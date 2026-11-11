@@ -147,12 +147,6 @@ impl App {
                 )
             }
             CommandId::Copy => self.execute_copy_command(),
-            CommandId::Goal => {
-                invocation.raw_args = slash_command_args(&turn.model).to_string();
-                invocation.args = invocation.raw_args.trim().to_string();
-                self.execute_goal_command(invocation, media, terminal, agent)
-                    .await
-            }
             CommandId::Hooks => self.execute_hooks_command(agent),
             CommandId::Skills => self.execute_skills_command(),
             CommandId::Theme => self.open_theme_picker(),

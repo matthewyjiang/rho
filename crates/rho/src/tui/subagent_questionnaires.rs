@@ -9,19 +9,13 @@ use crate::display_transcript::DisplayTranscript;
 
 use super::{
     questionnaire::QuestionnaireResponseChannel, App, ComposerMode, Entry, InteractiveRuntime,
-    PendingSubagentQuestionnaire, QuestionAnswerRequest, QuestionnaireReply, TurnOutcome,
+    PendingSubagentQuestionnaire, QuestionAnswerRequest, QuestionnaireReply,
 };
 
 #[derive(Clone, Copy)]
 enum ParentActivity {
     Idle,
     Working(&'static str),
-}
-
-pub(super) enum SubagentCompletionTurn {
-    NoDelivery,
-    PendingConfirmation,
-    Completed(TurnOutcome),
 }
 
 /// Already-scheduled provider requests may carry informational notices; notices
@@ -32,10 +26,6 @@ enum BoundaryTrigger {
     Notification,
 }
 
-fn subagent_completion_changed(outcome: &SubagentCompletionTurn) -> bool {
-    !matches!(outcome, SubagentCompletionTurn::NoDelivery)
-}
-
 impl App {
     /// The runtime waits here, rather than racing a ToolFinished-driven steer.
     /// An empty final reply hands later arrivals back to idle delivery.
@@ -43,7 +33,7 @@ impl App {
         &mut self,
         request: rho_sdk::BoundaryInputRequest,
         agent: &mut InteractiveRuntime,
-    ) -> Option<(String, DisplayTranscript)> {
+    ) -> Option<DisplayTranscript> {
         if request.session_id() != agent.session_id() {
             request.respond(None).await;
             return None;
@@ -86,7 +76,7 @@ impl App {
             agent.record_boundary_display(model_message, transcript.display_message());
             self.subagent_inbox
                 .commit_delivered_notices(delivery.batch.notice_count());
-            Some((delivery.model, transcript))
+            Some(transcript)
         } else {
             self.restore_turn_boundary_batch(agent, delivery.batch);
             None
@@ -94,8 +84,7 @@ impl App {
     }
 
     /// Wakes an idle session with a turn for finished background subagents.
-    /// Real prompt turns drain these notifications themselves, while active
-    /// goals deliver them before evaluating the goal again.
+    /// Real prompt turns drain these notifications themselves.
     pub(super) async fn poll_subagent_completions(
         &mut self,
         terminal: &mut DefaultTerminal,
@@ -107,8 +96,7 @@ impl App {
         }
         // Completions and child notices share one idle delivery path. Opening a
         // confirmation modal is itself a visible state change and needs redraw.
-        let outcome = self.run_subagent_completion_turn(terminal, agent).await?;
-        Ok(subagent_completion_changed(&outcome))
+        self.run_subagent_completion_turn(terminal, agent).await
     }
 
     /// Surfaces delegated questionnaires when the parent can take user input.
@@ -138,27 +126,6 @@ impl App {
         changed |= self
             .finish_pending_subagent_questionnaire(ParentActivity::Working("running"))
             .await?;
-        Ok(changed)
-    }
-
-    /// Surfaces delegated questionnaires while a goal waits for its children.
-    pub(super) async fn poll_waiting_subagent_questionnaires(
-        &mut self,
-        session_id: &rho_sdk::SessionId,
-    ) -> anyhow::Result<bool> {
-        let mut changed = self.subagent_inbox.drain();
-        changed |= self.subagent_inbox.discard_stale(session_id);
-        changed |= self
-            .finish_pending_subagent_questionnaire(ParentActivity::Working(
-                "waiting for delegated agents",
-            ))
-            .await?;
-        if self.pending_subagent_questionnaire.is_none()
-            && matches!(self.input_ui.composer(), ComposerMode::Input)
-            && !self.input_ui.has_pending_draft()
-        {
-            changed |= self.present_next_subagent_questionnaire(session_id).await?;
-        }
         Ok(changed)
     }
 
@@ -399,22 +366,20 @@ impl App {
             && matches!(self.input_ui.composer(), ComposerMode::Input)
             && !self.input_ui.has_pending_draft()
             && self.allows_idle_subagent_delivery()
-            && self
-                .goal
-                .as_ref()
-                .is_none_or(crate::tui::goal::GoalState::is_blocked)
             && self.pending.queued_prompts().is_empty()
             && self.pending.steering_prompts().is_empty()
     }
 
-    pub(super) async fn run_subagent_completion_turn(
+    /// Delivers what waits for the idle parent as one turn. Returns whether
+    /// anything was delivered or a send confirmation opened for it.
+    async fn run_subagent_completion_turn(
         &mut self,
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<SubagentCompletionTurn> {
+    ) -> anyhow::Result<bool> {
         let Some(delivery) = self.collect_boundary_prompts(agent, BoundaryTrigger::Notification)
         else {
-            return Ok(SubagentCompletionTurn::NoDelivery);
+            return Ok(false);
         };
         // The whole drained batch is one message and one model request, no
         // matter how many runs finished while the parent was busy. The send
@@ -422,20 +387,19 @@ impl App {
         // restoration after that point.
         let submission = super::send_confirm::SendSubmission::turn_boundary(delivery);
         let Some(submission) = self.gate_send(submission, agent) else {
-            return Ok(SubagentCompletionTurn::PendingConfirmation);
+            return Ok(true);
         };
         let (payload, authorization, _allow_auto_compact) = submission.into_authorized();
         let super::send_confirm::SendPayload::TurnBoundary(delivery) = payload else {
             unreachable!("subagent delivery is a turn-boundary submission");
         };
         self.run_turn_boundary_prompt_turn(delivery, authorization, terminal, agent)
-            .await
-            .map(SubagentCompletionTurn::Completed)
+            .await?;
+        Ok(true)
     }
 
     pub(super) fn should_deliver_idle_subagent_completions(&self) -> bool {
         self.allows_idle_subagent_delivery()
-            && self.goal.is_none()
             && self.pending.queued_prompts().is_empty()
             && self.pending_subagent_questionnaire.is_none()
             && matches!(self.input_ui.composer(), ComposerMode::Input)

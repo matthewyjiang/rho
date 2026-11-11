@@ -11,88 +11,6 @@ fn terminal_lifecycle_errors_bypass_sdk_failure_handling() {
     assert_eq!(error.to_string(), "resume failed");
 }
 
-fn failed_turn() -> FailedTurn {
-    FailedTurn {
-        message: String::new(),
-        input: rho_sdk::UserInput::text("continue the existing goal turn"),
-        display_user: vec![Message::user_text("continuing active goal")],
-        display_commit: DisplayCommit::Unsaved,
-        notification_context: None,
-        boundary_recovery: Vec::new(),
-        skills: Vec::new(),
-        generate_session_title_after_completion: true,
-        session_title_user: None,
-        parent_action_required: false,
-    }
-}
-
-// Covers: accepted in-turn findings are recovered after rollback, but not sent
-// again once already present in durable history. Owner: retry input policy.
-#[test]
-fn running_boundary_recovery_follows_durable_receipts() {
-    let first = BoundaryRecovery {
-        model: "first findings".into(),
-        display: Message::System("first receipt".into()),
-    };
-    let second = BoundaryRecovery {
-        model: "second findings".into(),
-        display: Message::System("second receipt".into()),
-    };
-    for (commit, retained) in [
-        (DisplayCommit::Unsaved, vec![first.clone(), second.clone()]),
-        (
-            DisplayCommit::Checkpoint(vec![first.display.clone()]),
-            vec![second.clone()],
-        ),
-        (DisplayCommit::Complete, Vec::new()),
-    ] {
-        let mut retry = failed_turn();
-        retry.boundary_recovery = vec![first.clone(), second.clone()];
-        retry
-            .display_user
-            .extend([first.display.clone(), second.display.clone()]);
-        retry.display_commit = commit;
-        retry.prepare_retry();
-        let mut context = None;
-        for recovery in &retained {
-            context = Some(crate::tools::agent::merge_notification_context(
-                context.as_deref(),
-                &recovery.model,
-            ));
-        }
-        let mut expected = context
-            .into_iter()
-            .map(ContentBlock::Text)
-            .collect::<Vec<_>>();
-        expected.extend_from_slice(retry.input.blocks());
-        pretty_assertions::assert_eq!(retry.model_input().unwrap().blocks(), expected);
-        pretty_assertions::assert_eq!(retry.boundary_recovery, retained);
-    }
-}
-
-// Covers: newer failed deliveries must not hide an older action retry from the
-// goal's child-wait decision. Owner: failed-turn scheduling policy.
-#[test]
-fn action_retry_keeps_queue_runnable_until_consumed() {
-    let mut action = failed_turn();
-    action.parent_action_required = true;
-    let mut retries = VecDeque::from([action.clone()]);
-    assert!(FailedTurn::retries_need_parent_action(&retries));
-
-    // A later completion/workflow delivery fails and is retried first.
-    retries.push_front(failed_turn());
-    assert!(FailedTurn::retries_need_parent_action(&retries));
-    retries.push_front(failed_turn());
-    assert!(FailedTurn::retries_need_parent_action(&retries));
-    retries.pop_front();
-    retries.pop_front();
-    pretty_assertions::assert_eq!(retries.pop_front(), Some(action));
-    assert!(!FailedTurn::retries_need_parent_action(&retries));
-
-    retries.push_back(failed_turn());
-    assert!(!FailedTurn::retries_need_parent_action(&retries));
-}
-
 #[test]
 fn mixed_interactions_preserve_arrival_order() {
     let approval_request = rho_sdk::ApprovalRequest::new(
@@ -146,38 +64,6 @@ fn mixed_interactions_preserve_arrival_order() {
     assert!(queue.pop().is_none());
 }
 
-// Covers: retries suppress saved display but retain unsaved human and boundary
-// messages after checkpoint failure. Owner: failed-turn retry policy.
-#[test]
-fn retry_retains_only_uncommitted_display_without_changing_model_or_title_state() {
-    let transcript = crate::display_transcript::DisplayTranscript(vec![
-        crate::display_transcript::DisplayRow::Notice("worker update".into()),
-    ]);
-    for (commit, retained) in [
-        (DisplayCommit::Unsaved, 2),
-        (DisplayCommit::Complete, 0),
-        (DisplayCommit::Checkpoint(failed_turn().display_user), 1),
-    ] {
-        let mut original = failed_turn();
-        original.display_user.push(transcript.display_message());
-        original.display_commit = commit.clone();
-        let mut expected = original.clone();
-        expected.display_commit = DisplayCommit::Unsaved;
-        if !matches!(commit, DisplayCommit::Unsaved) {
-            expected.session_title_user = Some(original.session_title_user_message());
-            expected
-                .display_user
-                .drain(..expected.display_user.len() - retained);
-        }
-        let mut retry = original;
-        retry.prepare_retry();
-        pretty_assertions::assert_eq!(retry, expected);
-        retry.display_commit = commit;
-        retry.prepare_retry();
-        pretty_assertions::assert_eq!(retry, expected);
-    }
-}
-
 #[test]
 fn persisted_display_excludes_notification_context_for_standard_and_command_prompts() {
     let cases = [
@@ -187,16 +73,16 @@ fn persisted_display_excludes_notification_context_for_standard_and_command_prom
             "visible prompt",
         ),
         (
-            TurnPrompt::command("expanded command context".into(), "/goal run tests".into()),
+            TurnPrompt::command("expanded command context".into(), "/init run tests".into()),
             "expanded command context",
-            "/goal run tests",
+            "/init run tests",
         ),
     ];
 
     for (prompt, expected_model, expected_display) in cases {
-        let mut failed_turn = FailedTurn::from_prompt(prompt, Vec::new()).unwrap();
-        failed_turn.attach_notification_context("hidden agent result".into());
-        let model_input = failed_turn.model_input().unwrap();
+        let mut outgoing = OutgoingTurn::from_prompt(prompt, Vec::new()).unwrap();
+        outgoing.attach_notification_context("hidden agent result".into());
+        let model_input = outgoing.model_input().unwrap();
 
         assert_eq!(
             model_input.blocks(),
@@ -206,41 +92,10 @@ fn persisted_display_excludes_notification_context_for_standard_and_command_prom
             ]
         );
         assert_eq!(
-            failed_turn.display_user,
+            outgoing.display_user,
             vec![Message::user_text(expected_display)]
         );
     }
-}
-
-#[test]
-fn retry_attachment_keeps_prior_batches_and_adds_each_new_batch_once() {
-    let mut failed_turn = FailedTurn::from_prompt(
-        TurnPrompt::standard("user prompt".into(), "user prompt".into()),
-        Vec::new(),
-    )
-    .unwrap();
-    failed_turn.attach_notification_context("first batch".into());
-
-    let mut retry = failed_turn.clone();
-    retry.attach_notification_context("second batch".into());
-    let later_retry_without_new_notifications = retry.clone();
-    let model_input = later_retry_without_new_notifications.model_input().unwrap();
-    let ContentBlock::Text(context) = &model_input.blocks()[0] else {
-        panic!("notification context must be text")
-    };
-
-    assert_eq!(context.matches("first batch").count(), 1);
-    assert_eq!(context.matches("second batch").count(), 1);
-    assert!(context.find("first batch") < context.find("second batch"));
-    assert!(context.len() <= crate::tools::agent::NOTIFICATION_CONTEXT_BYTES);
-    assert_eq!(
-        &model_input.blocks()[1..],
-        &[ContentBlock::Text("user prompt".into())]
-    );
-    assert_eq!(
-        later_retry_without_new_notifications.display_user,
-        vec![Message::user_text("user prompt")]
-    );
 }
 
 // Covers: mixed chat media must keep image blocks multimodal while injecting document text only
@@ -260,7 +115,7 @@ fn prompt_assembly_preserves_order_and_separates_document_display_from_model() {
         warnings: vec!["some pages had no text".into()],
     };
 
-    let failed_turn = FailedTurn::from_prompt(
+    let outgoing = OutgoingTurn::from_prompt(
         TurnPrompt::standard("model prompt".into(), "display prompt".into()),
         vec![
             ChatMedia::TextDocument(document),
@@ -270,7 +125,7 @@ fn prompt_assembly_preserves_order_and_separates_document_display_from_model() {
     .unwrap();
 
     assert_eq!(
-        failed_turn.input.blocks(),
+        outgoing.input.blocks(),
         &[
             ContentBlock::Text("model prompt".into()),
             ContentBlock::Text(
@@ -281,7 +136,7 @@ fn prompt_assembly_preserves_order_and_separates_document_display_from_model() {
         ]
     );
     assert_eq!(
-        failed_turn.display_user,
+        outgoing.display_user,
         vec![Message::User(vec![
             ContentBlock::Text("display prompt".into()),
             ContentBlock::Text("[pdf: report.pdf · 14 chars · truncated]".into()),
@@ -299,10 +154,14 @@ fn failed_turn_keeps_live_partial_assistant_text_before_error() {
         .assistant_stream
         .push_delta("partial assistant before stream failure");
 
-    let outcome =
-        app.finalize_failed_turn("provider stream failed".into(), failed_turn(), Vec::new());
+    let outcome = app.finalize_failed_turn("provider stream failed".into(), Vec::new());
 
-    assert_eq!(outcome.kind(), TurnOutcomeKind::Failed);
+    pretty_assertions::assert_eq!(
+        outcome,
+        TurnOutcome::Failed {
+            message: "provider stream failed".into()
+        }
+    );
     assert!(matches!(
         app.history.entries(),
         [Entry::Assistant(assistant), Entry::Error(error)]

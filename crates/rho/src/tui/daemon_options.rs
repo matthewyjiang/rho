@@ -453,10 +453,6 @@ impl App {
                 }
             }
             CommandId::Fast => self.set_daemon_fast(invocation.args.trim()),
-            CommandId::Goal => {
-                self.execute_daemon_goal_command(&invocation.args);
-                Ok(())
-            }
             CommandId::Advisor => {
                 self.execute_daemon_advisor_command(&invocation.args);
                 Ok(())

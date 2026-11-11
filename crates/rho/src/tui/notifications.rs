@@ -5,7 +5,7 @@
 //! prompts call [`TerminalNotifier::user_wait`], which notifies at once, and
 //! each finished turn calls [`TerminalNotifier::turn_finished`]. A finished
 //! turn is held until the event loop is about to wait for input
-//! ([`TerminalNotifier::take_ready`]), so a goal run or queued follow-ups
+//! ([`TerminalNotifier::take_ready`]), so queued follow-ups
 //! notify once at the end instead of after every turn.
 
 use std::io::{self, Write};

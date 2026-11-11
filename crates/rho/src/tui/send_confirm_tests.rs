@@ -7,12 +7,10 @@ use rho_sdk::SessionId;
 
 use super::{
     confirm_send_choice, AuthorizedSendSubmission, CancellationSource, SendOmissions,
-    SendSubmission, TurnOrigin, ACTION_COMPACT_SEND, ACTION_DONT_SEND, ACTION_SEND,
-    ACTION_SEND_SESSION,
+    SendSubmission, ACTION_COMPACT_SEND, ACTION_DONT_SEND, ACTION_SEND, ACTION_SEND_SESSION,
 };
 use crate::tui::{
-    goal, tests::test_app, ChatMedia, ChatTextDocument, ComposerAttachment, GoalState,
-    QueuedPrompt, TurnPrompt,
+    tests::test_app, ChatMedia, ChatTextDocument, ComposerAttachment, QueuedPrompt, TurnPrompt,
 };
 
 fn omissions(count: usize) -> HandoffReport {
@@ -196,7 +194,6 @@ fn compact_send_cancellation_parks_on_composer_collision() {
         .push_ready_attachment(draft_media.clone(), None);
 
     app.apply_turn_cancellation(
-        TurnOrigin::User,
         queued(
             "exact model prompt",
             "submitted prompt",
@@ -223,7 +220,6 @@ fn compact_send_cancellation_parks_on_composer_collision() {
     let mut empty = test_app();
     let restored_media = document("restored.txt", "restored attachment");
     empty.apply_turn_cancellation(
-        TurnOrigin::User,
         queued(
             "restored model prompt",
             "restored prompt",
@@ -246,7 +242,6 @@ fn compact_send_cancellation_parks_on_composer_collision() {
 fn direct_cancellation_restores_without_queueing() {
     let mut app = test_app();
     app.apply_turn_cancellation(
-        TurnOrigin::User,
         queued("model prompt", "display prompt", Vec::new()),
         CancellationSource::DirectConfirmation,
     );
@@ -254,78 +249,6 @@ fn direct_cancellation_restores_without_queueing() {
     assert_eq!(app.input_ui.text(), "display prompt");
     assert!(app.pending.queued_prompts().is_empty());
     assert!(app.start_follow_ups.is_none());
-}
-
-fn blocked_goal() -> GoalState {
-    let mut goal = GoalState::new("release is published".into());
-    goal.record_evaluation(&goal::GoalEvaluation::Blocked {
-        reason: "waiting for user".into(),
-        pending_steps: vec![goal::HumanStep {
-            action: "publish release".into(),
-            reason: "requires user credentials".into(),
-        }],
-    });
-    goal
-}
-
-// Covers: goal-owned confirmation cancellation applies lifecycle state rather
-// than treating synthetic display text as ordinary composer input.
-// Owner: goal send cancellation policy
-#[test]
-fn goal_submission_cancellation_applies_typed_state_transition() {
-    let mut initial = test_app();
-    initial.goal = Some(GoalState::new("tests pass".into()));
-    initial.apply_turn_cancellation(
-        TurnOrigin::InitialGoal,
-        queued("synthetic initial prompt", "/goal tests pass", Vec::new()),
-        CancellationSource::DirectConfirmation,
-    );
-    assert!(initial.goal.is_none());
-    assert_eq!(initial.input_ui.text(), "/goal tests pass");
-
-    let mut resume = test_app();
-    resume.goal = Some(blocked_goal());
-    assert!(resume.goal.as_mut().unwrap().begin_verification());
-    resume.apply_turn_cancellation(
-        TurnOrigin::GoalResume,
-        queued("synthetic verification", "/goal resume", Vec::new()),
-        CancellationSource::DirectConfirmation,
-    );
-    resume.goal.as_mut().unwrap().complete_verification();
-    assert!(resume.goal.as_ref().unwrap().is_blocked());
-    assert_eq!(resume.input_ui.text(), "/goal resume");
-
-    let mut continuation = test_app();
-    continuation.goal = Some(GoalState::new("tests pass".into()));
-    continuation.apply_turn_cancellation(
-        TurnOrigin::GoalContinuation,
-        queued(
-            "synthetic continuation prompt",
-            "continuing active goal",
-            Vec::new(),
-        ),
-        CancellationSource::DirectConfirmation,
-    );
-    assert!(continuation.input_ui.text().is_empty());
-    assert!(continuation.pending.queued_prompts().is_empty());
-
-    let mut colliding_resume = test_app();
-    colliding_resume.goal = Some(blocked_goal());
-    assert!(colliding_resume.goal.as_mut().unwrap().begin_verification());
-    colliding_resume.input_ui.set_text("new draft".into());
-    colliding_resume.apply_turn_cancellation(
-        TurnOrigin::GoalResume,
-        queued("synthetic verification", "/goal resume", Vec::new()),
-        CancellationSource::Compact,
-    );
-    assert_eq!(colliding_resume.input_ui.text(), "new draft");
-    assert!(colliding_resume.pending.queued_prompts().is_empty());
-    colliding_resume
-        .goal
-        .as_mut()
-        .unwrap()
-        .complete_verification();
-    assert!(colliding_resume.goal.as_ref().unwrap().is_blocked());
 }
 
 // Covers: the consent given with "Compact, then send" on a daemon session

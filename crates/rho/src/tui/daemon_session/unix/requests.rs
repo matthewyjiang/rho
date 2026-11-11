@@ -25,20 +25,6 @@ impl DaemonSession {
             .request_mcp()
     }
 
-    /// Send a goal action without waiting for the active turn.
-    pub(in crate::tui) fn goal(
-        &self,
-        action: rho_protocol::SessionGoalAction,
-    ) -> anyhow::Result<()> {
-        if self.ended {
-            anyhow::bail!(LOST);
-        }
-        self.requests
-            .as_ref()
-            .expect("attached session has requests")
-            .goal(action)
-    }
-
     /// Ask for a report on the session, which arrives as
     /// `DaemonView::Report`; the daemon refuses during a turn.
     pub(in crate::tui) fn inspect(

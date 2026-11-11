@@ -1,8 +1,7 @@
-//! The subagent, attach-view, tool-turn and goal-delegation scenarios again,
-//! with the session in the daemon and the TUI following it
-//! (`RHO_TUI_DAEMON=1`, #1667). Each runs the steps of the in-process scenario
-//! it names, so the two cannot drift; the goal retry differs in its last reply
-//! (see its steps).
+//! The subagent, attach-view and tool-turn scenarios again, with the session
+//! in the daemon and the TUI following it (`RHO_TUI_DAEMON=1`, #1667). Each
+//! runs the steps of the in-process scenario it names, so the two cannot
+//! drift.
 
 use super::{
     agent_messages::AGENT_MESSAGES_SCENARIO,
@@ -18,17 +17,12 @@ use super::{
         CANCEL_BACKGROUND_AGENT_QUESTIONNAIRE_SCENARIO,
         LATE_BACKGROUND_AGENT_QUESTIONNAIRE_SCENARIO,
     },
-    goal::{
-        DAEMON_GOAL_WAITS_FOR_SUBAGENTS_DURING_RETRY_STEPS, GOAL_QUESTIONNAIRE_STEPS,
-        GOAL_WAITS_FOR_SUBAGENTS_STEPS,
-    },
     quiet_subagent::{
         COMPLETION_AFTER_NEW_SCENARIO, QUIET_SUBAGENT_SCENARIO, RUNNING_NOTICES_SCENARIO,
         STREAMING_NOTICE_SCENARIO,
     },
     steering::RETRACT_STEERING_DURING_TOOL_SCENARIO,
     subagent_rail::SUBAGENT_RAIL_MOUSE_SCENARIO,
-    DEFAULT_SIZE,
 };
 use crate::scenario::Scenario;
 
@@ -129,37 +123,4 @@ pub(super) const ATTACH_VIEW_PARENT_APPROVAL: Scenario = in_daemon(
 pub(super) const ATTACH_VIEW_QUIT_RESTORES: Scenario = in_daemon(
     "daemon_attach_view_quit_restores",
     &ATTACH_VIEW_QUIT_RESTORES_SCENARIO,
-);
-
-pub(super) const GOAL_WAITS_FOR_SUBAGENTS: Scenario = in_daemon(
-    "daemon_goal_waits_for_subagents",
-    &Scenario::new(
-        "",
-        "Wait for delegated runs before prompting an active goal to continue",
-        DEFAULT_SIZE,
-        GOAL_WAITS_FOR_SUBAGENTS_STEPS,
-        /*smoke*/ false,
-    ),
-);
-
-pub(super) const GOAL_QUESTIONNAIRE: Scenario = in_daemon(
-    "daemon_goal_questionnaire",
-    &Scenario::new(
-        "",
-        "Answer a background child questionnaire while an active goal waits",
-        DEFAULT_SIZE,
-        GOAL_QUESTIONNAIRE_STEPS,
-        /*smoke*/ false,
-    ),
-);
-
-pub(super) const GOAL_WAITS_FOR_SUBAGENTS_DURING_RETRY: Scenario = in_daemon(
-    "daemon_goal_waits_for_subagents_during_retry",
-    &Scenario::new(
-        "",
-        "Wait for delegated runs before retrying a failed goal turn",
-        DEFAULT_SIZE,
-        DAEMON_GOAL_WAITS_FOR_SUBAGENTS_DURING_RETRY_STEPS,
-        /*smoke*/ false,
-    ),
 );

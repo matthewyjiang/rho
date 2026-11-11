@@ -60,7 +60,6 @@ mod daemon_asks;
 #[cfg_attr(not(unix), allow(dead_code))]
 mod daemon_events;
 mod daemon_gate;
-mod daemon_goal;
 #[cfg_attr(not(unix), allow(dead_code))]
 mod daemon_inputs;
 mod daemon_jobs;
@@ -87,6 +86,7 @@ mod diff_viewer;
 mod divider;
 mod doctor_overlay;
 mod drag_selection;
+mod elapsed;
 pub(crate) mod event_adapter;
 mod external_editor;
 mod external_login;
@@ -97,7 +97,6 @@ mod file_picker;
 mod first_run;
 mod frame_context;
 mod frame_scheduler;
-mod goal;
 mod line_editor;
 mod line_editor_view;
 mod panel_overlay;
@@ -130,7 +129,6 @@ mod custom_provider_login;
 mod during_turn;
 mod exclusive_screen;
 mod exit_receipt;
-mod goal_command;
 mod help_picker;
 mod herdr_resume;
 mod history_cache;
@@ -288,7 +286,7 @@ mod zen_tool_run;
 mod types;
 use types::*;
 
-use activity::{ActivityPhase, ActivityStatus, BackgroundCounts, LoadingSpinner};
+use activity::{ActivityPhase, ActivityStatus, BackgroundCounts};
 use app_state::{HistoryUi, InputUi, PendingWorkUi, TurnUi};
 use approval::{approval_frame, ApprovalKeyOutcome};
 use chat_media::{
@@ -299,7 +297,6 @@ use copy_interaction::CodeBlockCopyTarget;
 use event_adapter::{SdkEventAdapter, ViewEvent, ViewModelEvent};
 use feed_image::FeedImage;
 use frame_scheduler::FrameScheduler;
-use goal::GoalState;
 use inline_choice::{
     InlineChoice, InlineChoiceKeyOutcome, InlineChoiceModal, InlineChoiceOption,
     InlineChoicePending,
@@ -314,7 +311,6 @@ use picker::{
     PickerItem, PickerKeyHints, PickerLayout, RowDeleteKeys, TabKey, UiPicker,
 };
 use process_panel::ProcessPanel;
-use prompt_turn::FailedTurn;
 use questionnaire::{
     questionnaire_frame, questionnaire_notice_text, QuestionAnswerRequest, QuestionnaireReply,
     QuestionnaireResponseChannel,
@@ -325,7 +321,7 @@ use render::{
 };
 use scrollbar::HistoryScrollbar;
 use session_title::PendingSessionTitle;
-use statusline::{GoalStatus, StatusLine};
+use statusline::StatusLine;
 use subagent_panel::SubagentPanel;
 use terminal_session::TerminalSession;
 use text_selection::{highlight_selection, render_copy_notice, TextSelection};
@@ -620,7 +616,6 @@ struct App {
     pending: PendingWorkUi,
     pending_inline_shells: Vec<inline_shell::PendingShellTask>,
     deferred_inline_shell_context: Vec<inline_shell::DeferredShellContext>,
-    goal: Option<GoalState>,
     history: HistoryUi,
     credential_store: Arc<dyn CredentialStore>,
     available_auths: Vec<String>,

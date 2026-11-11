@@ -77,7 +77,7 @@ fn notifies_unfocused_user_once_per_wait() {
             vec!["turn finished"],
         ),
         (
-            "goal turns notify once at the end",
+            "back-to-back turns notify once at the end",
             vec![away.clone(), TurnFinished, TurnFinished, Idle],
             vec!["turn finished"],
         ),

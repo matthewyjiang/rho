@@ -316,7 +316,7 @@ auth = "anthropic-api-key"
 fn internal_agents_that_cannot_delegate_fall_back_to_the_rho_runtime() {
     let (config, warnings) = parse_settings(
         r#"
-[internal_agents.goal-judge]
+[internal_agents.compaction]
 runtime = "claude-cli"
 model = "opus"
 "#,
@@ -324,7 +324,7 @@ model = "opus"
     .unwrap();
 
     assert_eq!(
-        conversation_triple(&config, "goal-judge"),
+        conversation_triple(&config, "compaction"),
         (
             config.provider.clone(),
             config.model.clone(),
@@ -336,7 +336,7 @@ model = "opus"
         vec![ConfigWarning::Normalized {
             key: "internal_agents.runtime",
             from: "\"claude-cli\"".into(),
-            to: "\"rho\" with the conversation selection; agent 'goal-judge' cannot delegate"
+            to: "\"rho\" with the conversation selection; agent 'compaction' cannot delegate"
                 .into(),
         }]
     );
@@ -419,7 +419,7 @@ model = "@deep"
 deep = "anthropic/claude-opus-4-8"
 fast = "gpt-5.5-mini"
 
-[internal_agents.goal-judge]
+[internal_agents.compaction]
 reasoning = "high"
 "#,
     )
@@ -434,7 +434,7 @@ reasoning = "high"
                 .internal_agent_model("plugin-deep")
                 .and_then(crate::config::InternalAgentModelConfig::rho)
                 .map(|rho| (rho.provider.as_str(), rho.model.as_str())),
-            conversation_triple(&config, "goal-judge"),
+            conversation_triple(&config, "compaction"),
         ),
         (
             None,

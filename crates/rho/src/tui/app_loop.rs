@@ -19,34 +19,28 @@ enum UserBlock<'a> {
     Prompt(UserWait),
     /// No provider is usable until the user signs in.
     Auth(&'a str),
-    /// The goal stopped with this reason.
-    Goal(&'a str),
 }
 
 impl<'a> UserBlock<'a> {
     fn message(&self) -> &'a str {
         match self {
             Self::Prompt(wait) => wait.message(),
-            Self::Auth(message) | Self::Goal(message) => message,
+            Self::Auth(message) => message,
         }
     }
 
     fn program_status(&self) -> ProgramStatus {
         match self {
             Self::Prompt(wait) => ProgramStatus::Blocked {
-                kind: Some(match wait {
+                kind: match wait {
                     UserWait::Approval => BlockedKind::Permission,
                     UserWait::Questionnaire => BlockedKind::Question,
-                }),
+                },
                 message: wait.message().to_string(),
             },
             Self::Auth(message) => ProgramStatus::Blocked {
-                kind: Some(BlockedKind::Auth),
+                kind: BlockedKind::Auth,
                 message: (*message).to_string(),
-            },
-            Self::Goal(reason) => ProgramStatus::Blocked {
-                kind: None,
-                message: (*reason).to_string(),
             },
         }
     }
@@ -567,7 +561,7 @@ impl App {
     }
 
     /// Reports the resting state to Herdr. The terminal's program status
-    /// follows once the event loop waits for input, so a goal run or queued
+    /// follows once the event loop waits for input, so queued
     /// follow-ups do not flash `done` between turns.
     pub(super) async fn report_resting_herdr_state(&mut self) {
         let (state, message) = self.resting_herdr_state();
@@ -608,21 +602,11 @@ impl App {
         if let Some(prompt) = prompt {
             return Some(UserBlock::Prompt(prompt));
         }
-        if let Some(message) = self.info.services.auth_unavailable.as_deref() {
-            return Some(UserBlock::Auth(message));
-        }
-        if self.info.session.daemon.is_some() {
-            return self
-                .daemon_goal()
-                .filter(|goal| goal.phase == rho_protocol::SessionGoalPhase::Blocked)
-                .and_then(|goal| goal.last_reason.as_deref())
-                .map(UserBlock::Goal);
-        }
-        self.goal
-            .as_ref()
-            .filter(|goal| goal.is_blocked())
-            .and_then(|goal| goal.last_reason.as_deref())
-            .map(UserBlock::Goal)
+        self.info
+            .services
+            .auth_unavailable
+            .as_deref()
+            .map(UserBlock::Auth)
     }
 
     /// Writes a program status report the terminal has not heard yet.
@@ -704,7 +688,7 @@ impl App {
         }
         changed |= self.refresh_todo_list(agent);
         // Fold terminal subagent/advisor costs on every panel refresh path (idle
-        // poll, in-turn wait, goal wait). Claiming is idempotent per run/call.
+        // poll, in-turn wait). Claiming is idempotent per run/call.
         changed |= self.claim_non_main_costs(agent);
         changed |= self.apply_finished_ui_tasks();
         self.restore_tool_sources_hold_activity_if_needed(self.tool_sources_pending(agent));

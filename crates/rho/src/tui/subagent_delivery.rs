@@ -14,12 +14,6 @@ pub(super) struct TurnBoundaryBatch {
 }
 
 impl TurnBoundaryBatch {
-    pub(super) fn requires_parent_action(&self) -> bool {
-        self.notices
-            .iter()
-            .any(|notice| notice.delivery.requires_parent_action())
-    }
-
     pub(super) fn is_empty(&self) -> bool {
         self.notices.is_empty()
             && self.subagent_notifications.is_empty()

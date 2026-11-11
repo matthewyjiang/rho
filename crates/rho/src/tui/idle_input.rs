@@ -1,5 +1,3 @@
-use std::collections::VecDeque;
-
 use crate::tui::DefaultTerminal;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -8,10 +6,9 @@ use super::{
     command_palette::{slash_command_args, CommandPaletteKeyOutcome},
     commands,
     composer_buffer::ComposerEditKey,
-    goal_command,
     send_confirm::{SendAuthorization, SendPayload, SendSubmission},
-    skill_actions, ActivityPhase, App, ChatMedia, ComposerMode, GoalState, InputSubmissionMode,
-    InteractiveRuntime, PasteSegment, PendingLoginFinish, QueuedPrompt, TurnOutcome, TurnPrompt,
+    skill_actions, ActivityPhase, App, ChatMedia, ComposerMode, InputSubmissionMode,
+    InteractiveRuntime, PasteSegment, PendingLoginFinish, QueuedPrompt, TurnPrompt,
 };
 
 /// A turn held until MCP servers and OpenAPI sources finish loading.
@@ -392,7 +389,7 @@ impl App {
     }
 
     /// Submit a skill or command-backed model turn through the same tool-loading hold,
-    /// compaction, goal, and follow-up path as a regular composer prompt, or
+    /// compaction and follow-up path as a regular composer prompt, or
     /// to the daemon session, as a composer prompt goes.
     pub(super) async fn submit_interactive_turn(
         &mut self,
@@ -725,65 +722,8 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        let turn = self.prepare_goal_resumption_turn(turn);
-        let mut outcome = self
-            .run_prompt_turn(turn, media, authorization, terminal, agent)
+        self.run_prompt_turn(turn, media, authorization, terminal, agent)
             .await?;
-        self.finish_goal_resumption_turn(outcome.kind());
-        let mut pending_goal_retries = VecDeque::new();
-        let final_outcome = loop {
-            let outcome_kind = outcome.kind();
-            let resume_goal = goal_command::should_resume_goal_after_turn(
-                outcome_kind,
-                self.goal.as_ref().map(GoalState::loop_state),
-                self.should_quit,
-            );
-            if let TurnOutcome::Failed(failed_turn) = outcome {
-                if resume_goal {
-                    pending_goal_retries.push_back(*failed_turn);
-                }
-            }
-
-            // Successful completion already drained follow-ups in the shared
-            // turn continuation. Only failed goal turns need driver-owned retry
-            // bookkeeping before delivering their remaining queued prompts.
-            let should_drain_queue = matches!(outcome_kind, super::TurnOutcomeKind::Failed)
-                && goal_command::should_drain_queued_prompts(outcome_kind, resume_goal);
-            if self.should_quit
-                || !should_drain_queue
-                || self.input_ui.composer().blocks_auto_continue()
-            {
-                break outcome_kind;
-            }
-            let Some(prompt) = self.pending.pop_follow_up() else {
-                break outcome_kind;
-            };
-            self.pending_input_changed();
-            self.select_pending_recall_target();
-            let submission = self.queued_turn_submission(prompt, agent);
-            let Some(submission) = self.gate_send(submission, agent) else {
-                // Ownership moved from the queue to the modal. Re-inserting a
-                // copy here would send the same follow-up twice after approval.
-                break outcome_kind;
-            };
-            let (payload, authorization, _allow_auto_compact) = submission.into_authorized();
-            let SendPayload::Turn { turn, media, .. } = payload else {
-                unreachable!("queued prompts are turn submissions");
-            };
-            outcome = self
-                .run_prompt_turn(turn, media, authorization, terminal, agent)
-                .await?;
-        };
-        if !self.input_ui.composer().blocks_auto_continue()
-            && goal_command::should_resume_goal_after_turn(
-                final_outcome,
-                self.goal.as_ref().map(GoalState::loop_state),
-                self.should_quit,
-            )
-        {
-            self.continue_goal(terminal, agent, pending_goal_retries)
-                .await?;
-        }
         Ok(())
     }
 }

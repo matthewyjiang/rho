@@ -23,7 +23,6 @@ pub(super) fn command_route(command: CommandId) -> CommandRoute {
         CommandId::Model
         | CommandId::Permissions
         | CommandId::Fast
-        | CommandId::Goal
         | CommandId::Advisor
         | CommandId::Codemode => CommandRoute::Options,
         // These commands are implemented by the daemon's prompt pipeline.

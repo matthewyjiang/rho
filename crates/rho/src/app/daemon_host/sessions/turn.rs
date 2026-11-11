@@ -119,7 +119,6 @@ pub(super) enum Ran {
 
 enum TurnInput {
     Prompt(UserInput),
-    Goal(Turn),
     /// No prompt: the turn's first boundary delivers the background
     /// results that wait (see [`super::idle_wake`]).
     Delivery,
@@ -146,11 +145,6 @@ impl TurnTask {
     /// [`StartedTurn::start`] how the turn began.
     pub(super) fn spawn(self, input: UserInput) {
         tokio::spawn(self.run(TurnInput::Prompt(input)));
-    }
-
-    /// Start a host-constructed goal turn without parsing its displayed command.
-    pub(super) fn spawn_goal(self, input: Turn) {
-        tokio::spawn(self.run(TurnInput::Goal(input)));
     }
 
     /// Runs a turn with no prompt, which delivers the session's waiting
@@ -202,35 +196,14 @@ impl TurnTask {
                         // session now, before its prompt.
                         let config = session.config_for_turn(runtime).await;
                         let turn = async {
-                            let ended = match input {
+                            match input {
                                 TurnInput::Prompt(input) => {
                                     run_turn(runtime, &mut view, input, &config, &cancel).await
                                 }
-                                TurnInput::Goal(turn) => {
-                                    run_goal_turn(runtime, &mut view, turn.into(), &config, &cancel)
-                                        .await
-                                }
                                 TurnInput::Delivery => {
-                                    run_goal_turn(
-                                        runtime,
-                                        &mut view,
-                                        crate::app::session_runtime::TurnStart::Continue,
-                                        &config,
-                                        &cancel,
-                                    )
-                                    .await
+                                    run_delivery_turn(runtime, &mut view, &config, &cancel).await
                                 }
-                            };
-                            super::goal::drive(
-                                runtime,
-                                &mut view,
-                                ended,
-                                super::goal::Halt {
-                                    turn_cancel: &cancel,
-                                    stopping: &stopping,
-                                },
-                            )
-                            .await
+                            }
                         };
                         slot.lend_while_waiting(&session.jobs, &session.job, turn)
                             .await
@@ -252,7 +225,6 @@ impl TurnTask {
                 // reports it follows the transcript's cut: a client reset
                 // from then on gets the saved turn, then how it ended.
                 save_transcript(&session, runtime);
-                session.report_goal_outcome();
                 // The turn may have left new skills, prompts, or MCP prompts
                 // behind; clients see them before they see the turn end.
                 session.refresh_options(runtime, &available_auths(runtime.credentials()).await);
@@ -438,7 +410,7 @@ async fn run_turn(
             command = session_commands::resolve(input.clone(), &commands, DAEMON_COMMANDS) => command,
         }
     };
-    let mut turn = match command? {
+    let turn = match command? {
         PromptCommand::Turn {
             input: model,
             calls,
@@ -471,7 +443,6 @@ async fn run_turn(
         }
     };
     // The command stays the shown message; the model gets its expansion.
-    super::goal::prepare_turn(&view.session, &mut turn);
     view.session.live().prompt(&turn.display);
     // A turn builds a large future; keep it on the heap.
     let ended = Box::pin(runtime.run_prompt_turn(view, &scope, turn, config)).await?;
@@ -481,13 +452,12 @@ async fn run_turn(
     })
 }
 
-/// Run a goal continuation or retry, or a delivery of background results,
-/// with normal persistence, child boundary delivery, cancellation, and plan
-/// handoff. A retry and a delivery insert no prompt.
-pub(super) async fn run_goal_turn(
+/// Run a delivery of background results, which inserts no prompt, with
+/// normal persistence, child boundary delivery, cancellation, and plan
+/// handoff.
+async fn run_delivery_turn(
     runtime: &mut SessionRuntime,
     view: &mut DaemonView,
-    input: crate::app::session_runtime::TurnStart,
     config: &Config,
     cancel: &CancellationToken,
 ) -> anyhow::Result<Ran> {
@@ -498,10 +468,8 @@ pub(super) async fn run_goal_turn(
     if cancel.is_cancelled() {
         return Ok(Ran::Cancelled);
     }
-    if let crate::app::session_runtime::TurnStart::Prompt(turn) = &input {
-        view.session.live().prompt(&turn.display);
-    }
-    let ended = Box::pin(runtime.run_prompt_turn(view, &scope, input, config)).await?;
+    let start = crate::app::session_runtime::TurnStart::Continue;
+    let ended = Box::pin(runtime.run_prompt_turn(view, &scope, start, config)).await?;
     Ok(match ended {
         TurnOutcome::Completed(run) => Ran::Completed(outcome::finished(&run)),
         TurnOutcome::Cancelled => Ran::Cancelled,

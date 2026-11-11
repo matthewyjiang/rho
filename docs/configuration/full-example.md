@@ -28,11 +28,6 @@ compact_target_percent = 50
 # model = "gpt-5.6-sol"
 # auth = "api-key"
 
-[internal_agents.goal-judge]
-# provider = "openai"
-# model = "gpt-5.6-sol"
-# auth = "api-key"
-
 [internal_agents.advisor]
 # provider = "anthropic"
 # model = "claude-fable-5"

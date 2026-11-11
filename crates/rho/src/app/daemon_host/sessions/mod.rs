@@ -71,7 +71,6 @@ mod child_questions;
 mod configure;
 mod cost;
 mod feed;
-mod goal;
 mod grant;
 mod idle_wake;
 mod inputs;
@@ -190,8 +189,6 @@ struct LoadedSession {
     /// The workflow runs the session started; reads never wait for the
     /// active turn.
     workflows: crate::tools::workflow_tracker::WorkflowRunTracker,
-    /// Goal lifecycle shared with control requests while the runtime is busy.
-    goal: Mutex<goal::GoalControl>,
     /// Turns the runtime's events into the feed's; only the turn under way
     /// and its steers use it, each briefly and never across an await.
     live: Mutex<LiveEvents>,
@@ -433,7 +430,6 @@ impl LoadedSession {
             processes: Mutex::new(runtime.tools().processes().cloned()),
             workflows: runtime.tools().workflow_tracker().clone(),
             feed,
-            goal: Mutex::default(),
             job,
             jobs,
             runtime: Arc::new(tokio::sync::Mutex::new(Some(runtime))),
@@ -528,7 +524,6 @@ impl LoadedSession {
         // cancel. Lock order: the turn lock, then the prompt gate's
         // slot inside `handle.cancel()`; nothing takes them the other way.
         turn.cancel.cancel();
-        self.cancel_goal();
         self.handle.cancel();
     }
 }

@@ -23,7 +23,7 @@ use rho_sdk::{
 };
 
 use super::{
-    build_runtime, AddDirOutcome, DisplayCommit, InteractiveRunController, InteractiveRuntime,
+    build_runtime, AddDirOutcome, InteractiveRunController, InteractiveRuntime,
     InteractiveSessionController, ProviderController, RuntimeBuildOptions,
 };
 use crate::{
@@ -915,20 +915,8 @@ async fn failed_turn_does_not_duplicate_the_previous_assistant_in_display_histor
         .start(UserInput::text("failed prompt"), None)
         .await
         .unwrap();
-    assert_eq!(
-        interactive.take_last_turn_display_commit(),
-        DisplayCommit::Unsaved
-    );
     while interactive.next_event().await.is_some() {}
     assert!(interactive.finish_run().await.is_err());
-    assert_eq!(
-        interactive.take_last_turn_display_commit(),
-        DisplayCommit::Complete
-    );
-    assert_eq!(
-        interactive.take_last_turn_display_commit(),
-        DisplayCommit::Unsaved
-    );
     let committed_assistant = interactive.history()[1].clone();
 
     let (_, histories) =

@@ -515,7 +515,6 @@ async fn action_request_wakes_parent_and_includes_earlier_notices() {
         fixture.manager.post_notice_for_test(action.clone());
         reply.await;
     }
-    assert!(fixture.host.delivered_parent_action());
     assert!(ordinary.is_acknowledged());
     assert!(action.is_acknowledged());
     assert!(fixture

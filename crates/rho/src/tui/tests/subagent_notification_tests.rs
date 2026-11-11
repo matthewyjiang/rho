@@ -1,5 +1,5 @@
 use crate::tui::{
-    send_confirm::PendingConfirmSend, tests::test_app, App, ComposerMode, GoalState, InlineChoice,
+    send_confirm::PendingConfirmSend, tests::test_app, App, ComposerMode, InlineChoice,
     InlineChoiceModal, InlineChoiceOption, InlineChoicePending, QueuedPrompt,
 };
 
@@ -13,18 +13,15 @@ fn queued_prompt() -> QueuedPrompt {
 }
 
 // Covers: idle subagent notifications must wait while a user prompt is queued,
-// a goal owns the next turn, a turn is already running, or a confirm-send
+// a turn is already running, or a confirm-send
 // modal owns the exclusive SendSubmission (delivery would overwrite it).
 // Owner: idle subagent delivery policy
 #[test]
 fn busy_app_states_block_idle_subagent_delivery() {
     type MakeBusy = fn(&mut App);
-    let cases: [(&str, MakeBusy); 4] = [
+    let cases: [(&str, MakeBusy); 3] = [
         ("queued user prompt", |app| {
             app.pending.push_follow_up(queued_prompt())
-        }),
-        ("active goal", |app| {
-            app.goal = Some(GoalState::new("finish the task".into()))
         }),
         ("running turn", App::begin_provider_turn_ui),
         ("confirm-send modal", |app| {

@@ -54,13 +54,6 @@ impl DaemonSession {
         match *self {}
     }
 
-    pub(in crate::tui) fn goal(
-        &self,
-        _action: rho_protocol::SessionGoalAction,
-    ) -> anyhow::Result<()> {
-        match *self {}
-    }
-
     pub(in crate::tui) fn rename(&self, _title: String) -> anyhow::Result<()> {
         match *self {}
     }

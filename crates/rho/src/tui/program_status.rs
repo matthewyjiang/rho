@@ -7,8 +7,8 @@
 //! [`QUERY`]; reports go out only when the terminal answered it, unless
 //! `RHO_PROGRAM_STATUS=1` forces them on or `RHO_PROGRAM_STATUS=0` turns them off.
 //!
-//! Messages are fixed wait text, the sign-in hint, a blocked goal's reason
-//! (written by the model), or the first line of a turn error. Prompts and
+//! Messages are fixed wait text, the sign-in hint, or the first line of a
+//! turn error. Prompts and
 //! assistant replies are never reported.
 
 use base64::Engine as _;
@@ -78,7 +78,7 @@ pub(super) enum ProgramStatus {
     /// The last turn finished.
     Done,
     Blocked {
-        kind: Option<BlockedKind>,
+        kind: BlockedKind,
         message: String,
     },
     /// The last turn failed and was not retried.
@@ -93,7 +93,7 @@ impl ProgramStatus {
             Self::Idle => ("idle", None, None),
             Self::Working => ("working", None, None),
             Self::Done => ("done", None, None),
-            Self::Blocked { kind, message } => ("blocked", *kind, Some(message.as_str())),
+            Self::Blocked { kind, message } => ("blocked", Some(*kind), Some(message.as_str())),
             Self::Error { message } => ("error", None, Some(message.as_str())),
         };
         let mut body = format!("state={state}:app={APP}");

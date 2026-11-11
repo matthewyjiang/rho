@@ -211,44 +211,9 @@ fn wait_for_resumed_proposal_turn(harness: &mut PtyHarness) -> Result<()> {
     harness.wait_for_text(label, STREAM)
 }
 
-// Covers: every turn driver must deliver the implementation handoff before
-// evaluating the goal or returning to idle background delivery.
+// Covers: an idle delegated-completion turn must deliver the implementation
+// handoff before returning to idle background delivery.
 // Owner: interactive turn orchestration (PTY).
-pub(super) const GOAL_SCENARIO: Scenario = Scenario::new(
-    "plan_exit_goal",
-    "Deliver plan approval from /goal before goal evaluation",
-    DEFAULT_SIZE,
-    &[
-        Step::WaitText {
-            text: "gpt-5.5",
-            timeout: STARTUP,
-        },
-        Step::SubmitText("/goal fixture plan exit"),
-        Step::WaitText {
-            text: "Plan ready. How should Rho continue?",
-            timeout: STREAM,
-        },
-        Step::Key(Key::Enter),
-        Step::WaitText {
-            text: "Optional feedback for the plan",
-            timeout: STREAM,
-        },
-        Step::Key(Key::Enter),
-        Step::WaitText {
-            text: "goal achieved",
-            timeout: STREAM,
-        },
-        // The fixture evaluator returns Met only after the implementation
-        // receipt is in model history; early evaluation deterministically blocks.
-        Step::Custom(assert_allow_edits),
-        Step::ExitCommand,
-        Step::Custom(assert_config_unchanged),
-    ],
-    /*smoke*/ false,
-)
-.with_setup(setup)
-.with_args(&["--permission-mode", "plan"]);
-
 pub(super) const IDLE_COMPLETION_SCENARIO: Scenario = Scenario::new(
     "plan_exit_idle_completion",
     "Deliver plan approval from an idle delegated-completion turn",
@@ -450,13 +415,6 @@ const fn in_daemon(id: &'static str, description: &'static str, base: Scenario) 
         ..base
     }
 }
-
-#[cfg(unix)]
-pub(super) const DAEMON_GOAL_SCENARIO: Scenario = in_daemon(
-    "daemon_plan_exit_goal",
-    "Deliver a daemon session's plan approval from /goal before goal evaluation",
-    GOAL_SCENARIO,
-);
 
 // Covers: a plan proposed from a delegated child's completion hands off to
 // implementation. The daemon holds the prompt open while a subagent runs (its

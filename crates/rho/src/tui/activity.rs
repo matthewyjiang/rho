@@ -200,11 +200,6 @@ pub(super) enum ActivityPhase {
     Compacting,
     WaitingForApproval,
     WaitingForInput,
-    /// A goal loop is holding its next turn until delegated agents finish.
-    WaitingForAgents,
-    EvaluatingGoal,
-    /// A goal loop is pausing before it retries a failed turn.
-    WaitingToRetry,
 }
 
 impl ActivityPhase {
@@ -221,9 +216,6 @@ impl ActivityPhase {
             Self::Compacting => "compacting context",
             Self::WaitingForApproval => "waiting for approval",
             Self::WaitingForInput => "waiting for input",
-            Self::WaitingForAgents => "waiting for delegated agents",
-            Self::EvaluatingGoal => "evaluating goal",
-            Self::WaitingToRetry => "waiting to retry",
         }
     }
 }
@@ -414,10 +406,7 @@ fn activity_label(available: usize, status: ActivityStatus, elapsed: Option<Dura
         candidates.push(format!(
             "{} · {}",
             labels[0],
-            super::goal::format_elapsed_with(
-                elapsed,
-                super::goal::ElapsedPrecision::TenthsUnderMinute
-            )
+            super::elapsed::format_elapsed(elapsed)
         ));
     }
     candidates.extend(labels);

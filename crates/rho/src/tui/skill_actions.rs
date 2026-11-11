@@ -66,8 +66,8 @@ impl App {
     }
 
     /// Also loads the skills a typed turn mentions as `$<name>`, when the
-    /// active agent can load skills. Generated turns, such as goal
-    /// continuations and `/init`, skip this so their text stays prose.
+    /// active agent can load skills. Generated turns, such as
+    /// `/init`, skip this so their text stays prose.
     pub(super) fn load_mentioned_skills(&self, turn: &mut TurnPrompt, agent: &InteractiveRuntime) {
         if agent.has_tool(crate::skills::mention::SKILL_TOOL) {
             turn.load_mentioned_skills(|| {

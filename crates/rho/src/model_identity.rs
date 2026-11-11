@@ -67,7 +67,7 @@ impl PromptModel {
         }
     }
 
-    /// The model an internal agent (advisor, session title, goal judge) runs on.
+    /// The model an internal agent (advisor, session title, compaction) runs on.
     pub(crate) fn from_internal_agent(selection: &InternalAgentModelConfig) -> Self {
         match &selection.target {
             InternalAgentTarget::Rho(rho) => Self::Rho {

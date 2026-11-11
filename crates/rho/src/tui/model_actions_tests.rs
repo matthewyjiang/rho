@@ -3,7 +3,6 @@ use std::time::Instant;
 
 use pretty_assertions::assert_eq;
 
-use crate::tui::ActivityPhase;
 use rho_providers::model::catalog::ModelSelection;
 use rho_providers::model::provider_models::with_provider_models_cache_dir_for_tests;
 use rho_providers::reasoning::ReasoningLevel;
@@ -529,9 +528,6 @@ fn empty_model_picker_wait_clause_follows_busy_session() {
                 (|app| app.begin_provider_turn_ui()) as fn(&mut crate::tui::App),
             ),
             ("compacting", |app| app.begin_compact_ui()),
-            ("cancellable wait", |app| {
-                app.begin_cancellable_wait_ui(ActivityPhase::EvaluatingGoal)
-            }),
         ]
         .map(|(name, setup)| {
             let mut app = test_app();
@@ -548,7 +544,6 @@ fn empty_model_picker_wait_clause_follows_busy_session() {
             );
         }
         assert_eq!(notices[0].1, notices[1].1);
-        assert_eq!(notices[0].1, notices[2].1);
     });
 }
 

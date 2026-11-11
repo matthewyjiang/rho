@@ -264,7 +264,7 @@ fn field_hits_match_painted_columns_across_widths() {
 #[test]
 fn hover_lifts_only_the_hovered_click_target() {
     let mut statusline = fully_populated_statusline();
-    let before = statusline.lines(100, None)[FIELDS_ROW].clone();
+    let before = statusline.lines(100)[FIELDS_ROW].clone();
     let model = statusline
         .cache
         .hits
@@ -273,7 +273,7 @@ fn hover_lifts_only_the_hovered_click_target() {
         .cloned()
         .expect("model field is clickable at width 100");
     statusline.set_hovered_column(Some(model.columns.end - 1));
-    let after = statusline.lines(100, None)[FIELDS_ROW].clone();
+    let after = statusline.lines(100)[FIELDS_ROW].clone();
     let changed = before
         .spans
         .iter()
@@ -320,7 +320,7 @@ fn context_without_known_window_still_shows_tokens() {
     let mut statusline = StatusLine::new(&test_info(PathBuf::from("/tmp/project")));
     statusline.update_usage(None, Some(&ContextUsage::estimated(1_234, None)), 0);
 
-    let line = statusline.lines(80, None)[1].clone();
+    let line = statusline.lines(80)[1].clone();
     assert_eq!(
         span_style(&line, "1.2K"),
         Some(Theme::dim()),
@@ -488,12 +488,12 @@ fn signed_out_keeps_not_signed_in_over_permission() {
 fn permission_mode_update_invalidates_cache() {
     let mut info = test_info(PathBuf::from("/tmp/project"));
     let mut statusline = StatusLine::new(&info);
-    statusline.lines(18, None);
+    statusline.lines(18);
     let initial_render_count = statusline.render_count();
 
     info.permission_mode = crate::permission::PermissionMode::Plan;
     statusline.update_model(&info);
-    let _ = statusline.lines(18, None);
+    let _ = statusline.lines(18);
 
     assert_eq!(statusline.render_count(), initial_render_count + 1);
 }
@@ -574,11 +574,11 @@ fn git_branch_is_cached_until_explicit_refresh() {
     fs::write(git_dir.join("HEAD"), "ref: refs/heads/main\n").unwrap();
     let mut statusline = StatusLine::new(&test_info(temp.path().to_path_buf()));
 
-    let initial = statusline.lines(80, None).to_vec();
+    let initial = statusline.lines(80).to_vec();
     fs::write(git_dir.join("HEAD"), "ref: refs/heads/feature\n").unwrap();
-    let cached = statusline.lines(80, None).to_vec();
+    let cached = statusline.lines(80).to_vec();
     statusline.refresh_git_branch();
-    let refreshed = statusline.lines(80, None).to_vec();
+    let refreshed = statusline.lines(80).to_vec();
 
     assert_eq!(cached, initial);
     assert_ne!(refreshed, initial);
