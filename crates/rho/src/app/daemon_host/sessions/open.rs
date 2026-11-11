@@ -44,9 +44,10 @@ use crate::{
         },
         cli_config::{settle_bound_config, ProviderRefreshStatus, SettledConfig},
         session_runtime::{
-            ApprovalPolicy, HostCapabilities, RunShape, SessionBuild, SessionLaunch,
+            ApprovalPolicy, ChildAgents, HostCapabilities, RunShape, SessionBuild, SessionLaunch,
             SessionOpening, SessionRole, SessionRuntime, SessionUse,
         },
+        tools_prompt::ToolSourceLoad,
     },
     caller_context::CallerContext,
     config::Config,
@@ -331,6 +332,13 @@ async fn open_runtime(
             approvals: ApprovalPolicy::Host,
             parent_notices: None,
             session_use,
+            // Opening never waits for a slow MCP server, as the in-process
+            // TUI's first frame does not. A host's threads bind its task
+            // tools when the session is built, so they need its MCP first.
+            tool_sources: match children {
+                ChildAgents::InProcess => ToolSourceLoad::Deferred,
+                ChildAgents::HostThreads => ToolSourceLoad::Inline,
+            },
         },
         run: RunShape {
             role: SessionRole::Daemon,

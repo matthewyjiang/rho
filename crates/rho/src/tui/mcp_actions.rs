@@ -1,6 +1,6 @@
 //! The `/mcp` command: show configured servers and session load status.
 
-use super::{mcp_picker, App, ComposerMode};
+use super::{mcp_picker, App, ComposerMode, InteractiveRuntime, StatusSource};
 
 impl App {
     pub(super) fn show_daemon_mcp(
@@ -21,6 +21,34 @@ impl App {
                 }
                 self.insert_entry(&super::Entry::Error(error));
             }
+        }
+    }
+
+    /// Whether the session's tool sources still load, so a prompt waits:
+    /// the daemon session's when the TUI follows one, else the runtime's.
+    pub(super) fn tool_sources_pending(&self, agent: &InteractiveRuntime) -> bool {
+        match &self.info.session.daemon {
+            Some(session) => session.tool_sources_loading(),
+            None => agent.tool_sources_pending(),
+        }
+    }
+
+    /// The daemon session's MCP servers stopped connecting: as when the
+    /// in-process load lands, held prompts may go and an open `/mcp`
+    /// shows where the servers ended up.
+    pub(super) fn show_daemon_tool_sources_loaded(&mut self) {
+        if let Some(session) = self.info.session.daemon.as_mut() {
+            session.tool_sources_loaded();
+        }
+        if self.status_source == StatusSource::ToolSourcesLoading {
+            self.set_status_quiet("");
+        }
+        self.clear_tool_sources_loading_activity();
+        if matches!(
+            self.input_ui.composer(),
+            ComposerMode::Picker(picker) if picker.is_mcp_inventory()
+        ) {
+            let _ = self.execute_mcp_command();
         }
     }
 

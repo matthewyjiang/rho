@@ -396,6 +396,9 @@ async fn run_turn(
         Err(error) if error.is::<UnsavedCompaction>() => anyhow::bail!(UNSAVED_COMPACTION),
         Err(error) => return Err(error),
     };
+    if scope.attached_tool_sources() {
+        view.session.tool_sources_attached(runtime).await;
+    }
     // A cancel sent before the prompt began only tripped `cancel`: the turn
     // ends here, before it saves the prompt or calls the model, and dropping
     // `scope` ends the prompt. A cancel from here on reaches the prompt
@@ -471,6 +474,9 @@ pub(super) async fn run_goal_turn(
     cancel: &CancellationToken,
 ) -> anyhow::Result<Ran> {
     let scope = runtime.begin_prompt(config).await?;
+    if scope.attached_tool_sources() {
+        view.session.tool_sources_attached(runtime).await;
+    }
     if cancel.is_cancelled() {
         return Ok(Ran::Cancelled);
     }

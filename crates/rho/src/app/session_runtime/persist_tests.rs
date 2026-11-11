@@ -43,6 +43,7 @@ async fn runtime(
         prompt_template: None,
         prompt: Default::default(),
         diagnostics: RuntimeDiagnostics::new(&config),
+        tool_sources: None,
     };
     SessionRuntime::for_tests(built, storage, &config)
 }

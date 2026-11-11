@@ -72,6 +72,7 @@ mod switch;
 #[cfg(test)]
 mod test_support;
 mod title;
+mod tool_sources;
 mod tree;
 mod turn;
 mod workflow;

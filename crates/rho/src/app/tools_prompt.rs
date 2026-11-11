@@ -83,6 +83,16 @@ pub(crate) enum ToolSourceAttach {
     None,
 }
 
+/// When a session that attaches tool sources loads them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ToolSourceLoad {
+    /// Before the session opens.
+    Inline,
+    /// After it opens, so a slow server cannot hold the opening up. The
+    /// session's prompts wait for them (see [`DeferredToolSources`]).
+    Deferred,
+}
+
 /// External tools loaded at session start, together so one deferred job
 /// settles them and the prompt and tool list are rebuilt once.
 pub(crate) struct ToolSourcesOutcome {
@@ -106,6 +116,71 @@ impl ToolSourcesOutcome {
         Self { mcp, openapi }
     }
 }
+
+/// Tool sources a session loads after it opens, as the daemon's sessions
+/// do. [`Self::loaded`] says when they finished without a borrow of the
+/// session, so its host can wait for them while a turn holds the session.
+/// Dropping it stops the load.
+pub(crate) struct DeferredToolSources {
+    relay: tokio::task::JoinHandle<Result<ToolSourcesOutcome, tokio::task::JoinError>>,
+    load: tokio::task::AbortHandle,
+    loaded: tokio::sync::watch::Receiver<bool>,
+}
+
+impl DeferredToolSources {
+    pub(crate) fn follow(load: tokio::task::JoinHandle<ToolSourcesOutcome>) -> Self {
+        let (finished, loaded) = tokio::sync::watch::channel(false);
+        let abort = load.abort_handle();
+        let relay = tokio::spawn(async move {
+            let outcome = load.await;
+            finished.send_replace(true);
+            outcome
+        });
+        Self {
+            relay,
+            load: abort,
+            loaded,
+        }
+    }
+
+    /// Resolves once the load finished, or was stopped.
+    pub(crate) fn loaded(&self) -> impl std::future::Future<Output = ()> + Send + 'static {
+        let mut loaded = self.loaded.clone();
+        async move {
+            // An error means the relay is gone, so the load is over too.
+            let _ = loaded.wait_for(|loaded| *loaded).await;
+        }
+    }
+
+    pub(crate) fn is_loaded(&self) -> bool {
+        *self.loaded.borrow()
+    }
+
+    /// What the load produced. Call once [`Self::is_loaded`].
+    pub(crate) async fn outcome(mut self) -> Result<ToolSourcesOutcome, tokio::task::JoinError> {
+        match (&mut self.relay).await {
+            Ok(outcome) => outcome,
+            Err(error) => Err(error),
+        }
+    }
+}
+
+impl Drop for DeferredToolSources {
+    fn drop(&mut self) {
+        self.load.abort();
+        self.relay.abort();
+    }
+}
+
+/// A session's deferred tool sources, until its runtime runs with them.
+pub(crate) enum PendingToolSources {
+    /// Still loading, or loaded and not yet attached.
+    Loading(DeferredToolSources),
+    /// Attached to the session's tool set, but the runtime still runs on
+    /// the list it had, since rebuilding it failed. The next attach retries.
+    Unbound,
+}
+
 pub(crate) struct StartupInventory {
     pub(crate) mcp: crate::tools::mcp::McpSessionReport,
     pub(crate) plugins: crate::plugins::PluginLoadReport,

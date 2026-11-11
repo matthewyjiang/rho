@@ -117,6 +117,7 @@ pub(super) async fn built_with(
         prompt_template: None,
         prompt: Default::default(),
         diagnostics: RuntimeDiagnostics::new(config),
+        tool_sources: None,
     }
 }
 
@@ -204,6 +205,7 @@ pub(in crate::app) fn test_build(config: &Config, workspace_root: &Path) -> Sess
             approvals: ApprovalPolicy::Host,
             parent_notices: None,
             session_use: super::SessionUse::Run,
+            tool_sources: crate::app::tools_prompt::ToolSourceLoad::Inline,
         },
         run: RunShape {
             role: SessionRole::Daemon,
