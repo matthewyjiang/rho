@@ -6,7 +6,7 @@ use std::{
 };
 
 use agent_client_protocol::{
-    schema::v1::{
+    v1::schema::{
         CompleteElicitationNotification, CreateElicitationRequest, CreateElicitationResponse,
         RequestPermissionRequest, RequestPermissionResponse, SessionId as AcpSessionId,
         SessionNotification, SessionUpdate,
@@ -532,7 +532,7 @@ async fn ended_attachments_fail_the_prompt_and_release_job_waits() {
             "deleted",
             Routed::Detached(DetachReason::Deleted),
             None,
-            AcpError::resource_not_found(Some(SESSION.to_owned())),
+            crate::app::acp::resource_not_found(Some(SESSION.to_owned())),
             Attachment::Deleted,
         ),
         (

@@ -1,5 +1,5 @@
 use super::*;
-use agent_client_protocol::schema::v1::UsageUpdate;
+use agent_client_protocol::v1::schema::UsageUpdate;
 use pretty_assertions::assert_eq;
 
 fn shape(system_prompt: PromptPolicy, persistence: SessionPersistence) -> ClaudeSessionShape {

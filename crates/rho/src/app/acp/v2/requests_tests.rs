@@ -1,4 +1,4 @@
-use agent_client_protocol::schema::{v1, v2, ProtocolVersion};
+use agent_client_protocol::{schema::ProtocolVersion, v1::schema as v1, v2::schema as v2};
 use pretty_assertions::assert_eq;
 use serde_json::json;
 

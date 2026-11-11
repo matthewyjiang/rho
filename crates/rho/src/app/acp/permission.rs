@@ -4,7 +4,7 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use agent_client_protocol::schema::v1::{
+use agent_client_protocol::v1::schema::{
     PermissionOption, PermissionOptionKind, RequestPermissionOutcome, RequestPermissionRequest,
     SessionId, SessionModeId, ToolCallContent, ToolCallId, ToolCallUpdate, ToolCallUpdateFields,
     ToolKind,

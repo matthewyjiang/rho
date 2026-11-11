@@ -1,4 +1,4 @@
-use agent_client_protocol::schema::v1::{
+use agent_client_protocol::v1::schema::{
     PermissionOption, PermissionOptionKind, ToolCallUpdate, ToolCallUpdateFields,
 };
 use pretty_assertions::assert_eq;

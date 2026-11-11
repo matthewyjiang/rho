@@ -3,8 +3,8 @@
 
 use std::{collections::HashSet, future::Future, pin::Pin, sync::Mutex};
 
-use agent_client_protocol::schema::{v1, v2};
-use agent_client_protocol::{Client, Error as AcpError, V2ConnectionTo};
+use agent_client_protocol::{v1::schema as v1, v2::schema as v2};
+use agent_client_protocol::{v2::ConnectionTo as V2ConnectionTo, Client, Error as AcpError};
 
 use super::{bridge, requests, updates};
 use crate::app::acp::AcpClientPort;

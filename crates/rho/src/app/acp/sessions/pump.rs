@@ -14,7 +14,7 @@
 use std::sync::{Arc, PoisonError};
 
 use agent_client_protocol::{
-    schema::v1::{MessageId, SessionInfoUpdate, SessionUpdate},
+    v1::schema::{MessageId, SessionInfoUpdate, SessionUpdate},
     Error as AcpError,
 };
 use rho_protocol::{
@@ -412,7 +412,8 @@ impl Pump {
                 AcpError::internal_error().data("rho daemon restarted"),
             ),
             DetachReason::Deleted => {
-                let error = AcpError::resource_not_found(Some(self.context.acp_id.0.to_string()));
+                let error =
+                    crate::app::acp::resource_not_found(Some(self.context.acp_id.0.to_string()));
                 self.end(Attachment::Deleted, error);
             }
             // `Unknown`, or a reason a newer daemon sends: attach again on

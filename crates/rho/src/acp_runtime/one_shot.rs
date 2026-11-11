@@ -9,7 +9,7 @@
 
 use super::{
     driver::CANCEL_DRAIN_BUDGET,
-    handshake::{self, error, HANDSHAKE_STEP_BUDGET},
+    handshake::{self, bounded, error},
     permission::choose_option,
     policy::AcpAgentPolicy,
     session::spawn_agent,
@@ -22,16 +22,16 @@ use crate::{
     session_environment::Ambient,
 };
 use agent_client_protocol::{
-    schema::v1::{
+    util::MatchDispatch,
+    v1::schema::{
         CancelNotification, ContentBlock, NewSessionRequest, RequestPermissionRequest,
         RequestPermissionResponse, SessionNotification, SessionUpdate,
     },
-    util::MatchDispatch,
-    Client, ConnectTo, Error, SessionMessage, UntypedMessage,
+    v1::{SessionMessage, SessionSetup},
+    Client, ConnectTo, Error, UntypedMessage,
 };
 use rho_sdk::CancellationToken;
 use std::{path::Path, process::Stdio, sync::Mutex};
-use tokio::sync::oneshot;
 
 /// What the agent is doing, for a live progress card.
 #[derive(Debug, PartialEq, Eq)]
@@ -115,7 +115,7 @@ pub(super) async fn converse<P: AcpAgentPolicy>(
 ) -> Result<OneShotAnswer, OneShotError> {
     let policy = Mutex::new(policy);
     let outcome = Client
-        .builder()
+        .v1()
         .name("rho")
         .connect_with(transport, async |cx| {
             tokio::select! {
@@ -124,20 +124,26 @@ pub(super) async fn converse<P: AcpAgentPolicy>(
                 result = handshake::initialize(&cx, &policy) => { result?; }
             }
             let meta = policy.lock().expect("ACP policy").session_meta();
-            let (started_tx, started_rx) = oneshot::channel();
-            let run = cx
-                .build_session_from(NewSessionRequest::new(cwd.to_path_buf()).meta(meta))
-                .block_task()
-                .run_until(async |mut session| {
-                    let _ = started_tx.send(());
-                    tokio::select! {
-                        biased;
-                        () = cancellation.cancelled() => return Ok(None),
-                        result = async {
-                            handshake::require_mode(&session, &policy).await?;
-                            handshake::require_config(&session, &policy).await
-                        } => result?,
-                    }
+            // Setup can be cancelled and is bounded like a delegated run's;
+            // once the session exists, the loop below owns cancellation.
+            let SessionSetup { mut session, response, .. } = tokio::select! {
+                biased;
+                () = cancellation.cancelled() => return Ok(None),
+                setup = bounded(
+                    "session/new",
+                    cx.build_session_from(NewSessionRequest::new(cwd.to_path_buf()).meta(meta))
+                        .block_task()
+                        .start_session(),
+                ) => setup?,
+            };
+            tokio::select! {
+                biased;
+                () = cancellation.cancelled() => return Ok(None),
+                result = async {
+                    handshake::require_mode(&session, &response, &policy).await?;
+                    handshake::require_config(&session, &response, &policy).await
+                } => result?,
+            }
                     session.send_prompt(prompt)?;
                     let mut answer = OneShotAnswer::default();
                     loop {
@@ -148,7 +154,7 @@ pub(super) async fn converse<P: AcpAgentPolicy>(
                                 // Give the agent the delegated runs' shutdown
                                 // grace to stop the turn before the process ends.
                                 let _ = tokio::time::timeout(CANCEL_DRAIN_BUDGET, async {
-                                    while !matches!(session.read_update().await, Ok(SessionMessage::StopReason(_)) | Err(_)) {}
+                                    while !matches!(session.read_update().await, Ok(SessionMessage::PromptResponse(_)) | Err(_)) {}
                                 })
                                 .await;
                                 return Ok(None);
@@ -156,10 +162,11 @@ pub(super) async fn converse<P: AcpAgentPolicy>(
                             message = session.read_update() => message?,
                         };
                         match message {
-                            SessionMessage::SessionMessage(dispatch) => {
-                                answer_update(dispatch, &policy, &mut answer, &mut on_progress).await?;
+                            SessionMessage::Message(dispatch) => {
+                                answer_update(dispatch.into_raw(), &policy, &mut answer, &mut on_progress).await?;
                             }
-                            SessionMessage::StopReason(stop) => {
+                            SessionMessage::PromptResponse(response) => {
+                                let stop = response?.stop_reason;
                                 let turn = classify_stop(&stop, /*cancelled_by_us*/ false);
                                 return match turn.failure_detail() {
                                     None => Ok(Some(answer)),
@@ -169,19 +176,6 @@ pub(super) async fn converse<P: AcpAgentPolicy>(
                             _ => return Err(error("acp: unhandled session message")),
                         }
                     }
-                });
-            tokio::pin!(run);
-            // Setup can be cancelled and is bounded like a delegated run's;
-            // once the session exists, the loop above owns cancellation.
-            tokio::select! {
-                biased;
-                () = cancellation.cancelled() => Ok(None),
-                started = tokio::time::timeout(HANDSHAKE_STEP_BUDGET, started_rx) => match started {
-                    Ok(_) => run.await,
-                    Err(_) => Err(error("acp: session/new exceeded handshake step budget 10 s")),
-                },
-                result = &mut run => result,
-            }
         })
         .await;
     match outcome {

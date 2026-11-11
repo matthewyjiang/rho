@@ -34,13 +34,10 @@ pub(super) fn daemon_error(error: &ClientError) -> AcpError {
         // sign in and quotes neither a credential nor the provider, and no
         // data.
         Some(ErrorCode::SignInRequired) => {
-            return AcpError::new(
-                i32::from(agent_client_protocol::ErrorCode::AuthRequired),
-                message,
-            );
+            return AcpError::new(agent_client_protocol::ErrorCode::AUTH_REQUIRED, message);
         }
         Some(ErrorCode::SessionNotFound | ErrorCode::SessionNotLoaded) => {
-            AcpError::resource_not_found(None)
+            super::resource_not_found(None)
         }
         Some(
             ErrorCode::SessionBusy

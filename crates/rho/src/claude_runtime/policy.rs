@@ -9,7 +9,7 @@
 
 use std::path::{Path, PathBuf};
 
-use agent_client_protocol::schema::v1::{
+use agent_client_protocol::v1::schema::{
     AuthMethod, AuthMethodId, Meta, RequestPermissionRequest, SessionModeId, SessionUpdate,
 };
 use serde_json::{json, Map, Value};

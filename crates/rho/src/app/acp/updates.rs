@@ -14,7 +14,7 @@
 
 use std::collections::HashSet;
 
-use agent_client_protocol::schema::v1::{
+use agent_client_protocol::v1::schema::{
     AvailableCommandsUpdate, CompactionId, CompactionStatus, CompactionUpdate, ConfigOptionUpdate,
     ContentBlock, ContentChunk, Cost, CurrentModeUpdate, Diff, EmbeddedResource,
     EmbeddedResourceResource, ImageContent, MessageId, Notice, NoticeSeverity, Plan, PlanEntry,

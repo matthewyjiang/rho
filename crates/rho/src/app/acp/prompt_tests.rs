@@ -1,4 +1,4 @@
-use agent_client_protocol::{schema::v1::StopReason, Error as AcpError, ErrorCode};
+use agent_client_protocol::{v1::schema::StopReason, Error as AcpError, ErrorCode};
 use pretty_assertions::assert_eq;
 use rho_protocol::{AnswerStop, TurnError, TurnErrorKind, TurnOutcome};
 
@@ -65,7 +65,7 @@ fn turn_outcomes_answer_the_prompt() {
             "sign-in needed",
             failed(TurnErrorKind::Authentication, "run rho login openai"),
             Err(AcpError::new(
-                i32::from(ErrorCode::AuthRequired),
+                ErrorCode::AUTH_REQUIRED,
                 "run rho login openai",
             )),
         ),

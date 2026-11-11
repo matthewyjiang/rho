@@ -1,6 +1,6 @@
 //! Fail-closed selection of one-shot ACP permission options.
 
-use agent_client_protocol::schema::v1::{
+use agent_client_protocol::v1::schema::{
     PermissionOption, PermissionOptionKind, RequestPermissionOutcome, SelectedPermissionOutcome,
 };
 

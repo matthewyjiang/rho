@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use crate::presentation::diff::compact_diff_rows;
-use agent_client_protocol::schema::v1::{
+use agent_client_protocol::v1::schema::{
     ContentBlock, Diff, EmbeddedResourceResource, ToolCall, ToolCallContent, ToolCallLocation,
     ToolCallStatus, ToolCallUpdate, ToolKind,
 };

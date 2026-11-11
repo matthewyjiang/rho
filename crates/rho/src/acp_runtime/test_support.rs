@@ -14,7 +14,7 @@ use crate::{
     run_artifacts::{AttachmentEvent, RunArtifactIdentity},
     subagent::{self, RunStatus},
 };
-use agent_client_protocol::schema::v1::{
+use agent_client_protocol::v1::schema::{
     AuthMethod, AuthMethodId, RequestPermissionRequest, SessionModeId,
 };
 use serde_json::{json, Value};

@@ -4,18 +4,17 @@
 //! request on the dispatch loop.
 
 use agent_client_protocol::{
-    schema::{
-        v1::{
-            AuthenticateRequest, AuthenticateResponse, CancelNotification, InitializeRequest,
-            InitializeResponse, NewSessionRequest, NewSessionResponse, PermissionOption,
-            PromptRequest, PromptResponse, RequestPermissionRequest, SessionConfigOption,
-            SessionMode, SessionModeState, SessionNotification, SessionUpdate,
-            SetSessionConfigOptionRequest, SetSessionConfigOptionResponse, SetSessionModeRequest,
-            SetSessionModeResponse, StopReason, ToolCallUpdate,
-        },
-        ProtocolVersion,
+    schema::ProtocolVersion,
+    v1::schema::{
+        AuthenticateRequest, AuthenticateResponse, CancelNotification, InitializeRequest,
+        InitializeResponse, NewSessionRequest, NewSessionResponse, PermissionOption, PromptRequest,
+        PromptResponse, RequestPermissionRequest, SessionConfigOption, SessionMode,
+        SessionModeState, SessionNotification, SessionUpdate, SetSessionConfigOptionRequest,
+        SetSessionConfigOptionResponse, SetSessionModeRequest, SetSessionModeResponse, StopReason,
+        ToolCallUpdate,
     },
-    Agent, Client, ConnectTo, ConnectionTo, Error, Handled, Responder, UntypedMessage,
+    v1::{ConnectionTo, Responder},
+    Agent, Client, ConnectTo, Error, Handled, UntypedMessage,
 };
 use rho_tools::cancellation::RunCancellation;
 use serde::{Deserialize, Serialize};
@@ -221,7 +220,7 @@ impl ScriptedAgent {
                 .unwrap_or_else(|| json!({"outcome": "injected"}))),
         };
         Agent
-            .builder()
+            .v1()
             .name("rho-scripted-agent")
             .on_receive_request(
                 async move |request: InitializeRequest, responder, _cx| {

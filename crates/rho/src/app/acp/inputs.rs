@@ -19,7 +19,7 @@ use std::{
     sync::{atomic::AtomicU64, Arc},
 };
 
-use agent_client_protocol::{schema::v1::SessionId as AcpSessionId, Error as AcpError};
+use agent_client_protocol::{v1::schema::SessionId as AcpSessionId, Error as AcpError};
 use rho_protocol::{
     methods::{SessionAnswer, SessionHold},
     Ask, ClientError, ErrorCode, InputAnswer, InputRequest, InputRequestId, SessionAnswerParams,

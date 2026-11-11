@@ -13,7 +13,7 @@ use std::sync::{
 };
 
 use agent_client_protocol::{
-    schema::v1::{ContentBlock, MessageId, SessionId as AcpSessionId, StopReason},
+    v1::schema::{ContentBlock, MessageId, SessionId as AcpSessionId, StopReason},
     Error as AcpError, ErrorCode,
 };
 use rho_protocol::{
@@ -131,9 +131,7 @@ fn stop_reason(outcome: TurnOutcome) -> Result<StopReason, AcpError> {
 /// writes the message for a person and never quotes credentials in it.
 fn turn_error(error: TurnError) -> AcpError {
     match error.kind {
-        TurnErrorKind::Authentication => {
-            AcpError::new(i32::from(ErrorCode::AuthRequired), error.message)
-        }
+        TurnErrorKind::Authentication => AcpError::new(ErrorCode::AUTH_REQUIRED, error.message),
         TurnErrorKind::Configuration => AcpError::invalid_params().data(error.message),
         TurnErrorKind::Provider
         | TurnErrorKind::ToolHost

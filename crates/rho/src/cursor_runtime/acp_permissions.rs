@@ -1,7 +1,7 @@
 //! Cursor-specific classification; generic ACP code selects the offered
 //! allow_once/reject_once option and never persists an approval.
 
-use agent_client_protocol::schema::v1::{RequestPermissionRequest, ToolKind};
+use agent_client_protocol::v1::schema::{RequestPermissionRequest, ToolKind};
 
 use crate::{acp_runtime::permission::PermissionDecision, permission::PermissionMode};
 

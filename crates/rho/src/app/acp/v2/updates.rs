@@ -9,14 +9,16 @@
 //!   treats as the creating upsert.
 //! - A v1 update field that is absent means "unchanged", which is v2's
 //!   undefined, never its `null` (clear).
+//! - A location's `line` counts from 1 in v2, where Rho's v1 lines count
+//!   from 0.
 //! - `plan` becomes `plan_update` for Rho's single todo plan.
 //! - `current_mode_update` is dropped: the mode is a config option in v2, and
 //!   every mode change also refreshes `config_option_update`.
 //! - A v1 diff of complete file texts becomes structured `changes` plus a
 //!   `git_patch`.
 
-use agent_client_protocol::schema::{v1, v2, MaybeUndefined};
 use agent_client_protocol::Error as AcpError;
+use agent_client_protocol::{schema::MaybeUndefined, v1::schema as v1, v2::schema as v2};
 
 use super::{bridge, git_patch::FileContents};
 
@@ -187,12 +189,20 @@ pub(super) fn tool_call_update(update: v1::ToolCallUpdate) -> Result<v2::ToolCal
             ))
             .content(unchanged_if_absent(content))
             .locations(unchanged_if_absent(
-                locations.map(|locations| bridge(&locations)).transpose()?,
+                locations.map(|locations| locations.into_iter().map(location).collect()),
             ))
             .raw_input(unchanged_if_absent(raw_input))
             .raw_output(unchanged_if_absent(raw_output))
             .meta(unchanged_if_absent(meta)),
     )
+}
+
+/// v2 counts `line` from 1 and rejects 0. Rho's v1 locations count from 0,
+/// so the same row is one higher here.
+fn location(location: v1::ToolCallLocation) -> v2::ToolCallLocation {
+    v2::ToolCallLocation::new(location.path)
+        .line(location.line.map(|row| row.saturating_add(1)))
+        .meta(location.meta)
 }
 
 /// v1 leaves a field out to keep it; v2 does too, while `null` clears it.
@@ -270,9 +280,11 @@ pub(super) fn available_commands(
                     return Err(AcpError::internal_error().data("no ACP v2 form for command input"))
                 }
             };
-            Ok(v2::AvailableCommand::new(command.name, command.description)
-                .input(input)
-                .meta(command.meta))
+            Ok(v2::AvailableCommand::Command(
+                v2::Command::new(command.name, command.description)
+                    .input(input)
+                    .meta(command.meta),
+            ))
         })
         .collect()
 }
