@@ -273,7 +273,12 @@ fn jsonl_streams_the_sessions_events_between_start_and_end() {
             .map(|event| event["type"].as_str().unwrap())
             .filter(|kind| *kind != "usage")
             .collect::<Vec<_>>(),
-        ["user_message", "agent_message_chunk", "turn_ended"]
+        [
+            "user_message",
+            "provider_request",
+            "agent_message_chunk",
+            "turn_ended"
+        ]
     );
     assert_eq!(
         &events[events.len() - 2..],
