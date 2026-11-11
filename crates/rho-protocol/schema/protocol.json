@@ -504,7 +504,7 @@
       "description": "A concurrency budget jobs wait on, named for the setting that sizes it.\nProtocol minors may add budgets."
     },
     "BuildId": {
-      "description": "The wire schema a build speaks (#1776). While the protocol version stays\nat 0.1 until the beta, two builds of one version can still speak\ndifferent wires, and only this tells them apart at the handshake.\n\nIt changes exactly when the wire schema, `schema/protocol.json`, changes.\nIt has no order: two ids say only whether the builds differ, never which\none is newer. Opaque to clients: compare it whole.",
+      "description": "The wire schema a build speaks (#1776). While the protocol version stays\nat 0.1 until the beta, two builds of one version can still speak\ndifferent wires, and only this tells them apart at the handshake.\n\nIt changes when the wire schema, `schema/protocol.json`, changes in\nanything but its documentation and layout. It has no order: two ids say\nonly whether the builds differ, never which one is newer. Opaque to\nclients: compare it whole.",
       "type": "string"
     },
     "BuildSkew": {
