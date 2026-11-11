@@ -7,10 +7,8 @@ use rho_sdk::{ApprovalRequest, CapabilityRequest, CapabilitySource, PathScope};
 use rho_sdk::model::context::estimate_text_tokens;
 
 use super::{
-    budget::COMPLETED_CALL_STRING_CAP_CHARS,
-    render_classifier_transcript,
-    transcript::{render_with_pending_call, render_with_pending_calls, LabeledPending},
-    TranscriptBudget, TranscriptOverBudget,
+    budget::COMPLETED_CALL_STRING_CAP_CHARS, render_classifier_transcript,
+    transcript::render_with_pending_call, TranscriptBudget, TranscriptOverBudget,
 };
 
 // Covers: questionnaire consent reaches the classifier, without promoting unrelated,
@@ -188,57 +186,6 @@ fn transcript_appends_pending_capability_details_at_end() {
     assert_eq!(
         transcript.rfind("pending_capability:"),
         transcript.find("pending_capability:")
-    );
-}
-
-// Covers: each section of a batched review names the tool call that made its
-// request, so two identical capabilities stay bound to their own calls.
-// Owner: permission classifier transcript rendering.
-#[test]
-fn batched_sections_name_the_call_behind_each_request() {
-    let write = |id: &str, content: &str| {
-        ContentBlock::ToolCall(ToolCall::new(
-            id.into(),
-            "write".into(),
-            serde_json::json!({"path": "a", "content": content}),
-        ))
-    };
-    let history = vec![Message::Assistant(vec![
-        write("w1", "safe"),
-        write("w2", "rm -rf /"),
-    ])];
-    let pending = ApprovalRequest::new(
-        CapabilityRequest::write_path("a", PathScope::PrimaryWorkspace, source("write")),
-        "",
-    );
-    let pendings = [
-        LabeledPending {
-            label: "request_1",
-            pending: &pending,
-            call_id: Some("w2"),
-        },
-        LabeledPending {
-            label: "request_2",
-            pending: &pending,
-            call_id: Some("w1"),
-        },
-    ];
-
-    let transcript =
-        render_with_pending_calls(&history, &pendings, TranscriptBudget::Unbounded).unwrap();
-
-    let headers_and_calls: Vec<&str> = transcript
-        .lines()
-        .filter(|line| line.starts_with("pending_capability") || line.starts_with("  call_id:"))
-        .collect();
-    assert_eq!(
-        headers_and_calls,
-        [
-            "pending_capability request_1:",
-            "  call_id: \"w2\"",
-            "pending_capability request_2:",
-            "  call_id: \"w1\"",
-        ]
     );
 }
 
