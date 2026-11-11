@@ -52,7 +52,7 @@ pub(super) fn open(root: &Path) -> anyhow::Result<Connection> {
     Ok(database.into_connection())
 }
 
-const SCHEMA_VERSION: u32 = 4;
+const SCHEMA_VERSION: u32 = 5;
 
 #[derive(Debug, thiserror::Error)]
 enum OpenError {
@@ -105,8 +105,9 @@ fn migrate(connection: &mut Connection) -> Result<(), OpenError> {
     if version > 0 {
         // Version 1 anchors identified positions without binding their contents;
         // version 2 indexed the sessions tool's own calls and results; version 3
-        // did not mark the sessions person-facing scopes leave out. Discard the
-        // derived evidence and cursor to rebuild with current extraction.
+        // did not mark the sessions person-facing scopes leave out; version 4
+        // held evidence from format 1-3 sessions, which no longer open. Discard
+        // the derived evidence and cursor to rebuild with current extraction.
         let marks_person_facing: bool = transaction.query_row(
             "select exists(select 1 from pragma_table_info('files') where name='person_facing')",
             [],
