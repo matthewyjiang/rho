@@ -1,8 +1,8 @@
 //! The model-switch scenarios again, with the daemon holding the session.
 //!
 //! Each reuses its in-process scenario's steps unchanged: what `/model`, the
-//! pin cycle and the model picker show must not depend on which side runs
-//! the session.
+//! pin cycle, the model picker and the statusline clicks show must not depend
+//! on which side runs the session.
 
 use super::{
     model_cycle_reasoning, model_prompts,
@@ -13,6 +13,10 @@ use crate::scenario::Scenario;
 
 const OPENAI_ENV: &[(&str, &str)] = &[
     ("OPENAI_API_KEY", "fixture-openai-key"),
+    ("RHO_TUI_DAEMON", "1"),
+];
+const COPILOT_ENV: &[(&str, &str)] = &[
+    ("GITHUB_COPILOT_TOKEN", "fixture-copilot-token"),
     ("RHO_TUI_DAEMON", "1"),
 ];
 const OPENAI_AND_XAI_ENV: &[(&str, &str)] = &[
@@ -51,6 +55,13 @@ pub(super) const STATUSLINE_MODEL_CLICK: Scenario = Scenario {
     description: "Open a daemon session's model picker by clicking the statusline model",
     env: OPENAI_ENV,
     ..status_clicks::STATUSLINE_MODEL_CLICK_SCENARIO
+};
+
+pub(super) const STATUSLINE_NO_REASONING_CLICK: Scenario = Scenario {
+    id: "daemon_statusline_no_reasoning_click",
+    description: "Paint no reasoning target for a daemon session's model without reasoning",
+    env: COPILOT_ENV,
+    ..status_clicks::STATUSLINE_NO_REASONING_CLICK_SCENARIO
 };
 
 pub(super) const MODEL_PROMPTS: Scenario = Scenario {

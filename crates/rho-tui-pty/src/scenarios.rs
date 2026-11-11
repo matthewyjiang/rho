@@ -381,6 +381,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
     panel_pointer::PANEL_POINTER_SCENARIO,
     panel_pointer::SIDE_POINTER_SCENARIO,
     status_clicks::STATUSLINE_MODEL_CLICK_SCENARIO,
+    status_clicks::STATUSLINE_NO_REASONING_CLICK_SCENARIO,
     status_clicks::ATTACHMENT_CLICK_REMOVE_SCENARIO,
     Scenario::new(
         "supervised_approval",
@@ -623,6 +624,8 @@ const ALL_SCENARIOS: &[Scenario] = &[
     daemon_model::CYCLE_AND_PINNED_MODEL_PICKER,
     #[cfg(unix)]
     daemon_model::STATUSLINE_MODEL_CLICK,
+    #[cfg(unix)]
+    daemon_model::STATUSLINE_NO_REASONING_CLICK,
     #[cfg(unix)]
     daemon_model::MODEL_PROMPTS,
     #[cfg(unix)]
