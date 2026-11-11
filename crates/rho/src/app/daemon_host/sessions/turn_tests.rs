@@ -24,7 +24,8 @@ use crate::{
             sessions::{open::OpenedSession, t3_wake::WakeDir, LoadedSession},
         },
         session_runtime::{
-            unattended_runtime_on, HangUntilCancel, InsertedMessage, QuestionSupport, SessionEvent,
+            host_woken_runtime_on, unattended_runtime_on, HangUntilCancel, InsertedMessage,
+            QuestionSupport, SessionEvent,
         },
     },
     config::Config,
@@ -103,17 +104,41 @@ async fn began(mut start: watch::Receiver<PromptStart>) -> Option<PromptStart> {
     told.ok().map(|start| start.clone())
 }
 
+/// The host a test session runs under.
+#[derive(Clone, Copy, Debug)]
+enum Host {
+    /// Nobody watches it.
+    Unattended,
+    /// It runs the session's children and wakes the idle session, as T3
+    /// Code does, so `/rho-wake` prompts wait for its signal.
+    Waking,
+}
+
 /// Session `job`, loaded in `root` with a provider that never answers, so
 /// nothing but the test drives its turns.
 async fn loaded_session(root: &Path, jobs: &Arc<JobRegistry>, job: JobId) -> Arc<LoadedSession> {
+    loaded_session_under(Host::Unattended, root, jobs, job).await
+}
+
+/// [`loaded_session`] under `host`.
+async fn loaded_session_under(
+    host: Host,
+    root: &Path,
+    jobs: &Arc<JobRegistry>,
+    job: JobId,
+) -> Arc<LoadedSession> {
     let config = Config::default();
     let provider: Arc<dyn rho_sdk::provider::ModelProvider> = Arc::new(HangUntilCancel);
     let sdk = rho_sdk::Rho::builder()
         .provider_shared(Arc::clone(&provider))
         .build()
         .unwrap();
-    let runtime =
-        unattended_runtime_on(root, &config, QuestionSupport::Unavailable, sdk, provider).await;
+    let runtime = match host {
+        Host::Unattended => {
+            unattended_runtime_on(root, &config, QuestionSupport::Unavailable, sdk, provider).await
+        }
+        Host::Waking => host_woken_runtime_on(root, &config, sdk, provider).await,
+    };
     Arc::new(LoadedSession::new(
         &jobs.get(&job).unwrap(),
         Arc::clone(jobs),
@@ -418,42 +443,56 @@ async fn a_cancel_before_the_prompt_begins_saves_nothing() {
 }
 
 // Covers: a prompt the client sends on the person's behalf runs only as a
-// workflow start; any other ends the turn as a configuration failure before
-// it saves anything, so it never reaches the model unseen.
+// workflow start; any other, a model prompt or a host-woken session's
+// `/rho-wake` wait, ends the turn as a configuration failure before it
+// saves or shows anything, so it never runs as the person's message.
 // Owner: daemon session turn task.
 #[tokio::test]
 async fn a_client_prompt_that_starts_no_workflow_saves_nothing() {
-    let root = TempDir::new().unwrap();
-    let home = TempDir::new().unwrap();
-    let jobs = Arc::new(JobRegistry::open(JobStore::open(home.path()).unwrap()));
-    let job = started_job(&jobs);
-    let session = loaded_session(root.path(), &jobs, job.clone()).await;
+    let cases = [
+        (Host::Unattended, "hello".to_owned()),
+        (
+            Host::Waking,
+            "/rho-wake 123e4567-e89b-12d3-a456-426614174000".to_owned(),
+        ),
+    ];
 
-    let (turn, start) = started_turn(&session, rho_sdk::CancellationToken::new());
-    TurnTask {
-        session: Arc::clone(&session),
-        turn,
-        stopping: rho_sdk::CancellationToken::new(),
-        limit: None,
+    for (host, prompt) in cases {
+        let root = TempDir::new().unwrap();
+        let home = TempDir::new().unwrap();
+        let jobs = Arc::new(JobRegistry::open(JobStore::open(home.path()).unwrap()));
+        let job = started_job(&jobs);
+        let session = loaded_session_under(host, root.path(), &jobs, job.clone()).await;
+
+        let (turn, start) = started_turn(&session, rho_sdk::CancellationToken::new());
+        TurnTask {
+            session: Arc::clone(&session),
+            turn,
+            stopping: rho_sdk::CancellationToken::new(),
+            limit: None,
+        }
+        .spawn(UserInput::text(&prompt), rho_protocol::PromptAuthor::Client);
+        let start = began(start).await;
+        // Released once the turn recorded its end.
+        let messages = session
+            .runtime
+            .lock()
+            .await
+            .as_ref()
+            .map(|runtime| runtime.history_for_tests().len());
+        let kind = match start {
+            Some(PromptStart::Ended(rho_protocol::TurnOutcome::Failed { error })) => {
+                Some(error.kind)
+            }
+            _ => None,
+        };
+
+        assert_eq!(
+            (kind, messages),
+            (Some(rho_protocol::TurnErrorKind::Configuration), Some(0)),
+            "{host:?} {prompt}"
+        );
     }
-    .spawn(UserInput::text("hello"), rho_protocol::PromptAuthor::Client);
-    let start = began(start).await;
-    // Released once the turn recorded its end.
-    let messages = session
-        .runtime
-        .lock()
-        .await
-        .as_ref()
-        .map(|runtime| runtime.history_for_tests().len());
-    let kind = match start {
-        Some(PromptStart::Ended(rho_protocol::TurnOutcome::Failed { error })) => Some(error.kind),
-        _ => None,
-    };
-
-    assert_eq!(
-        (kind, messages),
-        (Some(rho_protocol::TurnErrorKind::Configuration), Some(0))
-    );
 }
 
 /// A turn with a time limit of `timeout_ms`, whose session is busy until

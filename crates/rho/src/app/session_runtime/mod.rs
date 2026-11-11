@@ -109,7 +109,7 @@ pub(crate) use session_tools::SessionTools;
 pub(crate) use settings::SettingChangeError;
 #[cfg(test)]
 pub(in crate::app) use test_support::{
-    unattended_runtime_on, unsaved_unattended_runtime_on, HangUntilCancel,
+    host_woken_runtime_on, unattended_runtime_on, unsaved_unattended_runtime_on, HangUntilCancel,
 };
 pub(crate) use title::TitleJob;
 use title::TitleState;

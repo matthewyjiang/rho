@@ -432,6 +432,10 @@ async fn run_turn(
     }
     let origin = match wake_prompt {
         WakePrompt::Prompt(origin) => origin,
+        // The wait shows its prompt as the person's message.
+        WakePrompt::Watch(_) if author != wire::PromptAuthor::Person => {
+            anyhow::bail!(client_rejected())
+        }
         WakePrompt::Watch(signal) => return wake::watch(view, &scope, &input, signal?).await,
     };
     let home = crate::paths::home_dir();
@@ -445,12 +449,8 @@ async fn run_turn(
         }
     };
     let command = command?;
-    // Only a workflow start runs without the person's message; any other
-    // prompt from the client would reach the model unseen.
     if author != wire::PromptAuthor::Person && !matches!(command, PromptCommand::StartWorkflow(_)) {
-        anyhow::bail!(CommandRejected(
-            "only a workflow start may come from the client".into()
-        ));
+        anyhow::bail!(client_rejected());
     }
     let mut turn = match command {
         PromptCommand::Turn {
@@ -577,6 +577,13 @@ async fn compact(
         }),
         None => Ran::Cancelled,
     })
+}
+
+/// The refusal of a prompt from the client that does not start a workflow:
+/// only a workflow start runs without the person's message, and any other
+/// would reach the model, or show as the person's, without them sending it.
+fn client_rejected() -> CommandRejected {
+    CommandRejected("only a workflow start may come from the client".into())
 }
 
 /// Starts `launch`'s workflow run within `scope`, without a model turn. The
