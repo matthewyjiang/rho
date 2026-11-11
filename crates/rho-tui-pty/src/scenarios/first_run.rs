@@ -42,7 +42,8 @@ pub(super) const DAEMON_SIGNED_OUT_SCENARIO: super::Scenario = super::Scenario::
 .with_setup(setup_prompt_template);
 
 /// [`SIGNED_OUT_SETUP_STEPS`] for a daemon session, which holds a template
-/// command as typed: the daemon expands it, not the TUI.
+/// expanded as in process, and a built-in the daemon runs as a prompt as
+/// typed.
 #[cfg(unix)]
 const DAEMON_SIGNED_OUT_STEPS: &[Step] = &[
     Step::Phase("signed_in_baseline"),
@@ -71,7 +72,7 @@ const DAEMON_SIGNED_OUT_STEPS: &[Step] = &[
         timeout: SETTLE,
     },
     Step::Key(Key::Ctrl('c')),
-    Step::Phase("template_command_is_held"),
+    Step::Phase("template_prompt_survives"),
     Step::SubmitText("/prompt:greet with a trailing note"),
     Step::WaitText {
         text: "Select provider to login",
@@ -79,7 +80,7 @@ const DAEMON_SIGNED_OUT_STEPS: &[Step] = &[
     },
     Step::Key(Key::Esc),
     Step::WaitText {
-        text: "/prompt:greet with a trailing note",
+        text: "expanded template body with a trailing note",
         timeout: SETTLE,
     },
     Step::Key(Key::Ctrl('c')),
