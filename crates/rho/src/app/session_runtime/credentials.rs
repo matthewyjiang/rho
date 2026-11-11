@@ -17,6 +17,7 @@
 use rho_providers::model::ModelError;
 
 use super::{model_scoped_config, SessionRuntime};
+use crate::app::session_assembly::ProviderCredentials;
 use crate::{
     config::Config,
     credential_store::{
@@ -104,7 +105,8 @@ pub(crate) enum SessionCredentials {
     /// Read from the store at this generation, taken with
     /// [`AppCredentialStore::generation`]; stale once it moves.
     Read(CredentialGeneration),
-    /// A prompt failed on a credential failure; reacquire before the next.
+    /// A prompt failed on a credential failure, or the session opened
+    /// without credentials; reacquire before the next prompt.
     Refused,
     /// A test's scripted provider, which reads no credentials and cannot be
     /// rebuilt from config, so another test moving the process-wide
@@ -114,6 +116,17 @@ pub(crate) enum SessionCredentials {
 }
 
 impl SessionCredentials {
+    /// A session just opened on `built`, whose credentials were read at
+    /// `read`. One that opened without them rereads other processes' logins
+    /// at its first prompt, as after a refusal, so a `rho login` run
+    /// elsewhere since applies to that prompt.
+    pub(super) fn opened(read: CredentialGeneration, built: ProviderCredentials) -> Self {
+        match built {
+            ProviderCredentials::Found => Self::Read(read),
+            ProviderCredentials::Missing => Self::Refused,
+        }
+    }
+
     /// Records that the provider was rebuilt after `read` was taken. A
     /// scripted provider stays scripted: a test that switches it swaps one
     /// scripted provider for another.

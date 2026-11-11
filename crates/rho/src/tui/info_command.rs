@@ -157,7 +157,12 @@ impl App {
         let info = RuntimeInfo {
             version: identity.rho_version.to_string(),
             provider: identity.provider.to_string(),
-            model: identity.model.to_string(),
+            // `/info` keeps the id beside the name: it is where a person
+            // looks the id up.
+            model: match self.model_names().name(&identity.provider, &identity.model) {
+                Some(name) => format!("{name} ({})", identity.model),
+                None => identity.model.to_string(),
+            },
             reasoning: identity.reasoning.to_string(),
             permission_mode: self.info.runtime.permission_mode.as_str().into(),
             advisor: self.advisor_status().detail(),

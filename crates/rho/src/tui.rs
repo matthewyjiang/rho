@@ -167,6 +167,7 @@ mod message_history;
 mod message_render;
 mod model_actions;
 mod model_cycle;
+mod model_names;
 mod model_performance;
 mod model_picker;
 pub(crate) mod model_prompt_picker;

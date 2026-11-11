@@ -10,7 +10,7 @@ use rho_sdk::{
 };
 use serde_json::json;
 
-use super::{diagnostic_notice, finished, turn_error};
+use super::{diagnostic_notice, finished, turn_error, withheld_diagnostic};
 
 /// The outcome of a scripted run whose one model step is `response`,
 /// limited to `max_steps` steps when given.
@@ -133,7 +133,8 @@ fn a_failure_is_classified_by_type_and_hides_authentication_text() {
 }
 
 // Covers: a failed turn shows its provider's diagnostic, unless the turn
-// failed to authenticate, whose diagnostic may echo a credential.
+// failed to authenticate, whose diagnostic may echo a credential: that one
+// is withheld for the host's log, and no other is.
 // Owner: turn outcome on the wire.
 #[test]
 fn a_diagnostic_shows_unless_authentication_failed() {
@@ -151,6 +152,7 @@ fn a_diagnostic_shows_unless_authentication_failed() {
             "provider failure",
             provider(rho_sdk::ProviderErrorKind::Other, Some("upstream said 500")),
             Some("provider diagnostic:\nupstream said 500"),
+            None,
         ),
         (
             "authentication failure",
@@ -159,15 +161,30 @@ fn a_diagnostic_shows_unless_authentication_failed() {
                 Some("token fixture-secret rejected"),
             ),
             None,
+            Some("token fixture-secret rejected"),
         ),
         (
             "no diagnostic",
             provider(rho_sdk::ProviderErrorKind::Other, None),
             None,
+            None,
+        ),
+        (
+            "authentication failure without a diagnostic",
+            provider(rho_sdk::ProviderErrorKind::Authentication, None),
+            None,
+            None,
         ),
     ];
-    for (case, error, expected) in cases {
-        assert_eq!(diagnostic_notice(&error).as_deref(), expected, "{case}");
+    for (case, error, shown, withheld) in cases {
+        assert_eq!(
+            (
+                diagnostic_notice(&error).as_deref(),
+                withheld_diagnostic(&error)
+            ),
+            (shown, withheld),
+            "{case}"
+        );
     }
 }
 
