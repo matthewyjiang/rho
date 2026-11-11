@@ -52,7 +52,7 @@ use rho_sdk::{CancellationToken, SessionId};
 use super::{
     jobs::{
         Admission, JobEvent, JobId, JobRecord, JobRegistry, Keeping, RegisterError, SessionJob,
-        TurnEnd, TurnRecord,
+        TurnEnd,
     },
     subagents::Subagents,
     wire::{session_to_wire, state_event},
@@ -109,7 +109,7 @@ pub(super) use open::session_environment;
 use open::{open_session, OpenWith, OpenedSession, Opening, Workspace};
 use queued::Queued;
 use reopen::ReopenLocks;
-use start::Entered;
+use start::{Entered, KeyedTurn};
 use t3_wake::{T3Wake, WakeDir};
 use turn::{PromptStart, TurnLimit, TurnTask};
 use unload::Residency;
@@ -249,28 +249,6 @@ struct TurnSlot {
     /// reduced the conversation, which a
     /// [`rho_protocol::SessionChange::ModelAfterCompaction`] waits for.
     compacted_prompt: Option<u64>,
-}
-
-/// A turn a prompt naming `key` started, as a prompt sent again with the
-/// key finds it.
-struct KeyedTurn {
-    key: rho_protocol::IdempotencyKey,
-    id: rho_protocol::TurnId,
-    /// How the turn began, once it has.
-    start: tokio::sync::watch::Receiver<PromptStart>,
-}
-
-impl KeyedTurn {
-    /// The turn job `job` last ran, as an earlier daemon or an earlier load
-    /// recorded it, if a prompt naming a key started it and it began: one
-    /// that did not begin ran nothing, so its key starts a turn again.
-    fn recorded(job: &JobRecord) -> Option<Self> {
-        let TurnRecord { id, key, began } = job.turn.clone()?;
-        let key = key.filter(|_| began)?;
-        // The sender is dropped: the turn began, and nothing changes that.
-        let (_, start) = tokio::sync::watch::channel(PromptStart::Began);
-        Some(Self { key, id, start })
-    }
 }
 
 /// What a session's turn runs, as far as a prompt sent meanwhile goes.
