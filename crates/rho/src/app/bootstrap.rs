@@ -5,6 +5,7 @@ use std::{
     time::Duration,
 };
 
+use anyhow::Context as _;
 use tracing::Instrument;
 
 use {
@@ -70,8 +71,25 @@ fn run_inner(cli: Cli) -> impl std::future::Future<Output = anyhow::Result<()>> 
     Box::pin(run_startup(cli))
 }
 
+/// Rewrites a `config.toml` rho 2.x wrote to the 3.0 files and says what
+/// moved. Runs before anything loads the config, which refuses 2.x keys.
+fn upgrade_2x_config(cli: &Cli) -> anyhow::Result<()> {
+    let config_path = ConfigRepository::new(cli.config.clone()).configured_path()?;
+    let upgraded = crate::config::upgrade_2x(
+        &config_path,
+        &crate::paths::rho_dir()?,
+        crate::credential_store::save_migrated_web_search_keys,
+    )
+    .with_context(|| format!("could not update 2.x config {}", config_path.display()))?;
+    for line in upgraded.iter().flat_map(|done| done.notice(&config_path)) {
+        eprintln!("{line}");
+    }
+    Ok(())
+}
+
 async fn run_startup(cli: Cli) -> anyhow::Result<()> {
     cli_config::validate(&cli)?;
+    upgrade_2x_config(&cli)?;
     if let EarlyDispatch::Handled(result) = dispatch_early_command(&cli).await? {
         return result;
     }

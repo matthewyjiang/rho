@@ -110,7 +110,7 @@ review = "Review this code for correctness, security, and maintainability."
 "explain-tests" = "Explain how these tests cover the expected behavior."
 ```
 
-That is `~/.rho/config.toml`. Every setting sits in a table grouped by purpose; a key at the top level, or one from an older layout, is a load error.
+That is `~/.rho/config.toml`. Every setting sits in a table grouped by purpose; a key at the top level is a load error, except in a 2.x file, which Rho [rewrites once](/configuration#upgrading-from-rho-2x).
 
 The interactive TUI keeps its own settings at the top level of `~/.rho/clients/tui.toml`:
 

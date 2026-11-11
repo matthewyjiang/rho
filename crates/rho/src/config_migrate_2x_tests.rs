@@ -203,7 +203,7 @@ backend = "exa"
         ],
     },
     Case {
-        name: "native-only web search stays for the user to resolve",
+        name: "native-only web search turns off instead of enabling a backend",
         before: r#"
 [web_search]
 hosted = true
@@ -211,8 +211,7 @@ provider = "disabled"
 "#,
         agent: r#"
 [web_search]
-hosted = true
-provider = "disabled"
+mode = "off"
 "#,
         client_tui: "",
         tui_local: "",

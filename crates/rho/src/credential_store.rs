@@ -7,8 +7,9 @@ use std::{
 };
 
 use rho_providers::credentials::{
-    open_credential_store, probe_credential_store, CredentialError, CredentialResult,
-    CredentialStore, CredentialStoreBackend, CredentialStoreProbe, OsCredentialStore,
+    load_web_search_api_key, open_credential_store, probe_credential_store,
+    save_web_search_api_key, CredentialError, CredentialResult, CredentialStore,
+    CredentialStoreBackend, CredentialStoreProbe, OsCredentialStore, WebSearchCredential,
 };
 
 use crate::config::Config;
@@ -219,6 +220,27 @@ pub(crate) fn saved_policy_backend(
         return Ok(config.credential_store);
     }
     Ok(read_legacy_policy_file()?)
+}
+
+/// Saves the web-search keys a 2.x config held in plaintext, keeping any
+/// key already stored. Writes to the store `config_backend` (the upgraded
+/// file's, else the legacy policy file's) and the environment select,
+/// opened for this call only: startup opens the process's store later.
+pub(crate) fn save_migrated_web_search_keys(
+    config_backend: Option<CredentialStoreBackend>,
+    keys: &[(WebSearchCredential, String)],
+) -> anyhow::Result<()> {
+    let config_backend = match config_backend {
+        Some(backend) => Some(backend),
+        None => read_legacy_policy_file()?,
+    };
+    let store = open_credential_store(resolve_backend(config_backend)?)?;
+    for (credential, key) in keys {
+        if load_web_search_api_key(store.as_ref(), *credential)?.is_none() {
+            save_web_search_api_key(store.as_ref(), *credential, key)?;
+        }
+    }
+    Ok(())
 }
 
 /// Why [`set_backend`] did not switch stores.

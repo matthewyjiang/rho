@@ -48,6 +48,6 @@ Firecrawl uses the [v2 search API](https://docs.firecrawl.dev/api-reference/endp
 
 ## Older settings
 
-Rho 3.0 no longer reads the 2.x `hosted`, `provider`, and top-level `web_search_provider` keys. They are unknown keys, so a config that still sets them fails to load. Replace the pair `hosted = false`, `provider = "disabled"` with `mode = "off"`, and a concrete `provider` with `backend` plus `mode = "auto"` or `"backend"`.
+Rho 3.0 no longer reads the 2.x `hosted`, `provider`, and top-level `web_search_provider` keys. The [2.x upgrade](/configuration#upgrading-from-rho-2x) rewrites them the first time Rho 3.0 starts: `provider = "disabled"` becomes `mode = "off"`, and a concrete `provider` becomes `backend` with `mode = "auto"`, or `mode = "backend"` when `hosted` was `false`. Set by hand afterwards, they are unknown keys and the config fails to load.
 
-Existing flat `web_search_openai_api_key`, `web_search_exa_api_key`, and `web_search_brave_api_key` values still migrate to the credential store. Empty strings are ignored.
+The upgrade also moves flat `web_search_openai_api_key`, `web_search_exa_api_key`, and `web_search_brave_api_key` values to the credential store. Empty strings are ignored.
