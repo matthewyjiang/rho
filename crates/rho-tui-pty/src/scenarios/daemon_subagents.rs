@@ -14,8 +14,8 @@ use super::{
         ATTACH_VIEW_QUIT_RESTORES_SCENARIO,
     },
     background_agents::{
-        BACKGROUND_AGENT_AUTO_DELIVERY_STEPS, BACKGROUND_AGENT_QUESTIONNAIRE_STEPS,
-        LATE_BACKGROUND_AGENT_QUESTIONNAIRE_STEPS,
+        BACKGROUND_AGENT_AUTO_DELIVERY_SCENARIO, BACKGROUND_AGENT_QUESTIONNAIRE_SCENARIO,
+        LATE_BACKGROUND_AGENT_QUESTIONNAIRE_SCENARIO,
     },
     goal::{
         DAEMON_GOAL_WAITS_FOR_SUBAGENTS_DURING_RETRY_STEPS, GOAL_QUESTIONNAIRE_STEPS,
@@ -55,35 +55,17 @@ pub(super) const AGENT_MESSAGES: Scenario =
 
 pub(super) const BACKGROUND_AGENT_AUTO_DELIVERY: Scenario = in_daemon(
     "daemon_background_agent_auto_delivery",
-    &Scenario::new(
-        "",
-        "Spawn a background agent, end the turn, and receive its completion automatically",
-        DEFAULT_SIZE,
-        BACKGROUND_AGENT_AUTO_DELIVERY_STEPS,
-        /*smoke*/ false,
-    ),
+    &BACKGROUND_AGENT_AUTO_DELIVERY_SCENARIO,
 );
 
 pub(super) const BACKGROUND_AGENT_QUESTIONNAIRE: Scenario = in_daemon(
     "daemon_background_agent_questionnaire",
-    &Scenario::new(
-        "",
-        "Answer a questionnaire raised by a background agent and deliver its completion",
-        DEFAULT_SIZE,
-        BACKGROUND_AGENT_QUESTIONNAIRE_STEPS,
-        /*smoke*/ false,
-    ),
+    &BACKGROUND_AGENT_QUESTIONNAIRE_SCENARIO,
 );
 
 pub(super) const LATE_BACKGROUND_AGENT_QUESTIONNAIRE: Scenario = in_daemon(
     "daemon_late_background_agent_questionnaire",
-    &Scenario::new(
-        "",
-        "Answer a questionnaire a background agent raises after its parent's turn ended",
-        DEFAULT_SIZE,
-        LATE_BACKGROUND_AGENT_QUESTIONNAIRE_STEPS,
-        /*smoke*/ false,
-    ),
+    &LATE_BACKGROUND_AGENT_QUESTIONNAIRE_SCENARIO,
 );
 
 pub(super) const SUBAGENT_RAIL_MOUSE: Scenario =

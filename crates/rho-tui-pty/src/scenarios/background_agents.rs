@@ -8,9 +8,37 @@ use std::time::Duration;
 
 use anyhow::Result;
 
-use crate::{harness::WaitTimeout, keys::Key, scenario::Step};
+use crate::{
+    harness::WaitTimeout,
+    keys::Key,
+    scenario::{Scenario, Step},
+};
 
-use super::{SETTLE, STARTUP, STREAM};
+use super::{DEFAULT_SIZE, SETTLE, STARTUP, STREAM};
+
+pub(super) const BACKGROUND_AGENT_AUTO_DELIVERY_SCENARIO: Scenario = Scenario::new(
+    "background_agent_auto_delivery",
+    "Spawn a background agent, end the turn, and receive its completion automatically",
+    DEFAULT_SIZE,
+    BACKGROUND_AGENT_AUTO_DELIVERY_STEPS,
+    /*smoke*/ false,
+);
+
+pub(super) const BACKGROUND_AGENT_QUESTIONNAIRE_SCENARIO: Scenario = Scenario::new(
+    "background_agent_questionnaire",
+    "Answer a questionnaire raised by a background agent and deliver its completion",
+    DEFAULT_SIZE,
+    BACKGROUND_AGENT_QUESTIONNAIRE_STEPS,
+    /*smoke*/ false,
+);
+
+pub(super) const LATE_BACKGROUND_AGENT_QUESTIONNAIRE_SCENARIO: Scenario = Scenario::new(
+    "late_background_agent_questionnaire",
+    "Answer a questionnaire a background agent raises after its parent's turn ended",
+    DEFAULT_SIZE,
+    LATE_BACKGROUND_AGENT_QUESTIONNAIRE_STEPS,
+    /*smoke*/ false,
+);
 
 fn assert_agent_tool_hides_raw_json(harness: &mut crate::PtyHarness) -> Result<()> {
     let screen = harness.screen().contents();
@@ -23,7 +51,7 @@ fn assert_agent_tool_hides_raw_json(harness: &mut crate::PtyHarness) -> Result<(
     Ok(())
 }
 
-pub(super) const BACKGROUND_AGENT_AUTO_DELIVERY_STEPS: &[Step] = &[
+const BACKGROUND_AGENT_AUTO_DELIVERY_STEPS: &[Step] = &[
     Step::Phase("startup"),
     Step::WaitText {
         text: "gpt-5.5",
@@ -95,7 +123,7 @@ fn release_background_questionnaire_parent(harness: &mut crate::PtyHarness) -> R
     super::release_fixture(harness, ".rho-fixture-release-questionnaire-parent")
 }
 
-pub(super) const BACKGROUND_AGENT_QUESTIONNAIRE_STEPS: &[Step] = &[
+const BACKGROUND_AGENT_QUESTIONNAIRE_STEPS: &[Step] = &[
     Step::Phase("startup"),
     Step::WaitText {
         text: "gpt-5.5",
@@ -151,7 +179,7 @@ fn release_child_questionnaire(harness: &mut crate::PtyHarness) -> Result<()> {
 // parent turn in between.
 // Owner: interactive delegated-questionnaire routing. The scenario above
 // holds the parent's turn open until the form shows.
-pub(super) const LATE_BACKGROUND_AGENT_QUESTIONNAIRE_STEPS: &[Step] = &[
+const LATE_BACKGROUND_AGENT_QUESTIONNAIRE_STEPS: &[Step] = &[
     Step::Phase("startup"),
     Step::WaitText {
         text: "gpt-5.5",

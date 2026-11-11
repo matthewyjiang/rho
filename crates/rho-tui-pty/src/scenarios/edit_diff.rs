@@ -5,6 +5,8 @@ use crate::{
     scenario::{Scenario, Step},
 };
 
+#[cfg(unix)]
+use super::daemon_resume::write_daemon_config;
 use super::{DEFAULT_SIZE, STARTUP, STREAM};
 
 pub(super) const EDIT_DIFF_SCENARIO: Scenario = Scenario::new(
@@ -14,6 +16,23 @@ pub(super) const EDIT_DIFF_SCENARIO: Scenario = Scenario::new(
     EDIT_DIFF_STEPS,
     false,
 );
+
+// Covers: the same steps with the daemon holding the session. Esc at the
+// questionnaire cancels it as in process, not as a plain interrupt.
+// Owner: interactive TUI as a daemon client
+#[cfg(unix)]
+pub(super) const DAEMON_EDIT_DIFF_SCENARIO: Scenario = Scenario::new(
+    "daemon_edit_diff",
+    "Keep one diff card through a daemon session's edit and interruption",
+    DEFAULT_SIZE,
+    EDIT_DIFF_STEPS,
+    false,
+)
+.with_setup(write_daemon_config)
+.with_env(&[
+    ("RHO_TUI_DAEMON", "1"),
+    ("OPENAI_API_KEY", "sk-test-matrix"),
+]);
 
 const EDIT_DIFF_STEPS: &[Step] = &[
     Step::Phase("startup"),

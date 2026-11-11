@@ -161,8 +161,8 @@ use attach_view::{
     ATTACH_VIEW_PARENT_APPROVAL_SCENARIO, ATTACH_VIEW_QUIT_RESTORES_SCENARIO,
 };
 use background_agents::{
-    BACKGROUND_AGENT_AUTO_DELIVERY_STEPS, BACKGROUND_AGENT_QUESTIONNAIRE_STEPS,
-    LATE_BACKGROUND_AGENT_QUESTIONNAIRE_STEPS,
+    BACKGROUND_AGENT_AUTO_DELIVERY_SCENARIO, BACKGROUND_AGENT_QUESTIONNAIRE_SCENARIO,
+    LATE_BACKGROUND_AGENT_QUESTIONNAIRE_SCENARIO,
 };
 use changelog::CHANGELOG_STEPS;
 use command_palette::{
@@ -665,6 +665,8 @@ const ALL_SCENARIOS: &[Scenario] = &[
     #[cfg(unix)]
     daemon_prompt::DAEMON_CANCEL_SCENARIO,
     #[cfg(unix)]
+    edit_diff::DAEMON_EDIT_DIFF_SCENARIO,
+    #[cfg(unix)]
     daemon_prompt::DAEMON_STREAM_COST_SCENARIO,
     #[cfg(unix)]
     daemon_approval::DAEMON_APPROVAL_SCENARIO,
@@ -899,13 +901,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
         GOAL_WAITS_FOR_SUBAGENTS_DURING_RETRY_STEPS,
         false,
     ),
-    Scenario::new(
-        "background_agent_auto_delivery",
-        "Spawn a background agent, end the turn, and receive its completion automatically",
-        DEFAULT_SIZE,
-        BACKGROUND_AGENT_AUTO_DELIVERY_STEPS,
-        false,
-    ),
+    BACKGROUND_AGENT_AUTO_DELIVERY_SCENARIO,
     SUBAGENT_RAIL_MOUSE_SCENARIO,
     #[cfg(unix)]
     quiet_subagent::QUIET_SUBAGENT_SCENARIO,
@@ -963,22 +959,10 @@ const ALL_SCENARIOS: &[Scenario] = &[
     ),
     ADVISOR_MISSING_MODEL_SCENARIO,
     ADVISOR_REVIEW_SCENARIO,
-    Scenario::new(
-        "late_background_agent_questionnaire",
-        "Answer a questionnaire a background agent raises after its parent's turn ended",
-        DEFAULT_SIZE,
-        LATE_BACKGROUND_AGENT_QUESTIONNAIRE_STEPS,
-        false,
-    ),
+    LATE_BACKGROUND_AGENT_QUESTIONNAIRE_SCENARIO,
     #[cfg(unix)]
     daemon_subagents::LATE_BACKGROUND_AGENT_QUESTIONNAIRE,
-    Scenario::new(
-        "background_agent_questionnaire",
-        "Answer a questionnaire raised by a background agent and deliver its completion",
-        DEFAULT_SIZE,
-        BACKGROUND_AGENT_QUESTIONNAIRE_STEPS,
-        false,
-    ),
+    BACKGROUND_AGENT_QUESTIONNAIRE_SCENARIO,
 ];
 
 pub fn all_scenarios() -> &'static [Scenario] {
