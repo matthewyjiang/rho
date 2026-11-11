@@ -163,6 +163,19 @@ impl App {
         }
     }
 
+    /// The oldest change this TUI asked the daemon for finished, applied or
+    /// refused. Login's note of the model it asked for goes with its
+    /// request: a switch that landed has shown by now, and one the daemon
+    /// refused must not quiet a later `/model` to the same model.
+    pub(super) fn finish_daemon_option_request(&mut self) {
+        let finished = self.daemon_option_requests.pop_front();
+        if let Some(SessionChange::Model { model, .. }) = &finished {
+            if self.daemon_login_selected.as_ref() == Some(model) {
+                self.daemon_login_selected = None;
+            }
+        }
+    }
+
     pub(super) fn configure_daemon(&mut self, change: SessionChange) -> anyhow::Result<()> {
         let session = self
             .info

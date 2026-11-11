@@ -140,9 +140,7 @@ impl App {
                 DaemonView::SettingsChanged(changed) => {
                     self.show_daemon_settings(SettingsUpdate::Changed(changed));
                 }
-                DaemonView::ConfigureFinished => {
-                    self.daemon_option_requests.pop_front();
-                }
+                DaemonView::ConfigureFinished => self.finish_daemon_option_request(),
                 DaemonView::Turn(state) => self.show_daemon_turn(state).await,
                 DaemonView::SteerApplied(id) => {
                     // The user row that follows shows it.
@@ -171,8 +169,6 @@ impl App {
         Ok(())
     }
 
-    /// Appends `entry` as a row of its own, even after a row of its kind
-    /// that it would otherwise extend: a new message starts a new row.
     /// Writes `text`, replayed, as more of the message the running turn's
     /// stream of `kind` shows. It goes through that stream, whole and at
     /// once, so the stream's fence, wrap, and emitted text account for it
@@ -184,6 +180,8 @@ impl App {
         }
     }
 
+    /// Appends `entry` as a row of its own, even after a row of its kind
+    /// that it would otherwise extend: a new message starts a new row.
     fn open_transcript_row(&mut self, entry: Entry) {
         let index = self.history.len();
         self.history.lines_mut().invalidate_from(index);

@@ -141,26 +141,46 @@ fn a_signed_out_first_launch_has_a_model_to_choose_only_from_another_auth() {
     }
 }
 
+/// Who asked for the model switch whose options arrive.
+#[derive(Clone, Copy)]
+enum Switch {
+    /// `/login`, after storing credentials.
+    Login,
+    /// The person, with `/model`.
+    Model,
+    /// The person, after the daemon refused the same switch from `/login`.
+    ModelAfterRefusedLogin,
+}
+
 // Covers: a model switch this TUI asked for says where it landed, except
 // the one `/login` sent after storing credentials: its status line already
-// names the model and the credentials, and stays (#1818).
+// names the model and the credentials, and stays. A login switch the
+// daemon refused quiets nothing later (#1818).
 // Owner: tui daemon session options
 #[test]
 fn a_switch_login_asked_for_keeps_logins_status_line() {
     const LOGIN: &str = "stored credentials for anthropic and selected anthropic/model";
-    let kept: Vec<_> = [true, false]
+    let kept: Vec<_> = [Switch::Login, Switch::Model, Switch::ModelAfterRefusedLogin]
         .into_iter()
-        .map(|by_login| {
+        .map(|switch| {
             let mut app = crate::tui::tests::test_app();
             app.show_daemon_options(options_on("openai", "api-key"));
             let switched = options_on("anthropic", "anthropic-api-key");
             let model = switched.model.current.clone();
-            app.daemon_option_requests
-                .push_back(rho_protocol::SessionChange::Model {
-                    model: model.clone(),
-                    auth: None,
-                });
-            app.daemon_login_selected = by_login.then_some(model);
+            let change = rho_protocol::SessionChange::Model {
+                model: model.clone(),
+                auth: None,
+            };
+            app.daemon_option_requests.push_back(change.clone());
+            match switch {
+                Switch::Login => app.daemon_login_selected = Some(model),
+                Switch::Model => {}
+                Switch::ModelAfterRefusedLogin => {
+                    app.daemon_login_selected = Some(model);
+                    app.finish_daemon_option_request();
+                    app.daemon_option_requests.push_back(change);
+                }
+            }
             app.set_status(LOGIN);
 
             app.show_daemon_options(switched);
@@ -169,5 +189,5 @@ fn a_switch_login_asked_for_keeps_logins_status_line() {
         })
         .collect();
 
-    assert_eq!(kept, vec![true, false]);
+    assert_eq!(kept, vec![true, false, false]);
 }
