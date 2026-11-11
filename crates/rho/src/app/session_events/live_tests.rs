@@ -1006,3 +1006,38 @@ fn background_cards_carry_plain_text_and_tone() {
         }]
     );
 }
+
+// Covers: a goal's intermediate answer is sent once, never repeating what
+// its last step streamed and never dropped when that step streamed nothing.
+// Owner: daemon live event mapping
+#[test]
+fn an_answer_goes_out_only_when_its_last_step_did_not_stream_it() {
+    let reset = SessionEvent::Run(RunEvent::ProviderStreamReset {
+        reason: ProviderStreamResetReason::InvalidResponse,
+        detail: "retry".into(),
+    });
+    let cases: [(&str, &[SessionEvent], &str, Vec<WireEvent>); 5] = [
+        ("unstreamed", &[step(1)], "done", vec![agent("m0", "done")]),
+        ("streamed", &[step(1), delta("done")], "done", vec![]),
+        (
+            "an earlier step streamed",
+            &[step(1), delta("working"), step(2)],
+            "done",
+            vec![agent("m0", "done")],
+        ),
+        (
+            "the stream was discarded",
+            &[step(1), delta("do"), reset],
+            "done",
+            vec![agent("m0", "done")],
+        ),
+        ("only tool calls", &[step(1)], "", vec![]),
+    ];
+    for (name, events, answer, expected) in cases {
+        let tool_set = AppToolSet::disabled();
+        let mut live = live(&tool_set);
+        map_all(&mut live, events);
+        let sent = live.unstreamed_answer(answer).into_iter().collect();
+        assert_eq!(canonical_messages(sent), expected, "{name}");
+    }
+}

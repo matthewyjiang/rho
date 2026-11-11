@@ -121,6 +121,9 @@ pub(crate) struct LiveEvents {
     /// The message the latest chunk belongs to, while later chunks of its
     /// kind still continue it.
     message: Option<OpenMessage>,
+    /// Whether the model step under way, or the last one, streamed agent
+    /// text that clients kept.
+    streamed_answer: bool,
     /// The content of each steer the daemon recorded that has not applied,
     /// by the id the run accepted it under. The run's end clears it.
     steers: HashMap<SteeringId, Vec<ContentBlock>>,
@@ -202,6 +205,7 @@ impl LiveEvents {
             replayed_rows: 0,
             compaction: None,
             message: None,
+            streamed_answer: false,
             steers: HashMap::new(),
             applied_unseen: HashSet::new(),
             late_steers: Vec::new(),
@@ -276,6 +280,14 @@ impl LiveEvents {
             message: inserted_message_id(reply),
             text,
         }
+    }
+
+    /// `answer`, a finished run's answer, as one agent message when its
+    /// last step streamed none of it. For a run whose end clients are not
+    /// told: a turn's end carries its answer whole
+    /// (`TurnOutcome::Answered`).
+    pub(crate) fn unstreamed_answer(&mut self, answer: &str) -> Option<WireEvent> {
+        (!answer.is_empty() && !self.streamed_answer).then(|| self.chunk(ChunkKind::Agent, answer))
     }
 
     /// The wire events that replay the rows of `rows`, the session's saved
@@ -416,6 +428,7 @@ impl LiveEvents {
                 context_estimate, ..
             } => {
                 self.message = None;
+                self.streamed_answer = false;
                 // A step numbers its calls from zero again, and a call the
                 // last one streamed has started by now if it ever will.
                 let unstarted = self.fail_pending();
@@ -497,6 +510,7 @@ impl LiveEvents {
                 // them again: the cards its streamed arguments opened close.
                 self.proposed.clear();
                 self.presenter.step_started();
+                self.streamed_answer = false;
                 let discarded = self.fail_pending();
                 discarded
                     .into_iter()
@@ -598,7 +612,10 @@ impl LiveEvents {
         };
         let text = text.to_owned();
         match kind {
-            ChunkKind::Agent => WireEvent::AgentMessageChunk { message, text },
+            ChunkKind::Agent => {
+                self.streamed_answer = true;
+                WireEvent::AgentMessageChunk { message, text }
+            }
             ChunkKind::Thought => WireEvent::ThoughtChunk { message, text },
         }
     }

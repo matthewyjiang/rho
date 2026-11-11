@@ -329,14 +329,23 @@ async fn drive_goal(
         if cancel.is_cancelled() {
             return ended;
         }
-        if let Err(error) = &ended {
-            notice(
+        match &ended {
+            Err(error) => notice(
                 &session,
                 format!(
                     "could not complete goal turn: {}; retrying while goal remains active",
                     turn::client_error(runtime, error).message
                 ),
-            );
+            ),
+            // Clients are told only how the goal's last turn ended, so an
+            // answer the provider did not stream is sent here.
+            Ok(Ran::Completed(
+                wire::TurnOutcome::Answered { text, .. } | wire::TurnOutcome::MaxSteps { text },
+            )) => {
+                let answer = session.live().unstreamed_answer(text);
+                session.feed.publish(answer);
+            }
+            Ok(Ran::Completed(_) | Ran::Cancelled) => {}
         }
         // Where prompts end while their subagents run, the goal still waits
         // for them: it neither retries nor is judged ahead of their results.
