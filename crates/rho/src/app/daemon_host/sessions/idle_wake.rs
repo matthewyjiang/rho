@@ -3,12 +3,16 @@
 //! turn of its own, with no prompt, whose first boundary gives the model
 //! the result, as the in-process TUI's idle delivery does.
 //!
-//! Such a session's prompts do not wait for the workflows and background
-//! processes they start (`BackgroundWait::HostTurns`), so a turn ends while
-//! they run on. One watcher per loaded session, started as the session is
-//! added, waits for a result and for the session to be idle. A result that
-//! arrives during a turn is delivered at that turn's boundaries; one that
-//! turn left behind is delivered once it ended.
+//! Such a session's prompts do not wait for the subagents, workflows and
+//! background processes they start (`BackgroundWait::HostTurns`), so a turn
+//! ends while they run on. One watcher per loaded session, started as the
+//! session is added, waits for a result and for the session to be idle. A
+//! result that arrives during a turn is delivered at that turn's
+//! boundaries; one that turn left behind is delivered once it ended.
+//!
+//! A subagent's request that its parent act (`request_parent_action`) is a
+//! result too. Its informational notices (`message_parent`) are not: they
+//! start no turn, and go with the next one.
 //!
 //! The watcher holds the session weakly: the session stays loaded while
 //! work runs or a result waits (see `unload`), and the watcher ends once
@@ -39,7 +43,8 @@ impl IdleWatch {
         match runtime.background_wait() {
             BackgroundWait::HoldPrompt | BackgroundWait::HostWakes => None,
             BackgroundWait::HostTurns => Some(Self {
-                background: Background::of(runtime.tools(), runtime.session_id().to_string()),
+                background: Background::of(runtime.tools(), runtime.session_id().to_string())
+                    .with_subagents(runtime.tools()),
                 turns_ended: watch::Sender::new(0),
                 dropped: CancellationToken::new(),
             }),
@@ -134,7 +139,17 @@ async fn watch_results(
     mut turns_ended: watch::Receiver<u64>,
 ) {
     loop {
-        background.clone().result_ready().await;
+        tokio::select! {
+            () = background.clone().result_ready() => {}
+            // A turn that ended may have put back a result it took and
+            // never delivered, which no result's arrival announces.
+            changed = turns_ended.changed() => {
+                if changed.is_err() {
+                    return;
+                }
+                continue;
+            }
+        }
         // Only a turn that ends from here on frees the session again.
         turns_ended.borrow_and_update();
         // Subscribed before the attempt, so no result that follows it is

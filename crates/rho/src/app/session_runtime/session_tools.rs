@@ -10,7 +10,10 @@ use crate::tools::{
     todo::TodoState,
 };
 #[cfg(unix)]
-use crate::tools::{process::ProcessManager, workflow_tracker::WorkflowRunTracker};
+use crate::{
+    app::subagent_manager::SubagentManager,
+    tools::{process::ProcessManager, workflow_tracker::WorkflowRunTracker},
+};
 
 /// A read-only view of a session's tools, for hosts that list what the
 /// session offers or reach its background work. It reaches nothing the
@@ -58,6 +61,13 @@ impl<'a> SessionTools<'a> {
     #[cfg(unix)]
     pub(crate) fn processes(self) -> Option<&'a ProcessManager> {
         self.0.processes()
+    }
+
+    /// The session's in-process subagents, when it may start any. Only the
+    /// daemon's idle watcher, unix-only so far (#1665), reads them.
+    #[cfg(unix)]
+    pub(crate) fn subagents(self) -> Option<&'a SubagentManager> {
+        self.0.subagents()
     }
 
     /// The session's workflow runs (see [`Self::processes`]).

@@ -1,7 +1,7 @@
 //! Routes structured host questionnaires from delegated agents to the parent session.
 
 use rho_sdk::{CancellationToken, Error, HostInputRequest, HostInputResponse, SessionId};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
 
 use super::parent_bridge::ParentBridge;
 
@@ -21,6 +21,24 @@ pub(crate) struct SubagentHostInputRequest {
 #[derive(Clone)]
 pub(crate) struct SubagentHostInputBridge {
     bridge: ParentBridge<SubagentHostInputRequest>,
+    /// How many questionnaires the parent took and has not answered.
+    open: watch::Sender<usize>,
+}
+
+/// Counts one questionnaire as open with the parent until dropped.
+struct OpenQuestion<'a>(&'a watch::Sender<usize>);
+
+impl<'a> OpenQuestion<'a> {
+    fn new(open: &'a watch::Sender<usize>) -> Self {
+        open.send_modify(|open| *open += 1);
+        Self(open)
+    }
+}
+
+impl Drop for OpenQuestion<'_> {
+    fn drop(&mut self) {
+        self.0.send_modify(|open| *open -= 1);
+    }
 }
 
 impl Default for SubagentHostInputBridge {
@@ -33,7 +51,14 @@ impl SubagentHostInputBridge {
     pub(crate) fn new() -> Self {
         Self {
             bridge: ParentBridge::new(HOST_INPUT_QUEUE_CAPACITY),
+            open: watch::Sender::new(0),
         }
+    }
+
+    /// How many questionnaires the parent took and has not answered, and
+    /// each change of that.
+    pub(crate) fn open(&self) -> watch::Receiver<usize> {
+        self.open.subscribe()
     }
 
     /// Installs the parent receiver. Replaces any previous binding.
@@ -68,6 +93,9 @@ impl SubagentHostInputBridge {
                     .into(),
                 source: None,
             })?;
+        // Counted before the parent can take it, so a turn that sees the
+        // questionnaire arrive also sees it open.
+        let _open = OpenQuestion::new(&self.open);
         let (response_tx, response_rx) = oneshot::channel();
         let pending = SubagentHostInputRequest {
             run_id: run_id.into(),

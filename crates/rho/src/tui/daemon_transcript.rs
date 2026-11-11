@@ -13,8 +13,9 @@ use super::{
     event_adapter::ViewModelEvent,
     program_status::ProgramStatus,
     settings_screen::SettingsUpdate,
-    App, DefaultTerminal, Entry, HerdrState, StreamKind,
+    App, DefaultTerminal, Entry, HerdrState, StreamKind, ToolEntry,
 };
+use rho_protocol::display::Presentation;
 
 impl App {
     /// Applies what the followed daemon session changed.
@@ -171,6 +172,18 @@ impl App {
                 // Held until the message under way ends, as in process: a
                 // notice such as a new title does not break into a reply.
                 DaemonView::Notice(text) => self.insert_entry(&Entry::Notice(text)),
+                DaemonView::Card(card) => {
+                    // A result reaches the model between its messages, so
+                    // what the stream still holds was said before it.
+                    self.finish_streams();
+                    self.daemon_result_delivered(&card);
+                    self.insert_entry(&Entry::Tool(ToolEntry::new(
+                        Presentation::Notification(card),
+                        /*expanded*/ false,
+                        /*image*/ None,
+                        /*started_at*/ None,
+                    )));
+                }
                 DaemonView::Error(text) => {
                     self.finish_streams();
                     self.insert_entry(&Entry::Error(text));

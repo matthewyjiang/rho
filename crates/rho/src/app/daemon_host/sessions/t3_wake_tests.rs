@@ -125,6 +125,7 @@ impl Fixture {
                 session_id: "parent".into(),
                 processes: Some(ProcessManager::new(ProcessLimits::default())),
                 workflows: WorkflowRunTracker::new(),
+                subagents: None,
             },
             wake,
         }

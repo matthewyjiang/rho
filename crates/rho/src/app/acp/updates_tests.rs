@@ -196,6 +196,7 @@ fn transcript_events_map_to_acp_updates() {
                 markdown: "**exit 1**".into(),
                 plain: "exit 1".into(),
                 tone: wire::CardTone::Error,
+                display: None,
             },
             vec![SessionUpdate::ToolCall(
                 ToolCall::new(ToolCallId::new("rho-notice-n-1"), "Job failed")
@@ -213,6 +214,7 @@ fn transcript_events_map_to_acp_updates() {
                 markdown: String::new(),
                 plain: "  ".into(),
                 tone: wire::CardTone::Success,
+                display: None,
             },
             vec![SessionUpdate::ToolCall(
                 ToolCall::new(ToolCallId::new("rho-notice-n-1"), "Job done")

@@ -55,6 +55,8 @@ mod plugins_cli;
 mod policy;
 mod prompt_content;
 mod provider_controller;
+#[cfg(all(debug_assertions, unix))]
+pub(crate) mod quiet_notice_signal;
 mod runtime_builder;
 pub(crate) mod sdk_config;
 mod session_assembly;

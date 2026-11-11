@@ -132,6 +132,9 @@ pub(super) enum DaemonView {
     /// Status-line feedback.
     Status(String),
     Notice(String),
+    /// A background result or a child's message the model was given, as
+    /// the card an in-process turn shows for it.
+    Card(Box<rho_protocol::display::NotificationCard>),
     Error(String),
 }
 
@@ -181,10 +184,11 @@ pub(super) struct DaemonEvents {
     /// What the turn's last agent message said so far, which its answer
     /// completes when chunks went missing.
     reply: String,
-    /// Whether the step that streamed `reply` went on to call tools. A
-    /// turn's answer is its last agent message, so after calls an answer
-    /// other than `reply` is a later step's whose chunks all went missing.
-    called_since_reply: bool,
+    /// Whether the step that streamed `reply` went on: it called tools, or
+    /// the model was given a background result. A turn's answer is its
+    /// last agent message, so after either an answer other than `reply` is
+    /// a later step's whose text never arrived in chunks.
+    stepped_since_reply: bool,
     /// Each open call's last running card.
     running: HashMap<WireCallId, ToolCard>,
     /// Why a turn failed, which that turn's `failed` job state shows.
@@ -313,8 +317,20 @@ impl DaemonEvents {
                 reason,
                 retry_after_ms,
             } => vec![DaemonView::Retrying(retry_hint(reason, retry_after_ms))],
-            SessionEvent::Card { title, plain, .. } => {
-                vec![DaemonView::Notice(card_text(title, &plain))]
+            SessionEvent::Card {
+                title,
+                plain,
+                display,
+                ..
+            } => {
+                // The model was given a result, so what it says next is a
+                // later step's.
+                self.open_message = None;
+                self.stepped_since_reply = true;
+                vec![match display {
+                    Some(card) => DaemonView::Card(card),
+                    None => DaemonView::Notice(card_text(title, &plain)),
+                }]
             }
             SessionEvent::Notice { text } => vec![DaemonView::Notice(text)],
             SessionEvent::TurnEnded { turn, outcome } => {
@@ -389,7 +405,7 @@ impl DaemonEvents {
         if kind == StreamKind::Assistant {
             if opens {
                 self.reply.clear();
-                self.called_since_reply = false;
+                self.stepped_since_reply = false;
             }
             self.reply.push_str(&text);
         }
@@ -406,13 +422,13 @@ impl DaemonEvents {
     fn end_messages(&mut self) {
         self.open_message = None;
         self.reply.clear();
-        self.called_since_reply = false;
+        self.stepped_since_reply = false;
     }
 
     fn tool_call(&mut self, update: ToolCallUpdate) -> Option<DaemonView> {
         // The step's text ends at its calls; the next text starts a row.
         self.open_message = None;
-        self.called_since_reply = true;
+        self.stepped_since_reply = true;
         let ToolCallUpdate {
             id,
             status,
@@ -462,7 +478,7 @@ impl DaemonEvents {
         match outcome {
             TurnOutcome::Answered { text, .. } | TurnOutcome::MaxSteps { text } => {
                 // An empty answer: the last step only called tools.
-                if self.called_since_reply && !text.is_empty() && text != self.reply {
+                if self.stepped_since_reply && !text.is_empty() && text != self.reply {
                     return vec![DaemonView::Text {
                         kind: StreamKind::Assistant,
                         text,

@@ -156,15 +156,20 @@ struct Pending {
     approvals: BTreeMap<ApprovalId, PendingApproval>,
     plans: BTreeMap<PlanApprovalId, oneshot::Sender<PlanExitDecision>>,
     questions: BTreeSet<HostInputId>,
-    /// Where each open subagent question's answer goes. Dropping one tells
-    /// the subagent nobody will answer.
-    child_questions: BTreeMap<HostInputId, ChildReply>,
+    /// Each open subagent question. Dropping one tells the subagent
+    /// nobody will answer.
+    child_questions: BTreeMap<HostInputId, ChildQuestion>,
     next_approval: u64,
     next_plan: u64,
 }
 
-/// Takes a subagent's answer to its question.
-type ChildReply = oneshot::Sender<Result<HostInputResponse, rho_sdk::Error>>;
+/// A subagent's open question.
+struct ChildQuestion {
+    /// The subagent's run, as notices name it: `<run id> (<agent id>)`.
+    asker: String,
+    /// Takes the answer.
+    reply: oneshot::Sender<Result<HostInputResponse, rho_sdk::Error>>,
+}
 
 /// Runs the turn's sources until the run's events end and no approval waits
 /// on the host. Fails only when the host reports it could not deliver
@@ -289,8 +294,9 @@ pub(super) async fn pump(sources: PumpSources<'_>, io: &mut TurnIo) -> anyhow::R
                     request,
                     response,
                 } = asked;
+                let asker = format!("{run_id} ({agent_id})");
                 io.emit(SessionEvent::Notice {
-                    text: format!("agent {run_id} ({agent_id}) asks: {}", request.title()),
+                    text: format!("agent {asker} asks: {}", request.title()),
                 });
                 io.emit(SessionEvent::QuestionAsked {
                     id: request.id().clone(),
@@ -298,7 +304,13 @@ pub(super) async fn pump(sources: PumpSources<'_>, io: &mut TurnIo) -> anyhow::R
                     request: request.clone(),
                 });
                 hooks.question_requested(session, &request);
-                pending.child_questions.insert(request.id().clone(), response);
+                pending.child_questions.insert(
+                    request.id().clone(),
+                    ChildQuestion {
+                        asker,
+                        reply: response,
+                    },
+                );
             }
 
             // Its subagent stopped waiting, as one the parent stopped does.
@@ -346,7 +358,17 @@ pub(super) async fn pump(sources: PumpSources<'_>, io: &mut TurnIo) -> anyhow::R
                 Some(TurnControl::AnswerQuestion { id, answer }) => {
                     if pending.questions.remove(&id) {
                         events.answer(id, answer);
-                    } else if let Some(reply) = pending.child_questions.remove(&id) {
+                    } else if let Some(ChildQuestion { asker, reply }) =
+                        pending.child_questions.remove(&id)
+                    {
+                        // As the in-process TUI says it.
+                        let verb = match &answer {
+                            Ok(_) => "answered",
+                            Err(_) => "cancelled",
+                        };
+                        io.emit(SessionEvent::Notice {
+                            text: format!("{verb} questionnaire for agent {asker}"),
+                        });
                         let _ = reply.send(answer.map_err(|refusal| rho_sdk::Error::Interrupted {
                             message: match refusal {
                                 HostInputRefusal::Declined => {
@@ -391,10 +413,12 @@ fn withdraw_questions(pending: &mut Pending, io: &TurnIo) {
 
 /// The pending child question whose subagent no longer waits for an
 /// answer; never resolves while every subagent waits.
-async fn abandoned_child_question(pending: &mut BTreeMap<HostInputId, ChildReply>) -> HostInputId {
+async fn abandoned_child_question(
+    pending: &mut BTreeMap<HostInputId, ChildQuestion>,
+) -> HostInputId {
     std::future::poll_fn(|context| {
-        for (id, reply) in pending.iter_mut() {
-            if reply.poll_closed(context).is_ready() {
+        for (id, question) in pending.iter_mut() {
+            if question.reply.poll_closed(context).is_ready() {
                 return std::task::Poll::Ready(id.clone());
             }
         }

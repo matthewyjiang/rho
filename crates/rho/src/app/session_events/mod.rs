@@ -233,6 +233,10 @@ fn cards(transcript: &DisplayTranscript) -> impl Iterator<Item = WireEvent> + '_
             markdown: text.markdown,
             plain: text.plain,
             tone: card_tone(row),
+            display: match row {
+                DisplayRow::Notification(card) => Some(card.clone()),
+                DisplayRow::Notice(_) => None,
+            },
         }
     })
 }
