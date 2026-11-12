@@ -3,11 +3,15 @@ use ratatui::{
     text::{Line, Span},
 };
 
+use unicode_width::UnicodeWidthStr;
+
 use super::{
     render::{truncate_one_line, wrap_line_at_whitespace},
     theme::Theme,
 };
 
+/// The column values start at, after the indent, when the label fits it
+/// with a space to spare; a longer label moves its own value right.
 const FIELD_LABEL_WIDTH: usize = 14;
 const SIDE_BY_SIDE_MIN_WIDTH: usize = 32;
 
@@ -70,14 +74,20 @@ impl CommandBlock {
             self.lines.push(Line::from(Span::styled("", self.style)));
             return;
         }
-        let label_width = FIELD_LABEL_WIDTH.min(self.width.saturating_sub(1));
+        let label_width = FIELD_LABEL_WIDTH
+            .max(label.width() + 1)
+            .min(self.width.saturating_sub(1));
         let value_start = label_width.saturating_add(2);
         if self.width >= SIDE_BY_SIDE_MIN_WIDTH && value_start < self.width {
             let mut values = wrap_line_at_whitespace(value, self.width - value_start).into_iter();
             let first = values.next().unwrap_or_default();
             self.lines.push(Line::from(vec![
                 Span::styled(
-                    format!("  {label:label_width$}"),
+                    // Pad by display width, as the column is measured.
+                    format!(
+                        "  {label}{}",
+                        " ".repeat(label_width.saturating_sub(label.width()))
+                    ),
                     self.style.add_modifier(Modifier::DIM),
                 ),
                 Span::styled(first.to_owned(), self.style),
@@ -152,3 +162,7 @@ pub(super) fn fill_lines(
         })
         .collect()
 }
+
+#[cfg(test)]
+#[path = "command_block_tests.rs"]
+mod tests;
