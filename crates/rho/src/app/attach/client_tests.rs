@@ -27,8 +27,8 @@ fn job(id: &str, kind: JobKind, parent: Option<&str>, session: Option<&str>) -> 
 
 // Covers: an id names a session by its job's id or its own; a subagent
 // run, a workflow's agent node included, by its job's id or the id of the
-// session it writes, the latest run's when several wrote it, and an
-// earlier run of that session is refused, naming the latest; a run on
+// session it writes, the run under way when several wrote it, and an
+// ended run of that session is refused, naming the one under way; a run on
 // another runtime and a workflow run's drive
 // are refused, naming the session they run in; an id no job has is taken
 // as a session id for the daemon to reopen.
@@ -43,19 +43,23 @@ fn an_id_names_a_session_or_a_run() {
             Some("parent-session"),
         ),
         job("workflow-job", JobKind::Workflow, Some("session-job"), None),
-        job(
-            "node-job",
-            JobKind::Subagent,
-            Some("workflow-job"),
-            Some("node-session"),
-        ),
-        // The node ran again in the same session.
+        // The node runs again in the same session. Both attempts began in
+        // the same second, so the list holds them in either order.
         job(
             "node-job-again",
             JobKind::Subagent,
             Some("workflow-job"),
             Some("node-session"),
         ),
+        JobSummary {
+            state: JobState::Completed,
+            ..job(
+                "node-job",
+                JobKind::Subagent,
+                Some("workflow-job"),
+                Some("node-session"),
+            )
+        },
         job("cli-job", JobKind::Subagent, Some("session-job"), None),
         job("orphan-job", JobKind::Subagent, Some("gone"), None),
     ];
@@ -65,7 +69,7 @@ fn an_id_names_a_session_or_a_run() {
         ("parent-session", session),
         (
             "node-job",
-            Err("job node-job ran before job node-job-again in the same session; attach to that one".to_owned()),
+            Err("job node-job ended, and job node-job-again now runs in the same session; attach to that one".to_owned()),
         ),
         (
             "node-session",

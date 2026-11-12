@@ -370,16 +370,23 @@ async fn run_end(
 /// a subagent job's id, or the id of the session its run writes, for the
 /// run. A session no job of the daemon's ran, such as one the TUI saved, is
 /// named by its own id, and the daemon reopens it (#1661). A session id
-/// several jobs wrote names the latest of them. A run on another
+/// several jobs wrote names the one under way, else the last listed. A run on another
 /// runtime keeps no Rho session, and a workflow run's drive has no events
 /// of its own, only its agent nodes' runs: both are refused, naming the
 /// session they run in.
 fn resolve(jobs: &[JobSummary], id: &str) -> Result<Target, AutomationExit> {
-    // The latest: a workflow node that runs again writes its session under
-    // a newer job, and the list is oldest first.
-    let Some(job) = jobs.iter().rev().find(|job| {
-        job.id.as_str() == id || job.session.as_ref().is_some_and(|s| s.as_str() == id)
-    }) else {
+    // A workflow node that runs again writes its session under another job.
+    // The one under way is the session's; with none under way, the last
+    // listed, which is the latest unless two began in the same second.
+    let wrote = |job: &&JobSummary| job.session.as_ref().is_some_and(|s| s.as_str() == id);
+    let named = jobs.iter().find(|job| job.id.as_str() == id).or_else(|| {
+        let under_way = jobs
+            .iter()
+            .filter(wrote)
+            .find(|job| job.state.in_progress());
+        under_way.or_else(|| jobs.iter().rev().find(wrote))
+    });
+    let Some(job) = named else {
         return Ok(Target::Session(SessionId::new(id)));
     };
     let why = match (job.kind, &job.session) {
@@ -391,16 +398,16 @@ fn resolve(jobs: &[JobSummary], id: &str) -> Result<Target, AutomationExit> {
             )))
         }
         (JobKind::Subagent, Some(session)) => {
-            // The session's stream is its latest run's.
-            let latest = jobs
-                .iter()
-                .rev()
-                .find(|other| other.session.as_ref() == Some(session))
-                .unwrap_or(job);
-            if latest.id != job.id {
+            // The session's stream is that of the run writing it now.
+            let writing = jobs.iter().find(|other| {
+                other.id != job.id
+                    && other.session.as_ref() == Some(session)
+                    && other.state.in_progress()
+            });
+            if let Some(writing) = writing {
                 return Err(AutomationExit::other(format!(
-                    "job {} ran before job {} in the same session; attach to that one",
-                    job.id, latest.id
+                    "job {} ended, and job {} now runs in the same session; attach to that one",
+                    job.id, writing.id
                 )));
             }
             return Ok(Target::Run {
