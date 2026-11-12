@@ -9,7 +9,8 @@ use super::{JobId, SessionWorktree};
 
 /// Remove every session worktree the daemon knows that is safe to remove,
 /// and report what it did with each one still on disk. The daemon runs the
-/// same pass when it starts and once a day.
+/// same pass a minute after it starts and once a day, there skipping
+/// sessions used within the last day.
 pub const WORKTREE_PRUNE: &str = "rho/worktree/prune";
 
 /// Params of [`WORKTREE_PRUNE`].
