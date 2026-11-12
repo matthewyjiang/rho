@@ -128,7 +128,7 @@ pub(crate) enum McpSamplingPolicy {
     /// Reject every `sampling/createMessage` and never declare the capability.
     #[default]
     Deny,
-    /// The server may ask; the user allows or refuses each request.
+    /// Accepted so a config that sets it still loads. It has no effect.
     Ask,
 }
 

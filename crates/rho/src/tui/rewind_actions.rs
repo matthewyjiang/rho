@@ -65,14 +65,15 @@ impl App {
         };
         // The session takes the setting when it opens, so one opened after
         // a change may have checkpoints the configured setting would not
-        // expect: the setting only explains an empty list.
+        // expect: the setting only explains an empty list. A config that
+        // cannot be read explains nothing.
         if checkpoints.is_empty()
-            && !self
+            && self
                 .info
                 .services
                 .config_repository
-                .load()?
-                .workspace_rewind
+                .load()
+                .is_ok_and(|config| !config.workspace_rewind)
         {
             self.set_status(
                 "workspace rewind is off; set behavior.workspace_rewind = true and start a new session",

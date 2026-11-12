@@ -114,8 +114,6 @@ pub(super) enum InlineChoicePending {
     },
 }
 
-impl InlineChoiceModal {}
-
 impl InlineChoice {
     pub(super) fn new(
         title: impl Into<String>,
