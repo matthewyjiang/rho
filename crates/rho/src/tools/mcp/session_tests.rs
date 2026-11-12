@@ -278,8 +278,9 @@ async fn refreshed_output_schema_replaces_validator_atomically() {
 
 // Covers: a server takes what it reads from the environment from its
 // session's, such as a daemon client's (#1659): a stdio server's base set,
-// caller context (#1672, #1765), and `env_from_env` on top of its config `env`,
-// nothing else of it, and a remote server's `headers_from_env`.
+// where the session's daemon is, caller context (#1672, #1765), and
+// `env_from_env` on top of its config `env`, nothing else of it, and a
+// remote server's `headers_from_env`.
 // Owner: MCP server environment
 #[cfg(unix)]
 #[test]
@@ -305,6 +306,9 @@ fn a_server_reads_its_sessions_environment() {
         ("GITHUB_TOKEN", "token"),
         ("API_TOKEN", "Bearer client"),
         ("UNRELATED", "value"),
+        // As the client spelled it, relative to its own directory.
+        ("RHO_HOME", "rho-dev"),
+        ("XDG_RUNTIME_DIR", "/run/user/client"),
         ("RHO_SESSION_DEPTH", "2"),
         (
             "RHO_SESSION_SCOPE",
@@ -318,6 +322,7 @@ fn a_server_reads_its_sessions_environment() {
         &strings(&[("MODE", "fast")]),
         &strings(&[("GITHUB_PERSONAL_ACCESS_TOKEN", "GITHUB_TOKEN")]),
         &session,
+        Some(std::path::Path::new("/srv/rho")),
     )
     .unwrap();
     let headers = super::resolve_headers(
@@ -335,6 +340,8 @@ fn a_server_reads_its_sessions_environment() {
     let expected_environment = [
         ("PATH", "/client/bin"),
         ("HOME", "/home/client"),
+        ("RHO_HOME", "/srv/rho"),
+        ("XDG_RUNTIME_DIR", "/run/user/client"),
         ("RHO_SESSION_DEPTH", "2"),
         (
             "RHO_SESSION_SCOPE",
