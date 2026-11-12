@@ -127,6 +127,11 @@ impl FileIdentity {
     }
 }
 
+/// Whether an installer can put a new executable at the daemon's path while
+/// the daemon runs. It cannot: Windows refuses to overwrite or delete the
+/// file of a running program.
+pub(crate) const REPLACEABLE_WHILE_RUNNING: bool = false;
+
 /// Nothing names the binary this process runs apart from its path, so the
 /// daemon takes the path's file at startup.
 pub(in crate::daemon) fn running_identity() -> Option<FileIdentity> {

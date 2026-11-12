@@ -21,6 +21,7 @@ mod daemon_cli;
 // #1667).
 pub(crate) mod daemon_client;
 mod daemon_host;
+pub(crate) mod daemon_install;
 mod detach;
 mod doctor_cli;
 mod doctor_daemon;

@@ -85,6 +85,24 @@ If Cargo's bin directory is not on your `PATH`, add it before running the [inter
 export PATH="$HOME/.cargo/bin:$PATH"
 ```
 
+## The daemon and services
+
+Rho runs your sessions in a per-user [daemon](/daemon) that the first `rho` command starts on demand. No install method installs a service, a login item, or a scheduled task for it, and none needs a post-install hook. The one service Rho documents is optional and yours to save: a [systemd unit or LaunchAgent](/daemon#running-as-a-service) that keeps `rho mcp serve --http` listening.
+
+`rho update` moves a running daemon to the version it installed without interrupting work, and how depends on where the install method puts that version:
+
+| Install method | Service installed | A running daemon after `rho update` |
+| --- | --- | --- |
+| Install script (`install.sh`) and release archives on macOS and Linux | None | The new binary replaces the old one at the same path. The daemon [re-executes it in place](/daemon#upgrading-in-place) once nothing would be cut short, and `rho update` waits to report the restart, or says what the daemon is waiting for. |
+| Cargo (`cargo install rho-coding-agent`) | None | As the install script. |
+| Arch `PKGBUILD` (pacman) | None. The package ships `/usr/bin/rho` and its license only. | As the install script. |
+| mise | None | mise gives each version a directory of its own, so the daemon has nothing to re-execute. `rho update` stops an idle daemon, and the next `rho` command starts the updated one. A daemon with jobs in progress keeps running the old version: run `rho daemon restart` once they finish. |
+| Scoop bucket, install script (`install.ps1`), and release archives on Windows | None | Windows does not let an installer replace the executable of a running daemon. `rho update` stops an idle daemon and then prints the update command for you to run. If the daemon has jobs in progress, run `rho daemon stop` once they finish, then the command. |
+
+The same holds when you update without `rho update`, by running the package manager or the install script yourself. On macOS and Linux a daemon whose executable was replaced upgrades itself. With mise, and on Windows, run `rho daemon restart` or `rho daemon stop` as the table says.
+
+`rho uninstall` stops the running daemon, which interrupts the turns under way, and stops and deletes the saved `rho mcp serve --http` service: `rho-mcp.service` in your systemd user directory with the links that enable it, and `~/Library/LaunchAgents/dev.rho.mcp.plist`. `rho uninstall --dry-run` lists the daemon and each service file without touching them. A service saved under another name or installed system-wide is not found, so remove that one yourself. See [`rho uninstall`](/automation-cli#rho-uninstall).
+
 ## Claude Code binary (optional)
 
 Agent definitions with `runtime: claude-cli`, and a Claude Code advisor, need [`claude-agent-acp`](https://github.com/agentclientprotocol/claude-agent-acp) on `PATH`. It is the Agent Client Protocol adapter for Claude Code and bundles its own Claude Code CLI, so a separate `claude` install is not needed. Rho does not ship or install it. It needs Node.js or Bun:

@@ -6,6 +6,7 @@ use std::{
     time::Duration,
 };
 
+use crate::app::daemon_install::{self, Installed};
 use crate::installation::{
     self, cargo_install_root_contains_crate, cargo_update_root_for_exe, InstallHint,
     ManagedInstallation, ScoopInstallScope,
@@ -87,6 +88,15 @@ impl InstallMethod {
             Self::Scoop => "Scoop",
             Self::ScoopGlobal => "Scoop (global)",
             Self::Script => "install script",
+        }
+    }
+
+    /// Where this method's update puts the new rho, which decides whether
+    /// a running daemon can re-execute it in place.
+    fn installs(self) -> Installed {
+        match self {
+            Self::Cargo | Self::Pacman | Self::Script => Installed::OverTheExecutable,
+            Self::Mise | Self::Scoop | Self::ScoopGlobal => Installed::AtAnotherPath,
         }
     }
 
@@ -194,7 +204,21 @@ pub async fn run_update(current_version: &str) -> anyhow::Result<()> {
         | InstallMethod::Script => {}
     }
 
-    run_update_command(method, &git_ref).await
+    let mut output = std::io::stdout();
+    // The daemon is a courtesy to the update, never a reason to fail it: one
+    // that could not be asked is reported and the update goes on.
+    if let Err(error) = daemon_install::make_way_for_update(&mut output).await {
+        eprintln!(
+            "warning: could not check the running rho daemon: {error:#}; run `rho daemon stop` if the installer cannot replace rho"
+        );
+    }
+    run_update_command(method, &git_ref).await?;
+    if let Err(error) = daemon_install::follow_update(method.installs(), &mut output).await {
+        eprintln!(
+            "warning: could not check the running rho daemon: {error:#}; `rho daemon restart` moves it to the updated rho"
+        );
+    }
+    Ok(())
 }
 
 async fn run_update_command(method: InstallMethod, git_ref: &str) -> anyhow::Result<()> {

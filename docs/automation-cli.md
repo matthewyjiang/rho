@@ -365,6 +365,8 @@ API-key providers are usually easier to configure interactively with `/login` in
 
 On Windows, `rho update` prints the detected update command instead of running it automatically.
 
+A running [daemon](/daemon) moves to the updated version without interrupting work. Where the update replaces the executable at its path (install script, Cargo, pacman), the daemon re-executes it once nothing would be cut short; `rho update` waits for an idle daemon to restart and reports it, and for a busy one says what it is waiting for. Where the new version lands at another path (mise) or a running daemon keeps the executable from being replaced (Windows), `rho update` stops an idle daemon so the next `rho` command starts the updated one, and tells you what to run for a busy one. See [The daemon and services](/installation#the-daemon-and-services).
+
 Set `RHO_INSTALL_METHOD` to `cargo`, `pacman`, `scoop`, `scoop-global`, or `script` to override detection.
 
 ## `rho uninstall`
@@ -372,7 +374,7 @@ Set `RHO_INSTALL_METHOD` to `cargo`, `pacman`, `scoop`, `scoop-global`, or `scri
 ```sh
 rho uninstall                  # preserve local configuration and sessions
 rho uninstall --purge          # also delete ~/.rho and its contents
-rho uninstall --purge --dry-run # preview without prompting or deleting
+rho uninstall --purge --dry-run # preview without prompting, stopping, or deleting
 ```
 
 Rho lists the exact paths it will remove and asks for confirmation with `[y/N]`.
@@ -399,6 +401,17 @@ loading, so a broken config does not block cleanup.
 The preview lists removals in execution order: data first, then the executable.
 All targets are revalidated after confirmation and before any deletion. If the
 data purge fails, the executable remains available to retry.
+
+Uninstall also stops this rho home's running [daemon](/daemon), which interrupts
+the turns under way, and removes the service saved for
+[`rho mcp serve --http`](/daemon#running-as-a-service): it asks systemd or
+launchd to stop the service and no longer start it, then deletes
+`rho-mcp.service` with the links that enable it, or `dev.rho.mcp.plist`. Both
+happen after confirmation and before anything else is removed, and they happen
+for package-managed installations too. The preview names the running daemon and
+lists each service file. If the service manager cannot be asked, as in a login
+without a user session bus, the files are still deleted and a note says to stop
+the service yourself.
 
 OS keyring entries, environment credentials, shell/PATH edits, shared `~/.agents`,
 project files, and data outside `~/.rho` remain untouched. This includes a custom

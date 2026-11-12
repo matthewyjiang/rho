@@ -1,5 +1,9 @@
 //! Conservative local uninstall. Unknown installations require manual removal.
+//! The running daemon is stopped, and a saved `rho mcp serve --http` service
+//! is stopped and its files removed, before anything they run from goes.
 
+use crate::app::daemon_install::{self, RunningDaemon};
+use crate::daemon::{find_services, ServiceFiles, ServiceManager};
 use crate::installation::{ManagedInstallation, ScoopInstallScope};
 use anyhow::{bail, Context, Result};
 use std::{
@@ -21,8 +25,18 @@ struct Paths {
     mise_tool: fn(&Path) -> Result<String>,
 }
 
-/// Preview local removal and ask for confirmation. Never runs a package manager.
-pub(crate) fn run(purge: bool, dry_run: bool) -> Result<()> {
+/// What uninstall found running or saved besides the installation: the
+/// daemon to stop and the service files to remove.
+#[derive(Default)]
+struct Found {
+    daemon: Option<RunningDaemon>,
+    services: Vec<ServiceFiles>,
+}
+
+/// Preview local removal and ask for confirmation, then stop the saved
+/// service and the daemon before removing anything they run from. Never
+/// runs a package manager.
+pub(crate) async fn run(purge: bool, dry_run: bool) -> Result<()> {
     let paths = Paths {
         home: fs::canonicalize(
             crate::paths::home_dir().context("could not determine home directory")?,
@@ -36,13 +50,58 @@ pub(crate) fn run(purge: bool, dry_run: bool) -> Result<()> {
         custom_data: std::env::var_os("RHO_HOME").map(PathBuf::from),
         mise_tool: crate::installation::mise_tool,
     };
-    run_with_io(
+    let found = Found {
+        daemon: daemon_install::running_daemon(),
+        services: find_services(
+            &paths.home,
+            std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from),
+        ),
+    };
+    let Some(plan) = review(
         &paths,
+        &found,
         purge,
         dry_run,
         &mut io::stdin().lock(),
         &mut io::stdout().lock(),
-    )
+    )?
+    else {
+        return Ok(());
+    };
+    // The service first: its server would start the daemon again.
+    remove_services(&found.services, &mut io::stdout().lock())?;
+    if found.daemon.is_some() {
+        daemon_install::stop_for_uninstall().await?;
+    }
+    execute(plan, &mut io::stdout().lock(), |path, kind| match kind {
+        TargetKind::DataDirectory => fs::remove_dir_all(path),
+        TargetKind::Executable => fs::remove_file(path),
+    })
+}
+
+/// Stops each saved service through its manager, then deletes its files. A
+/// manager that could not be asked does not keep the files: the note says
+/// what may still run.
+fn remove_services(services: &[ServiceFiles], output: &mut impl Write) -> Result<()> {
+    for service in services {
+        if let Err(error) = service.stop() {
+            writeln!(
+                output,
+                "note: could not stop the service {:?} ({error}); stop it yourself if it still runs",
+                service.definition
+            )?;
+        }
+        service.delete().with_context(|| {
+            format!(
+                "could not remove the service files of {:?}",
+                service.definition
+            )
+        })?;
+        for path in service.paths() {
+            writeln!(output, "removed {path:?}")?;
+        }
+    }
+    Ok(())
 }
 
 fn managed_instruction(managed: &ManagedInstallation, paths: &Paths) -> String {
@@ -84,13 +143,17 @@ fn confirm(purge: bool, input: &mut impl BufRead, output: &mut impl Write) -> Re
     }
 }
 
-fn run_with_io(
+/// Prints what uninstalling does and asks for confirmation. Returns the
+/// plan to carry out, or `None` when there is nothing to do, on a dry run,
+/// and when the user declined.
+fn review(
     paths: &Paths,
+    found: &Found,
     purge: bool,
     dry_run: bool,
     input: &mut impl BufRead,
     output: &mut impl Write,
-) -> Result<()> {
+) -> Result<Option<RemovalPlan>> {
     let plan = plan(paths, purge)?;
     let data = paths.home.join(".rho");
     writeln!(output, "running executable: {:?}", paths.executable)?;
@@ -116,7 +179,32 @@ fn run_with_io(
         writeln!(output, "RHO_HOME is set to {custom_data:?}; only {data:?} is eligible for purge, no additional custom data path is removed")?;
     }
     writeln!(output, "log out of providers before uninstalling or remove keyring entries with your OS credential manager; credentials are not revoked remotely")?;
+    match found.daemon {
+        Some(RunningDaemon { pid: Some(pid) }) => writeln!(
+            output,
+            "the rho daemon is running (pid {pid}); it will be stopped, which interrupts the turns under way"
+        )?,
+        Some(RunningDaemon { pid: None }) => writeln!(
+            output,
+            "the rho daemon is running; it will be stopped, which interrupts the turns under way"
+        )?,
+        None => {}
+    }
     writeln!(output, "paths to remove:")?;
+    for service in &found.services {
+        let manager = match service.manager {
+            ServiceManager::Systemd => "systemd user unit",
+            ServiceManager::Launchd => "launchd agent",
+        };
+        for link in &service.enabled_by {
+            writeln!(output, "  {link:?} (link that enables the {manager})")?;
+        }
+        writeln!(
+            output,
+            "  {:?} ({manager}; the service is stopped first)",
+            service.definition
+        )?;
+    }
     for target in &plan.removals {
         let kind = match target.kind {
             TargetKind::DataDirectory => {
@@ -126,22 +214,21 @@ fn run_with_io(
         };
         writeln!(output, "  {:?} ({kind})", target.path)?;
     }
-    if plan.removals.is_empty() {
+    if plan.removals.is_empty() && found.services.is_empty() {
         writeln!(output, "  none")?;
-        return Ok(());
+        if found.daemon.is_none() {
+            return Ok(None);
+        }
     }
     if dry_run {
-        writeln!(output, "dry run: nothing removed")?;
-        return Ok(());
+        writeln!(output, "dry run: nothing stopped or removed")?;
+        return Ok(None);
     }
     if !confirm(purge, input, output)? {
-        writeln!(output, "uninstall cancelled; nothing removed")?;
-        return Ok(());
+        writeln!(output, "uninstall cancelled; nothing stopped or removed")?;
+        return Ok(None);
     }
-    execute(plan, output, |path, kind| match kind {
-        TargetKind::DataDirectory => fs::remove_dir_all(path),
-        TargetKind::Executable => fs::remove_file(path),
-    })
+    Ok(Some(plan))
 }
 
 /// Revalidate every target before any deletion. The remover seam allows testing

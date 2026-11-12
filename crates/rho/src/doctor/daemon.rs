@@ -8,11 +8,7 @@ use rho_protocol::{ProtocolVersion, RestartCost, VersionFix, VersionMismatch};
 
 use super::report::{DoctorCheck, DoctorCheckId, DoctorStatus};
 
-/// The systemd user unit `docs/daemon.md` has you save for
-/// `rho mcp serve --http`, the one process that needs a service.
-pub(crate) const SYSTEMD_UNIT: &str = "rho-mcp.service";
-/// The launchd label of the same service on macOS.
-pub(crate) const LAUNCHD_LABEL: &str = "dev.rho.mcp";
+use crate::daemon::{LAUNCHD_LABEL, SYSTEMD_UNIT};
 
 const SERVICE_DOCS: &str = "https://matthewyjiang.github.io/rho/daemon#running-as-a-service";
 

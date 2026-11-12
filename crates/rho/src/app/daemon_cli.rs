@@ -422,7 +422,8 @@ fn status_text(status: &DaemonStatus) -> String {
     )
 }
 
-async fn stop(paths: &DaemonPaths) -> anyhow::Result<()> {
+/// `rho daemon stop`: asks the daemon to stop and waits until it exited.
+pub(super) async fn stop(paths: &DaemonPaths) -> anyhow::Result<()> {
     let pid = match daemon::connect(paths, ConnectAs::Command.hello()).await {
         Ok(connection) => {
             connection

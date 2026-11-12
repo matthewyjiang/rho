@@ -16,7 +16,8 @@
 //! restart`, is in [`upgrade`]; what a client of another version hears at
 //! the handshake is in [`skew`]; what a daemon takes from the client that
 //! starts it, and each session's project trust, is in [`identity`]; what
-//! `rho doctor` reports about it is in [`doctor`].
+//! `rho doctor` reports about it is in [`doctor`]; what `rho update` and
+//! `rho uninstall` do about it is in [`install`].
 
 use std::{
     fs::File,
@@ -93,6 +94,9 @@ mod grants;
 
 #[path = "support/daemon_doctor.rs"]
 mod doctor;
+
+#[path = "support/daemon_install.rs"]
+mod install;
 
 #[path = "support/key_checking_provider.rs"]
 mod key_checking_provider;
