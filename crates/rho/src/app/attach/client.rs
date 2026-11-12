@@ -151,7 +151,18 @@ async fn follow(id: &str, view: &mut View, lines: Lines) -> Result<(), Automatio
         .jobs;
     let target = resolve(&jobs, id)?;
     let session = target.session().clone();
-    let response = attach_session(&client, &target, None).await?;
+    let response = match (attach_session(&client, &target, None).await, &target) {
+        (Ok(response), _) => response,
+        // A run that ended before it opened its session, as one cancelled
+        // while queued, left nothing to follow or replay.
+        (Err(refused), Target::Run { job, .. }) => {
+            return match run_end(&client, job).await? {
+                Some(end) => end,
+                None => Err(refused),
+            }
+        }
+        (Err(refused), Target::Session(_)) => return Err(refused),
+    };
     view.started(&session, &response.workspace)?;
     let (mut follow, ending) = Follow::attached(&response);
     if let Some(ending) = ending {
@@ -210,7 +221,13 @@ async fn follow(id: &str, view: &mut View, lines: Lines) -> Result<(), Automatio
                         // The run ended before this followed it: what came
                         // was its session as saved, with no turn's end.
                         DetachReason::NotLoaded => match &target {
-                            Target::Run { job, .. } => return run_ended(&client, job).await,
+                            Target::Run { job, .. } => {
+                                return run_end(&client, job).await?.unwrap_or_else(|| {
+                                    Err(AutomationExit::other(
+                                        "the rho daemon detached this client",
+                                    ))
+                                })
+                            }
                             Target::Session(_) => {
                                 return Err(AutomationExit::other(
                                     "the rho daemon detached this client",
@@ -300,8 +317,11 @@ async fn attach_session(
 }
 
 /// The exit for a run that had ended by the time it was followed, by where
-/// its job `job` stands.
-async fn run_ended(client: &Client, job: &JobId) -> Result<(), AutomationExit> {
+/// its job `job` stands; `None` while the run is still under way.
+async fn run_end(
+    client: &Client,
+    job: &JobId,
+) -> Result<Option<Result<(), AutomationExit>>, AutomationExit> {
     let jobs = client
         .request::<JobList>(&JobListParams {})
         .await
@@ -309,31 +329,36 @@ async fn run_ended(client: &Client, job: &JobId) -> Result<(), AutomationExit> {
             AutomationExit::other(format!("could not list the daemon's jobs: {error}"))
         })?
         .jobs;
-    match jobs.iter().find(|listed| &listed.id == job) {
+    let ended = |how: &str| Some(Err(AutomationExit::other(format!("job {job}'s run {how}"))));
+    Ok(match jobs.iter().find(|listed| &listed.id == job) {
+        Some(listed) if listed.state.in_progress() => None,
         Some(JobSummary {
             state: JobState::Completed,
             ..
-        }) => Ok(()),
+        }) => Some(Ok(())),
+        Some(JobSummary {
+            state: JobState::Cancelled,
+            ..
+        }) => ended("was cancelled"),
         Some(JobSummary {
             error: Some(error), ..
-        }) => Err(AutomationExit::other(format!(
-            "job {job}'s run failed: {error}"
-        ))),
-        Some(_) | None => Err(AutomationExit::other(format!(
-            "job {job}'s run ended without completing"
-        ))),
-    }
+        }) => ended(&format!("failed: {error}")),
+        Some(_) | None => ended("ended without completing"),
+    })
 }
 
 /// What `id` names: a session job's id, or a session id, for its session;
 /// a subagent job's id, or the id of the session its run writes, for the
 /// run. A session no job of the daemon's ran, such as one the TUI saved, is
-/// named by its own id, and the daemon reopens it (#1661). A run on another
+/// named by its own id, and the daemon reopens it (#1661). A session id
+/// several jobs wrote names the latest of them. A run on another
 /// runtime keeps no Rho session, and a workflow run's drive has no events
 /// of its own, only its agent nodes' runs: both are refused, naming the
 /// session they run in.
 fn resolve(jobs: &[JobSummary], id: &str) -> Result<Target, AutomationExit> {
-    let Some(job) = jobs.iter().find(|job| {
+    // The latest: a workflow node that runs again writes its session under
+    // a newer job, and the list is oldest first.
+    let Some(job) = jobs.iter().rev().find(|job| {
         job.id.as_str() == id || job.session.as_ref().is_some_and(|s| s.as_str() == id)
     }) else {
         return Ok(Target::Session(SessionId::new(id)));

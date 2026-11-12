@@ -27,7 +27,8 @@ fn job(id: &str, kind: JobKind, parent: Option<&str>, session: Option<&str>) -> 
 
 // Covers: an id names a session by its job's id or its own; a subagent
 // run, a workflow's agent node included, by its job's id or the id of the
-// session it writes; a run on another runtime and a workflow run's drive
+// session it writes, the latest run's when several wrote it; a run on
+// another runtime and a workflow run's drive
 // are refused, naming the session they run in; an id no job has is taken
 // as a session id for the daemon to reopen.
 // Owner: rho attach id resolution (unit).
@@ -47,6 +48,13 @@ fn an_id_names_a_session_or_a_run() {
             Some("workflow-job"),
             Some("node-session"),
         ),
+        // The node ran again in the same session.
+        job(
+            "node-job-again",
+            JobKind::Subagent,
+            Some("workflow-job"),
+            Some("node-session"),
+        ),
         job("cli-job", JobKind::Subagent, Some("session-job"), None),
         job("orphan-job", JobKind::Subagent, Some("gone"), None),
     ];
@@ -58,8 +66,14 @@ fn an_id_names_a_session_or_a_run() {
     let cases = [
         ("session-job", session.clone()),
         ("parent-session", session),
-        ("node-job", node.clone()),
-        ("node-session", node),
+        ("node-job", node),
+        (
+            "node-session",
+            Ok(Target::Run {
+                job: JobId::new("node-job-again"),
+                session: SessionId::new("node-session"),
+            }),
+        ),
         (
             "workflow-job",
             Err("job workflow-job drives a workflow run, whose events are its agent nodes' jobs'; it runs in session parent-session".to_owned()),
