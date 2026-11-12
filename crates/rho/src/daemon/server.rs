@@ -12,6 +12,7 @@ use std::{
 };
 
 use rho_protocol::{BuildId, DaemonInfo, FrameError, Service, PROTOCOL_VERSION};
+use rho_sdk::CancellationToken;
 use tokio::task::JoinSet;
 
 use super::{
@@ -211,6 +212,10 @@ impl BoundDaemon {
             build: reported_build(),
         });
         let mut connections = JoinSet::new();
+        // Ends the connections, once the listener is closed or held. A
+        // client reconnects as soon as its connection ends, so one that
+        // ended first could reach a listener this daemon is about to close.
+        let closing = CancellationToken::new();
         let result = loop {
             tokio::select! {
                 // First, so a connection made once shutdown was requested is
@@ -223,13 +228,13 @@ impl BoundDaemon {
                     Ok(stream) => {
                         let service = Arc::clone(&service);
                         let info = Arc::clone(&info);
-                        let shutdown = shutdown.clone();
+                        let closing = closing.clone();
                         connections.spawn(async move {
                             let served = rho_protocol::serve_connection(
                                 stream,
                                 &info,
                                 service,
-                                shutdown.requested(),
+                                closing.cancelled(),
                             )
                             .await;
                             match served {
@@ -273,8 +278,9 @@ impl BoundDaemon {
                 None
             }
         };
-        // Connections stop reading once shutdown is requested, so this waits
-        // only for the requests they have already read.
+        // Connections stop reading now, so this waits only for the requests
+        // they have already read.
+        closing.cancel();
         while connections.join_next().await.is_some() {}
         tracing::info!("rho daemon stopped serving");
         match listener {
