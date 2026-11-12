@@ -494,7 +494,7 @@ pub struct SessionBootstrap {
     /// first turn once the composer is free.
     pub startup_prompt: Option<String>,
     /// The daemon session this TUI follows instead of running one in
-    /// process (`RHO_TUI_DAEMON=1`, #1667); `None` on the in-process path.
+    /// process (#1667); `None` on the in-process path (`RHO_TUI_DAEMON=0`).
     pub(crate) daemon: Option<DaemonSession>,
 }
 

@@ -1,4 +1,4 @@
-//! Opens the daemon session a `RHO_TUI_DAEMON=1` launch follows (#1667),
+//! Opens the daemon session an interactive launch follows (#1667),
 //! from the CLI flags the in-process path would read.
 //!
 //! The daemon reads config for the session's workspace itself, so the
@@ -72,7 +72,7 @@ pub(super) async fn open(
     if config_path.is_some() {
         // The daemon's sessions share the config in its Rho home.
         anyhow::bail!(
-            "--config is not supported with RHO_TUI_DAEMON=1: the daemon reads the config in its Rho home; set RHO_HOME to run on another"
+            "--config is not supported in a daemon session: the daemon reads the config in its Rho home; set RHO_HOME to run on another, or RHO_TUI_DAEMON=0 to keep this session in process"
         );
     }
 

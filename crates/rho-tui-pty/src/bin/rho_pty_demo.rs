@@ -193,6 +193,8 @@ fn capture_demo(binary: &Path) -> Result<DemoCapture> {
         .with_context(|| format!("failed to write demo models {}", models_path.display()))?;
 
     let mut plan = RhoLaunchPlan::matrix(binary, &home, DEMO_SIZE);
+    // The fixture seeds its files where the session's tools then read them.
+    plan = plan.with_env("RHO_TUI_FIXTURE_WORKSPACE", workspace.display().to_string());
     plan.cwd = workspace;
     // Pin the header version at the capture input so release bumps do not force
     // proof-plate regen and the plate does not show a placeholder 0.0.0.

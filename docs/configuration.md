@@ -110,7 +110,7 @@ The TUI reads both files at startup. Following a daemon session, it hands its `c
 
 ## Changing settings
 
-`/config` changes settings through the [daemon](/daemon#configuration-changes), so it works in a TUI that follows a daemon session (`RHO_TUI_DAEMON=1`). In an in-process TUI, `/config` and `/advisor` say they need the daemon; edit the files instead.
+`/config` changes settings through the [daemon](/daemon#configuration-changes), so it works in a TUI that follows a daemon session, the default on Linux and macOS. In an in-process TUI (Windows, or `RHO_TUI_DAEMON=0`), `/config` and `/advisor` say they need the daemon; edit the files instead.
 
 The root page lists the session's own options (model, reasoning, fast mode, permission mode), then one row per settings category, then the theme and **Clear prompt history**, which stay local to this terminal. Type to find a row, Enter to open it, Esc to go back.
 

@@ -1,5 +1,5 @@
 //! The daemon session the TUI follows instead of running one in process
-//! (#1667, behind `RHO_TUI_DAEMON=1`; see `app/interactive.rs`).
+//! (#1667, the default on Unix; see `app/interactive.rs`).
 //!
 //! [`DaemonSession::open`] opens or resumes the session on a daemon
 //! connection of its own (`app::daemon_client`, which starts the daemon

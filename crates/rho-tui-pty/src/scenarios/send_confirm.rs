@@ -59,7 +59,7 @@ impl SessionHost {
 
     fn launch(self, plan: crate::env::RhoLaunchPlan) -> crate::env::RhoLaunchPlan {
         match self {
-            Self::InProcess => plan,
+            Self::InProcess => plan.with_env("RHO_TUI_DAEMON", "0"),
             #[cfg(unix)]
             Self::Daemon => plan.with_env("RHO_TUI_DAEMON", "1"),
         }

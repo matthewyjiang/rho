@@ -59,7 +59,7 @@ enum SessionHost {
 impl SessionHost {
     fn launch(self, plan: RhoLaunchPlan) -> RhoLaunchPlan {
         match self {
-            Self::InProcess => plan,
+            Self::InProcess => plan.with_env("RHO_TUI_DAEMON", "0"),
             Self::Daemon => plan.with_env("RHO_TUI_DAEMON", "1"),
         }
     }

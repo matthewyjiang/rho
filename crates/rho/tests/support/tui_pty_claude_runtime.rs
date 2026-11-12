@@ -46,7 +46,7 @@ fn launch_on(host: Host, home: &IsolatedHome, path: String, rows: u16, name: &st
     )
     .with_env("PATH", path);
     match host {
-        Host::InProcess => {}
+        Host::InProcess => plan = plan.with_env("RHO_TUI_DAEMON", "0"),
         Host::Daemon => plan = plan.with_env("RHO_TUI_DAEMON", "1"),
     }
     let mut harness = PtyHarness::spawn_named(&plan, name).unwrap();

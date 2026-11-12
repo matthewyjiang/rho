@@ -178,7 +178,7 @@ impl App {
     /// `/name` changes settings, which only the daemon saves.
     pub(super) fn needs_daemon(&mut self, name: &str) {
         let notice = if cfg!(unix) {
-            format!("/{name} needs the rho daemon: start rho with RHO_TUI_DAEMON=1")
+            format!("/{name} needs the rho daemon: start rho without RHO_TUI_DAEMON=0")
         } else {
             format!("/{name} needs the rho daemon, which does not run on this platform yet; edit the settings files instead")
         };
@@ -189,7 +189,7 @@ impl App {
     /// Says that the daemon's session does not offer the prompt command
     /// `/name`.
     pub(super) fn daemon_command_unavailable(&mut self, name: &str) {
-        let notice = format!("/{name} is not available with RHO_TUI_DAEMON yet");
+        let notice = format!("/{name} is not available in a daemon session yet");
         self.insert_entry(&Entry::Notice(notice.clone()));
         self.set_status(notice);
     }

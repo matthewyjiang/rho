@@ -37,12 +37,13 @@ pub(super) struct Startup<'a> {
     pub(super) added_dirs: crate::added_dirs::AddedDirs,
 }
 
-// The daemon session a `RHO_TUI_DAEMON=1` launch follows.
+// The daemon session an interactive launch follows.
 #[path = "interactive_daemon.rs"]
 mod daemon;
 
-/// Hidden switch (#1667) that hosts the interactive session in the daemon,
-/// which the TUI follows, instead of in this process. Read once per launch.
+/// Overrides where the interactive session runs (#1667): `0` keeps it in
+/// this process, `1` hosts it in the daemon, which the TUI follows. Read
+/// once per launch.
 const DAEMON_FLAG: &str = "RHO_TUI_DAEMON";
 
 /// Where an interactive launch's session runs.
@@ -52,12 +53,20 @@ enum SessionHost {
 }
 
 impl SessionHost {
-    /// `Daemon` when [`DAEMON_FLAG`] is `1`.
-    fn from_env() -> Self {
-        if std::env::var_os(DAEMON_FLAG).is_some_and(|value| value == "1") {
-            Self::Daemon
-        } else {
-            Self::InProcess
+    /// The daemon wherever one runs; Windows has none yet (#1778).
+    const PLATFORM_DEFAULT: Self = if cfg!(unix) {
+        Self::Daemon
+    } else {
+        Self::InProcess
+    };
+
+    /// The host `flag`, the value of [`DAEMON_FLAG`], asks for: `0` and `1`
+    /// choose one, and anything else leaves the platform's default.
+    fn from_flag(flag: Option<&std::ffi::OsStr>) -> Self {
+        match flag.and_then(std::ffi::OsStr::to_str) {
+            Some("0") => Self::InProcess,
+            Some("1") => Self::Daemon,
+            _ => Self::PLATFORM_DEFAULT,
         }
     }
 }
@@ -127,10 +136,10 @@ async fn run_inner(startup: Startup<'_>) -> anyhow::Result<()> {
         added_dirs,
     } = startup;
     let startup_session = StartupSession::from_cli(cli, &cwd)?;
-    // The one read of the hidden #1667 seam: the session runs in the daemon,
-    // which the TUI follows, or in this process. T6 deletes the flag with
+    // The one read of the #1667 seam: the session runs in the daemon, which
+    // the TUI follows, or in this process. T6 deletes the flag with
     // `InteractiveRuntime` and `tui/prompt_turn.rs`.
-    let daemon = match SessionHost::from_env() {
+    let daemon = match SessionHost::from_flag(std::env::var_os(DAEMON_FLAG).as_deref()) {
         SessionHost::InProcess => None,
         SessionHost::Daemon => {
             // Before the daemon builds the session's options from the cache.
