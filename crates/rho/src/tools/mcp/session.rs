@@ -659,9 +659,9 @@ async fn refresh_tools(maintenance: &SessionMaintenance) {
     maintenance.live.record_tool_changes(added, removed);
 }
 
-/// Gives a stdio server the base set from `environment` and the session's
-/// caller context, then its config's `env`, then its `env_from_env` read from
-/// `environment`.
+/// Gives a stdio server the base set from `environment`, where the session's
+/// daemon is, and the session's caller context, then its config's `env`,
+/// then its `env_from_env` read from `environment`.
 fn apply_stdio_environment(
     command: &mut tokio::process::Command,
     env: &BTreeMap<String, String>,
@@ -669,10 +669,15 @@ fn apply_stdio_environment(
     environment: &Ambient,
 ) -> anyhow::Result<()> {
     environment.apply_base(command);
-    // A `rho mcp serve` registered as a session's server starts from the
-    // session's depth and scope, so its caps hold across hops (#1672). Each
-    // call then carries the session's current ones (#1765).
-    for name in crate::caller_context::ENV_NAMES {
+    // A `rho mcp serve` registered as a session's server reaches the daemon
+    // the session's client reached, not the one of the default home or
+    // runtime directory, and starts from the session's depth and scope, so
+    // its caps hold across hops (#1672). Each call then carries the
+    // session's current ones (#1765).
+    let names = crate::daemon::DAEMON_LOCATION_ENV
+        .into_iter()
+        .chain(crate::caller_context::ENV_NAMES);
+    for name in names {
         if let Some(value) = environment.read_os(name) {
             command.env(name, value);
         }

@@ -15,6 +15,12 @@ use sha2::{Digest, Sha256};
 
 use super::platform::{self, DaemonPathError, Endpoint};
 
+/// The variables besides `HOME` that decide which daemon a client reaches:
+/// `RHO_HOME` picks the home, and on Unix `XDG_RUNTIME_DIR` the directory
+/// of its socket (see [`DaemonPaths::resolve`]). A process given a client's
+/// values reaches that client's daemon.
+pub(crate) const DAEMON_LOCATION_ENV: [&str; 2] = ["RHO_HOME", "XDG_RUNTIME_DIR"];
+
 /// Every file the daemon and its clients use.
 ///
 /// [`DaemonPaths::resolve`] is pure: it takes the home's canonical path from

@@ -42,7 +42,7 @@ pub(crate) use lock::{
     acquire as acquire_lock, holder as lock_holder, terminate_recorded_daemon, wait_until_released,
     DaemonLock, LockHolder,
 };
-pub(crate) use paths::{real_home, DaemonPaths, SocketFound};
+pub(crate) use paths::{real_home, DaemonPaths, SocketFound, DAEMON_LOCATION_ENV};
 // Named outside this module only by the Unix tests of what `rho doctor`
 // reports.
 #[cfg(all(test, unix))]

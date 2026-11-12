@@ -103,7 +103,7 @@ command = "rho"
 args = ["mcp", "serve"]
 ```
 
-A rho session starts its stdio servers with a [sanitized environment](/integrations/mcp#stdio-servers), so the sessions such a server starts get that environment too. List the variables their tools need in the server's `env_from_env`.
+A rho session starts its stdio servers with a [sanitized environment](/integrations/mcp#stdio-servers), so the sessions such a server starts get that environment too. List the variables their tools need in the server's `env_from_env`. The session passes on its `RHO_HOME` and `XDG_RUNTIME_DIR`, so the server reaches the session's own daemon without listing them.
 
 Pass `--max-depth` and `--max-sessions` after `serve` to change the [limits](#limits).
 
@@ -129,7 +129,7 @@ this server's caller has read access; `new` needs write
 rho mcp serve --http 127.0.0.1:8765
 ```
 
-The server prints where it listens, `rho mcp serve listening on http://127.0.0.1:8765/mcp`, and serves MCP's streamable HTTP transport at `/mcp`. Port `0` picks a free port.
+The server prints where it listens on stderr, `rho mcp serve listening on http://127.0.0.1:8765/mcp`, and serves MCP's streamable HTTP transport at `/mcp`. Port `0` picks a free port.
 
 It binds a loopback address only and refuses any other, so nothing off the machine reaches it unless you set up a tunnel, such as an SSH forward or a tunnel service, to that address. Run it under a service manager to keep it listening; [Running as a service](/daemon#running-as-a-service) has a systemd unit and a launchd agent.
 
