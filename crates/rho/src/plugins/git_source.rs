@@ -21,18 +21,6 @@ use super::{contain, state::GitRecord};
 /// URL prefixes `git` may fetch from. Other schemes are rejected.
 const REMOTE_PREFIXES: &[&str] = &["https://", "http://", "ssh://", "git://", "file://", "git@"];
 
-/// Inherited variables that would point `git` at another repository instead
-/// of the temporary checkout (for example when Rho runs inside a git hook).
-const GIT_LOCATION_ENV: &[&str] = &[
-    "GIT_DIR",
-    "GIT_WORK_TREE",
-    "GIT_INDEX_FILE",
-    "GIT_OBJECT_DIRECTORY",
-    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-    "GIT_COMMON_DIR",
-    "GIT_NAMESPACE",
-];
-
 /// Hosts whose browser links parse as `<owner>/<repo>[/tree/<ref>[/<path>]]`.
 const GITHUB_HOSTS: &[&str] = &["github.com", "www.github.com"];
 
@@ -389,7 +377,7 @@ impl Git<'_> {
     /// Run `git -C <repo> <args>` and return trimmed stdout.
     fn run(&self, args: &[&str]) -> anyhow::Result<String> {
         let mut command = Command::new("git");
-        for name in GIT_LOCATION_ENV {
+        for name in crate::git::LOCATION_ENV {
             command.env_remove(name);
         }
         let output = command

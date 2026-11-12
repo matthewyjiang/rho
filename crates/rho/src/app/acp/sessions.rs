@@ -330,6 +330,7 @@ impl Adapter {
                 setup: setup.clone(),
                 parent: None,
                 grant: None,
+                worktree: false,
             })
             .await?;
         self.open(created.session, setup, Show::Skip).await
