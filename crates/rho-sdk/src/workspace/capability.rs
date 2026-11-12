@@ -289,13 +289,28 @@ impl ProcessOutputLimits {
 }
 
 /// Complete, structured process facts presented to policy and approval handlers.
-#[derive(Clone, PartialEq, Eq)]
+///
+/// Equality ignores [`Self::requested_command`]: approval identity, including
+/// "Allow for session", is the process that runs, not the text that led to it.
+#[derive(Clone)]
 pub struct ProcessExecution {
     working_directory: PathBuf,
     invocation: ProcessInvocation,
     environment: ProcessEnvironment,
     output_limits: ProcessOutputLimits,
+    requested_command: Option<String>,
 }
+
+impl PartialEq for ProcessExecution {
+    fn eq(&self, other: &Self) -> bool {
+        self.working_directory == other.working_directory
+            && self.invocation == other.invocation
+            && self.environment == other.environment
+            && self.output_limits == other.output_limits
+    }
+}
+
+impl Eq for ProcessExecution {}
 
 impl ProcessExecution {
     pub fn new(
@@ -309,7 +324,16 @@ impl ProcessExecution {
             invocation,
             environment,
             output_limits,
+            requested_command: None,
         }
+    }
+
+    /// Records the command the model asked for when the host rewrote it into
+    /// the invocation that runs, such as `git status` run as `rtk git status`.
+    /// Leave it unset when nothing was rewritten.
+    pub fn with_requested_command(mut self, command: impl Into<String>) -> Self {
+        self.requested_command = Some(command.into());
+        self
     }
 
     pub fn working_directory(&self) -> &Path {
@@ -327,6 +351,12 @@ impl ProcessExecution {
     pub fn output_limits(&self) -> ProcessOutputLimits {
         self.output_limits
     }
+
+    /// The command the model asked for, present only when the host rewrote it.
+    /// Informational: policy and approval act on [`Self::invocation`].
+    pub fn requested_command(&self) -> Option<&str> {
+        self.requested_command.as_deref()
+    }
 }
 
 impl fmt::Debug for ProcessExecution {
@@ -337,6 +367,7 @@ impl fmt::Debug for ProcessExecution {
             .field("invocation", &self.invocation)
             .field("environment", &self.environment)
             .field("output_limits", &self.output_limits)
+            .field("requested_command", &self.requested_command)
             .finish()
     }
 }

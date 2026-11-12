@@ -9,7 +9,10 @@ mod unix {
     };
 
     use pretty_assertions::assert_eq;
-    use rho_sdk::hooks::{testing::RecordingObserver, HookEventKind, HookPayload, HookToolStatus};
+    use rho_sdk::hooks::{
+        testing::RecordingObserver, HookDecision, HookEventKind, HookGateFuture, HookPayload,
+        HookToolStatus, PreToolUseGate, PreToolUseRequest,
+    };
     use rho_sdk::{
         model::{ContentBlock, ModelIdentity, ModelResponse, ToolCall},
         provider::{ScriptedProvider, ScriptedTurn},
@@ -138,7 +141,9 @@ mod unix {
     }
 
     // Covers: with RTK on, the shell must rewrite before authorization, so the
-    // approved process is the rewritten one that runs and the run is recorded
+    // approved process is the rewritten one that runs, `before_tool_use` hooks
+    // see both it and the command the model asked for (absent when nothing
+    // was rewritten, #1647), and the run is recorded
     // for `rtk discover`, under the `CLAUDE_CONFIG_DIR` of the environment
     // the command runs in; with RTK unavailable, or `RTK_DISABLED=1` in that
     // environment, nothing is rewritten or recorded. RTK was silently off
@@ -163,12 +168,18 @@ mod unix {
             (available, Some("0"), rewritten, "rewritten", 1),
         ] {
             let outcome = run_with_fake_rtk(script, original, disabled).await;
+            let hook_commands = if expected_command == original {
+                json!({ "shell_command": original })
+            } else {
+                json!({ "shell_command": expected_command, "requested_command": original })
+            };
             assert_eq!(
                 outcome,
                 FakeRtkOutcome {
                     // The card shows what the model asked for.
                     started_command: Some(original.to_owned()),
                     approved_command: Some(expected_command.to_owned()),
+                    hook_commands,
                     output: expected_output.to_owned(),
                     recorded_commands: vec![expected_command.to_owned(); expected_records],
                 },
@@ -181,6 +192,8 @@ mod unix {
     struct FakeRtkOutcome {
         started_command: Option<String>,
         approved_command: Option<String>,
+        /// The command fields of the `before_tool_use` capability, as hooks read them.
+        hook_commands: serde_json::Value,
         output: String,
         recorded_commands: Vec<String>,
     }
@@ -232,6 +245,7 @@ mod unix {
         let approvals = Arc::new(ApproveAndRecord {
             requests: Mutex::new(Vec::new()),
         });
+        let gate = Arc::new(RecordingGate::default());
         let runtime = Rho::builder()
             .provider(provider)
             .workspace(Workspace::new(root.path()).unwrap())
@@ -241,6 +255,7 @@ mod unix {
                     .require_process_approval(),
             )
             .approval_handler_shared(approvals.clone())
+            .pre_tool_gate_shared(gate.clone())
             .tool(SdkShellTool::bash(
                 ShellToolOptions::new()
                     .environment(environment)
@@ -286,11 +301,40 @@ mod unix {
                     .collect::<Vec<_>>()
             })
             .collect();
+        let hook_commands = {
+            let envelopes = gate
+                .envelopes
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let capability = &envelopes[0]["payload"]["capability"];
+            ["shell_command", "requested_command"]
+                .into_iter()
+                .filter_map(|field| Some((field.to_owned(), capability.get(field)?.clone())))
+                .collect::<serde_json::Map<_, _>>()
+                .into()
+        };
         FakeRtkOutcome {
             started_command,
             approved_command,
+            hook_commands,
             output: std::fs::read_to_string(root.path().join("out.txt")).unwrap(),
             recorded_commands,
+        }
+    }
+
+    /// Lets every call continue, keeping each `before_tool_use` envelope as JSON.
+    #[derive(Default)]
+    struct RecordingGate {
+        envelopes: Mutex<Vec<serde_json::Value>>,
+    }
+
+    impl PreToolUseGate for RecordingGate {
+        fn evaluate(&self, request: PreToolUseRequest) -> HookGateFuture<'_> {
+            self.envelopes
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(serde_json::to_value(request.envelope()).unwrap());
+            Box::pin(std::future::ready(HookDecision::Continue))
         }
     }
 

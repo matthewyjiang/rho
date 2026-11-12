@@ -55,7 +55,7 @@ Envelopes carry structured capability facts built from the request the host poli
 
 `after_tool_use` also reports how a process the call ran to completion exited: its exit code, the tails of stdout and stderr, and whether output was lost. A tool supplies this by attaching a `ProcessResult` with `ToolOutput::with_process_result`, marking lost output with `ProcessResult::with_truncated`; the built-in shell tools do, keeping the end of each stream past their model output limit. It is `AfterToolUsePayload::process`, `payload.process` on the wire (`null` when the call ran no process to completion). The streams are bounded but not redacted: they carry whatever the command printed.
 
-Every envelope reports shortened fields in `HookTruncation`. Host labels use the same field and envelope bounds. Do not put prompts, credentials, environment values, or tool output in labels. The `host_labels` wire field is part of hook schema version 2 (`HOOK_SCHEMA_VERSION`).
+Every envelope reports shortened fields in `HookTruncation`. Host labels use the same field and envelope bounds. Do not put prompts, credentials, environment values, or tool output in labels. The `host_labels` wire field arrived in hook schema version 2, and `payload.capability.requested_command` in version 3 (`HOOK_SCHEMA_VERSION`).
 
 ## Testing helpers
 
