@@ -1,7 +1,18 @@
+use std::path::Path;
+
 use pretty_assertions::assert_eq;
 use rho_protocol::{self as wire, Cursor, Replay, Seq};
+use rho_sdk::model::Message;
 
 use super::{Feed, REPLAY_BUFFER_BYTES, TURN_START_EVICTED};
+use crate::{
+    app::{
+        session_events::{LiveEvents, SavedTurn},
+        session_runtime::SessionTools,
+    },
+    session::tree::{DisplayRowOrigin, NodeId, ProjectedMessage},
+    tools::sdk_registry::AppToolSet,
+};
 
 fn notice(text: &str) -> wire::SessionEvent {
     wire::SessionEvent::Notice { text: text.into() }
@@ -11,13 +22,43 @@ fn notices(texts: &[&str]) -> Vec<wire::SessionEvent> {
     texts.iter().map(|text| notice(text)).collect()
 }
 
-/// The events an attach from `after` replays, and whether it resets.
+/// `texts` saved as one save's display rows, a user message each, saved in
+/// a node named after its text.
+fn saved(texts: &[&str]) -> SavedTurn {
+    let rows: Vec<_> = texts
+        .iter()
+        .map(|text| ProjectedMessage {
+            origin: Some(DisplayRowOrigin {
+                node: NodeId::from_string(*text).unwrap(),
+                row: 0,
+            }),
+            message: Message::user_text(*text),
+        })
+        .collect();
+    let tool_set = AppToolSet::disabled();
+    let tools = SessionTools::of_tool_set_for_tests(&tool_set);
+    LiveEvents::new(Path::new("/work"), tools, /*configured_window*/ None)
+        .replay(&rows, Path::new("/work"), tools)
+        .unwrap()
+}
+
+/// The event a reset replays [`saved`]'s row of `text` as.
+fn shown(text: &str) -> wire::SessionEvent {
+    wire::SessionEvent::UserMessage {
+        message: wire::MessageId::new(format!("saved-{text}-0-0")),
+        content: vec![wire::ContentBlock::Text { text: text.into() }],
+        steer: None,
+    }
+}
+
+/// The events an attach from `after` replays, and whether it resets. Also
+/// checks the count the attach reports, which the client reads before the
+/// lazily rendered events.
 fn replay(feed: &Feed, after: Option<Cursor>) -> (Replay, Vec<(u64, wire::SessionEvent)>) {
     let (replay, events) = feed.state().replay_from(after.as_ref());
-    let events = events
-        .into_iter()
-        .map(|(seq, event)| (seq.0, event))
-        .collect();
+    let len = events.len;
+    let events: Vec<_> = events.events.map(|(seq, event)| (seq.0, event)).collect();
+    assert_eq!(len, events.len(), "the reported replay length");
     (replay, events)
 }
 
@@ -64,7 +105,7 @@ fn attach_resumes_a_buffered_cursor_and_resets_anything_else() {
     // One saved turn, then a turn in progress.
     let feed = idle_feed();
     feed.publish(notices(&["live"]));
-    feed.end_turn(notices(&["saved"]));
+    feed.end_turn(saved(&["saved"]));
     feed.publish(notices(&["a", "b", "c"]));
 
     let other_stream = Some(Cursor {
@@ -74,7 +115,7 @@ fn attach_resumes_a_buffered_cursor_and_resets_anything_else() {
     let reset = (
         Replay::Reset,
         vec![
-            (1, notice("saved")),
+            (1, shown("saved")),
             (2, notice("a")),
             (3, notice("b")),
             (4, notice("c")),
@@ -113,11 +154,11 @@ fn attach_resumes_a_buffered_cursor_and_resets_anything_else() {
 fn a_saved_turn_moves_into_the_transcript_without_repeating_or_dropping_events() {
     let feed = idle_feed();
     feed.publish(notices(&["first live"]));
-    feed.end_turn(notices(&["first turn"]));
+    feed.end_turn(saved(&["first turn"]));
     feed.publish(notices(&["live prompt", "live reply"]));
     // The turn's replay from its saved rows joins the transcript, and its
     // live events stop being part of a reset.
-    feed.end_turn(notices(&["saved prompt", "saved reply"]));
+    feed.end_turn(saved(&["saved prompt", "saved reply"]));
     feed.publish(notices(&["next prompt"]));
 
     assert_eq!(
@@ -125,9 +166,9 @@ fn a_saved_turn_moves_into_the_transcript_without_repeating_or_dropping_events()
         (
             Replay::Reset,
             vec![
-                (0, notice("first turn")),
-                (0, notice("saved prompt")),
-                (3, notice("saved reply")),
+                (0, shown("first turn")),
+                (0, shown("saved prompt")),
+                (3, shown("saved reply")),
                 (4, notice("next prompt")),
             ]
         ),
@@ -157,10 +198,10 @@ fn a_turn_that_did_not_save_replays_live_until_a_later_turn_saves_it() {
         ),
     );
 
-    feed.end_turn(notices(&["both turns saved"]));
+    feed.end_turn(saved(&["both turns saved"]));
     assert_eq!(
         replay(&feed, None),
-        (Replay::Reset, vec![(2, notice("both turns saved"))]),
+        (Replay::Reset, vec![(2, shown("both turns saved"))]),
     );
 }
 
@@ -194,16 +235,16 @@ fn a_turn_larger_than_the_buffer_resets_with_a_notice_instead_of_its_start() {
 fn a_restart_replays_the_moved_conversation_to_every_cursor() {
     let feed = idle_feed();
     feed.publish(notices(&["live"]));
-    feed.end_turn(notices(&["first saved", "second saved"]));
+    feed.end_turn(saved(&["first saved", "second saved"]));
     let before = cursor(&feed, 1);
     let _attached = feed.attach(before.as_ref());
 
-    feed.restart(notices(&["first saved"]));
+    feed.restart(Some(saved(&["first saved"])));
     feed.publish(notices(&["told after"]));
 
     let moved = (
         Replay::Reset,
-        vec![(0, notice("first saved")), (1, notice("told after"))],
+        vec![(0, shown("first saved")), (1, notice("told after"))],
     );
     assert_eq!(
         (replay(&feed, before), replay(&feed, None), feed.followed()),
@@ -343,10 +384,55 @@ fn events_json_cannot_hold_are_dropped_live_and_saved() {
         (Replay::Reset, vec![(1, notice("live"))])
     );
 
-    feed.end_turn(vec![unencodable(), notice("saved")]);
+    // A saved read in a workspace whose path is not UTF-8 opens with a
+    // location JSON cannot hold.
+    let config = crate::config::Config::default();
+    let tool_set = AppToolSet::new(
+        &config,
+        crate::diagnostics::RuntimeDiagnostics::new(&config),
+        crate::tools::sdk_registry::ToolSetOptions::new(crate::agent::AgentCapabilities::new(
+            [crate::agent::ToolCapability::ReadFile].into(),
+        )),
+    );
+    let workspace = PathBuf::from(OsStr::from_bytes(b"/work/\xff"));
+    let read = rho_sdk::model::ToolCall::new(
+        "read".into(),
+        "read_file".into(),
+        serde_json::json!({ "path": "src/lib.rs" }),
+    );
+    let rows = [
+        ProjectedMessage {
+            origin: Some(DisplayRowOrigin {
+                node: NodeId::from_string("saved").unwrap(),
+                row: 0,
+            }),
+            message: Message::user_text("saved"),
+        },
+        ProjectedMessage {
+            origin: None,
+            message: Message::Assistant(vec![rho_sdk::model::ContentBlock::ToolCall(read)].into()),
+        },
+    ];
+    let tools = SessionTools::of_tool_set_for_tests(&tool_set);
+    let turn = LiveEvents::new(&workspace, tools, /*configured_window*/ None)
+        .replay(&rows, &workspace, tools)
+        .unwrap();
+    feed.end_turn(turn);
+    // The read opens with that location, so its opening is dropped; the
+    // replay still closes the call it left without a result.
+    let closed = wire::SessionEvent::tool_call(wire::ToolCallUpdate {
+        id: wire::ToolCallId::new("read"),
+        title: None,
+        kind: None,
+        status: Some(wire::ToolStatus::Failed),
+        raw_input: None,
+        content: None,
+        locations: None,
+        display: None,
+    });
     assert_eq!(
         replay(&feed, None),
-        (Replay::Reset, vec![(1, notice("saved"))])
+        (Replay::Reset, vec![(0, shown("saved")), (1, closed)])
     );
 }
 
@@ -396,10 +482,10 @@ fn a_reset_replays_the_usage_as_of_the_last_save() {
     };
     let reopened = idle_feed();
     reopened.seed_usage(&usage(10));
-    reopened.end_turn(notices(&["saved prompt"]));
+    reopened.end_turn(saved(&["saved prompt"]));
     let loaded = idle_feed();
     loaded.publish([notice("prompt"), usage(10), notice("reply"), usage(20)]);
-    loaded.end_turn(notices(&["saved prompt", "saved reply"]));
+    loaded.end_turn(saved(&["saved prompt", "saved reply"]));
     loaded.publish([notice("next prompt"), usage(30)]);
 
     assert_eq!(
@@ -407,13 +493,13 @@ fn a_reset_replays_the_usage_as_of_the_last_save() {
         (
             (
                 Replay::Reset,
-                vec![(0, notice("saved prompt")), (0, usage(10))]
+                vec![(0, shown("saved prompt")), (0, usage(10))]
             ),
             (
                 Replay::Reset,
                 vec![
-                    (0, notice("saved prompt")),
-                    (0, notice("saved reply")),
+                    (0, shown("saved prompt")),
+                    (0, shown("saved reply")),
                     (4, usage(20)),
                     (5, notice("next prompt")),
                     (6, usage(30)),

@@ -60,7 +60,7 @@ use super::{
 };
 use crate::{
     app::{
-        session_events::LiveEvents,
+        session_events::{LiveEvents, SavedTurn},
         session_runtime::{SessionHandle, SessionRuntime},
     },
     config::Config,
@@ -335,13 +335,10 @@ async fn time_out(session: Weak<LoadedSession>, id: rho_protocol::InputRequestId
     }
 }
 
-/// The rows `runtime` has saved, replayed through `live` as the feed's
-/// events, or `None` when it has saved none yet or they could not be read.
-fn saved_replay(
-    live: &mut LiveEvents,
-    runtime: &SessionRuntime,
-    job: &JobId,
-) -> Option<Vec<rho_protocol::SessionEvent>> {
+/// The rows `runtime` has saved that `live` has not replayed yet, as a turn
+/// of the feed's transcript, or `None` when it has saved none since or they
+/// could not be read.
+fn saved_replay(live: &mut LiveEvents, runtime: &SessionRuntime, job: &JobId) -> Option<SavedTurn> {
     let saved = runtime.saved_history()?;
     match saved.display_rows() {
         Ok(rows) => live.replay(&rows, saved.cwd(), saved.tools()),

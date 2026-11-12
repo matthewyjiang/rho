@@ -203,6 +203,27 @@ pub(crate) struct InteractiveToolPresenter {
     mcp_tools: McpToolNames,
     calls: BTreeMap<String, ToolView>,
     streamed: BTreeMap<usize, StreamedPreview>,
+    calls_shown: CallsShown,
+}
+
+/// Whether a presenter draws calls as they run or calls a session saved.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CallsShown {
+    /// A start card may read the workspace, such as the file an edit is
+    /// about to change.
+    Live,
+    /// Start cards come from the saved call alone, so drawing the same
+    /// call again draws the same card (`saved_start_card`).
+    Saved,
+}
+
+impl CallsShown {
+    fn start_card(self, view: &ToolView, cwd: &std::path::Path) -> ToolCard {
+        match self {
+            Self::Live => start_card(view, cwd),
+            Self::Saved => saved_start_card(view, cwd),
+        }
+    }
 }
 
 impl InteractiveToolPresenter {
@@ -212,6 +233,16 @@ impl InteractiveToolPresenter {
             mcp_tools,
             calls: BTreeMap::new(),
             streamed: BTreeMap::new(),
+            calls_shown: CallsShown::Live,
+        }
+    }
+
+    /// A presenter for calls a session saved, as a replay of its transcript
+    /// draws them: their cards never depend on the workspace as it is now.
+    pub(crate) fn for_saved_calls(cwd: PathBuf, mcp_tools: McpToolNames) -> Self {
+        Self {
+            calls_shown: CallsShown::Saved,
+            ..Self::new(cwd, mcp_tools)
         }
     }
 
@@ -325,7 +356,7 @@ impl InteractiveToolPresenter {
             arguments: call.arguments,
             metadata: ToolMetadata::default(),
         };
-        let presented = presentation(&view, start_card(&view, &self.cwd));
+        let presented = presentation(&view, self.calls_shown.start_card(&view, &self.cwd));
         self.calls.insert(id, view);
         presented
     }
@@ -347,7 +378,7 @@ impl InteractiveToolPresenter {
         view.kind = ToolKind::from_name(&name, &self.mcp_tools);
         view.name = name;
         view.metadata = metadata;
-        presentation(view, start_card(view, &self.cwd))
+        presentation(view, self.calls_shown.start_card(view, &self.cwd))
     }
 
     pub(crate) fn updated(
@@ -370,6 +401,12 @@ impl InteractiveToolPresenter {
             metadata: ToolMetadata::default(),
         };
         presentation(&view, card)
+    }
+
+    /// Forgets call `id`, whose start was drawn: a replay draws its result
+    /// with [`Self::historical`], from the saved call.
+    pub(crate) fn forget(&mut self, id: &str) {
+        self.calls.remove(id);
     }
 
     pub(crate) fn finished(

@@ -10,6 +10,7 @@
 //! | Endpoint | [`Listener`], [`Stream`], [`connect`], [`connect_restarting`], [`remove_endpoint`], [`inspect_endpoint`] |
 //! | Private files | [`DaemonPathError`], [`create_private_dir`], [`prepare_private_dir`], [`create_private_file`], [`sync_dir`], [`open_lock_file`], [`open_log_file`], [`FileIdentity`], [`running_identity`], [`account_lock_path`], [`lock_account_file`] |
 //! | Process | [`spawn_detached`], [`MACHINE_VARIABLES`], [`is_variable`], [`request_stop`], [`StopRequests`], [`stderr_is_journal_stream`] |
+//! | Memory | [`release_freed_memory`] |
 //! | Restart | [`relaunch`], [`take_handoff`] |
 //! | Install | [`REPLACEABLE_WHILE_RUNNING`], [`stop_service`] |
 //!
@@ -37,6 +38,9 @@
 //!   daemon does, and [`connect_restarting`] waits for it instead. Either way
 //!   `Listener::hold_for_restart` leaves no connection open to a client
 //!   that nothing will serve.
+//! - **Memory.** [`release_freed_memory`] returns memory the allocator holds
+//!   free to the system where the allocator keeps it otherwise; it may do
+//!   nothing.
 //! - **Install.** [`REPLACEABLE_WHILE_RUNNING`] says whether an installer can put a
 //!   new file at the daemon's path while the daemon runs, which decides
 //!   whether an update restarts the daemon after installing or stops it
@@ -54,8 +58,8 @@ use windows as imp;
 
 pub(crate) use imp::{
     account_lock_path, create_private_dir, create_private_file, lock_account_file,
-    stderr_is_journal_stream, sync_dir, DaemonPathError, FileIdentity, StopRequests,
-    REPLACEABLE_WHILE_RUNNING,
+    release_freed_memory, stderr_is_journal_stream, sync_dir, DaemonPathError, FileIdentity,
+    StopRequests, REPLACEABLE_WHILE_RUNNING,
 };
 pub(super) use imp::{
     connect, connect_restarting, inspect_endpoint, is_variable, open_lock_file, open_log_file,

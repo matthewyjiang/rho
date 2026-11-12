@@ -12,7 +12,7 @@ use rho_sdk::{
 };
 use serde_json::json;
 
-use super::replay;
+use super::{SavedTranscript, SavedTurn};
 use crate::{
     agent::{AgentCapabilities, ToolCapability},
     app::{
@@ -47,13 +47,17 @@ fn saved_rows(messages: &[Message]) -> Vec<ProjectedMessage> {
         .collect()
 }
 
+/// The events a client that resets replays once `messages` saved as one
+/// turn with the tools of `tool_set`.
 fn replay_with(tool_set: &AppToolSet, messages: &[Message]) -> Vec<WireEvent> {
-    replay(
+    let mut transcript = SavedTranscript::default();
+    transcript.push(SavedTurn::capture(
         &saved_rows(messages),
         Path::new("/work"),
         SessionTools::of_tool_set_for_tests(tool_set),
         &mut CallIds::default(),
-    )
+    ));
+    transcript.events().collect()
 }
 
 fn replay_messages(messages: &[Message]) -> Vec<WireEvent> {
@@ -483,7 +487,7 @@ fn a_replay_with_no_new_rows_reports_nothing_saved() {
     let rows = saved_rows(&[Message::Assistant(vec![call_block("call")].into())]);
     let mut live = LiveEvents::new(Path::new("/work"), tools(), /*configured_window*/ None);
     assert!(live.replay(&rows, Path::new("/work"), tools()).is_some());
-    assert_eq!(live.replay(&rows, Path::new("/work"), tools()), None);
+    assert!(live.replay(&rows, Path::new("/work"), tools()).is_none());
 }
 
 // Covers: a provider id the saved transcript already used is numbered live
@@ -536,4 +540,44 @@ fn live_calls_continue_the_numbering_of_the_saved_transcript() {
         ]
     );
     assert_eq!(live_calls, replayed_tail);
+}
+
+// Covers: a saved transcript built a save at a time numbers a call id the
+// provider reused in a later save as its own call, as a replay of every row
+// at once does, and replays the same events each time a client resets. The
+// daemon renders a reset from the saved rows again for each client, so a
+// numbering that restarted per save would update the earlier call's card.
+// Owner: session event replay
+#[test]
+fn a_transcript_saved_turn_by_turn_replays_as_one_and_the_same_each_time() {
+    let tool_set = AppToolSet::disabled();
+    let tools = || SessionTools::of_tool_set_for_tests(&tool_set);
+    let first = vec![
+        Message::Assistant(vec![call_block("reused")].into()),
+        Message::ToolResult(ToolResult::succeeded("reused", "a.rs").into()),
+    ];
+    let mut whole = first.clone();
+    whole.extend([
+        Message::Assistant(vec![call_block("reused")].into()),
+        Message::ToolResult(ToolResult::succeeded("reused", "b.rs").into()),
+    ]);
+    let mut live = LiveEvents::new(Path::new("/work"), tools(), /*configured_window*/ None);
+    let mut transcript = SavedTranscript::default();
+    for saved in [&first, &whole] {
+        let turn = live.replay(&saved_rows(saved), Path::new("/work"), tools());
+        transcript.push(turn.expect("each save adds rows"));
+    }
+
+    let rendered: Vec<_> = transcript.events().collect();
+    let ids: Vec<_> = rendered
+        .iter()
+        .filter_map(|event| match event {
+            WireEvent::ToolCall(update) => Some(update.id.as_str().to_owned()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(ids, ["reused", "reused", "reused#2", "reused#2"]);
+    assert_eq!(rendered, replay_messages(&whole));
+    assert_eq!(rendered, transcript.events().collect::<Vec<_>>());
+    assert_eq!(rendered.len(), transcript.len());
 }

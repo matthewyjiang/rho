@@ -19,7 +19,8 @@
 //! `rho doctor` reports about it is in [`doctor`]; what `rho update` and
 //! `rho uninstall` do about it is in [`install`]; a turn whose provider
 //! cannot be reached is in [`unreachable`]; what a session records about
-//! what follows a compaction is in [`compaction`].
+//! what follows a compaction is in [`compaction`]; what a loaded session
+//! costs the daemon in memory is in [`memory`].
 
 use std::{
     fs::File,
@@ -108,6 +109,11 @@ mod unreachable;
 
 #[path = "support/daemon_compaction.rs"]
 mod compaction;
+
+// glibc on Linux: it reads `/proc` and tunes glibc's allocator.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+#[path = "support/daemon_memory.rs"]
+mod memory;
 
 #[path = "support/key_checking_provider.rs"]
 mod key_checking_provider;

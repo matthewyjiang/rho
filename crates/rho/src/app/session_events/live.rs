@@ -19,7 +19,7 @@ use rho_sdk::{
 
 use super::{
     cards, named_call, opened_call, plan_entries,
-    replay::{self, saved_message_id},
+    replay::{saved_message_id, SavedTurn},
     result_content, status_update, steer_to_wire, text_content, tools, user_content, CallIds,
     UNNAMED_TOOL_TITLE,
 };
@@ -176,8 +176,8 @@ struct AnnouncedCall {
 
 impl LiveEvents {
     /// A mapper for the session in `workspace` whose tools are `tools`. A
-    /// checklist the session already has counts as sent: [`super::replay`]
-    /// ends with it. When the session's tools are rebuilt, the checklist
+    /// checklist the session already has counts as sent: a [`SavedTurn`]'s
+    /// replay ends with it. When the session's tools are rebuilt, the checklist
     /// with them, follow them with [`Self::rebind_tools`]. Usage reports
     /// `configured_window`, the context window the session's model is
     /// configured with, when it has one (`session_runtime::context_window`).
@@ -283,20 +283,20 @@ impl LiveEvents {
         }
     }
 
-    /// The wire events that replay the rows of `rows`, the session's saved
-    /// display rows, that this mapper has not replayed yet (see
-    /// [`replay::replay`]); `None` when no row is new, so nothing saved since
-    /// the last replay.
+    /// The rows of `rows`, the session's saved display rows, that this
+    /// mapper has not replayed yet, as a turn of the saved transcript (see
+    /// [`SavedTurn`]); `None` when no row is new, so nothing saved since the
+    /// last replay.
     pub(crate) fn replay(
         &mut self,
         rows: &[ProjectedMessage],
         workspace: &Path,
         tools: SessionTools<'_>,
-    ) -> Option<Vec<WireEvent>> {
+    ) -> Option<SavedTurn> {
         let from = std::mem::replace(&mut self.replayed_rows, rows.len());
         match rows.get(from..) {
             Some([]) => None,
-            Some(new) => Some(replay::replay(
+            Some(new) => Some(SavedTurn::capture(
                 new,
                 workspace,
                 tools,
