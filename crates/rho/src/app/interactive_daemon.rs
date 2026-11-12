@@ -34,7 +34,7 @@ pub(super) async fn open(
     };
 
     use crate::{
-        app::{session_options::reasoning_to_wire, Setting, SettingOrigins},
+        app::{session_options::reasoning_to_wire, LaunchFlag, SettingOrigins},
         session::Session,
         tui::LaunchChange,
     };
@@ -130,9 +130,15 @@ pub(super) async fn open(
         definition: std::sync::Arc::new(bound.definition().clone()),
         flags: SettingOrigins::of_launch_flags(
             [
-                (provider.is_some() || model.is_some() || auth.is_some()).then_some(Setting::Model),
-                reasoning.is_some().then_some(Setting::Reasoning),
-                permission_mode.is_some().then_some(Setting::PermissionMode),
+                match (provider.is_some() || model.is_some(), auth.is_some()) {
+                    (true, _) => Some(LaunchFlag::Model),
+                    (false, true) => Some(LaunchFlag::Auth),
+                    (false, false) => None,
+                },
+                reasoning.is_some().then_some(LaunchFlag::Reasoning),
+                permission_mode
+                    .is_some()
+                    .then_some(LaunchFlag::PermissionMode),
             ]
             .into_iter()
             .flatten(),

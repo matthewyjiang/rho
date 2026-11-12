@@ -77,9 +77,21 @@ pub(crate) enum SettingOrigin {
     Chosen,
 }
 
+/// A launch flag that chooses a session's setting.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LaunchFlag {
+    /// `--provider` or `--model`, with `--auth` or not.
+    Model,
+    /// `--auth` alone, which keeps the configured model where the auth is
+    /// its provider's: it holds until `config.toml` changes the model.
+    Auth,
+    Reasoning,
+    PermissionMode,
+}
+
 /// A setting a client may choose for a session before or after it opens.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Setting {
+enum Setting {
     /// The model and its auth.
     Model,
     Reasoning,
@@ -150,28 +162,46 @@ pub(crate) struct SettingOrigins {
 }
 
 impl SettingOrigins {
-    /// The settings a launch's flags chose, which hold for the launch. A
-    /// flag choosing the model carries the reasoning level the launch
-    /// settled for it, made on `launch_file`, the `config.toml` the launch
-    /// read: it goes with the model where the daemon takes it, until the
-    /// file's reasoning changes.
+    /// The settings `flagged`, a launch's flags, chose, which hold for
+    /// the launch. A flag choosing the model carries the reasoning level
+    /// the launch settled for it, made on `launch_file`, the `config.toml`
+    /// the launch read: it goes with the model where the daemon takes it,
+    /// until the file's reasoning changes. A bare `--auth` holds the same
+    /// way until the file's model changes.
     pub(crate) fn of_launch_flags(
-        flagged: impl IntoIterator<Item = Setting>,
+        flagged: impl IntoIterator<Item = LaunchFlag>,
         launch_file: Arc<Config>,
     ) -> Self {
+        let held = || Origin {
+            from: SettingOrigin::Chosen,
+            made_on: None,
+        };
+        let made_on_launch = |from| Origin {
+            from,
+            made_on: Some(Arc::clone(&launch_file)),
+        };
         let mut flags = Self::default();
-        for setting in flagged {
-            flags.origin_mut(setting).from = SettingOrigin::Chosen;
+        let mut model_flag = false;
+        for flag in flagged {
+            match flag {
+                LaunchFlag::Model => {
+                    flags.model = held();
+                    model_flag = true;
+                }
+                LaunchFlag::Auth => flags.model = made_on_launch(SettingOrigin::Chosen),
+                LaunchFlag::Reasoning => flags.reasoning = held(),
+                LaunchFlag::PermissionMode => flags.permission_mode = held(),
+            }
         }
-        if flags.model.from == SettingOrigin::Chosen
-            && flags.reasoning.from == SettingOrigin::Config
-        {
-            flags.reasoning = Origin {
-                from: SettingOrigin::Carried,
-                made_on: Some(launch_file),
-            };
+        if model_flag && flags.reasoning.from == SettingOrigin::Config {
+            flags.reasoning = made_on_launch(SettingOrigin::Carried);
         }
         flags
+    }
+
+    /// Whether `change` moves a setting, which a choice of it records.
+    pub(crate) fn moves_a_setting(change: &wire::SessionChange) -> bool {
+        Setting::of(change).is_some()
     }
 
     /// The origin of the setting `change` moves; a change that moves none

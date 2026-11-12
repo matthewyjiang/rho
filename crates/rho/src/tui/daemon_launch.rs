@@ -44,12 +44,18 @@ impl DaemonLaunch {
         .ok()
     }
 
-    /// `config.toml` as it is now, which a setting chosen now is made
-    /// against; the launch's read of it when it does not load.
-    pub(crate) fn config_file_now(&self) -> std::sync::Arc<crate::config::Config> {
-        crate::app::read_config_file()
-            .map(std::sync::Arc::new)
-            .unwrap_or_else(|_| std::sync::Arc::clone(&self.config_file))
+    /// What a choice `change` makes now is made against: `config.toml`
+    /// as it is, else the launch's read of it; nothing for a change that
+    /// moves no setting.
+    pub(crate) fn made_on(
+        &self,
+        change: &rho_protocol::SessionChange,
+    ) -> Option<std::sync::Arc<crate::config::Config>> {
+        crate::app::SettingOrigins::moves_a_setting(change).then(|| {
+            crate::app::read_config_file()
+                .map(std::sync::Arc::new)
+                .unwrap_or_else(|_| std::sync::Arc::clone(&self.config_file))
+        })
     }
 }
 

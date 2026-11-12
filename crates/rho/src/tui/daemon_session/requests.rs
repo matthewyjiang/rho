@@ -144,9 +144,10 @@ impl DaemonSession {
         if self.ended() {
             anyhow::bail!(LOST);
         }
+        let made_on = self.launch.made_on(&change);
         self.requests
             .as_ref()
             .expect("attached session has requests")
-            .configure(change, self.launch.config_file_now())
+            .configure(change, made_on)
     }
 }

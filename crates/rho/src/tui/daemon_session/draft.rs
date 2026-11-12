@@ -190,7 +190,7 @@ impl DaemonSession {
     /// waits for the session to open. Either counts as finished now, as
     /// the app counts every change it asked for.
     pub(super) fn configure_draft(&mut self, change: SessionChange) {
-        let made_on = self.launch.config_file_now();
+        let made_on = self.launch.made_on(&change);
         let Following::Draft(draft) = &mut self.following else {
             return;
         };
@@ -231,7 +231,9 @@ impl DaemonSession {
                     .push(DaemonView::Options(Box::new(draft.options.options())));
             }
             (Ok(()), _) => {
-                draft.options.chose(&change, made_on);
+                if let Some(made_on) = made_on {
+                    draft.options.chose(&change, made_on);
+                }
                 self.pending
                     .push(DaemonView::Options(Box::new(draft.options.options())));
             }

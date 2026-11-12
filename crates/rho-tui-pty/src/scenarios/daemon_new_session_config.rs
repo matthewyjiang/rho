@@ -44,8 +44,9 @@ credential_store = "file"
 // Covers: `/new` after a config.toml edit shows and opens its session on
 // the edited model, while the launch's `--permission-mode` still holds over
 // the config's, and a pick in a session holds in the next while config.toml
-// leaves it alone since the pick, edited before it or not; a config.toml that no longer loads fails the next
-// session's first prompt with the daemon's error naming the file.
+// leaves it alone since the pick, edited before it or not; a config.toml
+// that no longer loads fails the next session's first prompt with the
+// daemon's error naming the file.
 // Owner: interactive TUI as a daemon client
 pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
     let home = IsolatedHome::new()?;

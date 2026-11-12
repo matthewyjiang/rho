@@ -62,9 +62,9 @@ enum Request {
 /// Who asked for a change, which decides whether its end is reported.
 enum Asked {
     /// The app, which counts the change as pending until
-    /// [`DaemonView::ConfigureFinished`]: a pick, made against
-    /// `config.toml` as it was then.
-    ByApp { made_on: Arc<Config> },
+    /// [`DaemonView::ConfigureFinished`]: a pick, when it moves a setting,
+    /// made against `config.toml` as it was then.
+    ByApp { made_on: Option<Arc<Config>> },
     /// The launch, carrying a setting to a session opened mid-turn: the
     /// app never counted it, so its end must not settle one the app did.
     AtLaunch,
@@ -414,7 +414,7 @@ impl DaemonRequests {
                             saved.store(true, Ordering::Relaxed);
                         }
                         if let Asked::ByApp { made_on } = asked {
-                            if error.is_none() {
+                            if let (None, Some(made_on)) = (&error, made_on) {
                                 picked
                                     .lock()
                                     .unwrap_or_else(PoisonError::into_inner)
@@ -535,11 +535,12 @@ impl DaemonRequests {
             .map_err(|_| anyhow::anyhow!(LOST))
     }
 
-    /// Queues a pick, made against `made_on`, `config.toml` as it is now.
+    /// Queues a change; one that moves a setting is a pick, made against
+    /// `made_on`, `config.toml` as it is now.
     pub(super) fn configure(
         &self,
         change: SessionChange,
-        made_on: Arc<Config>,
+        made_on: Option<Arc<Config>>,
     ) -> anyhow::Result<()> {
         self.sender
             .send(Request::Configure(change, Asked::ByApp { made_on }))

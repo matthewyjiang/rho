@@ -3,7 +3,7 @@ use rho_protocol as wire;
 
 use std::sync::Arc;
 
-use super::{DraftOptions, Setting, SettingOrigin, SettingOrigins};
+use super::{DraftOptions, LaunchFlag, SettingOrigin, SettingOrigins};
 use crate::{config::Config, permission::PermissionMode};
 
 fn draft(provider: &str, model: &str, auth: &str) -> DraftOptions {
@@ -119,8 +119,9 @@ fn file(model: &str, reasoning: rho_sdk::ReasoningLevel, mode: PermissionMode) -
 
 // Covers: a choice holds in the next new session while `config.toml`
 // configures that setting as when it was made, so an edit since a pick, or
-// since the launch for the reasoning a model flag carries, wins over it, a
-// pick made after an edit holds, and a launch flag always holds.
+// since the launch for the reasoning a model flag carries and for a bare
+// `--auth`, wins over it, a pick made after an edit holds, and a launch flag
+// naming the model always holds.
 // Owner: session options
 #[test]
 fn a_choice_holds_until_config_changes_its_setting() {
@@ -142,7 +143,8 @@ fn a_choice_holds_until_config_changes_its_setting() {
     let permission = wire::SessionChange::PermissionMode {
         mode: wire::PermissionMode::Supervised,
     };
-    let flags = || SettingOrigins::of_launch_flags([Setting::Model], Arc::clone(&launch));
+    let flags = || SettingOrigins::of_launch_flags([LaunchFlag::Model], Arc::clone(&launch));
+    let auth_flag = || SettingOrigins::of_launch_flags([LaunchFlag::Auth], Arc::clone(&launch));
     let picked = |made_on: &Arc<Config>| {
         let mut picks = SettingOrigins::default();
         picks.choose(&permission, Arc::clone(made_on));
@@ -167,6 +169,13 @@ fn a_choice_holds_until_config_changes_its_setting() {
             flags(),
             file("gpt-5.4", High, Bypass),
             [chosen, carried, config],
+        ),
+        // A bare `--auth` holds until an edit of the model.
+        (auth_flag(), Arc::clone(&launch), [chosen, config, config]),
+        (
+            auth_flag(),
+            file("gpt-5.4", High, Bypass),
+            [config, config, config],
         ),
         // A pick holds until an edit of its setting after it.
         (
