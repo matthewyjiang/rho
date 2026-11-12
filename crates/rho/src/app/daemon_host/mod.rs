@@ -431,16 +431,17 @@ impl Service for DaemonHost {
                 .map(|record| {
                     let queue = self.sessions.subagents().queue_place(&record.id);
                     let live = match &record.subject {
-                        JobSubject::Session { session }
-                        | JobSubject::Subagent {
+                        JobSubject::Session { session } => self.sessions.session_live(session),
+                        // Only the run under way: an ended run of the same
+                        // session, as a workflow node that ran again has,
+                        // is followed no more.
+                        JobSubject::Subagent {
                             session: Some(session),
                             run: _,
-                        } => self.sessions.job_live(session),
-                        JobSubject::Subagent {
-                            session: None,
-                            run: _,
+                        } if record.state.in_progress() => {
+                            self.sessions.subagents().feeds().live(session)
                         }
-                        | JobSubject::Workflow { .. } => None,
+                        JobSubject::Subagent { .. } | JobSubject::Workflow { .. } => None,
                     };
                     wire::job_summary(record, queue, &undelivered, live)
                 })
