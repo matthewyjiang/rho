@@ -737,12 +737,14 @@ impl App {
         // A saved session attaches as `/resume` does, with its checks. One
         // the daemon has open and has not saved yet, as a session just
         // started, has no file to find: it is followed by its id.
-        let saved = Session::resolve_target(&self.info.runtime.cwd, session.as_str()).is_ok();
-        let attached = if saved {
-            self.resume_daemon_session(session.as_str(), terminal).await
-        } else {
-            self.follow_unsaved_session(session, &workspace, terminal)
-                .await
+        let attached = match Session::workspace_of(session.as_str()) {
+            Ok(Some(_)) => self.resume_daemon_session(session.as_str(), terminal).await,
+            Ok(None) => {
+                self.follow_unsaved_session(session, &workspace, terminal)
+                    .await
+            }
+            // The store could not say, so no check below would hold.
+            Err(error) => Err(error),
         };
         if let Err(error) = attached {
             self.set_status(format!("could not attach session: {error:#}"));
@@ -750,7 +752,9 @@ impl App {
     }
 
     /// Follows `session`, which the daemon has loaded in `workspace` and
-    /// has not saved.
+    /// has not saved. A launch that named an agent follows only that
+    /// agent's sessions, and an unsaved session's agent is recorded
+    /// nowhere this TUI reads, so such a launch refuses it until it saves.
     async fn follow_unsaved_session(
         &mut self,
         session: SessionId,
@@ -758,6 +762,11 @@ impl App {
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
         self.ensure_this_project(workspace)?;
+        anyhow::ensure!(
+            self.info.session.resume_launch.definition.is_none(),
+            "the session has saved nothing yet, so its agent cannot be checked against --agent; \
+             attach once its first turn saves"
+        );
         let short = super::session_picker::short_session_id(session.as_str());
         self.switch_daemon_session(DaemonTarget::Resume(session), terminal)
             .await?;
