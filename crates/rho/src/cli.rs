@@ -368,8 +368,7 @@ Run rho model-prompt edit --help for editor setup, saving, and reload behavior."
 #[derive(clap::Args, Clone, Debug, Default)]
 pub struct AcpArgs {
     /// Mark the host as T3 Code: subagents run as T3 child threads through
-    /// its `t3-code` MCP server. Wake-ups for background work are not yet
-    /// available with the rho daemon (#1670).
+    /// its `t3-code` MCP server, and background results wake an idle thread.
     #[arg(long)]
     pub t3code: bool,
     /// Run terminal authentication for an auth profile instead of serving ACP.

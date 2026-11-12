@@ -7,7 +7,7 @@ use agent_client_protocol::{v1::schema as v1, v2::schema as v2};
 use agent_client_protocol::{v2::ConnectionTo as V2ConnectionTo, Client, Error as AcpError};
 
 use super::{bridge, requests, updates};
-use crate::app::acp::AcpClientPort;
+use crate::app::acp::{AcpClientPort, TurnEnd};
 
 pub(super) struct V2Port {
     cx: V2ConnectionTo<Client>,
@@ -110,5 +110,14 @@ impl AcpClientPort for V2Port {
             let notification: v2::CompleteElicitationNotification = bridge(&notification)?;
             self.cx.send_notification(notification)
         })
+    }
+
+    /// Closes the `running` that `session/resume` reported with `idle`.
+    fn attached_turn_ended(&self, session_id: &v1::SessionId, end: TurnEnd) {
+        let sent = bridge::<_, v2::SessionId>(session_id)
+            .and_then(|session_id| self.send_update(&session_id, requests::idle(&end)));
+        if let Err(error) = sent {
+            tracing::warn!(%error, "could not report the end of an attached turn over ACP v2");
+        }
     }
 }
