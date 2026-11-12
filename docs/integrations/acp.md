@@ -24,7 +24,7 @@ Every host launches the same command:
 rho acp
 ```
 
-Each session opens with the configuration, agents, and instructions of its workspace, as `rho` launched there would use them. `rho acp` takes `--agent`, `--add-dir`, `--no-tools`, `--no-system-prompt`, and `--no-subagents`, and applies them to every session it opens. It refuses `--provider`, `--model`, `--auth`, `--reasoning`, `--permission-mode`, `--config`, and `--save`: choose the model and mode in the host. Sign in to your provider before the first session; see [Sign in](#sign-in).
+Each session opens with the configuration, agents, and instructions of its workspace, as `rho` launched there would use them. `rho acp` takes `--agent`, `--add-dir`, `--no-tools`, `--no-system-prompt`, and `--no-subagents`, and applies them to every session it opens. `--no-tools` and `--no-system-prompt` go before `acp`, as in `rho --no-tools acp`; the others may also follow it. It refuses `--provider`, `--model`, `--auth`, `--reasoning`, `--permission-mode`, `--config`, and `--save`: choose the model and mode in the host. Sign in to your provider before the first session; see [Sign in](#sign-in).
 
 ### Zed
 

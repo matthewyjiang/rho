@@ -9,7 +9,8 @@
 //! A prompt of this host's is matched to its turn by the turn's id, which
 //! the daemon answers the prompt with ([`Armed`]): the pump reads nothing
 //! past [`Control::Arm`] until it has that id, so it never guesses whose
-//! turn an event is of.
+//! turn an event is of. Until the host prompts, the pump follows the turn
+//! the host was told is running when it attached ([`Following::Announced`]).
 
 use std::sync::{Arc, PoisonError};
 
@@ -19,7 +20,7 @@ use agent_client_protocol::{
 };
 use rho_protocol::{
     DetachReason, InputRequest, JobState, Replay, Seq, SessionAttachResponse, SessionEvent,
-    SessionOptions, SessionSetup, TurnId,
+    SessionOptions, SessionSetup, TurnId, TurnOutcome,
 };
 use tokio::{
     sync::{mpsc, oneshot},
@@ -34,8 +35,9 @@ use crate::{
         acp::{
             daemon,
             inputs::{InputContext, Inputs},
+            prompt,
             updates::{self, Delivery, Updates},
-            AcpClientPort,
+            AcpClientPort, TurnEnd,
         },
         daemon_client::{HerdrStatus, Part, Routed, StreamPosition},
     },
@@ -63,7 +65,10 @@ pub(super) fn spawn(
         shared,
         setup,
         turn: None,
-        waiter: None,
+        following: busy(opening.response.state)
+            .then(|| opening.response.turn.clone())
+            .flatten()
+            .map(Following::Announced),
         inputs: Inputs::default(),
         replaying: None,
     };
@@ -88,6 +93,27 @@ struct Replaying {
     gate: Option<oneshot::Receiver<()>>,
 }
 
+/// The turn the pump follows for the host, whose end it must report.
+enum Following {
+    /// The prompt of this host's that the pump waits on.
+    Prompt(Armed),
+    /// The turn under way when the opening attach began, which the host was
+    /// told is running: ACP v2 `session/resume` reports `running` from the
+    /// same attach state (`v2::state`). A prompt of this host's replaces it
+    /// unreported, since that prompt's own updates then give the session's
+    /// state.
+    Announced(TurnId),
+}
+
+impl Following {
+    fn turn(&self) -> &TurnId {
+        match self {
+            Self::Prompt(armed) => &armed.turn,
+            Self::Announced(turn) => turn,
+        }
+    }
+}
+
 /// The prompt of this host's that the pump waits on, by its turn.
 struct Armed {
     /// The turn the daemon answered the prompt with.
@@ -108,7 +134,7 @@ struct Pump {
     /// The turn the session's job is in or last ran, as its last state
     /// said.
     turn: Option<TurnId>,
-    waiter: Option<Armed>,
+    following: Option<Following>,
     inputs: Inputs,
     position: StreamPosition,
     replaying: Option<Replaying>,
@@ -163,11 +189,11 @@ impl Pump {
             // wait on.
             Control::Arm { waiter, turn } if self.attached() => {
                 if let Ok(turn) = turn.await {
-                    self.waiter = Some(Armed {
+                    self.following = Some(Following::Prompt(Armed {
                         turn,
                         waiter,
                         shown: false,
-                    });
+                    }));
                 }
             }
             // The attachment ended between the prompt's reattach and now.
@@ -247,9 +273,9 @@ impl Pump {
                 }
             }
             Show::Missed => self.live(event).await,
-            // The host has the history; only the armed prompt reads it.
+            // The host has the history; only the followed turn reads it.
             Show::Skip => {
-                self.follow_prompt(&event);
+                self.follow_turn(&event);
             }
         }
         if left == 0 {
@@ -296,15 +322,15 @@ impl Pump {
     }
 
     /// A skipped reset replay is over, ending with the job in `state`, of
-    /// the turn the attach named, now `self.turn`. It held the armed prompt's turn's end
-    /// unless another turn saved since: a prompt still armed whose turn is
+    /// the turn the attach named, now `self.turn`. It held the followed
+    /// turn's end unless another turn saved since: a followed turn that is
     /// no longer the one under way ended unseen, and fails.
     fn fail_unreplayed(&mut self, state: JobState) {
         let under_way = busy(state).then_some(self.turn.as_ref()).flatten();
         if self
-            .waiter
+            .following
             .as_ref()
-            .is_some_and(|armed| under_way != Some(&armed.turn))
+            .is_some_and(|following| under_way != Some(following.turn()))
         {
             self.fail(AcpError::internal_error().data(
                 "the prompt's turn ended while this client was behind, and the rho daemon no longer replays how",
@@ -313,11 +339,12 @@ impl Pump {
     }
 
     async fn live(&mut self, event: SessionEvent) {
-        let own = self.follow_prompt(&event);
+        let own = self.follow_turn(&event);
         match event {
             // The host already shows its own prompt.
             SessionEvent::UserMessage { .. } if own => {}
-            // The armed prompt's, or one no prompt of this host waits on.
+            // The followed turn's, which `follow_turn` settled, or one the
+            // host follows no other way.
             SessionEvent::TurnEnded { .. } => {}
             SessionEvent::State { state, .. } => {
                 self.shared
@@ -333,22 +360,32 @@ impl Pump {
         }
     }
 
-    /// Reads what `event` says of the armed prompt's turn: the turn's first
-    /// user message that is no steer is the prompt's own, which accepts it,
-    /// and the turn's end ends it. Returns whether `event` is that user
-    /// message. A prompt that gave up (its receiver is gone) is dropped.
-    fn follow_prompt(&mut self, event: &SessionEvent) -> bool {
+    /// Reads what `event` says of the followed turn: the first user message
+    /// of an armed prompt's turn that is no steer is the prompt's own, which
+    /// accepts it, and the followed turn's end settles it. Returns whether
+    /// `event` is that user message. A prompt that gave up (its receiver is
+    /// gone) is dropped.
+    fn follow_turn(&mut self, event: &SessionEvent) -> bool {
         if let SessionEvent::State { turn, .. } = event {
             self.turn.clone_from(turn);
         }
-        if self
-            .waiter
-            .as_ref()
-            .is_some_and(|armed| armed.waiter.outcome.is_closed())
-        {
-            self.waiter = None;
+        if matches!(
+            &self.following,
+            Some(Following::Prompt(armed)) if armed.waiter.outcome.is_closed()
+        ) {
+            self.following = None;
         }
-        let Some(armed) = self.waiter.as_mut() else {
+        if let SessionEvent::TurnEnded { turn, outcome } = event {
+            if self
+                .following
+                .as_ref()
+                .is_some_and(|following| following.turn() == turn)
+            {
+                self.settle(Ok(outcome.clone()));
+            }
+            return false;
+        }
+        let Some(Following::Prompt(armed)) = self.following.as_mut() else {
             return false;
         };
         match event {
@@ -371,13 +408,28 @@ impl Pump {
                 }
                 true
             }
-            SessionEvent::TurnEnded { turn, outcome } if *turn == armed.turn => {
-                if let Some(armed) = self.waiter.take() {
-                    let _ = armed.waiter.outcome.send(Ok(outcome.clone()));
-                }
-                false
-            }
             _ => false,
+        }
+    }
+
+    /// Settles the followed turn, if any: an armed prompt hears `end`, and
+    /// the host hears an announced turn end with the outcome's stop reason,
+    /// or unseen when the pump lost track of it (`end` is the error).
+    fn settle(&mut self, end: Result<TurnOutcome, AcpError>) {
+        match self.following.take() {
+            Some(Following::Prompt(armed)) => {
+                let _ = armed.waiter.outcome.send(end);
+            }
+            Some(Following::Announced(_)) => {
+                let end = match end {
+                    Ok(outcome) => TurnEnd::Ended(prompt::stop_reason(outcome)),
+                    Err(_) => TurnEnd::Unseen,
+                };
+                self.context
+                    .port
+                    .attached_turn_ended(&self.context.acp_id, end);
+            }
+            None => {}
         }
     }
 
@@ -423,7 +475,8 @@ impl Pump {
     }
 
     /// Ends the attachment as `attachment`: the prompt waiting on it fails
-    /// with `error`, and the host's input prompts are withdrawn.
+    /// with `error`, an announced turn ends unseen, and the host's input
+    /// prompts are withdrawn.
     fn end(&mut self, attachment: Attachment, error: AcpError) {
         self.fail(error);
         self.inputs.abort_all();
@@ -431,11 +484,9 @@ impl Pump {
         self.shared.attachment.send_replace(attachment);
     }
 
-    /// Fails the armed prompt, if any, with `error`.
+    /// Fails the followed turn, if any, with `error`.
     fn fail(&mut self, error: AcpError) {
-        if let Some(armed) = self.waiter.take() {
-            let _ = armed.waiter.outcome.send(Err(error));
-        }
+        self.settle(Err(error));
     }
 
     async fn send_mapped(&mut self, event: &SessionEvent) {

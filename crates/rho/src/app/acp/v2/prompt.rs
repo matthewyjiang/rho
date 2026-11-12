@@ -24,7 +24,7 @@ use agent_client_protocol::{
 };
 
 use super::{port::V2Port, requests};
-use crate::app::acp::{sessions::Accept, Adapter};
+use crate::app::acp::{sessions::Accept, Adapter, TurnEnd};
 
 pub(super) fn spawn(
     adapter: Arc<Adapter>,
@@ -61,16 +61,7 @@ pub(super) fn spawn(
             };
             return responder.respond_with_error(error);
         }
-        let stop_reason = match &result {
-            Ok(stop_reason) => requests::stop_reason(*stop_reason),
-            Err(error) => requests::failed(error),
-        };
-        port.send_update(
-            &session_id,
-            v2::SessionUpdate::StateUpdate(v2::StateUpdate::Idle(
-                v2::IdleStateUpdate::new().stop_reason(stop_reason),
-            )),
-        )
+        port.send_update(&session_id, requests::idle(&TurnEnd::Ended(result)))
     })
 }
 
