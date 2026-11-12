@@ -5,7 +5,8 @@
 //! id and feeds [`probe_checks`] back through [`DoctorReport::replace_checks`].
 
 mod checks;
-pub(crate) mod daemon;
+mod daemon;
+mod daemon_observe;
 mod daemon_store;
 mod probes;
 mod report;
@@ -16,7 +17,7 @@ use std::path::Path;
 use rho_providers::{auth::login_dispatch::ProviderAuthentication, credentials::CredentialStore};
 
 pub(crate) use checks::{mcp_check, HerdrProbe};
-pub(crate) use daemon_store::{daemon_store_check, DaemonStore};
+use daemon_store::{daemon_store_check, DaemonStore};
 pub(crate) use probes::{
     plan_probes, probe_checks, run_probe, DoctorProbeGate, DoctorProbeId, DoctorProbeOutcome,
 };

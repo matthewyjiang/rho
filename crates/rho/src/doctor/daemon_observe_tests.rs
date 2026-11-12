@@ -240,3 +240,26 @@ fn a_daemons_environment_is_compared_by_what_it_changes() {
         }
     );
 }
+
+// Covers: the daemon probe's rows replace exactly its placeholders, so
+// `/doctor` never keeps spinning on a daemon row nothing fills in.
+// Owner: doctor daemon observation (pure)
+#[test]
+fn rows_fill_the_probe_placeholders() {
+    let ids = |rows: Vec<DoctorCheck>| rows.into_iter().map(|row| row.id).collect::<Vec<_>>();
+
+    let observed = rows(
+        &DaemonProcess::NotRunning,
+        &DaemonSocket::Unknown("unread".into()),
+        &DaemonService::NotInstalled,
+        &DaemonEnvironment::NotRunning,
+        &DaemonStore::NotRunning,
+    );
+
+    assert_eq!(
+        ids(observed),
+        ids(super::super::probes::placeholder_checks(
+            &super::super::DoctorProbeId::Daemon
+        ))
+    );
+}

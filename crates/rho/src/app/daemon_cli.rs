@@ -29,7 +29,7 @@ use {
 };
 
 pub(super) async fn run(command: Option<DaemonCommand>) -> anyhow::Result<()> {
-    let paths = paths()?;
+    let paths = DaemonPaths::of_this_process()?;
     let run = DaemonCommand::Run {
         unload_idle_after: None,
         exec_handoff: None,
@@ -47,16 +47,6 @@ pub(super) async fn run(command: Option<DaemonCommand>) -> anyhow::Result<()> {
         DaemonCommand::Stop => stop(&paths).await,
         DaemonCommand::Restart => restart(&paths).await,
     }
-}
-
-/// The daemon's paths for this rho home, from the process environment.
-pub(super) fn paths() -> anyhow::Result<DaemonPaths> {
-    let rho_home = crate::paths::rho_dir()?;
-    let rho_home = daemon::real_home(&rho_home)
-        .with_context(|| format!("could not resolve rho home {}", rho_home.display()))?;
-    Ok(DaemonPaths::resolve(&rho_home, |name| {
-        std::env::var_os(name)
-    })?)
 }
 
 /// Why [`connect`] reached no daemon: the socket path is over the
@@ -95,7 +85,8 @@ pub(super) async fn connect_with(
     connect_as: ConnectAs,
 ) -> Result<daemon::Connection, Unreachable> {
     let unreachable = |reason: String| Unreachable { reason };
-    let paths = paths().map_err(|error| unreachable(format!("{error:#}")))?;
+    let paths =
+        DaemonPaths::of_this_process().map_err(|error| unreachable(format!("{error:#}")))?;
     if reach == Reach::Running {
         return daemon::connect(&paths, connect_as.hello())
             .await

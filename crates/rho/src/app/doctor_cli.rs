@@ -3,9 +3,8 @@
 //! Runs the same checks as the interactive `/doctor` overlay without a TUI.
 //! Root `--provider`/`--model`/`--auth`/`--reasoning` apply in memory so the
 //! report matches `rho --provider X run`. Probes run concurrently under one
-//! deadline so a hung endpoint cannot stall the report. The daemon rows
-//! (`doctor_daemon`) ask the running daemon, never one this starts, under the
-//! same deadline.
+//! deadline so a hung endpoint cannot stall the report. The daemon probe asks
+//! the running daemon, never one this starts.
 
 use std::{sync::Arc, time::Duration};
 
@@ -90,14 +89,9 @@ pub(super) async fn run(json: bool, cli: &Cli) -> anyhow::Result<()> {
         .into_iter()
         .map(|id| (id.clone(), tokio::spawn(run_probe(id, store.clone()))))
         .collect();
-    let (outcomes, daemon_checks) = tokio::join!(
-        collect_probes(handles, PROBE_DEADLINE),
-        daemon_checks(PROBE_DEADLINE)
-    );
-    for outcome in outcomes {
+    for outcome in collect_probes(handles, PROBE_DEADLINE).await {
         report.replace_checks(probe_checks(&outcome, &config.provider));
     }
-    report.replace_checks(daemon_checks);
 
     if json {
         println!(
@@ -135,11 +129,6 @@ fn apply_doctor_overrides(
         },
     )?;
     Ok(())
-}
-
-/// The daemon rows, asking the running daemon for at most `deadline`.
-async fn daemon_checks(deadline: Duration) -> Vec<crate::doctor::DoctorCheck> {
-    super::doctor_daemon::checks(deadline).await
 }
 
 /// Collect every spawned probe under one shared deadline. A probe that

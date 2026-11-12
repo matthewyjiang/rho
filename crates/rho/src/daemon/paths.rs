@@ -78,6 +78,17 @@ impl DaemonPaths {
         })
     }
 
+    /// The daemon's paths for this process's rho home, placed by this
+    /// process's environment.
+    pub(crate) fn of_this_process() -> anyhow::Result<Self> {
+        use anyhow::Context;
+
+        let rho_home = crate::paths::rho_dir()?;
+        let rho_home = real_home(&rho_home)
+            .with_context(|| format!("could not resolve rho home {}", rho_home.display()))?;
+        Ok(Self::resolve(&rho_home, |name| std::env::var_os(name))?)
+    }
+
     /// Creates the runtime directory, or verifies that an existing one is
     /// private to this user. Clients and the daemon both call this before
     /// touching the socket.

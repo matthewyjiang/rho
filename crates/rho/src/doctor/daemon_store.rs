@@ -8,7 +8,7 @@ use rho_protocol::{CredentialStoreKind, CredentialStoreStatus, StoreSelectedBy};
 use super::report::{DoctorCheck, DoctorCheckId, DoctorStatus};
 use crate::credential_store::wire;
 
-const LABEL: &str = "Daemon credential store";
+pub(super) const LABEL: &str = "Daemon credential store";
 
 /// What `rho doctor` learned about the daemon's credential store.
 #[derive(Clone, Debug, PartialEq, Eq)]

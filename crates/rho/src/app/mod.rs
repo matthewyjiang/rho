@@ -24,7 +24,6 @@ mod daemon_host;
 pub(crate) mod daemon_install;
 mod detach;
 mod doctor_cli;
-mod doctor_daemon;
 pub(crate) mod endpoint_login;
 mod headless_host;
 mod host_mcp;

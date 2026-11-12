@@ -1,4 +1,5 @@
-//! `/doctor` reports the daemon session's MCP servers, not the client's.
+//! `/doctor` reports the daemon session's MCP servers, not the client's, and
+//! the daemon it runs on.
 
 use std::io::Write;
 
@@ -21,7 +22,7 @@ const SIZE: PtySize = PtySize {
 
 pub(super) const SCENARIO: Scenario = Scenario::new(
     "daemon_doctor_mcp",
-    "Report a daemon session's MCP servers in /doctor, not the client's",
+    "Report a daemon session's MCP servers and its daemon in /doctor",
     SIZE,
     &[],
     /*smoke*/ false,
@@ -29,7 +30,8 @@ pub(super) const SCENARIO: Scenario = Scenario::new(
 
 // Covers: the MCP row of /doctor on a daemon session reads the session's
 // servers, and shows the row `doctor_mcp` shows for them. The client's own
-// config names other servers, so a row built from it differs.
+// config names other servers, so a row built from it differs. The Daemon
+// section fills in with the daemon the session runs on.
 // Owner: interactive TUI as a daemon client (#1685).
 pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
     let home = IsolatedHome::new()?;
@@ -75,6 +77,7 @@ pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
             harness.screen().contents().contains("degraded"),
             "MCP row is not degraded"
         );
+        harness.wait_for_text("running, pid", SETTLE)?;
         harness.inject_key(&Key::Esc)?;
         harness.wait_for_text_gone("Extensions", SETTLE)?;
         harness.inject_key(&Key::Esc)?;

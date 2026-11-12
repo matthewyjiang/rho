@@ -1,8 +1,9 @@
-//! What `rho doctor` observes about the daemon (#1674), from outside and
-//! without ever starting one: the handshake and status of the one running,
-//! the socket's permissions, the documented service's files, and, where the
-//! OS shows it, the daemon's environment. `crate::doctor::daemon` turns each
-//! observation into a row.
+//! What `/doctor` and `rho doctor` observe about the daemon (#1674), from
+//! outside and without ever starting one: the handshake and status of the
+//! one running, the socket's permissions, the documented service's files,
+//! and, where the OS shows it, the daemon's environment. `super::daemon` and
+//! `super::daemon_store` turn each observation into a row; hosts run
+//! [`checks`] as the [`super::DoctorProbeId::Daemon`] probe.
 //!
 //! This is a boundary that reads the process environment and the user's
 //! files; the functions it calls take what was read.
@@ -15,21 +16,25 @@ use std::{
 
 use rho_protocol::{methods::Status, ClientError, StatusParams};
 
-use crate::{
-    daemon::{
-        self, ConnectError, DaemonPaths, LockHolder, ServiceManager, SocketFound, VariableKind,
-    },
-    doctor::{
-        daemon::{
-            environment_check, process_check, service_check, socket_check, DaemonEnvironment,
-            DaemonProcess, DaemonService, DaemonSocket,
-        },
-        daemon_store_check, DaemonStore, DoctorCheck,
-    },
+use crate::daemon::{
+    self, ConnectError, DaemonPaths, LockHolder, ServiceManager, SocketFound, VariableKind,
 };
 
-/// Every daemon row, asking the running daemon for at most `deadline`.
-pub(super) async fn checks(deadline: Duration) -> Vec<DoctorCheck> {
+use super::{
+    daemon::{
+        environment_check, process_check, service_check, socket_check, DaemonEnvironment,
+        DaemonProcess, DaemonService, DaemonSocket,
+    },
+    daemon_store_check, DaemonStore, DoctorCheck,
+};
+
+/// How long the daemon has to complete the handshake and report its status:
+/// the runtime probes' 10 s budget, under `rho doctor`'s 20 s deadline, so a
+/// hung daemon reports why on its own rows instead of a bare `timed out`.
+const STATUS_DEADLINE: Duration = Duration::from_secs(10);
+
+/// Every daemon row.
+pub(super) async fn checks() -> Vec<DoctorCheck> {
     let service = match crate::paths::home_dir() {
         Some(home) => find_service(
             &home,
@@ -37,9 +42,9 @@ pub(super) async fn checks(deadline: Duration) -> Vec<DoctorCheck> {
         ),
         None => DaemonService::Unknown("could not determine the home directory".into()),
     };
-    let (process, store, socket, environment) = match super::daemon_cli::paths() {
+    let (process, store, socket, environment) = match DaemonPaths::of_this_process() {
         Ok(paths) => {
-            let (process, store) = ask(&paths, deadline).await;
+            let (process, store) = ask(&paths, STATUS_DEADLINE).await;
             // A daemon that did not answer still wrote its record.
             let pid = daemon_pid(&process).or_else(|| {
                 daemon::lock_holder(&paths)
@@ -83,12 +88,23 @@ pub(super) async fn checks(deadline: Duration) -> Vec<DoctorCheck> {
             )
         }
     };
+    rows(&process, &socket, &service, &environment, &store)
+}
+
+/// One row per observation, in [`super::daemon::ROWS`] order.
+fn rows(
+    process: &DaemonProcess,
+    socket: &DaemonSocket,
+    service: &DaemonService,
+    environment: &DaemonEnvironment,
+    store: &DaemonStore,
+) -> Vec<DoctorCheck> {
     vec![
-        process_check(&process, env!("CARGO_PKG_VERSION")),
-        socket_check(&socket),
-        service_check(&service),
-        environment_check(&environment),
-        daemon_store_check(&store),
+        process_check(process, env!("CARGO_PKG_VERSION")),
+        socket_check(socket),
+        service_check(service),
+        environment_check(environment),
+        daemon_store_check(store),
     ]
 }
 
@@ -130,9 +146,7 @@ async fn ask(paths: &DaemonPaths, deadline: Duration) -> (DaemonProcess, DaemonS
     };
     match tokio::time::timeout(deadline, ask).await {
         Ok(answer) => answer,
-        Err(_) => unanswered(format!(
-            "it did not report its status within PROBE_DEADLINE ({deadline:?})"
-        )),
+        Err(_) => unanswered(format!("it did not report its status within {deadline:?}")),
     }
 }
 
@@ -257,5 +271,5 @@ fn parse_environ(bytes: &[u8]) -> Vec<(OsString, OsString)> {
 }
 
 #[cfg(test)]
-#[path = "doctor_daemon_tests.rs"]
+#[path = "daemon_observe_tests.rs"]
 mod tests;

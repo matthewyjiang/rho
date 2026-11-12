@@ -1,8 +1,8 @@
 //! The doctor rows about the rho daemon itself (#1674): whether one runs and
 //! matches this `rho`, whether its socket is private, whether the documented
 //! always-on service is installed, and how the daemon's environment differs
-//! from this shell's. `rho doctor` observes each from outside, never starting
-//! a daemon; the credential store row is in `daemon_store`.
+//! from this shell's. `daemon_observe` observes each from outside, never
+//! starting a daemon; the credential store row is in `daemon_store`.
 
 use rho_protocol::{ProtocolVersion, RestartCost, VersionFix, VersionMismatch};
 
@@ -11,6 +11,24 @@ use super::report::{DoctorCheck, DoctorCheckId, DoctorStatus};
 use crate::daemon::{LAUNCHD_LABEL, SYSTEMD_UNIT};
 
 const SERVICE_DOCS: &str = "https://matthewyjiang.github.io/rho/daemon#running-as-a-service";
+
+const PROCESS_LABEL: &str = "Daemon";
+const SOCKET_LABEL: &str = "Daemon socket";
+const SERVICE_LABEL: &str = "Service";
+const ENVIRONMENT_LABEL: &str = "Daemon environment";
+
+/// Every daemon row's id and label, in the order the observation reports
+/// them: what the probe's placeholders and failure rows show.
+pub(super) const ROWS: [(DoctorCheckId, &str); 5] = [
+    (DoctorCheckId::DaemonProcess, PROCESS_LABEL),
+    (DoctorCheckId::DaemonSocket, SOCKET_LABEL),
+    (DoctorCheckId::DaemonService, SERVICE_LABEL),
+    (DoctorCheckId::DaemonEnvironment, ENVIRONMENT_LABEL),
+    (
+        DoctorCheckId::DaemonCredentialStore,
+        super::daemon_store::LABEL,
+    ),
+];
 
 /// Whether a daemon answers on this rho home's socket.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -96,7 +114,7 @@ pub(crate) enum DaemonEnvironment {
 /// the protocol matches.
 pub(crate) fn process_check(process: &DaemonProcess, client_version: &str) -> DoctorCheck {
     let row = |status, summary: String| {
-        DoctorCheck::new(DoctorCheckId::DaemonProcess, "Daemon", status, summary)
+        DoctorCheck::new(DoctorCheckId::DaemonProcess, PROCESS_LABEL, status, summary)
     };
     match process {
         DaemonProcess::NotRunning => row(DoctorStatus::Info, "not running".into()).with_hint(
@@ -167,13 +185,7 @@ pub(crate) fn process_check(process: &DaemonProcess, client_version: &str) -> Do
 /// private.
 pub(crate) fn socket_check(socket: &DaemonSocket) -> DoctorCheck {
     let row = |status, summary: &str, hint: &str| {
-        DoctorCheck::new(
-            DoctorCheckId::DaemonSocket,
-            "Daemon socket",
-            status,
-            summary,
-        )
-        .with_hint(hint)
+        DoctorCheck::new(DoctorCheckId::DaemonSocket, SOCKET_LABEL, status, summary).with_hint(hint)
     };
     match socket {
         DaemonSocket::Missing { socket } => row(
@@ -196,7 +208,8 @@ pub(crate) fn socket_check(socket: &DaemonSocket) -> DoctorCheck {
 /// start at the next login.
 pub(crate) fn service_check(service: &DaemonService) -> DoctorCheck {
     let row = |status, summary: String, hint: String| {
-        DoctorCheck::new(DoctorCheckId::DaemonService, "Service", status, summary).with_hint(hint)
+        DoctorCheck::new(DoctorCheckId::DaemonService, SERVICE_LABEL, status, summary)
+            .with_hint(hint)
     };
     match service {
         DaemonService::NotInstalled => row(
@@ -237,7 +250,7 @@ pub(crate) fn environment_check(environment: &DaemonEnvironment) -> DoctorCheck 
     let row = |status, summary: String, hint: &str| {
         DoctorCheck::new(
             DoctorCheckId::DaemonEnvironment,
-            "Daemon environment",
+            ENVIRONMENT_LABEL,
             status,
             summary,
         )

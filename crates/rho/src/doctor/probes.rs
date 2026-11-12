@@ -38,6 +38,9 @@ pub(crate) enum DoctorProbeId {
     Antigravity,
     /// `rtk --version`.
     Rtk,
+    /// The running daemon's handshake and status, its socket, service, and
+    /// environment, observed without starting one.
+    Daemon,
 }
 
 #[derive(Debug)]
@@ -52,6 +55,7 @@ pub(crate) enum DoctorProbeOutcome {
     Rtk {
         available: bool,
     },
+    Daemon(Vec<DoctorCheck>),
     /// The task was aborted or panicked before producing a result.
     Failed(DoctorProbeId),
     /// The host stopped waiting.
@@ -108,6 +112,7 @@ pub(crate) fn plan_probes(
     if config.rtk {
         probes.push(DoctorProbeId::Rtk);
     }
+    probes.push(DoctorProbeId::Daemon);
     probes
 }
 
@@ -132,6 +137,7 @@ pub(crate) async fn run_probe(
         DoctorProbeId::Rtk => DoctorProbeOutcome::Rtk {
             available: probe_rtk().await,
         },
+        DoctorProbeId::Daemon => DoctorProbeOutcome::Daemon(super::daemon_observe::checks().await),
     }
 }
 
@@ -220,6 +226,7 @@ pub(crate) fn probe_checks(
         DoctorProbeOutcome::Cursor(snapshot) => vec![checks::cursor_check(snapshot)],
         DoctorProbeOutcome::Antigravity(status) => vec![checks::antigravity_check(status)],
         DoctorProbeOutcome::Rtk { available } => vec![checks::rtk_check(*available)],
+        DoctorProbeOutcome::Daemon(rows) => rows.clone(),
         DoctorProbeOutcome::Failed(id) => failed_rows(
             id,
             active_provider,
@@ -249,7 +256,7 @@ fn failed_rows(
             DoctorStatus::Fail
         }
         DoctorProbeId::ProviderEndpoint { .. } => DoctorStatus::Info,
-        DoctorProbeId::Claude | DoctorProbeId::Rtk => DoctorStatus::Warn,
+        DoctorProbeId::Claude | DoctorProbeId::Rtk | DoctorProbeId::Daemon => DoctorStatus::Warn,
         DoctorProbeId::Cursor | DoctorProbeId::Antigravity => DoctorStatus::Info,
     };
     probe_rows(id)
@@ -278,6 +285,10 @@ fn probe_rows(id: &DoctorProbeId) -> Vec<(DoctorCheckId, String)> {
             vec![(DoctorCheckId::Antigravity, checks::ANTIGRAVITY_LABEL.into())]
         }
         DoctorProbeId::Rtk => vec![(DoctorCheckId::Rtk, checks::RTK_LABEL.into())],
+        DoctorProbeId::Daemon => super::daemon::ROWS
+            .iter()
+            .map(|(id, label)| (id.clone(), (*label).into()))
+            .collect(),
     }
 }
 
