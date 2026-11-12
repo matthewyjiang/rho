@@ -206,10 +206,16 @@ impl Feed {
     /// replay from the saved rows: it joins the transcript, and resets stop
     /// replaying those turns' live events.
     pub(super) fn end_turn(&self, saved: Vec<wire::SessionEvent>) {
-        let saved = saved
+        let saved: Vec<_> = saved
             .into_iter()
-            .filter(|event| encoded_len(event).is_some());
+            .filter(|event| encoded_len(event).is_some())
+            .collect();
         let mut state = self.state();
+        // A reopened session's usage is its saved conversation's until a
+        // turn reports it live, which then also holds the session's cost.
+        if state.usage.is_none() {
+            state.usage = saved.iter().rev().find_map(usage_of);
+        }
         state.transcript.extend(saved);
         state.turn_start = state.last;
         state.turn_start_evicted = false;
@@ -344,17 +350,7 @@ impl FeedState {
                 }
             }
             wire::SessionEvent::TitleChanged { title } => self.title = Some(title.clone()),
-            wire::SessionEvent::Usage {
-                used_tokens,
-                window_tokens,
-                cost_usd_micros,
-            } => {
-                self.usage = Some(wire::JobUsage {
-                    used_tokens: *used_tokens,
-                    window_tokens: *window_tokens,
-                    cost_usd_micros: *cost_usd_micros,
-                });
-            }
+            wire::SessionEvent::Usage { .. } => self.usage = usage_of(&event),
             wire::SessionEvent::OptionsChanged { options } => self.options = (**options).clone(),
             _ => {}
         }
@@ -431,6 +427,23 @@ impl FeedState {
         }
         events.extend(self.events_after(self.turn_start));
         events
+    }
+}
+
+/// What `event` says of the session's context use and spend, if it is a
+/// usage event.
+fn usage_of(event: &wire::SessionEvent) -> Option<wire::JobUsage> {
+    match event {
+        wire::SessionEvent::Usage {
+            used_tokens,
+            window_tokens,
+            cost_usd_micros,
+        } => Some(wire::JobUsage {
+            used_tokens: *used_tokens,
+            window_tokens: *window_tokens,
+            cost_usd_micros: *cost_usd_micros,
+        }),
+        _ => None,
     }
 }
 

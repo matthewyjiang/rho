@@ -349,3 +349,42 @@ fn events_json_cannot_hold_are_dropped_live_and_saved() {
         (Replay::Reset, vec![(1, notice("saved"))])
     );
 }
+
+// Covers: the job list's usage is the last a session's stream said: a
+// reopened session's is its saved conversation's, a turn's live usage
+// replaces it, and that turn's saved rows, which hold no cost, do not
+// replace the live one.
+// Owner: daemon session feed.
+#[test]
+fn the_listed_usage_is_the_saved_one_until_a_turn_reports_it() {
+    let usage = |used_tokens, cost_usd_micros| wire::SessionEvent::Usage {
+        used_tokens,
+        window_tokens: Some(1_000),
+        cost_usd_micros,
+    };
+    let listed = |used_tokens, cost_usd_micros| {
+        Some(wire::JobUsage {
+            used_tokens,
+            window_tokens: Some(1_000),
+            cost_usd_micros,
+        })
+    };
+    let feed = idle_feed();
+    let new = feed.live().usage;
+    feed.end_turn(vec![notice("saved"), usage(10, None)]);
+    let reopened = feed.live().usage;
+    feed.publish([usage(20, Some(5))]);
+    let live = feed.live().usage;
+    feed.end_turn(vec![usage(20, None)]);
+    let saved = feed.live().usage;
+
+    assert_eq!(
+        (new, reopened, live, saved),
+        (
+            None,
+            listed(10, None),
+            listed(20, Some(5)),
+            listed(20, Some(5))
+        )
+    );
+}
