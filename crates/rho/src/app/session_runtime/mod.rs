@@ -391,9 +391,11 @@ impl SessionRuntime {
                 .is_some_and(delegation::HeldNotices::has_undelivered)
     }
 
-    /// Cancels any prompt and tears the session down.
+    /// Cancels any prompt, saves the partial follow-up of a compaction
+    /// whose window is still open, and tears the session down.
     pub(crate) async fn shutdown(self) {
         self.handle.cancel();
+        self.built.diagnostics.flush_unfinished_compaction().await;
         self.built.teardown().await;
     }
 

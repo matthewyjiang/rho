@@ -286,6 +286,7 @@ impl SessionRuntime {
                 hooks: self.built.runtime.hooks(),
                 session: self.built.session.id(),
                 child_questions: child_questions.as_mut(),
+                diagnostics: &self.built.diagnostics,
             },
             io,
         )
@@ -311,9 +312,13 @@ impl SessionRuntime {
         }
         let outcome = run.outcome().await;
         // The committed turn is the settled context; in-run updates were estimates.
-        io.emit(SessionEvent::RunFinished {
-            context: self.built.session.context_estimate(),
-        });
+        let context = self.built.session.context_estimate();
+        // A run whose last request followed a compaction starts no step that
+        // would report its size.
+        self.built
+            .diagnostics
+            .observe_prompt_tokens(context.provider_reported_tokens());
+        io.emit(SessionEvent::RunFinished { context });
         match outcome {
             Ok(outcome) => {
                 if let Err(error) = self.settle_turn(checkpoint, &outcome) {
