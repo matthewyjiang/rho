@@ -234,6 +234,15 @@ impl Feed {
             .into_iter()
             .filter(|event| encoded_len(event).is_some())
             .collect();
+        // The context is the moved conversation's; the session's spend is
+        // what it was.
+        if let Some(moved) = state.transcript.iter().rev().find_map(usage_of) {
+            let spent = state.usage.and_then(|usage| usage.cost_usd_micros);
+            state.usage = Some(wire::JobUsage {
+                cost_usd_micros: spent,
+                ..moved
+            });
+        }
         state.buffer.clear();
         state.buffered_bytes = 0;
         state.last = Seq(0);
