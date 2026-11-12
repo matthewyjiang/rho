@@ -15,7 +15,7 @@ The rho daemon is one long-lived background process per user and rho home (`~/.r
 | `rho worktrees prune [--dry-run]` | Remove the [session worktrees](#sessions-in-worktrees) that are clean and merged now, instead of at the daemon's next daily pass, and say why each other one stays. `--dry-run` only lists what it would do. |
 | `rho attach <ID>` | Follow a session's turn until it ends, and exit as it ended; answer its requests, steer it, or cancel it from the terminal; Ctrl+C detaches. See [Attaching to a daemon session](/automation-cli#attaching-to-a-daemon-session). |
 
-`status`, `stop`, and `attach` never start a daemon. With none running, they print `rho daemon is not running` and exit with status 1. `rho worktrees prune --dry-run` does not start one either: with none running, it fails with `could not reach the rho daemon: rho daemon is not running` and exits with status 1.
+`status`, `stop`, and `attach` never start a daemon. With none running, they print `rho daemon is not running` and exit with status 1. `rho worktrees prune --dry-run` does not start one either: with none running, it fails with an error that begins `could not reach the rho daemon: rho daemon is not running` and exits with status 1.
 
 Only one daemon runs per rho home. A second `rho daemon run` fails with the pid, version, and socket of the one already running.
 
