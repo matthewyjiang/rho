@@ -58,5 +58,5 @@ pub(crate) use service::{
     find_services, ServiceFiles, ServiceManager, LAUNCHD_LABEL, SYSTEMD_UNIT,
 };
 pub(crate) use shutdown::{Ending, Shutdown};
-pub(crate) use spawn::{connect_or_spawn, DaemonSpawner, ProcessSpawner};
+pub(crate) use spawn::{connect_or_spawn, DaemonSpawner, ProcessSpawner, SpawnFuture};
 pub(crate) use spawn_env::{differing_variables, VariableKind};
