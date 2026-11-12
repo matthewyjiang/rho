@@ -31,6 +31,7 @@ fn estimates_include_every_request_part() {
         provenance: Some(identity),
         reasoning_summary: None,
         provider_context: vec![context.clone()],
+        created_at: None,
     });
     let spec = ToolSpec {
         name: "read_file".into(),

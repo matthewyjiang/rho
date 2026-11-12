@@ -6,8 +6,8 @@ use crate::{
     client::Rho,
     event::{RunOutcome, StopReason},
     model::{
-        AssistantMessage, ContentBlock, Message, ModelEvent, ModelRequest, ModelResponse,
-        ModelUsage,
+        AssistantMessage, ContentBlock, Message, MessageTime, ModelEvent, ModelRequest,
+        ModelResponse, ModelUsage,
     },
     provider::{
         provider_event_channel, provider_steering_channel, ModelRequestOptions,
@@ -424,6 +424,7 @@ async fn execute_turn_loop(
             provenance: Some(runtime.provider.identity()),
             reasoning_summary,
             provider_context,
+            created_at: runtime.record_reply_times.then(MessageTime::now),
         };
         history.push(Message::assistant(assistant));
         core.append_context_estimate(history.last().expect("assistant was appended"));

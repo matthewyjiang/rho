@@ -99,6 +99,7 @@ where
         .usage_purpose(usage_purpose)
         .usage_recording(usage_recording)
         .hook_host_labels(hook_host_labels)
+        .record_reply_times(true)
         .compactor(compactor);
     if let Some(service_tier) = service_tier {
         builder = builder.service_tier(service_tier);

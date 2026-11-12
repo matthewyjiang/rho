@@ -4,7 +4,7 @@ use tokio::sync::mpsc;
 
 use crate::{
     event::RunOutcome,
-    model::Message,
+    model::{Message, MessageTime},
     session::{SessionCore, SessionState},
     Error, Retryability, RunEvent,
 };
@@ -33,7 +33,8 @@ pub(super) async fn commit_terminal(
     kind: TerminalKind,
     events: &mpsc::Sender<RunEvent>,
 ) -> Result<RunOutcome, Error> {
-    if let Some(aborted) = capture.into_aborted_assistant() {
+    if let Some(mut aborted) = capture.into_aborted_assistant() {
+        aborted.stopped_at = core.runtime().record_reply_times.then(MessageTime::now);
         history.push(Message::AbortedAssistant(Box::new(aborted)));
     }
     commit_terminal_history(core, history, kind, events).await
