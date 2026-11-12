@@ -67,6 +67,8 @@ impl SessionRuntime {
             };
             return Err(SelectNodeError::Change(SettingChangeError::Apply(error)));
         }
+        // Later turns continue another conversation, not the compacted one.
+        self.built.diagnostics.end_compaction_follow_up();
         Ok(())
     }
 

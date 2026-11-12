@@ -638,6 +638,7 @@ fn compactions_always_end() {
 fn a_discarded_response_drops_what_it_proposed() {
     let tool_set = AppToolSet::disabled();
     let mut live = live(&tool_set);
+    live.map(&delta("Cleaning up."));
     let events = [
         proposed("call-1", "rm -rf build"),
         SessionEvent::Run(RunEvent::ProviderStreamReset {
@@ -668,8 +669,9 @@ fn a_discarded_response_drops_what_it_proposed() {
 }
 
 // Covers: each time the run asks the provider again, clients hear why and
-// how long the provider said to wait, after the discarded response when a
-// stream reset discarded one.
+// how long the provider said to wait. A stream reset discards the response
+// first only when its attempt streamed some: an attempt that failed before
+// streaming, as one that could not connect, restarted nothing.
 // Owner: session event live mapping
 #[test]
 fn a_retry_says_why() {
@@ -679,6 +681,12 @@ fn a_retry_says_why() {
             detail: "retry".into(),
         })
     };
+    let unavailable = || {
+        reset(ProviderStreamResetReason::RetryableFailure {
+            kind: ProviderErrorKind::Unavailable,
+            retry_after: None,
+        })
+    };
     let retry = |reason, retry_after_ms| WireEvent::ProviderRetry {
         reason,
         retry_after_ms,
@@ -686,43 +694,63 @@ fn a_retry_says_why() {
     let cases = [
         (
             "request failed",
+            vec![],
             SessionEvent::Run(RunEvent::ProviderRequestRetry),
             vec![retry(RetryReason::RequestFailed, None)],
         ),
         (
             "rate limited",
+            vec![],
             reset(ProviderStreamResetReason::RetryableFailure {
                 kind: ProviderErrorKind::RateLimit,
                 retry_after: Some(Duration::from_secs(5)),
             }),
-            vec![
-                WireEvent::ResponseDiscarded,
-                retry(RetryReason::RateLimit, Some(5_000)),
-            ],
+            vec![retry(RetryReason::RateLimit, Some(5_000))],
         ),
         (
-            "other failure",
-            reset(ProviderStreamResetReason::RetryableFailure {
-                kind: ProviderErrorKind::Unavailable,
-                retry_after: None,
-            }),
+            "could not connect",
+            vec![],
+            unavailable(),
+            vec![retry(RetryReason::ProviderError, None)],
+        ),
+        (
+            "context overflow",
+            vec![],
+            reset(ProviderStreamResetReason::ContextOverflow),
+            vec![retry(RetryReason::ContextOverflow, None)],
+        ),
+        (
+            "failed mid-stream",
+            vec![delta("partial")],
+            unavailable(),
             vec![
                 WireEvent::ResponseDiscarded,
                 retry(RetryReason::ProviderError, None),
             ],
         ),
         (
-            "context overflow",
-            reset(ProviderStreamResetReason::ContextOverflow),
+            "failed after a hosted search",
+            vec![SessionEvent::Run(RunEvent::WebSearch {
+                detail: "rho docs".into(),
+            })],
+            unavailable(),
             vec![
                 WireEvent::ResponseDiscarded,
-                retry(RetryReason::ContextOverflow, None),
+                retry(RetryReason::ProviderError, None),
             ],
         ),
+        (
+            "the retry of a streamed response could not connect",
+            vec![delta("partial"), unavailable()],
+            unavailable(),
+            vec![retry(RetryReason::ProviderError, None)],
+        ),
     ];
-    for (case, event, expected) in cases {
+    for (case, before, event, expected) in cases {
         let tool_set = AppToolSet::disabled();
-        assert_eq!(live(&tool_set).map(&event), expected, "{case}");
+        let mut live = live(&tool_set);
+        map_all(&mut live, &before);
+        assert_eq!(live.map(&event), expected, "{case}");
     }
 }
 

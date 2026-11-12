@@ -523,14 +523,15 @@ fn http_error_messages_include_status_without_bodies() {
 }
 
 // Covers: transport request failures keep a public message and never copy
-// reqwest URL or source text. Timeouts, connect failures, and builder errors
-// get a specific message; other transport failures stay generic.
+// the reqwest URL. Timeouts, connect failures, and builder errors get a
+// specific message, a connect failure with the OS's reason; other transport
+// failures stay generic.
 // Owner: provider SDK error mapping
 #[tokio::test]
 async fn transport_request_errors_keep_sanitized_public_messages() {
     const SECRET: &str = "secret-token-should-not-leak";
 
-    let connection = connection_refused_error(SECRET).await;
+    let (connection, refused) = connection_refused_error(SECRET).await;
     let timeout = request_timeout_error(SECRET).await;
     let builder = builder_error();
 
@@ -539,24 +540,24 @@ async fn transport_request_errors_keep_sanitized_public_messages() {
             connection,
             ProviderErrorKind::Unavailable,
             true,
-            "provider request failed to connect",
+            format!("provider request failed to connect: {refused}"),
         ),
         (
             timeout,
             ProviderErrorKind::Timeout,
             true,
-            "provider request timed out",
+            "provider request timed out".into(),
         ),
         (
             builder,
             ProviderErrorKind::Other,
             false,
-            "provider client configuration failed",
+            "provider client configuration failed".into(),
         ),
     ];
 
     for (error, kind, retryable, message) in cases {
-        assert_sanitized_transport_request(error, kind, retryable, message, SECRET);
+        assert_sanitized_transport_request(error, kind, retryable, &message, SECRET);
     }
 }
 
@@ -564,7 +565,7 @@ fn assert_sanitized_transport_request(
     error: reqwest::Error,
     kind: ProviderErrorKind,
     retryable: bool,
-    message: &'static str,
+    message: &str,
     secret: &str,
 ) {
     let converted = provider_error_from_model_error(ModelError::from(error));
@@ -603,14 +604,19 @@ async fn bind_local() -> (tokio::net::TcpListener, std::net::SocketAddr) {
     (listener, address)
 }
 
-async fn connection_refused_error(secret: &str) -> reqwest::Error {
+/// A request to a closed port, and the OS's own words for the refusal.
+async fn connection_refused_error(secret: &str) -> (reqwest::Error, String) {
     let (listener, address) = bind_local().await;
     drop(listener);
-    crate::reqwest_client()
+    let refused = std::net::TcpStream::connect(address)
+        .expect_err("closed listener should refuse the connection")
+        .to_string();
+    let error = crate::reqwest_client()
         .get(secret_url(address, secret))
         .send()
         .await
-        .expect_err("closed listener should refuse the connection")
+        .expect_err("closed listener should refuse the connection");
+    (error, refused)
 }
 
 async fn request_timeout_error(secret: &str) -> reqwest::Error {

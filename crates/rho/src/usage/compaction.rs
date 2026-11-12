@@ -12,16 +12,29 @@ static DEFAULT_RECORDER: std::sync::OnceLock<Option<SqliteUsageRecorder>> =
 /// Saves `record` to the default ledger off the async runtime. Failures are
 /// logged, never surfaced: metrics must not fail a compaction. Tests skip it.
 pub(crate) fn save_compaction(record: Option<CompactionRecord>) {
-    let Some(record) = record else {
+    let Some(record) = to_save(record) else {
         return;
     };
-    if cfg!(test) {
-        return;
-    }
     match tokio::runtime::Handle::try_current() {
         Ok(runtime) => drop(runtime.spawn_blocking(move || write_compaction(record))),
         Err(_) => write_compaction(record),
     }
+}
+
+/// [`save_compaction`], returning once the write finished, for a caller the
+/// process may exit after: a queued blocking task would be dropped.
+pub(crate) async fn save_compaction_and_wait(record: Option<CompactionRecord>) {
+    let Some(record) = to_save(record) else {
+        return;
+    };
+    if let Err(error) = tokio::task::spawn_blocking(move || write_compaction(record)).await {
+        tracing::warn!(%error, "could not record compaction metrics");
+    }
+}
+
+/// `record`, unless there is none or tests are running.
+fn to_save(record: Option<CompactionRecord>) -> Option<CompactionRecord> {
+    record.filter(|_| !cfg!(test))
 }
 
 fn write_compaction(record: CompactionRecord) {

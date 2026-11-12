@@ -97,6 +97,7 @@ impl Harness {
         let (dispatcher, hooks) = recording_dispatcher();
         let pump = tokio::spawn(async move {
             let session = SessionId::new();
+            let diagnostics = crate::diagnostics::test_diagnostics("test", "test");
             let mut io = TurnIo {
                 events: events_tx,
                 control: control_rx,
@@ -112,6 +113,7 @@ impl Harness {
                     hooks: dispatcher,
                     session: &session,
                     child_questions: Some(&mut child_rx),
+                    diagnostics: &diagnostics,
                 },
                 &mut io,
             )

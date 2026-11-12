@@ -182,8 +182,8 @@ pub enum SessionEvent {
     /// [`Self::ProviderRetry`] saying why follows.
     ResponseDiscarded,
     /// The turn asks the provider again, and why. Says what the turn is
-    /// doing until its next event; a stream reset sends
-    /// [`Self::ResponseDiscarded`] first.
+    /// doing until its next event; a stream reset that discarded streamed
+    /// output sends [`Self::ResponseDiscarded`] first.
     ProviderRetry {
         reason: RetryReason,
         /// How long the provider said to wait before the next request.

@@ -212,6 +212,43 @@ impl RuntimeDiagnostics {
         self.read().compaction_metrics.last().cloned()
     }
 
+    /// Feeds one of the session's run events to the latest compaction's
+    /// follow-up (see [`CompactionMetrics::observe_run_event`]).
+    pub(crate) fn observe_run_event(&self, event: &rho_sdk::RunEvent) {
+        let finished = self.write().compaction_metrics.observe_run_event(event);
+        crate::usage::save_compaction(finished);
+    }
+
+    /// The latest compactor result is committed outside a run, as `/compact`
+    /// commits it; start its follow-up.
+    pub(crate) fn compaction_committed(&self) {
+        self.write().compaction_metrics.committed();
+    }
+
+    /// Feeds the latest provider-reported prompt size to the follow-up.
+    pub(crate) fn observe_prompt_tokens(&self, tokens: Option<u64>) {
+        let finished = self
+            .write()
+            .compaction_metrics
+            .observe_prompt_tokens(tokens);
+        crate::usage::save_compaction(finished);
+    }
+
+    /// Ends a follow-up still in progress and saves its partial numbers,
+    /// because what comes next no longer follows that compaction: the
+    /// conversation moved to another node, or the model changed.
+    pub(crate) fn end_compaction_follow_up(&self) {
+        let unfinished = self.write().compaction_metrics.take_unfinished();
+        crate::usage::save_compaction(unfinished);
+    }
+
+    /// [`Self::end_compaction_follow_up`] for a session that is closing:
+    /// returns once the save is written, since the process may exit next.
+    pub(crate) async fn flush_unfinished_compaction(&self) {
+        let unfinished = self.write().compaction_metrics.take_unfinished();
+        crate::usage::save_compaction_and_wait(unfinished).await;
+    }
+
     pub fn update_compaction_config(&self, config: &CompactionConfig) {
         let mut state = self.write();
         state.config.auto_compact = config.auto_compact;
