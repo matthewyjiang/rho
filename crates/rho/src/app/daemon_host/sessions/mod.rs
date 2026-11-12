@@ -658,7 +658,10 @@ impl Sessions {
                 session.clone(),
             )
         };
-        let added = self.add(SessionJobRecord::Register(record), opened).await?;
+        let added = self
+            .add(SessionJobRecord::Register(record), opened)
+            .await
+            .map_err(|error| worktree::kept(error, worktree.as_ref()))?;
         tracing::info!(%session, %job, "opened session");
         Ok(SessionNewResponse {
             session: session_to_wire(session),

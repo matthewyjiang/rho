@@ -301,6 +301,17 @@ impl JobsView {
         None
     }
 
+    /// The project the selected job lists under, as `rows::groups` groups
+    /// it: a run nested under a session in a worktree lists under that
+    /// session's project, not the worktree it runs in.
+    fn selected_project(&self) -> Option<PathBuf> {
+        let selected = self.selected.as_ref()?;
+        self.groups()
+            .into_iter()
+            .find(|group| group.rows.iter().any(|row| &row.job == selected))
+            .map(|group| group.workspace)
+    }
+
     /// Cancels the turn of the selected job's session, at the second `c`
     /// in a row on it: `c` copies in every other panel, and a cancelled
     /// turn does not come back.
@@ -357,11 +368,9 @@ impl JobsView {
     }
 
     fn begin_new_session(&mut self) {
-        // A session in a worktree offers the project it came from.
-        let workspace = self.selected_job().map_or_else(
-            || self.launch.cwd.clone(),
-            |job| job.project().to_path_buf(),
-        );
+        let workspace = self
+            .selected_project()
+            .unwrap_or_else(|| self.launch.cwd.clone());
         self.mode = Mode::NewWorkspace {
             path: workspace.to_string_lossy().into_owned(),
             worktree: false,
