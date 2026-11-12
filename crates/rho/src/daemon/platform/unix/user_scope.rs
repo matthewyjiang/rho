@@ -14,18 +14,28 @@
 //! not exist, as on macOS, nothing is moved.
 
 use std::{
-    io,
+    io::{self, Write},
     path::Path,
-    process::{Command, Stdio},
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
+
+use super::service::run_manager_command;
+use crate::daemon::paths::DaemonPaths;
+
+/// How long the user's manager may take to answer the request for the
+/// scope.
+//
+// Tripwire. Measured on a loaded 12-core host, 15 runs: the call took
+// 4.3 to 5.6 ms. A manager that takes a second is wedged, and the client is
+// waiting on it before it can reach the daemon at all.
+const SCOPE_CALL_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// How long a client waits for systemd to move the daemon once it accepted
 /// the scope.
 //
 // Tripwire. The call returns once systemd queued the scope's start job, not
-// once it ran. Measured on a loaded 12-core host, 15 runs: the move landed
-// 1.5 ms after the call returned, 30 ms at most. A daemon serves no session
+// once it ran. Measured on the same host and runs: the move landed 1.5 ms
+// after the call returned, 30 ms at most. A daemon serves no session
 // before a client connects, so the wait only keeps the processes its first
 // session starts out of the client's unit.
 const MOVE_TIMEOUT: Duration = Duration::from_secs(1);
@@ -34,9 +44,15 @@ const MOVE_POLL_INTERVAL: Duration = Duration::from_millis(1);
 
 /// Moves the daemon running as `pid` into a scope of its own, beside the
 /// unit this process runs in, when that unit is the user's systemd
-/// manager's. A daemon that cannot be moved keeps running where it
-/// started, as it did before; why is logged.
-pub(super) fn leave_caller_unit(pid: u32, home: &Path) {
+/// manager's. Blocks until systemd moved it, up to [`SCOPE_CALL_TIMEOUT`]
+/// plus [`MOVE_TIMEOUT`]. A daemon whose move is not confirmed keeps
+/// running, likely where it started, as it did before; why goes to the
+/// daemon's log, which a client that logs nothing itself, such as `rho acp`
+/// under an editor host, still leaves behind.
+///
+/// `pid` must be a child this process has not reaped yet, so no other
+/// process can have taken the pid by the time systemd moves it.
+pub(super) fn leave_caller_unit(pid: u32, paths: &DaemonPaths) {
     let Ok(cgroup) = std::fs::read_to_string("/proc/self/cgroup") else {
         return;
     };
@@ -44,27 +60,44 @@ pub(super) fn leave_caller_unit(pid: u32, home: &Path) {
         return;
     };
     let unit = format!("rho-daemon-{pid}.scope");
-    match start_scope(&unit, slice, pid, home).and_then(|()| wait_until_moved(pid, &unit)) {
-        Ok(()) => tracing::debug!(%unit, slice, "moved the rho daemon into a scope of its own"),
-        Err(error) => tracing::warn!(
-            %unit,
-            slice,
-            %error,
-            "could not move the rho daemon out of this process's systemd unit; stopping that unit stops the daemon"
-        ),
+    let moved =
+        start_scope(&unit, slice, pid, &paths.home).and_then(|()| wait_until_moved(pid, &unit));
+    let Err(error) = moved else {
+        tracing::debug!(%unit, slice, "moved the rho daemon into a scope of its own");
+        return;
+    };
+    let warning = format!(
+        "could not confirm the rho daemon (pid {pid}) moved into {unit} in {slice}; \
+         stopping the systemd unit of the client that started it may stop it: {error}"
+    );
+    tracing::warn!("{warning}");
+    let line = format!(
+        "{}  WARN {}: {warning}\n",
+        humantime::format_rfc3339_micros(SystemTime::now()),
+        module_path!()
+    );
+    if let Err(error) = paths
+        .open_log_file()
+        .and_then(|mut log| log.write_all(line.as_bytes()))
+    {
+        tracing::warn!(%error, log_file = %paths.log_file.display(), "could not write to the rho daemon log");
     }
+}
+
+/// The path of the cgroup v2 hierarchy in the contents of a
+/// `/proc/<pid>/cgroup` file: the `0::` line's.
+fn unified_path(proc_cgroup: &str) -> Option<&str> {
+    proc_cgroup
+        .lines()
+        .find_map(|line| line.strip_prefix("0::"))
 }
 
 /// The slice holding the unit this process runs in, when the user's
 /// systemd manager runs it, from the contents of `/proc/self/cgroup`. On
-/// cgroup v2 that is a `0::` line whose path runs through
-/// `user@<uid>.service`, then slices, then the unit, then any control
-/// groups the unit made of its own.
+/// cgroup v2 that path runs through `user@<uid>.service`, then slices, then
+/// the unit, then any control groups the unit made of its own.
 fn caller_slice(proc_self_cgroup: &str) -> Option<&str> {
-    let path = proc_self_cgroup
-        .lines()
-        .find_map(|line| line.strip_prefix("0::"))?;
-    let components = path
+    let components = unified_path(proc_self_cgroup)?
         .split('/')
         .skip_while(|component| !is_user_manager(component))
         .skip(1);
@@ -89,11 +122,14 @@ fn is_user_manager(component: &str) -> bool {
 /// Asks the user's manager to start `unit`, a scope in `slice` holding
 /// `pid`, which it removes once the daemon exits.
 fn start_scope(unit: &str, slice: &str, pid: u32, home: &Path) -> io::Result<()> {
+    let timeout = format!("--timeout={}", SCOPE_CALL_TIMEOUT.as_secs());
+    let pid = pid.to_string();
     let description = format!("rho daemon for {}", home.display());
-    let output = Command::new("busctl")
-        .args([
+    run_manager_command(
+        "busctl",
+        &[
             "--user",
-            "--timeout=5",
+            &timeout,
             "call",
             "org.freedesktop.systemd1",
             "/org/freedesktop/systemd1",
@@ -106,7 +142,7 @@ fn start_scope(unit: &str, slice: &str, pid: u32, home: &Path) -> io::Result<()>
             "PIDs",
             "au",
             "1",
-            &pid.to_string(),
+            &pid,
             "Slice",
             "s",
             slice,
@@ -117,17 +153,8 @@ fn start_scope(unit: &str, slice: &str, pid: u32, home: &Path) -> io::Result<()>
             "s",
             &description,
             "0",
-        ])
-        .stdin(Stdio::null())
-        .output()?;
-    if output.status.success() {
-        return Ok(());
-    }
-    Err(io::Error::other(format!(
-        "busctl {}: {}",
-        output.status,
-        String::from_utf8_lossy(&output.stderr).trim()
-    )))
+        ],
+    )
 }
 
 /// Waits until `pid` runs in `unit`, up to [`MOVE_TIMEOUT`].
@@ -136,11 +163,7 @@ fn wait_until_moved(pid: u32, unit: &str) -> io::Result<()> {
     let cgroup = format!("/proc/{pid}/cgroup");
     loop {
         let current = std::fs::read_to_string(&cgroup)?;
-        if current
-            .lines()
-            .filter_map(|line| line.strip_prefix("0::"))
-            .any(|path| path.rsplit('/').next() == Some(unit))
-        {
+        if unified_path(&current).and_then(|path| path.rsplit('/').next()) == Some(unit) {
             return Ok(());
         }
         let elapsed = started.elapsed();

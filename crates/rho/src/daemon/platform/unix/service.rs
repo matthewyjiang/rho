@@ -1,5 +1,6 @@
 //! Asking the service manager that runs a saved `rho mcp serve --http`
-//! service to stop it: systemd's user manager, or launchd on macOS.
+//! service to stop it: systemd's user manager, or launchd on macOS; and
+//! running a request to a service manager, which `user_scope` shares.
 
 use std::{
     io,
@@ -31,6 +32,13 @@ pub(in crate::daemon) fn stop_service(manager: ServiceManager) -> io::Result<()>
             )
         }
     };
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    run_manager_command(program, &args)
+}
+
+/// Runs `program` with `args`, a request to a service manager. The error
+/// names the command and carries what it printed.
+pub(super) fn run_manager_command(program: &str, args: &[&str]) -> io::Result<()> {
     let ran = format!("{program} {}", args.join(" "));
     let output = Command::new(program)
         .args(args)

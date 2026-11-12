@@ -46,8 +46,11 @@ const DRAIN_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Starts a daemon process for [`connect_or_spawn`].
 ///
-/// Implementors launch the daemon and return without waiting for it:
-/// `connect_or_spawn` detects readiness by connecting. The caller holds the
+/// Implementors launch the daemon and return without waiting for it to
+/// serve: `connect_or_spawn` detects readiness by connecting. A spawner may
+/// block for a bounded time to place the process it started, as
+/// [`ProcessSpawner`] does to move it out of the caller's systemd unit;
+/// until the daemon serves, the caller has nothing else to do. The caller holds the
 /// spawn lock, so at most one `spawn` runs per runtime directory at a time.
 pub(crate) trait DaemonSpawner: Send + Sync {
     /// Whether a daemon `spawn` starts could start, as far as the caller's
@@ -62,7 +65,8 @@ pub(crate) trait DaemonSpawner: Send + Sync {
 }
 
 /// Starts `rho daemon run` from the current executable, detached from the
-/// caller's terminal and from the caller's service-manager unit.
+/// caller's terminal and, where the platform can, from the caller's
+/// service-manager unit.
 ///
 /// The daemon does not inherit the caller's environment: it gets only the
 /// variables that describe the daemon and the machine (see

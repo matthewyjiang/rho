@@ -21,8 +21,10 @@
 //! - **Private files.** A directory [`prepare_private_dir`] accepted and a
 //!   file the `open_*` functions created are closed to other users.
 //! - **Process.** A daemon started through [`spawn_detached`] outlives the
-//!   client that started it, its terminal, and the service manager's unit
-//!   the client runs in. [`request_stop`] reaches a daemon
+//!   client that started it and its terminal and, where the platform can
+//!   move it, the service manager's unit the client runs in (a unit of the
+//!   user's systemd manager on Linux); one it cannot move stays in that
+//!   unit. [`request_stop`] reaches a daemon
 //!   that cannot take a protocol request, and that daemon hears it from
 //!   [`StopRequests`] and shuts down as gracefully as on `rho/daemon/stop`.
 //! - **Restart.** [`relaunch`] replaces a daemon that stopped serving with a

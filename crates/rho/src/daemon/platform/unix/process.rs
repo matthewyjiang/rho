@@ -49,7 +49,8 @@ pub(in crate::daemon) fn is_variable(name: &str, listed: &str) -> bool {
 }
 
 /// Starts the daemon `command` runs, detached from the caller's terminal
-/// and from the caller's systemd unit ([`super::user_scope`]).
+/// and, when the user's systemd manager runs the caller, from the caller's
+/// unit ([`super::user_scope`]).
 pub(in crate::daemon) fn spawn_detached(
     command: &mut Command,
     paths: &DaemonPaths,
@@ -63,7 +64,8 @@ pub(in crate::daemon) fn spawn_detached(
         // each session in that session's own workspace.
         .current_dir("/");
     let child = command.spawn()?;
-    super::user_scope::leave_caller_unit(child.id(), &paths.home);
+    // Before anyone reaps `child`, so its pid cannot name another process.
+    super::user_scope::leave_caller_unit(child.id(), paths);
     Ok(child)
 }
 
