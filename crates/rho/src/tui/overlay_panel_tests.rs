@@ -136,7 +136,8 @@ fn panel_scroll_applies_targets_and_clamps() {
 }
 
 // Covers: End pressed on a body that later gains rows keeps the view on the
-// last row, across a re-clamp, until a target moves above the end.
+// last row, across a re-clamp, until a target scrolls up or names a row,
+// even while the body still fits.
 // Owner: pure unit
 #[test]
 fn panel_scroll_end_follows_a_growing_body() {
@@ -150,4 +151,10 @@ fn panel_scroll_end_follows_a_growing_body() {
     assert_eq!(drawn(scroll, 12), 8);
     scroll.apply(PanelScrollTarget::Delta(-1), 12, 4);
     assert_eq!(drawn(scroll, 20), 7);
+
+    // Home after End, before the rows arrive, wins.
+    let mut scroll = PanelScroll::default();
+    scroll.apply(PanelScrollTarget::End, 3, 4);
+    scroll.apply(PanelScrollTarget::Absolute(0), 3, 4);
+    assert_eq!(drawn(scroll, 10), 0);
 }

@@ -299,9 +299,9 @@ pub(super) fn scroll_panel(panel: &mut dyn PanelBody, area: Rect, target: PanelS
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) struct PanelScroll {
     offset: usize,
-    /// Set by [`PanelScrollTarget::End`] until a target moves above the
-    /// end: rows a panel gains after it opened, such as a report it waited
-    /// for, then keep the view on the last row.
+    /// Set by [`PanelScrollTarget::End`] until a target scrolls up or names
+    /// a row: rows a panel gains after it opened, such as a report it
+    /// waited for, then keep the view on the last row.
     at_end: bool,
 }
 
@@ -317,8 +317,11 @@ impl PanelScroll {
     }
 
     pub(super) fn apply(&mut self, target: PanelScrollTarget, body_len: usize, body_rows: usize) {
-        let end = clamp_panel_scroll(usize::MAX, body_len, body_rows);
-        let current = if self.at_end { end } else { self.offset };
+        let current = if self.at_end {
+            clamp_panel_scroll(usize::MAX, body_len, body_rows)
+        } else {
+            self.offset
+        };
         let next = match target {
             PanelScrollTarget::Delta(delta) if delta < 0 => {
                 current.saturating_sub(delta.unsigned_abs())
@@ -335,7 +338,13 @@ impl PanelScroll {
             PanelScrollTarget::Absolute(scroll) => scroll,
             PanelScrollTarget::End => usize::MAX,
         };
-        self.at_end = target == PanelScrollTarget::End || (self.at_end && next >= end);
+        self.at_end = match target {
+            PanelScrollTarget::End => true,
+            PanelScrollTarget::Delta(delta) | PanelScrollTarget::Page(delta) => {
+                self.at_end && delta >= 0
+            }
+            PanelScrollTarget::Absolute(_) => false,
+        };
         self.offset = clamp_panel_scroll(next, body_len, body_rows);
     }
 }
