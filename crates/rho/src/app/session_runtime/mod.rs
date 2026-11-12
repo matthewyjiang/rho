@@ -313,9 +313,8 @@ impl SessionRuntime {
         }
     }
 
-    /// Which model prompt file the session runs on, in the words the
-    /// in-process TUI reports after a model switch. `None` for a session
-    /// whose prompt does not follow its model.
+    /// Which model prompt file the session runs on, as a notice names it.
+    /// `None` for a session whose prompt does not follow its model.
     pub(crate) fn model_prompt_notice(&self) -> Option<String> {
         self.built.prompt_template.as_ref().map(|_| {
             crate::app::model_prompt_metadata::provenance_notice(
@@ -342,10 +341,9 @@ impl SessionRuntime {
     }
 
     /// Hands the host the questions the session's subagents ask from now
-    /// on, whether or not a prompt runs, as the in-process TUI's inbox
-    /// takes them: a subagent outlives the prompt that started it, and may
-    /// ask long after. `None`, and nothing changes, when nobody can be
-    /// asked or the session starts no subagents. Call once.
+    /// on, whether or not a prompt runs: a subagent outlives the prompt that
+    /// started it, and may ask long after. `None`, and nothing changes, when
+    /// nobody can be asked or the session starts no subagents. Call once.
     // Only the daemon takes them itself.
     pub(crate) fn host_takes_child_questions(
         &mut self,

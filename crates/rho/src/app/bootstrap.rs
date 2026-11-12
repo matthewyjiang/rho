@@ -102,7 +102,6 @@ async fn run_startup(cli: Cli) -> anyhow::Result<()> {
     );
     let PreparedStartup {
         cli,
-        catalog,
         config,
         config_repository,
         first_run,
@@ -157,7 +156,6 @@ async fn run_startup(cli: Cli) -> anyhow::Result<()> {
     run_interactive_startup(InteractiveStartup {
         keyring_notice,
         cli: &cli,
-        catalog,
         config,
         config_repository,
         first_run,
@@ -283,7 +281,6 @@ async fn dispatch_early_command(cli: &Cli) -> anyhow::Result<EarlyDispatch> {
 
 struct PreparedStartup {
     cli: Cli,
-    catalog: crate::agent::DiscoveredAgentCatalog,
     /// The config to settle (see [`cli_config::settle_bound_config`]): the
     /// bound agent's own when it runs on rho, else the launch config with
     /// CLI overrides.
@@ -325,17 +322,15 @@ async fn prepare_startup(cli: Cli) -> anyhow::Result<PreparedStartup> {
         }) => (output_file.clone(), *output, *max_steps, *timeout),
         _ => (None, OutputFormat::Text, None, None),
     };
-    let catalog = Arc::new(crate::agent::AgentCatalog::discover(
+    let catalog = crate::agent::AgentCatalog::discover(
         &cwd,
         crate::workspace::ProjectTrusts::of_this_process(),
-    )?);
+    )?;
     let selected_agent = cli
         .agent
         .as_deref()
         .unwrap_or(crate::agent::DEFAULT_AGENT_ID);
     let definition = Arc::new(catalog.find(selected_agent)?.definition.clone());
-    // The walk is reused for the delegation tool set so startup discovers once.
-    let catalog = crate::agent::DiscoveredAgentCatalog::new(cwd.clone(), catalog);
 
     // Only automation and interactive sessions reach here; every other
     // command dispatches early, and `rho acp` runs in the daemon.
@@ -405,7 +400,6 @@ async fn prepare_startup(cli: Cli) -> anyhow::Result<PreparedStartup> {
 
     Ok(PreparedStartup {
         cli,
-        catalog,
         config,
         config_repository,
         first_run,
@@ -467,7 +461,6 @@ async fn run_automation_startup(startup: AutomationStartup<'_>) -> anyhow::Resul
 struct InteractiveStartup<'a> {
     keyring_notice: crate::credential_store::StartupKeyringNotice,
     cli: &'a Cli,
-    catalog: crate::agent::DiscoveredAgentCatalog,
     config: crate::config::Config,
     config_repository: ConfigRepository,
     first_run: Option<SetupEntry>,
@@ -534,25 +527,20 @@ async fn run_interactive_startup(startup: InteractiveStartup<'_>) -> anyhow::Res
                 &credentials,
             )
         });
-    let (missing_auth_error, missing_auth_model_error) = match provider_result {
-        Ok(_) => (None, None),
-        Err(error) if is_interactive_startup_unavailable_error(&error) => {
-            (Some(error.to_string()), Some(error))
-        }
+    let missing_auth_error = match provider_result {
+        Ok(_) => None,
+        Err(error) if is_interactive_startup_unavailable_error(&error) => Some(error.to_string()),
         Err(error) => return Err(error.into()),
     };
     interactive::run(interactive::Startup {
         keyring_notice: startup.keyring_notice,
         cli: startup.cli,
-        catalog: startup.catalog,
         config: startup.config,
         settings,
-        config_path: absolute_config_path(&startup.config_repository)?,
         config_repository: startup.config_repository,
         cwd: startup.cwd,
         first_run: startup.first_run,
         missing_auth_error,
-        missing_auth_model_error,
         pending_update_notice,
         pending_custom_models,
         pending_prompt_history,

@@ -15,24 +15,6 @@ pub(super) fn agent_start_card(arguments: &serde_json::Value) -> ToolCard {
     )
 }
 
-pub(super) fn agent_interrupted_card(arguments: &serde_json::Value) -> ToolCard {
-    agent_card(
-        arguments,
-        ToolCardStatus::Interrupted,
-        agent_identity(arguments).unwrap_or("agent"),
-        "interrupted",
-    )
-}
-
-pub(super) fn agents_interrupted_card(arguments: &serde_json::Value) -> ToolCard {
-    let action = string_value(arguments, "action").unwrap_or("request");
-    bare_agent_card(
-        ToolCardStatus::Interrupted,
-        string_value(arguments, "id").unwrap_or("delegated agents"),
-        format!("{action} interrupted"),
-    )
-}
-
 pub(super) fn agent_progress_card(view: &ToolView, content: &str) -> ToolCard {
     let agent_id = agent_identity(&view.arguments).unwrap_or("agent");
     let mut card = agent_card(

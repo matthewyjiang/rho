@@ -196,14 +196,6 @@ impl WebAccessStore {
         Self::default()
     }
 
-    /// Points durable web blobs at the active session sidecar directory.
-    pub fn bind_session(&self, root: Option<PathBuf>) {
-        let mut state = self.state.lock().expect("web access store lock poisoned");
-        state.session_root = root;
-        state.binding = Arc::new(());
-        state.memory = MemoryCache::default();
-    }
-
     /// Durable sidecar root for web-access blobs and GitHub clones.
     ///
     /// Preference order:

@@ -92,16 +92,6 @@ impl CompactionUiOutcome {
         }
     }
 
-    pub(super) fn from_task_result(
-        result: anyhow::Result<Option<rho_sdk::CompactionOutcome>>,
-    ) -> Self {
-        match result {
-            Ok(Some(outcome)) => Self::from_sdk_outcome(&outcome),
-            Ok(None) => Self::unchanged(),
-            Err(err) => Self::failed(err.to_string()),
-        }
-    }
-
     pub(super) fn failed(detail: impl Into<String>) -> Self {
         Self::Failed {
             detail: detail.into(),
@@ -124,12 +114,6 @@ impl CompactionUiOutcome {
             Self::Failed { .. } => "context compaction failed",
             Self::Cancelled => "context compaction cancelled",
         }
-    }
-
-    /// Auto-compact parks the triggering turn as a follow-up. Start it after
-    /// any settlement except a user cancel.
-    pub(super) fn starts_follow_ups(&self) -> bool {
-        !matches!(self, Self::Cancelled)
     }
 }
 

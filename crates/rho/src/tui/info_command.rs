@@ -72,8 +72,8 @@ pub(super) struct RuntimeInfo {
     cache_rebilled: super::cache_stats::CacheRebilled,
     model_performance: ModelPerformanceSummary,
     context_usage: Option<ContextUsage>,
-    /// The Compaction section. A daemon session's arrives after the overlay
-    /// opens, read from the daemon.
+    /// The Compaction section, read from the daemon after the overlay
+    /// opens.
     compaction: CompactionSection,
     model_metadata: Option<ModelMetadata>,
     tree: Option<crate::session::tree::SessionTreeFacts>,
@@ -195,18 +195,8 @@ impl App {
                 .model_performance
                 .summary(&self.info.runtime.model_call_profile()),
             context_usage: self.usage.current_context.clone(),
-            // A daemon session's is the daemon's to report; the in-process
-            // runtime behind this TUI ran none of its turns.
-            compaction: match &self.info.session.daemon {
-                Some(_) => CompactionSection::Absent,
-                None => self
-                    .info
-                    .services
-                    .diagnostics
-                    .compaction()
-                    .map(|diagnostics| CompactionReport::new(&diagnostics))
-                    .map_or(CompactionSection::Absent, CompactionSection::Report),
-            },
+            // The daemon reports it once asked, below.
+            compaction: CompactionSection::Absent,
             model_metadata: self.model_metadata.clone(),
             tree: None,
             tree_error,

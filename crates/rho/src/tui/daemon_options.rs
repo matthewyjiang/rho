@@ -53,8 +53,8 @@ pub(super) fn setting_name(change: &SessionChange) -> &'static str {
     }
 }
 
-/// How an error says `change` was not made: a model switch in the words the
-/// in-process TUI refuses one with.
+/// How an error says `change` was not made, naming the model a refused
+/// switch asked for.
 pub(super) fn change_failure(change: &SessionChange) -> String {
     match change {
         SessionChange::Model { model, .. } | SessionChange::ModelAfterCompaction { model, .. } => {
@@ -123,7 +123,7 @@ impl App {
                     }))
         });
         // Login's own status line, which also names the stored credentials,
-        // stays, as it does in process.
+        // stays.
         let said_by_login =
             switched && self.daemon_login_selected.take().as_ref() == Some(&options.model.current);
         if switched && !said_by_login {
@@ -144,8 +144,8 @@ impl App {
             .map(|_| rho_sdk::model::ServiceTier::Priority);
         self.info.runtime.added_dirs =
             crate::added_dirs::AddedDirs::reported(options.added_dirs.clone());
-        // Metadata is display-only in this path; never normalize daemon options
-        // or push a context window into the unused InteractiveRuntime.
+        // Metadata is display-only; the daemon's options are never normalized
+        // here.
         self.model_metadata = super::reasoning_metadata::cached_metadata(
             &options.model.current.provider,
             &options.model.current.model,
@@ -190,17 +190,9 @@ impl App {
     }
 
     pub(super) fn configure_daemon(&mut self, change: SessionChange) -> anyhow::Result<()> {
-        let session = self
-            .info
-            .session
-            .daemon
-            .as_ref()
-            .expect("daemon setting requires a session");
-        match session.configure(change.clone()) {
+        match self.info.session.daemon.configure(change.clone()) {
             Ok(()) => {
                 if self.turn.is_provider_turn() {
-                    // In the words an in-process turn queues the same
-                    // change with.
                     self.set_status(match &change {
                         SessionChange::PermissionMode { mode } => {
                             match PermissionMode::try_from(*mode) {
@@ -230,8 +222,6 @@ impl App {
         Ok(())
     }
 
-    /// The session's model page, which re-renders as the session's
-    /// options change, opened from `/model` or `/config`.
     /// Whether a daemon session's first launch has a model to choose: its
     /// own, signed in, or another auth's. Its picker always lists the
     /// current model, so an empty picker cannot say there is none.
@@ -243,8 +233,8 @@ impl App {
                 .is_some_and(|options| options.model.available.len() > 1)
     }
 
-    /// The in-process model picker over the models the daemon offers:
-    /// pins, scope and badges are the TUI's own, as the pin list is.
+    /// The model picker over the models the daemon offers: pins, scope and
+    /// badges are the TUI's own, as the pin list is.
     pub(super) fn daemon_model_picker(&self) -> Option<UiPicker> {
         let options = self.daemon_options.as_ref()?;
         let offered = super::model_picker::offered_models(&options.model);
@@ -278,7 +268,7 @@ impl App {
             Ok(model) => {
                 // The daemon rounds a level the model lacks, as a pin cycle
                 // wants. A model picked by name keeps a level the user
-                // asked for, or is refused, as in process.
+                // asked for, or is refused.
                 let capabilities = rho_providers::model::models_dev::current_reasoning_capabilities(
                     &model.provider,
                     &model.model,
@@ -298,7 +288,6 @@ impl App {
                     &capabilities,
                     reasoning,
                     self.info.runtime.reasoning_source,
-                    super::reasoning_metadata::ModelSwitchReasoningPolicy::PreserveExplicit,
                 ) {
                     self.insert_entry(&Entry::Error(format!(
                         "could not switch to {}: reasoning level '{requested}' is not supported",
@@ -339,7 +328,7 @@ impl App {
         let favorites = rho_providers::model::favorites::normalized_favorite_models(
             &self.info.runtime.favorite_models,
         );
-        // In pin order, as the in-process cycle goes.
+        // In pin order.
         let available: Vec<_> = favorites
             .iter()
             .filter_map(|favorite| {

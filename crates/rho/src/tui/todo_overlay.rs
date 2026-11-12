@@ -16,7 +16,7 @@ use super::{
     },
     panel_text::indented_wrapped_lines,
     render::wrap_text_lines,
-    App, ComposerMode, DefaultTerminal, InteractiveRuntime, PanelOverlay, Theme,
+    App, ComposerMode, DefaultTerminal, PanelOverlay, Theme,
 };
 
 #[derive(Debug)]
@@ -113,15 +113,6 @@ impl App {
             .set_composer(ComposerMode::Panel(PanelOverlay::Todo(overlay)));
         self.set_status_quiet("todo");
         Ok(())
-    }
-
-    /// Refresh in idle and running loops. Leave the reader's scroll position alone.
-    /// A daemon session's checklist arrives as its plan events instead.
-    pub(super) fn refresh_todo_list(&mut self, agent: &InteractiveRuntime) -> bool {
-        if self.info.session.daemon.is_some() {
-            return false;
-        }
-        self.set_todo_list(agent.todo_list())
     }
 
     /// Shows `list` as the session's checklist, in an open `/todo` overlay

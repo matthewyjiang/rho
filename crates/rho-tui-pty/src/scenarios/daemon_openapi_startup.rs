@@ -11,12 +11,9 @@ use anyhow::{Context, Result};
 use super::mcp::{MCP_CONNECT_RELEASE_SCENARIO, MCP_HOLD_TAKE_BACK_SCENARIO};
 use crate::{env::IsolatedHome, scenario::Scenario};
 
-const DAEMON_ENV: &[(&str, &str)] = &[("RHO_TUI_DAEMON", "1")];
-
 pub(super) const HOLD_TAKE_BACK: Scenario = Scenario {
     id: "daemon_openapi_hold_take_back",
     description: "Hold a turn while a daemon session's only tool source, an OpenAPI spec, loads",
-    env: DAEMON_ENV,
     setup: Some(setup_stalled_openapi),
     ..MCP_HOLD_TAKE_BACK_SCENARIO
 };
@@ -24,7 +21,6 @@ pub(super) const HOLD_TAKE_BACK: Scenario = Scenario {
 pub(super) const LOAD_RELEASE: Scenario = Scenario {
     id: "daemon_openapi_load_release",
     description: "Start a daemon turn held during an OpenAPI load once the load ends",
-    env: DAEMON_ENV,
     setup: Some(setup_settling_openapi),
     ..MCP_CONNECT_RELEASE_SCENARIO
 };

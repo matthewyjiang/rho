@@ -1,6 +1,6 @@
 //! The `/mcp` command: show configured servers and session load status.
 
-use super::{mcp_picker, App, ComposerMode, InteractiveRuntime, StatusSource};
+use super::{mcp_picker, App, ComposerMode, StatusSource};
 
 impl App {
     pub(super) fn show_daemon_mcp(
@@ -27,19 +27,14 @@ impl App {
         }
     }
 
-    /// Whether the session's tool sources still load, so a prompt waits:
-    /// the daemon session's when the TUI follows one, else the runtime's.
-    pub(super) fn tool_sources_pending(&self, agent: &InteractiveRuntime) -> bool {
-        match &self.info.session.daemon {
-            Some(session) => session.tool_sources_loading(),
-            None => agent.tool_sources_pending(),
-        }
+    /// Whether the session's tool sources still load, so a prompt waits.
+    pub(super) fn tool_sources_pending(&self) -> bool {
+        self.info.session.daemon.tool_sources_loading()
     }
 
-    /// The daemon session's MCP servers stopped connecting: as when the
-    /// in-process load lands, held prompts may go and an open `/mcp`
-    /// shows where the servers ended up. The session already counts them
-    /// loaded by the time it sends the view.
+    /// The session's MCP servers stopped connecting: held prompts may go
+    /// and an open `/mcp` shows where the servers ended up. The session
+    /// already counts them loaded by the time it sends the view.
     pub(super) fn show_daemon_tool_sources_loaded(&mut self) {
         if self.status_source == StatusSource::ToolSourcesLoading {
             self.set_status_quiet("");
@@ -54,25 +49,16 @@ impl App {
     }
 
     pub(super) fn execute_mcp_command(&mut self) -> anyhow::Result<()> {
-        if let Some(session) = &self.info.session.daemon {
-            match session.request_mcp() {
-                Ok(()) => {
-                    self.input_ui
-                        .set_composer(ComposerMode::Picker(mcp_picker::loading()));
-                    self.set_status("loading session MCP inventory");
-                }
-                Err(error) => self.insert_entry(&super::Entry::Error(format!(
-                    "could not read session MCP inventory: {error}"
-                ))),
+        match self.info.session.daemon.request_mcp() {
+            Ok(()) => {
+                self.input_ui
+                    .set_composer(ComposerMode::Picker(mcp_picker::loading()));
+                self.set_status("loading session MCP inventory");
             }
-            return Ok(());
+            Err(error) => self.insert_entry(&super::Entry::Error(format!(
+                "could not read session MCP inventory: {error}"
+            ))),
         }
-        let config_path = self.info.services.config_repository.configured_path()?;
-        let inventory =
-            crate::app::session_mcp_inventory(&self.mcp_report, &self.mcp_catalog, &config_path);
-        let picker = mcp_picker::picker(&inventory);
-        self.input_ui.set_composer(ComposerMode::Picker(picker));
-        self.set_status("mcp servers");
         Ok(())
     }
 }

@@ -1,6 +1,6 @@
 //! In-app `/workflow` hub: start workflows and check runs from the chat TUI.
 
-use std::{cmp::Reverse, collections::BTreeMap, str::FromStr};
+use std::{cmp::Reverse, str::FromStr};
 
 use crate::tui::DefaultTerminal;
 
@@ -10,12 +10,7 @@ use super::{
     PickerLayout, UiPicker,
 };
 use crate::{
-    agent::AgentCapabilities,
-    app::{
-        workflow_cli::{self, discover, WorkflowOps},
-        workflow_runtime::RecoveryDecision,
-    },
-    tools::workflow_tracker::{starting_notice, BackgroundStart},
+    app::workflow_cli::{self, discover, WorkflowOps},
     workflow::{
         PlanId, PlanInventory, RunId, RunInventory, RunInventoryItem, RunLifecycle, StoredRun,
         UnsupportedRecord, WorkflowError, WorkflowOutcome,
@@ -420,7 +415,6 @@ impl App {
         &mut self,
         value: &str,
         terminal: &mut DefaultTerminal,
-        agent: &mut super::InteractiveRuntime,
     ) -> anyhow::Result<()> {
         if value.starts_with("noop:") {
             return Ok(());
@@ -447,18 +441,14 @@ impl App {
                 let path = value
                     .strip_prefix(SOURCE_PREFIX)
                     .expect("prefix checked above");
-                if self.info.session.daemon.is_some() {
-                    return self.start_daemon_workflow_source(path, terminal).await;
-                }
-                self.start_workflow_source(path, BTreeMap::new(), agent)
-                    .await
+                self.start_daemon_workflow_source(path, terminal).await
             }
             // Enter on a saved plan runs it.
             value if value.starts_with(PLAN_PREFIX) => {
                 let id = value
                     .strip_prefix(PLAN_PREFIX)
                     .expect("prefix checked above");
-                self.run_workflow_plan(id, terminal, agent).await
+                self.run_workflow_plan(id, terminal).await
             }
             // Retry is explicit; watching a ready run must never start a driver.
             value if value.starts_with(RETRY_RUN_PREFIX) => {
@@ -469,13 +459,12 @@ impl App {
                     return Ok(());
                 };
                 // Inventory can be stale if another process started the run.
-                // Normal resume retains the tracker and durable driver guards.
                 if run.state.state.lifecycle != RunLifecycle::Planned {
                     self.open_workflow_hub()?;
                     self.set_status("run is no longer ready; refreshed workflows");
                     return Ok(());
                 }
-                self.resume_workflow_run(id, /*recover_uncertain*/ false, terminal, agent)
+                self.resume_workflow_run(id, /*recover_uncertain*/ false, terminal)
                     .await
             }
             // Enter on a run opens the live screen or finished status.
@@ -483,7 +472,7 @@ impl App {
                 let id = value
                     .strip_prefix(RUN_PREFIX)
                     .expect("prefix checked above");
-                self.open_workflow_run_primary(id, terminal, agent).await
+                self.open_workflow_run_primary(id, terminal).await
             }
             other => {
                 self.insert_entry(&Entry::Error(format!(
@@ -509,27 +498,17 @@ impl App {
         &mut self,
         run_id: &str,
         terminal: &mut DefaultTerminal,
-        agent: &mut super::InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let parsed = RunId::from_str(run_id)?;
         let Some(run) = self.load_run_for_watch(parsed)? else {
             return Ok(());
         };
         match run.state.state.lifecycle {
+            // The daemon recovers the run once its prompt is through; the
+            // rail and the hub open it from there.
             RunLifecycle::NeedsRecovery => {
-                // Recover in the background; in process, then open the
-                // watch screen.
-                self.resume_workflow_run(run_id, /*recover_uncertain*/ true, terminal, agent)
-                    .await?;
-                // The daemon recovers a daemon session's run once its prompt
-                // is through; the rail and the hub open it from there.
-                if self.info.session.daemon.is_some() {
-                    return Ok(());
-                }
-                let Some(run) = self.load_run_for_watch(parsed)? else {
-                    return Ok(());
-                };
-                self.open_workflow_watch(run, terminal).await
+                self.resume_workflow_run(run_id, /*recover_uncertain*/ true, terminal)
+                    .await
             }
             RunLifecycle::Planned
             | RunLifecycle::Running
@@ -623,129 +602,13 @@ impl App {
         Ok(())
     }
 
-    /// Plans `relative_path` with `inputs` (declared defaults fill the rest)
-    /// and starts the run in the background. Shared by the hub's START rows
-    /// and `/workflow:<name>`.
-    pub(super) async fn start_workflow_source(
-        &mut self,
-        relative_path: &str,
-        inputs: BTreeMap<String, serde_json::Value>,
-        agent: &mut super::InteractiveRuntime,
-    ) -> anyhow::Result<()> {
-        self.set_status(format!("starting {relative_path}"));
-        let ops = self.workflow_ops()?;
-        let available_tools = agent.workflow_host_capabilities();
-        let start = BackgroundStart::Source {
-            default_inputs: inputs.is_empty(),
-        };
-        let prepared = match self
-            .prepare_source(
-                std::path::Path::new(relative_path),
-                inputs,
-                &available_tools,
-            )
-            .await
-        {
-            Ok(prepared) => prepared,
-            Err(error) => {
-                self.insert_entry(&Entry::Error(format!(
-                    "could not start {relative_path}: {error:#}"
-                )));
-                self.set_status("start failed");
-                return Ok(());
-            }
-        };
-        let run = match ops.create_launch_run(&prepared) {
-            Ok(run) => run,
-            Err(error) => {
-                self.insert_entry(&Entry::Error(format!("{error:#}")));
-                self.set_status("start failed");
-                return Ok(());
-            }
-        };
-        let run_id = run.manifest.run_id;
-        self.input_ui.set_composer(ComposerMode::Input);
-        self.insert_entry(&Entry::Notice(starting_notice(
-            &start,
-            run.graph.program.name.as_str(),
-            &run_id.to_string(),
-        )));
-        self.launch_workflow_execution(run, RecoveryDecision::NormalResume, agent)
-            .await
-    }
-
-    /// `/workflow:<name> [inputs JSON]`: start one workspace workflow
-    /// without opening the hub, or report why it cannot start.
-    pub(super) async fn start_workflow_command(
-        &mut self,
-        name: &str,
-        resolved: Result<discover::StartCommand, String>,
-        agent: &mut super::InteractiveRuntime,
-    ) -> anyhow::Result<()> {
-        match resolved {
-            Ok(start) => {
-                self.start_workflow_source(&start.workflow.relative_path, start.inputs, agent)
-                    .await
-            }
-            Err(detail) => {
-                self.insert_entry(&Entry::Error(format!("could not run /{name}: {detail}")));
-                self.set_status("start failed");
-                Ok(())
-            }
-        }
-    }
-
-    async fn prepare_source(
-        &self,
-        relative: &std::path::Path,
-        inputs: BTreeMap<String, serde_json::Value>,
-        available_tools: &AgentCapabilities,
-    ) -> anyhow::Result<workflow_cli::PreparedPlan> {
-        let ops = self.workflow_ops()?;
-        let config = self.info.services.config_repository.load()?;
-        ops.prepare_local_json(relative, inputs, &config, available_tools)
-            .await
-    }
-
     async fn run_workflow_plan(
         &mut self,
         plan_id: &str,
         terminal: &mut DefaultTerminal,
-        agent: &mut super::InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        let plan_id = PlanId::from_str(plan_id)?;
-        if self.info.session.daemon.is_some() {
-            let command = discover::WorkflowLaunch::plan_command(plan_id);
-            return self.launch_daemon_workflow(command, terminal).await;
-        }
-        let ops = self.workflow_ops()?;
-        let plan = match ops.prepare_run_id(plan_id) {
-            Ok(plan) => plan,
-            Err(error) => {
-                self.insert_entry(&Entry::Error(format!("could not prepare plan: {error:#}")));
-                self.set_status("run failed");
-                return Ok(());
-            }
-        };
-        let run = match ops.create_confirmed_run(&plan) {
-            Ok(run) => run,
-            Err(error) => {
-                self.insert_entry(&Entry::Error(format!("could not create run: {error:#}")));
-                self.set_status("run failed");
-                return Ok(());
-            }
-        };
-        let run_id = run.manifest.run_id;
-        self.input_ui.set_composer(ComposerMode::Input);
-        self.insert_entry(&Entry::Notice(starting_notice(
-            &BackgroundStart::Plan {
-                plan_id: &plan_id.to_string(),
-            },
-            run.graph.program.name.as_str(),
-            &run_id.to_string(),
-        )));
-        self.launch_workflow_execution(run, RecoveryDecision::NormalResume, agent)
-            .await
+        let command = discover::WorkflowLaunch::plan_command(PlanId::from_str(plan_id)?);
+        self.launch_daemon_workflow(command, terminal).await
     }
 
     async fn resume_workflow_run(
@@ -753,98 +616,10 @@ impl App {
         run_id: &str,
         recover_uncertain: bool,
         terminal: &mut DefaultTerminal,
-        agent: &mut super::InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let run_id = RunId::from_str(run_id)?;
-        if self.info.session.daemon.is_some() {
-            let command = discover::WorkflowLaunch::resume_command(run_id, recover_uncertain);
-            return self.launch_daemon_workflow(command, terminal).await;
-        }
-        let ops = self.workflow_ops()?;
-        let run = match ops.load_run_id(run_id) {
-            Ok(run) => run,
-            Err(error) => {
-                self.insert_entry(&Entry::Error(format!("could not load run: {error:#}")));
-                self.set_status("open failed");
-                return Ok(());
-            }
-        };
-        let recovery = match ops.prepare_resume(&run, recover_uncertain) {
-            Ok(recovery) => recovery,
-            Err(error) => {
-                self.insert_entry(&Entry::Error(format!("could not open run: {error:#}")));
-                self.set_status("open failed");
-                return Ok(());
-            }
-        };
-        self.input_ui.set_composer(ComposerMode::Input);
-        self.insert_entry(&Entry::Notice(starting_notice(
-            &BackgroundStart::Resume,
-            run.graph.program.name.as_str(),
-            &run_id.to_string(),
-        )));
-        self.launch_workflow_execution(run, recovery, agent).await
-    }
-
-    async fn launch_workflow_execution(
-        &mut self,
-        run: StoredRun,
-        recovery: RecoveryDecision,
-        agent: &mut super::InteractiveRuntime,
-    ) -> anyhow::Result<()> {
-        let run_id = run.manifest.run_id;
-        let workflow_name = run.graph.program.name.as_str().to_owned();
-        let program_digest = run.manifest.program_digest.0.clone();
-        let config_path = self.info.services.config_repository.configured_path().ok();
-        // Background runs keep the chat TUI, so workflow approvals are headless.
-        let tracker = agent.workflow_tracker().clone();
-        if !tracker.register_start(
-            run_id.to_string(),
-            workflow_name.clone(),
-            program_digest.clone(),
-            Some(agent.session_id().to_string()),
-        ) {
-            self.insert_entry(&Entry::Error(
-                "could not start workflow: already running".into(),
-            ));
-            self.set_status("workflow already running");
-            return Ok(());
-        }
-        let background = workflow_cli::BackgroundRun {
-            cwd: self.info.runtime.cwd.clone(),
-            config_path,
-            pool: crate::app::subagent_pool::SubagentPool::Own,
-            tracker,
-            // The TUI's sessions run in this process's environment (#1659).
-            environment: crate::session_environment::SessionEnvironment::default(),
-        };
-        match workflow_cli::spawn_background_run(run, recovery, background).await {
-            Ok(_) => {
-                let (model, display) = crate::tools::workflow_tracker::start_context_prompts(
-                    &run_id.to_string(),
-                    &workflow_name,
-                    &program_digest,
-                );
-                if let Err(error) = agent.append_user_context_with_display(model, display.clone()) {
-                    self.insert_entry(&Entry::Error(format!(
-                        "workflow started, but could not add run id to context: {error:#}"
-                    )));
-                } else {
-                    self.insert_entry(&Entry::Notice(display));
-                }
-                self.set_status(format!(
-                    "workflow run {} is running in the background",
-                    short_id(&run_id.to_string())
-                ));
-            }
-            Err(error) => {
-                self.insert_entry(&Entry::Error(format!(
-                    "could not start workflow in the background: {error:#}"
-                )));
-                self.set_status("workflow failed");
-            }
-        }
-        Ok(())
+        let command = discover::WorkflowLaunch::resume_command(run_id, recover_uncertain);
+        self.launch_daemon_workflow(command, terminal).await
     }
 }
 

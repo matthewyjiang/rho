@@ -119,14 +119,16 @@ fn listed_store_sessions_open_by_their_listed_id() {
             .collect::<Vec<_>>(),
         vec![(saved_id.clone(), PathBuf::from(&cwd))]
     );
-    let (opened, histories) = StoredSession::open_by_id_with_histories_in_root(
-        root.path(),
-        &listed[0].cwd,
-        &listed[0].id,
-    )
-    .unwrap();
+    let (opened, _) =
+        StoredSession::open_by_id_in_root(root.path(), &listed[0].cwd, &listed[0].id).unwrap();
+    let display: Vec<_> = opened
+        .active_display_history()
+        .unwrap()
+        .into_iter()
+        .map(|row| row.message)
+        .collect();
     assert_eq!(
-        (opened.id(), histories.display),
+        (opened.id(), display),
         (saved_id.as_str(), vec![Message::user_text("list me")])
     );
 }

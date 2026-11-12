@@ -13,7 +13,7 @@ use tokio::{sync::mpsc, time::timeout};
 use crate::{
     app::{
         policy::AppPolicy,
-        runtime_builder::{build_runtime, RuntimeBuildOptions},
+        runtime_builder::{build_runtime_with_max_steps, RuntimeBuildOptions},
         session_runtime::{
             test_support::unattended_runtime_on, QuestionSupport, Turn, TurnIo, TurnOutcome,
         },
@@ -59,34 +59,37 @@ async fn a_run_that_crosses_its_compaction_threshold_compacts_and_finishes() {
     let root = tempfile::tempdir().unwrap();
     let config = Config::default();
     let shared: Arc<dyn ModelProvider> = Arc::new(provider.clone());
-    let sdk = build_runtime(RuntimeBuildOptions {
-        provider: Arc::clone(&shared),
-        tools: &inventory,
-        workspace: Workspace::new(root.path()).unwrap(),
-        workspace_policy: AppPolicy::for_mode(
-            PermissionMode::Auto,
-            Default::default(),
-            /*search_path*/ None,
-        ),
-        approval_session: None,
-        system_prompt: SystemPrompt::None,
-        reasoning: rho_sdk::ReasoningLevel::Off,
-        service_tier: None,
-        compaction: CompactionConfig {
-            auto_compact: true,
-            threshold_percent: 5,
-            target_percent: 1,
-            summarizer: None,
+    let sdk = build_runtime_with_max_steps(
+        RuntimeBuildOptions {
+            provider: Arc::clone(&shared),
+            tools: &inventory,
+            workspace: Workspace::new(root.path()).unwrap(),
+            workspace_policy: AppPolicy::for_mode(
+                PermissionMode::Auto,
+                Default::default(),
+                /*search_path*/ None,
+            ),
+            approval_session: None,
+            system_prompt: SystemPrompt::None,
+            reasoning: rho_sdk::ReasoningLevel::Off,
+            service_tier: None,
+            compaction: CompactionConfig {
+                auto_compact: true,
+                threshold_percent: 5,
+                target_percent: 1,
+                summarizer: None,
+            },
+            context_window: Some(1_000),
+            usage_purpose: "agent",
+            usage_parent_session_id: None,
+            usage_recording: Default::default(),
+            hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
+            hooks: None,
+            diagnostics: crate::diagnostics::test_diagnostics("test", "test"),
+            recall: None,
         },
-        context_window: Some(1_000),
-        usage_purpose: "agent",
-        usage_parent_session_id: None,
-        usage_recording: Default::default(),
-        hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
-        hooks: None,
-        diagnostics: crate::diagnostics::test_diagnostics("test", "test"),
-        recall: None,
-    })
+        /*max_steps*/ None,
+    )
     .unwrap();
     assert_eq!(sdk.diagnostics().compaction_trigger_tokens(), Some(50));
     let mut runtime = unattended_runtime_on(

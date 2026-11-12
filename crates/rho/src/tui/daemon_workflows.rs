@@ -38,13 +38,7 @@ impl App {
     ) -> anyhow::Result<()> {
         self.input_ui.set_composer(super::ComposerMode::Input);
         let turn = TurnPrompt::command(command.clone(), command);
-        if self
-            .info
-            .session
-            .daemon
-            .as_ref()
-            .is_some_and(super::DaemonSession::tool_sources_loading)
-        {
+        if self.info.session.daemon.tool_sources_loading() {
             self.hold(HeldTurn {
                 turn,
                 media: Vec::new(),
@@ -58,9 +52,8 @@ impl App {
 
     /// Sends `turn`, a workflow launch. The prompt is the hub's spelling,
     /// not something to type: it stays out of the input history, the
-    /// daemon keeps no user message for it, as in process, and a prompt
-    /// that could not be sent is reported without touching the composer's
-    /// draft.
+    /// daemon keeps no user message for it, and a prompt that could not be
+    /// sent is reported without touching the composer's draft.
     pub(super) async fn send_daemon_workflow(
         &mut self,
         turn: TurnPrompt,
@@ -185,7 +178,7 @@ impl WorkflowRuns {
 /// saved state, at `now` (Unix seconds). The daemon ends a drive `Failed`
 /// for a failed, denied, or blocked outcome too, which the saved state
 /// tells apart, so only a drive that failed while its run still reads as
-/// live failed on its own, as a drive that errors does in process.
+/// live failed on its own.
 fn drive_row(job: &JobSummary, progress: WorkflowRailSummary, now: u64) -> WorkflowRailSummary {
     let until = if may_still_change(job.state) {
         now
@@ -203,7 +196,7 @@ fn drive_row(job: &JobSummary, progress: WorkflowRailSummary, now: u64) -> Workf
 /// the order the runs first appear. A run resumed has a job for each drive,
 /// and the one that began last says where the run is. A run shows while
 /// that drive may still change, and then until the session is given its
-/// result, as in process.
+/// result.
 fn shown_drives<'a>(jobs: &[&'a JobSummary]) -> Vec<(RunId, &'a JobSummary)> {
     let mut drives: Vec<(RunId, &JobSummary)> = Vec::new();
     for job in jobs {

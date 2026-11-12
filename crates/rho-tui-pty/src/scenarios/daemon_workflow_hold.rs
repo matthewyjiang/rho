@@ -36,8 +36,7 @@ pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
     setup_workflow(&home)?;
     let runs = home.rho_home().join("workflows/runs");
     let plan = RhoLaunchPlan::matrix(&runner.binary, &home, DEFAULT_SIZE)
-        .with_env("OPENAI_API_KEY", "sk-test-matrix")
-        .with_env("RHO_TUI_DAEMON", "1");
+        .with_env("OPENAI_API_KEY", "sk-test-matrix");
     let mut harness = PtyHarness::spawn_named(&plan, SCENARIO.id)?;
     harness.enable_timing(runner.record_timing);
     if let Some(root) = &runner.artifact_root {

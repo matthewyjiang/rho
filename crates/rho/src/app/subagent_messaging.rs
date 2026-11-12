@@ -239,10 +239,6 @@ pub(crate) struct NoticeRebind {
     pub(crate) permits: NoticePermits,
     /// Notices drained from the retired receiver under the binding lock.
     pub(crate) retained: Vec<SubagentNotice>,
-    /// Permit generation that accepted [`Self::retained`] and any notices the
-    /// inbox already held from the prior binding. `None` when there was no
-    /// previous binding.
-    pub(crate) retired_permits: Option<NoticePermits>,
 }
 
 impl SubagentNoticeBridge {
@@ -290,14 +286,12 @@ impl SubagentNoticeBridge {
     ///
     /// Holds the binding lock for the whole swap so a concurrent [`Self::post`]
     /// cannot return `Ok` for a notice that this replacement would discard.
-    /// Callers must keep [`NoticeRebind::retained`] deliverable against
-    /// [`NoticeRebind::retired_permits`].
+    /// Callers must keep [`NoticeRebind::retained`] deliverable.
     pub(crate) fn rebind_parent(
         &self,
         mut old_receiver: Option<mpsc::Receiver<SubagentNotice>>,
     ) -> NoticeRebind {
         let mut guard = self.binding_slot();
-        let retired_permits = guard.as_ref().map(|binding| binding.permits.clone());
 
         let mut retained = Vec::new();
         if let Some(receiver) = old_receiver.as_mut() {
@@ -320,7 +314,6 @@ impl SubagentNoticeBridge {
             receiver,
             permits,
             retained,
-            retired_permits,
         }
     }
 

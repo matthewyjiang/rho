@@ -98,7 +98,8 @@ async fn finished_runtime_probe_fills_the_open_overlay() {
 #[test]
 fn info_opened_during_a_turn_defers_the_tree_read_until_idle() {
     let mut app = super::super::tests::test_app();
-    app.info.session.session_id = Some("session-1".into());
+    app.info.session.daemon =
+        crate::tui::DaemonSession::ended_for_tests("/tmp/project".into()).saved_for_tests();
     app.begin_provider_turn_ui();
     app.execute_info_command().unwrap();
 

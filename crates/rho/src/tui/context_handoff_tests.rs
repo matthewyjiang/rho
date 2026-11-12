@@ -2,8 +2,8 @@ use pretty_assertions::assert_eq;
 use rho_sdk::model::handoff::HandoffReport;
 
 use super::{
-    decision_from_value, ContextHandoffDecision, ContextHandoffImpact, ContextHandoffKind,
-    ACTION_COMPACT, ACTION_CONTINUE, ACTION_USE_SOURCE,
+    decision_from_value, ContextHandoffDecision, ContextHandoffImpact, ACTION_COMPACT,
+    ACTION_CONTINUE, ACTION_USE_SOURCE,
 };
 
 fn impact(omissions: usize, can_compact: bool, offer_use_source: bool) -> ContextHandoffImpact {
@@ -24,10 +24,8 @@ fn impact(omissions: usize, can_compact: bool, offer_use_source: bool) -> Contex
 }
 
 #[test]
-fn resume_offers_source_model_when_available() {
-    let choice = impact(3, true, true)
-        .choice(ContextHandoffKind::Resume)
-        .unwrap();
+fn offers_source_model_when_available() {
+    let choice = impact(3, true, true).choice().unwrap();
 
     assert_eq!(
         choice

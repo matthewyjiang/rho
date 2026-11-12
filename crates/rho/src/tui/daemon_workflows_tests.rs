@@ -72,11 +72,11 @@ fn a_run_shows_until_its_session_is_given_its_result() {
     );
 }
 
-// Covers: a finished drive's row says how the run ended as in process: the
-// daemon ends a denied or blocked drive `Failed`, and the row still says
-// denied or blocked from the saved run; only a drive that failed while its
-// run reads as live shows as failed on its own. A live row's time runs to
-// now and an ended row's stops when its drive ended.
+// Covers: a finished drive's row says how the run ended: the daemon ends a
+// denied or blocked drive `Failed`, and the row still says denied or blocked
+// from the saved run; only a drive that failed while its run reads as live
+// shows as failed on its own. A live row's time runs to now and an ended
+// row's stops when its drive ended.
 // Owner: daemon workflow rail (pure row)
 #[test]
 fn a_drive_row_keeps_the_saved_runs_verdict() {

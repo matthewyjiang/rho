@@ -1,10 +1,8 @@
 //! What of a conversation its model cannot be sent: the provider-native
 //! context blocks another model produced.
 //!
-//! The in-process TUI reads its own runtime's history for this. A daemon
-//! session reports it (`SessionReport::ProviderContext`), so the TUI that
-//! follows one asks before a resume or a send omits the blocks, as in
-//! process.
+//! A daemon session reports it (`SessionReport::ProviderContext`), so the
+//! TUI that follows one asks before a resume or a send omits the blocks.
 
 use std::collections::BTreeSet;
 use std::hash::{DefaultHasher, Hash, Hasher};

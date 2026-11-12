@@ -113,17 +113,14 @@ fn notice_rebind_retains_in_flight_channel_notices_on_retired_generation() {
             .collect::<Vec<_>>(),
         vec!["queued-a", "queued-b"]
     );
-    let retired = rebind
-        .retired_permits
-        .expect("prior binding exposes retired permits");
-    assert_eq!(retired.outstanding(), 2);
+    assert_eq!(old_permits.outstanding(), 2);
     assert_eq!(rebind.permits.outstanding(), 0);
     bridge
         .post(sample_notice("new-gen"))
         .expect("replacement generation accepts posts");
     assert_eq!(rebind.permits.outstanding(), 1);
     // Freeing retained notices only touches the retired generation.
-    retired.release(2);
+    old_permits.release(2);
     assert_eq!(old_permits.outstanding(), 0);
     assert_eq!(rebind.permits.outstanding(), 1);
 }

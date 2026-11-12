@@ -151,7 +151,6 @@ fn closed_notice(request: &InputRequest, resolution: Resolution) -> String {
     match resolution {
         Resolution::Answered => format!("another client answered {asked}"),
         Resolution::Withdrawn => format!("the turn withdrew {asked}"),
-        // As the in-process TUI says it when its own timer submits.
         Resolution::TimedOut => match &request.timeout {
             Some(timeout) => format!("timeout fallback: {}", timeout.reason),
             None => format!("the daemon answered {asked} at its timeout"),

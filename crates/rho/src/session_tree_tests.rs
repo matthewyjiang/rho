@@ -1,5 +1,6 @@
 use super::tree::{NodeId, SessionNodeKind};
 use super::*;
+use rho_providers::model::ModelIdentity;
 use std::fs::OpenOptions;
 
 fn assert_mirrored_record_matches_file(session: &Session, mirrored: &SessionIndexRecord) {

@@ -35,7 +35,6 @@ use super::{
     oauth::{self, McpAuthorizationMode, McpHttpClient},
     progress::McpProgressRouter,
     report::McpLiveServerState,
-    sampling::{McpSamplingBridge, McpSamplingService},
     tool::McpToolSlot,
     validate, McpSessionOptions,
 };
@@ -101,8 +100,6 @@ enum ToolDiscoveryError {
 #[derive(Clone, Debug)]
 pub(super) struct McpSessionServices {
     pub(super) elicitation: McpElicitationSupport,
-    /// `Some` when this run will bind a model for sampling.
-    pub(super) sampling: Option<McpSamplingBridge>,
 }
 
 /// Which optional primitives a server declared at `initialize`.
@@ -171,7 +168,13 @@ pub(super) async fn connect_server_bounded(
         options.roots.clone(),
         progress.clone(),
         event_sender,
-        client_services(identity, server, &options.services, &calls),
+        McpClientServices {
+            elicit: McpElicitationService::new(
+                identity,
+                calls.clone(),
+                options.services.elicitation,
+            ),
+        },
     );
     let session = match tokio::time::timeout_at(
         deadline,
@@ -260,28 +263,6 @@ async fn compile_tool_definitions(
         return Err(ToolDiscoveryError::TimedOut);
     }
     Ok(discovered)
-}
-
-/// Resolve what this session declares and answers for one server.
-///
-/// Sampling needs both halves of its double gate before the capability is
-/// declared: the server opted in through config, and this run has somewhere to
-/// get a model from.
-fn client_services(
-    identity: &str,
-    server: &McpServerConfig,
-    services: &McpSessionServices,
-    calls: &McpInFlightCalls,
-) -> McpClientServices {
-    let sample = services
-        .sampling
-        .clone()
-        .filter(|_| server.sampling.is_offered())
-        .map(|bridge| McpSamplingService::new(identity, server.sampling, bridge, calls.clone()));
-    McpClientServices {
-        elicit: McpElicitationService::new(identity, calls.clone(), services.elicitation),
-        sample,
-    }
 }
 
 /// Ask the server to emit logs at the configured level. A server that does not

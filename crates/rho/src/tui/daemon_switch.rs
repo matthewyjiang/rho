@@ -9,8 +9,6 @@
 //! the TUI had stopped following, or whose turn began unseen; it keeps
 //! running in the daemon and can be resumed. The new session's attach
 //! replays its conversation as a first attach does.
-//!
-//! [`App::reset_session_view`] is also the in-process `/new`'s reset.
 
 use super::{daemon_launch::DaemonTarget, App, ComposerMode, DefaultTerminal, InputSubmissionMode};
 use crate::session::Session;
@@ -34,7 +32,7 @@ impl App {
         self.input_ui.clear_attachments();
         self.input_ui.set_command_palette_dismissed(false);
         self.clamp_command_selection();
-        self.start_follow_ups = None;
+        self.start_follow_ups = false;
         self.daemon_compact_handoff = false;
         self.pending.clear_follow_ups();
         self.pending.clear_steering();
@@ -45,11 +43,8 @@ impl App {
         self.turn.clear_tool_calls();
         self.reset_usage();
         self.usage.current_context = None;
-        self.pending_session_title = None;
-        self.session_title_locked = false;
         self.turn.set_current_turn_start(None);
         self.discard_side_chat();
-        self.provisional_history = None;
         self.history.clear_entries();
         self.history.images_mut().clear();
         self.history.set_images_dirty_from(None);
@@ -66,16 +61,10 @@ impl App {
         target: DaemonTarget,
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
-        let current = self
-            .info
-            .session
-            .daemon
-            .as_ref()
-            .expect("switching needs a daemon session");
-        let opened = current.open_sibling(target).await?;
+        let opened = self.info.session.daemon.open_sibling(target).await?;
         self.info.session.session_id = opened.saved_id().map(str::to_owned);
         // The session followed until now detaches as its connection drops.
-        self.info.session.daemon = Some(opened);
+        self.info.session.daemon = opened;
         self.sessions_hub_state.clear();
         self.daemon_option_requests.clear();
         self.daemon_login_selected = None;
@@ -83,7 +72,7 @@ impl App {
         self.daemon_title = None;
         self.awaited_daemon_report = None;
         self.reset_daemon_mcp_offers();
-        // Held for the session left behind, as `/new` drops them in process.
+        // Held for the session left behind.
         self.held_turns.clear();
         self.clear_tool_sources_loading_activity();
         self.reset_daemon_rail();

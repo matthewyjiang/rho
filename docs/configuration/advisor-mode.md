@@ -66,9 +66,8 @@ Ways to enable it:
 - `/agents`, then choose the `advisor` internal agent and pick a model
 - a hand edit of `~/.rho/config.toml`
 
-`/advisor` and `/config` save through the [daemon](/daemon#configuration-changes),
-so they need a TUI following a daemon session; the change reaches loaded
-sessions at their next turn.
+`/advisor` and `/config` save through the [daemon](/daemon#configuration-changes).
+The change reaches loaded sessions at their next turn.
 
 ```toml
 [behavior]

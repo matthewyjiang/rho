@@ -1,8 +1,6 @@
 //! What an MCP server offers the composer: a resource picked from the `@`
 //! palette arrives as an attachment, and a prompt command's argument
-//! completes from the server's suggestions. The scenario runs twice, with
-//! the session in process and with the daemon holding it, since the servers
-//! are the session's either way.
+//! completes from the server's suggestions.
 
 use std::fs;
 
@@ -178,10 +176,3 @@ pub(super) const MCP_COMPOSER_SCENARIO: Scenario = Scenario::new(
     /* smoke */ false,
 )
 .with_setup(setup_composer_server);
-
-pub(super) const DAEMON_MCP_COMPOSER_SCENARIO: Scenario = Scenario {
-    id: "daemon_mcp_composer",
-    description: "Attach an MCP resource and complete a prompt argument in a daemon session",
-    env: &[("RHO_TUI_DAEMON", "1")],
-    ..MCP_COMPOSER_SCENARIO
-};

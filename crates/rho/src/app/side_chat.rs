@@ -14,7 +14,7 @@ use super::{
         assemble_session, ApprovalInputs, BuiltSession, HookStart, SessionApproval,
         SessionAssemblyOptions, SignIn,
     },
-    tools_prompt::{McpSamplingSupport, ToolSourceAttach},
+    tools_prompt::ToolSourceAttach,
 };
 use crate::{
     agent::{
@@ -237,7 +237,6 @@ async fn assemble_side_session(launch: &SideChatLaunch) -> anyhow::Result<BuiltS
         no_subagents: true,
         questionnaire_enabled: false,
         mcp_elicitation: crate::tools::mcp::McpElicitationSupport::Unavailable,
-        mcp_sampling: McpSamplingSupport::Unavailable,
         tool_source_attach: ToolSourceAttach::None,
         tool_source_load: super::tools_prompt::ToolSourceLoad::Inline,
         hook_start: HookStart::Start,

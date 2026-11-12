@@ -1,19 +1,18 @@
-//! The send gate for a daemon session (#1667).
+//! The send gate for the daemon session (#1667).
 //!
 //! The daemon holds the conversation and runs the turn, so the TUI reads
 //! what the session's model cannot be sent from the daemon
-//! (`SessionReport::ProviderContext`) before each prompt and asks as in
-//! process. A released submission is a prompt request: it starts no provider
-//! here, so it carries no [`super::SendAuthorization`].
+//! (`SessionReport::ProviderContext`) before each prompt and asks before
+//! sending. A released submission is a prompt request.
 //!
 //! "Compact, then send" parks the prompt first in the follow-up queue and
 //! sends `/compact`, which the daemon runs as a turn. The queue sends the
 //! prompt when that turn ends, whether the compaction compacted or failed,
-//! as in process, and the consent given here goes with that prompt alone,
-//! so it is not asked for again and no other prompt is sent under it. A
-//! cancelled compaction returns the prompt to the composer with the rest of
-//! the pending work, without the consent. A compaction the daemon cannot
-//! start parks nothing: the prompt returns to the composer.
+//! and the consent given here goes with that prompt alone, so it is not
+//! asked for again and no other prompt is sent under it. A cancelled
+//! compaction returns the prompt to the composer with the rest of the
+//! pending work, without the consent. A compaction the daemon cannot start
+//! parks nothing: the prompt returns to the composer.
 //!
 //! A prompt held while the session's MCP servers connect keeps the model it
 //! was confirmed for (`HeldOrigin::Confirmed`), so its release asks again
@@ -21,7 +20,7 @@
 
 use rho_sdk::SessionId;
 
-use super::{PendingConfirmSend, SendOmissions, SendPayload, SendSubmission};
+use super::{PendingConfirmSend, SendOmissions, SendSubmission};
 use crate::app::provider_context_report::ProviderContextReport;
 use crate::commands::CommandId;
 use crate::tui::{
@@ -37,18 +36,15 @@ impl SendSubmission {
         self
     }
 
-    /// The turn this asks a daemon session for, and the same prompt as the
-    /// follow-up queue holds one.
+    /// The turn this asks the daemon session for, and the same prompt as
+    /// the follow-up queue holds one.
     pub(in crate::tui) fn into_daemon_turn(self) -> (TurnPrompt, QueuedPrompt) {
-        let SendPayload::Turn {
+        let Self {
             turn,
             media,
             paste_segments,
             ..
-        } = self.into_payload()
-        else {
-            unreachable!("a daemon session's sends are turn submissions");
-        };
+        } = self;
         let prompt = QueuedPrompt {
             prompt: turn.model.clone(),
             display_prompt: turn.display.clone(),
@@ -71,7 +67,7 @@ impl SendOmissions {
 }
 
 impl App {
-    /// The omission gate for a prompt to the followed daemon session.
+    /// The omission gate for a prompt to the followed session.
     /// Returns ownership, approved for the model the session runs on, when
     /// no confirmation is needed, this exact submission was approved for
     /// that model, or consent already covers the omissions; otherwise the
@@ -125,9 +121,7 @@ impl App {
     async fn read_daemon_provider_context(
         &self,
     ) -> anyhow::Result<(SendOmissions, ProviderContextReport)> {
-        let Some(session) = self.info.session.daemon.as_ref() else {
-            anyhow::bail!("no daemon session is open");
-        };
+        let session = &self.info.session.daemon;
         let report = session.provider_context().await?;
         let id = SessionId::from_string(session.id())?;
         Ok((SendOmissions::reported(id, &report), report))
@@ -162,7 +156,7 @@ impl App {
     /// Compacts the daemon session, then sends `submission` as the next
     /// queued message under the consent `omissions` records. The prompt is
     /// parked only once the daemon took the compaction: one it cannot start
-    /// returns the prompt to the composer under the reason, as in process.
+    /// returns the prompt to the composer under the reason.
     pub(super) async fn compact_then_send_to_daemon(
         &mut self,
         submission: SendSubmission,

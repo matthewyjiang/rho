@@ -204,7 +204,7 @@ impl SessionRuntime {
             .map_err(Refused)?
             .clone();
         // The node must still be there to return to once files changed.
-        stored.histories_for_node(&before).map_err(Refused)?;
+        stored.history_for_node(&before).map_err(Refused)?;
         let audit = planned.restore(&store, &workspace).map_err(Failed)?;
         let conversation = if restored_fully(&audit) {
             match self.select_node(&before, process_config).await {

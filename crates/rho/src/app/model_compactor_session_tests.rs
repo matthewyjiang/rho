@@ -256,11 +256,7 @@ async fn session_summary_reuses_the_cached_history_and_falls_back_to_the_transcr
             "{}",
             case.name
         );
-        let record = compactor
-            .diagnostics
-            .compaction()
-            .and_then(|compaction| compaction.last_compaction)
-            .unwrap();
+        let record = compactor.diagnostics.last_compaction().unwrap();
         assert_eq!(
             (
                 record.outcome,
@@ -444,11 +440,7 @@ async fn failed_summary_request_usage_is_charged_to_the_compaction_record() {
         .unwrap();
 
     assert_eq!(output.usage().cache_read_tokens, Some(100));
-    let record = compactor
-        .diagnostics
-        .compaction()
-        .and_then(|compaction| compaction.last_compaction)
-        .unwrap();
+    let record = compactor.diagnostics.last_compaction().unwrap();
     assert_eq!(record.request_path, Some(SummaryRequestPath::Transcript));
     assert_eq!(record.cache_read_tokens, Some(1_000));
 }

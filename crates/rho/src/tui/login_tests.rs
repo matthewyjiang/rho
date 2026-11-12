@@ -1,16 +1,6 @@
-use rho_providers::{
-    model::{
-        catalog::LoginTarget,
-        provider_models::{
-            replace_cached_provider_models_for_tests, with_provider_models_cache_dir_for_tests,
-            ProviderModel,
-        },
-        ReasoningCapabilities, ReasoningLevelSet, ReasoningRequestSource,
-    },
-    reasoning::ReasoningLevel,
-};
+use rho_providers::model::catalog::LoginTarget;
 
-use crate::{config::Config, tui::tests::test_app};
+use crate::tui::tests::test_app;
 
 use super::super::custom_provider_login::CustomHostStep;
 
@@ -36,31 +26,6 @@ fn blank_optional_key_keeps_a_reachable_key_and_runs_keyless_when_none_exists() 
             label: "ollama".into(),
         }
     );
-}
-
-#[test]
-fn login_state_save_persists_reasoning_and_normalizes_auth_profile() {
-    let mut app = test_app();
-    assert_ne!(
-        app.info
-            .services
-            .config_repository
-            .configured_path()
-            .unwrap(),
-        Config::default_path().unwrap()
-    );
-    app.info.runtime.provider = "kimi-code".into();
-    app.info.runtime.model = "login-k3-test".into();
-    app.info.runtime.auth = "api-key".into();
-    app.info.runtime.reasoning = ReasoningLevel::High;
-
-    app.save_current_config().unwrap();
-
-    let saved = app.info.services.config_repository.load().unwrap();
-    assert_eq!(saved.provider, "kimi-code");
-    assert_eq!(saved.model, "login-k3-test");
-    assert_eq!(saved.auth, "kimi-oauth");
-    assert_eq!(saved.reasoning, ReasoningLevel::High);
 }
 
 // Covers: choosing Responses in /login must persist api, not default chat
@@ -98,171 +63,22 @@ fn custom_onboarding_persists_selected_responses_api() {
     rho_providers::provider::reset_custom_openai_compatible_providers_for_tests();
 }
 
-// Covers: a login-driven cross-provider activation must reconcile the live
-// edit tool when the saved preference is Auto.
-// Owner: provider activation
-#[tokio::test]
-async fn cross_provider_activation_reconciles_auto_edit_tool() {
-    use std::sync::Arc;
-
-    use rho_sdk::{
-        model::ModelIdentity,
-        provider::{ModelProvider, ScriptedProvider, ScriptedTurn},
-    };
-
-    use crate::{
-        app::interactive_runtime::test_edit_tool_runtime,
-        config::EditTool,
-        tui::{
-            provider_actions::ProviderActivation,
-            reasoning_metadata::ModelSwitchReasoningResolution,
-        },
-    };
-
-    let mut app = test_app();
-    app.info
-        .services
-        .config_repository
-        .update(|config| config.edit_tool = EditTool::Auto)
-        .unwrap();
-    let mut agent = test_edit_tool_runtime(EditTool::Auto).await;
-    assert!(agent.has_tool("str_replace"));
-
-    let replacement: Arc<dyn ModelProvider> = Arc::new(ScriptedProvider::new(
-        ModelIdentity::new("openai-codex", "test", "gpt-5.5"),
-        Vec::<ScriptedTurn>::new(),
-    ));
-    app.activate_provider(
-        ProviderActivation {
-            provider: "openai-codex".into(),
-            model: "gpt-5.5".into(),
-            reasoning: ModelSwitchReasoningResolution {
-                effective: ReasoningLevel::Medium,
-                source: ReasoningRequestSource::PersistedOrDefault,
-            },
-            auth: "codex".into(),
-            replacement,
-        },
-        &mut agent,
-    )
-    .await
-    .unwrap();
-
-    assert!(agent.has_tool("apply_patch"));
-    assert!(!agent.has_tool("str_replace"));
-}
-
-// Covers: /login on an active custom host must persist `{name}-api-key`
+// Covers: /login must not persist a foreign auth id next to the default provider
 // Owner: login
 #[test]
-fn keyed_custom_login_persists_auth_mode_for_active_provider() {
-    let _lock = rho_providers::provider::custom_provider_registry_test_lock();
-    rho_providers::provider::reset_custom_openai_compatible_providers_for_tests();
-
+fn keyed_custom_login_does_not_write_auth_for_a_different_default_provider() {
     let mut app = test_app();
-    app.info.runtime.provider = "composer".into();
-    app.info.runtime.model = "composer-2.5".into();
-    app.info.runtime.auth = "none".into();
-    app.info
-        .services
-        .config_repository
-        .update(|config| {
-            config
-                .providers
-                .set_endpoint("composer", "http://127.0.0.1:8787/v1")
-                .unwrap();
-            config.provider = "composer".into();
-            config.model = "composer-2.5".into();
-            config.auth = "none".into();
-        })
-        .unwrap();
-
-    app.persist_login_auth(&LoginTarget {
-        provider: "composer".into(),
-        auth: "composer-api-key".into(),
-        label: "composer API key".into(),
-    });
-
-    assert_eq!(app.info.runtime.auth, "composer-api-key");
-    let saved = app.info.services.config_repository.load().unwrap();
-    assert_eq!(saved.auth, "composer-api-key");
-}
-
-// Covers: /login must not persist a foreign auth id next to the current provider
-// Owner: login
-#[test]
-fn keyed_custom_login_does_not_write_auth_for_a_different_runtime_provider() {
-    let mut app = test_app();
-    app.using_unavailable_provider = true;
     let before = app.info.services.config_repository.load().unwrap();
 
-    app.persist_login_auth(&LoginTarget {
+    app.persist_default_login_auth(&LoginTarget {
         provider: "composer".into(),
         auth: "composer-api-key".into(),
         label: "composer API key".into(),
     });
 
-    pretty_assertions::assert_eq!(app.info.runtime.provider.as_str(), "openai");
-    pretty_assertions::assert_eq!(app.info.runtime.auth.as_str(), "api-key");
     let saved = app.info.services.config_repository.load().unwrap();
     pretty_assertions::assert_eq!(saved.provider, before.provider);
     pretty_assertions::assert_eq!(saved.auth, before.auth);
-}
-
-#[test]
-fn refreshed_login_capabilities_reject_explicit_and_normalize_persisted_reasoning() {
-    let cache = tempfile::tempdir().unwrap();
-    with_provider_models_cache_dir_for_tests(cache.path().to_path_buf(), || {
-        replace_cached_provider_models_for_tests(
-            "kimi-code",
-            &[ProviderModel {
-                provider: "kimi-code".into(),
-                model: "login-k3-test".into(),
-                display_name: "Login K3 Test".into(),
-                context_window: None,
-                max_output_tokens: None,
-                reasoning_capabilities: ReasoningCapabilities::Levels(ReasoningLevelSet::new(
-                    vec![
-                        ReasoningLevel::Off,
-                        ReasoningLevel::Low,
-                        ReasoningLevel::High,
-                        ReasoningLevel::Max,
-                    ],
-                )),
-            }],
-        )
-        .unwrap();
-        let mut app = test_app();
-        app.info.runtime.reasoning = ReasoningLevel::Medium;
-        app.info.runtime.reasoning_source = ReasoningRequestSource::Explicit;
-
-        assert!(app
-            .resolve_reasoning_after_login("kimi-code", "login-k3-test")
-            .is_none());
-
-        app.info.runtime.reasoning_source = ReasoningRequestSource::PersistedOrDefault;
-        let resolved = app
-            .resolve_reasoning_after_login("kimi-code", "login-k3-test")
-            .unwrap();
-        assert_eq!(resolved.effective, ReasoningLevel::High);
-        assert_eq!(resolved.source, ReasoningRequestSource::PersistedOrDefault);
-    });
-}
-
-#[test]
-fn first_login_preserves_explicit_reasoning_when_capabilities_are_unknown() {
-    let cache = tempfile::tempdir().unwrap();
-    with_provider_models_cache_dir_for_tests(cache.path().to_path_buf(), || {
-        let mut app = test_app();
-        app.info.runtime.reasoning = ReasoningLevel::Off;
-        app.info.runtime.reasoning_source = ReasoningRequestSource::Explicit;
-
-        let resolved = app
-            .resolve_reasoning_after_login("kimi-code", "unknown-login-model")
-            .unwrap();
-        assert_eq!(resolved.effective, ReasoningLevel::Off);
-        assert_eq!(resolved.source, ReasoningRequestSource::Explicit);
-    });
 }
 
 // Covers: the store picker defaults to the first available backend, and keys

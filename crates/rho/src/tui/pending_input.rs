@@ -1,7 +1,4 @@
-use super::{
-    message_history, App, ComposerMode, Entry, InputSubmissionMode, InteractiveRuntime,
-    QueuedPrompt,
-};
+use super::{message_history, App, ComposerMode, Entry, InputSubmissionMode, QueuedPrompt};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 #[derive(Debug)]
@@ -9,22 +6,6 @@ pub(super) struct AcceptedSteering {
     pub(super) id: rho_sdk::SteeringId,
     pub(super) prompt: QueuedPrompt,
     pub(super) delivered: bool,
-}
-
-pub(super) enum PendingInputRequest {
-    Accept {
-        prompt: QueuedPrompt,
-        receipt: crate::app::interactive_runtime::SteeringAcceptanceFuture,
-    },
-    Retract {
-        action: PendingInputAction,
-        receipt: crate::app::interactive_runtime::SteeringRetractionFuture,
-    },
-}
-
-pub(super) enum PendingInputCompletion {
-    Accepted(Result<rho_sdk::SteeringId, rho_sdk::Error>),
-    Retracted(Result<rho_sdk::SteeringRetraction, rho_sdk::Error>),
 }
 
 #[derive(Debug, Default)]
@@ -141,81 +122,7 @@ impl App {
         true
     }
 
-    pub(super) fn start_pending_input_request(
-        &mut self,
-        agent: &mut InteractiveRuntime,
-    ) -> Option<PendingInputRequest> {
-        if let Some(action) = self.pending.take_input_action() {
-            let id = match &action {
-                PendingInputAction::EditAccepted { id, .. }
-                | PendingInputAction::DiscardAccepted { id } => id.clone(),
-            };
-            return match agent.request_steering_retraction(id.clone()) {
-                Ok(receipt) => {
-                    self.pending.set_retracting_steering(Some(id));
-                    Some(PendingInputRequest::Retract { action, receipt })
-                }
-                Err(error) => {
-                    self.notify_status(format!("could not request steer retraction: {error}"));
-                    None
-                }
-            };
-        }
-
-        let prompt = self.pending.steering_prompts_mut().pop_front()?;
-        match agent.request_steer(rho_sdk::UserInput::text(prompt.prompt.clone())) {
-            Ok(receipt) => Some(PendingInputRequest::Accept { prompt, receipt }),
-            Err(error) => {
-                self.pending.steering_prompts_mut().push_front(prompt);
-                self.notify_status(format!("could not submit steer: {error}"));
-                None
-            }
-        }
-    }
-
-    pub(super) fn finish_pending_input_request(
-        &mut self,
-        request: PendingInputRequest,
-        completion: PendingInputCompletion,
-    ) -> Option<String> {
-        match (request, completion) {
-            (
-                PendingInputRequest::Accept { prompt, .. },
-                PendingInputCompletion::Accepted(Ok(id)),
-            ) => {
-                self.pending
-                    .accepted_steering_mut()
-                    .push_back(AcceptedSteering {
-                        id,
-                        prompt,
-                        delivered: false,
-                    });
-                self.select_pending_recall_target();
-                None
-            }
-            (
-                PendingInputRequest::Accept { prompt, .. },
-                PendingInputCompletion::Accepted(Err(error)),
-            ) => {
-                self.pending.push_follow_up_front(prompt);
-                self.select_pending_recall_target();
-                self.notify_status(format!("steer queued as follow-up: {error}"));
-                None
-            }
-            (
-                PendingInputRequest::Retract { action, .. },
-                PendingInputCompletion::Retracted(result),
-            ) => {
-                self.pending.set_retracting_steering(None);
-                self.finish_steering_retraction(action, result.map_err(|error| error.to_string()));
-                None
-            }
-            _ => Some("pending-input request completed with the wrong response type".into()),
-        }
-    }
-
-    /// Shows what withdrawing the steer `action` names did, in process or in
-    /// a daemon session.
+    /// Shows what withdrawing the steer `action` names did.
     pub(super) fn finish_steering_retraction(
         &mut self,
         action: PendingInputAction,
@@ -303,7 +210,6 @@ impl App {
 
     pub(super) fn clear_accepted_steering(&mut self) {
         self.pending.accepted_steering_mut().clear();
-        self.pending.set_retracting_steering(None);
         self.pending.clear_input_action();
         self.pending_input_changed();
     }
@@ -419,10 +325,6 @@ impl App {
         match item {
             PendingInputRef::AcceptedSteering(index) => {
                 let entry = &self.pending.accepted_steering()[index];
-                if self.pending.retracting_steering() == Some(&entry.id) {
-                    self.notify_status("steer retraction is already in progress");
-                    return;
-                }
                 self.pending
                     .set_input_action(Some(PendingInputAction::EditAccepted {
                         id: entry.id.clone(),
@@ -457,10 +359,6 @@ impl App {
         match item {
             PendingInputRef::AcceptedSteering(index) => {
                 let id = self.pending.accepted_steering()[index].id.clone();
-                if self.pending.retracting_steering() == Some(&id) {
-                    self.notify_status("steer retraction is already in progress");
-                    return;
-                }
                 self.pending
                     .set_input_action(Some(PendingInputAction::DiscardAccepted { id }));
             }
@@ -496,19 +394,6 @@ impl App {
         self.input_ui.set_cursor(self.input_char_len());
         self.reset_input_history_navigation();
         self.input_changed();
-    }
-}
-
-pub(super) async fn pending_input_completion(
-    request: &mut Option<PendingInputRequest>,
-) -> Option<PendingInputCompletion> {
-    match request.as_mut()? {
-        PendingInputRequest::Accept { receipt, .. } => {
-            Some(PendingInputCompletion::Accepted(receipt.as_mut().await))
-        }
-        PendingInputRequest::Retract { receipt, .. } => {
-            Some(PendingInputCompletion::Retracted(receipt.as_mut().await))
-        }
     }
 }
 

@@ -4,10 +4,7 @@ use anyhow::Result;
 
 use crate::scenario::{ScenarioOutcome, ScenarioRunner};
 
-use super::{
-    all_scenarios, calibrated_context, config, continue_latest, resume_scrollback, send_confirm,
-    workflow,
-};
+use super::{all_scenarios, calibrated_context, continue_latest, resume_scrollback, workflow};
 
 pub fn run_named(runner: &ScenarioRunner, name: &str) -> Result<ScenarioOutcome> {
     let scenario = all_scenarios()
@@ -20,11 +17,13 @@ pub fn run_named(runner: &ScenarioRunner, name: &str) -> Result<ScenarioOutcome>
     if workflow::is_workflow_scenario(name) {
         return workflow::run(runner, name);
     }
-    if let Some(host) = config::auto_recovered_handoff_scenario(name) {
-        return config::run_auto_recovered_handoff(runner, host);
+    #[cfg(unix)]
+    if name == super::config::AUTO_RECOVERED_HANDOFF_SCENARIO.id {
+        return super::config::run_auto_recovered_handoff(runner);
     }
-    if let Some(host) = send_confirm::send_confirm_scenario(name) {
-        return send_confirm::run_send_confirm_handoff(runner, host);
+    #[cfg(unix)]
+    if name == super::send_confirm::SCENARIO.id {
+        return super::send_confirm::run_send_confirm_handoff(runner);
     }
     if resume_scrollback::is_resume_scrollback_scenario(name) {
         return resume_scrollback::run_resume_scrollback(runner);

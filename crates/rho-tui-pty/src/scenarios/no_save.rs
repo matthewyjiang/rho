@@ -21,25 +21,6 @@ pub(super) const NO_SAVE_SESSION_SCENARIO: Scenario = Scenario::new(
 )
 .with_args(ARGS);
 
-// Covers: the same boundary when the session runs in the daemon, which
-// keeps it in memory alone: no file under the Rho home holds a prompt or an
-// answer, and /new opens another unsaved session.
-// Owner: interactive TUI as a daemon client
-#[cfg(unix)]
-pub(super) const DAEMON_NO_SAVE_SESSION_SCENARIO: Scenario = Scenario::new(
-    "daemon_no_save_session",
-    "Keep a daemon session's prompts unsaved across /new",
-    SIZE,
-    STEPS,
-    /*smoke*/ false,
-)
-.with_args(ARGS)
-.with_env(&[
-    ("RHO_TUI_DAEMON", "1"),
-    ("OPENAI_API_KEY", "sk-test-matrix"),
-])
-.with_setup(super::daemon_resume::write_daemon_config);
-
 const SIZE: PtySize = PtySize {
     rows: 28,
     cols: 100,

@@ -158,8 +158,8 @@ pub(super) async fn intercept(
 }
 
 /// What opens the turn this request starts: the human prompt and whatever
-/// was delivered with it. An in-process TUI folds queued notices into the
-/// prompt; a daemon session delivers them as a boundary input after it.
+/// was delivered with it. A session delivers queued notices as a boundary
+/// input after the prompt.
 /// `None` once the turn has replied or called a tool.
 fn opening_input(request: &ModelRequest<'_>) -> Option<String> {
     let prompt = request

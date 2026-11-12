@@ -143,10 +143,7 @@ fn canonical_tool_names_match_the_unfiltered_registry() {
             ))
             .workflow(Arc::new(RegistryWorkflowService));
         let mut tools = AppToolSet::new(&config, RuntimeDiagnostics::new(&config), options)
-            .with_plan_exit_host(
-                &config,
-                crate::tools::plan_exit::PlanExitHost::Questionnaire,
-            );
+            .with_plan_exit_host(&config);
         tools.set_plan_exit_registered(crate::permission::PermissionMode::Plan);
         // Advisor mode is off by default; the registry still owns the name.
         tools.set_advisor_registered(true);
@@ -673,58 +670,6 @@ fn advisor_registration_toggles_without_rebuilding_the_tool_set() {
     assert!(tools.advisor().is_some());
 }
 
-// Covers: /config edit-tool selection must swap the single edit surface in
-// execution, nesting, and discovery without a getter refresh or rebuilding
-// the rest of the tool set.
-// Owner: application tool registry.
-#[test]
-fn edit_tool_selection_swaps_the_advertised_edit_surface() {
-    let config = Config {
-        edit_tool: crate::config::EditTool::Pinned(rho_tools::EditFormat::ApplyPatch),
-        ..Config::default()
-    };
-    let mut tools = AppToolSet::new(
-        &config,
-        RuntimeDiagnostics::new(&config),
-        ToolSetOptions::new(capabilities(&["edit", "read_file"])),
-    );
-    let before = tools.unfiltered_names().collect::<Vec<_>>();
-    assert_eq!(tools.edit_tool(), Some(rho_tools::EditFormat::ApplyPatch));
-    assert!(tools.contains("apply_patch"));
-    assert!(!tools.contains("str_replace"));
-
-    assert_eq!(
-        tools.set_edit_tool(rho_tools::EditFormat::ApplyPatch, config.max_output_bytes),
-        None
-    );
-    assert_eq!(
-        tools.set_edit_tool(rho_tools::EditFormat::StrReplace, config.max_output_bytes),
-        Some(rho_tools::EditFormat::ApplyPatch)
-    );
-    assert_eq!(tools.edit_tool(), Some(rho_tools::EditFormat::StrReplace));
-    assert!(!tools.contains("apply_patch"));
-    assert!(tools.contains("str_replace"));
-
-    let after = tools.unfiltered_names().collect::<Vec<_>>();
-    assert_eq!(before.len(), after.len());
-    assert!(after.iter().any(|name| name == "read_file"));
-    assert_eq!(
-        after.iter().filter(|name| *name == "read_file").count(),
-        1,
-        "edit-tool switch must keep one read_file"
-    );
-
-    let mut without_edit = AppToolSet::new(
-        &config,
-        RuntimeDiagnostics::new(&config),
-        ToolSetOptions::new(capabilities(&["read_file"])),
-    );
-    assert_eq!(
-        without_edit.set_edit_tool(rho_tools::EditFormat::StrReplace, config.max_output_bytes),
-        None
-    );
-}
-
 // Covers: Auto preference advertises the provider-preferred format at construction.
 // Owner: application tool registry.
 #[test]
@@ -739,7 +684,6 @@ fn auto_edit_tool_constructs_the_preferred_provider_format() {
         RuntimeDiagnostics::new(&config),
         ToolSetOptions::new(capabilities(&["edit", "read_file"])),
     );
-    assert_eq!(tools.edit_tool(), Some(rho_tools::EditFormat::StrReplace));
     assert!(tools.contains("str_replace"));
     assert!(!tools.contains("edit"));
     assert!(!tools.contains("apply_patch"));

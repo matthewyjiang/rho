@@ -1,11 +1,9 @@
 //! Ties a server-initiated request back to the tool call that provoked it.
 //!
-//! `elicitation/create` and `sampling/createMessage` arrive on the session
-//! transport with nothing in them that names the `tools/call` they belong to:
-//! the protocol carries no correlation field for either. Both nevertheless need
-//! a caller, because the only route to the user runs through a live tool call,
-//! and because the caller's cancellation token is what ends the work when the
-//! call ends.
+//! `elicitation/create` arrives on the session transport with nothing in it
+//! that names the `tools/call` it belongs to: the protocol carries no
+//! correlation field. It nevertheless needs a caller, because the only route
+//! to the user runs through a live tool call.
 //!
 //! Rho records every in-flight `tools/call` for a session and answers a
 //! server-initiated request only when exactly one call is running **and** no
@@ -14,10 +12,6 @@
 //! work; more than one means Rho would have to guess; a recent release means a
 //! late message from the finished call could be mis-attributed to the next one.
 //! All three fail closed.
-//!
-//! Each registration owns a call-scoped cancellation token that is cancelled
-//! when the call ends for any reason (success, error, turn cancel, or budget),
-//! so nested sampling stops with the call rather than only with the turn.
 //!
 //! The registry is per session, so two servers calling tools at the same time
 //! never make each other ambiguous.
@@ -28,7 +22,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use rho_sdk::{CancellationToken, Error, HostInputRequest, HostInputResponse};
+use rho_sdk::{Error, HostInputRequest, HostInputResponse};
 use tokio::sync::{mpsc, oneshot};
 
 /// How long a finished call can still poison attribution for a later sole call.
@@ -56,7 +50,6 @@ const QUESTION_QUEUE_CAPACITY: usize = 4;
 #[derive(Clone, Debug)]
 pub(crate) struct McpCaller {
     questions: mpsc::Sender<McpUserQuestion>,
-    cancellation: CancellationToken,
 }
 
 impl McpCaller {
@@ -74,10 +67,6 @@ impl McpCaller {
             message: "the MCP tool call ended before the question was answered".into(),
             source: None,
         })?
-    }
-
-    pub(crate) fn cancellation(&self) -> &CancellationToken {
-        &self.cancellation
     }
 }
 
@@ -135,29 +124,18 @@ impl McpInFlightCalls {
     }
 
     /// Publish one running call. The guard withdraws it when the call ends,
-    /// however it ends, cancels the call-scoped token, and the receiver is how
-    /// the caller learns of questions.
-    ///
-    /// The token is owned by the registration, not the turn: sampling and other
-    /// nested work must stop when this call ends even if the turn continues.
+    /// however it ends, and the receiver is how the caller learns of
+    /// questions.
     pub(crate) fn register(&self) -> (McpCallRegistration, mpsc::Receiver<McpUserQuestion>) {
-        let cancellation = CancellationToken::new();
         let (questions, receiver) = mpsc::channel(QUESTION_QUEUE_CAPACITY);
         let mut state = self.lock();
         let key = state.next_key;
         state.next_key += 1;
-        state.callers.insert(
-            key,
-            McpCaller {
-                questions,
-                cancellation: cancellation.clone(),
-            },
-        );
+        state.callers.insert(key, McpCaller { questions });
         drop(state);
         (
             McpCallRegistration {
                 key,
-                cancellation,
                 calls: self.clone(),
             },
             receiver,
@@ -186,9 +164,7 @@ impl McpInFlightCalls {
         }
     }
 
-    fn release(&self, key: u64, cancellation: &CancellationToken) {
-        // Stop nested work tied to this call before (or as) it leaves the map.
-        cancellation.cancel();
+    fn release(&self, key: u64) {
         let mut state = self.lock();
         state.callers.remove(&key);
         state.last_release_at = Some(Instant::now());
@@ -208,16 +184,15 @@ impl McpInFlightCalls {
     }
 }
 
-/// Withdraws one call's registration when the call ends and cancels its token.
+/// Withdraws one call's registration when the call ends.
 pub(crate) struct McpCallRegistration {
     key: u64,
-    cancellation: CancellationToken,
     calls: McpInFlightCalls,
 }
 
 impl Drop for McpCallRegistration {
     fn drop(&mut self) {
-        self.calls.release(self.key, &self.cancellation);
+        self.calls.release(self.key);
     }
 }
 

@@ -445,8 +445,7 @@ impl App {
         changes: Vec<SettingChange>,
         label: &str,
     ) -> bool {
-        let (Some(session), Some(settings)) = (&self.info.session.daemon, &self.daemon_settings)
-        else {
+        let Some(settings) = &self.daemon_settings else {
             return false;
         };
         let params = ConfigSetParams {
@@ -457,7 +456,12 @@ impl App {
             writer: None,
             changes,
         };
-        match session.set_config(params, label.to_owned()) {
+        match self
+            .info
+            .session
+            .daemon
+            .set_config(params, label.to_owned())
+        {
             Ok(()) => true,
             Err(error) => {
                 self.insert_entry(&Entry::Error(format!("could not save {label}: {error}")));

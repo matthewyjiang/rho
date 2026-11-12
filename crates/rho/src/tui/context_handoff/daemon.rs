@@ -1,4 +1,4 @@
-//! The loaded-session handoff for a daemon session (#1667).
+//! The loaded-session handoff for the daemon session (#1667).
 //!
 //! The daemon recovers the conversation, so the TUI asks it what the
 //! session's model cannot be sent once it follows a saved session, at launch
@@ -8,36 +8,34 @@
 //! and the send gate (`send_confirm::daemon`) asks before its next prompt
 //! instead.
 //!
-//! The dialog offers what it does in process: the model that produced the
-//! native context when the session may switch to it, to compact on that
-//! model and then continue on this one, and to continue. "Compact, then
-//! continue" switches the session to the source model, sends `/compact`,
-//! and has the daemon switch back once that turn ends having compacted. A
-//! compaction that fails, leaves the conversation as it was, or is
-//! cancelled keeps the session on the source model, as in process.
+//! The dialog offers the model that produced the native context when the
+//! session may switch to it, to compact on that model and then continue on
+//! this one, and to continue. "Compact, then continue" switches the session
+//! to the source model, sends `/compact`, and has the daemon switch back
+//! once that turn ends having compacted. A compaction that fails, leaves the
+//! conversation as it was, or is cancelled keeps the session on the source
+//! model.
 
 use rho_protocol::{ModelRef, SessionChange, SessionReport};
 use rho_providers::{model::catalog::ModelSelection, provider::model_reference};
 
 use super::{
     decision_from_value, selection_matches_runtime, ContextHandoffDecision, ContextHandoffImpact,
-    ContextHandoffKind, PendingContextHandoff,
+    PendingContextHandoff,
 };
 use crate::app::provider_context_report::ProviderContextReport;
 use crate::commands::CommandId;
 use crate::tui::{
-    daemon_events::ReportRefusal, reasoning_metadata::ModelSwitchReasoningPolicy, App,
-    ComposerMode, DefaultTerminal, Entry, InteractiveModelSelection, TurnPrompt,
+    daemon_events::ReportRefusal, App, ComposerMode, DefaultTerminal, Entry,
+    InteractiveModelSelection, TurnPrompt,
 };
 
 impl App {
     /// Asks the daemon what the followed session's model cannot be sent, when
     /// the session has a saved conversation; the answer opens the dialog
-    /// ([`Self::show_daemon_provider_context`]). Does nothing in process.
+    /// ([`Self::show_daemon_provider_context`]).
     pub(in crate::tui) fn request_daemon_context_handoff(&mut self) {
-        let Some(session) = self.info.session.daemon.as_ref() else {
-            return;
-        };
+        let session = &self.info.session.daemon;
         if session.saved_id().is_none() {
             return;
         }
@@ -76,7 +74,7 @@ impl App {
         }
         // The Auto gate waited for this answer; a handoff that opened runs
         // it once resolved.
-        if let Err(error) = self.reconcile_daemon_auto_classifier_gate() {
+        if let Err(error) = self.reconcile_auto_classifier_gate() {
             self.insert_entry(&Entry::Error(format!(
                 "could not change permission mode: {error:#}"
             )));
@@ -108,28 +106,20 @@ impl App {
             source_label: source.unwrap_or_else(|| "session model".into()),
             target_label: model_reference(&self.info.runtime.provider, &self.info.runtime.model),
             omissions,
-            // As in process, compacting summarizes on the source model.
+            // Compacting summarizes on the source model.
             can_compact: source_selection.is_some()
                 && report.can_compact
                 && self.daemon_offers_built_in(CommandId::Compact),
             offer_use_source: source_selection.is_some(),
         };
-        let choice = match impact.choice(ContextHandoffKind::LoadedSession) {
+        let choice = match impact.choice() {
             Ok(choice) => choice,
             Err(error) => {
                 tracing::warn!(%error, "context handoff choice unavailable");
                 return;
             }
         };
-        self.open_context_handoff(
-            choice,
-            PendingContextHandoff {
-                kind: ContextHandoffKind::LoadedSession,
-                source_selection,
-                target_selection: None,
-                materialize: None,
-            },
-        );
+        self.open_context_handoff(choice, PendingContextHandoff { source_selection });
     }
 
     /// Applies the person's answer: the session already runs on the model
@@ -168,7 +158,7 @@ impl App {
     }
 
     /// Compacts on `source`, then continues on the model and auth the
-    /// session runs on now, as in process. Once `/compact` started, the
+    /// session runs on now. Once `/compact` started, the
     /// switch back goes to the daemon as a
     /// [`SessionChange::ModelAfterCompaction`]: the daemon applies it only if
     /// the compaction reduced the conversation, whether or not this TUI still
@@ -236,7 +226,7 @@ impl App {
     /// The `/compact` of "Compact, then continue" ended as this TUI saw it:
     /// `compacted` when its compaction reduced the conversation, `None` when
     /// the TUI did not see how it ended. Says when the daemon kept the
-    /// source model, as in process; does nothing when no handoff waits.
+    /// source model; does nothing when no handoff waits.
     pub(in crate::tui) fn settle_daemon_compact_handoff(&mut self, compacted: Option<bool>) {
         if std::mem::take(&mut self.daemon_compact_handoff) && compacted == Some(false) {
             self.insert_entry(&Entry::Notice(KEPT_SOURCE.into()));
@@ -244,8 +234,7 @@ impl App {
     }
 }
 
-/// The in-process notice for a "Compact, then continue" that did not
-/// compact.
+/// The notice for a "Compact, then continue" that did not compact.
 const KEPT_SOURCE: &str = "kept the session model because context was not compacted";
 
 /// The daemon change that switches the session to `provider`/`model` on
@@ -272,6 +261,5 @@ fn daemon_selection(app: &App, provider: &str, model: &str) -> InteractiveModelS
             from_catalog: true,
         },
         alias: None,
-        reasoning_policy: ModelSwitchReasoningPolicy::PreserveExplicit,
     }
 }

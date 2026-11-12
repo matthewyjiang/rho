@@ -2,14 +2,13 @@ use crate::tui::DefaultTerminal;
 
 use super::sessions_hub_tasks::SessionsDelete;
 use super::{app_state::PointerAction, composer_pointer::ChoiceClick, config_row::ConfigRow};
-use super::{App, ComposerMode, InlineChoiceKeyOutcome, InlineChoicePending, InteractiveRuntime};
+use super::{App, ComposerMode, InlineChoiceKeyOutcome, InlineChoicePending};
 
 impl App {
     pub(super) async fn handle_inline_choice_key(
         &mut self,
         key: crossterm::event::KeyEvent,
         terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<bool> {
         let outcome = match self.input_ui.composer_mut() {
             ComposerMode::InlineChoice(modal) => modal.choice.handle_key(key),
@@ -18,7 +17,7 @@ impl App {
 
         match outcome {
             InlineChoiceKeyOutcome::Selected(value) => {
-                if !self.resolve_inline_choice(value, terminal, agent).await? {
+                if !self.resolve_inline_choice(value, terminal).await? {
                     return Ok(true);
                 }
             }
@@ -41,12 +40,11 @@ impl App {
                         self.set_status(self.busy_status_label());
                     }
                     InlineChoicePending::ContextHandoff(pending) => {
-                        self.resolve_context_handoff(None, *pending, terminal, agent)
+                        self.resolve_context_handoff(None, *pending, terminal)
                             .await?;
                     }
                     InlineChoicePending::ConfirmSend(pending) => {
-                        self.resolve_send_confirm(None, *pending, terminal, agent)
-                            .await?;
+                        self.resolve_send_confirm(None, *pending, terminal).await?;
                     }
                     InlineChoicePending::DeleteSession { .. }
                     | InlineChoicePending::DeleteDirectorySessions { .. }
@@ -77,7 +75,7 @@ impl App {
 
     /// A click focuses an available option. A double click also asks the idle
     /// loop to confirm it like Enter, since [`Self::resolve_inline_choice`]
-    /// needs the terminal and runtime the pointer handler does not have.
+    /// needs the terminal the pointer handler does not have.
     pub(super) fn click_inline_choice(&mut self, index: usize, click: ChoiceClick) {
         let ComposerMode::InlineChoice(modal) = self.input_ui.composer_mut() else {
             return;
@@ -102,7 +100,6 @@ impl App {
         &mut self,
         value: String,
         terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<bool> {
         let requires_full_visibility = match self.input_ui.composer() {
             ComposerMode::InlineChoice(modal) => modal.choice.selected_requires_full_visibility(),
@@ -121,15 +118,15 @@ impl App {
                 if let Some(parent) = modal.parent_picker {
                     self.input_ui.set_composer(ComposerMode::Picker(*parent));
                 }
-                self.submit_credential_store_choice(modal.choice, next, terminal, agent)
+                self.submit_credential_store_choice(modal.choice, next, terminal)
                     .await?;
             }
             InlineChoicePending::ContextHandoff(pending) => {
-                self.resolve_context_handoff(Some(&value), *pending, terminal, agent)
+                self.resolve_context_handoff(Some(&value), *pending, terminal)
                     .await?;
             }
             InlineChoicePending::ConfirmSend(pending) => {
-                self.resolve_send_confirm(Some(&value), *pending, terminal, agent)
+                self.resolve_send_confirm(Some(&value), *pending, terminal)
                     .await?;
             }
             InlineChoicePending::ClaudeCodeLogin => {
@@ -165,7 +162,7 @@ impl App {
                 );
             }
             InlineChoicePending::DeleteAgent(target) => {
-                self.submit_delete_agent_choice(&value, target, modal.parent_picker, agent);
+                self.submit_delete_agent_choice(&value, target, modal.parent_picker);
             }
             InlineChoicePending::DeleteWorkflowPlan { plan_id } => {
                 self.submit_delete_workflow_plan_choice(&value, &plan_id)?;

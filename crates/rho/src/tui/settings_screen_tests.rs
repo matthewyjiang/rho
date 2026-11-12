@@ -8,8 +8,8 @@ use crate::tui::{
 use crate::tui::{daemon_settings::SettingsNamespace, ComposerMode};
 
 // Covers: once the daemon's settings are read, every advisor surface shows
-// them, not the in-process runtime the TUI started with, which `/advisor`
-// and `/config` never change in a daemon session.
+// them, not the config the TUI started with, which `/advisor` and `/config`
+// never change.
 // Owner: interactive TUI settings screen (pure state).
 #[test]
 fn advisor_surfaces_follow_the_daemon_settings() {

@@ -13,7 +13,7 @@ use super::{
 };
 use crate::{
     subagent::format_elapsed_secs,
-    tools::workflow_tracker::{WorkflowRailSummary, WorkflowRunTracker},
+    tools::workflow_tracker::WorkflowRailSummary,
     workflow::{RunLifecycle, WorkflowOutcome},
 };
 
@@ -21,7 +21,6 @@ use crate::{
 pub(super) struct WorkflowPanel {
     rail: StackedRail<WorkflowRailSummary>,
     pending_watch: Option<String>,
-    source: Option<(WorkflowRunTracker, String)>,
 }
 
 impl Default for WorkflowPanel {
@@ -29,30 +28,14 @@ impl Default for WorkflowPanel {
         Self {
             rail: StackedRail::new(RailPointerPolicy::LiveOrFinished),
             pending_watch: None,
-            source: None,
         }
     }
 }
 
 impl WorkflowPanel {
-    pub(super) fn update(&mut self, tracker: &WorkflowRunTracker, session_id: &str) -> bool {
-        self.source = Some((tracker.clone(), session_id.to_owned()));
-        self.rail.ingest(tracker.rail_summaries(session_id))
-    }
-
-    /// Shows `runs`, which a daemon session's jobs name; nothing in this
-    /// process tracks them.
+    /// Shows `runs`, which the daemon session's jobs name.
     pub(super) fn ingest(&mut self, runs: Vec<WorkflowRailSummary>) -> bool {
-        self.source = None;
         self.rail.ingest(runs)
-    }
-
-    /// Delivery may drain notifications between a panel tick and a draw. Read
-    /// the in-memory source again so rows leave in the delivery repaint.
-    pub(super) fn refresh(&mut self) {
-        if let Some((tracker, session_id)) = &self.source {
-            self.rail.ingest(tracker.rail_summaries(session_id));
-        }
     }
 
     pub(super) fn is_active(&self) -> bool {

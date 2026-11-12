@@ -19,7 +19,7 @@ use crate::{
         },
         subagent_messaging::NoticePoster,
         subagent_pool::SubagentPool,
-        tools_prompt::{McpSamplingSupport, ToolSourceAttach, ToolSourceLoad},
+        tools_prompt::{ToolSourceAttach, ToolSourceLoad},
     },
     config::Config,
     credential_store::AppCredentialStore,
@@ -27,7 +27,6 @@ use crate::{
     session::{SessionOrigin, SessionProvenance, SessionTarget},
     tools::{
         mcp::{config::McpConfig, McpAuthorizationMode},
-        plan_exit::PlanExitHost,
         sdk_registry::AppToolSet,
     },
 };
@@ -330,9 +329,9 @@ pub(super) async fn build_session(
 ) -> anyhow::Result<(BuiltSession, SessionPermission)> {
     let credentials = build.host.environment.credentials();
     match build.run.role {
-        // A daemon session opens in Auto without a classifier model, as an
-        // in-process TUI session does: the classifier denies every gated tool
-        // until a client picks a model and sets Auto again.
+        // A daemon session opens in Auto without a classifier model: the
+        // classifier denies every gated tool until a client picks a model and
+        // sets Auto again.
         SessionRole::Daemon => {
             if config.permission_mode == crate::permission::PermissionMode::Auto {
                 crate::permission_classifier::check_screen_config(config, credentials.as_ref())?;
@@ -376,7 +375,6 @@ pub(super) async fn build_session(
         } else {
             crate::tools::mcp::McpElicitationSupport::Unavailable
         },
-        mcp_sampling: McpSamplingSupport::Unavailable,
         tool_source_attach: match build.host.session_use {
             SessionUse::Run(_) => ToolSourceAttach::Connect,
             SessionUse::Read => ToolSourceAttach::None,
@@ -446,7 +444,7 @@ pub(super) fn with_plan_exit(
         && agent.rho_capabilities().is_some()
         && build.host.approvals.offers_plan_exit()
     {
-        tools.with_plan_exit_host(config, PlanExitHost::Permission)
+        tools.with_plan_exit_host(config)
     } else {
         tools
     }

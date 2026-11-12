@@ -448,9 +448,9 @@ async fn a_change_outlasts_the_idle_unload() {
     );
 }
 
-// Covers: a session opens in Auto with no permission-classifier model, as an
-// in-process TUI session does, and refuses Auto again until one is saved;
-// a model saved after the session opened is the one Auto then takes.
+// Covers: a session opens in Auto with no permission-classifier model, and
+// refuses Auto again until one is saved; a model saved after the session
+// opened is the one Auto then takes.
 // Owner: daemon session settings.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn auto_opens_without_a_classifier_and_takes_one_saved_later() {

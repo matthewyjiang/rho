@@ -196,36 +196,3 @@ pub(super) const PROCESS_RAIL_PEEK_SCENARIO: Scenario = Scenario::new(
     PROCESS_RAIL_PEEK_STEPS,
     /*smoke*/ false,
 );
-
-// Covers: the same rail, peek and row order with `RHO_TUI_DAEMON=1`, where
-// the daemon's session owns the process.
-// Owner: interactive TUI as a daemon client
-#[cfg(unix)]
-pub(super) const DAEMON_PROCESS_RAIL_SCENARIO: Scenario = Scenario::new(
-    "daemon_process_rail",
-    "Show a daemon session's live background process in the activity rail",
-    DEFAULT_SIZE,
-    PROCESS_RAIL_STEPS,
-    /*smoke*/ false,
-)
-.with_env(super::daemon_resume::DAEMON_ENV);
-
-#[cfg(unix)]
-pub(super) const DAEMON_PROCESS_RAIL_PEEK_SCENARIO: Scenario = Scenario::new(
-    "daemon_process_rail_peek",
-    "Open and leave the peek view of a daemon session's process",
-    DEFAULT_SIZE,
-    PROCESS_RAIL_PEEK_STEPS,
-    /*smoke*/ false,
-)
-.with_env(super::daemon_resume::DAEMON_ENV);
-
-#[cfg(unix)]
-pub(super) const DAEMON_PENDING_INPUT_BELOW_ACTIVITY_SCENARIO: Scenario = Scenario::new(
-    "daemon_pending_input_below_activity",
-    "Keep a daemon session's pending input below its process rail",
-    DEFAULT_SIZE,
-    PENDING_INPUT_BELOW_ACTIVITY_STEPS,
-    /*smoke*/ false,
-)
-.with_env(super::daemon_resume::DAEMON_ENV);

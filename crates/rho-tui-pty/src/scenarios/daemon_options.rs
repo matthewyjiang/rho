@@ -6,10 +6,7 @@ use crate::{
     scenario::{Scenario, Step},
 };
 
-const ENV: &[(&str, &str)] = &[
-    ("RHO_TUI_DAEMON", "1"),
-    ("OPENAI_API_KEY", "sk-test-matrix"),
-];
+const ENV: &[(&str, &str)] = &[("OPENAI_API_KEY", "sk-test-matrix")];
 
 // Covers: /permissions changes the daemon's actual tool policy, not just the
 // local statusline, and its picker opens on the mode in force. A configure queued during a running turn must leave Esc

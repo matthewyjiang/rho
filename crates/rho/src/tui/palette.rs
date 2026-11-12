@@ -64,11 +64,6 @@ pub(super) struct PaletteCaches {
     file: Option<FileMatchCache>,
     /// Discovered skills for `/` palette matching.
     pub(super) skills: Option<DiscoveryCache<Vec<crate::skills::Skill>>>,
-    /// File and inline prompt templates for `/` matching and expansion.
-    pub(super) prompt_templates: Option<DiscoveryCache<crate::prompt_templates::PromptTemplates>>,
-    /// Workspace workflows with a `/workflow:<name>` command.
-    pub(super) workflows:
-        Option<DiscoveryCache<Vec<crate::app::workflow_cli::discover::DiscoveredWorkflow>>>,
     /// Workspace walk shared by different `@` queries against the same root.
     workspace: WorkspacePathCache,
 }
@@ -108,13 +103,6 @@ impl PaletteCaches {
 
     pub(super) fn workspace_mut(&mut self) -> &mut WorkspacePathCache {
         &mut self.workspace
-    }
-
-    #[cfg(test)]
-    pub(super) fn expire_prompt_templates(&mut self) {
-        if let Some(cache) = self.prompt_templates.as_mut() {
-            cache.refreshed_at = Instant::now() - PALETTE_CACHE_TTL;
-        }
     }
 
     #[cfg(test)]

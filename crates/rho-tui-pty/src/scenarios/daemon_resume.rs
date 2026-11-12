@@ -1,5 +1,5 @@
-//! `RHO_TUI_DAEMON=1 rho --resume <id>` follows the saved session in the
-//! daemon and shows its conversation as the in-process TUI did (#1667).
+//! `rho --resume <id>` follows the saved session in the daemon and shows its
+//! conversation as the session's first run drew it (#1667).
 
 use anyhow::{Context, Result};
 
@@ -36,8 +36,8 @@ pub(super) fn is_daemon_resume_scenario(name: &str) -> bool {
     name == DAEMON_RESUME_ID
 }
 
-// Covers: a daemon-hosted TUI resuming a saved session shows its prompt, the
-// daemon's tool card reading as the in-process TUI drew it, and the answer;
+// Covers: the TUI resuming a saved session shows its prompt, the tool card
+// as the session's first run drew it, and the answer;
 // `--agent` may name the agent the session was saved as, and any other is
 // refused before the TUI opens.
 // Owner: interactive TUI as a daemon client
@@ -57,16 +57,15 @@ pub(super) fn run_daemon_resume(runner: &ScenarioRunner) -> Result<ScenarioOutco
         Ok(harness)
     };
 
-    // Seeded in process, so the card the resume shows is checked against
-    // the one the in-process TUI drew.
+    // The seed run draws the card the resume's replay must match.
     let mut harness = spawn(&plan)?;
     let seeded = (|| -> Result<String> {
-        harness.set_phase("seed_in_process");
+        harness.set_phase("seed");
         harness.wait_for_text("gpt-5.5", STARTUP)?;
         harness.submit_text(SEED_PROMPT)?;
         harness.wait_for_text(ANSWER, STREAM)?;
         let card = card_header(&harness.screen().contents())
-            .context("the in-process transcript shows no write card")?;
+            .context("the seed transcript shows no write card")?;
         let code = harness.quit_with_exit_command()?;
         anyhow::ensure!(code == 0, "seed session exited with code {code}");
         Ok(card)
@@ -77,7 +76,6 @@ pub(super) fn run_daemon_resume(runner: &ScenarioRunner) -> Result<ScenarioOutco
         harness = spawn(
             &plan
                 .clone()
-                .with_env("RHO_TUI_DAEMON", "1")
                 .with_arg("--agent")
                 .with_arg("default")
                 .with_arg("--resume")
@@ -96,7 +94,6 @@ pub(super) fn run_daemon_resume(runner: &ScenarioRunner) -> Result<ScenarioOutco
         harness = spawn(
             &plan
                 .clone()
-                .with_env("RHO_TUI_DAEMON", "1")
                 .with_arg("--agent")
                 .with_arg("editable-fixture")
                 .with_arg("--resume")
@@ -123,12 +120,6 @@ pub(super) fn run_daemon_resume(runner: &ScenarioRunner) -> Result<ScenarioOutco
         artifact_dir: runner.artifact_root.clone(),
     })
 }
-
-/// The environment that runs a scenario's TUI as a daemon client.
-pub(super) const DAEMON_ENV: &[(&str, &str)] = &[
-    ("RHO_TUI_DAEMON", "1"),
-    ("OPENAI_API_KEY", "sk-test-matrix"),
-];
 
 /// Config for a daemon-hosted fixture session whose tools run without
 /// asking.

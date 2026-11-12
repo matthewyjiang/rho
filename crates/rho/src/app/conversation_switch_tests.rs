@@ -7,11 +7,11 @@ use rho_sdk::{
     SessionOptions, SystemPrompt, Workspace,
 };
 
-use super::{apply_conversation_switch, ConversationSwitch, SwitchNotice};
+use super::{apply_conversation_switch, ConversationSwitch};
 use crate::{
     app::{
         policy::AppPolicy,
-        runtime_builder::{build_runtime, RuntimeBuildOptions},
+        runtime_builder::{build_runtime_with_max_steps, RuntimeBuildOptions},
     },
     compaction::CompactionConfig,
     permission::PermissionMode,
@@ -23,81 +23,73 @@ fn identity(provider: &str, model: &str) -> ModelIdentity {
     ModelIdentity::new(provider, "test", model)
 }
 
-// Covers: switch policy may normalize unsupported levels, but must not erase
-// explicit provenance when the preference is unchanged (including unknown metadata).
+// Covers: a switch normalizes an unsupported default level, refuses an
+// unsupported explicit one, and keeps provenance when the level is unchanged
+// (including unknown metadata).
 // Owner: conversation model switch policy
 #[test]
-fn model_switch_reasoning_preserves_provenance_unless_normalized() {
-    use super::{
-        resolve_model_switch_reasoning, ModelSwitchReasoningPolicy, ModelSwitchReasoningResolution,
-    };
+fn model_switch_reasoning_preserves_explicit_provenance() {
+    use super::{resolve_model_switch_reasoning, ModelSwitchReasoningResolution};
     use rho_providers::{
         model::{ReasoningCapabilities, ReasoningLevelSet, ReasoningRequestSource},
         reasoning::ReasoningLevel,
     };
 
-    for policy in [
-        ModelSwitchReasoningPolicy::PreserveExplicit,
-        ModelSwitchReasoningPolicy::NormalizeUnsupported,
+    for source in [
+        ReasoningRequestSource::Explicit,
+        ReasoningRequestSource::PersistedOrDefault,
     ] {
-        for source in [
-            ReasoningRequestSource::Explicit,
-            ReasoningRequestSource::PersistedOrDefault,
-        ] {
-            for (capabilities, requested, effective) in [
-                (
-                    ReasoningCapabilities::Unknown,
-                    ReasoningLevel::Off,
-                    ReasoningLevel::Off,
-                ),
-                (
-                    ReasoningCapabilities::NotConfigurable,
-                    ReasoningLevel::High,
-                    ReasoningLevel::High,
-                ),
-                (
-                    ReasoningCapabilities::Levels(ReasoningLevelSet::new(vec![
-                        ReasoningLevel::Low,
-                        ReasoningLevel::High,
-                    ])),
-                    ReasoningLevel::High,
-                    ReasoningLevel::High,
-                ),
-                (
-                    ReasoningCapabilities::Levels(ReasoningLevelSet::new(vec![
-                        ReasoningLevel::Low,
-                        ReasoningLevel::High,
-                    ])),
-                    ReasoningLevel::Medium,
-                    ReasoningLevel::High,
-                ),
-                (
-                    ReasoningCapabilities::Levels(ReasoningLevelSet::new(vec![
-                        ReasoningLevel::Low,
-                        ReasoningLevel::High,
-                    ])),
-                    ReasoningLevel::Off,
+        for (capabilities, requested, effective) in [
+            (
+                ReasoningCapabilities::Unknown,
+                ReasoningLevel::Off,
+                ReasoningLevel::Off,
+            ),
+            (
+                ReasoningCapabilities::NotConfigurable,
+                ReasoningLevel::High,
+                ReasoningLevel::High,
+            ),
+            (
+                ReasoningCapabilities::Levels(ReasoningLevelSet::new(vec![
                     ReasoningLevel::Low,
-                ),
-            ] {
-                let expected = if requested == effective {
-                    Ok(ModelSwitchReasoningResolution { effective, source })
-                } else if policy == ModelSwitchReasoningPolicy::PreserveExplicit
-                    && source == ReasoningRequestSource::Explicit
-                {
-                    Err(requested)
-                } else {
-                    Ok(ModelSwitchReasoningResolution {
-                        effective,
-                        source: ReasoningRequestSource::PersistedOrDefault,
-                    })
-                };
-                assert_eq!(
-                    resolve_model_switch_reasoning(&capabilities, requested, source, policy),
-                    expected,
-                    "{capabilities:?}, {requested:?}, {source:?}, {policy:?}",
-                );
-            }
+                    ReasoningLevel::High,
+                ])),
+                ReasoningLevel::High,
+                ReasoningLevel::High,
+            ),
+            (
+                ReasoningCapabilities::Levels(ReasoningLevelSet::new(vec![
+                    ReasoningLevel::Low,
+                    ReasoningLevel::High,
+                ])),
+                ReasoningLevel::Medium,
+                ReasoningLevel::High,
+            ),
+            (
+                ReasoningCapabilities::Levels(ReasoningLevelSet::new(vec![
+                    ReasoningLevel::Low,
+                    ReasoningLevel::High,
+                ])),
+                ReasoningLevel::Off,
+                ReasoningLevel::Low,
+            ),
+        ] {
+            let expected = if requested == effective {
+                Ok(ModelSwitchReasoningResolution { effective, source })
+            } else if source == ReasoningRequestSource::Explicit {
+                Err(requested)
+            } else {
+                Ok(ModelSwitchReasoningResolution {
+                    effective,
+                    source: ReasoningRequestSource::PersistedOrDefault,
+                })
+            };
+            assert_eq!(
+                resolve_model_switch_reasoning(&capabilities, requested, source),
+                expected,
+                "{capabilities:?}, {requested:?}, {source:?}",
+            );
         }
     }
 }
@@ -117,34 +109,37 @@ async fn switchable_session(
     ));
     let tools = AppToolSet::disabled();
     let workspace = Workspace::new(std::env::current_dir().unwrap()).unwrap();
-    let runtime = build_runtime(RuntimeBuildOptions {
-        provider: Arc::clone(&provider),
-        tools: &tools,
-        workspace,
-        workspace_policy: AppPolicy::for_mode(
-            PermissionMode::Auto,
-            Default::default(),
-            /*search_path*/ None,
-        ),
-        approval_session: None,
-        system_prompt: SystemPrompt::None,
-        reasoning: rho_sdk::ReasoningLevel::Medium,
-        service_tier: None,
-        compaction: CompactionConfig {
-            auto_compact: true,
-            threshold_percent: 80,
-            target_percent: 50,
-            summarizer: None,
+    let runtime = build_runtime_with_max_steps(
+        RuntimeBuildOptions {
+            provider: Arc::clone(&provider),
+            tools: &tools,
+            workspace,
+            workspace_policy: AppPolicy::for_mode(
+                PermissionMode::Auto,
+                Default::default(),
+                /*search_path*/ None,
+            ),
+            approval_session: None,
+            system_prompt: SystemPrompt::None,
+            reasoning: rho_sdk::ReasoningLevel::Medium,
+            service_tier: None,
+            compaction: CompactionConfig {
+                auto_compact: true,
+                threshold_percent: 80,
+                target_percent: 50,
+                summarizer: None,
+            },
+            context_window,
+            usage_purpose: "agent",
+            usage_parent_session_id: None,
+            usage_recording: Default::default(),
+            hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
+            hooks: None,
+            diagnostics: crate::diagnostics::test_diagnostics("test", "test"),
+            recall: None,
         },
-        context_window,
-        usage_purpose: "agent",
-        usage_parent_session_id: None,
-        usage_recording: Default::default(),
-        hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
-        hooks: None,
-        diagnostics: crate::diagnostics::test_diagnostics("test", "test"),
-        recall: None,
-    })
+        /*max_steps*/ None,
+    )
     .unwrap();
     let session = runtime
         .session(SessionOptions::new().history(history))
@@ -174,28 +169,25 @@ async fn mid_session_switch_updates_provider_reasoning_and_compaction() {
     .await;
     let new_provider = replacement("replacement", "next");
 
-    apply_conversation_switch(
-        ConversationSwitch {
-            prepared_prompt: None,
-            session: &session,
-            tools: &tools,
-            previous_provider,
-            new_provider: Arc::clone(&new_provider),
-            new_reasoning: rho_sdk::ReasoningLevel::Low,
-            auth: "test-auth",
-            compaction: CompactionConfig {
-                auto_compact: true,
-                threshold_percent: 80,
-                target_percent: 50,
-                summarizer: None,
-            },
-            context_window: Some(2_000),
-            previous_context_window: Some(1_000),
-            usage_recording: Default::default(),
-            diagnostics: crate::diagnostics::test_diagnostics("test", "test"),
+    apply_conversation_switch(ConversationSwitch {
+        prepared_prompt: None,
+        session: &session,
+        tools: &tools,
+        previous_provider,
+        new_provider: Arc::clone(&new_provider),
+        new_reasoning: rho_sdk::ReasoningLevel::Low,
+        auth: "test-auth",
+        compaction: CompactionConfig {
+            auto_compact: true,
+            threshold_percent: 80,
+            target_percent: 50,
+            summarizer: None,
         },
-        SwitchNotice::SessionMessage,
-    )
+        context_window: Some(2_000),
+        previous_context_window: Some(1_000),
+        usage_recording: Default::default(),
+        diagnostics: crate::diagnostics::test_diagnostics("test", "test"),
+    })
     .unwrap();
 
     assert_eq!(
@@ -226,23 +218,20 @@ async fn fresh_session_switch_stays_silent() {
         let (_runtime, session, tools, previous_provider) =
             switchable_session(history.clone(), None).await;
 
-        apply_conversation_switch(
-            ConversationSwitch {
-                prepared_prompt: None,
-                session: &session,
-                tools: &tools,
-                previous_provider,
-                new_provider: replacement("replacement", "next"),
-                new_reasoning: rho_sdk::ReasoningLevel::Low,
-                auth: "test-auth",
-                compaction: CompactionConfig::default(),
-                context_window: None,
-                previous_context_window: None,
-                usage_recording: Default::default(),
-                diagnostics: crate::diagnostics::test_diagnostics("test", "test"),
-            },
-            SwitchNotice::SessionMessage,
-        )
+        apply_conversation_switch(ConversationSwitch {
+            prepared_prompt: None,
+            session: &session,
+            tools: &tools,
+            previous_provider,
+            new_provider: replacement("replacement", "next"),
+            new_reasoning: rho_sdk::ReasoningLevel::Low,
+            auth: "test-auth",
+            compaction: CompactionConfig::default(),
+            context_window: None,
+            previous_context_window: None,
+            usage_recording: Default::default(),
+            diagnostics: crate::diagnostics::test_diagnostics("test", "test"),
+        })
         .unwrap();
 
         assert_eq!(session.history(), history);
@@ -251,66 +240,4 @@ async fn fresh_session_switch_stays_silent() {
             &identity("replacement", "next")
         );
     }
-}
-
-// Covers: failed host persistence after provider replacement must restore the
-// old prompt and transcript, not just the provider and reasoning selection.
-// Owner: shared conversation switch transaction (Interactive and ACP)
-#[tokio::test]
-async fn failed_notice_restores_prompt_provider_and_history() {
-    let history = vec![
-        Message::System("original prompt".into()),
-        Message::user_text("keep me"),
-    ];
-    let (_runtime, session, tools, previous_provider) =
-        switchable_session(history.clone(), Some(1_000)).await;
-    let home = tempfile::tempdir().unwrap();
-    let running =
-        crate::model_identity::PromptModel::from_sdk_identity(&identity("replacement", "next"));
-    let mut prepared = crate::prompt::system_prompt_with_home_and_models(
-        &[],
-        home.path(),
-        Some(home.path()),
-        crate::prompt::PromptModels {
-            running: &running,
-            advisor: None,
-        },
-    );
-    prepared.text = "new prompt".into();
-    let mut fail_notice = |_: String, _: String| {
-        Err(rho_sdk::Error::Persistence {
-            message: "injected write failure".into(),
-            source: None,
-        })
-    };
-    assert!(apply_conversation_switch(
-        ConversationSwitch {
-            prepared_prompt: Some(&prepared),
-            session: &session,
-            tools: &tools,
-            previous_provider,
-            new_provider: replacement("replacement", "next"),
-            new_reasoning: rho_sdk::ReasoningLevel::Low,
-            auth: "test-auth",
-            compaction: CompactionConfig::default(),
-            context_window: Some(2_000),
-            previous_context_window: Some(1_000),
-            usage_recording: Default::default(),
-            diagnostics: crate::diagnostics::test_diagnostics("test", "test"),
-        },
-        SwitchNotice::WithDisplay(&mut fail_notice),
-    )
-    .is_err());
-    assert_eq!(
-        (
-            session.history(),
-            session.snapshot().provider().clone(),
-            session.reasoning_level()
-        ),
-        (
-            history,
-            identity("original", "start"),
-            rho_sdk::ReasoningLevel::Medium
-        )
-    );
 }

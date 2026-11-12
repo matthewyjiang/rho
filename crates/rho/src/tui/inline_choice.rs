@@ -114,14 +114,7 @@ pub(super) enum InlineChoicePending {
     },
 }
 
-impl InlineChoiceModal {
-    pub(super) fn blocks_auto_continue(&self) -> bool {
-        matches!(
-            self.pending,
-            InlineChoicePending::ContextHandoff(_) | InlineChoicePending::ConfirmSend(_)
-        )
-    }
-}
+impl InlineChoiceModal {}
 
 impl InlineChoice {
     pub(super) fn new(

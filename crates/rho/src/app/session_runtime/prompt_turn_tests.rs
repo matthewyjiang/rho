@@ -16,10 +16,7 @@ use crate::{
     config::Config,
     permission::PermissionMode,
     session::Session as StoredSession,
-    tools::{
-        plan_exit::{PlanExitDecision, PlanExitHost},
-        sdk_registry::AppToolSet,
-    },
+    tools::{plan_exit::PlanExitDecision, sdk_registry::AppToolSet},
 };
 
 fn text(text: &str) -> ScriptedTurn {
@@ -52,7 +49,7 @@ async fn plan_mode_runtime(
         turns,
     ));
     let mut built = built_on(config, id, provider).await;
-    built.tools = AppToolSet::disabled().with_plan_exit_host(config, PlanExitHost::Permission);
+    built.tools = AppToolSet::disabled().with_plan_exit_host(config);
     let mut runtime = SessionRuntime::for_tests(built, SessionStorage::saved(stored), config);
     // Entering plan mode rebuilds the SDK runtime with the tools, as a
     // host's mode change does, and the session keeps the mode with its

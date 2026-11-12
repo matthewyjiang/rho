@@ -13,9 +13,8 @@
 //! request it read to completion.
 //!
 //! A permission mode change still waiting when an approved plan switches
-//! the mode is dropped. The in-process TUI applies such a change at the end
-//! of the turn it was sent during, so the approval, at the end of the same
-//! turn, sets the mode the session ends in either way.
+//! the mode is dropped: the approval, at the end of the turn the change was
+//! sent during, sets the mode the session ends in.
 //!
 //! Only a loaded session takes a change: a client attaches first, which
 //! loads it. A change that applies is kept with the session's file, so a

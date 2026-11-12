@@ -49,10 +49,7 @@ pub(super) const REASONING_OUTPUT_RETROACTIVE_SCENARIO: Scenario = Scenario::new
     /*smoke*/ true,
 )
 .with_setup(setup_hidden_reasoning)
-.with_env(&[
-    ("RHO_TUI_DAEMON", "1"),
-    ("OPENAI_API_KEY", "sk-test-matrix"),
-]);
+.with_env(&[("OPENAI_API_KEY", "sk-test-matrix")]);
 
 fn setup_hidden_reasoning(home: &IsolatedHome) -> Result<()> {
     write_daemon_config(home)?;

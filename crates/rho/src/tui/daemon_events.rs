@@ -4,9 +4,8 @@
 //! and says what each changes as [`DaemonView`]s, which `daemon_transcript`
 //! applies through the TUI's own transcript paths: history entries for
 //! messages, notices, and finished tool cards, and the live tool batch for
-//! cards still running. The daemon draws each tool card with the presenter
-//! the in-process TUI uses (`ToolCallUpdate::display`), so a card reads the
-//! same either way.
+//! cards still running. The daemon draws each tool card with the shared
+//! presenter (`ToolCallUpdate::display`).
 //!
 //! The job's state says whether a turn runs ([`TurnState`]), which drives
 //! the TUI's busy chrome; steers carry their id, so the TUI's pending panel
@@ -708,8 +707,7 @@ fn todo_list(entries: &[PlanEntry]) -> Option<TodoList> {
     (!todos.is_empty()).then_some(TodoList { todos })
 }
 
-/// The compaction card and status line the in-process TUI shows for
-/// `status`.
+/// The compaction card and status line for `status`.
 fn compaction(status: CompactionStatus) -> Vec<DaemonView> {
     let outcome = match status {
         CompactionStatus::Started { trigger } => {
@@ -731,9 +729,9 @@ fn compaction(status: CompactionStatus) -> Vec<DaemonView> {
     vec![DaemonView::CompactionEnded(outcome)]
 }
 
-/// The in-process TUI's hint for a retry for `reason`, which reads as the
-/// SDK reason it came from. `None` when the provider only sends a failed
-/// request again, which the in-process TUI shows without a hint too.
+/// The hint for a retry for `reason`, which reads as the SDK reason it came
+/// from. `None` when the provider only sends a failed request again, which
+/// shows without a hint.
 fn retry_hint(reason: RetryReason, retry_after_ms: Option<u64>) -> Option<ProviderRetryHint> {
     let retry_after = retry_after_ms.map(Duration::from_millis);
     let reason = match reason {

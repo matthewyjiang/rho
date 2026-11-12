@@ -101,9 +101,7 @@ async fn saves_retain_the_loaded_tool_schemas() {
         }
         host.shutdown().await;
 
-        let (stored, _) =
-            StoredSession::open_by_id_with_histories_in_root(home.path(), home.path(), &id)
-                .unwrap();
+        let (stored, _) = StoredSession::open_by_id_in_root(home.path(), home.path(), &id).unwrap();
         let snapshot = stored
             .snapshot_for_resume(provider.identity(), "restored".into())
             .unwrap();

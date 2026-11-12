@@ -13,7 +13,7 @@ use futures_util::{stream::FuturesUnordered, StreamExt};
 use rho_protocol::{SessionEvent as WireEvent, TurnOutcome};
 use rho_sdk::{
     CancellationToken, HostInputId, HostInputRefusal, HostInputRequest, HostInputResponse,
-    SessionId, UserInput,
+    UserInput,
 };
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
@@ -301,7 +301,6 @@ pub(crate) struct ParentQuestions {
     pub(crate) bridge: SubagentHostInputBridge,
     pub(crate) run_id: String,
     pub(crate) agent_id: String,
-    pub(crate) parent: SessionId,
 }
 
 type Answer = Result<HostInputResponse, HostInputRefusal>;
@@ -320,14 +319,10 @@ impl ParentAsks {
         let token = CancellationToken::new();
         self.tokens.insert(id.clone(), token.clone());
         let bridge = parent.bridge.clone();
-        let (run_id, agent_id, parent) = (
-            parent.run_id.clone(),
-            parent.agent_id.clone(),
-            parent.parent.clone(),
-        );
+        let (run_id, agent_id) = (parent.run_id.clone(), parent.agent_id.clone());
         self.pending.push(Box::pin(async move {
             let answer = bridge
-                .request(run_id, agent_id, parent, request, &token)
+                .request(run_id, agent_id, request, &token)
                 .await
                 .map_err(|error| match error {
                     rho_sdk::Error::Cancelled => HostInputRefusal::Dismissed,

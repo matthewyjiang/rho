@@ -1,22 +1,11 @@
-use std::{
-    collections::VecDeque,
-    future::Future,
-    path::PathBuf,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
-    time::{Duration, Instant},
-};
+use std::{collections::VecDeque, path::PathBuf, sync::Arc, time::Duration};
 
 use questionnaire::QuestionnaireCancelReason;
 use synced_backend::{repaint_after_resize, DefaultTerminal};
-use tokio::sync::oneshot;
 mod activity;
 mod add_dir_command;
 mod advisor_command;
 mod advisor_status;
-mod agent_creator_command;
 mod agent_delete;
 mod agent_editor;
 mod agent_picker;
@@ -37,8 +26,6 @@ mod codemode_command;
 mod command_actions;
 mod command_block;
 mod command_palette;
-mod compact_work;
-mod compaction_config;
 mod compaction_display;
 mod composer;
 mod composer_attachments;
@@ -94,8 +81,6 @@ mod frame_scheduler;
 mod line_editor;
 mod line_editor_view;
 mod panel_overlay;
-mod subagent_inbox;
-mod subagent_questionnaires;
 mod text_input;
 mod text_view_overlay;
 
@@ -131,7 +116,6 @@ mod hook_actions;
 mod hooks_overlay;
 mod info_command;
 mod info_overlay;
-mod init_command;
 mod inline_choice;
 mod inline_prompt_input;
 pub(crate) use inline_prompt_input::InlinePromptInput;
@@ -153,7 +137,6 @@ mod markdown_image;
 mod mcp_actions;
 mod mcp_argument_completion;
 mod mcp_picker;
-mod mcp_prompt;
 mod mcp_resource;
 mod mcp_source;
 mod media_attach;
@@ -181,14 +164,12 @@ mod pending_input;
 mod permission_mode;
 mod picker;
 mod picker_actions;
-mod plan_exit;
 mod pointer_actions;
 mod process_panel;
 mod process_peek;
 mod program_status;
 mod prompt_history;
 mod prompt_history_search;
-mod prompt_turn;
 mod provider_actions;
 mod provider_attempt;
 mod provider_picker;
@@ -243,7 +224,6 @@ mod stream_pace;
 mod stream_preview;
 mod streaming_mode;
 mod subagent_attach;
-mod subagent_delivery;
 mod subagent_panel;
 mod synced_backend;
 mod terminal_events;
@@ -288,7 +268,6 @@ use chat_media::{
 };
 use clipboard::Clipboard;
 use copy_interaction::CodeBlockCopyTarget;
-use event_adapter::{SdkEventAdapter, ViewEvent, ViewModelEvent};
 use feed_image::FeedImage;
 use frame_scheduler::FrameScheduler;
 use inline_choice::{
@@ -314,7 +293,6 @@ use render::{
     tool_entry_lines, truncate_one_line, InputFrame, LineFill,
 };
 use scrollbar::HistoryScrollbar;
-use session_title::PendingSessionTitle;
 use statusline::StatusLine;
 use subagent_panel::SubagentPanel;
 use terminal_session::TerminalSession;
@@ -324,10 +302,9 @@ use turn_prompt::TurnPrompt;
 use workflow_panel::WorkflowPanel;
 
 #[cfg(test)]
-use rho_providers::model::{ImageContent, ModelUsage};
+use rho_providers::model::ModelUsage;
 use {
     crate::app::config_repository::ConfigRepository,
-    crate::app::interactive_runtime::InteractiveRuntime,
     crate::commands::{self, CommandId, CommandInvocation},
     crate::herdr::{HerdrReporter, HerdrState},
     crate::keybindings::Keybindings,
@@ -338,7 +315,7 @@ use {
         catalog::{self, LoginTarget, ModelSelection},
         favorites,
         provider_models::refresh_provider_models_with_store,
-        ContentBlock, Message, ModelMetadata, ReasoningRequestSource, UnavailableProvider,
+        ModelMetadata, ReasoningRequestSource,
     },
     rho_providers::provider,
     rho_providers::reasoning::ReasoningLevel,
@@ -377,9 +354,6 @@ pub struct RuntimeModelView {
     pub advisor_mode: bool,
     /// Show a transcript notice after a turn that re-billed a large uncached prompt.
     pub cache_miss_notices: bool,
-    /// Live mirror of `behavior.keep_cache_warm`. Turning it off stops any
-    /// active warming at once; the `keep_warm` tool parameter follows on restart.
-    pub keep_cache_warm: bool,
     /// Resolved cache lifetime for the active provider, shared by scheduling and notices.
     pub prompt_cache_ttl: Duration,
     /// Show the keyboard hint block in the session header.
@@ -478,18 +452,14 @@ pub struct SessionBootstrap {
     /// Invocation-wide policy, retained when starting a new conversation.
     pub no_save: bool,
     pub session_id: Option<String>,
-    /// Take-once startup buffer. `insert_recovered_history` converts this into
-    /// transcript entries and drops the `Message` vec.
-    pub recovered_messages: Vec<Message>,
     pub open_resume_picker: bool,
     /// Launch options the Herdr resume command repeats.
     pub resume_launch: ResumeLaunchOptions,
     /// Take-once CLI prompt. After the first frame, the TUI submits it as the
     /// first turn once the composer is free.
     pub startup_prompt: Option<String>,
-    /// The daemon session this TUI follows instead of running one in
-    /// process (#1667); `None` on the in-process path (`RHO_TUI_DAEMON=0`).
-    pub(crate) daemon: Option<DaemonSession>,
+    /// The daemon session this TUI follows.
+    pub(crate) daemon: DaemonSession,
 }
 
 pub struct ApplicationServices {
@@ -519,54 +489,31 @@ pub use herdr_resume::ResumeLaunchOptions;
 #[cfg(debug_assertions)]
 pub(crate) use smoke_injection::seed_matrix_model_cache;
 
-pub(crate) async fn run(
-    agent: &mut InteractiveRuntime,
-    info: TuiBootstrap,
-) -> anyhow::Result<Option<ExitReceipt>> {
+pub(crate) async fn run(info: TuiBootstrap) -> anyhow::Result<Option<ExitReceipt>> {
     let mut terminal = synced_backend::init();
     let probe = terminal_probe::probe_terminal();
     Theme::initialize_palette(probe.palette);
     Theme::apply_committed(&info.services.settings.theme);
     let herdr = info.services.herdr.clone();
-    let result = {
-        let injected = smoke_injection::after_terminal_init();
-
-        match injected {
-            Ok(()) => {
-                let mut app = App::new(
-                    info,
-                    agent.mcp_report().clone(),
-                    agent.mcp_catalog().clone(),
-                    agent.plugins_report().clone(),
-                    probe
-                        .program_status
-                        .with_override(std::env::var("RHO_PROGRAM_STATUS").ok().as_deref()),
-                );
-                app.spawn_initial_herdr_report();
-                app.terminal_session = Some(TerminalSession::acquire());
-                if let Some(manager) = agent.subagents() {
-                    app.subagent_inbox.bind(manager);
-                    let pool = manager.concurrency();
-                    app.info
-                        .services
-                        .diagnostics
-                        .update_agent_concurrency(pool.total_limit());
-                    app.agent_concurrency = Some(pool);
-                }
-                let (result, mut program_status) = app.run(&mut terminal, agent).await;
-                // Teardown must clear the terminal record even when the loop
-                // exits through an error rather than its clean-return path.
-                if let Some(bytes) = program_status.clear() {
-                    notifications::write_to_terminal(&bytes);
-                }
-                if let Some(manager) = agent.subagents() {
-                    manager.unbind_host_input();
-                    manager.unbind_notices();
-                }
-                result
+    let result = match smoke_injection::after_terminal_init() {
+        Ok(()) => {
+            let mut app = App::new(
+                info,
+                probe
+                    .program_status
+                    .with_override(std::env::var("RHO_PROGRAM_STATUS").ok().as_deref()),
+            );
+            app.spawn_initial_herdr_report();
+            app.terminal_session = Some(TerminalSession::acquire());
+            let (result, mut program_status) = app.run(&mut terminal).await;
+            // Teardown must clear the terminal record even when the loop
+            // exits through an error rather than its clean-return path.
+            if let Some(bytes) = program_status.clear() {
+                notifications::write_to_terminal(&bytes);
             }
-            Err(error) => Err(error),
+            result
         }
+        Err(error) => Err(error),
     };
     let _ = herdr.release().await;
     ratatui::restore();
@@ -580,12 +527,8 @@ struct App {
     subagent_panel: SubagentPanel,
     process_panel: ProcessPanel,
     workflow_panel: WorkflowPanel,
-    subagent_inbox: subagent_inbox::SubagentInbox,
-    /// Live delegated-agent cap, shared with the executor so `/config` can resize it.
-    agent_concurrency: Option<crate::app::agent_concurrency::AgentConcurrency>,
-    pending_subagent_questionnaire: Option<PendingSubagentQuestionnaire>,
     /// The followed daemon session's input request the TUI shows, and those
-    /// waiting behind it; empty on the in-process path.
+    /// waiting behind it.
     daemon_answers: daemon_answers::DaemonAnswers,
     input_ui: InputUi,
     /// Palette match caches shared by keystroke and render paths.
@@ -608,11 +551,9 @@ struct App {
     image_picker: Option<ratatui_image::picker::Picker>,
     pending: PendingWorkUi,
     pending_inline_shells: Vec<inline_shell::PendingShellTask>,
-    deferred_inline_shell_context: Vec<inline_shell::DeferredShellContext>,
     history: HistoryUi,
     credential_store: Arc<dyn CredentialStore>,
     available_auths: Vec<String>,
-    using_unavailable_provider: bool,
     /// Who owns the full terminal. Setup and attach replace session chrome.
     exclusive: exclusive_screen::ExclusiveOccupant,
     /// Background task handles; see `background_tasks`.
@@ -628,10 +569,6 @@ struct App {
     >,
     /// Open `/diff` popup state; dropped once its picker closes.
     diff_viewer: Option<diff_viewer::DiffViewer>,
-    compaction_reload_pending: bool,
-    /// Set when classifier settings were saved without the agent at hand;
-    /// see [`App::apply_pending_classifier_config`].
-    classifier_config_sync_pending: bool,
     /// Built on first `/limits` use; constructing a client loads TLS roots,
     /// which startup should not pay for a feature that may never run.
     usage_limits_client: std::sync::OnceLock<reqwest::Client>,
@@ -640,14 +577,10 @@ struct App {
     prompt_history: prompt_history::PromptHistory,
     /// Turns held until MCP connect settles.
     held_turns: VecDeque<idle_input::HeldTurn>,
-    compact_follow_up: compact_work::CompactFollowUp,
-    /// Work made runnable by compact settlement. A confirmed send remains a
-    /// distinct owned submission rather than being cloned into the edit queue.
-    start_follow_ups: Option<compact_work::ReadyFollowUp>,
+    /// Set when a settled `/compact` made the queued prompts runnable.
+    start_follow_ups: bool,
     /// "Send for this session" consent; see [`send_confirm::SendOmissions::covers`].
     acknowledged_send_omissions: Option<send_confirm::SendOmissions>,
-    pending_model_selection: Option<InteractiveModelSelection>,
-    pending_permission_mode: Option<crate::permission::PermissionMode>,
     /// Explicit all/pinned choice from the scope-toggle key. `None` means
     /// prefer pinned, falling back to all when no pin has auth.
     model_picker_scope_override: Option<model_picker::ModelPickerScope>,
@@ -660,7 +593,6 @@ struct App {
     sessions_hub_state: sessions_hub::SessionsHubState,
     /// Session list or delete running off the event loop.
     pending_sessions_task: Option<sessions_hub_tasks::PendingSessionsTask>,
-    pending_session_title: Option<PendingSessionTitle>,
     daemon_options: Option<rho_protocol::SessionOptions>,
     daemon_option_requests: std::collections::VecDeque<rho_protocol::SessionChange>,
     /// The model `/login` asked the daemon session to switch to, whose
@@ -688,10 +620,8 @@ struct App {
     daemon_rail: daemon_jobs::DaemonRail,
     /// The interactive login the daemon runs for this TUI, if any.
     daemon_login: Option<daemon_login::DaemonLogin>,
-    /// The daemon's settings, once read; `None` in process.
+    /// The daemon's settings, once read.
     daemon_settings: Option<daemon_settings::DaemonSettings>,
-    /// Set by `/title` so auto-title generation cannot overwrite a manual name.
-    session_title_locked: bool,
     /// Latest native checklist, mirrored for commands while a turn is running.
     todo_list: Option<crate::tools::todo::TodoList>,
     clipboard: Box<dyn Clipboard + Send>,
@@ -708,20 +638,12 @@ struct App {
     last_mouse_position: Option<(u16, u16)>,
     /// Screen-space drag selection for text outside the history area.
     screen_selection: Option<TextSelection>,
-    /// MCP inventory for `/mcp` and `/doctor` (session snapshot from tool assembly).
-    mcp_report: crate::tools::mcp::McpSessionReport,
-    /// Recovered history rendered before deferred MCP servers connected.
-    provisional_history: Option<message_history::ProvisionalHistory>,
-    /// Prompts and resources connected MCP servers offer, for palette matching.
-    mcp_catalog: crate::tools::mcp::McpCatalog,
     /// Fetched argument suggestions for the MCP prompt being typed, so palette
     /// matching reads a local cache instead of awaiting a server.
     mcp_argument_completions: mcp_argument_completion::McpArgumentCompletions,
-    /// What a daemon session's MCP servers offer, read from the daemon for
-    /// the same matching; an in-process session reads `mcp_catalog`.
+    /// What the session's MCP servers offer, read from the daemon for palette
+    /// matching.
     daemon_mcp_offers: mcp_source::DaemonMcpOffers,
-    /// Agent Plugins load report captured at session start for `/doctor`.
-    plugins_report: crate::plugins::PluginLoadReport,
     /// In-memory `/side` aside. Survives overlay close until `/new` or resume.
     side_chat: Option<side_chat::SideChat>,
     /// What Herdr last heard about the session, so idle changes are re-sent.
@@ -731,13 +653,6 @@ struct App {
     program_status: program_status::ProgramStatusReporter,
     /// Last turn outcome, deferred until the event loop rests on input.
     settled_program_status: program_status::ProgramStatus,
-}
-
-struct PendingSubagentQuestionnaire {
-    run_id: String,
-    agent_id: String,
-    reply_rx: oneshot::Receiver<QuestionnaireReply>,
-    response_tx: tokio::sync::oneshot::Sender<Result<rho_sdk::HostInputResponse, rho_sdk::Error>>,
 }
 
 #[cfg(test)]

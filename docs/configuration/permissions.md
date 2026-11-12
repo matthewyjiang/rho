@@ -50,7 +50,7 @@ Set the model under `/config` → **Agent** → **Permission classifier model**,
 
 ### Screen model
 
-By default the classifier model answers the screen too, at low reasoning, sharing its prompt cache with the review. Another model can answer it instead: a decision model, which is faster, or another text model. Set it as `[internal_agents.permission-classifier-screen]`, or from the picker `/permissions auto` offers after the classifier pick in an in-process TUI; Esc keeps the current screen model.
+By default the classifier model answers the screen too, at low reasoning, sharing its prompt cache with the review. Another model can answer it instead: a decision model, which is faster, or another text model. Set it as `[internal_agents.permission-classifier-screen]`.
 
 The picker lists three groups:
 

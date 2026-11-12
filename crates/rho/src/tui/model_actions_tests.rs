@@ -10,7 +10,6 @@ use rho_providers::reasoning::ReasoningLevel;
 use super::super::InteractiveModelSelection;
 use crate::{
     agent::ADVISOR_AGENT_ID,
-    commands::parse_command,
     config::InternalAgentModelConfig,
     model_aliases::ModelAliases,
     tui::{tests::test_app, ComposerMode, Entry, StreamKind},
@@ -93,8 +92,6 @@ fn resolves_aliases_before_interactive_model_lookup() {
                     from_catalog: true,
                 },
                 alias: Some(alias.into()),
-                reasoning_policy:
-                    super::reasoning_metadata::ModelSwitchReasoningPolicy::PreserveExplicit,
             },
             "@{alias}"
         );
@@ -189,275 +186,13 @@ fn selecting_an_internal_agent_model_carries_explicit_reasoning() {
     );
 }
 
-// Covers: select_model_report must apply Auto's provider-preferred edit format
-// after a provider change, while a pinned preference stays put.
-// Owner: model switch edit-tool handoff
-#[tokio::test]
-async fn select_model_report_auto_edit_tool_follows_provider_change() {
-    use std::sync::Arc;
-
-    use rho_providers::credentials::{
-        save_codex_tokens, save_provider_api_key, CodexTokens, MemoryCredentialStore,
-    };
-
-    use crate::{
-        app::interactive_runtime::test_edit_tool_runtime,
-        config::EditTool,
-        tui::{tests::test_bootstrap, App, InteractiveRuntime},
-    };
-
-    async fn switch_to_codex(app: &mut App, agent: &mut InteractiveRuntime) {
-        app.select_model_report(
-            InteractiveModelSelection {
-                selection: ModelSelection {
-                    provider: "openai-codex".into(),
-                    model: "gpt-5.5".into(),
-                    auth: "codex".into(),
-                    from_catalog: true,
-                },
-                alias: None,
-                reasoning_policy:
-                    super::reasoning_metadata::ModelSwitchReasoningPolicy::PreserveExplicit,
-            },
-            agent,
-        )
-        .await
-        .expect("model switch should succeed")
-        .expect("handoff report");
-    }
-
-    fn advertised_edit_name(agent: &InteractiveRuntime) -> Option<&'static str> {
-        ["apply_patch", "str_replace"]
-            .into_iter()
-            .find(|name| agent.has_tool(name))
-    }
-
-    fn app_on_openai(edit_tool: EditTool) -> App {
-        let store = Arc::new(MemoryCredentialStore::default());
-        save_provider_api_key(store.as_ref(), "openai", "sk-test").unwrap();
-        save_codex_tokens(
-            store.as_ref(),
-            &CodexTokens {
-                access_token: "test-access-token".into(),
-                refresh_token: None,
-                id_token: None,
-                account_id: None,
-            },
-        )
-        .unwrap();
-        let app = App::new_with_credentials(
-            test_bootstrap(),
-            store,
-            crate::tools::mcp::McpSessionReport::default(),
-            crate::tools::mcp::McpCatalog::default(),
-            crate::plugins::PluginLoadReport::default(),
-            crate::tui::program_status::ProgramStatusSupport::Unsupported,
-        );
-        app.info
-            .services
-            .config_repository
-            .update(|config| {
-                config.edit_tool = edit_tool;
-                config.provider = "openai".into();
-                config.model = "gpt-5.5".into();
-                config.auth = "api-key".into();
-            })
-            .unwrap();
-        app
-    }
-
-    // --- Auto follows the provider ---
-    let mut app = app_on_openai(EditTool::Auto);
-    let mut agent = test_edit_tool_runtime(EditTool::Auto).await;
-    assert_eq!(
-        advertised_edit_name(&agent),
-        Some("str_replace"),
-        "Auto + openai should start on str_replace"
-    );
-
-    switch_to_codex(&mut app, &mut agent).await;
-    assert_eq!(app.info.runtime.provider, "openai-codex");
-    assert_eq!(
-        advertised_edit_name(&agent),
-        Some("apply_patch"),
-        "Auto must follow openai-codex to apply_patch after select_model_report"
-    );
-
-    // --- Pinned does not follow ---
-    let pinned = EditTool::Pinned(rho_tools::EditFormat::StrReplace);
-    let mut app = app_on_openai(pinned);
-    let mut agent = test_edit_tool_runtime(pinned).await;
-    assert_eq!(advertised_edit_name(&agent), Some("str_replace"));
-
-    switch_to_codex(&mut app, &mut agent).await;
-    assert_eq!(app.info.runtime.provider, "openai-codex");
-    assert_eq!(
-        advertised_edit_name(&agent),
-        Some("str_replace"),
-        "pinned str_replace must not follow the openai-codex provider change"
-    );
-    assert!(!agent.has_tool("apply_patch"));
-}
-
-// Covers: a mid-session model switch remains visible in conversation history,
-// even when model-scoped assembly also rebuilds the system prompt. The notice
-// includes the catalog name when available, as does the status line. Empty
-// conversations need no history notice before their first request.
-// Owner: model switch context notice
-#[tokio::test]
-async fn select_model_report_tells_the_model_about_a_mid_session_switch() {
-    use std::sync::Arc;
-
-    use rho_providers::{
-        credentials::{save_provider_api_key, MemoryCredentialStore},
-        model::{
-            display_name::ModelDisplayNameCacheGuard,
-            models_dev::{
-                with_models_dev_cache_dir_for_tests, write_cached_model_metadata_for_tests,
-                ModelMetadata,
-            },
-        },
-    };
-
-    use crate::{
-        app::interactive_runtime::test_edit_tool_runtime,
-        config::EditTool,
-        model_identity::PromptModel,
-        prompt::{model_switch_context, ModelSwitchKind},
-        tui::{tests::test_bootstrap, App, InteractiveRuntime},
-    };
-
-    async fn switch_to_anthropic(app: &mut App, agent: &mut InteractiveRuntime) {
-        app.select_model_report(
-            InteractiveModelSelection {
-                selection: ModelSelection {
-                    provider: "anthropic".into(),
-                    model: "claude-fable-5".into(),
-                    auth: "api-key".into(),
-                    from_catalog: true,
-                },
-                alias: None,
-                reasoning_policy:
-                    super::reasoning_metadata::ModelSwitchReasoningPolicy::PreserveExplicit,
-            },
-            agent,
-        )
-        .await
-        .expect("model switch should succeed");
-    }
-
-    /// Model-visible history as one string. A provider change also swaps the
-    /// Auto edit tool, so the switch notice is not reliably the last message.
-    fn history_text(agent: &InteractiveRuntime) -> String {
-        agent
-            .history()
-            .iter()
-            .filter_map(|message| match message {
-                rho_sdk::model::Message::User(blocks) => Some(
-                    blocks
-                        .iter()
-                        .filter_map(|block| match block {
-                            rho_sdk::model::ContentBlock::Text(text) => Some(text.as_str()),
-                            _ => None,
-                        })
-                        .collect::<String>(),
-                ),
-                _ => None,
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-
-    fn app_on_openai() -> App {
-        let store = Arc::new(MemoryCredentialStore::default());
-        save_provider_api_key(store.as_ref(), "openai", "sk-test").unwrap();
-        save_provider_api_key(store.as_ref(), "anthropic", "sk-ant-test").unwrap();
-        let app = App::new_with_credentials(
-            test_bootstrap(),
-            store,
-            crate::tools::mcp::McpSessionReport::default(),
-            crate::tools::mcp::McpCatalog::default(),
-            crate::plugins::PluginLoadReport::default(),
-            crate::tui::program_status::ProgramStatusSupport::Unsupported,
-        );
-        app.info
-            .services
-            .config_repository
-            .update(|config| {
-                config.provider = "openai".into();
-                config.model = "gpt-5.5".into();
-                config.auth = "api-key".into();
-            })
-            .unwrap();
-        app
-    }
-
-    let catalog = tempfile::tempdir().unwrap();
-    with_models_dev_cache_dir_for_tests(catalog.path().to_path_buf(), || {
-        let _names = ModelDisplayNameCacheGuard::new();
-        let mut metadata = ModelMetadata::default();
-        metadata.display_name = Some("Claude Fable 5".into());
-        metadata.reasoning_metadata_complete = true;
-        write_cached_model_metadata_for_tests("anthropic", "claude-fable-5", &metadata);
-    });
-
-    // --- A started session is told, naming the new model with its catalog name ---
-    let mut app = app_on_openai();
-    // Auto mode would replace the switch status with its classifier prompt.
-    app.info.runtime.permission_mode = crate::permission::PermissionMode::Bypass;
-    let mut agent = test_edit_tool_runtime(EditTool::Auto).await;
-    agent
-        .append_user_context_with_display("first turn".into(), "first turn".into())
-        .unwrap();
-
-    // Keep the test cache dir for the switch so describe() reads the seeded name.
-    let _cache =
-        rho_providers::model::models_dev::ModelsDevCacheDirGuard::new(catalog.path().to_path_buf());
-    let _names = ModelDisplayNameCacheGuard::new();
-    switch_to_anthropic(&mut app, &mut agent).await;
-
-    // The status line names the model it switched to by its catalog name.
-    assert_eq!(
-        app.last_status.split(" with reasoning").next(),
-        Some("model switched to Claude Fable 5")
-    );
-    let text = history_text(&agent);
-    let (stored, _) = model_switch_context(
-        ModelSwitchKind::Conversation,
-        &PromptModel::Rho {
-            provider: "anthropic".into(),
-            model: "claude-fable-5".into(),
-        },
-    );
-    assert!(
-        text.contains(stored.trim()),
-        "expected switch notice {stored:?} in history:\n{text}"
-    );
-    // The model the session started on stays readable in the system prompt, so
-    // the notice does not restate it.
-    assert!(!text.contains("openai/gpt-5.5"), "{text}");
-
-    // --- A first selection on an empty session stays silent ---
-    let mut app = app_on_openai();
-    let mut agent = test_edit_tool_runtime(EditTool::Auto).await;
-    assert!(agent.history().is_empty());
-
-    switch_to_anthropic(&mut app, &mut agent).await;
-
-    let text = history_text(&agent);
-    assert!(
-        !text.contains("conversation model switched"),
-        "a first model choice is not a switch: {text}"
-    );
-}
-
 fn with_empty_provider_models_cache<T>(f: impl FnOnce() -> T) -> T {
     let cache = tempfile::tempdir().unwrap();
     with_provider_models_cache_dir_for_tests(cache.path().to_path_buf(), f)
 }
 
-/// Opens the model picker as idle `/model` does, past its redraw: with no
-/// cached models, it reports them missing instead.
+/// Opens the conversation model picker while idle: with no cached models,
+/// it reports them missing instead.
 fn open_idle_model_picker(app: &mut crate::tui::App) {
     app.refresh_available_auths();
     if app.conversation_model_picker().items.is_empty() {
@@ -465,10 +200,12 @@ fn open_idle_model_picker(app: &mut crate::tui::App) {
     }
 }
 
-/// `/model` with no argument while a turn runs.
+/// [`open_idle_model_picker`] while a turn runs.
 fn open_model_picker_during_turn(app: &mut crate::tui::App) {
-    let invocation = parse_command("/model").unwrap().unwrap();
-    app.execute_model_command_during_turn(invocation).unwrap();
+    app.refresh_available_auths();
+    if app.conversation_model_picker_during_run().items.is_empty() {
+        app.report_missing_cached_provider_models();
+    }
 }
 
 fn last_notice(app: &crate::tui::App) -> &str {
@@ -522,28 +259,15 @@ fn empty_model_picker_wait_clause_follows_busy_session() {
             open_idle_model_picker(&mut app);
             last_notice(&app).to_string()
         };
-        let notices = [
-            (
-                "provider turn",
-                (|app| app.begin_provider_turn_ui()) as fn(&mut crate::tui::App),
-            ),
-            ("compacting", |app| app.begin_compact_ui()),
-        ]
-        .map(|(name, setup)| {
-            let mut app = test_app();
-            setup(&mut app);
-            open_model_picker_during_turn(&mut app);
-            assert!(app.streams.pending_notices.is_empty());
-            (name, last_notice(&app).to_string())
-        });
-
-        for (name, notice) in &notices {
-            assert_ne!(
-                notice, &idle,
-                "{name} must keep the wait clause while refresh is blocked"
-            );
-        }
-        assert_eq!(notices[0].1, notices[1].1);
+        let mut app = test_app();
+        app.begin_provider_turn_ui();
+        open_model_picker_during_turn(&mut app);
+        assert!(app.streams.pending_notices.is_empty());
+        assert_ne!(
+            last_notice(&app),
+            idle.as_str(),
+            "a provider turn must keep the wait clause while refresh is blocked"
+        );
     });
 }
 

@@ -10,47 +10,6 @@ pub(super) fn matrix_enabled() -> bool {
         && std::env::var_os("RHO_TUI_TEST_MODE").as_deref() == Some(std::ffi::OsStr::new("matrix"))
 }
 
-/// Acknowledge a notification boundary, not merely the child's enqueue. The PTY
-/// releases the next notice only after the parent has checked the previous one.
-#[cfg(debug_assertions)]
-pub(super) fn quiet_notice_boundary(queued: usize) {
-    #[cfg(unix)]
-    if matrix_enabled() {
-        thread_local! {
-            static LAST_ACKNOWLEDGED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-        }
-        LAST_ACKNOWLEDGED.with(|last| {
-            acknowledge_notice_boundary(queued, last, &crate::app::quiet_notice_signal::socket());
-        });
-    }
-    #[cfg(not(unix))]
-    let _ = queued;
-}
-
-#[cfg(all(debug_assertions, unix))]
-fn acknowledge_notice_boundary(
-    queued: usize,
-    last: &std::cell::Cell<usize>,
-    path: &std::path::Path,
-) {
-    if queued == last.get() {
-        return;
-    }
-    if queued == 0 {
-        last.set(0);
-        return;
-    }
-    // A full or retired observer must never stall or crash the TUI. Retry an
-    // unsent state at the next boundary; suppress duplicates only after success.
-    if crate::app::quiet_notice_signal::send(queued, path).is_ok() {
-        last.set(queued);
-    }
-}
-
-#[cfg(all(test, debug_assertions, unix))]
-#[path = "smoke_injection_boundary_tests.rs"]
-mod boundary_tests;
-
 /// Version shown in TUI chrome (session header, setup welcome).
 ///
 /// Production always uses the package version. Debug matrix runs may override

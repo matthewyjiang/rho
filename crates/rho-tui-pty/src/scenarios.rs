@@ -33,8 +33,6 @@ mod daemon_doctor;
 mod daemon_login;
 mod daemon_mcp;
 mod daemon_mcp_owner;
-mod daemon_mcp_startup;
-mod daemon_model;
 mod daemon_openapi_startup;
 mod daemon_options;
 mod daemon_prompt;
@@ -45,9 +43,6 @@ mod daemon_restart;
 mod daemon_restart_mcp;
 mod daemon_resume;
 mod daemon_rewind;
-// Unix: it listens for the quiet-notice hook on a datagram socket.
-#[cfg(unix)]
-mod daemon_subagents;
 mod daemon_switch;
 mod daemon_tree;
 #[cfg(unix)]
@@ -107,6 +102,7 @@ mod resume_delete;
 mod resume_scrollback;
 mod run_events;
 mod runtime_info;
+#[cfg(unix)]
 mod send_confirm;
 mod sessions_hub;
 mod sessions_tool;
@@ -275,17 +271,9 @@ const ALL_SCENARIOS: &[Scenario] = &[
     TRANSCRIPT_SEARCH_SCENARIO,
     TRANSCRIPT_SEARCH_HOLDS_HIT_SCENARIO,
     STREAMING_CONTROLS_SCENARIO,
-    #[cfg(unix)]
-    streaming_controls::DAEMON_STREAMING_CONTROLS_SCENARIO,
     run_events::PROVIDER_RETRY_SCENARIO,
-    #[cfg(unix)]
-    run_events::DAEMON_PROVIDER_RETRY_SCENARIO,
     run_events::WEB_SEARCH_ACTIVITY_SCENARIO,
-    #[cfg(unix)]
-    run_events::DAEMON_WEB_SEARCH_ACTIVITY_SCENARIO,
     run_events::PROVIDER_DIAGNOSTIC_SCENARIO,
-    #[cfg(unix)]
-    run_events::DAEMON_PROVIDER_DIAGNOSTIC_SCENARIO,
     AGENT_PROMPT_SCENARIO,
     Scenario::new(
         "cancel_and_resubmit",
@@ -356,13 +344,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
     #[cfg(any(target_os = "linux", target_os = "android"))]
     workflow_background::WORKFLOW_HUB_PLANNED_RETRY_SCENARIO,
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    workflow_background::DAEMON_WORKFLOW_BACKGROUND_SCENARIO,
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    workflow_background::DAEMON_WORKFLOW_HUB_PLANNED_RETRY_SCENARIO,
-    #[cfg(any(target_os = "linux", target_os = "android"))]
     workflow_result_rail::SCENARIO,
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    workflow_result_rail::DAEMON_SCENARIO,
     PASTE_MULTILINE_SCENARIO,
     composer_unicode::COMPOSER_UNICODE_SCENARIO,
     composer_vim::COMPOSER_VIM_SCENARIO,
@@ -373,8 +355,6 @@ const ALL_SCENARIOS: &[Scenario] = &[
     questionnaire::QUESTIONNAIRE_CLICK_SCENARIO,
     questionnaire::APPROVAL_CLICK_SCENARIO,
     inline_choice_click::INLINE_CHOICE_CLICK_SCENARIO,
-    #[cfg(unix)]
-    inline_choice_click::DAEMON_DELETE_LEFT_SESSION_SCENARIO,
     palette_click::SLASH_PALETTE_CLICK_SCENARIO,
     palette_click::FILE_PALETTE_CLICK_SCENARIO,
     #[cfg(unix)]
@@ -396,23 +376,11 @@ const ALL_SCENARIOS: &[Scenario] = &[
         true,
     ),
     config::PERMISSIONS_COMMAND_SCENARIO,
-    #[cfg(unix)]
-    config::SETTINGS_NEED_THE_DAEMON,
     plan_exit::APPROVE_SCENARIO,
-    #[cfg(unix)]
-    plan_exit::DAEMON_APPROVE_SCENARIO,
-    #[cfg(unix)]
-    init_command::DAEMON_INIT_PLAN_SCENARIO,
     plan_exit::IDLE_COMPLETION_SCENARIO,
     plan_exit::KEEP_SCENARIO,
     plan_exit::FAILED_SCENARIO,
     plan_exit::QUEUED_CYCLE_SCENARIO,
-    #[cfg(unix)]
-    plan_exit::DAEMON_DELEGATED_COMPLETION_SCENARIO,
-    #[cfg(unix)]
-    plan_exit::DAEMON_FAILED_SCENARIO,
-    #[cfg(unix)]
-    plan_exit::DAEMON_QUEUED_CYCLE_SCENARIO,
     Scenario::new(
         "auto_permission_mode_startup",
         "Start in Auto without a classifier and force a model pick before tools run",
@@ -425,18 +393,14 @@ const ALL_SCENARIOS: &[Scenario] = &[
     )
     .with_setup(setup_auto_without_classifier)
     .with_env(OPENAI_KEY_ENV),
-    // Custom multi-process scenarios: see config::run_auto_recovered_handoff.
+    // Custom multi-process scenario: see config::run_auto_recovered_handoff.
+    #[cfg(unix)]
     config::AUTO_RECOVERED_HANDOFF_SCENARIO,
-    #[cfg(unix)]
-    config::DAEMON_AUTO_RECOVERED_HANDOFF_SCENARIO,
     // Custom multi-process scenario: see send_confirm::run_send_confirm_handoff.
-    send_confirm::SCENARIO,
     #[cfg(unix)]
-    send_confirm::DAEMON_SCENARIO,
+    send_confirm::SCENARIO,
     codemode_stream::CODEMODE_CARD_SCENARIO,
     codemode_stream::CODEMODE_LARGE_SCRIPT_SCENARIO,
-    #[cfg(unix)]
-    codemode_stream::DAEMON_CODEMODE_LARGE_SCRIPT_SCENARIO,
     Scenario::new(
         "progress_tool",
         "Run the fixture progress tool to completion",
@@ -476,19 +440,9 @@ const ALL_SCENARIOS: &[Scenario] = &[
     SIDE_COMPOSER_SCENARIO,
     fast_discovery::FAST_DISCOVERY_SCENARIO,
     #[cfg(unix)]
-    fast_discovery::DAEMON_FAST_DISCOVERY_SCENARIO,
-    #[cfg(unix)]
     fast_discovery::DAEMON_FAST_OFF_SCENARIO,
-    #[cfg(unix)]
-    command_palette::DAEMON_TAB_COMPLETE_SCENARIO,
-    #[cfg(unix)]
-    workspace_rewind::DAEMON_WORKSPACE_REWIND_OFF_SCENARIO,
     CREATE_AGENT_COMMAND_SCENARIO,
     CREATE_AGENT_MISSING_TOOLS_SCENARIO,
-    #[cfg(unix)]
-    command_palette::DAEMON_CREATE_AGENT_COMMAND_SCENARIO,
-    #[cfg(unix)]
-    command_palette::DAEMON_CREATE_AGENT_MISSING_TOOLS_SCENARIO,
     TAB_COMPLETE_ENTER_BARE_COMMAND_SCENARIO,
     PROMPT_TEMPLATE_HOT_RELOAD_SCENARIO,
     PROMPT_TEMPLATE_DURING_TURN_SCENARIO,
@@ -523,8 +477,6 @@ const ALL_SCENARIOS: &[Scenario] = &[
     HOOKS_CONTRACT_SCENARIO,
     MCP_INVENTORY_SCENARIO,
     mcp_composer::MCP_COMPOSER_SCENARIO,
-    #[cfg(unix)]
-    mcp_composer::DAEMON_MCP_COMPOSER_SCENARIO,
     MCP_CONNECTING_SCENARIO,
     MCP_CONNECT_RELEASE_SCENARIO,
     MCP_HOLD_TAKE_BACK_SCENARIO,
@@ -564,48 +516,12 @@ const ALL_SCENARIOS: &[Scenario] = &[
     daemon_tree::SCENARIO,
     #[cfg(unix)]
     daemon_rewind::SCENARIO,
-    #[cfg(unix)]
-    no_save::DAEMON_NO_SAVE_SESSION_SCENARIO,
     #[cfg(any(target_os = "linux", target_os = "android"))]
     daemon_workflow::SCENARIO,
     #[cfg(any(target_os = "linux", target_os = "android"))]
     daemon_workflow_hold::SCENARIO,
     #[cfg(unix)]
     daemon_switch::SCENARIO,
-    #[cfg(unix)]
-    daemon_subagents::AGENT_PROMPT_STREAMING,
-    #[cfg(unix)]
-    daemon_subagents::AGENT_MESSAGES,
-    #[cfg(unix)]
-    daemon_subagents::BACKGROUND_AGENT_AUTO_DELIVERY,
-    #[cfg(unix)]
-    daemon_subagents::BACKGROUND_AGENT_QUESTIONNAIRE,
-    #[cfg(unix)]
-    daemon_subagents::SUBAGENT_RAIL_MOUSE,
-    #[cfg(unix)]
-    daemon_subagents::QUIET_SUBAGENT_NOTICES,
-    #[cfg(unix)]
-    daemon_subagents::QUIET_SUBAGENT_RUNNING_NOTICES,
-    #[cfg(unix)]
-    daemon_subagents::STREAMING_BOUNDARY_NOTICE,
-    #[cfg(unix)]
-    daemon_subagents::BOUNDARY_NOTIFICATIONS,
-    #[cfg(unix)]
-    daemon_subagents::RETRACT_STEERING_DURING_TOOL,
-    #[cfg(unix)]
-    daemon_subagents::SUBAGENT_COMPLETION_AFTER_NEW,
-    #[cfg(unix)]
-    daemon_subagents::ATTACH_PICKER,
-    #[cfg(unix)]
-    daemon_subagents::ATTACH_PARENT_MESSAGE,
-    #[cfg(unix)]
-    daemon_subagents::ATTACH_VIEW_FROM_COMMAND,
-    #[cfg(unix)]
-    daemon_subagents::ATTACH_VIEW_CYCLE,
-    #[cfg(unix)]
-    daemon_subagents::ATTACH_VIEW_PARENT_APPROVAL,
-    #[cfg(unix)]
-    daemon_subagents::ATTACH_VIEW_QUIT_RESTORES,
     #[cfg(unix)]
     daemon_restart::SCENARIO,
     #[cfg(unix)]
@@ -623,8 +539,6 @@ const ALL_SCENARIOS: &[Scenario] = &[
     #[cfg(unix)]
     daemon_prompt::DAEMON_CANCEL_SCENARIO,
     #[cfg(unix)]
-    edit_diff::DAEMON_EDIT_DIFF_SCENARIO,
-    #[cfg(unix)]
     daemon_prompt::DAEMON_STREAM_COST_SCENARIO,
     #[cfg(unix)]
     daemon_approval::DAEMON_APPROVAL_SCENARIO,
@@ -632,37 +546,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
     daemon_approval::DAEMON_APPROVAL_DENY_SCENARIO,
     #[cfg(unix)]
     daemon_options::PERMISSION_MODE,
-    #[cfg(unix)]
-    daemon_model::OPEN_MODEL_PICKER,
-    #[cfg(unix)]
-    daemon_model::CYCLE_AND_PINNED_MODEL_PICKER,
-    #[cfg(unix)]
-    daemon_model::STATUSLINE_MODEL_CLICK,
-    #[cfg(unix)]
-    daemon_model::STATUSLINE_NO_REASONING_CLICK,
-    #[cfg(unix)]
-    daemon_model::MODEL_PROMPTS,
-    #[cfg(unix)]
-    daemon_model::MODEL_PROMPT_BEFORE_FIRST_PROMPT,
-    #[cfg(unix)]
-    daemon_model::CYCLE_REASONING_IDLE,
-    #[cfg(unix)]
-    daemon_model::CYCLE_REASONING_QUEUED,
     compact::COMPACT_COMPLETES,
-    #[cfg(unix)]
-    compact::DAEMON_COMPACT_COMPLETES,
-    #[cfg(unix)]
-    compact::DAEMON_TYPE_DURING_COMPACT,
-    #[cfg(unix)]
-    compact::DAEMON_SUBMIT_DURING_COMPACT,
-    #[cfg(unix)]
-    calibrated_context::DAEMON_SCENARIO,
-    #[cfg(unix)]
-    daemon_mcp_startup::CONNECTING,
-    #[cfg(unix)]
-    daemon_mcp_startup::HOLD_TAKE_BACK,
-    #[cfg(unix)]
-    daemon_mcp_startup::CONNECT_RELEASE,
     #[cfg(unix)]
     daemon_openapi_startup::HOLD_TAKE_BACK,
     #[cfg(unix)]
@@ -701,14 +585,10 @@ const ALL_SCENARIOS: &[Scenario] = &[
     model_prompts::BEFORE_FIRST_PROMPT_SCENARIO,
     model_cycle_reasoning::IDLE,
     model_cycle_reasoning::QUEUED,
-    config_2x_upgrade::IN_PROCESS,
-    #[cfg(unix)]
-    config_2x_upgrade::DAEMON,
+    config_2x_upgrade::SCENARIO,
     permission_cycle::IDLE,
     permission_cycle::REMAPPED,
     permission_cycle::QUEUED,
-    #[cfg(unix)]
-    permission_cycle::DAEMON_QUEUED,
     Scenario::new(
         "open_workflow_hub_empty",
         "Open the workflows hub when the workspace has no workflows yet",
@@ -808,8 +688,6 @@ const ALL_SCENARIOS: &[Scenario] = &[
     )
     .with_setup(setup_prompt_template),
     #[cfg(unix)]
-    first_run::DAEMON_FIRST_RUN_SETUP_SCENARIO,
-    #[cfg(unix)]
     first_run::DAEMON_SIGNED_OUT_SCENARIO,
     Scenario::new(
         "login_provider_groups",
@@ -859,19 +737,9 @@ const ALL_SCENARIOS: &[Scenario] = &[
     ATTACH_VIEW_QUIT_RESTORES_SCENARIO,
     keep_warm::KEEP_WARM_PINGS_SCENARIO,
     keep_warm::KEEP_WARM_OFF_SCENARIO,
-    #[cfg(unix)]
-    keep_warm::DAEMON_KEEP_WARM_PINGS_SCENARIO,
-    #[cfg(unix)]
-    keep_warm::DAEMON_KEEP_WARM_OFF_SCENARIO,
     PROCESS_RAIL_SCENARIO,
     PROCESS_RAIL_PEEK_SCENARIO,
     PENDING_INPUT_BELOW_ACTIVITY_SCENARIO,
-    #[cfg(unix)]
-    process_rail::DAEMON_PROCESS_RAIL_SCENARIO,
-    #[cfg(unix)]
-    process_rail::DAEMON_PROCESS_RAIL_PEEK_SCENARIO,
-    #[cfg(unix)]
-    process_rail::DAEMON_PENDING_INPUT_BELOW_ACTIVITY_SCENARIO,
     Scenario::new(
         "tool_card_hover",
         "Lift tool-card text on hover and expand the card on click",
@@ -898,12 +766,8 @@ const ALL_SCENARIOS: &[Scenario] = &[
     ADVISOR_MISSING_MODEL_SCENARIO,
     ADVISOR_REVIEW_SCENARIO,
     LATE_BACKGROUND_AGENT_QUESTIONNAIRE_SCENARIO,
-    #[cfg(unix)]
-    daemon_subagents::LATE_BACKGROUND_AGENT_QUESTIONNAIRE,
     BACKGROUND_AGENT_QUESTIONNAIRE_SCENARIO,
     CANCEL_BACKGROUND_AGENT_QUESTIONNAIRE_SCENARIO,
-    #[cfg(unix)]
-    daemon_subagents::CANCEL_BACKGROUND_AGENT_QUESTIONNAIRE,
 ];
 
 pub fn all_scenarios() -> &'static [Scenario] {

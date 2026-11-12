@@ -62,15 +62,6 @@ jobs:
         env:
           RHO_PTY_ARTIFACTS: ${{ runner.temp }}/rho-pty-native-artifacts
         run: cargo nextest run --workspace --locked --no-fail-fast
-      - name: Run the PTY suites on the in-process TUI
-        # The workspace tests above launch rho as a user does, so on Unix
-        # their TUI follows the daemon. The in-process TUI still ships
-        # (RHO_TUI_DAEMON=0, and Windows): here every launch that names no
-        # host runs in process. Reuses the binaries built above.
-        env:
-          RHO_PTY_ARTIFACTS: ${{ runner.temp }}/rho-pty-native-artifacts
-          RHO_TUI_DAEMON: "0"
-        run: cargo nextest run -p rho-coding-agent --test tui_pty --test tui_external_editor_pty --locked --no-fail-fast
       - name: Upload native PTY failure artifacts
         if: failure()
         uses: actions/upload-artifact@v7

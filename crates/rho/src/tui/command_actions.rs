@@ -1,8 +1,9 @@
 use crate::tui::DefaultTerminal;
 
 use super::{
-    command_palette::slash_command_args, App, ChatMedia, CommandId, CommandInvocation, Entry,
-    InteractiveRuntime, PasteSegment, TurnPrompt,
+    command_palette::slash_command_args,
+    daemon_gate::{command_route, CommandRoute},
+    App, ChatMedia, CommandId, CommandInvocation, Entry, PasteSegment, TurnPrompt,
 };
 
 /// Fully-owned composer state transferred to a slash command.
@@ -49,19 +50,17 @@ impl App {
         &'a mut self,
         submission: CommandSubmission,
         terminal: &'a mut DefaultTerminal,
-        agent: &'a mut InteractiveRuntime,
     ) -> impl std::future::Future<Output = anyhow::Result<()>> + 'a {
         // Even /exit shares the largest command future. Construct it outside
         // the input poll frames so their debug move temporaries do not exhaust
         // the Windows main stack before command dispatch.
-        Box::pin(self.execute_command_inner(submission, terminal, agent))
+        Box::pin(self.execute_command_inner(submission, terminal))
     }
 
     async fn execute_command_inner(
         &mut self,
         submission: CommandSubmission,
         terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let CommandSubmission {
             mut invocation,
@@ -69,99 +68,54 @@ impl App {
             media,
             paste_segments,
         } = submission;
-        if self.info.session.daemon.is_some() {
-            match super::daemon_gate::command_route(invocation.id) {
-                super::daemon_gate::CommandRoute::Options => {
-                    return self.execute_daemon_option_command(&invocation)
+        match command_route(invocation.id) {
+            CommandRoute::Options => return self.execute_daemon_option_command(&invocation),
+            CommandRoute::Prompt => {
+                if !self.daemon_offers_built_in(invocation.id) {
+                    self.daemon_command_unavailable(&invocation.name);
+                    return Ok(());
                 }
-                super::daemon_gate::CommandRoute::Prompt => {
-                    if !self.daemon_offers_built_in(invocation.id) {
-                        self.daemon_command_unavailable(&invocation.name);
-                        return Ok(());
-                    }
-                    // `/compact` is no send: in process it passes no
-                    // confirmation either.
-                    if invocation.id == CommandId::Compact {
-                        return self
-                            .send_daemon_command(turn, media, paste_segments, terminal)
-                            .await;
-                    }
+                // `/compact` is no send: it passes no confirmation.
+                if invocation.id == CommandId::Compact {
                     return self
-                        .submit_daemon_turn(turn, media, paste_segments, terminal)
+                        .send_daemon_command(turn, media, paste_segments, terminal)
                         .await;
                 }
-                super::daemon_gate::CommandRoute::Ui => {}
+                return self
+                    .submit_daemon_turn(turn, media, paste_segments, terminal)
+                    .await;
             }
+            CommandRoute::Ui => {}
         }
         match invocation.id {
-            CommandId::AddDir => self.execute_add_dir_command(&invocation, agent).await,
-            CommandId::Advisor => {
-                self.needs_daemon("advisor");
-                Ok(())
-            }
-            CommandId::Codemode => self.execute_codemode_command(invocation, agent),
+            CommandId::AddDir => self.execute_add_dir_command(&invocation),
             CommandId::Exit => self.execute_exit_command(),
-            CommandId::New => self.execute_new_command(terminal, agent).await,
-            CommandId::Model => {
-                self.execute_model_command(invocation, terminal, agent)
-                    .await
-            }
-            CommandId::Login => {
-                self.execute_login_command(invocation, terminal, agent)
-                    .await
-            }
-            CommandId::Logout => self.execute_logout_command(invocation, agent).await,
-            CommandId::Resume => {
-                self.execute_resume_command(invocation, terminal, agent)
-                    .await
-            }
+            CommandId::New => self.execute_new_command(terminal).await,
+            CommandId::Login => self.execute_login_command(invocation, terminal).await,
+            CommandId::Logout => self.execute_logout_command(invocation).await,
+            CommandId::Resume => self.execute_resume_command(invocation, terminal).await,
             CommandId::Remember => {
                 invocation.args = slash_command_args(&turn.model).trim().to_string();
-                self.execute_remember_command(&invocation, agent)
+                self.execute_remember_command(&invocation)
             }
-            CommandId::Rewind => self.execute_rewind_command(invocation, agent),
+            CommandId::Rewind => self.execute_rewind_command(invocation),
             CommandId::Sessions => {
                 self.execute_sessions_command();
                 Ok(())
             }
-            CommandId::Tree => self.execute_tree_command(agent),
+            CommandId::Tree => self.execute_tree_command(),
             CommandId::Config => {
-                self.execute_config_command();
+                self.open_daemon_config();
                 Ok(())
             }
-            CommandId::Permissions => self.execute_permissions_command(invocation, agent).await,
             CommandId::Info => self.execute_info_command(),
-            CommandId::Context => self.execute_context_command(agent),
-            CommandId::Init => {
-                self.execute_init_command(turn, media, paste_segments, terminal, agent)
-                    .await
-            }
+            CommandId::Context => self.execute_context_command(),
             CommandId::Help => self.execute_help_command(),
-            CommandId::Compact => {
-                // Expanded model text, so pasted guidance arrives in full.
-                let instructions = slash_command_args(&turn.model).trim();
-                self.start_compact(
-                    agent,
-                    super::compact_work::CompactFollowUp::None,
-                    (!instructions.is_empty()).then(|| instructions.to_owned()),
-                )
-            }
             CommandId::Copy => self.execute_copy_command(),
-            CommandId::Hooks => self.execute_hooks_command(agent),
+            CommandId::Hooks => self.execute_hooks_command(),
             CommandId::Skills => self.execute_skills_command(),
             CommandId::Theme => self.open_theme_picker(),
             CommandId::Agents => self.execute_agents_command(),
-            CommandId::CreateAgent => {
-                self.execute_create_agent_command(
-                    &invocation,
-                    turn,
-                    media,
-                    paste_segments,
-                    terminal,
-                    agent,
-                )
-                .await
-            }
             CommandId::Attach => self.execute_attach_command(),
             CommandId::Changelog => self.execute_changelog_command(&invocation, terminal),
             CommandId::Diff => self.execute_diff_command(),
@@ -171,16 +125,20 @@ impl App {
             CommandId::Title => self.execute_title_command(&invocation),
             CommandId::Limits => self.execute_limits_command(terminal),
             CommandId::Spend => self.execute_spend_command(),
-            CommandId::Todo => {
-                if self.info.session.daemon.is_none() {
-                    self.refresh_todo_list(agent);
-                }
-                self.execute_todo_command(terminal)
-            }
-            CommandId::Fast => self.execute_fast_command(invocation, agent),
-            CommandId::RefreshModels => self.execute_refresh_models_command(terminal, agent).await,
+            CommandId::Todo => self.execute_todo_command(terminal),
+            CommandId::RefreshModels => self.execute_refresh_models_command(terminal).await,
             CommandId::Workflow => self.execute_workflow_command(terminal).await,
             CommandId::Side => self.execute_side_command(invocation).await,
+            CommandId::Model
+            | CommandId::Permissions
+            | CommandId::Fast
+            | CommandId::Advisor
+            | CommandId::Codemode
+            | CommandId::Init
+            | CommandId::Compact
+            | CommandId::CreateAgent => {
+                unreachable!("command_route sends /{} to the daemon", invocation.name)
+            }
         }
     }
 
@@ -205,36 +163,16 @@ impl App {
     pub(super) async fn execute_new_command(
         &mut self,
         terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        if self.info.session.daemon.is_some() {
-            match self
-                .switch_daemon_session(super::daemon_launch::DaemonTarget::New, terminal)
-                .await
-            {
-                Ok(()) => self.set_status("new session"),
-                Err(error) => self.insert_entry(&Entry::Error(format!(
-                    "could not start new session: {error:#}"
-                ))),
-            }
-            return Ok(());
+        match self
+            .switch_daemon_session(super::daemon_launch::DaemonTarget::New, terminal)
+            .await
+        {
+            Ok(()) => self.set_status("new session"),
+            Err(error) => self.insert_entry(&Entry::Error(format!(
+                "could not start new session: {error:#}"
+            ))),
         }
-        // Reset refuses to run under compaction, so stop it first.
-        self.abort_compact(agent).await;
-        if let Err(error) = agent.reset() {
-            // The old session is still live: report the failure and keep its
-            // pending work instead of clearing the UI as though one started.
-            self.insert_entry(&Entry::Error(format!(
-                "could not start new session: {error}"
-            )));
-            return Ok(());
-        }
-        self.info.runtime.added_dirs = agent.added_dirs().clone();
-        self.held_turns.clear();
-        self.clear_tool_sources_loading_activity();
-        self.info.session.session_id = None;
-        self.reset_session_view(terminal)?;
-        self.set_status("new session");
         Ok(())
     }
 }

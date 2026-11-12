@@ -169,27 +169,6 @@ fn backspace_removes_the_selected_follow_up() {
     );
 }
 
-#[test]
-fn rejected_steering_acceptance_becomes_a_follow_up_without_failing_the_turn() {
-    let mut app = test_app();
-    let queued = prompt("continue after this turn");
-    let request = PendingInputRequest::Accept {
-        prompt: queued.clone(),
-        receipt: Box::pin(std::future::pending()),
-    };
-    let completion = PendingInputCompletion::Accepted(Err(rho_sdk::Error::RunFinished));
-
-    let failure = app.finish_pending_input_request(request, completion);
-
-    assert_eq!(failure, None);
-    assert!(app.pending.steering_prompts().is_empty());
-    assert_eq!(*app.pending.queued_prompts(), VecDeque::from([queued]));
-    assert_eq!(
-        app.status(),
-        "steer queued as follow-up: run has already finished"
-    );
-}
-
 // Covers: a rejected retraction must wait for SteeringApplied before changing the transcript.
 // Owner: interactive TUI pending-input
 #[test]
@@ -206,16 +185,11 @@ fn already_applied_retraction_keeps_the_live_stream_intact() {
     app.streams.current_stream_kind = Some(StreamKind::Assistant);
     app.streams
         .push_delta(StreamKind::Assistant, "held assistant tail", Instant::now());
-    let request = PendingInputRequest::Retract {
-        action: PendingInputAction::DiscardAccepted { id },
-        receipt: Box::pin(std::future::pending()),
-    };
-    let completion =
-        PendingInputCompletion::Retracted(Ok(rho_sdk::SteeringRetraction::AlreadyApplied));
+    app.finish_steering_retraction(
+        PendingInputAction::DiscardAccepted { id },
+        Ok(rho_sdk::SteeringRetraction::AlreadyApplied),
+    );
 
-    let failure = app.finish_pending_input_request(request, completion);
-
-    assert_eq!(failure, None);
     assert_eq!(app.pending.accepted_steering().len(), 1);
     assert!(app.history.entries().is_empty());
     assert!(!app.streams.hold.is_empty());

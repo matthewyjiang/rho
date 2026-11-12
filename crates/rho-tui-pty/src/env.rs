@@ -298,31 +298,6 @@ impl RhoLaunchPlan {
     }
 }
 
-/// Whether a rho launched with `env` follows a daemon session, as rho
-/// decides it: `RHO_TUI_DAEMON=0` keeps the session in process, `1` puts it
-/// in the daemon, and otherwise the daemon hosts it wherever one runs
-/// (Unix). A later pair wins, as it does when the pairs are applied to the
-/// child in order.
-///
-/// Scenarios that expect different text per host ask this rather than assume
-/// their own host, so they hold on the platform's default and when a run
-/// forces every launch in process (see [`default_clean_env`]).
-pub(crate) fn follows_daemon(env: &[(String, String)]) -> bool {
-    let flag = env
-        .iter()
-        .rev()
-        .find(|(key, _)| key == SESSION_HOST_FLAG)
-        .map(|(_, value)| value.as_str());
-    match flag {
-        Some("0") => false,
-        Some("1") => true,
-        _ => cfg!(unix),
-    }
-}
-
-/// rho's override of where an interactive session runs.
-const SESSION_HOST_FLAG: &str = "RHO_TUI_DAEMON";
-
 /// Baseline env pairs that form the complete child environment for isolated runs.
 pub fn default_clean_env() -> Vec<(String, String)> {
     let mut env = vec![
@@ -346,11 +321,6 @@ pub fn default_clean_env() -> Vec<(String, String)> {
         "LOGNAME",
         "SHELL",
         "XDG_RUNTIME_DIR",
-        // Inherited so one run can put every launch that names no host in
-        // process (`RHO_TUI_DAEMON=0 cargo nextest run ...`), the TUI that
-        // still ships beside the default daemon one. A scenario's own pair
-        // comes later and wins.
-        SESSION_HOST_FLAG,
         // Windows loader, system tools, and executable lookup essentials. Do
         // not inherit USERPROFILE or APPDATA: IsolatedHome::env supplies
         // isolated paths.

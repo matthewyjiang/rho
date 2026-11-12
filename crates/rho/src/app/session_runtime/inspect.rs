@@ -39,8 +39,6 @@ impl SessionRuntime {
                 self.configured_context_window(),
                 &CompactionConfig::from(&config),
             ),
-            // Only the in-process TUI checks while idle.
-            last_idle_check: None,
             last_provider_check: session.last_compaction_decision().map(Into::into),
             last_compaction: self.built.diagnostics.last_compaction(),
         })

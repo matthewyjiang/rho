@@ -56,37 +56,6 @@ pub(super) const WORKFLOW_HUB_PLANNED_RETRY_SCENARIO: Scenario = Scenario::new(
 )
 .with_setup(setup_workflow);
 
-/// The session runs in the daemon, which the TUI follows (#1667).
-const DAEMON_SESSION: &[(&str, &str)] = &[("RHO_TUI_DAEMON", "1")];
-
-// Covers: in a daemon session a turn must end while the workflow it started
-// runs on, and the daemon must start the turn that delivers the result once
-// the run finishes with the session idle.
-// Owner: interactive TUI as a daemon client. `daemon_workflow` starts from
-// the hub alone and never waits for a result to be delivered.
-pub(super) const DAEMON_WORKFLOW_BACKGROUND_SCENARIO: Scenario = Scenario::new(
-    "daemon_workflow_background",
-    "Run real workflow tools in a daemon session, keep live progress, and deliver results to the idle session",
-    DEFAULT_SIZE,
-    WORKFLOW_BACKGROUND_SCENARIO.steps,
-    /*smoke*/ false,
-)
-.with_setup(setup_workflow)
-.with_env(DAEMON_SESSION);
-
-// Covers: in a daemon session a failed background start must report the
-// ready run to the model while idle, and Retry must start it under its id.
-// Owner: interactive TUI as a daemon client.
-pub(super) const DAEMON_WORKFLOW_HUB_PLANNED_RETRY_SCENARIO: Scenario = Scenario::new(
-    "daemon_workflow_hub_planned_retry",
-    "Recover a failed background launch in a daemon session through Retry start",
-    DEFAULT_SIZE,
-    WORKFLOW_HUB_PLANNED_RETRY_SCENARIO.steps,
-    /*smoke*/ false,
-)
-.with_setup(setup_workflow)
-.with_env(DAEMON_SESSION);
-
 pub(super) fn setup_workflow(home: &IsolatedHome) -> Result<()> {
     // A FIFO read blocks in the real command runner until the PTY writes it.
     // No Python, fixture runtime, polling shell, or timing-based release.

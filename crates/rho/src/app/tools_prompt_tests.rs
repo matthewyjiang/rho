@@ -68,7 +68,6 @@ async fn assemble_awaiting_catalog(
     let diagnostics = RuntimeDiagnostics::new(config);
     let agent = bound_agent(config);
     let assembled = assemble_tools_and_prompt(ToolsAndPromptOptions {
-        catalog: None,
         config,
         config_path: cwd.join("config.toml"),
         cwd,
@@ -77,7 +76,6 @@ async fn assemble_awaiting_catalog(
         no_subagents: true,
         questionnaire_enabled: false,
         mcp_elicitation: crate::tools::mcp::McpElicitationSupport::Unavailable,
-        mcp_sampling: super::McpSamplingSupport::Unavailable,
         tool_source_attach: super::ToolSourceAttach::Connect,
         mcp_authorization: crate::tools::mcp::McpAuthorizationMode::NonInteractive,
         await_catalog_names,
@@ -143,7 +141,6 @@ async fn the_advisor_receives_the_executor_system_prompt() {
     let agent = bound_agent(&config);
 
     let assembled = assemble_tools_and_prompt(ToolsAndPromptOptions {
-        catalog: None,
         config: &config,
         config_path: cwd.path().join("config.toml"),
         cwd: cwd.path(),
@@ -152,7 +149,6 @@ async fn the_advisor_receives_the_executor_system_prompt() {
         no_subagents: true,
         questionnaire_enabled: false,
         mcp_elicitation: crate::tools::mcp::McpElicitationSupport::Unavailable,
-        mcp_sampling: super::McpSamplingSupport::Unavailable,
         tool_source_attach: super::ToolSourceAttach::Connect,
         mcp_authorization: crate::tools::mcp::McpAuthorizationMode::NonInteractive,
         await_catalog_names: false,
@@ -266,7 +262,6 @@ async fn deferred_mcp_connect_returns_pending_inventory_without_waiting() {
     let assembled = tokio::time::timeout(
         std::time::Duration::from_millis(500),
         assemble_tools_and_prompt(ToolsAndPromptOptions {
-            catalog: None,
             config: &config,
             config_path: cwd.path().join("config.toml"),
             cwd: cwd.path(),
@@ -275,7 +270,6 @@ async fn deferred_mcp_connect_returns_pending_inventory_without_waiting() {
             no_subagents: true,
             questionnaire_enabled: false,
             mcp_elicitation: crate::tools::mcp::McpElicitationSupport::Unavailable,
-            mcp_sampling: super::McpSamplingSupport::Unavailable,
             tool_source_attach: super::ToolSourceAttach::Connect,
             mcp_authorization: crate::tools::mcp::McpAuthorizationMode::NonInteractive,
             await_catalog_names: false,
@@ -293,8 +287,8 @@ async fn deferred_mcp_connect_returns_pending_inventory_without_waiting() {
     .unwrap();
     assert_eq!(
         assembled
-            .inventory
-            .mcp
+            .tools
+            .mcp_report()
             .find("slow")
             .map(|server| server.status()),
         Some(McpServerStatus::Connecting)
@@ -329,7 +323,6 @@ auth = { type = "bearer", token_env = "TOKEN" }"#,
     let diagnostics = RuntimeDiagnostics::new(&config);
     let agent = bound_agent(&config);
     let assembled = assemble_tools_and_prompt(ToolsAndPromptOptions {
-        catalog: None,
         config: &config,
         config_path: cwd.path().join("config.toml"),
         cwd: cwd.path(),
@@ -338,7 +331,6 @@ auth = { type = "bearer", token_env = "TOKEN" }"#,
         no_subagents: true,
         questionnaire_enabled: false,
         mcp_elicitation: crate::tools::mcp::McpElicitationSupport::Unavailable,
-        mcp_sampling: super::McpSamplingSupport::Unavailable,
         tool_source_attach: super::ToolSourceAttach::Connect,
         mcp_authorization: crate::tools::mcp::McpAuthorizationMode::NonInteractive,
         await_catalog_names: false,

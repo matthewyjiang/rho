@@ -210,7 +210,7 @@ impl StatusLine {
         }
     }
 
-    /// Updates the model chrome from the in-process runtime. Reasoning
+    /// Updates the model chrome from the model view. Reasoning
     /// capability is read from the model catalog only when the model view
     /// changed, not on every frame.
     pub(super) fn update_model(&mut self, info: &RuntimeModelView) {

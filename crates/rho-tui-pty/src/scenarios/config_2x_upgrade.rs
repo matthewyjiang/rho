@@ -97,7 +97,7 @@ const STEPS: &[Step] = &[
 // Covers: a 2.x config.toml does not stop startup, and the display and
 // keybinding keys it held still apply from their 3.0 files.
 // Owner: interactive startup
-pub(super) const IN_PROCESS: Scenario = Scenario::new(
+pub(super) const SCENARIO: Scenario = Scenario::new(
     "config_2x_upgrade",
     "Start on a 2.x config.toml and keep its display and keybinding settings",
     DEFAULT_SIZE,
@@ -106,14 +106,3 @@ pub(super) const IN_PROCESS: Scenario = Scenario::new(
 )
 .with_setup(write_2x_home)
 .with_env(OPENAI_KEY_ENV);
-
-// Covers: the same 2.x home serves a daemon session, so the daemon the TUI
-// starts loads the rewritten config.toml and the moved client settings.
-// Owner: interactive TUI as a daemon client
-#[cfg(unix)]
-pub(super) const DAEMON: Scenario = Scenario {
-    id: "daemon_config_2x_upgrade",
-    description: "Start a daemon session on a 2.x config.toml",
-    env: super::daemon_resume::DAEMON_ENV,
-    ..IN_PROCESS
-};

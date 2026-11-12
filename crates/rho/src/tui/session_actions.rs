@@ -2,36 +2,27 @@ use crate::tui::DefaultTerminal;
 
 use super::{
     session_picker, App, CommandInvocation, ComposerMode, Entry, InlineChoice, InlineChoiceOption,
-    InlineChoicePending, InteractiveRuntime, Session,
+    InlineChoicePending, Session,
 };
-use crate::session::{
-    is_cross_project, SessionHistories, SessionListing, SessionSummary, SessionTarget,
-};
+use crate::session::{is_cross_project, SessionListing, SessionSummary, SessionTarget};
 
 impl App {
-    /// The id the followed session is saved under, once it is: the daemon's
-    /// when it holds the session, else this process's.
+    /// The id the followed session is saved under, once it is.
     pub(super) fn current_session_id(&self) -> Option<String> {
-        match &self.info.session.daemon {
-            Some(daemon) => daemon.saved_id().map(str::to_owned),
-            None => self.info.session.session_id.clone(),
-        }
+        self.info.session.daemon.saved_id().map(str::to_owned)
     }
 
     pub(super) async fn execute_resume_command(
         &mut self,
         invocation: CommandInvocation,
         terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         if self.info.session.no_save {
             return self.open_resume_picker();
         }
         let session_id = invocation.args.trim();
         if !session_id.is_empty() {
-            return self
-                .submit_resume_selection(session_id, terminal, agent)
-                .await;
+            return self.submit_resume_selection(session_id, terminal).await;
         }
 
         self.open_resume_picker()
@@ -134,9 +125,8 @@ impl App {
         &mut self,
         session_id: &str,
         terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        match self.resume_session_by_id(session_id, terminal, agent).await {
+        match self.resume_session_by_id(session_id, terminal).await {
             Ok(()) => Ok(()),
             Err(err) => {
                 self.report_resume_error(err);
@@ -149,9 +139,8 @@ impl App {
         &mut self,
         target: &SessionTarget,
         terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        match self.resume_session_target(target, terminal, agent).await {
+        match self.resume_session_target(target, terminal).await {
             Ok(()) => Ok(()),
             Err(err) => {
                 self.report_resume_error(err);
@@ -167,39 +156,28 @@ impl App {
         self.set_status("resume failed");
     }
 
+    /// The daemon reopens the session, as the agent it was saved as, and
+    /// says on its next turn when its model or prompt changed.
     async fn resume_session_by_id(
         &mut self,
         session_id: &str,
         terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         self.ensure_resume_saves()?;
-        if self.info.session.daemon.is_some() {
-            // The daemon reopens it, as the agent it was saved as, and
-            // says on its next turn when its model or prompt changed.
-            return self.resume_daemon_session(session_id, terminal).await;
-        }
-        let opened = Session::open_by_id_with_histories(&self.info.runtime.cwd, session_id)?;
-        self.resume_opened_session(opened, terminal, agent).await
+        self.resume_daemon_session(session_id, terminal).await
     }
 
     async fn resume_session_target(
         &mut self,
         target: &SessionTarget,
         terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         self.ensure_resume_saves()?;
         self.ensure_this_project(&target.cwd)?;
-        if self.info.session.daemon.is_some() {
-            return self.resume_daemon_session(&target.id, terminal).await;
-        }
-        let opened = Session::open_target_with_histories(target)?;
-        self.resume_opened_session(opened, terminal, agent).await
+        self.resume_daemon_session(&target.id, terminal).await
     }
 
-    // Checked before opening, which locks the session against other Rho
-    // processes, so a refused resume never holds that lock.
+    // Checked before the daemon opens the session.
     fn ensure_resume_saves(&self) -> anyhow::Result<()> {
         anyhow::ensure!(
             !self.info.session.no_save,
@@ -214,51 +192,6 @@ impl App {
             "start Rho in {} to resume this session",
             crate::paths::display(session_cwd)
         );
-        Ok(())
-    }
-
-    async fn resume_opened_session(
-        &mut self,
-        (session, histories): (Session, SessionHistories),
-        terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<()> {
-        // An id lookup can find a session saved under another project.
-        self.ensure_this_project(session.cwd())?;
-        session.validate_agent_definition_identity(agent.bound_definition())?;
-
-        if self.offer_resume_context_handoff(
-            &session,
-            &histories.model,
-            &histories.display,
-            agent,
-        )? {
-            return Ok(());
-        }
-
-        self.apply_resume_session(session, histories.display, terminal, agent)
-            .await
-    }
-}
-
-impl App {
-    pub(super) fn ensure_session(&mut self, agent: &mut InteractiveRuntime) -> anyhow::Result<()> {
-        if self.info.session.no_save {
-            return Ok(());
-        }
-        if self.info.session.session_id.is_none() {
-            let session_id = agent.session_id().to_string();
-            let (agent_id, agent_fingerprint) = agent.agent_identity();
-            let session = Session::create_with_id(
-                &self.info.runtime.cwd,
-                &session_id,
-                agent_id,
-                agent_fingerprint,
-                crate::session::SessionOrigin::Interactive.into(),
-            )?;
-            self.info.session.session_id = Some(session_id);
-            agent.attach_storage(session);
-        }
         Ok(())
     }
 }

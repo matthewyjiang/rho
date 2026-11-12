@@ -1,6 +1,6 @@
 //! Covers: a workflow that finishes during a model call must keep its row on
 //! the rail until the session is given the run's result, and the row must
-//! leave with it, in process and in a daemon session alike.
+//! leave with it.
 //! Owner: interactive workflow rail. `workflow_background` releases its runs
 //! with the session idle, where the result arrives at once, so a row that
 //! leaves as its run ends looks the same there.
@@ -38,16 +38,6 @@ pub(super) const SCENARIO: Scenario = Scenario::new(
 )
 .with_setup(setup_workflow);
 
-pub(super) const DAEMON_SCENARIO: Scenario = Scenario::new(
-    "daemon_workflow_result_rail",
-    "Keep a daemon session's finished workflow on the rail while its result waits for a busy turn",
-    DEFAULT_SIZE,
-    SCENARIO.steps,
-    /*smoke*/ false,
-)
-.with_setup(setup_workflow)
-.with_env(&[("RHO_TUI_DAEMON", "1")]);
-
 fn finished_row_waits_for_its_result(harness: &mut PtyHarness) -> Result<()> {
     harness.set_phase("start_background_run");
     harness.submit_text("fixture workflow background")?;
@@ -77,13 +67,7 @@ fn finished_row_waits_for_its_result(harness: &mut PtyHarness) -> Result<()> {
         b"release",
     )?;
     harness.wait_for_text_gone("└ workflow pty-background", STREAM)?;
-    // In process the result joins the turn under way, whose reply quotes
-    // it; the daemon gives it to the idle session in a turn of its own.
-    let delivered = if harness.follows_daemon() {
-        RESULT
-    } else {
-        "[workflow notification]"
-    };
-    harness.wait_for_text(delivered, STREAM)?;
-    wait_for_turn_completion_after(harness, delivered)
+    // The daemon gives the result to the idle session in a turn of its own.
+    harness.wait_for_text(RESULT, STREAM)?;
+    wait_for_turn_completion_after(harness, RESULT)
 }

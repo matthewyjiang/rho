@@ -4,7 +4,6 @@ use std::collections::BTreeMap;
 
 use rho_sdk::{
     CancellationToken, Error, HostInputId, HostInputRefusal, HostInputRequest, HostInputResponse,
-    SessionId,
 };
 use tokio::sync::{mpsc, oneshot};
 
@@ -18,14 +17,13 @@ const HOST_INPUT_QUEUE_CAPACITY: usize = 32;
 pub(crate) struct SubagentHostInputRequest {
     pub(crate) run_id: String,
     pub(crate) agent_id: String,
-    pub(crate) parent_session_id: SessionId,
     pub(crate) request: HostInputRequest,
     pub(crate) response: oneshot::Sender<Result<HostInputResponse, Error>>,
 }
 
 /// The questionnaires a host took from subagents and has not answered,
-/// with what it tells the person about each, worded as the in-process TUI
-/// words it. Dropping one tells its subagent nobody will answer.
+/// with what it tells the person about each. Dropping one tells its
+/// subagent nobody will answer.
 #[derive(Default)]
 pub(crate) struct OpenChildQuestions(BTreeMap<HostInputId, OpenChildQuestion>);
 
@@ -42,7 +40,6 @@ impl OpenChildQuestions {
         let SubagentHostInputRequest {
             run_id,
             agent_id,
-            parent_session_id: _,
             request,
             response,
         } = asked;
@@ -156,7 +153,6 @@ impl SubagentHostInputBridge {
         &self,
         run_id: impl Into<String>,
         agent_id: impl Into<String>,
-        parent_session_id: SessionId,
         request: HostInputRequest,
         cancellation: &CancellationToken,
     ) -> Result<HostInputResponse, Error> {
@@ -172,7 +168,6 @@ impl SubagentHostInputBridge {
         let pending = SubagentHostInputRequest {
             run_id: run_id.into(),
             agent_id: agent_id.into(),
-            parent_session_id,
             request,
             response: response_tx,
         };

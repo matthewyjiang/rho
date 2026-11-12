@@ -1,12 +1,9 @@
 //! `behavior.keep_cache_warm`: a `process start` that asked for `keep_warm`
-//! holds the provider prompt cache, and the session's host pings it while
-//! the session idles. Each scenario runs in process and with
-//! `RHO_TUI_DAEMON=1`, where the daemon's session owns the warming.
+//! holds the provider prompt cache, and the daemon's session pings it while
+//! the session idles.
 
 use anyhow::Result;
 
-#[cfg(unix)]
-use super::daemon_resume::DAEMON_ENV;
 use super::{DEFAULT_SIZE, SETTLE, STARTUP, STREAM};
 use crate::{
     env::IsolatedHome,
@@ -119,19 +116,3 @@ pub(super) const KEEP_WARM_OFF_SCENARIO: Scenario = Scenario::new(
     /*smoke*/ false,
 )
 .with_setup(setting_off);
-
-#[cfg(unix)]
-pub(super) const DAEMON_KEEP_WARM_PINGS_SCENARIO: Scenario = Scenario {
-    id: "daemon_keep_warm_pings",
-    description: "Ping a daemon session's prompt cache, stop on a miss, and total the spend",
-    env: DAEMON_ENV,
-    ..KEEP_WARM_PINGS_SCENARIO
-};
-
-#[cfg(unix)]
-pub(super) const DAEMON_KEEP_WARM_OFF_SCENARIO: Scenario = Scenario {
-    id: "daemon_keep_warm_off",
-    description: "Offer a daemon session no keep_warm when keep_cache_warm is off",
-    env: DAEMON_ENV,
-    ..KEEP_WARM_OFF_SCENARIO
-};

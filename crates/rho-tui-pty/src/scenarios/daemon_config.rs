@@ -12,7 +12,6 @@ use crate::{
 };
 
 const ENV: &[(&str, &str)] = &[
-    ("RHO_TUI_DAEMON", "1"),
     ("OPENAI_API_KEY", "sk-test-matrix"),
     ("XAI_API_KEY", "fixture-xai-key"),
 ];

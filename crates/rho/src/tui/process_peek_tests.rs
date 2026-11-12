@@ -100,18 +100,18 @@ fn daemon_answers_extend_the_output_held() {
                 .map(|chunk| chunk.cursor)
                 .collect::<Vec<_>>(),
             snapshot.truncated,
-            view.daemon_cursor().map(|(_, cursor)| cursor),
+            view.daemon_cursor().1,
         )
     };
 
     view.extend(daemon_answer(0, 3, &[0, 1, 2]));
-    assert_eq!(held(&view), (vec![0, 1, 2], false, Some(3)));
+    assert_eq!(held(&view), (vec![0, 1, 2], false, 3));
 
     // Nothing new: the chunks held stay.
     view.extend(daemon_answer(0, 3, &[]));
-    assert_eq!(held(&view), (vec![0, 1, 2], false, Some(3)));
+    assert_eq!(held(&view), (vec![0, 1, 2], false, 3));
 
     // The daemon evicted 0 and 1 and read two more.
     view.extend(daemon_answer(2, 5, &[3, 4]));
-    assert_eq!(held(&view), (vec![2, 3, 4], true, Some(5)));
+    assert_eq!(held(&view), (vec![2, 3, 4], true, 5));
 }

@@ -107,9 +107,7 @@ impl App {
         let (label, context, prompt, label_style) = match item {
             PendingInputRef::AcceptedSteering(index) => {
                 let entry = &self.pending.accepted_steering()[index];
-                let context = if self.pending.retracting_steering() == Some(&entry.id) {
-                    "retracting"
-                } else if entry.delivered {
+                let context = if entry.delivered {
                     "delivered"
                 } else {
                     "current run"
@@ -129,11 +127,7 @@ impl App {
             ),
             PendingInputRef::FollowUp(index) => (
                 "NEXT",
-                if self.turn.is_compacting() {
-                    "after compact"
-                } else {
-                    "after turn"
-                },
+                "after turn",
                 &self.pending.queued_prompts()[index].display_prompt,
                 Theme::accent(),
             ),

@@ -4,11 +4,13 @@ Rho can connect native agents to ordinary [Model Context Protocol (MCP)](https:/
 
 ## Configuration source and precedence
 
-Add servers under `[mcp.servers]` in Rho's config file. Rho reads `~/.rho/config.toml` by default. To keep project MCP settings with a project, select that file through the existing config override:
+Add servers under `[mcp.servers]` in Rho's config file. Rho reads `~/.rho/config.toml` by default. To keep project MCP settings with a project, select that file through the existing config override on a command that runs on its own, such as `rho run`:
 
 ```bash
-rho --config .rho/config.toml
+rho --config .rho/config.toml run "..."
 ```
+
+The interactive TUI refuses `--config`, because its session runs in the [daemon](/daemon#daemon-backed-tui), which reads the config in its Rho home. Set `RHO_HOME` to run a daemon on another home.
 
 An explicit `--config` file replaces the default user config. Rho does not merge the two files. The selected file is the only ordinary MCP configuration source for that run. Plugin packages contribute servers separately through [Agent Plugins](/integrations/plugins); they merge with the servers below at session start.
 
@@ -120,7 +122,7 @@ Rho identifies itself in `initialize` as `rho` with the running version, and dec
 
 - `roots`: Rho advertises the session workspace as one `file://` root. The declaration sets `listChanged: false`, because a session's workspace never changes and Rho would never send the notification.
 - `elicitation`: declared only in a run that can put a question in front of a person, and only in form mode with `schemaValidation: false`. See [Questions from a server](#questions-from-a-server).
-- `sampling`: declared only to a server that opted in with `sampling = "ask"`, and only in a run that has a model to spend. See [Completions for a server](#completions-for-a-server).
+- `sampling`: not declared. See [Completions for a server](#completions-for-a-server).
 
 Rho never declares a capability it would then always refuse. A run that cannot show a questionnaire, such as `rho mcp list --connect` or an automation run started without a host-input responder, declares no `elicitation`, so a well-behaved server never asks.
 
@@ -336,31 +338,9 @@ While a form is open, the tool call's two-minute budget is paused. The budget ex
 
 ## Completions for a server
 
-A server may ask Rho's model to write something with `sampling/createMessage`. This spends the user's tokens on work the user did not ask for, so it is behind **two independent gates that both have to open**.
+Rho does not answer `sampling/createMessage`. It declares no `sampling` capability to any server and rejects the request as method not found.
 
-**Gate one, config.** The server opts in per entry. The default is `deny`, and a server left at the default never sees `sampling` in Rho's declared capabilities:
-
-```toml
-[mcp.servers.reviewer]
-transport = "stdio"
-command = "reviewer-mcp"
-sampling = "ask"
-```
-
-Plugin-provided servers cannot opt themselves in; only the selected config file can.
-
-**Gate two, the user.** Every individual request still raises a question naming the server, the number of messages, and the token ceiling it asked for. A refusal rejects the request and no model call happens. The gate is a question rather than a permission prompt on purpose: Rho's default `bypass` permission mode allows every capability by policy, so an approval prompt would never reach a person there, and token spend a server asked for is not something that mode ever opted into.
-
-Sampling is routed to the in-flight tool call the same way elicitation is, and refuses under the same rules: no call in flight, or more than one, and the request is rejected. A run with no model bound, such as `rho run` or `rho mcp list --connect`, rejects every sampling request and declares no `sampling` capability. Sampling spend is recorded in the usage ledger under the `mcp_sampling` purpose, so it is attributable apart from the user's own turns.
-
-**Fidelity limits.**
-
-- **`modelPreferences` is ignored.** The provider, model, and credentials are the user's configuration. Letting a server steer them would let it choose which of the user's accounts pays and which model sees the prompt. Rho always uses the session's current model and reports its name in the result.
-- **The conversation is flattened.** Rho's one-shot path takes a system prompt and one user turn, so a multi-turn sampling conversation is rendered as labelled text. Non-text blocks are named but not sent; Rho does not forward a server's images or tool results into the user's model.
-- **`maxTokens` is not enforced.** Rho shows the requested ceiling in the confirmation but has no per-request token cap to apply.
-- **`includeContext`, `temperature`, `stopSequences`, `tools`, and `toolChoice` are not honored.** Rho declares no sampling sub-capabilities, so a server should not expect them.
-
-A sampling call is bounded at three minutes. Cancelling the turn cancels it.
+The per-server `sampling` config key (`"deny"` by default, or `"ask"`) is still read, so a config that sets it loads, but it has no effect. Rho 2.x answered sampling requests from the session that ran inside the TUI's own process. Sessions now run in the [daemon](/daemon), which does not answer them.
 
 ## Inspect status
 

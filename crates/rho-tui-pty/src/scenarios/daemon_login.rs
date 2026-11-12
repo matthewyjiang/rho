@@ -65,7 +65,6 @@ pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
     write_daemon_config(&home)?;
     let plan = RhoLaunchPlan::matrix(&runner.binary, &home, DEFAULT_SIZE)
         .with_env("OPENAI_API_KEY", "sk-test-matrix")
-        .with_env("RHO_TUI_DAEMON", "1")
         // The offline login the daemon serves for `xai-oauth`.
         .with_env("RHO_AUTOMATION_TEST_LOGIN", "1")
         // A remote shell: the TUI shows the login's URL and opens no browser.

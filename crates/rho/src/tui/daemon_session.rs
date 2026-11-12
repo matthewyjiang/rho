@@ -1,5 +1,4 @@
-//! The daemon session the TUI follows instead of running one in process
-//! (#1667, the default; see `app/interactive.rs`).
+//! The daemon session the TUI follows (#1667; see `app/interactive.rs`).
 //!
 //! [`DaemonSession::open`] opens or resumes the session on a daemon
 //! connection of its own (`app::daemon_client`, which starts the daemon
@@ -77,15 +76,6 @@ use initial_settings::{carry, changes_between, configure_all, Refused};
 pub(in crate::tui) use mcp::DaemonMcp;
 use relink::{Reattach, Reattached, Relink, Relinked};
 use tool_sources::ToolSources;
-
-/// What the followed session changed since the last call, waiting until it
-/// changes; never ready without a session.
-pub(super) async fn next_views(session: &mut Option<DaemonSession>) -> Vec<DaemonView> {
-    match session {
-        Some(session) => session.next_views().await,
-        None => std::future::pending().await,
-    }
-}
 
 const LOST: &str = "lost the connection to the rho daemon";
 
@@ -311,6 +301,54 @@ impl DaemonSession {
                 .carry(change)?;
         }
         Ok(session)
+    }
+
+    /// A session whose attachment has already ended, for tests that need an
+    /// app but no daemon: it never connects, sends no views, and its
+    /// requests fail.
+    #[cfg(test)]
+    pub(in crate::tui) fn ended_for_tests(cwd: PathBuf) -> Self {
+        use rho_protocol::Replay;
+
+        let response = crate::app::daemon_client::test_support::attach_response(
+            Replay::Reset,
+            /*replay_events*/ 0,
+            JobState::Idle,
+            /*turn*/ None,
+        );
+        Self {
+            position: StreamPosition::attached(&response),
+            daemon: Arc::new(Daemon::for_frontend()),
+            id: SessionId::new("test-session"),
+            saved: false,
+            keeps_file: true,
+            launch: DaemonLaunch {
+                cwd: cwd.clone(),
+                agent: None,
+                setup: rho_protocol::SessionSetup::default(),
+            },
+            opened: None,
+            workspace: cwd,
+            routed: mpsc::unbounded_channel().1,
+            config_changes: mpsc::unbounded_channel().1,
+            target: watch::channel(Target::Ended).0,
+            options: None,
+            events: DaemonEvents::default(),
+            pending: Vec::new(),
+            ended: true,
+            requests: None,
+            reattach: None,
+            logins: None,
+            tool_sources: ToolSources::Loaded,
+            tool_source_watch: None,
+        }
+    }
+
+    /// This session, as one the daemon has saved.
+    #[cfg(test)]
+    pub(in crate::tui) fn saved_for_tests(mut self) -> Self {
+        self.saved = true;
+        self
     }
 
     /// Opens `target` on a connection of its own, to follow in this

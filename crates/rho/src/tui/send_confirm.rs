@@ -1,33 +1,27 @@
 //! Confirm a send when the conversation carries provider-native context the
 //! active model cannot use.
 //!
-//! A [`SendSubmission`] owns the exact provider-starting work while it moves
-//! through confirmation and optional compaction. Approval is scoped to that
-//! value and the model identity shown by the confirmation. The only state a
-//! later send can consume is an explicit "Send for this session"
-//! acknowledgement, which [`SendOmissions::covers`] scopes to one session,
-//! one target model, and the exact native blocks the user was warned about.
+//! A [`SendSubmission`] owns the exact prompt while it moves through
+//! confirmation and optional compaction. Approval is scoped to that value
+//! and the model identity shown by the confirmation. The only state a later
+//! send can consume is an explicit "Send for this session" acknowledgement,
+//! which [`SendOmissions::covers`] scopes to one session, one target model,
+//! and the exact native blocks the user was warned about.
 //!
-//! A daemon session holds its own conversation, so its sends pass the gate
-//! in [`daemon`], on what the daemon reports.
+//! The daemon session holds the conversation, so sends pass the gate in
+//! [`daemon`], on what the daemon reports.
 
 use std::collections::BTreeSet;
 
-use crate::app::provider_context_report::block_fingerprint;
 use crate::tui::DefaultTerminal;
-use rho_providers::model::Message;
-use rho_sdk::model::{
-    handoff::{self, HandoffReport},
-    ModelIdentity,
-};
+use rho_sdk::model::{handoff::HandoffReport, ModelIdentity};
 use rho_sdk::SessionId;
 
 mod daemon;
 
 use super::{
-    subagent_delivery::TurnBoundaryDelivery, App, ChatMedia, ComposerMode, Entry, InlineChoice,
-    InlineChoiceModal, InlineChoiceOption, InlineChoicePending, InteractiveRuntime, PasteSegment,
-    TurnPrompt,
+    App, ChatMedia, ComposerMode, InlineChoice, InlineChoiceModal, InlineChoiceOption,
+    InlineChoicePending, PasteSegment, TurnPrompt,
 };
 
 pub(super) const ACTION_SEND: &str = "send";
@@ -47,24 +41,6 @@ pub(super) struct SendOmissions {
 }
 
 impl SendOmissions {
-    fn new(session_id: SessionId, target: ModelIdentity, history: &[Message]) -> Self {
-        let blocks = handoff::omitted_message_context(history, &target)
-            .map(block_fingerprint)
-            .collect();
-        Self {
-            session_id,
-            target,
-            blocks,
-        }
-    }
-
-    /// Whether this send must ask: some block is omitted and no session
-    /// acknowledgement covers the omissions.
-    fn needs_confirmation(&self, acknowledged: Option<&Self>) -> bool {
-        !self.blocks.is_empty()
-            && !acknowledged.is_some_and(|acknowledged| acknowledged.covers(self))
-    }
-
     /// Whether consent to omit `self` also covers `current`: the same session
     /// and target, and no omitted block the user was not already warned about.
     /// Compaction only drops blocks, so it never invalidates consent.
@@ -75,42 +51,16 @@ impl SendOmissions {
     }
 }
 
-pub(super) enum SendPayload {
-    Turn {
-        turn: TurnPrompt,
-        media: Vec<ChatMedia>,
-        paste_segments: Vec<PasteSegment>,
-    },
-    TurnBoundary(TurnBoundaryDelivery),
-}
-
-#[derive(Clone, Copy)]
-enum CancellationSource {
-    DirectConfirmation,
-    Compact,
-}
-
-/// Move-only provider work plus authorization for one exact model identity.
+/// A prompt on its way to the session, plus the model identity a
+/// confirmation approved it for.
 pub(super) struct SendSubmission {
-    payload: SendPayload,
+    turn: TurnPrompt,
+    media: Vec<ChatMedia>,
+    paste_segments: Vec<PasteSegment>,
     approved_for: Option<ModelIdentity>,
-    allow_auto_compact: bool,
-    /// Consent given for this prompt before a daemon session compacted for
-    /// it; see [`daemon`].
+    /// Consent given for this prompt before the session compacted for it;
+    /// see [`daemon`].
     compact_consent: Option<SendOmissions>,
-}
-
-/// A submission released by the omission gate. Keeping this wrapper distinct
-/// makes all provider-starting APIs require proof of the centralized policy.
-pub(super) struct AuthorizedSendSubmission(SendSubmission);
-
-/// Proof that omission policy admitted a provider start for one identity.
-pub(super) struct SendAuthorization(ModelIdentity);
-
-impl SendAuthorization {
-    pub(super) fn matches(&self, identity: &ModelIdentity) -> bool {
-        &self.0 == identity
-    }
 }
 
 impl SendSubmission {
@@ -120,22 +70,10 @@ impl SendSubmission {
         paste_segments: Vec<PasteSegment>,
     ) -> Self {
         Self {
-            payload: SendPayload::Turn {
-                turn,
-                media,
-                paste_segments,
-            },
+            turn,
+            media,
+            paste_segments,
             approved_for: None,
-            allow_auto_compact: true,
-            compact_consent: None,
-        }
-    }
-
-    pub(super) fn turn_boundary(delivery: TurnBoundaryDelivery) -> Self {
-        Self {
-            payload: SendPayload::TurnBoundary(delivery),
-            approved_for: None,
-            allow_auto_compact: false,
             compact_consent: None,
         }
     }
@@ -147,43 +85,6 @@ impl SendSubmission {
 
     fn is_approved_for(&self, identity: &ModelIdentity) -> bool {
         self.approved_for.as_ref() == Some(identity)
-    }
-
-    fn after_compact(mut self) -> Self {
-        self.allow_auto_compact = false;
-        self
-    }
-
-    /// The work itself, for a cancellation to put back or a daemon session
-    /// to send: neither starts a provider in this process.
-    fn into_payload(self) -> SendPayload {
-        self.payload
-    }
-
-    #[cfg(test)]
-    pub(super) fn allows_auto_compact(&self) -> bool {
-        self.allow_auto_compact
-    }
-
-    #[cfg(test)]
-    pub(super) fn turn_display(&self) -> Option<&str> {
-        match &self.payload {
-            SendPayload::Turn { turn, .. } => Some(&turn.display),
-            SendPayload::TurnBoundary(_) => None,
-        }
-    }
-}
-
-impl AuthorizedSendSubmission {
-    pub(super) fn into_authorized(self) -> (SendPayload, SendAuthorization, bool) {
-        let SendSubmission {
-            payload,
-            approved_for,
-            allow_auto_compact,
-            compact_consent: _,
-        } = self.0;
-        let identity = approved_for.expect("the omission gate always records its identity");
-        (payload, SendAuthorization(identity), allow_auto_compact)
     }
 }
 
@@ -203,25 +104,6 @@ impl std::fmt::Debug for PendingConfirmSend {
             .field("target", &self.omissions.target)
             .field("can_compact", &self.can_compact)
             .finish_non_exhaustive()
-    }
-}
-
-#[cfg(test)]
-impl PendingConfirmSend {
-    pub(super) fn for_test() -> Self {
-        Self {
-            submission: SendSubmission::turn(
-                TurnPrompt::standard("model body".into(), "display body".into()),
-                Vec::new(),
-                Vec::new(),
-            ),
-            omissions: SendOmissions::new(
-                SessionId::new(),
-                ModelIdentity::new("openai", "responses", "gpt-5"),
-                &[],
-            ),
-            can_compact: false,
-        }
     }
 }
 
@@ -283,38 +165,6 @@ fn confirm_send_choice(
 }
 
 impl App {
-    /// The single omission-policy gate for every provider-starting main-session
-    /// turn. Returns ownership only when no confirmation is needed, this exact
-    /// submission was approved for the still-active model identity, or a
-    /// session acknowledgement covers the current omissions.
-    pub(super) fn gate_send(
-        &mut self,
-        submission: SendSubmission,
-        agent: &mut InteractiveRuntime,
-    ) -> Option<AuthorizedSendSubmission> {
-        let target_identity = agent.provider_identity();
-        if submission.is_approved_for(&target_identity) {
-            return Some(AuthorizedSendSubmission(submission));
-        }
-        let history = agent.history();
-        let omissions = SendOmissions::new(agent.session_id().clone(), target_identity, &history);
-        if !omissions.needs_confirmation(self.acknowledged_send_omissions.as_ref()) {
-            return Some(AuthorizedSendSubmission(
-                submission.approve_for(omissions.target),
-            ));
-        }
-        let report = handoff::report_message_omissions(&history, &omissions.target);
-        self.confirm_send(
-            PendingConfirmSend {
-                submission,
-                omissions,
-                can_compact: agent.can_compact(),
-            },
-            &report,
-        );
-        None
-    }
-
     /// Opens the confirmation that owns `pending` until the person answers
     /// it; `report` is what it says the model will not receive.
     fn confirm_send(&mut self, pending: PendingConfirmSend, report: &HandoffReport) {
@@ -343,7 +193,6 @@ impl App {
         value: Option<&str>,
         pending: PendingConfirmSend,
         terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let PendingConfirmSend {
             submission,
@@ -352,146 +201,27 @@ impl App {
         } = pending;
         match value {
             Some(ACTION_SEND) => {
-                self.start_approved_submission(
-                    submission.approve_for(omissions.target),
-                    terminal,
-                    agent,
-                )
-                .await?;
+                self.submit_daemon_submission(submission.approve_for(omissions.target), terminal)
+                    .await?;
             }
             Some(ACTION_SEND_SESSION) => {
                 let submission = submission.approve_for(omissions.target.clone());
                 self.acknowledged_send_omissions = Some(omissions);
-                self.start_approved_submission(submission, terminal, agent)
-                    .await?;
+                self.submit_daemon_submission(submission, terminal).await?;
             }
-            Some(ACTION_COMPACT_SEND) if can_compact && self.info.session.daemon.is_some() => {
+            Some(ACTION_COMPACT_SEND) if can_compact => {
                 self.compact_then_send_to_daemon(submission, omissions, terminal)
                     .await?;
             }
-            Some(ACTION_COMPACT_SEND) if can_compact => {
-                let submission = submission.approve_for(omissions.target).after_compact();
-                if let Err((err, submission)) = self.start_compact_send(agent, Box::new(submission))
-                {
-                    self.insert_entry(&Entry::Error(format!(
-                        "could not compact before send: {err}"
-                    )));
-                    self.cancel_send_submission(*submission, agent);
-                }
-            }
-            _ => self.cancel_send_submission(submission, agent),
+            _ => self.cancel_send_submission(submission),
         }
         Ok(())
     }
 
-    /// Starts a previously approved continuation. Calling the central gate
-    /// again is intentional: a model change while the modal or compact job was
-    /// active invalidates the old identity-scoped approval.
-    pub(super) async fn start_approved_submission(
-        &mut self,
-        submission: SendSubmission,
-        terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<()> {
-        if self.info.session.daemon.is_some() {
-            return self.submit_daemon_submission(submission, terminal).await;
-        }
-        let Some(submission) = self.gate_send(submission, agent) else {
-            return Ok(());
-        };
-        let (payload, authorization, allow_auto_compact) = submission.into_authorized();
-        match payload {
-            SendPayload::Turn {
-                turn,
-                media,
-                paste_segments,
-            } => {
-                if allow_auto_compact {
-                    self.run_turn_sequence_after_send_gate(
-                        turn,
-                        media,
-                        paste_segments,
-                        authorization,
-                        terminal,
-                        agent,
-                    )
-                    .await
-                } else {
-                    self.run_turn_sequence_without_auto_compact(
-                        turn,
-                        media,
-                        authorization,
-                        terminal,
-                        agent,
-                    )
-                    .await
-                }
-            }
-            SendPayload::TurnBoundary(delivery) => {
-                self.run_turn_boundary_prompt_turn(delivery, authorization, terminal, agent)
-                    .await?;
-                Ok(())
-            }
-        }
-    }
-
-    pub(super) fn cancel_send_submission(
-        &mut self,
-        submission: SendSubmission,
-        agent: &mut InteractiveRuntime,
-    ) {
-        self.cancel_send_submission_from(submission, CancellationSource::DirectConfirmation, agent);
-    }
-
-    pub(super) fn cancel_compact_send_submission(
-        &mut self,
-        submission: SendSubmission,
-        agent: &mut InteractiveRuntime,
-    ) {
-        self.cancel_send_submission_from(submission, CancellationSource::Compact, agent);
-    }
-
-    fn cancel_send_submission_from(
-        &mut self,
-        submission: SendSubmission,
-        source: CancellationSource,
-        agent: &mut InteractiveRuntime,
-    ) {
-        match submission.into_payload() {
-            SendPayload::Turn {
-                turn,
-                media,
-                paste_segments,
-            } => {
-                let prompt = super::QueuedPrompt {
-                    prompt: turn.model,
-                    display_prompt: turn.display,
-                    paste_segments,
-                    media,
-                };
-                self.apply_turn_cancellation(prompt, source);
-            }
-            SendPayload::TurnBoundary(delivery) => {
-                self.restore_turn_boundary_batch(agent, delivery.batch);
-                self.set_status("send cancelled");
-            }
-        }
-    }
-
-    fn apply_turn_cancellation(&mut self, prompt: super::QueuedPrompt, source: CancellationSource) {
-        match source {
-            CancellationSource::DirectConfirmation => self.restore_pending_prompt(prompt),
-            CancellationSource::Compact if self.composer_available_for_pending_edit() => {
-                self.restore_pending_prompt(prompt);
-            }
-            CancellationSource::Compact => {
-                self.pending.push_follow_up_front(prompt);
-                self.pending_input_changed();
-                self.select_pending_recall_target();
-                self.set_status("send cancelled; prompt parked in pending input");
-                return;
-            }
-        }
+    /// Returns a declined prompt to the composer.
+    fn cancel_send_submission(&mut self, submission: SendSubmission) {
+        let (_, prompt) = submission.into_daemon_turn();
+        self.restore_pending_prompt(prompt);
         self.set_status("send cancelled");
     }
 }

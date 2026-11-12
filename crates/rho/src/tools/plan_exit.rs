@@ -1,9 +1,6 @@
 //! Interactive plan approval records intent; the host installs policy after the turn.
 
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc, Mutex,
-};
+use std::sync::{Arc, Mutex};
 
 use rho_sdk::{
     tool::{
@@ -102,25 +99,6 @@ impl PlanExitSlot {
     }
 }
 
-/// The approval prompt an interactive host draws, chosen when it installs
-/// the tool; the tool set builds the matching [`PlanExitPrompt`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum PlanExitHost {
-    Questionnaire,
-    Permission,
-}
-
-/// How the tool puts the approval question to the user.
-pub(crate) enum PlanExitPrompt {
-    /// A decision and optional-feedback questionnaire through the run's host
-    /// input, which the TUI draws.
-    Questionnaire,
-    /// One permission prompt whose options are the approvable modes. ACP
-    /// hosts answer it with `session/request_permission`, which every host
-    /// implements, so the handoff does not depend on form elicitation.
-    Permission(PlanPermissionSender),
-}
-
 /// One plan approval waiting on a permission-prompt host.
 pub(crate) struct PlanPermissionRequest {
     /// The `exit_plan_mode` call, so the host shows the prompt on its card.
@@ -137,8 +115,12 @@ pub(crate) type PlanPermissionReceiver = mpsc::UnboundedReceiver<PlanPermissionR
 
 pub(crate) struct PlanExitTool {
     pub(crate) slot: Option<PlanExitSlot>,
-    pub(crate) prompt: PlanExitPrompt,
-    pub(crate) classifier_configured: Arc<AtomicBool>,
+    /// Where the tool puts its one permission prompt, whose options are the
+    /// approvable modes. ACP hosts answer it with `session/request_permission`,
+    /// which every host implements, so the handoff does not depend on form
+    /// elicitation.
+    pub(crate) permission_requests: PlanPermissionSender,
+    pub(crate) classifier_configured: bool,
 }
 
 /// The modes a plan may be approved into. Auto needs the classifier model,
@@ -197,13 +179,6 @@ fn decision_output(decision: &PlanExitDecision) -> ToolOutput {
             output.push_str(&format!("\n\nUser feedback:\n{feedback}"));
         }
         ToolOutput::text(output)
-    }
-}
-
-fn host_error(error: rho_sdk::Error) -> ToolError {
-    match error {
-        rho_sdk::Error::Cancelled => ToolError::cancelled(),
-        error => ToolError::new(ToolErrorKind::Execution, error.to_string()),
     }
 }
 
@@ -269,24 +244,6 @@ fn decision_question(targets: &[PermissionMode]) -> Result<HostQuestion, rho_sdk
         SelectionMode::One,
     )?
     .with_header("Decision"))
-}
-
-/// Asks the TUI's decision and feedback questionnaire.
-async fn ask_questionnaire(
-    context: &ToolContext,
-    targets: &[PermissionMode],
-) -> Result<PlanExitDecision, ToolError> {
-    let request = questionnaire(
-        targets,
-        "Review the plan in the tool card above. Approval lasts until Rho exits; it is not saved, and the next launch starts in your saved mode.",
-    )
-    .map_err(host_error)?;
-    let response = context
-        .request_host_input(request)
-        .await
-        .map_err(host_error)?;
-    questionnaire_decision(&response, targets)
-        .ok_or_else(|| ToolError::new(ToolErrorKind::Execution, "plan approval answer is missing"))
 }
 
 /// Asks a permission-prompt host, which may answer with feedback.
@@ -364,13 +321,9 @@ impl Tool for PlanExitTool {
             };
             // A revision supersedes earlier intent, even if its new question is cancelled.
             slot.take();
-            let targets = approval_targets(self.classifier_configured.load(Ordering::Relaxed));
-            let decision = match &self.prompt {
-                PlanExitPrompt::Questionnaire => ask_questionnaire(&context, &targets).await?,
-                PlanExitPrompt::Permission(sender) => {
-                    ask_permission(sender, call_id, plan, targets, &context).await?
-                }
-            };
+            let targets = approval_targets(self.classifier_configured);
+            let decision =
+                ask_permission(&self.permission_requests, call_id, plan, targets, &context).await?;
             let output = decision_output(&decision);
             slot.set(decision);
             Ok(output)

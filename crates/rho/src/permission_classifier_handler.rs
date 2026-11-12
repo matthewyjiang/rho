@@ -165,13 +165,6 @@ impl ClassifierApprovalHandler {
         self
     }
 
-    pub(crate) fn update_config(&self, config: Config) {
-        *self
-            .config
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = config;
-    }
-
     /// Clones classifier config for an isolated agent/command run.
     ///
     /// The deny counters reset so concurrent workflow nodes cannot escalate each

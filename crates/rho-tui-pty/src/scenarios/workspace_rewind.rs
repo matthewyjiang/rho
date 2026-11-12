@@ -222,14 +222,3 @@ const WORKSPACE_REWIND_STEPS: &[Step] = &[
     Step::Key(Key::Esc),
     Step::ExitCommand,
 ];
-
-// Covers: `/rewind` on a daemon session says rewind is off rather than that
-// the session has no checkpoints.
-// Owner: interactive TUI as a daemon client
-#[cfg(unix)]
-pub(super) const DAEMON_WORKSPACE_REWIND_OFF_SCENARIO: Scenario = Scenario {
-    id: "daemon_workspace_rewind_off",
-    description: "Say workspace rewind is off on a daemon session",
-    env: &[("RHO_TUI_DAEMON", "1")],
-    ..WORKSPACE_REWIND_OFF_SCENARIO
-};

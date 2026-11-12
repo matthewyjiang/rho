@@ -5,8 +5,8 @@ use crate::tui::DefaultTerminal;
 use crate::session::tree::{NodeId, SessionTreeItem, SessionTreeItemKind};
 
 use super::{
-    picker::OverlayChrome, App, ComposerMode, Entry, InteractiveRuntime, PickerBadge,
-    PickerBadgeTone, PickerItem, PickerLayout, UiPicker, ViewModelEvent,
+    picker::OverlayChrome, App, ComposerMode, PickerBadge, PickerBadgeTone, PickerItem,
+    PickerLayout, UiPicker,
 };
 
 pub(super) fn tree_picker(items: Vec<SessionTreeItem>) -> UiPicker {
@@ -72,29 +72,18 @@ fn tree_label(item: &SessionTreeItem, preview: &str) -> String {
 }
 
 impl App {
-    pub(super) fn execute_tree_command(
-        &mut self,
-        agent: &InteractiveRuntime,
-    ) -> anyhow::Result<()> {
+    pub(super) fn execute_tree_command(&mut self) -> anyhow::Result<()> {
         if self.info.session.no_save {
             self.set_status("conversation tree unavailable with --no-save");
             return Ok(());
         }
-        let items = if self.info.session.daemon.is_some() {
-            // The daemon holds the session open; its tree is read from the
-            // file both share.
-            let Some(id) = self.current_session_id() else {
-                self.set_status("no active session tree; send a message first");
-                return Ok(());
-            };
-            crate::session::Session::tree_turn_items_by_id(&self.info.runtime.cwd, &id)?
-        } else {
-            let Some(storage) = agent.stored_session() else {
-                self.set_status("no active session tree; send a message first");
-                return Ok(());
-            };
-            storage.tree_turn_items()?
+        // The daemon holds the session open; its tree is read from the file
+        // both share.
+        let Some(id) = self.current_session_id() else {
+            self.set_status("no active session tree; send a message first");
+            return Ok(());
         };
+        let items = crate::session::Session::tree_turn_items_by_id(&self.info.runtime.cwd, &id)?;
         if items.is_empty() {
             self.set_status("this session tree has no turns");
             return Ok(());
@@ -105,57 +94,17 @@ impl App {
         Ok(())
     }
 
+    /// The daemon moves the session to the selected node and has every
+    /// client replay the conversation as it then stands.
     pub(super) async fn submit_tree_selection(
         &mut self,
         value: &str,
         _terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let target_id = NodeId::from_string(value)?;
-        if self.info.session.daemon.is_some() {
-            // The daemon moves the session there and has every client
-            // replay the conversation as it then stands.
-            self.input_ui.set_composer(ComposerMode::Input);
-            return self.configure_daemon(SessionChange::SelectNode {
-                node: target_id.to_string(),
-            });
-        }
-        let storage = agent
-            .stored_session()
-            .ok_or_else(|| anyhow::anyhow!("active session storage is unavailable"))?;
-        let histories = storage.histories_for_node(&target_id)?;
-        let entries = self.transcript_entries(&histories.display);
-        agent.select_tree_node(storage, &target_id).await?;
-        self.info.runtime.added_dirs = agent.added_dirs().clone();
-
-        self.present_tree_selection(entries, &target_id, agent);
-        Ok(())
-    }
-
-    pub(super) fn present_tree_selection(
-        &mut self,
-        entries: Vec<Entry>,
-        target_id: &NodeId,
-        agent: &mut InteractiveRuntime,
-    ) {
         self.input_ui.set_composer(ComposerMode::Input);
-        self.input_ui.clear_text();
-        self.input_ui.clear_paste_segments();
-        self.input_ui.set_shell_mode(None);
-        self.input_ui.set_cursor(0);
-        self.input_ui.set_command_palette_dismissed(false);
-        self.reset_streams();
-        self.reset_usage();
-        self.usage.current_context = None;
-        self.set_history_entries(entries);
-        self.scroll_history_to_bottom();
-        if let Some(context) = agent.take_context_usage() {
-            self.record_agent_event(ViewModelEvent::ContextUsage(context));
-        }
-        self.insert_runtime_notices(agent);
-        self.set_status(format!(
-            "restored conversation state {}",
-            &target_id.as_str()[..target_id.as_str().len().min(8)]
-        ));
+        self.configure_daemon(SessionChange::SelectNode {
+            node: target_id.to_string(),
+        })
     }
 }

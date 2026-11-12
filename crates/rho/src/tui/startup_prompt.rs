@@ -2,7 +2,7 @@
 
 use crate::tui::DefaultTerminal;
 
-use super::{exclusive_screen::ExclusiveOccupant, App, InteractiveRuntime};
+use super::{exclusive_screen::ExclusiveOccupant, App};
 
 impl App {
     /// Start the take-once CLI prompt after first paint.
@@ -13,7 +13,6 @@ impl App {
     pub(super) async fn start_startup_prompt(
         &mut self,
         terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<bool> {
         if !matches!(self.exclusive, ExclusiveOccupant::Session)
             || self.input_ui.composer().blocks_held_turn_start()
@@ -26,7 +25,7 @@ impl App {
         };
         self.input_ui.set_text(prompt);
         self.input_ui.set_cursor(self.input_ui.char_len());
-        self.submit(terminal, agent).await?;
+        self.submit(terminal).await?;
         Ok(true)
     }
 }

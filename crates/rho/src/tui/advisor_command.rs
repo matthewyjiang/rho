@@ -1,17 +1,14 @@
 //! `/advisor [on|off|model]`, which changes the daemon's advisor settings
-//! (#1720), and applying an advisor model `/agents` saved to the
-//! in-process runtime.
+//! (#1720).
 
 use rho_protocol::{ModelSelection, SettingChange, SettingKey, SettingValue};
-
-use crate::agent::ADVISOR_AGENT_ID;
 
 use super::{
     advisor_status::AdvisorStatus,
     config_row::ConfigRow,
     daemon_settings::{DaemonSettings, SettingsNamespace},
     settings_screen::ConfigPage,
-    App, ComposerMode, Entry, InteractiveRuntime, UiPicker,
+    App, ComposerMode, Entry, UiPicker,
 };
 
 const ADVISOR_MODE_KEY: &str = "behavior.advisor_mode";
@@ -20,44 +17,9 @@ const ADVISOR_MODEL_KEY: &str = "internal_agents.advisor";
 pub(super) const ADVISOR_USAGE: &str = "usage: /advisor [on|off|model]";
 
 impl App {
-    /// Applies the saved advisor state to the live runtime.
-    ///
-    /// The advisor model and the mode reach the runtime as one value, because
-    /// advisor mode without a model offers the executor nothing.
-    pub(super) async fn sync_advisor_runtime(&mut self, agent: &mut InteractiveRuntime) {
-        let model = self.info.runtime.advisor_mode.then(|| {
-            self.info
-                .runtime
-                .internal_agents
-                .get(ADVISOR_AGENT_ID)
-                .cloned()
-        });
-        self.info
-            .services
-            .diagnostics
-            .update_advisor_mode(self.info.runtime.advisor_mode);
-        match agent.set_advisor(model.flatten()).await {
-            Ok(Some(display)) => {
-                self.insert_entry(&Entry::Notice(display));
-                self.info
-                    .services
-                    .diagnostics
-                    .update_tools(&agent.tool_specs());
-            }
-            Ok(None) => {}
-            Err(error) => {
-                self.insert_entry(&Entry::Error(format!(
-                    "advisor mode could not be applied to this session: {error}"
-                )));
-            }
-        }
-    }
-}
-
-impl App {
     /// The advisor as every surface shows it: the daemon's saved settings
-    /// once read, which `/advisor` and `/config` change, and the in-process
-    /// runtime's otherwise.
+    /// once read, which `/advisor` and `/config` change, and the startup
+    /// config's until then.
     pub(super) fn advisor_status(&self) -> AdvisorStatus {
         let Some(settings) = &self.daemon_settings else {
             return AdvisorStatus::from_runtime(&self.info.runtime, self.model_names());

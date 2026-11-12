@@ -1,6 +1,6 @@
 //! A session file from rho before 1.11 (format 1-3) is refused with the
-//! release that still opens it, in process and in the daemon, and its
-//! presence does not break the resume picker.
+//! release that still opens it, and its presence does not break the resume
+//! picker.
 
 use std::fs;
 
@@ -22,7 +22,7 @@ use super::{
 
 pub(super) const SCENARIO: Scenario = Scenario::new(
     "pre_tree_session",
-    "Refuse a pre-1.11 session file by naming rho 2.x, in process and in the daemon",
+    "Refuse a pre-1.11 session file by naming rho 2.x",
     SIZE,
     &[],
     /*smoke*/ false,
@@ -68,15 +68,13 @@ fn setup(home: &IsolatedHome) -> Result<()> {
 }
 
 // Covers: `--resume` of a format 2 session exits naming rho 2.x instead of a
-// parse error, and the resume picker still lists the current session, both
-// in process and as a daemon client.
-// Owner: session persistence, through both TUI hosts
+// parse error, and the resume picker still lists the current session.
+// Owner: session persistence, through the TUI
 pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
     let home = IsolatedHome::new()?;
     setup(&home)?;
-    let in_process = RhoLaunchPlan::matrix(&runner.binary, &home, SIZE)
-        .with_env("OPENAI_API_KEY", "sk-test-matrix")
-        .with_env("RHO_TUI_DAEMON", "0");
+    let plan = RhoLaunchPlan::matrix(&runner.binary, &home, SIZE)
+        .with_env("OPENAI_API_KEY", "sk-test-matrix");
     let spawn = |plan: &RhoLaunchPlan| -> Result<PtyHarness> {
         let mut harness = PtyHarness::spawn_named(plan, SCENARIO.id)?;
         harness.enable_timing(runner.record_timing);
@@ -88,27 +86,19 @@ pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
 
     let mut harness: Option<PtyHarness> = None;
     let result = (|| -> Result<()> {
-        for (host, plan) in [
-            ("in_process", in_process.clone()),
-            ("daemon", in_process.clone().with_env("RHO_TUI_DAEMON", "1")),
-        ] {
-            let resume = plan.clone().with_arg("--resume").with_arg(&LEGACY_ID[..8]);
-            let refused = harness.insert(spawn(&resume)?);
-            refused.set_phase(format!("{host}_resume_pre_tree"));
-            let code = refused.wait_for_exit(STARTUP)?;
-            refused.assert_raw_contains(REFUSAL.as_bytes())?;
-            anyhow::ensure!(
-                code != 0,
-                "{host}: resuming a pre-1.11 session exited cleanly"
-            );
+        let resume = plan.clone().with_arg("--resume").with_arg(&LEGACY_ID[..8]);
+        let refused = harness.insert(spawn(&resume)?);
+        refused.set_phase("resume_pre_tree");
+        let code = refused.wait_for_exit(STARTUP)?;
+        refused.assert_raw_contains(REFUSAL.as_bytes())?;
+        anyhow::ensure!(code != 0, "resuming a pre-1.11 session exited cleanly");
 
-            let picker = harness.insert(spawn(&plan.clone().with_arg("--resume"))?);
-            picker.set_phase(format!("{host}_resume_picker"));
-            picker.wait_for_text("Resume session", STARTUP)?;
-            picker.wait_for_text(CURRENT_PROMPT, STREAM)?;
-            let code = picker.quit_with_exit_command()?;
-            anyhow::ensure!(code == 0, "{host}: picker session exited with code {code}");
-        }
+        let picker = harness.insert(spawn(&plan.clone().with_arg("--resume"))?);
+        picker.set_phase("resume_picker");
+        picker.wait_for_text("Resume session", STARTUP)?;
+        picker.wait_for_text(CURRENT_PROMPT, STREAM)?;
+        let code = picker.quit_with_exit_command()?;
+        anyhow::ensure!(code == 0, "picker session exited with code {code}");
         Ok(())
     })();
 

@@ -49,7 +49,7 @@ Rho runs inline commands asynchronously, so you can continue working while a com
 
 ## Choose a shell
 
-Rho uses Bash on macOS and Linux, and PowerShell on Windows by default. Open `/config` → **Tools** → **Inline shell** in a TUI following a daemon session to set another shell, or set `behavior.inline_shell` in `~/.rho/config.toml`.
+Rho uses Bash on macOS and Linux, and PowerShell on Windows by default. Open `/config` → **Tools** → **Inline shell** to set another shell, or set `behavior.inline_shell` in `~/.rho/config.toml`.
 
 Rho checks these shells when it builds the picker:
 

@@ -26,12 +26,11 @@ impl App {
         provider_label: &'static str,
         mode: InteractiveLoginMode,
         terminal: &mut DefaultTerminal,
-        _agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         // A login its provider cannot confirm is shown from here instead,
         // so the daemon, which records one as soon as it runs, is asked
         // only on Enter (`record_daemon_login`).
-        if self.info.session.daemon.is_some() && crate::app::confirms_sign_in(&target.auth) {
+        if crate::app::confirms_sign_in(&target.auth) {
             return self
                 .start_daemon_login(target, provider_label, mode, terminal)
                 .await;
@@ -110,52 +109,14 @@ impl App {
             TaskId::InteractiveLogin,
             async move { completion.await.map_err(|err| err.to_string()) },
             move |result| {
-                SessionOutput::InteractiveLogin(FinishedInteractiveLogin { target, result }).into()
+                SessionOutput::InteractiveLogin(Box::new(FinishedInteractiveLogin {
+                    target,
+                    result,
+                }))
+                .into()
             },
         );
         Ok(())
-    }
-
-    /// Enter on a login the provider cannot confirm: the user says they approved.
-    pub(super) async fn confirm_pending_login(
-        &mut self,
-        terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<()> {
-        if self.info.session.daemon.is_some() {
-            return self.record_daemon_login(terminal).await;
-        }
-        let Some(target) = self.record_confirmed_login().await else {
-            return Ok(());
-        };
-        self.finish_login(target, terminal, agent).await
-    }
-
-    /// Records the user's confirmation and closes the pending composer.
-    ///
-    /// A failed write keeps the pending login open, so Enter retries and Esc
-    /// still restores the setup step that started it.
-    async fn record_confirmed_login(&mut self) -> Option<LoginTarget> {
-        let ComposerMode::InteractivePending(pending) = self.input_ui.composer() else {
-            return None;
-        };
-        let (target, finish) = (pending.target.clone(), pending.finish.clone());
-        // Only a login the provider cannot confirm carries a handle to accept.
-        let PendingLoginFinish::UserConfirms(authentication) = finish.clone() else {
-            return None;
-        };
-        if let Err(err) = authentication.accept(self.credential_store.as_ref()) {
-            self.insert_entry(&Entry::Error(format!("could not record login: {err}")));
-            self.set_status(format!(
-                "login failed · {}",
-                super::login_presentation::login_key_hint(&finish)
-            ));
-            return None;
-        }
-        self.cancel_limits_command().await;
-        self.cancel_doctor_command().await;
-        self.input_ui.set_composer(ComposerMode::Input);
-        Some(target)
     }
 
     pub(super) fn interactive_login_pending(&self) -> bool {
@@ -173,7 +134,6 @@ impl App {
         &mut self,
         finished: FinishedInteractiveLogin,
         terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let FinishedInteractiveLogin { target, result } = finished;
         match result {
@@ -184,7 +144,7 @@ impl App {
                 match saved {
                     Ok(()) => {
                         self.input_ui.set_composer(ComposerMode::Input);
-                        self.finish_login(target, terminal, agent).await
+                        self.finish_daemon_login(target, terminal).await
                     }
                     Err(err) => {
                         self.input_ui.set_composer(ComposerMode::Input);
@@ -216,7 +176,3 @@ impl App {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "login_pending_tests.rs"]
-mod tests;

@@ -1,4 +1,4 @@
-//! `/mcp` inventory picker, shared by in-process and daemon sessions.
+//! `/mcp` inventory picker for the daemon session's MCP inventory.
 
 use rho_protocol::{SessionMcpInventory, SessionMcpMode, SessionMcpServer, SessionMcpStatus};
 

@@ -212,16 +212,18 @@ fn tab_chip_hits_cover_their_painted_labels() {
 async fn approval_clicks_wait_for_the_prompt_to_be_painted() {
     let mut app = test_app();
     let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
-    let request = rho_sdk::ApprovalRequest::new(
-        rho_sdk::CapabilityRequest::read_path(
-            "/workspace/file",
-            rho_sdk::PathScope::PrimaryWorkspace,
-            rho_sdk::CapabilitySource::built_in_tool("read_file"),
-        ),
-        "approval required",
-    );
-    app.open_approval(rho_sdk::PendingApproval::new(request).0)
-        .await;
+    let prompt = crate::tui::approval::ApprovalPrompt::of_daemon_ask(&rho_protocol::ApprovalAsk {
+        source: rho_protocol::ApprovalSource::BuiltInTool {
+            name: "read_file".into(),
+        },
+        operation: rho_protocol::Operation::ReadPath {
+            path: "/workspace/file".into(),
+            scope: rho_protocol::PathScope::Workspace,
+        },
+        reason: "approval required".into(),
+    });
+    let (reply, _decision) = tokio::sync::oneshot::channel();
+    app.open_replying_approval(prompt, reply).await;
     let active = |app: &crate::tui::App| match app.input_ui.composer() {
         ComposerMode::Approval(approval) => approval.active(),
         other => panic!("approval closed: {other:?}"),

@@ -21,22 +21,21 @@ const SIZE: PtySize = PtySize {
 
 pub(super) const SCENARIO: Scenario = Scenario::new(
     "daemon_doctor_mcp",
-    "Report a daemon session's MCP servers in /doctor as in process, not the client's",
+    "Report a daemon session's MCP servers in /doctor, not the client's",
     SIZE,
     &[],
     /*smoke*/ false,
 );
 
 // Covers: the MCP row of /doctor on a daemon session reads the session's
-// servers, and shows the row `doctor_mcp` shows in process for them. The
-// client's own config names other servers, so a row built from it differs.
+// servers, and shows the row `doctor_mcp` shows for them. The client's own
+// config names other servers, so a row built from it differs.
 // Owner: interactive TUI as a daemon client (#1685).
 pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
     let home = IsolatedHome::new()?;
     write_config(&home, "[mcp.servers.broken]\ntransport = \"stdio\"\ncommand = \"rho-mcp-command-that-does-not-exist\"")?;
     let plan = RhoLaunchPlan::matrix(&runner.binary, &home, SIZE)
-        .with_env("OPENAI_API_KEY", "sk-test-matrix")
-        .with_env("RHO_TUI_DAEMON", "1");
+        .with_env("OPENAI_API_KEY", "sk-test-matrix");
     let spawn = |plan: &RhoLaunchPlan| -> Result<PtyHarness> {
         let mut harness = PtyHarness::spawn_named(plan, SCENARIO.id)?;
         harness.enable_timing(runner.record_timing);

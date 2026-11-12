@@ -1,4 +1,4 @@
-use super::{expand, matches_search, merge, usage, validate, PromptTemplates};
+use super::{expand, merge, usage, validate, PromptTemplates};
 use pretty_assertions::assert_eq;
 
 #[test]
@@ -66,13 +66,6 @@ fn discovers_global_and_project_template_files() {
         Some("explain this")
     );
     assert_eq!(templates.len(), 2);
-}
-
-#[test]
-fn matches_search_by_prompt_prefix_or_bare_name() {
-    assert!(matches_search("review-code", "prompt:rev"));
-    assert!(matches_search("review-code", "rev"));
-    assert!(!matches_search("review-code", "explain"));
 }
 
 // Covers: only namespaced commands resolve templates, regardless of prefix case;

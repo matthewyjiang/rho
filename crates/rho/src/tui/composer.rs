@@ -445,7 +445,6 @@ impl App {
                 }
                 result
             }
-            InputSubmissionMode::Prompt => Ok(None),
         }
     }
 

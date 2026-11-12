@@ -1,4 +1,4 @@
-//! The session's MCP inventory, shared by in-process and daemon frontends.
+//! The session's MCP inventory, as the daemon reports it to its clients.
 
 use std::path::Path;
 use std::path::PathBuf;
@@ -96,9 +96,9 @@ impl SessionMcp {
     }
 }
 
-/// Build the same inventory for either host, including live catalog details.
+/// Build the inventory, including live catalog details.
 /// `tool_sources_loading` is the daemon's to set (see
-/// `SessionMcp::snapshot`): the in-process TUI asks its runtime instead.
+/// `SessionMcp::snapshot`).
 pub(crate) fn session_mcp_inventory(
     report: &McpSessionReport,
     catalog: &McpCatalog,

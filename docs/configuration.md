@@ -81,7 +81,7 @@ theme = "terminal"
 cycle_permission_mode = "alt+m"
 ```
 
-The TUI reads both files at startup. Following a daemon session, it hands its `clients/tui.toml` settings to the daemon, so `/config` saves them there and applies them live; see [Changing settings](#changing-settings). `tui.toml` stays hand-edited.
+The TUI reads both files at startup. It hands its `clients/tui.toml` settings to the daemon, so `/config` saves them there and applies them live; see [Changing settings](#changing-settings). `tui.toml` stays hand-edited.
 
 ## Common settings
 
@@ -110,7 +110,7 @@ The TUI reads both files at startup. Following a daemon session, it hands its `c
 
 ## Changing settings
 
-`/config` changes settings through the [daemon](/daemon#configuration-changes), so it works in a TUI that follows a daemon session, as the TUI does by default. In an in-process TUI (`RHO_TUI_DAEMON=0`), `/config` and `/advisor` say they need the daemon; edit the files instead.
+`/config` changes settings through the [daemon](/daemon#configuration-changes), which runs the TUI's session.
 
 The root page lists the session's own options (model, reasoning, fast mode, permission mode), then one row per settings category, then the theme and **Clear prompt history**, which stay local to this terminal. Type to find a row, Enter to open it, Esc to go back.
 
@@ -196,8 +196,10 @@ Without `--auth`, a provider selected by `--provider` or a `provider/model` refe
 `--config` selects the file to load and save. It does not override those keys:
 
 ```bash
-rho --config ~/.rho/config.toml
+rho --config ~/.rho/config.toml run "..."
 ```
+
+The interactive TUI refuses `--config`, since its session runs in the [daemon](/daemon#daemon-backed-tui), which reads the config in its Rho home. Set `RHO_HOME` to run on another.
 
 The exact `--provider`, `--auth`, and `--model` combination for each provider is on its [provider page](/authentication-and-models#providers).
 

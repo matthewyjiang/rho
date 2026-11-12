@@ -9,7 +9,7 @@ use rho_sdk::{
 
 use super::{BackgroundSources, BackgroundWait, Delegation};
 use crate::{
-    app::{agent_executor::AgentRunHandle, SubagentManager},
+    app::{agent_executor::AgentRunHandle, subagent_manager::SubagentManager},
     subagent::{RunState, RunStatus},
     tools::{
         process::{ProcessLimits, ProcessManager},

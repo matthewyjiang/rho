@@ -118,14 +118,10 @@ fn submit_bypass_feedback(harness: &mut PtyHarness) -> Result<()> {
     submit_typed_feedback(harness, "bypass")
 }
 
-/// Runs bare `/permissions` and checks it reports plan. In process it prints
-/// the mode with its usage; a daemon client opens the mode picker on the mode
-/// in force, which Esc closes without a change.
+/// Runs bare `/permissions` and checks it opens the mode picker on plan,
+/// which Esc closes without a change.
 fn probe_plan_mode(harness: &mut PtyHarness) -> Result<()> {
     harness.submit_text("/permissions")?;
-    if !harness.follows_daemon() {
-        return harness.wait_for_text("permission mode: plan. usage:", STREAM);
-    }
     const PICKER: &str = "Permission mode · Type to search";
     harness.wait_for_text(PICKER, STREAM)?;
     let rows = harness.screen().rows_text();
@@ -194,9 +190,9 @@ const QUEUED_CYCLE_STEPS: &[Step] = &[
         text: "✓ exit_plan_mode",
         timeout: STREAM,
     },
-    // In process, the next step's start writes a routine status that clears
-    // any toast, so the wait outlasts the brief `starting` label: a late step
-    // start then cannot wipe the queued-mode toast before it paints.
+    // The next step's start writes a routine status that clears any toast,
+    // so the wait outlasts the brief `starting` label: a late step start
+    // then cannot wipe the queued-mode toast before it paints.
     Step::WaitText {
         text: "waiting for provider",
         timeout: STREAM,
@@ -284,21 +280,6 @@ pub(super) const APPROVE_SCENARIO: Scenario = Scenario::new(
 )
 .with_setup(setup)
 .with_args(&["--permission-mode", "plan"]);
-
-// Covers: the same approval when the session runs in the daemon: the
-// feedback typed with it reaches the implementation turn's history.
-// Owner: interactive TUI as a daemon client
-#[cfg(unix)]
-pub(super) const DAEMON_APPROVE_SCENARIO: Scenario = Scenario::new(
-    "daemon_plan_exit_approve",
-    "Approve a daemon session's plan with feedback, then implement",
-    DEFAULT_SIZE,
-    APPROVE_STEPS,
-    /*smoke*/ false,
-)
-.with_setup(setup)
-.with_args(&["--permission-mode", "plan"])
-.with_env(super::daemon_resume::DAEMON_ENV);
 
 const APPROVE_STEPS: &[Step] = &[
     Step::WaitText {
@@ -410,74 +391,3 @@ pub(super) const FAILED_SCENARIO: Scenario = Scenario::new(
 )
 .with_setup(setup)
 .with_args(&["--permission-mode", "plan"]);
-
-/// `base` with its TUI as a daemon client.
-#[cfg(unix)]
-const fn in_daemon(id: &'static str, description: &'static str, base: Scenario) -> Scenario {
-    Scenario {
-        id,
-        description,
-        env: super::daemon_resume::DAEMON_ENV,
-        ..base
-    }
-}
-
-// Covers: a plan proposed from a delegated child's completion hands off to
-// implementation. The daemon holds the prompt open while a subagent runs (its
-// idle wake covers only workflows and processes), so the completion arrives
-// in that prompt rather than in an idle turn, and the idle-only
-// `/permissions` probe does not apply.
-// Owner: interactive TUI as a daemon client (#1667)
-#[cfg(unix)]
-pub(super) const DAEMON_DELEGATED_COMPLETION_SCENARIO: Scenario = Scenario::new(
-    "daemon_plan_exit_delegated_completion",
-    "Deliver a daemon session's plan approval from a delegated child's completion",
-    DEFAULT_SIZE,
-    &[
-        Step::WaitText {
-            text: "gpt-5.5",
-            timeout: STARTUP,
-        },
-        Step::SubmitText("fixture plan exit background"),
-        Step::WaitText {
-            text: "fixture plan background dispatched",
-            timeout: STREAM,
-        },
-        Step::Custom(release_plan_child),
-        Step::WaitText {
-            text: "Plan ready. How should Rho continue?",
-            timeout: STREAM,
-        },
-        Step::Key(Key::Enter),
-        Step::WaitText {
-            text: "Optional feedback for the plan",
-            timeout: STREAM,
-        },
-        Step::Key(Key::Enter),
-        Step::WaitText {
-            text: "fixture plan implementation reached",
-            timeout: STREAM,
-        },
-        Step::Custom(assert_allow_edits),
-        Step::ExitCommand,
-        Step::Custom(assert_config_unchanged),
-    ],
-    /*smoke*/ false,
-)
-.with_setup(setup)
-.with_args(&["--permission-mode", "plan"])
-.with_env(super::daemon_resume::DAEMON_ENV);
-
-#[cfg(unix)]
-pub(super) const DAEMON_FAILED_SCENARIO: Scenario = in_daemon(
-    "daemon_plan_exit_failed_turn",
-    "Discard a daemon session's approval when the proposal turn fails",
-    FAILED_SCENARIO,
-);
-
-#[cfg(unix)]
-pub(super) const DAEMON_QUEUED_CYCLE_SCENARIO: Scenario = in_daemon(
-    "daemon_plan_exit_queued_cycle",
-    "Apply a daemon session's approved plan mode over a queued Alt+M change",
-    QUEUED_CYCLE_SCENARIO,
-);

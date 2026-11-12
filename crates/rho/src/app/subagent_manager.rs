@@ -24,11 +24,6 @@ use {
 
 pub(crate) use super::subagent_messaging::ValidatedMessage;
 
-/// How long the host rail keeps a finished run that the current parent session
-/// will never receive (another or no parent session). Rows it will receive
-/// leave on delivery instead.
-const RAIL_TERMINAL_RETENTION: Duration = Duration::from_secs(10);
-
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Debug)]
@@ -64,10 +59,6 @@ struct AgentEntry {
     persistence: SessionPersistence,
     observed: bool,
     explicitly_observed: bool,
-    /// Whether this run's terminal cost has already been folded into a parent
-    /// session total. Independent of [`Self::observed`] so cost still counts
-    /// when a run is delivered through `status`/`stop` instead of notification.
-    cost_accounted: bool,
 }
 
 impl AgentEntry {
@@ -234,34 +225,6 @@ impl SubagentManager {
         self.executor.update_added_dirs(added_dirs);
     }
 
-    /// Updates the internal-agent selections future launches build from,
-    /// such as the permission classifier and its screen.
-    pub(crate) fn update_internal_agents(
-        &self,
-        internal_agents: &std::collections::BTreeMap<
-            String,
-            crate::config::InternalAgentModelConfig,
-        >,
-    ) {
-        self.executor.update_internal_agents(internal_agents);
-    }
-
-    pub(crate) fn concurrency(&self) -> crate::app::agent_concurrency::AgentConcurrency {
-        self.executor.concurrency()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn launch_permission_mode(&self) -> crate::permission::PermissionMode {
-        self.executor.launch_permission_mode()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn launch_internal_agents(
-        &self,
-    ) -> std::collections::BTreeMap<String, crate::config::InternalAgentModelConfig> {
-        self.executor.launch_internal_agents()
-    }
-
     pub(crate) async fn spawn(
         &self,
         definition: &AgentDefinition,
@@ -333,7 +296,6 @@ impl SubagentManager {
                 persistence,
                 observed: false,
                 explicitly_observed: false,
-                cost_accounted: false,
             },
         );
         // Once the run is registered, so whoever the notice wakes finds it.
@@ -343,29 +305,6 @@ impl SubagentManager {
             ended.notify_waiters();
         });
         Ok((id, directory.join(subagent::LOG_FILE_NAME)))
-    }
-
-    /// Fold terminal costs for `session_id` into a parent total once per run.
-    ///
-    /// Counts every finished run (success or failure)
-    /// the first time the parent claims it. Safe to call from any TUI poll path.
-    pub fn claim_terminal_costs_usd_micros(&self, session_id: &str) -> u64 {
-        let mut entries = self.inner.lock().expect("delegated registry lock");
-        let mut total = 0u64;
-        for entry in entries.values_mut() {
-            if entry.cost_accounted || entry.session_id != session_id {
-                continue;
-            }
-            let status = entry.handle.status();
-            if !status.state.is_terminal() {
-                continue;
-            }
-            entry.cost_accounted = true;
-            if let Some(cost) = status.total_cost_usd {
-                total = total.saturating_add(subagent::usd_to_micros(cost));
-            }
-        }
-        total
     }
 
     #[cfg(test)]
@@ -420,7 +359,6 @@ impl SubagentManager {
                 persistence: SessionPersistence::Saved,
                 observed: false,
                 explicitly_observed: false,
-                cost_accounted: false,
             },
         );
     }
@@ -462,41 +400,6 @@ impl SubagentManager {
             agent_id: entry.agent_id.clone(),
             task,
         })
-    }
-
-    /// Live runs plus finished runs whose result has not been delivered yet.
-    ///
-    /// A finished row leaves once its result is observed, so the rail drops it
-    /// in the same repaint that lands the result in the transcript. Until then
-    /// runs owned by `session_id` keep showing their verdict. Runs it will never
-    /// receive (another parent session's) keep a recent `finished_at` window.
-    ///
-    /// Host UI only. `list()` stays the full agent-facing registry.
-    pub(crate) fn rail_summaries(&self, session_id: &str) -> Vec<SubagentSnapshot> {
-        let now = subagent::unix_now_secs();
-        let retention = RAIL_TERMINAL_RETENTION.as_secs();
-        let entries = self.inner.lock().expect("delegated registry lock");
-        let mut snapshots = entries
-            .iter()
-            .filter_map(|(id, entry)| {
-                let snapshot = entry.snapshot(id);
-                if snapshot.done {
-                    if entry.observed {
-                        return None;
-                    }
-                    if entry.session_id == session_id {
-                        return Some(snapshot);
-                    }
-                    let finished_at = snapshot.status.finished_at?;
-                    if now.saturating_sub(finished_at) >= retention {
-                        return None;
-                    }
-                }
-                Some(snapshot)
-            })
-            .collect::<Vec<_>>();
-        snapshots.sort_by_key(|snapshot| std::cmp::Reverse(snapshot.elapsed));
-        snapshots
     }
 
     #[cfg(test)]

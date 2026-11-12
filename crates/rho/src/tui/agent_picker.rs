@@ -4,7 +4,6 @@ use crate::{
         internal_agent_requires_model, AgentCatalog, AgentCatalogEntry, AgentOrigin,
         AgentRuntimeSpec, ModelPolicy, ModelSelection, PromptPolicy,
     },
-    app::interactive_runtime::InteractiveRuntime,
     config::{InternalAgentModelConfig, InternalAgentTarget},
 };
 
@@ -21,15 +20,10 @@ use super::{
 pub(super) enum InternalAgentModelPickerOrigin {
     /// Opened from the agents picker; reopen it after a selection.
     AgentsPicker,
-    /// Opened by `/permissions auto`; selection applies Auto and returns to input.
-    PermissionModeCommand,
     /// Opened at interactive startup when permission mode is already Auto with
     /// no classifier model. Selection keeps Auto; cancel falls back to
     /// Supervised. Opens alone in the composer (no parent picker).
     PermissionModeStartup,
-    /// The permission screen's picker, opened by `/permissions auto` once a
-    /// classifier model is picked. Opens alone in the composer.
-    PermissionScreenSetupCommand,
 }
 
 impl InternalAgentModelPickerOrigin {
@@ -37,9 +31,7 @@ impl InternalAgentModelPickerOrigin {
     pub(super) fn opens_standalone(self) -> bool {
         match self {
             Self::AgentsPicker => false,
-            Self::PermissionModeStartup
-            | Self::PermissionModeCommand
-            | Self::PermissionScreenSetupCommand => true,
+            Self::PermissionModeStartup => true,
         }
     }
 }
@@ -668,35 +660,22 @@ impl super::App {
         picker
     }
 
-    /// After `/agents` wrote or removed a definition: append any advertised
-    /// catalog correction and rebuild the picker for the caller to position
-    /// and open. `None` (composer on input) when the reload failed. A failed
-    /// correction is reported but never undoes the disk change, which
-    /// subsequent launches already use.
-    pub(super) fn agents_picker_after_change(
-        &mut self,
-        agent: &mut InteractiveRuntime,
-    ) -> Option<UiPicker> {
+    /// After `/agents` wrote or removed a definition: tell the session and
+    /// rebuild the picker for the caller to position and open. `None`
+    /// (composer on input) when the reload failed. A failed notice is
+    /// reported but never undoes the disk change, which subsequent launches
+    /// already use.
+    pub(super) fn agents_picker_after_change(&mut self) -> Option<UiPicker> {
         let Some(catalog) = self.load_agents_or_report() else {
             self.input_ui.set_composer(ComposerMode::Input);
             return None;
         };
-        if self.info.session.daemon.is_some() {
-            // The daemon reads the definitions itself and tells the model;
-            // its notice says when it had to.
-            if let Err(error) = self.configure_daemon(rho_protocol::SessionChange::AgentCatalog) {
-                self.insert_entry(&super::Entry::Error(format!(
-                    "could not tell the model about the agent change: {error}"
-                )));
-            }
-            return Some(self.agents_picker(catalog));
-        }
-        match agent.sync_agent_catalog(&catalog) {
-            Ok(Some(display)) => self.insert_entry(&super::Entry::Notice(display.into())),
-            Ok(None) => {}
-            Err(error) => self.insert_entry(&super::Entry::Error(format!(
+        // The daemon reads the definitions itself and tells the model; its
+        // notice says when it had to.
+        if let Err(error) = self.configure_daemon(rho_protocol::SessionChange::AgentCatalog) {
+            self.insert_entry(&super::Entry::Error(format!(
                 "could not tell the model about the agent change: {error}"
-            ))),
+            )));
         }
         Some(self.agents_picker(catalog))
     }

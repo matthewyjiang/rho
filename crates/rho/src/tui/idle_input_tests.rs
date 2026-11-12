@@ -98,45 +98,6 @@ fn line_text(line: &Line<'_>) -> String {
         .collect()
 }
 
-// Covers: compact-time prompts use the pending-input list, not held turns.
-// Enter during idle compact is a follow-up; the queue-prompt chord is the same list.
-// Owner: idle input key handling
-#[test]
-fn compact_prompts_use_the_pending_input_list() {
-    let mut app = test_app();
-    app.begin_compact_ui();
-    app.queue_steering_prompt("steer me".into(), "steer me".into(), Vec::new())
-        .unwrap();
-    app.queue_prompt(
-        "next turn".into(),
-        "next turn".into(),
-        Vec::new(),
-        Vec::new(),
-    )
-    .unwrap();
-
-    assert!(app.held_turns.is_empty());
-    assert_eq!(app.pending.steering_prompts().len(), 1);
-    assert_eq!(app.pending.queued_prompts().len(), 1);
-    let lines = app.pending_input_lines(80);
-    assert!(line_text(&lines[0]).contains("1 steer"));
-    assert!(line_text(&lines[0]).contains("1 follow-up"));
-    assert!(line_text(&lines[1]).contains("STEER"));
-    assert!(line_text(&lines[2]).contains("NEXT"));
-    assert!(line_text(&lines[2]).contains("after compact"));
-}
-
-// Covers: Unchanged/Failed compaction still starts the parked follow-up; cancel does not.
-// Owner: compact follow-up drain
-#[test]
-fn unchanged_and_failed_compact_start_follow_ups_cancel_does_not() {
-    use super::super::compaction_display::CompactionUiOutcome;
-
-    assert!(CompactionUiOutcome::unchanged().starts_follow_ups());
-    assert!(CompactionUiOutcome::failed("boom").starts_follow_ups());
-    assert!(!CompactionUiOutcome::Cancelled.starts_follow_ups());
-}
-
 // Covers: an MCP hold is idle UI with LoadingToolSources activity, not a pending-input item.
 // Owner: idle input hold/release
 #[test]
@@ -235,16 +196,4 @@ fn esc_restores_held_command_display_exactly() {
     app.take_back_held_turn();
     assert_eq!(app.input_ui.text(), display);
     assert!(app.held_turns.is_empty());
-}
-
-// Covers: an MCP hold must not start a turn while a compact job holds the session.
-// Owner: idle input hold/release
-#[test]
-fn mcp_holds_are_not_releasable_while_compacting() {
-    let mut app = test_app();
-    app.held_turns.push_back(held_turn("after mcp"));
-
-    assert!(app.first_held_turn_is_releasable(false, false));
-    assert!(!app.first_held_turn_is_releasable(false, true));
-    assert!(!app.first_held_turn_is_releasable(true, false));
 }

@@ -314,37 +314,6 @@ impl AgentExecutor {
             .permission_mode = mode;
     }
 
-    /// Future delegated runs build their classifier from these, so a changed
-    /// classifier or screen setting reaches the next child too.
-    pub(crate) fn update_internal_agents(
-        &self,
-        internal_agents: &std::collections::BTreeMap<
-            String,
-            crate::config::InternalAgentModelConfig,
-        >,
-    ) {
-        self.config
-            .write()
-            .expect("delegated config lock")
-            .internal_agents
-            .clone_from(internal_agents);
-    }
-
-    pub(crate) fn concurrency(&self) -> AgentConcurrency {
-        self.concurrency.clone()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn launch_internal_agents(
-        &self,
-    ) -> std::collections::BTreeMap<String, crate::config::InternalAgentModelConfig> {
-        self.config
-            .read()
-            .expect("delegated config lock")
-            .internal_agents
-            .clone()
-    }
-
     #[cfg(test)]
     pub(crate) fn launch_permission_mode(&self) -> crate::permission::PermissionMode {
         self.config
@@ -362,16 +331,13 @@ impl AgentExecutor {
         #[cfg(not(windows))]
         capabilities.remove(&ToolCapability::Powershell);
         // Delegated questionnaires require a live parent host-input bridge.
-        let questionnaire_target = self
-            .host_input
-            .is_bound()
-            .then(|| request.parent_session_id.clone());
+        let parent_answers_questions = self.host_input.is_bound();
         // Notices share the parent-session binding, not the questionnaire one.
         let notice_target = self
             .notices
             .is_bound()
             .then(|| request.parent_session_id.clone());
-        if questionnaire_target.is_none() {
+        if !parent_answers_questions {
             capabilities.remove(&ToolCapability::Questionnaire);
         }
         let bound = AgentBinder::bind_with_credentials(
@@ -398,7 +364,7 @@ impl AgentExecutor {
             },
             persistence: request.persistence,
             output_file: request.output_file,
-            questionnaire_target,
+            parent_answers_questions,
             notice_target,
             frozen_cli: None,
             hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
@@ -450,7 +416,7 @@ impl AgentExecutor {
             // sessions are part of and `rho workflow` resumes from.
             persistence: SessionPersistence::Saved,
             output_file: request.output_file,
-            questionnaire_target: None,
+            parent_answers_questions: false,
             notice_target: None,
             frozen_cli,
             hook_host_labels: request.hook_host_labels,
@@ -466,7 +432,7 @@ impl AgentExecutor {
             role,
             persistence,
             output_file,
-            questionnaire_target,
+            parent_answers_questions,
             notice_target,
             frozen_cli,
             hook_host_labels,
@@ -595,11 +561,10 @@ impl AgentExecutor {
                 }
                 Launch::Rho(bound) => {
                     let agent_id = bound.id().to_string();
-                    let questions = questionnaire_target.map(|parent| ParentQuestions {
+                    let questions = parent_answers_questions.then(|| ParentQuestions {
                         bridge: host_input,
                         run_id: run_id.clone(),
                         agent_id: agent_id.clone(),
-                        parent,
                     });
                     let notices = notice_target.map(|parent_session_id| {
                         Arc::new(DelegatedNoticePoster {
@@ -685,9 +650,9 @@ struct BoundLaunchRequest {
     /// no unsaved session, so their children keep theirs either way.
     persistence: SessionPersistence,
     output_file: PathBuf,
-    /// Parent session that can present this child's questionnaires, when one
-    /// is listening. `None` removes the capability before bind.
-    questionnaire_target: Option<rho_sdk::SessionId>,
+    /// Whether a parent session listens for this child's questionnaires.
+    /// `false` removes the capability before bind.
+    parent_answers_questions: bool,
     /// Parent session that can receive this child's notices, when one is
     /// listening. `None` withholds both child notice tools.
     notice_target: Option<rho_sdk::SessionId>,

@@ -11,7 +11,7 @@ mod model_prompt_template;
 pub(crate) mod model_prompts;
 mod project_instructions;
 pub(crate) use mcp_context::tool_sources_context;
-pub(crate) use model_prompt_template::{ModelPromptTemplate, PromptSession};
+pub(crate) use model_prompt_template::ModelPromptTemplate;
 pub(crate) use project_instructions::added_dir_context;
 
 pub const BASE_SYSTEM_PROMPT: &str = r#"You are a coding agent in the rho coding-agent harness, working with the user in a shared workspace. Use available tools to inspect files, run commands, and edit or create files.
@@ -349,34 +349,6 @@ matches for direct calls on the next model request, even in this mode."
 exactly like direct tool calls. Follow the live tool list.\n"
     );
     (model, format!("codemode {label}"))
-}
-
-/// Model and display text for a mid-session edit-tool switch.
-///
-/// The system prompt stays format-agnostic. This notice carries the new tool
-/// contract so the model stops using the previous surface.
-pub fn edit_tool_switch_context(
-    previous: rho_tools::EditFormat,
-    current: rho_tools::EditFormat,
-    spec: &ToolSpec,
-) -> (String, String) {
-    let previous_name = previous.tool_name();
-    let current_name = current.tool_name();
-    let model = format!(
-        "[edit tool switched]\n\n\
-The file edit tool changed mid-session. Do not call `{previous_name}` anymore.\n\
-Use `{current_name}` for edits to existing UTF-8 files from now on.\n\
-Prefer `write` only to create or fully rewrite a file.\n\
-Follow the live tool list.\n\n\
-Previous tool: `{previous_name}` ({previous_label})\n\
-Current tool: `{current_name}` ({current_label})\n\n\
-{schema}\n",
-        previous_label = previous.as_str(),
-        current_label = current.as_str(),
-        schema = tool_schema_block(spec),
-    );
-    let display = format!("edit tool switched to {}", current.as_str());
-    (model, display)
 }
 
 fn tool_schema_block(spec: &ToolSpec) -> String {

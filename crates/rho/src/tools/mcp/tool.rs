@@ -147,8 +147,8 @@ pub(super) struct McpTool {
     pub(super) remote_name: String,
     pub(super) peer: Peer<RoleClient>,
     pub(super) progress: McpProgressRouter,
-    /// Where this invocation publishes itself so the server's elicitation and
-    /// sampling requests can be routed back to it.
+    /// Where this invocation publishes itself so the server's elicitation
+    /// requests can be routed back to it.
     pub(super) calls: McpInFlightCalls,
     pub(super) transport: McpTransport,
     pub(super) max_output_bytes: usize,
@@ -239,9 +239,6 @@ impl Tool for McpTool {
                         // when this future ends, so a server request that
                         // arrives mid-call has a caller and one that arrives
                         // after it does not.
-                        // Call-scoped registration: its token cancels when this future
-                        // ends (success, error, turn cancel, or budget), so
-                        // nested sampling cannot outlive the tools/call.
                         let caller = self.caller_context()?;
                         let (_registration, questions) = self.calls.register();
                         let budget = CallBudget::new(MCP_TOOL_CALL_BUDGET);

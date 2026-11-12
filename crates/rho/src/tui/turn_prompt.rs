@@ -34,19 +34,4 @@ impl TurnPrompt {
         self.skills.push(name);
         self
     }
-
-    /// Also loads every known skill the model text mentions as `$<name>`,
-    /// after the skills already listed.
-    pub(super) fn load_mentioned_skills(
-        &mut self,
-        discover: impl FnOnce() -> Vec<crate::skills::Skill>,
-    ) {
-        let leading = self.skills.iter().map(String::as_str).collect::<Vec<_>>();
-        let skills =
-            crate::skills::mention::skills_to_load(&leading, &[self.model.as_str()], discover)
-                .into_iter()
-                .map(str::to_owned)
-                .collect();
-        self.skills = skills;
-    }
 }

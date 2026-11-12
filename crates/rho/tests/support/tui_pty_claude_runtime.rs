@@ -27,28 +27,13 @@ fn install_fake(home: &IsolatedHome, script: &str) -> (FakeAcpPaths, String) {
     (fake, path)
 }
 
-/// Where the TUI runs the session.
-#[derive(Clone, Copy)]
-enum Host {
-    InProcess,
-    Daemon,
-}
-
 fn launch(home: &IsolatedHome, path: String, rows: u16, name: &str) -> PtyHarness {
-    launch_on(Host::InProcess, home, path, rows, name)
-}
-
-fn launch_on(host: Host, home: &IsolatedHome, path: String, rows: u16, name: &str) -> PtyHarness {
-    let mut plan = RhoLaunchPlan::matrix(
+    let plan = RhoLaunchPlan::matrix(
         PathBuf::from(env!("CARGO_BIN_EXE_rho")),
         home,
         PtySize { rows, cols: 120 },
     )
     .with_env("PATH", path);
-    match host {
-        Host::InProcess => plan = plan.with_env("RHO_TUI_DAEMON", "0"),
-        Host::Daemon => plan = plan.with_env("RHO_TUI_DAEMON", "1"),
-    }
     let mut harness = PtyHarness::spawn_named(&plan, name).unwrap();
     harness
         .wait_for_text("gpt-5.5", WaitTimeout::secs(20, "startup"))
@@ -212,20 +197,9 @@ fn fake_claude_runtime_end_to_end_success() {
 /// into the parent session total shown by `/info` after automatic delivery.
 #[test]
 fn fake_claude_background_cost_appears_in_info() {
-    background_cost_appears_in_info(Host::InProcess, "fake_claude_background_cost_info");
-}
-
-/// The same with the daemon running the session: the TUI reads the run's
-/// cost from its artifacts rather than from an in-process manager.
-#[test]
-fn fake_claude_background_cost_appears_in_info_daemon() {
-    background_cost_appears_in_info(Host::Daemon, "fake_claude_background_cost_info_daemon");
-}
-
-fn background_cost_appears_in_info(host: Host, name: &str) {
     let home = IsolatedHome::new().unwrap();
     let (_fake, path) = install_fake(&home, "success.json");
-    let mut harness = launch_on(host, &home, path, 36, name);
+    let mut harness = launch(&home, path, 36, "fake_claude_background_cost_info");
 
     harness
         .submit_text("fixture background claude agent")
@@ -300,10 +274,10 @@ fn fake_claude_runtime_end_to_end_error() {
     assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
 }
 
-/// Full Claude Code advisor path in a daemon session: `/advisor on` picker
-/// selection -> the daemon's settings -> advisor tool call ->
-/// `claude-agent-acp` one-shot with no tools -> advice in the card. Never
-/// touches a real Claude install or the network.
+/// Full Claude Code advisor path: `/advisor on` picker selection -> the
+/// daemon's settings -> advisor tool call -> `claude-agent-acp` one-shot with
+/// no tools -> advice in the card. Never touches a real Claude install or the
+/// network.
 #[test]
 fn fake_claude_advisor_reviews_the_session() {
     let home = IsolatedHome::new().unwrap();
@@ -331,7 +305,6 @@ credential_store = "file"
         },
     )
     .with_env("PATH", path)
-    .with_env("RHO_TUI_DAEMON", "1")
     .with_env("OPENAI_API_KEY", "sk-test-matrix");
     let mut harness = PtyHarness::spawn_named(&plan, "fake_claude_advisor").unwrap();
     harness

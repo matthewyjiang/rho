@@ -1,17 +1,16 @@
-//! A daemon session's approval ask as the approval prompt the in-process
-//! TUI shows (#1667): the same title, details, and reason, drawn from the
-//! wire's operation instead of the runtime's capability request.
+//! A daemon session's approval ask as the approval prompt: its title,
+//! details, and reason, drawn from the wire's operation.
 //!
 //! The wire carries what a person decides on, not the runtime's whole
 //! request: a process's environment, output limit, and timeout stay in the
 //! daemon, so its details show only what the ask says rather than guess.
 
-use rho_protocol::{ApprovalAsk, ApprovalSource, Operation, PathScope as WirePathScope};
-use rho_sdk::{CapabilityKind, PathScope};
+use rho_protocol::{ApprovalAsk, ApprovalSource, Operation, PathScope};
+use rho_sdk::CapabilityKind;
 
 use super::render::{
-    format_direct_invocation, format_path_scope, sanitize_controls, session_control_details, title,
-    Actor, ApprovalDetails, ApprovalPrompt,
+    format_direct_invocation, sanitize_controls, session_control_details, title, Actor,
+    ApprovalDetails, ApprovalPrompt,
 };
 
 impl ApprovalPrompt {
@@ -105,16 +104,18 @@ fn details(operation: &Operation) -> ApprovalDetails {
     }
 }
 
-/// Where a path lies, as the in-process prompt says it.
-fn path_scope(scope: &WirePathScope) -> String {
-    let scope = match scope {
-        WirePathScope::Workspace => PathScope::PrimaryWorkspace,
-        WirePathScope::GrantedRoot { root } => PathScope::GrantedRoot { root: root.clone() },
-        WirePathScope::Unrestricted => PathScope::UnrestrictedFilesystem,
+/// Where a path lies.
+fn path_scope(scope: &PathScope) -> String {
+    match scope {
+        PathScope::Workspace => "scope primary workspace".into(),
+        PathScope::GrantedRoot { root } => format!(
+            "scope granted root {}",
+            sanitize_controls(&root.to_string_lossy())
+        ),
+        PathScope::Unrestricted => "scope unrestricted filesystem".into(),
         // `Unknown`, or a scope a newer daemon sends.
-        _ => return "scope unspecified".into(),
-    };
-    format_path_scope(&scope)
+        _ => "scope unspecified".into(),
+    }
 }
 
 #[cfg(test)]

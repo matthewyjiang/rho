@@ -1,5 +1,5 @@
-//! With `RHO_TUI_DAEMON=1`, a daemon turn's approval request opens the
-//! TUI's approval prompt, and the person's choice answers it (#1667).
+//! A daemon turn's approval request opens the TUI's approval prompt, and the
+//! person's choice answers it (#1667).
 
 use anyhow::Result;
 
@@ -12,10 +12,7 @@ use crate::{
 
 use super::{daemon_resume::write_daemon_config_in_mode, DEFAULT_SIZE, SETTLE, STARTUP, STREAM};
 
-const ENV: &[(&str, &str)] = &[
-    ("RHO_TUI_DAEMON", "1"),
-    ("OPENAI_API_KEY", "sk-test-matrix"),
-];
+const ENV: &[(&str, &str)] = &[("OPENAI_API_KEY", "sk-test-matrix")];
 /// The idle composer's placeholder; a running turn shows `esc abort`.
 const IDLE_COMPOSER: &str = "Type a message";
 /// The approval prompt's title for the fixture's `write` call.

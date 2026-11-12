@@ -75,13 +75,7 @@ fn name(report: SessionReport) -> &'static str {
 impl App {
     /// Asks the daemon for `report` on the followed session.
     pub(super) fn request_daemon_report(&mut self, report: SessionReport) {
-        let session = self
-            .info
-            .session
-            .daemon
-            .as_ref()
-            .expect("a daemon report requires a session");
-        match session.inspect(report) {
+        match self.info.session.daemon.inspect(report) {
             Ok(()) => {
                 self.awaited_daemon_report = Some(report);
                 self.set_status_quiet(format!("reading {}", name(report)));
@@ -93,12 +87,9 @@ impl App {
         }
     }
 
-    /// Reads the Compaction section of the `/info` overlay just opened on a
-    /// daemon session: now, or once the turn under way ends.
+    /// Reads the Compaction section of the `/info` overlay just opened: now,
+    /// or once the turn under way ends.
     pub(super) fn open_daemon_info_compaction(&mut self) {
-        if self.info.session.daemon.is_none() {
-            return;
-        }
         let step = InfoCompactionRead::opened(self.daemon_turn_runs());
         self.step_info_compaction(step);
     }
@@ -122,10 +113,7 @@ impl App {
         if !ask {
             return;
         }
-        let Some(session) = self.info.session.daemon.as_ref() else {
-            return;
-        };
-        if let Err(error) = session.inspect(SessionReport::Compaction) {
+        if let Err(error) = self.info.session.daemon.inspect(SessionReport::Compaction) {
             self.info_compaction_read = InfoCompactionRead::Idle;
             self.apply_info_compaction(Err(error.to_string()));
         }

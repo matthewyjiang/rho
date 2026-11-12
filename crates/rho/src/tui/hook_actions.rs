@@ -1,23 +1,10 @@
 //! The `/hooks` command: reload hook configuration and show the spawn contract.
 
-use super::{App, Entry, InteractiveRuntime};
+use super::App;
 
 impl App {
-    pub(super) fn execute_hooks_command(
-        &mut self,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<()> {
-        if self.info.session.daemon.is_some() {
-            self.request_daemon_report(rho_protocol::SessionReport::Hooks);
-            return Ok(());
-        }
-        match agent.reload_hooks() {
-            Ok(report) => self.show_hooks_report(report),
-            Err(error) => {
-                self.insert_entry(&Entry::Error(format!("could not reload hooks: {error}")));
-                self.set_status("hook reload failed");
-            }
-        }
+    pub(super) fn execute_hooks_command(&mut self) -> anyhow::Result<()> {
+        self.request_daemon_report(rho_protocol::SessionReport::Hooks);
         Ok(())
     }
 }

@@ -120,11 +120,8 @@ impl From<McpLogLevel> for rmcp::model::LoggingLevel {
 /// Whether a server may ask Rho's model for a completion through
 /// `sampling/createMessage`.
 ///
-/// Config opt-in is only the first of two gates. Even an opted-in server must
-/// still get the user's answer before each individual request runs, because a
-/// server that samples in a loop spends the user's tokens. A server left at the
-/// default never sees `sampling` in Rho's declared capabilities, so a
-/// well-behaved server never asks.
+/// Rho reads and writes the setting but declares `sampling` to no server, so
+/// every server is refused whatever it says.
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum McpSamplingPolicy {
@@ -133,16 +130,6 @@ pub(crate) enum McpSamplingPolicy {
     Deny,
     /// The server may ask; the user allows or refuses each request.
     Ask,
-}
-
-impl McpSamplingPolicy {
-    /// Whether Rho may declare `sampling` to this server.
-    pub(crate) fn is_offered(self) -> bool {
-        match self {
-            Self::Deny => false,
-            Self::Ask => true,
-        }
-    }
 }
 
 /// OAuth 2.1 authorization for one Streamable HTTP server.

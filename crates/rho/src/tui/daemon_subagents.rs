@@ -25,7 +25,7 @@ pub(super) struct SubagentRuns {
     /// Each run's artifact directory, resolved once.
     directories: HashMap<String, PathBuf>,
     /// The finished runs whose result the transcript shows delivered:
-    /// their rows left the rail with it, as in process.
+    /// their rows left the rail with it.
     delivered: HashSet<String>,
     /// The rows the last job list put on the rail.
     shown: Vec<SubagentSnapshot>,

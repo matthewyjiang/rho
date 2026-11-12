@@ -1,7 +1,6 @@
 use pretty_assertions::assert_eq;
 use rho_sdk::{
-    CancellationToken, HostChoice, HostInputRequest, HostInputResponse, HostQuestion,
-    SelectionMode, SessionId,
+    CancellationToken, HostChoice, HostInputRequest, HostInputResponse, HostQuestion, SelectionMode,
 };
 use tokio::time::{timeout, Duration};
 
@@ -28,7 +27,6 @@ async fn unbound_bridge_rejects_child_requests() {
         .request(
             "abc123",
             "worker",
-            SessionId::new(),
             sample_request(),
             &CancellationToken::new(),
         )
@@ -47,13 +45,7 @@ async fn child_cancellation_ends_a_waiting_request() {
         let cancellation = cancellation.clone();
         async move {
             bridge
-                .request(
-                    "abc123",
-                    "worker",
-                    SessionId::new(),
-                    sample_request(),
-                    &cancellation,
-                )
+                .request("abc123", "worker", sample_request(), &cancellation)
                 .await
         }
     });
@@ -77,13 +69,7 @@ async fn reports_a_parent_that_stopped_accepting_requests() {
 
     let error = timeout(
         Duration::from_secs(1),
-        bridge.request(
-            "run-1",
-            "worker",
-            SessionId::new(),
-            sample_request(),
-            &cancellation,
-        ),
+        bridge.request("run-1", "worker", sample_request(), &cancellation),
     )
     .await
     .expect("request timeout")
@@ -105,13 +91,7 @@ async fn reports_a_queued_request_the_parent_dropped() {
         let bridge = bridge.clone();
         async move {
             bridge
-                .request(
-                    "run-1",
-                    "worker",
-                    SessionId::new(),
-                    sample_request(),
-                    &cancellation,
-                )
+                .request("run-1", "worker", sample_request(), &cancellation)
                 .await
         }
     });
@@ -141,17 +121,15 @@ async fn reports_a_queued_request_the_parent_dropped() {
 async fn forwards_the_child_identity_to_the_parent() {
     let bridge = SubagentHostInputBridge::new();
     let mut receiver = bridge.bind_parent();
-    let parent_session_id = SessionId::new();
     let request = sample_request();
     let request_id = request.id().clone();
     let cancellation = CancellationToken::new();
 
     let child = tokio::spawn({
         let bridge = bridge.clone();
-        let parent_session_id = parent_session_id.clone();
         async move {
             bridge
-                .request("run-1", "worker", parent_session_id, request, &cancellation)
+                .request("run-1", "worker", request, &cancellation)
                 .await
         }
     });
@@ -164,10 +142,9 @@ async fn forwards_the_child_identity_to_the_parent() {
         (
             pending.run_id.as_str(),
             pending.agent_id.as_str(),
-            &pending.parent_session_id,
             pending.request.id(),
         ),
-        ("run-1", "worker", &parent_session_id, &request_id)
+        ("run-1", "worker", &request_id)
     );
     pending
         .response

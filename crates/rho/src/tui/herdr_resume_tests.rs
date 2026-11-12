@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use clap::Parser;
 use pretty_assertions::assert_eq;
 use rho_providers::model::{ReasoningCapabilities, ReasoningLevelSet};
@@ -88,21 +86,17 @@ fn resume_argv_pins_only_drift_from_config() {
         (
             "unreadable config pins everything; launch flags repeat",
             ResumeLaunchOptions {
-                config: Some(PathBuf::from("/tmp/rho config/config.toml")),
                 agent: Some("reviewer".into()),
                 definition: None,
                 no_system_prompt: true,
                 no_tools: true,
                 no_subagents: true,
-                in_process: false,
             },
             live.clone(),
             None,
             ReasoningCapabilities::Unknown,
             vec![
                 "rho",
-                "--config",
-                "/tmp/rho config/config.toml",
                 "--agent",
                 "reviewer",
                 "--no-system-prompt",
@@ -116,26 +110,6 @@ fn resume_argv_pins_only_drift_from_config() {
                 "high",
                 "--permission-mode",
                 "allow_edits",
-                "--resume",
-                "session-1",
-            ],
-        ),
-        (
-            "an in-process launch stays in process",
-            ResumeLaunchOptions {
-                config: Some(PathBuf::from("/tmp/config.toml")),
-                in_process: true,
-                ..ResumeLaunchOptions::default()
-            },
-            live.clone(),
-            Some(live.clone()),
-            levels.clone(),
-            vec![
-                "env",
-                "RHO_TUI_DAEMON=0",
-                "rho",
-                "--config",
-                "/tmp/config.toml",
                 "--resume",
                 "session-1",
             ],

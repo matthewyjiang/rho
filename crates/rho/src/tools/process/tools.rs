@@ -7,8 +7,8 @@ use std::time::Duration;
 const STOP_GRACE: Duration = Duration::from_secs(2);
 
 /// Whether `process start` advertises `keep_warm`. Only a host that runs a
-/// cache warmer offers it: the in-process TUI, and the daemon for a session
-/// whose turns end while a process runs. Every other host keeps it hidden.
+/// cache warmer offers it: the daemon, for a session whose turns end while a
+/// process runs. Every other host keeps it hidden.
 #[derive(Clone, Debug, Default)]
 pub(crate) enum KeepWarmOffer {
     #[default]

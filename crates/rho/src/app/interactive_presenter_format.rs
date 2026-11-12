@@ -557,43 +557,6 @@ fn advisor_finished_card(content: &str, ok: bool) -> ToolCard {
     card
 }
 
-pub(super) fn interrupted_card(
-    view: &ToolView,
-    partial_arguments: &str,
-    cwd: &std::path::Path,
-) -> ToolCard {
-    match &view.kind {
-        // A partial argument buffer for a no-argument tool is only `{}` noise.
-        ToolKind::Advisor => advisor_card(ToolCardStatus::Interrupted, "interrupted"),
-        ToolKind::Agent => agent_format::agent_interrupted_card(&view.arguments),
-        ToolKind::Agents => agent_format::agents_interrupted_card(&view.arguments),
-        ToolKind::Codemode => {
-            codemode_format::preview_card(&view.arguments, ToolCardStatus::Interrupted, None)
-        }
-        ToolKind::Workflow => crate::presentation::workflow::preview_card(
-            &view.arguments,
-            cwd,
-            ToolCardStatus::Interrupted,
-        ),
-        ToolKind::Edit(format) => {
-            edit_preview_card(*format, &view.arguments, cwd, ToolCardStatus::Interrupted)
-        }
-        _ => {
-            let mut card = preview_card(
-                &view.kind,
-                &view.name,
-                Some(&view.arguments),
-                cwd,
-                ToolCardStatus::Interrupted,
-            );
-            if !partial_arguments.is_empty() && card.body.is_empty() && card.facts.is_empty() {
-                card.body = ToolBody::Lines(vec![partial_arguments.to_string()]);
-            }
-            card
-        }
-    }
-}
-
 pub(super) fn family_for_kind(kind: &ToolKind, metadata: Option<&ToolMetadata>) -> ToolFamily {
     match kind {
         // The advisor is another model reviewing the run, like a subagent.

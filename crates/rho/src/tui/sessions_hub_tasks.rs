@@ -47,20 +47,20 @@ impl SessionsDelete {
 
     /// Deletes from the session store, in one batch, then through `held`
     /// what the store refused as open elsewhere.
-    fn run(self, options: DeleteOptions, held: Option<DeleteHeld>) -> DeleteReport {
+    fn run(self, options: DeleteOptions, held: DeleteHeld) -> DeleteReport {
         match self {
             Self::One(target) => {
                 let result = match Session::delete_target(&target, options) {
                     Ok(outcome) => Ok(Deleted::from(&outcome)),
-                    Err(error) => match held.filter(|_| is_in_use(&error)) {
-                        Some(held) => match held(vec![target.id.clone()]).pop() {
+                    Err(error) if is_in_use(&error) => {
+                        match held(vec![target.id.clone()]).pop() {
                             // The daemon does not count what went with it.
                             Some(Ok(())) => Ok(Deleted::default()),
                             Some(Err(refusal)) => Err(anyhow::anyhow!(refusal)),
                             None => Err(error),
-                        },
-                        None => Err(error),
-                    },
+                        }
+                    }
+                    Err(error) => Err(error),
                 };
                 DeleteReport::One { target, result }
             }
@@ -129,10 +129,7 @@ impl BatchDeleted {
     /// Asks `held` for the sessions the store refused as open elsewhere:
     /// each it deletes counts as deleted, and each it refuses keeps the
     /// failure, in its words.
-    fn retry_held(mut self, held: Option<DeleteHeld>) -> Self {
-        let Some(held) = held else {
-            return self;
-        };
+    fn retry_held(mut self, held: DeleteHeld) -> Self {
         let (in_use, mut failures): (Vec<_>, Vec<_>) = std::mem::take(&mut self.failures)
             .into_iter()
             .partition(|failure| failure.in_use);
@@ -294,12 +291,7 @@ impl App {
         let status = format!("deleting {}", plural(request.session_count(), "session"));
         // The daemon holds every session it has loaded, such as the ones
         // this TUI left: only it can delete those.
-        let held = self
-            .info
-            .session
-            .daemon
-            .as_ref()
-            .map(crate::tui::DaemonSession::deleter);
+        let held = self.info.session.daemon.deleter();
         self.pending_sessions_task = Some(PendingSessionsTask {
             handle: tokio::task::spawn_blocking(move || {
                 let report = request.run(options, held);

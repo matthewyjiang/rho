@@ -1,6 +1,6 @@
 use super::tree::{SessionNode, StoredStateTransition};
 use super::*;
-use rho_providers::model::{AssistantMessage, ProviderContextBlock};
+use rho_providers::model::{AssistantMessage, ModelIdentity, ProviderContextBlock};
 use serde_json::json;
 use std::fs::OpenOptions;
 
@@ -68,9 +68,9 @@ fn every_supported_application_session_fixture_restores_as_a_snapshot() {
                 "rho:migrated-v1".into(),
             )
             .unwrap();
-        let histories =
-            persistence::histories_from_tree(&tree::SessionTree::load(session.path()).unwrap())
-                .unwrap();
+        let tree = tree::SessionTree::load(session.path()).unwrap();
+        let history = persistence::history_from_tree(&tree).unwrap();
+        let display = persistence::active_display_from_tree(&tree).unwrap();
 
         assert_eq!(
             snapshot.schema_version(),
@@ -81,9 +81,9 @@ fn every_supported_application_session_fixture_restores_as_a_snapshot() {
         assert_eq!(snapshot.compaction().completed_compactions(), compactions);
         assert_eq!(snapshot.compaction().removed_messages(), removed);
         assert_eq!(snapshot.prompt_cache_key(), Some(cache_key));
-        assert_eq!(snapshot.history(), histories.model);
-        assert_eq!(histories.model.len(), model_len);
-        assert_eq!(histories.display.len(), display_len);
+        assert_eq!(snapshot.history(), history);
+        assert_eq!(history.len(), model_len);
+        assert_eq!(display.len(), display_len);
 
         drop((root, cwd));
     }
@@ -332,12 +332,13 @@ fn consecutive_snapshot_saves_append_only_new_history() {
         .snapshot_for_resume(identity, "rho:fallback".into())
         .unwrap();
     assert_eq!(restored, second);
-    assert_eq!(
-        persistence::histories_from_tree(&tree::SessionTree::load(session.path()).unwrap())
+    let display: Vec<_> =
+        persistence::active_display_from_tree(&tree::SessionTree::load(session.path()).unwrap())
             .unwrap()
-            .display,
-        second.history()
-    );
+            .into_iter()
+            .map(|row| row.message)
+            .collect();
+    assert_eq!(display, second.history());
 }
 
 #[test]

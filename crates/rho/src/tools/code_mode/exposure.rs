@@ -211,10 +211,6 @@ impl CodeModeSurface {
             .unwrap_or_default();
         self.state.write().expect("codemode surface").loaded = loaded;
     }
-
-    pub(crate) fn clear_loaded(&self) {
-        self.state.write().expect("codemode surface").loaded.clear();
-    }
 }
 
 const LOADED_TOOLS_KEY: &str = "rho.codemode.loaded_tools";
