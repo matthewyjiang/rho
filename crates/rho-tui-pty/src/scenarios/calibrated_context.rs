@@ -110,10 +110,6 @@ pub(super) fn run(runner: &ScenarioRunner, scenario: &Scenario) -> Result<Scenar
                     harness.screen().contents()
                 );
                 harness.submit_text("/info")?;
-                // The compaction rows arrive from the daemon after the panel
-                // opens. End scrolls to the bottom of what is there, so wait
-                // for them before pressing it.
-                harness.wait_for_text("Local target", SETTLE)?;
                 harness.inject_key(&crate::keys::Key::End)?;
                 harness.wait_for_text("local tokens (reduced)", SETTLE)?;
                 harness.inject_key(&crate::keys::Key::Esc)?;

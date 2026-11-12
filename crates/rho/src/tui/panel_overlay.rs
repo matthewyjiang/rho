@@ -140,11 +140,9 @@ impl App {
 
     /// Re-clamps the open panel's scroll after a resize.
     pub(super) fn clamp_panel_overlay_scroll(&mut self, terminal: &DefaultTerminal) {
-        let (Some(panel), Some(area)) = (self.panel_overlay(), terminal_area(terminal)) else {
-            return;
-        };
-        let offset = panel.body().state().scroll.offset();
-        self.scroll_panel_overlay(area, PanelScrollTarget::Absolute(offset));
+        if let Some(area) = terminal_area(terminal) {
+            self.scroll_panel_overlay(area, PanelScrollTarget::Delta(0));
+        }
     }
 
     /// The open panel's frame at `area`, or `None` when no panel is open.

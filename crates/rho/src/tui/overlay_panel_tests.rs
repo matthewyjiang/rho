@@ -101,7 +101,7 @@ fn classify_panel_key_covers_close_scroll_passthrough_and_swallow() {
         (
             KeyCode::End,
             KeyModifiers::NONE,
-            PanelKey::Scroll(PanelScrollTarget::Absolute(usize::MAX)),
+            PanelKey::Scroll(PanelScrollTarget::End),
         ),
         (
             KeyCode::Char('c'),
@@ -133,4 +133,21 @@ fn panel_scroll_applies_targets_and_clamps() {
     assert_eq!(scroll.offset(), 6);
     scroll.apply(PanelScrollTarget::Delta(-3), 10, 4);
     assert_eq!(scroll.offset(), 3);
+}
+
+// Covers: End pressed on a body that later gains rows keeps the view on the
+// last row, across a re-clamp, until a target moves above the end.
+// Owner: pure unit
+#[test]
+fn panel_scroll_end_follows_a_growing_body() {
+    let drawn = |scroll: PanelScroll, body_len| clamp_panel_scroll(scroll.offset(), body_len, 4);
+    let mut scroll = PanelScroll::default();
+    // The body fits when End is pressed, as before a report arrives.
+    scroll.apply(PanelScrollTarget::End, 3, 4);
+    assert_eq!(drawn(scroll, 3), 0);
+    assert_eq!(drawn(scroll, 10), 6);
+    scroll.apply(PanelScrollTarget::Delta(0), 10, 4);
+    assert_eq!(drawn(scroll, 12), 8);
+    scroll.apply(PanelScrollTarget::Delta(-1), 12, 4);
+    assert_eq!(drawn(scroll, 20), 7);
 }

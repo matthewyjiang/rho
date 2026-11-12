@@ -223,6 +223,8 @@ pub(super) enum PanelScrollTarget {
     Delta(isize),
     Page(isize),
     Absolute(usize),
+    /// The last row, kept there as the body grows.
+    End,
 }
 
 /// Per-panel state every single-pane overlay embeds: body scroll plus
@@ -297,29 +299,43 @@ pub(super) fn scroll_panel(panel: &mut dyn PanelBody, area: Rect, target: PanelS
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) struct PanelScroll {
     offset: usize,
+    /// Set by [`PanelScrollTarget::End`] until a target moves above the
+    /// end: rows a panel gains after it opened, such as a report it waited
+    /// for, then keep the view on the last row.
+    at_end: bool,
 }
 
 impl PanelScroll {
+    /// The first body row to draw. Past the body while pinned to the end,
+    /// which the frame clamps to the body it draws.
     pub(super) fn offset(self) -> usize {
-        self.offset
+        if self.at_end {
+            usize::MAX
+        } else {
+            self.offset
+        }
     }
 
     pub(super) fn apply(&mut self, target: PanelScrollTarget, body_len: usize, body_rows: usize) {
+        let end = clamp_panel_scroll(usize::MAX, body_len, body_rows);
+        let current = if self.at_end { end } else { self.offset };
         let next = match target {
             PanelScrollTarget::Delta(delta) if delta < 0 => {
-                self.offset.saturating_sub(delta.unsigned_abs())
+                current.saturating_sub(delta.unsigned_abs())
             }
-            PanelScrollTarget::Delta(delta) => self.offset.saturating_add(delta as usize),
+            PanelScrollTarget::Delta(delta) => current.saturating_add(delta as usize),
             PanelScrollTarget::Page(direction) => {
                 let delta = direction.saturating_mul(body_rows.max(1) as isize);
                 if delta < 0 {
-                    self.offset.saturating_sub(delta.unsigned_abs())
+                    current.saturating_sub(delta.unsigned_abs())
                 } else {
-                    self.offset.saturating_add(delta as usize)
+                    current.saturating_add(delta as usize)
                 }
             }
             PanelScrollTarget::Absolute(scroll) => scroll,
+            PanelScrollTarget::End => usize::MAX,
         };
+        self.at_end = target == PanelScrollTarget::End || (self.at_end && next >= end);
         self.offset = clamp_panel_scroll(next, body_len, body_rows);
     }
 }
@@ -350,7 +366,7 @@ pub(super) fn classify_panel_key(key: crossterm::event::KeyEvent) -> PanelKey {
         (_, KeyCode::PageUp) => PanelKey::Scroll(PanelScrollTarget::Page(-1)),
         (_, KeyCode::PageDown) => PanelKey::Scroll(PanelScrollTarget::Page(1)),
         (_, KeyCode::Home) => PanelKey::Scroll(PanelScrollTarget::Absolute(0)),
-        (_, KeyCode::End) => PanelKey::Scroll(PanelScrollTarget::Absolute(usize::MAX)),
+        (_, KeyCode::End) => PanelKey::Scroll(PanelScrollTarget::End),
         (KeyModifiers::CONTROL, KeyCode::Char('c')) => PanelKey::Passthrough,
         _ => PanelKey::Swallow,
     }
