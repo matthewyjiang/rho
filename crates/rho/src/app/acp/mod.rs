@@ -42,9 +42,11 @@ use agent_client_protocol::{
     Agent, Client, ConnectTo, Error as AcpError, JsonRpcResponse, Role, Stdio,
 };
 use rho_protocol::{methods::SessionList, ChildThreads, SessionListParams, SessionPart};
-use tokio::signal::unix::{signal, Signal, SignalKind};
 
-use super::{daemon_client::Daemon, shutdown_signal::ShutdownSignals};
+use super::{
+    daemon_client::Daemon,
+    shutdown_signal::{ShutdownSignals, TerminalClosed},
+};
 use crate::{
     cli::Cli,
     herdr::{HerdrReporter, HerdrSource},
@@ -252,7 +254,7 @@ pub(super) async fn run(cli: Cli) -> anyhow::Result<()> {
     // Installed before the host can reach this agent, so a stop signal
     // always detaches its sessions.
     let mut stops = ShutdownSignals::install()?;
-    let mut hangup = signal(SignalKind::hangup())?;
+    let mut hangup = TerminalClosed::install()?;
     let adapter = Arc::new(Adapter::new(&cli)?);
     // Host integrations do not change protocol negotiation: each connection
     // uses the highest version both sides support.
@@ -276,12 +278,12 @@ pub(super) async fn run(cli: Cli) -> anyhow::Result<()> {
     served
 }
 
-/// Returns once this process is told to stop: SIGINT, SIGTERM, or SIGHUP,
-/// which a host that closes the terminal it ran the agent in sends.
-async fn stopped(stops: &mut ShutdownSignals, hangup: &mut Signal) {
+/// Returns once this process is told to stop: by a shutdown signal, or by
+/// the terminal closing, as when a host closes the one it ran the agent in.
+async fn stopped(stops: &mut ShutdownSignals, hangup: &mut TerminalClosed) {
     tokio::select! {
         _ = stops.recv() => {}
-        _ = hangup.recv() => {}
+        () = hangup.recv() => {}
     }
 }
 

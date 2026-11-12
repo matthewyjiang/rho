@@ -33,7 +33,6 @@ pub(crate) enum LaunchChange {
     },
 }
 
-#[cfg(unix)]
 impl LaunchChange {
     /// The change to send a session that runs with `options`.
     pub(super) fn of(self, options: &rho_protocol::SessionOptions) -> rho_protocol::SessionChange {

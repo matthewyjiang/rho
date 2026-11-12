@@ -25,10 +25,7 @@ use rho_protocol::{
     ToolCallId, ToolContent, ToolStatus, TurnError, TurnErrorKind, TurnId, TurnOutcome,
 };
 use rho_tui_pty::IsolatedHome;
-use tokio::{
-    io::{AsyncBufReadExt, BufReader},
-    net::UnixStream,
-};
+use tokio::io::{AsyncBufReadExt, BufReader};
 
 /// Failure bound for each wait on the daemon. Every turn here answers from
 /// the fixture provider without network; this only stops a hung test.
@@ -90,7 +87,8 @@ Do the task.
 pub(super) struct Sandbox {
     /// The sandbox's home, log, and socket: tests reach them only here.
     pub(super) isolated: IsolatedHome,
-    /// The session's workspace, canonicalized as the daemon records it.
+    /// The session's workspace, canonicalized as the daemon records it:
+    /// on Windows, without the verbatim prefix.
     pub(super) workspace: PathBuf,
 }
 
@@ -99,10 +97,24 @@ impl Sandbox {
         let isolated = IsolatedHome::new().unwrap();
         std::fs::write(&isolated.config_path, CONFIG).unwrap();
         let workspace = isolated.workspace.canonicalize().unwrap();
+        #[cfg(windows)]
+        let workspace = PathBuf::from(
+            workspace
+                .to_str()
+                .and_then(|path| path.strip_prefix(r"\\?\"))
+                .expect("a canonical path on a drive"),
+        );
         Self {
             isolated,
             workspace,
         }
+    }
+
+    /// The workspace as a session's tools and the runs it starts name it:
+    /// resolved by the file system, which on Windows puts the verbatim
+    /// prefix on it, in a daemon and out of one.
+    pub(super) fn resolved_workspace(&self) -> PathBuf {
+        self.workspace.canonicalize().unwrap()
     }
 
     /// `rho` in the workspace, in the sandbox, with the fixture provider in
@@ -195,10 +207,44 @@ impl Sandbox {
             .0
     }
 
-    async fn try_connect_as(&self, hello: ClientHello) -> Option<(Client, Notifications)> {
-        let stream = UnixStream::connect(self.isolated.daemon_socket()?)
+    /// A raw connection to the sandbox's daemon, before any hello; `None`
+    /// while none listens.
+    #[cfg(unix)]
+    pub(super) async fn stream(&self) -> Option<tokio::net::UnixStream> {
+        tokio::net::UnixStream::connect(self.isolated.daemon_socket()?)
             .await
-            .ok()?;
+            .ok()
+    }
+
+    /// A raw connection to the sandbox's daemon, before any hello; `None`
+    /// while none listens. A pipe whose every instance is taken for a
+    /// moment is tried again, as rho's own client does.
+    #[cfg(windows)]
+    pub(super) async fn stream(
+        &self,
+    ) -> Option<rho_protocol::CloseOnShutdown<tokio::net::windows::named_pipe::NamedPipeClient>>
+    {
+        // ERROR_PIPE_BUSY.
+        const BUSY: i32 = 231;
+        let socket = self.isolated.daemon_socket()?;
+        let started = Instant::now();
+        loop {
+            match tokio::net::windows::named_pipe::ClientOptions::new().open(&socket) {
+                // A pipe cannot close one direction alone, so a client that
+                // is dropped must stop reading for the daemon to see it go.
+                Ok(stream) => return Some(rho_protocol::CloseOnShutdown::new(stream)),
+                Err(error)
+                    if error.raw_os_error() == Some(BUSY) && started.elapsed() < DEADLINE =>
+                {
+                    tokio::time::sleep(POLL_INTERVAL).await;
+                }
+                Err(_) => return None,
+            }
+        }
+    }
+
+    async fn try_connect_as(&self, hello: ClientHello) -> Option<(Client, Notifications)> {
+        let stream = self.stream().await?;
         Client::handshake(stream, hello)
             .await
             .ok()
@@ -932,7 +978,7 @@ async fn a_subagent_is_a_child_job_of_its_session() {
             JobState::Completed,
             JobKind::Subagent,
             JobState::Completed,
-            sandbox.workspace.clone(),
+            sandbox.resolved_workspace(),
             None,
             None,
         ),
@@ -958,6 +1004,11 @@ async fn a_subagent_is_a_child_job_of_its_session() {
 // child job of the session's job, completed once the run succeeded; each of
 // its agent nodes is a subagent job whose parent is the workflow job.
 // Owner: daemon workflow jobs.
+// Unix: on Windows the `workflow` tool refuses every source as outside the
+// workspace, in a daemon and out of one: it compares the path the file
+// system resolved, which has the verbatim prefix, with the workspace's
+// (#1895).
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_workflow_run_is_a_child_job_of_its_session() {
     let sandbox = Sandbox::new();
@@ -998,7 +1049,7 @@ async fn a_workflow_run_is_a_child_job_of_its_session() {
                 None
             ),
             (JobKind::Subagent, JobState::Completed, None),
-            (sandbox.workspace.clone(), sandbox.workspace.clone()),
+            (sandbox.resolved_workspace(), sandbox.resolved_workspace()),
         ),
         "log:\n{log}"
     );
@@ -1739,7 +1790,7 @@ async fn an_approval_waits_for_any_client_to_answer() {
                         name: "write".into(),
                     },
                     operation: Operation::WritePath {
-                        path: sandbox.workspace.join("note.txt"),
+                        path: sandbox.resolved_workspace().join("note.txt"),
                         scope: PathScope::Workspace,
                     },
                     reason,
@@ -1829,6 +1880,7 @@ async fn an_agents_connection_can_neither_answer_nor_hold_an_approval() {
 // attached runs the user's `input_requested` hooks, which name the session
 // and what it asks, so a user away from every client can be told (#1660).
 // Owner: daemon input requests.
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_turn_that_asks_tells_the_hooks() {
     let sandbox = Sandbox::new();

@@ -6,10 +6,6 @@ mod added_dirs;
 mod agent;
 mod antigravity_runtime;
 mod app;
-#[cfg_attr(
-    not(unix),
-    allow(dead_code, reason = "session control is unix-only (#1665)")
-)]
 mod cache_warm;
 mod caller_context;
 mod changelog;
@@ -26,7 +22,6 @@ mod config_writer;
 mod control_chars;
 mod credential_store;
 mod cursor_runtime;
-#[cfg(unix)]
 mod daemon;
 mod decision;
 mod diagnostics;

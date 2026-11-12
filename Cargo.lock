@@ -5012,6 +5012,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "fs2",
  "libc",
  "portable-pty",
  "pretty_assertions",
@@ -5020,6 +5021,7 @@ dependencies = [
  "tempfile",
  "unicode-width 0.2.2",
  "vt100",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

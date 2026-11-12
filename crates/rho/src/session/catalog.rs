@@ -70,7 +70,8 @@ fn list_in_root(
         })
         .transpose()?;
     let summaries = match cwd {
-        Some(cwd) => match std::fs::canonicalize(cwd) {
+        // In the form a session's workspace is saved under.
+        Some(cwd) => match crate::paths::canonicalize(cwd) {
             // Checked before listing, which creates the workspace's session
             // directory; a session in a missing workspace cannot load anyway.
             Ok(cwd) if cwd.is_dir() => {

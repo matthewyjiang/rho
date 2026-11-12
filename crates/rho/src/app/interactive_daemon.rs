@@ -15,23 +15,10 @@ use crate::{added_dirs::AddedDirs, cli::Cli, config::Config, tui};
 
 use super::{super::agent_binding::BoundAgent, StartupSession};
 
-#[cfg(not(unix))]
-pub(super) async fn open(
-    _cli: &Cli,
-    _config: &Config,
-    _bound: &BoundAgent,
-    _startup: &StartupSession<'_>,
-    _cwd: &Path,
-    _added_dirs: &AddedDirs,
-) -> anyhow::Result<tui::DaemonSession> {
-    anyhow::bail!(super::super::daemon_cli::UNSUPPORTED)
-}
-
 /// Opens or resumes the session `startup` names in the daemon, which starts
 /// when none runs, and attaches to it. `config` is this launch's, with the
 /// CLI's overrides applied, and `bound` the agent it bound: `--agent`'s, or
 /// the default.
-#[cfg(unix)]
 pub(super) async fn open(
     cli: &Cli,
     config: &Config,
@@ -164,7 +151,6 @@ pub(super) async fn open(
 /// Resuming `session`. It runs as the agent it was saved as, so `--agent`
 /// may only name that one, unchanged since, as when the session is resumed
 /// in process.
-#[cfg(unix)]
 fn resumed(
     session: crate::session::SessionTarget,
     agent: &Option<String>,

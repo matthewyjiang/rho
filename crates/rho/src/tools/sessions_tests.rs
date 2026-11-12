@@ -92,7 +92,6 @@ async fn archive_access_is_authorized_before_search_execution() {
 // `state`, carries that definition instead of a `$ref` to a `$defs` the
 // merged schema does not have, which providers reject (#1714).
 // Owner: sessions tool schema, generated from the session-control core.
-#[cfg(unix)]
 #[test]
 fn control_arguments_carry_their_definitions() {
     let schema = input_schema();
@@ -119,7 +118,6 @@ fn null_arguments_count_as_absent_for_every_action() {
     let route = |arguments: Value| match Action::parse(arguments) {
         Ok(Action::Index(_)) => "history",
         Ok(Action::Recall(_)) => "recall",
-        #[cfg(unix)]
         Ok(Action::Control(_)) => "control",
         Err(_) => "refused",
     };
@@ -148,6 +146,5 @@ fn null_arguments_count_as_absent_for_every_action() {
     .map(|call| route(with_nulls(call)))
     .collect();
 
-    let live_read = if cfg!(unix) { "control" } else { "refused" };
-    assert_eq!(routes, ["history", "recall", "history", live_read]);
+    assert_eq!(routes, ["history", "recall", "history", "control"]);
 }

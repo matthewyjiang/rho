@@ -69,7 +69,7 @@ impl DaemonPathError {
 
 /// Creates `path` and its missing parents with mode 0700. An existing
 /// directory is left as it is.
-pub(in crate::daemon) fn create_private_dir(path: &Path) -> io::Result<()> {
+pub(crate) fn create_private_dir(path: &Path) -> io::Result<()> {
     fs::DirBuilder::new()
         .recursive(true)
         .mode(0o700)
@@ -144,6 +144,22 @@ pub(in crate::daemon) fn open_log_file(path: &Path) -> io::Result<File> {
         .open(path)
 }
 
+/// Flushes the directory `path`, so the files created, renamed, or removed
+/// in it stay that way across a crash.
+pub(crate) fn sync_dir(path: &Path) -> io::Result<()> {
+    File::open(path)?.sync_all()
+}
+
+/// Opens `path` for writing, emptied, creating it with mode 0600.
+pub(crate) fn create_private_file(path: &Path) -> io::Result<File> {
+    OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)
+}
+
 /// The bytes that name `path`, the same for one path in every rho version,
 /// so what is derived from them stays stable.
 pub(in crate::daemon) fn path_bytes(path: &Path) -> Cow<'_, [u8]> {
@@ -167,7 +183,7 @@ pub(crate) struct FileIdentity {
 }
 
 impl FileIdentity {
-    pub(in crate::daemon) fn of(metadata: &fs::Metadata) -> Self {
+    pub(crate) fn of(metadata: &fs::Metadata) -> Self {
         Self {
             device: metadata.dev(),
             inode: metadata.ino(),

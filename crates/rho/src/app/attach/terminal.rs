@@ -38,19 +38,10 @@ impl Lines {
     pub(super) fn of(input: AttachInput) -> Self {
         match input {
             AttachInput::Stdin => Self::Read,
-            AttachInput::Terminal if foreground_terminal() => Self::Read,
+            AttachInput::Terminal if stdio::stdin_is_foreground_terminal() => Self::Read,
             AttachInput::Terminal => Self::Ignore,
         }
     }
-}
-
-fn foreground_terminal() -> bool {
-    if !stdio::stdin_is_terminal() {
-        return false;
-    }
-    // SAFETY: both only read the calling process's state; `tcgetpgrp`
-    // takes any descriptor and reports an error as -1.
-    unsafe { libc::tcgetpgrp(libc::STDIN_FILENO) == libc::getpgrp() }
 }
 
 /// The console, and the lines typed for it while there are any.

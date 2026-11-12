@@ -8,7 +8,7 @@
 //! | Concern | Items |
 //! |---|---|
 //! | Endpoint | [`endpoint`], [`Listener`], [`Stream`], [`connect`], [`connect_restarting`], [`remove_endpoint`], [`inspect_endpoint`] |
-//! | Private files | [`DaemonPathError`], [`create_private_dir`], [`prepare_private_dir`], [`open_lock_file`], [`open_log_file`], [`path_bytes`], [`FileIdentity`], [`running_identity`] |
+//! | Private files | [`DaemonPathError`], [`create_private_dir`], [`prepare_private_dir`], [`create_private_file`], [`sync_dir`], [`open_lock_file`], [`open_log_file`], [`path_bytes`], [`FileIdentity`], [`running_identity`], [`account_lock_path`], [`lock_account_file`] |
 //! | Process | [`detach`], [`MACHINE_VARIABLES`], [`is_variable`], [`request_stop`], [`StopRequests`], [`stderr_is_journal_stream`] |
 //! | Restart | [`relaunch`], [`take_handoff`] |
 //!
@@ -28,20 +28,33 @@
 //!   listener across the restart passes them as a handoff token, which the
 //!   new run gives back to [`take_handoff`]; clients then wait in the
 //!   endpoint's backlog. One that cannot releases both and starts another
-//!   process, and [`connect_restarting`] waits for it instead.
+//!   process, whose token names what [`take_handoff`] waits for before it
+//!   returns the lock file alone, for the new run to lock and bind as any
+//!   daemon does, and [`connect_restarting`] waits for it instead. Either way
+//!   `Listener::hold_for_restart` leaves no connection open to a client
+//!   that nothing will serve.
 
 #[cfg(unix)]
 mod unix;
 #[cfg(unix)]
 use unix as imp;
+#[cfg(windows)]
+mod windows;
+#[cfg(windows)]
+use windows as imp;
 
-pub(super) use imp::{
-    connect, connect_restarting, create_private_dir, detach, endpoint, inspect_endpoint,
-    is_variable, open_lock_file, open_log_file, path_bytes, prepare_private_dir, relaunch,
-    remove_endpoint, request_stop, running_identity, take_handoff, Listener, Stream,
-    MACHINE_VARIABLES,
+pub(crate) use imp::{
+    account_lock_path, create_private_dir, create_private_file, lock_account_file,
+    stderr_is_journal_stream, sync_dir, DaemonPathError, FileIdentity, StopRequests,
 };
-pub(crate) use imp::{stderr_is_journal_stream, DaemonPathError, FileIdentity, StopRequests};
+pub(super) use imp::{
+    connect, connect_restarting, detach, endpoint, inspect_endpoint, is_variable, open_lock_file,
+    open_log_file, path_bytes, prepare_private_dir, relaunch, remove_endpoint, request_stop,
+    running_identity, take_handoff, Listener, Stream, MACHINE_VARIABLES,
+};
+
+#[cfg(test)]
+pub(crate) use imp::test_support::StopTarget;
 
 /// Where a rho home's daemon listens, as [`endpoint`] lays it out.
 pub(super) struct Endpoint {

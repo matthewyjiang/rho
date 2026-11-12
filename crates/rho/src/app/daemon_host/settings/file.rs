@@ -5,9 +5,7 @@
 use std::{
     collections::BTreeMap,
     io,
-    os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
-    time::SystemTime,
 };
 
 use rho_protocol::{ConfigRevision, ErrorCode, RpcError, SettingEntry, SettingKey};
@@ -16,6 +14,7 @@ use sha2::{Digest, Sha256};
 use crate::{
     config::ConfigDocument,
     config_writer::edit_lock::{acquire_edit_lock, EditFileLock},
+    daemon::FileIdentity,
 };
 
 /// A file's state as `stat` reports it. Comparing two tells whether the
@@ -24,11 +23,7 @@ use crate::{
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Stat {
     Missing,
-    File {
-        modified: Option<SystemTime>,
-        len: u64,
-        inode: u64,
-    },
+    File(FileIdentity),
     /// `stat` failed for another reason; reading the file reports why.
     Unreadable,
 }
@@ -36,11 +31,7 @@ pub(super) enum Stat {
 impl Stat {
     pub(super) fn of(path: &Path) -> Self {
         match std::fs::metadata(path) {
-            Ok(metadata) => Self::File {
-                modified: metadata.modified().ok(),
-                len: metadata.len(),
-                inode: metadata.ino(),
-            },
+            Ok(metadata) => Self::File(FileIdentity::of(&metadata)),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Self::Missing,
             Err(_) => Self::Unreadable,
         }

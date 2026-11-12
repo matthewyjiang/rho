@@ -1,25 +1,20 @@
 //! The session's MCP inventory, shared by in-process and daemon frontends.
 
 use std::path::Path;
-#[cfg(unix)]
 use std::path::PathBuf;
 
-#[cfg(unix)]
 use rho_protocol::{
     SessionMcpCatalog, SessionMcpPrompt, SessionMcpPromptArgument, SessionMcpResource,
 };
 use rho_protocol::{SessionMcpInventory, SessionMcpMode, SessionMcpServer, SessionMcpStatus};
 
-#[cfg(unix)]
 use crate::tools::mcp::McpCompletionSupport;
 use crate::tools::mcp::{McpCatalog, McpLoadMode, McpServerStatus, McpSessionReport};
 
-#[cfg(unix)]
 use super::session_runtime::SessionRuntime;
 
 /// Handles to a session's inventory, readable while its runtime runs a turn.
 /// Catalog and live server facts remain shared with MCP maintenance tasks.
-#[cfg(unix)]
 #[derive(Clone)]
 pub(super) struct SessionMcp {
     report: McpSessionReport,
@@ -30,7 +25,6 @@ pub(super) struct SessionMcp {
     tool_sources: Option<tokio::sync::watch::Receiver<bool>>,
 }
 
-#[cfg(unix)]
 impl SessionMcp {
     pub(super) fn of(runtime: &SessionRuntime) -> Self {
         Self {

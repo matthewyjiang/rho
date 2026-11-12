@@ -11,7 +11,6 @@
 
 use std::{
     fs, io,
-    os::unix::fs::DirBuilderExt,
     path::{Path, PathBuf},
 };
 
@@ -29,16 +28,13 @@ pub(in crate::app::daemon_host) struct JobStore {
 const RECORD_SUFFIX: &str = ".json";
 
 impl JobStore {
-    /// The store in the daemon's `state_dir`, its directory created 0700.
+    /// The store in the daemon's `state_dir`, its directory created private.
     /// Records name the user's workspaces and sessions; they stay private
     /// because the store sits inside the state dir, which taking the daemon
     /// lock checked is private.
     pub(in crate::app::daemon_host) fn open(state_dir: &Path) -> io::Result<Self> {
         let dir = state_dir.join("jobs");
-        fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(&dir)?;
+        crate::daemon::create_private_dir(&dir)?;
         Ok(Self { dir })
     }
 
@@ -53,14 +49,14 @@ impl JobStore {
             &contents,
             WriteDurability::Durable,
         )?;
-        fs::File::open(&self.dir)?.sync_all()
+        crate::daemon::sync_dir(&self.dir)
     }
 
     /// Deletes `id`'s file, if it has one, and flushes the directory, so a
     /// later daemon does not list the job.
     pub(in crate::app::daemon_host) fn remove(&self, id: &JobId) -> io::Result<()> {
         match fs::remove_file(self.path_of(id)) {
-            Ok(()) => fs::File::open(&self.dir)?.sync_all(),
+            Ok(()) => crate::daemon::sync_dir(&self.dir),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
             Err(error) => Err(error),
         }

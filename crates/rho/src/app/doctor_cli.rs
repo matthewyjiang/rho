@@ -3,7 +3,7 @@
 //! Runs the same checks as the interactive `/doctor` overlay without a TUI.
 //! Root `--provider`/`--model`/`--auth`/`--reasoning` apply in memory so the
 //! report matches `rho --provider X run`. Probes run concurrently under one
-//! deadline so a hung endpoint cannot stall the report. On unix the daemon rows
+//! deadline so a hung endpoint cannot stall the report. The daemon rows
 //! (`doctor_daemon`) ask the running daemon, never one this starts, under the
 //! same deadline.
 
@@ -138,17 +138,8 @@ fn apply_doctor_overrides(
 }
 
 /// The daemon rows, asking the running daemon for at most `deadline`.
-#[cfg(unix)]
 async fn daemon_checks(deadline: Duration) -> Vec<crate::doctor::DoctorCheck> {
     super::doctor_daemon::checks(deadline).await
-}
-
-/// The one row saying this platform has no daemon.
-#[cfg(not(unix))]
-async fn daemon_checks(_deadline: Duration) -> Vec<crate::doctor::DoctorCheck> {
-    vec![crate::doctor::daemon::unsupported_check(
-        super::daemon_cli::UNSUPPORTED,
-    )]
 }
 
 /// Collect every spawned probe under one shared deadline. A probe that

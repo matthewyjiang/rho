@@ -1,6 +1,5 @@
-//! Driving a provider's interactive login, for each host that runs one in
-//! its own process: the daemon's `rho/auth/login` (#1662) and the
-//! in-process `rho login` where the daemon is unsupported (`in_process.rs`).
+//! Driving a provider's interactive login, for the host that runs one in
+//! its own process: the daemon's `rho/auth/login` (#1662).
 //!
 //! [`approve`] runs the provider's flow until the provider approves it;
 //! dropping its future cancels the login, which closes a browser login's

@@ -236,8 +236,6 @@ impl IsolatedHome {
     /// either on disk calls this first; the next rho process then starts a
     /// daemon that reads them again.
     pub(crate) fn stop_daemon(&self) {
-        // rho runs no daemon off Unix.
-        #[cfg(unix)]
         crate::daemon::stop(self);
     }
 }

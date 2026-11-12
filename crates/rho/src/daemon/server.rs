@@ -12,6 +12,7 @@ use std::{
 };
 
 use rho_protocol::{BuildId, DaemonInfo, FrameError, Service, PROTOCOL_VERSION};
+use rho_sdk::CancellationToken;
 use tokio::task::JoinSet;
 
 use super::{
@@ -103,13 +104,14 @@ impl Restarting {
 
 /// Takes over the lock and the listener the handoff `token` names, for a
 /// daemon its predecessor restarted with one, before anything else this
-/// process starts could inherit them.
+/// process starts could inherit them. Where a restart keeps no listener,
+/// there is none to take over, and the caller binds one as any daemon does.
 pub(crate) fn take_handoff(
     paths: &DaemonPaths,
     token: &str,
-) -> io::Result<(DaemonLock, Inherited)> {
+) -> io::Result<(DaemonLock, Option<Inherited>)> {
     let (lock, listener) = platform::take_handoff(paths, token)?;
-    Ok((DaemonLock::adopt(lock)?, Inherited(listener)))
+    Ok((DaemonLock::adopt(lock)?, listener.map(Inherited)))
 }
 
 /// The listener a restarted daemon inherited, checked to be this home's;
@@ -211,6 +213,10 @@ impl BoundDaemon {
             build: reported_build(),
         });
         let mut connections = JoinSet::new();
+        // Ends the connections, once the listener is closed or held. A
+        // client reconnects as soon as its connection ends, so one that
+        // ended first could reach a listener this daemon is about to close.
+        let closing = CancellationToken::new();
         let result = loop {
             tokio::select! {
                 // First, so a connection made once shutdown was requested is
@@ -223,13 +229,13 @@ impl BoundDaemon {
                     Ok(stream) => {
                         let service = Arc::clone(&service);
                         let info = Arc::clone(&info);
-                        let shutdown = shutdown.clone();
+                        let closing = closing.clone();
                         connections.spawn(async move {
                             let served = rho_protocol::serve_connection(
                                 stream,
                                 &info,
                                 service,
-                                shutdown.requested(),
+                                closing.cancelled(),
                             )
                             .await;
                             match served {
@@ -258,11 +264,13 @@ impl BoundDaemon {
         };
         // A stopping daemon closes its socket now, so a client that
         // connects meanwhile finds nothing listening and waits for the lock
-        // instead. A restarting one keeps it, so that client waits in the
-        // backlog for the binary it re-executes.
+        // instead. A restarting one holds it as the platform's restart
+        // needs: where the new run inherits the socket, that client waits in
+        // its backlog.
         let listener = match (&result, shutdown.ending()) {
             (Ok(()), Ending::Restart) => {
                 tracing::info!("rho daemon restarting");
+                listener.hold_for_restart();
                 Some(listener)
             }
             (_, Ending::Stop | Ending::Restart) => {
@@ -271,8 +279,9 @@ impl BoundDaemon {
                 None
             }
         };
-        // Connections stop reading once shutdown is requested, so this waits
-        // only for the requests they have already read.
+        // Connections stop reading now, so this waits only for the requests
+        // they have already read.
+        closing.cancel();
         while connections.join_next().await.is_some() {}
         tracing::info!("rho daemon stopped serving");
         match listener {

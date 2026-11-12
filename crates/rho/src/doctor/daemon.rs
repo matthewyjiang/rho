@@ -287,18 +287,6 @@ pub(crate) fn environment_check(environment: &DaemonEnvironment) -> DoctorCheck 
     }
 }
 
-/// The one row a platform without a daemon gets.
-#[cfg(not(unix))]
-pub(crate) fn unsupported_check(reason: &str) -> DoctorCheck {
-    DoctorCheck::new(
-        DoctorCheckId::DaemonProcess,
-        "Daemon",
-        DoctorStatus::Info,
-        "not supported",
-    )
-    .with_hint(reason)
-}
-
 #[cfg(test)]
 #[path = "daemon_tests.rs"]
 mod tests;

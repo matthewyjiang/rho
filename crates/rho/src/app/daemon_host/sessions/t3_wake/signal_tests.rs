@@ -1,4 +1,4 @@
-use std::{os::unix::fs::PermissionsExt, time::SystemTime};
+use std::time::SystemTime;
 
 use pretty_assertions::assert_eq;
 
@@ -24,7 +24,10 @@ fn set_modified(path: &Path, modified: SystemTime) {
         .unwrap();
 }
 
+#[cfg(unix)]
 fn mode(path: &Path) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+
     std::fs::metadata(path).unwrap().permissions().mode() & 0o777
 }
 
@@ -40,7 +43,7 @@ async fn starting_a_wait_prunes_only_old_unusable_files() {
     let (_home, dir) = wake_dir();
     let (live, ended) = (uuid::Uuid::new_v4(), uuid::Uuid::new_v4());
     let live_lock = dir.path().join(format!("{live}.lock"));
-    let held = private_file(&live_lock).unwrap();
+    let held = crate::daemon::create_private_file(&live_lock).unwrap();
     held.lock().unwrap();
     let old = SystemTime::now() - EXPIRED_AFTER - Duration::from_secs(60);
     let record = || format!("{}.watcher", uuid::Uuid::new_v4());
@@ -160,6 +163,7 @@ async fn failed_result_record_keeps_the_signal_for_the_restarted_watcher() {
 // a signal and a record hold the finished command's line, which may carry
 // secrets, and the directory sits in a home other users may read.
 // Owner: daemon T3 wake watcher files.
+#[cfg(unix)]
 #[tokio::test]
 async fn wake_files_are_private() {
     let home = tempfile::tempdir().unwrap();

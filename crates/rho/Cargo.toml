@@ -76,6 +76,11 @@ shell-words = "1"
 tempfile = "3"
 portable-pty = "0.9"
 fs2 = "0.4.3"
+# `rho mcp serve --http` serves rmcp's streamable HTTP service with these.
+bytes = "1"
+http-body-util = "0.1"
+hyper = { version = "1", features = ["http1", "server"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = [
@@ -107,11 +112,6 @@ agent-client-protocol = { version = "=5.0.0", features = ["stdio", "unstable_pro
 
 [target.'cfg(unix)'.dependencies]
 vt100 = "0.18"
-# `rho mcp serve --http` serves rmcp's streamable HTTP service with these.
-bytes = "1"
-http-body-util = "0.1"
-hyper = { version = "1", features = ["http1", "server"] }
-hyper-util = { version = "0.1", features = ["tokio"] }
 
 [target.'cfg(windows)'.dependencies]
 termwiz = "0.23.3"
@@ -120,6 +120,7 @@ windows-sys = { version = "0.61", features = [
     "Wdk_Storage_FileSystem",
     "Win32_Foundation",
     "Win32_Security",
+    "Win32_Security_Authorization",
     "Win32_Storage_FileSystem",
     "Win32_System_Console",
     "Win32_System_Diagnostics_ToolHelp",

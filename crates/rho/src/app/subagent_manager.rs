@@ -520,8 +520,7 @@ impl SubagentManager {
     /// Whether a finished child of session `session_id` waits to be
     /// delivered. Running children are excluded: a host that wakes the
     /// idle session sleeps on [`Self::parent_wake`].
-    // Only the daemon, unix-only so far, wakes an idle parent (#1665).
-    #[cfg_attr(not(unix), allow(dead_code))]
+    // Only the daemon wakes an idle parent.
     pub(crate) fn has_pending_notification(&self, session_id: &str) -> bool {
         self.inner
             .lock()
@@ -534,14 +533,12 @@ impl SubagentManager {
 
     /// The notices children queued for session `session_id` that no turn
     /// delivered.
-    #[cfg_attr(not(unix), allow(dead_code))]
     pub(crate) fn undelivered_notices(&self, session_id: &str) -> Vec<SubagentNotice> {
         self.executor.notices().undelivered(session_id)
     }
 
     /// Resolves once a child ends or queues a notice from now on, whatever
     /// waits already: the two things that can give an idle parent a turn.
-    #[cfg_attr(not(unix), allow(dead_code))]
     pub(crate) fn parent_wake(&self) -> impl std::future::Future<Output = ()> + Send + 'static {
         let ended = Arc::clone(&self.ended).notified_owned();
         let posted = self.executor.notices().posted();

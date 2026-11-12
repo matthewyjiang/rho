@@ -70,7 +70,7 @@ pub(in crate::daemon) fn relaunch(
     executable: &Path,
     args: impl FnOnce(Option<String>) -> Vec<OsString>,
 ) -> io::Result<()> {
-    let lock = restarting.lock.file().as_fd();
+    let lock = AsRef::<File>::as_ref(&restarting.lock).as_fd();
     let socket = restarting.listener.socket.as_fd();
     let handoff = Handoff {
         lock: lock.as_raw_fd(),
@@ -117,7 +117,7 @@ fn reap_exited_children() {
 pub(in crate::daemon) fn take_handoff(
     paths: &DaemonPaths,
     token: &str,
-) -> io::Result<(File, Listener)> {
+) -> io::Result<(File, Option<Listener>)> {
     let handoff: Handoff = token
         .parse()
         .map_err(|error: String| io::Error::new(io::ErrorKind::InvalidInput, error))?;
@@ -140,7 +140,8 @@ pub(in crate::daemon) fn take_handoff(
         )));
     }
     listener.set_nonblocking(true)?;
-    Ok((lock, Listener::serving(UnixListener::from_std(listener)?)))
+    let listener = Listener::serving(UnixListener::from_std(listener)?);
+    Ok((lock, Some(listener)))
 }
 
 /// Takes ownership of inherited descriptor `fd`, once it is open, and marks

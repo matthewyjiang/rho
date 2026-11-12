@@ -38,10 +38,15 @@ pub(crate) fn acquire_lock_file(lock_path: &Path) -> io::Result<EditFileLock> {
         io::Error::new(error.kind(), format!("could not open edit lock: {error}"))
     })?;
     fs2::FileExt::try_lock_exclusive(&file).map_err(|error| {
-        io::Error::new(
-            error.kind(),
-            format!("could not lock file for editing: {error}"),
-        )
+        // `fs2` reports a busy lock as `WouldBlock` on Unix and as the raw
+        // lock-violation error on Windows; callers tell a busy writer by
+        // the kind.
+        let kind = if error.raw_os_error() == fs2::lock_contended_error().raw_os_error() {
+            io::ErrorKind::WouldBlock
+        } else {
+            error.kind()
+        };
+        io::Error::new(kind, format!("could not lock file for editing: {error}"))
     })?;
     Ok(EditFileLock { file })
 }

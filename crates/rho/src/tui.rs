@@ -53,14 +53,11 @@ mod config_row;
 mod context_handoff;
 mod context_overlay;
 mod copy_interaction;
-// The TUI as a daemon client (#1667). The daemon is unix-only (#1665), so
-// elsewhere no daemon session opens and the mapper is never built.
+// The TUI as a daemon client (#1667).
 mod daemon_answers;
 mod daemon_asks;
-#[cfg_attr(not(unix), allow(dead_code))]
 mod daemon_events;
 mod daemon_gate;
-#[cfg_attr(not(unix), allow(dead_code))]
 mod daemon_inputs;
 mod daemon_jobs;
 mod daemon_launch;
@@ -69,12 +66,9 @@ mod daemon_options;
 mod daemon_processes;
 mod daemon_prompt;
 mod daemon_reports;
-#[cfg(unix)]
 mod daemon_requests;
 mod daemon_session;
-#[cfg_attr(not(unix), allow(dead_code))]
 mod daemon_settings;
-#[cfg(unix)]
 mod daemon_settings_read;
 mod daemon_subagents;
 mod daemon_switch;
@@ -518,7 +512,6 @@ pub struct ApplicationServices {
     pub herdr: HerdrReporter,
 }
 pub(crate) use attachment::translate_run_event;
-#[cfg(unix)]
 pub(crate) use daemon_launch::{DaemonLaunch, DaemonTarget, InitialSettings, LaunchChange};
 pub(crate) use daemon_session::DaemonSession;
 pub(crate) use exit_receipt::{print_exit_receipt, ExitReceipt};

@@ -96,6 +96,11 @@ impl Listener {
         }
     }
 
+    /// Called once serving ended for a restart. Nothing to do: the socket
+    /// stays bound for the binary the daemon re-executes, and a client that
+    /// connects meanwhile waits in its backlog for that binary.
+    pub(in crate::daemon) fn hold_for_restart(&mut self) {}
+
     /// The next connection from the user who owns the daemon. Cancel safe:
     /// a connection is either returned or still waiting in the backlog.
     pub(in crate::daemon) async fn accept(&mut self) -> io::Result<Stream> {

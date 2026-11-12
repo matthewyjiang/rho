@@ -22,10 +22,12 @@ const RECOVER: &str = "recover";
 /// A workflow source the hub can validate or plan.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct DiscoveredWorkflow {
-    /// Workspace-relative path using `/` separators.
+    /// Workspace-relative path to the entry `.star` file, using `/`
+    /// separators. A run is planned from this path, which the workflow store
+    /// resolves under the workspace as it names it: the workspace's
+    /// canonical path, which on Windows is not the one a session names it
+    /// by.
     pub(crate) relative_path: String,
-    /// Absolute path to the entry `.star` file.
-    pub(crate) absolute_path: PathBuf,
     /// Short label for picker rows and the `/workflow:<label>` command.
     pub(crate) label: String,
 }
@@ -258,7 +260,6 @@ fn push_discovered(workspace: &Path, absolute: PathBuf, out: &mut Vec<Discovered
     let label = workflow_label(&relative_path);
     out.push(DiscoveredWorkflow {
         relative_path,
-        absolute_path: absolute,
         label,
     });
 }

@@ -179,3 +179,46 @@ fn every_spelling_of_a_home_resolves_to_its_canonical_path() {
     let mode = fs::metadata(home.join("new")).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode, 0o700);
 }
+
+// Covers: a daemon that holds the lock binds over the socket a crashed one
+// left behind, instead of failing on a path that is taken.
+// Owner: daemon endpoint (Unix socket file).
+#[tokio::test]
+async fn bind_replaces_the_socket_a_crashed_daemon_left() {
+    let root = TempDir::new().unwrap();
+    let paths = DaemonPaths::resolve(root.path(), |_| None).unwrap();
+    paths.prepare_runtime_dir().unwrap();
+    fs::write(&paths.socket, "left by a crashed daemon").unwrap();
+
+    let _listener = super::Listener::bind(&paths).unwrap();
+
+    assert_eq!(
+        paths.inspect_socket(),
+        Ok(crate::daemon::paths::SocketFound::Private)
+    );
+}
+
+// Covers: every file the daemon and its host create through the boundary is
+// readable and writable by its owner alone, whatever the umask would allow.
+// Owner: daemon private files (Unix modes).
+#[test]
+fn files_are_created_for_their_owner_alone() {
+    let root = TempDir::new().unwrap();
+    type Open = fn(&Path) -> std::io::Result<fs::File>;
+    let opens: [(&str, Open); 3] = [
+        ("lock", super::open_lock_file),
+        ("log", super::open_log_file),
+        ("created", super::create_private_file),
+    ];
+
+    let modes = opens.map(|(name, open)| {
+        let path = root.path().join(name);
+        open(&path).unwrap();
+        (
+            name,
+            fs::metadata(path).unwrap().permissions().mode() & 0o777,
+        )
+    });
+
+    assert_eq!(modes, [("lock", 0o600), ("log", 0o600), ("created", 0o600)]);
+}

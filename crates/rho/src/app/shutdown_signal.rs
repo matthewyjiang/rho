@@ -1,4 +1,5 @@
-//! SIGINT/SIGTERM handling for headless runs.
+//! SIGINT/SIGTERM handling for headless runs, and the terminal closing for
+//! `rho acp`.
 //!
 //! Handlers must exist before a run becomes observable. A lazily registered
 //! handler leaves a window after the first output where the default
@@ -78,5 +79,38 @@ impl ShutdownSignals {
     pub(super) async fn recv(&mut self) -> io::Result<ShutdownSignal> {
         self.ctrl_c.recv().await;
         Ok(ShutdownSignal::Interrupt)
+    }
+}
+
+/// The terminal this process runs in closing: SIGHUP on Unix, the console's
+/// close event on Windows. Install it before the process is observable, as
+/// [`ShutdownSignals`].
+#[cfg(unix)]
+pub(super) struct TerminalClosed(tokio::signal::unix::Signal);
+
+#[cfg(unix)]
+impl TerminalClosed {
+    pub(super) fn install() -> io::Result<Self> {
+        use tokio::signal::unix::{signal, SignalKind};
+
+        Ok(Self(signal(SignalKind::hangup())?))
+    }
+
+    pub(super) async fn recv(&mut self) {
+        self.0.recv().await;
+    }
+}
+
+#[cfg(windows)]
+pub(super) struct TerminalClosed(tokio::signal::windows::CtrlClose);
+
+#[cfg(windows)]
+impl TerminalClosed {
+    pub(super) fn install() -> io::Result<Self> {
+        Ok(Self(tokio::signal::windows::ctrl_close()?))
+    }
+
+    pub(super) async fn recv(&mut self) {
+        self.0.recv().await;
     }
 }

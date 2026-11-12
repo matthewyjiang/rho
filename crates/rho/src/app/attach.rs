@@ -10,27 +10,11 @@
 //! input requests, steer it, or cancel it. Ctrl+C detaches: the connection
 //! closes, and the turn runs on in the daemon.
 
-#[cfg(unix)]
 mod client;
-#[cfg(unix)]
 mod console;
-#[cfg(unix)]
 mod follow;
-#[cfg(unix)]
 mod prompt;
-#[cfg(unix)]
 mod terminal;
-#[cfg(unix)]
 mod text;
 
-#[cfg(unix)]
 pub(super) use client::run;
-
-#[cfg(not(unix))]
-pub(super) async fn run(
-    _id: &str,
-    _output: crate::cli::AttachOutput,
-    _input: crate::cli::AttachInput,
-) -> anyhow::Result<()> {
-    anyhow::bail!(super::daemon_cli::UNSUPPORTED)
-}

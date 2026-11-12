@@ -21,9 +21,9 @@ fn prepared_paths(root: &Path) -> DaemonPaths {
     paths
 }
 
-// Covers: a daemon started over a crashed one's leftover socket serves the
-// handshake, routes requests to the service its caller passed, keeps its
-// socket private, and when that service stops it on `rho/daemon/stop`,
+// Covers: a daemon serves the handshake, routes requests to the service its
+// caller passed, keeps its socket private, and when that service stops it on
+// `rho/daemon/stop`,
 // acknowledges, ends its serve task, removes its socket and info file, and
 // frees the lock.
 // Owner: daemon server lifecycle.
@@ -31,7 +31,6 @@ fn prepared_paths(root: &Path) -> DaemonPaths {
 async fn daemon_serves_status_and_cleans_up_on_stop() {
     let root = TempDir::new().unwrap();
     let paths = prepared_paths(root.path());
-    fs::write(&paths.socket, "left by a crashed daemon").unwrap();
     let bound = bind(&paths, lock::acquire(&paths).unwrap()).unwrap();
     let shutdown = Shutdown::default();
     let server = tokio::spawn(async move {
@@ -70,7 +69,7 @@ async fn daemon_serves_status_and_cleans_up_on_stop() {
         .unwrap()
         .unwrap();
 
-    assert!(!paths.socket.exists(), "socket removed");
+    assert_eq!(paths.inspect_socket(), Ok(SocketFound::Missing));
     assert!(!paths.info_file.exists(), "info file removed");
     // A child another test forks at this moment shares the lock's open file
     // description until it execs, so wait for the release rather than

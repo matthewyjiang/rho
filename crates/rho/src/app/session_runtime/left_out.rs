@@ -37,9 +37,7 @@ pub(crate) struct LeftOut {
 impl LeftOut {
     /// The parts `stored` was last saved without. A record this build
     /// cannot read fails, rather than reopen the session with parts it left
-    /// out. Only the daemon, which is unix-only so far (#1665), reopens a
-    /// session with what it saved.
-    #[cfg(unix)]
+    /// out. Only the daemon reopens a session with what it saved.
     pub(crate) fn saved(stored: &crate::session::Session) -> anyhow::Result<Self> {
         use anyhow::Context;
 
@@ -51,7 +49,6 @@ impl LeftOut {
     }
 
     /// The parts either leaves out.
-    #[cfg(unix)]
     pub(crate) fn union(self, other: Self) -> Self {
         let Self {
             system_prompt,

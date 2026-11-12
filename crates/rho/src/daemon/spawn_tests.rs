@@ -1,6 +1,4 @@
 use std::{
-    os::unix::process::ExitStatusExt,
-    process::ExitStatus,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc, Mutex,
@@ -9,22 +7,16 @@ use std::{
 };
 
 use pretty_assertions::assert_eq;
-use rho_protocol::{
-    ErrorCode, Message, MessageReader, MessageWriter, ProtocolVersion, Response, RestartCost,
-    RpcError, PROTOCOL_VERSION,
-};
+use rho_protocol::{ProtocolVersion, RestartCost, PROTOCOL_VERSION};
 use tempfile::TempDir;
-use tokio::{
-    net::{UnixListener, UnixStream},
-    task::JoinHandle,
-};
+use tokio::task::JoinHandle;
 
 use super::*;
 use crate::daemon::{
     client::ConnectAs,
     lock, server,
     shutdown::{Ending, Shutdown},
-    test_support::StubHost,
+    test_support::{RefusingListener, StopTarget, StubHost},
 };
 
 /// Failure bound for every racing caller to connect.
@@ -200,28 +192,22 @@ async fn a_client_on_another_socket_is_told_where_the_daemon_listens() {
 
 /// A daemon of another protocol version, as far as a client can tell: it
 /// holds the daemon lock, answers each hello with the next of `refusals`,
-/// repeating the last, and stops on SIGTERM by removing its socket and
-/// letting go of the lock. The pid it records is a child process's, so a
-/// signal a client sends the daemon lands there, not on the test process.
+/// repeating the last, and stops when asked outside the protocol, by
+/// removing its socket and letting go of the lock.
 struct RefusingDaemon {
-    /// Resolves once the daemon stopped, with how its process ended.
-    stopped: JoinHandle<ExitStatus>,
+    /// Resolves once the daemon was asked to stop, and stopped.
+    stopped: JoinHandle<()>,
 }
 
 impl RefusingDaemon {
     fn start(paths: &DaemonPaths, refusals: &[VersionMismatch]) -> Self {
         let lock = lock::acquire(paths).unwrap();
-        paths.prepare_runtime_dir().unwrap();
-        let listener = UnixListener::bind(&paths.socket).unwrap();
-        let mut process = tokio::process::Command::new("sleep")
-            .arg("600")
-            .kill_on_drop(true)
-            .spawn()
-            .unwrap();
+        let mut listener = RefusingListener::bind(paths);
+        let mut stop = StopTarget::listen(paths);
         lock::write_record(
             paths,
             &lock::DaemonRecord {
-                pid: process.id().expect("the process is running"),
+                pid: stop.pid(),
                 version: "0.0.0".into(),
                 protocol: refusals[0].daemon,
                 started_at: 0,
@@ -229,46 +215,26 @@ impl RefusingDaemon {
             },
         )
         .unwrap();
-        let socket = paths.socket.clone();
+        let paths = paths.clone();
         let refusals = refusals.to_vec();
         let mut answered = 0;
         let stopped = tokio::spawn(async move {
             let _lock = lock;
             loop {
+                let refusal = refusals[answered.min(refusals.len() - 1)];
                 tokio::select! {
-                    ended = process.wait() => {
-                        std::fs::remove_file(&socket).unwrap();
-                        return ended.unwrap();
+                    () = stop.asked() => {
+                        drop(listener);
+                        platform::remove_endpoint(&paths).unwrap();
+                        return;
                     }
-                    accepted = listener.accept() => {
-                        let refusal = refusals[answered.min(refusals.len() - 1)];
-                        answered += 1;
-                        // In turn, so the hellos are answered in order.
-                        refuse(accepted.unwrap().0, refusal).await;
-                    }
+                    // In turn, so the hellos are answered in order.
+                    () = listener.refuse_next(refusal) => answered += 1,
                 }
             }
         });
         Self { stopped }
     }
-}
-
-/// Answers the hello on `stream` with `refusal`.
-async fn refuse(stream: UnixStream, refusal: VersionMismatch) {
-    let (read, write) = stream.into_split();
-    let hello = MessageReader::new(read).read_line().await.unwrap();
-    let Message::Request(hello) = Message::parse(&hello.expect("a hello")).unwrap() else {
-        panic!("expected a request");
-    };
-    let refused = RpcError::new(ErrorCode::VersionMismatch, refusal.to_string())
-        .with_data(serde_json::to_value(refusal).unwrap());
-    // The client may leave as soon as it has read the refusal.
-    let _ = MessageWriter::new(write)
-        .write(&Message::Response(Response {
-            id: Some(hello.id),
-            outcome: Err(refused),
-        }))
-        .await;
 }
 
 /// The refusal of a daemon one protocol version older than this client,
@@ -306,15 +272,14 @@ async fn an_unused_older_daemon_is_replaced_by_the_clients_own() {
     .expect("the client connects once the older daemon stopped")
     .map(|connection| connection.hello.daemon.pid)
     .unwrap();
-    let stopped_by = tokio::time::timeout(RACE_DEADLINE, older.stopped)
+    tokio::time::timeout(RACE_DEADLINE, older.stopped)
         .await
-        .expect("the older daemon stops")
-        .unwrap()
-        .signal();
+        .expect("the older daemon was asked to stop")
+        .unwrap();
 
     assert_eq!(
-        (pid, spawner.spawns.load(Ordering::SeqCst), stopped_by),
-        (std::process::id(), 1, Some(libc::SIGTERM))
+        (pid, spawner.spawns.load(Ordering::SeqCst)),
+        (std::process::id(), 1)
     );
     spawner.shutdown.request(Ending::Stop, |_| {});
     let servers = std::mem::take(&mut *spawner.servers.lock().unwrap());

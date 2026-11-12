@@ -177,12 +177,9 @@ impl App {
 
     /// `/name` changes settings, which only the daemon saves.
     pub(super) fn needs_daemon(&mut self, name: &str) {
-        let notice = if cfg!(unix) {
-            format!("/{name} needs the rho daemon: start rho without RHO_TUI_DAEMON=0")
-        } else {
-            format!("/{name} needs the rho daemon, which does not run on this platform yet; edit the settings files instead")
-        };
-        self.insert_entry(&Entry::Notice(notice));
+        self.insert_entry(&Entry::Notice(format!(
+            "/{name} needs the rho daemon: start rho without RHO_TUI_DAEMON=0"
+        )));
         self.set_status(format!("/{name} needs the rho daemon"));
     }
 

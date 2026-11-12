@@ -32,7 +32,7 @@ mod shutdown;
 mod spawn;
 mod spawn_env;
 #[cfg(test)]
-mod test_support;
+pub(crate) mod test_support;
 
 pub(crate) use client::{
     connect, connect_restarting, ConnectAs, ConnectError, Connection, DAEMON_RESTART_TIMEOUT,
@@ -43,10 +43,14 @@ pub(crate) use lock::{
     DaemonLock, LockHolder,
 };
 pub(crate) use paths::{real_home, DaemonPaths, SocketFound};
-// Named outside this module only by the tests of what `rho doctor` reports.
-#[cfg(test)]
+// Named outside this module only by the Unix tests of what `rho doctor`
+// reports.
+#[cfg(all(test, unix))]
 pub(crate) use platform::DaemonPathError;
-pub(crate) use platform::{stderr_is_journal_stream, FileIdentity, StopRequests};
+pub(crate) use platform::{
+    account_lock_path, create_private_dir, create_private_file, lock_account_file,
+    stderr_is_journal_stream, sync_dir, FileIdentity, StopRequests,
+};
 pub(crate) use server::{bind, rebind, take_handoff, Served};
 pub(crate) use shutdown::{Ending, Shutdown};
 pub(crate) use spawn::{connect_or_spawn, DaemonSpawner, ProcessSpawner};

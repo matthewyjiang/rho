@@ -653,10 +653,6 @@ impl Config {
 }
 
 /// Which hooks [`Config::take_next_turn_settings`] calls for.
-#[cfg_attr(
-    not(unix),
-    allow(dead_code, reason = "the unix-only daemon applies them")
-)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct NextTurnChanges {
     /// Advisor mode, model, or reasoning changed.
@@ -667,10 +663,6 @@ pub(crate) struct NextTurnChanges {
     pub(crate) codemode: bool,
 }
 
-#[cfg_attr(
-    not(unix),
-    allow(dead_code, reason = "the unix-only daemon applies them")
-)]
 impl Config {
     /// Takes every setting that reaches a loaded session at its next turn
     /// (`Apply::NextTurn` in the registry) and changed in the global config

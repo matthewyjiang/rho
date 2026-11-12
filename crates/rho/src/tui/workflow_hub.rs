@@ -632,7 +632,6 @@ impl App {
         inputs: BTreeMap<String, serde_json::Value>,
         agent: &mut super::InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        let absolute = self.info.runtime.cwd.join(relative_path);
         self.set_status(format!("starting {relative_path}"));
         let ops = self.workflow_ops()?;
         let available_tools = agent.workflow_host_capabilities();
@@ -640,7 +639,11 @@ impl App {
             default_inputs: inputs.is_empty(),
         };
         let prepared = match self
-            .prepare_source(&absolute, inputs, &available_tools)
+            .prepare_source(
+                std::path::Path::new(relative_path),
+                inputs,
+                &available_tools,
+            )
             .await
         {
             Ok(prepared) => prepared,
@@ -694,13 +697,13 @@ impl App {
 
     async fn prepare_source(
         &self,
-        absolute: &std::path::Path,
+        relative: &std::path::Path,
         inputs: BTreeMap<String, serde_json::Value>,
         available_tools: &AgentCapabilities,
     ) -> anyhow::Result<workflow_cli::PreparedPlan> {
         let ops = self.workflow_ops()?;
         let config = self.info.services.config_repository.load()?;
-        ops.prepare_local_json(absolute, inputs, &config, available_tools)
+        ops.prepare_local_json(relative, inputs, &config, available_tools)
             .await
     }
 
@@ -853,7 +856,6 @@ mod tests;
 fn test_source(label: &str, relative: &str) -> discover::DiscoveredWorkflow {
     discover::DiscoveredWorkflow {
         relative_path: relative.into(),
-        absolute_path: std::path::PathBuf::from(relative),
         label: label.into(),
     }
 }

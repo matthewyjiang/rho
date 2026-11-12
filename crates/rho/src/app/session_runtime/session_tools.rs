@@ -9,7 +9,6 @@ use crate::tools::{
     sdk_registry::AppToolSet,
     todo::TodoState,
 };
-#[cfg(unix)]
 use crate::{
     app::subagent_manager::SubagentManager,
     tools::{process::ProcessManager, workflow_tracker::WorkflowRunTracker},
@@ -57,21 +56,18 @@ impl<'a> SessionTools<'a> {
     }
 
     /// The session's background processes, when it may run any. Only the
-    /// daemon's T3 wake watchers, unix-only so far (#1665), read them.
-    #[cfg(unix)]
+    /// daemon's T3 wake watchers read them.
     pub(crate) fn processes(self) -> Option<&'a ProcessManager> {
         self.0.processes()
     }
 
     /// The session's in-process subagents, when it may start any. Only the
-    /// daemon's idle watcher, unix-only so far (#1665), reads them.
-    #[cfg(unix)]
+    /// daemon's idle watcher reads them.
     pub(crate) fn subagents(self) -> Option<&'a SubagentManager> {
         self.0.subagents()
     }
 
     /// The session's workflow runs (see [`Self::processes`]).
-    #[cfg(unix)]
     pub(crate) fn workflow_tracker(self) -> &'a WorkflowRunTracker {
         self.0.workflow_tracker()
     }

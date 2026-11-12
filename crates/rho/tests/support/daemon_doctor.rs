@@ -1,6 +1,6 @@
 //! `rho doctor`'s daemon rows through the real binary (#1674).
 
-use std::{os::unix::fs::PermissionsExt, process::Stdio};
+use std::process::Stdio;
 
 use pretty_assertions::assert_eq;
 use serde_json::Value;
@@ -63,6 +63,21 @@ fn rows(statuses: [&str; 4]) -> Vec<(String, String)> {
     .collect()
 }
 
+/// Opens the daemon's socket to other users, where a file mode does that:
+/// a named pipe's access control list is fixed when it is created.
+fn open_socket_to_others(sandbox: &Sandbox) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let socket = sandbox.isolated.daemon_socket().unwrap();
+        std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o666)).unwrap();
+    }
+    #[cfg(not(unix))]
+    let _ = sandbox;
+    cfg!(unix)
+}
+
 // Covers: `rho doctor --json` reports every daemon check without starting a
 // daemon; a running one is reported with its pid, version, and protocol
 // and a private socket; a daemon setting this shell
@@ -90,9 +105,8 @@ fn doctor_reports_the_daemon_it_finds() {
     let pid = sandbox.isolated.daemon_pid().unwrap();
     let up = daemon_rows(&sandbox, &[]);
     let other_log = daemon_rows(&sandbox, &[("RHO_LOG", "rho=trace")]);
-    let socket = sandbox.isolated.daemon_socket().unwrap();
-    std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o666)).unwrap();
-    let exposed = daemon_rows(&sandbox, &[]);
+    let exposed = open_socket_to_others(&sandbox);
+    let exposed_rows = exposed.then(|| daemon_rows(&sandbox, &[]).0);
 
     let running = format!(
         "running, pid {pid}, version {}, protocol {}",
@@ -100,7 +114,7 @@ fn doctor_reports_the_daemon_it_finds() {
         rho_protocol::PROTOCOL_VERSION
     );
     assert_eq!(
-        (down, spawned, up, other_log.0, exposed.0),
+        (down, spawned, up, other_log.0, exposed_rows),
         (
             (
                 rows(["info", "info", "info", "info"]),
@@ -109,7 +123,7 @@ fn doctor_reports_the_daemon_it_finds() {
             None,
             (rows(["ok", "ok", "info", same]), running),
             rows(["ok", "ok", "info", changed]),
-            rows(["ok", "fail", "info", same]),
+            exposed.then(|| rows(["ok", "fail", "info", same])),
         ),
         "log:\n{}",
         sandbox.isolated.daemon_log()

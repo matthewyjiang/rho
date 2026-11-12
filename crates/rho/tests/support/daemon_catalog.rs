@@ -144,7 +144,6 @@ async fn the_list_holds_every_workspace_or_one() {
     let sandbox = Sandbox::new();
     let other = sandbox.workspace.with_file_name("other-workspace");
     std::fs::create_dir_all(&other).unwrap();
-    let other = other.canonicalize().unwrap();
     let client = sandbox.start_daemon("fixed").await;
     let first = saved_session(&sandbox, &client, sandbox.workspace.clone()).await;
     let elsewhere = saved_session(&sandbox, &client, other.clone()).await;

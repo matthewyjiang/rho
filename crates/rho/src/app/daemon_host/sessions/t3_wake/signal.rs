@@ -6,9 +6,8 @@
 
 use std::{
     ffi::OsStr,
-    fs::{File, OpenOptions},
+    fs::File,
     io::{self, Write},
-    os::unix::fs::OpenOptionsExt,
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -66,7 +65,7 @@ impl WakeSignal {
             dir: dir.clone(),
             token: uuid::Uuid::new_v4().to_string(),
         };
-        let lock = private_file(&signal.lock_path())?;
+        let lock = crate::daemon::create_private_file(&signal.lock_path())?;
         lock.lock()?;
         Ok((signal, lock))
     }
@@ -300,20 +299,10 @@ pub(super) fn released(path: &Path) -> bool {
     }
 }
 
-/// Opens `path` for writing, emptied, and created private to the user.
-fn private_file(path: &Path) -> io::Result<File> {
-    OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o600)
-        .open(path)
-}
-
 /// Writes `contents` to `path` whole: to the private file `staging`, then
 /// renamed into place, so a reader never sees a partial file.
 fn write_whole(path: &Path, staging: &Path, contents: &str) -> io::Result<()> {
-    private_file(staging)?.write_all(contents.as_bytes())?;
+    crate::daemon::create_private_file(staging)?.write_all(contents.as_bytes())?;
     std::fs::rename(staging, path)
 }
 

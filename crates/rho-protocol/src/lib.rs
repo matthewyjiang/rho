@@ -82,6 +82,7 @@ mod server_calls;
 mod server_settings;
 mod server_streams;
 mod subscription;
+mod transport;
 mod version;
 
 pub use build_id::BuildId;
@@ -162,6 +163,7 @@ pub use methods::{
 pub use server::{serve_connection, Service, CLOSE_GRACE};
 pub use server_settings::SettingsService;
 pub use subscription::{subscription, Published, Publisher, Subscription};
+pub use transport::CloseOnShutdown;
 pub use version::{
     BuildSkew, ProtocolVersion, RestartCost, VersionFix, VersionMismatch, PROTOCOL_VERSION,
 };

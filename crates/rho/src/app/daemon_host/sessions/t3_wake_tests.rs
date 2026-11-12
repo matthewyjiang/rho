@@ -17,7 +17,7 @@ use crate::tools::{
 /// The host's MCP server, whose task tools the watchers call.
 const SERVER: &str = "t3-code";
 
-/// The daemon, and so this module, is unix-only so far (#1665).
+/// A command that outlives every wait here, in the shell of either platform.
 const LONG_RUNNING_COMMAND: &str = "sleep 300";
 
 /// Bounds each wait on real process exits and signal polls; a hang fails.
