@@ -20,7 +20,7 @@ use crate::{
     config::{
         Config, InternalAgentModelConfig, InternalAgentTarget, ModelKind, RhoInternalAgentModel,
     },
-    credential_store::build_provider_on,
+    credential_store::build_provider,
 };
 
 use super::{
@@ -172,8 +172,8 @@ impl ClassifierModel {
         let InternalAgentTarget::Rho(selection) = &model.target else {
             bail!("{PERMISSION_CLASSIFIER_AGENT_ID} cannot run on Claude Code runtime");
         };
-        let provider = build_provider_on(
-        config,
+        let provider = build_provider(
+            &config.providers,
             &selection.provider,
             &selection.model,
             reasoning,
@@ -233,8 +233,8 @@ async fn resolve_screen(
         }
         Some(EntryModel::Text(selection)) => selection,
     };
-    let provider = build_provider_on(
-        config,
+    let provider = build_provider(
+        &config.providers,
         &selection.provider,
         &selection.model,
         ReasoningLevel::Low,

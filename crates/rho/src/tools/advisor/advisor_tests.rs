@@ -276,6 +276,7 @@ fn the_description_never_names_the_reviewer_model() {
     let tool = AdvisorTool::new(
         store.clone(),
         DEFAULT_TRANSCRIPT_BUDGET,
+        Default::default(),
         crate::session_environment::SessionEnvironment::default(),
     );
     let baseline = tool.spec().description;

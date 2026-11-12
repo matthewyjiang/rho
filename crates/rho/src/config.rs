@@ -726,6 +726,7 @@ impl From<&Config> for CompactionConfig {
                 // every selection on Rho's stack.
                 let rho = selection.rho()?;
                 Some(crate::compaction::SummarizerModel {
+                    providers: config.providers.clone(),
                     provider: rho.provider.clone(),
                     model: rho.model.clone(),
                     auth: rho.auth.clone(),

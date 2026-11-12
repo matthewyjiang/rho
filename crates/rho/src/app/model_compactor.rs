@@ -87,12 +87,14 @@ impl Summarizer {
         self.provider
             .get_or_try_init(|| async {
                 let SummarizerModel {
+                    providers,
                     provider,
                     model,
                     auth,
                     reasoning,
                 } = &self.model;
                 crate::credential_store::build_provider(
+                    providers,
                     provider,
                     model,
                     *reasoning,
