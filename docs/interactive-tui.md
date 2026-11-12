@@ -8,7 +8,7 @@ rho
 
 Rho uses the current directory as its [workspace](/tools-workspace). Tool access follows [tools and workspace](/tools-workspace#security-and-workspace-boundaries).
 
-The session runs in the [daemon](/daemon#daemon-backed-tui), which rho starts when none runs, so a turn keeps going after the TUI quits and `rho --resume` catches up with it. `--config` is refused there, since the daemon reads the config in its Rho home; set `RHO_HOME` to run on another.
+The session runs in the [daemon](/daemon#daemon-backed-tui), which rho starts when none runs, so a turn keeps going after the TUI quits and `rho --resume` catches up with it. This is the only interactive TUI on Linux, macOS, and Windows. `--config` is refused there, since the daemon reads the config in its Rho home; set `RHO_HOME` to run on another.
 
 ```mermaid
 flowchart TD
@@ -243,6 +243,8 @@ While [advisor mode](/configuration/advisor-mode) is on, the top composer divide
 ## Removed commands
 
 `/goal` was removed in Rho 3. It was a legacy feature that set a completion condition and kept prompting the agent until an evaluator judged the condition met. Models got better and no longer need that hand-holding to reach a goal: state the outcome you want in the prompt. A leftover `[internal_agents.goal-judge]` table in a config file is ignored and can be deleted.
+
+`/computer` was removed with computer use in Rho 3, since a daemon session may not have your desktop. [Upgrading to Rho 3](/upgrading-to-3) lists everything else that changed.
 
 ## Questionnaires
 

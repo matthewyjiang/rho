@@ -364,7 +364,7 @@ Built-in providers have no per-provider override. They use this table unless you
 | `xai` | `str_replace` | First-party agent tooling uses string replace |
 | all others | `str_replace` | Rho default when no first-party match is known |
 
-Pinned values stay fixed across provider changes. A change from `/config` applies to new sessions. Auto also switches live when you change providers mid-session. Rho 3.0 removed the legacy `hashline` format. The [2.x upgrade](#upgrading-from-rho-2x) rewrites `edit_tool = "hashline"` to `"str_replace"` at startup, globally and on a custom provider. Format details: [Edit formats](/tools-workspace/edit-format).
+Pinned values stay fixed across provider changes. A change from `/config` applies to new sessions. Auto also switches live when you change providers mid-session. Rho 3.0 removed the legacy `hashline` format. The [2.x upgrade](#upgrading-from-rho-2-x) rewrites `edit_tool = "hashline"` to `"str_replace"` at startup, globally and on a custom provider. Format details: [Edit formats](/tools-workspace/edit-format).
 
 ## Behavior
 
