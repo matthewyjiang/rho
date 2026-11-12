@@ -107,11 +107,14 @@ pub(crate) struct Grant {
 }
 
 impl Grant {
-    /// Everything, for the local caller.
-    pub(crate) fn local() -> Self {
+    /// Every workspace with `access`, for the local caller.
+    pub(crate) fn local(access: Access) -> Self {
         Self {
             holder: Holder::Local,
-            scope: Scope::FULL,
+            scope: Scope {
+                access,
+                workspaces: Workspaces::Any,
+            },
         }
     }
 
