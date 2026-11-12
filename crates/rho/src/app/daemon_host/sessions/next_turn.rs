@@ -15,7 +15,7 @@ use crate::{
     app::session_runtime::SessionRuntime,
     config::Config,
     permission_classifier::DECISION_SCREEN_ID,
-    tools::advisor::{advisor_available, advisor_model},
+    tools::advisor::{advisor_available, advisor_model, AdvisorModel},
 };
 
 /// What a loaded session's turns read.
@@ -78,9 +78,16 @@ impl LoadedSession {
             }
         }
         if changes.advisor {
+            // On the global config's providers, not the session's: the
+            // advisor came from that config, which may name a custom
+            // provider added since the session opened.
             let model = advisor_available(&next)
-                .then(|| advisor_model(&next).cloned())
-                .flatten();
+                .then(|| advisor_model(&next))
+                .flatten()
+                .map(|selection| AdvisorModel {
+                    selection: selection.clone(),
+                    providers: global.providers.clone(),
+                });
             match runtime.set_advisor(model, &next).await {
                 Ok(notice) => notices.extend(notice),
                 Err(error) => {

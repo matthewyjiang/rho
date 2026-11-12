@@ -340,11 +340,10 @@ impl AppToolSet {
         if let (true, Some(store)) = (capabilities.contains(&ToolCapability::Advisor), advisor) {
             // The tool set owns advisor initialization: the model and the
             // registration state both come from the same config read.
-            store.set_model(super::advisor::advisor_model(config).cloned());
+            store.set_model(super::advisor::AdvisorModel::from_config(config));
             tool_set.advisor = Some(AdvisorTools {
                 registration: HostToolRegistration::new(super::advisor::advisor_tool(
                     store.clone(),
-                    config.providers.clone(),
                     environment.clone(),
                 )),
                 store,
