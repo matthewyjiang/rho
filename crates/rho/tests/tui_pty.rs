@@ -709,7 +709,8 @@ fn mermaid_flowchart_survives_narrow_and_restored_panes() {
 
 // Covers: a bare /skill command loads the skill before the model responds, and
 // the loaded SKILL.md stays behind a collapsed card until Ctrl+O expands it;
-// an unknown skill is reported as an unknown command.
+// an unknown skill is reported as an unknown command, and a command Rho 3
+// removed says so.
 // Owner: interactive TUI
 #[test]
 fn bare_skill_command_starts_a_model_turn() {
@@ -744,6 +745,13 @@ fn bare_skill_command_starts_a_model_turn() {
         .wait_for_text(
             "unknown command '/skill:missing-skill'",
             WaitTimeout::secs(10, "unknown skill"),
+        )
+        .unwrap();
+    harness.submit_text("/goal ship it").unwrap();
+    harness
+        .wait_for_text(
+            "/goal was removed in Rho 3",
+            WaitTimeout::secs(10, "removed command"),
         )
         .unwrap();
     harness.submit_text("/skill:test-skill").unwrap();
