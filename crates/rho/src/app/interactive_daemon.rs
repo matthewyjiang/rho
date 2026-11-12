@@ -109,6 +109,8 @@ pub(super) async fn open(
     .into_iter()
     .filter_map(|(part, left_out)| left_out.then_some(part))
     .collect();
+    // Startup read it a moment ago; it loads unless edited since.
+    let config_file = std::sync::Arc::new(crate::app::read_config_file()?);
     let launch = tui::DaemonLaunch {
         cwd: cwd.to_path_buf(),
         agent: agent.clone(),
@@ -126,10 +128,6 @@ pub(super) async fn open(
         },
         config: std::sync::Arc::new(config.clone()),
         definition: std::sync::Arc::new(bound.definition().clone()),
-        config_file: std::sync::Arc::new(
-            crate::app::config_for_new_session(bound.definition())
-                .unwrap_or_else(|_| config.clone()),
-        ),
         flags: SettingOrigins::of_launch_flags(
             [
                 (provider.is_some() || model.is_some() || auth.is_some()).then_some(Setting::Model),
@@ -138,7 +136,9 @@ pub(super) async fn open(
             ]
             .into_iter()
             .flatten(),
+            std::sync::Arc::clone(&config_file),
         ),
+        config_file,
     };
 
     // The picker opens over a new session, which opens only if prompted,
@@ -163,7 +163,7 @@ pub(super) async fn open(
         // the config the daemon reads then, and `/new` carries them on.
         StartupSession::Fresh | StartupSession::Picker => {
             let mut options = new_options(&launch, bound).await;
-            options.set_launch_flags(launch.flags);
+            options.set_launch_flags(launch.flags.clone());
             return tui::DaemonSession::draft(launch, options).await;
         }
         // Resolve the id, but never take the writer lease from the daemon

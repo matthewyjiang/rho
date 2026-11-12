@@ -44,7 +44,7 @@ credential_store = "file"
 // Covers: `/new` after a config.toml edit shows and opens its session on
 // the edited model, while the launch's `--permission-mode` still holds over
 // the config's, and a pick in a session holds in the next while config.toml
-// leaves it alone; a config.toml that no longer loads fails the next
+// leaves it alone since the pick, edited before it or not; a config.toml that no longer loads fails the next
 // session's first prompt with the daemon's error naming the file.
 // Owner: interactive TUI as a daemon client
 pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
@@ -54,7 +54,8 @@ pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
         .with_arg("--permission-mode")
         .with_arg("supervised")
         .with_env("OPENAI_API_KEY", "fixture-openai-key")
-        .with_env("XAI_API_KEY", "fixture-xai-key");
+        .with_env("XAI_API_KEY", "fixture-xai-key")
+        .with_env("POOLSIDE_API_KEY", "fixture-poolside-key");
     let mut harness = PtyHarness::spawn_named(&plan, SCENARIO.id)?;
     harness.enable_timing(runner.record_timing);
     if let Some(root) = &runner.artifact_root {
@@ -100,10 +101,27 @@ pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
         harness.assert_screen_contains("Bypass ·")?;
         harness.assert_screen_contains("grok-4.6")?;
 
+        // A pick after an edit holds over the edited setting.
+        harness.set_phase("pick_after_edit_holds");
+        write_config(&home, "poolside", "laguna-m.1")?;
+        harness.submit_text("/model openai/gpt-5.5")?;
+        harness.wait_for_text("model switched to openai/gpt-5.5", SETTLE)?;
+        harness.submit_text("/new")?;
+        harness.wait_for_text_gone("fixture response: hello picked", SETTLE)?;
+        harness.submit_text("hello repicked")?;
+        harness.wait_for_text("fixture response: hello repicked", STREAM)?;
+        harness.wait_for_text("Type a message", SETTLE)?;
+        harness.assert_screen_contains("gpt-5.5")?;
+        ensure!(
+            !harness.screen().contains_text("laguna-m.1"),
+            "the new session dropped the pick made after the edit:\n{}",
+            harness.screen().contents()
+        );
+
         harness.set_phase("new_session_on_broken_config");
         std::fs::write(&home.config_path, "[model\n")?;
         harness.submit_text("/new")?;
-        harness.wait_for_text_gone("fixture response: hello picked", SETTLE)?;
+        harness.wait_for_text_gone("fixture response: hello repicked", SETTLE)?;
         harness.submit_text("hello broken")?;
         harness.wait_for_text("invalid config file", STREAM)?;
         // The composer gets the prompt back; clear it to quit.

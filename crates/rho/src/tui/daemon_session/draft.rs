@@ -34,19 +34,14 @@ pub(super) struct Draft {
     context: Vec<SessionChange>,
     /// The connection the settings were read on.
     settings_link: Arc<Link>,
-    /// `config.toml` as read when the settings were chosen, without the
-    /// launch's flags: a setting it changes since is no longer carried.
-    pub(super) chosen_on: Arc<crate::config::Config>,
 }
 
 impl DaemonSession {
     /// Connects to the daemon, on a connection of its own, for a new
-    /// session the first prompt opens with `options`, whose chosen
-    /// settings were chosen on `chosen_on`.
+    /// session the first prompt opens with `options`.
     pub(super) async fn drafted(
         launch: DaemonLaunch,
         options: DraftOptions,
-        chosen_on: Arc<crate::config::Config>,
     ) -> anyhow::Result<Self> {
         let Connection {
             daemon,
@@ -71,7 +66,6 @@ impl DaemonSession {
                 options,
                 context: Vec::new(),
                 settings_link: link,
-                chosen_on,
             })),
         })
     }
@@ -140,8 +134,7 @@ impl DaemonSession {
                 }
             }
         }
-        let origins = draft.options.origins();
-        let chosen_on = Arc::clone(&draft.chosen_on);
+        let origins = draft.options.origins().clone();
         let settings_link = Arc::clone(&draft.settings_link);
         let Attached {
             mut attachment,
@@ -158,7 +151,6 @@ impl DaemonSession {
         )
         .await?;
         attachment.origins = origins;
-        attachment.chosen_on = chosen_on;
         // A connection since the settings were read has none of their
         // subscription.
         if !Arc::ptr_eq(&link, &settings_link) {
@@ -198,6 +190,7 @@ impl DaemonSession {
     /// waits for the session to open. Either counts as finished now, as
     /// the app counts every change it asked for.
     pub(super) fn configure_draft(&mut self, change: SessionChange) {
+        let made_on = self.launch.config_file_now();
         let Following::Draft(draft) = &mut self.following else {
             return;
         };
@@ -237,9 +230,11 @@ impl DaemonSession {
                 self.pending
                     .push(DaemonView::Options(Box::new(draft.options.options())));
             }
-            (Ok(()), _) => self
-                .pending
-                .push(DaemonView::Options(Box::new(draft.options.options()))),
+            (Ok(()), _) => {
+                draft.options.chose(&change, made_on);
+                self.pending
+                    .push(DaemonView::Options(Box::new(draft.options.options())));
+            }
             (Err(error), _) => self.pending.push(DaemonView::Error(format!(
                 "{}: {error}",
                 change_failure(&change)

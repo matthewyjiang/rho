@@ -46,8 +46,9 @@ use super::{
 };
 use crate::app::{
     daemon_client::{Daemon, Link},
-    SettingOrigin, SettingOrigins,
+    SettingOrigins,
 };
+use crate::config::Config;
 
 enum Request {
     Configure(SessionChange, Asked),
@@ -59,11 +60,11 @@ enum Request {
 }
 
 /// Who asked for a change, which decides whether its end is reported.
-#[derive(Clone, Copy)]
 enum Asked {
     /// The app, which counts the change as pending until
-    /// [`DaemonView::ConfigureFinished`].
-    ByApp,
+    /// [`DaemonView::ConfigureFinished`]: a pick, made against
+    /// `config.toml` as it was then.
+    ByApp { made_on: Arc<Config> },
     /// The launch, carrying a setting to a session opened mid-turn: the
     /// app never counted it, so its end must not settle one the app did.
     AtLaunch,
@@ -409,16 +410,16 @@ impl DaemonRequests {
                             }
                             None => Some(LOST.to_owned()),
                         };
-                        if error.is_none() {
-                            if saves_rows {
-                                saved.store(true, Ordering::Relaxed);
-                            }
-                            picked
-                                .lock()
-                                .unwrap_or_else(PoisonError::into_inner)
-                                .set(&change, SettingOrigin::Chosen);
+                        if error.is_none() && saves_rows {
+                            saved.store(true, Ordering::Relaxed);
                         }
-                        if let Asked::ByApp = asked {
+                        if let Asked::ByApp { made_on } = asked {
+                            if error.is_none() {
+                                picked
+                                    .lock()
+                                    .unwrap_or_else(PoisonError::into_inner)
+                                    .choose(&change, made_on);
+                            }
                             let _ = views.send(DaemonView::ConfigureFinished);
                         }
                         if let Some(error) = error {
@@ -474,10 +475,13 @@ impl DaemonRequests {
         }
     }
 
-    /// The settings a change sent from here moved, as chosen, once the
+    /// The settings a pick sent from here moved, as chosen, once the
     /// daemon took it: one it refused stays where it came from.
     pub(super) fn picks(&self) -> SettingOrigins {
-        *self.picks.lock().unwrap_or_else(PoisonError::into_inner)
+        self.picks
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     /// Whether a change sent from here saved rows to the session.
@@ -531,9 +535,14 @@ impl DaemonRequests {
             .map_err(|_| anyhow::anyhow!(LOST))
     }
 
-    pub(super) fn configure(&self, change: SessionChange) -> anyhow::Result<()> {
+    /// Queues a pick, made against `made_on`, `config.toml` as it is now.
+    pub(super) fn configure(
+        &self,
+        change: SessionChange,
+        made_on: Arc<Config>,
+    ) -> anyhow::Result<()> {
         self.sender
-            .send(Request::Configure(change, Asked::ByApp))
+            .send(Request::Configure(change, Asked::ByApp { made_on }))
             .map_err(|_| anyhow::anyhow!(LOST))
     }
 

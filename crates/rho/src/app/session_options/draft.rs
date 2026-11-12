@@ -11,9 +11,11 @@
 //! someone chose ([`SettingOrigin`]) as changes, and one it refuses is reported
 //! then. The rest the daemon takes from `config.toml` as it is when the
 //! session opens, so a config edit applies to the next new session; `/new`
-//! reads it again too ([`config_for_new_session`]), so the draft shows it.
+//! reads it again too ([`read_config_file`]), so the draft shows it. A
+//! choice holds in the next new session until `config.toml` changes that
+//! setting ([`SettingOrigins::holding_on`]).
 
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
 use rho_protocol as wire;
 use rho_providers::{provider::model_reference, providers::fast_mode::supports_fast_mode};
@@ -27,18 +29,32 @@ use crate::{
     permission::PermissionMode,
 };
 
-/// The config a draft opened now as `agent` shows its options from:
-/// `config.toml` as it is, under the agent's model policy, as startup
+/// `config.toml` as it is now, without an agent's model policy or a
+/// launch's flags: what a choice of setting is made against. Its warnings
+/// go to the log, since the TUI owns the terminal. A file that does not
+/// load is an error, naming it.
+pub(crate) fn read_config_file() -> anyhow::Result<Config> {
+    let path = Config::default_path()?;
+    let (config, warnings) = Config::load_with_warnings(&path)?;
+    for warning in warnings {
+        tracing::warn!(path = %path.display(), "{}", warning.message());
+    }
+    Ok(config)
+}
+
+/// The config a draft opened as `agent` on `file`, a [`read_config_file`],
+/// shows its options from: under the agent's model policy, as startup
 /// settles it. The daemon settles its own as it opens the session
 /// (`daemon_host::sessions::open`), which the settings from config then
-/// follow, so this only has to match what the person sees until then. A
-/// file that does not load is an error, naming it. Activates the file's
-/// custom providers process-wide, as startup does, so the draft can name
-/// their models.
-pub(crate) fn config_for_new_session(agent: &AgentDefinition) -> anyhow::Result<Config> {
-    let config = Config::load(None)?;
-    config.providers.activate()?;
-    let mut config = crate::app::relaunch_config(agent, &config);
+/// follow, so this only has to match what the person sees until then.
+/// Activates the file's custom providers process-wide, as startup does, so
+/// the draft can name their models.
+pub(crate) fn config_for_new_session(
+    file: &Config,
+    agent: &AgentDefinition,
+) -> anyhow::Result<Config> {
+    file.providers.activate()?;
+    let mut config = crate::app::relaunch_config(agent, file);
     crate::app::cli_config::normalize_reasoning(
         &mut config,
         rho_providers::model::ReasoningRequestSource::PersistedOrDefault,
@@ -72,6 +88,8 @@ pub(crate) enum Setting {
 }
 
 impl Setting {
+    /// Every setting, the model first, since it decides what the others
+    /// may pick.
     const ALL: [Self; 4] = [
         Self::Model,
         Self::Reasoning,
@@ -112,67 +130,106 @@ impl Setting {
     }
 }
 
-/// The [`SettingOrigin`] of each [`Setting`] of a session.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// Where one setting comes from, and what a choice of it was made against.
+#[derive(Clone, Debug, Default)]
+struct Origin {
+    from: SettingOrigin,
+    /// `config.toml` as it was when the setting was chosen: the choice
+    /// holds in later sessions while the file configures the setting as it
+    /// did then. `None` for a launch flag, which holds for the launch.
+    made_on: Option<Arc<Config>>,
+}
+
+/// The origin of each [`Setting`] of a session.
+#[derive(Clone, Debug, Default)]
 pub(crate) struct SettingOrigins {
-    model: SettingOrigin,
-    reasoning: SettingOrigin,
-    fast_mode: SettingOrigin,
-    permission_mode: SettingOrigin,
+    model: Origin,
+    reasoning: Origin,
+    fast_mode: Origin,
+    permission_mode: Origin,
 }
 
 impl SettingOrigins {
-    /// The settings a launch's flags chose: the model's carries the
-    /// reasoning level the launch settled for it, which goes with it
-    /// where the daemon takes it.
-    pub(crate) fn of_launch_flags(flagged: impl IntoIterator<Item = Setting>) -> Self {
+    /// The settings a launch's flags chose, which hold for the launch. A
+    /// flag choosing the model carries the reasoning level the launch
+    /// settled for it, made on `launch_file`, the `config.toml` the launch
+    /// read: it goes with the model where the daemon takes it, until the
+    /// file's reasoning changes.
+    pub(crate) fn of_launch_flags(
+        flagged: impl IntoIterator<Item = Setting>,
+        launch_file: Arc<Config>,
+    ) -> Self {
         let mut flags = Self::default();
         for setting in flagged {
-            *flags.origin_mut(setting) = SettingOrigin::Chosen;
+            flags.origin_mut(setting).from = SettingOrigin::Chosen;
         }
-        if flags.model == SettingOrigin::Chosen && flags.reasoning == SettingOrigin::Config {
-            flags.reasoning = SettingOrigin::Carried;
+        if flags.model.from == SettingOrigin::Chosen
+            && flags.reasoning.from == SettingOrigin::Config
+        {
+            flags.reasoning = Origin {
+                from: SettingOrigin::Carried,
+                made_on: Some(launch_file),
+            };
         }
         flags
     }
 
     /// The origin of the setting `change` moves; a change that moves none
     /// is no setting a draft defers to config, so it must apply.
-    pub(crate) fn of(mut self, change: &wire::SessionChange) -> SettingOrigin {
-        Setting::of(change).map_or(SettingOrigin::Chosen, |setting| *self.origin_mut(setting))
+    pub(crate) fn of(&self, change: &wire::SessionChange) -> SettingOrigin {
+        Setting::of(change).map_or(SettingOrigin::Chosen, |setting| self.origin(setting).from)
     }
 
-    /// Records that the setting `change` moves comes from `origin` now;
-    /// a change that moves none leaves them.
-    pub(crate) fn set(&mut self, change: &wire::SessionChange, origin: SettingOrigin) {
+    /// Records that someone chose the setting `change` moves, against
+    /// `made_on`, `config.toml` as it is now; a change that moves none
+    /// leaves them.
+    pub(crate) fn choose(&mut self, change: &wire::SessionChange, made_on: Arc<Config>) {
         if let Some(setting) = Setting::of(change) {
-            *self.origin_mut(setting) = origin;
+            *self.origin_mut(setting) = Origin {
+                from: SettingOrigin::Chosen,
+                made_on: Some(made_on),
+            };
         }
     }
 
-    /// These origins, with the settings `picks` chose counted as chosen.
-    pub(crate) fn with_picks(mut self, mut picks: SettingOrigins) -> Self {
+    /// These origins, with the settings chosen in `picks` taken from it.
+    pub(crate) fn with_picks(mut self, picks: &SettingOrigins) -> Self {
         for setting in Setting::ALL {
-            if *picks.origin_mut(setting) == SettingOrigin::Chosen {
-                *self.origin_mut(setting) = SettingOrigin::Chosen;
+            let pick = picks.origin(setting);
+            if pick.from == SettingOrigin::Chosen {
+                *self.origin_mut(setting) = pick.clone();
             }
         }
         self
     }
 
-    /// These origins, but for the settings `now` configures otherwise than
-    /// `before` did, which come from config: a `config.toml` edit to a
-    /// setting since someone chose it wins over the choice.
-    pub(crate) fn unchanged_between(mut self, before: &Config, now: &Config) -> Self {
+    /// These origins, but for the choices `file`, `config.toml` as it is
+    /// now, configures otherwise than when they were made, which come from
+    /// config again: a file edit since a choice wins over it.
+    pub(crate) fn holding_on(mut self, file: &Config) -> Self {
         for setting in Setting::ALL {
-            if !setting.configured_alike(before, now) {
-                *self.origin_mut(setting) = SettingOrigin::Config;
+            let origin = self.origin_mut(setting);
+            if origin
+                .made_on
+                .as_ref()
+                .is_some_and(|made_on| !setting.configured_alike(made_on, file))
+            {
+                *origin = Origin::default();
             }
         }
         self
     }
 
-    fn origin_mut(&mut self, setting: Setting) -> &mut SettingOrigin {
+    fn origin(&self, setting: Setting) -> &Origin {
+        match setting {
+            Setting::Model => &self.model,
+            Setting::Reasoning => &self.reasoning,
+            Setting::FastMode => &self.fast_mode,
+            Setting::PermissionMode => &self.permission_mode,
+        }
+    }
+
+    fn origin_mut(&mut self, setting: Setting) -> &mut Origin {
         match setting {
             Setting::Model => &mut self.model,
             Setting::Reasoning => &mut self.reasoning,
@@ -230,56 +287,59 @@ impl DraftOptions {
         }
     }
 
-    /// Takes the settings `settings` names from a session that runs with
-    /// `options`, as `/new` carries them to the session it opens: each as
-    /// a pick, re-checked against the draft's model, counted as carried.
-    /// One the draft refuses stays its own, as the daemon keeps its own
-    /// when it refuses a carried setting.
-    pub(crate) fn carry(&mut self, options: &wire::SessionOptions, settings: SettingOrigins) {
+    /// Takes the settings `settings` says someone chose from a session
+    /// that runs with `options`, as `/new` carries them to the session it
+    /// opens: each as a pick, re-checked against the draft's model,
+    /// counted as carried. One the draft refuses stays its own, as the
+    /// daemon keeps its own when it refuses a carried setting.
+    pub(crate) fn carry(&mut self, options: &wire::SessionOptions, settings: &SettingOrigins) {
         let switched_model = self.switched_model;
-        let named = |origin: SettingOrigin| origin != SettingOrigin::Config;
-        // The model first, since it decides what the others may pick.
-        if named(settings.model)
-            && self
-                .set_model(&options.model.current, Some(&options.model.auth))
-                .is_ok()
-        {
-            self.origins.model = SettingOrigin::Carried;
-        }
-        if named(settings.reasoning)
-            && options
-                .reasoning
-                .as_ref()
-                .is_some_and(|reasoning| self.set_reasoning(reasoning.current).is_ok())
-        {
-            self.origins.reasoning = SettingOrigin::Carried;
-        }
-        if named(settings.fast_mode)
-            && self
-                .set_fast_mode(options.fast_mode.as_ref().is_some_and(|fast| fast.enabled))
-                .is_ok()
-        {
-            self.origins.fast_mode = SettingOrigin::Carried;
-        }
-        if named(settings.permission_mode)
-            && self
-                .set_permission_mode(options.permission_mode.current)
-                .is_ok()
-        {
-            self.origins.permission_mode = SettingOrigin::Carried;
+        for setting in Setting::ALL {
+            let origin = settings.origin(setting);
+            if origin.from != SettingOrigin::Config && self.take(setting, options) {
+                *self.origins.origin_mut(setting) = Origin {
+                    from: SettingOrigin::Carried,
+                    made_on: origin.made_on.clone(),
+                };
+            }
         }
         self.switched_model = switched_model;
     }
 
+    /// Sets `setting` as `options` have it; whether the draft took it.
+    fn take(&mut self, setting: Setting, options: &wire::SessionOptions) -> bool {
+        match setting {
+            Setting::Model => self
+                .set_model(&options.model.current, Some(&options.model.auth))
+                .is_ok(),
+            Setting::Reasoning => options
+                .reasoning
+                .as_ref()
+                .is_some_and(|reasoning| self.set_reasoning(reasoning.current).is_ok()),
+            Setting::FastMode => self
+                .set_fast_mode(options.fast_mode.as_ref().is_some_and(|fast| fast.enabled))
+                .is_ok(),
+            Setting::PermissionMode => self
+                .set_permission_mode(options.permission_mode.current)
+                .is_ok(),
+        }
+    }
+
     /// Where each setting comes from, which the session keeps once open.
-    pub(crate) fn origins(&self) -> SettingOrigins {
-        self.origins
+    pub(crate) fn origins(&self) -> &SettingOrigins {
+        &self.origins
     }
 
     /// Counts `flags`, the settings a launch's flags chose, as the
     /// draft's, whose config already holds their values.
     pub(crate) fn set_launch_flags(&mut self, flags: SettingOrigins) {
         self.origins = flags;
+    }
+
+    /// Records that someone chose the setting `change` moved, which the
+    /// draft took, against `made_on`, `config.toml` as it is now.
+    pub(crate) fn chose(&mut self, change: &wire::SessionChange, made_on: Arc<Config>) {
+        self.origins.choose(change, made_on);
     }
 
     /// The options these settings make now.
@@ -334,9 +394,6 @@ impl DraftOptions {
             auth: selection.auth,
         };
         self.switched_model = true;
-        // The reasoning level the switch kept stays where it came from:
-        // the daemon keeps its own the same way where it is from config.
-        self.origins.model = SettingOrigin::Chosen;
         Ok(())
     }
 
@@ -361,7 +418,6 @@ impl DraftOptions {
             )));
         }
         self.reasoning = level;
-        self.origins.reasoning = SettingOrigin::Chosen;
         Ok(())
     }
 
@@ -375,7 +431,6 @@ impl DraftOptions {
             )));
         }
         self.fast_mode = enabled;
-        self.origins.fast_mode = SettingOrigin::Chosen;
         Ok(())
     }
 
@@ -411,7 +466,6 @@ impl DraftOptions {
             .ok_or_else(|| {
                 SettingChangeError::Unsupported("that permission mode is not offered".into())
             })?;
-        self.origins.permission_mode = SettingOrigin::Chosen;
         Ok(())
     }
 }

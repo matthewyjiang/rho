@@ -1,8 +1,10 @@
 use pretty_assertions::assert_eq;
 use rho_protocol as wire;
 
-use super::{DraftOptions, SettingOrigin, SettingOrigins};
-use crate::config::Config;
+use std::sync::Arc;
+
+use super::{DraftOptions, Setting, SettingOrigin, SettingOrigins};
+use crate::{config::Config, permission::PermissionMode};
 
 fn draft(provider: &str, model: &str, auth: &str) -> DraftOptions {
     let config = Config {
@@ -26,17 +28,31 @@ fn draft(provider: &str, model: &str, auth: &str) -> DraftOptions {
 #[test]
 fn applied_settings_show_in_the_options_and_carry() {
     let mut draft = draft("openai-codex", "gpt-5.5", "codex");
-    let grok = wire::ModelRef {
-        provider: "xai".into(),
-        model: "grok-4.7".into(),
-    };
-    draft
-        .set_model(&grok, None)
-        .expect("the draft takes the model");
-    draft.set_fast_mode(true).expect("grok has fast mode");
-    draft
-        .set_permission_mode(wire::PermissionMode::Supervised)
-        .expect("supervised is offered");
+    let file = Arc::new(Config::default());
+    let changes = [
+        wire::SessionChange::Model {
+            model: wire::ModelRef {
+                provider: "xai".into(),
+                model: "grok-4.7".into(),
+            },
+            auth: None,
+            setup: false,
+        },
+        wire::SessionChange::FastMode { enabled: true },
+        wire::SessionChange::PermissionMode {
+            mode: wire::PermissionMode::Supervised,
+        },
+    ];
+    for change in changes {
+        match &change {
+            wire::SessionChange::Model { model, .. } => draft.set_model(model, None),
+            wire::SessionChange::FastMode { enabled } => draft.set_fast_mode(*enabled),
+            wire::SessionChange::PermissionMode { mode } => draft.set_permission_mode(*mode),
+            _ => unreachable!("only settings above"),
+        }
+        .expect("the draft takes the setting");
+        draft.chose(&change, Arc::clone(&file));
+    }
     let options = draft.options();
 
     assert_eq!(
@@ -89,38 +105,121 @@ fn refused_settings_leave_the_draft_unchanged() {
     assert_eq!(draft.options(), before);
 }
 
-// Covers: `/new` takes the config it reads then for every setting nobody
-// chose and for one `config.toml` changed since it was chosen, so a config
-// edit applies to the next session, and carries the other chosen ones,
-// which then apply where the daemon takes them, while one chosen since must
-// apply, so a carried setting the new session refuses never blocks every
-// prompt.
+/// `config.toml` with `model`, `reasoning`, and `permission_mode`.
+fn file(model: &str, reasoning: rho_sdk::ReasoningLevel, mode: PermissionMode) -> Arc<Config> {
+    Arc::new(Config {
+        provider: "openai-codex".into(),
+        model: model.into(),
+        auth: "codex".into(),
+        reasoning,
+        permission_mode: mode,
+        ..Config::default()
+    })
+}
+
+// Covers: a choice holds in the next new session while `config.toml`
+// configures that setting as when it was made, so an edit since a pick, or
+// since the launch for the reasoning a model flag carries, wins over it, a
+// pick made after an edit holds, and a launch flag always holds.
 // Owner: session options
 #[test]
-fn a_new_session_takes_the_config_but_for_settings_chosen_since() {
-    let mut old = draft("openai-codex", "gpt-5.5", "codex");
-    let grok = wire::ModelRef {
-        provider: "xai".into(),
-        model: "grok-4.7".into(),
+fn a_choice_holds_until_config_changes_its_setting() {
+    use rho_sdk::ReasoningLevel::{High, Low};
+    use PermissionMode::{Bypass, Supervised};
+
+    let launch = file("gpt-5.5", High, Bypass);
+    let model = wire::SessionChange::Model {
+        model: wire::ModelRef {
+            provider: "openai-codex".into(),
+            model: "gpt-5.4".into(),
+        },
+        auth: None,
+        setup: false,
     };
-    old.set_model(&grok, None)
-        .expect("the draft takes the model");
+    let reasoning = wire::SessionChange::Reasoning {
+        level: wire::ReasoningLevel::High,
+    };
+    let permission = wire::SessionChange::PermissionMode {
+        mode: wire::PermissionMode::Supervised,
+    };
+    let flags = || SettingOrigins::of_launch_flags([Setting::Model], Arc::clone(&launch));
+    let picked = |made_on: &Arc<Config>| {
+        let mut picks = SettingOrigins::default();
+        picks.choose(&permission, Arc::clone(made_on));
+        picks
+    };
+    let edited = file("gpt-5.5", High, Supervised);
+    let (config, carried, chosen) = (
+        SettingOrigin::Config,
+        SettingOrigin::Carried,
+        SettingOrigin::Chosen,
+    );
+    // (origins, config.toml now, expected origins of model, reasoning,
+    // and permission mode)
+    let cases = [
+        // A model flag holds; the reasoning it carries yields to an edit.
+        (
+            flags(),
+            file("gpt-5.4", Low, Bypass),
+            [chosen, config, config],
+        ),
+        (
+            flags(),
+            file("gpt-5.4", High, Bypass),
+            [chosen, carried, config],
+        ),
+        // A pick holds until an edit of its setting after it.
+        (
+            picked(&launch),
+            Arc::clone(&launch),
+            [config, config, chosen],
+        ),
+        (
+            picked(&launch),
+            Arc::clone(&edited),
+            [config, config, config],
+        ),
+        (
+            picked(&edited),
+            Arc::clone(&edited),
+            [config, config, chosen],
+        ),
+    ];
+
+    let held = cases
+        .iter()
+        .map(|(origins, now, _)| {
+            let origins = origins.clone().holding_on(now);
+            [&model, &reasoning, &permission].map(|change| origins.of(change))
+        })
+        .collect::<Vec<_>>();
+    let expected = cases
+        .iter()
+        .map(|(.., expected)| *expected)
+        .collect::<Vec<_>>();
+    assert_eq!(held, expected);
+}
+
+// Covers: `/new` takes the config it reads then for every setting nobody
+// chose, carries a chosen one, which then applies where the daemon takes
+// it, while one chosen since must apply, so a carried setting the new
+// session refuses never blocks every prompt.
+// Owner: session options
+#[test]
+fn a_new_session_carries_only_chosen_settings() {
+    let made_on = Arc::new(Config::default());
+    let mut old = draft("openai-codex", "gpt-5.5", "codex");
+    let permission = wire::SessionChange::PermissionMode {
+        mode: wire::PermissionMode::Supervised,
+    };
     old.set_permission_mode(wire::PermissionMode::Supervised)
         .expect("supervised is offered");
-    let chosen_on = Config {
-        provider: "openai-codex".into(),
-        model: "gpt-5.5".into(),
-        auth: "codex".into(),
-        ..Config::default()
-    };
-    let edited = Config {
-        model: "gpt-5.4".into(),
-        ..chosen_on.clone()
-    };
-    let chosen = old.origins().unchanged_between(&chosen_on, &edited);
+    old.chose(&permission, Arc::clone(&made_on));
     let mut new = draft("openai-codex", "gpt-5.4", "codex");
-    new.carry(&old.options(), chosen);
+    new.carry(&old.options(), old.origins());
+    let fast = wire::SessionChange::FastMode { enabled: false };
     new.set_fast_mode(false).expect("fast mode turns off");
+    new.chose(&fast, made_on);
     let options = new.options();
     let origins = [
         wire::SessionChange::Model {
@@ -128,13 +227,8 @@ fn a_new_session_takes_the_config_but_for_settings_chosen_since() {
             auth: None,
             setup: true,
         },
-        wire::SessionChange::PermissionMode {
-            mode: wire::PermissionMode::Supervised,
-        },
-        wire::SessionChange::FastMode { enabled: false },
-        wire::SessionChange::Reasoning {
-            level: wire::ReasoningLevel::High,
-        },
+        permission,
+        fast,
     ]
     .map(|change| new.origins().of(&change));
 
@@ -154,26 +248,7 @@ fn a_new_session_takes_the_config_but_for_settings_chosen_since() {
                 SettingOrigin::Config,
                 SettingOrigin::Carried,
                 SettingOrigin::Chosen,
-                SettingOrigin::Config,
             ],
         )
-    );
-}
-
-// Covers: a launch flag that picks the model carries the reasoning level
-// the launch settled for it, leniently, and chooses only what it names.
-// Owner: session options
-#[test]
-fn a_model_flag_carries_its_reasoning() {
-    let flags = SettingOrigins::of_launch_flags([super::Setting::Model]);
-    let reasoning = wire::SessionChange::Reasoning {
-        level: wire::ReasoningLevel::High,
-    };
-    let permission = wire::SessionChange::PermissionMode {
-        mode: wire::PermissionMode::Supervised,
-    };
-    assert_eq!(
-        [flags.of(&reasoning), flags.of(&permission)],
-        [SettingOrigin::Carried, SettingOrigin::Config]
     );
 }

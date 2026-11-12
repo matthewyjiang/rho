@@ -151,13 +151,12 @@ struct Attachment {
     routed: mpsc::UnboundedReceiver<Routed>,
     /// The session's options as the daemon last reported them.
     options: Option<SessionOptions>,
-    /// Which of them a launch flag or a pick chose as the TUI opened or
-    /// attached to the session, which `/new` carries to the session it
-    /// opens with those picked since (`DaemonRequests::picks`); the rest
-    /// it takes from config.
+    /// Which of them were chosen before the first prompt opened the
+    /// session, which `/new` carries to the session it opens with those
+    /// picked since (`DaemonRequests::picks`) where `config.toml` still
+    /// holds them; the rest it takes from config. A resumed session's
+    /// launch flags are the launch's (`DaemonLaunch::flags`).
     origins: SettingOrigins,
-    /// The config `origins` were chosen on (see `Draft::chosen_on`).
-    chosen_on: Arc<crate::config::Config>,
     events: DaemonEvents,
     /// Which of the attachment's events are its replay.
     position: StreamPosition,
@@ -201,8 +200,7 @@ impl DaemonSession {
     /// session the first prompt opens with `options`, at launch. A daemon
     /// of another build shows its notice, as [`Self::open`] says.
     pub(crate) async fn draft(launch: DaemonLaunch, options: DraftOptions) -> anyhow::Result<Self> {
-        let chosen_on = Arc::clone(&launch.config_file);
-        let mut session = Self::drafted(launch, options, chosen_on).await?;
+        let mut session = Self::drafted(launch, options).await?;
         session.show_skew().await;
         Ok(session)
     }
@@ -309,7 +307,6 @@ impl DaemonSession {
                 routed: mpsc::unbounded_channel().1,
                 options: None,
                 origins: SettingOrigins::default(),
-                chosen_on: Arc::default(),
                 events: DaemonEvents::default(),
                 ended: true,
                 reattach: None,
@@ -335,8 +332,8 @@ impl DaemonSession {
     pub(in crate::tui) async fn open_sibling(&self, target: DaemonTarget) -> anyhow::Result<Self> {
         match target {
             DaemonTarget::New => {
-                let (options, chosen_on) = self.new_session_options().await;
-                Self::drafted(self.launch.clone(), options, chosen_on).await
+                let options = self.new_session_options().await;
+                Self::drafted(self.launch.clone(), options).await
             }
             DaemonTarget::Resume(id) => {
                 Self::follow(self.launch.clone(), id, InitialSettings::Kept).await
@@ -346,33 +343,43 @@ impl DaemonSession {
 
     /// The options of a session `/new` opens in this one's place:
     /// `config.toml` as it is now, the launch's flags over it, and over
-    /// both the settings of this session a flag or a pick chose, unless
-    /// `config.toml` changed that setting since, so a config edit applies
-    /// to the next new session while a choice made after it holds. With
-    /// the config they were chosen on.
-    async fn new_session_options(&self) -> (DraftOptions, Arc<crate::config::Config>) {
-        let config = self.launch.config_now();
+    /// both the settings of this session a flag or a pick chose, but for
+    /// one `config.toml` changed since it was chosen, so a config edit
+    /// applies to the next new session while a choice made after it holds.
+    async fn new_session_options(&self) -> DraftOptions {
         let auths = available_auths(Arc::new(AppCredentialStore)).await;
-        let (options, chosen, chosen_on, added_dirs) = match &self.following {
+        let (options, chosen, added_dirs) = match &self.following {
             Following::Draft(draft) => (
                 Some(draft.options.options()),
-                draft.options.origins(),
-                &*draft.chosen_on,
+                draft.options.origins().clone(),
                 draft.options.added_dirs().to_vec(),
             ),
             Following::Attached(attachment) => (
                 attachment.options.clone(),
-                attachment.origins.with_picks(
-                    self.requests
+                attachment.origins.clone().with_picks(
+                    &self
+                        .requests
                         .as_ref()
                         .map(DaemonRequests::picks)
                         .unwrap_or_default(),
                 ),
-                &*attachment.chosen_on,
                 self.launch.setup.additional_directories.clone(),
             ),
         };
-        let chosen = chosen.unchanged_between(chosen_on, &config);
+        // A file that does not load fails the session's first prompt; the
+        // draft keeps the launch's settings meanwhile.
+        let (config, flags, chosen) = match self.launch.config_now() {
+            Some((config, file)) => (
+                config,
+                self.launch.flags.clone().holding_on(&file),
+                chosen.holding_on(&file),
+            ),
+            None => (
+                (*self.launch.config).clone(),
+                self.launch.flags.clone(),
+                chosen,
+            ),
+        };
         // The same setup lists the same commands.
         let commands = options
             .as_ref()
@@ -385,13 +392,12 @@ impl DaemonSession {
             Vec::new(),
         )
         .options();
-        let chosen_on = Arc::new(config.clone());
         let mut draft = DraftOptions::new(config, auths, commands, added_dirs);
-        draft.carry(&flagged, self.launch.flags);
+        draft.carry(&flagged, &flags);
         if let Some(options) = &options {
-            draft.carry(options, chosen);
+            draft.carry(options, &chosen);
         }
-        (draft, chosen_on)
+        draft
     }
 
     /// The followed session's attachment, once the daemon opened it.

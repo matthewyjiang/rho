@@ -18,26 +18,38 @@ pub(crate) struct DaemonLaunch {
     /// The settings the launch's flags chose, whose values `config` holds:
     /// every new session takes them over `config.toml`.
     pub(crate) flags: crate::app::SettingOrigins,
-    /// `config.toml` as the launch read it, under the agent's policy but
-    /// not the flags: a choice made in a session the launch opened holds
-    /// in the next one `/new` opens until `config.toml` changes it.
+    /// `config.toml` as the launch read it ([`crate::app::read_config_file`]).
     pub(crate) config_file: std::sync::Arc<crate::config::Config>,
 }
 
 impl DaemonLaunch {
-    /// The config a new session's options are built from now, as the
-    /// daemon will read it when the session opens: `config.toml` as it is,
-    /// so an edit since launch shows. One that does not load leaves the
-    /// launch's read of it: the daemon refuses to open the session on it
-    /// and says why with its first prompt.
-    pub(crate) fn config_now(&self) -> crate::config::Config {
-        crate::app::config_for_new_session(&self.definition).unwrap_or_else(|error| {
+    /// `config.toml` as it is now, which a new session's options are
+    /// built from, as the daemon will read it when the session opens, and
+    /// the config it was settled to for the launch's agent. `None` when it
+    /// does not load: the daemon refuses to open a new session on it and
+    /// says why with its first prompt.
+    pub(crate) fn config_now(
+        &self,
+    ) -> Option<(crate::config::Config, std::sync::Arc<crate::config::Config>)> {
+        let read = crate::app::read_config_file().and_then(|file| {
+            let settled = crate::app::config_for_new_session(&file, &self.definition)?;
+            Ok((settled, std::sync::Arc::new(file)))
+        });
+        read.inspect_err(|error| {
             tracing::warn!(
                 error = format!("{error:#}"),
                 "could not read config.toml for a new session"
             );
-            (*self.config_file).clone()
         })
+        .ok()
+    }
+
+    /// `config.toml` as it is now, which a setting chosen now is made
+    /// against; the launch's read of it when it does not load.
+    pub(crate) fn config_file_now(&self) -> std::sync::Arc<crate::config::Config> {
+        crate::app::read_config_file()
+            .map(std::sync::Arc::new)
+            .unwrap_or_else(|_| std::sync::Arc::clone(&self.config_file))
     }
 }
 

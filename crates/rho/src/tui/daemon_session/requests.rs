@@ -147,6 +147,6 @@ impl DaemonSession {
         self.requests
             .as_ref()
             .expect("attached session has requests")
-            .configure(change)
+            .configure(change, self.launch.config_file_now())
     }
 }
