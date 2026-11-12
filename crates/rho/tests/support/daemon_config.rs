@@ -120,6 +120,24 @@ async fn next_turn(
     notifications: &mut Notifications,
     session: &SessionId,
 ) -> (Vec<String>, Vec<String>) {
+    let (answer, notices) = next_turn_reply(notifications, session).await;
+    let request: Value =
+        serde_json::from_str(&answer).unwrap_or_else(|error| panic!("{error}: {answer}"));
+    let tools = request["tools"]
+        .as_array()
+        .expect("the request lists its tools")
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap().to_owned())
+        .collect();
+    (tools, notices)
+}
+
+/// The text `session`'s next turn answered with, and the notices it showed
+/// before it ended.
+async fn next_turn_reply(
+    notifications: &mut Notifications,
+    session: &SessionId,
+) -> (String, Vec<String>) {
     let (mut answer, mut notices) = (String::new(), Vec::new());
     loop {
         let DaemonNotification::SessionEvent(params) = next_notification(notifications).await
@@ -134,15 +152,7 @@ async fn next_turn(
             _ => {}
         }
     }
-    let request: Value =
-        serde_json::from_str(&answer).unwrap_or_else(|error| panic!("{error}: {answer}"));
-    let tools = request["tools"]
-        .as_array()
-        .expect("the request lists its tools")
-        .iter()
-        .map(|tool| tool["name"].as_str().unwrap().to_owned())
-        .collect();
-    (tools, notices)
+    (answer, notices)
 }
 
 // Covers: a change set through the protocol is saved to `config.toml`,
@@ -291,17 +301,7 @@ base_url = "http://{address}/v1"
         )
         .await;
 
-    let mut reply = String::new();
-    loop {
-        let DaemonNotification::SessionEvent(params) = next_notification(&mut events).await else {
-            continue;
-        };
-        match params.event {
-            SessionEvent::AgentMessageChunk { text, .. } => reply.push_str(&text),
-            SessionEvent::TurnEnded { .. } => break,
-            _ => {}
-        }
-    }
+    let (reply, _) = next_turn_reply(&mut events, &session).await;
     // `answered` is what the custom host says to every request.
     assert_eq!(reply, "answered", "log:\n{}", sandbox.isolated.daemon_log());
 }

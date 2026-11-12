@@ -83,6 +83,9 @@ pub(crate) fn advisor_available(config: &Config) -> bool {
 /// on: those of the config the model was chosen in. A session takes a new
 /// advisor from the global config at its next turn, and a custom provider
 /// added since the session opened is only in that config's providers.
+///
+/// Unlike [`crate::agent::ResolvedRhoModel`], the selection stays unresolved:
+/// the advisor may run on Claude Code, and its reasoning resolves per call.
 #[derive(Clone, Debug)]
 pub struct AdvisorModel {
     pub selection: InternalAgentModelConfig,
@@ -329,22 +332,22 @@ async fn consult_advisor(
 ) -> Result<(String, ModelUsage), ToolError> {
     let AdvisorRequest {
         model: AdvisorModel {
-            selection: model,
+            selection,
             providers,
         },
         session_id,
         transcript,
     } = request;
-    let reasoning = advisor_effective_reasoning(&model);
-    match &model.target {
-        InternalAgentTarget::Rho(selection) => {
-            let reference = model.display_reference();
+    let reasoning = advisor_effective_reasoning(&selection);
+    match &selection.target {
+        InternalAgentTarget::Rho(rho) => {
+            let reference = selection.display_reference();
             let provider = build_provider(
                 &providers,
-                &selection.provider,
-                &selection.model,
+                &rho.provider,
+                &rho.model,
                 reasoning,
-                &selection.auth,
+                &rho.auth,
                 environment.credentials(),
             )
             .await

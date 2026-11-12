@@ -179,8 +179,8 @@ static CLAUDE_REASONING_CAPABILITIES: LazyLock<ReasoningCapabilities> = LazyLock
 /// inherits the session's reasoning.
 const OVERRIDE_DEFAULT_REASONING: ReasoningLevel = ReasoningLevel::Low;
 
-/// An internal agent's model on Rho's own stack, resolved from a config for
-/// a run: the session title model and the compaction summarizer.
+/// An internal agent's model on Rho's own provider stack, resolved from a
+/// config with its reasoning worked out, ready for a run.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResolvedRhoModel {
     /// The configured providers the model is looked up on, so a custom
