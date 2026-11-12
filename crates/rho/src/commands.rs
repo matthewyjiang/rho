@@ -215,6 +215,25 @@ const CHANGELOG_ARGUMENT_CHOICES: &[CommandArgumentChoice] = &[CommandArgumentCh
     description: "fetch notes for the latest published release",
 }];
 
+/// Commands Rho 3 removed, by name, with the notice typing one shows.
+const REMOVED_COMMANDS: &[(&str, &str)] = &[
+    (
+        "computer",
+        "/computer was removed in Rho 3 along with computer use",
+    ),
+    (
+        "goal",
+        "/goal was removed in Rho 3: state the outcome you want in the prompt instead",
+    ),
+];
+
+/// The notice for `/name` when it is a command Rho 3 removed.
+pub(crate) fn removed_command_notice(name: &str) -> Option<&'static str> {
+    REMOVED_COMMANDS
+        .iter()
+        .find_map(|(removed, notice)| (*removed == name).then_some(*notice))
+}
+
 // Keep alphabetical by `name` so the slash palette stays sorted as commands are added.
 pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec {

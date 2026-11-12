@@ -54,6 +54,8 @@ cargo install rho-coding-agent
 rho
 ```
 
+Sessions run in a per-user background [daemon](https://matthewyjiang.github.io/rho/daemon), so a turn keeps going after you quit the TUI. `rho --resume` reattaches to it.
+
 For one-off prompts:
 
 ```bash
@@ -62,6 +64,10 @@ rho run "summarize this repository"
 
 For a deterministic multi-step graph, see the
 [workflow guide](https://matthewyjiang.github.io/rho/workflows).
+
+## Upgrading from Rho 2.x
+
+Rho 3 moves sessions into the daemon and removes some 2.x features. See [Upgrading to Rho 3](https://matthewyjiang.github.io/rho/upgrading-to-3).
 
 ## Docs
 

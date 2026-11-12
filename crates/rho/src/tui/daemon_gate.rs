@@ -78,9 +78,12 @@ pub(super) fn command_route(command: CommandId) -> CommandRoute {
 
 impl App {
     /// Says that the daemon's session does not offer the prompt command
-    /// `/name`.
+    /// `/name`, or that Rho 3 removed it.
     pub(super) fn daemon_command_unavailable(&mut self, name: &str) {
-        let notice = format!("/{name} is not available in a daemon session yet");
+        let notice = crate::commands::removed_command_notice(name).map_or_else(
+            || format!("/{name} is not available in a daemon session yet"),
+            str::to_owned,
+        );
         self.insert_entry(&Entry::Notice(notice.clone()));
         self.set_status(notice);
     }
