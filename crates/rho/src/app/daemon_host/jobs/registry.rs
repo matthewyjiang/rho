@@ -287,6 +287,24 @@ impl JobRegistry {
         }
     }
 
+    /// Records that the daemon's cleanup removed job `id`'s worktree with
+    /// `commit` checked out, or, with `None`, that it is on disk again.
+    /// Not a transition: `updated_at` keeps when the job was last used.
+    pub(in crate::app::daemon_host) fn set_worktree_removed_at(
+        &self,
+        id: &JobId,
+        commit: Option<String>,
+    ) {
+        let mut jobs = self.lock();
+        let Some(record) = jobs.get_mut(id) else {
+            return;
+        };
+        if record.worktree_removed_at != commit {
+            record.worktree_removed_at = commit;
+            persist(&self.store, record);
+        }
+    }
+
     /// The grant of the session turn job `id` runs under: its own, for a
     /// session job, else that of the nearest session job that started it,
     /// as a subagent run's or a workflow drive's is. `None` when no known

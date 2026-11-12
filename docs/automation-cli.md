@@ -277,8 +277,9 @@ It runs `git worktree remove` (never with `--force`) and keeps the branch.
 It checks when it starts and once a day, and only removes worktrees whose
 session has been unused for a day. Files git ignores, such as `.env`,
 `node_modules`, or `target/`, go with the worktree. If you reopen or read the
-session later, the daemon adds the worktree back from the branch, or from
-`HEAD` if you deleted the merged branch. A squash or rebase merge leaves the
+session later, the daemon adds the worktree back on the branch, at the commit
+it removed, and makes the branch again if you deleted it. A worktree you
+removed yourself stays removed. A squash or rebase merge leaves the
 branch looking unmerged, so that worktree stays until you remove it.
 
 Every other worktree stays. After 14 days unused, `rho daemon status` and

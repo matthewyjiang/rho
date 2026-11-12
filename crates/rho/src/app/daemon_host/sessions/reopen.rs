@@ -28,7 +28,8 @@ use super::{
     open::{open_session, OpenWith, Opening},
     open_failed,
     store::{store_blocking, store_failed},
-    worktree, writing, LoadedSession, SessionJobRecord, Sessions, TurnSlot,
+    worktree::Restore,
+    writing, LoadedSession, SessionJobRecord, Sessions, TurnSlot,
 };
 use crate::{
     app::daemon_host::{
@@ -107,13 +108,13 @@ impl Sessions {
         with: &OpenWith,
     ) -> Result<Arc<LoadedSession>, RpcError> {
         self.refuse_when_stopping()?;
-        let last = match self.jobs.session_job(id) {
+        let mut last = match self.jobs.session_job(id) {
             SessionJob::Busy(job) => return Err(writing(&job, id)),
             SessionJob::Last(record) => Some(*record),
             SessionJob::New => None,
         };
-        if let Some(record) = &last {
-            worktree::restore(record).await?;
+        if let Some(record) = &mut last {
+            self.restore_worktree(record, Restore::Turns).await?;
         }
         let stored = saved_session(id, SavedFor::Turns).await?;
         // The session opens under the grant `with` brings, held to its

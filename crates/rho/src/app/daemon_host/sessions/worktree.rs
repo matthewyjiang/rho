@@ -5,9 +5,12 @@
 //! Cleanup removes a worktree only when nothing could lose by it: no session
 //! loaded in it and no job in it under way, no uncommitted or untracked
 //! change, and what it has checked out merged into its origin's `HEAD`. It
-//! keeps the branch, and a session reopened later gets its worktree back
-//! from it, or, when someone deleted the branch since, from the origin's
-//! `HEAD` that held its work. Reading the session does the same.
+//! keeps the branch and records the commit it removed. A session reopened
+//! later gets its worktree back on that branch, made again at that commit
+//! when someone deleted it since. Reading the session does the same, or
+//! checks the commit out alone when the branch is checked out elsewhere,
+//! so a read never fails on the branch. A worktree a person removed has no
+//! commit recorded, and the daemon never adds it back.
 //!
 //! The daemon's own pass runs at its start and once a day, and skips
 //! worktrees whose session changed within [`QUIET_BEFORE_DAILY`], so a
@@ -31,7 +34,7 @@ use rho_protocol::{ErrorCode, RpcError, SessionWorktree, WorktreeReport, Worktre
 use super::{open::Workspace, Sessions};
 use crate::{
     app::daemon_host::jobs::{unix_now, JobRecord, JobSubject},
-    worktree::Holds,
+    worktree::{Checkout, Holds},
 };
 
 /// How long a worktree sits on disk unused before it is stale: no change
@@ -122,32 +125,6 @@ pub(super) fn kept(mut error: RpcError, worktree: Option<&SessionWorktree>) -> R
     error
 }
 
-/// Adds back the worktree of `record`, the job of a session about to be
-/// reopened or read, if a cleanup removed it, so the session works where it
-/// did (see `crate::worktree::restore`).
-pub(super) async fn restore(record: &JobRecord) -> Result<(), RpcError> {
-    let Some(worktree) = &record.worktree else {
-        return Ok(());
-    };
-    if worktree.path.exists() {
-        return Ok(());
-    }
-    crate::worktree::restore(worktree, &record.workspace)
-        .await
-        .map_err(|error| {
-            RpcError::new(
-                ErrorCode::SessionOpenFailed,
-                format!("could not add back the session's worktree: {error}"),
-            )
-        })?;
-    tracing::info!(
-        branch = %worktree.branch,
-        path = %worktree.path.display(),
-        "restored a session worktree"
-    );
-    Ok(())
-}
-
 /// Whether `record`'s worktree is stale at `now`, Unix seconds: still on
 /// disk, not `in_use`, and its job unchanged for [`STALE_AFTER`]. The one
 /// rule `rho/job/list` and `rho/worktree/prune` both report.
@@ -163,7 +140,66 @@ pub(in crate::app::daemon_host) fn worktree_stale(
     })
 }
 
+/// What a session whose worktree cleanup removed is about to be opened for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Restore {
+    /// Turns, which work on its branch.
+    Turns,
+    /// Reading its transcript, which only needs the directory.
+    Reading,
+}
+
 impl Sessions {
+    /// Adds back the worktree of `record`, the job of a session about to be
+    /// opened for `purpose`, if the daemon's cleanup removed it, at the
+    /// commit it removed, so the session works where it did. The caller
+    /// holds the session's reopen lock.
+    pub(super) async fn restore_worktree(
+        &self,
+        record: &mut JobRecord,
+        purpose: Restore,
+    ) -> Result<(), RpcError> {
+        let (Some(worktree), Some(commit)) = (&record.worktree, &record.worktree_removed_at) else {
+            return Ok(());
+        };
+        let restore =
+            |checkout| crate::worktree::restore(worktree, commit, &record.workspace, checkout);
+        let restored = match (restore(Checkout::Branch).await, purpose) {
+            (Ok(()), _) => Ok(Checkout::Branch),
+            (Err(error), Restore::Reading) => {
+                tracing::warn!(
+                    branch = %worktree.branch,
+                    %error,
+                    "could not add back a session worktree on its branch; checking its commit out alone to read it"
+                );
+                restore(Checkout::Detached)
+                    .await
+                    .map(|()| Checkout::Detached)
+            }
+            (Err(error), Restore::Turns) => Err(error),
+        };
+        let checkout = restored.map_err(|error| {
+            RpcError::new(
+                ErrorCode::SessionOpenFailed,
+                format!(
+                    "could not add back the session's worktree at {} on branch {}: {error}",
+                    worktree.path.display(),
+                    worktree.branch
+                ),
+            )
+        })?;
+        tracing::info!(
+            branch = %worktree.branch,
+            path = %worktree.path.display(),
+            %commit,
+            ?checkout,
+            "restored a session worktree"
+        );
+        record.worktree_removed_at = None;
+        self.jobs.set_worktree_removed_at(&record.id, None);
+        Ok(())
+    }
+
     /// The workspaces `records`, every job, use now (see [`InUse`]).
     pub(in crate::app::daemon_host) fn worktrees_in_use(&self, records: &[JobRecord]) -> InUse {
         let loaded = self.loaded();
@@ -235,14 +271,17 @@ impl Sessions {
             false => match crate::worktree::inspect(worktree).await {
                 Ok(Holds::Changes) => WorktreeVerdict::Dirty,
                 Ok(Holds::Unmerged { base }) => WorktreeVerdict::Unmerged { base },
-                Ok(Holds::Merged { base }) => match prune {
+                Ok(Holds::Merged { base, commit }) => match prune {
                     Prune::DryRun => WorktreeVerdict::Merged { base },
                     Prune::Daily | Prune::Now => match crate::worktree::remove(worktree).await {
                         Ok(()) => {
+                            self.jobs
+                                .set_worktree_removed_at(&record.id, Some(commit.clone()));
                             tracing::info!(
                                 branch = %worktree.branch,
                                 path = %worktree.path.display(),
                                 %base,
+                                %commit,
                                 "removed a merged session worktree"
                             );
                             WorktreeVerdict::Merged { base }

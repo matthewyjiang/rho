@@ -9,8 +9,8 @@
 //! `SessionNewParams::worktree`, and a foreground `rho run --worktree` for
 //! its own session. The daemon removes one of its sessions' worktrees once
 //! it is clean and what it has checked out is merged ([`inspect`],
-//! [`remove`]), keeping the branch, and adds it back from that branch when
-//! the session reopens ([`restore`]). It never removes one holding work
+//! [`remove`]), keeping the branch, and adds it back at the commit it
+//! removed when the session reopens ([`restore`]). It never removes one holding work
 //! nobody merged, and nothing removes a foreground run's: a person does,
 //! with `git worktree remove <path>` and `git branch -D <branch>`.
 
@@ -89,9 +89,9 @@ enum Ran {
 pub(crate) enum Holds {
     /// Uncommitted or untracked changes, which removing would lose.
     Changes,
-    /// Nothing but what is merged into `base`, the `HEAD` of the checkout
+    /// Nothing but `commit`, merged into `base`, the `HEAD` of the checkout
     /// the worktree was added from: removing loses nothing.
-    Merged { base: String },
+    Merged { base: String, commit: String },
     /// Commits `base` does not have.
     Unmerged { base: String },
 }
@@ -228,7 +228,7 @@ pub(crate) async fn inspect(worktree: &SessionWorktree) -> Result<Holds, Worktre
     )
     .await?
     {
-        Ran::Succeeded(_) => Ok(Holds::Merged { base }),
+        Ran::Succeeded(_) => Ok(Holds::Merged { base, commit: head }),
         // `--is-ancestor` answers no with exit 1 and fails with others.
         Ran::Failed { code: Some(1), .. } => Ok(Holds::Unmerged { base }),
         Ran::Failed { stderr, .. } => Err(WorktreeError::Git {
@@ -252,48 +252,59 @@ pub(crate) async fn remove(worktree: &SessionWorktree) -> Result<(), WorktreeErr
         .map(drop)
 }
 
-/// Adds `worktree` back where it was after [`remove`], on its branch, and
-/// makes `cwd`, the session's directory in it, when git does not track it.
-/// A branch deleted since, as merged branches often are, is made again from
-/// the origin's `HEAD`, which held the worktree's work when it was removed.
-/// It first clears git's record of a worktree whose directory a person
-/// deleted, which would refuse the path.
-pub(crate) async fn restore(worktree: &SessionWorktree, cwd: &Path) -> Result<(), WorktreeError> {
+/// What [`restore`] checks out in the worktree it adds back.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Checkout {
+    /// Its branch, made again at the commit when someone deleted it.
+    Branch,
+    /// The commit alone, as when its branch is checked out elsewhere.
+    Detached,
+}
+
+/// Adds `worktree` back where it was after [`remove`] removed it with
+/// `commit` checked out, as `checkout` says, and makes `cwd`, the session's
+/// directory in it, when git does not track it.
+pub(crate) async fn restore(
+    worktree: &SessionWorktree,
+    commit: &str,
+    cwd: &Path,
+    checkout: Checkout,
+) -> Result<(), WorktreeError> {
     let origin = &worktree.origin;
-    succeeded(origin, "worktree prune", ["worktree", "prune"]).await?;
-    let reference = format!("refs/heads/{}", worktree.branch);
-    let kept = match git(
-        origin,
-        ["rev-parse", "--verify", "--quiet", reference.as_str()],
-        &[],
-    )
-    .await?
-    {
-        Ran::Succeeded(_) => true,
-        Ran::Failed { code: Some(1), .. } => false,
-        Ran::Failed { stderr, .. } => {
-            return Err(WorktreeError::Git {
-                action: "rev-parse".to_owned(),
-                repository: origin.clone(),
-                detail: stderr,
-            })
-        }
-    };
     let path = worktree.path.as_os_str();
     let branch: &OsStr = worktree.branch.as_ref();
-    let args: Vec<&OsStr> = match kept {
-        true => vec!["worktree".as_ref(), "add".as_ref(), path, branch],
-        false => {
-            tracing::info!(branch = %worktree.branch, "making a deleted worktree branch again from HEAD");
-            vec![
-                "worktree".as_ref(),
-                "add".as_ref(),
-                "-b".as_ref(),
-                branch,
-                path,
-                "HEAD".as_ref(),
-            ]
+    let commit: &OsStr = commit.as_ref();
+    let args: Vec<&OsStr> = match checkout {
+        Checkout::Branch => {
+            let reference = format!("refs/heads/{}", worktree.branch);
+            let verify = ["rev-parse", "--verify", "--quiet", reference.as_str()];
+            match git(origin, verify, &[]).await? {
+                Ran::Succeeded(_) => vec!["worktree".as_ref(), "add".as_ref(), path, branch],
+                // Deleted since, as merged branches often are.
+                Ran::Failed { code: Some(1), .. } => vec![
+                    "worktree".as_ref(),
+                    "add".as_ref(),
+                    "-b".as_ref(),
+                    branch,
+                    path,
+                    commit,
+                ],
+                Ran::Failed { stderr, .. } => {
+                    return Err(WorktreeError::Git {
+                        action: "rev-parse".to_owned(),
+                        repository: origin.clone(),
+                        detail: stderr,
+                    })
+                }
+            }
         }
+        Checkout::Detached => vec![
+            "worktree".as_ref(),
+            "add".as_ref(),
+            "--detach".as_ref(),
+            path,
+            commit,
+        ],
     };
     succeeded(origin, "worktree add", args).await?;
     std::fs::create_dir_all(cwd).map_err(|error| WorktreeError::Io {

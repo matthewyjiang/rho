@@ -23,7 +23,8 @@ use super::{
     opening_feed,
     options::available_auths,
     reopen::{parse_session, saved_session, SavedFor},
-    worktree, writing, Sessions,
+    worktree::Restore,
+    writing, Sessions,
 };
 use crate::app::daemon_host::jobs::{JobId, JobRecord, SessionJob};
 
@@ -76,13 +77,13 @@ impl Sessions {
         id: &SessionId,
         after: Option<&Cursor>,
     ) -> Result<(SessionAttachResponse, Subscription), RpcError> {
-        let last = match self.jobs.session_job(id) {
+        let mut last = match self.jobs.session_job(id) {
             SessionJob::Busy(job) => return Err(writing(&job, id)),
             SessionJob::Last(record) => Some(*record),
             SessionJob::New => None,
         };
-        if let Some(record) = &last {
-            worktree::restore(record).await?;
+        if let Some(record) = &mut last {
+            self.restore_worktree(record, Restore::Reading).await?;
         }
         let stored = saved_session(id, SavedFor::Reading).await?;
         // A session no daemon has run is idle, with no last turn. Its job

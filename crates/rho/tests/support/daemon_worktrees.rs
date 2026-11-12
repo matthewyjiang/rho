@@ -1,9 +1,10 @@
 //! Cleaning up session worktrees through the real binary (#1673):
 //! `rho worktrees prune` removes a worktree that is clean and merged,
 //! keeping the branch, keeps every other one, and never touches one a
-//! session uses. A session reopened or read after gets its worktree back,
-//! from the kept branch or, once someone deleted it, from the repository's
-//! HEAD. When the daemon's own pass runs is unit-tested beside it.
+//! session uses. A session reopened or read after gets its worktree back
+//! at the commit it was removed at, on the kept branch or the branch made
+//! again; one a person removed stays removed. When the daemon's own pass
+//! runs is unit-tested beside it.
 
 use std::{
     path::Path,
@@ -222,7 +223,7 @@ async fn a_reopened_session_gets_its_removed_worktree_back() {
 
 // Covers: reading a session whose worktree was pruned and whose merged
 // branch someone then deleted, as `rho mcp serve`'s `read` does, adds the
-// worktree back on that branch, made again from the repository's HEAD.
+// worktree back on that branch, made again at the commit it was removed at.
 // Owner: daemon worktree cleanup through `rho/session/observe`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn reading_a_session_brings_back_its_worktree_after_its_branch_was_deleted() {
@@ -256,6 +257,45 @@ async fn reading_a_session_brings_back_its_worktree_after_its_branch_was_deleted
             worktree.branch.clone(),
             git(&sandbox.workspace, &["rev-parse", "HEAD"]),
         ),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
+// Covers: the daemon never adds back a worktree a person removed, nor makes
+// again the branch they deleted: reading the session then fails, as it did
+// before cleanup existed, instead of resuming it on unrelated code.
+// Owner: daemon worktree cleanup through `rho/session/observe`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_worktree_a_person_removed_stays_removed() {
+    let sandbox = Sandbox::new();
+    init_repo(&sandbox.workspace);
+    let client = sandbox.start_daemon_with("fixed", &UNLOAD_SOON).await;
+    let (session, worktree) = finished_worktree_session(&sandbox, &client).await;
+    let path = worktree.path.to_string_lossy().into_owned();
+    git(&sandbox.workspace, &["worktree", "remove", path.as_str()]);
+    git(
+        &sandbox.workspace,
+        &["branch", "--quiet", "-D", worktree.branch.as_str()],
+    );
+
+    let observed = client
+        .request::<SessionObserve>(&SessionObserveParams {
+            session,
+            after: None,
+        })
+        .await;
+
+    assert_eq!(
+        (
+            observed.is_err(),
+            worktree.path.exists(),
+            git(
+                &sandbox.workspace,
+                &["branch", "--list", worktree.branch.as_str()]
+            ),
+        ),
+        (true, false, String::new()),
         "log:\n{}",
         sandbox.isolated.daemon_log()
     );
