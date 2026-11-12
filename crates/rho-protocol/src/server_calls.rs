@@ -19,12 +19,13 @@ use crate::{
         SessionMcpResourceRead, SessionNew, SessionNewParams, SessionProcesses,
         SessionProcessesParams, SessionPrompt, SessionPromptParams, SessionRename,
         SessionRenameParams, SessionSteer, SessionSteerParams, SessionUnsteer,
-        SessionUnsteerParams, Status, Stop, AUTH_CHOOSE_STORE, AUTH_KEY, AUTH_LIST,
-        AUTH_LOGIN_CANCEL, AUTH_LOGOUT, CONFIG_REGISTER, CONFIG_SCHEMA, CONFIG_SET, DAEMON_RESTART,
-        DAEMON_STATUS, DAEMON_STOP, JOB_LIST, SESSION_ANSWER, SESSION_CANCEL, SESSION_CONFIGURE,
-        SESSION_DELETE, SESSION_HOLD, SESSION_INSPECT, SESSION_LIST, SESSION_MCP,
-        SESSION_MCP_CATALOG, SESSION_MCP_COMPLETE, SESSION_MCP_RESOURCE, SESSION_NEW,
-        SESSION_PROCESSES, SESSION_PROMPT, SESSION_RENAME, SESSION_STEER, SESSION_UNSTEER,
+        SessionUnsteerParams, Status, Stop, WorktreePrune, WorktreePruneParams, AUTH_CHOOSE_STORE,
+        AUTH_KEY, AUTH_LIST, AUTH_LOGIN_CANCEL, AUTH_LOGOUT, CONFIG_REGISTER, CONFIG_SCHEMA,
+        CONFIG_SET, DAEMON_RESTART, DAEMON_STATUS, DAEMON_STOP, JOB_LIST, SESSION_ANSWER,
+        SESSION_CANCEL, SESSION_CONFIGURE, SESSION_DELETE, SESSION_HOLD, SESSION_INSPECT,
+        SESSION_LIST, SESSION_MCP, SESSION_MCP_CATALOG, SESSION_MCP_COMPLETE, SESSION_MCP_RESOURCE,
+        SESSION_NEW, SESSION_PROCESSES, SESSION_PROMPT, SESSION_RENAME, SESSION_STEER,
+        SESSION_UNSTEER, WORKTREE_PRUNE,
     },
     server::{decode_params, encode_result, Service},
     ErrorCode, RpcError, StatusParams, StopParams, StopResponse,
@@ -53,6 +54,7 @@ pub(crate) enum ServiceCall {
     RenameSession(SessionRenameParams),
     DeleteSession(SessionDeleteParams),
     ListJobs,
+    PruneWorktrees(WorktreePruneParams),
     SaveAuthKey(AuthKeyParams),
     LogoutAuth(AuthLogoutParams),
     ListAuths(AuthListParams),
@@ -101,6 +103,7 @@ impl ServiceCall {
             SESSION_RENAME => decode_params::<SessionRename>(params).map(Self::RenameSession),
             SESSION_DELETE => decode_params::<SessionDelete>(params).map(Self::DeleteSession),
             JOB_LIST => decode_params::<JobList>(params).map(|JobListParams {}| Self::ListJobs),
+            WORKTREE_PRUNE => decode_params::<WorktreePrune>(params).map(Self::PruneWorktrees),
             AUTH_KEY => decode_params::<AuthKey>(params).map(Self::SaveAuthKey),
             AUTH_LOGOUT => decode_params::<AuthLogout>(params).map(Self::LogoutAuth),
             AUTH_LIST => decode_params::<AuthList>(params).map(Self::ListAuths),
@@ -142,6 +145,7 @@ impl ServiceCall {
             | Self::ListSessions(_)
             | Self::DeleteSession(_)
             | Self::ListJobs
+            | Self::PruneWorktrees(_)
             | Self::SaveAuthKey(_)
             | Self::LogoutAuth(_)
             | Self::ListAuths(_)
@@ -217,6 +221,9 @@ impl ServiceCall {
                 encode_result::<SessionDelete>(&service.delete_session(params).await?)
             }
             Self::ListJobs => encode_result::<JobList>(&service.list_jobs().await),
+            Self::PruneWorktrees(params) => {
+                encode_result::<WorktreePrune>(&service.prune_worktrees(params).await?)
+            }
             Self::SaveAuthKey(params) => {
                 encode_result::<AuthKey>(&service.save_auth_key(params).await?)
             }

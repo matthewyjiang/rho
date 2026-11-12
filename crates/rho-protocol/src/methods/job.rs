@@ -172,6 +172,14 @@ pub struct JobSummary {
     /// is then in it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub worktree: Option<super::SessionWorktree>,
+    /// Whether `worktree` is stale: still on disk, neither its session
+    /// loaded nor a job in it under way, and no change to this job for 14
+    /// days. The daemon's daily pass removes one that is clean and merged
+    /// ([`super::WORKTREE_PRUNE`]), so a stale one almost always holds
+    /// uncommitted or unmerged work, and stays until a person merges or
+    /// removes it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub worktree_stale: bool,
 }
 
 impl JobSummary {

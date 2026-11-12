@@ -26,6 +26,7 @@ fn job(id: &str, kind: JobKind, state: JobState, workspace: &str) -> JobSummary 
         grant: None,
         grant_limit: None,
         worktree: None,
+        worktree_stale: false,
     }
 }
 
@@ -180,7 +181,9 @@ fn a_filter_keeps_matching_rows() {
 
 // Covers: a session in a worktree lists under the project the worktree was
 // added from, with the runs it started even though they work in the
-// worktree, and its row names the worktree's branch first (#1673).
+// worktree, and its row names the worktree's branch first (#1673). An
+// ended session whose worktree went stale lists too, flagged, and one whose
+// worktree is not stale does not.
 // Owner: jobs view (pure selection).
 #[test]
 fn a_worktree_session_lists_under_its_project_with_its_branch() {
@@ -207,6 +210,33 @@ fn a_worktree_session_lists_under_its_project_with_its_branch() {
             JobState::Running,
             "/home/.rho/worktrees/a-1234abcd",
         ),
+        JobSummary {
+            worktree: Some(SessionWorktree {
+                branch: "rho/a-5678ef90".into(),
+                path: PathBuf::from("/home/.rho/worktrees/a-5678ef90"),
+                ..worktree.clone()
+            }),
+            worktree_stale: true,
+            ..job(
+                "stale",
+                JobKind::Session,
+                JobState::Completed,
+                "/home/.rho/worktrees/a-5678ef90",
+            )
+        },
+        JobSummary {
+            worktree: Some(SessionWorktree {
+                branch: "rho/a-0000aaaa".into(),
+                path: PathBuf::from("/home/.rho/worktrees/a-0000aaaa"),
+                ..worktree.clone()
+            }),
+            ..job(
+                "recent",
+                JobKind::Session,
+                JobState::Completed,
+                "/home/.rho/worktrees/a-0000aaaa",
+            )
+        },
     ];
 
     // Each row's job and facts.
@@ -236,6 +266,10 @@ fn a_worktree_session_lists_under_its_project_with_its_branch() {
                     vec!["rho/a-1234abcd".to_owned(), "grok-fixture".to_owned()],
                 ),
                 ("isolated-run".to_owned(), Vec::new()),
+                (
+                    "stale".to_owned(),
+                    vec!["rho/a-5678ef90".to_owned(), "stale worktree".to_owned()],
+                ),
             ],
         )]
     );

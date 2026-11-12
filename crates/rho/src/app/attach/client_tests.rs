@@ -24,6 +24,7 @@ fn job(id: &str, kind: JobKind, parent: Option<&str>, session: Option<&str>) -> 
         grant: None,
         grant_limit: None,
         worktree: None,
+        worktree_stale: false,
     }
 }
 

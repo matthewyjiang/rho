@@ -361,6 +361,11 @@ Run rho model-prompt edit --help for editor setup, saving, and reload behavior."
         #[command(subcommand)]
         command: Option<DaemonCommand>,
     },
+    /// Clean up the git worktrees the daemon added for sessions.
+    Worktrees {
+        #[command(subcommand)]
+        command: WorktreesCommand,
+    },
     /// Internal supervised workflow planner worker. Not a public command.
     #[command(name = "__workflow_planner_worker", hide = true)]
     WorkflowPlannerWorker,
@@ -528,6 +533,23 @@ pub enum DaemonCommand {
     /// runs an installed upgrade at once. Turns under way are interrupted
     /// and recorded as interrupted. Starts the daemon when none is running.
     Restart,
+}
+
+#[derive(Subcommand, Clone, Debug)]
+pub enum WorktreesCommand {
+    /// Remove each session worktree that is clean and merged, keeping its
+    /// branch, and say why each other one stays.
+    ///
+    /// A worktree is removed when its session is neither loaded nor
+    /// running, it has no uncommitted or untracked changes, and its branch
+    /// is merged into the current HEAD of the checkout it was added from.
+    /// The daemon does the same soon after it starts and once a day. Starts the
+    /// daemon when none is running.
+    Prune {
+        /// List what would be removed, and why, without removing anything.
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 #[derive(Subcommand, Clone, Debug)]

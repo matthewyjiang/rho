@@ -28,8 +28,8 @@ pub(super) struct Row {
     pub(super) status: Status,
     pub(super) title: String,
     /// The branch of the worktree the job's session works in, if it does,
-    /// then the model, turn time, and spend the daemon follows, those it
-    /// does.
+    /// and whether that worktree is stale, then the model, turn time, and
+    /// spend the daemon follows, those it does.
     pub(super) facts: Vec<String>,
 }
 
@@ -65,10 +65,11 @@ pub(super) fn needs_input(job: &JobSummary) -> bool {
             .is_some_and(|live| !live.inputs.is_empty())
 }
 
-/// Whether the view lists `job`: one under way, or one the daemon follows,
-/// which a loaded session's is even between turns.
+/// Whether the view lists `job`: one under way, one the daemon follows,
+/// which a loaded session's is even between turns, or one whose stale
+/// worktree waits on a person to merge or remove it.
 fn listed(job: &JobSummary) -> bool {
-    job.state.in_progress() || job.live.is_some()
+    job.state.in_progress() || job.live.is_some() || job.worktree_stale
 }
 
 /// The listed jobs among `jobs` that match `filter`, by project, each
@@ -131,6 +132,9 @@ fn row(job: &JobSummary, depth: usize) -> Row {
         .iter()
         .map(|worktree| worktree.branch.clone())
         .collect();
+    if job.worktree_stale {
+        facts.push("stale worktree".to_owned());
+    }
     if let Some(live) = live {
         facts.push(live.model.model.clone());
         if let Some(elapsed) = live.turn_elapsed_ms {

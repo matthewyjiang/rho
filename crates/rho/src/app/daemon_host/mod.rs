@@ -35,7 +35,7 @@ use rho_protocol::{
     SessionNewParams, SessionNewResponse, SessionObserveParams, SessionPromptParams,
     SessionPromptResponse, SessionRenameParams, SessionRenameResponse, SessionSteerParams,
     SessionSteerResponse, SessionUnsteerParams, SessionUnsteerResponse, SettingsService,
-    Subscription, PROTOCOL_VERSION,
+    Subscription, WorktreePruneParams, WorktreePruneResponse, PROTOCOL_VERSION,
 };
 use rho_providers::credentials::CredentialStoreBackend;
 
@@ -53,10 +53,27 @@ mod wire;
 
 use jobs::{JobRegistry, JobStore, JobSubject};
 use logins::Logins;
-use sessions::Sessions;
 pub(super) use sessions::UNLOAD_IDLE_AFTER;
+use sessions::{worktree_stale, Prune, Sessions};
 use upgrade::UPGRADE_CHECK_INTERVAL;
 use upgrade::{Check, Upgrades, Watch};
+
+/// How often the daemon prunes session worktrees, after the pass it runs
+/// at start.
+//
+// Policy: once a day, as the cleanup proposal Matt approved in #1917 says.
+// A pass runs git on each kept worktree, so it does not run per listing.
+const WORKTREE_PRUNE_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// How long after the daemon starts its first worktree pass runs.
+//
+// Tripwire, not measured to the millisecond: a client that starts the
+// daemon, as `rho worktrees prune` can, sends its request well under a
+// second after the daemon answers (each e2e prune test runs in about 1 s
+// whole), so its own pass removes, and reports, what the daemon's would
+// have. The daemon's pass skips sessions used within the last day, so
+// waiting a minute delays nothing it would remove.
+const WORKTREE_PRUNE_AFTER_START: Duration = Duration::from_secs(60);
 
 /// The daemon's job records, opened before the daemon binds its socket, so
 /// a daemon that cannot keep records stops before any client reaches it.
@@ -213,6 +230,21 @@ impl DaemonHost {
     /// when it saved nothing, until the daemon starts stopping (#1661).
     pub(super) async fn unload_idle_sessions(&self, grace: Duration) {
         self.sessions.unload_idle(grace).await;
+    }
+
+    /// Prunes the session worktrees [`WORKTREE_PRUNE_AFTER_START`] after
+    /// the daemon starts and every [`WORKTREE_PRUNE_INTERVAL`] after that,
+    /// until the daemon starts stopping.
+    pub(super) async fn prune_worktrees_daily(&self) {
+        let mut wait = WORKTREE_PRUNE_AFTER_START;
+        loop {
+            tokio::select! {
+                () = tokio::time::sleep(wait) => {}
+                () = self.shutdown.requested() => return,
+            }
+            self.sessions.prune_worktrees(Prune::Daily).await;
+            wait = WORKTREE_PRUNE_INTERVAL;
+        }
     }
 
     /// Stops the turns under way, waits for them to save, and records
@@ -426,6 +458,8 @@ impl Service for DaemonHost {
         // first that has ended is already in the tracker read second.
         let records = self.jobs.list();
         let undelivered = self.sessions.undelivered_workflow_runs();
+        let in_use = self.sessions.worktrees_in_use(&records);
+        let now = jobs::unix_now();
         JobListResponse {
             jobs: records
                 .into_iter()
@@ -444,10 +478,25 @@ impl Service for DaemonHost {
                         }
                         JobSubject::Subagent { .. } | JobSubject::Workflow { .. } => None,
                     };
-                    wire::job_summary(record, queue, &undelivered, live)
+                    let worktree_stale = worktree_stale(&record, &in_use, now);
+                    wire::job_summary(record, queue, &undelivered, live, worktree_stale)
                 })
                 .collect(),
         }
+    }
+
+    async fn prune_worktrees(
+        &self,
+        params: WorktreePruneParams,
+    ) -> Result<WorktreePruneResponse, RpcError> {
+        let WorktreePruneParams { dry_run } = params;
+        let prune = match dry_run {
+            true => Prune::DryRun,
+            false => Prune::Now,
+        };
+        Ok(WorktreePruneResponse {
+            worktrees: self.sessions.prune_worktrees(prune).await,
+        })
     }
 
     // A credential write changes the models every session may switch to.

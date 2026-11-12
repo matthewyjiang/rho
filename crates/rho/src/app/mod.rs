@@ -65,6 +65,7 @@ pub(crate) mod subagent_pool;
 mod tools_prompt;
 pub(crate) mod workflow_cli;
 pub(crate) mod workflow_runtime;
+mod worktrees_cli;
 
 pub(crate) use agent_binding::relaunch_config;
 pub use automation::{AutomationExit, AutomationInterrupted};

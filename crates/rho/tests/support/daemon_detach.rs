@@ -16,7 +16,7 @@ use super::{
 };
 
 /// `rho run --detach` with `args` against the fixture in `mode`.
-fn detach(sandbox: &Sandbox, mode: &str, args: &[&str]) -> Output {
+pub(super) fn detach(sandbox: &Sandbox, mode: &str, args: &[&str]) -> Output {
     sandbox
         .rho(mode)
         .args(["run", "--detach"])
@@ -28,7 +28,7 @@ fn detach(sandbox: &Sandbox, mode: &str, args: &[&str]) -> Output {
 }
 
 /// The session id a successful detach printed.
-fn session_of(detached: &Output) -> SessionId {
+pub(super) fn session_of(detached: &Output) -> SessionId {
     let stdout = String::from_utf8(detached.stdout.clone()).unwrap();
     assert_eq!(
         detached.status.code(),
@@ -39,7 +39,7 @@ fn session_of(detached: &Output) -> SessionId {
     SessionId::new(stdout.trim_end().to_owned())
 }
 
-fn attach(sandbox: &Sandbox, mode: &str, session: &SessionId) -> Output {
+pub(super) fn attach(sandbox: &Sandbox, mode: &str, session: &SessionId) -> Output {
     sandbox
         .rho(mode)
         .args(["attach", session.as_str()])

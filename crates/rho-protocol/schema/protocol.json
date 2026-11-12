@@ -2259,6 +2259,10 @@
             }
           ],
           "description": "The git worktree a [`JobKind::Session`] job's session works in, for\none opened with [`super::SessionNewParams::worktree`]; `workspace`\nis then in it."
+        },
+        "worktree_stale": {
+          "description": "Whether `worktree` is stale: still on disk, neither its session\nloaded nor a job in it under way, and no change to this job for 14\ndays. The daemon's daily pass removes one that is clean and merged\n([`super::WORKTREE_PRUNE`]), so a stale one almost always holds\nuncommitted or unmerged work, and stays until a person merges or\nremoves it.",
+          "type": "boolean"
         }
       },
       "required": [
@@ -7144,6 +7148,152 @@
         "fix"
       ],
       "type": "object"
+    },
+    "WorktreePruneParams": {
+      "description": "Params of [`WORKTREE_PRUNE`].",
+      "properties": {
+        "dry_run": {
+          "description": "Report what would be removed without removing anything.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "WorktreePruneResponse": {
+      "description": "Result of [`WORKTREE_PRUNE`].",
+      "properties": {
+        "worktrees": {
+          "description": "Each session worktree that was on disk when the pass reached it, in\nthe order the daemon lists jobs.",
+          "items": {
+            "$ref": "#/$defs/WorktreeReport"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "worktrees"
+      ],
+      "type": "object"
+    },
+    "WorktreeReport": {
+      "description": "One session worktree, and what [`WORKTREE_PRUNE`] did with it.",
+      "properties": {
+        "job": {
+          "$ref": "#/$defs/JobId",
+          "description": "The job of the session the worktree was added for."
+        },
+        "stale": {
+          "description": "Whether the worktree is stale, as\n[`super::JobSummary::worktree_stale`] says.",
+          "type": "boolean"
+        },
+        "verdict": {
+          "$ref": "#/$defs/WorktreeVerdict"
+        },
+        "worktree": {
+          "$ref": "#/$defs/SessionWorktree"
+        }
+      },
+      "required": [
+        "job",
+        "worktree",
+        "verdict"
+      ],
+      "type": "object"
+    },
+    "WorktreeVerdict": {
+      "anyOf": [
+        {
+          "description": "Clean, and its branch is merged into `base`, the current `HEAD` of\nthe checkout it was added from: removed with its branch kept, or, in\na dry run, would be.",
+          "properties": {
+            "base": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "merged",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "base"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Its session is loaded, or a job in it is under way.",
+          "properties": {
+            "kind": {
+              "const": "in_use",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "It holds uncommitted or untracked changes.",
+          "properties": {
+            "kind": {
+              "const": "dirty",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Its branch has commits `base` does not.",
+          "properties": {
+            "base": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "unmerged",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "base"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Git could not check or remove it, saying `error`.",
+          "properties": {
+            "error": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "failed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "error"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "properties": {
+            "kind": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object",
+          "x-rho-other": true
+        }
+      ],
+      "description": "What [`WORKTREE_PRUNE`] found a worktree to be. Only a\n[`Self::Merged`] one is removed."
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -7521,6 +7671,14 @@
       },
       "result": {
         "$ref": "#/$defs/SessionUnsteerResponse"
+      }
+    },
+    "rho/worktree/prune": {
+      "params": {
+        "$ref": "#/$defs/WorktreePruneParams"
+      },
+      "result": {
+        "$ref": "#/$defs/WorktreePruneResponse"
       }
     }
   },

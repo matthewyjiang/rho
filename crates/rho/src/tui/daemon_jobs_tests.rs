@@ -26,6 +26,7 @@ fn job(id: &str, kind: JobKind, parent: Option<&str>) -> JobSummary {
         grant: None,
         grant_limit: None,
         worktree: None,
+        worktree_stale: false,
     }
 }
 
