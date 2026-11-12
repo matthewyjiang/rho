@@ -91,6 +91,10 @@ struct FeedState {
     /// The session's context use and spend, as the last usage event sent
     /// them.
     usage: Option<wire::JobUsage>,
+    /// `usage` as of `turn_start`, which a reset replays with the
+    /// transcript: no saved row holds usage, and the turn in progress
+    /// replays its own.
+    saved_usage: Option<wire::JobUsage>,
     subscribers: Vec<Publisher>,
     /// Set by [`Feed::close`]: a client attaching later is detached at once.
     closed: Option<DetachReason>,
@@ -154,6 +158,7 @@ impl Feed {
                 title,
                 options,
                 usage: None,
+                saved_usage: None,
                 subscribers: Vec::new(),
                 closed: None,
             }),
@@ -214,6 +219,7 @@ impl Feed {
         state.transcript.extend(saved);
         state.turn_start = state.last;
         state.turn_start_evicted = false;
+        state.saved_usage = state.usage;
     }
 
     /// Replaces the conversation the feed holds with `transcript`, the
@@ -234,6 +240,8 @@ impl Feed {
         state.last = Seq(0);
         state.turn_start = Seq(0);
         state.turn_start_evicted = false;
+        // The moved conversation's usage arrives as a live event.
+        state.saved_usage = None;
         for publisher in std::mem::take(&mut state.subscribers) {
             publisher.close(DetachReason::Lagged);
         }
@@ -272,9 +280,12 @@ impl Feed {
 
     /// Starts the session's usage at `usage`, a usage event of the context
     /// its saved conversation fills, which no saved row holds. Sent to no
-    /// client: a turn's usage replaces it, with the session's cost.
+    /// live client, but a reset replays it until a saved turn's usage, with
+    /// the session's cost, replaces it.
     pub(super) fn seed_usage(&self, usage: &wire::SessionEvent) {
-        self.state().usage = usage_of(usage);
+        let mut state = self.state();
+        state.usage = usage_of(usage);
+        state.saved_usage = state.usage;
     }
 
     /// The session's title, if it has one.
@@ -411,17 +422,22 @@ impl FeedState {
             .collect()
     }
 
-    /// The transcript at seq 0 but its last event, which carries the point
-    /// the turn in progress began after, then the turn's buffered events.
+    /// The transcript and the usage as of its last save at seq 0 but the
+    /// last event, which carries the point the turn in progress began after,
+    /// then the turn's buffered events. No saved row holds usage, so without
+    /// it a client that resets shows no context or spend until the next
+    /// turn.
     fn reset_events(&self) -> Vec<(Seq, wire::SessionEvent)> {
         let evicted = self.turn_start_evicted.then(|| wire::SessionEvent::Notice {
             text: TURN_START_EVICTED.to_owned(),
         });
+        let usage = self.saved_usage.map(usage_event);
         let mut events: Vec<_> = self
             .transcript
             .iter()
             .cloned()
             .chain(evicted)
+            .chain(usage)
             .map(|event| (Seq(0), event))
             .collect();
         if let Some((seq, _)) = events.last_mut() {
@@ -446,6 +462,15 @@ fn usage_of(event: &wire::SessionEvent) -> Option<wire::JobUsage> {
             cost_usd_micros: *cost_usd_micros,
         }),
         _ => None,
+    }
+}
+
+/// The usage event that reports `usage`; [`usage_of`] reverses it.
+fn usage_event(usage: wire::JobUsage) -> wire::SessionEvent {
+    wire::SessionEvent::Usage {
+        used_tokens: usage.used_tokens,
+        window_tokens: usage.window_tokens,
+        cost_usd_micros: usage.cost_usd_micros,
     }
 }
 
