@@ -24,6 +24,7 @@ use crate::{
         },
         shutdown_signal::ShutdownSignals,
         subagent_messaging::{NoticePoster, SteeringSlot, CHILD_COMMUNICATION_CONTRACT},
+        subagent_pool::ChildEventSender,
     },
     session::SessionPersistence,
     subagent::RunStatus,
@@ -78,6 +79,8 @@ pub(crate) struct ChildRun {
     pub(crate) session: ChildSession,
     pub(crate) added_dirs: crate::added_dirs::AddedDirs,
     pub(crate) environment: crate::session_environment::SessionEnvironment,
+    /// Where the session's events go, when the host follows them.
+    pub(crate) events: Option<ChildEventSender>,
 }
 
 /// Runs `run` to its end, reporting it in its status file. Fails only when
@@ -102,6 +105,7 @@ pub(crate) async fn run_child(run: ChildRun) -> anyhow::Result<()> {
         session,
         added_dirs,
         environment,
+        events,
     } = run;
 
     let bound_config = bound
@@ -204,6 +208,9 @@ pub(crate) async fn run_child(run: ChildRun) -> anyhow::Result<()> {
     let mut view = HeadlessView::new()
         .reporting_to(&mut reporter)
         .with_parent_questions(questions);
+    if let Some(events) = events {
+        view = view.streaming_to(events);
+    }
     // The child's status file keeps the title its prompt was given; the
     // session's own title request is left untaken.
     let end = run_prompt(
@@ -218,6 +225,7 @@ pub(crate) async fn run_child(run: ChildRun) -> anyhow::Result<()> {
                 TurnStart::Continue
             } else {
                 let input = UserInput::text(prompt);
+                view.prompt(&input);
                 TurnStart::Prompt(Turn {
                     display: input.clone(),
                     model: input,

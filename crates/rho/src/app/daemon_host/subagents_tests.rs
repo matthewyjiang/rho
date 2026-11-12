@@ -143,6 +143,7 @@ async fn a_child_job_reports_its_queue_place_until_it_runs() {
         workspace: PathBuf::from("/work"),
         status: status_rx,
         queue: queued.watch(),
+        events: None,
     });
     let job = registry.list().pop().expect("the run's job").id;
     assert_eq!(

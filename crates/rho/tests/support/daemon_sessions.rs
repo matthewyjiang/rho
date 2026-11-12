@@ -1686,7 +1686,7 @@ fn test_client() -> ClientInfo {
 }
 
 /// Answers `request` of `session` with `answer` on `client`.
-async fn answer(
+pub(super) async fn answer(
     client: &Client,
     session: &SessionId,
     request: InputRequestId,
@@ -1955,7 +1955,7 @@ async fn ask_color_with_fallback(sandbox: &Sandbox, client: &Client, session: &S
     sandbox.prompt_tool_call(client, session, &call).await;
 }
 
-fn blue() -> InputAnswer {
+pub(super) fn blue() -> InputAnswer {
     InputAnswer::Answers {
         answers: [("color".to_owned(), vec!["Blue".to_owned()])].into(),
     }
@@ -1988,7 +1988,7 @@ async fn color_result(follower: &mut Follower) -> serde_json::Value {
 }
 
 /// The first input request `events` open.
-fn first_request(events: &[(Seq, SessionEvent)]) -> InputRequest {
+pub(super) fn first_request(events: &[(Seq, SessionEvent)]) -> InputRequest {
     events
         .iter()
         .find_map(|(_, event)| match event {
