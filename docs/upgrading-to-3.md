@@ -32,6 +32,7 @@ When you update Rho, a running daemon switches to the new version by itself once
 - **`/jobs`** shows everything the daemon is running, in every project. From there you can answer questions, send messages, cancel work, and open a session ([Interactive TUI](/interactive-tui)).
 - **Run in the background from a script.** `rho run --detach "<prompt>"` starts a run, prints its id, and exits. `rho attach <id>` follows it, answers its questions, and exits when the turn ends. It also follows a subagent ([Running in the daemon](/automation-cli#running-in-the-daemon)).
 - **Editor sessions keep running.** Closing an editor that runs `rho acp`, or one of its threads, leaves the session running. Open it again from the editor or with `rho --resume` ([Agent Client Protocol](/integrations/acp)). In T3 Code with `--t3code`, a background process or workflow that finishes after a prompt has ended wakes the idle thread with its result ([T3 Code](/integrations/acp/t3-code#wake-on-background-results)).
+- **Other agents can drive Rho.** Add `rho mcp serve` as an MCP server in Claude Code, Codex, or another Rho, and that agent can list your Rho sessions, start new ones, and follow them to their answer. Approvals and questions still wait for you ([Serving Rho to other agents](/integrations/mcp#serving-rho-to-other-agents)).
 - **Commands see your shell's environment.** Each prompt carries the environment of the terminal or editor it came from, so `PATH`, `mise` tools, and exported variables work as they do in your shell ([Environment](/daemon#environment)).
 - **The model knows when you wrote.** Each message you send reaches the model with the date and time you sent it. Your transcript shows the message as you typed it.
 - **Keep-warm works without the TUI.** With `behavior.keep_cache_warm` on, the daemon keeps the provider's prompt cache warm whether or not a TUI is open.
@@ -75,7 +76,7 @@ Some settings need you:
 
 - **Sessions from Rho 1.11 and later** open in Rho 3. Once Rho 3 saves to one, Rho 2.x cannot open it.
 - **Sessions from before Rho 1.11** do not open, and show `this session was created by rho before 1.11 (session format v2) and can't be opened in rho 3; open it with rho 2.x`. Rho 2.x still opens them.
-- **One program at a time.** Rho 2.x and the Rho 3 daemon cannot use the same session at the same time. The daemon lets go of a session one to two minutes after its last activity ([One process per session](/sessions#one-process-per-session)).
+- **One program at a time.** Rho 2.x and the Rho 3 daemon cannot use the same session at the same time. Rho 3 then reports that the session `is open in another Rho process; close it there first`. The daemon lets go of a session one to two minutes after its last activity ([One process per session](/sessions#one-process-per-session)).
 
 ### Scripts
 
