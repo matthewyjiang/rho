@@ -28,7 +28,7 @@ use super::{
     open::{open_session, OpenWith, Opening},
     open_failed,
     store::{store_blocking, store_failed},
-    worktree::Restore,
+    worktree::{Restore, Restored},
     writing, LoadedSession, SessionJobRecord, Sessions, TurnSlot,
 };
 use crate::{
@@ -114,7 +114,8 @@ impl Sessions {
             SessionJob::New => None,
         };
         if let Some(record) = &mut last {
-            self.restore_worktree(record, Restore::Turns).await?;
+            // Turns never get a checkout for reading.
+            let _: Restored = self.restore_worktree(record, Restore::Turns).await?;
         }
         let stored = saved_session(id, SavedFor::Turns).await?;
         // The session opens under the grant `with` brings, held to its

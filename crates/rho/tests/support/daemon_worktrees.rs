@@ -300,3 +300,45 @@ async fn a_worktree_a_person_removed_stays_removed() {
         sandbox.isolated.daemon_log()
     );
 }
+
+// Covers: once cleanup removed a worktree and its branch is checked out in
+// the repository's own checkout, reading the session still works, on a
+// checkout of its commit removed again after the read, while reopening it
+// for turns fails instead of running them off the branch.
+// Owner: daemon worktree cleanup through `rho/session/observe` and
+// `rho attach`'s reopen.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_branch_checked_out_elsewhere_lets_a_read_but_not_turns_restore() {
+    let sandbox = Sandbox::new();
+    init_repo(&sandbox.workspace);
+    let client = sandbox.start_daemon_with("fixed", &UNLOAD_SOON).await;
+    let (session, worktree) = finished_worktree_session(&sandbox, &client).await;
+    let pruned = prune(&sandbox, "fixed", &[]);
+    git(
+        &sandbox.workspace,
+        &["checkout", "--quiet", worktree.branch.as_str()],
+    );
+
+    let observed = client
+        .request::<SessionObserve>(&SessionObserveParams {
+            session: session.clone(),
+            after: None,
+        })
+        .await;
+    let after_read = worktree.path.exists();
+    let attached = attach(&sandbox, "fixed", &session);
+
+    assert_eq!(
+        (
+            pruned.status.code(),
+            observed.map(drop).map_err(|error| error.to_string()),
+            after_read,
+            attached.status.success(),
+            worktree.path.exists(),
+        ),
+        (Some(0), Ok(()), false, false, false),
+        "{}\nlog:\n{}",
+        String::from_utf8_lossy(&attached.stderr),
+        sandbox.isolated.daemon_log()
+    );
+}

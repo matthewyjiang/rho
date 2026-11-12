@@ -7,9 +7,10 @@
 //! change, and what it has checked out merged into its origin's `HEAD`. It
 //! keeps the branch and records the commit it removed. A session reopened
 //! later gets its worktree back on that branch, made again at that commit
-//! when someone deleted it since. Reading the session does the same, or
-//! checks the commit out alone when the branch is checked out elsewhere,
-//! so a read never fails on the branch. A worktree a person removed has no
+//! when someone deleted it since. Reading the session does the same, or,
+//! when the branch is checked out elsewhere, checks the commit out alone
+//! for the read and removes it again after, so a read never fails on the
+//! branch and turns never run off it. A worktree a person removed has no
 //! commit recorded, and the daemon never adds it back.
 //!
 //! The daemon's own pass runs a minute after its start and once a day, and skips
@@ -149,6 +150,19 @@ pub(super) enum Restore {
     Reading,
 }
 
+/// What [`Sessions::restore_worktree`] did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[must_use]
+pub(super) enum Restored {
+    /// Nothing: the worktree is on disk, or the daemon did not remove it.
+    Nothing,
+    /// Added it back on its branch, for good.
+    OnBranch,
+    /// Checked its commit out alone for a read, which removes it again
+    /// after ([`Sessions::end_read_checkout`]); it still counts as removed.
+    ForReading,
+}
+
 impl Sessions {
     /// Adds back the worktree of `record`, the job of a session about to be
     /// opened for `purpose`, if the daemon's cleanup removed it, at the
@@ -158,9 +172,9 @@ impl Sessions {
         &self,
         record: &mut JobRecord,
         purpose: Restore,
-    ) -> Result<(), RpcError> {
+    ) -> Result<Restored, RpcError> {
         let (Some(worktree), Some(commit)) = (&record.worktree, &record.worktree_removed_at) else {
-            return Ok(());
+            return Ok(Restored::Nothing);
         };
         let restore =
             |checkout| crate::worktree::restore(worktree, commit, &record.workspace, checkout);
@@ -195,9 +209,31 @@ impl Sessions {
             ?checkout,
             "restored a session worktree"
         );
-        record.worktree_removed_at = None;
-        self.jobs.set_worktree_removed_at(&record.id, None);
-        Ok(())
+        match checkout {
+            Checkout::Branch => {
+                record.worktree_removed_at = None;
+                self.jobs.set_worktree_removed_at(&record.id, None);
+                Ok(Restored::OnBranch)
+            }
+            Checkout::Detached => Ok(Restored::ForReading),
+        }
+    }
+
+    /// Removes the checkout a read of `record`'s session had added
+    /// ([`Restored::ForReading`]) once the read is done, so a later reopen
+    /// adds the worktree back on its branch or fails, never running turns
+    /// on the bare commit. The caller still holds the reopen lock.
+    pub(super) async fn end_read_checkout(record: &JobRecord) {
+        let Some(worktree) = &record.worktree else {
+            return;
+        };
+        if let Err(error) = crate::worktree::remove(worktree).await {
+            tracing::warn!(
+                path = %worktree.path.display(),
+                %error,
+                "could not remove the checkout a read of a session added"
+            );
+        }
     }
 
     /// The workspaces `records`, every job, use now (see [`InUse`]).

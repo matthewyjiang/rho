@@ -23,7 +23,7 @@ use super::{
     opening_feed,
     options::available_auths,
     reopen::{parse_session, saved_session, SavedFor},
-    worktree::Restore,
+    worktree::{Restore, Restored},
     writing, Sessions,
 };
 use crate::app::daemon_host::jobs::{JobId, JobRecord, SessionJob};
@@ -82,9 +82,26 @@ impl Sessions {
             SessionJob::Last(record) => Some(*record),
             SessionJob::New => None,
         };
-        if let Some(record) = &mut last {
-            self.restore_worktree(record, Restore::Reading).await?;
+        let restored = match &mut last {
+            Some(record) => self.restore_worktree(record, Restore::Reading).await?,
+            None => Restored::Nothing,
+        };
+        let observed = self.read_saved(id, after, last.clone()).await;
+        // Removed again however the read went.
+        if let (Restored::ForReading, Some(record)) = (restored, &last) {
+            Self::end_read_checkout(record).await;
         }
+        observed
+    }
+
+    /// The replay of saved session `id` whose last job is `last`, as
+    /// [`Self::read_unloaded`] answers it once its worktree is on disk.
+    async fn read_saved(
+        &self,
+        id: &SessionId,
+        after: Option<&Cursor>,
+        last: Option<JobRecord>,
+    ) -> Result<(SessionAttachResponse, Subscription), RpcError> {
         let stored = saved_session(id, SavedFor::Reading).await?;
         // A session no daemon has run is idle, with no last turn. Its job
         // is not registered: reading it records nothing.
