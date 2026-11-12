@@ -818,3 +818,58 @@ async fn http_refuses_what_its_tokens_do_not_allow() {
         )
     );
 }
+
+// Covers: an MCP host's `new` with `worktree` starts the session in a git
+// worktree of the workspace's repository, on a new branch, which the
+// result and `list` name; the session's commands run in the worktree, and
+// the workspace's own checkout stays clean (#1673).
+// Owner: rho mcp serve (stdio) over the session-control core.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_host_starts_a_session_in_a_worktree_over_mcp() {
+    let sandbox = Sandbox::new();
+    sandbox.set_permission_mode("bypass");
+    let workspace = elsewhere(&sandbox);
+    crate::detach::init_repo(&workspace);
+    let host = stdio_server(&sandbox, "tool-call", &[], &[]).await;
+
+    let started = call(
+        &host,
+        "new",
+        json!({"workspace": workspace, "prompt": bash("pwd -P > where.txt"), "worktree": true}),
+    )
+    .await
+    .unwrap();
+    let worktree = started["worktree"].clone();
+    let path = PathBuf::from(worktree["path"].as_str().expect("a worktree path"));
+    let ended = call(
+        &host,
+        "wait",
+        json!({"session": started["session"], "timeout_secs": 50}),
+    )
+    .await
+    .unwrap();
+    let listed = call(&host, "list", json!({"workspace": workspace}))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        (
+            ended["state"].clone(),
+            worktree["origin"].clone(),
+            crate::detach::git(&path, &["branch", "--show-current"]),
+            std::fs::read_to_string(path.join("where.txt")).unwrap(),
+            listed["sessions"][0]["worktree"].clone(),
+            crate::detach::git(&workspace, &["status", "--porcelain"]),
+        ),
+        (
+            json!("completed"),
+            json!(workspace),
+            worktree["branch"].as_str().unwrap().to_owned(),
+            format!("{}\n", path.display()),
+            worktree.clone(),
+            String::new(),
+        ),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}

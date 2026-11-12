@@ -164,6 +164,11 @@ pub struct JobSummary {
     /// opened its session; absent for every other job.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub live: Option<JobLive>,
+    /// The git worktree a [`JobKind::Session`] job's session works in, for
+    /// one opened with [`super::SessionNewParams::worktree`]; `workspace`
+    /// is then in it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worktree: Option<super::SessionWorktree>,
 }
 
 /// What the daemon follows of a job whose session's events it streams: the

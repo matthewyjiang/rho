@@ -51,6 +51,7 @@ const BROWSE_FOOTER: &str =
 const ASK_FOOTER: &str =
     "y allow once · a allow for session · d deny · ↑↓ · Enter attach · Esc close";
 const INPUT_FOOTER: &str = "Enter confirm · Esc cancel";
+const NEW_FOOTER: &str = "Enter confirm · Tab worktree · Esc cancel";
 
 /// What the view's keys go to.
 #[derive(Debug)]
@@ -63,10 +64,15 @@ enum Mode {
     /// one is under way as the message is sent, and starts its next when
     /// none is.
     Message { session: SessionId, text: String },
-    /// Typing the directory a new session works in.
-    NewWorkspace { path: String },
+    /// Typing the directory a new session works in, and whether it works
+    /// in a git worktree of its own there (#1673), which Tab toggles.
+    NewWorkspace { path: String, worktree: bool },
     /// Typing the new session's first prompt.
-    NewPrompt { workspace: PathBuf, text: String },
+    NewPrompt {
+        workspace: PathBuf,
+        worktree: bool,
+        text: String,
+    },
 }
 
 /// What closing the view asks of the TUI.
@@ -350,11 +356,18 @@ impl JobsView {
     }
 
     fn begin_new_session(&mut self) {
-        let workspace = self
-            .selected_job()
-            .map_or_else(|| self.launch.cwd.clone(), |job| job.workspace.clone());
+        let workspace = self.selected_job().map_or_else(
+            || self.launch.cwd.clone(),
+            // A session in a worktree offers the project it came from.
+            |job| {
+                job.worktree
+                    .as_ref()
+                    .map_or_else(|| job.workspace.clone(), |worktree| worktree.origin.clone())
+            },
+        );
         self.mode = Mode::NewWorkspace {
             path: workspace.to_string_lossy().into_owned(),
+            worktree: false,
         };
     }
 
@@ -388,21 +401,26 @@ impl JobsView {
                     sent
                 });
             }
-            Mode::NewWorkspace { path } => {
+            Mode::NewWorkspace { path, worktree } => {
                 let workspace = PathBuf::from(path.trim());
                 if workspace.is_absolute() {
                     self.mode = Mode::NewPrompt {
                         workspace,
+                        worktree,
                         text: String::new(),
                     };
                 } else {
                     // Kept, so the path is fixed rather than typed again.
-                    self.mode = Mode::NewWorkspace { path };
+                    self.mode = Mode::NewWorkspace { path, worktree };
                     self.say("could not start session: the workspace must be an absolute path");
                 }
             }
             Mode::NewPrompt { text, .. } if text.trim().is_empty() => {}
-            Mode::NewPrompt { workspace, text } => {
+            Mode::NewPrompt {
+                workspace,
+                worktree,
+                text,
+            } => {
                 let mut setup = self.launch.setup.clone();
                 // Saved even under `--no-save`: no client follows it, so
                 // one kept in memory alone is discarded once idle, and
@@ -426,6 +444,7 @@ impl JobsView {
                         setup,
                         parent: None,
                         grant: None,
+                        worktree,
                     };
                     let session = daemon.request::<SessionNew>(&params).await?.session;
                     prompt(daemon, session, text).await
@@ -440,7 +459,7 @@ impl JobsView {
             Mode::Browse => None,
             Mode::Filter => Some(&mut self.filter),
             Mode::Message { text, .. } | Mode::NewPrompt { text, .. } => Some(text),
-            Mode::NewWorkspace { path } => Some(path),
+            Mode::NewWorkspace { path, .. } => Some(path),
         }
     }
 
@@ -463,6 +482,13 @@ impl JobsView {
                 | Mode::NewPrompt { .. } => {}
             },
             (_, KeyCode::Enter) => self.confirm(),
+            (_, KeyCode::Tab) => {
+                if let Mode::NewWorkspace { worktree, .. } | Mode::NewPrompt { worktree, .. } =
+                    &mut self.mode
+                {
+                    *worktree = !*worktree;
+                }
+            }
             (_, KeyCode::Backspace) => {
                 if let Some(input) = self.input_mut() {
                     input.pop();
@@ -588,11 +614,13 @@ impl JobsView {
                 };
                 lines.push(input_line(label, text, /*typing*/ true));
             }
-            Mode::NewWorkspace { path } => {
+            Mode::NewWorkspace { path, worktree } => {
                 lines.push(input_line("Workspace", path, /*typing*/ true));
+                lines.push(worktree_line(*worktree));
             }
-            Mode::NewPrompt { text, .. } => {
+            Mode::NewPrompt { text, worktree, .. } => {
                 lines.push(input_line("Prompt", text, /*typing*/ true));
+                lines.push(worktree_line(*worktree));
             }
         }
         if let Some(notice) = self.notice() {
@@ -676,6 +704,19 @@ fn input_line(label: &str, text: &str, typing: bool) -> Line<'static> {
     ])
 }
 
+/// Whether the session being started works in a worktree of its own.
+fn worktree_line(worktree: bool) -> Line<'static> {
+    let choice = if worktree {
+        "new git worktree and branch"
+    } else {
+        "off"
+    };
+    Line::from(vec![
+        Span::styled(" Worktree: ", Theme::dim()),
+        Span::styled(choice, Theme::text()),
+    ])
+}
+
 fn row_line(row: &Row, selected: bool, width: usize) -> Line<'static> {
     let marker = if selected { "▸" } else { " " };
     let nesting = match row.depth {
@@ -731,10 +772,8 @@ impl PanelBody for JobsView {
                 )) => ASK_FOOTER,
                 Some(_) | None => BROWSE_FOOTER,
             },
-            Mode::Filter
-            | Mode::Message { .. }
-            | Mode::NewWorkspace { .. }
-            | Mode::NewPrompt { .. } => INPUT_FOOTER,
+            Mode::Filter | Mode::Message { .. } => INPUT_FOOTER,
+            Mode::NewWorkspace { .. } | Mode::NewPrompt { .. } => NEW_FOOTER,
         }
     }
 

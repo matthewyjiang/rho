@@ -311,6 +311,18 @@ async fn prepare_startup(cli: Cli) -> anyhow::Result<PreparedStartup> {
     crate::credential_store::initialize_from_config(&mut config, &absolute_config)?;
     let cwd = std::env::current_dir()?;
     let added_dirs = crate::added_dirs::launch_added_dirs(&cli.add_dirs, &cwd)?;
+    // Paths the person typed, such as `--add-dir` and `--output-file`,
+    // still resolve against the directory they typed them in.
+    let cwd = match &cli.command {
+        Some(Command::Run { worktree: true, .. }) => {
+            let workspace = crate::paths::canonicalize(&cwd)?;
+            let root = crate::worktree::root(&crate::paths::rho_dir()?);
+            let added = crate::worktree::add(&root, &workspace).await?;
+            eprintln!("rho: {}", crate::worktree::hint(&added.worktree));
+            added.cwd
+        }
+        _ => cwd,
+    };
     let automation_prompt = automation::prompt_for_command(&cli.command)?;
     let (output_file, output, max_steps, timeout) = match &cli.command {
         Some(Command::Run {

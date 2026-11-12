@@ -41,7 +41,8 @@ fn setup_git_worktree(home: &IsolatedHome) -> Result<()> {
     Ok(())
 }
 
-fn git(repo: &Path, args: &[&str]) -> Result<()> {
+/// Runs `git args` in `repo` with an identity and no user or system config.
+pub(super) fn git(repo: &Path, args: &[&str]) -> Result<()> {
     let status = Command::new("git")
         .args([
             "-c",

@@ -1,7 +1,9 @@
 use std::path::PathBuf;
 
 use pretty_assertions::assert_eq;
-use rho_protocol::{JobId, JobKind, JobLive, JobState, JobSummary, JobUsage, ModelRef, SessionId};
+use rho_protocol::{
+    JobId, JobKind, JobLive, JobState, JobSummary, JobUsage, ModelRef, SessionId, SessionWorktree,
+};
 
 use super::{groups, Status};
 
@@ -23,6 +25,7 @@ fn job(id: &str, kind: JobKind, state: JobState, workspace: &str) -> JobSummary 
         live: None,
         grant: None,
         grant_limit: None,
+        worktree: None,
     }
 }
 
@@ -172,5 +175,66 @@ fn a_filter_keeps_matching_rows() {
             vec![untitled],
             Vec::new(),
         )
+    );
+}
+
+// Covers: a session in a worktree lists under the project the worktree was
+// added from, with the runs it started even though they work in the
+// worktree, and its row names the worktree's branch first (#1673).
+// Owner: jobs view (pure selection).
+#[test]
+fn a_worktree_session_lists_under_its_project_with_its_branch() {
+    let worktree = SessionWorktree {
+        branch: "rho/a-1234abcd".into(),
+        path: PathBuf::from("/home/.rho/worktrees/a-1234abcd"),
+        origin: PathBuf::from("/work/a"),
+    };
+    let jobs = [
+        job("here", JobKind::Session, JobState::Running, "/work/a"),
+        JobSummary {
+            live: Some(live(Some("Refactor"))),
+            worktree: Some(worktree.clone()),
+            ..job(
+                "isolated",
+                JobKind::Session,
+                JobState::Running,
+                "/home/.rho/worktrees/a-1234abcd",
+            )
+        },
+        child(
+            "isolated-run",
+            "isolated",
+            JobState::Running,
+            "/home/.rho/worktrees/a-1234abcd",
+        ),
+    ];
+
+    let listed: Vec<(String, Vec<(String, Vec<String>)>)> = groups(&jobs, "")
+        .into_iter()
+        .map(|group| {
+            (
+                group.workspace.to_string_lossy().into_owned(),
+                group
+                    .rows
+                    .into_iter()
+                    .map(|row| (row.job.as_str().to_owned(), row.facts))
+                    .collect(),
+            )
+        })
+        .collect();
+
+    assert_eq!(
+        listed,
+        vec![(
+            "/work/a".to_owned(),
+            vec![
+                ("here".to_owned(), Vec::new()),
+                (
+                    "isolated".to_owned(),
+                    vec!["rho/a-1234abcd".to_owned(), "grok-fixture".to_owned()],
+                ),
+                ("isolated-run".to_owned(), Vec::new()),
+            ],
+        )]
     );
 }

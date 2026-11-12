@@ -326,6 +326,7 @@ impl Sandbox {
                 setup: SessionSetup::default(),
                 parent: None,
                 grant: None,
+                worktree: false,
             })
             .await
             .unwrap()

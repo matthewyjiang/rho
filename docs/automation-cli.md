@@ -45,6 +45,8 @@ Options:
       --detach              Start the run in the rho daemon, starting one if none
                             runs, and exit once its prompt is saved, printing the
                             session's id
+      --worktree            Run in a new git worktree of the current directory's
+                            repository, on a new branch from its HEAD
       --no-subagents        Do not expose the delegated-agent tools (agent/agents) to the model
       --agent <ID>          Select the agent definition used for this session or automation run
   -h, --help                Print help (see more with '--help')
@@ -238,6 +240,35 @@ rho attach "$SESSION"
   `rho attach` or prompt reopens it.
 - Slash commands resolve as they do in a foreground run, and `/compact` and
   `/workflow:<name>` run too; TUI-only commands fail with exit 2.
+- `--worktree` has the daemon open the session in a git worktree of its own,
+  as described below.
+
+### Running in a worktree
+
+Two runs in one repository edit the same files, so one can overwrite the
+other's work. `rho run --worktree`, with or without `--detach`, gives the run a
+git worktree of its own: a new branch from the repository's `HEAD`, checked out
+under `~/.rho/worktrees/` (`$RHO_HOME/worktrees/`), never inside the
+repository. The run works at the current directory's place in the worktree, and
+says where on stderr:
+
+```text
+rho: the session works in worktree /home/me/.rho/worktrees/api-3fa2c1d0 on branch rho/api-3fa2c1d0; rho never removes it
+```
+
+Outside a git repository, `--worktree` fails with exit 2. A repository with no
+commit has no `HEAD` to branch from, and fails the same way.
+
+Rho never removes a worktree or its branch, finished or not. Review the branch,
+merge what you keep, then remove both from the repository:
+
+```bash
+git worktree remove ~/.rho/worktrees/api-3fa2c1d0   # add --force to drop uncommitted edits
+git branch -D rho/api-3fa2c1d0
+```
+
+`rho daemon status` lists the worktrees of the daemon's sessions, and
+`git worktree list` lists every worktree of a repository.
 - `--output`, `--output-file`, `--max-steps`, and `--no-save` do not apply and
   are refused.
 - Unlike a foreground run's, the session is listed like one you had yourself,

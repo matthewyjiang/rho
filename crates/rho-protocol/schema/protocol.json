@@ -2241,6 +2241,17 @@
         "workspace": {
           "description": "The workspace the job runs in.",
           "type": "string"
+        },
+        "worktree": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionWorktree"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The git worktree a [`JobKind::Session`] job's session works in, for\none opened with [`super::SessionNewParams::worktree`]; `workspace`\nis then in it."
         }
       },
       "required": [
@@ -5254,6 +5265,10 @@
         "setup": {
           "$ref": "#/$defs/SessionSetup",
           "description": "The client's choices for the session."
+        },
+        "worktree": {
+          "description": "Whether the session works in a git worktree of its own (#1673), so\nsessions in one repository cannot overwrite each other's edits. The\ndaemon adds a worktree of the repository `cwd` is in, on a new\nbranch from that repository's `HEAD`, under its rho home, and opens\nthe session at `cwd`'s place in it. A `cwd` in no git repository,\nor one git cannot add a worktree of, is\n[`crate::ErrorCode::SessionOpenFailed`]. The daemon never removes\nthe worktree; [`SessionNewResponse::worktree`] and\n[`super::JobSummary::worktree`] name it.",
+          "type": "boolean"
         }
       },
       "required": [
@@ -5271,6 +5286,17 @@
         },
         "session": {
           "$ref": "#/$defs/SessionId"
+        },
+        "worktree": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionWorktree"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The worktree the session works in, for one opened with\n[`SessionNewParams::worktree`]."
         }
       },
       "required": [
@@ -5749,6 +5775,29 @@
       },
       "required": [
         "outcome"
+      ],
+      "type": "object"
+    },
+    "SessionWorktree": {
+      "description": "A git worktree the daemon added for a session to work in (#1673).",
+      "properties": {
+        "branch": {
+          "description": "The branch checked out in the worktree, new from the repository's\n`HEAD` when the session opened.",
+          "type": "string"
+        },
+        "origin": {
+          "description": "The workspace the session was asked to open in, in the checkout the\nworktree was added from. The session works at the same place in the\nworktree.",
+          "type": "string"
+        },
+        "path": {
+          "description": "The worktree's root directory, under the daemon's rho home: what\n`git worktree remove` takes.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "branch",
+        "path",
+        "origin"
       ],
       "type": "object"
     },
