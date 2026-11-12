@@ -84,6 +84,7 @@ pub(super) fn test_bootstrap() -> TuiBootstrap {
             first_run: None,
             auth_unavailable: None,
             update_notice: None,
+            config_upgrade_note: None,
             pending_update_notice: None,
             pending_custom_models: None,
             pending_syntax_warmup: None,

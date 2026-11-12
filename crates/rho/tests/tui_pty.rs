@@ -194,6 +194,61 @@ fn a_2x_config_starts_and_keeps_its_tui_settings() {
     assert_pass("config_2x_upgrade");
 }
 
+// Covers: the stderr notice of a 2.x config upgrade scrolls away under the
+// TUI, so the first TUI after it shows the upgrade in its transcript, also
+// when another rho process (here a non-TUI command, as the daemon would be)
+// did the upgrade, and no later TUI shows it again.
+// Owner: interactive startup through PTY
+#[test]
+fn a_2x_config_upgrade_shows_once_in_the_next_tui() {
+    const NOTE: &str = "what changed in rho 3";
+    let home = IsolatedHome::new().unwrap();
+    fs::write(
+        &home.config_path,
+        "[model]\nprovider = \"openai\"\nmodel = \"gpt-5.5\"\nauth = \"api-key\"\n\n[display]\ntheme = \"nord\"\n\n[web_search]\nmode = \"off\"\n\n[behavior]\ncredential_store = \"file\"\n",
+    )
+    .unwrap();
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_rho"));
+    // Upgrades the file, as every rho process does first; exits 1 since no
+    // daemon runs.
+    let status = home
+        .command(&binary)
+        .args(["daemon", "status"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&status.stderr);
+    assert!(
+        stderr.contains("config.toml.2x.bak"),
+        "the non-TUI process did not upgrade the config: {stderr}"
+    );
+    let plan = RhoLaunchPlan::matrix(
+        &binary,
+        &home,
+        PtySize {
+            rows: 30,
+            cols: 120,
+        },
+    )
+    .with_env("OPENAI_API_KEY", "fixture-openai-key");
+
+    let mut first = PtyHarness::spawn_named(&plan, "config_2x_note_first").unwrap();
+    first
+        .wait_for_text(NOTE, WaitTimeout::secs(20, "the upgrade note"))
+        .unwrap();
+    assert_eq!(first.quit_with_exit_command().unwrap(), 0);
+
+    let mut second = PtyHarness::spawn_named(&plan, "config_2x_note_second").unwrap();
+    // The note is in the transcript before the first frame, which draws the
+    // header with it.
+    second
+        .wait_for_text("rho  v", WaitTimeout::secs(20, "startup"))
+        .unwrap();
+    second
+        .wait_for_text_gone(NOTE, WaitTimeout::secs(1, "no second note"))
+        .unwrap();
+    assert_eq!(second.quit_with_exit_command().unwrap(), 0);
+}
+
 // Covers: repeated presses queue from the pending mode, not the active mode,
 // and cancellation applies the last queued policy before the next idle press.
 // Owner: interactive queued permission shortcut through PTY

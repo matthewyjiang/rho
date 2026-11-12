@@ -58,6 +58,10 @@ mod migrate_2x;
 mod upgrade_2x;
 pub(crate) use upgrade_2x::upgrade_2x;
 
+#[path = "config_upgrade_2x_note.rs"]
+mod upgrade_2x_note;
+pub(crate) use upgrade_2x_note::take_upgrade_note;
+
 /// `runtime` value that selects the Claude Code CLI for an internal agent.
 /// Matches the agent frontmatter vocabulary (`runtime: claude-cli`).
 pub(crate) const CLAUDE_CLI_RUNTIME_KEY: &str = "claude-cli";

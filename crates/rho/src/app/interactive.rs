@@ -109,6 +109,9 @@ async fn run_inner(startup: Startup<'_>) -> anyhow::Result<()> {
     // Background credential reads must stop writing to stderr before the TUI
     // takes ownership of the terminal.
     drop(keyring_notice);
+    // Taken here, after this process's own upgrade, so any rho process's
+    // upgrade (the daemon's included) shows in the first TUI after it.
+    let config_upgrade_note = crate::config::take_upgrade_note(&crate::paths::rho_dir()?);
     let prompt_cache_ttl = config.providers.resolved_prompt_cache_ttl(&config.provider);
     let result = tui::run(TuiBootstrap {
         runtime: RuntimeModelView {
@@ -152,6 +155,7 @@ async fn run_inner(startup: Startup<'_>) -> anyhow::Result<()> {
             first_run,
             auth_unavailable: missing_auth_error,
             update_notice: None,
+            config_upgrade_note,
             pending_update_notice,
             pending_custom_models,
             pending_syntax_warmup: Some(tui::spawn_syntax_warmup(&[])),

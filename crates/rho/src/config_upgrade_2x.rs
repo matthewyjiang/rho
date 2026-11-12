@@ -7,7 +7,9 @@
 //! last, so an interrupted upgrade runs again from the same 2.x file and
 //! ends in the same place. A value `tui.toml` or `clients/tui.toml` already
 //! holds wins over the 2.x one. Keys neither version knows stay in
-//! `config.toml`, where loading names them.
+//! `config.toml`, where loading names them. Besides the stderr notice, the
+//! upgrade leaves a note the next TUI shows once
+//! ([`super::upgrade_2x_note`]).
 
 use std::path::{Path, PathBuf};
 
@@ -21,7 +23,7 @@ use super::{
 };
 use crate::config_writer::write_bytes_atomically;
 
-/// What one upgrade did, for the startup notice.
+/// What one upgrade did, for the startup notice and the TUI's note.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Upgraded {
     /// The 2.x `config.toml`, as it was.
@@ -36,7 +38,8 @@ pub(crate) struct Upgraded {
     pub(crate) secrets_error: Option<String>,
 }
 
-/// Upgrades the 2.x `config_path`, writing the TUI's files under `rho_dir`.
+/// Upgrades the 2.x `config_path`, writing the TUI's files and its note
+/// under `rho_dir`.
 /// `None` when the file holds no 2.x key, which leaves every file alone.
 ///
 /// `save_secrets` stores the web-search keys 2.x kept in plaintext, given
@@ -133,13 +136,19 @@ pub(crate) fn upgrade_2x(
             Err(error) => secrets_error = Some(format!("{error:#}")),
         }
     }
-    write(config_path, &agent.text())?;
-    Ok(Some(Upgraded {
+    let upgraded = Upgraded {
         backup,
         report: migrated.report,
         already_set,
         secrets_error,
-    }))
+    };
+    // Before `config.toml`, so a note is left whenever the upgrade is done.
+    // A note that cannot be written costs only the TUI's copy of the notice.
+    if let Err(error) = super::upgrade_2x_note::leave(rho_dir, config_path, &upgraded) {
+        tracing::warn!("could not leave the config upgrade note: {error:#}");
+    }
+    write(config_path, &agent.text())?;
+    Ok(Some(upgraded))
 }
 
 impl Upgraded {

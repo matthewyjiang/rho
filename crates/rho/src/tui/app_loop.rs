@@ -77,6 +77,10 @@ impl App {
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<Option<ExitReceipt>> {
         self.show_taken_daemon_views(terminal).await?;
+        // After a resumed conversation, so the note is the newest entry.
+        if let Some(note) = self.info.services.config_upgrade_note.take() {
+            self.insert_entry(&super::Entry::Notice(note));
+        }
         self.start_catalog_hydrate();
         self.start_github_pr_fetch();
         self.maybe_offer_loaded_session_context_handoff();
