@@ -5021,6 +5021,7 @@ dependencies = [
  "tempfile",
  "unicode-width 0.2.2",
  "vt100",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

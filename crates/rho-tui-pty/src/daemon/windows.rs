@@ -6,6 +6,12 @@ use std::{ffi::OsString, fs, os::windows::fs::OpenOptionsExt, path::PathBuf, pro
 /// `SECURITY_IDENTIFICATION`, from the Windows SDK.
 const SECURITY_IDENTIFICATION: u32 = 0x0001_0000;
 
+use windows_sys::Win32::{
+    Foundation::{CloseHandle, WAIT_OBJECT_0},
+    System::Threading::{OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE},
+};
+
+use super::{fail_teardown, DAEMON_TEARDOWN_TIMEOUT};
 use crate::env::IsolatedHome;
 
 /// The pipe the recorded daemon listens on, while it exists. Pipes are
@@ -51,5 +57,32 @@ pub(super) fn kill(pid: u32) {
         .output();
 }
 
-/// Nothing to reap: a process that exited is gone once its handles close.
-pub(super) fn reap(_pid: u32) {}
+/// Waits for `pid` to exit. Nothing is left to reap on Windows, but the
+/// daemon releases its lock when its run returns, a moment before the
+/// process is gone, and until then it holds what it inherited from the test
+/// that started it, the test runner's output pipes among them.
+///
+/// A daemon still running [`DAEMON_TEARDOWN_TIMEOUT`] later is killed.
+pub(super) fn reap(pid: u32) {
+    // SAFETY: the call takes no pointers.
+    let process = unsafe {
+        OpenProcess(PROCESS_SYNCHRONIZE, /*bInheritHandle*/ 0, pid)
+    };
+    if process.is_null() {
+        // No process has that pid any more, or it is not this user's.
+        return;
+    }
+    // SAFETY: `process` is the open handle `OpenProcess` returned, closed
+    // once, after the wait.
+    let exited = unsafe {
+        let waited = WaitForSingleObject(process, DAEMON_TEARDOWN_TIMEOUT.as_millis() as u32);
+        CloseHandle(process);
+        waited == WAIT_OBJECT_0
+    };
+    if !exited {
+        kill(pid);
+        fail_teardown(&format!(
+            "rho daemon (pid {pid}) released its lock but had not exited DAEMON_TEARDOWN_TIMEOUT ({DAEMON_TEARDOWN_TIMEOUT:?}) later"
+        ));
+    }
+}
