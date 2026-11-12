@@ -486,7 +486,7 @@ pub struct ApplicationServices {
     pub herdr: HerdrReporter,
 }
 pub(crate) use attachment::translate_run_event;
-pub(crate) use daemon_launch::{DaemonLaunch, DaemonTarget, InitialSettings, LaunchChange};
+pub(crate) use daemon_launch::{DaemonLaunch, InitialSettings, LaunchChange};
 pub(crate) use daemon_session::DaemonSession;
 pub(crate) use exit_receipt::{print_exit_receipt, ExitReceipt};
 pub use herdr_resume::ResumeLaunchOptions;

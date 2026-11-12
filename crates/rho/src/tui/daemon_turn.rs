@@ -47,6 +47,10 @@ impl App {
         paste_segments: Vec<PasteSegment>,
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
+        if !self.open_daemon_draft(terminal).await? {
+            self.give_back_turn(turn, media, paste_segments);
+            return Ok(());
+        }
         if self.daemon_tool_sources_loading() {
             self.hold_turn(turn, media, paste_segments);
             return Ok(());
@@ -65,6 +69,10 @@ impl App {
         paste_segments: Vec<PasteSegment>,
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
+        if !self.open_daemon_draft(terminal).await? {
+            self.give_back_turn(turn, media, paste_segments);
+            return Ok(());
+        }
         if self.daemon_tool_sources_loading() {
             self.hold(HeldTurn {
                 turn,
@@ -78,8 +86,47 @@ impl App {
             .await
     }
 
+    /// Puts a turn that was not sent back in the composer.
+    fn give_back_turn(
+        &mut self,
+        turn: TurnPrompt,
+        media: Vec<ChatMedia>,
+        paste_segments: Vec<PasteSegment>,
+    ) {
+        self.restore_pending_prompt(QueuedPrompt {
+            prompt: turn.model,
+            display_prompt: turn.display,
+            paste_segments,
+            media,
+        });
+    }
+
     pub(super) fn daemon_tool_sources_loading(&self) -> bool {
         self.info.session.daemon.tool_sources_loading()
+    }
+
+    /// Opens the new session a first prompt opens, with the settings
+    /// chosen before it, ahead of the hold for its MCP servers, which only
+    /// an open session connects; `true` once it is open. When it could not
+    /// open, the transcript says why, and the caller gives the prompt back.
+    pub(super) async fn open_daemon_draft(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+    ) -> anyhow::Result<bool> {
+        if !self.info.session.daemon.is_draft() {
+            return Ok(true);
+        }
+        let opened = self.info.session.daemon.open_drafted().await;
+        self.show_taken_daemon_views(terminal).await?;
+        match opened {
+            Ok(()) => Ok(true),
+            Err(error) => {
+                self.insert_entry(&Entry::Error(format!(
+                    "could not open the session: {error:#}"
+                )));
+                Ok(false)
+            }
+        }
     }
 
     /// Asks the daemon to run `turn` with `media`, now and unconfirmed: the
@@ -128,12 +175,7 @@ impl App {
                     "could not send the prompt: {error:#}"
                 ))),
             }
-            self.restore_pending_prompt(QueuedPrompt {
-                prompt: turn.model,
-                display_prompt: turn.display,
-                paste_segments,
-                media,
-            });
+            self.give_back_turn(turn, media, paste_segments);
             return Ok(());
         }
         if !turn.history.is_empty() {

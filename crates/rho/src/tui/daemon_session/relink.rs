@@ -11,7 +11,7 @@ use rho_protocol::{
 use tokio::sync::mpsc;
 
 use super::{
-    initial_settings::{carry, changes_between},
+    initial_settings::{carry, changes_between, ModelChange},
     route,
     tool_sources::ToolSources,
     DaemonSettings,
@@ -103,7 +103,9 @@ impl Relink {
                     // The settings the person changed carry over; one the
                     // restarted daemon refuses keeps its default.
                     let changes = carried
-                        .map(|carried| changes_between(&created.options, &carried))
+                        .map(|carried| {
+                            changes_between(&created.options, &carried, ModelChange::Setup)
+                        })
                         .unwrap_or_default();
                     carry(&link, &session, changes).await;
                     let routed = route(&daemon, &session);

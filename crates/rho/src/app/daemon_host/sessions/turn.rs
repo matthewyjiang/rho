@@ -99,7 +99,7 @@ async fn expired(limit: Option<TurnLimit>) -> u64 {
 /// The commands a daemon session runs, which its menu lists too: every
 /// command a session host runs, so the TUI's own commands are the only ones
 /// it refuses.
-pub(super) const DAEMON_COMMANDS: CommandSet = CommandSet {
+pub(in crate::app) const DAEMON_COMMANDS: CommandSet = CommandSet {
     built_ins: &[
         BuiltInCommand::Compact,
         BuiltInCommand::Init,

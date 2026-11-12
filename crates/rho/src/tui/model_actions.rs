@@ -356,6 +356,12 @@ impl App {
 
     pub(super) fn refresh_available_auths(&mut self) {
         self.available_auths = available_auth_modes(self.credential_store.as_ref());
+        // A session not opened yet lists the models they offer, as an
+        // opened one's options follow a credential write.
+        self.info
+            .session
+            .daemon
+            .set_draft_auths(&self.available_auths);
     }
 
     /// Provider and auth context for resolving a partially-qualified Rho model

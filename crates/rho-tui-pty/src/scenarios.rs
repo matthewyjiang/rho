@@ -32,6 +32,8 @@ mod daemon_detach;
 mod daemon_doctor;
 #[cfg(unix)]
 mod daemon_jobs_view;
+#[cfg(unix)]
+mod daemon_lazy_session;
 mod daemon_login;
 mod daemon_mcp;
 mod daemon_mcp_owner;
@@ -524,6 +526,8 @@ const ALL_SCENARIOS: &[Scenario] = &[
     daemon_workflow_hold::SCENARIO,
     #[cfg(unix)]
     daemon_switch::SCENARIO,
+    #[cfg(unix)]
+    daemon_lazy_session::SCENARIO,
     #[cfg(unix)]
     daemon_restart::SCENARIO,
     #[cfg(unix)]

@@ -86,8 +86,9 @@ pub(super) struct Attach {
 /// The `/jobs` overlay.
 pub(super) struct JobsView {
     daemon: Arc<Daemon>,
-    /// The session this TUI follows, whose job the view opens on.
-    followed: SessionId,
+    /// The session this TUI follows, whose job the view opens on; none
+    /// before its first prompt opened it.
+    followed: Option<SessionId>,
     /// What this TUI opens its sessions with. A session started here opens
     /// with its setup, though always saved, and in this TUI's project as
     /// its agent too, so
@@ -123,7 +124,7 @@ impl std::fmt::Debug for JobsView {
 }
 
 impl JobsView {
-    fn new(daemon: Arc<Daemon>, followed: SessionId, launch: DaemonLaunch) -> Self {
+    fn new(daemon: Arc<Daemon>, followed: Option<SessionId>, launch: DaemonLaunch) -> Self {
         Self {
             daemon,
             followed,
@@ -161,7 +162,7 @@ impl JobsView {
         if self.jobs.is_none() {
             self.selected = jobs
                 .iter()
-                .find(|job| job.session.as_ref() == Some(&self.followed))
+                .find(|job| job.session.is_some() && job.session == self.followed)
                 .map(|job| job.id.clone());
         }
         self.jobs = Some(jobs);
@@ -544,7 +545,7 @@ impl JobsView {
             (KeyModifiers::NONE, KeyCode::Enter) => {
                 match self.session_of_selected() {
                     // Already followed: closing the view shows it.
-                    Some((_, session)) if session == &self.followed => {}
+                    Some((_, session)) if self.followed.as_ref() == Some(session) => {}
                     Some((job, session)) => {
                         self.attach = Some(Attach {
                             session: session.clone(),
@@ -824,7 +825,7 @@ impl App {
         let session = &self.info.session.daemon;
         let view = JobsView::new(
             session.daemon(),
-            SessionId::new(session.id()),
+            session.id().map(SessionId::new),
             session.launch().clone(),
         );
         self.input_ui

@@ -7,9 +7,9 @@
 use rho_protocol as wire;
 
 use crate::{
-    agent::AgentRuntimeSpec,
+    agent::{AgentCapabilities, AgentRuntimeSpec, ToolCapability},
     app::{
-        session_commands::{command_args, CommandScope, CommandSet, Hosting},
+        session_commands::{command_args, CommandFiles, CommandScope, CommandSet, Hosting},
         workflow_cli::discover as workflows,
     },
     commands::COMMANDS,
@@ -31,15 +31,6 @@ pub(crate) fn available_commands(
     scope: &CommandScope<'_>,
     commands: CommandSet,
 ) -> Vec<wire::SessionCommand> {
-    let built_in = COMMANDS
-        .iter()
-        .filter(|spec| commands.built_in(spec.id).is_some())
-        .map(|spec| slash(spec.name.to_string(), spec.description, spec.usage));
-    let templates = scope.templates().into_iter().map(|(name, template)| {
-        let name = format!("prompt:{name}");
-        let usage = prompt_templates::usage(&name, &template);
-        slash(name, &prompt_templates::description(&template), &usage)
-    });
     let mcp_prompts = scope
         .tools
         .mcp_catalog()
@@ -48,14 +39,60 @@ pub(crate) fn available_commands(
         .map(|prompt| {
             let description = prompt.description.as_deref().unwrap_or(prompt.label());
             slash(prompt.command_name(), description, &prompt.usage())
-        });
+        })
+        .collect();
+    listed(
+        &scope.files,
+        mcp_prompts,
+        |name| scope.tools.contains(name),
+        commands,
+    )
+}
+
+/// The commands a session not opened yet will list as it opens, before its
+/// MCP servers connect: [`available_commands`] with the tools `capabilities`
+/// grants its agent, none for an agent on another runtime.
+pub(crate) fn drafted_commands(
+    files: &CommandFiles<'_>,
+    capabilities: Option<&AgentCapabilities>,
+    commands: CommandSet,
+) -> Vec<wire::SessionCommand> {
+    listed(
+        files,
+        Vec::new(),
+        |name| {
+            capabilities.is_some_and(|capabilities| {
+                capabilities.contains(&ToolCapability::parse(name.to_owned()))
+            })
+        },
+        commands,
+    )
+}
+
+/// The menu of a session whose definitions `files` finds, with
+/// `mcp_prompts`, and the tools `has_tool` says it offers.
+fn listed(
+    files: &CommandFiles<'_>,
+    mcp_prompts: Vec<wire::SessionCommand>,
+    has_tool: impl Fn(&str) -> bool,
+    commands: CommandSet,
+) -> Vec<wire::SessionCommand> {
+    let built_in = COMMANDS
+        .iter()
+        .filter(|spec| commands.built_in(spec.id).is_some())
+        .map(|spec| slash(spec.name.to_string(), spec.description, spec.usage));
+    let templates = files.templates().into_iter().map(|(name, template)| {
+        let name = format!("prompt:{name}");
+        let usage = prompt_templates::usage(&name, &template);
+        slash(name, &prompt_templates::description(&template), &usage)
+    });
     let mut listed = built_in
         .chain(templates)
         .chain(mcp_prompts)
         .collect::<Vec<_>>();
     match commands.workflows {
-        Hosting::Runs if scope.tools.contains(workflow_tool::NAME) => listed.extend(
-            workflows::command_workflows(scope.cwd)
+        Hosting::Runs if has_tool(workflow_tool::NAME) => listed.extend(
+            workflows::command_workflows(files.cwd)
                 .into_iter()
                 .filter_map(|workflow| {
                     Some(slash(
@@ -67,12 +104,12 @@ pub(crate) fn available_commands(
         ),
         Hosting::Runs | Hosting::Refused => {}
     }
-    if scope.tools.contains(SKILL_TOOL) {
-        listed.extend(skill_commands(&scope.skills()));
+    if has_tool(SKILL_TOOL) {
+        listed.extend(skill_commands(&files.skills()));
     }
     match commands.agents {
         Hosting::Runs => {
-            if let Ok(catalog) = scope.agent_catalog() {
+            if let Ok(catalog) = files.agent_catalog() {
                 listed.extend(catalog.iter().filter_map(|entry| {
                     let definition = &entry.definition;
                     match &definition.runtime {

@@ -71,6 +71,10 @@ pub fn run_named(runner: &ScenarioRunner, name: &str) -> Result<ScenarioOutcome>
     if name == super::daemon_switch::SCENARIO.id {
         return super::daemon_switch::run(runner);
     }
+    #[cfg(unix)]
+    if name == super::daemon_lazy_session::SCENARIO.id {
+        return super::daemon_lazy_session::run(runner);
+    }
     if name == super::daemon_detach::SCENARIO.id {
         return super::daemon_detach::run(runner);
     }

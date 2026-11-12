@@ -2,12 +2,13 @@
 //! `/sessions` pick.
 //!
 //! The session to follow opens on a connection of its own before anything
-//! here changes, so a refusal leaves the TUI on the session it had. Then
+//! here changes, so a refusal leaves the TUI on the session it had; a new
+//! one only connects there, as its first prompt opens it. Then
 //! the old session's connection closes, which detaches it without
 //! cancelling anything, and the screen resets. These commands run only
 //! while the TUI shows no turn, so work is left behind only in a session
 //! the TUI had stopped following, or whose turn began unseen; it keeps
-//! running in the daemon and can be resumed. The new session's attach
+//! running in the daemon and can be resumed. A resumed session's attach
 //! replays its conversation as a first attach does.
 
 use super::{daemon_launch::DaemonTarget, App, ComposerMode, DefaultTerminal, InputSubmissionMode};
@@ -78,6 +79,9 @@ impl App {
         self.reset_daemon_rail();
         self.drop_daemon_login();
         self.reset_session_view(terminal)?;
+        // A new session sends no reset replay to clear what the old one
+        // left, such as its checklist, until its first prompt opens it.
+        self.clear_daemon_transcript();
         // What the attach answered with, the session's options among it:
         // a session at rest sends nothing more until it is prompted.
         self.show_taken_daemon_views(terminal).await?;

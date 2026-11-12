@@ -38,6 +38,9 @@ impl App {
     ) -> anyhow::Result<()> {
         self.input_ui.set_composer(super::ComposerMode::Input);
         let turn = TurnPrompt::command(command.clone(), command);
+        if !self.open_daemon_draft(terminal).await? {
+            return Ok(());
+        }
         if self.info.session.daemon.tool_sources_loading() {
             self.hold(HeldTurn {
                 turn,

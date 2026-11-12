@@ -1542,6 +1542,15 @@ fn daemon_tui_switches_the_session_it_follows() {
     assert_pass("daemon_switch");
 }
 
+// Covers: the TUI opens its daemon session with the first prompt, so an
+// unprompted launch or `/new` leaves no job, and settings chosen before
+// that prompt are the ones the session runs on.
+// Owner: interactive TUI as a daemon client
+#[test]
+fn daemon_tui_opens_its_session_with_the_first_prompt() {
+    assert_pass("daemon_lazy_session");
+}
+
 // Covers: MCP inventory belongs to the daemon session even when the new client's
 // config differs, and remains inspectable behind a queued mid-turn configure.
 // Owner: interactive TUI as a daemon client.

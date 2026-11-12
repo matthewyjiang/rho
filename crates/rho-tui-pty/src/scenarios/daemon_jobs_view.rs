@@ -39,9 +39,9 @@ const ACTIONS_STEPS: &[Step] = &[
     },
     Step::Phase("open"),
     Step::SubmitText("/jobs"),
-    // This TUI's own session, loaded and between turns.
+    // This TUI's own session opens with its first prompt.
     Step::WaitText {
-        text: "▸ idle",
+        text: "No jobs are running",
         timeout: SETTLE,
     },
     Step::Phase("new_session"),
@@ -57,8 +57,9 @@ const ACTIONS_STEPS: &[Step] = &[
     },
     Step::TypeText("fixture gated reply"),
     Step::Key(Key::Enter),
+    // The only job, so it is selected.
     Step::WaitText {
-        text: "  running",
+        text: "▸ running",
         timeout: STREAM,
     },
     // Rows are picked by filter: two sessions opened in the same second
@@ -172,7 +173,7 @@ const WORKTREE_STEPS: &[Step] = &[
     Step::Phase("open"),
     Step::SubmitText("/jobs"),
     Step::WaitText {
-        text: "▸ idle",
+        text: "No jobs are running",
         timeout: SETTLE,
     },
     Step::Phase("new_session_in_a_worktree"),

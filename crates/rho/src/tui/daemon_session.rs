@@ -1,10 +1,17 @@
 //! The daemon session the TUI follows (#1667; see `app/interactive.rs`).
 //!
-//! [`DaemonSession::open`] opens or resumes the session on a daemon
-//! connection of its own (`app::daemon_client`, which starts the daemon
-//! when none runs) and attaches to it: at launch before the TUI takes the
-//! terminal, so a refusal reads as an ordinary startup error, and again
-//! for each session the TUI switches to (`daemon_switch`). A daemon of
+//! A new session does not exist in the daemon until its first prompt:
+//! [`DaemonSession::draft`] only connects (`app::daemon_client`, which
+//! starts the daemon when none runs), and shows the options the session
+//! will open with, which the person may change meanwhile (`draft`). The
+//! first prompt opens it with them and attaches, as does a command that reads
+//! the live session (`/mcp`, `/context`), so opening the TUI, or `/new`,
+//! and quitting leaves no session behind. Context a `!` command or
+//! `/remember` adds meanwhile goes with the first prompt; quitting before
+//! one drops it. [`DaemonSession::open`]
+//! resumes a saved session and attaches to it: at launch before the TUI
+//! takes the terminal, so a refusal reads as an ordinary startup error, and
+//! again for each session the TUI switches to (`daemon_switch`). A daemon of
 //! another build than the TUI shows its notice at launch and after each
 //! reattach, not for a switch. The app loop then waits on
 //! [`next_views`], which maps what the daemon sent since through
@@ -14,7 +21,7 @@
 //!
 //! The TUI prompts, cancels, steers, and withdraws steers through it
 //! (`daemon_turn`), and answers and holds input requests (`daemon_answers`);
-//! configures options through a background request queue. Once attached,
+//! configures options through a background request queue. Once connected,
 //! it registers the `tui` client's settings and reads the daemon's
 //! (`daemon_settings`), whose changes then arrive with the session's views;
 //! settings writes bypass that queue. Quitting closes
@@ -37,47 +44,49 @@ use std::{
 };
 
 use anyhow::Context;
-use rho_protocol::ClientError;
 use rho_protocol::{
-    methods::{
-        SessionAnswer, SessionAttach, SessionCancel, SessionHold, SessionNew, SessionSteer,
-        SessionUnsteer,
-    },
-    ClientEnvironment, ConfigChangedParams, ContentBlock, DetachReason, ErrorCode, InputAnswer,
-    InputRequestId, JobState, SessionAnswerParams, SessionAttachParams, SessionAttachResponse,
-    SessionCancelParams, SessionChange, SessionHoldParams, SessionId, SessionNewParams,
-    SessionOptions, SessionSteerParams, SessionUnsteerParams, SteerId, UnsteerOutcome,
+    methods::SessionAttach, ClientEnvironment, ConfigChangedParams, ContentBlock, DetachReason,
+    SessionAttachParams, SessionAttachResponse, SessionId, SessionNewParams, SessionOptions,
 };
-use rho_sdk::SteeringId;
 use tokio::sync::{mpsc, oneshot, watch};
 
-use super::daemon_launch::{DaemonLaunch, DaemonTarget, InitialSettings, LaunchChange};
+use super::daemon_launch::{DaemonLaunch, DaemonTarget, InitialSettings};
 use super::{
     daemon_events::{DaemonEvents, DaemonView, LoginUpdate, Rest, TurnState},
-    daemon_inputs::AnswerRefusal,
-    daemon_options::setting_name,
     daemon_requests::{DaemonRequests, Target},
     daemon_settings::DaemonSettings,
-    daemon_settings_read::{load_settings, route_config, settings_loaded},
+    daemon_settings_read::settings_loaded,
 };
 use crate::{
-    app::daemon_client::{Daemon, Link, LoginEvent, Part, Routed, StreamPosition},
+    app::{
+        available_auths,
+        daemon_client::{Daemon, Link, LoginEvent, Part, Routed, StreamPosition},
+        DraftOptions,
+    },
+    credential_store::AppCredentialStore,
     daemon::DAEMON_RESTART_TIMEOUT,
 };
 
+mod attach;
 mod auth;
+mod draft;
 mod initial_settings;
 mod mcp;
 mod relink;
 mod requests;
 mod tool_sources;
+mod turn_requests;
 
-use initial_settings::{carry, changes_between, configure_all, Refused};
+use attach::{Attached, Connection};
+use draft::Draft;
 pub(in crate::tui) use mcp::DaemonMcp;
 use relink::{Reattach, Reattached, Relink, Relinked};
 use tool_sources::ToolSources;
 
 const LOST: &str = "lost the connection to the rho daemon";
+
+/// Why a request about the session waits for nothing before it opened.
+const NOT_OPENED: &str = "the session opens with its first prompt";
 
 /// Shown while the TUI reconnects to a restarting daemon.
 const RECONNECTING: &str = "rho daemon restarting; reconnecting";
@@ -100,6 +109,33 @@ pub(crate) struct DaemonSession {
     /// Holds the connection; dropping it closes the connection, which
     /// detaches the session.
     daemon: Arc<Daemon>,
+    /// What `/new` and a resume from here open their session with.
+    launch: DaemonLaunch,
+    /// `rho/config/changed` for the settings last read, on the
+    /// connection the session is attached on.
+    config_changes: mpsc::UnboundedReceiver<ConfigChangedParams>,
+    /// Where the session's requests go.
+    target: watch::Sender<Target>,
+    /// Views made outside the event stream, shown with the next views:
+    /// the attach response's, such as the reset replay's
+    /// [`DaemonView::Clear`], a draft's options, and a refused answer's or
+    /// hold's.
+    pending: Vec<DaemonView>,
+    requests: Option<DaemonRequests>,
+    /// The events of the interactive login under way, if any.
+    logins: Option<mpsc::UnboundedReceiver<LoginEvent>>,
+    following: Following,
+}
+
+/// Whether the session exists in the daemon yet.
+enum Following {
+    /// Not until the first prompt opens it with these settings.
+    Draft(Box<Draft>),
+    Attached(Box<Attachment>),
+}
+
+/// A session the daemon opened and the TUI attached to.
+struct Attachment {
     id: SessionId,
     /// Whether the session has something to resume, so the exit
     /// receipt offers to: it was resumed, has a title, or took a
@@ -108,35 +144,21 @@ pub(crate) struct DaemonSession {
     /// Whether the daemon saves the session: not one opened without
     /// saving, as `--no-save` opens them.
     keeps_file: bool,
-    /// What `/new` and a resume from here open their session with.
-    launch: DaemonLaunch,
     /// What opened the session, while it was opened new: a restarted
     /// daemon cannot reopen it until it saves, so it opens a new one.
     opened: Option<SessionNewParams>,
     workspace: PathBuf,
     routed: mpsc::UnboundedReceiver<Routed>,
-    /// `rho/config/changed` for the settings last read, on the
-    /// connection the session is attached on.
-    config_changes: mpsc::UnboundedReceiver<ConfigChangedParams>,
-    /// Where the session's requests go.
-    target: watch::Sender<Target>,
     /// The session's options as the daemon last reported them.
     options: Option<SessionOptions>,
     events: DaemonEvents,
     /// Which of the attachment's events are its replay.
     position: StreamPosition,
-    /// Views made outside the event stream, shown with the next views:
-    /// the attach response's, such as the reset replay's
-    /// [`DaemonView::Clear`], and a refused answer's or hold's.
-    pending: Vec<DaemonView>,
     /// Set once the daemon ended the attachment; nothing more arrives.
     ended: bool,
-    requests: Option<DaemonRequests>,
     /// Kept across cancelled `next_views` waits; never restart an attach
     /// merely because the TUI handled a key or redrew.
     reattach: Option<Reattach>,
-    /// The events of the interactive login under way, if any.
-    logins: Option<mpsc::UnboundedReceiver<LoginEvent>>,
     /// Whether the session's tool sources still load.
     tool_sources: ToolSources,
     /// The one watch of them while they load, started by each attach:
@@ -145,155 +167,82 @@ pub(crate) struct DaemonSession {
     tool_source_watch: Option<tool_sources::Watch>,
 }
 
+impl Attachment {
+    /// Whether the daemon has a file for the session; `requests` says
+    /// whether a change saved rows to it.
+    fn is_saved(&self, requests: Option<&DaemonRequests>) -> bool {
+        self.keeps_file && (self.saved || requests.is_some_and(DaemonRequests::saved_rows))
+    }
+}
+
 impl DaemonSession {
-    /// Opens or resumes `target` as `launch` says, attaches to it, and
+    /// Resumes saved session `id` as `launch` says, attaches to it, and
     /// applies `settings`, at launch. The daemon starts when none runs.
     /// A daemon of another build than this process shows its notice,
     /// once: a session the TUI switches to reaches the same daemon.
     pub(crate) async fn open(
         launch: DaemonLaunch,
-        target: DaemonTarget,
+        id: SessionId,
         settings: InitialSettings,
     ) -> anyhow::Result<Self> {
-        let mut session = Self::follow(launch, target, settings).await?;
-        let skew = session.daemon.current().await.and_then(|link| link.skew());
-        if let Some(skew) = skew {
-            session.pending.push(DaemonView::Notice(skew.to_string()));
-        }
+        let mut session = Self::follow(launch, id, settings).await?;
+        session.show_skew().await;
         Ok(session)
     }
 
-    /// Opens or resumes `target` as `launch` says, on a connection of
-    /// its own, attaches to it, and applies `settings`. The daemon
-    /// starts when none runs.
+    /// Connects to the daemon, which starts when none runs, for a new
+    /// session the first prompt opens with `options`, at launch. A daemon
+    /// of another build shows its notice, as [`Self::open`] says.
+    pub(crate) async fn draft(launch: DaemonLaunch, options: DraftOptions) -> anyhow::Result<Self> {
+        let mut session = Self::drafted(launch, options).await?;
+        session.show_skew().await;
+        Ok(session)
+    }
+
+    /// Shows the notice of a daemon of another build than this process.
+    async fn show_skew(&mut self) {
+        let skew = self.daemon.current().await.and_then(|link| link.skew());
+        if let Some(skew) = skew {
+            self.pending.push(DaemonView::Notice(skew.to_string()));
+        }
+    }
+
+    /// Resumes saved session `id` as `launch` says, on a connection of its
+    /// own, attaches to it, and applies `settings`. The daemon starts when
+    /// none runs.
     async fn follow(
         launch: DaemonLaunch,
-        target: DaemonTarget,
+        id: SessionId,
         settings: InitialSettings,
     ) -> anyhow::Result<Self> {
-        let daemon = Arc::new(Daemon::for_frontend());
-        let (id, opened) = match target {
-            DaemonTarget::New => {
-                let params = SessionNewParams {
-                    cwd: launch.cwd.clone(),
-                    environment: ClientEnvironment::of_this_process(),
-                    agent: launch.agent.clone(),
-                    setup: launch.setup.clone(),
-                    parent: None,
-                    grant: None,
-                    worktree: false,
-                };
-                let created = daemon
-                    .request::<SessionNew>(&params)
-                    .await
-                    .context("could not open a daemon session")?;
-                (created.session, Some(params))
-            }
-            DaemonTarget::Resume(session) => (session, None),
-        };
-        // Routed before the attach, so the replay that follows its
-        // response is not dropped.
-        let routed = route(&daemon, &id);
-        let params = SessionAttachParams {
-            session: id.clone(),
-            after: None,
-            environment: ClientEnvironment::of_this_process(),
-            setup: launch.setup.clone(),
-        };
-        let mut response = match daemon.request::<SessionAttach>(&params).await {
-            Ok(response) => response,
-            Err(error) => {
-                daemon.unroute(&id);
-                return Err(anyhow::Error::new(error)
-                    .context(format!("could not attach to daemon session {id}")));
-            }
-        };
-        let link = daemon.current().await.context(LOST)?;
-        // After the attach, which loads a saved session. The daemon
-        // also sends each change's options on the session's stream.
-        let at_rest = !matches!(
-            response.state,
-            JobState::Queued | JobState::Running | JobState::WaitingForInput
-        );
-        // A change waits for the turn under way, which may wait for
-        // this client: those go through the request queue once the
-        // session is followed, and a refusal shows as a row.
-        let mut queued = Vec::new();
-        let required = |changes: Vec<LaunchChange>| -> Vec<SessionChange> {
-            changes
-                .into_iter()
-                .map(|change| change.of(&response.options))
-                .collect()
-        };
-        let changed = match settings {
-            InitialSettings::Kept => None,
-            InitialSettings::Required(changes) if !at_rest => {
-                queued = required(changes);
-                None
-            }
-            InitialSettings::Required(changes) => {
-                match configure_all(&link, &id, required(changes)).await {
-                    Ok(options) => options,
-                    Err(refused) => {
-                        let Refused { change, error } = *refused;
-                        daemon.unroute(&id);
-                        return Err(anyhow::Error::new(error).context(format!(
-                            "could not set the session's {}",
-                            setting_name(&change)
-                        )));
-                    }
-                }
-            }
-            InitialSettings::Carried(carried) => {
-                carry(&link, &id, changes_between(&response.options, &carried)).await
-            }
-        };
-        // The session's options are what the changes left, not what
-        // the attach answered before them: the chrome shows them, and
-        // a `/new` sent before the stream's own report of the changes
-        // is read carries them on.
-        if let Some(changed) = changed {
-            response.options = changed;
-        }
-        // Routed before the reads, so no change after them is dropped.
-        let config_changes = route_config(&daemon);
-        let settings = load_settings(&link).await;
-        let tool_sources = ToolSources::read(&link, &id).await;
-        let tool_source_watch = tool_sources::Watch::of(tool_sources, &link, &id);
+        let Connection {
+            daemon,
+            link: _,
+            config_changes,
+            settings: read,
+        } = Connection::open().await?;
+        let Attached {
+            attachment,
+            link,
+            views,
+            queued,
+        } = Self::attach(&daemon, id, /*opened*/ None, &launch, settings).await?;
         let (target, requests) = watch::channel(Target::Attached {
             link,
-            session: id.clone(),
+            session: attachment.id.clone(),
         });
-        let mut events = DaemonEvents::default();
-        let pending = begin_replay(&mut events, &response);
-        let mut session = Self {
-            position: StreamPosition::attached(&response),
+        let mut pending = views;
+        pending.push(settings_loaded(read));
+        let session = Self {
+            requests: Some(DaemonRequests::new(requests, Arc::clone(&daemon))),
             daemon,
-            id,
-            saved: opened.is_none() || response.title.is_some(),
-            keeps_file: !opened.as_ref().is_some_and(|opened| {
-                opened
-                    .setup
-                    .without
-                    .contains(&rho_protocol::SessionPart::Saving)
-            }),
             launch,
-            opened,
-            workspace: response.workspace,
-            routed,
             config_changes,
             target,
-            options: Some(response.options.clone()),
-            events,
             pending,
-            ended: false,
-            requests: Some(DaemonRequests::new(requests)),
-            reattach: None,
             logins: None,
-            tool_sources,
-            tool_source_watch,
+            following: Following::Attached(Box::new(attachment)),
         };
-        session.pending.push(settings_loaded(settings));
         for change in queued {
             session
                 .requests
@@ -309,7 +258,7 @@ impl DaemonSession {
     /// requests fail.
     #[cfg(test)]
     pub(in crate::tui) fn ended_for_tests(cwd: PathBuf) -> Self {
-        use rho_protocol::Replay;
+        use rho_protocol::{JobState, Replay};
 
         let response = crate::app::daemon_client::test_support::attach_response(
             Replay::Reset,
@@ -318,68 +267,88 @@ impl DaemonSession {
             /*turn*/ None,
         );
         Self {
-            position: StreamPosition::attached(&response),
             daemon: Arc::new(Daemon::for_frontend()),
-            id: SessionId::new("test-session"),
-            saved: false,
-            keeps_file: true,
             launch: DaemonLaunch {
                 cwd: cwd.clone(),
                 agent: None,
                 setup: rho_protocol::SessionSetup::default(),
+                config: Arc::default(),
             },
-            opened: None,
-            workspace: cwd,
-            routed: mpsc::unbounded_channel().1,
             config_changes: mpsc::unbounded_channel().1,
             target: watch::channel(Target::Ended).0,
-            options: None,
-            events: DaemonEvents::default(),
             pending: Vec::new(),
-            ended: true,
             requests: None,
-            reattach: None,
             logins: None,
-            tool_sources: ToolSources::Loaded,
-            tool_source_watch: None,
+            following: Following::Attached(Box::new(Attachment {
+                position: StreamPosition::attached(&response),
+                id: SessionId::new("test-session"),
+                saved: false,
+                keeps_file: true,
+                opened: None,
+                workspace: cwd,
+                routed: mpsc::unbounded_channel().1,
+                options: None,
+                events: DaemonEvents::default(),
+                ended: true,
+                reattach: None,
+                tool_sources: ToolSources::Loaded,
+                tool_source_watch: None,
+            })),
         }
     }
 
     /// This session, as one the daemon has saved.
     #[cfg(test)]
     pub(in crate::tui) fn saved_for_tests(mut self) -> Self {
-        self.saved = true;
+        if let Following::Attached(attachment) = &mut self.following {
+            attachment.saved = true;
+        }
         self
     }
 
-    /// Opens `target` on a connection of its own, to follow in this
-    /// session's place: with this launch's setup, and a new session
-    /// with the settings this one has now. This session keeps running
-    /// in the daemon until the caller drops it, which detaches it.
+    /// Follows `target` in this session's place, on a connection of its
+    /// own: with this launch's setup, and a new session with the settings
+    /// this one has now. This session keeps running in the daemon until
+    /// the caller drops it, which detaches it.
     pub(in crate::tui) async fn open_sibling(&self, target: DaemonTarget) -> anyhow::Result<Self> {
-        let settings = match (&target, &self.options) {
-            (DaemonTarget::New, Some(options)) => {
-                InitialSettings::Carried(Box::new(options.clone()))
+        match target {
+            DaemonTarget::New => {
+                let options = match &self.following {
+                    Following::Draft(draft) => draft.options.clone(),
+                    Following::Attached(attachment) => {
+                        let config = (*self.launch.config).clone();
+                        let auths = available_auths(Arc::new(AppCredentialStore)).await;
+                        let added_dirs = self.launch.setup.additional_directories.clone();
+                        match &attachment.options {
+                            Some(options) => {
+                                DraftOptions::carried(options, config, auths, added_dirs)
+                            }
+                            None => DraftOptions::new(config, auths, Vec::new(), added_dirs),
+                        }
+                    }
+                };
+                Self::drafted(self.launch.clone(), options).await
             }
-            (DaemonTarget::New, None) | (DaemonTarget::Resume(_), _) => InitialSettings::Kept,
-        };
-        Self::follow(self.launch.clone(), target, settings).await
+            DaemonTarget::Resume(id) => {
+                Self::follow(self.launch.clone(), id, InitialSettings::Kept).await
+            }
+        }
+    }
+
+    /// The followed session's attachment, once the daemon opened it.
+    fn attachment(&self) -> Option<&Attachment> {
+        match &self.following {
+            Following::Attached(attachment) => Some(attachment),
+            Following::Draft(_) => None,
+        }
     }
 
     /// The session's id, once a resume, saved title, or catalog lookup
     /// confirmed it has something to resume.
     pub(crate) fn saved_id(&self) -> Option<&str> {
-        self.is_saved().then_some(self.id.as_str())
-    }
-
-    /// Whether the daemon has a file for the session.
-    fn is_saved(&self) -> bool {
-        self.keeps_file
-            && (self.saved
-                || self
-                    .requests
-                    .as_ref()
-                    .is_some_and(DaemonRequests::saved_rows))
+        self.attachment()
+            .filter(|attachment| attachment.is_saved(self.requests.as_ref()))
+            .map(|attachment| attachment.id.as_str())
     }
 
     /// What this launch opens its sessions with.
@@ -393,9 +362,16 @@ impl DaemonSession {
         Arc::clone(&self.daemon)
     }
 
-    /// The directory the session works in, as the daemon reports it.
+    /// The directory the session works in, as the daemon reports it, or
+    /// the launch's before the session opened.
     pub(crate) fn workspace(&self) -> &Path {
-        &self.workspace
+        self.attachment()
+            .map_or(&self.launch.cwd, |attachment| &attachment.workspace)
+    }
+
+    /// Whether the followed attachment ended; one not opened yet never has.
+    fn ended(&self) -> bool {
+        self.attachment().is_some_and(|attachment| attachment.ended)
     }
 
     /// What the daemon sent since the last call, mapped; waits for a
@@ -405,7 +381,7 @@ impl DaemonSession {
     /// Cancel-safe: the reattach future stays in the session, and no
     /// queued views are taken until the wait finishes.
     pub(super) async fn next_views(&mut self) -> Vec<DaemonView> {
-        if self.ended {
+        if self.ended() {
             return std::future::pending().await;
         }
         if let Some(mut views) = self.finish_reattach().await {
@@ -424,8 +400,11 @@ impl DaemonSession {
         let mut views = Vec::new();
         tokio::select! {
             biased;
-            routed = self.routed.recv() => self.read(routed, &mut views),
-            Some(error) = self.requests.as_mut().expect("attached session has requests").views.recv() => {
+            next = next_of(&mut self.following) => match next {
+                Next::Routed(routed) => self.read(routed, &mut views),
+                Next::ToolSourcesLoaded => views.push(DaemonView::ToolSourcesLoaded),
+            },
+            Some(error) = self.requests.as_mut().expect("followed session has requests").views.recv() => {
                 views.push(error);
             }
             Some(changed) = self.config_changes.recv() => {
@@ -433,10 +412,6 @@ impl DaemonSession {
             }
             Some(update) = auth::next_login(&mut self.logins) => {
                 views.push(DaemonView::Login(update));
-            }
-            () = tool_sources::loaded(&mut self.tool_source_watch) => {
-                self.tool_sources = ToolSources::Loaded;
-                views.push(DaemonView::ToolSourcesLoaded);
             }
         }
         // A settings change that arrived meanwhile rides along, so a
@@ -464,10 +439,16 @@ impl DaemonSession {
             }
         }
         self.take_settings_changes(&mut views);
-        if !self.ended && self.reattach.is_none() {
-            if let Ok(first) = self.routed.try_recv() {
-                self.read(Some(first), &mut views);
+        let first = match &mut self.following {
+            Following::Attached(attachment)
+                if !attachment.ended && attachment.reattach.is_none() =>
+            {
+                attachment.routed.try_recv().ok()
             }
+            Following::Attached(_) | Following::Draft(_) => None,
+        };
+        if let Some(first) = first {
+            self.read(Some(first), &mut views);
         }
         views
     }
@@ -476,8 +457,11 @@ impl DaemonSession {
     /// attachment it came back with, or ends following when it failed;
     /// the views to show, `pending` first.
     async fn finish_reattach(&mut self) -> Option<Vec<DaemonView>> {
-        let reattached = self.reattach.as_mut()?.await;
-        self.reattach = None;
+        let Following::Attached(attachment) = &mut self.following else {
+            return None;
+        };
+        let reattached = attachment.reattach.as_mut()?.await;
+        attachment.reattach = None;
         let mut views = std::mem::take(&mut self.pending);
         let mut lost_conversation = false;
         let mut skew = None;
@@ -494,35 +478,37 @@ impl DaemonSession {
                 {
                     // A session with no file that took a prompt: the
                     // new session in its place has none of it.
-                    lost_conversation = session != self.id && self.saved && !self.keeps_file;
+                    lost_conversation =
+                        session != attachment.id && attachment.saved && !attachment.keeps_file;
                     self.config_changes = config_changes;
                     views.push(settings_loaded(settings));
                     let status = format!("reconnected to rho daemon {}", link.daemon().version);
-                    views.push(DaemonView::Status(if session == self.id {
+                    views.push(DaemonView::Status(if session == attachment.id {
                         status
                     } else {
                         // It had saved nothing the restarted daemon could reopen.
                         format!("{status} (new session)")
                     }));
-                    self.id = session.clone();
-                    self.routed = routed;
+                    attachment.id = session.clone();
+                    attachment.routed = routed;
                     // A prompt waits again while the restarted daemon
                     // loads the session's tool sources again.
-                    self.tool_source_watch = tool_sources::Watch::of(tool_sources, &link, &session);
-                    if self.tool_sources == ToolSources::Loading
+                    attachment.tool_source_watch =
+                        tool_sources::Watch::of(tool_sources, &link, &session);
+                    if attachment.tool_sources == ToolSources::Loading
                         && tool_sources == ToolSources::Loaded
                     {
                         views.push(DaemonView::ToolSourcesLoaded);
                     }
-                    self.tool_sources = tool_sources;
+                    attachment.tool_sources = tool_sources;
                     skew = link.skew();
                     self.target.send_replace(Target::Attached { link, session });
                 }
-                self.position.reattached(&response);
-                self.options = Some(response.options.clone());
-                self.saved |= response.title.is_some();
-                self.workspace = response.workspace.clone();
-                views.extend(begin_replay(&mut self.events, &response));
+                attachment.position.reattached(&response);
+                attachment.options = Some(response.options.clone());
+                attachment.saved |= response.title.is_some();
+                attachment.workspace = response.workspace.clone();
+                views.extend(begin_replay(&mut attachment.events, &response));
                 // After the replay, which clears the transcript.
                 if lost_conversation {
                     views.push(DaemonView::Notice(
@@ -543,40 +529,33 @@ impl DaemonSession {
         Some(views)
     }
 
-    /// The params that attach the session again after its cursor.
-    fn reattach_params(&self) -> SessionAttachParams {
-        SessionAttachParams {
-            session: self.id.clone(),
-            after: self.position.cursor().cloned(),
-            environment: ClientEnvironment::of_this_process(),
-            setup: self.launch.setup.clone(),
-        }
-    }
-
     /// Maps `first` and everything queued behind it into `views`;
     /// `None` is a closed route.
     fn read(&mut self, first: Option<Routed>, views: &mut Vec<DaemonView>) {
         let mut next = first;
         loop {
+            let Following::Attached(attachment) = &mut self.following else {
+                return;
+            };
             match next {
                 Some(Routed::Event { seq, event }) => {
-                    let part = self.position.observe(seq);
+                    let part = attachment.position.observe(seq);
                     match &event {
-                        rho_protocol::SessionEvent::TitleChanged { .. } => self.saved = true,
+                        rho_protocol::SessionEvent::TitleChanged { .. } => attachment.saved = true,
                         rho_protocol::SessionEvent::OptionsChanged { options } => {
-                            self.options = Some((**options).clone());
+                            attachment.options = Some((**options).clone());
                         }
                         _ => {}
                     }
-                    views.extend(self.events.map(event));
+                    views.extend(attachment.events.map(event));
                     if let Part::Replayed { left: 0, .. } = part {
-                        views.extend(self.events.end_replay());
+                        views.extend(attachment.events.end_replay());
                     }
                 }
                 Some(Routed::Detached(DetachReason::Lagged)) => {
                     let daemon = Arc::clone(&self.daemon);
-                    let params = self.reattach_params();
-                    self.reattach = Some(Box::pin(async move {
+                    let params = reattach_params(attachment, &self.launch);
+                    attachment.reattach = Some(Box::pin(async move {
                         // Lagged ends the subscription, not the connection.
                         // A lost connection still ends following, never sends
                         // prompts or answers on a new unseen attachment.
@@ -593,25 +572,25 @@ impl DaemonSession {
                     views.push(DaemonView::Status(RECONNECTING.into()));
                     // Its connection closes next, and a read that fails
                     // counts as loaded: the reattach reads them again.
-                    self.tool_source_watch = None;
+                    attachment.tool_source_watch = None;
                     // The connection the session is attached on, taken
                     // now: the daemon closes it next.
                     let old = match self.target.send_replace(Target::Reconnecting) {
                         Target::Attached { link, .. } => Some(link),
-                        Target::Reconnecting | Target::Ended => None,
+                        Target::Unopened | Target::Reconnecting | Target::Ended => None,
                     };
                     let relink = Relink {
                         daemon: Arc::clone(&self.daemon),
-                        params: self.reattach_params(),
+                        params: reattach_params(attachment, &self.launch),
                         // Only a session that saved nothing can be
                         // missing from the restarted daemon.
-                        opened: self
+                        opened: attachment
                             .opened
                             .clone()
-                            .filter(|_| !self.is_saved())
-                            .map(|opened| (opened, self.options.clone())),
+                            .filter(|_| !attachment.is_saved(self.requests.as_ref()))
+                            .map(|opened| (opened, attachment.options.clone())),
                     };
-                    self.reattach = Some(Box::pin(async move {
+                    attachment.reattach = Some(Box::pin(async move {
                         tokio::time::timeout(DAEMON_RESTART_TIMEOUT, relink.run(old))
                             .await
                             .map_err(|_| {
@@ -635,7 +614,7 @@ impl DaemonSession {
                     return;
                 }
             }
-            match self.routed.try_recv() {
+            match attachment.routed.try_recv() {
                 Ok(routed) => next = Some(routed),
                 // Empty, or closed, which the next call reads as lost.
                 Err(_) => return,
@@ -646,7 +625,9 @@ impl DaemonSession {
     /// The attachment is over: `error` says why, and the TUI stops
     /// showing a turn it can no longer follow.
     fn end(&mut self, error: DaemonView) -> Vec<DaemonView> {
-        self.ended = true;
+        if let Following::Attached(attachment) = &mut self.following {
+            attachment.ended = true;
+        }
         self.target.send_replace(Target::Ended);
         let mut views = vec![
             error,
@@ -677,21 +658,37 @@ impl DaemonSession {
     async fn attached_link(&self) -> anyhow::Result<Arc<Link>> {
         match &*self.target.borrow() {
             Target::Attached { link, .. } if link.is_alive() => Ok(Arc::clone(link)),
+            Target::Unopened => anyhow::bail!(NOT_OPENED),
             Target::Attached { .. } | Target::Reconnecting | Target::Ended => {
                 anyhow::bail!(LOST)
             }
         }
     }
 
-    /// Starts a turn of `content`. Once this returns, the views of what
-    /// the daemon sent before it answered, such as the turn's start, are
-    /// waiting for [`Self::take_views`], and the session is saved: the
-    /// daemon answers once the turn saved its prompt.
+    /// The connection requests about the daemon rather than the session
+    /// go on: the attached one, or before the session opened, the
+    /// daemon's, connecting again when it closed.
+    async fn connected_link(&self) -> anyhow::Result<Arc<Link>> {
+        if matches!(*self.target.borrow(), Target::Unopened) {
+            return Ok(self.daemon.link().await?);
+        }
+        self.attached_link().await
+    }
+
+    /// Starts a turn of `content` in the opened session. Once this returns, the views of what the daemon
+    /// sent before it answered, such as the turn's start, are waiting for
+    /// [`Self::take_views`], and the session is saved: the daemon answers
+    /// once the turn saved its prompt.
     pub(in crate::tui) async fn prompt(
         &mut self,
         content: Vec<ContentBlock>,
         author: rho_protocol::PromptAuthor,
     ) -> anyhow::Result<()> {
+        // The app opens a new session first (`open_daemon_draft`), so a
+        // failure reads as the open's own.
+        if self.is_draft() {
+            anyhow::bail!(NOT_OPENED);
+        }
         // A restart the TUI has not caught up with yet: attach again
         // first, so the prompt reaches the restarted daemon.
         let mut views = self.take_views();
@@ -708,7 +705,9 @@ impl DaemonSession {
         // which may be after its turn already saved the prompt: the
         // daemon runs it once.
         self.await_answer(answer).await?;
-        self.saved = true;
+        if let Following::Attached(attachment) = &mut self.following {
+            attachment.saved = true;
+        }
         Ok(())
     }
 
@@ -721,10 +720,13 @@ impl DaemonSession {
         mut answer: oneshot::Receiver<anyhow::Result<()>>,
     ) -> anyhow::Result<()> {
         loop {
-            if self.ended {
+            let Following::Attached(attachment) = &mut self.following else {
+                return answer.await.unwrap_or_else(|_| Err(anyhow::anyhow!(LOST)));
+            };
+            if attachment.ended {
                 return answer.await.unwrap_or_else(|_| Err(anyhow::anyhow!(LOST)));
             }
-            if self.reattach.is_some() {
+            if attachment.reattach.is_some() {
                 tokio::select! {
                     biased;
                     sent = &mut answer => {
@@ -740,7 +742,7 @@ impl DaemonSession {
                     sent = &mut answer => {
                         return sent.unwrap_or_else(|_| Err(anyhow::anyhow!(LOST)));
                     }
-                    routed = self.routed.recv() => {
+                    routed = attachment.routed.recv() => {
                         let mut views = Vec::new();
                         self.read(routed, &mut views);
                         self.pending.extend(views);
@@ -750,114 +752,52 @@ impl DaemonSession {
         }
     }
 
-    /// The session's id, saved or not.
-    pub(in crate::tui) fn id(&self) -> &str {
-        self.id.as_str()
+    /// The session's id, saved or not, once the daemon opened it.
+    pub(in crate::tui) fn id(&self) -> Option<&str> {
+        self.attachment().map(|attachment| attachment.id.as_str())
     }
 
-    /// Asks the turn under way, if any, to stop. A closed connection
-    /// has already ended what the TUI followed, so it asks nothing.
-    pub(in crate::tui) async fn cancel(&self) -> anyhow::Result<()> {
-        // Only on the connection the session is attached on: one the
-        // TUI reconnects on has no turn of its to cancel yet.
-        let Ok(link) = self.attached_link().await else {
-            return Ok(());
-        };
-        link.request::<SessionCancel>(&SessionCancelParams {
-            session: self.id.clone(),
-        })
-        .await?;
-        Ok(())
+    /// The opened session's id, for requests that need one: the turn's
+    /// and its input requests', which only an opened session has.
+    fn opened_id(&self) -> anyhow::Result<SessionId> {
+        self.attachment()
+            .map(|attachment| attachment.id.clone())
+            .context(NOT_OPENED)
     }
+}
 
-    /// Hands `text` to the running turn's next model request; returns
-    /// the steer's id, which its user message carries once it applies.
-    pub(in crate::tui) async fn steer(&self, text: String) -> anyhow::Result<SteeringId> {
-        let steered = self
-            .attached_link()
-            .await?
-            .request::<SessionSteer>(&SessionSteerParams {
-                session: self.id.clone(),
-                text,
-            })
-            .await;
-        let id = match steered {
-            Ok(response) => response.id,
-            Err(error) => return Err(steer_refused(error)),
-        };
-        SteeringId::from_string(id.as_str())
-            .map_err(|_| anyhow::anyhow!("the rho daemon answered with an empty steer id"))
+/// The params that attach `attachment` again after its cursor, with
+/// `launch`'s setup.
+fn reattach_params(attachment: &Attachment, launch: &DaemonLaunch) -> SessionAttachParams {
+    SessionAttachParams {
+        session: attachment.id.clone(),
+        after: attachment.position.cursor().cloned(),
+        environment: ClientEnvironment::of_this_process(),
+        setup: launch.setup.clone(),
     }
+}
 
-    /// Withdraws steer `id` unless the turn already took it.
-    pub(in crate::tui) async fn unsteer(&self, id: &SteeringId) -> anyhow::Result<UnsteerOutcome> {
-        let withdrawn = self
-            .attached_link()
-            .await?
-            .request::<SessionUnsteer>(&SessionUnsteerParams {
-                session: self.id.clone(),
-                id: SteerId::new(id.as_str()),
-            })
-            .await;
-        match withdrawn {
-            Ok(response) => Ok(response.outcome),
-            Err(error) => Err(steer_refused(error)),
-        }
-    }
+/// What the followed session's attachment brought next.
+enum Next {
+    /// What the router handed it; `None` is a closed route.
+    Routed(Option<Routed>),
+    /// Its tool sources loaded.
+    ToolSourcesLoaded,
+}
 
-    /// Answers input request `id` with `answer`. Once this returns, a
-    /// refusal's views wait for [`Self::take_views`]: an error row, then
-    /// the request again while it is still open. An answer the daemon
-    /// took shows nothing: the prompt already closed.
-    pub(in crate::tui) async fn answer(&mut self, id: InputRequestId, answer: InputAnswer) {
-        self.events.answering(id);
-        let params = SessionAnswerParams {
-            session: self.id.clone(),
-            request: id,
-            answer,
-        };
-        let answered = match self.attached_link().await {
-            Ok(link) => link.request::<SessionAnswer>(&params).await.map_err(Some),
-            Err(_) => Err(None),
-        };
-        let refusal = match answered {
-            Ok(_) => return,
-            Err(Some(error)) if error.error_code() == Some(ErrorCode::InputNotOpen) => {
-                AnswerRefusal::NotOpen
-            }
-            Err(Some(error)) => AnswerRefusal::Failed(format!("{:#}", anyhow::Error::new(error))),
-            // Following ends once the TUI reads the connection's loss.
-            Err(None) => AnswerRefusal::Failed(LOST.to_owned()),
-        };
-        let views = self.events.answer_refused(id, refusal);
-        self.pending.extend(views);
-    }
-
-    /// Stops input request `id`'s timeout, as once the person starts on
-    /// it, and says whether it needs no more holding: the daemon held
-    /// it, it already closed (its resolution says how), or the
-    /// connection is gone. Once a hold fails, its error row waits for
-    /// [`Self::take_views`].
-    pub(in crate::tui) async fn hold(&mut self, id: InputRequestId) -> bool {
-        let params = SessionHoldParams {
-            session: self.id.clone(),
-            request: id,
-        };
-        // Without the attached connection there is nothing to hold for:
-        // following ends once the TUI reads its loss.
-        let Ok(link) = self.attached_link().await else {
-            return true;
-        };
-        match link.request::<SessionHold>(&params).await {
-            Ok(_) => true,
-            Err(error) if error.error_code() == Some(ErrorCode::InputNotOpen) => true,
-            Err(error) => {
-                self.pending.push(DaemonView::Error(format!(
-                    "could not hold the request: {:#}",
-                    anyhow::Error::new(error)
-                )));
-                false
-            }
+/// The next of what the followed session's attachment brings: what the
+/// router hands it, or its tool sources loading. Never before the session
+/// opened. Cancel-safe.
+async fn next_of(following: &mut Following) -> Next {
+    let Following::Attached(attachment) = following else {
+        return std::future::pending().await;
+    };
+    tokio::select! {
+        biased;
+        routed = attachment.routed.recv() => Next::Routed(routed),
+        () = tool_sources::loaded(&mut attachment.tool_source_watch) => {
+            attachment.tool_sources = ToolSources::Loaded;
+            Next::ToolSourcesLoaded
         }
     }
 }
@@ -884,15 +824,6 @@ fn begin_replay(events: &mut DaemonEvents, response: &SessionAttachResponse) -> 
         views.extend(events.end_replay());
     }
     views
-}
-
-/// Why a steer, or its withdrawal, was refused, as the TUI says it.
-fn steer_refused(error: ClientError) -> anyhow::Error {
-    if error.error_code() == Some(ErrorCode::NotSteerable) {
-        anyhow::anyhow!("no model request is taking input")
-    } else {
-        anyhow::Error::new(error)
-    }
 }
 
 fn lost() -> DaemonView {

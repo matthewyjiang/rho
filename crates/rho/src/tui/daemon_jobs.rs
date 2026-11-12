@@ -189,10 +189,15 @@ impl App {
             self.daemon_rail.jobs.answered(/*shows*/ true);
             return;
         };
-        let session = self.info.session.daemon.id().to_owned();
         let now = subagent::unix_now_secs();
-        let workflows = rail_jobs(&jobs, &session, JobKind::Workflow, now);
-        let subagents = rail_jobs(&jobs, &session, JobKind::Subagent, now);
+        // A session not opened yet runs nothing.
+        let (workflows, subagents) = match self.info.session.daemon.id() {
+            Some(session) => (
+                rail_jobs(&jobs, session, JobKind::Workflow, now),
+                rail_jobs(&jobs, session, JobKind::Subagent, now),
+            ),
+            None => (Vec::new(), Vec::new()),
+        };
         self.daemon_rail
             .jobs
             .answered(!workflows.is_empty() || !subagents.is_empty());

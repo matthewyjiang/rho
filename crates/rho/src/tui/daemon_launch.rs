@@ -9,11 +9,14 @@ pub(crate) struct DaemonLaunch {
     /// The agent a new session runs as; a resumed one runs as it was saved.
     pub(crate) agent: Option<String>,
     pub(crate) setup: rho_protocol::SessionSetup,
+    /// The launch's settled config, which a new session's options are
+    /// built from until its first prompt opens it in the daemon.
+    pub(crate) config: std::sync::Arc<crate::config::Config>,
 }
 
 /// Which session the TUI follows.
 pub(crate) enum DaemonTarget {
-    /// A new session the daemon opens.
+    /// A new session, which the daemon opens with its first prompt.
     New,
     /// The saved session with this id, which the daemon reopens unless it
     /// has it loaded.
@@ -61,7 +64,4 @@ pub(crate) enum InitialSettings {
     /// Changes the launch asked for; one the daemon refuses fails the open,
     /// unless the session has a turn under way, which they wait for.
     Required(Vec<LaunchChange>),
-    /// The settings of the session it replaces; one the daemon refuses
-    /// keeps its default.
-    Carried(Box<rho_protocol::SessionOptions>),
 }

@@ -1,6 +1,7 @@
 //! The settings a daemon session takes as the TUI opens it: a launch
-//! flag's, which must apply, and the ones carried from the session a `/new`
-//! replaces, which apply where the daemon takes them.
+//! flag's and those chosen before a new session's first prompt, which must
+//! apply, and the ones carried from the session it replaces, after `/new`
+//! or a daemon restart, which apply where the daemon takes them.
 
 use rho_protocol::{
     methods::SessionConfigure, ClientError, SessionChange, SessionConfigureParams, SessionId,
@@ -9,16 +10,31 @@ use rho_protocol::{
 
 use crate::app::daemon_client::Link;
 
+/// How a session reports a change of model it takes as it opens.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ModelChange {
+    /// As its setup, as a launch flag sets it up: nothing to report.
+    Setup,
+    /// As a switch the person made, which names the prompt file the
+    /// session now runs on.
+    Switch,
+}
+
 /// The changes that move a session from the options `from` to `to`, in
 /// the order they apply: a model first, since it decides which
-/// reasoning levels and fast mode the others may pick.
-pub(super) fn changes_between(from: &SessionOptions, to: &SessionOptions) -> Vec<SessionChange> {
+/// reasoning levels and fast mode the others may pick. The session
+/// reports the model's change as `model` says.
+pub(super) fn changes_between(
+    from: &SessionOptions,
+    to: &SessionOptions,
+    model: ModelChange,
+) -> Vec<SessionChange> {
     let mut changes = Vec::new();
     if from.model.current != to.model.current || from.model.auth != to.model.auth {
         changes.push(SessionChange::Model {
             model: to.model.current.clone(),
             auth: Some(to.model.auth.clone()),
-            setup: true,
+            setup: model == ModelChange::Setup,
         });
     }
     if let Some(reasoning) = to.reasoning.as_ref().filter(|reasoning| {

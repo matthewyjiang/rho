@@ -112,11 +112,17 @@ impl App {
         let probes = plan_probes(&config, &self.info.runtime.provider, probe_gate());
         // The session's servers run in the daemon; its answer lands in
         // `apply_doctor_mcp`.
-        let mcp = match self.info.session.daemon.request_mcp() {
-            Ok(()) => DoctorMcp::Reading,
-            // Worded as the read's own error, which `/mcp` shows too.
-            Err(error) => {
-                DoctorMcp::Unreadable(format!("could not read session MCP inventory: {error}"))
+        let mcp = if self.info.session.daemon.is_draft() {
+            // Not worth opening a session for: the rest reads disk and
+            // config.
+            DoctorMcp::Unreadable("the session's MCP servers start with its first prompt".into())
+        } else {
+            match self.info.session.daemon.request_mcp() {
+                Ok(()) => DoctorMcp::Reading,
+                // Worded as the read's own error, which `/mcp` shows too.
+                Err(error) => {
+                    DoctorMcp::Unreadable(format!("could not read session MCP inventory: {error}"))
+                }
             }
         };
         // Read as `rho doctor` reads it: what a session in this workspace

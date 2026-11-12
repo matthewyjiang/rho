@@ -2,7 +2,7 @@
 //! each goes to the session's request queue, and what it answers with
 //! arrives as a view.
 
-use super::{DaemonSession, Target, ToolSources, LOST};
+use super::{DaemonSession, Following, Target, ToolSources, LOST, NOT_OPENED};
 
 impl DaemonSession {
     /// Whether the session's MCP servers still connect, so a prompt waits.
@@ -10,15 +10,24 @@ impl DaemonSession {
     /// connects them again, so a prompt waits until the session attached
     /// there and read them.
     pub(in crate::tui) fn tool_sources_loading(&self) -> bool {
-        self.tool_sources == ToolSources::Loading
+        self.attachment()
+            .is_some_and(|attachment| attachment.tool_sources == ToolSources::Loading)
             || matches!(*self.target.borrow(), Target::Reconnecting)
+    }
+
+    /// Refuses a request about the session before it opened, and one
+    /// once following ended.
+    fn ensure_followed(&self) -> anyhow::Result<()> {
+        match &self.following {
+            Following::Draft(_) => anyhow::bail!(NOT_OPENED),
+            Following::Attached(attachment) if attachment.ended => anyhow::bail!(LOST),
+            Following::Attached(_) => Ok(()),
+        }
     }
 
     /// Request live inventory without waiting for the active turn.
     pub(in crate::tui) fn request_mcp(&self) -> anyhow::Result<()> {
-        if self.ended {
-            anyhow::bail!(LOST);
-        }
+        self.ensure_followed()?;
         self.requests
             .as_ref()
             .expect("attached session has requests")
@@ -31,9 +40,7 @@ impl DaemonSession {
         &self,
         report: rho_protocol::SessionReport,
     ) -> anyhow::Result<()> {
-        if self.ended {
-            anyhow::bail!(LOST);
-        }
+        self.ensure_followed()?;
         self.requests
             .as_ref()
             .expect("attached session has requests")
@@ -46,11 +53,12 @@ impl DaemonSession {
     pub(in crate::tui) async fn provider_context(
         &self,
     ) -> anyhow::Result<crate::app::provider_context_report::ProviderContextReport> {
+        let session = self.opened_id()?;
         let answer = self
             .attached_link()
             .await?
             .request::<rho_protocol::methods::SessionInspect>(&rho_protocol::SessionInspectParams {
-                session: self.id.clone(),
+                session,
                 report: rho_protocol::SessionReport::ProviderContext,
             })
             .await?;
@@ -60,7 +68,7 @@ impl DaemonSession {
     /// Ask for the daemon's jobs without waiting for the active turn;
     /// they arrive as `DaemonView::Jobs`.
     pub(in crate::tui) fn request_jobs(&self) -> anyhow::Result<()> {
-        if self.ended {
+        if self.ended() {
             anyhow::bail!(LOST);
         }
         self.requests
@@ -76,9 +84,7 @@ impl DaemonSession {
         &self,
         output: Option<rho_protocol::ProcessOutputParams>,
     ) -> anyhow::Result<()> {
-        if self.ended {
-            anyhow::bail!(LOST);
-        }
+        self.ensure_followed()?;
         self.requests
             .as_ref()
             .expect("attached session has requests")
@@ -101,9 +107,7 @@ impl DaemonSession {
     /// Rename the session without waiting for the active turn; its
     /// `TitleChanged` event reports the new title.
     pub(in crate::tui) fn rename(&self, title: String) -> anyhow::Result<()> {
-        if self.ended {
-            anyhow::bail!(LOST);
-        }
+        self.ensure_followed()?;
         self.requests
             .as_ref()
             .expect("attached session has requests")
@@ -117,7 +121,7 @@ impl DaemonSession {
         params: rho_protocol::ConfigSetParams,
         label: String,
     ) -> anyhow::Result<()> {
-        if self.ended {
+        if self.ended() {
             anyhow::bail!(LOST);
         }
         self.requests
@@ -127,11 +131,16 @@ impl DaemonSession {
     }
 
     /// Queue a change without waiting for the active turn to release it.
+    /// Before the session opened, the draft takes it.
     pub(in crate::tui) fn configure(
-        &self,
+        &mut self,
         change: rho_protocol::SessionChange,
     ) -> anyhow::Result<()> {
-        if self.ended {
+        if self.is_draft() {
+            self.configure_draft(change);
+            return Ok(());
+        }
+        if self.ended() {
             anyhow::bail!(LOST);
         }
         self.requests
