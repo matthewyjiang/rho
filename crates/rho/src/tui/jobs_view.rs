@@ -308,9 +308,10 @@ impl JobsView {
         if self.waits_on_request(&session) {
             return self.say("could not message job: it waits on a request; answer it first");
         }
-        let text = match self.draft.take() {
-            Some((drafted, text)) if drafted == session => text,
-            Some(_) | None => String::new(),
+        // Another session's draft waits for its own `m`.
+        let text = match self.draft.take_if(|(drafted, _)| *drafted == session) {
+            Some((_, text)) => text,
+            None => String::new(),
         };
         self.mode = Mode::Message { session, text };
     }
