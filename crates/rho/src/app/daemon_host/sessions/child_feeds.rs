@@ -4,8 +4,9 @@
 //!
 //! A run's stream is a [`Feed`] like a loaded session's, with one turn: the
 //! run. It opens when the run opens its session, which may be long after
-//! the run started, while it waits for capacity; an observe meanwhile waits
-//! with it. The stream carries the run's events as its child sends them,
+//! the run started, while it waits for capacity; an observe meanwhile is
+//! refused as any other of a session a job writes, and the client asks
+//! again. The stream carries the run's events as its child sends them,
 //! the run's job states, and how the run ended, then closes. Nobody
 //! attaches to it to prompt, steer, or answer: a run's questions go to its
 //! parent session.
@@ -67,32 +68,17 @@ impl ChildFeeds {
     }
 
     /// Subscribes a client to the stream of the run writing `session`,
-    /// resuming after its cursor when the stream still can, once the run
-    /// has opened the session. `None` when no run under way writes
-    /// `session`, or the run ended before it opened it. A run that gave way
-    /// to another of the same session meanwhile, as a workflow node's next
-    /// attempt, is followed through that one.
-    pub(super) async fn attach(
+    /// resuming after its cursor when the stream still can. `None` when no
+    /// run under way writes `session`, or the run has not opened it yet: an
+    /// observe never waits on a run, which may be queued for long.
+    pub(super) fn attach(
         &self,
         session: &SessionId,
         after: Option<&Cursor>,
     ) -> Option<(SessionAttachResponse, Subscription)> {
-        loop {
-            let Listed {
-                workspace,
-                mut feed,
-            } = self.runs().get(session)?.clone();
-            let opened = feed
-                .wait_for(Option::is_some)
-                .await
-                .ok()
-                .map(|feed| feed.clone());
-            // A run that ended unopened took its listing with it; the next
-            // lookup finds a later run's, or none.
-            if let Some(Some(feed)) = opened {
-                return Some(attach_response(&workspace, feed.attach(after)));
-            }
-        }
+        let listed = self.runs().get(session)?.clone();
+        let feed = listed.feed.borrow().clone()?;
+        Some(attach_response(&listed.workspace, feed.attach(after)))
     }
 
     fn runs(&self) -> MutexGuard<'_, HashMap<SessionId, Listed>> {

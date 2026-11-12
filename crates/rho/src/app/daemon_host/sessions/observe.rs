@@ -53,7 +53,7 @@ impl Sessions {
                 ));
             }
             // A subagent run under way writes it: its stream is the run's.
-            if let Some(observed) = self.subagents.feeds().attach(&id, after).await {
+            if let Some(observed) = self.subagents.feeds().attach(&id, after) {
                 return Ok(observed);
             }
             // Held while reading, so no request loads the session meanwhile

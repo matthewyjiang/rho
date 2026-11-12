@@ -11,9 +11,9 @@ use std::path::Path;
 
 use rho_protocol::{
     methods::{JobList, SessionAttach, SessionObserve},
-    Client, Cursor, DaemonNotification, DetachReason, JobId, JobKind, JobListParams, JobState,
-    JobSummary, Replay, SessionAttachParams, SessionAttachResponse, SessionEvent, SessionId,
-    SessionObserveParams, SessionSetup,
+    Client, ClientError, Cursor, DaemonNotification, DetachReason, ErrorCode, JobId, JobKind,
+    JobListParams, JobState, JobSummary, Replay, SessionAttachParams, SessionAttachResponse,
+    SessionEvent, SessionId, SessionObserveParams, SessionSetup,
 };
 
 use super::{
@@ -151,17 +151,25 @@ async fn follow(id: &str, view: &mut View, lines: Lines) -> Result<(), Automatio
         .jobs;
     let target = resolve(&jobs, id)?;
     let session = target.session().clone();
-    let response = match (attach_session(&client, &target, None).await, &target) {
-        (Ok(response), _) => response,
-        // A run that ended before it opened its session, as one cancelled
-        // while queued, left nothing to follow or replay.
-        (Err(refused), Target::Run { job, .. }) => {
-            return match run_end(&client, job).await? {
-                Some(end) => end,
-                None => Err(refused),
+    let response = loop {
+        match (request_attach(&client, &target, None).await, &target) {
+            (Ok(response), _) => break response,
+            (Err(refused), Target::Run { job, .. }) => {
+                // A run that ended before it opened its session, as one
+                // cancelled while queued, left nothing to follow or replay.
+                if let Some(end) = run_end(&client, job).await? {
+                    return end;
+                }
+                // A run still waiting for capacity, or opening its session,
+                // has no stream yet: the daemon says another job writes
+                // the session.
+                if refused.error_code() != Some(ErrorCode::SessionBusy) {
+                    return Err(attach_refused(&target, &refused));
+                }
+                tokio::time::sleep(RUN_OPEN_POLL).await;
             }
+            (Err(refused), Target::Session(_)) => return Err(attach_refused(&target, &refused)),
         }
-        (Err(refused), Target::Session(_)) => return Err(refused),
     };
     view.started(&session, &response.workspace)?;
     let (mut follow, ending) = Follow::attached(&response);
@@ -201,7 +209,9 @@ async fn follow(id: &str, view: &mut View, lines: Lines) -> Result<(), Automatio
                         // longer does for a session it unloaded.
                         DetachReason::Lagged => {
                             let response =
-                                attach_session(&client, &target, follow.cursor()).await?;
+                                request_attach(&client, &target, follow.cursor())
+                                    .await
+                                    .map_err(|refused| attach_refused(&target, &refused))?;
                             if response.replay == Replay::Reset {
                                 view.restart()?;
                             }
@@ -284,12 +294,20 @@ impl Target {
     }
 }
 
-async fn attach_session(
+/// How often `rho attach` asks again for the stream of a run that has not
+/// opened its session yet.
+//
+// The cadence the TUI lists the daemon's jobs at while a run shows
+// (`RAIL_POLL` in `tui/daemon_jobs.rs`); each ask is one job list and one
+// refused observe.
+const RUN_OPEN_POLL: std::time::Duration = std::time::Duration::from_millis(500);
+
+async fn request_attach(
     client: &Client,
     target: &Target,
     after: Option<&Cursor>,
-) -> Result<SessionAttachResponse, AutomationExit> {
-    let attached = match target {
+) -> Result<SessionAttachResponse, ClientError> {
+    match target {
         Target::Session(session) => {
             let params = SessionAttachParams {
                 session: session.clone(),
@@ -307,13 +325,14 @@ async fn attach_session(
             };
             client.request::<SessionObserve>(&params).await
         }
-    };
-    attached.map_err(|error| {
-        AutomationExit::other(format!(
-            "could not attach to session {}: {error}",
-            target.session()
-        ))
-    })
+    }
+}
+
+fn attach_refused(target: &Target, refused: &ClientError) -> AutomationExit {
+    AutomationExit::other(format!(
+        "could not attach to session {}: {refused}",
+        target.session()
+    ))
 }
 
 /// The exit for a run that had ended by the time it was followed, by where
