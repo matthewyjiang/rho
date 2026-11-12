@@ -2,35 +2,18 @@
 //! the 0700 runtime directory that holds it.
 
 use std::{
-    ffi::OsString,
     fs, io,
     os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt},
-    path::{Path, PathBuf},
+    path::Path,
 };
 
 use tokio::net::{UnixListener, UnixStream};
-
-use rho_protocol::DaemonEndpoint;
 
 use super::files::{current_uid, verify_private_dir, DaemonPathError};
 use crate::daemon::paths::{DaemonPaths, SocketFound};
 
 /// A connection between the daemon and one client.
 pub(in crate::daemon) type Stream = UnixStream;
-
-/// Where the daemon of `rho_home` listens: `daemon.sock` under the
-/// `XDG_RUNTIME_DIR` that `env` gives, as [`DaemonEndpoint::locate`] lays it
-/// out for every client.
-pub(in crate::daemon) fn endpoint(
-    rho_home: &Path,
-    env: impl Fn(&str) -> Option<OsString>,
-) -> Result<DaemonEndpoint, DaemonPathError> {
-    let xdg_runtime_dir = env("XDG_RUNTIME_DIR").map(PathBuf::from);
-    Ok(DaemonEndpoint::locate(
-        rho_home,
-        xdg_runtime_dir.as_deref(),
-    )?)
-}
 
 /// The daemon's listening socket.
 pub(in crate::daemon) struct Listener {

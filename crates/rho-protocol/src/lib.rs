@@ -96,9 +96,7 @@ mod version;
 
 pub use build_id::BuildId;
 pub use client::{Client, ClientError, DaemonNotification, Notifications};
-pub use endpoint::DaemonEndpoint;
-#[cfg(unix)]
-pub use endpoint::SocketPathTooLong;
+pub use endpoint::{DaemonEndpoint, SocketPathTooLong};
 pub use error::ErrorCode;
 pub use forward::ConfigWatch;
 pub use jsonrpc::{

@@ -7,7 +7,7 @@
 //!
 //! | Concern | Items |
 //! |---|---|
-//! | Endpoint | [`endpoint`], [`Listener`], [`Stream`], [`connect`], [`connect_restarting`], [`remove_endpoint`], [`inspect_endpoint`] |
+//! | Endpoint | [`Listener`], [`Stream`], [`connect`], [`connect_restarting`], [`remove_endpoint`], [`inspect_endpoint`] |
 //! | Private files | [`DaemonPathError`], [`create_private_dir`], [`prepare_private_dir`], [`create_private_file`], [`sync_dir`], [`open_lock_file`], [`open_log_file`], [`FileIdentity`], [`running_identity`], [`account_lock_path`], [`lock_account_file`] |
 //! | Process | [`spawn_detached`], [`MACHINE_VARIABLES`], [`is_variable`], [`request_stop`], [`StopRequests`], [`stderr_is_journal_stream`] |
 //! | Restart | [`relaunch`], [`take_handoff`] |
@@ -58,9 +58,9 @@ pub(crate) use imp::{
     REPLACEABLE_WHILE_RUNNING,
 };
 pub(super) use imp::{
-    connect, connect_restarting, endpoint, inspect_endpoint, is_variable, open_lock_file,
-    open_log_file, prepare_private_dir, relaunch, remove_endpoint, request_stop, running_identity,
-    spawn_detached, stop_service, take_handoff, Listener, Stream, MACHINE_VARIABLES,
+    connect, connect_restarting, inspect_endpoint, is_variable, open_lock_file, open_log_file,
+    prepare_private_dir, relaunch, remove_endpoint, request_stop, running_identity, spawn_detached,
+    stop_service, take_handoff, Listener, Stream, MACHINE_VARIABLES,
 };
 
 #[cfg(test)]

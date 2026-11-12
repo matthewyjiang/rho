@@ -64,18 +64,16 @@ impl DaemonPaths {
         rho_home: &Path,
         env: impl Fn(&str) -> Option<OsString>,
     ) -> Result<Self, DaemonPathError> {
-        let DaemonEndpoint {
-            runtime_dir,
-            socket,
-        } = platform::endpoint(rho_home, env)?;
+        let xdg_runtime_dir = env("XDG_RUNTIME_DIR").map(PathBuf::from);
+        let endpoint = DaemonEndpoint::locate(rho_home, xdg_runtime_dir.as_deref())?;
         let state_dir = rho_home.join("daemon");
         Ok(Self {
             lock: state_dir.join("daemon.lock"),
             info_file: state_dir.join("daemon.json"),
             log_file: rho_home.join("logs").join("daemon.log"),
             state_dir,
-            socket,
-            runtime_dir,
+            socket: endpoint.socket,
+            runtime_dir: endpoint.runtime_dir,
             home: rho_home.to_owned(),
         })
     }

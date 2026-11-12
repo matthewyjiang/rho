@@ -12,6 +12,7 @@ use sha2::{Digest, Sha256};
 /// home (see [`DaemonEndpoint::locate`]), so two homes never reach the same
 /// daemon.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct DaemonEndpoint {
     /// The private directory that holds the daemon's spawn lock and, on
     /// Unix, its socket.
@@ -22,9 +23,9 @@ pub struct DaemonEndpoint {
 }
 
 /// A Unix socket path over the platform's limit, which `bind(2)` would
-/// truncate.
-#[cfg(unix)]
+/// truncate. Never returned on Windows, whose pipe names have no such limit.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
 #[error(
     "rho daemon socket path {path} is {len} bytes, over the {max}-byte Unix socket path limit on this platform; point RHO_HOME or XDG_RUNTIME_DIR at a shorter directory"
 )]
@@ -46,49 +47,51 @@ const SUN_PATH_BYTES: usize = 104;
 const MAX_SOCKET_PATH_BYTES: usize = SUN_PATH_BYTES - 1;
 
 impl DaemonEndpoint {
-    /// Where the daemon of `rho_home` listens: `daemon.sock` in
-    /// `$XDG_RUNTIME_DIR/rho/<home id>` when `xdg_runtime_dir` is an
-    /// absolute path, else in `<rho home>/run`. `rho_home` is the home's
-    /// canonical path, so every spelling of one home finds one socket.
+    /// Where the daemon of `rho_home`, the home's canonical path, listens,
+    /// so every spelling of one home finds one endpoint.
     ///
-    /// The per-user `$XDG_RUNTIME_DIR` is shared by every rho home of that
-    /// user, so the socket goes in a subdirectory named after the home; two
-    /// homes never reach the same daemon. A relative `XDG_RUNTIME_DIR` is
-    /// invalid by the XDG spec and ignored.
-    #[cfg(unix)]
+    /// On Unix: `daemon.sock` in `$XDG_RUNTIME_DIR/rho/<home id>` when
+    /// `xdg_runtime_dir` is an absolute path, else in `<rho home>/run`. The
+    /// per-user `$XDG_RUNTIME_DIR` is shared by every rho home of that user,
+    /// so the socket goes in a subdirectory named after the home; two homes
+    /// never reach the same daemon. A relative `XDG_RUNTIME_DIR` is invalid
+    /// by the XDG spec and ignored.
+    ///
+    /// On Windows: the pipe `\\.\pipe\rho-daemon-<home id>`, and
+    /// `xdg_runtime_dir` is ignored. Pipes live in one namespace for the
+    /// whole machine and not in a directory, so the runtime directory,
+    /// `<rho home>\run`, holds only the spawn lock.
     pub fn locate(
         rho_home: &Path,
         xdg_runtime_dir: Option<&Path>,
     ) -> Result<Self, SocketPathTooLong> {
-        let runtime_dir = match xdg_runtime_dir.filter(|dir| dir.is_absolute()) {
-            Some(dir) => dir.join("rho").join(home_id(rho_home)),
-            None => rho_home.join("run"),
-        };
-        let socket = runtime_dir.join("daemon.sock");
-        let len = socket.as_os_str().len();
-        if len > MAX_SOCKET_PATH_BYTES {
-            return Err(SocketPathTooLong {
-                path: socket,
-                len,
-                max: MAX_SOCKET_PATH_BYTES,
-            });
+        #[cfg(unix)]
+        {
+            let runtime_dir = match xdg_runtime_dir.filter(|dir| dir.is_absolute()) {
+                Some(dir) => dir.join("rho").join(home_id(rho_home)),
+                None => rho_home.join("run"),
+            };
+            let socket = runtime_dir.join("daemon.sock");
+            let len = socket.as_os_str().len();
+            if len > MAX_SOCKET_PATH_BYTES {
+                return Err(SocketPathTooLong {
+                    path: socket,
+                    len,
+                    max: MAX_SOCKET_PATH_BYTES,
+                });
+            }
+            Ok(Self {
+                runtime_dir,
+                socket,
+            })
         }
-        Ok(Self {
-            runtime_dir,
-            socket,
-        })
-    }
-
-    /// Where the daemon of `rho_home`, the home's canonical path, listens:
-    /// the pipe `\\.\pipe\rho-daemon-<home id>`, so two homes never reach
-    /// the same daemon. Pipes live in one namespace for the whole machine
-    /// and not in a directory, so the runtime directory, `<rho home>\run`,
-    /// holds only the spawn lock.
-    #[cfg(windows)]
-    pub fn locate(rho_home: &Path) -> Self {
-        Self {
-            runtime_dir: rho_home.join("run"),
-            socket: format!(r"\\.\pipe\rho-daemon-{}", home_id(rho_home)).into(),
+        #[cfg(windows)]
+        {
+            let _ = xdg_runtime_dir;
+            Ok(Self {
+                runtime_dir: rho_home.join("run"),
+                socket: format!(r"\\.\pipe\rho-daemon-{}", home_id(rho_home)).into(),
+            })
         }
     }
 }

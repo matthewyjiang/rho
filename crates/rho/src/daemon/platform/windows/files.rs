@@ -13,6 +13,10 @@ use std::{
 /// Why the daemon's files cannot be used.
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
 pub(crate) enum DaemonPathError {
+    /// Never on Windows, whose pipe names have no length limit; here
+    /// because `rho_protocol::DaemonEndpoint::locate` returns it everywhere.
+    #[error(transparent)]
+    SocketPathTooLong(#[from] rho_protocol::SocketPathTooLong),
     #[error("rho daemon directory {path} is not a directory; remove it and retry")]
     NotADirectory { path: PathBuf },
     #[error("could not prepare rho daemon directory {path}: {message}")]
@@ -31,7 +35,9 @@ impl DaemonPathError {
     pub(crate) fn is_unreadable(&self) -> bool {
         match self {
             Self::Io { .. } | Self::Unreadable { .. } => true,
-            Self::NotADirectory { .. } | Self::ForeignPipe { .. } => false,
+            Self::SocketPathTooLong(_) | Self::NotADirectory { .. } | Self::ForeignPipe { .. } => {
+                false
+            }
         }
     }
 }
