@@ -243,12 +243,18 @@ async fn has_changes_of(dir: &Path, base: &str, commit: &str) -> Result<bool, Wo
         return Ok(true);
     }
     // One line for each commit `base` lacks, merge commits left out: `-`
-    // when `base` has one with the same patch, `+` when not. With every
-    // commit a merge it lists none, which proves nothing. Unlike the tree
-    // check below, it still matches once `base` edits those lines again.
-    let cherry = succeeded(dir, "cherry", ["cherry", base, commit]).await?;
-    if !cherry.is_empty() && cherry.lines().all(|line| line.starts_with('-')) {
-        return Ok(true);
+    // when `base` has one with the same patch, `+` when not. Unlike the
+    // tree check below, it still matches once `base` edits those lines
+    // again. A merge commit can add changes of its own, as a resolved
+    // conflict does, which no patch here shows, so only a branch without
+    // one is checked this way.
+    let range = format!("{base}..{commit}");
+    let merges = ["rev-list", "--merges", "--max-count=1", range.as_str()];
+    if succeeded(dir, "rev-list", merges).await?.is_empty() {
+        let cherry = succeeded(dir, "cherry", ["cherry", base, commit]).await?;
+        if !cherry.is_empty() && cherry.lines().all(|line| line.starts_with('-')) {
+            return Ok(true);
+        }
     }
     // The tree merging `commit` into `base` makes, without touching any
     // checkout: `base`'s own when `base` has every change. Unlike patches,
@@ -300,7 +306,10 @@ pub(crate) enum Checkout {
 
 /// Adds `worktree` back where it was after [`remove`] removed it with
 /// `commit` checked out, as `checkout` says, and makes `cwd`, the session's
-/// directory in it, when git does not track it.
+/// directory in it, when git does not track it. When git no longer has
+/// `commit`, as once a squash-merged branch is deleted and git collects
+/// what only it held, it starts from the origin's `HEAD`, which [`inspect`]
+/// found has its changes.
 pub(crate) async fn restore(
     worktree: &SessionWorktree,
     commit: &str,
@@ -310,7 +319,12 @@ pub(crate) async fn restore(
     let origin = &worktree.origin;
     let path = worktree.path.as_os_str();
     let branch: &OsStr = worktree.branch.as_ref();
-    let commit: &OsStr = commit.as_ref();
+    let object = format!("{commit}^{{commit}}");
+    let exists = ["rev-parse", "--verify", "--quiet", object.as_str()];
+    let commit: &OsStr = match answered(origin, "rev-parse", exists).await? {
+        Some(_) => commit.as_ref(),
+        None => "HEAD".as_ref(),
+    };
     let args: Vec<&OsStr> = match checkout {
         Checkout::Branch => {
             let reference = format!("refs/heads/{}", worktree.branch);

@@ -213,7 +213,9 @@ async fn inspect_reads_what_removing_a_worktree_would_lose() {
 // rebase merge (cherry-picks), each after HEAD changed a line next to the
 // branch's, as a base moving on under a branch does, and a rebase merge
 // whose lines HEAD edited again since; it reads one HEAD has only some of,
-// none of, or conflicting changes for, as unmerged.
+// none of, or conflicting changes for, as unmerged, and one whose merge
+// commit adds changes of its own, though HEAD has each of its other
+// commits' patches.
 // Owner: session worktrees (git plumbing under the daemon's cleanup).
 #[tokio::test]
 async fn inspect_reads_squash_and_rebase_merges_as_merged() {
@@ -221,15 +223,15 @@ async fn inspect_reads_squash_and_rebase_merges_as_merged() {
     // diff, so the origin editing it first gives a merge different patches;
     // line 3 is not.
     const NEXT_TO: usize = 8;
-    // What a case does in the origin once the branch is ahead and the
-    // origin edited a line; given the origin and the branch's two commits,
+    // What a case does once the branch is ahead and the origin edited a
+    // line; given the origin, the worktree, and the branch's two commits,
     // oldest first.
-    type Merge = fn(&Path, &[String; 2]);
-    let cases: [(&str, usize, Merge, bool); 7] = [
+    type Merge = fn(&Path, &Path, &[String; 2]);
+    let cases: [(&str, usize, Merge, bool); 8] = [
         (
             "merge commit",
             NEXT_TO,
-            |origin, [_, last]| {
+            |origin, _, [_, last]| {
                 git(
                     origin,
                     &["merge", "--quiet", "--no-ff", "--no-edit", last.as_str()],
@@ -240,7 +242,7 @@ async fn inspect_reads_squash_and_rebase_merges_as_merged() {
         (
             "squash merge",
             NEXT_TO,
-            |origin, [_, last]| {
+            |origin, _, [_, last]| {
                 git(origin, &["merge", "--quiet", "--squash", last.as_str()]);
                 git(origin, &["commit", "--quiet", "-m", "squash"]);
             },
@@ -249,7 +251,7 @@ async fn inspect_reads_squash_and_rebase_merges_as_merged() {
         (
             "rebase merge",
             NEXT_TO,
-            |origin, [first, last]| {
+            |origin, _, [first, last]| {
                 git(origin, &["cherry-pick", first.as_str(), last.as_str()]);
             },
             true,
@@ -257,7 +259,7 @@ async fn inspect_reads_squash_and_rebase_merges_as_merged() {
         (
             "rebase merge, its lines edited since",
             3,
-            |origin, [first, last]| {
+            |origin, _, [first, last]| {
                 git(origin, &["cherry-pick", first.as_str(), last.as_str()]);
                 edit_line(origin, 10, "ten, edited again");
             },
@@ -266,18 +268,30 @@ async fn inspect_reads_squash_and_rebase_merges_as_merged() {
         (
             "conflicts with HEAD",
             NEXT_TO,
-            |origin, _| edit_line(origin, 10, "ten, another way"),
+            |origin, _, _| edit_line(origin, 10, "ten, another way"),
             false,
         ),
         (
             "half rebased",
             NEXT_TO,
-            |origin, [first, _]| {
+            |origin, _, [first, _]| {
                 git(origin, &["cherry-pick", first.as_str()]);
             },
             false,
         ),
-        ("not merged", NEXT_TO, |_, _| {}, false),
+        (
+            "a merge commit adding changes, then rebased",
+            3,
+            |origin, worktree, [first, last]| {
+                git(worktree, &["merge", "--quiet", "--no-commit", "main"]);
+                std::fs::write(worktree.join("resolved.txt"), "new").unwrap();
+                git(worktree, &["add", "resolved.txt"]);
+                git(worktree, &["commit", "--quiet", "--no-edit"]);
+                git(origin, &["cherry-pick", first.as_str(), last.as_str()]);
+            },
+            false,
+        ),
+        ("not merged", NEXT_TO, |_, _, _| {}, false),
     ];
     let mut found = Vec::new();
     let mut expected = Vec::new();
@@ -292,10 +306,10 @@ async fn inspect_reads_squash_and_rebase_merges_as_merged() {
             git(path, &["rev-parse", "HEAD"])
         });
         edit_line(&origin, origin_edits, "moved on");
-        merge(&origin, &commits);
+        merge(&origin, path, &commits);
 
         found.push((case, inspect(&added.worktree).await.unwrap()));
-        let [_, head] = commits;
+        let head = git(path, &["rev-parse", "HEAD"]);
         expected.push((
             case,
             match merged {
@@ -379,6 +393,57 @@ async fn a_removed_worktree_comes_back_at_the_commit_it_was_removed_at() {
             Checkout::Detached => String::new(),
         };
         expected.push((case, true, branch, removed_at.clone(), true));
+    }
+
+    assert_eq!(found, expected);
+}
+
+// Covers: a worktree removed once squash-merged comes back at the origin's
+// HEAD, on its branch made again or detached, when someone deleted the
+// branch and git collected the commit it was removed at, which nothing
+// else held.
+// Owner: session worktrees (git plumbing under the daemon's cleanup).
+#[tokio::test]
+async fn a_removed_worktree_whose_commit_git_collected_comes_back_at_head() {
+    let mut found = Vec::new();
+    let mut expected = Vec::new();
+    for checkout in [Checkout::Branch, Checkout::Detached] {
+        let home = TempDir::new().unwrap();
+        let origin = repository(home.path());
+        let added = add(&home.path().join("worktrees"), &origin).await.unwrap();
+        let worktree = &added.worktree;
+        edit_line(&worktree.path, 10, "ten");
+        let removed_at = git(&worktree.path, &["rev-parse", "HEAD"]);
+        git(
+            &origin,
+            &["merge", "--quiet", "--squash", worktree.branch.as_str()],
+        );
+        git(&origin, &["commit", "--quiet", "-m", "squash"]);
+        remove(worktree).await.unwrap();
+        git(
+            &origin,
+            &["branch", "--quiet", "-D", worktree.branch.as_str()],
+        );
+        git(&origin, &["reflog", "expire", "--expire=now", "--all"]);
+        git(&origin, &["gc", "--quiet", "--prune=now"]);
+        let objects = ["cat-file", "--batch-check", "--batch-all-objects"];
+        let collected = !git(&origin, &objects).contains(removed_at.as_str());
+
+        restore(worktree, &removed_at, &worktree.path, checkout)
+            .await
+            .unwrap();
+
+        found.push((
+            checkout,
+            collected,
+            git(&worktree.path, &["branch", "--show-current"]),
+            git(&worktree.path, &["rev-parse", "HEAD"]),
+        ));
+        let branch = match checkout {
+            Checkout::Branch => worktree.branch.clone(),
+            Checkout::Detached => String::new(),
+        };
+        expected.push((checkout, true, branch, git(&origin, &["rev-parse", "HEAD"])));
     }
 
     assert_eq!(found, expected);
