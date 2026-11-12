@@ -19,6 +19,10 @@ const COMMAND_ENV: &str = "RHO_AUTOMATION_TEST_COMMAND";
 const PATH_ENV: &str = "RHO_AUTOMATION_TEST_PATH";
 /// When set, every response reports this provider cost in USD micros.
 const COST_ENV: &str = "RHO_AUTOMATION_TEST_COST_USD_MICROS";
+/// When set, each response reports a prompt of this many input tokens plus
+/// its request's index (0 for the first), so a recorded size names the
+/// request it came from.
+const PROMPT_TOKENS_ENV: &str = "RHO_AUTOMATION_TEST_PROMPT_TOKENS";
 
 pub(super) fn from_env(
     provider: &str,
@@ -31,19 +35,25 @@ pub(super) fn from_env(
         .into_string()
         .map_err(|_| format!("{MODE_ENV} must be valid UTF-8"))?;
     let mode = Mode::parse(&mode)?;
-    let cost_usd_micros = std::env::var_os(COST_ENV)
-        .map(|cost| {
-            cost.to_str()
-                .and_then(|cost| cost.parse::<u64>().ok())
-                .ok_or_else(|| format!("{COST_ENV} must be a whole number of USD micros"))
-        })
-        .transpose()?;
     Ok(Some(std::sync::Arc::new(AutomationFixtureProvider {
         identity: ModelIdentity::new(provider, "automation-test-fixture", model),
         mode,
-        cost_usd_micros,
+        cost_usd_micros: whole_number_env(COST_ENV, "USD micros")?,
+        prompt_tokens: whole_number_env(PROMPT_TOKENS_ENV, "tokens")?,
         turn: AtomicUsize::new(0),
     })))
+}
+
+/// The whole number in the environment variable `name`, counting `unit`.
+fn whole_number_env(name: &str, unit: &str) -> Result<Option<u64>, String> {
+    std::env::var_os(name)
+        .map(|value| {
+            value
+                .to_str()
+                .and_then(|value| value.parse::<u64>().ok())
+                .ok_or_else(|| format!("{name} must be a whole number of {unit}"))
+        })
+        .transpose()
 }
 
 #[derive(Clone, Copy)]
@@ -93,22 +103,33 @@ struct AutomationFixtureProvider {
     identity: ModelIdentity,
     mode: Mode,
     cost_usd_micros: Option<u64>,
+    /// The first request's reported prompt size; see [`PROMPT_TOKENS_ENV`].
+    prompt_tokens: Option<u64>,
     turn: AtomicUsize,
 }
 
-impl ModelProvider for AutomationFixtureProvider {
-    fn identity(&self) -> ModelIdentity {
-        self.identity.clone()
+impl AutomationFixtureProvider {
+    /// The usage reported for request `turn`, when a cost or prompt size is
+    /// set.
+    fn usage(&self, turn: usize) -> Option<ModelUsage> {
+        let usage = ModelUsage {
+            cost_usd_micros: self.cost_usd_micros,
+            input_tokens: self
+                .prompt_tokens
+                .map(|tokens| tokens.saturating_add(turn as u64)),
+            ..ModelUsage::default()
+        };
+        (usage != ModelUsage::default()).then_some(usage)
     }
 
-    fn send_turn<'a>(&'a self, request: ModelRequest<'a>) -> ProviderFuture<'a> {
+    /// The response to request `turn`.
+    fn respond<'a>(&'a self, request: ModelRequest<'a>, turn: usize) -> ProviderFuture<'a> {
         Box::pin(async move {
             let messages = super::fixture_message_times::without_times(request.messages);
             let request = ModelRequest {
                 messages: &messages,
                 ..request
             };
-            let turn = self.turn.fetch_add(1, Ordering::SeqCst);
             match self.mode {
                 Mode::Inspect => completed(inspect_request(&self.identity, &request)),
                 Mode::Fixed => completed(fixed_response()),
@@ -204,8 +225,19 @@ impl ModelProvider for AutomationFixtureProvider {
             }
         })
     }
+}
 
-    /// The SDK default stream, plus one usage report when a cost is set.
+impl ModelProvider for AutomationFixtureProvider {
+    fn identity(&self) -> ModelIdentity {
+        self.identity.clone()
+    }
+
+    fn send_turn<'a>(&'a self, request: ModelRequest<'a>) -> ProviderFuture<'a> {
+        self.respond(request, self.turn.fetch_add(1, Ordering::SeqCst))
+    }
+
+    /// The SDK default stream, plus one usage report when a cost or prompt
+    /// size is set.
     /// Deltas go through the public `send`, so unlike the default they carry
     /// observation times; fixture turns have no meaningful timing either way.
     fn send_turn_stream<'a>(
@@ -216,8 +248,9 @@ impl ModelProvider for AutomationFixtureProvider {
         let events = context.events;
         Box::pin(async move {
             let cancellation = request.cancellation.clone();
+            let turn = self.turn.fetch_add(1, Ordering::SeqCst);
             let response = tokio::select! {
-                response = self.send_turn(request) => response?,
+                response = self.respond(request, turn) => response?,
                 () = cancellation.cancelled() => {
                     return Err(ProviderError::interrupted("provider request cancelled"));
                 }
@@ -228,11 +261,7 @@ impl ModelProvider for AutomationFixtureProvider {
                     events.send(ModelEvent::OutputDelta(text.clone())).await?;
                 }
             }
-            if let Some(cost_usd_micros) = self.cost_usd_micros {
-                let usage = ModelUsage {
-                    cost_usd_micros: Some(cost_usd_micros),
-                    ..ModelUsage::default()
-                };
+            if let Some(usage) = self.usage(turn) {
                 events.send(ModelEvent::Usage(usage)).await?;
             }
             Ok(response)

@@ -17,7 +17,8 @@
 //! the handshake is in [`skew`]; what a daemon takes from the client that
 //! starts it, and each session's project trust, is in [`identity`]; what
 //! `rho doctor` reports about it is in [`doctor`]; a turn whose provider
-//! cannot be reached is in [`unreachable`].
+//! cannot be reached is in [`unreachable`]; what a session records about
+//! what follows a compaction is in [`compaction`].
 
 use std::{
     fs::File,
@@ -97,6 +98,9 @@ mod doctor;
 
 #[path = "support/daemon_unreachable.rs"]
 mod unreachable;
+
+#[path = "support/daemon_compaction.rs"]
+mod compaction;
 
 #[path = "support/key_checking_provider.rs"]
 mod key_checking_provider;

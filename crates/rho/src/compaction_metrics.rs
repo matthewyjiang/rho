@@ -15,9 +15,17 @@ use std::{
 
 use rho_sdk::{
     model::{ContentBlock, Message, ModelUsage, ToolCall},
-    CompactionTrigger,
+    CompactionTrigger, RunEvent,
 };
 use serde::Serialize;
+
+/// How many tool calls after a compaction are checked for repeats.
+///
+/// Measured over 135 local sessions (5,824 tool calls): the gap between a
+/// `read_file`/shell call and its repeat was p50 8, p75 24, p90 48 calls. 24
+/// catches most natural repeats; the rate is a comparison between tiers, so
+/// the baseline cancels out. Shown in diagnostics as `reread.window`.
+pub(crate) const REREAD_WINDOW_TOOL_CALLS: u32 = 24;
 
 /// Which compaction tier produced the result.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -183,7 +191,7 @@ pub(crate) struct CompactionRecord {
     /// First provider-reported prompt size after the commit. For a commit
     /// that left history unchanged, the surviving measurement.
     pub next_prompt_tokens: Option<u64>,
-    /// `None` until the compaction commits in a host that watches tool calls.
+    /// `None` until the compaction commits.
     pub reread: Option<RereadStats>,
 }
 
@@ -298,6 +306,73 @@ impl CompactionMetrics {
         superseded
     }
 
+    /// Starts the follow-up once the SDK committed the latest replacement.
+    pub(crate) fn committed(&mut self) {
+        if self.phase != Phase::AwaitingCommit {
+            return;
+        }
+        let Some(record) = self.last.as_mut() else {
+            return;
+        };
+        record.reread = Some(RereadStats {
+            window: REREAD_WINDOW_TOOL_CALLS,
+            tracked: u32::try_from(self.removed.len()).unwrap_or(u32::MAX),
+            ..RereadStats::default()
+        });
+        self.phase = Phase::Following;
+    }
+
+    /// Takes the first provider-reported prompt size after the commit.
+    ///
+    /// Returns a record to save as soon as the size is known, so it survives
+    /// an exit before the re-read window ends. That early copy leaves the
+    /// re-read fields empty: the ledger keeps each follow-up column's first
+    /// non-null value, and a partial count must not stick.
+    pub(crate) fn observe_prompt_tokens(
+        &mut self,
+        tokens: Option<u64>,
+    ) -> Option<CompactionRecord> {
+        let record = self.following()?;
+        if record.next_prompt_tokens.is_some() || tokens.is_none() {
+            return None;
+        }
+        record.next_prompt_tokens = tokens;
+        let early = CompactionRecord {
+            reread: None,
+            ..record.clone()
+        };
+        self.take_finished().or(Some(early))
+    }
+
+    /// Feeds one of the session's run events to the follow-up: the SDK
+    /// committing an automatic compaction, the prompt size a step's request
+    /// starts from, and each proposed tool call. Returns a record to save,
+    /// as [`Self::observe_prompt_tokens`] and [`Self::observe_tool_call`] do.
+    pub(crate) fn observe_run_event(&mut self, event: &RunEvent) -> Option<CompactionRecord> {
+        match event {
+            RunEvent::CompactionCompleted { .. } => {
+                self.committed();
+                None
+            }
+            RunEvent::StepStarted {
+                context_estimate, ..
+            } => self.observe_prompt_tokens(context_estimate.provider_reported_tokens()),
+            RunEvent::ToolProposed { call } => self.observe_tool_call(call),
+            // `RunEvent` is non-exhaustive; nothing else feeds the follow-up.
+            _ => None,
+        }
+    }
+
+    pub(crate) fn observe_tool_call(&mut self, call: &ToolCall) -> Option<CompactionRecord> {
+        let repeated = ToolFingerprint::of(call).is_some_and(|print| self.removed.contains(&print));
+        let reread = self.following()?.reread.as_mut()?;
+        if reread.tool_calls < reread.window {
+            reread.tool_calls += 1;
+            reread.repeated += u32::from(repeated);
+        }
+        self.take_finished()
+    }
+
     /// Ends any follow-up in progress. Returns the record when its follow-up
     /// was cut short, so a session change or process exit can save the partial
     /// counts.
@@ -308,6 +383,26 @@ impl CompactionMetrics {
         self.phase = Phase::Idle;
         self.removed.clear();
         unfinished
+    }
+
+    fn following(&mut self) -> Option<&mut CompactionRecord> {
+        (self.phase == Phase::Following)
+            .then_some(self.last.as_mut())
+            .flatten()
+    }
+
+    fn take_finished(&mut self) -> Option<CompactionRecord> {
+        let record = self.last.as_ref()?;
+        let done = record.next_prompt_tokens.is_some()
+            && record
+                .reread
+                .is_some_and(|reread| reread.tool_calls >= reread.window);
+        if !done {
+            return None;
+        }
+        self.phase = Phase::Idle;
+        self.removed.clear();
+        Some(record.clone())
     }
 }
 
