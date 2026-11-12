@@ -6,8 +6,8 @@ use super::*;
 fn compact_fixtures_match_seed_prompt_after_empty_user_entry() {
     let messages = vec![
         Message::user_text("fixture compact until cancel"),
-        Message::Assistant(vec![ContentBlock::Text("ok".into())]),
-        Message::User(vec![]),
+        Message::Assistant(vec![ContentBlock::Text("ok".into())].into()),
+        Message::User(vec![].into()),
     ];
     let request = ModelRequest {
         messages: &messages,

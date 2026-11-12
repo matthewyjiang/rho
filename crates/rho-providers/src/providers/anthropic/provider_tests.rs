@@ -81,12 +81,15 @@ fn request_body_serializes_messages_tools_and_stream_flag() {
             ModelRequest {
                 messages: &[
                     Message::System("system prompt".into()),
-                    Message::User(vec![ContentBlock::Text("hello".into())]),
-                    Message::Assistant(vec![ContentBlock::ToolCall(ToolCall::new(
-                        "toolu_1".into(),
-                        "bash".into(),
-                        json!({"command":"pwd"}),
-                    ))]),
+                    Message::User(vec![ContentBlock::Text("hello".into())].into()),
+                    Message::Assistant(
+                        (vec![ContentBlock::ToolCall(ToolCall::new(
+                            "toolu_1".into(),
+                            "bash".into(),
+                            json!({"command":"pwd"}),
+                        ))])
+                        .into(),
+                    ),
                 ],
                 tools: &[ToolSpec {
                     name: "bash".into(),
@@ -209,7 +212,9 @@ fn reasoning_shift_inside_a_merged_user_turn_marks_that_turn() {
                         from: ReasoningLevel::High,
                         to: ReasoningLevel::Low,
                     }),
-                    Message::BoundaryInput(vec![ContentBlock::Text("process exited".into())]),
+                    Message::BoundaryInput(
+                        vec![ContentBlock::Text("process exited".into())].into(),
+                    ),
                 ],
                 tools: &[],
                 cancellation: Default::default(),
@@ -362,10 +367,13 @@ fn two_stage_request_body(
 ) -> AnthropicRequest {
     let messages = [
         Message::System("classifier".into()),
-        Message::User(vec![
-            ContentBlock::Text("shared transcript".into()),
-            ContentBlock::Text(instruction.into()),
-        ]),
+        Message::User(
+            vec![
+                ContentBlock::Text("shared transcript".into()),
+                ContentBlock::Text(instruction.into()),
+            ]
+            .into(),
+        ),
     ];
     provider
         .request_body(
@@ -509,16 +517,18 @@ fn tool_result_turn_marks_prior_write_and_newest_result() {
 fn tool_result_request_body(tool_results: usize) -> AnthropicRequest {
     let provider = test_provider_with_capabilities("claude-sonnet-4-5", &json!({}));
     let mut messages = vec![
-        Message::User(vec![ContentBlock::Text("first turn".into())]),
-        Message::Assistant(vec![ContentBlock::Text("ok".into())]),
+        Message::User(vec![ContentBlock::Text("first turn".into())].into()),
+        Message::Assistant(vec![ContentBlock::Text("ok".into())].into()),
     ];
     messages.extend((1..=tool_results).map(|index| {
-        Message::ToolResult(rho_sdk::model::ToolResult::succeeded(
-            format!("toolu_{index}"),
-            index.to_string(),
-        ))
+        Message::ToolResult(
+            (rho_sdk::model::ToolResult::succeeded(format!("toolu_{index}"), index.to_string()))
+                .into(),
+        )
     }));
-    messages.push(Message::User(vec![ContentBlock::Text("suffix".into())]));
+    messages.push(Message::User(
+        vec![ContentBlock::Text("suffix".into())].into(),
+    ));
     provider
         .request_body(
             ModelRequest {

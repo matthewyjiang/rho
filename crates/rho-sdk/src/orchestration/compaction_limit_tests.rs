@@ -7,15 +7,18 @@ use super::CompactionLimit;
 use crate::model::{ContentBlock, Message, ToolCall, ToolResult};
 
 fn call(id: &str) -> Message {
-    Message::Assistant(vec![ContentBlock::ToolCall(ToolCall::new(
-        id.into(),
-        "tool".into(),
-        json!({}),
-    ))])
+    Message::Assistant(
+        (vec![ContentBlock::ToolCall(ToolCall::new(
+            id.into(),
+            "tool".into(),
+            json!({}),
+        ))])
+        .into(),
+    )
 }
 
 fn result(id: &str) -> Message {
-    Message::ToolResult(ToolResult::succeeded(id, "done"))
+    Message::ToolResult(ToolResult::succeeded(id, "done").into())
 }
 
 // Covers: compacting while async jobs run must keep every running call, any

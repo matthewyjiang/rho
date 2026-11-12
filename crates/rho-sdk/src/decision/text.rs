@@ -276,7 +276,7 @@ impl DecisionModel for TextDecisionModel {
             request.check().map_err(DecisionError::InvalidRequest)?;
             let messages = [
                 Message::System(system_prompt(request.instructions)),
-                Message::User(input(request, self.style)),
+                Message::User(input(request, self.style).into()),
             ];
             let turn = self.provider.send_turn(ModelRequest {
                 messages: &messages,

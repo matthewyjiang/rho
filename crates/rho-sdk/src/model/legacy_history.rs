@@ -13,6 +13,8 @@
 //! 5.x summary or model-context encoding is therefore reread as that entry.
 //! That only removes authority from the message, never grants it.
 
+use std::sync::Arc;
+
 use serde_json::Value;
 
 use super::{
@@ -36,11 +38,13 @@ pub(super) fn upgrade_message(message: Message) -> Message {
             }
         }
         Message::EnrichedAssistant(mut message) => {
-            attach_async_markers(&mut message.content, &mut message.provider_context);
+            let message_mut = Arc::make_mut(&mut message);
+            attach_async_markers(&mut message_mut.content, &mut message_mut.provider_context);
             Message::EnrichedAssistant(message)
         }
         Message::AbortedAssistant(mut message) => {
-            attach_async_markers(&mut message.content, &mut message.provider_context);
+            let message_mut = Arc::make_mut(&mut message);
+            attach_async_markers(&mut message_mut.content, &mut message_mut.provider_context);
             Message::AbortedAssistant(message)
         }
         message @ (Message::System(_)

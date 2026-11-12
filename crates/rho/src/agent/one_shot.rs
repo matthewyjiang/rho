@@ -116,7 +116,7 @@ pub(crate) async fn run_one_shot_with_provider(
     };
     let messages = vec![
         Message::System(prompt.clone()),
-        Message::User(request.input),
+        Message::User(request.input.into()),
     ];
     let usage_context =
         ProviderRequestUsageContext::for_purpose(provider.identity(), request.usage_purpose)

@@ -353,7 +353,9 @@ mod tests {
     #[test]
     fn marks_failed_tool_results_as_errors() {
         let AnthropicConversation { messages, .. } = split_system_and_messages(
-            &[Message::ToolResult(ToolResult::failed("toolu_1", "failed"))],
+            &[Message::ToolResult(
+                ToolResult::failed("toolu_1", "failed").into(),
+            )],
             &target(),
             ProviderContextReplay::Enabled,
         )

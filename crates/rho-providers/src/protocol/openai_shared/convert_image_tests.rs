@@ -5,13 +5,16 @@ use super::*;
 use crate::model::ImageContent;
 
 fn assistant_image() -> Message {
-    Message::Assistant(vec![
-        ContentBlock::Text("generated image".into()),
-        ContentBlock::Image(ImageContent {
-            data: "aW1hZ2U=".into(),
-            mime_type: "image/png".into(),
-        }),
-    ])
+    Message::Assistant(
+        (vec![
+            ContentBlock::Text("generated image".into()),
+            ContentBlock::Image(ImageContent {
+                data: "aW1hZ2U=".into(),
+                mime_type: "image/png".into(),
+            }),
+        ])
+        .into(),
+    )
 }
 
 // Covers: assistant images must leave a visible trace instead of disappearing from history.

@@ -218,7 +218,7 @@ fn restore_typed_user_role(request: &[Message], blocks: Vec<ContentBlock>) -> Me
         .filter(|message| !matches!(message, Message::User(_)))
         .find(|message| matches!(message.wire(), WireMessage::User(content) if *content == *blocks))
         .cloned()
-        .unwrap_or(Message::User(blocks))
+        .unwrap_or(Message::User(blocks.into()))
 }
 
 fn user_blocks_from_output_item(item: &Value) -> Option<Vec<ContentBlock>> {

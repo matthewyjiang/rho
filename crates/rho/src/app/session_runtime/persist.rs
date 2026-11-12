@@ -169,8 +169,8 @@ impl SessionRuntime {
             None => Rollback::LiveHistory,
         };
         let display = TurnDisplay::new(
-            Message::User(display.blocks().to_vec()),
-            Message::User(model.blocks().to_vec()),
+            Message::User(display.blocks().into()),
+            Message::User(model.blocks().into()),
             self.built.session.history().len(),
         );
         self.install_checkpoint(stored, rollback, display)
@@ -431,8 +431,8 @@ impl TurnCheckpoint {
     /// saves write `shown` in place of the stamped copy.
     pub(super) fn record_steer(&self, model: &UserInput, shown: &UserInput) {
         self.0.lock_display().steered.push((
-            Message::User(model.blocks().to_vec()),
-            Message::User(shown.blocks().to_vec()),
+            Message::User(model.blocks().into()),
+            Message::User(shown.blocks().into()),
         ));
     }
 
@@ -442,7 +442,7 @@ impl TurnCheckpoint {
         self.0
             .lock_display()
             .applied
-            .push_back((Message::BoundaryInput(input.blocks().to_vec()), shown));
+            .push_back((Message::BoundaryInput(input.blocks().into()), shown));
     }
 }
 

@@ -524,7 +524,7 @@ pub(super) fn active_display_from_tree(
         |projected| &mut projected.message,
         |_source, result| ProjectedMessage {
             origin: None,
-            message: Message::ToolResult(result),
+            message: Message::ToolResult(result.into()),
         },
     );
     Ok(messages)
@@ -728,7 +728,7 @@ pub(crate) fn insert_interrupted_tool_placeholders(mut messages: Vec<Message>) -
     normalize_loaded_history_by(
         &mut messages,
         |message| message,
-        |_source, result| Message::ToolResult(result),
+        |_source, result| Message::ToolResult(result.into()),
     );
     messages
 }
@@ -742,7 +742,7 @@ pub(crate) fn insert_interrupted_display_placeholders(
         |stored| &mut stored.message,
         |source, result| StoredDisplayMessage {
             timestamp: source.timestamp.clone(),
-            message: Message::ToolResult(result),
+            message: Message::ToolResult(result.into()),
         },
     );
     messages

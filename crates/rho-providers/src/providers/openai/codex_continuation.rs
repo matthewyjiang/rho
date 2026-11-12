@@ -123,8 +123,11 @@ impl CodexContinuationResponse {
         server_output_items: Vec<Value>,
     ) -> Self {
         let ModelResponse::Assistant(blocks) = response;
-        let local_output_items =
-            codex_input_items(&[Message::Assistant(blocks.clone())], &mut Vec::new()).ok();
+        let local_output_items = codex_input_items(
+            &[Message::Assistant(blocks.clone().into())],
+            &mut Vec::new(),
+        )
+        .ok();
         let local_output_items = local_output_items.filter(|local_output_items| {
             canonical_server_output_items(&server_output_items)
                 .is_some_and(|server_output_items| server_output_items == *local_output_items)

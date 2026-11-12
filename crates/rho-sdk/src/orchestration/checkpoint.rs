@@ -110,7 +110,7 @@ pub(super) fn settle_unanswered_calls(
                     Some(tool),
                 ));
             }
-            Some(_) | None => history.push(Message::ToolResult(interrupted_result(&call))),
+            Some(_) | None => history.push(Message::ToolResult(interrupted_result(&call).into())),
         }
     }
     (!rerun.is_empty()).then(|| StagedToolTurn::model_requested(rerun))

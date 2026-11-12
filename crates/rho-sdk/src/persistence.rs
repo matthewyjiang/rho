@@ -1,4 +1,10 @@
-use std::{collections::BTreeMap, fmt, future::Future, pin::Pin, sync::Mutex};
+use std::{
+    collections::BTreeMap,
+    fmt,
+    future::Future,
+    pin::Pin,
+    sync::{Arc, Mutex},
+};
 
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
 
@@ -106,8 +112,11 @@ impl SessionSnapshot {
     /// Raw aborted-assistant reasoning is cleared. Other messages are unchanged.
     pub fn sanitize_history(mut history: Vec<Message>) -> Vec<Message> {
         for message in &mut history {
+            // A shared message is copied only when it holds reasoning.
             if let Message::AbortedAssistant(assistant) = message {
-                assistant.reasoning.clear();
+                if !assistant.reasoning.is_empty() {
+                    Arc::make_mut(assistant).reasoning.clear();
+                }
             }
         }
         history

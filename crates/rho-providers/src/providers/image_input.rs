@@ -69,15 +69,19 @@ fn strip_input_images(messages: &[Message]) -> Vec<Message> {
     messages
         .iter()
         .map(|message| match message {
-            Message::User(blocks) => Message::User(strip_block_images(blocks)),
-            Message::BoundaryInput(blocks) => Message::BoundaryInput(strip_block_images(blocks)),
+            Message::User(blocks) => Message::User(strip_block_images(blocks).into()),
+            Message::BoundaryInput(blocks) => {
+                Message::BoundaryInput(strip_block_images(blocks).into())
+            }
             Message::ToolResult(result) if !result.images.is_empty() => {
                 let mut content = result.content.clone();
                 for _ in &result.images {
                     content.push('\n');
                     content.push_str(IMAGE_UNSUPPORTED_TEXT);
                 }
-                Message::ToolResult(ToolResult::new(result.id.clone(), result.status, content))
+                Message::ToolResult(
+                    ToolResult::new(result.id.clone(), result.status, content).into(),
+                )
             }
             other => other.clone(),
         })

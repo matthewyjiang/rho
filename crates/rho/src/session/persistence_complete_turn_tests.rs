@@ -5,15 +5,18 @@ use super::insert_interrupted_tool_placeholders;
 use rho_providers::model::{ContentBlock, Message, ToolCall, ToolResult};
 
 fn call(id: &str) -> Message {
-    Message::Assistant(vec![ContentBlock::ToolCall(ToolCall::new(
-        id.into(),
-        "agent".into(),
-        json!({}),
-    ))])
+    Message::Assistant(
+        (vec![ContentBlock::ToolCall(ToolCall::new(
+            id.into(),
+            "agent".into(),
+            json!({}),
+        ))])
+        .into(),
+    )
 }
 
 fn result(id: &str) -> Message {
-    Message::ToolResult(ToolResult::succeeded(id, "ok"))
+    Message::ToolResult(ToolResult::succeeded(id, "ok").into())
 }
 
 // Covers: an undelivered async call gets an interrupted placeholder so later
@@ -33,10 +36,9 @@ fn uncovered_async_call_inserts_placeholder_and_keeps_later_turn() {
         vec![
             Message::user_text("go"),
             call("a"),
-            Message::ToolResult(ToolResult::failed(
-                "a",
-                "tool call interrupted before completion"
-            )),
+            Message::ToolResult(
+                ToolResult::failed("a", "tool call interrupted before completion").into()
+            ),
             Message::user_text("later"),
             call("b"),
             result("b"),

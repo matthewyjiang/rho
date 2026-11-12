@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use super::*;
 use crate::model::{
     AbortedAssistant, ContentBlock, Message, PartialToolCall, ReasoningCapabilities,
@@ -878,7 +880,7 @@ fn codex_sse_search_action_url_and_pattern_are_bare_detail() {
 #[test]
 fn serializes_aborted_codex_tool_calls_as_non_executable_context() {
     let input = codex_input_items(
-        &[Message::AbortedAssistant(Box::new(AbortedAssistant {
+        &[Message::AbortedAssistant(Arc::new(AbortedAssistant {
             content: vec![ContentBlock::Text("partial answer".into())],
             tool_calls: vec![PartialToolCall {
                 id: Some("call_1".into()),

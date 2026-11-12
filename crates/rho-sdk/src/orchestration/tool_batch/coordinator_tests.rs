@@ -59,9 +59,8 @@ async fn cancellation_cleanup_keeps_result_completed_during_trailing_progress() 
     interrupt_batch(&cancellation, &mut batch, &mut history);
     pretty_assertions::assert_eq!(
         history,
-        vec![Message::ToolResult(ToolResult::failed(
-            "completed",
-            "completed side effect"
-        ))]
+        vec![Message::ToolResult(
+            ToolResult::failed("completed", "completed side effect").into()
+        )]
     );
 }

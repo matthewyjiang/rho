@@ -52,7 +52,7 @@ impl SteeringQueue {
         let id = SteeringId::new();
         self.staged.push(StagedSteering {
             id: id.clone(),
-            message: Message::User(input.into_blocks()),
+            message: Message::User(input.into_blocks().into()),
             delivery: Delivery::Staged,
         });
         id
@@ -194,7 +194,7 @@ fn should_apply(entry: &StagedSteering, delivered_only: bool) -> bool {
 
 fn user_blocks(message: &Message) -> Vec<ContentBlock> {
     match message {
-        Message::User(blocks) => blocks.clone(),
+        Message::User(blocks) => blocks.to_vec(),
         Message::System(_)
         | Message::Assistant(_)
         | Message::EnrichedAssistant(_)

@@ -170,7 +170,7 @@ fn opening_input(request: &ModelRequest<'_>) -> Option<String> {
     for message in &request.messages[prompt..] {
         match message {
             Message::User(content) | Message::BoundaryInput(content) => {
-                for block in content {
+                for block in content.iter() {
                     if let ContentBlock::Text(text) = block {
                         input.push_str(text);
                         input.push('\n');

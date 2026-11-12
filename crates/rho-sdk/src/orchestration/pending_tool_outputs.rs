@@ -30,7 +30,7 @@ impl CompletedToolOutput {
         history.extend(
             outputs
                 .into_iter()
-                .map(|output| Message::ToolResult(output.result.with_images(output.images))),
+                .map(|output| Message::ToolResult(output.result.with_images(output.images).into())),
         );
     }
 
@@ -83,7 +83,7 @@ impl PendingToolOutputs {
         history.extend(
             self.finished
                 .drain(..)
-                .map(|output| Message::ToolResult(output.into_result())),
+                .map(|output| Message::ToolResult(output.into_result().into())),
         );
     }
 }

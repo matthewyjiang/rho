@@ -5,15 +5,18 @@ use super::*;
 use crate::tui::syntax::warm_syntax_set;
 
 fn user_text(text: &str) -> Message {
-    Message::User(vec![ContentBlock::Text(text.into())])
+    Message::User(vec![ContentBlock::Text(text.into())].into())
 }
 
 fn tool_call_path(path: &str) -> Message {
-    Message::Assistant(vec![ContentBlock::ToolCall(ToolCall::new(
-        "call".into(),
-        "read_file".into(),
-        json!({"path": path}),
-    ))])
+    Message::Assistant(
+        (vec![ContentBlock::ToolCall(ToolCall::new(
+            "call".into(),
+            "read_file".into(),
+            json!({"path": path}),
+        ))])
+        .into(),
+    )
 }
 
 // Covers: resume warmup collects fence languages and skips markdown
@@ -38,16 +41,18 @@ fn warmup_plan_collects_fences_and_skips_markdown() {
 fn warmup_plan_uses_tool_call_path_not_result_body() {
     let plan = SyntaxWarmupPlan::from_messages(&[
         tool_call_path("src/lib.rs"),
-        Message::Assistant(vec![ContentBlock::ToolCall(ToolCall::new(
-            "edit".into(),
-            "edit".into(),
-            json!({"file_path": "foo.ts", "old_string": "bar.py"}),
-        ))]),
+        Message::Assistant(
+            (vec![ContentBlock::ToolCall(ToolCall::new(
+                "edit".into(),
+                "edit".into(),
+                json!({"file_path": "foo.ts", "old_string": "bar.py"}),
+            ))])
+            .into(),
+        ),
         tool_call_path("README.md"),
-        Message::ToolResult(ToolResult::succeeded(
-            "call",
-            r#"also ignored.ts and {"path":"leaked.go"}"#,
-        )),
+        Message::ToolResult(
+            (ToolResult::succeeded("call", r#"also ignored.ts and {"path":"leaked.go"}"#)).into(),
+        ),
     ]);
     assert_eq!(
         plan,

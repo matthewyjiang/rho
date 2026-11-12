@@ -114,9 +114,14 @@ fn summarize_counts_incomplete_active_display() {
         .unwrap();
     // Incomplete: the tool result is missing.
     session
-        .append_message(&Message::Assistant(vec![ContentBlock::ToolCall(
-            ToolCall::new("call-1".into(), "bash".into(), serde_json::json!({})),
-        )]))
+        .append_message(&Message::Assistant(
+            (vec![ContentBlock::ToolCall(ToolCall::new(
+                "call-1".into(),
+                "bash".into(),
+                serde_json::json!({}),
+            ))])
+            .into(),
+        ))
         .unwrap();
 
     let summary = summarize_session_file(session.path(), cwd.path())

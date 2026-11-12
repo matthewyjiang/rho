@@ -264,7 +264,9 @@ async fn assemble_side_session(launch: &SideChatLaunch) -> anyhow::Result<BuiltS
         session_options: move |_| {
             Ok(SessionOptions::new()
                 .id(SessionId::new())
-                .history(vec![Message::User(vec![ContentBlock::Text(snapshot)])]))
+                .history(vec![Message::User(
+                    vec![ContentBlock::Text(snapshot)].into(),
+                )]))
         },
     })
     .await?;

@@ -5,11 +5,14 @@ use serde_json::json;
 use super::*;
 
 fn call(id: &str, path: &str) -> Message {
-    Message::Assistant(vec![ContentBlock::ToolCall(ToolCall::new(
-        id.into(),
-        "read_file".into(),
-        json!({"path": path}),
-    ))])
+    Message::Assistant(
+        (vec![ContentBlock::ToolCall(ToolCall::new(
+            id.into(),
+            "read_file".into(),
+            json!({"path": path}),
+        ))])
+        .into(),
+    )
 }
 
 fn result(id: &str, status: ToolResultStatus, bytes: usize) -> ToolResult {
@@ -17,7 +20,7 @@ fn result(id: &str, status: ToolResultStatus, bytes: usize) -> ToolResult {
 }
 
 fn stub(result: &ToolResult, path: &str, status: &str, images: &str) -> Message {
-    Message::ToolResult(ToolResult::new(
+    Message::ToolResult((ToolResult::new(
         result.id.clone(),
         result.status,
         format!(
@@ -25,7 +28,7 @@ fn stub(result: &ToolResult, path: &str, status: &str, images: &str) -> Message 
             result.content.len(),
             recall_id(result),
         ),
-    ))
+    )).into())
 }
 
 // Covers: oldest-first selection outside the recent tail, the minimum-size
@@ -41,13 +44,13 @@ fn elides_oldest_large_results_outside_the_tail_until_target() {
         Message::System("system".into()),
         Message::user_text("go"),
         call("a", "src/a.rs"),
-        Message::ToolResult(old.clone()),
+        Message::ToolResult(old.clone().into()),
         call("b", "src/b.rs"),
-        Message::ToolResult(small.clone()),
+        Message::ToolResult(small.clone().into()),
         call("c", "src/c.rs"),
-        Message::ToolResult(middle.clone()),
+        Message::ToolResult(middle.clone().into()),
         call("d", "src/d.rs"),
-        Message::ToolResult(recent.clone()),
+        Message::ToolResult(recent.clone().into()),
     ];
     let full = estimate_context_tokens(&messages, &[]);
     let cases = [
@@ -94,7 +97,7 @@ fn elided_result_drops_its_images() {
         Message::System("system".into()),
         Message::user_text("look"),
         call("shot", "shot.png"),
-        Message::ToolResult(shot.clone()),
+        Message::ToolResult(shot.clone().into()),
         Message::user_text("recent"),
         Message::assistant_text("y".repeat(4_000)),
     ];
@@ -126,7 +129,7 @@ fn returns_none_when_nothing_is_eligible() {
         Message::System("system".into()),
         Message::user_text("x".repeat(8_000)),
         call("a", "a"),
-        Message::ToolResult(result("a", ToolResultStatus::Succeeded, 100)),
+        Message::ToolResult(result("a", ToolResultStatus::Succeeded, 100).into()),
         Message::user_text("recent"),
     ];
 
@@ -149,9 +152,9 @@ fn reused_call_ids_pair_by_position() {
         Message::System("system".into()),
         Message::user_text("go"),
         call("call_0", "first.rs"),
-        Message::ToolResult(first.clone()),
+        Message::ToolResult(first.clone().into()),
         call("call_0", "second.png"),
-        Message::ToolResult(second.with_images(vec![image])),
+        Message::ToolResult(second.with_images(vec![image]).into()),
         Message::user_text("recent"),
         Message::assistant_text("y".repeat(4_000)),
     ];

@@ -350,7 +350,7 @@ fn session_tool_results(session: &Session) -> Vec<ToolResult> {
         .history()
         .into_iter()
         .filter_map(|message| match message {
-            Message::ToolResult(result) => Some(result),
+            Message::ToolResult(result) => Some(Arc::unwrap_or_clone(result)),
             _ => None,
         })
         .collect()

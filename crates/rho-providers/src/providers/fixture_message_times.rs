@@ -11,12 +11,14 @@ pub(crate) fn without_times(messages: &[Message]) -> Vec<Message> {
         .cloned()
         .map(|mut message| {
             if let Message::User(content) = &mut message {
-                if let Some(text) = content.iter_mut().find_map(|block| match block {
+                let mut blocks = content.to_vec();
+                if let Some(text) = blocks.iter_mut().find_map(|block| match block {
                     ContentBlock::Text(text) => Some(text),
                     ContentBlock::Image(_) | ContentBlock::ToolCall(_) => None,
                 }) {
                     if let Some(rest) = MessageTime::strip_rendered_prefix(text) {
                         *text = rest.to_owned();
+                        *content = blocks.into();
                     }
                 }
             }

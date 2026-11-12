@@ -19,10 +19,13 @@ fn checklist_restatement_is_not_user_input() {
         (restatement, "checklist"),
         (Message::user_text("fix the test"), "user"),
         (
-            Message::User(vec![
-                ContentBlock::Text("please compact".into()),
-                ContentBlock::Text("summary".into()),
-            ]),
+            Message::User(
+                vec![
+                    ContentBlock::Text("please compact".into()),
+                    ContentBlock::Text("summary".into()),
+                ]
+                .into(),
+            ),
             "user",
         ),
     ];

@@ -471,7 +471,8 @@ fn resumed_snapshot_reports_and_filters_incompatible_provider_context() {
     let Message::EnrichedAssistant(message) = resumed.history()[0].clone() else {
         panic!("expected enriched assistant");
     };
-    let prepared = rho_sdk::model::handoff::prepare_assistant(*message, &target);
+    let prepared =
+        rho_sdk::model::handoff::prepare_assistant(Arc::unwrap_or_clone(message), &target);
 
     assert_eq!(report.omitted_provider_context, 1);
     assert_eq!(report.omitted_kinds, ["source_native_context"]);

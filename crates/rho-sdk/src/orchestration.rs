@@ -121,7 +121,7 @@ async fn execute_turn_loop(
     let revision = committed.revision();
     let mut checkpoints = checkpoint::Checkpoints::new(committed);
     if let RunStart::User(input) | RunStart::WithToolCalls { input, .. } = &start {
-        history.push(Message::User(input.blocks().to_vec()));
+        history.push(Message::User(input.blocks().into()));
     }
     match emit(
         &events,
@@ -429,9 +429,9 @@ async fn execute_turn_loop(
         core.append_context_estimate(history.last().expect("assistant was appended"));
         if let Err(error) = checkpoints.save(&core, &runtime, &history).await {
             history.extend(
-                tool_calls
-                    .iter()
-                    .map(|call| Message::ToolResult(tool_settlement::interrupted_result(call))),
+                tool_calls.iter().map(|call| {
+                    Message::ToolResult(tool_settlement::interrupted_result(call).into())
+                }),
             );
             return control.terminate(core, history, error).await;
         }

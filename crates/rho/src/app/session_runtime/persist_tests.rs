@@ -170,12 +170,15 @@ fn only_a_prompt_answered_by_replies_alone_rolls_back() {
     let earlier = Message::user_text("earlier");
     let input = Message::user_text("input");
     let reply = Message::assistant_text("refused");
-    let call = Message::Assistant(vec![ContentBlock::ToolCall(ToolCall::new(
-        "call".into(),
-        "read_file".into(),
-        serde_json::json!({}),
-    ))]);
-    let result = Message::ToolResult(rho_sdk::model::ToolResult::succeeded("call", "file"));
+    let call = Message::Assistant(
+        (vec![ContentBlock::ToolCall(ToolCall::new(
+            "call".into(),
+            "read_file".into(),
+            serde_json::json!({}),
+        ))])
+        .into(),
+    );
+    let result = Message::ToolResult(rho_sdk::model::ToolResult::succeeded("call", "file").into());
     let steer = Message::user_text("steer");
     let display = TurnDisplay::new(input.clone(), input.clone(), 1);
 

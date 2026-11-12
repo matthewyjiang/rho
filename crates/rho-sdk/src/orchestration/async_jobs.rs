@@ -353,7 +353,7 @@ impl AsyncJobSet {
         history.extend(
             std::mem::take(&mut self.unstarted)
                 .into_iter()
-                .map(|entry| Message::ToolResult(interrupted_result(&entry.call))),
+                .map(|entry| Message::ToolResult(interrupted_result(&entry.call).into())),
         );
         outputs.drain_interrupted(history);
         let jobs = std::mem::take(&mut self.jobs);
@@ -367,7 +367,7 @@ impl AsyncJobSet {
             let (result, completion) = settle_job(job).await;
             let _ = send_tool_finished(events, id.clone(), completion.clone()).await;
             hooks.after_tool_use(&name, &id, &completion, duration, capability.as_ref());
-            history.push(Message::ToolResult(result));
+            history.push(Message::ToolResult(result.into()));
         }
     }
 }

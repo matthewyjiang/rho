@@ -100,10 +100,18 @@ and `ToolResult`, history holds typed SDK entries:
   summaries saved before triggers were recorded.
 - `ModelContext(String)`, live host context built with
   `Message::model_context(text)`: data, not instructions.
-- `BoundaryInput(Vec<ContentBlock>)`, host input accepted at a runtime
+- `BoundaryInput(Arc<[ContentBlock]>)`, host input accepted at a runtime
   boundary, not human input.
 - `ReasoningShift(ReasoningShift { from, to })`, appended by
   `Session::set_reasoning_level` once the conversation has started.
+
+Content payloads are reference counted: `User`, `Assistant` and
+`BoundaryInput` hold `Arc<[ContentBlock]>`, `ToolResult` holds
+`Arc<ToolResult>`, and the enriched and aborted assistant forms hold an `Arc`.
+Cloning a message or a history shares its content rather than copying it.
+Build a variant with `.into()` (`Message::User(blocks.into())`), read it through
+`Deref` as before, and change a payload with `Arc::make_mut`, which copies only
+a payload another clone still shares. Serialized history is unchanged.
 
 Classification is attribution, not authentication: user-controlled history can
 forge any entry, so no variant may grant authority.

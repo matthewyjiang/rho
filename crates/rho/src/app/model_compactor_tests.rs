@@ -225,7 +225,7 @@ async fn instructions_skip_native_compaction_and_reach_the_summarizer() {
     let Some(Message::User(blocks)) = requests[0].messages.last() else {
         panic!("expected a trailing user instruction");
     };
-    let [ContentBlock::Text(instruction)] = blocks.as_slice() else {
+    let [ContentBlock::Text(instruction)] = blocks.as_ref() else {
         panic!("expected one text block, got {blocks:?}");
     };
     assert!(
@@ -380,12 +380,15 @@ fn elision_history() -> (rho_sdk::model::ToolResult, Vec<Message>) {
     let history = vec![
         Message::System("system".into()),
         Message::user_text("read it"),
-        Message::Assistant(vec![ContentBlock::ToolCall(rho_sdk::model::ToolCall::new(
-            "old".into(),
-            "read_file".into(),
-            serde_json::json!({"path": "big.rs"}),
-        ))]),
-        Message::ToolResult(old.clone()),
+        Message::Assistant(
+            (vec![ContentBlock::ToolCall(rho_sdk::model::ToolCall::new(
+                "old".into(),
+                "read_file".into(),
+                serde_json::json!({"path": "big.rs"}),
+            ))])
+            .into(),
+        ),
+        Message::ToolResult(old.clone().into()),
         Message::user_text("recent"),
         Message::assistant_text("ok"),
     ];
@@ -440,15 +443,21 @@ async fn compaction_sizes_partition_and_elision_against_advertised_tools() {
     history.splice(
         4..4,
         [
-            Message::Assistant(vec![ContentBlock::ToolCall(rho_sdk::model::ToolCall::new(
-                "recent-tool".into(),
-                "read_file".into(),
-                serde_json::json!({"path": "recent.rs"}),
-            ))]),
-            Message::ToolResult(rho_sdk::model::ToolResult::succeeded(
-                "recent-tool",
-                old.content[..old.content.len() / 10].to_owned(),
-            )),
+            Message::Assistant(
+                (vec![ContentBlock::ToolCall(rho_sdk::model::ToolCall::new(
+                    "recent-tool".into(),
+                    "read_file".into(),
+                    serde_json::json!({"path": "recent.rs"}),
+                ))])
+                .into(),
+            ),
+            Message::ToolResult(
+                (rho_sdk::model::ToolResult::succeeded(
+                    "recent-tool",
+                    old.content[..old.content.len() / 10].to_owned(),
+                ))
+                .into(),
+            ),
         ],
     );
     let mut registry = vec![read_spec(), read_spec()];
@@ -488,7 +497,7 @@ async fn compaction_sizes_partition_and_elision_against_advertised_tools() {
         let mut actual = output.messages().to_vec();
         let mut expected = history.clone();
         let tier = if can_recall {
-            actual[3] = Message::ToolResult(old.clone());
+            actual[3] = Message::ToolResult(old.clone().into());
             CompactionTier::Elision
         } else {
             expected.splice(2..4, [Message::compaction_summary(trigger, "summary text")]);

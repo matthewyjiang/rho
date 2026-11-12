@@ -329,7 +329,7 @@ fn append_interrupted_calls(
     history.extend(
         calls
             .iter()
-            .map(|entry| Message::ToolResult(interrupted_result(&entry.call))),
+            .map(|entry| Message::ToolResult(interrupted_result(&entry.call).into())),
     );
 }
 
@@ -816,7 +816,8 @@ fn append_results(batch: &mut [BatchCall<'_>], history: &mut Vec<Message>) {
                 .result
                 .take()
                 .expect("resolved call has a result")
-                .into_result(),
+                .into_result()
+                .into(),
         )
     }));
 }

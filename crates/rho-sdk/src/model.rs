@@ -4,6 +4,8 @@
 //! serialization intentionally preserves Rho's historical externally-tagged
 //! enum representation so existing session history remains readable.
 
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -320,18 +322,24 @@ impl<'de> Deserialize<'de> for AssistantMessage {
 ///
 /// Deserialization converts rho-sdk 5.x encodings (user-role compaction
 /// summaries and model context, async-call marker blocks) to these variants.
+///
+/// Content payloads are reference counted, so cloning a message, or a
+/// history, shares its content instead of copying it. A session's history is
+/// cloned for every run, checkpoint and save, and hosts keep further copies,
+/// so a deep clone multiplied a session's memory by the copies held. Change a
+/// shared payload with [`Arc::make_mut`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(from = "MessageRepr")]
 pub enum Message {
     System(String),
-    User(Vec<ContentBlock>),
+    User(Arc<[ContentBlock]>),
     /// Legacy provider-neutral assistant format retained for session compatibility.
-    Assistant(Vec<ContentBlock>),
+    Assistant(Arc<[ContentBlock]>),
     /// Assistant output with model provenance and portable/provider-owned context.
-    EnrichedAssistant(Box<AssistantMessage>),
+    EnrichedAssistant(Arc<AssistantMessage>),
     /// Partial assistant output retained when a model turn ends incompletely.
-    AbortedAssistant(Box<AbortedAssistant>),
-    ToolResult(ToolResult),
+    AbortedAssistant(Arc<AbortedAssistant>),
+    ToolResult(Arc<ToolResult>),
     /// Model-written summary that replaced earlier history.
     CompactionSummary(CompactionSummary),
     /// Request-only host context: data, not instructions. Built by
@@ -339,7 +347,7 @@ pub enum Message {
     ModelContext(String),
     /// Host input accepted at a runtime boundary (see
     /// [`crate::BoundaryInputRequest::respond`]), not human input.
-    BoundaryInput(Vec<ContentBlock>),
+    BoundaryInput(Arc<[ContentBlock]>),
     /// The session's reasoning level changed before the next entry.
     ReasoningShift(ReasoningShift),
 }
@@ -348,14 +356,14 @@ pub enum Message {
 #[derive(Deserialize)]
 enum MessageRepr {
     System(String),
-    User(Vec<ContentBlock>),
-    Assistant(Vec<ContentBlock>),
-    EnrichedAssistant(Box<AssistantMessage>),
-    AbortedAssistant(Box<AbortedAssistant>),
-    ToolResult(ToolResult),
+    User(Arc<[ContentBlock]>),
+    Assistant(Arc<[ContentBlock]>),
+    EnrichedAssistant(Arc<AssistantMessage>),
+    AbortedAssistant(Arc<AbortedAssistant>),
+    ToolResult(Arc<ToolResult>),
     CompactionSummary(CompactionSummary),
     ModelContext(String),
-    BoundaryInput(Vec<ContentBlock>),
+    BoundaryInput(Arc<[ContentBlock]>),
     ReasoningShift(ReasoningShift),
 }
 
@@ -379,15 +387,15 @@ impl From<MessageRepr> for Message {
 
 impl Message {
     pub fn user_text(content: impl Into<String>) -> Self {
-        Self::User(vec![ContentBlock::Text(content.into())])
+        Self::User(vec![ContentBlock::Text(content.into())].into())
     }
 
     pub fn assistant_text(content: impl Into<String>) -> Self {
-        Self::Assistant(vec![ContentBlock::Text(content.into())])
+        Self::Assistant(vec![ContentBlock::Text(content.into())].into())
     }
 
     pub fn assistant(message: AssistantMessage) -> Self {
-        Self::EnrichedAssistant(Box::new(message))
+        Self::EnrichedAssistant(Arc::new(message))
     }
 
     /// Construct a compaction summary for replacement history.

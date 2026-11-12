@@ -84,7 +84,7 @@ fn resumes_session_by_id_from_a_different_workspace() {
     assert!(matches!(
         &messages[0],
         Message::Assistant(content)
-            if matches!(content.as_slice(), [ContentBlock::Text(text)] if text == "from the original workspace")
+            if matches!(content.as_ref(), [ContentBlock::Text(text)] if text == "from the original workspace")
     ));
 }
 
@@ -131,17 +131,17 @@ fn separate_display_message_round_trips_for_resume_and_export() {
     drop(opened);
     assert!(matches!(
         &history[0],
-        Message::User(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "expanded init instructions")
+        Message::User(blocks) if matches!(blocks.as_ref(), [ContentBlock::Text(text)] if text == "expanded init instructions")
     ));
     assert!(matches!(
         &display[0].message,
-        Message::User(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "/init all tests pass")
+        Message::User(blocks) if matches!(blocks.as_ref(), [ContentBlock::Text(text)] if text == "/init all tests pass")
     ));
 
     let export = Session::export_by_id_in_root(&root, &cwd, session.id()).unwrap();
     assert!(matches!(
         &export.messages[0].message,
-        Message::User(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "/init all tests pass")
+        Message::User(blocks) if matches!(blocks.as_ref(), [ContentBlock::Text(text)] if text == "/init all tests pass")
     ));
 }
 
@@ -182,22 +182,22 @@ fn replace_history_is_append_only_but_model_replay_uses_latest_replacement() {
 
     assert_eq!(history.len(), 3);
     assert!(
-        matches!(&history[0], Message::User(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "summary"))
+        matches!(&history[0], Message::User(blocks) if matches!(blocks.as_ref(), [ContentBlock::Text(text)] if text == "summary"))
     );
     assert!(
-        matches!(&history[2], Message::User(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "after replacement"))
+        matches!(&history[2], Message::User(blocks) if matches!(blocks.as_ref(), [ContentBlock::Text(text)] if text == "after replacement"))
     );
     assert_eq!(display.len(), 4);
     assert!(
-        matches!(&display[0].message, Message::User(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "old user"))
+        matches!(&display[0].message, Message::User(blocks) if matches!(blocks.as_ref(), [ContentBlock::Text(text)] if text == "old user"))
     );
     assert!(
-        matches!(&display[1].message, Message::Assistant(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "old assistant"))
+        matches!(&display[1].message, Message::Assistant(blocks) if matches!(blocks.as_ref(), [ContentBlock::Text(text)] if text == "old assistant"))
     );
     assert!(matches!(&display[2].message, Message::Assistant(blocks)
-            if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text.contains("Compacted context"))));
+            if matches!(blocks.as_ref(), [ContentBlock::Text(text)] if text.contains("Compacted context"))));
     assert!(
-        matches!(&display[3].message, Message::User(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "after replacement"))
+        matches!(&display[3].message, Message::User(blocks) if matches!(blocks.as_ref(), [ContentBlock::Text(text)] if text == "after replacement"))
     );
 }
 
@@ -257,11 +257,14 @@ fn workspace_key_avoids_separator_collisions() {
 
 #[test]
 fn inserts_interrupted_tool_results_on_load() {
-    let plain = Message::Assistant(vec![ContentBlock::ToolCall(ToolCall::new(
-        "call-1".into(),
-        "bash".into(),
-        serde_json::json!({"command": "echo hi"}),
-    ))]);
+    let plain = Message::Assistant(
+        (vec![ContentBlock::ToolCall(ToolCall::new(
+            "call-1".into(),
+            "bash".into(),
+            serde_json::json!({"command": "echo hi"}),
+        ))])
+        .into(),
+    );
     let enriched = Message::assistant(AssistantMessage {
         content: vec![ContentBlock::ToolCall(ToolCall::new(
             "call-1".into(),
@@ -449,29 +452,30 @@ fn export_by_id_normalizes_incomplete_display_tool_calls() {
         .replace_history(&[Message::user_text("compacted summary")])
         .unwrap();
     session
-        .append_message(&Message::Assistant(vec![ContentBlock::ToolCall(
-            ToolCall::new(
+        .append_message(&Message::Assistant(
+            (vec![ContentBlock::ToolCall(ToolCall::new(
                 "call-1".into(),
                 "bash".into(),
                 serde_json::json!({"command": "echo hi"}),
-            ),
-        )]))
+            ))])
+            .into(),
+        ))
         .unwrap();
 
     let export = Session::export_by_id_in_root(&root, &cwd, session.id()).unwrap();
 
     assert_eq!(export.messages.len(), 4);
     assert!(
-        matches!(&export.messages[0].message, Message::User(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "original"))
+        matches!(&export.messages[0].message, Message::User(blocks) if matches!(blocks.as_ref(), [ContentBlock::Text(text)] if text == "original"))
     );
     assert!(
         matches!(&export.messages[1].message, Message::Assistant(blocks)
-            if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text.contains("Compacted context")))
+            if matches!(blocks.as_ref(), [ContentBlock::Text(text)] if text.contains("Compacted context")))
     );
     assert!(matches!(
         &export.messages[2].message,
         Message::Assistant(blocks)
-            if matches!(blocks.as_slice(), [ContentBlock::ToolCall(call)] if call.id == "call-1")
+            if matches!(blocks.as_ref(), [ContentBlock::ToolCall(call)] if call.id == "call-1")
     ));
     assert!(matches!(
         &export.messages[3].message,
@@ -531,7 +535,7 @@ fn opens_legacy_flat_jsonl_sessions_by_id() {
         .ends_with("_flat-legacy-id.jsonl"));
     assert!(matches!(
         messages.as_slice(),
-        [Message::User(blocks)] if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "hello legacy")
+        [Message::User(blocks)] if matches!(blocks.as_ref(), [ContentBlock::Text(text)] if text == "hello legacy")
     ));
 }
 

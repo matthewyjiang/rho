@@ -22,7 +22,7 @@ pub(super) fn interrupt_unstarted_calls(calls: Vec<StagedCall>, history: &mut Ve
     history.extend(
         calls
             .iter()
-            .map(|entry| Message::ToolResult(interrupted_result(&entry.call))),
+            .map(|entry| Message::ToolResult(interrupted_result(&entry.call).into())),
     );
 }
 

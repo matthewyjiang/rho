@@ -609,7 +609,7 @@ mod tests {
             provider_context: Vec::new(),
         });
         let cases = [
-            ("legacy", Message::Assistant(vec![tool_call()])),
+            ("legacy", Message::Assistant(vec![tool_call()].into())),
             ("enriched", enriched),
         ];
 
@@ -619,7 +619,7 @@ mod tests {
                 // Over the verbatim first-turn budget, so it is summarized.
                 Message::user_text("x".repeat(20_000)),
                 assistant.clone(),
-                Message::ToolResult(ToolResult::succeeded("call_1", "hi")),
+                Message::ToolResult(ToolResult::succeeded("call_1", "hi").into()),
                 Message::user_text("new"),
             ];
 

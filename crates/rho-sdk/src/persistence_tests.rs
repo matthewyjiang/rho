@@ -1,4 +1,4 @@
-use std::str::FromStr;
+use std::{str::FromStr, sync::Arc};
 
 use pretty_assertions::assert_eq;
 use serde_json::json;
@@ -17,7 +17,7 @@ const SNAPSHOT_V2: &str = include_str!("fixtures/session-snapshot-v2.json");
 const SNAPSHOT_V3: &str = include_str!("fixtures/session-snapshot-v3.json");
 
 fn aborted_history(identity: &ModelIdentity) -> Vec<Message> {
-    vec![Message::AbortedAssistant(Box::new(AbortedAssistant {
+    vec![Message::AbortedAssistant(Arc::new(AbortedAssistant {
         content: vec![ContentBlock::Text("partial".into())],
         reasoning: "raw reasoning must not persist".into(),
         provider_context: vec![ProviderContextBlock {

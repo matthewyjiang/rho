@@ -61,10 +61,9 @@ pub(crate) fn normalize_late_tool_results(messages: &[Message]) -> Vec<Cow<'_, M
             if adjacent_ids.contains(id) {
                 continue;
             }
-            out.push(Cow::Owned(Message::ToolResult(ToolResult::succeeded(
-                id,
-                LATE_PLACEHOLDER,
-            ))));
+            out.push(Cow::Owned(Message::ToolResult(
+                ToolResult::succeeded(id, LATE_PLACEHOLDER).into(),
+            )));
             late_names.insert(id.to_owned(), name.to_owned());
         }
     }
@@ -74,7 +73,7 @@ pub(crate) fn normalize_late_tool_results(messages: &[Message]) -> Vec<Cow<'_, M
 
 fn assistant_tool_calls(message: &Message) -> Vec<(&str, &str)> {
     let blocks = match message {
-        Message::Assistant(blocks) => blocks.as_slice(),
+        Message::Assistant(blocks) => blocks.as_ref(),
         Message::EnrichedAssistant(message) => message.content.as_slice(),
         Message::System(_)
         | Message::User(_)

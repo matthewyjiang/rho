@@ -136,7 +136,7 @@ async fn history_initialization_system_prompt_and_image_input_are_explicit() {
         provider.recorded_requests()[0].messages.as_slice(),
         [Message::System(system), Message::User(_), Message::User(content)]
             if system == "custom system"
-                && matches!(content.as_slice(), [ContentBlock::Text(_), ContentBlock::Image(value)] if value == &image)
+                && matches!(content.as_ref(), [ContentBlock::Text(_), ContentBlock::Image(value)] if *value == image)
     ));
 }
 
@@ -1715,7 +1715,7 @@ async fn live_history_exposes_the_turn_in_flight_to_tools() {
             vec![
                 Message::user_text("hi"),
                 assistant_tool_call("call-1"),
-                Message::ToolResult(crate::model::ToolResult::succeeded("call-1", "peeked")),
+                Message::ToolResult(crate::model::ToolResult::succeeded("call-1", "peeked").into()),
                 assistant_tool_call("call-2"),
             ],
         ]

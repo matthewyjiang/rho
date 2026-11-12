@@ -17,7 +17,7 @@ pub(in crate::app) fn recorded_changes(message: &Message) -> Option<Vec<Advertis
     let Message::User(blocks) = message else {
         return None;
     };
-    let [ContentBlock::Text(text)] = blocks.as_slice() else {
+    let [ContentBlock::Text(text)] = blocks.as_ref() else {
         return None;
     };
     serde_json::from_str(text.strip_prefix(CONTEXT_PREFIX)?).ok()
