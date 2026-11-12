@@ -3,6 +3,7 @@
 
 use std::{ffi::OsString, io, path::Path, time::Duration};
 
+use rho_protocol::CloseOnShutdown;
 use tokio::net::windows::named_pipe::{NamedPipeClient, NamedPipeServer};
 
 use super::{
@@ -18,8 +19,10 @@ use crate::daemon::{
 /// attempt is one `CreateFile` on a local pipe.
 const RESTART_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
-/// A client's connection to the daemon.
-pub(in crate::daemon) type Stream = NamedPipeClient;
+/// A client's connection to the daemon. A pipe cannot close one direction
+/// alone, so a client that shuts down its writes stops reading too, and the
+/// daemon sees it leave.
+pub(in crate::daemon) type Stream = CloseOnShutdown<NamedPipeClient>;
 
 /// Where the daemon of `rho_home` listens: a pipe named after the home (see
 /// [`home_id`]), so two homes never reach the same daemon. Pipes live in one
@@ -80,7 +83,9 @@ pub(in crate::daemon) fn remove_endpoint(_paths: &DaemonPaths) -> io::Result<()>
 /// Connects to the daemon's pipe, once it proved to be this user's. `None`
 /// when no pipe of that name exists.
 pub(in crate::daemon) async fn connect(paths: &DaemonPaths) -> io::Result<Option<Stream>> {
-    pipe::open(paths.socket.as_os_str()).await
+    Ok(pipe::open(paths.socket.as_os_str())
+        .await?
+        .map(CloseOnShutdown::new))
 }
 
 /// Connects to a daemon that is restarting. It closes its pipe and another
@@ -93,7 +98,7 @@ pub(in crate::daemon) async fn connect_restarting(
     let pipe = paths.socket.as_os_str();
     loop {
         match pipe::try_open(pipe)? {
-            Opened::Client(stream) => return Ok(Some(stream)),
+            Opened::Client(stream) => return Ok(Some(CloseOnShutdown::new(stream))),
             Opened::Foreign => return Err(pipe::foreign(pipe)),
             // Gone, or only the connections the old daemon is still
             // answering keep its name: the new one is not listening yet.
