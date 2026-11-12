@@ -110,6 +110,7 @@ fn message(rng: &mut DeterministicRng) -> Message {
                 total_tokens: Some(rng.next()),
                 ..ModelUsage::default()
             },
+            stopped_at: None,
         })),
         _ => Message::ToolResult(ToolResult::new(
             rng.string(16),

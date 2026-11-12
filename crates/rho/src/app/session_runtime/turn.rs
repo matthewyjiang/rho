@@ -8,7 +8,7 @@
 //! [`super::events`].
 
 use rho_sdk::{
-    model::{MessageTime, ToolCall},
+    model::{ToolCall, UserStamp},
     RunOutcome, UserInput,
 };
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
@@ -188,7 +188,7 @@ impl SessionRuntime {
             }) => {
                 // Stamp before the checkpoint copies it, so the saved turn
                 // finds the exact message the run appends.
-                let model = model.stamped(MessageTime::now());
+                let model = model.stamped(UserStamp::now_after(&self.built.session.history()));
                 (
                     self.install_turn_checkpoint(&display, &model),
                     RunInput::Prompt { model, calls },

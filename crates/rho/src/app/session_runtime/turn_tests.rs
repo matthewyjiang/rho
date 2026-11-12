@@ -1,18 +1,30 @@
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex,
+    },
+    time::Duration,
+};
 
 use pretty_assertions::assert_eq;
 use rho_sdk::{
     model::{
         AssistantMessage, ContentBlock, Message, MessageTime, ModelEvent, ModelIdentity,
-        ModelResponse, ProviderContextBlock, ReplayScope, ToolCall, ToolSpec,
+        ModelRequest, ModelResponse, ProviderContextBlock, ReplayScope, ReplyEnd, ToolCall,
+        ToolSpec, UserStamp,
     },
-    provider::{ModelProvider, ScriptedProvider, ScriptedTurn},
+    provider::{
+        ModelProvider, ProviderFuture, ProviderTurnContext, ScriptedProvider, ScriptedTurn,
+    },
     tool::{ScriptedTool, ScriptedToolOutcome, Tool, ToolOutput},
     CancellationToken, Rho, SessionOptions, SessionRequestPrefix, SystemPrompt, UserInput,
     Workspace,
 };
 use serde_json::json;
-use tokio::{sync::mpsc, time::timeout};
+use tokio::{
+    sync::{mpsc, Notify},
+    time::timeout,
+};
 
 use crate::{
     app::{
@@ -199,10 +211,10 @@ fn request_bytes(prefix: &SessionRequestPrefix) -> String {
     serde_json::to_string(prefix.as_request(CancellationToken::new()).messages).unwrap()
 }
 
-// Covers: a provider request shows when each user message and assistant text
-// output was created, on its own line, and leaves thinking as the provider
-// sent it; a session resumed from its file sends the same bytes as before,
-// so the prompt cache survives a reload.
+// Covers: a provider request stamps each user message with when it was sent
+// and when the previous reply finished, and sends that reply, thinking
+// included, exactly as the model wrote it; a session resumed from its file
+// sends the same bytes as before, so the prompt cache survives a reload.
 // Owner: session runtime turn (message timestamps)
 #[tokio::test]
 async fn requests_carry_saved_message_times_across_resume() {
@@ -247,23 +259,24 @@ async fn requests_carry_saved_message_times_across_resume() {
 
     let requests = provider.recorded_requests();
     let sent = &requests[1].messages;
-    let user = |text: &str| {
+    let Message::EnrichedAssistant(answer) = &sent[1] else {
+        panic!("no answer in {sent:#?}");
+    };
+    let answered = answer
+        .created_at
+        .expect("the answer records when it finished");
+    assert!(
         window
             .iter()
-            .map(|time| Message::user_text(format!("{time}\n{text}")))
-            .find(|message| sent.contains(message))
-            .unwrap_or_else(|| panic!("no stamped {text:?} in {sent:#?}"))
-    };
-    let answered = window
-        .iter()
-        .find(|time| sent[1] == stamped_answer(time, &identity, &thinking))
-        .unwrap_or_else(|| panic!("no stamped answer in {sent:#?}"));
+            .any(|time| time.to_string() == answered.to_string()),
+        "{answered} is outside the turn"
+    );
     assert_eq!(
         sent,
         &vec![
-            user("hello"),
-            stamped_answer(answered, &identity, &thinking),
-            user("again"),
+            stamped_user(sent, &window, None, "hello"),
+            answer_as_written(answered, &identity, &thinking),
+            stamped_user(sent, &window, Some(ReplyEnd::Finished(answered)), "again"),
         ]
     );
 
@@ -283,15 +296,15 @@ async fn requests_carry_saved_message_times_across_resume() {
     runtime.shutdown().await;
 }
 
-/// The first answer as a request sends it: stamped with `time`, its thinking
-/// untouched.
-fn stamped_answer(
-    time: &MessageTime,
+/// The first answer as the model wrote it, thinking included, with the time
+/// it finished recorded beside it.
+fn answer_as_written(
+    finished: MessageTime,
     identity: &ModelIdentity,
     thinking: &serde_json::Value,
 ) -> Message {
     Message::assistant(AssistantMessage {
-        content: vec![ContentBlock::Text(format!("{time}\nfirst answer"))],
+        content: vec![ContentBlock::Text("first answer".into())],
         provenance: Some(identity.clone()),
         reasoning_summary: None,
         provider_context: vec![ProviderContextBlock {
@@ -301,6 +314,154 @@ fn stamped_answer(
             data: thinking.clone(),
             replay: ReplayScope::ExactModel,
         }],
-        created_at: None,
+        created_at: Some(finished),
     })
+}
+
+/// The user message `text` in `sent`, stamped as sent at either end of
+/// `window` after `previous_reply`.
+fn stamped_user(
+    sent: &[Message],
+    window: &[MessageTime; 2],
+    previous_reply: Option<ReplyEnd>,
+    text: &str,
+) -> Message {
+    window
+        .iter()
+        .map(|&time| {
+            let stamp = UserStamp {
+                sent: time,
+                previous_reply,
+            };
+            Message::user_text(format!("{stamp}\n{text}"))
+        })
+        .find(|message| sent.contains(message))
+        .unwrap_or_else(|| panic!("no stamped {text:?} in {sent:#?}"))
+}
+
+/// A provider whose first turn streams `partial`, then holds until its run is
+/// cancelled; later turns answer `done`. Records every request's messages.
+#[derive(Default)]
+struct CutOffFirstReply {
+    streamed: Notify,
+    calls: AtomicUsize,
+    requests: Mutex<Vec<Vec<Message>>>,
+}
+
+impl ModelProvider for CutOffFirstReply {
+    fn identity(&self) -> ModelIdentity {
+        ModelIdentity::new("test", "test", "cut-off")
+    }
+
+    fn send_turn<'a>(&'a self, _request: ModelRequest<'a>) -> ProviderFuture<'a> {
+        Box::pin(async {
+            Ok(ModelResponse::Assistant(vec![ContentBlock::Text(
+                "done".into(),
+            )]))
+        })
+    }
+
+    fn send_turn_stream<'a>(
+        &'a self,
+        request: ModelRequest<'a>,
+        context: ProviderTurnContext,
+    ) -> ProviderFuture<'a> {
+        Box::pin(async move {
+            self.requests
+                .lock()
+                .unwrap()
+                .push(request.messages.to_vec());
+            if self.calls.fetch_add(1, Ordering::AcqRel) > 0 {
+                return self.send_turn(request).await;
+            }
+            context
+                .events
+                .send(ModelEvent::OutputDelta("partial".into()))
+                .await?;
+            self.streamed.notify_one();
+            request.cancellation.cancelled().await;
+            Err(rho_sdk::ProviderError::interrupted("cancelled"))
+        })
+    }
+}
+
+// Covers: a reply cut off by an interrupt records when it stopped, goes back
+// to the provider as the model wrote it, and the next user message's stamp
+// says it was interrupted then.
+// Owner: session runtime turn (message timestamps)
+#[tokio::test]
+async fn the_next_stamp_reports_an_interrupted_reply() {
+    let provider = Arc::new(CutOffFirstReply::default());
+    let root = tempfile::tempdir().unwrap();
+    let config = Config::default();
+    let shared: Arc<dyn ModelProvider> = provider.clone();
+    let sdk = agent_runtime(
+        Arc::clone(&shared),
+        &AppToolSet::disabled(),
+        root.path(),
+        no_compaction(),
+    );
+    let mut runtime = unattended_runtime_on(
+        root.path(),
+        &config,
+        QuestionSupport::Unavailable,
+        sdk,
+        shared,
+    )
+    .await;
+    let handle = runtime.handle();
+
+    let before = MessageTime::now();
+    let prompt = runtime.begin_prompt(&config).await.unwrap();
+    let input = UserInput::text("hello");
+    let turn = Turn {
+        display: input.clone(),
+        model: input,
+        calls: Vec::new(),
+    };
+    let (events, _shown) = mpsc::unbounded_channel();
+    let (_controls, control) = mpsc::unbounded_channel();
+    let interrupt = async {
+        provider.streamed.notified().await;
+        handle.cancel();
+    };
+    let (ended, ()) = timeout(TEST_BUDGET, async {
+        tokio::join!(
+            runtime.run_turn(&prompt, turn, TurnIo { events, control }, &config),
+            interrupt
+        )
+    })
+    .await
+    .expect("the turn ends");
+    assert!(
+        matches!(ended, Ok(TurnOutcome::Cancelled)),
+        "{:?}",
+        ended.map(|_| ())
+    );
+    drop(prompt);
+    run_prompt(&mut runtime, &config, "next").await;
+    let window = [before, MessageTime::now()];
+
+    let sent = provider.requests.lock().unwrap()[1].clone();
+    let Message::AbortedAssistant(cut_off) = &sent[1] else {
+        panic!("no cut-off reply in {sent:#?}");
+    };
+    let stopped = cut_off
+        .stopped_at
+        .expect("the cut-off reply records when it stopped");
+    assert_eq!(
+        (
+            sent[0].clone(),
+            cut_off.content.clone(),
+            sent[2].clone(),
+            sent.len()
+        ),
+        (
+            stamped_user(&sent, &window, None, "hello"),
+            vec![ContentBlock::Text("partial".into())],
+            stamped_user(&sent, &window, Some(ReplyEnd::Interrupted(stopped)), "next"),
+            3
+        )
+    );
+    runtime.shutdown().await;
 }

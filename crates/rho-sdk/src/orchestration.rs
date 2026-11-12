@@ -424,7 +424,7 @@ async fn execute_turn_loop(
             provenance: Some(runtime.provider.identity()),
             reasoning_summary,
             provider_context,
-            created_at: runtime.timestamp_assistant_output.then(MessageTime::now),
+            created_at: runtime.record_reply_times.then(MessageTime::now),
         };
         history.push(Message::assistant(assistant));
         core.append_context_estimate(history.last().expect("assistant was appended"));

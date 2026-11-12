@@ -426,23 +426,32 @@ fn continuation_with_context_fails_closed_on_history_rewrites() {
     }
 }
 
-// Covers: replayed assistant text carries the time the SDK stamped on it,
-// which the server's copy lacks; the continuation still chains on it.
+// Covers: recorded reply times never reach the request, so the next request
+// still replays the server's output byte for byte and chains on
+// `previous_response_id`; only the new stamped user message is sent.
 // Owner: Codex continuation matching.
 #[test]
-fn continuation_reads_past_the_stamp_on_replayed_assistant_text() {
-    let time = MessageTime::from_parts(1_794_461_940, -5 * 3600).unwrap();
-    let first = candidate(vec![
-        json!({"role":"user","content":[{"type":"input_text","text":"one"}]}),
-    ]);
-    let next = candidate(vec![
-        json!({"role":"user","content":[{"type":"input_text","text":"one"}]}),
-        json!({"role":"assistant","content":format!("{time}\ntwo")}),
-        json!({"role":"user","content":[{"type":"input_text","text":"three"}]}),
-    ]);
+fn continuation_chains_across_timed_replies() {
+    use rho_sdk::model::{AssistantMessage, MessageTime, ReplyEnd, UserStamp};
+
+    let finished = MessageTime::from_parts(1_794_461_940, -5 * 3600).unwrap();
+    let user = |text: &str, previous_reply| {
+        let stamp = UserStamp {
+            sent: finished,
+            previous_reply,
+        };
+        Message::user_text(format!("{stamp}\n{text}"))
+    };
+    let items = |messages: &[Message]| codex_input_items(messages, &mut Vec::new()).unwrap();
+    let first = user("one", None);
+    let answer = Message::assistant(AssistantMessage {
+        created_at: Some(finished),
+        ..AssistantMessage::from_content(vec![ContentBlock::Text("two".into())])
+    });
+    let next = user("three", Some(ReplyEnd::Finished(finished)));
     let mut state = CodexContinuationState::default();
     state.record_success(
-        first,
+        candidate(items(std::slice::from_ref(&first))),
         CodexContinuationResponse::from_response(
             &text_response("two"),
             Some("resp_1".into()),
@@ -451,14 +460,11 @@ fn continuation_reads_past_the_stamp_on_replayed_assistant_text() {
     );
 
     let plan = state
-        .continuation_delta(&next)
-        .expect("the stamped replay extends this turn");
+        .continuation_delta(&candidate(items(&[first, answer, next.clone()])))
+        .expect("the timed reply replays as the server holds it");
 
     assert_eq!(
         (&plan["previous_response_id"], &plan["input"]),
-        (
-            &json!("resp_1"),
-            &json!([{"role":"user","content":[{"type":"input_text","text":"three"}]}])
-        )
+        (&json!("resp_1"), &Value::Array(items(&[next])))
     );
 }

@@ -1,11 +1,6 @@
-use std::{
-    borrow::Cow,
-    collections::{BTreeMap, BTreeSet},
-};
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{json, Value};
-
-use rho_sdk::model::MessageTime;
 
 use crate::model::{ContentBlock, Message, ModelError, ModelResponse, WireMessage};
 
@@ -149,22 +144,6 @@ impl CodexContinuationResponse {
     }
 }
 
-/// `item` as the server stored it: replayed assistant text carries the time
-/// the SDK stamped on it, but the server holds the output it streamed.
-fn without_assistant_time(item: &Value) -> Cow<'_, Value> {
-    let text = (item.get("role").and_then(Value::as_str) == Some("assistant"))
-        .then(|| item.get("content")?.as_str())
-        .flatten();
-    match text.and_then(MessageTime::strip_rendered_prefix) {
-        Some(text) => {
-            let mut item = item.clone();
-            item["content"] = Value::String(text.to_owned());
-            Cow::Owned(item)
-        }
-        None => Cow::Borrowed(item),
-    }
-}
-
 fn canonical_server_output_items(items: &[Value]) -> Option<Vec<Value>> {
     let mut canonical = Vec::new();
     for item in items {
@@ -278,12 +257,8 @@ impl CodexContinuationState {
         let prefix_length = snapshot.request_input.len() + local_output_items.len();
         let history_input = candidate.history_input();
         if candidate.input.len() <= prefix_length
-            || history_input.len() < prefix_length
             || !history_input.starts_with(&snapshot.request_input)
-            || !history_input[snapshot.request_input.len()..prefix_length]
-                .iter()
-                .map(without_assistant_time)
-                .eq(local_output_items.iter().map(Cow::Borrowed))
+            || !history_input[snapshot.request_input.len()..].starts_with(local_output_items)
         {
             return None;
         }

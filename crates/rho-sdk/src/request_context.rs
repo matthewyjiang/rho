@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 
 use crate::{
-    model::{render_for_request, renders_in_request, Message, ToolSpec},
+    model::{Message, ToolSpec},
     ContextEstimate, Rho, SessionId,
 };
 
@@ -66,22 +66,19 @@ impl Rho {
             .unwrap_or_default()
     }
 
-    /// The messages a provider request sends: `history` with stored assistant
-    /// times rendered into their text, then the host's request context.
     pub(crate) fn request_messages<'a>(
         &self,
         session_id: &SessionId,
         history: &'a [Message],
     ) -> ProjectedRequest<'a> {
         let context = self.context_messages(session_id);
-        if context.is_empty() && !history.iter().any(renders_in_request) {
+        if context.is_empty() {
             return ProjectedRequest {
                 messages: Cow::Borrowed(history),
                 context,
             };
         }
         let mut messages = history.to_vec();
-        messages.iter_mut().for_each(render_for_request);
         messages.extend_from_slice(&context);
         ProjectedRequest {
             messages: Cow::Owned(messages),
