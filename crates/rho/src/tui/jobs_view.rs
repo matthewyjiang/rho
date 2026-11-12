@@ -94,6 +94,9 @@ pub(super) struct JobsView {
     mode: Mode,
     /// Why the last request failed, until the next key.
     notice: Arc<Mutex<Option<String>>>,
+    /// A message left unsent with Esc, and the session it was for, which
+    /// `m` on that session takes up again.
+    draft: Option<(SessionId, String)>,
     attach: Option<Attach>,
     panel: PanelState,
 }
@@ -119,6 +122,7 @@ impl JobsView {
             filter: String::new(),
             mode: Mode::Browse,
             notice: Arc::default(),
+            draft: None,
             attach: None,
             panel: PanelState::default(),
         }
@@ -300,10 +304,15 @@ impl JobsView {
         let Some((_, session)) = self.session_of_selected() else {
             return self.say("could not message job: no session of the daemon's started it");
         };
-        self.mode = Mode::Message {
-            session: session.clone(),
-            text: String::new(),
+        let session = session.clone();
+        if self.waits_on_request(&session) {
+            return self.say("could not message job: it waits on a request; answer it first");
+        }
+        let text = match self.draft.take() {
+            Some((drafted, text)) if drafted == session => text,
+            Some(_) | None => String::new(),
         };
+        self.mode = Mode::Message { session, text };
     }
 
     /// Whether `session`'s turn waits on a request of its own, as last
@@ -340,11 +349,13 @@ impl JobsView {
             Mode::Browse | Mode::Filter => {}
             Mode::Message { text, .. } if text.trim().is_empty() => {}
             // A turn waiting on a request takes neither a steer nor a
-            // prompt: the draft stays until the request is answered.
+            // prompt: the draft stays, and Esc keeps it for the next `m`
+            // once the request is answered from the list.
             Mode::Message { session, text } if self.waits_on_request(&session) => {
                 self.mode = Mode::Message { session, text };
                 self.say(
-                    "could not send the message: the session waits on a request; answer it first",
+                    "could not send the message: the session waits on a request; \
+                     Esc keeps this draft while you answer it",
                 );
             }
             Mode::Message { session, text } => {
@@ -405,12 +416,18 @@ impl JobsView {
     fn typing_key(&mut self, key: KeyEvent) -> PanelKeyOutcome {
         match (key.modifiers, key.code) {
             (KeyModifiers::CONTROL, KeyCode::Char('c')) => return PanelKeyOutcome::Unhandled,
-            (_, KeyCode::Esc) => {
-                if matches!(self.mode, Mode::Filter) {
-                    self.filter.clear();
+            (_, KeyCode::Esc) => match std::mem::replace(&mut self.mode, Mode::Browse) {
+                Mode::Filter => self.filter.clear(),
+                // Kept, so a request that held it back can be answered
+                // from the list first.
+                Mode::Message { session, text } if !text.trim().is_empty() => {
+                    self.draft = Some((session, text));
                 }
-                self.mode = Mode::Browse;
-            }
+                Mode::Browse
+                | Mode::Message { .. }
+                | Mode::NewWorkspace { .. }
+                | Mode::NewPrompt { .. } => {}
+            },
             (_, KeyCode::Enter) => self.confirm(),
             (_, KeyCode::Backspace) => {
                 if let Some(input) = self.input_mut() {
