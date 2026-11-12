@@ -4,8 +4,10 @@
 
 use std::{
     fs::File,
+    future::Future,
     io,
     path::{Path, PathBuf},
+    pin::Pin,
     process::{Command, Stdio},
     time::{Duration, Instant},
 };
@@ -46,9 +48,12 @@ const DRAIN_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Starts a daemon process for [`connect_or_spawn`].
 ///
-/// Implementors launch the daemon and return without waiting for it:
-/// `connect_or_spawn` detects readiness by connecting. The caller holds the
-/// spawn lock, so at most one `spawn` runs per runtime directory at a time.
+/// Implementors launch the daemon and resolve without waiting for it to
+/// serve: `connect_or_spawn` detects readiness by connecting. The future
+/// may take a bounded time to place the process it started, as
+/// [`ProcessSpawner`] does to move it out of the caller's systemd unit; it
+/// must not block the async runtime meanwhile. The caller holds the spawn
+/// lock, so at most one `spawn` runs per runtime directory at a time.
 pub(crate) trait DaemonSpawner: Send + Sync {
     /// Whether a daemon `spawn` starts could start, as far as the caller's
     /// side can tell. `connect_or_spawn` asks before every `spawn`, and
@@ -58,11 +63,15 @@ pub(crate) trait DaemonSpawner: Send + Sync {
         Ok(())
     }
 
-    fn spawn(&self, paths: &DaemonPaths) -> io::Result<()>;
+    fn spawn<'a>(&'a self, paths: &'a DaemonPaths) -> SpawnFuture<'a>;
 }
 
+/// What [`DaemonSpawner::spawn`] returns.
+pub(crate) type SpawnFuture<'a> = Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>>;
+
 /// Starts `rho daemon run` from the current executable, detached from the
-/// caller's terminal.
+/// caller's terminal and, where the platform can, from the caller's
+/// service-manager unit.
 ///
 /// The daemon does not inherit the caller's environment: it gets only the
 /// variables that describe the daemon and the machine (see
@@ -91,7 +100,9 @@ impl ProcessSpawner {
 }
 
 impl DaemonSpawner for ProcessSpawner {
-    fn spawn(&self, paths: &DaemonPaths) -> io::Result<()> {
+    /// Spawns off the async runtime: placing the daemon waits on the
+    /// service manager.
+    fn spawn<'a>(&'a self, paths: &'a DaemonPaths) -> SpawnFuture<'a> {
         let mut command = Command::new(&self.executable);
         command
             .args(["daemon", "run"])
@@ -101,11 +112,18 @@ impl DaemonSpawner for ProcessSpawner {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
-        platform::detach(&mut command, paths);
-        let mut child = command.spawn()?;
-        // Reap the daemon if it exits while this process is still running.
-        std::thread::spawn(move || child.wait());
-        Ok(())
+        let paths = paths.clone();
+        Box::pin(async move {
+            tokio::task::spawn_blocking(move || {
+                let mut child = platform::spawn_detached(&mut command, &paths)?;
+                // Reap the daemon if it exits while this process is still
+                // running.
+                std::thread::spawn(move || child.wait());
+                Ok(())
+            })
+            .await
+            .unwrap_or_else(|error| Err(io::Error::other(error)))
+        })
     }
 }
 
@@ -206,7 +224,7 @@ async fn connect_or_spawn_observing(
         tracing::info!(%refusal, "replacing the unused rho daemon with this rho");
         stop_older(paths).await?;
     }
-    spawner.spawn(paths).map_err(SpawnError::Spawn)?;
+    spawner.spawn(paths).await.map_err(SpawnError::Spawn)?;
     let started = Instant::now();
     loop {
         match connect(paths, hello.clone()).await {

@@ -128,7 +128,7 @@ impl daemon::DaemonSpawner for CheckedSpawner {
             })
     }
 
-    fn spawn(&self, paths: &DaemonPaths) -> std::io::Result<()> {
+    fn spawn<'a>(&'a self, paths: &'a DaemonPaths) -> daemon::SpawnFuture<'a> {
         self.0.spawn(paths)
     }
 }

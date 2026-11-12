@@ -31,7 +31,13 @@ struct InProcessSpawner {
 }
 
 impl DaemonSpawner for InProcessSpawner {
-    fn spawn(&self, paths: &DaemonPaths) -> io::Result<()> {
+    fn spawn<'a>(&'a self, paths: &'a DaemonPaths) -> SpawnFuture<'a> {
+        Box::pin(std::future::ready(self.serve(paths)))
+    }
+}
+
+impl InProcessSpawner {
+    fn serve(&self, paths: &DaemonPaths) -> io::Result<()> {
         self.spawns.fetch_add(1, Ordering::SeqCst);
         let lock = lock::acquire(paths).map_err(io::Error::other)?;
         let bound = server::bind(paths, lock)?;
@@ -296,7 +302,7 @@ impl DaemonSpawner for CannotStart {
         Err(io::Error::other("its environment is invalid"))
     }
 
-    fn spawn(&self, _: &DaemonPaths) -> io::Result<()> {
+    fn spawn<'a>(&'a self, _: &'a DaemonPaths) -> SpawnFuture<'a> {
         panic!("a daemon that cannot start is not started");
     }
 }

@@ -9,7 +9,7 @@ use std::{
         fd::AsFd,
         unix::{fs::MetadataExt, process::CommandExt},
     },
-    process::Command,
+    process::{Child, Command},
 };
 
 use tokio::signal::unix::{signal, Signal, SignalKind};
@@ -48,8 +48,13 @@ pub(in crate::daemon) fn is_variable(name: &str, listed: &str) -> bool {
     name == listed
 }
 
-/// Detaches the daemon `command` starts from the caller's terminal.
-pub(in crate::daemon) fn detach(command: &mut Command, _paths: &DaemonPaths) {
+/// Starts the daemon `command` runs, detached from the caller's terminal
+/// and, when the user's systemd manager runs the caller, from the caller's
+/// unit ([`super::user_scope`]).
+pub(in crate::daemon) fn spawn_detached(
+    command: &mut Command,
+    paths: &DaemonPaths,
+) -> io::Result<Child> {
     command
         // Its own process group, so Ctrl+C in the caller's terminal does
         // not reach the daemon.
@@ -58,6 +63,10 @@ pub(in crate::daemon) fn detach(command: &mut Command, _paths: &DaemonPaths) {
         // hold for its whole life (blocking an unmount, say). It opens
         // each session in that session's own workspace.
         .current_dir("/");
+    let child = command.spawn()?;
+    // Before anyone reaps `child`, so its pid cannot name another process.
+    super::user_scope::leave_caller_unit(child.id(), paths);
+    Ok(child)
 }
 
 /// Sends SIGTERM to the daemon running as `pid`, which triggers the same

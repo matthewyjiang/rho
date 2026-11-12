@@ -6,7 +6,7 @@ use std::{
     ffi::{OsStr, OsString},
     io,
     os::windows::{io::AsRawHandle, process::CommandExt},
-    process::Command,
+    process::{Child, Command},
 };
 
 use tokio::signal::windows::{ctrl_break, ctrl_c, CtrlBreak, CtrlC};
@@ -72,7 +72,7 @@ pub(in crate::daemon) fn is_variable(name: &str, listed: &str) -> bool {
     name.eq_ignore_ascii_case(listed)
 }
 
-/// Detaches the daemon `command` starts from the caller's terminal.
+/// Starts the daemon `command` runs, detached from the caller's terminal.
 ///
 /// A process started on Windows inherits every handle of its parent that is
 /// marked inheritable, whatever the child's own standard streams are. The
@@ -81,7 +81,10 @@ pub(in crate::daemon) fn is_variable(name: &str, listed: &str) -> bool {
 /// seeing them close. So this marks the caller's own standard streams not
 /// inheritable, for good: a child that should share them still gets them,
 /// because `std` passes it a duplicate.
-pub(in crate::daemon) fn detach(command: &mut Command, paths: &DaemonPaths) {
+pub(in crate::daemon) fn spawn_detached(
+    command: &mut Command,
+    paths: &DaemonPaths,
+) -> io::Result<Child> {
     for stream in [
         io::stdin().as_raw_handle(),
         io::stdout().as_raw_handle(),
@@ -102,6 +105,7 @@ pub(in crate::daemon) fn detach(command: &mut Command, paths: &DaemonPaths) {
         // hold for its whole life (it could not be renamed or removed). It
         // opens each session in that session's own workspace.
         .current_dir(&paths.home);
+    command.spawn()
 }
 
 /// The pipe a daemon is asked to stop through: any connection to it is the
