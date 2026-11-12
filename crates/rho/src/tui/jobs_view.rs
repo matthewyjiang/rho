@@ -30,7 +30,7 @@ use rho_protocol::{
 
 use super::{
     approval::ApprovalPrompt,
-    overlay_panel::{PanelBody, PanelKeyOutcome, PanelState},
+    overlay_panel::{reveal_panel_cursor, terminal_area, PanelBody, PanelKeyOutcome, PanelState},
     panel_text::indented_wrapped_lines,
     render::truncate_one_line,
     App, ComposerMode, DefaultTerminal, PanelOverlay, Theme,
@@ -75,6 +75,9 @@ pub(super) struct JobsView {
     daemon: Arc<Daemon>,
     /// The session this TUI follows, whose job the view opens on.
     followed: SessionId,
+    /// What this TUI opens its sessions with, which one started here
+    /// opens with too.
+    setup: SessionSetup,
     /// The daemon's jobs as last listed; `None` before the first answer.
     jobs: Option<Vec<JobSummary>>,
     selected: Option<JobId>,
@@ -97,10 +100,11 @@ impl std::fmt::Debug for JobsView {
 }
 
 impl JobsView {
-    fn new(daemon: Arc<Daemon>, followed: SessionId) -> Self {
+    fn new(daemon: Arc<Daemon>, followed: SessionId, setup: SessionSetup) -> Self {
         Self {
             daemon,
             followed,
+            setup,
             jobs: None,
             selected: None,
             filter: String::new(),
@@ -125,8 +129,10 @@ impl JobsView {
 
     /// Takes the daemon's latest list, keeping the selection on its job
     /// while that is listed. The first list selects the followed session's
-    /// job.
-    fn show(&mut self, jobs: Vec<JobSummary>) {
+    /// job. Returns whether the selection's rows may have moved or grown,
+    /// so the view scrolls to them again.
+    fn show(&mut self, jobs: Vec<JobSummary>) -> bool {
+        let before = self.cursor_place();
         if self.jobs.is_none() {
             self.selected = jobs
                 .iter()
@@ -135,6 +141,17 @@ impl JobsView {
         }
         self.jobs = Some(jobs);
         self.select_listed();
+        before != self.cursor_place()
+    }
+
+    /// Where the selection is in the list, and whether its job asks
+    /// something, which shows under its row.
+    fn cursor_place(&self) -> (Option<usize>, bool) {
+        let at = self
+            .selected
+            .as_ref()
+            .and_then(|selected| self.listed().iter().position(|job| job == selected));
+        (at, self.open_request().is_some())
     }
 
     /// Moves the selection to a listed row when it names none.
@@ -324,12 +341,13 @@ impl JobsView {
             }
             Mode::NewPrompt { text, .. } if text.trim().is_empty() => {}
             Mode::NewPrompt { workspace, text } => {
+                let setup = self.setup.clone();
                 self.send("start session", |daemon| async move {
                     let params = SessionNewParams {
                         cwd: workspace,
                         environment: ClientEnvironment::of_this_process(),
                         agent: None,
-                        setup: SessionSetup::default(),
+                        setup,
                         parent: None,
                         grant: None,
                     };
@@ -433,10 +451,11 @@ impl JobsView {
         PanelKeyOutcome::Handled
     }
 
-    /// The body's rows at `width`, and the row the selection is on.
-    fn rows(&self, width: usize) -> (Vec<Line<'static>>, Option<usize>) {
+    /// The body's rows at `width`, and the rows the selection takes: its
+    /// own and those of what its job asks.
+    fn rows(&self, width: usize) -> (Vec<Line<'static>>, Option<std::ops::Range<usize>>) {
         let mut lines = Vec::new();
-        let mut selected_row = None;
+        let mut selected_rows = None;
         if !self.filter.is_empty() || matches!(self.mode, Mode::Filter) {
             lines.push(input_line(
                 "Filter",
@@ -461,12 +480,11 @@ impl JobsView {
             ));
             for row in &group.rows {
                 let selected = self.selected.as_ref() == Some(&row.job);
-                if selected {
-                    selected_row = Some(lines.len());
-                }
+                let first = lines.len();
                 lines.push(row_line(row, selected, width));
                 if selected {
                     lines.extend(self.request_lines(width));
+                    selected_rows = Some(first..lines.len());
                 }
             }
             lines.push(Line::default());
@@ -491,7 +509,7 @@ impl JobsView {
         if let Some(notice) = self.notice() {
             lines.extend(indented_wrapped_lines(&notice, 1, width, Theme::warning()));
         }
-        (lines, selected_row)
+        (lines, selected_rows)
     }
 
     /// What the selected job's open request asks, under its row.
@@ -635,7 +653,7 @@ impl PanelBody for JobsView {
         self.rows(width).0
     }
 
-    fn cursor_row(&self, width: usize) -> Option<usize> {
+    fn cursor_rows(&self, width: usize) -> Option<std::ops::Range<usize>> {
         self.rows(width).1
     }
 
@@ -660,9 +678,14 @@ impl App {
     /// Opens `/jobs`, which only a session the daemon runs has.
     pub(super) fn execute_jobs_command(&mut self) -> anyhow::Result<()> {
         let Some(session) = &self.info.session.daemon else {
-            anyhow::bail!("this session does not run in the rho daemon");
+            self.needs_daemon("jobs");
+            return Ok(());
         };
-        let view = JobsView::new(session.daemon(), SessionId::new(session.id()));
+        let view = JobsView::new(
+            session.daemon(),
+            SessionId::new(session.id()),
+            session.launch_setup(),
+        );
         self.input_ui
             .set_composer(ComposerMode::Panel(PanelOverlay::Jobs(Box::new(view))));
         // The first list is owed now, not at the rail's next poll.
@@ -678,10 +701,13 @@ impl App {
         )
     }
 
-    /// Shows the daemon's `jobs` in an open `/jobs`.
-    pub(super) fn show_jobs_view(&mut self, jobs: &[JobSummary]) {
+    /// Shows the daemon's `jobs` in an open `/jobs`, scrolled to the
+    /// selection when the list moved it or its job began to ask.
+    pub(super) fn show_jobs_view(&mut self, jobs: &[JobSummary], terminal: &DefaultTerminal) {
         if let ComposerMode::Panel(PanelOverlay::Jobs(view)) = self.input_ui.composer_mut() {
-            view.show(jobs.to_vec());
+            if let (true, Some(area)) = (view.show(jobs.to_vec()), terminal_area(terminal)) {
+                reveal_panel_cursor(view.as_mut(), area);
+            }
         }
     }
 

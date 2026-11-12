@@ -193,7 +193,6 @@ impl App {
             return;
         };
         let session = session.id().to_owned();
-        self.show_jobs_view(&jobs);
         let now = subagent::unix_now_secs();
         let workflows = rail_jobs(&jobs, &session, JobKind::Workflow, now);
         let subagents = rail_jobs(&jobs, &session, JobKind::Subagent, now);

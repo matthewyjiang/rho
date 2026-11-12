@@ -251,10 +251,11 @@ pub(super) trait PanelBody {
     fn copy_text(&self) -> Option<String> {
         None
     }
-    /// The body row a panel with a cursor of its own is on, at `width`,
-    /// which the dispatcher keeps in view after each key the panel handles;
-    /// `None` for a panel without one.
-    fn cursor_row(&self, _width: usize) -> Option<usize> {
+    /// The body rows a panel with a cursor of its own is on, at `width`:
+    /// the cursor's row and what the panel shows with it. The dispatcher
+    /// keeps them in view after each key the panel handles, the first row
+    /// when they do not all fit. `None` for a panel without a cursor.
+    fn cursor_rows(&self, _width: usize) -> Option<std::ops::Range<usize>> {
         None
     }
     /// Feature keys, checked before the shared keys.
@@ -300,19 +301,20 @@ pub(super) fn scroll_panel(panel: &mut dyn PanelBody, area: Rect, target: PanelS
     panel.state_mut().scroll.apply(target, body_len, body_rows);
 }
 
-/// Scrolls the panel just far enough that its cursor row shows at `area`.
+/// Scrolls the panel just far enough that its cursor rows show at `area`.
 pub(super) fn reveal_panel_cursor(panel: &mut dyn PanelBody, area: Rect) {
     let width = overlay_panel_body_width(area);
-    let Some(row) = panel.cursor_row(width) else {
+    let Some(rows) = panel.cursor_rows(width) else {
         return;
     };
     let body_len = panel.body_lines(width, std::time::Instant::now()).len();
     let body_rows = overlay_panel_layout(area, body_len).body_rows;
     let offset = panel.state().scroll.offset();
-    let target = if row < offset {
-        row
-    } else if row >= offset + body_rows {
-        row + 1 - body_rows.max(1)
+    let target = if rows.start < offset {
+        rows.start
+    } else if rows.end > offset + body_rows {
+        // The first row stays in view when the rows outgrow the body.
+        rows.end.saturating_sub(body_rows).min(rows.start)
     } else {
         return;
     };

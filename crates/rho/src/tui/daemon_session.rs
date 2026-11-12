@@ -343,6 +343,11 @@ impl DaemonSession {
                     .is_some_and(DaemonRequests::saved_rows))
     }
 
+    /// What this launch opens its sessions with.
+    pub(in crate::tui) fn launch_setup(&self) -> rho_protocol::SessionSetup {
+        self.launch.setup.clone()
+    }
+
     /// The daemon the session runs in, for requests about its other
     /// sessions and jobs.
     pub(in crate::tui) fn daemon(&self) -> Arc<Daemon> {
