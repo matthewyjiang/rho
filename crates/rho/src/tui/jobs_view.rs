@@ -11,6 +11,7 @@
 //! of this project can be.
 
 use std::{
+    collections::HashMap,
     path::PathBuf,
     sync::{Arc, Mutex, PoisonError},
     time::Instant,
@@ -94,10 +95,10 @@ pub(super) struct JobsView {
     mode: Mode,
     /// Why the last request failed, until the next key.
     notice: Arc<Mutex<Option<String>>>,
-    /// A message left unsent, with Esc or because the daemon refused it,
-    /// and the session it was for, which `m` on that session takes up
-    /// again.
-    draft: Arc<Mutex<Option<(SessionId, String)>>>,
+    /// The messages left unsent, with Esc or because the daemon refused
+    /// them, by the session each was for, which `m` on that session takes
+    /// up again.
+    drafts: Arc<Mutex<HashMap<SessionId, String>>>,
     attach: Option<Attach>,
     panel: PanelState,
 }
@@ -123,7 +124,7 @@ impl JobsView {
             filter: String::new(),
             mode: Mode::Browse,
             notice: Arc::default(),
-            draft: Arc::default(),
+            drafts: Arc::default(),
             attach: None,
             panel: PanelState::default(),
         }
@@ -309,16 +310,12 @@ impl JobsView {
         if self.waits_on_request(&session) {
             return self.say("could not message job: it waits on a request; answer it first");
         }
-        // Another session's draft waits for its own `m`.
-        let text = match self
-            .draft
+        let text = self
+            .drafts
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .take_if(|(drafted, _)| *drafted == session)
-        {
-            Some((_, text)) => text,
-            None => String::new(),
-        };
+            .remove(&session)
+            .unwrap_or_default();
         self.mode = Mode::Message { session, text };
     }
 
@@ -368,12 +365,14 @@ impl JobsView {
             Mode::Message { session, text } => {
                 // A message the daemon refuses comes back as the draft.
                 let under_way = self.turn_under_way(&session);
-                let draft = Arc::clone(&self.draft);
+                let drafts = Arc::clone(&self.drafts);
                 self.send("send the message", move |daemon| async move {
                     let sent = message(daemon, session.clone(), text.clone(), under_way).await;
                     if sent.is_err() {
-                        *draft.lock().unwrap_or_else(PoisonError::into_inner) =
-                            Some((session, text));
+                        drafts
+                            .lock()
+                            .unwrap_or_else(PoisonError::into_inner)
+                            .insert(session, text);
                     }
                     sent
                 });
@@ -435,8 +434,10 @@ impl JobsView {
                 // Kept, so a request that held it back can be answered
                 // from the list first.
                 Mode::Message { session, text } if !text.trim().is_empty() => {
-                    *self.draft.lock().unwrap_or_else(PoisonError::into_inner) =
-                        Some((session, text));
+                    self.drafts
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .insert(session, text);
                 }
                 Mode::Browse
                 | Mode::Message { .. }
