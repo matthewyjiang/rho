@@ -20,8 +20,8 @@ const ENV: &[(&str, &str)] = &[
 
 // Covers: from `/jobs`, `n` starts a session in a workspace with a first
 // prompt and it lists as running; a filter keeps the rows that match and
-// says when none does, and Esc clears it; `c` cancels the selected
-// session's turn; `m` sends it a message that starts its next turn; Enter
+// says when none does, and Esc clears it; `c` twice cancels the selected
+// session's turn, and once only asks; `m` sends it a message that starts its next turn; Enter
 // attaches, and this TUI then follows that session's turn to its end.
 // Owner: interactive TUI as a daemon client
 pub(super) const ACTIONS_SCENARIO: Scenario = Scenario::new(
@@ -74,6 +74,13 @@ const ACTIONS_STEPS: &[Step] = &[
         timeout: SETTLE,
     },
     Step::Key(Key::Enter),
+    // The first `c` asks, the second cancels.
+    Step::Key(Key::Char('c')),
+    Step::WaitText {
+        text: "c again cancels",
+        timeout: SETTLE,
+    },
+    Step::AssertText("▸ running"),
     Step::Key(Key::Char('c')),
     // Cancelled, so it no longer matches.
     Step::WaitText {

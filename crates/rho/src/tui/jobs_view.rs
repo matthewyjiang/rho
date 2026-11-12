@@ -99,6 +99,9 @@ pub(super) struct JobsView {
     /// them, by the session each was for, which `m` on that session takes
     /// up again.
     drafts: Arc<Mutex<HashMap<SessionId, String>>>,
+    /// The session whose turn the last key, `c`, asked to cancel, which a
+    /// second `c` confirms.
+    cancel_armed: Option<SessionId>,
     attach: Option<Attach>,
     panel: PanelState,
 }
@@ -125,6 +128,7 @@ impl JobsView {
             mode: Mode::Browse,
             notice: Arc::default(),
             drafts: Arc::default(),
+            cancel_armed: None,
             attach: None,
             panel: PanelState::default(),
         }
@@ -290,13 +294,20 @@ impl JobsView {
         None
     }
 
-    fn cancel(&self) {
+    /// Cancels the turn of the selected job's session, at the second `c`
+    /// in a row on it: `c` copies in every other panel, and a cancelled
+    /// turn does not come back.
+    fn cancel(&mut self) {
         let Some((_, session)) = self.session_of_selected() else {
             return self.say("could not cancel job: no session of the daemon's started it");
         };
-        let params = SessionCancelParams {
-            session: session.clone(),
-        };
+        let session = session.clone();
+        if self.cancel_armed.take().as_ref() != Some(&session) {
+            self.say("c again cancels this session's turn");
+            self.cancel_armed = Some(session);
+            return;
+        }
+        let params = SessionCancelParams { session };
         self.send("cancel the turn", |daemon| async move {
             daemon.request::<SessionCancel>(&params).await.map(|_| ())
         });
@@ -740,8 +751,12 @@ impl PanelBody for JobsView {
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> PanelKeyOutcome {
-        // A notice is of the request before this key.
+        // A notice is of the request before this key, and only `c` right
+        // after `c` confirms a cancel.
         *self.notice.lock().unwrap_or_else(PoisonError::into_inner) = None;
+        if key.code != KeyCode::Char('c') {
+            self.cancel_armed = None;
+        }
         match self.mode {
             Mode::Browse => self.browse_key(key),
             Mode::Filter
