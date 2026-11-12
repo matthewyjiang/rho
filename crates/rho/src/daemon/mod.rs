@@ -14,8 +14,9 @@
 //!
 //! Everything that differs between operating systems sits behind the
 //! `platform` module: the endpoint, private files, detaching and stopping
-//! the process, and how a restart hands over. Nothing else here, in the
-//! host, or in a client branches on the platform.
+//! the process, how a restart hands over, and what an installer may do to
+//! a running daemon's executable. Nothing else here, in the host, or in a
+//! client branches on the platform.
 //!
 //! Configuration is read per session when a session is created, so config
 //! edits apply to new sessions without a restart. Daemon-level settings (the
@@ -28,6 +29,7 @@ mod lock;
 mod paths;
 mod platform;
 mod server;
+mod service;
 mod shutdown;
 mod spawn;
 mod spawn_env;
@@ -49,9 +51,12 @@ pub(crate) use paths::{real_home, DaemonPaths, SocketFound};
 pub(crate) use platform::DaemonPathError;
 pub(crate) use platform::{
     account_lock_path, create_private_dir, create_private_file, lock_account_file,
-    stderr_is_journal_stream, sync_dir, FileIdentity, StopRequests,
+    stderr_is_journal_stream, sync_dir, FileIdentity, StopRequests, REPLACEABLE_WHILE_RUNNING,
 };
 pub(crate) use server::{bind, rebind, take_handoff, Served};
+pub(crate) use service::{
+    find_services, ServiceFiles, ServiceManager, LAUNCHD_LABEL, SYSTEMD_UNIT,
+};
 pub(crate) use shutdown::{Ending, Shutdown};
 pub(crate) use spawn::{connect_or_spawn, DaemonSpawner, ProcessSpawner};
 pub(crate) use spawn_env::{differing_variables, VariableKind};

@@ -194,6 +194,11 @@ impl FileIdentity {
     }
 }
 
+/// Whether an installer can put a new executable at the daemon's path while
+/// the daemon runs. It can: a rename over the path leaves the running
+/// daemon on the old file until it re-executes.
+pub(crate) const REPLACEABLE_WHILE_RUNNING: bool = true;
+
 /// The binary this process runs, even once an installer replaced the path
 /// it started from. Only Linux names it; elsewhere the daemon takes the
 /// path's file at startup.

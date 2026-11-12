@@ -36,7 +36,6 @@ use rho_protocol::{ClientEnvironment, ErrorCode, RpcError, SessionSetup};
 
 use super::{
     super::{jobs::JobId, settings::ConfigStore, subagents::Subagents},
-    open_failed,
     setup::Setup,
 };
 use crate::{
@@ -48,8 +47,9 @@ use crate::{
         cli_config::{settle_bound_config, ProviderRefreshStatus, SettledConfig},
         session_assembly::SignIn,
         session_runtime::{
-            ApprovalPolicy, CacheWarming, ChildAgents, HostCapabilities, IdleTurns, RunShape,
-            SessionBuild, SessionLaunch, SessionOpening, SessionRole, SessionRuntime, SessionUse,
+            ApprovalPolicy, CacheWarming, ChildAgents, CredentialFailure, HostCapabilities,
+            IdleTurns, RunShape, SessionBuild, SessionLaunch, SessionOpening, SessionRole,
+            SessionRuntime, SessionUse,
         },
         tools_prompt::ToolSourceLoad,
     },
@@ -84,6 +84,10 @@ impl Workspace {
             return Err(invalid("not a directory".to_owned()));
         }
         Ok(Self(path))
+    }
+
+    pub(super) fn path(&self) -> &Path {
+        &self.0
     }
 }
 
@@ -194,6 +198,25 @@ pub(super) async fn open_session(
     )
     .await
     .map_err(open_failed)
+}
+
+/// The error for a session the daemon could not open: `SignInRequired`
+/// when signing in can fix it, in Rho's words with the full cause only in
+/// the daemon's log, else `SessionOpenFailed`.
+pub(super) fn open_failed(error: anyhow::Error) -> RpcError {
+    match CredentialFailure::find(&error) {
+        Some(failure) => {
+            tracing::warn!(error = format!("{error:#}"), "session needs a sign-in");
+            RpcError::new(
+                ErrorCode::SignInRequired,
+                format!("could not open session: {}", failure.message()),
+            )
+        }
+        None => RpcError::new(
+            ErrorCode::SessionOpenFailed,
+            format!("could not open session: {error:#}"),
+        ),
+    }
 }
 
 /// The project trust `stored` is read under, which no client is there to
@@ -455,3 +478,7 @@ fn bind_agent(
 #[cfg(test)]
 #[path = "open_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "open_failed_tests.rs"]
+mod open_failed_tests;

@@ -10,7 +10,7 @@ It serves over stdio by default, for a host that starts it as a command. `rho mc
 | --- | --- | --- |
 | `list` | The daemon's sessions, most recently changed first: each one's id, workspace, state, when it last changed, and the `parent` session whose agent started it, if one did. Filter by `workspace` or `state`; `limit` is 20 by default and at most 1000. | read |
 | `read` | A session's transcript as text: who said what, and the tools it called. Pages by characters: `start` (0 by default) and `chars` (4096 by default, at most 64000); pass the result's `next_start` to read on. | read |
-| `new` | Starts a session in `workspace`, an absolute path to an existing directory, with a first `prompt`. `agent` picks one of the workspace's agents by id and `model` one of its models, as `provider/model` or a model id only one provider offers; both default to the workspace's. | write |
+| `new` | Starts a session in `workspace`, an absolute path to an existing directory, with a first `prompt`. `agent` picks one of the workspace's agents by id and `model` one of its models, as `provider/model` or a model id only one provider offers; both default to the workspace's. `worktree: true` runs the session in a new git worktree of the workspace's repository, on a new branch from its `HEAD`, and the result's `worktree` names its `branch`, `path`, and `origin` ([sessions in worktrees](/daemon#sessions-in-worktrees)). | write |
 | `prompt` | Starts a session's next turn with `text`. | write |
 | `steer` | Gives the running turn `text` for its next model request. | write |
 | `cancel` | Stops the session's turn in progress, if any. | write |
@@ -103,7 +103,7 @@ command = "rho"
 args = ["mcp", "serve"]
 ```
 
-A rho session starts its stdio servers with a [sanitized environment](/integrations/mcp#stdio-servers), so the sessions such a server starts get that environment too. List the variables their tools need in the server's `env_from_env`.
+A rho session starts its stdio servers with a [sanitized environment](/integrations/mcp#stdio-servers), so the sessions such a server starts get that environment too. List the variables their tools need in the server's `env_from_env`. Each stdio server gets `RHO_HOME`, set to the rho home of the daemon running the session, and the session's `XDG_RUNTIME_DIR`, so the server reaches that daemon without listing them.
 
 Pass `--max-depth` and `--max-sessions` after `serve` to change the [limits](#limits).
 
@@ -129,7 +129,7 @@ this server's caller has read access; `new` needs write
 rho mcp serve --http 127.0.0.1:8765
 ```
 
-The server prints where it listens, `rho mcp serve listening on http://127.0.0.1:8765/mcp`, and serves MCP's streamable HTTP transport at `/mcp`. Port `0` picks a free port.
+The server prints where it listens on stderr, `rho mcp serve listening on http://127.0.0.1:8765/mcp`, and serves MCP's streamable HTTP transport at `/mcp`. Port `0` picks a free port.
 
 It binds a loopback address only and refuses any other, so nothing off the machine reaches it unless you set up a tunnel, such as an SSH forward or a tunnel service, to that address. Run it under a service manager to keep it listening; [Running as a service](/daemon#running-as-a-service) has a systemd unit and a launchd agent.
 

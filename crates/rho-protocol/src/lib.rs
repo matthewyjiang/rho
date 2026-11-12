@@ -111,9 +111,10 @@ pub use methods::{
     SessionEventParams, SessionGrant, SessionHoldParams, SessionHoldResponse, SessionId,
     SessionNewParams, SessionNewResponse, SessionObserveParams, SessionPromptParams,
     SessionPromptResponse, SessionSteerParams, SessionSteerResponse, SessionUnsteerParams,
-    SessionUnsteerResponse, StatusParams, SteerId, StopParams, StopResponse, StreamId, ToolCallId,
-    ToolCallUpdate, ToolContent, ToolKind, ToolStatus, TurnError, TurnErrorKind, TurnId,
-    TurnOutcome, UncheckedKey, UncheckedReason, UnsteerOutcome, SESSION_ANSWER, SESSION_HOLD,
+    SessionUnsteerResponse, SessionWorktree, StatusParams, SteerId, StopParams, StopResponse,
+    StreamId, ToolCallId, ToolCallUpdate, ToolContent, ToolKind, ToolStatus, TurnError,
+    TurnErrorKind, TurnId, TurnOutcome, UncheckedKey, UncheckedReason, UnsteerOutcome,
+    SESSION_ANSWER, SESSION_HOLD,
 };
 pub use methods::{
     Applies, ClientName, ConfigCategory, ConfigChangedParams, ConfigError, ConfigGetParams,

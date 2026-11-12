@@ -150,9 +150,9 @@ pub use session::{
     SessionDetachParams, SessionDetachResponse, SessionDetachedParams, SessionEventParams,
     SessionId, SessionNewParams, SessionNewResponse, SessionObserveParams, SessionPromptParams,
     SessionPromptResponse, SessionSteerParams, SessionSteerResponse, SessionUnsteerParams,
-    SessionUnsteerResponse, UnsteerOutcome, SESSION_ATTACH, SESSION_CANCEL, SESSION_DETACH,
-    SESSION_DETACHED, SESSION_EVENT, SESSION_NEW, SESSION_OBSERVE, SESSION_PROMPT, SESSION_STEER,
-    SESSION_UNSTEER,
+    SessionUnsteerResponse, SessionWorktree, UnsteerOutcome, SESSION_ATTACH, SESSION_CANCEL,
+    SESSION_DETACH, SESSION_DETACHED, SESSION_EVENT, SESSION_NEW, SESSION_OBSERVE, SESSION_PROMPT,
+    SESSION_STEER, SESSION_UNSTEER,
 };
 pub use setup::{ChildThreads, IdleWake, McpServer, SecretMap, SessionPart, SessionSetup, SignIn};
 pub use store::{

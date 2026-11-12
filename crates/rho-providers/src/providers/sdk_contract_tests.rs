@@ -604,18 +604,21 @@ async fn bind_local() -> (tokio::net::TcpListener, std::net::SocketAddr) {
     (listener, address)
 }
 
-/// A request to a closed port, and the OS's own words for the refusal.
+/// A request to a port nothing listens on, and the OS's own words for the
+/// refusal. The port is loopback's TCP discard port, as elsewhere in these
+/// suites: no test's server gets it, since each binds an ephemeral port. A
+/// port that was bound and then closed is free for a test running beside
+/// this one to bind, and its server would then answer.
 async fn connection_refused_error(secret: &str) -> (reqwest::Error, String) {
-    let (listener, address) = bind_local().await;
-    drop(listener);
+    let address = std::net::SocketAddr::from(([127, 0, 0, 1], 9));
     let refused = std::net::TcpStream::connect(address)
-        .expect_err("closed listener should refuse the connection")
+        .expect_err("the discard port should refuse the connection")
         .to_string();
     let error = crate::reqwest_client()
         .get(secret_url(address, secret))
         .send()
         .await
-        .expect_err("closed listener should refuse the connection");
+        .expect_err("the discard port should refuse the connection");
     (error, refused)
 }
 

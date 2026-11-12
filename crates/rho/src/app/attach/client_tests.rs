@@ -23,6 +23,7 @@ fn job(id: &str, kind: JobKind, parent: Option<&str>, session: Option<&str>) -> 
         live: None,
         grant: None,
         grant_limit: None,
+        worktree: None,
     }
 }
 

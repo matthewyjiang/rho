@@ -3,7 +3,10 @@
 //! run a session starts; workflow runs become jobs in a later protocol minor
 //! (#1658).
 
-use std::{fmt, path::PathBuf};
+use std::{
+    fmt,
+    path::{Path, PathBuf},
+};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -164,6 +167,21 @@ pub struct JobSummary {
     /// opened its session; absent for every other job.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub live: Option<JobLive>,
+    /// The git worktree a [`JobKind::Session`] job's session works in, for
+    /// one opened with [`super::SessionNewParams::worktree`]; `workspace`
+    /// is then in it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worktree: Option<super::SessionWorktree>,
+}
+
+impl JobSummary {
+    /// The project the job works for: for a session in a worktree, the
+    /// workspace the worktree was added from; else its `workspace`.
+    pub fn project(&self) -> &Path {
+        self.worktree
+            .as_ref()
+            .map_or(&self.workspace, |worktree| &worktree.origin)
+    }
 }
 
 /// What the daemon follows of a job whose session's events it streams: the

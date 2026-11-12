@@ -18,7 +18,10 @@
 //! session a caller starts from a session of its own, as the native
 //! `sessions` tool's callers do, records the job writing that session as its
 //! parent, and its turns wait for capacity in the daemon-wide agent budget
-//! as subagent runs do (#1714).
+//! as subagent runs do (#1714). `new` may ask the daemon to open the session
+//! in a git worktree of its own (#1673); a session in a worktree counts as
+//! in the workspace the worktree was added from as well as its own, for the
+//! grant and `list`'s filter.
 //!
 //! No action answers a session's approvals or questions: a turn that asks
 //! waits for a person, and `wait` reports it waiting for input. The daemon
@@ -161,8 +164,16 @@ impl SessionControl {
         let mut sessions: Vec<SessionEntry> = jobs
             .into_iter()
             .filter(|job| job.kind == JobKind::Session)
-            .filter(|job| caller.grant.scope.workspaces.allows(&job.workspace))
-            .filter(|job| workspace.as_ref().is_none_or(|only| &job.workspace == only))
+            .filter(|job| {
+                workspaces_of(job)
+                    .into_iter()
+                    .any(|place| caller.grant.scope.workspaces.allows(place))
+            })
+            .filter(|job| {
+                workspace
+                    .as_ref()
+                    .is_none_or(|only| workspaces_of(job).into_iter().any(|place| place == only))
+            })
             .filter(|job| params.state.is_none_or(|state| job.state == state))
             .filter_map(|job| SessionEntry::of_job(job, &writers))
             .collect();
@@ -199,8 +210,13 @@ impl SessionControl {
                 setup: SessionSetup::default(),
                 parent: caller.session.clone(),
                 grant: Some(caller.child_context().into()),
+                worktree: params.worktree,
             })
             .await?;
+        // Before the first turn, so nothing runs in a checkout the caller
+        // asked to keep out of.
+        crate::worktree::require(params.worktree, opened.worktree.as_ref())
+            .map_err(|error| ControlError::Invalid(error.to_string()))?;
         if let Some(model) = params.model {
             let model = choose_model(&opened.options.model.available, &model)?;
             self.daemon
@@ -218,6 +234,7 @@ impl SessionControl {
         Ok(NewResult {
             session: opened.session,
             workspace,
+            worktree: opened.worktree,
         })
     }
 
@@ -346,26 +363,32 @@ impl SessionControl {
     }
 
     /// The workspace of `session`, which must be one the daemon knows,
-    /// in the caller's grant's workspaces.
+    /// in the caller's grant's workspaces. A session in a worktree is in
+    /// them when its project is.
     async fn reach_session(
         &self,
         caller: &Caller,
         session: &SessionId,
     ) -> Result<PathBuf, ControlError> {
-        let workspace = self.workspace_of(session).await?;
-        caller.grant.reach(&workspace)?;
-        Ok(workspace)
+        let place = self.place_of(session).await?;
+        if !caller.grant.scope.workspaces.allows(&place.project) {
+            caller.grant.reach(&place.workspace)?;
+        }
+        Ok(place.workspace)
     }
 
-    /// The workspace of `session`: its job's, or, for a saved session no
-    /// daemon has run, the catalog's.
-    async fn workspace_of(&self, session: &SessionId) -> Result<PathBuf, ControlError> {
+    /// Where `session` works: its job's workspace and project, or, for a
+    /// saved session no daemon has run, the catalog's workspace.
+    async fn place_of(&self, session: &SessionId) -> Result<Place, ControlError> {
         let jobs = self.jobs().await?;
         if let Some(job) = jobs
             .iter()
             .find(|job| job.session.as_ref() == Some(session))
         {
-            return Ok(job.workspace.clone());
+            return Ok(Place {
+                workspace: job.workspace.clone(),
+                project: job.project().to_path_buf(),
+            });
         }
         let mut cursor = None;
         loop {
@@ -378,7 +401,10 @@ impl SessionControl {
                 })
                 .await?;
             if let Some(saved) = page.sessions.iter().find(|saved| &saved.session == session) {
-                return Ok(saved.cwd.clone());
+                return Ok(Place {
+                    workspace: saved.cwd.clone(),
+                    project: saved.cwd.clone(),
+                });
             }
             match page.next_cursor {
                 Some(next) => cursor = Some(next),
@@ -418,9 +444,23 @@ impl SessionControl {
     }
 }
 
-/// The catalog page `workspace_of` walks: the daemon's largest
+/// The catalog page `place_of` walks: the daemon's largest
 /// (`rho/session/list` refuses more than 1000).
 const CATALOG_PAGE: u32 = 1000;
+
+/// Where a session works: its workspace, and the project it works for,
+/// which for a session in a worktree is the workspace the worktree was
+/// added from (`JobSummary::project`).
+struct Place {
+    workspace: PathBuf,
+    project: PathBuf,
+}
+
+/// The workspaces `job` counts as in, for the grant and `list`'s filter: its
+/// own and its project.
+fn workspaces_of(job: &JobSummary) -> [&Path; 2] {
+    [job.workspace.as_path(), job.project()]
+}
 
 /// `path` resolved through symlinks, as the daemon records workspaces.
 fn canonical(path: &Path) -> Result<PathBuf, ControlError> {

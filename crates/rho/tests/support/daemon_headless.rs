@@ -54,6 +54,7 @@ async fn open_session(fixture: &Fixture, client: &Client) -> Result<SessionId, O
             setup: SessionSetup::default(),
             parent: None,
             grant: None,
+            worktree: false,
         })
         .await
         .map(|opened| opened.session)

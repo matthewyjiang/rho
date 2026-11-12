@@ -162,6 +162,7 @@ async fn a_socket_others_can_reach_is_reported_as_exposed() {
 #[cfg(unix)]
 #[test]
 fn the_systemd_unit_is_installed_once_saved_and_enabled_once_wanted() {
+    use crate::daemon::SYSTEMD_UNIT;
     let home = TempDir::new().unwrap();
     let default_units = home.path().join(".config/systemd/user");
     let xdg = home.path().join("xdg");

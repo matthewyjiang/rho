@@ -247,6 +247,13 @@ pub enum Command {
         /// approvals and questions. `--timeout` is enforced by the daemon.
         #[arg(long, conflicts_with_all = ["output_file", "output", "max_steps", "no_save"])]
         detach: bool,
+        /// Run in a new git worktree of the current directory's repository,
+        /// on a new branch from its HEAD, so runs in one repository cannot
+        /// overwrite each other's edits. The worktree is made under the rho
+        /// home, and the run works at the current directory's place in it.
+        /// Rho never removes it: `git worktree remove <PATH>` does.
+        #[arg(long)]
+        worktree: bool,
         /// Prompt text to send to the agent.
         #[arg(value_name = "PROMPT", num_args = 0..)]
         prompt: Vec<String>,
@@ -368,8 +375,8 @@ Run rho model-prompt edit --help for editor setup, saving, and reload behavior."
 #[derive(clap::Args, Clone, Debug, Default)]
 pub struct AcpArgs {
     /// Mark the host as T3 Code: subagents run as T3 child threads through
-    /// its `t3-code` MCP server. Wake-ups for background work are not yet
-    /// available with the rho daemon (#1670).
+    /// its `t3-code` MCP server, and a background process or workflow that
+    /// finishes after a prompt ended wakes the idle thread with its result.
     #[arg(long)]
     pub t3code: bool,
     /// Run terminal authentication for an auth profile instead of serving ACP.
