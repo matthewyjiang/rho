@@ -3,7 +3,9 @@
 //! `config.toml`, reaches every client reading the settings and the next
 //! turn of a loaded session; a stale or refused change writes nothing; a
 //! hand edit is served, and a broken one keeps the last good values in
-//! force; a client's own settings outlast the daemon. A custom provider
+//! force for loaded sessions but fails a new one; a client's own settings
+//! outlast the daemon. A setting read when a session opens, such as the edit
+//! tool, reaches the next session opened, not one already open. A custom provider
 //! added, edited or removed reaches a loaded session at its next turn.
 
 use pretty_assertions::assert_eq;
@@ -597,6 +599,120 @@ async fn a_codemode_change_reaches_a_loaded_sessions_next_turn() {
     );
 }
 
+// Covers: `behavior.edit_tool` edited by hand in `config.toml` while the
+// daemon runs reaches the next session opened, with no daemon restart; a
+// session already open keeps the edit tool it opened with (#1685).
+// Owner: daemon session open.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_edit_tool_change_reaches_the_next_session_not_an_open_one() {
+    let sandbox = Sandbox::new();
+    sandbox.set_config("supervised", "edit_tool = \"str_replace\"\n");
+    let client = sandbox.start_daemon("inspect").await;
+    let a = sandbox.new_session(&client).await;
+    let (_a_follower, mut a_events) = follow(&sandbox, &a).await;
+    sandbox.prompt(&client, &a).await.unwrap();
+    let (a_before, _) = next_turn(&mut a_events, &a).await;
+
+    sandbox.set_config("supervised", "edit_tool = \"apply_patch\"\n");
+    let b = sandbox.new_session(&client).await;
+    let (_b_follower, mut b_events) = follow(&sandbox, &b).await;
+    sandbox.prompt(&client, &b).await.unwrap();
+    let (b_tools, _) = next_turn(&mut b_events, &b).await;
+    sandbox.prompt(&client, &a).await.unwrap();
+    let (a_after, _) = next_turn(&mut a_events, &a).await;
+
+    let edit_tools = |tools: &[String]| {
+        tools
+            .iter()
+            .filter(|tool| ["str_replace", "apply_patch"].contains(&tool.as_str()))
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        (
+            edit_tools(&a_before),
+            edit_tools(&b_tools),
+            edit_tools(&a_after)
+        ),
+        (
+            vec!["str_replace".to_owned()],
+            vec!["apply_patch".to_owned()],
+            vec!["str_replace".to_owned()],
+        ),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
+// Covers: a daemon started on a `config.toml` that does not load still
+// starts; a new session fails with the file's errors, and the next one
+// opened once the file is fixed opens, with no daemon restart (#1685).
+// Owner: daemon session open.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_broken_config_fails_the_new_session_not_the_daemon() {
+    let sandbox = Sandbox::new();
+    sandbox.set_config("supervised", "edit_tool = \"sed\"\n");
+    let client = sandbox.start_daemon("fixed").await;
+
+    let environment = sandbox.client_environment();
+    let broken = sandbox
+        .try_new_session(&client, environment.clone())
+        .await
+        .map(drop);
+    sandbox.set_config("supervised", "edit_tool = \"apply_patch\"\n");
+    let fixed = sandbox
+        .try_new_session(&client, environment)
+        .await
+        .map(drop);
+
+    assert_eq!(
+        (broken, fixed),
+        (
+            Err(RpcError::new(
+                ErrorCode::SessionOpenFailed,
+                format!(
+                    "could not open session: invalid config file {}:\n`behavior.edit_tool`: must be one of auto, str_replace, apply_patch; got \"sed\"",
+                    sandbox.isolated.config_path.display()
+                ),
+            )),
+            Ok(()),
+        ),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
+// Covers: once `config.toml` stops loading, a saved session the daemon
+// unloaded while idle still reopens for its next prompt, on the last good
+// config, while a new session fails (#1685).
+// Owner: daemon session open.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_broken_config_still_reopens_an_unloaded_session() {
+    let sandbox = Sandbox::new();
+    let client = sandbox
+        .start_daemon_with("fixed", &["--unload-idle-after", "200ms"])
+        .await;
+    let session = sandbox.new_session(&client).await;
+    // Saved, so the unload has a file to reopen.
+    sandbox.prompt(&client, &session).await.unwrap();
+    sandbox.wait_unloaded(&session, /*times*/ 1).await;
+
+    sandbox.set_config("supervised", "edit_tool = \"sed\"\n");
+    let new = sandbox
+        .try_new_session(&client, sandbox.client_environment())
+        .await
+        .map(drop)
+        .map_err(|error| error.code);
+    let reopened = sandbox.prompt(&client, &session).await;
+
+    assert_eq!(
+        (new, reopened),
+        (Err(ErrorCode::SessionOpenFailed as i64), Ok(())),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
 // Covers: a change against a stale revision is refused as a conflict, and
 // one with a bad value or an unknown key as invalid params naming them, as
 // is a credential store change, which must go through
@@ -740,8 +856,9 @@ async fn a_writers_quick_changes_do_not_conflict_with_each_other() {
 
 // Covers: a hand edit of `config.toml` is served on the next request; one
 // that no longer loads is reported in `errors` while the last good values
-// stay served and in force, so a new session still opens; a change to the
-// key it fails on repairs it (#1720).
+// stay served, and fails a new session with the file's errors rather than
+// open it on them (#1685); a change to the key it fails on repairs it
+// (#1720).
 // Owner: daemon settings store.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_hand_edit_is_served_and_a_broken_one_keeps_the_last_good_values() {
@@ -772,7 +889,18 @@ async fn a_hand_edit_is_served_and_a_broken_one_keeps_the_last_good_values() {
             }]
         )
     );
-    sandbox.new_session(&client).await;
+    assert_eq!(
+        sandbox
+            .try_new_session(&client, sandbox.client_environment())
+            .await,
+        Err(RpcError::new(
+            ErrorCode::SessionOpenFailed,
+            format!(
+                "could not open session: invalid config file {}:\n`output.max_output_bytes`: must be at least 1; got 0",
+                sandbox.isolated.config_path.display()
+            ),
+        ))
+    );
 
     let hand_edit = std::fs::read_to_string(&sandbox.isolated.config_path).unwrap();
     set(

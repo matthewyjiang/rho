@@ -19,7 +19,7 @@ use rho_protocol::{
     ClientHello, ClientInfo, CompactionStatus, ContentBlock, Cursor, DaemonNotification,
     DetachReason, ErrorCode, IdempotencyKey, InputAnswer, InputRequest, InputRequestId, JobId,
     JobKind, JobListParams, JobState, JobSummary, Notifications, Operation, PathScope, Replay,
-    Resolution, Seq, SessionAnswerParams, SessionAttachParams, SessionAttachResponse,
+    Resolution, RpcError, Seq, SessionAnswerParams, SessionAttachParams, SessionAttachResponse,
     SessionCancelParams, SessionDetachParams, SessionDetachedParams, SessionEvent,
     SessionHoldParams, SessionId, SessionNewParams, SessionPromptParams, SessionSetup, StreamId,
     ToolCallId, ToolContent, ToolStatus, TurnError, TurnErrorKind, TurnId, TurnOutcome,
@@ -318,6 +318,15 @@ impl Sandbox {
         client: &Client,
         environment: ClientEnvironment,
     ) -> SessionId {
+        self.try_new_session(client, environment).await.unwrap()
+    }
+
+    /// [`Self::new_session_with_environment`]; the error that refused it.
+    pub(super) async fn try_new_session(
+        &self,
+        client: &Client,
+        environment: ClientEnvironment,
+    ) -> Result<SessionId, RpcError> {
         client
             .request::<SessionNew>(&SessionNewParams {
                 cwd: self.workspace.clone(),
@@ -329,8 +338,11 @@ impl Sandbox {
                 worktree: false,
             })
             .await
-            .unwrap()
-            .session
+            .map(|opened| opened.session)
+            .map_err(|error| match error {
+                ClientError::Rpc { error, .. } => error,
+                error => panic!("the open failed outside the protocol: {error}"),
+            })
     }
 
     /// Prompts `session` with "hello"; the error code of a refused prompt.

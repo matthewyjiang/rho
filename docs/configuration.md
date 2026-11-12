@@ -126,7 +126,7 @@ The credential store is not on this screen: choose it with `rho credential-store
 
 A category page shows each setting's value and, in its detail, when a change applies. Enter flips an on/off setting, as does Space before you type a filter. A choice or model opens a page of its values, with a **Default** row once the file sets it. A number or text opens a line editor; the prompt shows a number's range, and an empty entry removes the setting so its default applies.
 
-Every change goes to the daemon, which writes the file and tells every client; a row shows its new value once the daemon confirms it. If the settings changed elsewhere first, nothing is written and the status says to try again. If a hand edit leaves the file invalid, the daemon keeps the last good settings and the TUI shows the problem.
+Every change goes to the daemon, which writes the file and tells every client; a row shows its new value once the daemon confirms it. If the settings changed elsewhere first, nothing is written and the status says to try again. If a hand edit leaves the file invalid, the TUI shows the problem, sessions already open, or reopened, keep the last good settings, and a new session fails to open with the file's errors until you fix it ([Configuration changes](/daemon#configuration-changes)).
 
 When a change applies:
 

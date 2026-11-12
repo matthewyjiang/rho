@@ -4,10 +4,15 @@
 //!
 //! The store reads a file again whenever its `stat` moved since the last
 //! read, checked on every touch: each config request, each session open,
-//! and each turn start. A file that stops loading leaves its last good
-//! values in force and publishes its errors; the next touch reads it again.
-//! Nothing polls, so a client sitting on a settings screen sees a hand edit
-//! on its next request.
+//! and each turn start. A file that stops loading publishes its errors and
+//! leaves its last good values in force for turns and for sessions opened
+//! only to read; the next touch reads it again. Nothing polls, so a client
+//! sitting on a settings screen sees a hand edit on its next request.
+//!
+//! A session that opens to run takes the config only while the file loads
+//! ([`ConfigStore::config_to_open`]), and fails otherwise, rather than run
+//! on the last good values: a session opened after an edit never runs on
+//! the config before it.
 //!
 //! A change reaches the agent when its setting says (`applies`):
 //! `agent_concurrency` resizes the subagent budget as it is published, the
@@ -51,8 +56,8 @@ pub(super) struct ConfigStore {
     /// Serializes reads and writes of `config.toml`.
     agent: tokio::sync::Mutex<AgentFile>,
     agent_state: watch::Sender<Arc<ConfigGetResponse>>,
-    /// The last config that loaded, which sessions open and turn with;
-    /// `None` until one has.
+    /// The last config that loaded, which turns read and sessions open to
+    /// read with; `None` until one has.
     agent_config: Mutex<Option<Arc<Config>>>,
     /// Sized by `behavior.agent_concurrency` as each config is published.
     concurrency: AgentConcurrency,
@@ -67,7 +72,8 @@ struct AgentFile {
     run: WriterRun,
 }
 
-/// Why no session can open: `config.toml` has never loaded.
+/// Why `config.toml` gave no config, with the errors of the read that
+/// decided it.
 #[derive(Debug, thiserror::Error)]
 #[error("invalid config file {path}:\n{errors}")]
 pub(super) struct ConfigUnloaded {
@@ -102,24 +108,35 @@ impl ConfigStore {
         store
     }
 
-    /// The config a session opens or turns with: the last one that loaded,
-    /// after reading `config.toml` again if it changed.
+    /// The config a turn reads, or a session opened only to read its file:
+    /// the last one that loaded, after reading `config.toml` again if it
+    /// changed.
     pub(super) async fn agent_config(&self) -> Result<Arc<Config>, ConfigUnloaded> {
         self.refresh_agent(&mut self.agent.lock().await.seen);
-        self.config().clone().ok_or_else(|| ConfigUnloaded {
+        self.config()
+            .clone()
+            .ok_or_else(|| self.unloaded(&self.agent_state.borrow().errors))
+    }
+
+    /// The config a session opens to run with: `config.toml` as it is now,
+    /// after reading it again if it changed. A file that does not load fails
+    /// the open, naming each problem, rather than leave the session on the
+    /// last good values.
+    pub(super) async fn config_to_open(&self) -> Result<Arc<Config>, ConfigUnloaded> {
+        let mut file = self.agent.lock().await;
+        self.refresh_agent(&mut file.seen);
+        let state = self.agent_state.borrow();
+        match self.config().clone() {
+            Some(config) if state.errors.is_empty() => Ok(config),
+            _ => Err(self.unloaded(&state.errors)),
+        }
+    }
+
+    fn unloaded(&self, errors: &[WireError]) -> ConfigUnloaded {
+        ConfigUnloaded {
             path: self.agent_path.display().to_string(),
-            errors: self
-                .agent_state
-                .borrow()
-                .errors
-                .iter()
-                .map(|error| match &error.key {
-                    Some(key) => format!("`{key}`: {}", error.message),
-                    None => error.message.clone(),
-                })
-                .collect::<Vec<_>>()
-                .join("\n"),
-        })
+            errors: listed(errors),
+        }
     }
 
     /// The agent's `config.toml`.
@@ -221,6 +238,13 @@ impl ConfigStore {
                 (values, Vec::new())
             }
             Err(errors) => {
+                // Logged once per broken edit: only a changed file is read
+                // again.
+                tracing::warn!(
+                    path = %self.agent_path.display(),
+                    errors = %listed(&errors),
+                    "config does not load; new sessions fail to open until it is fixed"
+                );
                 let values = match &*self.config() {
                     Some(_) => self.agent_state.borrow().values.clone(),
                     None => agent_values(&ConfigDocument::default(), &Config::default()),
@@ -270,6 +294,18 @@ fn read_agent(path: &Path) -> AgentRead {
     log_warnings(path, &warnings);
     let values = agent_values(&doc, &config);
     Ok((config, values))
+}
+
+/// Every error of a read, one per line, by setting when it has one.
+fn listed(errors: &[WireError]) -> String {
+    errors
+        .iter()
+        .map(|error| match &error.key {
+            Some(key) => format!("`{key}`: {}", error.message),
+            None => error.message.clone(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn log_warnings(path: &Path, warnings: &[crate::config::ConfigWarning]) {

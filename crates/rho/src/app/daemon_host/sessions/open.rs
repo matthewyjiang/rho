@@ -1,9 +1,13 @@
 //! Opening a session: a new one, or one saved earlier, which the daemon
 //! reopens as the agent it was saved as (#1661). The config is the user's
-//! global config, read when the session is opened, so a config edit applies
-//! to the next session opened without a daemon restart; the agents and
-//! instructions are those of the session's workspace, as `rho` launched
-//! there would find them.
+//! global config as it is when the session is opened, so a config edit
+//! applies to the next session opened without a daemon restart; a session
+//! already open keeps its config until it reopens. A new session fails to
+//! open on a config that does not load, rather than run on the last good
+//! values; a reopened one, which a person may be in the middle of, runs on
+//! them. The
+//! agents and instructions are those of the session's workspace, as `rho`
+//! launched there would find them.
 //!
 //! A new session runs as the agent its client names, else the default
 //! agent, with the configured model, reasoning, fast mode, and permission
@@ -51,6 +55,7 @@ use crate::{
             IdleTurns, RunShape, SessionBuild, SessionLaunch, SessionOpening, SessionRole,
             SessionRuntime, SessionUse,
         },
+        subagent_pool::SubagentPool,
         tools_prompt::ToolSourceLoad,
     },
     caller_context::CallerContext,
@@ -167,15 +172,40 @@ pub(in crate::app::daemon_host) fn session_environment(
     Ok(Ambient::Client(Arc::new(variables)))
 }
 
+/// The global config a new session opens with: `config.toml` as it is
+/// now. One that does not load is `SessionOpenFailed`, naming each problem,
+/// rather than the last good values. Read before anything the open cannot
+/// undo, such as adding the session's worktree.
+pub(super) async fn config_for_new(settings: &ConfigStore) -> Result<Arc<Config>, RpcError> {
+    settings
+        .config_to_open()
+        .await
+        .map_err(|error| open_failed(error.into()))
+}
+
+/// The global config a saved session reopens with, to run or only to read:
+/// the last that loaded, as its turns read while it stays loaded, so a hand
+/// edit that broke `config.toml` does not break a conversation the daemon
+/// unloaded while it sat idle. Fails only if none ever loaded.
+pub(super) async fn config_for_saved(settings: &ConfigStore) -> Result<Arc<Config>, RpcError> {
+    settings
+        .agent_config()
+        .await
+        .map_err(|error| open_failed(error.into()))
+}
+
 /// Opens the session `opening` says, whose turns are job `job`, with what
-/// `with` brings. A new session's file is written with its first prompt.
-/// A setup the session cannot take is invalid params (see `setup.rs`); any
-/// other failure is `SessionOpenFailed`.
+/// `with` brings and `global`, read from `settings` by [`config_for_new`]
+/// or [`config_for_saved`].
+/// A new session's file is written with its first prompt. A setup the
+/// session cannot take is invalid params (see `setup.rs`); any other
+/// failure is `SessionOpenFailed`.
 pub(super) async fn open_session(
     opening: Opening,
     with: &OpenWith,
     subagents: &Subagents,
     settings: &ConfigStore,
+    global: Arc<Config>,
     job: &JobId,
 ) -> Result<OpenedSession, RpcError> {
     let saved = match &opening {
@@ -192,9 +222,9 @@ pub(super) async fn open_session(
         SessionEnvironment::new(with.environment.clone()),
         setup,
         SessionUse::Run(sign_in),
-        subagents,
+        subagents.pool_for(job.clone()),
         settings,
-        job,
+        global,
     )
     .await
     .map_err(open_failed)
@@ -259,7 +289,8 @@ fn reading_trust(stored: &StoredSession) -> anyhow::Result<ProjectTrusts> {
 /// `job`: it starts none of its MCP servers, OpenAPI sources, or hooks, sees
 /// no client's environment (see [`SessionEnvironment::for_reading`]), and
 /// takes no setup but what its file keeps. Its agents are found under
-/// [`reading_trust`]. Fails as [`open_session`] does.
+/// [`reading_trust`], with [`config_for_saved`]. Fails as [`open_session`]
+/// does.
 pub(super) async fn open_to_read(
     stored: StoredSession,
     subagents: &Subagents,
@@ -268,31 +299,35 @@ pub(super) async fn open_to_read(
 ) -> Result<OpenedSession, RpcError> {
     let project_trust = reading_trust(&stored).map_err(open_failed)?;
     let setup = Setup::resolve(&SessionSetup::default(), stored.cwd(), Some(&stored))?;
+    let global = config_for_saved(settings).await?;
     open_runtime(
         Opening::Saved(stored),
         SessionEnvironment::for_reading(project_trust),
         setup,
         SessionUse::Read,
-        subagents,
+        subagents.pool_for(job.clone()),
         settings,
-        job,
+        global,
     )
     .await
     .map_err(open_failed)
 }
 
-/// [`open_session`] and [`open_to_read`] once the setup resolved. The
-/// session's agent is found under `environment`'s project trust (#1779).
+/// [`open_session`] and [`open_to_read`] once the setup resolved and
+/// `global` was read from `settings`. The session's children share
+/// `subagent_pool`; its agent is found under `environment`'s project trust
+/// (#1779).
 async fn open_runtime(
     opening: Opening,
     environment: SessionEnvironment,
     setup: Setup,
     session_use: SessionUse,
-    subagents: &Subagents,
+    subagent_pool: SubagentPool,
     settings: &ConfigStore,
-    job: &JobId,
+    global: Arc<Config>,
 ) -> anyhow::Result<OpenedSession> {
     let cwd = &opening.cwd().to_path_buf();
+    let config_path = settings.agent_path().to_path_buf();
     let Setup {
         left_out,
         questions,
@@ -303,10 +338,8 @@ async fn open_runtime(
         persistence,
         adds_to_saved,
     } = setup;
-    let config_path = settings.agent_path().to_path_buf();
-    let global = settings.agent_config().await?;
-    // The last config read publishes its custom providers to the daemon,
-    // as each rho process publishes its own at startup.
+    // The config each session opens with publishes its custom providers to
+    // the daemon, as each rho process publishes its own at startup.
     global.providers.activate()?;
     // And its credential store: `rho credential-store set` and an edit of
     // `config.toml` choose one from outside the daemon, as the way out of
@@ -366,7 +399,7 @@ async fn open_runtime(
             questions,
             children,
             idle_turns,
-            subagent_pool: subagents.pool_for(job.clone()),
+            subagent_pool,
             environment: environment.clone(),
             mcp_authorization: McpAuthorizationMode::NonInteractive,
             approvals: ApprovalPolicy::Host,
