@@ -247,6 +247,13 @@ pub enum Command {
         /// approvals and questions. `--timeout` is enforced by the daemon.
         #[arg(long, conflicts_with_all = ["output_file", "output", "max_steps", "no_save"])]
         detach: bool,
+        /// Run in a new git worktree of the current directory's repository,
+        /// on a new branch from its HEAD, so runs in one repository cannot
+        /// overwrite each other's edits. The worktree is made under the rho
+        /// home, and the run works at the current directory's place in it.
+        /// Rho never removes it: `git worktree remove <PATH>` does.
+        #[arg(long)]
+        worktree: bool,
         /// Prompt text to send to the agent.
         #[arg(value_name = "PROMPT", num_args = 0..)]
         prompt: Vec<String>,

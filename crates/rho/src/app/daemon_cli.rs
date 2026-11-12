@@ -22,7 +22,8 @@ use {
     crate::logging::{self, LogSink},
     anyhow::Context,
     rho_protocol::{
-        methods, ClientError, DaemonStatus, PendingUpgrade, RestartParams, StatusParams, StopParams,
+        methods, ClientError, DaemonStatus, JobListParams, PendingUpgrade, RestartParams,
+        SessionWorktree, StatusParams, StopParams,
     },
     std::{ffi::OsString, sync::Arc, time::Duration},
 };
@@ -384,12 +385,29 @@ async fn status(paths: &DaemonPaths, json: bool) -> anyhow::Result<()> {
     if json {
         println!("{}", serde_json::to_string_pretty(&status)?);
     } else {
-        print!("{}", status_text(&status));
+        // Only what is still on disk: a person removes worktrees, not the
+        // daemon. A list the daemon cannot give drops the row, not the
+        // status.
+        let worktrees: Vec<_> = match client.request::<methods::JobList>(&JobListParams {}).await {
+            Ok(jobs) => jobs
+                .jobs
+                .into_iter()
+                .filter_map(|job| job.worktree)
+                .filter(|worktree| worktree.path.exists())
+                .collect(),
+            Err(error) => {
+                tracing::debug!(%error, "could not list the daemon's jobs");
+                Vec::new()
+            }
+        };
+        print!("{}", status_text(&status, &worktrees));
     }
     Ok(())
 }
 
-fn status_text(status: &DaemonStatus) -> String {
+/// The status text, with the worktrees the daemon's sessions work in that
+/// are still there (#1673).
+fn status_text(status: &DaemonStatus, worktrees: &[SessionWorktree]) -> String {
     let DaemonStatus {
         pid,
         version,
@@ -417,8 +435,20 @@ fn status_text(status: &DaemonStatus) -> String {
         None => String::new(),
         Some(reason) => format!("\n  unreachable  {reason}"),
     };
+    let worktrees: String = worktrees
+        .iter()
+        .enumerate()
+        .map(|(at, worktree)| {
+            let label = if at == 0 { "worktrees" } else { "" };
+            format!(
+                "\n  {label:<12} {} {}",
+                worktree.branch,
+                worktree.path.display()
+            )
+        })
+        .collect();
     format!(
-        "rho daemon is running\n  pid          {pid}\n  version      {version}\n  protocol     {protocol}\n  uptime       {uptime}\n  jobs         {jobs}{upgrade}\n  socket       {}\n  credentials  {store} store, chosen {chosen}{reach}\n",
+        "rho daemon is running\n  pid          {pid}\n  version      {version}\n  protocol     {protocol}\n  uptime       {uptime}\n  jobs         {jobs}{upgrade}\n  socket       {}\n  credentials  {store} store, chosen {chosen}{reach}{worktrees}\n",
         socket.display()
     )
 }

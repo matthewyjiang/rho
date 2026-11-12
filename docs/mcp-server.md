@@ -10,7 +10,7 @@ It serves over stdio by default, for a host that starts it as a command. `rho mc
 | --- | --- | --- |
 | `list` | The daemon's sessions, most recently changed first: each one's id, workspace, state, when it last changed, and the `parent` session whose agent started it, if one did. Filter by `workspace` or `state`; `limit` is 20 by default and at most 1000. | read |
 | `read` | A session's transcript as text: who said what, and the tools it called. Pages by characters: `start` (0 by default) and `chars` (4096 by default, at most 64000); pass the result's `next_start` to read on. | read |
-| `new` | Starts a session in `workspace`, an absolute path to an existing directory, with a first `prompt`. `agent` picks one of the workspace's agents by id and `model` one of its models, as `provider/model` or a model id only one provider offers; both default to the workspace's. | write |
+| `new` | Starts a session in `workspace`, an absolute path to an existing directory, with a first `prompt`. `agent` picks one of the workspace's agents by id and `model` one of its models, as `provider/model` or a model id only one provider offers; both default to the workspace's. `worktree: true` runs the session in a new git worktree of the workspace's repository, on a new branch from its `HEAD`, and the result's `worktree` names its `branch`, `path`, and `origin` ([sessions in worktrees](/daemon#sessions-in-worktrees)). | write |
 | `prompt` | Starts a session's next turn with `text`. | write |
 | `steer` | Gives the running turn `text` for its next model request. | write |
 | `cancel` | Stops the session's turn in progress, if any. | write |

@@ -181,6 +181,7 @@ impl DaemonSession {
                     setup: launch.setup.clone(),
                     parent: None,
                     grant: None,
+                    worktree: false,
                 };
                 let created = daemon
                     .request::<SessionNew>(&params)

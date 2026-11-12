@@ -31,6 +31,7 @@ mod executable;
 mod export;
 mod external_editor;
 mod frontmatter;
+mod git;
 mod herdr;
 mod history_message;
 mod hooks;
@@ -71,6 +72,7 @@ mod usage_limits;
 mod usage_limits_cache;
 pub(crate) mod workflow;
 mod workspace;
+mod worktree;
 
 pub use app::{run, AutomationExit, AutomationInterrupted};
 pub use cli::Cli;

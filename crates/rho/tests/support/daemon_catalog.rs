@@ -51,6 +51,7 @@ async fn open_session(sandbox: &Sandbox, client: &Client, cwd: PathBuf) -> Sessi
             setup: SessionSetup::default(),
             parent: None,
             grant: None,
+            worktree: false,
         },
     )
     .await

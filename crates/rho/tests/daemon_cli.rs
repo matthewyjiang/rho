@@ -48,6 +48,9 @@ mod attach;
 #[path = "support/daemon_detach.rs"]
 mod detach;
 
+#[path = "support/git_repo.rs"]
+mod git_repo;
+
 // Unix: the tool processes are shell commands, found by process group.
 #[cfg(unix)]
 #[path = "support/daemon_tools.rs"]
