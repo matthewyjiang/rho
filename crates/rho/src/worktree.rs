@@ -116,7 +116,9 @@ pub(crate) async fn add(root: &Path, workspace: &Path) -> Result<Added, Worktree
         path: root.to_path_buf(),
         error,
     })?;
-    let path = root.join(&name);
+    // Without the Windows verbatim prefix a rho home can carry, which git
+    // cannot create directories under.
+    let path = canonical(root)?.join(&name);
     let args: [&OsStr; 6] = [
         "worktree".as_ref(),
         "add".as_ref(),
