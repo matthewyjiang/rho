@@ -20,31 +20,7 @@
 
 use std::ffi::OsString;
 
-/// Where the daemon's files are, who it runs as, and its locale. `RHO_HOME`
-/// is not here: the spawner pins it to the resolved home.
-const MACHINE: &[&str] = &[
-    "HOME",
-    "USER",
-    "LOGNAME",
-    // The daemon's own executable lookups; a session's use its client's.
-    "PATH",
-    "TMPDIR",
-    // What the client's loader found this executable's libraries with.
-    "LD_LIBRARY_PATH",
-    "DYLD_LIBRARY_PATH",
-    // The socket's directory, which the client resolved its path from.
-    "XDG_RUNTIME_DIR",
-    // Model catalog caches.
-    "XDG_CACHE_HOME",
-    // The global ignore file of the `git` the write gate asks, and of
-    // workspace walks.
-    "XDG_CONFIG_HOME",
-    "GIT_CONFIG_GLOBAL",
-    "LANG",
-    "LC_ALL",
-    "LC_CTYPE",
-    "TZ",
-];
+use super::platform::{is_variable, MACHINE_VARIABLES};
 
 /// How the daemon's own requests, to providers and from web tools, reach the
 /// network from this machine.
@@ -82,9 +58,9 @@ const FIXTURE_PREFIXES: &[&str] = &[];
 /// Whether an auto-started daemon keeps variable `name` of the client that
 /// starts it.
 fn is_allowed(name: &str) -> bool {
-    [MACHINE, NETWORK, DAEMON_SETTINGS]
+    [MACHINE_VARIABLES, NETWORK, DAEMON_SETTINGS]
         .iter()
-        .any(|names| names.contains(&name))
+        .any(|names| names.iter().any(|listed| is_variable(name, listed)))
         || FIXTURE_PREFIXES
             .iter()
             .any(|prefix| name.starts_with(prefix))
@@ -113,11 +89,15 @@ pub(crate) fn differing_variables(
     let of_daemon = |name: &str| {
         daemon
             .iter()
-            .find(|(variable, _)| variable.to_str() == Some(name))
+            .find(|(variable, _)| {
+                variable
+                    .to_str()
+                    .is_some_and(|variable| is_variable(variable, name))
+            })
             .map(|(_, value)| value)
     };
     [
-        (MACHINE, VariableKind::Machine),
+        (MACHINE_VARIABLES, VariableKind::Machine),
         (NETWORK, VariableKind::Network),
         (DAEMON_SETTINGS, VariableKind::Setting),
     ]

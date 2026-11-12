@@ -14,11 +14,12 @@
 
 use std::{
     fs, io,
-    os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
     process::Stdio,
     time::Duration,
 };
+
+use super::platform::{self, FileIdentity};
 
 /// How long a replacement may take to print its version.
 //
@@ -38,28 +39,6 @@ pub(crate) struct Executable {
     /// started it under another name, which must not read as a replacement
     /// at every check.
     running: Option<FileIdentity>,
-}
-
-/// Which file a path names: equal identities are the same file, unchanged.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct FileIdentity {
-    device: u64,
-    inode: u64,
-    size: u64,
-    modified_secs: i64,
-    modified_nanos: i64,
-}
-
-impl FileIdentity {
-    fn of(metadata: &fs::Metadata) -> Self {
-        Self {
-            device: metadata.dev(),
-            inode: metadata.ino(),
-            size: metadata.size(),
-            modified_secs: metadata.mtime(),
-            modified_nanos: metadata.mtime_nsec(),
-        }
-    }
 }
 
 /// A file at the daemon's path other than the binary it runs.
@@ -105,7 +84,7 @@ impl Executable {
         };
         let started = identity(&path);
         Ok(Self {
-            running: running_identity().or(started),
+            running: platform::running_identity().or(started),
             started,
             path,
         })
@@ -157,14 +136,4 @@ fn identity(path: &Path) -> Option<FileIdentity> {
     fs::metadata(path)
         .ok()
         .map(|metadata| FileIdentity::of(&metadata))
-}
-
-/// The binary this process runs, even once an installer replaced the path
-/// it started from. Only Linux names it; elsewhere the daemon takes the
-/// path's file at startup.
-fn running_identity() -> Option<FileIdentity> {
-    #[cfg(target_os = "linux")]
-    return identity(Path::new("/proc/self/exe"));
-    #[cfg(not(target_os = "linux"))]
-    None
 }

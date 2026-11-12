@@ -1,9 +1,15 @@
-use std::os::unix::fs::symlink;
+use std::{
+    ffi::OsString,
+    fs,
+    os::unix::fs::{symlink, DirBuilderExt, PermissionsExt},
+    path::{Path, PathBuf},
+};
 
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 
-use super::*;
+use super::{endpoint::MAX_SOCKET_PATH_BYTES, DaemonPathError};
+use crate::daemon::paths::{home_id, real_home, DaemonPaths};
 
 fn resolve(rho_home: &Path, xdg_runtime_dir: Option<&str>) -> Result<DaemonPaths, DaemonPathError> {
     DaemonPaths::resolve(rho_home, |name| match name {

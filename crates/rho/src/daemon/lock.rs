@@ -1,6 +1,6 @@
 //! Single-instance lock and the info file that names the running daemon.
 //!
-//! The daemon holds an exclusive `flock` on [`DaemonPaths::lock`] for its
+//! The daemon holds an exclusive file lock on [`DaemonPaths::lock`] for its
 //! whole lifetime; the kernel releases it when the process exits, however it
 //! exits. Holding the lock therefore proves no other daemon is alive, which
 //! is what makes removing a leftover socket safe.
@@ -11,12 +11,8 @@
 //! [`DaemonPaths::resolve`]), so the lock also covers the socket.
 
 use std::{
-    fs::{self, File, OpenOptions},
+    fs::{self, File},
     io::{self, Write},
-    os::{
-        fd::{AsFd, BorrowedFd},
-        unix::fs::{MetadataExt, OpenOptionsExt},
-    },
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
@@ -25,7 +21,10 @@ use fs2::FileExt;
 use rho_protocol::ProtocolVersion;
 use serde::{Deserialize, Serialize};
 
-use super::paths::{DaemonPathError, DaemonPaths};
+use super::{
+    paths::DaemonPaths,
+    platform::{self, DaemonPathError},
+};
 
 /// Proof that this process is the only daemon for its rho home.
 /// Dropping it releases the lock.
@@ -90,29 +89,21 @@ pub(crate) fn acquire(paths: &DaemonPaths) -> Result<DaemonLock, LockError> {
     }
 }
 
-/// Takes over the lock the daemon this process re-executed from handed it
-/// as `file` (see `handoff`), once `file` proves to be this home's lock
-/// file, still locked.
-pub(super) fn adopt(paths: &DaemonPaths, file: File) -> io::Result<DaemonLock> {
-    let inherited = file.metadata()?;
-    let on_disk = fs::symlink_metadata(&paths.lock)?;
-    if (inherited.dev(), inherited.ino()) != (on_disk.dev(), on_disk.ino()) {
-        return Err(io::Error::other(format!(
-            "the inherited lock is not the daemon lock {}",
-            paths.lock.display()
-        )));
+impl DaemonLock {
+    /// Takes over the lock the daemon this process restarted from handed
+    /// it as `file`, its open lock file (see [`platform::take_handoff`]).
+    pub(super) fn adopt(file: File) -> io::Result<Self> {
+        // The lock belongs to the open file description, which the handoff
+        // kept, so locking it again succeeds at once; it would block only
+        // if another daemon had taken the lock meanwhile.
+        FileExt::try_lock_exclusive(&file)?;
+        Ok(Self { file })
     }
-    // The lock belongs to the open file description, which the exec kept,
-    // so locking it again succeeds at once; it would block only if another
-    // daemon had taken the lock meanwhile.
-    FileExt::try_lock_exclusive(&file)?;
-    Ok(DaemonLock { file })
-}
 
-/// The lock's descriptor, which `handoff` keeps open across the exec.
-impl AsFd for DaemonLock {
-    fn as_fd(&self) -> BorrowedFd<'_> {
-        self.file.as_fd()
+    /// The open lock file, which a restart in place hands to the binary it
+    /// runs.
+    pub(super) fn file(&self) -> &File {
+        &self.file
     }
 }
 
@@ -155,12 +146,13 @@ pub(crate) async fn wait_until_released(
 }
 
 /// Interval between lock probes while waiting for a daemon to exit. Each probe
-/// is an open and a `flock` on a local file; shutdown removes two files.
+/// is an open and a lock attempt on a local file; shutdown removes two files.
 const LOCK_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
-/// Writes the info file atomically (0600) so readers never see a partial one.
+/// Writes the info file atomically, private to this user, so readers never
+/// see a partial one.
 pub(crate) fn write_record(paths: &DaemonPaths, record: &DaemonRecord) -> io::Result<()> {
-    // `tempfile` creates the file with mode 0600.
+    // `tempfile` creates the file private to this user.
     let mut file = tempfile::NamedTempFile::new_in(&paths.state_dir)?;
     serde_json::to_writer(&mut file, record)?;
     file.write_all(b"\n")?;
@@ -206,39 +198,27 @@ pub(crate) fn holder(paths: &DaemonPaths) -> LockHolder {
     read_record(paths).map_or(LockHolder::Unrecorded, LockHolder::Daemon)
 }
 
-/// Sends SIGTERM to the recorded daemon, for a daemon that cannot take a
-/// `rho/daemon/stop` request because it speaks an incompatible protocol.
-/// SIGTERM triggers the same graceful shutdown. Returns the signalled pid, or
-/// `None` when no daemon holds the lock.
+/// Asks the recorded daemon to stop outside the protocol, for a daemon that
+/// cannot take a `rho/daemon/stop` request because it speaks an incompatible
+/// protocol. That triggers the same graceful shutdown. Returns the pid
+/// asked, or `None` when no daemon holds the lock.
 pub(crate) fn terminate_recorded_daemon(paths: &DaemonPaths) -> anyhow::Result<Option<u32>> {
-    // Only signal while the lock is held: the record then names a live
+    // Only ask while the lock is held: the record then names a live
     // daemon rather than a crashed one whose pid may have been reused.
     if !is_held(paths)? {
         return Ok(None);
     }
     let record = read_record(paths)
         .ok_or_else(|| anyhow::anyhow!("rho daemon is still starting; retry in a moment"))?;
-    let pid = libc::pid_t::try_from(record.pid)?;
-    // SAFETY: `kill` takes no pointers and has no memory-safety preconditions.
-    if unsafe { libc::kill(pid, libc::SIGTERM) } != 0 {
-        return Err(io::Error::last_os_error().into());
-    }
+    platform::request_stop(paths, record.pid)?;
     Ok(Some(record.pid))
 }
 
 fn open_lock_file(path: &Path) -> Result<File, LockError> {
-    OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .mode(0o600)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(path)
-        .map_err(|source| LockError::Io {
-            path: path.to_path_buf(),
-            source,
-        })
+    platform::open_lock_file(path).map_err(|source| LockError::Io {
+        path: path.to_path_buf(),
+        source,
+    })
 }
 
 #[cfg(test)]

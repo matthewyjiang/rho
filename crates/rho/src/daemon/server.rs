@@ -1,37 +1,30 @@
-//! The daemon's socket listener and accept loop. What the daemon answers
-//! comes from the [`Service`] its caller passes to [`BoundDaemon::serve`].
-//! A restart keeps the listener and the lock for the binary it re-executes
-//! ([`Restarting::reexec`]), which serves them again ([`rebind`]).
+//! The daemon's listener and accept loop. What the daemon answers comes
+//! from the [`Service`] its caller passes to [`BoundDaemon::serve`]. A
+//! restart ends in [`Restarting::relaunch`], which runs the daemon's binary
+//! again as the platform restarts a daemon; where that keeps the listener
+//! and the lock, the new run serves them again ([`rebind`]).
 
 use std::{
     ffi::OsString,
     fs, io,
-    os::{
-        fd::{AsFd, AsRawFd},
-        unix::{fs::PermissionsExt, process::CommandExt},
-    },
-    process::Command,
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use rho_protocol::{BuildId, DaemonInfo, FrameError, Service, PROTOCOL_VERSION};
-use tokio::{
-    net::{UnixListener, UnixStream},
-    task::JoinSet,
-};
+use tokio::task::JoinSet;
 
 use super::{
     executable::Executable,
-    handoff::{self, Handoff, InheritedSocket},
     lock::{self, DaemonLock, DaemonRecord},
-    paths::{current_uid, DaemonPaths},
+    paths::DaemonPaths,
+    platform::{self, Listener},
     shutdown::{Ending, Shutdown},
 };
 
 /// A daemon that owns its socket and is ready to serve.
 pub(crate) struct BoundDaemon {
-    listener: UnixListener,
+    listener: Listener,
     paths: DaemonPaths,
     started_at: u64,
     // Handed to the caller in [`Served`] once serving ends.
@@ -53,12 +46,12 @@ pub(crate) enum Served {
     Restarting(Box<Restarting>),
 }
 
-/// A daemon that stopped serving to restart: it still holds the listening
-/// socket, whose backlog keeps the clients that connect meanwhile waiting.
+/// A daemon that stopped serving to restart: it still holds the listener,
+/// whose backlog keeps the clients that connect meanwhile waiting.
 pub(crate) struct Restarting {
-    lock: DaemonLock,
-    listener: UnixListener,
-    paths: DaemonPaths,
+    pub(super) lock: DaemonLock,
+    pub(super) listener: Listener,
+    pub(super) paths: DaemonPaths,
 }
 
 impl Served {
@@ -79,7 +72,9 @@ impl Served {
 }
 
 impl Restarting {
-    fn release(self) {
+    /// Stops listening, removes the socket and the info file, and releases
+    /// the lock, so the next client starts a new daemon.
+    pub(super) fn release(self) {
         let Self {
             lock,
             listener,
@@ -90,51 +85,36 @@ impl Restarting {
         drop(lock);
     }
 
-    /// Re-executes `executable` as this process with the arguments `args`
-    /// makes of the [`Handoff`] that passes it the daemon lock and the
-    /// listening socket. Returns only if that failed, once it released the
-    /// lock and removed the socket, so the next client starts a new daemon.
-    pub(crate) fn reexec(
+    /// Runs `executable` again in this daemon's place, with the arguments
+    /// `args` makes of the handoff token, if the platform's restart passes
+    /// the new run one. `Ok` once another process is that run, and this one
+    /// should exit; where the restart replaces this process instead, it
+    /// returns only an error. Either way an error comes once the lock is
+    /// released and the socket removed, so the next client starts a new
+    /// daemon.
+    pub(crate) fn relaunch(
         self,
         executable: &Executable,
-        args: impl FnOnce(Handoff) -> Vec<OsString>,
-    ) -> io::Error {
-        let handoff = Handoff {
-            lock: self.lock.as_fd().as_raw_fd(),
-            socket: self.listener.as_raw_fd(),
-        };
-        let kept = handoff::set_close_on_exec(self.listener.as_fd(), false)
-            .and_then(|()| handoff::set_close_on_exec(self.lock.as_fd(), false));
-        let error = match kept {
-            Ok(()) => {
-                reap_exited_children();
-                tracing::info!(executable = %executable.path().display(), "re-executing the rho daemon");
-                Command::new(executable.path()).args(args(handoff)).exec()
-            }
-            Err(error) => error,
-        };
-        tracing::error!(
-            executable = %executable.path().display(),
-            %error,
-            "could not re-execute the rho daemon; exiting"
-        );
-        self.release();
-        error
+        args: impl FnOnce(Option<String>) -> Vec<OsString>,
+    ) -> io::Result<()> {
+        platform::relaunch(self, executable.path(), args)
     }
 }
 
-/// Reaps the children that already exited, which the exec would leave as
-/// zombies: the new binary never waits for what this one started.
-fn reap_exited_children() {
-    loop {
-        // SAFETY: a null status pointer is allowed; `WNOHANG` returns at
-        // once with 0 while children still run, and -1 once none is left.
-        let reaped = unsafe { libc::waitpid(-1, std::ptr::null_mut(), libc::WNOHANG) };
-        if reaped <= 0 {
-            return;
-        }
-    }
+/// Takes over the lock and the listener the handoff `token` names, for a
+/// daemon its predecessor restarted with one, before anything else this
+/// process starts could inherit them.
+pub(crate) fn take_handoff(
+    paths: &DaemonPaths,
+    token: &str,
+) -> io::Result<(DaemonLock, Inherited)> {
+    let (lock, listener) = platform::take_handoff(paths, token)?;
+    Ok((DaemonLock::adopt(lock)?, Inherited(listener)))
 }
+
+/// The listener a restarted daemon inherited, checked to be this home's;
+/// [`rebind`] serves it.
+pub(crate) struct Inherited(Listener);
 
 /// Binds the daemon socket and publishes the info file.
 ///
@@ -143,38 +123,32 @@ fn reap_exited_children() {
 /// daemon left behind are removed before binding. The runtime directory must
 /// already be prepared.
 pub(crate) fn bind(paths: &DaemonPaths, lock: DaemonLock) -> io::Result<BoundDaemon> {
-    for stale in [&paths.info_file, &paths.socket] {
-        match fs::remove_file(stale) {
-            Ok(()) => tracing::info!(path = %stale.display(), "removed stale daemon file"),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error),
+    match fs::remove_file(&paths.info_file) {
+        Ok(()) => {
+            tracing::info!(path = %paths.info_file.display(), "removed stale daemon file");
         }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
     }
-    let listener = UnixListener::bind(&paths.socket)?;
-    // The runtime directory is 0700, so nobody else can reach the socket in
-    // the moment before this chmod; 0600 keeps it private if the directory's
-    // mode is ever loosened.
-    fs::set_permissions(&paths.socket, fs::Permissions::from_mode(0o600))?;
+    let listener = Listener::bind(paths)?;
     publish(paths, listener, lock, "rho daemon listening")
 }
 
-/// Serves the socket the daemon this process re-executed from handed it,
+/// Serves the listener the daemon this process restarted from handed it,
 /// with its lock, and publishes this binary's info file. Connections that
-/// waited in the socket's backlog meanwhile are accepted first.
+/// waited in the listener's backlog meanwhile are accepted first.
 pub(crate) fn rebind(
     paths: &DaemonPaths,
     lock: DaemonLock,
-    InheritedSocket(listener): InheritedSocket,
+    Inherited(listener): Inherited,
 ) -> io::Result<BoundDaemon> {
-    listener.set_nonblocking(true)?;
-    let listener = UnixListener::from_std(listener)?;
     publish(paths, listener, lock, "rho daemon re-executed in place")
 }
 
 /// Writes the info file for the daemon `listener` serves.
 fn publish(
     paths: &DaemonPaths,
-    listener: UnixListener,
+    listener: Listener,
     lock: DaemonLock,
     message: &'static str,
 ) -> io::Result<BoundDaemon> {
@@ -226,7 +200,7 @@ impl BoundDaemon {
         shutdown: Shutdown,
     ) -> Served {
         let Self {
-            listener,
+            mut listener,
             paths,
             started_at: _,
             lock,
@@ -236,7 +210,6 @@ impl BoundDaemon {
             pid: std::process::id(),
             build: reported_build(),
         });
-        let uid = current_uid();
         let mut connections = JoinSet::new();
         let result = loop {
             tokio::select! {
@@ -247,10 +220,7 @@ impl BoundDaemon {
                 () = shutdown.requested() => break Ok(()),
                 Some(_) = connections.join_next(), if !connections.is_empty() => {}
                 accepted = listener.accept() => match accepted {
-                    Ok((stream, _)) => {
-                        if !peer_is_owner(&stream, uid) {
-                            continue;
-                        }
+                    Ok(stream) => {
                         let service = Arc::clone(&service);
                         let info = Arc::clone(&info);
                         let shutdown = shutdown.clone();
@@ -334,31 +304,15 @@ fn reported_build() -> BuildId {
 
 /// Removes the socket and the info file, which no daemon serves any more.
 fn remove_daemon_files(paths: &DaemonPaths) {
-    for path in [&paths.socket, &paths.info_file] {
-        if let Err(error) = fs::remove_file(path) {
+    let removed = [
+        (&paths.socket, platform::remove_endpoint(paths)),
+        (&paths.info_file, fs::remove_file(&paths.info_file)),
+    ];
+    for (path, removed) in removed {
+        if let Err(error) = removed {
             if error.kind() != io::ErrorKind::NotFound {
                 tracing::warn!(path = %path.display(), %error, "could not remove daemon file");
             }
-        }
-    }
-}
-
-/// Only the user who owns the daemon may connect. The socket's 0600 mode
-/// already enforces this; the peer check keeps it true if the mode is ever
-/// loosened.
-fn peer_is_owner(stream: &UnixStream, uid: u32) -> bool {
-    match stream.peer_cred() {
-        Ok(credentials) if credentials.uid() == uid => true,
-        Ok(credentials) => {
-            tracing::warn!(
-                peer_uid = credentials.uid(),
-                "rejected connection from another user"
-            );
-            false
-        }
-        Err(error) => {
-            tracing::warn!(%error, "rejected connection without peer credentials");
-            false
         }
     }
 }

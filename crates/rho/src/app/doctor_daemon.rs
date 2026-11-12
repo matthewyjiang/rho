@@ -16,9 +16,7 @@ use std::{
 use rho_protocol::{methods::Status, ClientError, StatusParams};
 
 use crate::{
-    daemon::{
-        self, ConnectError, DaemonPathError, DaemonPaths, LockHolder, SocketFound, VariableKind,
-    },
+    daemon::{self, ConnectError, DaemonPaths, LockHolder, SocketFound, VariableKind},
     doctor::{
         daemon::{
             environment_check, process_check, service_check, socket_check, DaemonEnvironment,
@@ -186,18 +184,8 @@ fn inspect_socket(paths: &DaemonPaths) -> DaemonSocket {
     match paths.inspect_socket() {
         Ok(SocketFound::Missing) => DaemonSocket::Missing { socket },
         Ok(SocketFound::Private) => DaemonSocket::Private { socket },
-        Err(error @ (DaemonPathError::Io { .. } | DaemonPathError::Unreadable { .. })) => {
-            DaemonSocket::Unknown(error.to_string())
-        }
-        Err(
-            error @ (DaemonPathError::SocketPathTooLong { .. }
-            | DaemonPathError::NotADirectory { .. }
-            | DaemonPathError::WrongOwner { .. }
-            | DaemonPathError::InsecureMode { .. }
-            | DaemonPathError::NotASocket { .. }
-            | DaemonPathError::SocketWrongOwner { .. }
-            | DaemonPathError::InsecureSocketMode { .. }),
-        ) => DaemonSocket::Exposed(error.to_string()),
+        Err(error) if error.is_unreadable() => DaemonSocket::Unknown(error.to_string()),
+        Err(error) => DaemonSocket::Exposed(error.to_string()),
     }
 }
 

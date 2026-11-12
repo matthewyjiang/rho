@@ -9,6 +9,7 @@ use tempfile::TempDir;
 use tokio::net::UnixListener;
 
 use super::*;
+use crate::daemon::DaemonPathError;
 
 /// Failure bound for a daemon stand-in to answer; no test waits it out.
 const DEADLINE: Duration = Duration::from_secs(10);
