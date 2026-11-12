@@ -270,17 +270,28 @@ The daemon removes a session's worktree once nothing in it can be lost:
 
 - its session is neither loaded nor running,
 - it has no uncommitted or untracked changes, and
-- its branch is merged into the current `HEAD` of the checkout you started it
-  from.
+- the current `HEAD` of the checkout you started it from already has its
+  branch's changes, whether you merged, squash-merged, or rebase-merged it.
 
 It runs `git worktree remove` (never with `--force`) and keeps the branch.
 It checks a minute after it starts and once a day, and only removes worktrees whose
 session has been unused for a day. Files git ignores, such as `.env`,
 `node_modules`, or `target/`, go with the worktree. If you reopen or read the
 session later, the daemon adds the worktree back on the branch, at the commit
-it removed, and makes the branch again if you deleted it. A worktree you
-removed yourself stays removed. A squash or rebase merge leaves the
-branch looking unmerged, so that worktree stays until you remove it.
+it removed, and makes the branch again if you deleted it. If git has since
+collected that commit, as it can once you delete a squash-merged branch, the
+worktree starts from the checkout's `HEAD`, which has its changes. A worktree
+you removed yourself stays removed.
+
+A branch counts as merged when `HEAD` contains its commit, when `HEAD` has a
+commit with the same patch as each of the branch's own (a rebase merge or
+cherry-picks), or when merging the branch into `HEAD` would change nothing (a
+squash merge). Pull the merged pull request into that checkout first; rho
+checks only local git, never the forge. The squash check needs git 2.38 or
+later. With an older git, a squash-merged worktree looks unmerged and stays,
+and the daemon log says why. A squash-merged branch with more than
+one commit, whose lines `HEAD` has since edited again, can look unmerged, so
+that worktree stays until you remove it.
 
 Every other worktree stays. After 14 days unused, `rho daemon status` and
 [`/jobs`](/interactive-tui) flag it as stale. Merge what you want, then remove
