@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use super::LoadedSession;
 use crate::{
-    agent::{ADVISOR_AGENT_ID, COMPACTION_AGENT_ID, PERMISSION_CLASSIFIER_AGENT_ID},
+    agent::PERMISSION_CLASSIFIER_AGENT_ID,
     app::session_runtime::SessionRuntime,
     config::Config,
     permission_classifier::DECISION_SCREEN_ID,
@@ -73,10 +73,7 @@ impl LoadedSession {
             if let Err(error) = runtime.set_compaction(&next) {
                 failed = true;
                 notices.push(format!("could not apply the compaction settings: {error}"));
-                next.auto_compact = current.auto_compact;
-                next.compact_threshold_percent = current.compact_threshold_percent;
-                next.compact_target_percent = current.compact_target_percent;
-                next.take_internal_agent(&current, COMPACTION_AGENT_ID);
+                next.take_compaction_settings(&current);
             }
         }
         if changes.advisor {
@@ -88,8 +85,7 @@ impl LoadedSession {
                 Err(error) => {
                     failed = true;
                     notices.push(format!("could not apply the advisor settings: {error}"));
-                    next.advisor_mode = current.advisor_mode;
-                    next.take_internal_agent(&current, ADVISOR_AGENT_ID);
+                    next.take_advisor_settings(&current);
                 }
             }
         }

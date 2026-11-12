@@ -108,6 +108,9 @@ pub(crate) enum SessionCredentials {
     /// A prompt failed on a credential failure, or the session opened
     /// without credentials; reacquire before the next prompt.
     Refused,
+    /// The provider must be rebuilt from the store before the next prompt,
+    /// as when its configured host changed (see `providers.rs`).
+    Stale,
     /// A test's scripted provider, which reads no credentials and cannot be
     /// rebuilt from config, so another test moving the process-wide
     /// generation must not make it stale.
@@ -132,7 +135,18 @@ impl SessionCredentials {
     /// scripted provider for another.
     pub(super) fn mark_read(&mut self, read: CredentialGeneration) {
         match *self {
-            Self::Read(_) | Self::Refused => *self = Self::Read(read),
+            Self::Read(_) | Self::Refused | Self::Stale => *self = Self::Read(read),
+            #[cfg(test)]
+            Self::Scripted => {}
+        }
+    }
+
+    /// Makes the next prompt rebuild the provider. A refusal stays one, so
+    /// that rebuild still rereads other processes' logins.
+    pub(super) fn mark_stale(&mut self) {
+        match *self {
+            Self::Read(_) => *self = Self::Stale,
+            Self::Refused | Self::Stale => {}
             #[cfg(test)]
             Self::Scripted => {}
         }
@@ -140,7 +154,8 @@ impl SessionCredentials {
 }
 
 impl SessionRuntime {
-    /// Rebuilds a stale provider for the same model and auth. Still-missing
+    /// Rebuilds a stale provider for the same model and auth, from what
+    /// `process_config` and the credential store hold now. Still-missing
     /// credentials fail with the typed provider error, which hosts report as
     /// a sign-in request again; the caller notes the failure
     /// ([`Self::note_credential_failure`]), so the next prompt rereads.
@@ -154,7 +169,7 @@ impl SessionRuntime {
             }
             // This process's writes keep the OS store's cache current, so
             // a moved generation needs no reread.
-            SessionCredentials::Read(_) => {}
+            SessionCredentials::Read(_) | SessionCredentials::Stale => {}
             // The login that fixes a refusal, or the credentials a renewal
             // did not find, may have run in another process, such as the
             // editor's terminal login.
@@ -162,13 +177,6 @@ impl SessionRuntime {
             #[cfg(test)]
             SessionCredentials::Scripted => return Ok(()),
         }
-        self.rebuild_provider(process_config).await
-    }
-
-    /// Rebuilds the session's provider for the same model and auth from
-    /// what `process_config` and the credential store hold now, which
-    /// rebinds the compactor too.
-    pub(super) async fn rebuild_provider(&mut self, process_config: &Config) -> anyhow::Result<()> {
         let read = AppCredentialStore::generation();
         let mut config = model_scoped_config(&self.current_model(), process_config);
         config.reasoning = self.built.session.reasoning_level();
@@ -183,7 +191,8 @@ impl SessionRuntime {
         // The model switch path also rebinds the compactor, which holds its
         // own provider. The model is unchanged, so no switch notice is saved.
         self.switch_provider(provider, &config, read)
-            .map_err(|error| anyhow::anyhow!("could not rebuild the session's provider: {error}"))
+            .map_err(|error| anyhow::anyhow!("could not renew credentials: {error}"))?;
+        Ok(())
     }
 
     /// Marks the provider stale when `result` failed on its credentials, so

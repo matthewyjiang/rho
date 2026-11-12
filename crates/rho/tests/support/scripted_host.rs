@@ -54,12 +54,14 @@ impl ScriptedHost {
         }
     }
 
-    /// `[providers.custom.<name>]` pointing at this host.
+    /// The config table of the configured provider `name` (`ollama`, or a
+    /// custom host) pointing at this host.
     pub(crate) fn provider_table(&self, name: &str) -> String {
-        format!(
-            "[providers.custom.{name}]\nbase_url = \"http://{}/v1\"\n",
-            self.address
-        )
+        let table = match name {
+            "ollama" => "providers.ollama".to_owned(),
+            name => format!("providers.custom.{name}"),
+        };
+        format!("[{table}]\nbase_url = \"http://{}/v1\"\n", self.address)
     }
 
     /// The models the chat requests so far named, in order.

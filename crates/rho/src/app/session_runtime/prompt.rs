@@ -93,7 +93,8 @@ impl SessionRuntime {
             return Err(super::UnsavedCompaction.into());
         }
         let mut scope = PromptScope::begin(&self.handle);
-        // Providers first: their rebuild reads the credentials too.
+        // Providers first: a changed host leaves the provider stale for the
+        // renewal to rebuild.
         let renewed = match self.refresh_providers(process_config).await {
             Ok(()) => self.renew_stale_credentials(process_config).await,
             Err(error) => Err(error),

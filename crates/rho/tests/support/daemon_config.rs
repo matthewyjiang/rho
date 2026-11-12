@@ -357,7 +357,7 @@ async fn an_edited_base_url_reaches_the_next_turn_not_the_running_one() {
     let new = ScriptedHost::spawn(&["mock-model"], |_| Reply::Text("new"));
     let sandbox = Sandbox::new();
     std::fs::write(sandbox.workspace.join("notes.txt"), "notes\n").unwrap();
-    let client = start_on_custom_host(&sandbox, &old).await;
+    let client = start_on_custom_host(&sandbox, "mock", &old).await;
     let session = sandbox.new_session(&client).await;
     let (_follower, mut events) = follow(&sandbox, &session).await;
 
@@ -366,7 +366,7 @@ async fn an_edited_base_url_reaches_the_next_turn_not_the_running_one() {
         .await
         .expect("the turn asks the host")
         .unwrap();
-    write_custom_host_config(&sandbox, &new);
+    write_custom_host_config(&sandbox, "mock", &new);
     // The daemon reads the edit before the turn goes on.
     get(&client, ConfigNamespace::Agent).await;
     release.send(()).unwrap();
@@ -389,43 +389,97 @@ async fn an_edited_base_url_reaches_the_next_turn_not_the_running_one() {
     );
 }
 
-// Covers: a session whose model's custom provider was removed from the
-// config fails its next turn with one configuration error that says so,
-// rather than running on the provider it opened with (#1685).
+// Covers: a session whose model's configured host was removed from the
+// config fails its next turn with one error that says what to do, rather
+// than running on the host it opened with (#1685): a custom host's is a
+// configuration error, and Ollama's, which its logout removes, still asks
+// to sign in again.
 // Owner: daemon next-turn providers.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_removed_provider_fails_the_next_turn_with_one_clear_error() {
-    let host = ScriptedHost::spawn(&["mock-model"], |_| Reply::Text("answered"));
+    for (provider, error) in [
+        (
+            "mock",
+            TurnError {
+                kind: TurnErrorKind::Configuration,
+                message: "invalid configuration: the session's model mock/mock-model is on provider 'mock', which is no longer configured; add it back, or switch the session to another model".into(),
+            },
+        ),
+        (
+            "ollama",
+            TurnError {
+                kind: TurnErrorKind::Authentication,
+                message: "authentication failed for ollama (auth: none); run /login ollama or pass --auth ollama-api-key".into(),
+            },
+        ),
+    ] {
+        let host = ScriptedHost::spawn(&["mock-model"], |_| Reply::Text("answered"));
+        let sandbox = Sandbox::new();
+        let client = start_on_custom_host(&sandbox, provider, &host).await;
+        let session = sandbox.new_session(&client).await;
+        let (_follower, mut events) = follow(&sandbox, &session).await;
+        // The default model moves off it, so the config still loads.
+        std::fs::write(
+            &sandbox.isolated.config_path,
+            format!("[model]\nprovider = \"xai\"\nmodel = \"grok-fixture\"\nauth = \"xai-oauth\"\n\n{CUSTOM_HOST_CONFIG_REST}"),
+        )
+        .unwrap();
+
+        // The turn ends before it begins, which the prompt answers.
+        let prompted = sandbox.prompt(&client, &session).await;
+
+        assert_eq!(
+            (
+                prompted,
+                next_turn_end(&mut events, &session).await,
+                host.models()
+            ),
+            (
+                Err(Some(ErrorCode::TurnEnded)),
+                TurnOutcome::Failed { error },
+                Vec::<String>::new(),
+            ),
+            "{provider}; log:\n{}",
+            sandbox.isolated.daemon_log()
+        );
+    }
+}
+
+// Covers: a `base_url` edited for the host only the session's compaction
+// model is on reaches the session's next compaction, though neither the
+// session's model nor the compaction model changed (#1685).
+// Owner: daemon next-turn providers.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_edited_summarizer_host_reaches_the_next_compaction() {
+    let old = ScriptedHost::spawn(&["compaction"], |_| Reply::Text("old summary"));
+    let new = ScriptedHost::spawn(&["compaction"], |_| Reply::Text("new summary"));
     let sandbox = Sandbox::new();
-    let client = start_on_custom_host(&sandbox, &host).await;
+    let summarizer_on = |host: &ScriptedHost| {
+        sandbox.set_config(
+            "supervised",
+            &format!(
+                "[internal_agents.compaction]\nprovider = \"summ\"\nmodel = \"compaction\"\nauth = \"none\"\n\n{}",
+                host.provider_table("summ")
+            ),
+        );
+    };
+    summarizer_on(&old);
+    let client = sandbox.start_daemon("fixed").await;
     let session = sandbox.new_session(&client).await;
     let (_follower, mut events) = follow(&sandbox, &session).await;
-    // The default model moves off it, so the config still loads.
-    std::fs::write(
-        &sandbox.isolated.config_path,
-        format!("[model]\nprovider = \"xai\"\nmodel = \"grok-fixture\"\nauth = \"xai-oauth\"\n\n{CUSTOM_HOST_CONFIG_REST}"),
-    )
-    .unwrap();
+    sandbox.prompt(&client, &session).await.unwrap();
+    next_turn_end(&mut events, &session).await;
 
-    // The turn ends before it begins, which the prompt answers.
-    let prompted = sandbox.prompt(&client, &session).await;
+    summarizer_on(&new);
+    sandbox
+        .prompt_text(&client, &session, "/compact")
+        .await
+        .unwrap();
+    next_turn_end(&mut events, &session).await;
 
     assert_eq!(
-        (
-            prompted,
-            next_turn_end(&mut events, &session).await,
-            host.models()
-        ),
-        (
-            Err(Some(ErrorCode::TurnEnded)),
-            TurnOutcome::Failed {
-                error: TurnError {
-                    kind: TurnErrorKind::Configuration,
-                    message: "invalid configuration: the session's model mock/mock-model is on provider 'mock', which is no longer configured; add it back, or switch the session to another model".into(),
-                },
-            },
-            Vec::<String>::new(),
-        ),
+        (old.models(), new.models()),
+        (Vec::<String>::new(), vec!["compaction".to_owned()]),
         "log:\n{}",
         sandbox.isolated.daemon_log()
     );
@@ -435,22 +489,24 @@ async fn a_removed_provider_fails_the_next_turn_with_one_clear_error() {
 /// a custom host.
 const CUSTOM_HOST_CONFIG_REST: &str = "[web_search]\nmode = \"off\"\n";
 
-/// Writes a config whose model is `mock/mock-model` on `host`.
-fn write_custom_host_config(sandbox: &Sandbox, host: &ScriptedHost) {
+/// Writes a config whose model is `mock-model` on the configured provider
+/// `provider`, at `host`.
+fn write_custom_host_config(sandbox: &Sandbox, provider: &str, host: &ScriptedHost) {
     std::fs::write(
         &sandbox.isolated.config_path,
         format!(
-            "[model]\nprovider = \"mock\"\nmodel = \"mock-model\"\nauth = \"none\"\n\n{CUSTOM_HOST_CONFIG_REST}\n{}",
-            host.provider_table("mock")
+            "[model]\nprovider = \"{provider}\"\nmodel = \"mock-model\"\nauth = \"none\"\n\n{CUSTOM_HOST_CONFIG_REST}\n{}",
+            host.provider_table(provider)
         ),
     )
     .unwrap();
 }
 
-/// Starts the daemon with the model on `host`, so new sessions run on it,
-/// without the fixture provider, which would stand in for it.
-async fn start_on_custom_host(sandbox: &Sandbox, host: &ScriptedHost) -> Client {
-    write_custom_host_config(sandbox, host);
+/// Starts the daemon with the model on the configured provider `provider`
+/// at `host`, so new sessions run on it, without the fixture provider,
+/// which would stand in for it.
+async fn start_on_custom_host(sandbox: &Sandbox, provider: &str, host: &ScriptedHost) -> Client {
+    write_custom_host_config(sandbox, provider, host);
     let mut command = sandbox.rho("fixed");
     command.env_remove("RHO_AUTOMATION_TEST_MODE");
     sandbox.spawn_daemon(command, &[]).await.1

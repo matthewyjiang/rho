@@ -697,15 +697,11 @@ impl Config {
         let mut changes = NextTurnChanges::default();
         if advisor(was) != advisor(now) {
             changes.advisor = advisor(self) != advisor(now);
-            self.advisor_mode = now.advisor_mode;
-            self.take_internal_agent(now, ADVISOR_AGENT_ID);
+            self.take_advisor_settings(now);
         }
         if compaction(was) != compaction(now) {
             changes.compaction = compaction(self) != compaction(now);
-            self.auto_compact = now.auto_compact;
-            self.compact_threshold_percent = now.compact_threshold_percent;
-            self.compact_target_percent = now.compact_target_percent;
-            self.take_internal_agent(now, COMPACTION_AGENT_ID);
+            self.take_compaction_settings(now);
         }
         if was.codemode.mode != now.codemode.mode {
             changes.codemode = self.codemode.mode != now.codemode.mode;
@@ -720,6 +716,21 @@ impl Config {
             self.take_internal_agent(now, SESSION_TITLE_AGENT_ID);
         }
         changes
+    }
+
+    /// Gives this config `from`'s advisor mode and model.
+    pub(crate) fn take_advisor_settings(&mut self, from: &Config) {
+        self.advisor_mode = from.advisor_mode;
+        self.take_internal_agent(from, crate::agent::ADVISOR_AGENT_ID);
+    }
+
+    /// Gives this config `from`'s automatic compaction settings and
+    /// compaction model.
+    pub(crate) fn take_compaction_settings(&mut self, from: &Config) {
+        self.auto_compact = from.auto_compact;
+        self.compact_threshold_percent = from.compact_threshold_percent;
+        self.compact_target_percent = from.compact_target_percent;
+        self.take_internal_agent(from, crate::agent::COMPACTION_AGENT_ID);
     }
 
     /// Gives this config the model `from` has for internal agent `id`, or
