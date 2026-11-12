@@ -27,7 +27,9 @@ pub(super) struct Row {
     pub(super) depth: usize,
     pub(super) status: Status,
     pub(super) title: String,
-    /// The model, turn time, and spend the daemon follows, those it does.
+    /// The branch of the worktree the job's session works in, if it does,
+    /// then the model, turn time, and spend the daemon follows, those it
+    /// does.
     pub(super) facts: Vec<String>,
 }
 
@@ -71,7 +73,9 @@ fn listed(job: &JobSummary) -> bool {
 
 /// The listed jobs among `jobs` that match `filter`, by project, each
 /// project's jobs oldest first with the runs a job started under it.
-/// `jobs` is oldest first, as the daemon lists them.
+/// `jobs` is oldest first, as the daemon lists them. A session in a
+/// worktree lists under the project the worktree was added from, and every
+/// run under the project of the job it nests under.
 pub(super) fn groups(jobs: &[JobSummary], filter: &str) -> Vec<Group> {
     let shown: Vec<&JobSummary> = jobs.iter().filter(|job| listed(job)).collect();
     let ids: HashSet<&JobId> = shown.iter().map(|job| &job.id).collect();
@@ -85,11 +89,12 @@ pub(super) fn groups(jobs: &[JobSummary], filter: &str) -> Vec<Group> {
             .is_none_or(|parent| !ids.contains(parent))
     });
     for root in roots {
+        let project = root.project();
         let mut stack = vec![(*root, 0)];
         while let Some((job, depth)) = stack.pop() {
             let row = row(job, depth);
             if matches(&row, job, &needle) {
-                by_workspace.entry(&job.workspace).or_default().push(row);
+                by_workspace.entry(project).or_default().push(row);
             }
             let children = shown
                 .iter()
@@ -121,7 +126,11 @@ fn matches(row: &Row, job: &JobSummary, needle: &str) -> bool {
 
 fn row(job: &JobSummary, depth: usize) -> Row {
     let live = job.live.as_ref();
-    let mut facts = Vec::new();
+    let mut facts: Vec<String> = job
+        .worktree
+        .iter()
+        .map(|worktree| worktree.branch.clone())
+        .collect();
     if let Some(live) = live {
         facts.push(live.model.model.clone());
         if let Some(elapsed) = live.turn_elapsed_ms {

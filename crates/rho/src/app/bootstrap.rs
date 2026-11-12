@@ -181,9 +181,9 @@ async fn dispatch_early_command(cli: &Cli) -> anyhow::Result<EarlyDispatch> {
         ));
     }
     if let Some(Command::Uninstall { purge, dry_run }) = &cli.command {
-        return Ok(EarlyDispatch::Handled(crate::uninstall::run(
-            *purge, *dry_run,
-        )));
+        return Ok(EarlyDispatch::Handled(
+            crate::uninstall::run(*purge, *dry_run).await,
+        ));
     }
     if let Some(Command::Workflow { command }) = &cli.command {
         return Ok(EarlyDispatch::Handled(
@@ -312,15 +312,40 @@ async fn prepare_startup(cli: Cli) -> anyhow::Result<PreparedStartup> {
     let cwd = std::env::current_dir()?;
     let added_dirs = crate::added_dirs::launch_added_dirs(&cli.add_dirs, &cwd)?;
     let automation_prompt = automation::prompt_for_command(&cli.command)?;
-    let (output_file, output, max_steps, timeout) = match &cli.command {
+    let (output_file, output, max_steps, timeout, worktree) = match &cli.command {
         Some(Command::Run {
             output_file,
             output,
             max_steps,
             timeout,
+            worktree,
             ..
-        }) => (output_file.clone(), *output, *max_steps, *timeout),
-        _ => (None, OutputFormat::Text, None, None),
+        }) => (
+            output_file.clone(),
+            *output,
+            *max_steps,
+            *timeout,
+            *worktree,
+        ),
+        _ => (None, OutputFormat::Text, None, None, false),
+    };
+    // A run in a worktree works there as one started there would, its MCP
+    // servers included, so the process moves into it. The paths the person
+    // typed still resolve against the directory they typed them in.
+    let (cwd, output_file, config_repository) = if worktree {
+        let workspace = crate::paths::canonicalize(&cwd)?;
+        let output_file = output_file.map(|path| workspace.join(path));
+        let config_repository = match &config_path {
+            Some(path) if path.is_relative() => ConfigRepository::new(Some(absolute_config)),
+            Some(_) | None => config_repository,
+        };
+        let root = crate::worktree::root(&crate::paths::rho_dir()?);
+        let added = crate::worktree::add(&root, &workspace).await?;
+        eprintln!("rho: {}", crate::worktree::hint(&added.worktree));
+        std::env::set_current_dir(&added.cwd)?;
+        (added.cwd, output_file, config_repository)
+    } else {
+        (cwd, output_file, config_repository)
     };
     let catalog = crate::agent::AgentCatalog::discover(
         &cwd,

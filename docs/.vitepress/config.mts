@@ -77,6 +77,7 @@ const appSidebar: DefaultTheme.SidebarItem[] = [
       { text: 'Overview', link: '/' },
       { text: 'Getting started', link: '/getting-started' },
       { text: 'Installation', link: '/installation' },
+      { text: 'Upgrading to Rho 3', link: '/upgrading-to-3' },
       { text: 'Authentication and models', link: '/authentication-and-models' },
       {
         text: 'Providers',

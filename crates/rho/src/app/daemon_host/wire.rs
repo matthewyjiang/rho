@@ -91,6 +91,7 @@ pub(super) fn job_summary(
         updated_at,
         outcome: _,
         turn: _,
+        worktree,
         keeping: _,
     } = record;
     let (kind, session, run, workflow_run) = match subject {
@@ -122,6 +123,7 @@ pub(super) fn job_summary(
         error: failure(&state),
         queue: queue.map(Into::into),
         live,
+        worktree,
     }
 }
 

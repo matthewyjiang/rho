@@ -264,7 +264,9 @@ async fn resume(
 }
 
 /// The session's state when the attachment began: a turn another client
-/// started may still run.
+/// started may still run. The session pump follows that turn from the same
+/// attach state (`sessions::pump::Following::Announced`) and reports its end
+/// through `AcpClientPort::attached_turn_ended`.
 fn state(started: &Started) -> v2::StateUpdate {
     if started.busy() {
         v2::StateUpdate::Running(v2::RunningStateUpdate::new())

@@ -44,6 +44,7 @@ async fn open(
             setup: SessionSetup::default(),
             parent: parent.cloned(),
             grant,
+            worktree: false,
         })
         .await
         .unwrap()

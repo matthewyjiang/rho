@@ -379,7 +379,13 @@ async fn establish_session(
             }
             // Start from the shared sanitized base. Servers opt into all other
             // inherited variables through `env_from_env`.
-            apply_stdio_environment(&mut command, env, env_from_env, environment)?;
+            apply_stdio_environment(
+                &mut command,
+                env,
+                env_from_env,
+                environment,
+                crate::child_env::rho_home().as_deref(),
+            )?;
             // Servers and anything they launch must not take over the TUI's terminal.
             #[cfg(unix)]
             rho_tools::process_session::start_new_session(command.as_std_mut());
@@ -659,16 +665,18 @@ async fn refresh_tools(maintenance: &SessionMaintenance) {
     maintenance.live.record_tool_changes(added, removed);
 }
 
-/// Gives a stdio server the base set from `environment` and the session's
-/// caller context, then its config's `env`, then its `env_from_env` read from
-/// `environment`.
+/// Gives a stdio server the base set from `environment`, which says where the
+/// session's daemon is (`rho_home`, see [`crate::child_env::apply_base`]), and
+/// the session's caller context, then its config's `env`, then its
+/// `env_from_env` read from `environment`.
 fn apply_stdio_environment(
     command: &mut tokio::process::Command,
     env: &BTreeMap<String, String>,
     env_from_env: &BTreeMap<String, String>,
     environment: &Ambient,
+    rho_home: Option<&Path>,
 ) -> anyhow::Result<()> {
-    environment.apply_base(command);
+    environment.apply_base(command, rho_home);
     // A `rho mcp serve` registered as a session's server starts from the
     // session's depth and scope, so its caps hold across hops (#1672). Each
     // call then carries the session's current ones (#1765).

@@ -59,15 +59,22 @@ impl<'a> Card<'a> {
     }
 }
 
-/// The prompt for one approval, drawn on `card`. The card of a call the
-/// host already saw keeps the kind it was announced with; only a
-/// placeholder, which has no kind yet, takes one from the operation.
+/// The prompt for one approval, drawn on `card`, titled with the policy's
+/// reason. The card of a call the host already saw keeps the kind it was
+/// announced with; only a placeholder, which has no kind yet, takes one
+/// from the operation. A policy may ask without a reason, as supervised mode
+/// does: the title is then left unset, so a v1 card keeps its own and a v2
+/// host gets the default question, instead of a blank one.
 pub(super) fn permission_request(
     session_id: &SessionId,
     ask: &ApprovalAsk,
     card: &Card<'_>,
 ) -> RequestPermissionRequest {
-    let fields = ToolCallUpdateFields::new().title(ask.reason.clone());
+    let fields = ToolCallUpdateFields::new();
+    let fields = match ask.reason.as_str() {
+        "" => fields,
+        reason => fields.title(reason.to_owned()),
+    };
     let fields = match card {
         Card::Call(_) => fields,
         Card::Placeholder(_) => fields.kind(tool_kind_for_operation(&ask.operation)),

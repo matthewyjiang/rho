@@ -118,6 +118,7 @@ async fn a_change_reaches_attached_clients_and_the_next_turn() {
             setup: SessionSetup::default(),
             parent: None,
             grant: None,
+            worktree: false,
         })
         .await
         .unwrap();
@@ -241,6 +242,7 @@ async fn a_model_change_runs_the_session_on_the_auth_it_names() {
             setup: SessionSetup::default(),
             parent: None,
             grant: None,
+            worktree: false,
         })
         .await
         .unwrap();

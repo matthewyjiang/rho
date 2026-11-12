@@ -69,6 +69,23 @@ fn permission_request_offers_three_options_on_the_asking_card() {
     assert_eq!(card(&known), ("call-7".to_owned(), None));
 }
 
+// Covers: the policy's reason titles the prompt, but a policy that asks
+// without one (supervised mode) must not blank the host's card title (v1)
+// or its question (v2, which falls back to its default when unset)
+// Owner: acp permission mapper
+#[test]
+fn approval_reason_titles_the_prompt_only_when_given() {
+    let call = wire::ToolCallId::new("call-7");
+    for (reason, title) in [("edit file", Some("edit file")), ("", None)] {
+        let request = permission_request(&session_id(), &write_ask(reason), &Card::Call(&call));
+        assert_eq!(
+            request.tool_call.fields.title.as_deref(),
+            title,
+            "reason {reason:?}"
+        );
+    }
+}
+
 // Covers: two approval prompts without a tool-call id must not share one ACP id
 // Owner: acp permission mapper
 #[test]

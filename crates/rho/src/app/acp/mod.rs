@@ -34,9 +34,9 @@ use agent_client_protocol::{
         NewSessionResponse, PromptCapabilities, PromptRequest, PromptResponse,
         RequestPermissionRequest, RequestPermissionResponse, ResumeSessionRequest,
         ResumeSessionResponse, SessionAdditionalDirectoriesCapabilities, SessionCapabilities,
-        SessionCloseCapabilities, SessionDeleteCapabilities, SessionListCapabilities,
+        SessionCloseCapabilities, SessionDeleteCapabilities, SessionId, SessionListCapabilities,
         SessionNotification, SessionResumeCapabilities, SetSessionConfigOptionRequest,
-        SetSessionModeRequest,
+        SetSessionModeRequest, StopReason,
     },
     v1::{ConnectionTo, Responder},
     Agent, Client, ConnectTo, Error as AcpError, JsonRpcResponse, Role, Stdio,
@@ -85,6 +85,20 @@ pub(super) trait AcpClientPort: Send + Sync {
         &self,
         notification: CompleteElicitationNotification,
     ) -> Pin<Box<dyn Future<Output = Result<(), AcpError>> + Send + '_>>;
+
+    /// The turn of session `session_id` that the host was told is running
+    /// when it attached, which no prompt of its own runs, ended as `end`.
+    /// Only ACP v2 reports turn state (`state_update`), so a v1 host has
+    /// nothing to hear.
+    fn attached_turn_ended(&self, _session_id: &SessionId, _end: TurnEnd) {}
+}
+
+/// How a turn ended, as far as the host can tell.
+pub(super) enum TurnEnd {
+    /// With this stop reason, or the error it failed with.
+    Ended(Result<StopReason, AcpError>),
+    /// While the host was not following it, so how is unknown.
+    Unseen,
 }
 
 /// The [`AcpClientPort`] of an ACP v1 connection.

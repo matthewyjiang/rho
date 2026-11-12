@@ -709,7 +709,8 @@ fn mermaid_flowchart_survives_narrow_and_restored_panes() {
 
 // Covers: a bare /skill command loads the skill before the model responds, and
 // the loaded SKILL.md stays behind a collapsed card until Ctrl+O expands it;
-// an unknown skill is reported as an unknown command.
+// an unknown skill is reported as an unknown command, and a command Rho 3
+// removed says so.
 // Owner: interactive TUI
 #[test]
 fn bare_skill_command_starts_a_model_turn() {
@@ -744,6 +745,13 @@ fn bare_skill_command_starts_a_model_turn() {
         .wait_for_text(
             "unknown command '/skill:missing-skill'",
             WaitTimeout::secs(10, "unknown skill"),
+        )
+        .unwrap();
+    harness.submit_text("/goal ship it").unwrap();
+    harness
+        .wait_for_text(
+            "/goal was removed in Rho 3",
+            WaitTimeout::secs(10, "removed command"),
         )
         .unwrap();
     harness.submit_text("/skill:test-skill").unwrap();
@@ -1264,6 +1272,14 @@ fn daemon_jobs_view_lists_projects_and_answers_a_prompt() {
 #[test]
 fn daemon_jobs_view_starts_cancels_messages_and_attaches() {
     assert_pass("daemon_jobs_view_actions");
+}
+
+// Covers: `/jobs` starts a session in its own git worktree, and its row
+// shows the worktree's branch (#1673).
+// Owner: interactive TUI as a daemon client
+#[test]
+fn daemon_jobs_view_starts_a_session_in_a_worktree() {
+    assert_pass("daemon_jobs_view_worktree");
 }
 
 // Covers: a prompt sent while a restarted daemon connects the session's MCP

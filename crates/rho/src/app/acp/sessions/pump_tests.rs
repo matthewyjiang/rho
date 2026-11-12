@@ -30,7 +30,7 @@ use crate::{
             sessions::{
                 Accept, Attacher, Attachment, Control, Inbound, Opening, Shared, Show, Waiter,
             },
-            AcpClientPort,
+            AcpClientPort, TurnEnd,
         },
         daemon_client::{test_support::attach_response, Daemon, Routed},
     },
@@ -43,6 +43,9 @@ const SESSION: &str = "s1";
 #[derive(Default)]
 struct Host {
     sent: Mutex<Vec<SessionNotification>>,
+    /// How each turn running at attach ended, as `attached_turn_ended`
+    /// told: a stop reason, `failed`, or `unseen`.
+    turn_ends: Mutex<Vec<String>>,
 }
 
 impl Host {
@@ -90,6 +93,15 @@ impl AcpClientPort for Host {
         _notification: CompleteElicitationNotification,
     ) -> Pin<Box<dyn Future<Output = Result<(), AcpError>> + Send + '_>> {
         Box::pin(std::future::ready(Ok(())))
+    }
+
+    fn attached_turn_ended(&self, _session_id: &AcpSessionId, end: TurnEnd) {
+        let end = match end {
+            TurnEnd::Ended(Ok(stop_reason)) => format!("{stop_reason:?}"),
+            TurnEnd::Ended(Err(_)) => "failed".to_owned(),
+            TurnEnd::Unseen => "unseen".to_owned(),
+        };
+        self.turn_ends.lock().unwrap().push(end);
     }
 }
 
@@ -377,6 +389,140 @@ async fn armed_prompts_match_their_own_turn() {
             echoed: pump.host.echoed(),
         };
         assert_eq!(seen, expected, "{label}");
+    }
+}
+
+// Covers: a host told at attach that a turn it did not prompt is running
+// (ACP v2 `session/resume` reports `running`) must hear that turn end, with
+// its stop reason, or unseen once the pump lost track of it; otherwise the
+// host shows the session running forever. A prompt of the host's takes over
+// unreported: T3 Code closes its pending prompt on any `idle`, so one for
+// the old turn would end the new prompt early. A session idle at attach,
+// whose later turns the host was never told of, reports none.
+// Owner: ACP session pump
+#[tokio::test]
+async fn the_turn_running_at_attach_reports_its_end() {
+    enum Step {
+        Live(SessionEvent),
+        /// A prompt of this host's the daemon answered with this turn.
+        Arm(&'static str),
+        /// The attachment fell behind and attached again with this answer.
+        Lagged(Box<SessionAttachResponse>),
+        /// An event of the reattach's replay, by its sequence number.
+        Replayed(u64, SessionEvent),
+        Detached(DetachReason),
+    }
+    use Step::{Arm, Detached, Lagged, Live, Replayed};
+    let failed = TurnOutcome::Failed {
+        error: wire::TurnError {
+            kind: wire::TurnErrorKind::Provider,
+            message: "provider down".into(),
+        },
+    };
+    let cases = [
+        (
+            "ends with its stop reason",
+            Some("t0"),
+            vec![Live(user("m0")), Live(ended("t0", TurnOutcome::Cancelled))],
+            vec!["Cancelled"],
+        ),
+        (
+            "ends failed",
+            Some("t0"),
+            vec![Live(ended("t0", failed))],
+            vec!["failed"],
+        ),
+        (
+            "a reattach that finds it running still waits for its end",
+            Some("t0"),
+            vec![
+                Lagged(Box::new(attach_response(
+                    Replay::Reset,
+                    0,
+                    JobState::Running,
+                    Some("t0"),
+                ))),
+                Live(ended("t0", answered("a"))),
+            ],
+            vec!["EndTurn"],
+        ),
+        (
+            "a reset reattach replays its end",
+            Some("t0"),
+            vec![
+                Lagged(Box::new(attach_response(
+                    Replay::Reset,
+                    2,
+                    JobState::Completed,
+                    Some("t0"),
+                ))),
+                Replayed(0, user("m0")),
+                Replayed(1, ended("t0", answered("a"))),
+            ],
+            vec!["EndTurn"],
+        ),
+        (
+            "a reattach whose replay no longer holds its end",
+            Some("t0"),
+            vec![Lagged(Box::new(attach_response(
+                Replay::Reset,
+                0,
+                JobState::Completed,
+                Some("t0"),
+            )))],
+            vec!["unseen"],
+        ),
+        (
+            "an attachment that ends loses track of it",
+            Some("t0"),
+            vec![Detached(DetachReason::DaemonStopping)],
+            vec!["unseen"],
+        ),
+        (
+            "a prompt of this host's takes over unreported",
+            Some("t0"),
+            vec![
+                Arm("t1"),
+                Live(ended("t0", TurnOutcome::Cancelled)),
+                Live(running("t1")),
+                Live(user("m1")),
+                Live(ended("t1", answered("a"))),
+            ],
+            vec![],
+        ),
+        (
+            "idle at attach",
+            None,
+            vec![
+                Live(running("t1")),
+                Live(user("m1")),
+                Live(ended("t1", answered("a"))),
+            ],
+            vec![],
+        ),
+    ];
+    for (label, running_at_attach, steps, expected) in cases {
+        let script = Script::default();
+        let state = match running_at_attach {
+            Some(_) => JobState::Running,
+            None => JobState::Idle,
+        };
+        let mut pump = Pump::start(state, running_at_attach, script);
+        let mut prompts = Vec::new();
+        for step in steps {
+            match step {
+                Live(event) => pump.live(event),
+                Arm(turn) => prompts.push(pump.arm(Some(turn))),
+                Lagged(resumed) => {
+                    pump.script.answers.lock().unwrap().push_back(Ok(*resumed));
+                    pump.routed(Routed::Detached(DetachReason::Lagged));
+                }
+                Replayed(seq, event) => pump.event(seq, event),
+                Detached(reason) => pump.routed(Routed::Detached(reason)),
+            }
+        }
+        pump.flush().await;
+        assert_eq!(*pump.host.turn_ends.lock().unwrap(), expected, "{label}");
     }
 }
 

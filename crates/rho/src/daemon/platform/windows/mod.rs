@@ -14,6 +14,7 @@ mod pipe;
 mod process;
 mod restart;
 mod security;
+mod service;
 
 pub(crate) use account::{account_lock_path, lock_account_file};
 pub(in crate::daemon) use endpoint::{
@@ -21,6 +22,7 @@ pub(in crate::daemon) use endpoint::{
 };
 pub(crate) use files::{
     create_private_dir, create_private_file, sync_dir, DaemonPathError, FileIdentity,
+    REPLACEABLE_WHILE_RUNNING,
 };
 pub(in crate::daemon) use files::{
     open_lock_file, open_log_file, path_bytes, prepare_private_dir, running_identity,
@@ -28,6 +30,7 @@ pub(in crate::daemon) use files::{
 pub(in crate::daemon) use process::{detach, is_variable, request_stop, MACHINE_VARIABLES};
 pub(crate) use process::{stderr_is_journal_stream, StopRequests};
 pub(in crate::daemon) use restart::{relaunch, take_handoff};
+pub(in crate::daemon) use service::stop_service;
 
 #[cfg(test)]
 pub(crate) mod test_support;

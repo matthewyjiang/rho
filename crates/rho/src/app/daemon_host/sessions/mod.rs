@@ -61,7 +61,7 @@ use super::{
 use crate::{
     app::{
         session_events::LiveEvents,
-        session_runtime::{CredentialFailure, SessionHandle, SessionRuntime},
+        session_runtime::{SessionHandle, SessionRuntime},
     },
     config::Config,
 };
@@ -99,6 +99,7 @@ mod tool_sources;
 mod turn;
 mod unload;
 mod workflows;
+mod worktree;
 
 use super::settings::ConfigStore;
 use cache_warm::KeepWarm;
@@ -107,6 +108,7 @@ use child_questions::ChildQuestions;
 use feed::{Attached, Feed};
 use idle_wake::IdleWatch;
 use inputs::Inputs;
+use open::open_failed;
 pub(super) use open::session_environment;
 use open::{open_session, OpenWith, OpenedSession, Opening, Workspace};
 use queued::Queued;
@@ -151,6 +153,9 @@ pub(super) struct Sessions {
     /// Where the sessions' T3 wake watchers keep their files (see
     /// [`t3_wake`]).
     wakes: WakeDir,
+    /// Where the daemon adds the worktrees sessions ask to work in, under
+    /// its rho home (see `crate::worktree`).
+    worktrees: PathBuf,
     /// This, for the tasks that start a turn on their own (see
     /// [`idle_wake`]).
     myself: Weak<Sessions>,
@@ -542,6 +547,7 @@ impl Sessions {
             stopping,
             unloading: tokio::sync::RwLock::new(()),
             wakes: WakeDir::in_home(rho_home),
+            worktrees: crate::worktree::root(rho_home),
         })
     }
 
@@ -578,8 +584,9 @@ impl Sessions {
         }
     }
 
-    /// Opens a new session in `cwd`, as `agent`, with the client's `setup`,
-    /// and registers the job of its turns.
+    /// Opens a new session in `cwd`, or in a worktree added for it, as
+    /// `agent`, with the client's `setup`, and registers the job of its
+    /// turns.
     pub(super) async fn open_new(
         &self,
         params: SessionNewParams,
@@ -591,6 +598,7 @@ impl Sessions {
             setup,
             parent,
             grant,
+            worktree,
         } = params;
         self.refuse_when_stopping()?;
         let workspace = Workspace::parse(&cwd)?;
@@ -606,6 +614,16 @@ impl Sessions {
             .and_then(|job| self.jobs.session_grant(job));
         let opening = grant::opening(grant::asked(grant, &environment)?, parents.as_ref());
         let with = OpenWith::under(opening, &environment, setup)?;
+        // Added last, once the request is otherwise sound, since nothing
+        // removes it.
+        let (workspace, worktree) = match worktree {
+            false => (workspace, None),
+            true => {
+                let (workspace, added) =
+                    worktree::add_for_session(&self.worktrees, &workspace).await?;
+                (workspace, Some(added))
+            }
+        };
         let job = JobId::generate();
         let opened = open_session(
             Opening::New { workspace, agent },
@@ -614,7 +632,8 @@ impl Sessions {
             &self.settings,
             &job,
         )
-        .await?;
+        .await
+        .map_err(|error| worktree::kept(error, worktree.as_ref()))?;
         let session = opened.runtime.session_id().clone();
         let record = JobRecord {
             // A session started from one no daemon job writes still shares
@@ -632,17 +651,22 @@ impl Sessions {
             // prompt widens it (#1796).
             grant_limit: (!with.grant.is_root()).then(|| with.grant.clone()),
             grant: with.grant,
+            worktree: worktree.clone(),
             ..JobRecord::new_session(
                 job.clone(),
                 opened.runtime.workspace_root().to_path_buf(),
                 session.clone(),
             )
         };
-        let added = self.add(SessionJobRecord::Register(record), opened).await?;
+        let added = self
+            .add(SessionJobRecord::Register(record), opened)
+            .await
+            .map_err(|error| worktree::kept(error, worktree.as_ref()))?;
         tracing::info!(%session, %job, "opened session");
         Ok(SessionNewResponse {
             session: session_to_wire(session),
             options: added.feed.options(),
+            worktree,
         })
     }
 
@@ -941,25 +965,6 @@ fn writing(job: &JobId, session: &SessionId) -> RpcError {
     )
 }
 
-/// The error for a session the daemon could not open: `SignInRequired`
-/// when signing in can fix it, in Rho's words with the full cause only in
-/// the daemon's log, else `SessionOpenFailed`.
-fn open_failed(error: anyhow::Error) -> RpcError {
-    match CredentialFailure::find(&error) {
-        Some(failure) => {
-            tracing::warn!(error = format!("{error:#}"), "session needs a sign-in");
-            RpcError::new(
-                ErrorCode::SignInRequired,
-                format!("could not open session: {}", failure.message()),
-            )
-        }
-        None => RpcError::new(
-            ErrorCode::SessionOpenFailed,
-            format!("could not open session: {error:#}"),
-        ),
-    }
-}
-
 /// The error a request that needs the session answers while a delete
 /// unloads it.
 fn being_deleted() -> RpcError {
@@ -985,10 +990,6 @@ fn ended_early(outcome: &TurnOutcome) -> RpcError {
     let data = serde_json::to_value(outcome).expect("a turn outcome serializes");
     RpcError::new(ErrorCode::TurnEnded, message).with_data(data)
 }
-
-#[cfg(test)]
-#[path = "open_failed_tests.rs"]
-mod open_failed_tests;
 
 #[cfg(test)]
 #[path = "restored_reopen_tests.rs"]

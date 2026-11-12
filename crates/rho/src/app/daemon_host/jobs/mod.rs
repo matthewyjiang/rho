@@ -163,6 +163,11 @@ pub(super) struct JobRecord {
     /// its key (#1777).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) turn: Option<TurnRecord>,
+    /// The git worktree a session job's session works in, which the daemon
+    /// added when the session opened (#1673); `workspace` is in it. `None`
+    /// for a session in its own workspace and for other jobs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) worktree: Option<rho_protocol::SessionWorktree>,
     /// Whether the record has a file. Never read from one: a record a file
     /// holds is kept.
     #[serde(skip)]
@@ -283,6 +288,7 @@ impl JobRecord {
             updated_at: now,
             outcome: None,
             turn: None,
+            worktree: None,
             keeping: Keeping::Stored,
         }
     }

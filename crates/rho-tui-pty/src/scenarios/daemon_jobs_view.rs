@@ -137,6 +137,71 @@ const ACTIONS_STEPS: &[Step] = &[
     Step::ExitCommand,
 ];
 
+// Covers: from `/jobs`, Tab while starting a session opts it into a git
+// worktree of its own (#1673): the session starts, and its row shows the
+// branch the daemon made for it, under this project.
+// Owner: interactive TUI as a daemon client
+pub(super) const WORKTREE_SCENARIO: Scenario = Scenario::new(
+    "daemon_jobs_view_worktree",
+    "Start a session in its own git worktree from /jobs and see its branch",
+    DEFAULT_SIZE,
+    WORKTREE_STEPS,
+    /*smoke*/ false,
+)
+.with_setup(setup_repository)
+.with_env(ENV);
+
+/// The daemon config, in a workspace that is a git repository with one
+/// commit.
+fn setup_repository(home: &IsolatedHome) -> Result<()> {
+    super::daemon_resume::write_daemon_config(home)?;
+    let repo = &home.workspace;
+    std::fs::write(repo.join("notes.md"), "base\n")?;
+    super::diff_viewer::git(repo, &["init", "-q", "-b", "main"])?;
+    super::diff_viewer::git(repo, &["add", "notes.md"])?;
+    super::diff_viewer::git(repo, &["commit", "-q", "-m", "init"])?;
+    Ok(())
+}
+
+const WORKTREE_STEPS: &[Step] = &[
+    Step::Phase("startup"),
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::Phase("open"),
+    Step::SubmitText("/jobs"),
+    Step::WaitText {
+        text: "▸ idle",
+        timeout: SETTLE,
+    },
+    Step::Phase("new_session_in_a_worktree"),
+    Step::Key(Key::Char('n')),
+    Step::WaitText {
+        text: "Worktree: off",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Tab),
+    Step::WaitText {
+        text: "Worktree: new git worktree and branch",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "Prompt:",
+        timeout: SETTLE,
+    },
+    Step::TypeText("hello"),
+    Step::Key(Key::Enter),
+    // The row's first fact; the branch is named for the repository's
+    // directory, `workspace`.
+    Step::WaitText {
+        text: "· rho/workspace-",
+        timeout: STREAM,
+    },
+    Step::ExitCommand,
+];
+
 pub(super) const SCENARIO: Scenario = Scenario::new(
     "daemon_jobs_view",
     "List jobs running in two projects and answer one's permission prompt from /jobs",

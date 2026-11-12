@@ -109,7 +109,7 @@ impl Adapter {
 
 /// The ACP stop reason of a turn that ended `outcome`, or the error of one
 /// that failed.
-fn stop_reason(outcome: TurnOutcome) -> Result<StopReason, AcpError> {
+pub(super) fn stop_reason(outcome: TurnOutcome) -> Result<StopReason, AcpError> {
     match outcome {
         TurnOutcome::Answered { stop, .. } => Ok(match stop {
             AnswerStop::EndTurn | AnswerStop::Unknown => StopReason::EndTurn,

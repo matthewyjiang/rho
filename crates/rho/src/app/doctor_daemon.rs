@@ -16,11 +16,13 @@ use std::{
 use rho_protocol::{methods::Status, ClientError, StatusParams};
 
 use crate::{
-    daemon::{self, ConnectError, DaemonPaths, LockHolder, SocketFound, VariableKind},
+    daemon::{
+        self, ConnectError, DaemonPaths, LockHolder, ServiceManager, SocketFound, VariableKind,
+    },
     doctor::{
         daemon::{
             environment_check, process_check, service_check, socket_check, DaemonEnvironment,
-            DaemonProcess, DaemonService, DaemonSocket, LAUNCHD_LABEL, SYSTEMD_UNIT,
+            DaemonProcess, DaemonService, DaemonSocket,
         },
         daemon_store_check, DaemonStore, DoctorCheck,
     },
@@ -189,40 +191,18 @@ fn inspect_socket(paths: &DaemonPaths) -> DaemonSocket {
     }
 }
 
-/// Looks for the service `docs/daemon.md` has the user save, under the names
-/// it gives: the systemd user unit, then the LaunchAgent. Each is looked for
-/// on every platform, as the other's file is simply not there. This reads
-/// files only, so it also answers where no user service manager can be
-/// asked, as in an SSH login without a session bus.
+/// The service `docs/daemon.md` has the user save, the systemd user unit
+/// before the LaunchAgent, as its files show it (see
+/// [`daemon::find_services`]).
 fn find_service(home: &Path, xdg_config_home: Option<PathBuf>) -> DaemonService {
-    // XDG: a relative value is invalid and must be ignored.
-    let units = xdg_config_home
-        .filter(|dir| dir.is_absolute())
-        .unwrap_or_else(|| home.join(".config"))
-        .join("systemd/user");
-    if units.join(SYSTEMD_UNIT).exists() {
-        // Enabled when a target's `.wants` or `.requires` directory links
-        // to the unit, which is what `systemctl --user enable` creates.
-        let enabled = std::fs::read_dir(&units).is_ok_and(|entries| {
-            entries.flatten().any(|entry| {
-                let dir = entry.path();
-                let pulls_in_units = dir
-                    .extension()
-                    .is_some_and(|extension| extension == "wants" || extension == "requires");
-                // The link's target may be anywhere, so only its own
-                // existence counts.
-                pulls_in_units && dir.join(SYSTEMD_UNIT).symlink_metadata().is_ok()
-            })
-        });
-        return DaemonService::Systemd { enabled };
-    }
-    let agent = home
-        .join("Library/LaunchAgents")
-        .join(format!("{LAUNCHD_LABEL}.plist"));
-    if agent.exists() {
-        DaemonService::Launchd
-    } else {
-        DaemonService::NotInstalled
+    match daemon::find_services(home, xdg_config_home).first() {
+        None => DaemonService::NotInstalled,
+        Some(service) => match service.manager {
+            ServiceManager::Systemd => DaemonService::Systemd {
+                enabled: !service.enabled_by.is_empty(),
+            },
+            ServiceManager::Launchd => DaemonService::Launchd,
+        },
     }
 }
 

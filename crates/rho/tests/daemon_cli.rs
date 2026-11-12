@@ -16,7 +16,8 @@
 //! restart`, is in [`upgrade`]; what a client of another version hears at
 //! the handshake is in [`skew`]; what a daemon takes from the client that
 //! starts it, and each session's project trust, is in [`identity`]; what
-//! `rho doctor` reports about it is in [`doctor`]; a turn whose provider
+//! `rho doctor` reports about it is in [`doctor`]; what `rho update` and
+//! `rho uninstall` do about it is in [`install`]; a turn whose provider
 //! cannot be reached is in [`unreachable`]; what a session records about
 //! what follows a compaction is in [`compaction`].
 
@@ -46,6 +47,9 @@ mod attach;
 
 #[path = "support/daemon_detach.rs"]
 mod detach;
+
+#[path = "support/git_repo.rs"]
+mod git_repo;
 
 // Unix: the tool processes are shell commands, found by process group.
 #[cfg(unix)]
@@ -95,6 +99,9 @@ mod grants;
 
 #[path = "support/daemon_doctor.rs"]
 mod doctor;
+
+#[path = "support/daemon_install.rs"]
+mod install;
 
 #[path = "support/daemon_unreachable.rs"]
 mod unreachable;
