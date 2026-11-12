@@ -1004,11 +1004,6 @@ async fn a_subagent_is_a_child_job_of_its_session() {
 // child job of the session's job, completed once the run succeeded; each of
 // its agent nodes is a subagent job whose parent is the workflow job.
 // Owner: daemon workflow jobs.
-// Unix: on Windows the `workflow` tool refuses every source as outside the
-// workspace, in a daemon and out of one: it compares the path the file
-// system resolved, which has the verbatim prefix, with the workspace's
-// (#1895).
-#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_workflow_run_is_a_child_job_of_its_session() {
     let sandbox = Sandbox::new();
