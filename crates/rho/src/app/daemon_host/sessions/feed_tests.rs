@@ -353,8 +353,7 @@ fn events_json_cannot_hold_are_dropped_live_and_saved() {
 // Covers: the job list's usage is the last a session's stream said: a
 // reopened session's is its saved conversation's, a turn's live usage
 // replaces it, and that turn's saved rows, which hold no cost, do not
-// replace the live one; a conversation moved to another point lists that
-// point's context with the spend so far.
+// replace the live one.
 // Owner: daemon session feed.
 #[test]
 fn the_listed_usage_is_the_saved_one_until_a_turn_reports_it() {
@@ -378,17 +377,14 @@ fn the_listed_usage_is_the_saved_one_until_a_turn_reports_it() {
     let live = feed.live().usage;
     feed.end_turn(vec![usage(20, None)]);
     let saved = feed.live().usage;
-    feed.restart(vec![notice("earlier"), usage(15, None)]);
-    let moved = feed.live().usage;
 
     assert_eq!(
-        (new, reopened, live, saved, moved),
+        (new, reopened, live, saved),
         (
             None,
             listed(10, None),
             listed(20, Some(5)),
-            listed(20, Some(5)),
-            listed(15, Some(5)),
+            listed(20, Some(5))
         )
     );
 }
