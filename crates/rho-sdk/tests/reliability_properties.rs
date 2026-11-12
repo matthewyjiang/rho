@@ -93,6 +93,7 @@ fn message(rng: &mut DeterministicRng) -> Message {
                 data: rng.value(),
                 replay: rho_sdk::model::ReplayScope::ExactModel,
             }],
+            created_at: None,
         }),
         4 => Message::AbortedAssistant(Box::new(AbortedAssistant {
             content: content_list(rng),

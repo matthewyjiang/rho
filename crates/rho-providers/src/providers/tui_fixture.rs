@@ -98,7 +98,13 @@ impl ModelProvider for TuiFixtureProvider {
     }
 
     fn send_turn<'a>(&'a self, request: ModelRequest<'a>) -> ProviderFuture<'a> {
-        Box::pin(async move { fixture_response(&request) })
+        Box::pin(async move {
+            let messages = super::fixture_message_times::without_times(request.messages);
+            fixture_response(&ModelRequest {
+                messages: &messages,
+                ..request
+            })
+        })
     }
 
     fn send_turn_stream<'a>(
@@ -110,6 +116,11 @@ impl ModelProvider for TuiFixtureProvider {
             events, steering, ..
         } = context;
         Box::pin(async move {
+            let messages = super::fixture_message_times::without_times(request.messages);
+            let request = ModelRequest {
+                messages: &messages,
+                ..request
+            };
             let prompt = last_user_text(&request).unwrap_or_default();
             if prompt == "fixture mid-turn steer" {
                 if let Some(mut steering) = steering {

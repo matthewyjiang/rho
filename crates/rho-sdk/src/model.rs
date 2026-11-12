@@ -14,6 +14,7 @@ pub mod context;
 pub mod handoff;
 mod legacy_history;
 mod legacy_tool_images;
+mod message_time;
 mod model_context;
 mod provider_context;
 mod reasoning_shift;
@@ -23,6 +24,8 @@ mod wire;
 
 pub use compaction_summary::CompactionSummary;
 pub use legacy_tool_images::attach_legacy_tool_images;
+pub use message_time::MessageTime;
+pub(crate) use message_time::{render_for_request, renders_in_request};
 pub use provider_context::{ProviderContextBlock, ReplayScope};
 pub(crate) use reasoning_shift::record as record_reasoning_shift;
 pub use reasoning_shift::ReasoningShift;
@@ -227,6 +230,10 @@ pub struct AssistantMessage {
     /// Opaque provider data filtered by [`ProviderContextBlock::is_replayable_to`].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub provider_context: Vec<ProviderContextBlock>,
+    /// When the provider finished this output. Requests show it on the first
+    /// text block's own line; the stored content stays as the model wrote it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<MessageTime>,
 }
 
 impl AssistantMessage {
@@ -286,6 +293,8 @@ struct AssistantMessageRepr {
     portable_fallback: Option<String>,
     #[serde(default)]
     provider_context: Vec<ProviderContextBlock>,
+    #[serde(default)]
+    created_at: Option<MessageTime>,
 }
 
 impl<'de> Deserialize<'de> for AssistantMessage {
@@ -299,6 +308,7 @@ impl<'de> Deserialize<'de> for AssistantMessage {
             provenance: repr.provenance,
             reasoning_summary: repr.reasoning_summary,
             provider_context: repr.provider_context,
+            created_at: repr.created_at,
         };
         Ok(match repr.portable_fallback {
             Some(fallback) => message.with_portable_fallback(fallback),

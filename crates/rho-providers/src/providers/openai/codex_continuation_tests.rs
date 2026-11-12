@@ -256,6 +256,7 @@ fn gpt6_reasoning_change_keeps_request_properties_and_deltas_update_item() {
                 data: json!("low"),
                 replay: crate::model::ReplayScope::Never,
             }],
+            created_at: None,
         }),
         Message::user_text("three"),
     ];

@@ -9,7 +9,7 @@ use std::{
 use crate::{
     client::Rho,
     event::RunOutcome,
-    model::{ContentBlock, ImageContent, Message, ToolCall},
+    model::{ContentBlock, ImageContent, Message, MessageTime, ToolCall},
     orchestration::execute_run,
     provider::ModelProvider,
     run::Run,
@@ -73,6 +73,18 @@ impl UserInput {
 
     pub fn blocks(&self) -> &[ContentBlock] {
         &self.content
+    }
+
+    /// Puts `time` on its own line at the start of this input's text, or in
+    /// a text block of its own when the input has none.
+    ///
+    /// The stamp becomes part of the content, so stamp the copy sent to the
+    /// model, not the one shown to the user.
+    pub fn stamped(mut self, time: MessageTime) -> Self {
+        if !time.prefix_first_text(&mut self.content) {
+            self.content.insert(0, ContentBlock::Text(time.to_string()));
+        }
+        self
     }
 
     pub(crate) fn into_blocks(self) -> Vec<ContentBlock> {

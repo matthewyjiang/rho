@@ -7,7 +7,10 @@
 //! shows the events and answers the requests among them; see
 //! [`super::events`].
 
-use rho_sdk::{model::ToolCall, RunOutcome, UserInput};
+use rho_sdk::{
+    model::{MessageTime, ToolCall},
+    RunOutcome, UserInput,
+};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use super::{
@@ -182,10 +185,15 @@ impl SessionRuntime {
                 display,
                 model,
                 calls,
-            }) => (
-                self.install_turn_checkpoint(&display, &model),
-                RunInput::Prompt { model, calls },
-            ),
+            }) => {
+                // Stamp before the checkpoint copies it, so the saved turn
+                // finds the exact message the run appends.
+                let model = model.stamped(MessageTime::now());
+                (
+                    self.install_turn_checkpoint(&display, &model),
+                    RunInput::Prompt { model, calls },
+                )
+            }
             TurnStart::Continue => (self.install_continuation_checkpoint(), RunInput::Continue),
         };
         let checkpoint = checkpoint?;
@@ -243,7 +251,7 @@ impl SessionRuntime {
                 return Err(error.into());
             }
         };
-        prompt.activate(ActiveWork::model_run(&run));
+        prompt.activate(ActiveWork::model_run(&run, checkpoint.clone()));
         io.emit(SessionEvent::RunStarted);
         let cancel = run.cancellation_handle();
         let mut approval_receiver = self.built.approval_receiver.take();

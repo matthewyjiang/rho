@@ -14,6 +14,8 @@ pub mod builder;
 mod context_overflow;
 pub mod factory;
 pub mod fast_mode;
+#[cfg(debug_assertions)]
+mod fixture_message_times;
 pub mod github_copilot;
 pub mod google;
 #[doc(hidden)]

@@ -13,6 +13,7 @@ fn chat_handoff_keeps_foreign_reasoning_summary_as_tagged_text() {
         provenance: Some(source),
         reasoning_summary: Some("verified it".into()),
         provider_context: Vec::new(),
+        created_at: None,
     });
 
     let converted = to_openai_message_for_target(&message, Some(&target))
@@ -49,6 +50,7 @@ fn chat_handoff_replays_reasoning_content_for_exact_model() {
             data: json!("need to inspect the workspace first"),
             replay: crate::model::ReplayScope::ExactModel,
         }],
+        created_at: None,
     });
 
     let converted = to_openai_message_for_target(&message, Some(&identity))
@@ -86,6 +88,7 @@ fn chat_handoff_omits_reasoning_content_for_foreign_model() {
             data: json!("private thoughts"),
             replay: crate::model::ReplayScope::ExactModel,
         }],
+        created_at: None,
     });
 
     let converted = to_openai_message_for_target(&message, Some(&target))
@@ -115,6 +118,7 @@ fn chat_handoff_rejects_unknown_replay_context_kinds() {
             data: json!({"x": 1}),
             replay: crate::model::ReplayScope::ExactModel,
         }],
+        created_at: None,
     });
 
     let err = match to_openai_message_for_target(&message, Some(&identity)) {
@@ -152,6 +156,7 @@ fn chat_handoff_injects_empty_reasoning_content_for_same_model_tool_turns() {
         provenance: Some(identity.clone()),
         reasoning_summary: None,
         provider_context: Vec::new(),
+        created_at: None,
     });
     let converted = to_openai_message_for_target(&same_model_tool_turn, Some(&identity))
         .unwrap()
@@ -163,6 +168,7 @@ fn chat_handoff_injects_empty_reasoning_content_for_same_model_tool_turns() {
         provenance: Some(identity.clone()),
         reasoning_summary: None,
         provider_context: Vec::new(),
+        created_at: None,
     });
     let converted = to_openai_message_for_target(&same_model_text_turn, Some(&identity))
         .unwrap()
@@ -176,6 +182,7 @@ fn chat_handoff_injects_empty_reasoning_content_for_same_model_tool_turns() {
         provenance: Some(non_deepseek.clone()),
         reasoning_summary: None,
         provider_context: Vec::new(),
+        created_at: None,
     });
     let converted = to_openai_message_for_target(&non_deepseek_tool_turn, Some(&non_deepseek))
         .unwrap()
@@ -189,6 +196,7 @@ fn chat_handoff_injects_empty_reasoning_content_for_same_model_tool_turns() {
         provenance: Some(identity),
         reasoning_summary: None,
         provider_context: Vec::new(),
+        created_at: None,
     });
     let converted = to_openai_message_for_target(&foreign_tool_turn, Some(&foreign_target))
         .unwrap()
@@ -239,6 +247,7 @@ fn codex_handoff_restores_replay_item_position() {
             data: json!({"type": "reasoning", "encrypted_content": "signed"}),
             replay: crate::model::ReplayScope::ExactModel,
         }],
+        created_at: None,
     });
 
     let input = codex_input_items_for_target(&[message], &mut Vec::new(), Some(&source)).unwrap();
@@ -307,6 +316,7 @@ fn codex_handoff_restores_original_order_for_multiple_replay_items() {
             provenance: Some(source.clone()),
             reasoning_summary: None,
             provider_context: case.provider_context,
+            created_at: None,
         });
         let input =
             codex_input_items_for_target(&[message], &mut Vec::new(), Some(&source)).unwrap();
@@ -344,6 +354,7 @@ fn codex_remote_compaction_marker_replays_item_without_portable_text() {
                 data: json!({"type": "compaction", "encrypted_content": "blob"}),
                 replay: crate::model::ReplayScope::ExactModel,
             }],
+            created_at: None,
         }
         .with_portable_fallback("portable summary"),
     );
@@ -390,6 +401,7 @@ fn codex_handoff_keeps_reasoning_native_or_uses_foreign_summary() {
             data: json!({"type": "reasoning", "encrypted_content": "signed"}),
             replay: crate::model::ReplayScope::ExactModel,
         }],
+        created_at: None,
     });
 
     let exact = codex_input_items_for_target(
@@ -438,6 +450,7 @@ fn codex_handoff_replays_async_true_only_for_matching_target() {
         provenance: Some(source.clone()),
         reasoning_summary: None,
         provider_context: Vec::new(),
+        created_at: None,
     });
 
     let exact = codex_input_items_for_target(

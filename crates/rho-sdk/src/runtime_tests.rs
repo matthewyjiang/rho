@@ -59,6 +59,7 @@ async fn simple_completion_and_streaming_share_one_history_path() {
                 provenance: Some(identity()),
                 reasoning_summary: None,
                 provider_context: Vec::new(),
+                created_at: None,
             }),
         ]
     );
@@ -180,6 +181,7 @@ async fn reset_preserves_prompt_policy_and_provider_replacement_reports_handoff(
             data: json!({"secret": "provider-owned"}),
             replay: crate::model::ReplayScope::ExactModel,
         }],
+        created_at: None,
     })];
     let runtime = Rho::builder()
         .provider(ScriptedProvider::new(identity(), []))
@@ -823,6 +825,7 @@ async fn steering_during_provider_stream_is_accepted_and_applied_in_order() {
                 provenance: Some(identity()),
                 reasoning_summary: None,
                 provider_context: Vec::new(),
+                created_at: None,
             }),
             Message::user_text("keep first"),
             Message::user_text("refine"),
@@ -1250,6 +1253,7 @@ async fn delivered_steer_applies_alone_before_late_undelivered() {
                 provenance: Some(identity()),
                 reasoning_summary: None,
                 provider_context: Vec::new(),
+                created_at: None,
             }),
             Message::user_text("S1"),
             Message::user_text("S2"),
@@ -1674,6 +1678,7 @@ fn assistant_tool_call(id: &str) -> Message {
         provenance: Some(identity()),
         reasoning_summary: None,
         provider_context: Vec::new(),
+        created_at: None,
     })
 }
 
