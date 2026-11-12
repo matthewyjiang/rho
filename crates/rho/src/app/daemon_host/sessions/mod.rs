@@ -549,6 +549,17 @@ impl Sessions {
         &self.settings
     }
 
+    /// What `rho/job/list` reports of the job writing `session` from the
+    /// session's stream: a loaded session's, or that of a subagent run
+    /// under way.
+    pub(super) fn job_live(&self, session: &SessionId) -> Option<rho_protocol::JobLive> {
+        let loaded = self.loaded().get(session).cloned();
+        match loaded {
+            Some(session) => Some(session.feed.live()),
+            None => self.subagents.feeds().live(session),
+        }
+    }
+
     /// The sessions' subagents: the daemon-wide budget and its queue.
     pub(super) fn subagents(&self) -> &Subagents {
         &self.subagents

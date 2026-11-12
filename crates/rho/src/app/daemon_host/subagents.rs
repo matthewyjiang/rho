@@ -265,6 +265,15 @@ impl Followed {
         }
     }
 
+    /// Shows the run's `status` where the stream carries it: its title,
+    /// once the stream is open. A status changes with every step of the
+    /// run, so a title that came first shows at the next.
+    fn show_status(&self, status: &RunStatus) {
+        if let Some(title) = &status.title {
+            self.stream.titled(title);
+        }
+    }
+
     fn show(&self, event: ChildEvent) {
         match event {
             ChildEvent::Opened(options) => self.stream.open(*options),
@@ -335,6 +344,9 @@ async fn follow(
     let mut state = JobState::Queued;
     loop {
         let run = status.borrow_and_update().clone();
+        if let Some(followed) = &followed {
+            followed.show_status(&run);
+        }
         if let Some(event) = next_event(&state, &run, stopping.is_cancelled()) {
             match jobs.record(&job, event) {
                 Ok(next) => {

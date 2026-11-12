@@ -420,7 +420,8 @@ async fn attach_cancels_the_turn_on_a_cancel_line() {
     );
 }
 
-// Covers: `rho attach` follows a subagent run by its job's id: it shows the
+// Covers: `rho/job/list` follows a subagent run that opened its session;
+// `rho attach` follows the run by its job's id: it shows the
 // run's events while the run is under way, here the question the run asks
 // its parent, and ends with the run, exit 0, once the parent's client
 // answered; attached again after the run ended, it replays the session the
@@ -468,6 +469,8 @@ async fn attach_follows_a_subagent_run() {
         .session
         .clone()
         .expect("a Rho subagent writes a session");
+    // The run asked, so its session is open and the daemon follows it.
+    let followed = run.live.as_ref().map(|live| live.inputs.clone());
 
     let mut live = Attach::spawn(
         &sandbox,
@@ -498,8 +501,10 @@ async fn attach_follows_a_subagent_run() {
         .map(|event| event["outcome"]["type"].clone())
         .collect();
     assert_eq!(
-        (status.code(), ends(&lines), ended),
+        (followed, status.code(), ends(&lines), ended),
         (
+            // The question is its parent session's request, not the run's.
+            Some(Vec::new()),
             Some(0),
             (run_started, completed.clone()),
             vec![json!("answered")],

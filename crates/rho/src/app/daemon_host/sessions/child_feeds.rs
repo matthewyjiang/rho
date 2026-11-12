@@ -81,6 +81,15 @@ impl ChildFeeds {
         Some(attach_response(&listed.workspace, feed.attach(after)))
     }
 
+    /// What `rho/job/list` reports of the run writing `session` from its
+    /// stream; `None` when no run under way writes it, or the run has not
+    /// opened it yet.
+    pub(super) fn live(&self, session: &SessionId) -> Option<wire::JobLive> {
+        let listed = self.runs().get(session)?.clone();
+        let feed = listed.feed.borrow().clone()?;
+        Some(feed.live())
+    }
+
     fn runs(&self) -> MutexGuard<'_, HashMap<SessionId, Listed>> {
         // Entries are only inserted and removed whole.
         self.runs.lock().unwrap_or_else(PoisonError::into_inner)
@@ -147,6 +156,18 @@ impl ChildStream {
             outcome,
         });
         self.publish(ended.into_iter().chain([self.state_event()]));
+    }
+
+    /// Tells the clients following the run its title is `title`, unless
+    /// they know.
+    pub(in crate::app::daemon_host) fn titled(&self, title: &str) {
+        if let Some(feed) = self.feed.borrow().as_ref() {
+            if feed.live().title.as_deref() != Some(title) {
+                feed.publish([wire::SessionEvent::TitleChanged {
+                    title: title.to_owned(),
+                }]);
+            }
+        }
     }
 
     /// Detaches the clients following the run with `reason`, instead of
