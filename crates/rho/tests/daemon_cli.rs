@@ -230,6 +230,40 @@ fn daemon_start_is_idempotent() {
     );
 }
 
+// Covers: a frontend's `rho_protocol::LocalDaemon` starts the stopped daemon
+// of an isolated rho home through `rho daemon start` and connects to it, and
+// a later one finds that daemon running, starting nothing.
+// Owner: rho-protocol LocalDaemon against the real CLI.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_frontend_starts_a_stopped_daemon_as_the_cli_does_then_finds_it() {
+    use rho_protocol::{ClientHello, ClientInfo, LocalDaemon};
+
+    let sandbox = Sandbox::new();
+    let daemon = LocalDaemon::new(sandbox.isolated.rho_home())
+        .with_xdg_runtime_dir(Some(sandbox.isolated.path().join("run")));
+    let hello = || {
+        ClientHello::frontend(ClientInfo {
+            name: "local-daemon-test".into(),
+            version: "0".into(),
+        })
+    };
+    assert!(daemon.connect(hello()).await.unwrap().is_none(), "stopped");
+
+    let (_client, _notifications, started) = daemon
+        .connect_or_start(sandbox.rho("fixed"), hello())
+        .await
+        .unwrap();
+    let pid = sandbox
+        .isolated
+        .daemon_pid()
+        .expect("the started daemon's record");
+    let no_rho = std::process::Command::new(sandbox.isolated.path().join("no-such-rho"));
+    let (_client, _notifications, found) = daemon.connect_or_start(no_rho, hello()).await.unwrap();
+
+    assert_eq!((started.daemon.pid, found.daemon.pid), (pid, pid));
+}
+
 // Covers: a client whose environment sets an unknown RHO_CREDENTIAL_STORE
 // starts no daemon, which would refuse its sessions and sign-ins for it,
 // and names the variable at once; with a daemon already running it

@@ -11,14 +11,14 @@ mod user_scope;
 
 pub(crate) use account::{account_lock_path, lock_account_file};
 pub(in crate::daemon) use endpoint::{
-    connect, connect_restarting, endpoint, inspect_endpoint, remove_endpoint, Listener, Stream,
+    connect, connect_restarting, inspect_endpoint, remove_endpoint, Listener, Stream,
 };
 pub(crate) use files::{
     create_private_dir, create_private_file, sync_dir, DaemonPathError, FileIdentity,
     REPLACEABLE_WHILE_RUNNING,
 };
 pub(in crate::daemon) use files::{
-    open_lock_file, open_log_file, path_bytes, prepare_private_dir, running_identity,
+    open_lock_file, open_log_file, prepare_private_dir, running_identity,
 };
 pub(in crate::daemon) use handoff::{relaunch, take_handoff};
 pub(in crate::daemon) use process::{is_variable, request_stop, spawn_detached, MACHINE_VARIABLES};

@@ -1,27 +1,17 @@
 //! Private directories and files, and which file a path names.
 
 use std::{
-    borrow::Cow,
     fs::{self, File, OpenOptions},
     io,
-    os::unix::{
-        ffi::OsStrExt,
-        fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt},
-    },
+    os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
 };
 
 /// Why the daemon's files cannot be used.
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
 pub(crate) enum DaemonPathError {
-    #[error(
-        "rho daemon socket path {path} is {len} bytes, over the {max}-byte Unix socket path limit on this platform; point RHO_HOME or XDG_RUNTIME_DIR at a shorter directory"
-    )]
-    SocketPathTooLong {
-        path: PathBuf,
-        len: usize,
-        max: usize,
-    },
+    #[error(transparent)]
+    SocketPathTooLong(#[from] rho_protocol::SocketPathTooLong),
     #[error("rho daemon directory {path} is not a directory; remove it and retry")]
     NotADirectory { path: PathBuf },
     #[error(
@@ -56,7 +46,7 @@ impl DaemonPathError {
     pub(crate) fn is_unreadable(&self) -> bool {
         match self {
             Self::Io { .. } | Self::Unreadable { .. } => true,
-            Self::SocketPathTooLong { .. }
+            Self::SocketPathTooLong(_)
             | Self::NotADirectory { .. }
             | Self::WrongOwner { .. }
             | Self::InsecureMode { .. }
@@ -158,12 +148,6 @@ pub(crate) fn create_private_file(path: &Path) -> io::Result<File> {
         .truncate(true)
         .mode(0o600)
         .open(path)
-}
-
-/// The bytes that name `path`, the same for one path in every rho version,
-/// so what is derived from them stays stable.
-pub(in crate::daemon) fn path_bytes(path: &Path) -> Cow<'_, [u8]> {
-    Cow::Borrowed(path.as_os_str().as_bytes())
 }
 
 /// The effective uid of this process.

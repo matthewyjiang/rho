@@ -4,16 +4,19 @@
 //! the user's profile, as the credentials and sessions beside them are.
 
 use std::{
-    borrow::Cow,
     fs::{self, File, OpenOptions},
     io,
-    os::windows::{ffi::OsStrExt, fs::MetadataExt},
+    os::windows::fs::MetadataExt,
     path::{Path, PathBuf},
 };
 
 /// Why the daemon's files cannot be used.
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
 pub(crate) enum DaemonPathError {
+    /// Never on Windows, whose pipe names have no length limit; here
+    /// because `rho_protocol::DaemonEndpoint::locate` returns it everywhere.
+    #[error(transparent)]
+    SocketPathTooLong(#[from] rho_protocol::SocketPathTooLong),
     #[error("rho daemon directory {path} is not a directory; remove it and retry")]
     NotADirectory { path: PathBuf },
     #[error("could not prepare rho daemon directory {path}: {message}")]
@@ -32,7 +35,9 @@ impl DaemonPathError {
     pub(crate) fn is_unreadable(&self) -> bool {
         match self {
             Self::Io { .. } | Self::Unreadable { .. } => true,
-            Self::NotADirectory { .. } | Self::ForeignPipe { .. } => false,
+            Self::SocketPathTooLong(_) | Self::NotADirectory { .. } | Self::ForeignPipe { .. } => {
+                false
+            }
         }
     }
 }
@@ -93,18 +98,6 @@ pub(crate) fn create_private_file(path: &Path) -> io::Result<File> {
         .create(true)
         .truncate(true)
         .open(path)
-}
-
-/// The bytes that name `path`, the same for one path in every rho version,
-/// so what is derived from them stays stable: its UTF-16 code units, little
-/// endian.
-pub(in crate::daemon) fn path_bytes(path: &Path) -> Cow<'_, [u8]> {
-    Cow::Owned(
-        path.as_os_str()
-            .encode_wide()
-            .flat_map(u16::to_le_bytes)
-            .collect(),
-    )
 }
 
 /// Which file a path names: equal identities are the same file, unchanged.

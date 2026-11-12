@@ -12,7 +12,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use rho_protocol::{ClientError, ClientHello, VersionFix, VersionMismatch};
+use rho_protocol::{ClientError, ClientHello};
 
 use super::{
     client::{connect, ConnectError, Connection},
@@ -243,18 +243,13 @@ async fn connect_or_spawn_observing(
     }
 }
 
-/// Whether the daemon refused this client as newer than itself and reported
-/// that restarting it is free, so replacing it interrupts nothing and
-/// disconnects no one. A daemon that does not say what a restart costs is
-/// in use.
+/// Whether the daemon refused this client as newer than itself, and nobody
+/// uses it ([`rho_protocol::VersionMismatch::is_unused_older_daemon`]).
 fn is_unused_older_daemon(refusal: &ConnectError) -> bool {
     matches!(
         refusal,
-        ConnectError::Handshake(ClientError::VersionMismatch(VersionMismatch {
-            fix: VersionFix::RestartDaemon,
-            restart: Some(cost),
-            ..
-        })) if cost.is_free()
+        ConnectError::Handshake(ClientError::VersionMismatch(mismatch))
+            if mismatch.is_unused_older_daemon()
     )
 }
 

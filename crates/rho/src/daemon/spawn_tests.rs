@@ -7,7 +7,7 @@ use std::{
 };
 
 use pretty_assertions::assert_eq;
-use rho_protocol::{ProtocolVersion, RestartCost, PROTOCOL_VERSION};
+use rho_protocol::{ProtocolVersion, RestartCost, VersionFix, VersionMismatch, PROTOCOL_VERSION};
 use tempfile::TempDir;
 use tokio::task::JoinHandle;
 

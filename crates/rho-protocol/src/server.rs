@@ -36,7 +36,12 @@ use crate::{
         SessionObserve, SessionObserveParams, SessionProcessesParams, SessionProcessesResponse,
         SessionPromptParams, SessionPromptResponse, SessionRenameParams, SessionRenameResponse,
         SessionSteerParams, SessionSteerResponse, SessionUnsteerParams, SessionUnsteerResponse,
-        AUTH_LOGIN, CONFIG_GET, HELLO, SESSION_ATTACH, SESSION_DETACH, SESSION_OBSERVE,
+        AUTH_CHOOSE_STORE, AUTH_KEY, AUTH_LIST, AUTH_LOGIN, AUTH_LOGIN_CANCEL, AUTH_LOGOUT,
+        CONFIG_GET, HELLO, SESSION_ANSWER, SESSION_ATTACH, SESSION_CANCEL, SESSION_CONFIGURE,
+        SESSION_DELETE, SESSION_DETACH, SESSION_HOLD, SESSION_INSPECT, SESSION_LIST, SESSION_MCP,
+        SESSION_MCP_CATALOG, SESSION_MCP_COMPLETE, SESSION_MCP_RESOURCE, SESSION_NEW,
+        SESSION_OBSERVE, SESSION_PROCESSES, SESSION_PROMPT, SESSION_RENAME, SESSION_STEER,
+        SESSION_UNSTEER,
     },
     subscription::Subscription,
     BuildId, BuildSkew, DaemonInfo, DaemonStatus, ErrorCode, FrameError, HelloResponse, Message,
@@ -62,6 +67,12 @@ use crate::{
 ///
 /// A fallible method's error is sent to the client as is; use the
 /// [`ErrorCode`] that names the failure.
+///
+/// Every fallible method, and every [`SettingsService`] method, answers
+/// [`ErrorCode::MethodNotFound`] unless overridden, so a daemon that serves
+/// part of the protocol, such as a test double, implements only what it
+/// serves. The handshake hooks, status, stop, restart, and the job list
+/// cannot fail, so every implementor answers them.
 ///
 /// `rho/session/detach` has no method: the connection answers it by
 /// dropping that session's [`Subscription`], which the publisher sees as
@@ -118,7 +129,10 @@ pub trait Service: SettingsService + Send + Sync {
     fn new_session(
         &self,
         params: SessionNewParams,
-    ) -> impl Future<Output = Result<SessionNewResponse, RpcError>> + Send;
+    ) -> impl Future<Output = Result<SessionNewResponse, RpcError>> + Send {
+        let _ = params;
+        unsupported(SESSION_NEW)
+    }
 
     /// Handles `rho/session/prompt`: start a turn the service runs in a task
     /// of its own, resolving once the turn has begun (see
@@ -127,14 +141,20 @@ pub trait Service: SettingsService + Send + Sync {
     fn prompt_session(
         &self,
         params: SessionPromptParams,
-    ) -> impl Future<Output = Result<SessionPromptResponse, RpcError>> + Send;
+    ) -> impl Future<Output = Result<SessionPromptResponse, RpcError>> + Send {
+        let _ = params;
+        unsupported(SESSION_PROMPT)
+    }
 
     /// Handles `rho/session/cancel`: ask the session's turn in progress to
     /// stop, without waiting for it to end.
     fn cancel_session(
         &self,
         params: SessionCancelParams,
-    ) -> impl Future<Output = Result<SessionCancelResponse, RpcError>> + Send;
+    ) -> impl Future<Output = Result<SessionCancelResponse, RpcError>> + Send {
+        let _ = params;
+        unsupported(SESSION_CANCEL)
+    }
 
     /// Handles `rho/session/steer`: queue input for the running turn,
     /// resolving once the turn accepted it, without waiting for the turn to
@@ -142,28 +162,40 @@ pub trait Service: SettingsService + Send + Sync {
     fn steer_session(
         &self,
         params: SessionSteerParams,
-    ) -> impl Future<Output = Result<SessionSteerResponse, RpcError>> + Send;
+    ) -> impl Future<Output = Result<SessionSteerResponse, RpcError>> + Send {
+        let _ = params;
+        unsupported(SESSION_STEER)
+    }
 
     /// Handles `rho/session/unsteer`: withdraw a steer the running turn has
     /// not applied yet, resolving with what became of it.
     fn unsteer_session(
         &self,
         params: SessionUnsteerParams,
-    ) -> impl Future<Output = Result<SessionUnsteerResponse, RpcError>> + Send;
+    ) -> impl Future<Output = Result<SessionUnsteerResponse, RpcError>> + Send {
+        let _ = params;
+        unsupported(SESSION_UNSTEER)
+    }
 
     /// Handles `rho/session/answer`: hand the answer to the turn that
     /// waits for the request, if the request is still open.
     fn answer_session(
         &self,
         params: SessionAnswerParams,
-    ) -> impl Future<Output = Result<SessionAnswerResponse, RpcError>> + Send;
+    ) -> impl Future<Output = Result<SessionAnswerResponse, RpcError>> + Send {
+        let _ = params;
+        unsupported(SESSION_ANSWER)
+    }
 
     /// Handles `rho/session/hold`: stop an open request's timeout, so it
     /// waits for an answer.
     fn hold_session(
         &self,
         params: SessionHoldParams,
-    ) -> impl Future<Output = Result<SessionHoldResponse, RpcError>> + Send;
+    ) -> impl Future<Output = Result<SessionHoldResponse, RpcError>> + Send {
+        let _ = params;
+        unsupported(SESSION_HOLD)
+    }
 
     /// Handles `rho/session/configure`: apply one change to the session's
     /// settings between its turns, once the turn under way ends, and answer
@@ -171,27 +203,39 @@ pub trait Service: SettingsService + Send + Sync {
     fn configure_session(
         &self,
         params: SessionConfigureParams,
-    ) -> impl Future<Output = Result<SessionConfigureResponse, RpcError>> + Send;
+    ) -> impl Future<Output = Result<SessionConfigureResponse, RpcError>> + Send {
+        let _ = params;
+        unsupported(SESSION_CONFIGURE)
+    }
 
     /// Read the loaded session's MCP inventory without waiting for a turn.
     fn session_mcp(
         &self,
         params: SessionMcpParams,
-    ) -> impl Future<Output = Result<SessionMcpInventory, RpcError>> + Send;
+    ) -> impl Future<Output = Result<SessionMcpInventory, RpcError>> + Send {
+        let _ = params;
+        unsupported(SESSION_MCP)
+    }
 
     /// Handles `rho/session/mcp/catalog`: list the prompts and resources the
     /// loaded session's MCP servers offer, without waiting for a turn.
     fn session_mcp_catalog(
         &self,
         params: SessionMcpCatalogParams,
-    ) -> impl Future<Output = Result<SessionMcpCatalog, RpcError>> + Send;
+    ) -> impl Future<Output = Result<SessionMcpCatalog, RpcError>> + Send {
+        let _ = params;
+        unsupported(SESSION_MCP_CATALOG)
+    }
 
     /// Handles `rho/session/mcp/resource`: read one resource from one of the
     /// loaded session's MCP servers, without waiting for a turn.
     fn session_mcp_resource(
         &self,
         params: SessionMcpResourceParams,
-    ) -> impl Future<Output = Result<SessionMcpResourceResponse, RpcError>> + Send;
+    ) -> impl Future<Output = Result<SessionMcpResourceResponse, RpcError>> + Send {
+        let _ = params;
+        unsupported(SESSION_MCP_RESOURCE)
+    }
 
     /// Handles `rho/session/mcp/complete`: ask one of the loaded session's
     /// MCP servers for values of a prompt argument, without waiting for a
@@ -199,21 +243,30 @@ pub trait Service: SettingsService + Send + Sync {
     fn session_mcp_complete(
         &self,
         params: SessionMcpCompleteParams,
-    ) -> impl Future<Output = Result<SessionMcpCompleteResponse, RpcError>> + Send;
+    ) -> impl Future<Output = Result<SessionMcpCompleteResponse, RpcError>> + Send {
+        let _ = params;
+        unsupported(SESSION_MCP_COMPLETE)
+    }
 
     /// Handles `rho/session/processes`: read the loaded session's background
     /// processes, and one's retained output, without waiting for a turn.
     fn session_processes(
         &self,
         params: SessionProcessesParams,
-    ) -> impl Future<Output = Result<SessionProcessesResponse, RpcError>> + Send;
+    ) -> impl Future<Output = Result<SessionProcessesResponse, RpcError>> + Send {
+        let _ = params;
+        unsupported(SESSION_PROCESSES)
+    }
 
     /// Handles `rho/session/inspect`: read a report about the loaded
     /// session between its turns, refusing while one runs.
     fn inspect_session(
         &self,
         params: SessionInspectParams,
-    ) -> impl Future<Output = Result<SessionInspectResponse, RpcError>> + Send;
+    ) -> impl Future<Output = Result<SessionInspectResponse, RpcError>> + Send {
+        let _ = params;
+        unsupported(SESSION_INSPECT)
+    }
 
     /// Handles `rho/session/attach`: subscribe this connection to the
     /// session's events (see [`crate::subscription()`]). The connection sends
@@ -224,7 +277,10 @@ pub trait Service: SettingsService + Send + Sync {
     fn attach_session(
         &self,
         params: SessionAttachParams,
-    ) -> impl Future<Output = Result<(SessionAttachResponse, Subscription), RpcError>> + Send;
+    ) -> impl Future<Output = Result<(SessionAttachResponse, Subscription), RpcError>> + Send {
+        let _ = params;
+        unsupported(SESSION_ATTACH)
+    }
 
     /// Handles `rho/session/observe`: subscribe this connection to the
     /// session's events as [`Self::attach_session`] does, without loading a
@@ -233,28 +289,40 @@ pub trait Service: SettingsService + Send + Sync {
     fn observe_session(
         &self,
         params: SessionObserveParams,
-    ) -> impl Future<Output = Result<(SessionAttachResponse, Subscription), RpcError>> + Send;
+    ) -> impl Future<Output = Result<(SessionAttachResponse, Subscription), RpcError>> + Send {
+        let _ = params;
+        unsupported(SESSION_OBSERVE)
+    }
 
     /// Answers `rho/session/list`: a page of the saved sessions a person
     /// can resume.
     fn list_sessions(
         &self,
         params: SessionListParams,
-    ) -> impl Future<Output = Result<SessionListResponse, RpcError>> + Send;
+    ) -> impl Future<Output = Result<SessionListResponse, RpcError>> + Send {
+        let _ = params;
+        unsupported(SESSION_LIST)
+    }
 
     /// Handles `rho/session/rename`: save a session's title and tell the
     /// clients attached to it.
     fn rename_session(
         &self,
         params: SessionRenameParams,
-    ) -> impl Future<Output = Result<SessionRenameResponse, RpcError>> + Send;
+    ) -> impl Future<Output = Result<SessionRenameResponse, RpcError>> + Send {
+        let _ = params;
+        unsupported(SESSION_RENAME)
+    }
 
     /// Handles `rho/session/delete`: unload the session, if loaded, and
     /// delete its files.
     fn delete_session(
         &self,
         params: SessionDeleteParams,
-    ) -> impl Future<Output = Result<SessionDeleteResponse, RpcError>> + Send;
+    ) -> impl Future<Output = Result<SessionDeleteResponse, RpcError>> + Send {
+        let _ = params;
+        unsupported(SESSION_DELETE)
+    }
 
     /// Answers `rho/job/list`.
     fn list_jobs(&self) -> impl Future<Output = JobListResponse> + Send;
@@ -265,20 +333,29 @@ pub trait Service: SettingsService + Send + Sync {
     fn save_auth_key(
         &self,
         params: AuthKeyParams,
-    ) -> impl Future<Output = Result<AuthKeyResponse, RpcError>> + Send;
+    ) -> impl Future<Output = Result<AuthKeyResponse, RpcError>> + Send {
+        let _ = params;
+        unsupported(AUTH_KEY)
+    }
 
     /// Handles `rho/auth/logout`: delete the auth profile's saved
     /// credentials.
     fn logout_auth(
         &self,
         params: AuthLogoutParams,
-    ) -> impl Future<Output = Result<AuthLogoutResponse, RpcError>> + Send;
+    ) -> impl Future<Output = Result<AuthLogoutResponse, RpcError>> + Send {
+        let _ = params;
+        unsupported(AUTH_LOGOUT)
+    }
 
     /// Answers `rho/auth/list`: the auth profiles a client can sign in to.
     fn list_auths(
         &self,
         params: AuthListParams,
-    ) -> impl Future<Output = Result<AuthListResponse, RpcError>> + Send;
+    ) -> impl Future<Output = Result<AuthListResponse, RpcError>> + Send {
+        let _ = params;
+        unsupported(AUTH_LIST)
+    }
 
     /// Handles `rho/auth/login`: start the auth profile's interactive login
     /// in a task the service owns, which sends its prompt and end through
@@ -290,21 +367,30 @@ pub trait Service: SettingsService + Send + Sync {
     fn login(
         &self,
         params: AuthLoginParams,
-    ) -> impl Future<Output = Result<(AuthLoginResponse, LoginStream), RpcError>> + Send;
+    ) -> impl Future<Output = Result<(AuthLoginResponse, LoginStream), RpcError>> + Send {
+        let _ = params;
+        unsupported(AUTH_LOGIN)
+    }
 
     /// Handles `rho/auth/login_cancel`: ask the login to stop, without
     /// waiting for it to end.
     fn cancel_login(
         &self,
         params: AuthLoginCancelParams,
-    ) -> impl Future<Output = Result<AuthLoginCancelResponse, RpcError>> + Send;
+    ) -> impl Future<Output = Result<AuthLoginCancelResponse, RpcError>> + Send {
+        let _ = params;
+        unsupported(AUTH_LOGIN_CANCEL)
+    }
 
     /// Handles `rho/auth/choose_store`: check that the store takes a
     /// secret, then keep provider credentials there.
     fn choose_store(
         &self,
         params: AuthChooseStoreParams,
-    ) -> impl Future<Output = Result<AuthChooseStoreResponse, RpcError>> + Send;
+    ) -> impl Future<Output = Result<AuthChooseStoreResponse, RpcError>> + Send {
+        let _ = params;
+        unsupported(AUTH_CHOOSE_STORE)
+    }
 }
 
 /// Messages queued for the connection's writer, written in queue order.
@@ -767,6 +853,15 @@ pub(crate) fn decode_params<M: Method>(params: Option<Value>) -> Result<M::Param
 /// Encodes `M`'s result, the type [`crate::Client::request`] decodes.
 pub(crate) fn encode_result<M: Method>(result: &M::Result) -> Result<Value, RpcError> {
     encode(result)
+}
+
+/// What a [`Service`] or [`SettingsService`] method that is not overridden
+/// answers: this daemon does not serve `method`.
+pub(crate) fn unsupported<T>(method: &str) -> std::future::Ready<Result<T, RpcError>> {
+    std::future::ready(Err(RpcError::new(
+        ErrorCode::MethodNotFound,
+        format!("this rho daemon does not serve {method}"),
+    )))
 }
 
 /// Fails only for values JSON cannot hold, such as a non-UTF-8 path.

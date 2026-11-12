@@ -1,7 +1,7 @@
 //! The daemon's endpoint: the named pipe `\\.\pipe\rho-daemon-<home id>`,
 //! private by its security descriptor (see `security`).
 
-use std::{ffi::OsString, io, path::Path, time::Duration};
+use std::{io, time::Duration};
 
 use rho_protocol::CloseOnShutdown;
 use tokio::net::windows::named_pipe::{NamedPipeClient, NamedPipeServer};
@@ -10,10 +10,7 @@ use super::{
     files::DaemonPathError,
     pipe::{self, Opened, PipeServer},
 };
-use crate::daemon::{
-    paths::{home_id, DaemonPaths, SocketFound},
-    platform::Endpoint,
-};
+use crate::daemon::paths::{DaemonPaths, SocketFound};
 
 /// Interval between connection attempts while a daemon restarts. Each
 /// attempt is one `CreateFile` on a local pipe.
@@ -23,21 +20,6 @@ const RESTART_POLL_INTERVAL: Duration = Duration::from_millis(10);
 /// alone, so a client that shuts down its writes stops reading too, and the
 /// daemon sees it leave.
 pub(in crate::daemon) type Stream = CloseOnShutdown<NamedPipeClient>;
-
-/// Where the daemon of `rho_home` listens: a pipe named after the home (see
-/// [`home_id`]), so two homes never reach the same daemon. Pipes live in one
-/// namespace for the whole machine and not in a directory, so the runtime
-/// directory, `<rho home>\run`, holds only the spawn lock. `env` places
-/// nothing here.
-pub(in crate::daemon) fn endpoint(
-    rho_home: &Path,
-    _env: impl Fn(&str) -> Option<OsString>,
-) -> Result<Endpoint, DaemonPathError> {
-    Ok(Endpoint {
-        runtime_dir: rho_home.join("run"),
-        socket: format!(r"\\.\pipe\rho-daemon-{}", home_id(rho_home)).into(),
-    })
-}
 
 /// The daemon's listening pipe.
 pub(in crate::daemon) struct Listener {

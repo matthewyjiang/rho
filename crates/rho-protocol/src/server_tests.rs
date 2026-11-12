@@ -11,16 +11,15 @@ use super::*;
 use crate::{
     login_relay,
     methods::{
-        AuthLoginFinishedParams, AuthLoginPromptParams, ConfigRegisterParams, ConfigSetParams,
-        DetachReason, JobState, LoginId, LoginOutcome, LoginPrompt, ModelOptions, ModelRef,
-        PermissionMode, PermissionModeOptions, Replay, Seq, SessionDetachedParams, SessionEvent,
-        SessionEventParams, SessionId, SessionOptions, StreamId, AUTH_LOGIN_FINISHED,
-        AUTH_LOGIN_PROMPT, CONFIG_CHANGED, DAEMON_STATUS, DAEMON_STOP, SESSION_ANSWER,
-        SESSION_DETACHED, SESSION_EVENT, SESSION_HOLD, SESSION_PROMPT,
+        AuthLoginFinishedParams, AuthLoginPromptParams, DetachReason, JobState, LoginId,
+        LoginOutcome, LoginPrompt, ModelOptions, ModelRef, PermissionMode, PermissionModeOptions,
+        Replay, Seq, SessionDetachedParams, SessionEvent, SessionEventParams, SessionId,
+        SessionOptions, StreamId, AUTH_LOGIN_FINISHED, AUTH_LOGIN_PROMPT, CONFIG_CHANGED,
+        DAEMON_STATUS, DAEMON_STOP, SESSION_ANSWER, SESSION_DETACHED, SESSION_EVENT, SESSION_HOLD,
+        SESSION_LIST, SESSION_PROMPT,
     },
-    subscription, AuthChooseStoreParams, AuthChooseStoreResponse, ClientRole, ConfigChangedParams,
-    ConfigGetResponse, ConfigNamespace, ConfigRegisterResponse, ConfigRevision, ConfigSchema,
-    ConfigSetResponse, ConfigWatch, CredentialStoreKind, CredentialStoreStatus, HelloParams,
+    subscription, ClientRole, ConfigChangedParams, ConfigGetResponse, ConfigNamespace,
+    ConfigRevision, ConfigWatch, CredentialStoreKind, CredentialStoreStatus, HelloParams,
     LoginRelay, ProtocolVersion, Published, Publisher, RequestId, SettingEntry, SettingKey,
     SettingValue, StoreSelectedBy, ValueSource,
 };
@@ -56,228 +55,20 @@ fn test_info() -> DaemonInfo {
     }
 }
 
-/// The error every test service answers session requests with.
+/// The error the test services that host no sessions answer a session
+/// request with, so a test can tell a service's error from the protocol's.
 fn no_such_session() -> RpcError {
     RpcError::new(ErrorCode::SessionNotFound, "no such session")
 }
 
-/// The session, job, and credential methods of a test service that hosts no
-/// sessions.
+/// The methods a test service that hosts no sessions cannot leave to
+/// [`Service`]'s defaults, which answer the rest.
 macro_rules! hosts_no_sessions {
     () => {
         async fn restart(&self) {}
 
-        async fn new_session(&self, _: SessionNewParams) -> Result<SessionNewResponse, RpcError> {
-            Err(no_such_session())
-        }
-
-        async fn prompt_session(
-            &self,
-            _: SessionPromptParams,
-        ) -> Result<SessionPromptResponse, RpcError> {
-            Err(no_such_session())
-        }
-
-        async fn cancel_session(
-            &self,
-            _: SessionCancelParams,
-        ) -> Result<SessionCancelResponse, RpcError> {
-            Err(no_such_session())
-        }
-
-        async fn steer_session(
-            &self,
-            _: SessionSteerParams,
-        ) -> Result<SessionSteerResponse, RpcError> {
-            Err(no_such_session())
-        }
-
-        async fn unsteer_session(
-            &self,
-            _: SessionUnsteerParams,
-        ) -> Result<SessionUnsteerResponse, RpcError> {
-            Err(no_such_session())
-        }
-
-        async fn answer_session(
-            &self,
-            _: SessionAnswerParams,
-        ) -> Result<SessionAnswerResponse, RpcError> {
-            Err(no_such_session())
-        }
-
-        async fn hold_session(
-            &self,
-            _: SessionHoldParams,
-        ) -> Result<SessionHoldResponse, RpcError> {
-            Err(no_such_session())
-        }
-
-        async fn session_mcp(&self, _: SessionMcpParams) -> Result<SessionMcpInventory, RpcError> {
-            Err(no_such_session())
-        }
-
-        async fn session_mcp_catalog(
-            &self,
-            _: SessionMcpCatalogParams,
-        ) -> Result<SessionMcpCatalog, RpcError> {
-            Err(no_such_session())
-        }
-
-        async fn session_mcp_resource(
-            &self,
-            _: SessionMcpResourceParams,
-        ) -> Result<SessionMcpResourceResponse, RpcError> {
-            Err(no_such_session())
-        }
-
-        async fn session_mcp_complete(
-            &self,
-            _: SessionMcpCompleteParams,
-        ) -> Result<SessionMcpCompleteResponse, RpcError> {
-            Err(no_such_session())
-        }
-
-        async fn observe_session(
-            &self,
-            _: SessionObserveParams,
-        ) -> Result<(SessionAttachResponse, Subscription), RpcError> {
-            Err(no_such_session())
-        }
-
-        async fn session_processes(
-            &self,
-            _: SessionProcessesParams,
-        ) -> Result<SessionProcessesResponse, RpcError> {
-            Err(no_such_session())
-        }
-
-        async fn inspect_session(
-            &self,
-            _: SessionInspectParams,
-        ) -> Result<SessionInspectResponse, RpcError> {
-            Err(no_such_session())
-        }
-
-        async fn configure_session(
-            &self,
-            _: SessionConfigureParams,
-        ) -> Result<SessionConfigureResponse, RpcError> {
-            Err(no_such_session())
-        }
-
-        async fn list_sessions(
-            &self,
-            _: SessionListParams,
-        ) -> Result<SessionListResponse, RpcError> {
-            Ok(SessionListResponse {
-                sessions: Vec::new(),
-                next_cursor: None,
-            })
-        }
-
-        async fn rename_session(
-            &self,
-            _: SessionRenameParams,
-        ) -> Result<SessionRenameResponse, RpcError> {
-            Err(no_such_session())
-        }
-
-        async fn delete_session(
-            &self,
-            _: SessionDeleteParams,
-        ) -> Result<SessionDeleteResponse, RpcError> {
-            Err(no_such_session())
-        }
-
         async fn list_jobs(&self) -> JobListResponse {
             JobListResponse { jobs: Vec::new() }
-        }
-
-        async fn save_auth_key(&self, _: AuthKeyParams) -> Result<AuthKeyResponse, RpcError> {
-            Err(no_credential_store())
-        }
-
-        async fn logout_auth(&self, _: AuthLogoutParams) -> Result<AuthLogoutResponse, RpcError> {
-            Err(no_credential_store())
-        }
-
-        async fn list_auths(&self, _params: AuthListParams) -> Result<AuthListResponse, RpcError> {
-            Err(no_credential_store())
-        }
-
-        async fn cancel_login(
-            &self,
-            _: AuthLoginCancelParams,
-        ) -> Result<AuthLoginCancelResponse, RpcError> {
-            Err(no_credential_store())
-        }
-
-        async fn choose_store(
-            &self,
-            _: AuthChooseStoreParams,
-        ) -> Result<AuthChooseStoreResponse, RpcError> {
-            Err(no_credential_store())
-        }
-    };
-}
-
-/// The error every test service answers credential requests with.
-fn no_credential_store() -> RpcError {
-    RpcError::new(ErrorCode::CredentialStoreUnavailable, "no credential store")
-}
-
-/// The config methods of a test service that keeps no settings.
-macro_rules! serves_no_config {
-    ($service:ty) => {
-        impl SettingsService for $service {
-            async fn config_schema(&self) -> Result<ConfigSchema, RpcError> {
-                Err(no_config())
-            }
-
-            async fn register_config(
-                &self,
-                _: ConfigRegisterParams,
-            ) -> Result<ConfigRegisterResponse, RpcError> {
-                Err(no_config())
-            }
-
-            async fn get_config(&self, _: ConfigGetParams) -> Result<ConfigWatch, RpcError> {
-                Err(no_config())
-            }
-
-            async fn set_config(&self, _: ConfigSetParams) -> Result<ConfigSetResponse, RpcError> {
-                Err(no_config())
-            }
-        }
-    };
-}
-
-/// The error every test service without settings answers with.
-fn no_config() -> RpcError {
-    RpcError::new(ErrorCode::MethodNotFound, "no settings")
-}
-
-/// The attach method of a test service that hosts no sessions.
-macro_rules! attaches_nothing {
-    () => {
-        async fn attach_session(
-            &self,
-            _: SessionAttachParams,
-        ) -> Result<(SessionAttachResponse, Subscription), RpcError> {
-            Err(no_such_session())
-        }
-    };
-}
-
-/// The login method of a test service that runs no logins.
-macro_rules! logs_in_nothing {
-    () => {
-        async fn login(
-            &self,
-            _: AuthLoginParams,
-        ) -> Result<(AuthLoginResponse, LoginStream), RpcError> {
-            Err(no_credential_store())
         }
     };
 }
@@ -345,11 +136,23 @@ impl Service for FakeService {
     async fn stop(&self) {}
 
     hosts_no_sessions!();
-    attaches_nothing!();
-    logs_in_nothing!();
+
+    async fn prompt_session(
+        &self,
+        _: SessionPromptParams,
+    ) -> Result<SessionPromptResponse, RpcError> {
+        Err(no_such_session())
+    }
+
+    async fn answer_session(
+        &self,
+        _: SessionAnswerParams,
+    ) -> Result<SessionAnswerResponse, RpcError> {
+        Err(no_such_session())
+    }
 }
 
-serves_no_config!(FakeService);
+impl SettingsService for FakeService {}
 
 /// Panics in `status`, as a handler bug would.
 struct PanickingService;
@@ -368,11 +171,9 @@ impl Service for PanickingService {
     async fn stop(&self) {}
 
     hosts_no_sessions!();
-    attaches_nothing!();
-    logs_in_nothing!();
 }
 
-serves_no_config!(PanickingService);
+impl SettingsService for PanickingService {}
 
 /// `status` answers only once the test releases it. `stop` resolves the
 /// connection's shutdown (see [`GatedService::shutdown`]) and returns only
@@ -407,11 +208,9 @@ impl Service for GatedService {
     }
 
     hosts_no_sessions!();
-    attaches_nothing!();
-    logs_in_nothing!();
 }
 
-serves_no_config!(GatedService);
+impl SettingsService for GatedService {}
 
 /// The hello of a frontend that answers its sessions' requests.
 fn hello_line(id: i64, protocol: ProtocolVersion) -> String {
@@ -676,6 +475,73 @@ async fn dispatch_enforces_the_handshake_and_rejects_unknown_requests() {
     }
 }
 
+/// Implements only what every [`Service`] must, leaving each fallible
+/// method, and every settings method, to its default.
+struct DefaultsService;
+
+impl Service for DefaultsService {
+    nobody_uses_it!();
+
+    async fn status(&self) -> DaemonStatus {
+        test_status()
+    }
+
+    async fn stop(&self) {}
+
+    hosts_no_sessions!();
+}
+
+impl SettingsService for DefaultsService {}
+
+// Covers: a service that overrides none of its fallible methods answers each
+// as not supported, whichever path serves it: a plain call, an attach, a
+// login, or a settings read; and the connection keeps serving after.
+// Owner: Service defaults.
+#[tokio::test]
+async fn a_method_the_service_leaves_to_its_default_is_not_supported() {
+    let not_supported = Err(Some(ErrorCode::MethodNotFound));
+    let lines = [
+        hello_line(1, PROTOCOL_VERSION),
+        request_with_params(2, SESSION_LIST, serde_json::json!({})),
+        request_with_params(
+            3,
+            SESSION_ATTACH,
+            serde_json::json!({"session": "s", "environment": {}}),
+        ),
+        request_with_params(
+            4,
+            AUTH_LOGIN,
+            serde_json::json!({"auth": "a", "environment": {}}),
+        ),
+        request_with_params(
+            5,
+            CONFIG_GET,
+            serde_json::json!({"namespace": {"kind": "agent"}}),
+        ),
+        request_line(6, DAEMON_STATUS),
+    ];
+
+    let mut outcomes = exchange(DefaultsService, &lines).await;
+    // Service calls answer as they complete, in any order.
+    outcomes.sort_by_key(|(id, _)| match id {
+        Some(RequestId::Number(id)) => *id,
+        other => panic!("unexpected response id {other:?}"),
+    });
+
+    let id = |id| Some(RequestId::Number(id));
+    assert_eq!(
+        outcomes,
+        vec![
+            (id(1), Ok(())),
+            (id(2), not_supported),
+            (id(3), not_supported),
+            (id(4), not_supported),
+            (id(5), not_supported),
+            (id(6), Ok(())),
+        ]
+    );
+}
+
 /// What a daemon whose restart costs `restart` answers the hello of a client
 /// that speaks `protocol` and names `build`, and the handshake hooks its
 /// service heard.
@@ -893,7 +759,6 @@ impl Service for AttachService {
     async fn stop(&self) {}
 
     hosts_no_sessions!();
-    logs_in_nothing!();
 
     async fn attach_session(
         &self,
@@ -938,7 +803,7 @@ impl Service for AttachService {
     }
 }
 
-serves_no_config!(AttachService);
+impl SettingsService for AttachService {}
 
 /// One message the daemon sent, reduced to what the attach tests compare.
 #[derive(Debug, PartialEq)]
@@ -1274,7 +1139,6 @@ impl Service for LoginService {
     async fn stop(&self) {}
 
     hosts_no_sessions!();
-    attaches_nothing!();
 
     async fn login(
         &self,
@@ -1294,7 +1158,7 @@ impl Service for LoginService {
     }
 }
 
-serves_no_config!(LoginService);
+impl SettingsService for LoginService {}
 
 fn login_line(id: i64) -> String {
     request_with_params(
@@ -1385,29 +1249,12 @@ impl Service for ConfigService {
     async fn stop(&self) {}
 
     hosts_no_sessions!();
-    attaches_nothing!();
-    logs_in_nothing!();
     nobody_uses_it!();
 }
 
 impl SettingsService for ConfigService {
-    async fn config_schema(&self) -> Result<ConfigSchema, RpcError> {
-        Err(no_config())
-    }
-
-    async fn register_config(
-        &self,
-        _: ConfigRegisterParams,
-    ) -> Result<ConfigRegisterResponse, RpcError> {
-        Err(no_config())
-    }
-
     async fn get_config(&self, _: ConfigGetParams) -> Result<ConfigWatch, RpcError> {
         Ok(ConfigWatch::new(self.state.subscribe()))
-    }
-
-    async fn set_config(&self, _: ConfigSetParams) -> Result<ConfigSetResponse, RpcError> {
-        Err(no_config())
     }
 }
 
