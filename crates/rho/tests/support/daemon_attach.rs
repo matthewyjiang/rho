@@ -103,7 +103,7 @@ fn ends(lines: &[Value]) -> (Value, Value) {
     (bare(lines.first().unwrap()), bare(lines.last().unwrap()))
 }
 
-/// The job of `session`'s turns, for the Unix-only test below.
+/// The job of `session`'s turns.
 async fn job_of(client: &rho_protocol::Client, session: &SessionId) -> rho_protocol::JobSummary {
     client
         .request::<rho_protocol::methods::JobList>(&rho_protocol::JobListParams {})
@@ -489,7 +489,7 @@ async fn attach_follows_a_subagent_run() {
     let run_started = json!({
         "type": "run_started",
         "session": run_session.as_str(),
-        "workspace": sandbox.workspace,
+        "workspace": sandbox.resolved_workspace(),
     });
     let completed = json!({"type": "run_ended", "reason": "completed", "exit_code": 0});
     let ended: Vec<_> = events(&lines)
@@ -501,15 +501,28 @@ async fn attach_follows_a_subagent_run() {
         (status.code(), ends(&lines), ended),
         (
             Some(0),
-            (run_started.clone(), completed.clone()),
+            (run_started, completed.clone()),
             vec![json!("answered")],
         ),
         "{lines:#?}\nlog:\n{}",
         sandbox.isolated.daemon_log()
     );
+    // The replay names the workspace as the saved session does, which is
+    // not this test's to pin.
+    let (after_started, after_ended) = ends(&after_lines);
     assert_eq!(
-        (after_status.code(), ends(&after_lines)),
-        (Some(0), (run_started, completed)),
+        (
+            after_status.code(),
+            after_started["type"].clone(),
+            after_started["session"].clone(),
+            after_ended,
+        ),
+        (
+            Some(0),
+            json!("run_started"),
+            json!(run_session.as_str()),
+            completed,
+        ),
         "{after_lines:#?}\nlog:\n{}",
         sandbox.isolated.daemon_log()
     );
