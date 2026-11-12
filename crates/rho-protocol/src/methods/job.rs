@@ -200,8 +200,9 @@ pub struct JobUsage {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub window_tokens: Option<u64>,
     /// The session's whole spend so far in millionths of a US dollar.
-    /// Absent while no request has a price, and for a subagent run, whose
-    /// spend its parent session's counts.
+    /// Absent while no request has a price, for a subagent run, whose
+    /// spend its parent session's counts, and for a session the daemon
+    /// reopened, until its next turn reports usage.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cost_usd_micros: Option<u64>,
 }

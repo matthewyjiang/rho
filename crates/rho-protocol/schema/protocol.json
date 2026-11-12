@@ -2257,7 +2257,7 @@
       "description": "A session's context use and spend, as [`super::SessionEvent::Usage`]\nreports them.",
       "properties": {
         "cost_usd_micros": {
-          "description": "The session's whole spend so far in millionths of a US dollar.\nAbsent while no request has a price, and for a subagent run, whose\nspend its parent session's counts.",
+          "description": "The session's whole spend so far in millionths of a US dollar.\nAbsent while no request has a price, for a subagent run, whose\nspend its parent session's counts, and for a session the daemon\nreopened, until its next turn reports usage.",
           "format": "uint64",
           "minimum": 0,
           "type": [
