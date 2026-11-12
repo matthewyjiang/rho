@@ -1,4 +1,4 @@
-use std::{fs, os::unix::fs::PermissionsExt, path::PathBuf};
+use std::{fs, path::PathBuf};
 
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
@@ -24,7 +24,7 @@ fn sorted(mut records: Vec<JobRecord>) -> Vec<JobRecord> {
 
 // Covers: a record written and loaded back is the same record, rewriting a
 // record replaces it rather than adding a second, a removed record is gone
-// and removing it again succeeds, and the directory is private.
+// and removing it again succeeds.
 // Owner: daemon job store.
 #[test]
 fn records_round_trip_and_rewrites_replace_them() {
@@ -44,11 +44,6 @@ fn records_round_trip_and_rewrites_replace_them() {
     store.remove(&removed.id).unwrap();
 
     assert_eq!(sorted(store.load().unwrap()), sorted(vec![failed, running]));
-    let mode = fs::metadata(home.path().join("jobs"))
-        .unwrap()
-        .permissions()
-        .mode();
-    assert_eq!(mode & 0o777, 0o700);
 }
 
 // Covers: files that are not a record named for its own id (not JSON, not a

@@ -8,10 +8,6 @@
 use std::fs::File;
 
 /// Where a subscriber writes.
-#[cfg_attr(
-    not(unix),
-    expect(dead_code, reason = "only the Unix daemon logs to journald or a file")
-)]
 pub(crate) enum LogSink {
     /// stderr with ANSI colors, for a terminal.
     Terminal,

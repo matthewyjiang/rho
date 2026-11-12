@@ -79,7 +79,7 @@ pub(crate) fn acquire(paths: &DaemonPaths) -> Result<DaemonLock, LockError> {
     let file = open_lock_file(&paths.lock)?;
     match FileExt::try_lock_exclusive(&file) {
         Ok(()) => Ok(DaemonLock { file }),
-        Err(error) if error.kind() == io::ErrorKind::WouldBlock => Err(LockError::AlreadyRunning {
+        Err(error) if is_contended(&error) => Err(LockError::AlreadyRunning {
             record: read_record(paths),
         }),
         Err(source) => Err(LockError::Io {
@@ -99,12 +99,21 @@ impl DaemonLock {
         FileExt::try_lock_exclusive(&file)?;
         Ok(Self { file })
     }
+}
 
-    /// The open lock file, which a restart in place hands to the binary it
-    /// runs.
-    pub(super) fn file(&self) -> &File {
+/// The open lock file, which a restart in place hands to the binary it runs.
+impl AsRef<File> for DaemonLock {
+    fn as_ref(&self) -> &File {
         &self.file
     }
+}
+
+/// Whether taking a lock failed because another handle holds it. `fs2`
+/// reports that as `WouldBlock` on Unix and as the raw lock-violation error
+/// on Windows.
+fn is_contended(error: &io::Error) -> bool {
+    error.kind() == io::ErrorKind::WouldBlock
+        || error.raw_os_error() == fs2::lock_contended_error().raw_os_error()
 }
 
 /// Whether a daemon currently holds the lock. Probes with a shared lock, so
@@ -119,7 +128,7 @@ pub(crate) fn is_held(paths: &DaemonPaths) -> Result<bool, LockError> {
     };
     match FileExt::try_lock_shared(&file) {
         Ok(()) => Ok(false),
-        Err(error) if error.kind() == io::ErrorKind::WouldBlock => Ok(true),
+        Err(error) if is_contended(&error) => Ok(true),
         Err(source) => Err(LockError::Io {
             path: paths.lock.clone(),
             source,

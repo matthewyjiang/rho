@@ -1,6 +1,5 @@
 //! What the host's cache warmer (see [`crate::cache_warm`]) asks of the
-//! session it warms. Only the daemon, unix-only so far, warms a session it
-//! runs (#1665).
+//! session it warms. Only the daemon warms a session it runs.
 
 use std::sync::Arc;
 

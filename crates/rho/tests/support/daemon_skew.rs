@@ -9,10 +9,7 @@ use rho_protocol::{
     Response, RestartCost, VersionFix, VersionMismatch, PROTOCOL_VERSION,
 };
 use serde_json::json;
-use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-    net::UnixStream,
-};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 use super::{
     sessions::{settled_job, Sandbox},
@@ -26,8 +23,8 @@ async fn hello(
     protocol: ProtocolVersion,
     build: &BuildId,
 ) -> Result<HelloResponse, VersionMismatch> {
-    let socket = sandbox.isolated.daemon_socket().expect("the daemon runs");
-    let (read, mut write) = UnixStream::connect(socket).await.unwrap().into_split();
+    let stream = sandbox.stream().await.expect("the daemon runs");
+    let (read, mut write) = tokio::io::split(stream);
     let hello = json!({
         "jsonrpc": "2.0",
         "id": 1,

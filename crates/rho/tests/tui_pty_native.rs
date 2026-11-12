@@ -17,17 +17,46 @@ const RESPONSE: WaitTimeout = WaitTimeout::secs(20, "native PTY paste response")
 const EXIT: WaitTimeout = WaitTimeout::secs(10, "native PTY exit");
 
 // Covers: cargo-built Windows Rho must start in ConPTY and preserve multiline
-// Unicode paste as one draft, without submitting embedded Enter or slash text.
+// Unicode paste as one draft, without submitting embedded Enter or slash text,
+// with the session in the daemon, which the TUI starts and follows over the
+// platform's endpoint (a named pipe on Windows).
 // Owner: interactive TUI. The existing product PTY suite is Unix-only.
 #[test]
 fn native_pty_startup_multiline_paste_exit() -> Result<()> {
     let home = IsolatedHome::new()?;
+    startup_multiline_paste_exit(&home, "1", "native_startup_multiline_paste_exit")?;
+    ensure!(
+        home.daemon_pid().is_some(),
+        "the session did not run in a daemon; daemon log:\n{}",
+        home.daemon_log()
+    );
+    Ok(())
+}
+
+// Covers: the same flow with the session kept in the TUI's own process, which
+// still ships behind `RHO_TUI_DAEMON=0`.
+// Owner: interactive TUI (in-process host).
+#[test]
+fn native_pty_startup_multiline_paste_exit_in_process() -> Result<()> {
+    let home = IsolatedHome::new()?;
+    startup_multiline_paste_exit(&home, "0", "native_startup_multiline_paste_exit_in_process")?;
+    ensure!(
+        home.daemon_pid().is_none(),
+        "an in-process session started a daemon"
+    );
+    Ok(())
+}
+
+/// Starts rho in `home` with `RHO_TUI_DAEMON` set to `host`, pastes, edits,
+/// submits one prompt, and exits.
+fn startup_multiline_paste_exit(home: &IsolatedHome, host: &str, name: &str) -> Result<()> {
     let plan = RhoLaunchPlan::matrix(
         PathBuf::from(env!("CARGO_BIN_EXE_rho")),
-        &home,
+        home,
         PtySize::new(28, 100),
-    );
-    let mut harness = PtyHarness::spawn_named(&plan, "native_startup_multiline_paste_exit")?;
+    )
+    .with_env("RHO_TUI_DAEMON", host);
+    let mut harness = PtyHarness::spawn_named(&plan, name)?;
     let artifacts = std::env::var_os("RHO_PTY_ARTIFACTS")
         .map(PathBuf::from)
         .unwrap_or_else(|| std::env::temp_dir().join("rho-pty-native-artifacts"));

@@ -1,11 +1,10 @@
 //! Asking at the terminal where provider credentials are kept, when nothing
 //! chose a store yet (#1662).
 //!
-//! Whoever writes the credentials judges which stores it can reach: the
-//! rho daemon on unix (`daemon_client.rs`), this process elsewhere. Rho
-//! never moves credentials to the file store on its own; when the OS store
-//! cannot be reached, the file store becomes the answer Enter takes, and the
-//! user still has to take it.
+//! The rho daemon writes the credentials, so it judges which stores it can
+//! reach (`daemon_client.rs`). Rho never moves credentials to the file store
+//! on its own; when the OS store cannot be reached, the file store becomes
+//! the answer Enter takes, and the user still has to take it.
 
 use std::io::{self, IsTerminal, Write};
 

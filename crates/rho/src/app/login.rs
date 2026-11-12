@@ -1,20 +1,13 @@
 //! `rho login` and `rho acp --login`: signing in from a terminal.
 //!
-//! On unix `rho login` is a client of the rho daemon, which saves the
-//! credential and runs interactive logins for it (#1662), starting the
-//! daemon when none runs (`daemon_client.rs`). `rho acp --login`, which an
-//! ACP host runs in a terminal, signs in the same way. Where the daemon is
-//! unsupported (Windows, #1665) `rho login` signs in in this process
-//! (`in_process.rs`), and `rho acp` is unavailable. Before the first
-//! sign-in, either way asks which credential store to keep it in
-//! (`store_choice.rs`).
+//! `rho login` is a client of the rho daemon, which saves the credential
+//! and runs interactive logins for it (#1662), starting the daemon when
+//! none runs (`daemon_client.rs`). `rho acp --login`, which an ACP host runs
+//! in a terminal, signs in the same way. Before the first sign-in, it asks
+//! which credential store to keep it in (`store_choice.rs`).
 
-#[cfg(unix)]
 mod daemon_client;
 pub(super) mod drive;
-#[cfg(not(unix))]
-mod in_process;
-#[cfg(unix)]
 pub(super) mod relay_wire;
 mod secret;
 pub(super) mod store_choice;
@@ -26,8 +19,6 @@ use rho_providers::{
 };
 
 use crate::cli::Command;
-#[cfg(not(unix))]
-use {super::config_repository::ConfigRepository, crate::config::Config};
 
 /// A sign-in someone asked for from a terminal.
 #[derive(Clone, Copy, Debug)]
@@ -65,7 +56,6 @@ pub(super) fn command(command: &Option<Command>) -> Option<LoginCommand<'_>> {
 
 /// Signs `command` in through the daemon, which saves the credential under
 /// its own config.
-#[cfg(unix)]
 pub(super) async fn run(command: LoginCommand<'_>) -> anyhow::Result<()> {
     match command {
         LoginCommand::Cli {
@@ -81,34 +71,6 @@ pub(super) async fn run(command: LoginCommand<'_>) -> anyhow::Result<()> {
             }
             daemon_client::run(target, /*device_auth*/ false).await
         }
-    }
-}
-
-/// Signs `command` in in this process. `config`, loaded from `repository`
-/// at `config_path` with its credential store chosen, is what the login
-/// saves under.
-#[cfg(not(unix))]
-pub(super) async fn run(
-    command: LoginCommand<'_>,
-    repository: &ConfigRepository,
-    config: &mut Config,
-    config_path: &std::path::Path,
-) -> anyhow::Result<()> {
-    match command {
-        LoginCommand::Cli {
-            provider,
-            device_auth,
-        } => {
-            in_process::run(
-                target(provider)?,
-                device_auth,
-                repository,
-                config,
-                config_path,
-            )
-            .await
-        }
-        LoginCommand::AcpTerminal { .. } => anyhow::bail!(super::daemon_cli::UNSUPPORTED),
     }
 }
 
@@ -128,12 +90,9 @@ pub(crate) fn confirms_sign_in(auth: &str) -> bool {
 
 /// An auth profile that takes a credential.
 struct Target {
-    /// The auth profile's id, such as `openai-codex`.
+    /// The auth profile's id, such as `openai-codex`. The daemon looks up
+    /// the provider it signs in to itself.
     auth: String,
-    /// The provider it signs in to, whose login an in-process sign-in
-    /// records; the daemon looks it up itself.
-    #[cfg(not(unix))]
-    descriptor: &'static rho_providers::provider::ProviderDescriptor,
     sign_in: SignIn,
 }
 
@@ -173,14 +132,8 @@ fn target(provider: &str) -> anyhow::Result<Target> {
             SignIn::Interactive { provider_label }
         }
     };
-    #[cfg(not(unix))]
-    let Some(descriptor) = provider_descriptor(&target.provider) else {
-        anyhow::bail!("unknown provider '{}'", target.provider);
-    };
     Ok(Target {
         auth: target.auth,
-        #[cfg(not(unix))]
-        descriptor,
         sign_in,
     })
 }

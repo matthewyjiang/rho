@@ -43,10 +43,6 @@ pub(crate) enum Ambient {
     ThisProcess,
     /// A daemon client's variables, all of them, provider credentials
     /// included.
-    #[cfg_attr(
-        not(unix),
-        allow(dead_code, reason = "only the Unix daemon has clients")
-    )]
     Client(Arc<BTreeMap<String, String>>),
 }
 
@@ -129,7 +125,6 @@ impl Ambient {
     /// This environment as a daemon client sends it, the inverse of how the
     /// daemon takes one (`daemon_host::sessions::open`): what the sessions
     /// a session starts through session control run with.
-    #[cfg(unix)]
     pub(crate) fn to_client(&self) -> rho_protocol::ClientEnvironment {
         match self {
             Self::ThisProcess => rho_protocol::ClientEnvironment::of_this_process(),
@@ -217,10 +212,6 @@ impl SessionEnvironment {
     /// The environment of a session opened only to read what it saved: no
     /// client's variables, since nothing of the session starts, and the
     /// `project_trust` its host reads the project's definitions under.
-    #[cfg_attr(
-        not(unix),
-        allow(dead_code, reason = "only the Unix daemon reads sessions")
-    )]
     pub(crate) fn for_reading(project_trust: ProjectTrusts) -> Self {
         Self {
             project_trust,
@@ -270,7 +261,6 @@ impl SessionEnvironment {
     /// session cannot change its trust while it is open, and would otherwise
     /// run the prompt with trust that client did not grant, or without
     /// trust it did (#1779).
-    #[cfg_attr(not(unix), allow(dead_code, reason = "only the Unix daemon asks"))]
     pub(crate) fn trust_mismatch(&self, ambient: &Ambient) -> Option<TrustMismatch> {
         let theirs = ProjectTrusts::read(|name| ambient.read(name));
         (theirs != self.project_trust).then(|| TrustMismatch {
@@ -282,10 +272,6 @@ impl SessionEnvironment {
     /// Makes `ambient` the environment every later child sees, process
     /// tools' included. The session's project trust stays as it opened, so
     /// a host first refuses an `ambient` with a [`Self::trust_mismatch`].
-    #[cfg_attr(
-        not(unix),
-        allow(dead_code, reason = "only the Unix daemon replaces it")
-    )]
     pub(crate) fn replace(&self, ambient: Ambient) {
         let mut current = self.ambient.write().unwrap_or_else(PoisonError::into_inner);
         self.process.replace(ambient.process_environment());

@@ -24,50 +24,31 @@ mod context_overlay;
 mod continue_latest;
 mod conversation_tree;
 mod copy_output;
-// The rho daemon is unix-only (#1665).
-#[cfg(unix)]
 mod daemon_approval;
-#[cfg(unix)]
 mod daemon_build_skew;
-#[cfg(unix)]
 mod daemon_config;
-#[cfg(unix)]
 mod daemon_context;
-#[cfg(unix)]
 mod daemon_detach;
-#[cfg(unix)]
 mod daemon_doctor;
-#[cfg(unix)]
 mod daemon_login;
-#[cfg(unix)]
 mod daemon_mcp;
-#[cfg(unix)]
 mod daemon_mcp_owner;
-#[cfg(unix)]
 mod daemon_mcp_startup;
-#[cfg(unix)]
 mod daemon_model;
-#[cfg(unix)]
 mod daemon_openapi_startup;
-#[cfg(unix)]
 mod daemon_options;
-#[cfg(unix)]
 mod daemon_prompt;
-#[cfg(unix)]
 mod daemon_reports;
-#[cfg(unix)]
 mod daemon_restart;
+// Unix: it gates its MCP server on a FIFO.
 #[cfg(unix)]
 mod daemon_restart_mcp;
-#[cfg(unix)]
 mod daemon_resume;
-#[cfg(unix)]
 mod daemon_rewind;
+// Unix: it listens for the quiet-notice hook on a datagram socket.
 #[cfg(unix)]
 mod daemon_subagents;
-#[cfg(unix)]
 mod daemon_switch;
-#[cfg(unix)]
 mod daemon_tree;
 #[cfg(unix)]
 mod pre_tree_session;

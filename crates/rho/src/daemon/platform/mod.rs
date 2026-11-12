@@ -8,7 +8,7 @@
 //! | Concern | Items |
 //! |---|---|
 //! | Endpoint | [`endpoint`], [`Listener`], [`Stream`], [`connect`], [`connect_restarting`], [`remove_endpoint`], [`inspect_endpoint`] |
-//! | Private files | [`DaemonPathError`], [`create_private_dir`], [`prepare_private_dir`], [`open_lock_file`], [`open_log_file`], [`path_bytes`], [`FileIdentity`], [`running_identity`] |
+//! | Private files | [`DaemonPathError`], [`create_private_dir`], [`prepare_private_dir`], [`create_private_file`], [`open_lock_file`], [`open_log_file`], [`path_bytes`], [`FileIdentity`], [`running_identity`], [`account_lock_path`], [`lock_account_file`] |
 //! | Process | [`detach`], [`MACHINE_VARIABLES`], [`is_variable`], [`request_stop`], [`StopRequests`], [`stderr_is_journal_stream`] |
 //! | Restart | [`relaunch`], [`take_handoff`] |
 //!
@@ -34,14 +34,23 @@
 mod unix;
 #[cfg(unix)]
 use unix as imp;
+#[cfg(windows)]
+mod windows;
+#[cfg(windows)]
+use windows as imp;
 
-pub(super) use imp::{
-    connect, connect_restarting, create_private_dir, detach, endpoint, inspect_endpoint,
-    is_variable, open_lock_file, open_log_file, path_bytes, prepare_private_dir, relaunch,
-    remove_endpoint, request_stop, running_identity, take_handoff, Listener, Stream,
-    MACHINE_VARIABLES,
+pub(crate) use imp::{
+    account_lock_path, create_private_dir, create_private_file, lock_account_file,
+    stderr_is_journal_stream, DaemonPathError, FileIdentity, StopRequests,
 };
-pub(crate) use imp::{stderr_is_journal_stream, DaemonPathError, FileIdentity, StopRequests};
+pub(super) use imp::{
+    connect, connect_restarting, detach, endpoint, inspect_endpoint, is_variable, open_lock_file,
+    open_log_file, path_bytes, prepare_private_dir, relaunch, remove_endpoint, request_stop,
+    running_identity, take_handoff, Listener, Stream, MACHINE_VARIABLES,
+};
+
+#[cfg(test)]
+pub(crate) use imp::test_support::StopTarget;
 
 /// Where a rho home's daemon listens, as [`endpoint`] lays it out.
 pub(super) struct Endpoint {

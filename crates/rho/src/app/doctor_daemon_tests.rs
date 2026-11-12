@@ -1,15 +1,9 @@
-use std::os::unix::fs::PermissionsExt;
-
 use pretty_assertions::assert_eq;
-use rho_protocol::{
-    ErrorCode, Message, MessageReader, MessageWriter, ProtocolVersion, Response, RpcError,
-    VersionFix, VersionMismatch, PROTOCOL_VERSION,
-};
+use rho_protocol::{ProtocolVersion, VersionFix, VersionMismatch, PROTOCOL_VERSION};
 use tempfile::TempDir;
-use tokio::net::UnixListener;
 
 use super::*;
-use crate::daemon::DaemonPathError;
+use crate::daemon::test_support::RefusingListener;
 
 /// Failure bound for a daemon stand-in to answer; no test waits it out.
 const DEADLINE: Duration = Duration::from_secs(10);
@@ -49,30 +43,14 @@ async fn no_daemon_is_reported_as_not_running_and_nothing_is_created() {
 async fn a_daemon_of_another_protocol_is_reported_as_incompatible() {
     let root = TempDir::new().unwrap();
     let paths = paths(&root);
-    paths.prepare_runtime_dir().unwrap();
-    let listener = UnixListener::bind(&paths.socket).unwrap();
+    let mut listener = RefusingListener::bind(&paths);
     let mismatch = VersionMismatch {
         daemon: ProtocolVersion::new(0, 0),
         client: PROTOCOL_VERSION,
         fix: VersionFix::RestartDaemon,
         restart: None,
     };
-    let daemon = tokio::spawn(async move {
-        let (read, write) = listener.accept().await.unwrap().0.into_split();
-        let hello = MessageReader::new(read).read_line().await.unwrap();
-        let Message::Request(hello) = Message::parse(&hello.expect("a hello")).unwrap() else {
-            panic!("expected a request");
-        };
-        let refused = RpcError::new(ErrorCode::VersionMismatch, mismatch.to_string())
-            .with_data(serde_json::to_value(mismatch).unwrap());
-        // The client may leave as soon as it has read the refusal.
-        let _ = MessageWriter::new(write)
-            .write(&Message::Response(Response {
-                id: Some(hello.id),
-                outcome: Err(refused),
-            }))
-            .await;
-    });
+    let daemon = tokio::spawn(async move { listener.refuse_next(mismatch).await });
 
     let answer = ask(&paths, DEADLINE).await;
     daemon.await.unwrap();
@@ -136,12 +114,16 @@ async fn a_daemon_on_another_socket_is_not_reported_as_down() {
 // Covers: a socket or runtime directory someone else can reach is reported
 // as exposed, naming the path and mode, and a private pair is not.
 // Owner: doctor daemon observation (filesystem permissions).
+#[cfg(unix)]
 #[tokio::test]
 async fn a_socket_others_can_reach_is_reported_as_exposed() {
+    use std::os::unix::fs::PermissionsExt;
+
+    use crate::daemon::DaemonPathError;
+
     let root = TempDir::new().unwrap();
     let paths = paths(&root);
-    paths.prepare_runtime_dir().unwrap();
-    let _listener = UnixListener::bind(&paths.socket).unwrap();
+    let _listener = RefusingListener::bind(&paths);
     let chmod = |path: &Path, mode| {
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
     };
@@ -177,6 +159,7 @@ async fn a_socket_others_can_reach_is_reported_as_exposed() {
 // once a target's `.wants` directory links to it, as `systemctl --user
 // enable` leaves it.
 // Owner: doctor daemon observation (service files).
+#[cfg(unix)]
 #[test]
 fn the_systemd_unit_is_installed_once_saved_and_enabled_once_wanted() {
     let home = TempDir::new().unwrap();

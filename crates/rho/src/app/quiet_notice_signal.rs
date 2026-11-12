@@ -32,11 +32,19 @@ pub(crate) fn socket() -> PathBuf {
 /// Tells the scenario listening at `socket` that the parent looked with
 /// `queued` notices waiting. Never blocks: a full or retired listener fails
 /// the send.
+#[cfg(unix)]
 pub(crate) fn send(queued: usize, socket: &Path) -> std::io::Result<()> {
     let sender = std::os::unix::net::UnixDatagram::unbound()?;
     sender.set_nonblocking(true)?;
     sender.send_to(format!("boundary:{queued}").as_bytes(), socket)?;
     Ok(())
+}
+
+/// The scenarios that listen run on Unix only, so elsewhere there is nobody
+/// to tell.
+#[cfg(not(unix))]
+pub(crate) fn send(_queued: usize, _socket: &Path) -> std::io::Result<()> {
+    Err(std::io::ErrorKind::Unsupported.into())
 }
 
 /// Tells the scenario, under the fixture matrix, that a parent looked with

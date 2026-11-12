@@ -54,8 +54,7 @@ pub(super) fn validate(cli: &Cli) -> anyhow::Result<()> {
         }
     }
     // `rho login` saves through the daemon, under the daemon's config
-    // (#1662); off unix it still signs in in this process (#1665).
-    #[cfg(unix)]
+    // (#1662).
     if let (Some(Command::Login { .. }), Some(_)) = (&cli.command, &cli.config) {
         anyhow::bail!(
             "rho login does not take --config: the rho daemon saves the credential under its own config"

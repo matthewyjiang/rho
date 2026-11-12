@@ -25,10 +25,7 @@ use rho_protocol::{
     ToolCallId, ToolContent, ToolStatus, TurnError, TurnErrorKind, TurnId, TurnOutcome,
 };
 use rho_tui_pty::IsolatedHome;
-use tokio::{
-    io::{AsyncBufReadExt, BufReader},
-    net::UnixStream,
-};
+use tokio::io::{AsyncBufReadExt, BufReader};
 
 /// Failure bound for each wait on the daemon. Every turn here answers from
 /// the fixture provider without network; this only stops a hung test.
@@ -195,10 +192,39 @@ impl Sandbox {
             .0
     }
 
-    async fn try_connect_as(&self, hello: ClientHello) -> Option<(Client, Notifications)> {
-        let stream = UnixStream::connect(self.isolated.daemon_socket()?)
+    /// A raw connection to the sandbox's daemon, before any hello; `None`
+    /// while none listens.
+    #[cfg(unix)]
+    pub(super) async fn stream(&self) -> Option<tokio::net::UnixStream> {
+        tokio::net::UnixStream::connect(self.isolated.daemon_socket()?)
             .await
-            .ok()?;
+            .ok()
+    }
+
+    /// A raw connection to the sandbox's daemon, before any hello; `None`
+    /// while none listens. A pipe whose every instance is taken for a
+    /// moment is tried again, as rho's own client does.
+    #[cfg(windows)]
+    pub(super) async fn stream(&self) -> Option<tokio::net::windows::named_pipe::NamedPipeClient> {
+        // ERROR_PIPE_BUSY.
+        const BUSY: i32 = 231;
+        let socket = self.isolated.daemon_socket()?;
+        let started = Instant::now();
+        loop {
+            match tokio::net::windows::named_pipe::ClientOptions::new().open(&socket) {
+                Ok(stream) => return Some(stream),
+                Err(error)
+                    if error.raw_os_error() == Some(BUSY) && started.elapsed() < DEADLINE =>
+                {
+                    tokio::time::sleep(POLL_INTERVAL).await;
+                }
+                Err(_) => return None,
+            }
+        }
+    }
+
+    async fn try_connect_as(&self, hello: ClientHello) -> Option<(Client, Notifications)> {
+        let stream = self.stream().await?;
         Client::handshake(stream, hello)
             .await
             .ok()
@@ -1829,6 +1855,7 @@ async fn an_agents_connection_can_neither_answer_nor_hold_an_approval() {
 // attached runs the user's `input_requested` hooks, which name the session
 // and what it asks, so a user away from every client can be told (#1660).
 // Owner: daemon input requests.
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_turn_that_asks_tells_the_hooks() {
     let sandbox = Sandbox::new();

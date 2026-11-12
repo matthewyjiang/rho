@@ -243,8 +243,6 @@ rho attach "$SESSION"
 - Unlike a foreground run's, the session is listed like one you had yourself,
   and titled in the background after its first answered turn with one small
   model call, as the TUI titles its sessions.
-- The daemon is not supported on Windows yet
-  ([#1665](https://github.com/matthewyjiang/rho/issues/1665)).
 
 ### Attaching to a daemon session
 
@@ -434,7 +432,7 @@ Rho accepts global options before an optional subcommand. Provider, model, auth,
 | `rho` | Start an interactive TUI session in the current working directory. Add `--prompt` to send the first message as the session opens. |
 | `rho run [OPTIONS] [PROMPT]...` | Send one prompt, optionally append stdin, print the final answer, and exit. With `--detach`, start it in the daemon and exit at once; see [Running in the daemon](#running-in-the-daemon). |
 | `rho attach [OPTIONS] <ID>` | Follow a daemon session's turn until it ends, and exit as it ended. See [Attaching to a daemon session](#attaching-to-a-daemon-session). |
-| `rho acp [--t3code]` | Serve Agent Client Protocol over stdio for an editor host, running its sessions in the [daemon](/daemon). Linux and macOS only. `--t3code` runs subagents as T3 Code child threads. See [ACP](/integrations/acp). |
+| `rho acp [--t3code]` | Serve Agent Client Protocol over stdio for an editor host, running its sessions in the [daemon](/daemon). `--t3code` runs subagents as T3 Code child threads. See [ACP](/integrations/acp). |
 | `rho workflow <COMMAND>` | Use `list`, `validate`, `plan`, `run`, `status`, `cancel`, or `resume <RUN_ID>` for a [durable workflow](/workflows). |
 | `rho sessions list [--all-projects] [--search TEXT] [--limit N] [--json]` | List saved sessions for the current workspace, or every workspace with cwd context. |
 | `rho sessions export <ID> [--output PATH] [--format html\|markdown\|json] [--force]` | Export a saved session transcript. Default path is under `$RHO_HOME/exports/` when `RHO_HOME` is set, otherwise `~/.rho/exports/`. |
@@ -454,7 +452,7 @@ Rho accepts global options before an optional subcommand. Provider, model, auth,
 | `rho plugins disable <NAME>` | Disable a plugin without deleting package files. |
 | `rho plugins remove <NAME> [--yes]` | Remove a package from a managed root; keeps plugin data. |
 | `rho daemon [run\|status [--json]\|stop]` | Run the per-user [daemon](/daemon) in the foreground, show its status, or stop it. `status` and `stop` exit with status 1 when no daemon is running. |
-| `rho doctor [--json]` | Run the same setup diagnostics as the interactive `/doctor` overlay and print a text report (or one JSON document). Root `--provider`, `--model`, `--auth`, and `--reasoning` apply to this invocation the same way they do for `rho run`. On Linux and macOS it also checks the [daemon](/daemon#checking-the-daemon), never starting one: whether it runs and matches this `rho`, its socket's permissions, the always-on service, its environment, and the credential store it can reach. Exits with status 1 when any check fails; warnings exit 0. |
+| `rho doctor [--json]` | Run the same setup diagnostics as the interactive `/doctor` overlay and print a text report (or one JSON document). Root `--provider`, `--model`, `--auth`, and `--reasoning` apply to this invocation the same way they do for `rho run`. It also checks the [daemon](/daemon#checking-the-daemon), never starting one: whether it runs and matches this `rho`, its socket's permissions, the always-on service, its environment, and the credential store it can reach. Exits with status 1 when any check fails; warnings exit 0. |
 | `rho update` | Update Rho using the detected installation method. |
 | `rho uninstall [--purge] [--dry-run]` | Preview and confirm uninstall; preserve local data unless `--purge` is given. |
 | `rho help [COMMAND]` | Show help for Rho or a subcommand. |

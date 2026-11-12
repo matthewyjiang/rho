@@ -17,11 +17,9 @@
 //! the handshake is in [`skew`]; what a daemon takes from the client that
 //! starts it, and each session's project trust, is in [`identity`]; what
 //! `rho doctor` reports about it is in [`doctor`].
-#![cfg(unix)]
 
 use std::{
     fs::File,
-    os::fd::AsRawFd,
     panic::AssertUnwindSafe,
     process::{Output, Stdio},
 };
@@ -47,6 +45,8 @@ mod attach;
 #[path = "support/daemon_detach.rs"]
 mod detach;
 
+// Unix: the tool processes are shell commands, found by process group.
+#[cfg(unix)]
 #[path = "support/daemon_tools.rs"]
 mod tools;
 
@@ -59,23 +59,35 @@ mod login;
 #[path = "support/daemon_headless.rs"]
 mod headless;
 
+// Unix: its sessions run shell commands, and its servers are shell scripts.
+#[cfg(unix)]
 #[path = "support/daemon_mcp.rs"]
 mod mcp;
 
 #[path = "support/daemon_config.rs"]
 mod config;
+// Unix: its sessions run shell commands.
+#[cfg(unix)]
 #[path = "support/daemon_started.rs"]
 mod started;
 
+// Unix: re-executing in place keeps the pid, lock and socket only on Unix.
+#[cfg(unix)]
 #[path = "support/daemon_upgrade.rs"]
 mod upgrade;
 
+// Unix: it holds turns open with the FIFOs `upgrade` makes.
+#[cfg(unix)]
 #[path = "support/daemon_skew.rs"]
 mod skew;
 
+// Unix: its hooks are shell scripts, and it reads `/proc`.
+#[cfg(unix)]
 #[path = "support/daemon_identity.rs"]
 mod identity;
 
+// Unix: its sessions run shell commands.
+#[cfg(unix)]
 #[path = "support/daemon_grants.rs"]
 mod grants;
 
@@ -258,8 +270,7 @@ fn a_dropped_sandbox_stops_the_daemon_a_client_started() {
     let lock = File::open(sandbox.isolated.rho_home().join("daemon/daemon.lock")).unwrap();
     // Whether a shared lock is granted, which the daemon's exclusive one
     // refuses until it exits.
-    // SAFETY: `flock` takes only a descriptor, which `lock` keeps open.
-    let free = || unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_SH | libc::LOCK_NB) == 0 };
+    let free = || fs2::FileExt::try_lock_shared(&lock).is_ok();
     assert!(!free(), "the daemon holds its lock");
     let pid = sandbox.isolated.daemon_pid().expect("the daemon's record");
 
@@ -268,12 +279,24 @@ fn a_dropped_sandbox_stops_the_daemon_a_client_started() {
     let teardown = std::panic::catch_unwind(AssertUnwindSafe(|| drop(sandbox)));
     let released = free();
     if !released {
-        // SAFETY: `kill` takes no pointers. The daemon must not outlive a
-        // failed test.
-        unsafe { libc::kill(libc::pid_t::try_from(pid).unwrap(), libc::SIGKILL) };
+        // The daemon must not outlive a failed test.
+        kill(pid);
     }
     if let Err(panic) = teardown {
         std::panic::resume_unwind(panic);
     }
     assert!(released, "the daemon (pid {pid}) still holds its lock");
+}
+
+/// Ends process `pid` at once.
+fn kill(pid: u32) {
+    #[cfg(unix)]
+    // SAFETY: `kill` takes no pointers.
+    unsafe {
+        libc::kill(libc::pid_t::try_from(pid).unwrap(), libc::SIGKILL);
+    }
+    #[cfg(windows)]
+    let _ = std::process::Command::new("taskkill")
+        .args(["/F", "/PID", &pid.to_string()])
+        .output();
 }

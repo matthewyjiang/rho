@@ -42,10 +42,6 @@ impl CacheWarmRoute {
     /// The route no longer holds the prefix the last request cached: the
     /// provider was replaced, or a setting that is part of the prefix
     /// changed. A warmer that reads [`Self::prefix_epoch`] starts over.
-    #[cfg_attr(
-        not(unix),
-        allow(dead_code, reason = "only the Unix daemon's warmer asks")
-    )]
     pub(crate) fn prefix_dropped(&self) {
         self.0
             .prefix_epoch
@@ -53,10 +49,6 @@ impl CacheWarmRoute {
     }
 
     /// Changes whenever [`Self::prefix_dropped`] was called.
-    #[cfg_attr(
-        not(unix),
-        allow(dead_code, reason = "only the Unix daemon's warmer asks")
-    )]
     pub(crate) fn prefix_epoch(&self) -> u64 {
         self.0
             .prefix_epoch

@@ -5,7 +5,7 @@
 //! `rho acp` is a client of the rho daemon, which it starts in the
 //! sandbox; the daemon keeps the fixture mode of the first client's
 //! environment, and the sandbox stops it when it drops, after the server.
-//! The daemon is unix-only (#1665), and so is `rho acp`.
+//! Unix: the tools its prompts call are shell commands.
 #![cfg(unix)]
 
 use std::{

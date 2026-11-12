@@ -1,5 +1,3 @@
-// `rho acp` is a client of the rho daemon, which is unix-only (#1665).
-#[cfg(unix)]
 mod acp;
 #[cfg(debug_assertions)]
 mod acp_fixture_agent;
@@ -17,18 +15,14 @@ pub(crate) mod compaction_report;
 pub(crate) mod config_repository;
 pub(crate) mod context_report;
 pub(crate) mod conversation_switch;
-#[cfg(unix)]
 mod credential_writes;
 mod daemon_cli;
-// The rho daemon is unix-only (#1665). The TUI follows daemon sessions
-// through it too (`tui::daemon_session`, #1667).
-#[cfg(unix)]
+// The TUI follows daemon sessions through it too (`tui::daemon_session`,
+// #1667).
 pub(crate) mod daemon_client;
-#[cfg(unix)]
 mod daemon_host;
 mod detach;
 mod doctor_cli;
-#[cfg(unix)]
 mod doctor_daemon;
 pub(crate) mod endpoint_login;
 mod headless_host;
@@ -41,8 +35,6 @@ mod interactive_session_controller;
 mod interactive_state;
 mod login;
 mod mcp_cli;
-// `rho mcp serve` is a client of the rho daemon, which is unix-only (#1665).
-#[cfg(unix)]
 mod mcp_server;
 mod model_compactor;
 mod model_prompt_cli;
@@ -55,15 +47,14 @@ mod policy;
 mod prompt_content;
 pub(crate) mod provider_context_report;
 mod provider_controller;
-#[cfg(all(debug_assertions, unix))]
+#[cfg(debug_assertions)]
 pub(crate) mod quiet_notice_signal;
 mod runtime_builder;
 pub(crate) mod sdk_config;
 mod session_assembly;
 mod session_commands;
 pub(crate) mod workspace_rewind;
-// Session control through the rho daemon, which is unix-only (#1665).
-#[cfg(unix)]
+// Session control through the rho daemon.
 pub(crate) mod session_control;
 mod session_events;
 mod session_mcp;

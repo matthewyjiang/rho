@@ -230,6 +230,9 @@ async fn attach_reports_how_the_last_turn_ended() {
 // 130 and the turn runs on; attached again, it ends with the turn when a
 // client cancels it, as a cancelled turn (exit 1).
 // Owner: rho attach CLI (process contract).
+// Unix: the test interrupts `rho attach` with SIGINT, which nothing sends a
+// process without a console on Windows.
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn attach_follows_a_turn_and_detaches_on_ctrl_c() {
     let sandbox = Sandbox::new();

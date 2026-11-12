@@ -10,7 +10,6 @@
 
 use crate::cli::{Command, DaemonCommand};
 
-#[cfg(unix)]
 use {
     super::{
         config_repository::ConfigRepository,
@@ -28,16 +27,6 @@ use {
     std::{ffi::OsString, sync::Arc, time::Duration},
 };
 
-/// Why a daemon command fails on Windows.
-#[cfg(not(unix))]
-pub(super) const UNSUPPORTED: &str = "the rho daemon is not supported on Windows yet (#1665)";
-
-#[cfg(not(unix))]
-pub(super) async fn run(_command: Option<DaemonCommand>) -> anyhow::Result<()> {
-    anyhow::bail!(UNSUPPORTED)
-}
-
-#[cfg(unix)]
 pub(super) async fn run(command: Option<DaemonCommand>) -> anyhow::Result<()> {
     let paths = paths()?;
     let run = DaemonCommand::Run {
@@ -60,7 +49,6 @@ pub(super) async fn run(command: Option<DaemonCommand>) -> anyhow::Result<()> {
 }
 
 /// The daemon's paths for this rho home, from the process environment.
-#[cfg(unix)]
 pub(super) fn paths() -> anyhow::Result<DaemonPaths> {
     let rho_home = crate::paths::rho_dir()?;
     let rho_home = daemon::real_home(&rho_home)
@@ -75,7 +63,6 @@ pub(super) fn paths() -> anyhow::Result<DaemonPaths> {
 /// connections in time (the reason names its log file), or its protocol
 /// is incompatible (the reason says which side to change and, for an older
 /// daemon someone is using, what a restart would cost).
-#[cfg(unix)]
 #[derive(Debug, thiserror::Error)]
 #[error("could not reach the rho daemon: {reason}; see https://matthewyjiang.github.io/rho/daemon")]
 pub(crate) struct Unreachable {
@@ -83,7 +70,6 @@ pub(crate) struct Unreachable {
 }
 
 /// Whether connecting may start the daemon.
-#[cfg(unix)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum Reach {
     /// Start one when none runs, as the commands that are its clients do.
@@ -97,14 +83,12 @@ pub(crate) enum Reach {
 /// Connects to this rho home's daemon, starting one when none runs, for
 /// the commands that answer no session's requests: `rho run --detach`,
 /// `rho login`, and `rho daemon start`.
-#[cfg(unix)]
 pub(super) async fn connect() -> Result<daemon::Connection, Unreachable> {
     connect_with(Reach::StartIfNeeded, ConnectAs::Command).await
 }
 
 /// Connects to this rho home's daemon as `reach` allows, declaring what
 /// `connect_as` does.
-#[cfg(unix)]
 pub(super) async fn connect_with(
     reach: Reach,
     connect_as: ConnectAs,
@@ -129,10 +113,8 @@ pub(super) async fn connect_with(
 /// names an unknown store, so a daemon is not started for one: the mistake
 /// is reported here, at once. A client of a running daemon hears it from
 /// that daemon at its first such request.
-#[cfg(unix)]
 struct CheckedSpawner(daemon::ProcessSpawner);
 
-#[cfg(unix)]
 impl daemon::DaemonSpawner for CheckedSpawner {
     fn check(&self) -> std::io::Result<()> {
         crate::credential_store::environment_backend()
@@ -170,13 +152,11 @@ pub(super) fn runs_daemon(command: Option<&Command>) -> bool {
 // `DRAIN_TIMEOUT` (4 s, in `daemon_host::sessions`) for them to save, which
 // this covers: that wait runs from the stop request. An upgrade waits for
 // its turns to finish before it asks to restart, so it needs no budget.
-#[cfg(unix)]
 const DAEMON_STOP_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Runs the daemon until it stops, unloading each session once it sat idle
 /// for `unload_idle_after`. A daemon restarted in place takes over its
 /// predecessor's lock and socket from `handoff`, the token it was run with.
-#[cfg(unix)]
 async fn run_foreground(
     paths: &DaemonPaths,
     unload_idle_after: Duration,
@@ -354,7 +334,6 @@ async fn run_foreground(
 /// The arguments that run `rho daemon run` again in this daemon's place, as
 /// it ran, with the `handoff` token that passes the new run the daemon's
 /// lock and socket where the platform's restart keeps them.
-#[cfg(unix)]
 fn rerun_args(unload_idle_after: Duration, handoff: Option<String>) -> Vec<OsString> {
     let unload_idle_after = humantime::format_duration(unload_idle_after).to_string();
     let run = ["daemon", "run", "--unload-idle-after"].map(str::to_owned);
@@ -373,7 +352,6 @@ fn rerun_args(unload_idle_after: Duration, handoff: Option<String>) -> Vec<OsStr
 /// open the one config selects then.
 /// A config that does not load is logged, and sessions then fail to open
 /// with the same error.
-#[cfg(unix)]
 fn open_credential_store() {
     let repository = ConfigRepository::new(None);
     let opened = repository.configured_path().and_then(|path| {
@@ -388,7 +366,6 @@ fn open_credential_store() {
 /// `rho daemon start`: connects to the running daemon, or starts one and
 /// waits until it answers. Idempotent, so a daemon that already runs counts
 /// as started.
-#[cfg(unix)]
 async fn start() -> anyhow::Result<()> {
     let connection = connect().await?;
     println!(
@@ -398,7 +375,6 @@ async fn start() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[cfg(unix)]
 async fn status(paths: &DaemonPaths, json: bool) -> anyhow::Result<()> {
     let client = daemon::connect(paths, ConnectAs::Command.hello())
         .await?
@@ -412,7 +388,6 @@ async fn status(paths: &DaemonPaths, json: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[cfg(unix)]
 fn status_text(status: &DaemonStatus) -> String {
     let DaemonStatus {
         pid,
@@ -446,7 +421,6 @@ fn status_text(status: &DaemonStatus) -> String {
     )
 }
 
-#[cfg(unix)]
 async fn stop(paths: &DaemonPaths) -> anyhow::Result<()> {
     let pid = match daemon::connect(paths, ConnectAs::Command.hello()).await {
         Ok(connection) => {
@@ -484,7 +458,6 @@ async fn stop(paths: &DaemonPaths) -> anyhow::Result<()> {
 /// of another build: its executable is not the one this `rho` was
 /// installed as, as when an installer switched a symlink to a new version's
 /// directory, or a rebuilt `rho` sits at another path.
-#[cfg(unix)]
 async fn restart(paths: &DaemonPaths) -> anyhow::Result<()> {
     let daemon::Connection {
         client,
@@ -558,6 +531,6 @@ async fn restart(paths: &DaemonPaths) -> anyhow::Result<()> {
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 #[path = "daemon_cli_tests.rs"]
 mod tests;

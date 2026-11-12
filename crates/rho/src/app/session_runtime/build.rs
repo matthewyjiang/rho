@@ -142,8 +142,7 @@ pub(crate) enum CacheWarming {
     /// The host warms the cache while a `keep_warm` process holds it. The
     /// route says whether the session's current model can be pinged, which
     /// the session keeps up to date as its provider changes.
-    // Only the daemon, unix-only so far, warms a session it runs (#1665).
-    #[cfg_attr(not(unix), allow(dead_code))]
+    // Only the daemon warms a session it runs.
     Host(crate::tools::process::CacheWarmRoute),
 }
 
@@ -184,7 +183,6 @@ impl CacheWarming {
     }
 
     /// The route the host's warmer reads, when it runs one.
-    #[cfg(unix)]
     pub(crate) fn route(&self) -> Option<&crate::tools::process::CacheWarmRoute> {
         match self {
             Self::None => None,
@@ -300,8 +298,7 @@ pub(crate) enum ChildAgents {
     /// --t3code` asks for; see `tools::agent::install_host_delegation`), so
     /// its UI owns them. The agent nodes of the session's workflow runs
     /// still run in this process.
-    // Only the daemon, unix-only so far, opens host-threads sessions (#1665).
-    #[cfg_attr(not(unix), allow(dead_code))]
+    // Only the daemon opens host-threads sessions.
     HostThreads,
 }
 
@@ -313,8 +310,7 @@ pub(crate) enum IdleTurns {
     /// A prompt waits for the work it started.
     Never,
     /// The host starts a turn that delivers the result, so no prompt waits.
-    // Only the daemon, unix-only so far, starts turns of its own (#1665).
-    #[cfg_attr(not(unix), allow(dead_code))]
+    // Only the daemon starts turns of its own.
     Host,
 }
 

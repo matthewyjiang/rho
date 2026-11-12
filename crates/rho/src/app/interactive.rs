@@ -54,20 +54,13 @@ enum SessionHost {
 }
 
 impl SessionHost {
-    /// The daemon wherever one runs; Windows has none yet (#1778).
-    const PLATFORM_DEFAULT: Self = if cfg!(unix) {
-        Self::Daemon
-    } else {
-        Self::InProcess
-    };
-
-    /// The host `flag`, the value of [`DAEMON_FLAG`], asks for: `0` and `1`
-    /// choose one, and anything else leaves the platform's default.
+    /// The host `flag`, the value of [`DAEMON_FLAG`], asks for: `0` keeps
+    /// the session in this process, and anything else leaves it to the
+    /// daemon.
     fn from_flag(flag: Option<&std::ffi::OsStr>) -> Self {
         match flag.and_then(std::ffi::OsStr::to_str) {
             Some("0") => Self::InProcess,
-            Some("1") => Self::Daemon,
-            _ => Self::PLATFORM_DEFAULT,
+            _ => Self::Daemon,
         }
     }
 }
@@ -184,8 +177,7 @@ async fn run_inner(startup: Startup<'_>) -> anyhow::Result<()> {
         no_system_prompt: cli.no_system_prompt,
         no_tools: cli.no_tools,
         no_subagents: cli.no_subagents,
-        in_process: host == SessionHost::InProcess
-            && SessionHost::PLATFORM_DEFAULT == SessionHost::Daemon,
+        in_process: host == SessionHost::InProcess,
     };
     let mut runtime = InteractiveRuntime::new(InteractiveRuntimeOptions {
         config: &config,

@@ -14,8 +14,6 @@ flowchart TD
 
 Sessions keep running in the daemon when the host disconnects. Other clients can follow the same session: another `rho acp`, [`rho attach`](/automation-cli#attaching-to-a-daemon-session), or anything else that speaks the [daemon protocol](/protocol).
 
-`rho acp` runs on Linux and macOS. The daemon does not support Windows yet ([#1665](https://github.com/matthewyjiang/rho/issues/1665)), so neither does `rho acp`.
-
 This page covers setup and day-to-day use. Host-specific behavior lives on [T3 Code](/integrations/acp/t3-code). Protocol details for people building or debugging a host are in the [ACP host reference](/integrations/acp/reference).
 
 ## Set up a host

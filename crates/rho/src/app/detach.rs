@@ -12,16 +12,12 @@
 use std::{collections::BTreeSet, path::PathBuf, time::Duration};
 
 use rho_protocol::SessionPart;
-#[cfg(unix)]
 use rho_protocol::{ChildThreads, SessionNewParams, SessionSetup};
 
-#[cfg(unix)]
 use super::automation::AutomationExit;
 use crate::cli::Cli;
 
-/// The flags a detached run passes to the daemon. Off unix only
-/// `cli_config::validate` sorts them, and nothing reads them (#1665).
-#[cfg_attr(not(unix), allow(dead_code))]
+/// The flags a detached run passes to the daemon.
 pub(super) struct Passed<'a> {
     /// `--agent`, the agent the session runs as.
     agent: Option<&'a str>,
@@ -98,7 +94,6 @@ pub(super) fn refusal(refused: &[&str]) -> String {
 /// in the current directory, with `environment`. `--add-dir` resolves as it
 /// does for a foreground run, so `~` and relative paths mean the same; a
 /// bad one is a configuration error.
-#[cfg(unix)]
 fn session_new(
     cli: &Cli,
     environment: rho_protocol::ClientEnvironment,
@@ -131,7 +126,6 @@ fn session_new(
 /// Starts the turn of the prompt `rho run` takes from `parts` and, with
 /// `read_stdin`, stdin, in a new daemon session `cli`'s flags describe,
 /// timed out after `timeout`, and prints the session's id.
-#[cfg(unix)]
 pub(super) async fn run(
     cli: &Cli,
     parts: Vec<String>,
@@ -144,21 +138,8 @@ pub(super) async fn run(
     start(new, parts, read_stdin, timeout).await
 }
 
-/// Off unix there is no daemon (#1665), which a detached run says before it
-/// reads its prompt or builds its request.
-#[cfg(not(unix))]
-pub(super) async fn run(
-    _cli: &Cli,
-    _parts: Vec<String>,
-    _read_stdin: bool,
-    _timeout: Option<Duration>,
-) -> anyhow::Result<()> {
-    anyhow::bail!(super::daemon_cli::UNSUPPORTED)
-}
-
 /// [`run`] once its session's params are known: opens the session, starts
 /// its turn, and prints its id.
-#[cfg(unix)]
 async fn start(
     new: SessionNewParams,
     parts: Vec<String>,

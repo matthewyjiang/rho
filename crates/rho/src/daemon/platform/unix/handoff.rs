@@ -70,7 +70,7 @@ pub(in crate::daemon) fn relaunch(
     executable: &Path,
     args: impl FnOnce(Option<String>) -> Vec<OsString>,
 ) -> io::Result<()> {
-    let lock = restarting.lock.file().as_fd();
+    let lock = AsRef::<File>::as_ref(&restarting.lock).as_fd();
     let socket = restarting.listener.socket.as_fd();
     let handoff = Handoff {
         lock: lock.as_raw_fd(),

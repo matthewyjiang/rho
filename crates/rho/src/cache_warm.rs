@@ -206,8 +206,7 @@ impl CacheWarmer {
     /// orphaned, and the budget and any halt stay as they are.
     // The in-process TUI cannot tell a compaction that rewrote the prefix
     // from one that failed (`ViewModelEvent::rewrites_prompt_prefix`), so
-    // only the daemon, unix-only so far, calls this (#1665).
-    #[cfg_attr(not(unix), allow(dead_code))]
+    // only the daemon calls this.
     pub(crate) fn prefix_rewritten(&mut self) {
         if self.in_flight {
             self.in_flight = false;

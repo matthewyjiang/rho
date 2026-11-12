@@ -19,7 +19,6 @@ use {
     rho_providers::model::ModelError,
 };
 
-#[cfg(unix)]
 use super::acp;
 use super::{
     agent_binding::{root_host_tools, AgentBinder, AgentInvocation, AgentRole, LaunchTools},
@@ -95,14 +94,7 @@ async fn run_startup(cli: Cli) -> anyhow::Result<()> {
     }
     if matches!(cli.command, Some(Command::Acp(_))) {
         // `rho acp` is a client of the rho daemon, which runs its sessions.
-        #[cfg(unix)]
-        {
-            return acp::run(cli).await;
-        }
-        #[cfg(not(unix))]
-        {
-            anyhow::bail!(daemon_cli::UNSUPPORTED);
-        }
+        return acp::run(cli).await;
     }
 
     let keyring_notice = crate::credential_store::StartupKeyringNotice::begin(
@@ -283,15 +275,7 @@ async fn dispatch_early_command(cli: &Cli) -> anyhow::Result<EarlyDispatch> {
         let config_repository = ConfigRepository::new(cli.config.clone());
         let config = config_repository.load()?;
         config.providers.activate()?;
-        #[cfg(unix)]
         let signed_in = login::run(command).await;
-        #[cfg(not(unix))]
-        let signed_in = {
-            let mut config = config;
-            let config_path = absolute_config_path(&config_repository)?;
-            ensure_cli_credential_store_choice(&mut config, Some(config_path.clone()))?;
-            login::run(command, &config_repository, &mut config, &config_path).await
-        };
         return Ok(EarlyDispatch::Handled(signed_in));
     }
     Ok(EarlyDispatch::Continue)
@@ -579,39 +563,6 @@ async fn run_interactive_startup(startup: InteractiveStartup<'_>) -> anyhow::Res
         added_dirs: startup.added_dirs,
     })
     .await
-}
-
-/// Asks, in this process, which credential store `rho login` keeps
-/// credentials in when nothing chose one. On unix the daemon writes them, so
-/// `rho login` asks with what the daemon reaches instead (`login`).
-#[cfg(not(unix))]
-fn ensure_cli_credential_store_choice(
-    config: &mut crate::config::Config,
-    config_path: Option<std::path::PathBuf>,
-) -> anyhow::Result<()> {
-    let Some(request) = crate::credential_store::choice_request(config) else {
-        return Ok(());
-    };
-    let unavailable = |probe: &rho_providers::credentials::CredentialStoreProbe| {
-        (!probe.available).then(|| probe.detail.clone())
-    };
-    let backend = login::store_choice::ask(
-        &login::store_choice::StoreOffers {
-            os_unavailable: unavailable(&request.os),
-            file_unavailable: unavailable(&request.file),
-        },
-        "credential store is unset; set it before non-interactive login with \
-`rho credential-store set os|file`, behavior.credential_store in config.toml, \
-or RHO_CREDENTIAL_STORE=os|file",
-    )?;
-    let path = crate::credential_store::set_backend(backend, config_path)?;
-    config.credential_store = Some(backend);
-    eprintln!(
-        "credential store set to {} in {}",
-        backend.as_str(),
-        path.display()
-    );
-    Ok(())
 }
 
 fn run_credential_store_command(

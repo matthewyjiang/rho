@@ -305,9 +305,7 @@ workspace, and the text sent; `plan` mode refuses them. `list`, `read`, and
 `wait` only watch, but they show other sessions' transcripts, so they ask for
 the same read of the session store as searching history does. The tool only
 reaches a daemon already running: in a rho that runs its session itself with
-no daemon running, these actions report that and start none. The daemon is
-not supported on Windows yet, so there the tool has only its history
-actions.
+no daemon running, these actions report that and start none.
 
 ## Resuming a session
 

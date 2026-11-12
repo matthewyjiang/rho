@@ -256,15 +256,13 @@ impl SubagentNoticeBridge {
     }
 
     /// Resolves once a notice is accepted from now on.
-    // Only the daemon, unix-only so far, wakes an idle parent (#1665).
-    #[cfg_attr(not(unix), allow(dead_code))]
+    // Only the daemon wakes an idle parent.
     pub(crate) fn posted(&self) -> impl std::future::Future<Output = ()> + Send + 'static {
         Arc::clone(&self.posted).notified_owned()
     }
 
     /// The accepted notices for parent session `session_id` that no turn
     /// delivered and no status read showed.
-    #[cfg_attr(not(unix), allow(dead_code))]
     pub(crate) fn undelivered(&self, session_id: &str) -> Vec<SubagentNotice> {
         self.pending
             .lock()

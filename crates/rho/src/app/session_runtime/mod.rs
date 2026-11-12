@@ -48,7 +48,6 @@ mod agent;
 pub(in crate::app) mod agent_catalog;
 mod approval_policy;
 mod build;
-#[cfg(unix)]
 mod cache_warm;
 mod codemode;
 mod compact;
@@ -254,7 +253,6 @@ impl SessionRuntime {
 
     /// The session's credentials: those of the environment it opened with
     /// (see [`crate::session_environment::SessionEnvironment::credentials`]).
-    #[cfg_attr(not(unix), allow(dead_code, reason = "only the Unix daemon asks"))]
     pub(crate) fn credentials(
         &self,
     ) -> std::sync::Arc<dyn rho_providers::credentials::CredentialStore> {
@@ -267,7 +265,6 @@ impl SessionRuntime {
     }
 
     /// The configuration file this session was opened with.
-    #[cfg(unix)]
     pub(crate) fn config_path(&self) -> &Path {
         &self.build.launch.config_path
     }
@@ -319,7 +316,6 @@ impl SessionRuntime {
     /// Which model prompt file the session runs on, in the words the
     /// in-process TUI reports after a model switch. `None` for a session
     /// whose prompt does not follow its model.
-    #[cfg(unix)]
     pub(crate) fn model_prompt_notice(&self) -> Option<String> {
         self.built.prompt_template.as_ref().map(|_| {
             crate::app::model_prompt_metadata::provenance_notice(
@@ -341,7 +337,6 @@ impl SessionRuntime {
 
     /// Tells the session's hooks what it does, for a host that reports
     /// what happens outside a prompt.
-    #[cfg_attr(not(unix), allow(dead_code))]
     pub(crate) fn hooks(&self) -> rho_sdk::hooks::HookDispatcher {
         self.built.runtime.hooks()
     }
@@ -351,8 +346,7 @@ impl SessionRuntime {
     /// takes them: a subagent outlives the prompt that started it, and may
     /// ask long after. `None`, and nothing changes, when nobody can be
     /// asked or the session starts no subagents. Call once.
-    // Only the daemon, unix-only so far, takes them itself (#1665).
-    #[cfg_attr(not(unix), allow(dead_code))]
+    // Only the daemon takes them itself.
     pub(crate) fn host_takes_child_questions(
         &mut self,
     ) -> Option<

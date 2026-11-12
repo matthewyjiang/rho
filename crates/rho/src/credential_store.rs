@@ -325,7 +325,6 @@ pub(crate) fn initialize_from_config(
 /// writes nothing, so it is safe beside startup or a live session. A store
 /// that cannot be opened closes the one open before, so reads fail with the
 /// same error instead of going on in a store config no longer selects.
-#[cfg(unix)]
 pub(crate) fn activate_from_config(config: &Config, config_path: &Path) -> anyhow::Result<()> {
     remember_config_path(config_path);
     let opened = resolve_backend(config.credential_store).and_then(activate);

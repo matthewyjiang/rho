@@ -1,8 +1,7 @@
 //! Signing in with an API key and signing out, for the daemon, which acts
 //! for a client rather than a person at a terminal (`rho/auth/key`,
 //! `rho/auth/logout`, and the environment and store checks of
-//! `rho/auth/login`), and the shell check of `rho login` (#1662). Unix-only, as the daemon is
-//! (#1665):
+//! `rho/auth/login`), and the shell check of `rho login` (#1662):
 //!
 //! - A request starts with [`load_config_and_store`], so it writes the store
 //!   config selects when it runs, not the one the process opened at start:

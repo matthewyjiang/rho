@@ -938,11 +938,10 @@ fn validate_cli_refuses_session_flags_with_a_detached_run() {
     assert_eq!(found, expected);
 }
 
-// Covers: on unix `rho login --config` and `rho acp --login --config` are
+// Covers: `rho login --config` and `rho acp --login --config` are
 // refused, since the daemon saves under its own config and would ignore the
 // file; plain `rho login` still runs.
 // Owner: cli config validation
-#[cfg(unix)]
 #[test]
 fn validate_cli_refuses_config_with_a_daemon_login() {
     let refused = |args: &[&str]| {

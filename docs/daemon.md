@@ -1,6 +1,6 @@
 # Daemon
 
-The rho daemon is one long-lived background process per user and rho home (`~/.rho`, or `$RHO_HOME`). It owns agent work so that frontends (the interactive TUI, `rho acp`, and other clients) can come and go without stopping it. Frontends talk to it over a private Unix socket using rho's versioned JSON-RPC protocol, described in the [protocol reference](/protocol) and published as the [`rho-protocol`](https://crates.io/crates/rho-protocol) crate.
+The rho daemon is one long-lived background process per user and rho home (`~/.rho`, or `$RHO_HOME`). It owns agent work so that frontends (the interactive TUI, `rho acp`, and other clients) can come and go without stopping it. Frontends talk to it over a private Unix socket, or a named pipe on Windows, using rho's versioned JSON-RPC protocol, described in the [protocol reference](/protocol) and published as the [`rho-protocol`](https://crates.io/crates/rho-protocol) crate.
 
 ## Commands
 
@@ -10,7 +10,7 @@ The rho daemon is one long-lived background process per user and rho home (`~/.r
 | `rho daemon start` | Start the daemon in the background unless one is running, wait until it answers, and print its pid. Run again, it starts no second daemon and still exits 0, so scripts can run it unconditionally. |
 | `rho daemon status` | Show the running daemon's pid, version, protocol, uptime, jobs, a pending [upgrade](#upgrading-in-place), socket, and [credential store](#credentials), with why the daemon cannot reach the store when it cannot. Add `--json` for one JSON document. |
 | `rho daemon stop` | Ask the daemon to shut down and wait for it to exit. |
-| `rho daemon restart` | Restart the daemon [in place](#upgrading-in-place) and wait until it answers again. Turns under way are interrupted and recorded `interrupted`. With no daemon running, it starts one. |
+| `rho daemon restart` | Restart the daemon ([in place](#upgrading-in-place) on Linux and macOS) and wait until it answers again. Turns under way are interrupted and recorded `interrupted`. With no daemon running, it starts one. |
 | `rho mcp serve` | Serve the daemon's sessions as an MCP server, so another agent can start, follow, and steer them. See [MCP server](/mcp-server). |
 | `rho attach <ID>` | Follow a session's turn until it ends, and exit as it ended; answer its requests, steer it, or cancel it from the terminal; Ctrl+C detaches. See [Attaching to a daemon session](/automation-cli#attaching-to-a-daemon-session). |
 
@@ -24,7 +24,7 @@ Stopping the daemon ends every process its sessions' tools started: the command 
 
 ## Daemon-backed TUI
 
-On Linux and macOS, `rho` opens the interactive TUI as a daemon client: the session runs in the daemon, which starts when none runs, and the TUI follows it. Set `RHO_TUI_DAEMON=0` to run the session inside the TUI's own process instead, as rho 2.x did; that in-process TUI cannot change settings (`/config` and `/advisor` say they need the daemon), and its turns stop when it quits. Windows runs no daemon yet ([#1665](https://github.com/matthewyjiang/rho/issues/1665)), so `rho` there always opens the in-process TUI.
+`rho` opens the interactive TUI as a daemon client: the session runs in the daemon, which starts when none runs, and the TUI follows it. Set `RHO_TUI_DAEMON=0` to run the session inside the TUI's own process instead, as rho 2.x did; that in-process TUI cannot change settings (`/config` and `/advisor` say they need the daemon), and its turns stop when it quits.
 
 The attached session supplies the current model, reasoning level, fast mode, permission mode, and their available choices. `/model`, `/fast`, `/permissions`, the session rows at the top of `/config`, and the model, reasoning, and permission shortcuts configure that session rather than the unused local runtime. The model picker lists the models the daemon offers under your pinned models, with the same pinned and all views and pin shortcut as without the daemon, and a model switch reports the model prompt file the session now runs on. Changes requested during a turn apply after it ends; the TUI remains responsive to approvals and cancellation, and displays the old settings until the daemon confirms the change. Changes are session settings, not edits to the default configuration; the categories of `/config` and `/advisor` change the default configuration through the daemon ([below](#configuration-changes)). Context tokens and cumulative session cost feed the usual context and spend gauges, and title changes update the followed session's title live.
 
@@ -137,11 +137,11 @@ Updating rho replaces its executable, which leaves a running daemon on the old v
 
 - **Noticing.** Once a second, the daemon checks the path it was started from: the one a service unit's `ExecStart` names, or, for a daemon a frontend started, that frontend's `rho` executable with symlinks resolved. A new file there is a replacement, which the daemon runs with `--version` first; one that does not print a rho version is never executed, and the log says why. A client of a newer rho that the daemon accepts makes it check at once.
 - **Waiting.** Until nothing would be cut short, the daemon keeps serving and taking new work. `rho daemon status` shows `upgrade  pending to <version> (<N> in progress)`, as does `upgrade` in `rho/daemon/status`. What keeps it waiting: jobs queued, running, or waiting for input (a job waiting for input is not yet asked again after a restart, [#1661](https://github.com/matthewyjiang/rho/issues/1661)); interactive logins under way; and sessions with work of their own, which are the same ones [unloading](#unloading-idle-sessions) keeps loaded: background processes, subagents, or workflow runs still running or holding a result, or a settings change being applied. A session a client follows that has saved nothing yet, because it has had no prompt, also keeps it waiting, since a restarted daemon could not reopen it for that client.
-- **Re-executing.** At the first check that finds nothing it would cut short, the daemon detaches its clients with the reason `restarting`, closes their connections, unloads its sessions, and executes the new binary as the same process. It keeps its pid, so a service manager sees the same service, and it hands the new binary its lock and listening socket, so no other daemon can start in between and a client that connects meanwhile waits until the new binary answers rather than finding nothing there. Job records and saved sessions carry over, and sessions reopen on their next prompt or attach.
+- **Re-executing.** At the first check that finds nothing it would cut short, the daemon detaches its clients with the reason `restarting`, closes their connections, unloads its sessions, and executes the new binary. On Linux and macOS it does so as the same process. It keeps its pid, so a service manager sees the same service, and it hands the new binary its lock and listening socket, so no other daemon can start in between and a client that connects meanwhile waits until the new binary answers rather than finding nothing there. On Windows the daemon stops and starts the new binary as a new process, so for a short time nothing listens; frontends reconnect, and the TUI reattaches, once the new daemon answers. Job records and saved sessions carry over, and sessions reopen on their next prompt or attach.
 
 `rho daemon restart` re-executes at once instead, without waiting: it interrupts the turns under way, which are recorded `interrupted` as a stop records them, and the sessions take prompts again once the daemon is back. It runs whatever executable is at the daemon's path, so it also applies an upgrade the daemon has not checked yet. When the restarted daemon is still older than the `rho` you ran it from, or another build, `restart` stops it and starts that `rho` instead. That is an ordinary stop and start, not an in-place restart: the pid changes, and a client that connects in between finds no daemon and waits for the new one, as after any stop. If the turns under way do not stop within 4 seconds, the daemon exits instead of re-executing, as a stop does, and the next connection starts a new daemon.
 
-An installer that puts the new version at another path, such as a versioned directory or a symlink switched to it (mise, Homebrew), leaves a frontend-started daemon's path unchanged, so the daemon cannot upgrade itself; it logs that a newer client connected, or that it refused one of a newer protocol. Run `rho daemon restart` from the new version, which then starts it in the old daemon's place. When the new version also speaks a newer protocol, a frontend replaces a daemon nobody is using itself, as [Versions](#versions) describes. Windows has no in-place restart yet ([#1665](https://github.com/matthewyjiang/rho/issues/1665)).
+An installer that puts the new version at another path, such as a versioned directory or a symlink switched to it (mise, Homebrew), leaves a frontend-started daemon's path unchanged, so the daemon cannot upgrade itself; it logs that a newer client connected, or that it refused one of a newer protocol. Run `rho daemon restart` from the new version, which then starts it in the old daemon's place. When the new version also speaks a newer protocol, a frontend replaces a daemon nobody is using itself, as [Versions](#versions) describes.
 
 ## Versions
 
@@ -184,16 +184,19 @@ The rest of the daemon's files live in the rho home's state directory, `~/.rho/d
 
 A `spawn.lock` in the runtime directory lets concurrent frontends start exactly one daemon.
 
-Only your user can reach the daemon:
+Only your user can reach the daemon, and it listens on no TCP port. On Linux and macOS:
 
 - The runtime directory and the state directory are created with mode `0700`. If one already exists, rho refuses to use it unless it is a real directory (not a symlink) that you own and that grants no group or other access.
 - The socket has mode `0600`.
 - The daemon checks the user id of every connecting process and closes connections from other users.
-- The daemon listens on no TCP port.
 
 Unix socket paths are limited to 107 bytes on Linux and 103 on macOS. If the socket path would be longer, rho fails with the limit and the actual length; point `RHO_HOME` or `XDG_RUNTIME_DIR` at a shorter directory.
 
-The daemon is not supported on Windows yet ([#1665](https://github.com/matthewyjiang/rho/issues/1665)), and neither are the clients that need it, such as `rho acp`.
+### Windows
+
+On Windows the daemon listens on a named pipe, `\\.\pipe\rho-daemon-<home id>`, with `<home id>` derived from the rho home's path as above, so every rho home gets its own pipe. There is no socket file, and `XDG_RUNTIME_DIR` plays no part. Only the user who runs the daemon can open the pipe: its access control list names that user alone, and a client checks that the pipe is its own user's before it sends anything. The lock, `daemon.json`, and job records are in `<rho home>\daemon\`, and `spawn.lock` in `<rho home>\run`.
+
+Windows has no `SIGTERM`. A daemon there is asked to stop outside the protocol through a second pipe, `\\.\pipe\rho-daemon-<home id>-stop`, as private as the first: any connection to it starts the same graceful shutdown, and a second one makes the daemon exit at once. `rho daemon stop` uses it for a daemon whose protocol it cannot speak. Ctrl+C or Ctrl+Break does the same for a `rho daemon run` started in a console.
 
 ## Logs
 
@@ -231,7 +234,7 @@ The daemon serves and changes [configuration](/configuration) for its clients ov
 | `Daemon environment` | Which of the variables the daemon reads from [its own environment](#starting-automatically) differ from this shell's, by name only. | A network variable or daemon setting differs, such as `HTTPS_PROXY` or `RHO_LOG` (warns): the daemon keeps what it started with. Variables such as `PATH` that only differ between shells are listed without a warning, as sessions use their client's. Linux only: elsewhere the row says the environment cannot be read. |
 | `Daemon credential store` | The store the daemon keeps provider credentials in and what chose it. | The daemon cannot reach it (see [Credentials](#credentials)). |
 
-On Windows the report has one `Daemon` row saying the daemon is not supported yet.
+On Windows the `Daemon socket` row checks the daemon's [named pipe](#windows) instead, and fails when the pipe is another user's.
 
 ## Running as a service
 

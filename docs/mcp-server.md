@@ -4,8 +4,6 @@
 
 It serves over stdio by default, for a host that starts it as a command. `rho mcp serve --http` serves streamable HTTP on a loopback address instead, for hosts that reach MCP servers by URL; see [Over HTTP](#over-http).
 
-The daemon, and so this server, is not supported on Windows yet ([#1665](https://github.com/matthewyjiang/rho/issues/1665)).
-
 ## Tools
 
 | Tool | What it does | Needs |

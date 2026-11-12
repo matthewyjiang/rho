@@ -8,7 +8,7 @@ rho
 
 Rho uses the current directory as its [workspace](/tools-workspace). Tool access follows [tools and workspace](/tools-workspace#security-and-workspace-boundaries).
 
-On Linux and macOS the session runs in the [daemon](/daemon#daemon-backed-tui), which rho starts when none runs, so a turn keeps going after the TUI quits and `rho --resume` catches up with it. `--config` is refused there, since the daemon reads the config in its Rho home. `RHO_TUI_DAEMON=0 rho` keeps the session in the TUI's own process, which is also what Windows runs.
+The session runs in the [daemon](/daemon#daemon-backed-tui), which rho starts when none runs, so a turn keeps going after the TUI quits and `rho --resume` catches up with it. `--config` is refused there, since the daemon reads the config in its Rho home. `RHO_TUI_DAEMON=0 rho` keeps the session in the TUI's own process.
 
 ```mermaid
 flowchart TD
