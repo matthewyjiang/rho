@@ -55,7 +55,9 @@ impl AppWorkflowToolService {
         let resolved = workspace
             .resolve_for_read(path)
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        if !resolved.path().starts_with(&self.cwd) {
+        // The workspace resolves to the canonical name of the file, which
+        // Windows writes with a prefix the session's directory lacks.
+        if !crate::paths::is_within(resolved.path(), &self.cwd) {
             anyhow::bail!("workflow source is outside the workspace");
         }
         context
@@ -66,7 +68,7 @@ impl AppWorkflowToolService {
             ))
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        if resolved.path() != lexical {
+        if !crate::paths::same(resolved.path(), &lexical) {
             return Err(crate::workflow::WorkflowError::SourceSymlink { path: lexical }.into());
         }
         let opened = crate::workflow::VerifiedPath::open(
@@ -75,7 +77,7 @@ impl AppWorkflowToolService {
         )?;
         self.authorize_opened_identity(context, &opened.identity)
             .await?;
-        if Path::new(&opened.identity.canonical_path) != resolved.path() {
+        if !crate::paths::same(Path::new(&opened.identity.canonical_path), resolved.path()) {
             return Err(crate::workflow::WorkflowError::SourceSymlink {
                 path: resolved.path().to_path_buf(),
             }

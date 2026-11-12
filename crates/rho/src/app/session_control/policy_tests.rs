@@ -66,7 +66,9 @@ fn workspaces_reach_their_subtrees_only() {
         grant.reach(Path::new("/work/ab")).unwrap_err().to_string(),
         "token \"remote\" may not reach workspace /work/ab; it may reach: /work/a, /work/b"
     );
-    assert!(Grant::local().reach(Path::new("/anywhere")).is_ok());
+    assert!(Grant::local(Access::Write)
+        .reach(Path::new("/anywhere"))
+        .is_ok());
 }
 
 // Covers: each cap's refusal names its budget, its limit, and the value

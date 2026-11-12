@@ -1,6 +1,8 @@
 # Model Context Protocol
 
-Rho can connect native agents to ordinary [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) servers. MCP support does not require an Agent Plugin package. To serve rho's own sessions to another agent over MCP, see [MCP server](/mcp-server).
+Rho can connect native agents to ordinary [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) servers. MCP support does not require an Agent Plugin package.
+
+Rho is also an MCP server: `rho mcp serve` lets another agent start, follow, and steer rho sessions. See [Serving rho to other agents](#serving-rho-to-other-agents).
 
 ## Configuration source and precedence
 
@@ -341,6 +343,41 @@ While a form is open, the tool call's two-minute budget is paused. The budget ex
 Rho does not answer `sampling/createMessage`. It declares no `sampling` capability to any server and rejects the request as method not found.
 
 The per-server `sampling` config key (`"deny"` by default, or `"ask"`) is still read, so a config that sets it loads, but it has no effect. Rho 2.x answered sampling requests from the session that ran inside the TUI's own process. Sessions now run in the [daemon](/daemon), which does not answer them.
+
+## Serving rho to other agents
+
+`rho mcp serve` is the other direction: it serves the [daemon](/daemon)'s sessions as an MCP server, so Claude Code, Codex, or another rho session can list and read sessions, start one in any workspace, wait for its turn, and read its final answer. The host starts it as a stdio command, and its first tool call starts the daemon if none is running.
+
+Claude Code:
+
+```bash
+claude mcp add --transport stdio rho -- rho mcp serve
+```
+
+Codex, in `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.rho]
+command = "rho"
+args = ["mcp", "serve"]
+```
+
+Rho, in `~/.rho/config.toml`:
+
+```toml
+[mcp.servers.rho]
+transport = "stdio"
+command = "rho"
+args = ["mcp", "serve"]
+```
+
+Three rules hold for every host:
+
+- **Approvals stay with people.** No tool answers a session's approvals or questions. A turn that asks for one waits until a person answers it in rho.
+- **`--scope read` makes the server read-only.** It lists, reads, and waits for sessions and refuses the tools that start or change one.
+- **Nesting is capped.** A session three levels deep may not start or prompt another, and the refusal names the budget, its limit, and the depth asked for. `--max-depth` changes the limit.
+
+[MCP server](/mcp-server) is the reference: the tools and their results, [following a turn](/mcp-server#following-a-turn), the [limits](/mcp-server#limits), and [serving over HTTP](/mcp-server#over-http) with bearer tokens for hosts that reach servers by URL.
 
 ## Inspect status
 

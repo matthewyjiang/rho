@@ -110,9 +110,9 @@ impl Sandbox {
         }
     }
 
-    /// The workspace as a session's tools and the runs it starts name it:
-    /// resolved by the file system, which on Windows puts the verbatim
-    /// prefix on it, in a daemon and out of one.
+    /// The workspace as a session's tools name it: resolved by the file
+    /// system, which on Windows puts the verbatim prefix on it, in a daemon
+    /// and out of one.
     pub(super) fn resolved_workspace(&self) -> PathBuf {
         self.workspace.canonicalize().unwrap()
     }
@@ -978,7 +978,7 @@ async fn a_subagent_is_a_child_job_of_its_session() {
             JobState::Completed,
             JobKind::Subagent,
             JobState::Completed,
-            sandbox.resolved_workspace(),
+            sandbox.workspace.clone(),
             None,
             None,
         ),
@@ -1004,11 +1004,6 @@ async fn a_subagent_is_a_child_job_of_its_session() {
 // child job of the session's job, completed once the run succeeded; each of
 // its agent nodes is a subagent job whose parent is the workflow job.
 // Owner: daemon workflow jobs.
-// Unix: on Windows the `workflow` tool refuses every source as outside the
-// workspace, in a daemon and out of one: it compares the path the file
-// system resolved, which has the verbatim prefix, with the workspace's
-// (#1895).
-#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_workflow_run_is_a_child_job_of_its_session() {
     let sandbox = Sandbox::new();
@@ -1049,7 +1044,7 @@ async fn a_workflow_run_is_a_child_job_of_its_session() {
                 None
             ),
             (JobKind::Subagent, JobState::Completed, None),
-            (sandbox.resolved_workspace(), sandbox.resolved_workspace()),
+            (sandbox.workspace.clone(), sandbox.workspace.clone()),
         ),
         "log:\n{log}"
     );
