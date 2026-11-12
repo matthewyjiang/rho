@@ -42,7 +42,7 @@ pub(crate) fn available_commands(
         })
         .collect();
     listed(
-        &scope.files(),
+        &scope.files,
         mcp_prompts,
         |name| scope.tools.contains(name),
         commands,

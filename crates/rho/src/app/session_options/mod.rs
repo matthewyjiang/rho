@@ -30,7 +30,7 @@ mod models;
 mod reasoning;
 
 pub(crate) use commands::{available_commands, drafted_commands};
-pub(crate) use draft::{available_auths, DraftOptions};
+pub(crate) use draft::DraftOptions;
 pub(crate) use models::{resolve_model, AuthPick};
 pub(crate) use reasoning::{reasoning_from_wire, reasoning_to_wire};
 
@@ -108,6 +108,25 @@ fn build(
         },
         commands,
         added_dirs: Vec::new(),
+    }
+}
+
+/// The auths `credentials` can use, whose models a session may switch to,
+/// read off the async workers: a locked OS keyring blocks its reader, as
+/// `daemon_host/auth.rs` notes.
+pub(crate) async fn available_auths(
+    credentials: std::sync::Arc<dyn rho_providers::credentials::CredentialStore>,
+) -> Vec<String> {
+    match tokio::task::spawn_blocking(move || {
+        rho_providers::credentials::available_auth_modes(credentials.as_ref())
+    })
+    .await
+    {
+        Ok(auths) => auths,
+        Err(error) if error.is_panic() => std::panic::resume_unwind(error.into_panic()),
+        // Cancelled before it ran: the runtime is shutting down, and no
+        // client reads options again.
+        Err(_) => Vec::new(),
     }
 }
 

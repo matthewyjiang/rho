@@ -130,7 +130,10 @@ impl SessionRuntime {
     }
 }
 
-fn resolve_switch_reasoning(
+/// The reasoning level a switch to `selection` keeps `requested` at, or
+/// rounds it to; [`SettingChangeError::Unsupported`] when the model cannot
+/// take it.
+pub(crate) fn resolve_switch_reasoning(
     selection: &ModelSelection,
     requested: rho_sdk::ReasoningLevel,
 ) -> Result<rho_sdk::ReasoningLevel, SettingChangeError> {

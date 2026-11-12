@@ -13,7 +13,7 @@ use crate::{
     },
 };
 
-use super::CommandScope;
+use super::{CommandFiles, CommandScope};
 
 /// A workspace with one prompt template (`review`), one project skill
 /// (`demo`), and one workflow (`check`), user definitions for a Rho
@@ -108,11 +108,13 @@ impl Fixture {
     /// The session in supervised mode.
     pub(in crate::app) fn scope(&self) -> CommandScope<'_> {
         CommandScope {
-            cwd: self.workspace.path(),
-            home: Some(self.home.path()),
-            project_trust: crate::workspace::ProjectTrusts::UNTRUSTED,
+            files: CommandFiles {
+                cwd: self.workspace.path(),
+                home: Some(self.home.path()),
+                project_trust: crate::workspace::ProjectTrusts::UNTRUSTED,
+                config: &self.config,
+            },
             tools: SessionTools::of_tool_set_for_tests(&self.tools),
-            config: &self.config,
             permission_mode: PermissionMode::Supervised,
         }
     }

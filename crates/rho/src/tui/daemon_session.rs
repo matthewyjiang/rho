@@ -63,6 +63,7 @@ use crate::{
         daemon_client::{Daemon, Link, LoginEvent, Part, Routed, StreamPosition},
         DraftOptions,
     },
+    credential_store::AppCredentialStore,
     daemon::DAEMON_RESTART_TIMEOUT,
 };
 
@@ -316,7 +317,7 @@ impl DaemonSession {
                     Following::Draft(draft) => draft.options.clone(),
                     Following::Attached(attachment) => {
                         let config = (*self.launch.config).clone();
-                        let auths = available_auths().await;
+                        let auths = available_auths(Arc::new(AppCredentialStore)).await;
                         let added_dirs = self.launch.setup.additional_directories.clone();
                         match &attachment.options {
                             Some(options) => {
@@ -674,8 +675,7 @@ impl DaemonSession {
         self.attached_link().await
     }
 
-    /// Starts a turn of `content`, opening the session first when this is
-    /// its first prompt. Once this returns, the views of what the daemon
+    /// Starts a turn of `content` in the opened session. Once this returns, the views of what the daemon
     /// sent before it answered, such as the turn's start, are waiting for
     /// [`Self::take_views`], and the session is saved: the daemon answers
     /// once the turn saved its prompt.
@@ -684,7 +684,11 @@ impl DaemonSession {
         content: Vec<ContentBlock>,
         author: rho_protocol::PromptAuthor,
     ) -> anyhow::Result<()> {
-        self.open_drafted().await?;
+        // The app opens a new session first (`open_daemon_draft`), so a
+        // failure reads as the open's own.
+        if self.is_draft() {
+            anyhow::bail!(NOT_OPENED);
+        }
         // A restart the TUI has not caught up with yet: attach again
         // first, so the prompt reaches the restarted daemon.
         let mut views = self.take_views();

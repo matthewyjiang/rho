@@ -48,12 +48,7 @@ impl App {
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
         if !self.open_daemon_draft(terminal).await? {
-            self.restore_pending_prompt(QueuedPrompt {
-                prompt: turn.model,
-                display_prompt: turn.display,
-                paste_segments,
-                media,
-            });
+            self.give_back_turn(turn, media, paste_segments);
             return Ok(());
         }
         if self.daemon_tool_sources_loading() {
@@ -75,12 +70,7 @@ impl App {
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
         if !self.open_daemon_draft(terminal).await? {
-            self.restore_pending_prompt(QueuedPrompt {
-                prompt: turn.model,
-                display_prompt: turn.display,
-                paste_segments,
-                media,
-            });
+            self.give_back_turn(turn, media, paste_segments);
             return Ok(());
         }
         if self.daemon_tool_sources_loading() {
@@ -94,6 +84,21 @@ impl App {
         }
         self.send_daemon_turn(turn, media, paste_segments, terminal)
             .await
+    }
+
+    /// Puts a turn that was not sent back in the composer.
+    fn give_back_turn(
+        &mut self,
+        turn: TurnPrompt,
+        media: Vec<ChatMedia>,
+        paste_segments: Vec<PasteSegment>,
+    ) {
+        self.restore_pending_prompt(QueuedPrompt {
+            prompt: turn.model,
+            display_prompt: turn.display,
+            paste_segments,
+            media,
+        });
     }
 
     pub(super) fn daemon_tool_sources_loading(&self) -> bool {
@@ -170,12 +175,7 @@ impl App {
                     "could not send the prompt: {error:#}"
                 ))),
             }
-            self.restore_pending_prompt(QueuedPrompt {
-                prompt: turn.model,
-                display_prompt: turn.display,
-                paste_segments,
-                media,
-            });
+            self.give_back_turn(turn, media, paste_segments);
             return Ok(());
         }
         if !turn.history.is_empty() {

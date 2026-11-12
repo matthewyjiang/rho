@@ -12,7 +12,7 @@ use tokio::sync::mpsc;
 
 use super::{
     begin_replay,
-    initial_settings::{changes_between, configure_all, Refused},
+    initial_settings::{configure_all, Refused},
     route,
     tool_sources::{self, ToolSources},
     Attachment, DaemonSession, LOST,
@@ -113,18 +113,6 @@ impl DaemonSession {
                 .into_iter()
                 .map(|change| change.of(&response.options))
                 .collect(),
-            InitialSettings::Drafted {
-                options,
-                switched_model,
-            } => {
-                let mut changes = changes_between(&response.options, &options);
-                for change in &mut changes {
-                    if let SessionChange::Model { setup, .. } = change {
-                        *setup = !switched_model;
-                    }
-                }
-                changes
-            }
         };
         if !at_rest {
             queued = required;

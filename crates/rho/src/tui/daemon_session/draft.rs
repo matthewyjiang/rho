@@ -1,7 +1,7 @@
 //! A new session before its first prompt, which the daemon does not have
 //! yet: the TUI shows the options it will open with, takes setting changes
-//! to them as a daemon session would, and keeps the context a `!` command
-//! or `/remember` adds. The first prompt opens it with all of that, so a
+//! and added directories as a daemon session would, and keeps the context
+//! a `!` command or `/remember` adds. The first prompt opens it with all of that, so a
 //! TUI that never prompts leaves nothing behind in the daemon.
 
 use std::sync::Arc;
@@ -12,14 +12,15 @@ use tokio::sync::watch;
 
 use super::{
     attach::{Attached, Connection},
-    DaemonSession, Following, Target,
+    initial_settings::{changes_between, configure_all, ModelChange, Refused},
+    DaemonSession, Following, Target, LOST, NOT_OPENED,
 };
 use crate::{
-    app::{daemon_client::Link, DraftOptions},
-    credential_store::AppCredentialStore,
+    app::{daemon_client::Link, DraftOptions, SettingChangeError},
     tui::{
         daemon_events::DaemonView,
         daemon_launch::{DaemonLaunch, InitialSettings},
+        daemon_options::{change_failure, setting_name},
         daemon_requests::DaemonRequests,
         daemon_settings_read::{load_settings, route_config, settings_loaded},
     },
@@ -28,9 +29,9 @@ use crate::{
 /// A session the first prompt opens.
 pub(super) struct Draft {
     pub(super) options: DraftOptions,
-    /// Context changes, in order, sent once the session opened and
-    /// before its first prompt.
-    rows: Vec<SessionChange>,
+    /// Context a `!` command or `/remember` added, in order, sent once
+    /// the session opened and before its first prompt.
+    context: Vec<SessionChange>,
     /// The connection the settings were read on.
     settings_link: Arc<Link>,
 }
@@ -63,7 +64,7 @@ impl DaemonSession {
             logins: None,
             following: Following::Draft(Box::new(Draft {
                 options,
-                rows: Vec::new(),
+                context: Vec::new(),
                 settings_link: link,
             })),
         })
@@ -75,19 +76,23 @@ impl DaemonSession {
     }
 
     /// Opens the session the first prompt opens, with the settings
-    /// chosen meanwhile, and attaches to it; nothing once it is open. A
-    /// setting the daemon refuses fails the open and leaves the draft,
-    /// so no turn runs on settings nobody chose; the session it opened
-    /// saved nothing, and the daemon discards it unused.
+    /// chosen meanwhile, and attaches to it; nothing once it is open. The
+    /// settings apply before the attach: a setting the daemon refuses fails
+    /// the open and leaves the draft, so no turn runs on settings nobody
+    /// chose, and the session it made, which nothing follows or saved, is
+    /// discarded at the daemon's next idle sweeps.
     pub(in crate::tui) async fn open_drafted(&mut self) -> anyhow::Result<()> {
         let Following::Draft(draft) = &self.following else {
             return Ok(());
         };
+        let mut setup = self.launch.setup.clone();
+        // The launch's, and those `/add-dir` added since.
+        setup.additional_directories = draft.options.added_dirs().to_vec();
         let params = SessionNewParams {
             cwd: self.launch.cwd.clone(),
             environment: ClientEnvironment::of_this_process(),
             agent: self.launch.agent.clone(),
-            setup: self.launch.setup.clone(),
+            setup,
             parent: None,
             grant: None,
             worktree: false,
@@ -97,10 +102,21 @@ impl DaemonSession {
             .request::<SessionNew>(&params)
             .await
             .context("could not open a daemon session")?;
-        let drafted = InitialSettings::Drafted {
-            options: Box::new(draft.options.options()),
-            switched_model: draft.options.switched_model(),
+        let link = self.daemon.current().await.context(LOST)?;
+        let model = if draft.options.switched_model() {
+            ModelChange::Switch
+        } else {
+            ModelChange::Setup
         };
+        let changes = changes_between(&created.options, &draft.options.options(), model);
+        if let Err(refused) = configure_all(&link, &created.session, changes).await {
+            let Refused { change, error } = *refused;
+            return Err(anyhow::Error::new(error).context(format!(
+                "could not set the session's {}",
+                setting_name(&change)
+            )));
+        }
+        let settings_link = Arc::clone(&draft.settings_link);
         let Attached {
             attachment,
             link,
@@ -112,12 +128,12 @@ impl DaemonSession {
             created.session,
             Some(params),
             &self.launch,
-            drafted,
+            InitialSettings::Kept,
         )
         .await?;
         // A connection since the settings were read has none of their
         // subscription.
-        if !Arc::ptr_eq(&link, &draft.settings_link) {
+        if !Arc::ptr_eq(&link, &settings_link) {
             self.config_changes = route_config(&self.daemon);
             self.pending
                 .push(settings_loaded(load_settings(&link).await));
@@ -143,8 +159,8 @@ impl DaemonSession {
             .requests
             .as_ref()
             .expect("followed session has requests");
-        for row in draft.rows {
-            requests.carry(row)?;
+        for context in draft.context {
+            requests.carry(context)?;
         }
         Ok(())
     }
@@ -157,34 +173,61 @@ impl DaemonSession {
         let Following::Draft(draft) = &mut self.following else {
             return;
         };
-        let refused = match change {
-            SessionChange::Context { .. } | SessionChange::AddDirectory { .. } => {
-                draft.rows.push(change);
-                None
+        let options = &mut draft.options;
+        let applied = match &change {
+            SessionChange::Model { model, auth, .. } => options.set_model(model, auth.as_deref()),
+            SessionChange::Reasoning { level } => options.set_reasoning(*level),
+            SessionChange::FastMode { enabled } => options.set_fast_mode(*enabled),
+            SessionChange::PermissionMode { mode } => options.set_permission_mode(*mode),
+            SessionChange::Context { .. } => {
+                draft.context.push(change.clone());
+                Ok(())
             }
-            // The session reads both lists as it opens.
-            SessionChange::AgentCatalog => None,
-            SessionChange::ModelCatalog => {
-                draft.options.set_available_auths(
-                    rho_providers::credentials::available_auth_modes(&AppCredentialStore),
-                );
-                self.pending
-                    .push(DaemonView::Options(Box::new(draft.options.options())));
-                None
+            SessionChange::AddDirectory { path } => options.add_directory(path.clone()),
+            // The session reads the agent and model lists as it opens; the
+            // draft's models follow the auths the app reads
+            // (`set_draft_auths`).
+            SessionChange::AgentCatalog | SessionChange::ModelCatalog => Ok(()),
+            // Each needs a turn or a saved conversation, which a session
+            // has only once its first prompt opened it.
+            SessionChange::ModelAfterCompaction { .. }
+            | SessionChange::SelectNode { .. }
+            | SessionChange::RewindWorkspace { .. } => {
+                Err(SettingChangeError::Unsupported(NOT_OPENED.into()))
             }
-            change => match draft.options.apply(&change) {
-                Ok(()) => {
-                    self.pending
-                        .push(DaemonView::Options(Box::new(draft.options.options())));
-                    None
-                }
-                Err(error) => Some(DaemonView::Error(format!(
-                    "{}: {error}",
-                    crate::tui::daemon_options::change_failure(&change)
-                ))),
-            },
+            // `SessionChange` is non-exhaustive; the TUI sends only the above.
+            _ => Err(SettingChangeError::Unsupported(NOT_OPENED.into())),
         };
         self.pending.push(DaemonView::ConfigureFinished);
-        self.pending.extend(refused);
+        match (applied, &change) {
+            (Ok(()), SessionChange::AddDirectory { path }) => {
+                // As the daemon says it of an opened session.
+                self.pending.push(DaemonView::Notice(format!(
+                    "added directory {}",
+                    crate::paths::display(path)
+                )));
+                self.pending
+                    .push(DaemonView::Options(Box::new(draft.options.options())));
+            }
+            (Ok(()), _) => self
+                .pending
+                .push(DaemonView::Options(Box::new(draft.options.options()))),
+            (Err(error), _) => self.pending.push(DaemonView::Error(format!(
+                "{}: {error}",
+                change_failure(&change)
+            ))),
+        }
+    }
+
+    /// Lists the models of `auths` in a draft's options, as the app read
+    /// them from the credential store; nothing once the session opened,
+    /// whose options the daemon reports.
+    pub(in crate::tui) fn set_draft_auths(&mut self, auths: &[String]) {
+        if let Following::Draft(draft) = &mut self.following {
+            if draft.options.set_available_auths(auths) {
+                self.pending
+                    .push(DaemonView::Options(Box::new(draft.options.options())));
+            }
+        }
     }
 }

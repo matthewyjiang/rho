@@ -179,7 +179,10 @@ async fn new_options(
     let commands = drafted_commands(&files, bound.rho_capabilities(), DAEMON_COMMANDS);
     DraftOptions::new(
         (*launch.config).clone(),
-        available_auths().await,
+        available_auths(std::sync::Arc::new(
+            crate::credential_store::AppCredentialStore,
+        ))
+        .await,
         commands,
         launch.setup.additional_directories.clone(),
     )

@@ -26,23 +26,17 @@ fn draft(provider: &str, model: &str, auth: &str) -> DraftOptions {
 #[test]
 fn applied_settings_show_in_the_options_and_carry() {
     let mut draft = draft("openai-codex", "gpt-5.5", "codex");
-    let changes = [
-        wire::SessionChange::Model {
-            model: wire::ModelRef {
-                provider: "xai".into(),
-                model: "grok-4.7".into(),
-            },
-            auth: None,
-            setup: false,
-        },
-        wire::SessionChange::FastMode { enabled: true },
-        wire::SessionChange::PermissionMode {
-            mode: wire::PermissionMode::Supervised,
-        },
-    ];
-    for change in &changes {
-        draft.apply(change).expect("the draft takes the change");
-    }
+    let grok = wire::ModelRef {
+        provider: "xai".into(),
+        model: "grok-4.7".into(),
+    };
+    draft
+        .set_model(&grok, None)
+        .expect("the draft takes the model");
+    draft.set_fast_mode(true).expect("grok has fast mode");
+    draft
+        .set_permission_mode(wire::PermissionMode::Supervised)
+        .expect("supervised is offered");
     let options = draft.options();
 
     assert_eq!(
@@ -79,23 +73,17 @@ fn applied_settings_show_in_the_options_and_carry() {
 fn refused_settings_leave_the_draft_unchanged() {
     let mut draft = draft("openai-codex", "gpt-5.4", "codex");
     let before = draft.options();
+    let unknown = wire::ModelRef {
+        provider: "xai".into(),
+        model: "no-such-model".into(),
+    };
     let refused = [
-        wire::SessionChange::FastMode { enabled: true },
-        wire::SessionChange::PermissionMode {
-            mode: wire::PermissionMode::Auto,
-        },
-        wire::SessionChange::Model {
-            model: wire::ModelRef {
-                provider: "xai".into(),
-                model: "no-such-model".into(),
-            },
-            auth: None,
-            setup: false,
-        },
-        wire::SessionChange::SelectNode { node: "n1".into() },
+        draft.set_fast_mode(true).is_err(),
+        draft
+            .set_permission_mode(wire::PermissionMode::Auto)
+            .is_err(),
+        draft.set_model(&unknown, None).is_err(),
     ];
-    for change in &refused {
-        assert!(draft.apply(change).is_err(), "{change:?} is refused");
-    }
+    assert_eq!(refused, [true; 3]);
     assert_eq!(draft.options(), before);
 }

@@ -72,3 +72,4 @@ pub use automation::{AutomationExit, AutomationInterrupted};
 pub use bootstrap::run;
 pub(crate) use login::confirms_sign_in;
 pub(crate) use session_options::{available_auths, reasoning_from_wire, DraftOptions};
+pub(crate) use session_runtime::SettingChangeError;

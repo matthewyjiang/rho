@@ -6,9 +6,9 @@
 use std::sync::Arc;
 
 use rho_protocol as wire;
-use rho_providers::credentials::{available_auth_modes, CredentialStore};
 
 use super::{turn::DAEMON_COMMANDS, LoadedSession, Sessions};
+pub(super) use crate::app::session_options::available_auths;
 use crate::{
     app::{session_options, session_runtime::SessionRuntime},
     config::Config,
@@ -60,19 +60,6 @@ impl Sessions {
                 }
             });
         }
-    }
-}
-
-/// The auths `credentials`, a session's, can use, read off the async
-/// workers: a locked OS keyring blocks its reader, as `daemon_host/auth.rs`
-/// notes.
-pub(super) async fn available_auths(credentials: Arc<dyn CredentialStore>) -> Vec<String> {
-    match tokio::task::spawn_blocking(move || available_auth_modes(credentials.as_ref())).await {
-        Ok(auths) => auths,
-        Err(error) if error.is_panic() => std::panic::resume_unwind(error.into_panic()),
-        // Cancelled before it ran: the runtime is shutting down, and no
-        // client reads options again.
-        Err(_) => Vec::new(),
     }
 }
 

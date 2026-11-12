@@ -96,17 +96,12 @@ impl CommandSet {
     }
 }
 
-/// What commands can see of one session. `home` roots user skills and
-/// prompt templates. `permission_mode` is the session's current mode, which
-/// a host can change from the process default. `project_trust` is the
-/// session's, under which project agents and project plugins' skills are
-/// found.
+/// What commands can see of one session: where its definitions are found,
+/// its tools, and its current permission mode, which a host can change from
+/// the process default.
 pub(crate) struct CommandScope<'a> {
-    pub(crate) cwd: &'a Path,
-    pub(crate) home: Option<&'a Path>,
-    pub(crate) project_trust: crate::workspace::ProjectTrusts,
+    pub(crate) files: CommandFiles<'a>,
     pub(crate) tools: SessionTools<'a>,
-    pub(crate) config: &'a Config,
     pub(crate) permission_mode: PermissionMode,
 }
 
@@ -119,38 +114,15 @@ impl<'a> CommandScope<'a> {
         process_config: &'a Config,
     ) -> Self {
         Self {
-            cwd: runtime.cwd(),
-            home,
-            project_trust: runtime.project_trust(),
+            files: CommandFiles {
+                cwd: runtime.cwd(),
+                home,
+                project_trust: runtime.project_trust(),
+                config: process_config,
+            },
             tools: runtime.tools(),
-            config: process_config,
             permission_mode: runtime.permission_mode(),
         }
-    }
-
-    /// Where the session's command definitions are found.
-    pub(crate) fn files(&self) -> CommandFiles<'a> {
-        CommandFiles {
-            cwd: self.cwd,
-            home: self.home,
-            project_trust: self.project_trust,
-            config: self.config,
-        }
-    }
-
-    /// The prompt templates `/prompt:<name>` expands.
-    pub(crate) fn templates(&self) -> prompt_templates::PromptTemplates {
-        self.files().templates()
-    }
-
-    /// The agent definitions `/agent:<name>` binds.
-    pub(crate) fn agent_catalog(&self) -> Result<AgentCatalog, AgentCatalogError> {
-        self.files().agent_catalog()
-    }
-
-    /// The skills a prompt can mention.
-    pub(crate) fn skills(&self) -> Vec<Skill> {
-        self.files().skills()
     }
 }
 
@@ -269,10 +241,11 @@ fn built_in(
             instructions: (!args.is_empty()).then(|| args.to_owned()),
         }),
         Some(BuiltInCommand::Init) => {
-            let model_prompt = init_turn::model_prompt(scope.cwd, scope.permission_mode, |name| {
-                scope.tools.contains(name)
-            })
-            .map_err(|error| CommandRejected(error.to_string()))?;
+            let model_prompt =
+                init_turn::model_prompt(scope.files.cwd, scope.permission_mode, |name| {
+                    scope.tools.contains(name)
+                })
+                .map_err(|error| CommandRejected(error.to_string()))?;
             Ok(PromptCommand::Turn {
                 input: replace_leading_text(input, model_prompt),
                 calls: vec![mention::load_call(init_turn::SKILL)],
@@ -351,6 +324,7 @@ fn run_as_agent(
         }
     }
     let catalog = scope
+        .files
         .agent_catalog()
         .map_err(|error| rejected(error.to_string()))?;
     let definition = &catalog
@@ -388,12 +362,12 @@ async fn dynamic(
         if !scope.tools.contains(mention::SKILL_TOOL) {
             return Err(CommandRejected(mention::NO_SKILL_TOOL.into()));
         }
-        if scope.skills().iter().any(|known| known.name == skill) {
+        if scope.files.skills().iter().any(|known| known.name == skill) {
             return Ok(turn(input, &[skill], scope));
         }
     }
     let trailing = leading_text(&input).map_or("", command_args);
-    if let Some(resolved) = workflows::resolve_launch(scope.cwd, name, trailing) {
+    if let Some(resolved) = workflows::resolve_launch(scope.files.cwd, name, trailing) {
         let rejected = |detail: &str| CommandRejected(format!("could not run /{name}: {detail}"));
         match commands.workflows {
             Hosting::Runs => {}
@@ -417,7 +391,7 @@ async fn dynamic(
     }
     if let Some(template) =
         prompt_templates::command_template_name(name).and_then(|template_name| {
-            prompt_templates::find(&scope.templates(), template_name).map(str::to_owned)
+            prompt_templates::find(&scope.files.templates(), template_name).map(str::to_owned)
         })
     {
         let expanded = prompt_templates::expand(&template, trailing);
@@ -433,7 +407,14 @@ async fn dynamic(
             prompt.command_name()
         ))
     };
-    match prompt_command::expand(catalog, &prompt, trailing, scope.config.max_output_bytes).await {
+    match prompt_command::expand(
+        catalog,
+        &prompt,
+        trailing,
+        scope.files.config.max_output_bytes,
+    )
+    .await
+    {
         McpPromptCommand::MissingArguments(missing) => Err(rejected(format!(
             "missing required arguments: {}",
             missing.join(", ")
@@ -447,7 +428,7 @@ async fn dynamic(
 /// `$skill`, all in one host batch.
 fn turn(input: UserInput, leading: &[&str], scope: &CommandScope<'_>) -> PromptCommand {
     let calls = if scope.tools.contains(mention::SKILL_TOOL) {
-        skill_calls(leading, &input, || scope.skills())
+        skill_calls(leading, &input, || scope.files.skills())
     } else {
         Vec::new()
     };

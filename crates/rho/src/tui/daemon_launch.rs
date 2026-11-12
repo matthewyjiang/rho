@@ -64,12 +64,4 @@ pub(crate) enum InitialSettings {
     /// Changes the launch asked for; one the daemon refuses fails the open,
     /// unless the session has a turn under way, which they wait for.
     Required(Vec<LaunchChange>),
-    /// The options chosen before the session opened, which the changes
-    /// from its own make; one the daemon refuses fails the open.
-    Drafted {
-        options: Box<rho_protocol::SessionOptions>,
-        /// Whether the person switched the model, which the session then
-        /// reports as a switch rather than its setup.
-        switched_model: bool,
-    },
 }

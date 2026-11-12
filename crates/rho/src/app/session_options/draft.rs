@@ -6,21 +6,19 @@
 //! the client's own settled config, and applies the setting changes a
 //! daemon session takes between turns (model, reasoning, fast mode,
 //! permission mode) with the same checks the daemon makes before it builds
-//! anything. The daemon stays the judge: the client sends the result as
+//! anything, refusing with the daemon's [`SettingChangeError`]. The daemon
+//! stays the judge: the client sends the result as
 //! changes once the session opens, and one it refuses is reported then.
 
 use std::path::PathBuf;
 
 use rho_protocol as wire;
-use rho_providers::{
-    model::{models_dev, ReasoningRequestSource},
-    providers::fast_mode::supports_fast_mode,
-};
+use rho_providers::{provider::model_reference, providers::fast_mode::supports_fast_mode};
 use rho_sdk::ReasoningLevel;
 
 use super::{build, models::AuthPick, reasoning_from_wire, resolve_model};
 use crate::{
-    app::{conversation_switch::resolve_model_switch_reasoning, session_runtime::CurrentModel},
+    app::session_runtime::{resolve_switch_reasoning, CurrentModel, SettingChangeError},
     config::Config,
     permission::PermissionMode,
 };
@@ -130,103 +128,107 @@ impl DraftOptions {
     }
 
     /// Lists the models of `available_auths` from now on, as a session's
-    /// options follow a credential write.
-    pub(crate) fn set_available_auths(&mut self, available_auths: Vec<String>) {
-        self.available_auths = available_auths;
-    }
-
-    /// Applies `change`, a setting, as a daemon session would; the error
-    /// says why it refuses one, which leaves the settings as they were.
-    /// Any other change is refused: it needs an open session.
-    pub(crate) fn apply(&mut self, change: &wire::SessionChange) -> Result<(), String> {
-        match change {
-            wire::SessionChange::Model { model, auth, .. } => {
-                let pick = auth
-                    .as_deref()
-                    .map_or(AuthPick::AnyOf(&self.available_auths), AuthPick::Named);
-                let selection = resolve_model(&model.provider, &model.model, &self.current, pick)
-                    .map_err(|refused| refused.to_string())?;
-                let capabilities = models_dev::current_reasoning_capabilities(
-                    &selection.provider,
-                    &selection.model,
-                );
-                let reasoning = resolve_model_switch_reasoning(
-                    &capabilities,
-                    self.reasoning,
-                    ReasoningRequestSource::PersistedOrDefault,
-                )
-                .map_err(|level| {
-                    format!(
-                        "reasoning level '{level}' is not supported for '{}/{}'",
-                        selection.provider, selection.model
-                    )
-                })?
-                .effective;
-                self.current = CurrentModel {
-                    provider: selection.provider,
-                    model: selection.model,
-                    auth: selection.auth,
-                };
-                self.reasoning = reasoning;
-                self.switched_model = true;
-                Ok(())
-            }
-            wire::SessionChange::Reasoning { level } => {
-                let offered = self
-                    .options()
-                    .reasoning
-                    .is_some_and(|reasoning| reasoning.available.contains(level));
-                match reasoning_from_wire(*level) {
-                    Some(level) if offered => {
-                        self.reasoning = level;
-                        Ok(())
-                    }
-                    Some(level) => Err(format!(
-                        "reasoning level '{level}' is not supported for '{}/{}'",
-                        self.current.provider, self.current.model
-                    )),
-                    None => Err("unknown reasoning level".into()),
-                }
-            }
-            wire::SessionChange::FastMode { enabled } => {
-                if *enabled
-                    && !supports_fast_mode(
-                        &self.current.provider,
-                        &self.current.model,
-                        &self.current.auth,
-                    )
-                {
-                    return Err("the current model has no fast mode".into());
-                }
-                self.fast_mode = *enabled;
-                Ok(())
-            }
-            wire::SessionChange::PermissionMode { mode } => {
-                let offered = self.options().permission_mode.available.contains(mode);
-                match PermissionMode::try_from(*mode).ok().filter(|_| offered) {
-                    Some(mode) => {
-                        self.permission_mode = mode;
-                        Ok(())
-                    }
-                    None => Err("that permission mode is not offered".into()),
-                }
-            }
-            _ => Err("the session has not started yet; send a prompt first".into()),
+    /// options follow a credential write; whether that changed them.
+    pub(crate) fn set_available_auths(&mut self, available_auths: &[String]) -> bool {
+        let changed = self.available_auths != available_auths;
+        if changed {
+            self.available_auths = available_auths.to_vec();
         }
+        changed
     }
-}
 
-/// The auths this process's credentials can use, whose models a draft
-/// lists, read off the async workers: a locked OS keyring blocks its
-/// reader.
-pub(crate) async fn available_auths() -> Vec<String> {
-    tokio::task::spawn_blocking(|| {
-        rho_providers::credentials::available_auth_modes(
-            &crate::credential_store::AppCredentialStore,
-        )
-    })
-    .await
-    .unwrap_or_default()
+    /// Switches to `model`, on `auth` when it names one, else on an auth
+    /// with credentials, keeping the reasoning level where the model takes
+    /// it, as a daemon session's switch does.
+    pub(crate) fn set_model(
+        &mut self,
+        model: &wire::ModelRef,
+        auth: Option<&str>,
+    ) -> Result<(), SettingChangeError> {
+        let pick = auth.map_or(AuthPick::AnyOf(&self.available_auths), AuthPick::Named);
+        let selection = resolve_model(&model.provider, &model.model, &self.current, pick)
+            .map_err(|refused| SettingChangeError::Unsupported(refused.to_string()))?;
+        self.reasoning = resolve_switch_reasoning(&selection, self.reasoning)?;
+        self.current = CurrentModel {
+            provider: selection.provider,
+            model: selection.model,
+            auth: selection.auth,
+        };
+        self.switched_model = true;
+        Ok(())
+    }
+
+    /// Spends `level`, one the current model offers, on the session's turns.
+    pub(crate) fn set_reasoning(
+        &mut self,
+        level: wire::ReasoningLevel,
+    ) -> Result<(), SettingChangeError> {
+        let offered = self
+            .options()
+            .reasoning
+            .is_some_and(|reasoning| reasoning.available.contains(&level));
+        let Some(level) = reasoning_from_wire(level) else {
+            return Err(SettingChangeError::Unsupported(
+                "unknown reasoning level".into(),
+            ));
+        };
+        if !offered {
+            return Err(SettingChangeError::Unsupported(format!(
+                "reasoning level '{level}' is not supported for '{}'",
+                model_reference(&self.current.provider, &self.current.model)
+            )));
+        }
+        self.reasoning = level;
+        Ok(())
+    }
+
+    /// Turns fast mode on, for a model that has it, or off.
+    pub(crate) fn set_fast_mode(&mut self, enabled: bool) -> Result<(), SettingChangeError> {
+        let current = &self.current;
+        if enabled && !supports_fast_mode(&current.provider, &current.model, &current.auth) {
+            return Err(SettingChangeError::Unsupported(format!(
+                "'{}' has no fast mode",
+                model_reference(&current.provider, &current.model)
+            )));
+        }
+        self.fast_mode = enabled;
+        Ok(())
+    }
+
+    /// The directories the session's tools reach besides its workspace,
+    /// which it opens with.
+    pub(crate) fn added_dirs(&self) -> &[PathBuf] {
+        &self.added_dirs
+    }
+
+    /// Lets the session's tools reach `dir`, an absolute directory, which
+    /// it opens with; one it already reaches is refused, as the daemon
+    /// refuses it.
+    pub(crate) fn add_directory(&mut self, dir: PathBuf) -> Result<(), SettingChangeError> {
+        if self.added_dirs.contains(&dir) {
+            return Err(SettingChangeError::Unsupported(format!(
+                "the session already reaches {}",
+                crate::paths::display(&dir)
+            )));
+        }
+        self.added_dirs.push(dir);
+        Ok(())
+    }
+
+    /// Gates the session's tool calls with `mode`, one it offers.
+    pub(crate) fn set_permission_mode(
+        &mut self,
+        mode: wire::PermissionMode,
+    ) -> Result<(), SettingChangeError> {
+        let offered = self.options().permission_mode.available.contains(&mode);
+        self.permission_mode = PermissionMode::try_from(mode)
+            .ok()
+            .filter(|_| offered)
+            .ok_or_else(|| {
+                SettingChangeError::Unsupported("that permission mode is not offered".into())
+            })?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
