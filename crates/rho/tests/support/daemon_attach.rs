@@ -43,9 +43,7 @@ impl Attach {
         }
     }
 
-    /// Reads lines until one satisfies `done`. Only the test that
-    /// interrupts `rho attach`, which is Unix's, reads part of a stream.
-    #[cfg(unix)]
+    /// Reads lines until one satisfies `done`.
     async fn read_until(&mut self, done: impl Fn(&Value) -> bool) {
         loop {
             let line = tokio::time::timeout(DEADLINE, self.lines.next_line())
@@ -106,7 +104,6 @@ fn ends(lines: &[Value]) -> (Value, Value) {
 }
 
 /// The job of `session`'s turns, for the Unix-only test below.
-#[cfg(unix)]
 async fn job_of(client: &rho_protocol::Client, session: &SessionId) -> rho_protocol::JobSummary {
     client
         .request::<rho_protocol::methods::JobList>(&rho_protocol::JobListParams {})
