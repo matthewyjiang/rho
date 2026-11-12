@@ -178,6 +178,7 @@ impl SessionRuntime {
             permission,
             reopen_notice: None,
             credentials,
+            providers: config.providers,
         }))
     }
 
@@ -249,6 +250,7 @@ impl SessionRuntime {
             permission,
             reopen_notice,
             credentials,
+            providers: config.providers,
         });
         // In every host, since every host's saves keep a record once the
         // file has one: a host that skipped this would overwrite it with

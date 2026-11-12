@@ -64,6 +64,7 @@ mod persist;
 mod prompt;
 mod prompt_gate;
 mod prompt_turn;
+mod providers;
 mod pump;
 mod saved_settings;
 mod session_tools;
@@ -165,6 +166,8 @@ struct OpenedSession {
     reopen_notice: Option<String>,
     /// What the session's provider read its credentials at (#1662).
     credentials: SessionCredentials,
+    /// The configured providers the session was built on.
+    providers: crate::config::ProviderConfigs,
 }
 
 /// One session's runtime: everything a host keeps for a session except how
@@ -181,6 +184,9 @@ pub(crate) struct SessionRuntime {
     permission: SessionPermission,
     auth: String,
     credentials: SessionCredentials,
+    /// The configured providers the session's provider, compactor, advisor
+    /// and classifier were built on (see `providers.rs`).
+    providers: crate::config::ProviderConfigs,
     /// Cancels this runtime's prompts; see [`Self::handle`].
     handle: SessionHandle,
     completed_runs: u64,
@@ -222,6 +228,7 @@ impl SessionRuntime {
             permission,
             reopen_notice,
             credentials,
+            providers,
         } = opened;
         built.tools.bind_recall(storage.file());
         let settings = SettingsPolicy::of(storage.file());
@@ -235,6 +242,7 @@ impl SessionRuntime {
             permission,
             auth,
             credentials,
+            providers,
             handle: SessionHandle::new(),
             completed_runs: 0,
             title: TitleState::Unasked,

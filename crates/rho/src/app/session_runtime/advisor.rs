@@ -15,9 +15,8 @@ use super::{model_context_window, model_scoped_config, SessionRuntime, SettingCh
 use crate::{
     app::runtime_builder::{refresh_session_compaction, CompactionSetup},
     compaction::CompactionConfig,
-    config::Config,
+    config::{Config, InternalAgentModelConfig},
     model_identity::PromptModel,
-    tools::advisor::AdvisorModel,
 };
 
 impl SessionRuntime {
@@ -28,7 +27,7 @@ impl SessionRuntime {
     /// something. On error the session keeps its advisor.
     pub(crate) async fn set_advisor(
         &mut self,
-        model: Option<AdvisorModel>,
+        model: Option<InternalAgentModelConfig>,
         process_config: &Config,
     ) -> Result<Option<String>, SettingChangeError> {
         let Some(store) = self.built.tools.advisor().cloned() else {
@@ -40,12 +39,10 @@ impl SessionRuntime {
             // reasoning-only change would otherwise announce a switch to the
             // model the advisor already uses.
             let previous = store.model();
-            let identity =
-                |model: &AdvisorModel| PromptModel::from_internal_agent(&model.selection);
-            let previous_identity = previous.as_ref().map(identity);
+            let previous_identity = previous.as_ref().map(PromptModel::from_internal_agent);
             let notice = model
                 .as_ref()
-                .map(identity)
+                .map(PromptModel::from_internal_agent)
                 .filter(|identity| previous_identity.as_ref() != Some(identity))
                 .map(|identity| {
                     crate::prompt::model_switch_context(
@@ -97,7 +94,7 @@ impl SessionRuntime {
             match (spec, store.model()) {
                 (Some(spec), Some(reviewer)) => Ok(crate::prompt::advisor_enabled_context(
                     &spec,
-                    &PromptModel::from_internal_agent(&reviewer.selection),
+                    &PromptModel::from_internal_agent(&reviewer),
                 )),
                 _ => Err(SettingChangeError::Apply(anyhow::anyhow!(
                     "the advisor tool is missing after it was registered"

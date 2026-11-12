@@ -1,8 +1,9 @@
 //! A loaded session's config (#1720): the one it opened with, which each
 //! turn first brings up to date with the global settings that apply at a
 //! loaded session's next turn: the advisor, automatic compaction, and the
-//! codemode mode. A permission-mode change takes the permission
-//! classifier's models the same way.
+//! codemode mode, with the configured providers and the title and
+//! compaction models that resolve on them. A permission-mode change takes
+//! the permission classifier's models the same way.
 //!
 //! Lazy on purpose: an idle session pays nothing for a change, and the turn
 //! already holds the session's runtime to apply it.
@@ -15,7 +16,7 @@ use crate::{
     app::session_runtime::SessionRuntime,
     config::Config,
     permission_classifier::DECISION_SCREEN_ID,
-    tools::advisor::{advisor_available, AdvisorModel},
+    tools::advisor::{advisor_available, advisor_model},
 };
 
 /// What a loaded session's turns read.
@@ -72,25 +73,19 @@ impl LoadedSession {
             if let Err(error) = runtime.set_compaction(&next) {
                 failed = true;
                 notices.push(format!("could not apply the compaction settings: {error}"));
-                next.auto_compact = current.auto_compact;
-                next.compact_threshold_percent = current.compact_threshold_percent;
-                next.compact_target_percent = current.compact_target_percent;
+                next.take_compaction_settings(&current);
             }
         }
         if changes.advisor {
-            // From `global`, whose advisor `next` just took, so the model
-            // is looked up on the providers it was chosen with, which may
-            // name a custom provider added since the session opened.
-            let model = advisor_available(&global)
-                .then(|| AdvisorModel::from_config(&global))
+            let model = advisor_available(&next)
+                .then(|| advisor_model(&next).cloned())
                 .flatten();
             match runtime.set_advisor(model, &next).await {
                 Ok(notice) => notices.extend(notice),
                 Err(error) => {
                     failed = true;
                     notices.push(format!("could not apply the advisor settings: {error}"));
-                    next.advisor_mode = current.advisor_mode;
-                    restore_advisor_model(&mut next, &current);
+                    next.take_advisor_settings(&current);
                 }
             }
         }
@@ -131,14 +126,7 @@ impl LoadedSession {
         };
         let mut next = (*self.config()).clone();
         for id in [PERMISSION_CLASSIFIER_AGENT_ID, DECISION_SCREEN_ID] {
-            match global.internal_agents.get(id) {
-                Some(selection) => {
-                    next.internal_agents.insert(id.into(), selection.clone());
-                }
-                None => {
-                    next.internal_agents.remove(id);
-                }
-            }
+            next.take_internal_agent(&global, id);
         }
         Arc::new(next)
     }
@@ -152,20 +140,5 @@ impl LoadedSession {
     /// consistent.
     fn lock_config(&self) -> std::sync::MutexGuard<'_, SessionConfig> {
         self.config.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-}
-
-/// Gives `config` the advisor model `from` has.
-fn restore_advisor_model(config: &mut Config, from: &Config) {
-    use crate::agent::ADVISOR_AGENT_ID;
-    match from.internal_agents.get(ADVISOR_AGENT_ID) {
-        Some(selection) => {
-            config
-                .internal_agents
-                .insert(ADVISOR_AGENT_ID.into(), selection.clone());
-        }
-        None => {
-            config.internal_agents.remove(ADVISOR_AGENT_ID);
-        }
     }
 }

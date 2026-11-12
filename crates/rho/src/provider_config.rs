@@ -130,9 +130,15 @@ impl ProviderConfigs {
         std::time::Duration::from_secs(30 * 60);
 
     fn endpoint(&self, provider: &str) -> Option<&Url> {
+        self.host(provider).map(|endpoint| &endpoint.base_url)
+    }
+
+    /// The configured host `provider` names: the Ollama endpoint or a
+    /// custom host. `None` for any other provider.
+    pub(crate) fn host(&self, provider: &str) -> Option<&ProviderEndpointConfig> {
         match provider {
-            "ollama" => self.ollama.as_ref().map(|endpoint| &endpoint.base_url),
-            name => self.custom.get(name).map(|endpoint| &endpoint.base_url),
+            "ollama" => self.ollama.as_ref(),
+            name => self.custom.get(name),
         }
     }
 
