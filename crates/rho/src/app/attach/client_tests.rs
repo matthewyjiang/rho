@@ -27,7 +27,8 @@ fn job(id: &str, kind: JobKind, parent: Option<&str>, session: Option<&str>) -> 
 
 // Covers: an id names a session by its job's id or its own; a subagent
 // run, a workflow's agent node included, by its job's id or the id of the
-// session it writes, the latest run's when several wrote it; a run on
+// session it writes, the latest run's when several wrote it, and an
+// earlier run of that session is refused, naming the latest; a run on
 // another runtime and a workflow run's drive
 // are refused, naming the session they run in; an id no job has is taken
 // as a session id for the daemon to reopen.
@@ -59,14 +60,13 @@ fn an_id_names_a_session_or_a_run() {
         job("orphan-job", JobKind::Subagent, Some("gone"), None),
     ];
     let session = Ok(Target::Session(SessionId::new("parent-session")));
-    let node = Ok(Target::Run {
-        job: JobId::new("node-job"),
-        session: SessionId::new("node-session"),
-    });
     let cases = [
         ("session-job", session.clone()),
         ("parent-session", session),
-        ("node-job", node),
+        (
+            "node-job",
+            Err("job node-job ran before job node-job-again in the same session; attach to that one".to_owned()),
+        ),
         (
             "node-session",
             Ok(Target::Run {

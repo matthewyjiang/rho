@@ -69,18 +69,30 @@ impl ChildFeeds {
     /// Subscribes a client to the stream of the run writing `session`,
     /// resuming after its cursor when the stream still can, once the run
     /// has opened the session. `None` when no run under way writes
-    /// `session`, or the run ended before it opened it.
+    /// `session`, or the run ended before it opened it. A run that gave way
+    /// to another of the same session meanwhile, as a workflow node's next
+    /// attempt, is followed through that one.
     pub(super) async fn attach(
         &self,
         session: &SessionId,
         after: Option<&Cursor>,
     ) -> Option<(SessionAttachResponse, Subscription)> {
-        let Listed {
-            workspace,
-            mut feed,
-        } = self.runs().get(session)?.clone();
-        let feed = feed.wait_for(Option::is_some).await.ok()?.clone()?;
-        Some(attach_response(&workspace, feed.attach(after)))
+        loop {
+            let Listed {
+                workspace,
+                mut feed,
+            } = self.runs().get(session)?.clone();
+            let opened = feed
+                .wait_for(Option::is_some)
+                .await
+                .ok()
+                .map(|feed| feed.clone());
+            // A run that ended unopened took its listing with it; the next
+            // lookup finds a later run's, or none.
+            if let Some(Some(feed)) = opened {
+                return Some(attach_response(&workspace, feed.attach(after)));
+            }
+        }
     }
 
     fn runs(&self) -> MutexGuard<'_, HashMap<SessionId, Listed>> {

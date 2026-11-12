@@ -372,10 +372,22 @@ fn resolve(jobs: &[JobSummary], id: &str) -> Result<Target, AutomationExit> {
             )))
         }
         (JobKind::Subagent, Some(session)) => {
+            // The session's stream is its latest run's.
+            let latest = jobs
+                .iter()
+                .rev()
+                .find(|other| other.session.as_ref() == Some(session))
+                .unwrap_or(job);
+            if latest.id != job.id {
+                return Err(AutomationExit::other(format!(
+                    "job {} ran before job {} in the same session; attach to that one",
+                    job.id, latest.id
+                )));
+            }
             return Ok(Target::Run {
                 job: job.id.clone(),
                 session: session.clone(),
-            })
+            });
         }
         (JobKind::Subagent, None) => {
             "is a subagent run on another runtime, which keeps no rho session to follow"
