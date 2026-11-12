@@ -378,6 +378,7 @@ fn opening_feed(
     );
     if let Some(saved) = saved_replay(&mut live, runtime, &job.id) {
         feed.end_turn(saved);
+        feed.seed_usage(&live.context_usage(runtime.context_estimate()));
     }
     // An outcome is recorded with the turn it is of.
     if let (Some(outcome), Some(turn)) = (job.outcome.clone(), last.turn.clone()) {

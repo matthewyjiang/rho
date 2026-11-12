@@ -1764,6 +1764,45 @@ async fn the_job_list_tells_what_a_waiting_job_asks() {
     );
 }
 
+// Covers: a session a later daemon reopens lists the context its saved
+// conversation fills, with no cost, before it runs another turn; until it
+// is reopened the daemon follows nothing of its job.
+// Owner: daemon job list.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_reopened_session_lists_its_context() {
+    let sandbox = Sandbox::new();
+    let (mut daemon, client) = sandbox.spawn_daemon(sandbox.rho("fixed"), &[]).await;
+    let session = sandbox.new_session(&client).await;
+    assert_eq!(sandbox.prompt(&client, &session).await, Ok(()));
+    settled_job(&sandbox, &client, &session).await;
+    drop(client);
+    let stop = sandbox
+        .rho("fixed")
+        .args(["daemon", "stop"])
+        .status()
+        .unwrap();
+    assert!(stop.success(), "log:\n{}", sandbox.isolated.daemon_log());
+    daemon.wait().unwrap();
+
+    let client = sandbox.start_daemon("fixed").await;
+    let unloaded = settled_job(&sandbox, &client, &session).await.live;
+    let (_follower, _) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
+    let usage = settled_job(&sandbox, &client, &session)
+        .await
+        .live
+        .and_then(|live| live.usage);
+
+    assert_eq!(
+        (
+            unloaded,
+            usage.map(|usage| (usage.used_tokens > 0, usage.cost_usd_micros)),
+        ),
+        (None, Some((true, None))),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
 // Covers: a supervised turn's approval, asked while no client is attached,
 // waits in the daemon with the job waiting for input; a client that
 // attaches later is told the open request in its attach response and

@@ -211,11 +211,6 @@ impl Feed {
             .filter(|event| encoded_len(event).is_some())
             .collect();
         let mut state = self.state();
-        // A reopened session's usage is its saved conversation's until a
-        // turn reports it live, which then also holds the session's cost.
-        if state.usage.is_none() {
-            state.usage = saved.iter().rev().find_map(usage_of);
-        }
         state.transcript.extend(saved);
         state.turn_start = state.last;
         state.turn_start_evicted = false;
@@ -273,6 +268,13 @@ impl Feed {
             options: state.options.clone(),
             subscription,
         }
+    }
+
+    /// Starts the session's usage at `usage`, a usage event of the context
+    /// its saved conversation fills, which no saved row holds. Sent to no
+    /// client: a turn's usage replaces it, with the session's cost.
+    pub(super) fn seed_usage(&self, usage: &wire::SessionEvent) {
+        self.state().usage = usage_of(usage);
     }
 
     /// The session's title, if it has one.
