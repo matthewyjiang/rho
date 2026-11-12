@@ -304,9 +304,9 @@ fn jsonl_streams_the_sessions_events_between_start_and_end() {
     );
 }
 
-// Covers: a provider retry shows as a discarded response, and the turn's
-// answer holds only the retried response's text; the provider's error stays
-// out.
+// Covers: a provider attempt that failed before streaming shows as a retry,
+// not a discarded response, and the turn's answer holds only the retried
+// response's text; the provider's error stays out.
 // Owner: rho run JSONL contract (process contract)
 #[test]
 fn jsonl_tracks_provider_retries_without_exposing_diagnostics() {
@@ -320,9 +320,12 @@ fn jsonl_tracks_provider_retries_without_exposing_diagnostics() {
     assert_success(&output);
     let lines = jsonl_events(&output);
     let events = session_events(&lines);
-    assert!(events
-        .iter()
-        .any(|event| event["type"] == "response_discarded"));
+    let count = |kind: &str| events.iter().filter(|event| event["type"] == kind).count();
+    assert_eq!(
+        (count("provider_retry"), count("response_discarded")),
+        (1, 0),
+        "{events:#?}"
+    );
     assert_eq!(
         events.last().unwrap()["outcome"]["text"],
         "recovered",
@@ -366,7 +369,7 @@ fn jsonl_reports_a_failed_turn_and_hides_authentication_text() {
             "fail",
             "provider",
             "provider_error",
-            "provider failed: deterministic provider failure",
+            "openai: provider failed: deterministic provider failure",
         ),
         (
             "auth-failure",

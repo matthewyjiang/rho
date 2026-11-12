@@ -33,7 +33,8 @@ pub(in crate::app) async fn serve(args: &McpServeArgs, cli: &Cli) -> anyhow::Res
     match args.http {
         None => {
             let context = CallerContext::from_env(|name| std::env::var_os(name))?;
-            mcp_server::serve_stdio(control, context, environment).await
+            let access = args.scope.map_or(Access::Write, access);
+            mcp_server::serve_stdio(control, access, context, environment).await
         }
         Some(address) => {
             // The tokens live in the credential store.
@@ -64,10 +65,7 @@ pub(in crate::app) fn token(command: &McpTokenCommand, cli: &Cli) -> anyhow::Res
                 tokens.rotate(
                     name,
                     Rotation {
-                        access: scope.map(|scope| match scope {
-                            McpTokenScope::Read => Access::Read,
-                            McpTokenScope::Write => Access::Write,
-                        }),
+                        access: scope.map(access),
                         workspaces: workspace.clone(),
                     },
                 )
@@ -111,6 +109,13 @@ pub(in crate::app) fn token(command: &McpTokenCommand, cli: &Cli) -> anyhow::Res
         }
     }
     Ok(())
+}
+
+fn access(scope: McpTokenScope) -> Access {
+    match scope {
+        McpTokenScope::Read => Access::Read,
+        McpTokenScope::Write => Access::Write,
+    }
 }
 
 /// `rho mcp token list --json`: every token without its hash.

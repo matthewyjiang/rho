@@ -17,7 +17,8 @@
 //! the handshake is in [`skew`]; what a daemon takes from the client that
 //! starts it, and each session's project trust, is in [`identity`]; what
 //! `rho doctor` reports about it is in [`doctor`]; what `rho update` and
-//! `rho uninstall` do about it is in [`install`].
+//! `rho uninstall` do about it is in [`install`]; a turn whose provider
+//! cannot be reached is in [`unreachable`].
 
 use std::{
     fs::File,
@@ -97,6 +98,9 @@ mod doctor;
 
 #[path = "support/daemon_install.rs"]
 mod install;
+
+#[path = "support/daemon_unreachable.rs"]
+mod unreachable;
 
 #[path = "support/key_checking_provider.rs"]
 mod key_checking_provider;

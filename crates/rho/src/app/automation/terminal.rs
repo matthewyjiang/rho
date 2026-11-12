@@ -7,15 +7,15 @@ use std::time::Duration;
 use rho_protocol::{TurnError, TurnErrorKind, TurnOutcome};
 
 use super::{AutomationExit, TerminalReason};
-use crate::app::session_events::outcome;
+use crate::{app::session_events::outcome, config::Config};
 
 /// How a turn that failed with `error` failed, in a session whose model
-/// runs on `provider` with `auth`: as the daemon tells its clients, unless
+/// runs as `model` selects: as the daemon tells its clients, unless
 /// `rho run` itself ended the prompt with an [`AutomationExit`], whose
 /// reason and message say it.
-pub(super) fn turn_error(error: &anyhow::Error, provider: &str, auth: &str) -> TurnError {
+pub(super) fn turn_error(error: &anyhow::Error, model: &Config) -> TurnError {
     let Some(exit) = error.downcast_ref::<AutomationExit>() else {
-        return outcome::turn_error(error, provider, auth);
+        return outcome::turn_error(error, model);
     };
     let kind = match exit.end.reason {
         TerminalReason::Authentication => TurnErrorKind::Authentication,

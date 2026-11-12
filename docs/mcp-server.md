@@ -16,7 +16,7 @@ It serves over stdio by default, for a host that starts it as a command. `rho mc
 | `cancel` | Stops the session's turn in progress, if any. | write |
 | `wait` | Waits for the session's turn to end or ask for input, up to `timeout_secs`, then reports where it is. See [Following a turn](#following-a-turn). | read |
 
-The "Needs" column matters only [over HTTP](#over-http), where each token has read or write access. Over stdio every tool is available.
+The "Needs" column is the access a tool needs. Over stdio the host has write access, and so every tool, unless the server runs with [`--scope read`](#read-only-over-stdio). [Over HTTP](#over-http) each token has read or write access.
 
 ## Following a turn
 
@@ -106,6 +106,22 @@ args = ["mcp", "serve"]
 A rho session starts its stdio servers with a [sanitized environment](/integrations/mcp#stdio-servers), so the sessions such a server starts get that environment too. List the variables their tools need in the server's `env_from_env`.
 
 Pass `--max-depth` and `--max-sessions` after `serve` to change the [limits](#limits).
+
+### Read-only over stdio
+
+Pass `--scope read` after `serve` for a host that should watch sessions and never start or change one:
+
+```bash
+claude mcp add --transport stdio rho-watch -- rho mcp serve --scope read
+```
+
+The server still lists every tool. `list`, `read`, and `wait` work, and `new`, `prompt`, `steer`, and `cancel` are refused with the access the server has and the access the tool needs:
+
+```text
+this server's caller has read access; `new` needs write
+```
+
+`--scope write` is the default. A rho session that calls the server cannot widen it: the call gets what both the server's scope and [the session's own](#scope-follows-the-sessions-a-token-starts) allow. `--scope` does not combine with `--http`, where each [token](#tokens) carries its scope.
 
 ## Over HTTP
 
