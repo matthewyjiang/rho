@@ -39,7 +39,6 @@ fn assistant_text(identity: &ModelIdentity, text: &str, effort: Option<&str>) ->
         provider_context: effort
             .map(|effort| vec![effort_block(identity, effort)])
             .unwrap_or_default(),
-        created_at: None,
     })
 }
 
@@ -53,7 +52,6 @@ fn assistant_tool_call(identity: &ModelIdentity, effort: &str) -> Message {
         provenance: Some(identity.clone()),
         reasoning_summary: None,
         provider_context: vec![effort_block(identity, effort)],
-        created_at: None,
     })
 }
 
@@ -156,7 +154,6 @@ fn gpt6_create_bodies_preserve_prefix_effort() {
                         data: json!("low"),
                         replay: crate::model::ReplayScope::ExactModel,
                     }],
-                    created_at: None,
                 }),
                 Message::user_text("three"),
             ],

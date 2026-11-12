@@ -616,7 +616,6 @@ mod tests {
             )),
             reasoning_summary: None,
             provider_context: Vec::new(),
-            created_at: None,
         });
         let cases = [
             ("legacy", Message::Assistant(vec![tool_call()])),

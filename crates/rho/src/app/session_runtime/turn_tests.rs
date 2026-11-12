@@ -10,8 +10,7 @@ use pretty_assertions::assert_eq;
 use rho_sdk::{
     model::{
         AssistantMessage, ContentBlock, Message, MessageTime, ModelEvent, ModelIdentity,
-        ModelRequest, ModelResponse, ProviderContextBlock, ReplayScope, ReplyEnd, ToolCall,
-        ToolSpec, UserStamp,
+        ModelRequest, ModelResponse, ProviderContextBlock, ReplayScope, ToolCall, ToolSpec,
     },
     provider::{
         ModelProvider, ProviderFuture, ProviderTurnContext, ScriptedProvider, ScriptedTurn,
@@ -211,9 +210,9 @@ fn request_bytes(prefix: &SessionRequestPrefix) -> String {
     serde_json::to_string(prefix.as_request(CancellationToken::new()).messages).unwrap()
 }
 
-// Covers: a provider request stamps each user message with when it was sent
-// and when the previous reply finished, and sends that reply, thinking
-// included, exactly as the model wrote it; a session resumed from its file
+// Covers: a provider request stamps each user message with only when it was
+// sent, and sends the reply before it, thinking included, exactly as the model
+// wrote it; a session resumed from its file
 // sends the same bytes as before, so the prompt cache survives a reload.
 // Owner: session runtime turn (message timestamps)
 #[tokio::test]
@@ -259,24 +258,12 @@ async fn requests_carry_saved_message_times_across_resume() {
 
     let requests = provider.recorded_requests();
     let sent = &requests[1].messages;
-    let Message::EnrichedAssistant(answer) = &sent[1] else {
-        panic!("no answer in {sent:#?}");
-    };
-    let answered = answer
-        .created_at
-        .expect("the answer records when it finished");
-    assert!(
-        window
-            .iter()
-            .any(|time| time.to_string() == answered.to_string()),
-        "{answered} is outside the turn"
-    );
     assert_eq!(
         sent,
         &vec![
-            stamped_user(sent, &window, None, "hello"),
-            answer_as_written(answered, &identity, &thinking),
-            stamped_user(sent, &window, Some(ReplyEnd::Finished(answered)), "again"),
+            stamped_user(sent, &window, "hello"),
+            answer_as_written(&identity, &thinking),
+            stamped_user(sent, &window, "again"),
         ]
     );
 
@@ -296,13 +283,8 @@ async fn requests_carry_saved_message_times_across_resume() {
     runtime.shutdown().await;
 }
 
-/// The first answer as the model wrote it, thinking included, with the time
-/// it finished recorded beside it.
-fn answer_as_written(
-    finished: MessageTime,
-    identity: &ModelIdentity,
-    thinking: &serde_json::Value,
-) -> Message {
+/// The first answer as the model wrote it, thinking included.
+fn answer_as_written(identity: &ModelIdentity, thinking: &serde_json::Value) -> Message {
     Message::assistant(AssistantMessage {
         content: vec![ContentBlock::Text("first answer".into())],
         provenance: Some(identity.clone()),
@@ -314,27 +296,15 @@ fn answer_as_written(
             data: thinking.clone(),
             replay: ReplayScope::ExactModel,
         }],
-        created_at: Some(finished),
     })
 }
 
-/// The user message `text` in `sent`, stamped as sent at either end of
-/// `window` after `previous_reply`.
-fn stamped_user(
-    sent: &[Message],
-    window: &[MessageTime; 2],
-    previous_reply: Option<ReplyEnd>,
-    text: &str,
-) -> Message {
+/// The user message `text` in `sent`, stamped with only the time it was
+/// sent, at either end of `window`.
+fn stamped_user(sent: &[Message], window: &[MessageTime; 2], text: &str) -> Message {
     window
         .iter()
-        .map(|&time| {
-            let stamp = UserStamp {
-                sent: time,
-                previous_reply,
-            };
-            Message::user_text(format!("{stamp}\n{text}"))
-        })
+        .map(|time| Message::user_text(format!("{time}\n{text}")))
         .find(|message| sent.contains(message))
         .unwrap_or_else(|| panic!("no stamped {text:?} in {sent:#?}"))
 }
@@ -385,12 +355,12 @@ impl ModelProvider for CutOffFirstReply {
     }
 }
 
-// Covers: a reply cut off by an interrupt records when it stopped, goes back
-// to the provider as the model wrote it, and the next user message's stamp
-// says it was interrupted then.
+// Covers: a reply cut off by an interrupt goes back to the provider as the
+// model wrote it, and the next user message's stamp carries only when that
+// message was sent.
 // Owner: session runtime turn (message timestamps)
 #[tokio::test]
-async fn the_next_stamp_reports_an_interrupted_reply() {
+async fn the_stamp_after_an_interrupted_reply_is_only_its_own_time() {
     let provider = Arc::new(CutOffFirstReply::default());
     let root = tempfile::tempdir().unwrap();
     let config = Config::default();
@@ -446,9 +416,6 @@ async fn the_next_stamp_reports_an_interrupted_reply() {
     let Message::AbortedAssistant(cut_off) = &sent[1] else {
         panic!("no cut-off reply in {sent:#?}");
     };
-    let stopped = cut_off
-        .stopped_at
-        .expect("the cut-off reply records when it stopped");
     assert_eq!(
         (
             sent[0].clone(),
@@ -457,9 +424,9 @@ async fn the_next_stamp_reports_an_interrupted_reply() {
             sent.len()
         ),
         (
-            stamped_user(&sent, &window, None, "hello"),
+            stamped_user(&sent, &window, "hello"),
             vec![ContentBlock::Text("partial".into())],
-            stamped_user(&sent, &window, Some(ReplyEnd::Interrupted(stopped)), "next"),
+            stamped_user(&sent, &window, "next"),
             3
         )
     );

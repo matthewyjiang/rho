@@ -31,7 +31,6 @@ fn assistant(content: Vec<ContentBlock>, provider_context: Vec<ProviderContextBl
         provenance: Some(identity("openai-codex", "gpt-a")),
         reasoning_summary: None,
         provider_context,
-        created_at: None,
     })
 }
 

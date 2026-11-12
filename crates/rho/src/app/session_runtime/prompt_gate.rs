@@ -3,8 +3,8 @@
 use std::{future::Future, sync::Mutex};
 
 use rho_sdk::{
-    model::{MessageTime, UserStamp},
-    CancellationToken, SteeringHandle, SteeringId, SteeringRetraction, UserInput,
+    model::MessageTime, CancellationToken, SteeringHandle, SteeringId, SteeringRetraction,
+    UserInput,
 };
 
 use super::persist::TurnCheckpoint;
@@ -195,12 +195,7 @@ impl PromptGate {
         match &self.slot().state {
             PromptGateState::Active(work) if !work.token.is_cancelled() => {
                 work.steering.as_ref().map(|steering| {
-                    // The reply this steer interrupts is still running, so
-                    // the stamp carries only when the steer arrived.
-                    let model = input.clone().stamped(UserStamp {
-                        sent: MessageTime::now(),
-                        previous_reply: None,
-                    });
+                    let model = input.clone().stamped(MessageTime::now());
                     steering.checkpoint.record_steer(&model, &input);
                     steering.handle.request_steer_retractable(model)
                 })

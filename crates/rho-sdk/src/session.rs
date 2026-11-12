@@ -9,7 +9,7 @@ use std::{
 use crate::{
     client::Rho,
     event::RunOutcome,
-    model::{ContentBlock, ImageContent, Message, ToolCall, UserStamp},
+    model::{ContentBlock, ImageContent, Message, MessageTime, ToolCall},
     orchestration::execute_run,
     provider::ModelProvider,
     run::Run,
@@ -75,13 +75,13 @@ impl UserInput {
         &self.content
     }
 
-    /// Puts `stamp` on its own line at the start of this input's text, or in
-    /// a text block of its own when the input has none.
+    /// Puts `sent`, the time the input arrived, on its own line at the start
+    /// of this input's text, or in a text block of its own when it has none.
     ///
     /// The stamp becomes part of the content, so stamp the copy sent to the
     /// model, not the one shown to the user.
-    pub fn stamped(mut self, stamp: UserStamp) -> Self {
-        let stamp = stamp.to_string();
+    pub fn stamped(mut self, sent: MessageTime) -> Self {
+        let stamp = sent.to_string();
         match self.content.iter_mut().find_map(|block| match block {
             ContentBlock::Text(text) => Some(text),
             ContentBlock::Image(_) | ContentBlock::ToolCall(_) => None,

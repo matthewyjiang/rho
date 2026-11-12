@@ -58,7 +58,6 @@ fn reasoning_forwarding_preserves_summary_and_abort_contracts() {
                     provider_context: vec![context],
                     tool_calls: Vec::new(),
                     usage: ModelUsage::default(),
-                    stopped_at: None,
                 })
             );
         } else {

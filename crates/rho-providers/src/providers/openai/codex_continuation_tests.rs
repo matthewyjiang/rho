@@ -256,7 +256,6 @@ fn gpt6_reasoning_change_keeps_request_properties_and_deltas_update_item() {
                 data: json!("low"),
                 replay: crate::model::ReplayScope::Never,
             }],
-            created_at: None,
         }),
         Message::user_text("three"),
     ];
@@ -426,29 +425,22 @@ fn continuation_with_context_fails_closed_on_history_rewrites() {
     }
 }
 
-// Covers: recorded reply times never reach the request, so the next request
+// Covers: user stamps are the only times in the request, so the next request
 // still replays the server's output byte for byte and chains on
 // `previous_response_id`; only the new stamped user message is sent.
 // Owner: Codex continuation matching.
 #[test]
-fn continuation_chains_across_timed_replies() {
-    use rho_sdk::model::{AssistantMessage, MessageTime, ReplyEnd, UserStamp};
+fn continuation_chains_across_stamped_user_messages() {
+    use rho_sdk::model::{AssistantMessage, MessageTime};
 
-    let finished = MessageTime::from_parts(1_794_461_940, -5 * 3600).unwrap();
-    let user = |text: &str, previous_reply| {
-        let stamp = UserStamp {
-            sent: finished,
-            previous_reply,
-        };
-        Message::user_text(format!("{stamp}\n{text}"))
-    };
+    let sent = MessageTime::from_parts(1_794_461_940, -5 * 3600).unwrap();
+    let user = |text: &str| Message::user_text(format!("{sent}\n{text}"));
     let items = |messages: &[Message]| codex_input_items(messages, &mut Vec::new()).unwrap();
-    let first = user("one", None);
-    let answer = Message::assistant(AssistantMessage {
-        created_at: Some(finished),
-        ..AssistantMessage::from_content(vec![ContentBlock::Text("two".into())])
-    });
-    let next = user("three", Some(ReplyEnd::Finished(finished)));
+    let first = user("one");
+    let answer = Message::assistant(AssistantMessage::from_content(vec![ContentBlock::Text(
+        "two".into(),
+    )]));
+    let next = user("three");
     let mut state = CodexContinuationState::default();
     state.record_success(
         candidate(items(std::slice::from_ref(&first))),
@@ -461,7 +453,7 @@ fn continuation_chains_across_timed_replies() {
 
     let plan = state
         .continuation_delta(&candidate(items(&[first, answer, next.clone()])))
-        .expect("the timed reply replays as the server holds it");
+        .expect("the reply replays as the server holds it");
 
     assert_eq!(
         (&plan["previous_response_id"], &plan["input"]),

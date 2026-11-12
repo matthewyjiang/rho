@@ -321,7 +321,6 @@ fn append_codex_history_message(
                 provenance: message.provenance.clone(),
                 reasoning_summary: message.reasoning_summary.clone(),
                 provider_context: message.provider_context.clone(),
-                created_at: None,
             };
             enriched
                 .content
@@ -589,7 +588,6 @@ pub(crate) fn to_openai_message_for_target(
                 provenance: message.provenance.clone(),
                 reasoning_summary: message.reasoning_summary.clone(),
                 provider_context: message.provider_context.clone(),
-                created_at: None,
             };
             enriched
                 .content
