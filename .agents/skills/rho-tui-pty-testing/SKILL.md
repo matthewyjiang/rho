@@ -1,6 +1,6 @@
 ---
 name: rho-tui-pty-testing
-description: Test Rho's interactive TUI with the deterministic PTY harness. Use when changing or validating TUI rendering, input, keybindings, pickers, scrolling, commands, lifecycle state, startup, shutdown, resize, paste, cancellation, or terminal restoration. Prefer this over Herdr for automated and CI-friendly checks.
+description: Test Rho's interactive TUI with the deterministic PTY harness. Use when changing or validating TUI rendering, input, keybindings, pickers, scrolling, commands, lifecycle state, startup, shutdown, resize, paste, cancellation, or terminal restoration.
 compatibility: Requires a buildable Rho checkout. Unix PTY support is required for scenario runs.
 ---
 
@@ -9,14 +9,6 @@ compatibility: Requires a buildable Rho checkout. Unix PTY support is required f
 Use the `rho-tui-pty` crate to spawn a compiled Rho binary in a pseudo-terminal, inject input, reconstruct the visible screen, and assert user-visible behavior. This is the primary automated interactive TUI path.
 
 For whether a TUI change needs a PTY scenario vs a pure unit test, follow `rho-test-selection` first.
-
-## When to use this vs Herdr
-
-| Need | Tool |
-| --- | --- |
-| Known flows, regressions, CI | PTY harness (this skill) |
-| Novel bug, live exploratory inspection | Herdr (`rho-tui-herdr-testing`) |
-| Compare virtual screen vs real pane | Herdr, then encode as a PTY scenario |
 
 ## Preconditions
 

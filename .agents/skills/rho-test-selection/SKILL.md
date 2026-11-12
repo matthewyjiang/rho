@@ -8,7 +8,7 @@ compatibility: Applies to the Rho monorepo test layout and PR template.
 
 Every test must earn its place. Prefer deleting or merging weak tests over growing the suite.
 
-Load this skill before adding `#[test]` / `#[tokio::test]`, before large test edits, and when reviewing test growth. For interactive TUI scenario mechanics, also load `rho-tui-pty-testing`. For Herdr exploratory checks, load `rho-tui-herdr-testing`.
+Load this skill before adding `#[test]` / `#[tokio::test]`, before large test edits, and when reviewing test growth. For interactive TUI scenario mechanics, also load `rho-tui-pty-testing`.
 
 ## Gate before you add a test
 
@@ -119,14 +119,11 @@ Tests must be deterministic under parallel `cargo test` and slow CI.
 PTY is the product gate for interactive behavior. Unit tests under `crates/rho/src/tui` stay limited to pure logic.
 
 - harness crate: `crates/rho-tui-pty`
-- smoke tests: `cargo test -p rho-coding-agent --test tui_pty`
+- smoke tests: `cargo nextest run -p rho-coding-agent --test tui_pty`
 - single scenario: `cargo run -p rho-tui-pty --bin rho-pty-scenario -- --bin target/debug/rho <scenario>`
 - skill: `rho-tui-pty-testing`
 
 For interactive bugfixes, add or extend a PTY scenario by default. Do not add a large buffer-string unit test for the same bug unless the logic is pure and better expressed as a table.
-
-Use Herdr sibling-pane smoke tests only for exploratory validation, novel bugs not yet covered by a scenario, or real-terminal parity checks (`rho-tui-herdr-testing`).
-
 ## Deleting and reviewing tests
 
 When shrinking the suite or reviewing test-only growth, delete or demand changes for:
@@ -143,5 +140,4 @@ Prefer one strong owner-layer test over the same branch covered three ways.
 ## Related skills
 
 - `rho-tui-pty-testing` - write and run PTY scenarios
-- `rho-tui-herdr-testing` - exploratory real-pane checks
 - `rho-rust-change-validation` - format, architecture, and test execution gates after Rust edits
