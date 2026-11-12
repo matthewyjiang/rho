@@ -238,7 +238,7 @@ The daemon serves and changes [configuration](/configuration) for its clients ov
 
 ## Checking the daemon
 
-[`rho doctor`](/automation-cli) reports on the daemon without starting one, each row with what to do about it; `rho doctor --json` carries the same rows in a `daemon` section, the credential store's under `authentication`.
+[`rho doctor`](/automation-cli) and `/doctor` report on the daemon without starting one, each row with what to do about it; `rho doctor --json` carries the same rows in a `daemon` section, the credential store's under `authentication`.
 
 | Row | Reports | An issue when |
 | --- | --- | --- |

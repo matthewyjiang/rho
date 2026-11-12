@@ -25,7 +25,6 @@ use crate::{
     app::{
         automation::{self, AutomationExit},
         automation_protocol::{JsonlStream, TerminalReason},
-        daemon_cli,
         shutdown_signal::ShutdownSignals,
     },
     cli::{AttachInput, AttachOutput},
@@ -134,7 +133,8 @@ async fn attach(id: &str, view: &mut View, lines: Lines) -> Result<(), Automatio
 }
 
 async fn follow(id: &str, view: &mut View, lines: Lines) -> Result<(), AutomationExit> {
-    let paths = daemon_cli::paths().map_err(|error| AutomationExit::other(format!("{error:#}")))?;
+    let paths = daemon::DaemonPaths::of_this_process()
+        .map_err(|error| AutomationExit::other(format!("{error:#}")))?;
     let Connection {
         client,
         mut notifications,

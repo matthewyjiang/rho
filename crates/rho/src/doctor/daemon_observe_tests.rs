@@ -3,7 +3,10 @@ use rho_protocol::{ProtocolVersion, VersionFix, VersionMismatch, PROTOCOL_VERSIO
 use tempfile::TempDir;
 
 use super::*;
-use crate::daemon::test_support::RefusingListener;
+use crate::{
+    daemon::test_support::RefusingListener,
+    doctor::{probes::placeholder_checks, DoctorProbeId},
+};
 
 /// Failure bound for a daemon stand-in to answer; no test waits it out.
 const DEADLINE: Duration = Duration::from_secs(10);
@@ -238,5 +241,26 @@ fn a_daemons_environment_is_compared_by_what_it_changes() {
             acts: vec!["NO_PROXY".into(), "RHO_LOG".into()],
             machine: vec!["PATH".into()],
         }
+    );
+}
+
+// Covers: the daemon probe's rows replace its placeholders one for one, in
+// the order they show, so `/doctor` never keeps spinning on a daemon row
+// nothing fills in.
+// Owner: doctor daemon observation (pure)
+#[test]
+fn rows_fill_the_probe_placeholders() {
+    let ids = |rows: Vec<DoctorCheck>| rows.into_iter().map(|row| row.id).collect::<Vec<_>>();
+    let observation = DaemonObservation {
+        process: DaemonProcess::NotRunning,
+        socket: DaemonSocket::Unknown("unread".into()),
+        service: DaemonService::NotInstalled,
+        environment: DaemonEnvironment::NotRunning,
+        store: DaemonStore::NotRunning,
+    };
+
+    assert_eq!(
+        ids(observation.rows()),
+        ids(placeholder_checks(&DoctorProbeId::Daemon))
     );
 }
