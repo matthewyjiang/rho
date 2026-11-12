@@ -708,3 +708,163 @@ async fn verdict_for_config(config: Config) -> ClassifierVerdict {
     )
     .await
 }
+
+// Covers: when RTK rewrites a shell command, the classifier reads the command
+// the agent wrote beside the one that runs, and an unrewritten command reads
+// as before, while the approval stays keyed on the command that runs (#1647).
+// Owner: permission classifier input from the shell tool's approval request
+#[cfg(unix)]
+#[tokio::test]
+async fn classifier_reads_the_requested_command_when_rtk_rewrites_it() {
+    for (command, expected_approved, expected_lines) in [
+        (
+            "git status",
+            "rtk git status",
+            vec![
+                r#"  command: "rtk git status""#,
+                r#"  requested_command: "git status""#,
+            ],
+        ),
+        ("echo hi", "echo hi", vec![r#"  command: "echo hi""#]),
+    ] {
+        let pending = shell_approval_with_fake_rtk(command).await;
+        let rho_sdk::CapabilityOperation::ExecuteProcess(execution) =
+            pending.capability().operation()
+        else {
+            panic!("shell approval must contain typed process facts");
+        };
+        let approved = execution.invocation().shell_command().map(str::to_owned);
+        let provider = ScriptedProvider::new(
+            ModelIdentity::new("provider", "api", "model"),
+            [text_turn(SCREEN_ALLOW)],
+        );
+        let session_id = SessionId::new();
+        let verdict = classify_capability_request_with_provider(
+            &provider,
+            &Screen::Classifier,
+            ReasoningLevel::Low,
+            TranscriptBudget::Unbounded,
+            ClassifyRequest {
+                history: &[],
+                pending: &pending,
+                cancellation: CancellationToken::new(),
+                session_id: &session_id,
+                workspace_path: Path::new("/test/workspace"),
+                usage_recording: ProviderRequestUsageRecording::default(),
+            },
+        )
+        .await;
+        assert_eq!(verdict, ClassifierVerdict::Allow, "{command}");
+        let state = request_state(&provider.recorded_requests()[0]);
+        let command_lines: Vec<&str> = state
+            .lines()
+            .filter(|line| line.contains("command: "))
+            .collect();
+        assert_eq!(
+            (approved.as_deref(), command_lines),
+            (Some(expected_approved), expected_lines),
+            "{command}"
+        );
+    }
+}
+
+/// Records each approval request and denies it, so nothing runs.
+#[cfg(unix)]
+#[derive(Debug, Default)]
+struct DenyAndRecord {
+    requests: Mutex<Vec<ApprovalRequest>>,
+}
+
+#[cfg(unix)]
+impl rho_sdk::ApprovalHandler for DenyAndRecord {
+    fn request<'a>(&'a self, request: ApprovalRequest) -> rho_sdk::ApprovalFuture<'a> {
+        Box::pin(async move {
+            self.requests
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(request);
+            rho_sdk::ApprovalDecision::Deny {
+                reason: "recorded".into(),
+            }
+        })
+    }
+}
+
+/// The approval the bash tool asks for `command`, with a fake `rtk` on
+/// `PATH` that rewrites only `git status`.
+#[cfg(unix)]
+async fn shell_approval_with_fake_rtk(command: &str) -> ApprovalRequest {
+    const FAKE_RTK: &str = "#!/bin/sh\n\
+        case \"$1\" in\n\
+        --version) echo 'rtk 1.1.0' ;;\n\
+        rewrite) [ \"$2\" = 'git status' ] || exit 1\n\
+        printf 'rtk git status'; exit 3 ;;\n\
+        esac\n";
+    let root = tempfile::tempdir().unwrap();
+    let bin = tempfile::tempdir().unwrap();
+    let rtk = bin.path().join("rtk");
+    // A child process writes the script: a write fd held by this test binary
+    // can be inherited across a concurrent test's fork, and exec of the fresh
+    // script would then fail with ETXTBSY.
+    let written = std::process::Command::new("/bin/sh")
+        .args(["-c", r#"printf '%s' "$1" > "$2" && chmod +x "$2""#, "sh"])
+        .arg(FAKE_RTK)
+        .arg(&rtk)
+        .status()
+        .unwrap();
+    assert!(written.success());
+    let path = format!(
+        "{}:{}",
+        bin.path().display(),
+        std::env::var("PATH").unwrap()
+    );
+    let environment = rho_sdk::ProcessEnvironment::Explicit {
+        variables: [("PATH".to_owned(), path)].into_iter().collect(),
+    };
+    let provider = ScriptedProvider::new(
+        ModelIdentity::new("scripted", "test", "model"),
+        [
+            ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
+                ToolCall::new(
+                    "shell-1".into(),
+                    "bash".into(),
+                    serde_json::json!({ "command": command }),
+                ),
+            )])),
+            text_turn("done"),
+        ],
+    );
+    let approvals = Arc::new(DenyAndRecord::default());
+    let runtime = rho_sdk::Rho::builder()
+        .provider(provider)
+        .workspace(rho_sdk::Workspace::new(root.path()).unwrap())
+        .workspace_policy(
+            rho_sdk::ScopedWorkspacePolicy::new()
+                .allow_processes()
+                .require_process_approval(),
+        )
+        .approval_handler_shared(approvals.clone())
+        .tool_shared(rho_tools::shell_tool(
+            rho_tools::ShellToolOptions::new()
+                .environment(environment)
+                .rtk(true),
+        ))
+        .build()
+        .unwrap();
+    let session = runtime
+        .session(rho_sdk::SessionOptions::default())
+        .await
+        .unwrap();
+    let mut run = session
+        .start(rho_sdk::UserInput::text("run it"))
+        .await
+        .unwrap();
+    while run.next_event().await.is_some() {}
+    run.outcome().await.unwrap();
+    let mut requests = approvals
+        .requests
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    assert_eq!(requests.len(), 1, "{command}");
+    requests.remove(0)
+}
