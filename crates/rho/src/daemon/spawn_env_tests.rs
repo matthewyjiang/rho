@@ -18,7 +18,7 @@ fn an_auto_started_daemon_keeps_only_allowed_variables() {
     let kept = [
         ("HOME", "/home/dev"),
         ("PATH", "/usr/bin"),
-        ("XDG_RUNTIME_DIR", "/run/user/1000"),
+        ("XDG_CACHE_HOME", "/home/dev/.cache"),
         ("LANG", "C.UTF-8"),
         ("https_proxy", "http://proxy:3128"),
         ("RHO_LOG", "rho=debug"),

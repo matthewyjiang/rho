@@ -80,6 +80,12 @@ pub(in crate::daemon) fn open_log_file(path: &Path) -> io::Result<File> {
     OpenOptions::new().create(true).append(true).open(path)
 }
 
+/// Nothing to flush: Windows does not open a directory as a file, and NTFS
+/// journals the directory entries a create, rename, or remove changes.
+pub(crate) fn sync_dir(_path: &Path) -> io::Result<()> {
+    Ok(())
+}
+
 /// Opens `path` for writing, emptied, creating it if it is missing.
 pub(crate) fn create_private_file(path: &Path) -> io::Result<File> {
     OpenOptions::new()

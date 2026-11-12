@@ -11,7 +11,9 @@ pub(crate) use account::{account_lock_path, lock_account_file};
 pub(in crate::daemon) use endpoint::{
     connect, connect_restarting, endpoint, inspect_endpoint, remove_endpoint, Listener, Stream,
 };
-pub(crate) use files::{create_private_dir, create_private_file, DaemonPathError, FileIdentity};
+pub(crate) use files::{
+    create_private_dir, create_private_file, sync_dir, DaemonPathError, FileIdentity,
+};
 pub(in crate::daemon) use files::{
     open_lock_file, open_log_file, path_bytes, prepare_private_dir, running_identity,
 };

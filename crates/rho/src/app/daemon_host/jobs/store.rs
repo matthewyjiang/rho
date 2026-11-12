@@ -49,14 +49,14 @@ impl JobStore {
             &contents,
             WriteDurability::Durable,
         )?;
-        fs::File::open(&self.dir)?.sync_all()
+        crate::daemon::sync_dir(&self.dir)
     }
 
     /// Deletes `id`'s file, if it has one, and flushes the directory, so a
     /// later daemon does not list the job.
     pub(in crate::app::daemon_host) fn remove(&self, id: &JobId) -> io::Result<()> {
         match fs::remove_file(self.path_of(id)) {
-            Ok(()) => fs::File::open(&self.dir)?.sync_all(),
+            Ok(()) => crate::daemon::sync_dir(&self.dir),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
             Err(error) => Err(error),
         }

@@ -8,7 +8,7 @@
 //! | Concern | Items |
 //! |---|---|
 //! | Endpoint | [`endpoint`], [`Listener`], [`Stream`], [`connect`], [`connect_restarting`], [`remove_endpoint`], [`inspect_endpoint`] |
-//! | Private files | [`DaemonPathError`], [`create_private_dir`], [`prepare_private_dir`], [`create_private_file`], [`open_lock_file`], [`open_log_file`], [`path_bytes`], [`FileIdentity`], [`running_identity`], [`account_lock_path`], [`lock_account_file`] |
+//! | Private files | [`DaemonPathError`], [`create_private_dir`], [`prepare_private_dir`], [`create_private_file`], [`sync_dir`], [`open_lock_file`], [`open_log_file`], [`path_bytes`], [`FileIdentity`], [`running_identity`], [`account_lock_path`], [`lock_account_file`] |
 //! | Process | [`detach`], [`MACHINE_VARIABLES`], [`is_variable`], [`request_stop`], [`StopRequests`], [`stderr_is_journal_stream`] |
 //! | Restart | [`relaunch`], [`take_handoff`] |
 //!
@@ -43,7 +43,7 @@ use windows as imp;
 
 pub(crate) use imp::{
     account_lock_path, create_private_dir, create_private_file, lock_account_file,
-    stderr_is_journal_stream, DaemonPathError, FileIdentity, StopRequests,
+    stderr_is_journal_stream, sync_dir, DaemonPathError, FileIdentity, StopRequests,
 };
 pub(super) use imp::{
     connect, connect_restarting, detach, endpoint, inspect_endpoint, is_variable, open_lock_file,

@@ -1,4 +1,4 @@
-use std::{fs::OpenOptions, io, path::PathBuf};
+use std::{fs::OpenOptions, path::PathBuf};
 
 use pretty_assertions::assert_eq;
 use rho_providers::credentials::{CredentialResult, FileCredentialStore};
@@ -20,11 +20,12 @@ impl ContendedStore {
             .write(true)
             .open(&self.lock_path)
             .unwrap();
+        // `fs2` reports a held lock as the platform's own contention error.
         assert_eq!(
             fs2::FileExt::try_lock_exclusive(&contender)
                 .err()
-                .map(|error| error.kind()),
-            Some(io::ErrorKind::WouldBlock),
+                .and_then(|error| error.raw_os_error()),
+            fs2::lock_contended_error().raw_os_error(),
             "another token writer must be excluded for the whole transaction"
         );
     }

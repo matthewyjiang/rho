@@ -49,7 +49,7 @@ pub(crate) use paths::{real_home, DaemonPaths, SocketFound};
 pub(crate) use platform::DaemonPathError;
 pub(crate) use platform::{
     account_lock_path, create_private_dir, create_private_file, lock_account_file,
-    stderr_is_journal_stream, FileIdentity, StopRequests,
+    stderr_is_journal_stream, sync_dir, FileIdentity, StopRequests,
 };
 pub(crate) use server::{bind, rebind, take_handoff, Served};
 pub(crate) use shutdown::{Ending, Shutdown};

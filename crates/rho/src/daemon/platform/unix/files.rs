@@ -144,6 +144,12 @@ pub(in crate::daemon) fn open_log_file(path: &Path) -> io::Result<File> {
         .open(path)
 }
 
+/// Flushes the directory `path`, so the files created, renamed, or removed
+/// in it stay that way across a crash.
+pub(crate) fn sync_dir(path: &Path) -> io::Result<()> {
+    File::open(path)?.sync_all()
+}
+
 /// Opens `path` for writing, emptied, creating it with mode 0600.
 pub(crate) fn create_private_file(path: &Path) -> io::Result<File> {
     OpenOptions::new()
