@@ -458,7 +458,7 @@ impl RunTerminal {
                 unreachable!("rho run's stops have no parent cancel")
             }
             PromptEnd::Failed(error) => Self::Failed {
-                turn: terminal::turn_error(&error, &selection.provider, &selection.auth),
+                turn: terminal::turn_error(&error, selection),
                 error,
             },
         }

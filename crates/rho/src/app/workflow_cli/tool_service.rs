@@ -543,8 +543,10 @@ fn agent_catalog_roots_for(
     roots
 }
 
+/// The scope of `path`, which may be a canonical name or a frozen
+/// identity's, for a session in `cwd`.
 fn path_scope(cwd: &Path, path: &Path) -> PathScope {
-    if path.starts_with(cwd) {
+    if crate::paths::is_within(path, cwd) {
         PathScope::PrimaryWorkspace
     } else {
         PathScope::UnrestrictedFilesystem

@@ -23,7 +23,7 @@ const MAX_PLAIN_PATH: usize = 260;
 /// means the same without it: Windows parses a plain path, so a long one, a
 /// device name such as `NUL`, and a name ending in a dot or a space would
 /// then name something else. No path has that prefix on other platforms.
-fn without_verbatim_prefix(path: PathBuf) -> PathBuf {
+pub(crate) fn without_verbatim_prefix(path: PathBuf) -> PathBuf {
     let mut components = path.components();
     let Some(Component::Prefix(prefix)) = components.next() else {
         return path;
@@ -68,6 +68,49 @@ fn is_plain_windows_name(name: &OsStr) -> bool {
                     .is_some_and(|stem| stem.eq_ignore_ascii_case(port))
             }));
     !device && !name.ends_with(['.', ' '])
+}
+
+/// Whether `path` is `root` or a path beneath it, whichever way each is
+/// written. See [`same`].
+pub(crate) fn is_within(path: &Path, root: &Path) -> bool {
+    comparable(path).starts_with(comparable(root))
+}
+
+/// Whether `left` and `right` are one path written two ways.
+///
+/// Windows writes `C:\dir` three ways in this crate: as a person does,
+/// `\\?\C:\dir` as [`fs::canonicalize`] answers, and `//?/C:/dir`, that
+/// answer through [`display`]. [`Path`] compares the three as different
+/// drives. Other platforms write a path one way.
+pub(crate) fn same(left: &Path, right: &Path) -> bool {
+    comparable(left) == comparable(right)
+}
+
+/// `path` on the plain drive its verbatim prefix names, for comparing and
+/// not for opening: unlike [`without_verbatim_prefix`] this drops the prefix
+/// from a path only the prefix makes valid.
+fn comparable(path: &Path) -> PathBuf {
+    let mut components = path.components();
+    let Some(Component::Prefix(prefix)) = components.next() else {
+        return path.to_path_buf();
+    };
+    let drive = match prefix.kind() {
+        Prefix::VerbatimDisk(drive) => drive,
+        // `//?/C:`: a slash does not spell the verbatim prefix, so this
+        // parses as the share `C:` of a server `?`, which names no server.
+        Prefix::UNC(server, share) if server == "?" => match share.as_encoded_bytes() {
+            [drive, b':'] => *drive,
+            _ => return path.to_path_buf(),
+        },
+        Prefix::Verbatim(_)
+        | Prefix::VerbatimUNC(..)
+        | Prefix::DeviceNS(_)
+        | Prefix::UNC(..)
+        | Prefix::Disk(_) => return path.to_path_buf(),
+    };
+    let mut plain = OsString::from(format!("{}:", char::from(drive)));
+    plain.push(components.as_path());
+    PathBuf::from(plain)
 }
 
 /// Renders paths consistently in user-facing text and structured output.
@@ -449,6 +492,31 @@ mod tests {
     fn prompt_encoders_normalize_windows_separators() {
         assert_eq!(prompt_data(Path::new(r"C:\Users\rho")), "\"C:/Users/rho\"");
         assert_eq!(prompt_attr(Path::new(r"C:\Users\rho")), "\"C:/Users/rho\"");
+    }
+
+    // Covers: the three ways this crate writes one Windows path compare as
+    // one path, and a path on another drive, a share, or beside the root
+    // does not compare as inside it.
+    // Owner: path comparison
+    #[cfg(windows)]
+    #[test]
+    fn one_windows_path_written_three_ways_compares_as_one() {
+        let forms = [r"C:\ws\wf", r"\\?\C:\ws\wf", "//?/C:/ws/wf", "C:/ws/wf"];
+        let inside = forms.map(|form| {
+            forms.map(|other| {
+                (
+                    same(Path::new(form), Path::new(other)),
+                    is_within(Path::new(form), Path::new(r"C:\ws")),
+                    is_within(Path::new(form), Path::new(r"\\?\C:\ws")),
+                )
+            })
+        });
+        let outside = [r"\\?\D:\ws\wf", r"\\?\C:\ws2\wf", r"\\server\C:\ws\wf"]
+            .map(|path| is_within(Path::new(path), Path::new(r"C:\ws")));
+        assert_eq!(
+            (inside, outside),
+            ([[(true, true, true); 4]; 4], [false; 3])
+        );
     }
 
     // Covers: a canonical path loses the verbatim prefix only where the

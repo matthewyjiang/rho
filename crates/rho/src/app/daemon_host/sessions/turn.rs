@@ -36,9 +36,9 @@ use crate::{
         },
         session_events::{outcome, CompactionEnd},
         session_runtime::{
-            CommandRejected, InsertedMessage, PlanReport, PromptScope, SessionEvent,
-            SessionRuntime, StartedBy, TitleJob, Turn, TurnControl, TurnIo, TurnOutcome, TurnView,
-            UnsavedCompaction, WorkflowStart,
+            model_scoped_config, CommandRejected, InsertedMessage, PlanReport, PromptScope,
+            SessionEvent, SessionRuntime, StartedBy, TitleJob, Turn, TurnControl, TurnIo,
+            TurnOutcome, TurnView, UnsavedCompaction, WorkflowStart,
         },
         workflow_cli::discover::WorkflowLaunch,
     },
@@ -287,16 +287,20 @@ fn failure(
     session
         .feed
         .publish(outcome::diagnostic_notice(error).map(|text| wire::SessionEvent::Notice { text }));
-    client_error(runtime, error)
+    client_error(session, runtime, error)
 }
 
-/// `error` on `runtime` as clients are told it, hiding an authentication
-/// failure's text, which may echo credentials.
-pub(super) fn client_error(runtime: &SessionRuntime, error: &anyhow::Error) -> wire::TurnError {
+/// `error` on `session`'s `runtime` as clients are told it, hiding an
+/// authentication failure's text, which may echo credentials.
+pub(super) fn client_error(
+    session: &LoadedSession,
+    runtime: &SessionRuntime,
+    error: &anyhow::Error,
+) -> wire::TurnError {
     // The model the turn ran on, which a configure may have switched from
     // the config's.
-    let current = runtime.current_model();
-    outcome::turn_error(error, &current.provider, &current.auth)
+    let model = model_scoped_config(&runtime.current_model(), &session.config());
+    outcome::turn_error(error, &model)
 }
 
 /// Moves what the session saved since the last call, a turn's rows or
@@ -530,7 +534,7 @@ async fn compact(
     let end = match &compacted {
         Ok(Some(outcome)) => CompactionEnd::Completed(outcome),
         Ok(None) => CompactionEnd::Cancelled,
-        Err(error) => CompactionEnd::Failed(client_error(runtime, error).message),
+        Err(error) => CompactionEnd::Failed(client_error(&view.session, runtime, error).message),
     };
     let summary = compacted
         .as_ref()

@@ -4366,7 +4366,7 @@
           "type": "object"
         },
         {
-          "description": "The turn asks the provider again, and why. Says what the turn is\ndoing until its next event; a stream reset sends\n[`Self::ResponseDiscarded`] first.",
+          "description": "The turn asks the provider again, and why. Says what the turn is\ndoing until its next event; a stream reset that discarded streamed\noutput sends [`Self::ResponseDiscarded`] first.",
           "properties": {
             "reason": {
               "$ref": "#/$defs/RetryReason"

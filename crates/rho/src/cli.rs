@@ -654,6 +654,12 @@ pub struct McpServeArgs {
     /// running at once. Defaults to 10.
     #[arg(long, value_name = "N")]
     pub max_sessions: Option<u32>,
+    /// Over stdio, what the host may do: `read` lists, reads, and waits
+    /// for sessions and refuses every other tool; `write`, the default,
+    /// also starts, prompts, steers, and cancels them. With `--http` each
+    /// token carries its own scope instead.
+    #[arg(long, value_enum, conflicts_with = "http")]
+    pub scope: Option<McpTokenScope>,
 }
 
 #[derive(Subcommand, Clone, Debug)]
@@ -689,7 +695,8 @@ pub enum McpTokenCommand {
     },
 }
 
-/// What an MCP server token may do.
+/// What a caller of the MCP server may do: an HTTP token, or the host of a
+/// stdio server.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 pub enum McpTokenScope {
     Read,
