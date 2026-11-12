@@ -84,7 +84,7 @@ impl ChildFeeds {
     /// What `rho/job/list` reports of the run writing `session` from its
     /// stream; `None` when no run under way writes it, or the run has not
     /// opened it yet.
-    pub(super) fn live(&self, session: &SessionId) -> Option<wire::JobLive> {
+    pub(in crate::app::daemon_host) fn live(&self, session: &SessionId) -> Option<wire::JobLive> {
         let listed = self.runs().get(session)?.clone();
         let feed = listed.feed.borrow().clone()?;
         Some(feed.live())
