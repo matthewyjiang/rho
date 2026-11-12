@@ -1274,6 +1274,14 @@ fn daemon_jobs_view_starts_cancels_messages_and_attaches() {
     assert_pass("daemon_jobs_view_actions");
 }
 
+// Covers: `/jobs` starts a session in its own git worktree, and its row
+// shows the worktree's branch (#1673).
+// Owner: interactive TUI as a daemon client
+#[test]
+fn daemon_jobs_view_starts_a_session_in_a_worktree() {
+    assert_pass("daemon_jobs_view_worktree");
+}
+
 // Covers: a prompt sent while a restarted daemon connects the session's MCP
 // servers again is held, as at startup, and runs once they have.
 // Owner: interactive TUI as a daemon client

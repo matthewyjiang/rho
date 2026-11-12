@@ -61,6 +61,18 @@ A session's job state is the state of its current or last turn:
 
 A new prompt moves a session's job from any state but `queued`, `running`, and `waiting_for_input` back to `running`, or to `queued` for a session [another session started](#sessions-other-sessions-start). `rho daemon status` counts the jobs that are `queued`, `running`, or `waiting_for_input`.
 
+### Sessions in worktrees
+
+A session can work in a git worktree of its own, so sessions running at once in one repository never overwrite each other's edits ([#1673](https://github.com/matthewyjiang/rho/issues/1673)). [`rho run --worktree`](/automation-cli#running-in-a-worktree), `Tab` while starting a session from [`/jobs`](/interactive-tui), and the `worktree` argument of the [MCP server's](/mcp-server) and `sessions` tool's `new` ask for one. The daemon adds the worktree when it opens the session: a new branch `rho/<repository>-<id>` from the repository's `HEAD`, checked out at `$RHO_HOME/worktrees/<repository>-<id>`, outside the repository. The session works at its workspace's place in the worktree, so its commands, edits, and project instructions are the worktree's. A workspace outside every git repository, or one git cannot add a worktree for, fails to open with `SessionOpenFailed`.
+
+The job records the worktree, so `rho/job/list` names its `branch`, its `path`, and the `origin` workspace it was added from, also after a restart. `/jobs` lists the session under its origin project with its branch, and `rho daemon status` lists the worktrees of the sessions the daemon knows that are still on disk:
+
+```text
+  worktrees    rho/api-3fa2c1d0 /home/me/.rho/worktrees/api-3fa2c1d0
+```
+
+The daemon never removes a worktree or its branch: they hold the session's work, committed or not. Remove them from the repository once you have kept what you want, with `git worktree remove <path>` (`--force` drops uncommitted edits) and `git branch -D <branch>`. A worktree whose session failed to open stays too, and the error names it. A client that asks for a worktree refuses a session a daemon older than itself opened without one, before anything runs in it; run `rho daemon restart` once its jobs finish. Attach to a worktree session with `rho attach <ID>`, or start the TUI in its worktree; a TUI in the origin project attaches only to that project's own sessions.
+
 ### Sessions other sessions start
 
 A session an agent starts from its own session, as the `sessions` tool's `new` does, is a job of kind `session` whose `parent` is the job writing the starting session, so `rho/job/list` shows who started what. A session started from one the daemon does not run, such as a foreground `rho run`'s, has no `parent` to show but is budgeted the same. Either way the daemon holds it to the grant it started with, whoever prompts it later, and for a parent it runs, starts it with no more than the parent's turn could give ([a session's grant](/protocol#a-session-s-grant)).

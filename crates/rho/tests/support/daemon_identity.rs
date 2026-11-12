@@ -135,6 +135,7 @@ async fn new_session(
             setup: SessionSetup::default(),
             parent: None,
             grant: None,
+            worktree: false,
         })
         .await
         .map(|opened| opened.session)

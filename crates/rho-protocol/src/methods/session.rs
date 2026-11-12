@@ -176,6 +176,17 @@ pub struct SessionNewParams {
     /// limit keeps it as its job's [`super::JobSummary::grant_limit`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grant: Option<super::SessionGrant>,
+    /// Whether the session works in a git worktree of its own (#1673), so
+    /// sessions in one repository cannot overwrite each other's edits. The
+    /// daemon adds a worktree of the repository `cwd` is in, on a new
+    /// branch from that repository's `HEAD`, under its rho home, and opens
+    /// the session at `cwd`'s place in it. A `cwd` in no git repository,
+    /// or one git cannot add a worktree of, is
+    /// [`crate::ErrorCode::SessionOpenFailed`]. The daemon never removes
+    /// the worktree; [`SessionNewResponse::worktree`] and
+    /// [`super::JobSummary::worktree`] name it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub worktree: bool,
 }
 
 /// Result of [`SESSION_NEW`]: the session is loaded and its job is
@@ -187,6 +198,25 @@ pub struct SessionNewResponse {
     /// The session's settings and the choices it offers, which
     /// [`super::SESSION_CONFIGURE`] changes.
     pub options: super::SessionOptions,
+    /// The worktree the session works in, for one opened with
+    /// [`SessionNewParams::worktree`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worktree: Option<SessionWorktree>,
+}
+
+/// A git worktree the daemon added for a session to work in (#1673).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SessionWorktree {
+    /// The branch checked out in the worktree, new from the repository's
+    /// `HEAD` when the session opened.
+    pub branch: String,
+    /// The worktree's root directory, under the daemon's rho home: what
+    /// `git worktree remove` takes.
+    pub path: PathBuf,
+    /// The workspace the session was asked to open in, in the checkout the
+    /// worktree was added from. The session works at the same place in the
+    /// worktree.
+    pub origin: PathBuf,
 }
 
 /// Params of [`SESSION_PROMPT`].

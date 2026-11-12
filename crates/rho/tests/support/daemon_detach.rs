@@ -1,7 +1,8 @@
 //! `rho run --detach` through the real binary: it starts a daemon when none
 //! runs, leaves the turn running there for `rho attach`, has the daemon
-//! enforce `--timeout`, and passes `--add-dir` on as the session's setup.
-//! Which flags it refuses is `cli_config`'s, tested there.
+//! enforce `--timeout`, passes `--add-dir` on as the session's setup, and
+//! with `--worktree` runs in a git worktree the daemon adds for it. Which
+//! flags it refuses is `cli_config`'s, tested there.
 
 use std::process::{Output, Stdio};
 
@@ -9,6 +10,7 @@ use pretty_assertions::assert_eq;
 use rho_protocol::{JobState, Operation, PathScope, SessionId};
 
 use super::{
+    git_repo::{git, init_repo},
     sessions::{settled_job, Sandbox, REPLY},
     setup::{asked_operation, extra_dir},
 };
@@ -157,6 +159,97 @@ async fn a_detached_run_passes_its_added_directories_to_the_daemon() {
             path: note,
             scope: PathScope::GrantedRoot { root: extra },
         },
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
+// Covers: two `rho run --detach --worktree` runs in one repository write
+// different text to the same tracked file, each in a worktree the daemon
+// added on a branch of its own: each edit stays in its own worktree on its
+// own branch, where in one checkout the second would overwrite the first,
+// and the repository's own checkout keeps its file and stays clean
+// (#1673).
+// Owner: rho run --detach CLI (process contract) over daemon worktrees.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn detached_runs_in_worktrees_keep_their_conflicting_edits_apart() {
+    let sandbox = Sandbox::new();
+    sandbox.set_permission_mode("bypass");
+    init_repo(&sandbox.workspace);
+    let client = sandbox.start_daemon("tool-call").await;
+    let write = |content: &str| {
+        serde_json::json!({
+            "id": "edit",
+            "name": "write",
+            "arguments": {"path": "shared.txt", "content": content},
+        })
+        .to_string()
+    };
+    let first = session_of(&detach(
+        &sandbox,
+        "tool-call",
+        &["--worktree", write("first").as_str()],
+    ));
+    let second = session_of(&detach(
+        &sandbox,
+        "tool-call",
+        &["--worktree", write("second").as_str()],
+    ));
+
+    let mut runs = Vec::new();
+    for session in [&first, &second] {
+        let job = settled_job(&sandbox, &client, session).await;
+        let worktree = job.worktree.expect("the job names its worktree");
+        runs.push((
+            job.state,
+            job.workspace == worktree.path,
+            worktree.origin == sandbox.workspace,
+            git(&worktree.path, &["branch", "--show-current"]) == worktree.branch,
+            std::fs::read_to_string(worktree.path.join("shared.txt")).unwrap(),
+        ));
+    }
+    let checkout = (
+        std::fs::read_to_string(sandbox.workspace.join("shared.txt")).unwrap(),
+        git(&sandbox.workspace, &["branch", "--show-current"]),
+        git(&sandbox.workspace, &["status", "--porcelain"]),
+    );
+
+    assert_eq!(
+        (runs, checkout),
+        (
+            vec![
+                (JobState::Completed, true, true, true, "first".to_owned()),
+                (JobState::Completed, true, true, true, "second".to_owned()),
+            ],
+            ("base".to_owned(), "main".to_owned(), String::new()),
+        ),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
+// Covers: `rho run --detach --worktree` outside every git repository opens
+// no session and exits as a configuration error, exit 2, saying why.
+// Owner: rho run --detach CLI (process contract) over daemon worktrees.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_detached_worktree_run_outside_git_is_refused() {
+    let sandbox = Sandbox::new();
+    let refused = detach(&sandbox, "fixed", &["--worktree", "hello"]);
+
+    assert_eq!(
+        (
+            refused.status.code(),
+            String::from_utf8(refused.stderr).unwrap()
+        ),
+        (
+            Some(2),
+            format!(
+                "Error: could not open a daemon session: rho daemon rejected rho/session/new: \
+                 could not open session in a worktree: {} is not in a git repository, so no \
+                 worktree can be added for it (code -32008)\n",
+                sandbox.workspace.display()
+            )
+        ),
         "log:\n{}",
         sandbox.isolated.daemon_log()
     );

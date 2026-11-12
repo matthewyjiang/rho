@@ -535,6 +535,8 @@ const ALL_SCENARIOS: &[Scenario] = &[
     #[cfg(unix)]
     daemon_jobs_view::ACTIONS_SCENARIO,
     #[cfg(unix)]
+    daemon_jobs_view::WORKTREE_SCENARIO,
+    #[cfg(unix)]
     daemon_mcp::SCENARIO,
     #[cfg(unix)]
     daemon_mcp_owner::SCENARIO,
