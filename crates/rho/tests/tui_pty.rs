@@ -1552,8 +1552,9 @@ fn daemon_tui_opens_its_session_with_the_first_prompt() {
 }
 
 // Covers: `/new` opens its session on config.toml as it is then, under the
-// launch's flags, and a config.toml that no longer loads fails that
-// session's first prompt with the daemon's error.
+// launch's flags and the picks config.toml left alone, and a config.toml
+// that no longer loads fails that session's first prompt with the daemon's
+// error.
 // Owner: interactive TUI as a daemon client
 #[test]
 fn daemon_tui_new_session_reads_the_current_config() {

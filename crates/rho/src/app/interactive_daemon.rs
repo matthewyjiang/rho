@@ -33,7 +33,11 @@ pub(super) async fn open(
         ChildThreads, IdleWake, ModelRef, SessionChange, SessionPart, SessionSetup, SignIn,
     };
 
-    use crate::{app::session_options::reasoning_to_wire, session::Session, tui::LaunchChange};
+    use crate::{
+        app::{session_options::reasoning_to_wire, Setting, SettingOrigins},
+        session::Session,
+        tui::LaunchChange,
+    };
 
     let Cli {
         provider,
@@ -122,6 +126,19 @@ pub(super) async fn open(
         },
         config: std::sync::Arc::new(config.clone()),
         definition: std::sync::Arc::new(bound.definition().clone()),
+        config_file: std::sync::Arc::new(
+            crate::app::config_for_new_session(bound.definition())
+                .unwrap_or_else(|_| config.clone()),
+        ),
+        flags: SettingOrigins::of_launch_flags(
+            [
+                (provider.is_some() || model.is_some() || auth.is_some()).then_some(Setting::Model),
+                reasoning.is_some().then_some(Setting::Reasoning),
+                permission_mode.is_some().then_some(Setting::PermissionMode),
+            ]
+            .into_iter()
+            .flatten(),
+        ),
     };
 
     // The picker opens over a new session, which opens only if prompted,
@@ -146,10 +163,7 @@ pub(super) async fn open(
         // the config the daemon reads then, and `/new` carries them on.
         StartupSession::Fresh | StartupSession::Picker => {
             let mut options = new_options(&launch, bound).await;
-            for change in changes {
-                let change = change.of(&options.options());
-                options.chose(&change);
-            }
+            options.set_launch_flags(launch.flags);
             return tui::DaemonSession::draft(launch, options).await;
         }
         // Resolve the id, but never take the writer lease from the daemon

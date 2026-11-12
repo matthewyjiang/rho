@@ -16,7 +16,7 @@ use super::{
     DaemonSession, Following, Target, LOST, NOT_OPENED,
 };
 use crate::{
-    app::{daemon_client::Link, DraftOptions, Origin, SettingChangeError},
+    app::{daemon_client::Link, DraftOptions, SettingChangeError, SettingOrigin},
     tui::{
         daemon_events::DaemonView,
         daemon_launch::{DaemonLaunch, InitialSettings},
@@ -34,14 +34,19 @@ pub(super) struct Draft {
     context: Vec<SessionChange>,
     /// The connection the settings were read on.
     settings_link: Arc<Link>,
+    /// `config.toml` as read when the settings were chosen, without the
+    /// launch's flags: a setting it changes since is no longer carried.
+    pub(super) chosen_on: Arc<crate::config::Config>,
 }
 
 impl DaemonSession {
     /// Connects to the daemon, on a connection of its own, for a new
-    /// session the first prompt opens with `options`.
+    /// session the first prompt opens with `options`, whose chosen
+    /// settings were chosen on `chosen_on`.
     pub(super) async fn drafted(
         launch: DaemonLaunch,
         options: DraftOptions,
+        chosen_on: Arc<crate::config::Config>,
     ) -> anyhow::Result<Self> {
         let Connection {
             daemon,
@@ -66,6 +71,7 @@ impl DaemonSession {
                 options,
                 context: Vec::new(),
                 settings_link: link,
+                chosen_on,
             })),
         })
     }
@@ -117,12 +123,12 @@ impl DaemonSession {
         // order, since the model decides what the others may pick. The
         // draft's config may be older than the daemon's, whose own stands.
         for change in changes_between(&created.options, &draft.options.options(), model) {
-            match draft.options.origin(&change) {
-                Origin::Config => {}
-                Origin::Carried => {
+            match draft.options.origins().of(&change) {
+                SettingOrigin::Config => {}
+                SettingOrigin::Carried => {
                     carry(&link, &created.session, vec![change]).await;
                 }
-                Origin::Chosen => {
+                SettingOrigin::Chosen => {
                     if let Err(refused) = configure_all(&link, &created.session, vec![change]).await
                     {
                         let Refused { change, error } = *refused;
@@ -135,6 +141,7 @@ impl DaemonSession {
             }
         }
         let origins = draft.options.origins();
+        let chosen_on = Arc::clone(&draft.chosen_on);
         let settings_link = Arc::clone(&draft.settings_link);
         let Attached {
             mut attachment,
@@ -151,6 +158,7 @@ impl DaemonSession {
         )
         .await?;
         attachment.origins = origins;
+        attachment.chosen_on = chosen_on;
         // A connection since the settings were read has none of their
         // subscription.
         if !Arc::ptr_eq(&link, &settings_link) {

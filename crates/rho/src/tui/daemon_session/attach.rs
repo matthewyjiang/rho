@@ -20,7 +20,7 @@ use super::{
 use crate::{
     app::{
         daemon_client::{Daemon, Link, StreamPosition},
-        Origin, SettingOrigins,
+        SettingOrigin, SettingOrigins,
     },
     tui::{
         daemon_events::{DaemonEvents, DaemonView},
@@ -110,6 +110,9 @@ impl DaemonSession {
         // this client: those go through the request queue once the
         // session is followed, and a refusal shows as a row.
         let mut queued = Vec::new();
+        // The launch's changes the daemon took now; queued ones count once
+        // it takes them (`DaemonRequests::picks`).
+        let mut origins = SettingOrigins::default();
         let required: Vec<SessionChange> = match settings {
             InitialSettings::Kept => Vec::new(),
             InitialSettings::Required(changes) => changes
@@ -117,13 +120,12 @@ impl DaemonSession {
                 .map(|change| change.of(&response.options))
                 .collect(),
         };
-        let mut origins = SettingOrigins::default();
-        for change in &required {
-            origins.set(change, Origin::Chosen);
-        }
         if !at_rest {
             queued = required;
         } else {
+            for change in &required {
+                origins.set(change, SettingOrigin::Chosen);
+            }
             match configure_all(&link, &id, required).await {
                 // The session's options are what the changes left, not
                 // what the attach answered before them: the chrome shows
@@ -160,6 +162,7 @@ impl DaemonSession {
             routed,
             options: Some(response.options),
             origins,
+            chosen_on: Arc::clone(&launch.config_file),
             events,
             ended: false,
             reattach: None,

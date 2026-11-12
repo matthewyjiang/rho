@@ -30,7 +30,9 @@ mod models;
 mod reasoning;
 
 pub(crate) use commands::{available_commands, drafted_commands};
-pub(crate) use draft::{config_for_new_session, DraftOptions, Origin, SettingOrigins};
+pub(crate) use draft::{
+    config_for_new_session, DraftOptions, Setting, SettingOrigin, SettingOrigins,
+};
 pub(crate) use models::{resolve_model, AuthPick};
 pub(crate) use reasoning::{reasoning_from_wire, reasoning_to_wire};
 

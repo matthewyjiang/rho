@@ -43,8 +43,9 @@ credential_store = "file"
 
 // Covers: `/new` after a config.toml edit shows and opens its session on
 // the edited model, while the launch's `--permission-mode` still holds over
-// the config's; a config.toml that no longer loads fails the next session's
-// first prompt with the daemon's error naming the file.
+// the config's, and a pick in a session holds in the next while config.toml
+// leaves it alone; a config.toml that no longer loads fails the next
+// session's first prompt with the daemon's error naming the file.
 // Owner: interactive TUI as a daemon client
 pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
     let home = IsolatedHome::new()?;
@@ -85,11 +86,24 @@ pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
             harness.screen().contents()
         );
 
-        harness.set_phase("new_session_on_broken_config");
-        std::fs::write(&home.config_path, "[model\n")?;
+        // A pick holds in the next session while config.toml leaves the
+        // setting alone, over the launch's flag too.
+        harness.set_phase("pick_holds_across_new");
+        harness.submit_text("/permissions bypass")?;
+        harness.wait_for_text("Bypass ·", SETTLE)?;
         harness.submit_text("/new")?;
         // The new session starts on an empty transcript.
         harness.wait_for_text_gone("fixture response: hello edited", SETTLE)?;
+        harness.submit_text("hello picked")?;
+        harness.wait_for_text("fixture response: hello picked", STREAM)?;
+        harness.wait_for_text("Type a message", SETTLE)?;
+        harness.assert_screen_contains("Bypass ·")?;
+        harness.assert_screen_contains("grok-4.6")?;
+
+        harness.set_phase("new_session_on_broken_config");
+        std::fs::write(&home.config_path, "[model\n")?;
+        harness.submit_text("/new")?;
+        harness.wait_for_text_gone("fixture response: hello picked", SETTLE)?;
         harness.submit_text("hello broken")?;
         harness.wait_for_text("invalid config file", STREAM)?;
         // The composer gets the prompt back; clear it to quit.

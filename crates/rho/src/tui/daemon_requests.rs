@@ -24,7 +24,7 @@ use std::{
     future::Future,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc,
+        Arc, Mutex, PoisonError,
     },
 };
 
@@ -44,7 +44,10 @@ use super::{
     daemon_events::{DaemonView, ReportRefusal},
     daemon_options::change_failure,
 };
-use crate::app::daemon_client::{Daemon, Link};
+use crate::app::{
+    daemon_client::{Daemon, Link},
+    SettingOrigin, SettingOrigins,
+};
 
 enum Request {
     Configure(SessionChange, Asked),
@@ -203,6 +206,8 @@ pub(super) struct DaemonRequests {
     /// Set once a change saved rows, which saves a session that had
     /// nothing saved yet.
     saved_rows: Arc<AtomicBool>,
+    /// The settings a change sent from here moved, once the daemon took it.
+    picks: Arc<Mutex<SettingOrigins>>,
 }
 
 impl DaemonRequests {
@@ -375,6 +380,8 @@ impl DaemonRequests {
         });
         let saved_rows = Arc::new(AtomicBool::new(false));
         let saved = Arc::clone(&saved_rows);
+        let picks = Arc::new(Mutex::new(SettingOrigins::default()));
+        let picked = Arc::clone(&picks);
         let task = tokio::spawn(async move {
             while let Some(request) = requests.recv().await {
                 match request {
@@ -402,8 +409,14 @@ impl DaemonRequests {
                             }
                             None => Some(LOST.to_owned()),
                         };
-                        if error.is_none() && saves_rows {
-                            saved.store(true, Ordering::Relaxed);
+                        if error.is_none() {
+                            if saves_rows {
+                                saved.store(true, Ordering::Relaxed);
+                            }
+                            picked
+                                .lock()
+                                .unwrap_or_else(PoisonError::into_inner)
+                                .set(&change, SettingOrigin::Chosen);
                         }
                         if let Asked::ByApp = asked {
                             let _ = views.send(DaemonView::ConfigureFinished);
@@ -457,7 +470,14 @@ impl DaemonRequests {
             control,
             control_task,
             saved_rows,
+            picks,
         }
+    }
+
+    /// The settings a change sent from here moved, as chosen, once the
+    /// daemon took it: one it refused stays where it came from.
+    pub(super) fn picks(&self) -> SettingOrigins {
+        *self.picks.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Whether a change sent from here saved rows to the session.

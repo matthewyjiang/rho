@@ -15,21 +15,28 @@ pub(crate) struct DaemonLaunch {
     /// The agent the launch bound, whose model policy a session `/new`
     /// opens takes over `config.toml` as it is then.
     pub(crate) definition: std::sync::Arc<crate::agent::AgentDefinition>,
+    /// The settings the launch's flags chose, whose values `config` holds:
+    /// every new session takes them over `config.toml`.
+    pub(crate) flags: crate::app::SettingOrigins,
+    /// `config.toml` as the launch read it, under the agent's policy but
+    /// not the flags: a choice made in a session the launch opened holds
+    /// in the next one `/new` opens until `config.toml` changes it.
+    pub(crate) config_file: std::sync::Arc<crate::config::Config>,
 }
 
 impl DaemonLaunch {
     /// The config a new session's options are built from now, as the
     /// daemon will read it when the session opens: `config.toml` as it is,
     /// so an edit since launch shows. One that does not load leaves the
-    /// launch's: the daemon refuses to open the session on it and says why
-    /// with its first prompt.
+    /// launch's read of it: the daemon refuses to open the session on it
+    /// and says why with its first prompt.
     pub(crate) fn config_now(&self) -> crate::config::Config {
         crate::app::config_for_new_session(&self.definition).unwrap_or_else(|error| {
             tracing::warn!(
                 error = format!("{error:#}"),
                 "could not read config.toml for a new session"
             );
-            (*self.config).clone()
+            (*self.config_file).clone()
         })
     }
 }
@@ -58,7 +65,7 @@ pub(crate) enum LaunchChange {
 
 impl LaunchChange {
     /// The change to send a session that runs with `options`.
-    pub(crate) fn of(self, options: &rho_protocol::SessionOptions) -> rho_protocol::SessionChange {
+    pub(super) fn of(self, options: &rho_protocol::SessionOptions) -> rho_protocol::SessionChange {
         match self {
             Self::Change(change) => change,
             Self::Auth { auth, on } => {
