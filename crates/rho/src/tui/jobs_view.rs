@@ -24,7 +24,7 @@ use ratatui::{
 use rho_protocol::{
     methods::{SessionAnswer, SessionCancel, SessionNew, SessionPrompt, SessionSteer},
     Ask, ClientEnvironment, ContentBlock, ErrorCode, InputAnswer, InputRequest, JobId, JobKind,
-    JobSummary, PromptAuthor, SessionAnswerParams, SessionCancelParams, SessionId,
+    JobState, JobSummary, PromptAuthor, SessionAnswerParams, SessionCancelParams, SessionId,
     SessionNewParams, SessionPart, SessionPromptParams, SessionSteerParams,
 };
 
@@ -306,6 +306,16 @@ impl JobsView {
         };
     }
 
+    /// Whether `session`'s turn waits on a request of its own, as last
+    /// listed.
+    fn waits_on_request(&self, session: &SessionId) -> bool {
+        self.jobs.iter().flatten().any(|job| {
+            job.kind == JobKind::Session
+                && job.session.as_ref() == Some(session)
+                && job.state == JobState::WaitingForInput
+        })
+    }
+
     /// Whether `session`'s job has a turn under way, as last listed.
     fn turn_under_way(&self, session: &SessionId) -> bool {
         self.jobs.iter().flatten().any(|job| {
@@ -329,6 +339,14 @@ impl JobsView {
         match std::mem::replace(&mut self.mode, Mode::Browse) {
             Mode::Browse | Mode::Filter => {}
             Mode::Message { text, .. } if text.trim().is_empty() => {}
+            // A turn waiting on a request takes neither a steer nor a
+            // prompt: the draft stays until the request is answered.
+            Mode::Message { session, text } if self.waits_on_request(&session) => {
+                self.mode = Mode::Message { session, text };
+                self.say(
+                    "could not send the message: the session waits on a request; answer it first",
+                );
+            }
             Mode::Message { session, text } => {
                 let under_way = self.turn_under_way(&session);
                 self.send("send the message", move |daemon| {
