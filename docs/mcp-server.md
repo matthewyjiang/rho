@@ -103,7 +103,7 @@ command = "rho"
 args = ["mcp", "serve"]
 ```
 
-A rho session starts its stdio servers with a [sanitized environment](/integrations/mcp#stdio-servers), so the sessions such a server starts get that environment too. List the variables their tools need in the server's `env_from_env`. The session passes on its `RHO_HOME` and `XDG_RUNTIME_DIR`, so the server reaches the session's own daemon without listing them.
+A rho session starts its stdio servers with a [sanitized environment](/integrations/mcp#stdio-servers), so the sessions such a server starts get that environment too. List the variables their tools need in the server's `env_from_env`. Each stdio server gets `RHO_HOME`, set to the rho home of the daemon running the session, and the session's `XDG_RUNTIME_DIR`, so the server reaches that daemon without listing them.
 
 Pass `--max-depth` and `--max-sessions` after `serve` to change the [limits](#limits).
 
