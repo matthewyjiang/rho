@@ -7,6 +7,7 @@ mod files;
 mod handoff;
 mod process;
 mod service;
+mod user_scope;
 
 pub(crate) use account::{account_lock_path, lock_account_file};
 pub(in crate::daemon) use endpoint::{
@@ -20,7 +21,7 @@ pub(in crate::daemon) use files::{
     open_lock_file, open_log_file, path_bytes, prepare_private_dir, running_identity,
 };
 pub(in crate::daemon) use handoff::{relaunch, take_handoff};
-pub(in crate::daemon) use process::{detach, is_variable, request_stop, MACHINE_VARIABLES};
+pub(in crate::daemon) use process::{is_variable, request_stop, spawn_detached, MACHINE_VARIABLES};
 pub(crate) use process::{stderr_is_journal_stream, StopRequests};
 pub(in crate::daemon) use service::stop_service;
 

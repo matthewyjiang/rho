@@ -27,7 +27,7 @@ use windows_sys::Win32::{
     System::Threading::{OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE},
 };
 
-use super::{endpoint::Listener, files::open_lock_file, process::detach};
+use super::{endpoint::Listener, files::open_lock_file, process::spawn_detached};
 use crate::daemon::{paths::DaemonPaths, server::Restarting};
 
 /// How long a restarted daemon waits for the daemon that started it to
@@ -60,14 +60,15 @@ pub(in crate::daemon) fn relaunch(
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    detach(&mut command, &paths);
-    command.spawn().map(drop).inspect_err(|error| {
-        tracing::error!(
-            executable = %executable.display(),
-            %error,
-            "could not start the rho daemon again; exiting"
-        );
-    })
+    spawn_detached(&mut command, &paths)
+        .map(drop)
+        .inspect_err(|error| {
+            tracing::error!(
+                executable = %executable.display(),
+                %error,
+                "could not start the rho daemon again; exiting"
+            );
+        })
 }
 
 /// Waits for the daemon whose pid is `token` to exit, then opens the lock

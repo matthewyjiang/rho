@@ -62,7 +62,7 @@ pub(crate) trait DaemonSpawner: Send + Sync {
 }
 
 /// Starts `rho daemon run` from the current executable, detached from the
-/// caller's terminal.
+/// caller's terminal and from the caller's service-manager unit.
 ///
 /// The daemon does not inherit the caller's environment: it gets only the
 /// variables that describe the daemon and the machine (see
@@ -101,8 +101,7 @@ impl DaemonSpawner for ProcessSpawner {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
-        platform::detach(&mut command, paths);
-        let mut child = command.spawn()?;
+        let mut child = platform::spawn_detached(&mut command, paths)?;
         // Reap the daemon if it exits while this process is still running.
         std::thread::spawn(move || child.wait());
         Ok(())
