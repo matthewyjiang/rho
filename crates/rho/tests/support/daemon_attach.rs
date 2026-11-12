@@ -494,7 +494,7 @@ async fn attach_follows_a_subagent_run() {
     let run_started = json!({
         "type": "run_started",
         "session": run_session.as_str(),
-        "workspace": sandbox.resolved_workspace(),
+        "workspace": sandbox.workspace,
     });
     let completed = json!({"type": "run_ended", "reason": "completed", "exit_code": 0});
     let ended: Vec<_> = events(&lines)
