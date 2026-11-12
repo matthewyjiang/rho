@@ -269,7 +269,7 @@ The daemon needs no service of its own: every frontend starts it on demand. Only
 
 Both examples below make the same three choices:
 
-- **Stopping the service leaves the daemon running.** On Linux the server moves the daemon it starts out of the service and into a scope of its own, as [Starting automatically](#starting-automatically) describes, so restarting or stopping the service stops neither the daemon nor the turns it runs. The server asks systemd for that scope with `busctl`, which it looks up on the service's `PATH`. If the move fails, the [daemon log](#logs) says why and the daemon may stay in the service's control group. By default systemd stops every process in that group when the service stops, and a new process group does not leave it. `KillMode=process` makes systemd stop only the server in that case too. launchd kills what is left of a job's process group when the job exits; the daemon is not in the server's group, and `AbandonProcessGroup` keeps launchd from killing anything the server leaves behind all the same. Stop the daemon itself with `rho daemon stop`.
+- **Stopping the service leaves the daemon running.** On Linux the server moves the daemon it starts out of the service and into a scope of its own, as [Starting automatically](#starting-automatically) describes, so restarting or stopping the service stops neither the daemon nor the turns it runs. The server asks systemd for that scope with `busctl`, which it looks up on the service's `PATH`. If the move fails, the [daemon log](#logs) says why and the daemon may stay in the service's control group. By default systemd stops every process in that group when the service stops, and a new process group does not leave it. `KillMode=process` makes systemd stop only the server in that case too. On macOS the daemon already runs in a process group of its own, so restarting or stopping the job does not stop it. `AbandonProcessGroup` is a safeguard, like `KillMode=process`: it keeps launchd from killing whatever is left in the server's own process group when the server exits. Stop the daemon itself with `rho daemon stop`.
 - **`PATH` is set.** A service starts with the service manager's bare environment, not your shell's, and the sessions the server starts run with the server's environment: their tools, [MCP servers](/integrations/mcp), and [CLI subagents](/subagents) find executables on its `PATH` (see [Environment](#environment)). Set it to the directories your tools live in (on Linux, including the one that holds `busctl`, usually `/usr/bin`), and add any variable sessions need that your shell would give them, such as a provider key.
 - **The server listens on loopback.** Reach it from elsewhere through a tunnel, as [Over HTTP](/mcp-server#over-http) describes.
 
@@ -301,6 +301,8 @@ systemctl --user daemon-reload
 systemctl --user enable --now rho-mcp
 loginctl enable-linger "$USER"   # optional: keep it running while you are logged out
 ```
+
+Every request needs a bearer token. Create one for each host that connects, with `rho mcp token rotate`, as [Tokens](/mcp-server#tokens) describes.
 
 `systemctl --user restart rho-mcp` restarts the server and leaves the daemon and its running turns alone. The server logs to the journal (`journalctl --user -u rho-mcp`); the daemon it starts writes its own log to `~/.rho/logs/daemon.log`, as [Logs](#logs) describes.
 
@@ -348,5 +350,7 @@ Then load it:
 launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/dev.rho.mcp.plist
 launchctl kickstart -k "gui/$(id -u)/dev.rho.mcp"   # restart the server
 ```
+
+Every request needs a bearer token. Create one for each host that connects, with `rho mcp token rotate`, as [Tokens](/mcp-server#tokens) describes.
 
 The server logs to `StandardErrorPath`; the daemon it starts writes its own log to `~/.rho/logs/daemon.log`, as [Logs](#logs) describes.
