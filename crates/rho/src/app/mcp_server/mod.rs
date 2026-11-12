@@ -4,8 +4,8 @@
 //! The server is a thin adapter: each MCP tool is one core action, its
 //! input schema the action's params, its result the action's JSON. It adds
 //! no policy. Over stdio the caller is whoever started the process, with a
-//! [`Grant::local`]; over HTTP each request's bearer token names its grant
-//! (`tokens.rs`), which the core enforces.
+//! [`Grant::local`] of the access `--scope` gives; over HTTP each request's
+//! bearer token names its grant (`tokens.rs`). The core enforces both.
 //!
 //! Each call's caller context (`crate::caller_context`) is the one a rho
 //! session's MCP client sends in the request's `_meta`, which the server
@@ -63,7 +63,10 @@ pub(super) struct SessionTools {
 enum Transport {
     /// The local caller's grant for every call, and the context the process
     /// started in.
-    Stdio { context: CallerContext },
+    Stdio {
+        grant: Grant,
+        context: CallerContext,
+    },
     /// The grant the HTTP layer put on the request after it checked the
     /// bearer token, which a request without one lacks and is refused.
     Http,
@@ -76,7 +79,7 @@ impl SessionTools {
         let sent = CallerContext::from_meta(&context.meta)
             .map_err(|error| ErrorData::invalid_params(format!("{error:#}"), None))?;
         let (grant, default) = match &self.transport {
-            Transport::Stdio { context } => (Grant::local(), context.clone()),
+            Transport::Stdio { grant, context } => (grant.clone(), context.clone()),
             Transport::Http => {
                 let grant = context
                     .extensions
@@ -153,16 +156,20 @@ fn tool(action: Action) -> Tool {
 }
 
 /// Serves the tools over stdio until the host closes stdin, for the
-/// process's caller, in `context` unless a call sends its own, the sessions
-/// they start running with `environment`.
+/// process's caller with `access`, in `context` unless a call sends its
+/// own, the sessions they start running with `environment`.
 pub(super) async fn serve_stdio(
     control: Arc<SessionControl>,
+    access: Access,
     context: CallerContext,
     environment: ClientEnvironment,
 ) -> anyhow::Result<()> {
     let tools = SessionTools {
         control,
-        transport: Transport::Stdio { context },
+        transport: Transport::Stdio {
+            grant: Grant::local(access),
+            context,
+        },
         environment,
     };
     let running = tools.serve(rmcp::transport::stdio()).await?;

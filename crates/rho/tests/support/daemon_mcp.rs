@@ -1,9 +1,9 @@
 //! `rho mcp serve` through the real binary: an MCP host drives a daemon
 //! session in another workspace over stdio while a second daemon client
 //! follows it, reading a session starts nothing of it, no tool can answer
-//! the session's approvals, the core's caps refuse with their budgets, and
-//! the HTTP transport refuses requests its tokens and origin rules do not
-//! allow. How a session's caller context carries depth and scope through
+//! the session's approvals, the core's caps refuse with their budgets, a
+//! read-only server refuses the tools that write, and the HTTP transport
+//! refuses requests its tokens and origin rules do not allow. How a session's caller context carries depth and scope through
 //! the server into the sessions it starts is in [`caller`].
 
 use std::{path::PathBuf, process::Stdio};
@@ -485,6 +485,82 @@ async fn the_caps_refuse_starts_past_their_limits() {
             Ok(json!({})),
             json!("cancelled"),
             Ok(()),
+        ),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
+// Covers: a stdio server started with `--scope read` lists, reads, and
+// waits for a session another host started, and refuses each tool that would
+// start or change one, naming the access it has and the access the tool
+// needs (#1672).
+// Owner: rho mcp serve (stdio) grant.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_read_only_stdio_server_refuses_the_tools_that_write() {
+    let sandbox = Sandbox::new();
+    sandbox.set_permission_mode("bypass");
+    let writer = stdio_server(&sandbox, "tool-call", &[], &[]).await;
+    let reader = stdio_server(&sandbox, "tool-call", &["--scope", "read"], &[]).await;
+
+    let started = call(
+        &writer,
+        "new",
+        json!({"workspace": sandbox.workspace, "prompt": bash("echo done")}),
+    )
+    .await
+    .unwrap();
+    let session = started["session"].clone();
+    let waited = call(
+        &reader,
+        "wait",
+        json!({"session": session, "timeout_secs": 50}),
+    )
+    .await
+    .unwrap();
+    let listed = call(&reader, "list", json!({})).await.unwrap();
+    let read = call(&reader, "read", json!({"session": session}))
+        .await
+        .unwrap();
+    let refused = [
+        (
+            "new",
+            json!({"workspace": sandbox.workspace, "prompt": "hello"}),
+        ),
+        ("prompt", json!({"session": session, "text": "hello"})),
+        ("steer", json!({"session": session, "text": "hello"})),
+        ("cancel", json!({"session": session})),
+    ];
+    let refusals: Vec<Result<Value, String>> = futures_util::future::join_all(
+        refused.map(|(tool, arguments)| call(&reader, tool, arguments)),
+    )
+    .await;
+    let after = call(&reader, "list", json!({})).await.unwrap();
+
+    let refusal = |tool: &str| {
+        Err(format!(
+            "this server's caller has read access; `{tool}` needs write"
+        ))
+    };
+    assert_eq!(
+        (
+            waited["state"].clone(),
+            listed["sessions"][0]["session"].clone(),
+            read["text"].as_str().map(|text| text.contains("echo done")),
+            refusals,
+            after["sessions"].as_array().map(Vec::len),
+        ),
+        (
+            json!("completed"),
+            session,
+            Some(true),
+            vec![
+                refusal("new"),
+                refusal("prompt"),
+                refusal("steer"),
+                refusal("cancel"),
+            ],
+            Some(1),
         ),
         "log:\n{}",
         sandbox.isolated.daemon_log()
