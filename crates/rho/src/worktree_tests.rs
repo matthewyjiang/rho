@@ -132,7 +132,9 @@ async fn inspect_reads_what_removing_a_worktree_would_lose() {
     let main = || Holds::Merged {
         base: "main".to_owned(),
     };
-    let cases: [(&str, &dyn Fn(&Path), Holds); 6] = [
+    // What a case does in its new worktree before the check.
+    type Arrange<'a> = &'a dyn Fn(&Path);
+    let cases: [(&str, Arrange, Holds); 6] = [
         ("nothing new", &|_| {}, main()),
         (
             "untracked",
