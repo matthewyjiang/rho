@@ -91,8 +91,13 @@ fn fake_cursor_acp_runtime_end_to_end() {
         spawn.cwd.canonicalize().unwrap(),
         home.workspace.canonicalize().unwrap()
     );
+    // A daemon names the run by its home's real path, which on macOS is not
+    // the temp dir's spelling.
     let config_dir = PathBuf::from(&spawn.env);
-    assert_eq!(config_dir, run_dir.join("cursor-config"));
+    assert_eq!(
+        config_dir.canonicalize().unwrap(),
+        run_dir.join("cursor-config").canonicalize().unwrap()
+    );
     assert_eq!(
         acp_e2e::read_json(&config_dir.join("cli-config.json")).unwrap(),
         json!({

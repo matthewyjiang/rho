@@ -82,6 +82,9 @@ fn fake_antigravity_acp_runtime_end_to_end() {
     let spawn = fake.spawn_record();
     let agent_root = run_dir.join("agy");
     let name = spawn.args.last().cloned().unwrap_or_default();
+    // A daemon names the run by its home's real path, which on macOS is not
+    // the temp dir's spelling.
+    let added_dir = spawn.args.get(4).cloned().unwrap_or_default();
     assert_eq!(
         spawn.args,
         [
@@ -89,10 +92,14 @@ fn fake_antigravity_acp_runtime_end_to_end() {
             "--cli_dir_name",
             "rho",
             "--add-dir",
-            &agent_root.display().to_string(),
+            &added_dir,
             "--agent",
             &name,
         ]
+    );
+    assert_eq!(
+        std::path::Path::new(&added_dir).canonicalize().unwrap(),
+        agent_root.canonicalize().unwrap()
     );
     let agent =
         std::fs::read_to_string(agent_root.join(format!(".agents/agents/{name}.md"))).unwrap();
