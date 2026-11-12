@@ -104,13 +104,14 @@ impl Restarting {
 
 /// Takes over the lock and the listener the handoff `token` names, for a
 /// daemon its predecessor restarted with one, before anything else this
-/// process starts could inherit them.
+/// process starts could inherit them. Where a restart keeps no listener,
+/// there is none to take over, and the caller binds one as any daemon does.
 pub(crate) fn take_handoff(
     paths: &DaemonPaths,
     token: &str,
-) -> io::Result<(DaemonLock, Inherited)> {
+) -> io::Result<(DaemonLock, Option<Inherited>)> {
     let (lock, listener) = platform::take_handoff(paths, token)?;
-    Ok((DaemonLock::adopt(lock)?, Inherited(listener)))
+    Ok((DaemonLock::adopt(lock)?, listener.map(Inherited)))
 }
 
 /// The listener a restarted daemon inherited, checked to be this home's;

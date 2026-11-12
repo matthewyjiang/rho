@@ -227,11 +227,8 @@ async fn run_foreground(
 
     let (lock, inherited) = match handoff {
         None => (daemon::acquire_lock(paths)?, None),
-        Some(handoff) => {
-            let (lock, socket) = daemon::take_handoff(paths, handoff)
-                .context("could not take over the restarted daemon's lock and socket")?;
-            (lock, Some(socket))
-        }
+        Some(handoff) => daemon::take_handoff(paths, handoff)
+            .context("could not take over the restarted daemon's lock and socket")?,
     };
     // Listen before the socket exists so an early request to stop still
     // shuts down cleanly.

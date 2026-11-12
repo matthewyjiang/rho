@@ -117,7 +117,7 @@ fn reap_exited_children() {
 pub(in crate::daemon) fn take_handoff(
     paths: &DaemonPaths,
     token: &str,
-) -> io::Result<(File, Listener)> {
+) -> io::Result<(File, Option<Listener>)> {
     let handoff: Handoff = token
         .parse()
         .map_err(|error: String| io::Error::new(io::ErrorKind::InvalidInput, error))?;
@@ -140,7 +140,8 @@ pub(in crate::daemon) fn take_handoff(
         )));
     }
     listener.set_nonblocking(true)?;
-    Ok((lock, Listener::serving(UnixListener::from_std(listener)?)))
+    let listener = Listener::serving(UnixListener::from_std(listener)?);
+    Ok((lock, Some(listener)))
 }
 
 /// Takes ownership of inherited descriptor `fd`, once it is open, and marks

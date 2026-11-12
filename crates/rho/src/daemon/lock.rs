@@ -93,9 +93,11 @@ impl DaemonLock {
     /// Takes over the lock the daemon this process restarted from handed
     /// it as `file`, its open lock file (see [`platform::take_handoff`]).
     pub(super) fn adopt(file: File) -> io::Result<Self> {
-        // The lock belongs to the open file description, which the handoff
-        // kept, so locking it again succeeds at once; it would block only
-        // if another daemon had taken the lock meanwhile.
+        // Where the handoff kept the lock, it belongs to the open file
+        // description, so locking it again succeeds at once. Where it
+        // released the lock, this takes it as a new daemon does. Either
+        // way it would block only if another daemon had taken the lock
+        // meanwhile.
         FileExt::try_lock_exclusive(&file)?;
         Ok(Self { file })
     }

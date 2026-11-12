@@ -1,6 +1,6 @@
 //! The daemon on Windows: a named pipe only the current user can open, a
 //! second pipe as its stop channel, and a restart that stops this process
-//! and starts another (#1665, #1778).
+//! and starts another, which waits for this one to exit (#1665, #1778).
 //!
 //! The daemon's files live in the rho home, under the user's profile, and
 //! are private by the profile's access control list: nothing here narrows
