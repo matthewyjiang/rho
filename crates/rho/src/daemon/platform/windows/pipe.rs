@@ -37,7 +37,8 @@ const PIPE_BUSY_POLL_INTERVAL: Duration = Duration::from_millis(5);
 pub(super) struct PipeServer {
     name: OsString,
     security: OwnerOnly,
-    next: NamedPipeServer,
+    /// `None` only while this is dropped.
+    next: Option<NamedPipeServer>,
 }
 
 impl PipeServer {
@@ -49,7 +50,7 @@ impl PipeServer {
         Ok(Self {
             name: name.to_owned(),
             security,
-            next,
+            next: Some(next),
         })
     }
 
@@ -57,7 +58,10 @@ impl PipeServer {
     /// stays connected to the waiting instance until a later call returns
     /// it.
     pub(super) async fn accept(&mut self) -> io::Result<NamedPipeServer> {
-        match self.next.connect().await {
+        let Some(waiting) = &self.next else {
+            return std::future::pending().await;
+        };
+        match waiting.connect().await {
             Ok(()) => {}
             // The client connected and closed before this call: still a
             // connection, which the caller reads as ended.
@@ -65,7 +69,24 @@ impl PipeServer {
             Err(error) => return Err(error),
         }
         let next = instance(&self.name, &self.security, Instance::Another)?;
-        Ok(std::mem::replace(&mut self.next, next))
+        Ok(self
+            .next
+            .replace(next)
+            .expect("the instance that connected was there"))
+    }
+}
+
+impl Drop for PipeServer {
+    /// Leaves no instance a client could still connect to. Dropping the
+    /// waiting instance only asks for its handle to be closed: it stays open,
+    /// and takes a connection nothing will ever serve, until the runtime has
+    /// seen its cancelled accept complete. So this connects to it first, as
+    /// the one client it can take, and no other client finds it.
+    fn drop(&mut self) {
+        drop(self.next.take());
+        // Whatever this finds, nothing waits now: it took the instance, or
+        // the instance was closed already, or a client had taken it.
+        let _ = probe(&self.name);
     }
 }
 
@@ -173,3 +194,7 @@ pub(super) fn foreign(name: &OsStr) -> io::Error {
         ),
     )
 }
+
+#[cfg(test)]
+#[path = "pipe_tests.rs"]
+mod tests;
