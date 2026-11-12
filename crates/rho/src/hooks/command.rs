@@ -69,7 +69,7 @@ pub async fn run_hook(
     cancellation: rho_sdk::CancellationToken,
 ) -> Result<HookRunOutput, HookRunError> {
     let started = std::time::Instant::now();
-    let mut command = build_command(hook, environment);
+    let mut command = build_command(hook, environment, crate::child_env::rho_home().as_deref());
     SupervisedTree::prepare(&mut command);
     let mut child = command
         .spawn()
@@ -135,10 +135,12 @@ pub async fn run_hook(
 }
 
 /// The command that runs `hook`, with exactly the environment the spawn
-/// contract promises, read from `environment`, its session's (#1659).
+/// contract promises, read from `environment`, its session's (#1659), and
+/// `rho_home` as the home of the daemon serving it.
 ///
 /// Nothing else of `environment` reaches a hook: the child gets the documented
-/// base set of [`crate::child_env`] plus the names the hook allowlisted, so
+/// base set of [`crate::child_env`], which says where the session's daemon is
+/// so a hook's `rho` reaches it, plus the names the hook allowlisted, so
 /// provider credentials and unrelated secrets cannot reach a hook program by
 /// accident. A name that is unset is simply absent from the child. A hook that
 /// needs one must handle its absence; the runtime does not invent a value or
@@ -146,7 +148,11 @@ pub async fn run_hook(
 ///
 /// [`super::IN_HOOK_ENV`] is always set last, so an allowlist cannot override
 /// it; it is Rho's own marker rather than an inherited value.
-fn build_command(hook: &HookDefinition, environment: &Ambient) -> tokio::process::Command {
+fn build_command(
+    hook: &HookDefinition,
+    environment: &Ambient,
+    rho_home: Option<&std::path::Path>,
+) -> tokio::process::Command {
     let argv = hook.command();
     let mut command = tokio::process::Command::new(hook.executable());
     command
@@ -156,7 +162,7 @@ fn build_command(hook: &HookDefinition, environment: &Ambient) -> tokio::process
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
-    environment.apply_base(&mut command);
+    environment.apply_base(&mut command, rho_home);
     for name in hook.env() {
         if let Some(value) = environment.read_os(name) {
             command.env(name, value);
