@@ -45,6 +45,8 @@ Options:
       --detach              Start the run in the rho daemon, starting one if none
                             runs, and exit once its prompt is saved, printing the
                             session's id
+      --worktree            Run in a new git worktree of the current directory's
+                            repository, on a new branch from its HEAD
       --no-subagents        Do not expose the delegated-agent tools (agent/agents) to the model
       --agent <ID>          Select the agent definition used for this session or automation run
   -h, --help                Print help (see more with '--help')
@@ -243,6 +245,35 @@ rho attach "$SESSION"
 - Unlike a foreground run's, the session is listed like one you had yourself,
   and titled in the background after its first answered turn with one small
   model call, as the TUI titles its sessions.
+- `--worktree` has the daemon open the session in a git worktree of its own,
+  as described below.
+
+### Running in a worktree
+
+Two runs in one repository edit the same files, so one can overwrite the
+other's work. `rho run --worktree`, with or without `--detach`, gives the run a
+git worktree of its own: a new branch from the repository's `HEAD`, checked out
+under `~/.rho/worktrees/` (`$RHO_HOME/worktrees/`), never inside the
+repository. The run works at the current directory's place in the worktree, and
+says where on stderr:
+
+```text
+rho: the session works in worktree /home/me/.rho/worktrees/api-3fa2c1d0 on branch rho/api-3fa2c1d0; rho never removes it
+```
+
+Outside a git repository, `--worktree` fails with exit 2. A repository with no
+commit has no `HEAD` to branch from, and fails the same way.
+
+Rho never removes a worktree or its branch, finished or not. Review the branch,
+merge what you keep, then remove both from the repository:
+
+```bash
+git worktree remove ~/.rho/worktrees/api-3fa2c1d0   # add --force to drop uncommitted edits
+git branch -D rho/api-3fa2c1d0
+```
+
+`rho daemon status` lists the worktrees of the daemon's sessions, and
+`git worktree list` lists every worktree of a repository.
 
 ### Attaching to a daemon session
 
@@ -365,6 +396,8 @@ API-key providers are usually easier to configure interactively with `/login` in
 
 On Windows, `rho update` prints the detected update command instead of running it automatically.
 
+A running [daemon](/daemon) moves to the updated version without interrupting work. Where the update replaces the executable at its path (install script, Cargo, pacman), the daemon re-executes it once nothing would be cut short; `rho update` waits for an idle daemon to restart and reports it, and for a busy one says what it is waiting for. Where the new version lands at another path (mise) or a running daemon keeps the executable from being replaced (Windows), `rho update` stops an idle daemon so the next `rho` command starts the updated one, and tells you what to run for a busy one. See [The daemon and services](/installation#the-daemon-and-services).
+
 Set `RHO_INSTALL_METHOD` to `cargo`, `pacman`, `scoop`, `scoop-global`, or `script` to override detection.
 
 ## `rho uninstall`
@@ -372,7 +405,7 @@ Set `RHO_INSTALL_METHOD` to `cargo`, `pacman`, `scoop`, `scoop-global`, or `scri
 ```sh
 rho uninstall                  # preserve local configuration and sessions
 rho uninstall --purge          # also delete ~/.rho and its contents
-rho uninstall --purge --dry-run # preview without prompting or deleting
+rho uninstall --purge --dry-run # preview without prompting, stopping, or deleting
 ```
 
 Rho lists the exact paths it will remove and asks for confirmation with `[y/N]`.
@@ -399,6 +432,17 @@ loading, so a broken config does not block cleanup.
 The preview lists removals in execution order: data first, then the executable.
 All targets are revalidated after confirmation and before any deletion. If the
 data purge fails, the executable remains available to retry.
+
+Uninstall also stops this rho home's running [daemon](/daemon), which interrupts
+the turns under way, and removes the service saved for
+[`rho mcp serve --http`](/daemon#running-as-a-service): it asks systemd or
+launchd to stop the service and no longer start it, then deletes
+`rho-mcp.service` with the links that enable it, or `dev.rho.mcp.plist`. Both
+happen after confirmation and before anything else is removed, and they happen
+for package-managed installations too. The preview names the running daemon and
+lists each service file. If the service manager cannot be asked, as in a login
+without a user session bus, the files are still deleted and a note says to stop
+the service yourself.
 
 OS keyring entries, environment credentials, shell/PATH edits, shared `~/.agents`,
 project files, and data outside `~/.rho` remain untouched. This includes a custom

@@ -117,6 +117,7 @@ fn validate_cli_rejects_session_flags_with_non_interactive_commands() {
                 timeout: None,
                 no_save: false,
                 detach: false,
+                worktree: false,
                 prompt: Vec::new(),
             },
             Command::Update,
@@ -146,6 +147,7 @@ fn validate_cli_rejects_prompt_outside_interactive_session() {
             timeout: None,
             no_save: false,
             detach: false,
+            worktree: false,
             prompt: Vec::new(),
         }),
         ..test_cli()

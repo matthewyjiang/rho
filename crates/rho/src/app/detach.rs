@@ -7,7 +7,9 @@
 //! started there would, as the `--agent` given and with the `--add-dir` and
 //! `--no-*` flags as its setup (see [`detach_flags`]), which the session
 //! keeps when the daemon reopens it; `cli_config::validate` refuses the
-//! flags that would change the config, before anything here runs.
+//! flags that would change the config, before anything here runs. With
+//! `--worktree`, the daemon opens it in a git worktree it adds for it
+//! (`crate::worktree`).
 
 use std::{collections::BTreeSet, path::PathBuf, time::Duration};
 
@@ -15,7 +17,7 @@ use rho_protocol::SessionPart;
 use rho_protocol::{ChildThreads, SessionNewParams, SessionSetup};
 
 use super::automation::AutomationExit;
-use crate::cli::Cli;
+use crate::cli::{Cli, Command};
 
 /// The flags a detached run passes to the daemon.
 pub(super) struct Passed<'a> {
@@ -105,6 +107,7 @@ fn session_new(
     })?;
     let added = crate::added_dirs::launch_added_dirs(passed.add_dirs, &cwd)
         .map_err(|error| AutomationExit::configuration(format!("{error:#}")))?;
+    let worktree = matches!(cli.command, Some(Command::Run { worktree: true, .. }));
     Ok(SessionNewParams {
         cwd,
         environment,
@@ -120,6 +123,7 @@ fn session_new(
         },
         parent: None,
         grant: None,
+        worktree,
     })
 }
 
@@ -172,23 +176,26 @@ async fn start(
         .await
         .map_err(|error| AutomationExit::other(error.to_string()))?
         .client;
-    let session = client
-        .request::<SessionNew>(&new)
-        .await
-        .map_err(|error| {
-            let message = format!("could not open a daemon session: {error}");
-            match error.error_code() {
-                // An agent or setup the session cannot open with, or an
-                // environment or cwd the daemon refuses.
-                Some(ErrorCode::SessionOpenFailed | ErrorCode::InvalidParams) => {
-                    AutomationExit::configuration(message)
-                }
-                // As a turn that failed on its credentials exits.
-                Some(ErrorCode::SignInRequired) => AutomationExit::authentication(message),
-                _ => AutomationExit::other(message),
+    let opened = client.request::<SessionNew>(&new).await.map_err(|error| {
+        let message = format!("could not open a daemon session: {error}");
+        match error.error_code() {
+            // An agent or setup the session cannot open with, or an
+            // environment or cwd the daemon refuses.
+            Some(ErrorCode::SessionOpenFailed | ErrorCode::InvalidParams) => {
+                AutomationExit::configuration(message)
             }
-        })?
-        .session;
+            // As a turn that failed on its credentials exits.
+            Some(ErrorCode::SignInRequired) => AutomationExit::authentication(message),
+            _ => AutomationExit::other(message),
+        }
+    })?;
+    crate::worktree::require(new.worktree, opened.worktree.as_ref())
+        .map_err(|error| AutomationExit::configuration(error.to_string()))?;
+    // Before the prompt, so a turn that fails to start still names it.
+    if let Some(worktree) = &opened.worktree {
+        let _ = writeln!(io::stderr(), "rho: {}", crate::worktree::hint(worktree));
+    }
+    let session = opened.session;
     client
         .request::<SessionPrompt>(&SessionPromptParams {
             author: rho_protocol::PromptAuthor::Person,

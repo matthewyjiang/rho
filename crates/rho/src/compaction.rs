@@ -39,6 +39,9 @@ pub struct CompactionConfig {
 /// A separately configured text-summary model and the reasoning it runs at.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SummarizerModel {
+    /// The configured providers the model is looked up on, so a custom
+    /// provider or configured endpoint can summarize.
+    pub providers: crate::config::ProviderConfigs,
     pub provider: String,
     pub model: String,
     pub auth: String,

@@ -12,7 +12,7 @@ use rho_providers::credentials::{
     CredentialStoreBackend, CredentialStoreProbe, OsCredentialStore, WebSearchCredential,
 };
 
-use crate::config::Config;
+use crate::config::{Config, ProviderConfigs};
 
 mod client;
 mod selection;
@@ -394,31 +394,13 @@ pub(crate) async fn build_provider_from_config_ensuring_catalog(
     build_provider_from_config(config, credential_store)
 }
 
-/// A provider for `model` signed in with `credentials`: those of whoever the
-/// provider acts for, a session's own inside one (see
+/// A provider for `model` on the configured `providers`, so a configured
+/// endpoint or custom provider reaches the model, signed in with
+/// `credentials`: those of whoever the provider acts for, a session's own
+/// inside one (see
 /// [`crate::session_environment::SessionEnvironment::credentials`]).
 pub(crate) async fn build_provider(
-    provider: &str,
-    model: &str,
-    reasoning: rho_providers::reasoning::ReasoningLevel,
-    auth: &str,
-    credentials: Arc<dyn CredentialStore>,
-) -> Result<Arc<dyn rho_sdk::provider::ModelProvider>, rho_providers::model::ModelError> {
-    build_provider_on(
-        &Config::default(),
-        provider,
-        model,
-        reasoning,
-        auth,
-        credentials,
-    )
-    .await
-}
-
-/// [`build_provider`] on `base`'s `[providers]`, so a configured endpoint or
-/// custom provider reaches the model. Nothing else carries over from `base`.
-pub(crate) async fn build_provider_on(
-    base: &Config,
+    providers: &ProviderConfigs,
     provider: &str,
     model: &str,
     reasoning: rho_providers::reasoning::ReasoningLevel,
@@ -430,7 +412,7 @@ pub(crate) async fn build_provider_on(
         model: model.into(),
         reasoning,
         auth: auth.into(),
-        providers: base.providers.clone(),
+        providers: providers.clone(),
         ..Config::default()
     };
     build_provider_from_config_ensuring_catalog(&config, credentials).await

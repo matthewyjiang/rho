@@ -23,20 +23,17 @@ fn delegate(arguments: Value) -> String {
     json!({"id": "delegate", "name": "codemode", "arguments": {"script": script}}).to_string()
 }
 
-/// The variables a session's `rho mcp serve` needs to reach the sandbox's
-/// daemon, which a stdio server's sanitized environment lacks.
-const DAEMON_ENV: &str =
-    "env_from_env = { RHO_HOME = \"RHO_HOME\", XDG_RUNTIME_DIR = \"XDG_RUNTIME_DIR\" }";
-
 /// Config registering `rho mcp serve --max-depth 2` as every session's stdio
-/// `rho` server. Each start appends the depth it started at to `starts`.
+/// `rho` server, as the docs register it: with nothing that says where the
+/// sandbox's daemon is, which the session passes on. Each start appends the
+/// depth it started at to `starts`.
 fn stdio_rho_server(starts: &std::path::Path) -> String {
     let script = format!(
         "echo \"${{RHO_SESSION_DEPTH-unset}}\" >> {}; exec \"$0\" mcp serve --max-depth 2",
         starts.display()
     );
     format!(
-        "[mcp.servers.rho]\ntransport = \"stdio\"\ncommand = \"/bin/sh\"\nargs = [\"-c\", {script:?}, {:?}]\n{DAEMON_ENV}\n",
+        "[mcp.servers.rho]\ntransport = \"stdio\"\ncommand = \"/bin/sh\"\nargs = [\"-c\", {script:?}, {:?}]\n",
         env!("CARGO_BIN_EXE_rho"),
     )
 }

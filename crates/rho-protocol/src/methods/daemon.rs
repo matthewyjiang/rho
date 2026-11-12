@@ -163,6 +163,11 @@ pub struct DaemonStatus {
     /// Jobs with a turn in progress: [`crate::JobState::Running`] or
     /// [`crate::JobState::WaitingForInput`].
     pub jobs: u64,
+    /// How many things stopping or restarting the daemon would interrupt:
+    /// the jobs counted in `jobs`, logins under way, and sessions with work
+    /// of their own, such as a background process. Zero is what the daemon
+    /// waits for before it upgrades in place.
+    pub in_progress: u64,
     /// The socket the daemon listens on.
     pub socket: PathBuf,
     /// The credential store the daemon keeps provider credentials in, what

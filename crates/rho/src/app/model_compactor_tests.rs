@@ -600,6 +600,7 @@ async fn escalation_elides_only_the_transcript_summary() {
         if configured {
             compactor.summarizer = Some(super::Summarizer::with_provider(
                 crate::compaction::SummarizerModel {
+                    providers: Default::default(),
                     provider: "opencode-go".into(),
                     model: "muse-mini".into(),
                     auth: "api-key".into(),

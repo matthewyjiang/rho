@@ -5,8 +5,8 @@
 use std::{collections::HashMap, num::NonZeroUsize, path::PathBuf, time::Duration};
 
 use rho_protocol::{
-    Cursor, InputRequest, JobId, JobState, JobSummary, Seq, SessionId, SteerId, StreamId,
-    TurnOutcome,
+    Cursor, InputRequest, JobId, JobState, JobSummary, Seq, SessionId, SessionWorktree, SteerId,
+    StreamId, TurnOutcome,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -84,6 +84,9 @@ pub(crate) struct SessionEntry {
     /// The session whose agent started this one (#1714).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) parent: Option<SessionId>,
+    /// The git worktree the session works in, with its branch (#1673).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) worktree: Option<SessionWorktree>,
 }
 
 impl SessionEntry {
@@ -97,6 +100,7 @@ impl SessionEntry {
             state: job.state,
             updated_at: job.updated_at,
             error: job.error,
+            worktree: job.worktree,
         })
     }
 }
@@ -183,13 +187,23 @@ pub(crate) struct NewParams {
     /// offers; the workspace's default when absent.
     #[serde(default)]
     pub(crate) model: Option<String>,
+    /// Work in a new git worktree of the workspace's repository, on a new
+    /// branch from its HEAD, so the session's edits cannot collide with
+    /// other sessions' in that repository. Nothing removes the worktree.
+    #[serde(default)]
+    pub(crate) worktree: bool,
 }
 
 /// Result of `new`: the session runs its first turn.
 #[derive(Debug, Serialize)]
 pub(crate) struct NewResult {
     pub(crate) session: SessionId,
+    /// The workspace the call named.
     pub(crate) workspace: PathBuf,
+    /// The worktree the session works in, for a call that asked for one:
+    /// its branch, its directory, and the workspace it was added from.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) worktree: Option<SessionWorktree>,
 }
 
 /// Params of `prompt`.
