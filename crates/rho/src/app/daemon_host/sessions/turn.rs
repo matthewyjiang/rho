@@ -346,7 +346,7 @@ pub(super) async fn restart_transcript(session: &LoadedSession, runtime: &Sessio
     if let Err(error) = session.jobs.conversation_moved(&session.job) {
         tracing::warn!(job = %session.job, %error, "could not rest the job after its conversation moved");
     }
-    session.feed.restart(saved.unwrap_or_default());
+    session.feed.restart(saved);
     session.cache_warm_conversation_moved();
     let rests = wire::SessionEvent::State {
         state: wire::JobState::Idle,

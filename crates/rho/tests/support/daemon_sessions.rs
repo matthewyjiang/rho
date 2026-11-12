@@ -443,7 +443,7 @@ impl Sandbox {
 
     /// The directory `session` is saved in, once it is: each session is a
     /// directory named for its id, below its workspace's.
-    fn session_dir(&self, session: &SessionId) -> Option<PathBuf> {
+    pub(super) fn session_dir(&self, session: &SessionId) -> Option<PathBuf> {
         let suffix = format!("_{session}");
         std::fs::read_dir(self.isolated.rho_home().join("sessions"))
             .ok()?

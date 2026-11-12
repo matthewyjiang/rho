@@ -7,7 +7,7 @@
 //! subscription's events as [`crate::methods::SESSION_EVENT`] notifications.
 
 use std::{
-    collections::VecDeque,
+    fmt,
     sync::{Arc, OnceLock},
 };
 
@@ -20,15 +20,21 @@ use crate::methods::{DetachReason, Seq, SessionEvent};
 
 /// Opens a subscription that first sends `replay`, the events a client
 /// attaching or reattaching has not seen, then holds up to `backlog` live
-/// events its connection has not yet taken. The replay is already in memory
-/// and does not count against the backlog, so a long one never drops the
-/// client. A subscriber further than `backlog` live events behind is dropped
-/// with [`DetachReason::Lagged`] rather than buffered without end.
+/// events its connection has not yet taken. The replay is taken as the
+/// connection sends it, so a long one, such as a whole transcript, can be
+/// produced an event at a time rather than held in memory at once. It does
+/// not count against the backlog, so a long one never drops the client. A
+/// subscriber further than `backlog` live events behind is dropped with
+/// [`DetachReason::Lagged`] rather than buffered without end.
 ///
 /// # Panics
 ///
 /// When `backlog` is 0.
-pub fn subscription(backlog: usize, replay: Vec<(Seq, SessionEvent)>) -> (Publisher, Subscription) {
+pub fn subscription<R>(backlog: usize, replay: R) -> (Publisher, Subscription)
+where
+    R: IntoIterator<Item = (Seq, SessionEvent)>,
+    R::IntoIter: Send + Sync + 'static,
+{
     let (events, receiver) = mpsc::channel(backlog);
     let reason = Arc::new(OnceLock::new());
     let publisher = Publisher {
@@ -36,7 +42,7 @@ pub fn subscription(backlog: usize, replay: Vec<(Seq, SessionEvent)>) -> (Publis
         reason: Arc::clone(&reason),
     };
     let subscription = Subscription {
-        replay: replay.into(),
+        replay: Box::new(replay.into_iter()),
         events: receiver,
         reason,
     };
@@ -116,19 +122,28 @@ impl Publisher {
 
 /// The connection's end of one subscription. [`crate::serve_connection`]
 /// forwards its events, then its detach reason, if any.
-#[derive(Debug)]
 pub struct Subscription {
     /// Sent before any live event.
-    replay: VecDeque<(Seq, SessionEvent)>,
+    replay: Box<dyn Iterator<Item = (Seq, SessionEvent)> + Send + Sync>,
     events: mpsc::Receiver<(Seq, SessionEvent)>,
     reason: Arc<OnceLock<DetachReason>>,
+}
+
+impl fmt::Debug for Subscription {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("Subscription")
+            .field("events", &self.events)
+            .field("reason", &self.reason)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Subscription {
     /// The next event, replayed ones first, or `None` once the publisher is
     /// gone and every published event was taken.
     pub(crate) async fn next(&mut self) -> Option<(Seq, SessionEvent)> {
-        match self.replay.pop_front() {
+        match self.replay.next() {
             Some(event) => Some(event),
             None => self.events.recv().await,
         }
@@ -136,7 +151,7 @@ impl Subscription {
 
     /// The next event already published, without waiting.
     pub(crate) fn try_next(&mut self) -> Next {
-        if let Some((seq, event)) = self.replay.pop_front() {
+        if let Some((seq, event)) = self.replay.next() {
             return Next::Event(seq, event);
         }
         match self.events.try_recv() {

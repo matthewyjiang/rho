@@ -10,6 +10,7 @@
 mod account;
 mod endpoint;
 mod files;
+mod memory;
 mod pipe;
 mod process;
 mod restart;
@@ -27,6 +28,7 @@ pub(crate) use files::{
 pub(in crate::daemon) use files::{
     open_lock_file, open_log_file, prepare_private_dir, running_identity,
 };
+pub(crate) use memory::release_freed_memory;
 pub(in crate::daemon) use process::{is_variable, request_stop, spawn_detached, MACHINE_VARIABLES};
 pub(crate) use process::{stderr_is_journal_stream, StopRequests};
 pub(in crate::daemon) use restart::{relaunch, take_handoff};

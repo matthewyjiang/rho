@@ -69,6 +69,22 @@ pub(super) fn start_card(view: &ToolView, cwd: &std::path::Path) -> ToolCard {
     with_summary_primary(&view.kind, &view.metadata, card)
 }
 
+/// [`start_card`] for a call that already ran, as a saved transcript shows
+/// it. The file a `str_replace` changed no longer shows the change the call
+/// was about to make, so its card projects the call's arguments instead,
+/// the same each time it is drawn.
+pub(super) fn saved_start_card(view: &ToolView, cwd: &std::path::Path) -> ToolCard {
+    match &view.kind {
+        ToolKind::Edit(rho_tools::EditFormat::StrReplace) => str_replace_card(
+            &view.arguments,
+            cwd,
+            ToolCardStatus::Running,
+            /*live_file*/ None,
+        ),
+        _ => start_card(view, cwd),
+    }
+}
+
 /// Generic tools describe a call through metadata; a `command_summary` fills
 /// the bare `name` header so a running card says what it is doing.
 fn with_summary_primary(kind: &ToolKind, metadata: &ToolMetadata, mut card: ToolCard) -> ToolCard {

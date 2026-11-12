@@ -2,8 +2,8 @@
 //! events the daemon streams to attached clients ([`WireEvent`]).
 //!
 //! [`LiveEvents`] maps a loaded session's live runtime events as a turn
-//! emits them; [`replay`] maps the display rows a client that attaches with
-//! a reset receives first. Both open a tool call with the same card (title,
+//! emits them; a [`SavedTranscript`] replays the display rows a client that
+//! attaches with a reset receives first. Both open a tool call with the same card (title,
 //! kind, raw input, locations), attach the card Rho's TUI draws for it from
 //! the same presenter (`ToolCallUpdate::display`), and close calls left
 //! unfinished as `failed`,
@@ -47,6 +47,7 @@ mod test_support;
 mod tools;
 
 pub(crate) use live::{CompactionEnd, LiveEvents};
+pub(crate) use replay::{SavedTranscript, SavedTurn};
 
 /// Hands out wire ids for tool calls. Providers may reuse a call id across
 /// turns, and a reused wire id would update the earlier card, so each call
@@ -76,6 +77,33 @@ impl CallIds {
         for (provider, &count) in &other.opened {
             let own = self.opened.entry(provider.clone()).or_default();
             *own = (*own).max(count);
+        }
+    }
+}
+
+/// How many bytes `event` encodes to as JSON, or `None`, logged, for one
+/// JSON cannot hold, such as one with a non-UTF-8 path. A connection's
+/// forwarder relies on every event it is given encoding (`Publisher`), so
+/// the daemon's feed sends none this rejects: it checks each live event as
+/// it publishes it, and [`SavedTurn`] each saved one as its turn saves.
+/// Counts the bytes without keeping them.
+pub(crate) fn encoded_len(event: &WireEvent) -> Option<usize> {
+    struct Counter(usize);
+    impl std::io::Write for Counter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0 += bytes.len();
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut counter = Counter(0);
+    match serde_json::to_writer(&mut counter, event) {
+        Ok(()) => Some(counter.0),
+        Err(error) => {
+            tracing::warn!(%error, "dropped a session event JSON cannot hold");
+            None
         }
     }
 }

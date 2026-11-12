@@ -83,22 +83,36 @@ impl Sessions {
     }
 
     /// Marks each loaded session idle, or unloads or discards it once it was
-    /// idle for `grace`.
+    /// idle for `grace`. Once one leaves, the memory its transcript took goes
+    /// back to the system.
     async fn sweep(&self, grace: Duration) {
         let sessions: Vec<_> = self
             .loaded()
             .iter()
             .map(|(id, session)| (id.clone(), Arc::clone(session)))
             .collect();
+        let mut left = false;
         for (id, session) in sessions {
-            self.unload_if_idle(&id, &session, grace).await;
+            left |= self.unload_if_idle(&id, &session, grace).await;
+        }
+        // After the loop, which held the last reference to each session
+        // that left. A reset replay or a title still in flight may hold one
+        // a little longer; the next sweep that unloads returns that too.
+        // It walks the allocator's arenas, so off the async workers.
+        if left {
+            let _ = tokio::task::spawn_blocking(crate::daemon::release_freed_memory).await;
         }
     }
 
     /// Unloads `session`, loaded as `id`, or discards it when it saved
     /// nothing, if a sweep marked it idle `grace` ago and it is idle still;
-    /// marks it idle or in use otherwise.
-    async fn unload_if_idle(&self, id: &SessionId, session: &Arc<LoadedSession>, grace: Duration) {
+    /// marks it idle or in use otherwise. Whether it left.
+    async fn unload_if_idle(
+        &self,
+        id: &SessionId,
+        session: &Arc<LoadedSession>,
+        grace: Duration,
+    ) -> bool {
         // Both held from the decision until the session is torn down and a
         // discarded one's job forgotten. The stop waits for the first. A
         // reopen waits for the second, since the old runtime holds the
@@ -113,22 +127,24 @@ impl Sessions {
                 || session.runtime_keeps_loaded();
             let now = Instant::now();
             let idle_since = match turn.residency {
-                Residency::Unloaded => return,
+                Residency::Unloaded => return false,
                 Residency::InUse | Residency::IdleSince(_) if busy => {
                     turn.residency = Residency::InUse;
-                    return;
+                    return false;
                 }
                 Residency::InUse => {
                     turn.residency = Residency::IdleSince(now);
-                    return;
+                    return false;
                 }
-                Residency::IdleSince(since) if now.duration_since(since) < grace => return,
+                Residency::IdleSince(since) if now.duration_since(since) < grace => {
+                    return false;
+                }
                 Residency::IdleSince(since) => since,
             };
             // A session the stop did not drain is torn down before the
             // stop's wait on `unloading`.
             if !self.evict(id, session, &mut turn) {
-                return;
+                return false;
             }
             idle_since
         };
@@ -178,6 +194,7 @@ impl Sessions {
                 "discarded unsaved idle session"
             );
         }
+        true
     }
 }
 

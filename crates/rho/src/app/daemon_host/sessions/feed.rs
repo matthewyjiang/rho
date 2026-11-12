@@ -6,7 +6,9 @@
 //! session's saved transcript, as wire events, then the turn in progress
 //! from the buffer. The feed keeps that transcript itself, extended with
 //! each turn's saved rows as the turn saves, so an attach never waits for
-//! the turn that holds the session's runtime. The transcript and the point
+//! the turn that holds the session's runtime. It keeps the rows, which
+//! share their content with the session's history, and renders their
+//! events for each reset ([`SavedTranscript`]). The transcript and the point
 //! where the turn in progress begins move together under the feed's lock,
 //! the same lock an attach reads both under, so a turn that saves while a
 //! client attaches is neither sent twice nor skipped. A turn that could not
@@ -31,6 +33,8 @@ use std::{
 use rho_protocol::{
     self as wire, Cursor, DetachReason, Published, Publisher, Replay, Seq, StreamId, Subscription,
 };
+
+use crate::app::session_events::{encoded_len, SavedTranscript, SavedTurn};
 
 /// How many events one client may fall behind before the daemon drops its
 /// subscription; it then reattaches with its cursor.
@@ -70,8 +74,8 @@ struct FeedState {
     turn_start: Seq,
     /// Whether the buffer evicted events of the turn in progress.
     turn_start_evicted: bool,
-    /// The session's saved transcript as wire events, up to `turn_start`.
-    transcript: Vec<wire::SessionEvent>,
+    /// The session's saved transcript, up to `turn_start`.
+    transcript: SavedTranscript,
     /// The job state the last state event sent, so an attach reports the
     /// state its replay ends in.
     job: wire::JobState,
@@ -98,6 +102,13 @@ struct FeedState {
     subscribers: Vec<Publisher>,
     /// Set by [`Feed::close`]: a client attaching later is detached at once.
     closed: Option<DetachReason>,
+}
+
+/// The events an attach replays, oldest first, and how many there are. A
+/// reset's transcript renders as its client takes it.
+struct ReplayEvents {
+    len: usize,
+    events: Box<dyn Iterator<Item = (Seq, wire::SessionEvent)> + Send + Sync>,
 }
 
 struct Buffered {
@@ -148,7 +159,7 @@ impl Feed {
                 buffered_bytes: 0,
                 turn_start: Seq(0),
                 turn_start_evicted: false,
-                transcript: Vec::new(),
+                transcript: SavedTranscript::default(),
                 job,
                 turn,
                 // A stream that opens on a turn under way, as a subagent
@@ -203,20 +214,16 @@ impl Feed {
     /// What a client attaching with no cursor replays, oldest first.
     #[cfg(test)]
     pub(super) fn reset_replay_for_tests(&self) -> Vec<wire::SessionEvent> {
-        let (_, events) = self.state().replay_from(None);
-        events.into_iter().map(|(_, event)| event).collect()
+        let (_, replay) = self.state().replay_from(None);
+        replay.events.map(|(_, event)| event).collect()
     }
 
-    /// Records that the turns since the last save saved as `saved`, their
-    /// replay from the saved rows: it joins the transcript, and resets stop
-    /// replaying those turns' live events.
-    pub(super) fn end_turn(&self, saved: Vec<wire::SessionEvent>) {
-        let saved: Vec<_> = saved
-            .into_iter()
-            .filter(|event| encoded_len(event).is_some())
-            .collect();
+    /// Records that the turns since the last save saved as `saved`: it
+    /// joins the transcript, and resets stop replaying those turns' live
+    /// events.
+    pub(super) fn end_turn(&self, saved: SavedTurn) {
         let mut state = self.state();
-        state.transcript.extend(saved);
+        state.transcript.push(saved);
         state.turn_start = state.last;
         state.turn_start_evicted = false;
         state.saved_usage = state.usage;
@@ -224,17 +231,18 @@ impl Feed {
 
     /// Replaces the conversation the feed holds with `transcript`, the
     /// session's saved rows after its conversation moved to another point
-    /// of its tree. The feed becomes a new stream, so no cursor of the old
-    /// one resumes, and every attached client is detached as lagged, which
-    /// it answers by attaching again and replaying `transcript`. Call
-    /// between turns: the buffer holds no turn in progress then.
-    pub(super) fn restart(&self, transcript: Vec<wire::SessionEvent>) {
+    /// of its tree, if it has any. The feed becomes a new stream, so no
+    /// cursor of the old one resumes, and every attached client is detached
+    /// as lagged, which it answers by attaching again and replaying
+    /// `transcript`. Call between turns: the buffer holds no turn in
+    /// progress then.
+    pub(super) fn restart(&self, transcript: Option<SavedTurn>) {
         let mut state = self.state();
         state.stream = StreamId::new(uuid::Uuid::new_v4().to_string());
-        state.transcript = transcript
-            .into_iter()
-            .filter(|event| encoded_len(event).is_some())
-            .collect();
+        state.transcript = SavedTranscript::default();
+        if let Some(turn) = transcript {
+            state.transcript.push(turn);
+        }
         state.buffer.clear();
         state.buffered_bytes = 0;
         state.last = Seq(0);
@@ -254,9 +262,10 @@ impl Feed {
     pub(super) fn attach(&self, after: Option<&Cursor>) -> Attached {
         let mut state = self.state();
         let (replay, events) = state.replay_from(after);
-        // A replay is in memory, so far below `u64::MAX` events.
-        let replay_events = u64::try_from(events.len()).unwrap_or(u64::MAX);
-        let (publisher, subscription) = rho_protocol::subscription(SUBSCRIBER_BACKLOG, events);
+        // A replay's events are counted in memory, so far below `u64::MAX`.
+        let replay_events = u64::try_from(events.len).unwrap_or(u64::MAX);
+        let (publisher, subscription) =
+            rho_protocol::subscription(SUBSCRIBER_BACKLOG, events.events);
         // Clients that left an idle session would otherwise stay until the
         // next event.
         state.subscribers.retain(|publisher| !publisher.is_gone());
@@ -393,9 +402,18 @@ impl FeedState {
     }
 
     /// What a client resuming from `after` is sent before the live events.
-    fn replay_from(&self, after: Option<&Cursor>) -> (Replay, Vec<(Seq, wire::SessionEvent)>) {
+    fn replay_from(&self, after: Option<&Cursor>) -> (Replay, ReplayEvents) {
         match after.filter(|cursor| self.resumes(cursor)) {
-            Some(cursor) => (Replay::Tail, self.events_after(cursor.seq)),
+            Some(cursor) => {
+                let tail = self.events_after(cursor.seq);
+                (
+                    Replay::Tail,
+                    ReplayEvents {
+                        len: tail.len(),
+                        events: Box::new(tail.into_iter()),
+                    },
+                )
+            }
             None => (Replay::Reset, self.reset_events()),
         }
     }
@@ -426,25 +444,33 @@ impl FeedState {
     /// last event, which carries the point the turn in progress began after,
     /// then the turn's buffered events. No saved row holds usage, so without
     /// it a client that resets shows no context or spend until the next
-    /// turn.
-    fn reset_events(&self) -> Vec<(Seq, wire::SessionEvent)> {
+    /// turn. The transcript renders as the client takes it, so a reset
+    /// never holds a long session's events at once.
+    fn reset_events(&self) -> ReplayEvents {
         let evicted = self.turn_start_evicted.then(|| wire::SessionEvent::Notice {
             text: TURN_START_EVICTED.to_owned(),
         });
         let usage = self.saved_usage.map(usage_event);
-        let mut events: Vec<_> = self
+        let saved =
+            self.transcript.len() + usize::from(evicted.is_some()) + usize::from(usage.is_some());
+        let turn_start = self.turn_start;
+        let tail = self.events_after(turn_start);
+        let len = saved + tail.len();
+        let events = self
             .transcript
-            .iter()
-            .cloned()
+            .events()
             .chain(evicted)
             .chain(usage)
-            .map(|event| (Seq(0), event))
-            .collect();
-        if let Some((seq, _)) = events.last_mut() {
-            *seq = self.turn_start;
+            .enumerate()
+            .map(move |(at, event)| {
+                let seq = if at + 1 == saved { turn_start } else { Seq(0) };
+                (seq, event)
+            })
+            .chain(tail);
+        ReplayEvents {
+            len,
+            events: Box::new(events),
         }
-        events.extend(self.events_after(self.turn_start));
-        events
     }
 }
 
@@ -471,20 +497,6 @@ fn usage_event(usage: wire::JobUsage) -> wire::SessionEvent {
         used_tokens: usage.used_tokens,
         window_tokens: usage.window_tokens,
         cost_usd_micros: usage.cost_usd_micros,
-    }
-}
-
-/// How many bytes `event` encodes to, or `None`, logged, for one JSON cannot
-/// hold, such as one with a non-UTF-8 path. Every event the feed keeps,
-/// live or transcript, passes this, so none takes a seq or reaches a
-/// connection's forwarder, which relies on it (`Publisher`).
-fn encoded_len(event: &wire::SessionEvent) -> Option<usize> {
-    match serde_json::to_vec(event) {
-        Ok(encoded) => Some(encoded.len()),
-        Err(error) => {
-            tracing::warn!(%error, "dropped a session event JSON cannot hold");
-            None
-        }
     }
 }
 
