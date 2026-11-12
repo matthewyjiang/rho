@@ -154,7 +154,7 @@ pub(super) enum Restore {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[must_use]
 pub(super) enum Restored {
-    /// Nothing: the worktree is on disk, or the daemon did not remove it.
+    /// Nothing: the daemon did not remove the worktree, or added it back.
     Nothing,
     /// Added it back on its branch, for good.
     OnBranch,
@@ -176,6 +176,21 @@ impl Sessions {
         let (Some(worktree), Some(commit)) = (&record.worktree, &record.worktree_removed_at) else {
             return Ok(Restored::Nothing);
         };
+        let failed = |error: crate::worktree::WorktreeError| {
+            RpcError::new(
+                ErrorCode::SessionOpenFailed,
+                format!(
+                    "could not add back the session's worktree at {} on branch {}: {error}",
+                    worktree.path.display(),
+                    worktree.branch
+                ),
+            )
+        };
+        // A checkout a daemon added back and died before it recorded so, or
+        // before a read removed it again. Removed first, refused if dirty.
+        if worktree.path.exists() {
+            crate::worktree::remove(worktree).await.map_err(failed)?;
+        }
         let restore =
             |checkout| crate::worktree::restore(worktree, commit, &record.workspace, checkout);
         let restored = match (restore(Checkout::Branch).await, purpose) {
@@ -192,16 +207,7 @@ impl Sessions {
             }
             (Err(error), Restore::Turns) => Err(error),
         };
-        let checkout = restored.map_err(|error| {
-            RpcError::new(
-                ErrorCode::SessionOpenFailed,
-                format!(
-                    "could not add back the session's worktree at {} on branch {}: {error}",
-                    worktree.path.display(),
-                    worktree.branch
-                ),
-            )
-        })?;
+        let checkout = restored.map_err(failed)?;
         tracing::info!(
             branch = %worktree.branch,
             path = %worktree.path.display(),

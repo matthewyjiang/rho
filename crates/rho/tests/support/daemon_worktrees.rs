@@ -342,3 +342,39 @@ async fn a_branch_checked_out_elsewhere_lets_a_read_but_not_turns_restore() {
         sandbox.isolated.daemon_log()
     );
 }
+
+// Covers: a checkout the daemon added back and never recorded, as one that
+// died mid-read leaves, does not block the session: a read removes that
+// clean leftover and adds the worktree back as usual.
+// Owner: daemon worktree cleanup through `rho/session/observe`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_checkout_left_by_a_crash_does_not_block_reading() {
+    let sandbox = Sandbox::new();
+    init_repo(&sandbox.workspace);
+    let client = sandbox.start_daemon_with("fixed", &UNLOAD_SOON).await;
+    let (session, worktree) = finished_worktree_session(&sandbox, &client).await;
+    let pruned = prune(&sandbox, "fixed", &[]);
+    let path = worktree.path.to_string_lossy().into_owned();
+    git(
+        &sandbox.workspace,
+        &["worktree", "add", "--quiet", "--detach", path.as_str()],
+    );
+
+    let observed = client
+        .request::<SessionObserve>(&SessionObserveParams {
+            session,
+            after: None,
+        })
+        .await;
+
+    assert_eq!(
+        (
+            pruned.status.code(),
+            observed.map(drop).map_err(|error| error.to_string()),
+            git(&worktree.path, &["branch", "--show-current"]),
+        ),
+        (Some(0), Ok(()), worktree.branch.clone()),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
