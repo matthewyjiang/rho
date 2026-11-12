@@ -16,7 +16,7 @@ use super::{
     DaemonSession, Following, Target, LOST, NOT_OPENED,
 };
 use crate::{
-    app::{daemon_client::Link, DraftOptions, SettingChangeError},
+    app::{daemon_client::Link, DraftOptions, SettingChangeError, SettingOrigin},
     tui::{
         daemon_events::DaemonView,
         daemon_launch::{DaemonLaunch, InitialSettings},
@@ -77,7 +77,8 @@ impl DaemonSession {
 
     /// Opens the session the first prompt opens, with the settings
     /// chosen meanwhile, and attaches to it; nothing once it is open. The
-    /// settings apply before the attach. One carried from the session
+    /// settings apply before the attach; the rest are the config the
+    /// daemon read as it opened the session. One carried from the session
     /// `/new` replaced keeps the new session's own when the daemon
     /// refuses it. A chosen one the daemon refuses fails the open and
     /// leaves the draft, so no turn runs on settings nobody chose, and the
@@ -113,22 +114,30 @@ impl DaemonSession {
         // Chosen settings must apply; carried ones from the session `/new`
         // replaced apply where the daemon takes them, as they did when
         // `/new` opened the session at once. Both keep the model-first
-        // order, since the model decides what the others may pick.
+        // order, since the model decides what the others may pick. The
+        // draft's config may be older than the daemon's, whose own stands.
         for change in changes_between(&created.options, &draft.options.options(), model) {
-            if draft.options.inherits(&change) {
-                carry(&link, &created.session, vec![change]).await;
-            } else if let Err(refused) = configure_all(&link, &created.session, vec![change]).await
-            {
-                let Refused { change, error } = *refused;
-                return Err(anyhow::Error::new(error).context(format!(
-                    "could not set the session's {}",
-                    setting_name(&change)
-                )));
+            match draft.options.origins().of(&change) {
+                SettingOrigin::Config => {}
+                SettingOrigin::Carried => {
+                    carry(&link, &created.session, vec![change]).await;
+                }
+                SettingOrigin::Chosen => {
+                    if let Err(refused) = configure_all(&link, &created.session, vec![change]).await
+                    {
+                        let Refused { change, error } = *refused;
+                        return Err(anyhow::Error::new(error).context(format!(
+                            "could not set the session's {}",
+                            setting_name(&change)
+                        )));
+                    }
+                }
             }
         }
+        let origins = draft.options.origins().clone();
         let settings_link = Arc::clone(&draft.settings_link);
         let Attached {
-            attachment,
+            mut attachment,
             link,
             views,
             // A new session runs no turn for them to wait for.
@@ -141,6 +150,7 @@ impl DaemonSession {
             InitialSettings::Kept,
         )
         .await?;
+        attachment.origins = origins;
         // A connection since the settings were read has none of their
         // subscription.
         if !Arc::ptr_eq(&link, &settings_link) {
@@ -180,6 +190,7 @@ impl DaemonSession {
     /// waits for the session to open. Either counts as finished now, as
     /// the app counts every change it asked for.
     pub(super) fn configure_draft(&mut self, change: SessionChange) {
+        let made_on = self.launch.made_on(&change);
         let Following::Draft(draft) = &mut self.following else {
             return;
         };
@@ -219,9 +230,13 @@ impl DaemonSession {
                 self.pending
                     .push(DaemonView::Options(Box::new(draft.options.options())));
             }
-            (Ok(()), _) => self
-                .pending
-                .push(DaemonView::Options(Box::new(draft.options.options()))),
+            (Ok(()), _) => {
+                if let Some(made_on) = made_on {
+                    draft.options.chose(&change, made_on);
+                }
+                self.pending
+                    .push(DaemonView::Options(Box::new(draft.options.options())));
+            }
             (Err(error), _) => self.pending.push(DaemonView::Error(format!(
                 "{}: {error}",
                 change_failure(&change)

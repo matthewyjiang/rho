@@ -33,7 +33,11 @@ pub(super) async fn open(
         ChildThreads, IdleWake, ModelRef, SessionChange, SessionPart, SessionSetup, SignIn,
     };
 
-    use crate::{app::session_options::reasoning_to_wire, session::Session, tui::LaunchChange};
+    use crate::{
+        app::{session_options::reasoning_to_wire, LaunchFlag, SettingOrigins},
+        session::Session,
+        tui::LaunchChange,
+    };
 
     let Cli {
         provider,
@@ -105,6 +109,8 @@ pub(super) async fn open(
     .into_iter()
     .filter_map(|(part, left_out)| left_out.then_some(part))
     .collect();
+    // Startup read it a moment ago; it loads unless edited since.
+    let config_file = std::sync::Arc::new(crate::app::read_config_file()?);
     let launch = tui::DaemonLaunch {
         cwd: cwd.to_path_buf(),
         agent: agent.clone(),
@@ -121,6 +127,24 @@ pub(super) async fn open(
             sign_in: SignIn::Later,
         },
         config: std::sync::Arc::new(config.clone()),
+        definition: std::sync::Arc::new(bound.definition().clone()),
+        flags: SettingOrigins::of_launch_flags(
+            [
+                match (provider.is_some() || model.is_some(), auth.is_some()) {
+                    (true, _) => Some(LaunchFlag::Model),
+                    (false, true) => Some(LaunchFlag::Auth),
+                    (false, false) => None,
+                },
+                reasoning.is_some().then_some(LaunchFlag::Reasoning),
+                permission_mode
+                    .is_some()
+                    .then_some(LaunchFlag::PermissionMode),
+            ]
+            .into_iter()
+            .flatten(),
+            std::sync::Arc::clone(&config_file),
+        ),
+        config_file,
     };
 
     // The picker opens over a new session, which opens only if prompted,
@@ -141,9 +165,11 @@ pub(super) async fn open(
     }
     let id = match startup {
         // The flags are this launch's config, which the draft is built
-        // from, so the first prompt opens the session with them.
+        // from; chosen, the first prompt opens the session with them over
+        // the config the daemon reads then, and `/new` carries them on.
         StartupSession::Fresh | StartupSession::Picker => {
-            let options = new_options(&launch, bound).await;
+            let mut options = new_options(&launch, bound).await;
+            options.set_launch_flags(launch.flags.clone());
             return tui::DaemonSession::draft(launch, options).await;
         }
         // Resolve the id, but never take the writer lease from the daemon

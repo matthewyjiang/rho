@@ -71,5 +71,8 @@ pub(crate) use agent_binding::relaunch_config;
 pub use automation::{AutomationExit, AutomationInterrupted};
 pub use bootstrap::run;
 pub(crate) use login::confirms_sign_in;
-pub(crate) use session_options::{available_auths, reasoning_from_wire, DraftOptions};
+pub(crate) use session_options::{
+    available_auths, config_for_new_session, read_config_file, reasoning_from_wire, DraftOptions,
+    LaunchFlag, SettingOrigin, SettingOrigins,
+};
 pub(crate) use session_runtime::SettingChangeError;

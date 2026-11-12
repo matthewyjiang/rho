@@ -131,7 +131,8 @@ impl DaemonSession {
     }
 
     /// Queue a change without waiting for the active turn to release it.
-    /// Before the session opened, the draft takes it.
+    /// Before the session opened, the draft takes it. A setting the daemon
+    /// takes counts as chosen, so `/new` carries it on.
     pub(in crate::tui) fn configure(
         &mut self,
         change: rho_protocol::SessionChange,
@@ -143,9 +144,10 @@ impl DaemonSession {
         if self.ended() {
             anyhow::bail!(LOST);
         }
+        let made_on = self.launch.made_on(&change);
         self.requests
             .as_ref()
             .expect("attached session has requests")
-            .configure(change)
+            .configure(change, made_on)
     }
 }

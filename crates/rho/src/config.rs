@@ -461,12 +461,18 @@ impl Config {
     /// writes. Every bad key is reported, not just the first.
     pub fn load(path: Option<PathBuf>) -> anyhow::Result<Self> {
         let path = path.map(Ok).unwrap_or_else(Self::default_path)?;
-        let doc = ConfigDocument::read(&path)?;
-        let (config, warnings) = load::resolve(&doc).map_err(|errors| {
-            load::errors_error(&errors).context(format!("invalid config file {}", path.display()))
-        })?;
+        let (config, warnings) = Self::load_with_warnings(&path)?;
         load::emit_warnings(&path.display().to_string(), &warnings);
         Ok(config)
+    }
+
+    /// [`Self::load`] of `path`, returning its warnings rather than
+    /// printing them, for a process that owns the terminal.
+    pub(crate) fn load_with_warnings(path: &Path) -> anyhow::Result<(Self, Vec<ConfigWarning>)> {
+        let doc = ConfigDocument::read(path)?;
+        load::resolve(&doc).map_err(|errors| {
+            load::errors_error(&errors).context(format!("invalid config file {}", path.display()))
+        })
     }
 
     pub(crate) fn parse_settings(text: &str) -> anyhow::Result<Self> {

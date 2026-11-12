@@ -18,7 +18,10 @@ use super::{
     Attachment, DaemonSession, LOST,
 };
 use crate::{
-    app::daemon_client::{Daemon, Link, StreamPosition},
+    app::{
+        daemon_client::{Daemon, Link, StreamPosition},
+        SettingOrigins,
+    },
     tui::{
         daemon_events::{DaemonEvents, DaemonView},
         daemon_launch::{DaemonLaunch, InitialSettings},
@@ -152,6 +155,7 @@ impl DaemonSession {
             workspace: response.workspace,
             routed,
             options: Some(response.options),
+            origins: SettingOrigins::default(),
             events,
             ended: false,
             reattach: None,
