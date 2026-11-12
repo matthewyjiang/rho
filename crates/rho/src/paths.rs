@@ -16,7 +16,7 @@ pub(crate) fn canonicalize(path: &Path) -> io::Result<PathBuf> {
 }
 
 /// The longest path Windows takes without the verbatim prefix (`MAX_PATH`),
-/// counting the terminator.
+/// in UTF-16 units, counting the terminator.
 const MAX_PLAIN_PATH: usize = 260;
 
 /// `path` without the Windows verbatim prefix of a drive, when the path
@@ -39,7 +39,10 @@ fn without_verbatim_prefix(path: PathBuf) -> PathBuf {
     });
     let mut plain = OsString::from(format!("{}:", char::from(drive)));
     plain.push(rest);
-    if parses_as_written && plain.len() < MAX_PLAIN_PATH {
+    // Windows counts UTF-16 units, which a lossy conversion keeps: it puts
+    // one unit where an unpaired surrogate was.
+    let units = plain.to_string_lossy().encode_utf16().count();
+    if parses_as_written && units < MAX_PLAIN_PATH {
         PathBuf::from(plain)
     } else {
         path
@@ -450,12 +453,17 @@ mod tests {
 
     // Covers: a canonical path loses the verbatim prefix only where the
     // plain path names the same file: not for a share, a device name, a name
-    // Windows would trim, or a path over MAX_PATH.
+    // Windows would trim, or a path over MAX_PATH, which counts UTF-16 units.
     // Owner: path resolution
     #[cfg(windows)]
     #[test]
     fn a_verbatim_drive_path_is_written_plainly_when_it_means_the_same() {
         let long = format!(r"\\?\C:\{}", "long".repeat(70));
+        // Under the limit in UTF-16 units, which Windows counts, and over
+        // it in bytes.
+        let accented = "\u{e9}".repeat(140);
+        let (verbatim_accented, plain_accented) =
+            (format!(r"\\?\C:\{accented}"), format!(r"C:\{accented}"));
         let cases = [
             (r"\\?\C:\Users\rho", r"C:\Users\rho"),
             (r"\\?\C:\", r"C:\"),
@@ -467,6 +475,7 @@ mod tests {
             (r"\\?\C:\dir \name", r"\\?\C:\dir \name"),
             (r"\\?\C:\dir\common", r"C:\dir\common"),
             (long.as_str(), long.as_str()),
+            (verbatim_accented.as_str(), plain_accented.as_str()),
         ];
         let written: Vec<PathBuf> = cases
             .iter()
