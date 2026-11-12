@@ -25,7 +25,7 @@ use rho_protocol::{
     methods::{SessionAnswer, SessionCancel, SessionNew, SessionPrompt, SessionSteer},
     Ask, ClientEnvironment, ContentBlock, ErrorCode, InputAnswer, InputRequest, JobId, JobKind,
     JobSummary, PromptAuthor, SessionAnswerParams, SessionCancelParams, SessionId,
-    SessionNewParams, SessionPromptParams, SessionSteerParams,
+    SessionNewParams, SessionPart, SessionPromptParams, SessionSteerParams,
 };
 
 use super::{
@@ -77,7 +77,8 @@ pub(super) struct JobsView {
     /// The session this TUI follows, whose job the view opens on.
     followed: SessionId,
     /// What this TUI opens its sessions with. A session started here opens
-    /// with its setup, and in this TUI's project as its agent too, so
+    /// with its setup, though always saved, and in this TUI's project as
+    /// its agent too, so
     /// attaching finds the agent the launch named. Another project may not
     /// define that agent, so a session there runs as its default.
     launch: DaemonLaunch,
@@ -312,9 +313,7 @@ impl JobsView {
     fn begin_new_session(&mut self) {
         let workspace = self
             .selected_job()
-            .map(|job| job.workspace.clone())
-            .or_else(|| std::env::current_dir().ok())
-            .unwrap_or_default();
+            .map_or_else(|| self.launch.cwd.clone(), |job| job.workspace.clone());
         self.mode = Mode::NewWorkspace {
             path: workspace.to_string_lossy().into_owned(),
         };
@@ -344,7 +343,11 @@ impl JobsView {
             }
             Mode::NewPrompt { text, .. } if text.trim().is_empty() => {}
             Mode::NewPrompt { workspace, text } => {
-                let setup = self.launch.setup.clone();
+                let mut setup = self.launch.setup.clone();
+                // Saved even under `--no-save`: no client follows it, so
+                // one kept in memory alone is discarded once idle, and
+                // attaching finds a session by its file.
+                setup.without.remove(&SessionPart::Saving);
                 let agent = (workspace == self.launch.cwd)
                     .then(|| self.launch.agent.clone())
                     .flatten();
