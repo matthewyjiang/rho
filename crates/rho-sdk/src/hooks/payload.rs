@@ -74,7 +74,13 @@ pub enum HookCapability {
         executable: PathBuf,
         arguments: Vec<String>,
         /// Script text, present only when execution really goes through a shell.
+        /// This is the command that runs, after any host rewrite.
         shell_command: Option<String>,
+        /// The command the model asked for, present only when the host
+        /// rewrote it (for example, RTK turning `git push` into
+        /// `rtk git push`). Omitted from the wire when absent.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        requested_command: Option<String>,
         environment: HookProcessEnvironment,
     },
     NetworkAccess {
@@ -556,6 +562,14 @@ fn summarize_process(
         ),
         arguments,
         shell_command,
+        requested_command: execution.requested_command().map(|command| {
+            bounded_string(
+                command.to_owned(),
+                "payload.capability.requested_command",
+                bounds,
+                truncation,
+            )
+        }),
         environment: execution.environment().into(),
     }
 }

@@ -19,7 +19,7 @@ use super::{
 };
 
 /// Wire schema version of [`HookEnvelope`]. Handlers must reject other values.
-pub const HOOK_SCHEMA_VERSION: u32 = 2;
+pub const HOOK_SCHEMA_VERSION: u32 = 3;
 
 /// Generic, non-secret labels supplied by the embedding host.
 ///

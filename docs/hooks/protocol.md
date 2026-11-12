@@ -10,7 +10,7 @@ One bounded JSON document on stdin:
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "event": "before_tool_use",
   "event_id": "0d1f…",
   "timestamp_unix_ms": 1730000000000,
@@ -126,9 +126,37 @@ output from it cannot change scheduler state, a condition, or a template.
 Read `bounds` before trusting payload text. A shortened field is named there,
 for example `payload.capability.shell_command`.
 
-`shell_command` is the command that runs. With [RTK](/integrations/rtk) on,
-that is the rewritten form, such as `rtk git push --force`, so match the command
-anywhere in the string instead of anchoring at its start.
+`shell_command` is the command that runs. When the host rewrote the command the
+model asked for, as [RTK](/integrations/rtk) turns `git push --force` into
+`rtk git push --force`, `shell_command` holds the rewritten form and
+`requested_command` holds what the model asked for:
+
+```json
+"capability": {
+  "operation": "execute_process",
+  "working_directory": "/home/you/project",
+  "executable": "bash",
+  "arguments": ["-lc"],
+  "shell_command": "rtk git push --force",
+  "requested_command": "git push --force",
+  "environment": "inherit_except"
+}
+```
+
+`requested_command` is absent when nothing was rewritten. A rule about intent,
+such as "never push", should read `requested_command` and fall back to
+`shell_command`, so the rule does not depend on which rewrites exist:
+
+```sh
+command=$(jq -r '.payload.capability | .requested_command // .shell_command // ""')
+case $command in
+  "git push"*) echo '{"version": 1, "decision": "deny", "reason": "no pushes"}' ;;
+  *) echo '{"version": 1, "decision": "continue"}' ;;
+esac
+```
+
+A rule about exactly what runs should read `shell_command`. Approvals, including
+"Allow for session", always match the command that runs.
 
 ### What is never in a payload
 

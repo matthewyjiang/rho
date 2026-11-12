@@ -5,7 +5,10 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use rho_sdk::{floor_char_boundary, hooks::HookPayloadBounds};
+use rho_sdk::{
+    floor_char_boundary,
+    hooks::{HookPayloadBounds, HOOK_SCHEMA_VERSION},
+};
 use serde::Serialize;
 
 use crate::hooks::config::WorkflowHookEventKind;
@@ -35,7 +38,7 @@ impl AppHookEnvelope {
         let payload = BoundedWorkflowPayload::new(payload, bounds, &mut truncation);
         let mut envelope = Self {
             kind: event,
-            schema_version: 2,
+            schema_version: HOOK_SCHEMA_VERSION,
             event: event.wire_name(),
             event_id: rho_sdk::HookEventId::new(),
             timestamp_unix_ms: SystemTime::now()
