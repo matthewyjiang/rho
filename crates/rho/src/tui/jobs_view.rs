@@ -30,13 +30,16 @@ use rho_protocol::{
 
 use super::{
     approval::ApprovalPrompt,
-    daemon_launch::DaemonLaunch,
+    daemon_launch::{DaemonLaunch, DaemonTarget},
     overlay_panel::{reveal_panel_cursor, terminal_area, PanelBody, PanelKeyOutcome, PanelState},
     panel_text::indented_wrapped_lines,
     render::truncate_one_line,
     App, ComposerMode, DefaultTerminal, PanelOverlay, Theme,
 };
-use crate::app::daemon_client::{Daemon, DaemonError};
+use crate::{
+    app::daemon_client::{Daemon, DaemonError},
+    session::Session,
+};
 
 mod rows;
 
@@ -69,6 +72,8 @@ enum Mode {
 #[derive(Debug)]
 pub(super) struct Attach {
     session: SessionId,
+    /// The workspace the session's job runs in.
+    workspace: PathBuf,
 }
 
 /// The `/jobs` overlay.
@@ -338,6 +343,8 @@ impl JobsView {
                         text: String::new(),
                     };
                 } else {
+                    // Kept, so the path is fixed rather than typed again.
+                    self.mode = Mode::NewWorkspace { path };
                     self.say("could not start session: the workspace must be an absolute path");
                 }
             }
@@ -435,9 +442,10 @@ impl JobsView {
                 match self.session_of_selected() {
                     // Already followed: closing the view shows it.
                     Some((_, session)) if session == &self.followed => {}
-                    Some((_, session)) => {
+                    Some((job, session)) => {
                         self.attach = Some(Attach {
                             session: session.clone(),
+                            workspace: job.workspace.clone(),
                         });
                     }
                     None if self.selected.is_some() => {
@@ -723,12 +731,38 @@ impl App {
     /// Follows the session a closed `/jobs` asked to attach to. Only
     /// between turns: a session switch leaves the turn under way behind.
     pub(super) async fn attach_from_jobs_view(&mut self, terminal: &mut DefaultTerminal) {
-        let Some(Attach { session }) = self.jobs_view_attach.take() else {
+        let Some(Attach { session, workspace }) = self.jobs_view_attach.take() else {
             return;
         };
-        if let Err(error) = self.resume_daemon_session(session.as_str(), terminal).await {
+        // A saved session attaches as `/resume` does, with its checks. One
+        // the daemon has open and has not saved yet, as a session just
+        // started, has no file to find: it is followed by its id.
+        let saved = Session::resolve_target(&self.info.runtime.cwd, session.as_str()).is_ok();
+        let attached = if saved {
+            self.resume_daemon_session(session.as_str(), terminal).await
+        } else {
+            self.follow_unsaved_session(session, &workspace, terminal)
+                .await
+        };
+        if let Err(error) = attached {
             self.set_status(format!("could not attach session: {error:#}"));
         }
+    }
+
+    /// Follows `session`, which the daemon has loaded in `workspace` and
+    /// has not saved.
+    async fn follow_unsaved_session(
+        &mut self,
+        session: SessionId,
+        workspace: &std::path::Path,
+        terminal: &mut DefaultTerminal,
+    ) -> anyhow::Result<()> {
+        self.ensure_this_project(workspace)?;
+        let short = super::session_picker::short_session_id(session.as_str());
+        self.switch_daemon_session(DaemonTarget::Resume(session), terminal)
+            .await?;
+        self.set_status(format!("attached session {short}"));
+        Ok(())
     }
 
     /// Drops what a `/jobs` closed during a turn asked for, saying why.
