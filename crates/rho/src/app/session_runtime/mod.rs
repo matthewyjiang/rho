@@ -395,7 +395,7 @@ impl SessionRuntime {
     /// whose window is still open, and tears the session down.
     pub(crate) async fn shutdown(self) {
         self.handle.cancel();
-        self.built.diagnostics.flush_unfinished_compaction();
+        self.built.diagnostics.flush_unfinished_compaction().await;
         self.built.teardown().await;
     }
 

@@ -60,6 +60,9 @@ impl SessionRuntime {
             .map_err(|error| SettingChangeError::Apply(error.into()))?;
             self.switch_provider(provider, &config, read)
                 .map_err(SettingChangeError::Apply)?;
+            // Another model's prompt sizes and choices measure it, not the
+            // compaction.
+            self.built.diagnostics.end_compaction_follow_up();
         }
         self.persist_model_override().map_err(|error| {
             SettingChangeError::Apply(anyhow::anyhow!(

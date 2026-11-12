@@ -212,21 +212,15 @@ impl RuntimeDiagnostics {
         self.read().compaction_metrics.last().cloned()
     }
 
-    /// Feeds one of a session's run events to the latest compaction's
-    /// follow-up: the SDK committing an automatic compaction, the prompt size
-    /// a step's request starts from, and each proposed tool call.
+    /// Feeds one of the session's run events to the latest compaction's
+    /// follow-up (see [`CompactionMetrics::observe_run_event`]).
     pub(crate) fn observe_run_event(&self, event: &rho_sdk::RunEvent) {
-        match event {
-            rho_sdk::RunEvent::CompactionCompleted { .. } => self.compaction_committed(),
-            rho_sdk::RunEvent::StepStarted {
-                context_estimate, ..
-            } => self.observe_prompt_tokens(context_estimate.provider_reported_tokens()),
-            rho_sdk::RunEvent::ToolProposed { call } => self.observe_tool_call(call),
-            _ => {}
-        }
+        let finished = self.write().compaction_metrics.observe_run_event(event);
+        crate::usage::save_compaction(finished);
     }
 
-    /// The SDK committed the latest compactor result; start its follow-up.
+    /// The latest compactor result is committed outside a run, as `/compact`
+    /// commits it; start its follow-up.
     pub(crate) fn compaction_committed(&self) {
         self.write().compaction_metrics.committed();
     }
@@ -240,18 +234,19 @@ impl RuntimeDiagnostics {
         crate::usage::save_compaction(finished);
     }
 
-    fn observe_tool_call(&self, call: &rho_sdk::model::ToolCall) {
-        let finished = self.write().compaction_metrics.observe_tool_call(call);
-        crate::usage::save_compaction(finished);
+    /// Ends a follow-up still in progress and saves its partial numbers,
+    /// because what comes next no longer follows that compaction: the
+    /// conversation moved to another node, or the model changed.
+    pub(crate) fn end_compaction_follow_up(&self) {
+        let unfinished = self.write().compaction_metrics.take_unfinished();
+        crate::usage::save_compaction(unfinished);
     }
 
-    /// Saves a follow-up that is still open, so a session that closes
-    /// mid-window keeps its partial re-read counts. The write finishes before
-    /// this returns: the usual save runs on a blocking task, which a process
-    /// exit can drop.
-    pub(crate) fn flush_unfinished_compaction(&self) {
+    /// [`Self::end_compaction_follow_up`] for a session that is closing:
+    /// returns once the save is written, since the process may exit next.
+    pub(crate) async fn flush_unfinished_compaction(&self) {
         let unfinished = self.write().compaction_metrics.take_unfinished();
-        crate::usage::save_compaction_inline(unfinished);
+        crate::usage::save_compaction_and_wait(unfinished).await;
     }
 
     pub fn update_compaction_config(&self, config: &CompactionConfig) {

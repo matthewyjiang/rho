@@ -15,7 +15,7 @@ use std::{
 
 use rho_sdk::{
     model::{ContentBlock, Message, ModelUsage, ToolCall},
-    CompactionTrigger,
+    CompactionTrigger, RunEvent,
 };
 use serde::Serialize;
 
@@ -342,6 +342,25 @@ impl CompactionMetrics {
             ..record.clone()
         };
         self.take_finished().or(Some(early))
+    }
+
+    /// Feeds one of the session's run events to the follow-up: the SDK
+    /// committing an automatic compaction, the prompt size a step's request
+    /// starts from, and each proposed tool call. Returns a record to save,
+    /// as [`Self::observe_prompt_tokens`] and [`Self::observe_tool_call`] do.
+    pub(crate) fn observe_run_event(&mut self, event: &RunEvent) -> Option<CompactionRecord> {
+        match event {
+            RunEvent::CompactionCompleted { .. } => {
+                self.committed();
+                None
+            }
+            RunEvent::StepStarted {
+                context_estimate, ..
+            } => self.observe_prompt_tokens(context_estimate.provider_reported_tokens()),
+            RunEvent::ToolProposed { call } => self.observe_tool_call(call),
+            // `RunEvent` is non-exhaustive; nothing else feeds the follow-up.
+            _ => None,
+        }
     }
 
     pub(crate) fn observe_tool_call(&mut self, call: &ToolCall) -> Option<CompactionRecord> {
