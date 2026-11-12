@@ -3,8 +3,9 @@
 //! follows it, reading a session starts nothing of it, no tool can answer
 //! the session's approvals, the core's caps refuse with their budgets, a
 //! read-only server refuses the tools that write, and the HTTP transport
-//! refuses requests its tokens and origin rules do not allow. How a session's caller context carries depth and scope through
-//! the server into the sessions it starts is in [`caller`].
+//! refuses requests its tokens and origin rules do not allow. How a
+//! session's caller context carries depth and scope through the server
+//! into the sessions it starts is in [`caller`].
 
 use std::{path::PathBuf, process::Stdio};
 
