@@ -94,6 +94,7 @@ fn resume_argv_pins_only_drift_from_config() {
                 no_system_prompt: true,
                 no_tools: true,
                 no_subagents: true,
+                in_process: false,
             },
             live.clone(),
             None,
@@ -115,6 +116,26 @@ fn resume_argv_pins_only_drift_from_config() {
                 "high",
                 "--permission-mode",
                 "allow_edits",
+                "--resume",
+                "session-1",
+            ],
+        ),
+        (
+            "an in-process launch stays in process",
+            ResumeLaunchOptions {
+                config: Some(PathBuf::from("/tmp/config.toml")),
+                in_process: true,
+                ..ResumeLaunchOptions::default()
+            },
+            live.clone(),
+            Some(live.clone()),
+            levels.clone(),
+            vec![
+                "env",
+                "RHO_TUI_DAEMON=0",
+                "rho",
+                "--config",
+                "/tmp/config.toml",
                 "--resume",
                 "session-1",
             ],
@@ -152,7 +173,8 @@ fn resume_argv_pins_only_drift_from_config() {
 
         assert_eq!(argv, expected, "{name}");
         assert!(crate::herdr::resume_argv_is_valid(&argv), "{name}");
-        let cli = crate::cli::Cli::try_parse_from(&argv)
+        let command = argv.iter().position(|arg| arg == "rho").unwrap();
+        let cli = crate::cli::Cli::try_parse_from(&argv[command..])
             .unwrap_or_else(|error| panic!("{name}: {error}"));
         assert_eq!(cli.resume, Some(Some("session-1".into())), "{name}");
         assert!(cli.command.is_none(), "{name}");

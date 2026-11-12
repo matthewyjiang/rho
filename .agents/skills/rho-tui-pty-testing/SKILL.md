@@ -40,6 +40,14 @@ TEST_LOG=$(mktemp /tmp/rho-pty-suite.XXXXXX.log)
 cargo nextest run -p rho-coding-agent --test tui_pty >"$TEST_LOG" 2>&1
 ```
 
+A launch that names no host runs as `rho` does for a user: on Unix the TUI follows the daemon. The in-process TUI still ships (`RHO_TUI_DAEMON=0`, and Windows), so CI runs the suite a second time with `RHO_TUI_DAEMON=0` in the test process's environment, which the harness passes to every launch:
+
+```bash
+RHO_TUI_DAEMON=0 cargo nextest run -p rho-coding-agent --test tui_pty >"$TEST_LOG" 2>&1
+```
+
+A scenario that covers one host only pins it with its own `RHO_TUI_DAEMON` pair, which wins over the inherited one. A scenario whose expected text differs per host asks `PtyHarness::follows_daemon()`.
+
 CI runs exactly the `assert_pass` tests in `crates/rho/tests/tui_pty.rs`. Key scenarios:
 
 - core lifecycle: `startup_stream_exit`, `cancel_and_resubmit`, `type_during_stream`, `resize_during_stream`, `scroll_during_stream`, `terminal_restoration`

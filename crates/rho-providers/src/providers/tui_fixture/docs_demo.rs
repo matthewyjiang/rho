@@ -110,24 +110,15 @@ async fn stream(
 }
 
 fn seed_workspace() -> Result<(), ProviderError> {
-    let cwd = std::env::current_dir().map_err(|error| {
-        ProviderError::new(
-            ProviderErrorKind::Other,
-            format!("docs demo setup: current_dir failed: {error}"),
-            Retryability::Permanent,
-        )
-    })?;
-    write_seed_file(&cwd, TARGET_PATH, ORIGINAL)?;
-    write_seed_file(&cwd, TEST_SCRIPT_PATH, TEST_SCRIPT)?;
+    write_seed_file(TARGET_PATH, ORIGINAL)?;
+    write_seed_file(TEST_SCRIPT_PATH, TEST_SCRIPT)?;
     Ok(())
 }
 
-fn write_seed_file(
-    cwd: &std::path::Path,
-    relative: &str,
-    contents: &str,
-) -> Result<(), ProviderError> {
-    let full = cwd.join(relative);
+/// Writes `relative` in the session's workspace, which a fixture the daemon
+/// hosts is not running in.
+fn write_seed_file(relative: &str, contents: &str) -> Result<(), ProviderError> {
+    let full = super::release::workspace_path(relative);
     if let Some(parent) = full.parent() {
         fs::create_dir_all(parent).map_err(|error| {
             ProviderError::new(

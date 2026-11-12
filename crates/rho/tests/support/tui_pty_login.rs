@@ -313,7 +313,7 @@ fn ollama_plan(home: &IsolatedHome, host: SessionHost) -> RhoLaunchPlan {
         },
     );
     match host {
-        SessionHost::InProcess => plan,
+        SessionHost::InProcess => plan.with_env("RHO_TUI_DAEMON", "0"),
         SessionHost::Daemon => plan.with_env("RHO_TUI_DAEMON", "1"),
     }
 }
@@ -580,7 +580,7 @@ fn ollama_is_refreshed_and_listed_after_login(host: SessionHost) {
 /// Opens `/model` and checks it lists no model of the fake Ollama server.
 /// In process nothing else is cached, so the picker does not open; a daemon
 /// session's picker always offers the session's own model. Asks the harness
-/// which one runs, so it holds when a run forces every launch into the daemon.
+/// which one runs, so it holds on either host.
 fn expect_no_ollama_model_listed(harness: &mut PtyHarness, what: &'static str) {
     harness.submit_text("/model").unwrap();
     if harness.follows_daemon() {

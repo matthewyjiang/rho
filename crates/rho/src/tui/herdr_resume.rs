@@ -31,6 +31,9 @@ pub struct ResumeLaunchOptions {
     pub no_system_prompt: bool,
     pub no_tools: bool,
     pub no_subagents: bool,
+    /// The launch kept the session in process (`RHO_TUI_DAEMON=0`) where a
+    /// plain `rho` would follow the daemon, which refuses `--config`.
+    pub in_process: bool,
 }
 
 /// The selection a resumed session would get from config alone.
@@ -250,8 +253,10 @@ impl App {
     }
 }
 
-/// `rho [launch options] [pinned selection] --resume <id>`. `configured` is
-/// what config would select; values that match it are left to config.
+/// `rho [launch options] [pinned selection] --resume <id>`, after
+/// `env RHO_TUI_DAEMON=0` when the launch kept the session in process: the
+/// pane Herdr restores may not have the variable. `configured` is what
+/// config would select; values that match it are left to config.
 pub(super) fn resume_argv(
     launch: &ResumeLaunchOptions,
     live: &ResumeSelection,
@@ -259,7 +264,11 @@ pub(super) fn resume_argv(
     reasoning_capabilities: &ReasoningCapabilities,
     session_id: &str,
 ) -> Vec<String> {
-    let mut argv = vec!["rho".to_string()];
+    let mut argv = Vec::new();
+    if launch.in_process {
+        argv.extend(["env".to_string(), "RHO_TUI_DAEMON=0".into()]);
+    }
+    argv.push("rho".into());
     if let Some(config) = &launch.config {
         argv.extend(["--config".into(), config.display().to_string()]);
     }
