@@ -25,7 +25,7 @@ use rho_sdk::SessionId;
 use tokio::sync::OwnedMutexGuard;
 
 use super::{
-    open::{open_session, OpenWith, Opening},
+    open::{config_for_saved, open_session, OpenWith, Opening},
     open_failed,
     store::{store_blocking, store_failed},
     worktree::{Restore, Restored},
@@ -118,6 +118,7 @@ impl Sessions {
             let _: Restored = self.restore_worktree(record, Restore::Turns).await?;
         }
         let stored = saved_session(id, SavedFor::Turns).await?;
+        let global = config_for_saved(&self.settings).await?;
         // The session opens under the grant `with` brings, held to its
         // job's limit, whatever its last turn ran under, so its record never
         // says another than its environment carries.
@@ -141,6 +142,7 @@ impl Sessions {
             with,
             &self.subagents,
             &self.settings,
+            global,
             &job,
         )
         .await?;

@@ -110,7 +110,7 @@ use idle_wake::IdleWatch;
 use inputs::Inputs;
 use open::open_failed;
 pub(super) use open::session_environment;
-use open::{open_session, OpenWith, OpenedSession, Opening, Workspace};
+use open::{config_for_new, open_session, OpenWith, OpenedSession, Opening, Workspace};
 use queued::Queued;
 use reopen::ReopenLocks;
 use start::{Entered, KeyedTurn};
@@ -616,6 +616,7 @@ impl Sessions {
             .and_then(|job| self.jobs.session_grant(job));
         let opening = grant::opening(grant::asked(grant, &environment)?, parents.as_ref());
         let with = OpenWith::under(opening, &environment, setup)?;
+        let global = config_for_new(&self.settings).await?;
         // Added last, once the request is otherwise sound, since nothing
         // removes it.
         let (workspace, worktree) = match worktree {
@@ -632,6 +633,7 @@ impl Sessions {
             &with,
             &self.subagents,
             &self.settings,
+            global,
             &job,
         )
         .await

@@ -19,7 +19,7 @@ use rho_protocol::{
     ClientHello, ClientInfo, CompactionStatus, ContentBlock, Cursor, DaemonNotification,
     DetachReason, ErrorCode, IdempotencyKey, InputAnswer, InputRequest, InputRequestId, JobId,
     JobKind, JobListParams, JobState, JobSummary, Notifications, Operation, PathScope, Replay,
-    Resolution, Seq, SessionAnswerParams, SessionAttachParams, SessionAttachResponse,
+    Resolution, RpcError, Seq, SessionAnswerParams, SessionAttachParams, SessionAttachResponse,
     SessionCancelParams, SessionDetachParams, SessionDetachedParams, SessionEvent,
     SessionHoldParams, SessionId, SessionNewParams, SessionPromptParams, SessionSetup, StreamId,
     ToolCallId, ToolContent, ToolStatus, TurnError, TurnErrorKind, TurnId, TurnOutcome,
@@ -96,18 +96,17 @@ impl Sandbox {
     pub(super) fn new() -> Self {
         let isolated = IsolatedHome::new().unwrap();
         std::fs::write(&isolated.config_path, CONFIG).unwrap();
-        let workspace = isolated.workspace.canonicalize().unwrap();
-        #[cfg(windows)]
-        let workspace = PathBuf::from(
-            workspace
-                .to_str()
-                .and_then(|path| path.strip_prefix(r"\\?\"))
-                .expect("a canonical path on a drive"),
-        );
+        let workspace = plain_canonical(&isolated.workspace);
         Self {
             isolated,
             workspace,
         }
+    }
+
+    /// `config.toml` as the daemon names it in errors: under its canonical
+    /// home, on Windows without the verbatim prefix.
+    pub(super) fn shown_config_path(&self) -> PathBuf {
+        plain_canonical(&self.isolated.config_path)
     }
 
     /// The workspace as a session's tools name it: resolved by the file
@@ -318,6 +317,15 @@ impl Sandbox {
         client: &Client,
         environment: ClientEnvironment,
     ) -> SessionId {
+        self.try_new_session(client, environment).await.unwrap()
+    }
+
+    /// [`Self::new_session_with_environment`]; the error that refused it.
+    pub(super) async fn try_new_session(
+        &self,
+        client: &Client,
+        environment: ClientEnvironment,
+    ) -> Result<SessionId, RpcError> {
         client
             .request::<SessionNew>(&SessionNewParams {
                 cwd: self.workspace.clone(),
@@ -329,8 +337,11 @@ impl Sandbox {
                 worktree: false,
             })
             .await
-            .unwrap()
-            .session
+            .map(|opened| opened.session)
+            .map_err(|error| match error {
+                ClientError::Rpc { error, .. } => error,
+                error => panic!("the open failed outside the protocol: {error}"),
+            })
     }
 
     /// Prompts `session` with "hello"; the error code of a refused prompt.
@@ -2180,4 +2191,17 @@ async fn a_held_question_waits_for_the_users_answer() {
         "log:\n{}",
         sandbox.isolated.daemon_log()
     );
+}
+
+/// `path` canonicalized, on Windows without the verbatim prefix, as the
+/// daemon shows the paths it resolved.
+fn plain_canonical(path: &Path) -> PathBuf {
+    let path = path.canonicalize().unwrap();
+    #[cfg(windows)]
+    let path = PathBuf::from(
+        path.to_str()
+            .and_then(|path| path.strip_prefix(r"\\?\"))
+            .expect("a canonical path on a drive"),
+    );
+    path
 }
