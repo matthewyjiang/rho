@@ -10,6 +10,8 @@
 //! id goes into context now, so the model can check on it with the
 //! `workflow` tool in the meantime.
 
+use std::path::Path;
+
 use rho_sdk::{model::Message, CancellationToken, UserInput};
 
 use super::{prompt_gate::ActiveWork, InsertedMessage, PromptScope, SessionRuntime};
@@ -95,7 +97,7 @@ impl SessionRuntime {
                     biased;
                     () = cancel.cancelled() => return Ok(WorkflowStart::Cancelled),
                     prepared = ops.prepare_local_json(
-                        &start.workflow.absolute_path,
+                        Path::new(&start.workflow.relative_path),
                         start.inputs,
                         process_config,
                         &available_tools,

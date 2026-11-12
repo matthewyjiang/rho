@@ -124,7 +124,11 @@ impl WorkflowOps {
     }
 
     /// [`Self::prepare_local`] with JSON input values, as `/workflow:<name>`
-    /// and the hub supply them, under the default planning limits.
+    /// and the hub supply them, under the default planning limits. `entry`
+    /// is relative to the workspace, and resolved under the workspace as
+    /// this names it: its canonical path, which on Windows is not the one a
+    /// session names its workspace by, so a path the session made absolute
+    /// would be outside it.
     pub(crate) async fn prepare_local_json(
         &self,
         entry: &Path,
@@ -137,7 +141,8 @@ impl WorkflowOps {
             .map(|(name, value)| Ok((InputName::new(name)?, WorkflowValue::from_json(value)?)))
             .collect::<anyhow::Result<BTreeMap<_, _>>>()?;
         let limits = super::planning_limits()?;
-        self.prepare_local(entry, inputs, config, available_tools, &limits)
+        let entry = self.workspace.join(entry);
+        self.prepare_local(&entry, inputs, config, available_tools, &limits)
             .await
     }
 
