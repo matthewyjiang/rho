@@ -12,7 +12,7 @@ use tokio::sync::watch;
 
 use super::{
     attach::{Attached, Connection},
-    initial_settings::{changes_between, configure_all, ModelChange, Refused},
+    initial_settings::{carry, changes_between, configure_all, ModelChange, Refused},
     DaemonSession, Following, Target, LOST, NOT_OPENED,
 };
 use crate::{
@@ -77,8 +77,9 @@ impl DaemonSession {
 
     /// Opens the session the first prompt opens, with the settings
     /// chosen meanwhile, and attaches to it; nothing once it is open. The
-    /// settings apply before the attach: a setting the daemon refuses fails
-    /// the open and leaves the draft, so no turn runs on settings nobody
+    /// settings apply before the attach. One carried from the session
+    /// `/new` replaced keeps the new session's own when the daemon refuses
+    /// it; a chosen one the daemon refuses fails the open and leaves the draft, so no turn runs on settings nobody
     /// chose, and the session it made, which nothing follows or saved, is
     /// discarded at the daemon's next idle sweeps.
     pub(in crate::tui) async fn open_drafted(&mut self) -> anyhow::Result<()> {
@@ -108,8 +109,15 @@ impl DaemonSession {
         } else {
             ModelChange::Setup
         };
-        let changes = changes_between(&created.options, &draft.options.options(), model);
-        if let Err(refused) = configure_all(&link, &created.session, changes).await {
+        // Chosen settings must apply; carried ones from the session `/new`
+        // replaced apply where the daemon takes them, as they did when
+        // `/new` opened the session at once.
+        let (carried, chosen): (Vec<_>, Vec<_>) =
+            changes_between(&created.options, &draft.options.options(), model)
+                .into_iter()
+                .partition(|change| draft.options.inherits(change));
+        carry(&link, &created.session, carried).await;
+        if let Err(refused) = configure_all(&link, &created.session, chosen).await {
             let Refused { change, error } = *refused;
             return Err(anyhow::Error::new(error).context(format!(
                 "could not set the session's {}",

@@ -87,3 +87,37 @@ fn refused_settings_leave_the_draft_unchanged() {
     assert_eq!(refused, [true; 3]);
     assert_eq!(draft.options(), before);
 }
+
+// Covers: after `/new`, settings carried from the old session apply where
+// the daemon takes them, while one the person changed since must apply, so
+// a carried setting the new session refuses never blocks every prompt.
+// Owner: session options
+#[test]
+fn only_settings_chosen_since_a_carry_are_required() {
+    let old = draft("openai-codex", "gpt-5.5", "codex").options();
+    let mut carried = DraftOptions::carried(
+        &old,
+        Config::default(),
+        vec!["xai-oauth".into(), "codex".into()],
+        Vec::new(),
+    );
+    carried
+        .set_permission_mode(wire::PermissionMode::Supervised)
+        .expect("supervised is offered");
+    let changes = [
+        wire::SessionChange::Model {
+            model: old.model.current.clone(),
+            auth: None,
+            setup: true,
+        },
+        wire::SessionChange::FastMode { enabled: false },
+        wire::SessionChange::PermissionMode {
+            mode: wire::PermissionMode::Supervised,
+        },
+    ];
+
+    assert_eq!(
+        changes.map(|change| carried.inherits(&change)),
+        [true, true, false]
+    );
+}

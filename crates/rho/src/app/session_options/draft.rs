@@ -34,6 +34,9 @@ pub(crate) struct DraftOptions {
     /// Whether the person switched the model here, rather than took the
     /// one the session opens or was carried with.
     switched_model: bool,
+    /// The settings taken from the session this one replaces and not
+    /// chosen since, which the session takes where the daemon lets it.
+    inherited: Inherited,
     /// The settled config of the client, read as a session reads its
     /// process config: favorites, per-model reasoning, the classifier.
     process_config: Config,
@@ -62,6 +65,7 @@ impl DraftOptions {
             fast_mode: process_config.fast_mode,
             permission_mode: process_config.permission_mode,
             switched_model: false,
+            inherited: Inherited::default(),
             process_config,
             available_auths,
             commands,
@@ -100,7 +104,35 @@ impl DraftOptions {
         if let Ok(mode) = PermissionMode::try_from(options.permission_mode.current) {
             draft.permission_mode = mode;
         }
+        draft.inherited = Inherited {
+            model: true,
+            reasoning: true,
+            fast_mode: true,
+            permission_mode: true,
+        };
         draft
+    }
+
+    /// Whether `change` moves the session to a setting carried from the
+    /// one it replaces rather than one the person or the launch chose: one
+    /// the daemon refuses then keeps the session's own, where a chosen one
+    /// fails the open.
+    pub(crate) fn inherits(&self, change: &wire::SessionChange) -> bool {
+        match change {
+            wire::SessionChange::Model { .. } => self.inherited.model,
+            wire::SessionChange::Reasoning { .. } => self.inherited.reasoning,
+            wire::SessionChange::FastMode { .. } => self.inherited.fast_mode,
+            wire::SessionChange::PermissionMode { .. } => self.inherited.permission_mode,
+            wire::SessionChange::ModelAfterCompaction { .. }
+            | wire::SessionChange::Context { .. }
+            | wire::SessionChange::AgentCatalog
+            | wire::SessionChange::AddDirectory { .. }
+            | wire::SessionChange::ModelCatalog
+            | wire::SessionChange::SelectNode { .. }
+            | wire::SessionChange::RewindWorkspace { .. } => false,
+            // `SessionChange` is non-exhaustive; a draft makes only the above.
+            _ => false,
+        }
     }
 
     /// The options these settings make now.
@@ -155,6 +187,10 @@ impl DraftOptions {
             auth: selection.auth,
         };
         self.switched_model = true;
+        // A switch keeps the reasoning level where the model takes it,
+        // which then is as chosen as the model.
+        self.inherited.model = false;
+        self.inherited.reasoning = false;
         Ok(())
     }
 
@@ -179,6 +215,7 @@ impl DraftOptions {
             )));
         }
         self.reasoning = level;
+        self.inherited.reasoning = false;
         Ok(())
     }
 
@@ -192,6 +229,7 @@ impl DraftOptions {
             )));
         }
         self.fast_mode = enabled;
+        self.inherited.fast_mode = false;
         Ok(())
     }
 
@@ -227,8 +265,18 @@ impl DraftOptions {
             .ok_or_else(|| {
                 SettingChangeError::Unsupported("that permission mode is not offered".into())
             })?;
+        self.inherited.permission_mode = false;
         Ok(())
     }
+}
+
+/// Which of a draft's settings it carries from the session it replaces.
+#[derive(Clone, Copy, Debug, Default)]
+struct Inherited {
+    model: bool,
+    reasoning: bool,
+    fast_mode: bool,
+    permission_mode: bool,
 }
 
 #[cfg(test)]

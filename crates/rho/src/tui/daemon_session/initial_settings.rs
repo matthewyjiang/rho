@@ -1,7 +1,7 @@
 //! The settings a daemon session takes as the TUI opens it: a launch
 //! flag's and those chosen before a new session's first prompt, which must
-//! apply, and, after a daemon restart, the ones carried from the unsaved
-//! session it replaces, which apply where the daemon takes them.
+//! apply, and the ones carried from the session it replaces, after `/new`
+//! or a daemon restart, which apply where the daemon takes them.
 
 use rho_protocol::{
     methods::SessionConfigure, ClientError, SessionChange, SessionConfigureParams, SessionId,
