@@ -1,7 +1,7 @@
 use pretty_assertions::assert_eq;
 use rho_protocol as wire;
 
-use super::DraftOptions;
+use super::{DraftOptions, Origin};
 use crate::config::Config;
 
 fn draft(provider: &str, model: &str, auth: &str) -> DraftOptions {
@@ -20,8 +20,8 @@ fn draft(provider: &str, model: &str, auth: &str) -> DraftOptions {
 }
 
 // Covers: a setting chosen before the session opens moves the options the
-// TUI shows the way the daemon's would, and the settings carried to a
-// session that replaces this one are the ones chosen.
+// TUI shows the way the daemon's would, and a session that replaces this
+// one carries the ones chosen.
 // Owner: session options
 #[test]
 fn applied_settings_show_in_the_options_and_carry() {
@@ -58,6 +58,7 @@ fn applied_settings_show_in_the_options_and_carry() {
     );
     let carried = DraftOptions::carried(
         &options,
+        draft.origins(),
         Config::default(),
         vec!["xai-oauth".into(), "codex".into()],
         Vec::new(),
@@ -88,36 +89,57 @@ fn refused_settings_leave_the_draft_unchanged() {
     assert_eq!(draft.options(), before);
 }
 
-// Covers: after `/new`, settings carried from the old session apply where
-// the daemon takes them, while one the person changed since must apply, so
-// a carried setting the new session refuses never blocks every prompt.
+// Covers: `/new` takes the config it reads then for every setting nobody
+// chose, so a config edit applies to the next session, and carries a chosen
+// one, which then applies where the daemon takes it, while one chosen since
+// must apply, so a carried setting the new session refuses never blocks
+// every prompt.
 // Owner: session options
 #[test]
-fn only_settings_chosen_since_a_carry_are_required() {
-    let old = draft("openai-codex", "gpt-5.5", "codex").options();
+fn a_new_session_takes_the_config_but_for_chosen_settings() {
+    let mut old = draft("openai-codex", "gpt-5.5", "codex");
+    old.set_permission_mode(wire::PermissionMode::Supervised)
+        .expect("supervised is offered");
+    let edited = Config {
+        provider: "xai".into(),
+        model: "grok-4.7".into(),
+        auth: "xai-oauth".into(),
+        ..Config::default()
+    };
     let mut carried = DraftOptions::carried(
-        &old,
-        Config::default(),
+        &old.options(),
+        old.origins(),
+        edited,
         vec!["xai-oauth".into(), "codex".into()],
         Vec::new(),
     );
-    carried
-        .set_permission_mode(wire::PermissionMode::Supervised)
-        .expect("supervised is offered");
+    carried.set_fast_mode(true).expect("grok has fast mode");
+    let options = carried.options();
     let changes = [
         wire::SessionChange::Model {
-            model: old.model.current.clone(),
+            model: options.model.current.clone(),
             auth: None,
             setup: true,
         },
-        wire::SessionChange::FastMode { enabled: false },
         wire::SessionChange::PermissionMode {
             mode: wire::PermissionMode::Supervised,
         },
+        wire::SessionChange::FastMode { enabled: true },
     ];
 
     assert_eq!(
-        changes.map(|change| carried.inherits(&change)),
-        [true, true, false]
+        (
+            options.model.current,
+            options.permission_mode.current,
+            changes.map(|change| carried.origin(&change)),
+        ),
+        (
+            wire::ModelRef {
+                provider: "xai".into(),
+                model: "grok-4.7".into(),
+            },
+            wire::PermissionMode::Supervised,
+            [Origin::Config, Origin::Carried, Origin::Chosen],
+        )
     );
 }

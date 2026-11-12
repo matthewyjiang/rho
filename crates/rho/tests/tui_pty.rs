@@ -1551,6 +1551,15 @@ fn daemon_tui_opens_its_session_with_the_first_prompt() {
     assert_pass("daemon_lazy_session");
 }
 
+// Covers: `/new` opens its session on config.toml as it is then, under the
+// launch's flags, and a config.toml that no longer loads fails that
+// session's first prompt with the daemon's error.
+// Owner: interactive TUI as a daemon client
+#[test]
+fn daemon_tui_new_session_reads_the_current_config() {
+    assert_pass("daemon_new_session_config");
+}
+
 // Covers: MCP inventory belongs to the daemon session even when the new client's
 // config differs, and remains inspectable behind a queued mid-turn configure.
 // Owner: interactive TUI as a daemon client.

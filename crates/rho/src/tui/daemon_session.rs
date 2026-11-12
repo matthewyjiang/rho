@@ -61,7 +61,7 @@ use crate::{
     app::{
         available_auths,
         daemon_client::{Daemon, Link, LoginEvent, Part, Routed, StreamPosition},
-        DraftOptions,
+        DraftOptions, SettingOrigins,
     },
     credential_store::AppCredentialStore,
     daemon::DAEMON_RESTART_TIMEOUT,
@@ -151,6 +151,9 @@ struct Attachment {
     routed: mpsc::UnboundedReceiver<Routed>,
     /// The session's options as the daemon last reported them.
     options: Option<SessionOptions>,
+    /// Which of them a launch flag or a pick chose, which `/new` carries
+    /// to the session it opens; the rest it takes from config.
+    origins: SettingOrigins,
     events: DaemonEvents,
     /// Which of the attachment's events are its replay.
     position: StreamPosition,
@@ -273,6 +276,16 @@ impl DaemonSession {
                 agent: None,
                 setup: rho_protocol::SessionSetup::default(),
                 config: Arc::default(),
+                definition: Arc::new(
+                    crate::agent::AgentCatalog::discover_with_home(&cwd, /*home*/ None)
+                        .and_then(|catalog| {
+                            Ok(catalog
+                                .find(crate::agent::DEFAULT_AGENT_ID)?
+                                .definition
+                                .clone())
+                        })
+                        .expect("the built-in default agent"),
+                ),
             },
             config_changes: mpsc::unbounded_channel().1,
             target: watch::channel(Target::Ended).0,
@@ -288,6 +301,7 @@ impl DaemonSession {
                 workspace: cwd,
                 routed: mpsc::unbounded_channel().1,
                 options: None,
+                origins: SettingOrigins::default(),
                 events: DaemonEvents::default(),
                 ended: true,
                 reattach: None,
@@ -307,22 +321,33 @@ impl DaemonSession {
     }
 
     /// Follows `target` in this session's place, on a connection of its
-    /// own: with this launch's setup, and a new session with the settings
-    /// this one has now. This session keeps running in the daemon until
-    /// the caller drops it, which detaches it.
+    /// own: with this launch's setup, and a new session on `config.toml`
+    /// as it is now, with the settings of this one a launch flag or a pick
+    /// chose. This session keeps running in the daemon until the caller
+    /// drops it, which detaches it.
     pub(in crate::tui) async fn open_sibling(&self, target: DaemonTarget) -> anyhow::Result<Self> {
         match target {
             DaemonTarget::New => {
+                let config = self.launch.config_now();
+                let auths = available_auths(Arc::new(AppCredentialStore)).await;
                 let options = match &self.following {
-                    Following::Draft(draft) => draft.options.clone(),
+                    Following::Draft(draft) => DraftOptions::carried(
+                        &draft.options.options(),
+                        draft.options.origins(),
+                        config,
+                        auths,
+                        draft.options.added_dirs().to_vec(),
+                    ),
                     Following::Attached(attachment) => {
-                        let config = (*self.launch.config).clone();
-                        let auths = available_auths(Arc::new(AppCredentialStore)).await;
                         let added_dirs = self.launch.setup.additional_directories.clone();
                         match &attachment.options {
-                            Some(options) => {
-                                DraftOptions::carried(options, config, auths, added_dirs)
-                            }
+                            Some(options) => DraftOptions::carried(
+                                options,
+                                attachment.origins,
+                                config,
+                                auths,
+                                added_dirs,
+                            ),
                             None => DraftOptions::new(config, auths, Vec::new(), added_dirs),
                         }
                     }

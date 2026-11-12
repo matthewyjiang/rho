@@ -18,7 +18,10 @@ use super::{
     Attachment, DaemonSession, LOST,
 };
 use crate::{
-    app::daemon_client::{Daemon, Link, StreamPosition},
+    app::{
+        daemon_client::{Daemon, Link, StreamPosition},
+        Origin, SettingOrigins,
+    },
     tui::{
         daemon_events::{DaemonEvents, DaemonView},
         daemon_launch::{DaemonLaunch, InitialSettings},
@@ -107,13 +110,17 @@ impl DaemonSession {
         // this client: those go through the request queue once the
         // session is followed, and a refusal shows as a row.
         let mut queued = Vec::new();
-        let required = match settings {
+        let required: Vec<SessionChange> = match settings {
             InitialSettings::Kept => Vec::new(),
             InitialSettings::Required(changes) => changes
                 .into_iter()
                 .map(|change| change.of(&response.options))
                 .collect(),
         };
+        let mut origins = SettingOrigins::default();
+        for change in &required {
+            origins.set(change, Origin::Chosen);
+        }
         if !at_rest {
             queued = required;
         } else {
@@ -152,6 +159,7 @@ impl DaemonSession {
             workspace: response.workspace,
             routed,
             options: Some(response.options),
+            origins,
             events,
             ended: false,
             reattach: None,

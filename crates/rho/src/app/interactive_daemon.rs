@@ -121,6 +121,7 @@ pub(super) async fn open(
             sign_in: SignIn::Later,
         },
         config: std::sync::Arc::new(config.clone()),
+        definition: std::sync::Arc::new(bound.definition().clone()),
     };
 
     // The picker opens over a new session, which opens only if prompted,
@@ -141,9 +142,14 @@ pub(super) async fn open(
     }
     let id = match startup {
         // The flags are this launch's config, which the draft is built
-        // from, so the first prompt opens the session with them.
+        // from; chosen, the first prompt opens the session with them over
+        // the config the daemon reads then, and `/new` carries them on.
         StartupSession::Fresh | StartupSession::Picker => {
-            let options = new_options(&launch, bound).await;
+            let mut options = new_options(&launch, bound).await;
+            for change in changes {
+                let change = change.of(&options.options());
+                options.chose(&change);
+            }
             return tui::DaemonSession::draft(launch, options).await;
         }
         // Resolve the id, but never take the writer lease from the daemon

@@ -7,8 +7,11 @@
 //! daemon session takes between turns (model, reasoning, fast mode,
 //! permission mode) with the same checks the daemon makes before it builds
 //! anything, refusing with the daemon's [`SettingChangeError`]. The daemon
-//! stays the judge: the client sends the result as
-//! changes once the session opens, and one it refuses is reported then.
+//! stays the judge: once the session opens, the client sends it the settings
+//! someone chose ([`Origin`]) as changes, and one it refuses is reported
+//! then. The rest the daemon takes from `config.toml` as it is when the
+//! session opens, so a config edit applies to the next new session; `/new`
+//! reads it again too ([`config_for_new_session`]), so the draft shows it.
 
 use std::path::PathBuf;
 
@@ -18,10 +21,86 @@ use rho_sdk::ReasoningLevel;
 
 use super::{build, models::AuthPick, reasoning_from_wire, resolve_model};
 use crate::{
+    agent::AgentDefinition,
     app::session_runtime::{resolve_switch_reasoning, CurrentModel, SettingChangeError},
     config::Config,
     permission::PermissionMode,
 };
+
+/// The config a session opened now as `agent` starts on: `config.toml` as
+/// it is, under the agent's model policy, as the daemon reads it for the
+/// session (`daemon_host::sessions::open`). A file that does not load is
+/// an error, naming it.
+pub(crate) fn config_for_new_session(agent: &AgentDefinition) -> anyhow::Result<Config> {
+    let config = Config::load(None)?;
+    // Custom providers this config adds name models the draft may show.
+    config.providers.activate()?;
+    let mut config = crate::app::relaunch_config(agent, &config);
+    super::super::cli_config::normalize_reasoning(
+        &mut config,
+        rho_providers::model::ReasoningRequestSource::PersistedOrDefault,
+    )?;
+    Ok(config)
+}
+
+/// Where a session's setting comes from, which decides whether the session
+/// a client opens is sent it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum Origin {
+    /// `config.toml`, which the daemon reads as the session opens:
+    /// nothing to send.
+    #[default]
+    Config,
+    /// Carried from the session this one replaces, where it was chosen:
+    /// applies where the daemon takes it.
+    Carried,
+    /// Chosen for this session, by a launch flag or a pick: must apply.
+    Chosen,
+}
+
+/// The [`Origin`] of each setting a client may choose for a session.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct SettingOrigins {
+    model: Origin,
+    reasoning: Origin,
+    fast_mode: Origin,
+    permission_mode: Origin,
+}
+
+impl SettingOrigins {
+    /// The origin of the setting `change` moves; one no client chooses
+    /// before a session opens must apply.
+    pub(crate) fn of(mut self, change: &wire::SessionChange) -> Origin {
+        self.setting(change)
+            .map_or(Origin::Chosen, |origin| *origin)
+    }
+
+    /// Records that the setting `change` moves comes from `origin` now;
+    /// a change that moves none leaves them.
+    pub(crate) fn set(&mut self, change: &wire::SessionChange, origin: Origin) {
+        if let Some(setting) = self.setting(change) {
+            *setting = origin;
+        }
+    }
+
+    fn setting(&mut self, change: &wire::SessionChange) -> Option<&mut Origin> {
+        match change {
+            wire::SessionChange::Model { .. } => Some(&mut self.model),
+            wire::SessionChange::Reasoning { .. } => Some(&mut self.reasoning),
+            wire::SessionChange::FastMode { .. } => Some(&mut self.fast_mode),
+            wire::SessionChange::PermissionMode { .. } => Some(&mut self.permission_mode),
+            wire::SessionChange::ModelAfterCompaction { .. }
+            | wire::SessionChange::Context { .. }
+            | wire::SessionChange::AgentCatalog
+            | wire::SessionChange::AddDirectory { .. }
+            | wire::SessionChange::ModelCatalog
+            | wire::SessionChange::SelectNode { .. }
+            | wire::SessionChange::RewindWorkspace { .. } => None,
+            // `SessionChange` is non-exhaustive; nothing else is a setting.
+            _ => None,
+        }
+    }
+}
 
 /// A session's settings before it opens, and the options they make.
 #[derive(Clone, Debug)]
@@ -34,9 +113,7 @@ pub(crate) struct DraftOptions {
     /// Whether the person switched the model here, rather than took the
     /// one the session opens or was carried with.
     switched_model: bool,
-    /// The settings taken from the session this one replaces and not
-    /// chosen since, which the session takes where the daemon lets it.
-    inherited: Inherited,
+    origins: SettingOrigins,
     /// The settled config of the client, read as a session reads its
     /// process config: favorites, per-model reasoning, the classifier.
     process_config: Config,
@@ -65,7 +142,7 @@ impl DraftOptions {
             fast_mode: process_config.fast_mode,
             permission_mode: process_config.permission_mode,
             switched_model: false,
-            inherited: Inherited::default(),
+            origins: SettingOrigins::default(),
             process_config,
             available_auths,
             commands,
@@ -73,11 +150,13 @@ impl DraftOptions {
         }
     }
 
-    /// The settings of a session that runs with `options`, for one that
-    /// replaces it, as `/new` does: its commands too, which the same setup
-    /// lists again. Its tools reach `added_dirs`, the launch's.
+    /// The settings of a session on `process_config` that replaces one
+    /// running with `options`, as `/new` does: of those, it carries the
+    /// ones `origins` says someone chose, and its commands, which the same
+    /// setup lists again. Its tools reach `added_dirs`.
     pub(crate) fn carried(
         options: &wire::SessionOptions,
+        origins: SettingOrigins,
         process_config: Config,
         available_auths: Vec<String>,
         added_dirs: Vec<PathBuf>,
@@ -88,51 +167,59 @@ impl DraftOptions {
             options.commands.clone(),
             added_dirs,
         );
-        draft.current = CurrentModel {
-            provider: options.model.current.provider.clone(),
-            model: options.model.current.model.clone(),
-            auth: options.model.auth.clone(),
+        let carried = |origin: Origin| match origin {
+            Origin::Config => Origin::Config,
+            Origin::Carried | Origin::Chosen => Origin::Carried,
         };
-        if let Some(level) = options
-            .reasoning
-            .as_ref()
-            .and_then(|reasoning| reasoning_from_wire(reasoning.current))
-        {
-            draft.reasoning = level;
-        }
-        draft.fast_mode = options.fast_mode.as_ref().is_some_and(|fast| fast.enabled);
-        if let Ok(mode) = PermissionMode::try_from(options.permission_mode.current) {
-            draft.permission_mode = mode;
-        }
-        draft.inherited = Inherited {
-            model: true,
-            reasoning: true,
-            fast_mode: true,
-            permission_mode: true,
+        draft.origins = SettingOrigins {
+            model: carried(origins.model),
+            reasoning: carried(origins.reasoning),
+            fast_mode: carried(origins.fast_mode),
+            permission_mode: carried(origins.permission_mode),
         };
+        if draft.origins.model == Origin::Carried {
+            draft.current = CurrentModel {
+                provider: options.model.current.provider.clone(),
+                model: options.model.current.model.clone(),
+                auth: options.model.auth.clone(),
+            };
+        }
+        if draft.origins.reasoning == Origin::Carried {
+            if let Some(level) = options
+                .reasoning
+                .as_ref()
+                .and_then(|reasoning| reasoning_from_wire(reasoning.current))
+            {
+                draft.reasoning = level;
+            }
+        }
+        if draft.origins.fast_mode == Origin::Carried {
+            draft.fast_mode = options.fast_mode.as_ref().is_some_and(|fast| fast.enabled);
+        }
+        if draft.origins.permission_mode == Origin::Carried {
+            if let Ok(mode) = PermissionMode::try_from(options.permission_mode.current) {
+                draft.permission_mode = mode;
+            }
+        }
         draft
     }
 
-    /// Whether `change` moves the session to a setting carried from the
-    /// one it replaces rather than one the person or the launch chose: one
-    /// the daemon refuses then keeps the session's own, where a chosen one
-    /// fails the open.
-    pub(crate) fn inherits(&self, change: &wire::SessionChange) -> bool {
-        match change {
-            wire::SessionChange::Model { .. } => self.inherited.model,
-            wire::SessionChange::Reasoning { .. } => self.inherited.reasoning,
-            wire::SessionChange::FastMode { .. } => self.inherited.fast_mode,
-            wire::SessionChange::PermissionMode { .. } => self.inherited.permission_mode,
-            wire::SessionChange::ModelAfterCompaction { .. }
-            | wire::SessionChange::Context { .. }
-            | wire::SessionChange::AgentCatalog
-            | wire::SessionChange::AddDirectory { .. }
-            | wire::SessionChange::ModelCatalog
-            | wire::SessionChange::SelectNode { .. }
-            | wire::SessionChange::RewindWorkspace { .. } => false,
-            // `SessionChange` is non-exhaustive; a draft makes only the above.
-            _ => false,
-        }
+    /// Where the setting `change` moves the session to comes from: one
+    /// from config is not sent, a carried one the daemon refuses keeps the
+    /// session's own, and a chosen one it refuses fails the open.
+    pub(crate) fn origin(&self, change: &wire::SessionChange) -> Origin {
+        self.origins.of(change)
+    }
+
+    /// Where each setting comes from, which the session keeps once open.
+    pub(crate) fn origins(&self) -> SettingOrigins {
+        self.origins
+    }
+
+    /// Counts the setting `change` moves as chosen, as a launch flag does,
+    /// whose value the draft's config already holds.
+    pub(crate) fn chose(&mut self, change: &wire::SessionChange) {
+        self.origins.set(change, Origin::Chosen);
     }
 
     /// The options these settings make now.
@@ -187,10 +274,9 @@ impl DraftOptions {
             auth: selection.auth,
         };
         self.switched_model = true;
-        // A switch keeps the reasoning level where the model takes it,
-        // which then is as chosen as the model.
-        self.inherited.model = false;
-        self.inherited.reasoning = false;
+        // The reasoning level the switch kept stays where it came from:
+        // the daemon keeps its own the same way where it is from config.
+        self.origins.model = Origin::Chosen;
         Ok(())
     }
 
@@ -215,7 +301,7 @@ impl DraftOptions {
             )));
         }
         self.reasoning = level;
-        self.inherited.reasoning = false;
+        self.origins.reasoning = Origin::Chosen;
         Ok(())
     }
 
@@ -229,7 +315,7 @@ impl DraftOptions {
             )));
         }
         self.fast_mode = enabled;
-        self.inherited.fast_mode = false;
+        self.origins.fast_mode = Origin::Chosen;
         Ok(())
     }
 
@@ -265,18 +351,9 @@ impl DraftOptions {
             .ok_or_else(|| {
                 SettingChangeError::Unsupported("that permission mode is not offered".into())
             })?;
-        self.inherited.permission_mode = false;
+        self.origins.permission_mode = Origin::Chosen;
         Ok(())
     }
-}
-
-/// Which of a draft's settings it carries from the session it replaces.
-#[derive(Clone, Copy, Debug, Default)]
-struct Inherited {
-    model: bool,
-    reasoning: bool,
-    fast_mode: bool,
-    permission_mode: bool,
 }
 
 #[cfg(test)]

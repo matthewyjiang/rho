@@ -37,6 +37,7 @@ mod daemon_lazy_session;
 mod daemon_login;
 mod daemon_mcp;
 mod daemon_mcp_owner;
+mod daemon_new_session_config;
 mod daemon_openapi_startup;
 mod daemon_options;
 mod daemon_prompt;
@@ -528,6 +529,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
     daemon_switch::SCENARIO,
     #[cfg(unix)]
     daemon_lazy_session::SCENARIO,
+    daemon_new_session_config::SCENARIO,
     #[cfg(unix)]
     daemon_restart::SCENARIO,
     #[cfg(unix)]

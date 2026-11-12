@@ -75,6 +75,9 @@ pub fn run_named(runner: &ScenarioRunner, name: &str) -> Result<ScenarioOutcome>
     if name == super::daemon_lazy_session::SCENARIO.id {
         return super::daemon_lazy_session::run(runner);
     }
+    if name == super::daemon_new_session_config::SCENARIO.id {
+        return super::daemon_new_session_config::run(runner);
+    }
     if name == super::daemon_detach::SCENARIO.id {
         return super::daemon_detach::run(runner);
     }

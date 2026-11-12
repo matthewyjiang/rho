@@ -131,18 +131,21 @@ impl DaemonSession {
     }
 
     /// Queue a change without waiting for the active turn to release it.
-    /// Before the session opened, the draft takes it.
+    /// Before the session opened, the draft takes it. A setting it moves
+    /// counts as chosen, so `/new` carries it on.
     pub(in crate::tui) fn configure(
         &mut self,
         change: rho_protocol::SessionChange,
     ) -> anyhow::Result<()> {
-        if self.is_draft() {
-            self.configure_draft(change);
-            return Ok(());
-        }
-        if self.ended() {
-            anyhow::bail!(LOST);
-        }
+        let attachment = match &mut self.following {
+            Following::Draft(_) => {
+                self.configure_draft(change);
+                return Ok(());
+            }
+            Following::Attached(attachment) if attachment.ended => anyhow::bail!(LOST),
+            Following::Attached(attachment) => attachment,
+        };
+        attachment.origins.set(&change, crate::app::Origin::Chosen);
         self.requests
             .as_ref()
             .expect("attached session has requests")
