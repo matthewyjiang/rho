@@ -378,14 +378,21 @@ async fn establish_session(
                 command.current_dir(cwd);
             }
             // The home this process serves, as the daemon's spawner pins it:
-            // canonical, so it names the same directory from the child's.
-            let rho_home = crate::paths::rho_dir().and_then(|home| {
-                crate::daemon::real_home(&home)
-                    .with_context(|| format!("could not resolve rho home {}", home.display()))
-            })?;
+            // canonical, so it names the same directory from the child's. Only
+            // a nested `rho` reads it, so a home that does not resolve keeps
+            // no other server from starting.
+            let rho_home = crate::paths::rho_dir()
+                .ok()
+                .and_then(|home| crate::daemon::real_home(&home).ok());
             // Start from the shared sanitized base. Servers opt into all other
             // inherited variables through `env_from_env`.
-            apply_stdio_environment(&mut command, env, env_from_env, environment, &rho_home)?;
+            apply_stdio_environment(
+                &mut command,
+                env,
+                env_from_env,
+                environment,
+                rho_home.as_deref(),
+            )?;
             // Servers and anything they launch must not take over the TUI's terminal.
             #[cfg(unix)]
             rho_tools::process_session::start_new_session(command.as_std_mut());
@@ -666,15 +673,15 @@ async fn refresh_tools(maintenance: &SessionMaintenance) {
 }
 
 /// Gives a stdio server the base set from `environment`, where the session's
-/// daemon is (`rho_home`, this process's canonical home, and the session's
-/// runtime directory), and the session's caller context, then its config's
-/// `env`, then its `env_from_env` read from `environment`.
+/// daemon is (`rho_home`, this process's canonical home when it resolves, and
+/// the session's runtime directory), and the session's caller context, then
+/// its config's `env`, then its `env_from_env` read from `environment`.
 fn apply_stdio_environment(
     command: &mut tokio::process::Command,
     env: &BTreeMap<String, String>,
     env_from_env: &BTreeMap<String, String>,
     environment: &Ambient,
-    rho_home: &Path,
+    rho_home: Option<&Path>,
 ) -> anyhow::Result<()> {
     environment.apply_base(command);
     // A `rho mcp serve` registered as a session's server reaches the daemon
@@ -683,7 +690,9 @@ fn apply_stdio_environment(
     // could not have reached it. It also starts from the session's depth and
     // scope, so its caps hold across hops (#1672); each call then carries
     // the session's current ones (#1765).
-    command.env("RHO_HOME", rho_home);
+    if let Some(rho_home) = rho_home {
+        command.env("RHO_HOME", rho_home);
+    }
     let names = std::iter::once("XDG_RUNTIME_DIR").chain(crate::caller_context::ENV_NAMES);
     for name in names {
         if let Some(value) = environment.read_os(name) {

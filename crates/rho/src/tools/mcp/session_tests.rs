@@ -322,7 +322,7 @@ fn a_server_reads_its_sessions_environment() {
         &strings(&[("MODE", "fast")]),
         &strings(&[("GITHUB_PERSONAL_ACCESS_TOKEN", "GITHUB_TOKEN")]),
         &session,
-        std::path::Path::new("/srv/rho"),
+        Some(std::path::Path::new("/srv/rho")),
     )
     .unwrap();
     let headers = super::resolve_headers(
