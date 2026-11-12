@@ -47,6 +47,7 @@ mod daemon;
 const DAEMON_FLAG: &str = "RHO_TUI_DAEMON";
 
 /// Where an interactive launch's session runs.
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum SessionHost {
     InProcess,
     Daemon,
@@ -139,7 +140,8 @@ async fn run_inner(startup: Startup<'_>) -> anyhow::Result<()> {
     // The one read of the #1667 seam: the session runs in the daemon, which
     // the TUI follows, or in this process. T6 deletes the flag with
     // `InteractiveRuntime` and `tui/prompt_turn.rs`.
-    let daemon = match SessionHost::from_flag(std::env::var_os(DAEMON_FLAG).as_deref()) {
+    let host = SessionHost::from_flag(std::env::var_os(DAEMON_FLAG).as_deref());
+    let daemon = match host {
         SessionHost::InProcess => None,
         SessionHost::Daemon => {
             // Before the daemon builds the session's options from the cache.
@@ -182,6 +184,8 @@ async fn run_inner(startup: Startup<'_>) -> anyhow::Result<()> {
         no_system_prompt: cli.no_system_prompt,
         no_tools: cli.no_tools,
         no_subagents: cli.no_subagents,
+        in_process: host == SessionHost::InProcess
+            && SessionHost::PLATFORM_DEFAULT == SessionHost::Daemon,
     };
     let mut runtime = InteractiveRuntime::new(InteractiveRuntimeOptions {
         config: &config,

@@ -54,7 +54,7 @@ rho [--config <path>] [--agent <id>] [--no-system-prompt] [--no-tools] [--no-sub
   [--permission-mode <mode>] --resume <session-id>
 ```
 
-Launch flags are repeated as given. Model, auth, reasoning, and permission mode are added only where the session differs from what a plain relaunch would select (your config, plus the `--agent` definition's model when one was given), for example after another pane saves a different model. Otherwise the restored session reads them from config, exactly like a plain `rho --resume`. Rho re-reports the command when the session, its selection, or the config file changes, including while the pane is idle, and retries until Herdr accepts it. Switching to another session with `/resume` moves the pane to that session.
+Launch flags are repeated as given. A session started with `RHO_TUI_DAEMON=0` on Linux or macOS is resumed through `env RHO_TUI_DAEMON=0 rho ...`, so it stays in process and keeps its `--config`. Model, auth, reasoning, and permission mode are added only where the session differs from what a plain relaunch would select (your config, plus the `--agent` definition's model when one was given), for example after another pane saves a different model. Otherwise the restored session reads them from config, exactly like a plain `rho --resume`. Rho re-reports the command when the session, its selection, or the config file changes, including while the pane is idle, and retries until Herdr accepts it. Switching to another session with `/resume` moves the pane to that session.
 
 A session that is not saved yet (before the first prompt, after `/new`, or with `--no-save`) has no resume command. Resume needs Herdr 0.9.2 or later. To turn it off, set `[session] resume_agents_on_restore = false` in Herdr's config.
 
