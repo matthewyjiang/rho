@@ -6,10 +6,7 @@
 use std::process::{ExitStatus, Stdio};
 
 use pretty_assertions::assert_eq;
-use rho_protocol::{
-    methods::{JobList, SessionCancel},
-    JobListParams, JobState, SessionCancelParams, SessionId,
-};
+use rho_protocol::{JobState, SessionId};
 use serde_json::{json, Value};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines},
@@ -43,7 +40,9 @@ impl Attach {
         }
     }
 
-    /// Reads lines until one satisfies `done`.
+    /// Reads lines until one satisfies `done`. Only the test that
+    /// interrupts `rho attach`, which is Unix's, reads part of a stream.
+    #[cfg(unix)]
     async fn read_until(&mut self, done: impl Fn(&Value) -> bool) {
         loop {
             let line = tokio::time::timeout(DEADLINE, self.lines.next_line())
@@ -103,9 +102,11 @@ fn ends(lines: &[Value]) -> (Value, Value) {
     (bare(lines.first().unwrap()), bare(lines.last().unwrap()))
 }
 
+/// The job of `session`'s turns, for the Unix-only test below.
+#[cfg(unix)]
 async fn job_of(client: &rho_protocol::Client, session: &SessionId) -> rho_protocol::JobSummary {
     client
-        .request::<JobList>(&JobListParams {})
+        .request::<rho_protocol::methods::JobList>(&rho_protocol::JobListParams {})
         .await
         .unwrap()
         .jobs
@@ -235,6 +236,8 @@ async fn attach_reports_how_the_last_turn_ended() {
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn attach_follows_a_turn_and_detaches_on_ctrl_c() {
+    use rho_protocol::{methods::SessionCancel, SessionCancelParams};
+
     let sandbox = Sandbox::new();
     // The fixture holds the turn until it is cancelled.
     let client = sandbox.start_daemon("delay").await;

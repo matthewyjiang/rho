@@ -8,7 +8,7 @@
 //! anything: another account that created a pipe of the same name first
 //! cannot make itself that pipe's owner.
 
-use std::{ffi::c_void, io, os::windows::io::RawHandle, ptr};
+use std::{io, os::windows::io::RawHandle, ptr};
 
 use windows_sys::Win32::{
     Foundation::{CloseHandle, LocalFree, ERROR_SUCCESS, HANDLE},
@@ -174,7 +174,7 @@ pub(super) fn owned_by_current_user(pipe: RawHandle) -> io::Result<bool> {
     // is freed only after the comparison, as its documentation says.
     let same = unsafe {
         let same = EqualSid(owner, user.sid()) != 0;
-        LocalFree(descriptor as *mut c_void);
+        LocalFree(descriptor);
         same
     };
     Ok(same)

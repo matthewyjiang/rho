@@ -9,9 +9,9 @@ use pretty_assertions::assert_eq;
 use rho_protocol::{
     methods::{JobList, SessionAttach, SessionDetach, SessionList, SessionNew},
     Ask, ChildThreads, Client, ClientError, DaemonNotification, ErrorCode, JobKind, JobListParams,
-    JobState, McpServer, Operation, PathScope, SessionAttachParams, SessionDetachParams,
-    SessionEvent, SessionEventParams, SessionId, SessionListParams, SessionNewParams, SessionPart,
-    SessionSetup, ToolCallId, ToolStatus, TurnOutcome,
+    JobState, Operation, PathScope, SessionAttachParams, SessionDetachParams, SessionEvent,
+    SessionEventParams, SessionId, SessionListParams, SessionNewParams, SessionPart, SessionSetup,
+    ToolCallId, ToolStatus, TurnOutcome,
 };
 use serde_json::Value;
 
@@ -534,6 +534,8 @@ async fn a_rebound_session_keeps_its_root_agents_tools_after_a_reopen() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_setups_mcp_server_replaces_the_config_server_of_its_name() {
     use std::os::unix::fs::PermissionsExt;
+
+    use rho_protocol::McpServer;
 
     let sandbox = Sandbox::new();
     let root = sandbox.workspace.parent().unwrap().to_path_buf();
