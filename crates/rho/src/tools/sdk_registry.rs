@@ -123,7 +123,7 @@ impl ToolSetOptions {
     }
 
     /// Advertises `keep_warm` on `process start`. Only a host that runs a
-    /// cache warmer (the in-process TUI, or the daemon) may offer it.
+    /// cache warmer (the daemon) may offer it.
     pub(crate) fn process_keep_warm(mut self, offer: super::process::KeepWarmOffer) -> Self {
         self.process_keep_warm = offer;
         self
@@ -175,7 +175,6 @@ struct AdvisorTools {
 
 struct PlanExitTools {
     slot: super::plan_exit::PlanExitSlot,
-    classifier_configured: Arc<std::sync::atomic::AtomicBool>,
     registration: HostToolRegistration,
     /// Approvals the tool asks a permission-prompt host, between the host's
     /// prompts. A running prompt takes it to answer them.
@@ -559,41 +558,21 @@ impl AppToolSet {
             .mutate(|tools| advisor.registration.set_registered(tools, registered))
     }
 
-    /// Installs plan handoff for an interactive host that can ask the user.
-    /// A questionnaire host needs the questionnaire tool, which exists only
-    /// when the host can draw questionnaires.
-    pub(crate) fn with_plan_exit_host(
-        mut self,
-        config: &Config,
-        host: super::plan_exit::PlanExitHost,
-    ) -> Self {
-        use super::plan_exit::{PlanExitHost, PlanExitPrompt};
-
-        let (prompt, permission_requests) = match host {
-            PlanExitHost::Questionnaire if self.contains("questionnaire") => {
-                (PlanExitPrompt::Questionnaire, None)
-            }
-            PlanExitHost::Questionnaire => return self,
-            PlanExitHost::Permission => {
-                let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
-                (PlanExitPrompt::Permission(sender), Some(receiver))
-            }
-        };
+    /// Installs plan handoff for an interactive host that asks the user with
+    /// a permission prompt.
+    pub(crate) fn with_plan_exit_host(mut self, config: &Config) -> Self {
+        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
         let slot = super::plan_exit::PlanExitSlot::default();
-        let classifier_configured = Arc::new(std::sync::atomic::AtomicBool::new(
-            config
-                .internal_agents
-                .contains_key(crate::agent::PERMISSION_CLASSIFIER_AGENT_ID),
-        ));
         self.plan_exit = Some(PlanExitTools {
             registration: HostToolRegistration::new(Arc::new(super::plan_exit::PlanExitTool {
                 slot: Some(slot.clone()),
-                prompt,
-                classifier_configured: classifier_configured.clone(),
+                permission_requests: sender,
+                classifier_configured: config
+                    .internal_agents
+                    .contains_key(crate::agent::PERMISSION_CLASSIFIER_AGENT_ID),
             })),
             slot,
-            classifier_configured,
-            permission_requests,
+            permission_requests: Some(receiver),
         });
         self.set_plan_exit_registered(config.permission_mode);
         self
@@ -630,53 +609,8 @@ impl AppToolSet {
         })
     }
 
-    pub(crate) fn update_plan_exit_classifier(&self, config: &Config) {
-        if let Some(plan_exit) = &self.plan_exit {
-            plan_exit.classifier_configured.store(
-                config
-                    .internal_agents
-                    .contains_key(crate::agent::PERMISSION_CLASSIFIER_AGENT_ID),
-                std::sync::atomic::Ordering::Relaxed,
-            );
-        }
-    }
-
     pub(crate) fn take_plan_exit_decision(&self) -> Option<super::plan_exit::PlanExitDecision> {
         self.plan_exit.as_ref()?.slot.take()
-    }
-
-    /// Replaces the advertised built-in file edit tool.
-    ///
-    /// Returns the previous format when the advertised tool list changed so
-    /// callers can rebuild the runtime and tell the model. No-ops when this
-    /// run has no edit tool or the selection is already active.
-    ///
-    /// Matches built-in edit tool names (`apply_patch`, `str_replace`).
-    pub fn set_edit_tool(
-        &mut self,
-        edit_tool: rho_tools::EditFormat,
-        max_output_bytes: usize,
-    ) -> Option<rho_tools::EditFormat> {
-        let previous = self.edit_tool()?;
-        if previous == edit_tool {
-            return None;
-        }
-        let position = self
-            .tools()
-            .iter()
-            .position(|tool| rho_tools::EditFormat::is_edit_tool_name(tool.spec().name.as_str()))?;
-        let mutation_observer: Arc<dyn rho_tools::WorkspaceMutationObserver> =
-            self.checkpoint_tracker.clone();
-        let replacement = super::coding::edit_tool(edit_tool, max_output_bytes, mutation_observer);
-        self.inventory.mutate(|tools| tools[position] = replacement);
-        Some(previous)
-    }
-
-    /// The currently advertised built-in edit format, when this run exposes one.
-    pub fn edit_tool(&self) -> Option<rho_tools::EditFormat> {
-        self.tools()
-            .iter()
-            .find_map(|tool| rho_tools::EditFormat::from_tool_name(tool.spec().name.as_str()))
     }
 
     pub fn subagents(&self) -> Option<&SubagentManager> {
@@ -717,10 +651,6 @@ impl AppToolSet {
         &self,
     ) -> &Arc<crate::session::workspace_checkpoint::WorkspaceCheckpointTracker> {
         &self.checkpoint_tracker
-    }
-
-    pub fn web_access(&self) -> &super::web::WebAccessStore {
-        &self.web_access
     }
 
     pub async fn shutdown(&self) {

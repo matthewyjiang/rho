@@ -490,16 +490,11 @@ impl ProcessManager {
         live.into_iter().map(|(_, _, summary)| summary).collect()
     }
 
-    /// Full retained output for the host peek view.
+    /// Retained output from chunk `cursor` on for the host peek view; a host
+    /// that keeps the earlier chunks itself passes where it left off.
     ///
     /// Host UI only. Unlike [`Self::poll_bounded`], this does not wait, mark a
     /// terminal process observed, or consume an agent-visible cursor.
-    pub(crate) fn host_view(&self, id: &str) -> Result<super::HostProcessView, String> {
-        self.host_view_from(id, /*cursor*/ 0)
-    }
-
-    /// [`Self::host_view`] with only the retained chunks from `cursor` on,
-    /// for a host that keeps the earlier ones itself.
     pub(crate) fn host_view_from(
         &self,
         id: &str,

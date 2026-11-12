@@ -1,7 +1,7 @@
 //! Wakes an idle session whose client asked for it (`idle_wake: turn`, as
 //! the TUI does) when its background work finishes: the daemon starts a
 //! turn of its own, with no prompt, whose first boundary gives the model
-//! the result, as the in-process TUI's idle delivery does.
+//! the result.
 //!
 //! Such a session's prompts do not wait for the subagents, workflows and
 //! background processes they start (`BackgroundWait::HostTurns`), so a turn

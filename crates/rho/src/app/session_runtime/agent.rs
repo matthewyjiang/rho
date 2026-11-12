@@ -9,14 +9,14 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     build::{build_session, session_config},
-    model_scoped_config, CommandRejected, PromptScope, SessionPermission, SessionRuntime,
-    SessionUse,
+    model_scoped_config,
+    open::session_options_for_id,
+    CommandRejected, PromptScope, SessionPermission, SessionRuntime, SessionUse,
 };
 use crate::{
     agent::{AgentCatalog, AgentDefinition},
     app::{
         agent_binding::{AgentBinder, AgentInvocation, AgentRole, BoundAgent, ModelOverride},
-        interactive_runtime::startup::session_options_for_id,
         session_assembly::BuiltSession,
         tools_prompt::ToolSourceLoad,
     },

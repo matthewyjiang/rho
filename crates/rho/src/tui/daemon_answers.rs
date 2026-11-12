@@ -1,6 +1,5 @@
-//! Answers the followed daemon session's input requests from the TUI
-//! (#1667), with the prompts the in-process TUI shows for the same asks:
-//! the approval prompt, the plan-approval questionnaire, and the
+//! Answers the followed session's input requests from the TUI (#1667),
+//! with the approval prompt, the plan-approval questionnaire, and the
 //! questionnaire ([`super::daemon_asks`]).
 //!
 //! The TUI shows one request at a time, oldest first; the rest wait. Each
@@ -46,7 +45,7 @@ pub(super) struct DaemonAnswers {
     /// unsaid.
     cancelled: HashSet<InputRequestId>,
     /// The person's cancel of questions cancelled the running turn, whose
-    /// end then says the questionnaire was cancelled, as in process.
+    /// end then says the questionnaire was cancelled.
     questions_cancelled_turn: bool,
 }
 
@@ -73,10 +72,10 @@ enum Reply {
 /// What the person did at the open prompt.
 enum Reaction {
     Answer(InputAnswer),
-    /// Cancelled a plan approval, which cancels the turn, as in process.
+    /// Cancelled a plan approval, which cancels the turn.
     CancelTurn,
     /// Cancelled questions: dismisses them, then, when they are the turn's
-    /// own, cancels the turn if one runs, as in process. The dismiss comes
+    /// own, cancels the turn if one runs. The dismiss comes
     /// first: the cancel alone would leave a subagent's question waiting.
     DismissQuestions(InputAsker),
     /// The prompt closed without a reply: another client may answer.
@@ -171,9 +170,7 @@ impl App {
         match self.take_daemon_reaction() {
             None => self.hold_touched_daemon_input(terminal).await?,
             Some((id, Reaction::Answer(answer))) => {
-                if let Some(session) = self.info.session.daemon.as_mut() {
-                    session.answer(id, answer).await;
-                }
+                self.info.session.daemon.answer(id, answer).await;
                 self.show_taken_daemon_views(terminal).await?;
             }
             // The cancel withdraws the request.
@@ -184,9 +181,11 @@ impl App {
             }
             Some((id, Reaction::DismissQuestions(asker))) => {
                 self.daemon_answers.cancelled.insert(id);
-                if let Some(session) = self.info.session.daemon.as_mut() {
-                    session.answer(id, InputAnswer::Dismiss).await;
-                }
+                self.info
+                    .session
+                    .daemon
+                    .answer(id, InputAnswer::Dismiss)
+                    .await;
                 // An asker a newer daemon names is taken for the turn, as
                 // before the daemon said whose a request is.
                 let turns_question = !matches!(asker, InputAsker::Subagent);
@@ -214,9 +213,6 @@ impl App {
         &mut self,
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<bool> {
-        if self.info.session.daemon.is_none() {
-            return Ok(false);
-        }
         let shown = |app: &Self| app.daemon_answers.shown.as_ref().map(|shown| shown.id);
         let before = shown(self);
         self.answer_daemon_input(terminal, /*cancelling*/ false)
@@ -240,12 +236,9 @@ impl App {
         else {
             return Ok(());
         };
-        let Some(session) = self.info.session.daemon.as_mut() else {
-            return Ok(());
-        };
         // A failed hold leaves the daemon's deadline running, so the next
         // touch tries again.
-        if session.hold(id).await {
+        if self.info.session.daemon.hold(id).await {
             if let Some(shown) = self.daemon_answers.shown.as_mut() {
                 shown.times_out = false;
             }
@@ -284,7 +277,7 @@ impl App {
     /// Opens the oldest waiting request's prompt while none is open. One
     /// the TUI cannot show says so, and is left to other clients. With no
     /// turn running, a subagent's question waits for a plain, empty
-    /// composer, as an in-process one does, and shows once the loop finds
+    /// composer, and shows once the loop finds
     /// one: it must not replace a draft or an open picker.
     async fn show_next_daemon_input(&mut self) {
         let composer_free = matches!(self.input_ui.composer(), ComposerMode::Input)

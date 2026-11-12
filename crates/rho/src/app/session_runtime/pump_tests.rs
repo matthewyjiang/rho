@@ -388,7 +388,6 @@ fn child_question() -> (
     let asked = SubagentHostInputRequest {
         run_id: "ab12cd".into(),
         agent_id: "worker".into(),
-        parent_session_id: SessionId::new(),
         request,
         response,
     };

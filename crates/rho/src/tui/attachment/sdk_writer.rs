@@ -52,7 +52,7 @@ pub(crate) fn translate_run_event(
         .filter_map(|view_event| match view_event {
             ViewEvent::Update(update) => attachment_update(adapter, update),
             ViewEvent::Notice(notice) => Some(AttachmentEvent::Notice(notice)),
-            ViewEvent::Questionnaire { request, .. } => Some(AttachmentEvent::Notice(format!(
+            ViewEvent::Questionnaire { request } => Some(AttachmentEvent::Notice(format!(
                 "input requested but unavailable in a delegated agent: {}",
                 request.title()
             ))),

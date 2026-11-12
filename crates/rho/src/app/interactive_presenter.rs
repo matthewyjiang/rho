@@ -302,29 +302,6 @@ impl InteractiveToolPresenter {
         })
     }
 
-    pub(crate) fn interrupted(
-        &self,
-        name: Option<&str>,
-        partial_arguments: &str,
-    ) -> ToolPresentation {
-        let name = name.unwrap_or("tool call");
-        let arguments = if ToolKind::from_name(name, &self.mcp_tools) == ToolKind::Codemode {
-            let mut script = script_stream::ScriptStream::default();
-            script.update(partial_arguments);
-            serde_json::json!({"script": script.lines().join("\n")})
-        } else {
-            parse_incomplete_json(partial_arguments)
-                .unwrap_or_else(|| serde_json::Value::Object(Default::default()))
-        };
-        let view = ToolView {
-            kind: ToolKind::from_name(name, &self.mcp_tools),
-            name: name.into(),
-            arguments,
-            metadata: ToolMetadata::default(),
-        };
-        presentation(&view, interrupted_card(&view, partial_arguments, &self.cwd))
-    }
-
     pub(crate) fn historical(
         &self,
         call: &ToolCall,

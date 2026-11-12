@@ -123,7 +123,7 @@ pub(crate) fn discover_workflow_sources(workspace: &Path) -> Vec<DiscoveredWorkf
 
 /// Workflows that have a command, one per command name. When `<name>.star`
 /// and `<name>/workflow.star` both exist, or two names differ only by case,
-/// the name is listed once and [`resolve_start_command`] reports the ambiguity.
+/// the name is listed once and [`resolve_launch`] reports the ambiguity.
 pub(crate) fn command_workflows(workspace: &Path) -> Vec<DiscoveredWorkflow> {
     let mut workflows = discover_workflow_sources(workspace);
     workflows.retain(|workflow| workflow.command_name().is_some());
@@ -132,27 +132,15 @@ pub(crate) fn command_workflows(workspace: &Path) -> Vec<DiscoveredWorkflow> {
     workflows
 }
 
-/// Resolves the slash token `name` (without `/`) and its trailing `args`.
-///
-/// The prefix and the name match without regard to ASCII case, like
-/// `/prompt:<name>`. `None` means `name` is not a workflow command.
-/// `Some(Err)` carries a user-facing reason: no such workflow, an ambiguous
-/// name, or inputs that are not one JSON object.
-pub(crate) fn resolve_start_command(
-    workspace: &Path,
-    name: &str,
-    args: &str,
-) -> Option<Result<StartCommand, String>> {
-    name.get(..COMMAND_PREFIX.len())
-        .filter(|prefix| prefix.eq_ignore_ascii_case(COMMAND_PREFIX))
-        .map(|_| resolve_label(workspace, &name[COMMAND_PREFIX.len()..], args))
-}
-
 /// Resolves the slash token `name` (without `/`) and its trailing `args` to
-/// what it starts: a workspace workflow by name, as
-/// [`resolve_start_command`] does, or `plan/<plan id>` and
+/// what it starts: a workspace workflow by name, or `plan/<plan id>` and
 /// `run/<run id> [recover]`, the hub's rows for saved plans and stopped
 /// runs. A name is a file stem, so it never contains the `/` those have.
+///
+/// The prefix and the name match without regard to ASCII case. `None` means
+/// `name` is not a workflow command. `Some(Err)` carries a user-facing
+/// reason: no such workflow, an ambiguous name, or inputs that are not one
+/// JSON object.
 pub(crate) fn resolve_launch(
     workspace: &Path,
     name: &str,

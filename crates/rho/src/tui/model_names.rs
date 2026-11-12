@@ -3,7 +3,7 @@
 //!
 //! A daemon session's own labels decide for the models it offers, because they
 //! are the names its model picker shows. The local catalog answers for models
-//! the daemon does not offer and for in-process sessions. A model keeps its id
+//! the daemon does not offer. A model keeps its id
 //! when nothing names it or when its name is shared with another model from
 //! the same provider, never a name guessed from it.
 
@@ -17,7 +17,7 @@ use crate::config::{InternalAgentModelConfig, InternalAgentTarget};
 
 /// Names models for status, divider, and notice text.
 ///
-/// `offered` is the daemon session's model choices; empty in process.
+/// `offered` is the daemon session's model choices.
 #[derive(Clone, Copy, Default)]
 pub(super) struct ModelNames<'a> {
     offered: &'a [ModelChoice],

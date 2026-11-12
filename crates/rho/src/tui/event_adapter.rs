@@ -111,10 +111,7 @@ impl ViewModelEvent {
 #[derive(Clone, Debug)]
 pub(super) enum ViewEvent {
     Update(ViewModelEvent),
-    Questionnaire {
-        call_id: rho_sdk::ToolCallId,
-        request: HostInputRequest,
-    },
+    Questionnaire { request: HostInputRequest },
     Notice(String),
     Completed,
     Cancelled,
@@ -365,14 +362,9 @@ impl SdkEventAdapter {
                 ))]
             }
             RunEvent::ProviderServiceTierFallback { .. } => Vec::new(),
-            RunEvent::HostInputRequested { request } => {
-                vec![ViewEvent::Questionnaire {
-                    call_id: rho_sdk::ToolCallId::new(),
-                    request,
-                }]
-            }
-            RunEvent::ToolHostInputRequested { call_id, request } => {
-                vec![ViewEvent::Questionnaire { call_id, request }]
+            RunEvent::HostInputRequested { request }
+            | RunEvent::ToolHostInputRequested { request, .. } => {
+                vec![ViewEvent::Questionnaire { request }]
             }
             RunEvent::CompactionStarted { .. } => {
                 self.compaction_open = true;

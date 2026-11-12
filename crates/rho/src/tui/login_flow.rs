@@ -9,7 +9,7 @@ use rho_providers::{
     model::catalog::LoginTarget,
 };
 
-use super::{App, ComposerMode, InteractiveRuntime, PickerItem, PickerKeyHints, UiPicker};
+use super::{App, ComposerMode, PickerItem, PickerKeyHints, UiPicker};
 
 const BROWSER_VALUE: &str = "browser";
 const DEVICE_VALUE: &str = "device";
@@ -96,20 +96,13 @@ impl App {
         value: &str,
         target: LoginFlowTarget,
         terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let Some(mode) = parse_login_flow_mode(value) else {
             self.set_status(self.busy_status_label());
             return Ok(());
         };
-        self.start_interactive_login_flow(
-            target.target,
-            target.provider_label,
-            mode,
-            terminal,
-            agent,
-        )
-        .await
+        self.start_interactive_login_flow(target.target, target.provider_label, mode, terminal)
+            .await
     }
 }
 

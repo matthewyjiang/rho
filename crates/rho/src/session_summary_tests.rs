@@ -1,6 +1,6 @@
 use std::fs;
 
-use rho_providers::model::{ContentBlock, Message};
+use rho_providers::model::{ContentBlock, Message, ModelIdentity};
 use rho_sdk::{CompactionState, Revision, SessionId, SessionSnapshot};
 use rho_tools::tool::ToolCall;
 use tempfile::TempDir;

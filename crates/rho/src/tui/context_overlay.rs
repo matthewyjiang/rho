@@ -1,6 +1,6 @@
 //! `/context` overlay: what fills the context window, grouped by source.
 //!
-//! The runtime builds the report on demand (it scans history), so the command
+//! The daemon builds the report on demand (it scans history), so the command
 //! runs only while idle and the panel is a snapshot. `c` copies the report.
 
 use std::time::Instant;
@@ -20,7 +20,7 @@ use super::{
     statusline::path::shorten_path_display,
     theme::Theme,
     usage_cost::{context_fill_percent, format_token_count},
-    App, ComposerMode, InteractiveRuntime, PanelOverlay,
+    App, ComposerMode, PanelOverlay,
 };
 
 const TITLE: &str = "Context";
@@ -36,7 +36,7 @@ const COPY_WIDTH: usize = 160;
 #[derive(Clone, Debug)]
 pub(super) struct ContextOverlay {
     report: ContextReport,
-    /// Effective limit: the runtime's window, else the model catalog's.
+    /// Effective limit: the report's window, else the model catalog's.
     window: Option<u64>,
     panel: PanelState,
 }
@@ -81,15 +81,8 @@ impl PanelBody for ContextOverlay {
 }
 
 impl App {
-    pub(super) fn execute_context_command(
-        &mut self,
-        agent: &InteractiveRuntime,
-    ) -> anyhow::Result<()> {
-        if self.info.session.daemon.is_some() {
-            self.request_daemon_report(rho_protocol::SessionReport::Context);
-            return Ok(());
-        }
-        self.show_context_report(agent.context_report());
+    pub(super) fn execute_context_command(&mut self) -> anyhow::Result<()> {
+        self.request_daemon_report(rho_protocol::SessionReport::Context);
         Ok(())
     }
 

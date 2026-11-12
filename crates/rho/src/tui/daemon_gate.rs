@@ -1,8 +1,6 @@
-//! The single policy boundary for commands against a daemon-owned session.
-//!
-//! A command must not silently operate on the unused in-process session, so
-//! each says how it reaches the daemon's. Keep this match exhaustive: every
-//! new builtin needs an intentional daemon classification.
+//! The single policy boundary for how each command reaches the daemon-owned
+//! session. Keep this match exhaustive: every new builtin needs an
+//! intentional classification.
 
 use crate::commands::CommandId;
 
@@ -19,7 +17,6 @@ pub(super) fn command_route(command: CommandId) -> CommandRoute {
     match command {
         // Session state the daemon owns, changed through the session's
         // options, and settings it saves through `rho/config/set`.
-        // In process, `/advisor` says it needs the daemon (`needs_daemon`).
         CommandId::Model
         | CommandId::Permissions
         | CommandId::Fast
@@ -80,110 +77,6 @@ pub(super) fn command_route(command: CommandId) -> CommandRoute {
 }
 
 impl App {
-    /// The palette's matches for a daemon session, shaped as in process:
-    /// a settled command's argument values alone, else the matching
-    /// commands in the built-in order with an exact match's arguments
-    /// after them, then the session's own commands. A built-in the daemon
-    /// runs as a prompt is listed only while the session offers it.
-    pub(super) fn daemon_command_choices(&self) -> Vec<super::CommandChoice> {
-        let context = self.command_context();
-        let arguments = crate::commands::argument_choices(
-            self.input_ui.text(),
-            self.input_ui.cursor(),
-            &context,
-        );
-        if !arguments.is_empty() {
-            return arguments
-                .iter()
-                .map(super::command_palette::argument_command_choice)
-                .collect();
-        }
-        // As in process: values for the argument of an MCP prompt command
-        // already typed, where command matching has nothing left to say.
-        let mcp_arguments = self.mcp_argument_choices();
-        if !mcp_arguments.is_empty() {
-            return mcp_arguments;
-        }
-        let Some(prefix) = crate::commands::command_prefix(self.input_ui.text()) else {
-            return Vec::new();
-        };
-        let prefix = prefix.trim_start_matches('/').to_ascii_lowercase();
-        let offered: Vec<_> = self
-            .daemon_options
-            .iter()
-            .flat_map(|options| &options.commands)
-            .filter(|command| command.kind == rho_protocol::CommandKind::Slash)
-            .collect();
-        let session_choice = |command: &rho_protocol::SessionCommand| super::CommandChoice {
-            name: command.name.clone(),
-            usage: match &command.input_hint {
-                Some(hint) => format!("/{} {hint}", command.name),
-                None => format!("/{}", command.name),
-            },
-            description: command.description.clone(),
-            kind: super::CommandChoiceKind::SessionCommand,
-        };
-        let mut builtins = crate::commands::matching_commands(&prefix);
-        builtins.retain(|command| context.is_discoverable(command.id));
-        let exact = builtins
-            .iter()
-            .find(|command| command.name.eq_ignore_ascii_case(&prefix))
-            .copied();
-        let mut choices: Vec<_> = builtins
-            .into_iter()
-            .filter_map(|command| match command_route(command.id) {
-                CommandRoute::Prompt => offered
-                    .iter()
-                    .find(|offered| offered.name == command.name)
-                    .map(|offered| session_choice(offered)),
-                CommandRoute::Ui | CommandRoute::Options => Some(super::CommandChoice {
-                    name: command.name.into(),
-                    usage: command.usage.into(),
-                    description: command.description.into(),
-                    kind: super::CommandChoiceKind::Builtin(command),
-                }),
-            })
-            .collect();
-        if let Some(command) = exact {
-            choices.extend(
-                command
-                    .argument_choices
-                    .iter()
-                    .map(super::command_palette::argument_command_choice),
-            );
-        }
-        choices.extend(
-            offered
-                .iter()
-                .filter(|command| command.name.to_ascii_lowercase().starts_with(&prefix))
-                .filter(|command| {
-                    !crate::commands::COMMANDS
-                        .iter()
-                        .any(|builtin| builtin.name == command.name)
-                })
-                .map(|command| session_choice(command)),
-        );
-        choices
-    }
-
-    /// `/config` edits the daemon's settings; in process there is no
-    /// daemon to save them (#1720).
-    pub(super) fn execute_config_command(&mut self) {
-        if self.info.session.daemon.is_some() {
-            self.open_daemon_config();
-        } else {
-            self.needs_daemon("config");
-        }
-    }
-
-    /// `/name` changes settings, which only the daemon saves.
-    pub(super) fn needs_daemon(&mut self, name: &str) {
-        self.insert_entry(&Entry::Notice(format!(
-            "/{name} needs the rho daemon: start rho without RHO_TUI_DAEMON=0"
-        )));
-        self.set_status(format!("/{name} needs the rho daemon"));
-    }
-
     /// Says that the daemon's session does not offer the prompt command
     /// `/name`.
     pub(super) fn daemon_command_unavailable(&mut self, name: &str) {

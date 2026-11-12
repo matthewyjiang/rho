@@ -241,24 +241,10 @@ impl Session {
         self.with_session_tree(|tree| Ok(tree.facts()))
     }
 
-    /// The tree as `/tree` lists it; see [`SessionTree::turn_items`].
-    pub(crate) fn tree_turn_items(&self) -> anyhow::Result<Vec<super::tree::SessionTreeItem>> {
-        self.with_session_tree(SessionTree::turn_items)
-    }
-
-    pub(crate) fn histories_for_node(
-        &self,
-        target_id: &NodeId,
-    ) -> anyhow::Result<super::SessionHistories> {
+    pub(crate) fn history_for_node(&self, target_id: &NodeId) -> anyhow::Result<Vec<Message>> {
         self.with_session_tree(|tree| {
             let state = tree.state_for(target_id)?;
-            let display = tree.projected_display(target_id)?;
-            Ok(super::SessionHistories {
-                model: insert_interrupted_tool_placeholders(state.model),
-                display: insert_interrupted_tool_placeholders(
-                    display.into_iter().map(|entry| entry.message).collect(),
-                ),
-            })
+            Ok(insert_interrupted_tool_placeholders(state.model))
         })
     }
 

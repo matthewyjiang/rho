@@ -159,10 +159,7 @@ pub(super) const INLINE_PICKER_CLICK_SCENARIO: Scenario = Scenario::new(
     /*smoke*/ false,
 )
 .with_setup(write_daemon_config)
-.with_env(&[
-    ("RHO_TUI_DAEMON", "1"),
-    ("OPENAI_API_KEY", "sk-test-matrix"),
-]);
+.with_env(&[("OPENAI_API_KEY", "sk-test-matrix")]);
 
 // Covers: a click on an overlay picker nav row selects it without closing the
 // overlay, and a double click submits it like Enter.

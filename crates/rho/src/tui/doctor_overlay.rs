@@ -110,18 +110,22 @@ impl App {
         let clipboard = crate::clipboard::doctor_report();
         self.abort_doctor_probes();
         let probes = plan_probes(&config, &self.info.runtime.provider, probe_gate());
-        // A daemon session's servers run in the daemon; its answer lands in
+        // The session's servers run in the daemon; its answer lands in
         // `apply_doctor_mcp`.
-        let mcp = match &self.info.session.daemon {
-            None => DoctorMcp::Summary(self.mcp_report.summary()),
-            Some(session) => match session.request_mcp() {
-                Ok(()) => DoctorMcp::Reading,
-                // Worded as the read's own error, which `/mcp` shows too.
-                Err(error) => {
-                    DoctorMcp::Unreadable(format!("could not read session MCP inventory: {error}"))
-                }
-            },
+        let mcp = match self.info.session.daemon.request_mcp() {
+            Ok(()) => DoctorMcp::Reading,
+            // Worded as the read's own error, which `/mcp` shows too.
+            Err(error) => {
+                DoctorMcp::Unreadable(format!("could not read session MCP inventory: {error}"))
+            }
         };
+        // Read as `rho doctor` reads it: what a session in this workspace
+        // would load now.
+        let plugins = crate::plugins::discover(
+            &self.info.runtime.cwd,
+            crate::paths::home_dir().as_deref(),
+            crate::workspace::ProjectTrusts::of_this_process(),
+        );
         let report = build_report(DoctorInputs {
             provider: &self.info.runtime.provider,
             model: &self.info.runtime.model,
@@ -133,7 +137,7 @@ impl App {
             herdr: HerdrProbe::from_reporter(&self.info.services.herdr),
             clipboard: &clipboard,
             mcp,
-            plugins_report: &self.plugins_report,
+            plugins_report: &plugins.report,
             permission_screen: config
                 .internal_agent_model(crate::permission_classifier::DECISION_SCREEN_ID),
             rtk_enabled: config.rtk,

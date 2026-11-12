@@ -169,17 +169,6 @@ impl AdvisorSessionStore {
         state.unclaimed_cost_usd_micros = state.unclaimed_cost_usd_micros.saturating_add(cost);
     }
 
-    /// Takes advisor costs that have not yet been added to the parent session
-    /// total. Safe to call from any TUI poll path; returns 0 when nothing is
-    /// new. Costs claimed only through this poll can be lost if the TUI exits
-    /// before the next refresh - same as subagent terminal-cost claims.
-    pub fn claim_cost_usd_micros(&self) -> u64 {
-        let mut state = self.lock();
-        let claimed = state.unclaimed_cost_usd_micros;
-        state.unclaimed_cost_usd_micros = 0;
-        claimed
-    }
-
     #[cfg(test)]
     fn unclaimed_cost_usd_micros(&self) -> u64 {
         self.lock().unclaimed_cost_usd_micros

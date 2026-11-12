@@ -238,7 +238,7 @@ const LOOK_UP: &str = "look the session up";
 /// turns (see [`SavedFor`]). Blocking.
 fn open_saved(cwd: &Path, id: &SessionId, purpose: SavedFor) -> Result<StoredSession, RpcError> {
     let stored = match StoredSession::open_exact_in_workspace(cwd, id.as_str()) {
-        Ok(Some((stored, _histories))) => stored,
+        Ok(Some((stored, _history))) => stored,
         // Deleted since the index named it.
         Ok(None) => return Err(not_found(id)),
         Err(error) if error.is::<SessionInUse>() => {

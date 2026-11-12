@@ -33,22 +33,8 @@ pub(super) const SCENARIO: Scenario = Scenario::new(
     /*smoke*/ false,
 );
 
-/// The same lifecycle with the daemon holding the session.
-#[cfg(unix)]
-pub(super) const DAEMON_SCENARIO: Scenario = Scenario {
-    id: "daemon_calibrated_context_auto_compact",
-    description:
-        "Retain a daemon session's calibrated idle usage, auto-compact on the next prompt, and repeat after resume",
-    env: super::daemon_resume::DAEMON_ENV,
-    ..SCENARIO
-};
-
-/// Whether `name` is one of this module's scenarios, which `run` drives.
+/// Whether `name` is this module's scenario, which `run` drives.
 pub(super) fn owns(name: &str) -> bool {
-    #[cfg(unix)]
-    if name == DAEMON_SCENARIO.id {
-        return true;
-    }
     name == SCENARIO.id
 }
 
@@ -67,9 +53,6 @@ pub(super) fn run(runner: &ScenarioRunner, scenario: &Scenario) -> Result<Scenar
         .with_env("OPENAI_API_KEY", "sk-test-matrix")
         .with_arg("--no-system-prompt")
         .with_arg("--no-tools");
-    for (key, value) in scenario.env {
-        plan = plan.with_env(*key, *value);
-    }
     let mut timing = TimingSummary::default();
     let result = (|| -> Result<()> {
         for phase in ["fresh", "resumed"] {

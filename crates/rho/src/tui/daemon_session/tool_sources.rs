@@ -1,8 +1,8 @@
 //! Whether the session's tool sources still load. The daemon loads its MCP
 //! servers and OpenAPI sources after the session opens, and again once it
-//! restarted in place, and its prompts wait for them. So the TUI reads
-//! whether they load each time the session attaches, holds a prompt
-//! meanwhile as it does in process, and watches them until they have.
+//! restarted in place, and its prompts wait for them. So the TUI reads whether
+//! they load each time the session attaches, holds a prompt meanwhile, and
+//! watches them until they have.
 
 use std::{sync::Arc, time::Duration};
 

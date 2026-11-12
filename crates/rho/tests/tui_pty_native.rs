@@ -31,25 +31,11 @@ const EXIT: WaitTimeout = WaitTimeout::secs(10, "native PTY exit");
 #[test]
 fn native_pty_startup_multiline_paste_exit() -> Result<()> {
     let home = IsolatedHome::new()?;
-    startup_multiline_paste_exit(&home, "1", "native_startup_multiline_paste_exit")?;
+    startup_multiline_paste_exit(&home)?;
     ensure!(
         home.daemon_pid().is_some(),
         "the session did not run in a daemon; daemon log:\n{}",
         home.daemon_log()
-    );
-    Ok(())
-}
-
-// Covers: the same flow with the session kept in the TUI's own process, which
-// still ships behind `RHO_TUI_DAEMON=0`.
-// Owner: interactive TUI (in-process host).
-#[test]
-fn native_pty_startup_multiline_paste_exit_in_process() -> Result<()> {
-    let home = IsolatedHome::new()?;
-    startup_multiline_paste_exit(&home, "0", "native_startup_multiline_paste_exit_in_process")?;
-    ensure!(
-        home.daemon_pid().is_none(),
-        "an in-process session started a daemon"
     );
     Ok(())
 }
@@ -69,16 +55,14 @@ fn native_pty_daemon_turn_outlives_the_tui() -> Result<()> {
     Ok(())
 }
 
-/// Starts rho in `home` with `RHO_TUI_DAEMON` set to `host`, pastes, edits,
-/// submits one prompt, and exits.
-fn startup_multiline_paste_exit(home: &IsolatedHome, host: &str, name: &str) -> Result<()> {
+/// Starts rho in `home`, pastes, edits, submits one prompt, and exits.
+fn startup_multiline_paste_exit(home: &IsolatedHome) -> Result<()> {
     let plan = RhoLaunchPlan::matrix(
         PathBuf::from(env!("CARGO_BIN_EXE_rho")),
         home,
         PtySize::new(28, 100),
-    )
-    .with_env("RHO_TUI_DAEMON", host);
-    let mut harness = PtyHarness::spawn_named(&plan, name)?;
+    );
+    let mut harness = PtyHarness::spawn_named(&plan, "native_startup_multiline_paste_exit")?;
     harness.set_artifact_writer(ArtifactWriter::new(artifacts()));
     harness.wait_for_text("gpt-5.5", STARTUP)?;
 

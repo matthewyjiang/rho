@@ -294,28 +294,16 @@ credential_store = "file"
     assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
 }
 
-/// Where the TUI under test runs its session.
-#[derive(Clone, Copy)]
-enum SessionHost {
-    InProcess,
-    /// In the daemon the TUI follows (`RHO_TUI_DAEMON=1`, #1667).
-    Daemon,
-}
-
-/// A 32x140 matrix launch in `home` whose session runs in `host`.
-fn ollama_plan(home: &IsolatedHome, host: SessionHost) -> RhoLaunchPlan {
-    let plan = RhoLaunchPlan::matrix(
+/// A 32x140 matrix launch in `home`.
+fn ollama_plan(home: &IsolatedHome) -> RhoLaunchPlan {
+    RhoLaunchPlan::matrix(
         PathBuf::from(env!("CARGO_BIN_EXE_rho")),
         home,
         PtySize {
             rows: 32,
             cols: 140,
         },
-    );
-    match host {
-        SessionHost::InProcess => plan.with_env("RHO_TUI_DAEMON", "0"),
-        SessionHost::Daemon => plan.with_env("RHO_TUI_DAEMON", "1"),
-    }
+    )
 }
 
 // Covers: an Ollama device login counts only after Enter, logout signs Rho
@@ -323,20 +311,8 @@ fn ollama_plan(home: &IsolatedHome, host: SessionHost) -> RhoLaunchPlan {
 // Owner: interactive login lifecycle.
 #[test]
 fn ollama_device_login_needs_enter_and_logout_signs_out() {
-    ollama_device_login_needs_enter(SessionHost::InProcess);
-}
-
-// Covers: the same with RHO_TUI_DAEMON=1, where the daemon records the
-// login: not before Enter, and not at all after Esc.
-// Owner: interactive TUI as a daemon client (#1667)
-#[test]
-fn daemon_ollama_device_login_needs_enter_and_logout_signs_out() {
-    ollama_device_login_needs_enter(SessionHost::Daemon);
-}
-
-fn ollama_device_login_needs_enter(host: SessionHost) {
     let home = IsolatedHome::new().unwrap();
-    let plan = ollama_plan(&home, host)
+    let plan = ollama_plan(&home)
         // Headless on every platform, so no real browser opens.
         .with_env("SSH_CONNECTION", "127.0.0.1 1 127.0.0.1 2");
     let mut harness = PtyHarness::spawn_named(&plan, "ollama_device_login").unwrap();
@@ -413,8 +389,7 @@ fn daemon_device_login_names_a_daemon_key_that_differs_from_the_one_shown() {
         .status()
         .unwrap();
     assert!(started.success(), "rho daemon start: {started}");
-    let plan = ollama_plan(&home, SessionHost::Daemon)
-        .with_env("SSH_CONNECTION", "127.0.0.1 1 127.0.0.1 2");
+    let plan = ollama_plan(&home).with_env("SSH_CONNECTION", "127.0.0.1 1 127.0.0.1 2");
     let mut harness = PtyHarness::spawn_named(&plan, "ollama_device_key_mismatch").unwrap();
     harness
         .wait_for_text("gpt-5.5", WaitTimeout::secs(20, "startup"))
@@ -481,22 +456,10 @@ fn spawn_fake_ollama() -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize
 // Owner: interactive provider setup.
 #[test]
 fn ollama_is_refreshed_and_listed_only_after_login() {
-    ollama_is_refreshed_and_listed_after_login(SessionHost::InProcess);
-}
-
-// Covers: the same with RHO_TUI_DAEMON=1, where the daemon records and
-// forgets the login.
-// Owner: interactive TUI as a daemon client (#1667)
-#[test]
-fn daemon_ollama_is_refreshed_and_listed_only_after_login() {
-    ollama_is_refreshed_and_listed_after_login(SessionHost::Daemon);
-}
-
-fn ollama_is_refreshed_and_listed_after_login(host: SessionHost) {
     let home = IsolatedHome::new().unwrap();
     let original_config = std::fs::read_to_string(&home.config_path).unwrap();
     let (ollama_base, ollama_requests) = spawn_fake_ollama();
-    let plan = ollama_plan(&home, host);
+    let plan = ollama_plan(&home);
     let mut harness = PtyHarness::spawn_named(&plan, "ollama_login_only").unwrap();
     harness
         .wait_for_text("gpt-5.5", WaitTimeout::secs(20, "startup"))
@@ -577,27 +540,19 @@ fn ollama_is_refreshed_and_listed_after_login(host: SessionHost) {
     );
 }
 
-/// Opens `/model` and checks it lists no model of the fake Ollama server.
-/// In process nothing else is cached, so the picker does not open; a daemon
-/// session's picker always offers the session's own model. Asks the harness
-/// which one runs, so it holds on either host.
+/// Opens `/model` and checks it lists no model of the fake Ollama server. The
+/// picker always opens, since it offers the session's own model.
 fn expect_no_ollama_model_listed(harness: &mut PtyHarness, what: &'static str) {
     harness.submit_text("/model").unwrap();
-    if harness.follows_daemon() {
-        harness
-            .wait_for_text("select model", WaitTimeout::secs(10, what))
-            .unwrap();
-        let screen = harness.screen().contents();
-        assert!(!screen.contains("llama-pty"), "{what}:\n{screen}");
-        harness.inject_key(&Key::Esc).unwrap();
-        harness
-            .wait_for_text_gone("select model", WaitTimeout::secs(5, "picker closed"))
-            .unwrap();
-    } else {
-        harness
-            .wait_for_text("no cached provider models", WaitTimeout::secs(10, what))
-            .unwrap();
-    }
+    harness
+        .wait_for_text("select model", WaitTimeout::secs(10, what))
+        .unwrap();
+    let screen = harness.screen().contents();
+    assert!(!screen.contains("llama-pty"), "{what}:\n{screen}");
+    harness.inject_key(&Key::Esc).unwrap();
+    harness
+        .wait_for_text_gone("select model", WaitTimeout::secs(5, "picker closed"))
+        .unwrap();
 }
 
 /// Runs `/login ollama` against `base` with no key, then checks the login
@@ -702,9 +657,9 @@ fn rho_login_without_a_session_bus_falls_back_to_the_file_store_it_offers() {
     );
 }
 
-// Covers: with RHO_TUI_DAEMON=1, a session that started signed out takes a
-// login another process saved since, such as `rho login` in another
-// terminal, at its first prompt, which the provider then answers.
+// Covers: a session that started signed out takes a login another process
+// saved since, such as `rho login` in another terminal, at its first prompt,
+// which the provider then answers.
 // Owner: interactive TUI as a daemon client (#1667)
 #[test]
 fn daemon_signed_out_session_answers_after_an_outside_login() {
@@ -732,7 +687,7 @@ credential_store = "file"
         ),
     )
     .unwrap();
-    let mut plan = ollama_plan(&home, SessionHost::Daemon);
+    let mut plan = ollama_plan(&home);
     // The turn must reach the provider, not the matrix fixture.
     plan.env.retain(|(key, _)| key != "RHO_TUI_TEST_MODE");
     let mut harness = PtyHarness::spawn_named(&plan, "daemon_outside_login").unwrap();

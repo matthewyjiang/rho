@@ -13,9 +13,6 @@ pub(crate) const MODEL_NOTIFICATION_BYTES: usize = 16 * 1024;
 
 const NOTIFICATION_HEADER: &str = "[agent notification]\n\nRun status:\n";
 const NOTIFICATION_FOOTER: &str = "\n\nAny omitted or truncated result details remain available through `agents list` or `agents status`.\n\nThis is an automated notification, not a user message. Fold the results into your ongoing work; use the agents tool for details.";
-const NEWER_NOTIFICATIONS_SEPARATOR: &str = "\n\n--- newer agent completions ---\n\n";
-const EARLIER_NOTIFICATIONS_TRUNCATED: &str =
-    "\n[earlier agent notification context truncated; use `agents list` or `agents status`]";
 
 #[derive(Clone, Copy)]
 pub(super) enum SnapshotFormat {
@@ -208,30 +205,6 @@ pub(crate) fn notification_prompt(notifications: &[SubagentNotification]) -> Str
         .map(|notification| &notification.snapshot)
         .collect::<Vec<_>>();
     format_notification(&snapshots)
-}
-
-pub(crate) fn merge_notification_context(existing: Option<&str>, newer: &str) -> String {
-    // The retention budget applies to earlier context. A boundary can combine
-    // multiple bounded sources; never truncate or reject its accepted findings.
-    let Some(existing) = existing else {
-        return newer.to_string();
-    };
-    if existing.len() + NEWER_NOTIFICATIONS_SEPARATOR.len() + newer.len()
-        <= MODEL_NOTIFICATION_BYTES
-    {
-        return format!("{existing}{NEWER_NOTIFICATIONS_SEPARATOR}{newer}");
-    }
-
-    let reserved =
-        NEWER_NOTIFICATIONS_SEPARATOR.len() + EARLIER_NOTIFICATIONS_TRUNCATED.len() + newer.len();
-    let Some(prefix_bytes) = MODEL_NOTIFICATION_BYTES.checked_sub(reserved) else {
-        return newer.to_string();
-    };
-    let boundary = floor_char_boundary(existing, prefix_bytes);
-    format!(
-        "{}{EARLIER_NOTIFICATIONS_TRUNCATED}{NEWER_NOTIFICATIONS_SEPARATOR}{newer}",
-        &existing[..boundary]
-    )
 }
 
 fn completion_summary(snapshot: &SubagentSnapshot) -> Vec<String> {

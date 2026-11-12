@@ -2,7 +2,6 @@ use pretty_assertions::assert_eq;
 
 use super::DaemonCompactTurn;
 use crate::tui::{
-    compact_work::ReadyFollowUp,
     daemon_events::{Rest, TurnState},
     tests::test_app,
     Entry, QueuedPrompt, StreamKind,
@@ -69,9 +68,9 @@ async fn reset_replay_during_a_turn_places_its_start_after_the_rebuilt_rows() {
 }
 
 // Covers: a daemon `/compact` turn whose compaction failed sends the
-// follow-up that waited for it, as a prompt "Compact, then send" parked, as a
-// failed compaction does in process; a cancelled compaction does not, and
-// neither does a failed turn that was no compaction.
+// follow-up that waited for it, as a prompt "Compact, then send" parked; a
+// cancelled compaction does not, and neither does a failed turn that was no
+// compaction.
 // Owner: daemon transcript (follow-ups at a turn's end). The fixture matrix
 // cannot fail a compaction: a failed native compaction falls back to a text
 // summary, and a conversation small enough for a PTY has none to write.
@@ -100,10 +99,6 @@ async fn a_failed_compaction_sends_the_follow_up_that_waited_for_it() {
 
         app.show_daemon_turn(TurnState::Resting(rest)).await;
 
-        assert_eq!(
-            matches!(app.start_follow_ups, Some(ReadyFollowUp::Queued { .. })),
-            sends,
-            "{name}"
-        );
+        assert_eq!(app.start_follow_ups, sends, "{name}");
     }
 }

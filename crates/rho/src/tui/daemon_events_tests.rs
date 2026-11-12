@@ -244,9 +244,9 @@ fn a_compact_turn_is_over_when_its_job_rests_or_the_next_prompt_arrives() {
     }
 }
 
-// Covers: a live retry says why as the in-process TUI's retry hint does, a
-// request the provider only sends again says just that it retries, and a
-// replayed retry, which is history, changes nothing.
+// Covers: a live retry says why with the retry hint, a request the provider
+// only sends again says just that it retries, and a replayed retry, which is
+// history, changes nothing.
 // Owner: tui daemon session events
 #[test]
 fn a_live_retry_says_why_and_a_replayed_one_nothing() {
@@ -396,10 +396,10 @@ fn call() -> ToolCallId {
 }
 
 // Covers: a daemon session's replayed or live events reach the transcript as
-// the rows the in-process TUI shows: one row per message, the daemon's tool
-// cards running then finished, a call cut off shown interrupted, an answer
-// completing missing chunks, a tail preserving partial rows and cards, and
-// a reset replay starting the session over.
+// rows: one row per message, the daemon's tool cards running then finished, a
+// call cut off shown interrupted, an answer completing missing chunks, a tail
+// preserving partial rows and cards, and a reset replay starting the session
+// over.
 // Owner: tui daemon event mapping
 #[test]
 fn session_events_map_to_transcript_views() {

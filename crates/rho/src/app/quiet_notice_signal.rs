@@ -4,9 +4,8 @@
 //! proves the earlier one bought no provider request, not merely that the
 //! child queued it.
 //!
-//! The scenario listens on a datagram socket in its workspace. The
-//! in-process TUI runs there; the daemon, whose working directory is `/`,
-//! finds the workspace as its fixtures do.
+//! The scenario listens on a datagram socket in its workspace. The daemon,
+//! whose working directory is `/`, finds the workspace as its fixtures do.
 
 use std::path::{Path, PathBuf};
 

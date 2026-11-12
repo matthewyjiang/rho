@@ -39,10 +39,10 @@ pub(crate) fn turn_error(error: &anyhow::Error, provider: &str, auth: &str) -> T
     TurnError { kind, message }
 }
 
-/// The notice that shows a failed turn's provider diagnostic, as the
-/// in-process TUI shows it: `None` when no provider error in `error`'s chain
-/// has one, or when the turn failed to authenticate, since the provider's
-/// details may echo credentials ([`withheld_diagnostic`]).
+/// The notice that shows a failed turn's provider diagnostic: `None` when no
+/// provider error in `error`'s chain has one, or when the turn failed to
+/// authenticate, since the provider's details may echo credentials
+/// ([`withheld_diagnostic`]).
 pub(crate) fn diagnostic_notice(error: &anyhow::Error) -> Option<String> {
     if failure_kind(error) == TurnErrorKind::Authentication {
         return None;

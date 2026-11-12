@@ -2,7 +2,7 @@
 //! replacement/recovery; durable recovery uses assembled history and metadata,
 //! never a file whose contents may have changed since the snapshot was saved.
 
-use rho_sdk::{model::Message, SessionSnapshot, SystemPrompt};
+use rho_sdk::{SessionSnapshot, SystemPrompt};
 
 use crate::{
     diagnostics::RuntimeDiagnostics,
@@ -22,12 +22,6 @@ pub(super) struct ActivePrompt {
     /// fingerprint is deliberately not reconstructed as a fictitious file.
     pub loaded: Option<ModelPrompt>,
     sources: Vec<PromptSource>,
-}
-
-pub(super) enum PromptTransition {
-    Keep,
-    Replace(crate::prompt::SystemPrompt),
-    Restore,
 }
 
 impl ActivePrompt {
@@ -66,31 +60,6 @@ impl ActivePrompt {
         }
     }
 
-    pub fn from_snapshot(snapshot: &SessionSnapshot) -> anyhow::Result<Self> {
-        let system = match snapshot.history().first() {
-            Some(Message::System(text)) => SystemPrompt::Custom(text.clone()),
-            _ => SystemPrompt::None,
-        };
-        Ok(Self {
-            system,
-            provenance: snapshot
-                .metadata()
-                .get(KEY)
-                .map(|encoded| serde_json::from_str(encoded))
-                .transpose()?
-                .flatten(),
-            loaded: None,
-            // Legacy snapshots have no source byte accounting. Unknown is
-            // preferable to publishing the sources of a different prompt.
-            sources: snapshot
-                .metadata()
-                .get(SOURCES_KEY)
-                .map(|encoded| serde_json::from_str(encoded))
-                .transpose()?
-                .unwrap_or_default(),
-        })
-    }
-
     /// All hosts adopt through here so advisor context and diagnostics cannot
     /// retain the old executor prompt after history changes.
     pub fn adopt(
@@ -122,7 +91,3 @@ impl ActivePrompt {
             .with_metadata(SOURCES_KEY, serde_json::json!(self.sources).to_string())
     }
 }
-
-#[cfg(test)]
-#[path = "active_prompt_tests.rs"]
-mod tests;

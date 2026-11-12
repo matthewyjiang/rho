@@ -1,7 +1,4 @@
-use super::{
-    command_workflows, discover_workflow_sources, resolve_launch, resolve_start_command,
-    WorkflowLaunch,
-};
+use super::{command_workflows, discover_workflow_sources, resolve_launch, WorkflowLaunch};
 use pretty_assertions::assert_eq;
 
 fn workspace(files: &[&str]) -> tempfile::TempDir {
@@ -67,62 +64,6 @@ fn discover_skips_nested_workflow_star_symlinks() {
             .collect::<Vec<_>>(),
         vec![".rho/workflows/target.star"]
     );
-}
-
-// Covers: a command resolves to exactly one entry file with its JSON inputs,
-// and every other request fails with the reason instead of reaching the model.
-// Owner: `/workflow:<name>` resolution shared by the TUI and ACP.
-#[test]
-fn start_command_resolves_one_workflow_and_its_inputs() {
-    let root = workspace(&[
-        ".rho/workflows/review/workflow.star",
-        ".rho/workflows/twin.star",
-        ".rho/workflows/twin/workflow.star",
-        ".rho/workflows/Lint.star",
-        ".rho/workflows/Case.star",
-        ".rho/workflows/case/workflow.star",
-    ]);
-    let resolve = |name: &str, args: &str| {
-        resolve_start_command(root.path(), name, args).map(|resolved| {
-            resolved.map(|command| (command.workflow.relative_path, command.inputs))
-        })
-    };
-
-    assert_eq!(resolve("prompt:review", ""), None);
-    assert_eq!(
-        resolve("workflow:review", r#" {"target": "src", "depth": 2} "#),
-        Some(Ok((
-            ".rho/workflows/review/workflow.star".to_owned(),
-            [
-                ("depth".to_owned(), serde_json::json!(2)),
-                ("target".to_owned(), serde_json::json!("src")),
-            ]
-            .into(),
-        )))
-    );
-    assert_eq!(
-        resolve("workflow:review", "").map(|resolved| resolved.map(|(_, inputs)| inputs)),
-        Some(Ok(Default::default()))
-    );
-    for name in ["workflow:lint", "Workflow:LINT"] {
-        assert_eq!(
-            resolve(name, "").map(|resolved| resolved.map(|(path, _)| path)),
-            Some(Ok(".rho/workflows/Lint.star".to_owned())),
-            "/{name} ignores ASCII case"
-        );
-    }
-    for (name, args) in [
-        ("workflow:missing", ""),
-        ("workflow:twin", ""),
-        ("workflow:case", ""),
-        ("workflow:review", "src"),
-        ("workflow:review", "[1]"),
-    ] {
-        assert!(
-            matches!(resolve(name, args), Some(Err(_))),
-            "/{name} {args} should be rejected"
-        );
-    }
 }
 
 // Covers: command menus list each name once, so `<name>.star` beside

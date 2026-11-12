@@ -200,56 +200,6 @@ fn evicted_memory_entry_still_loads_from_disk() {
     assert!(store.memory_contains(&ids[0]));
 }
 
-// Covers: old-session I/O must not populate a newly bound session's cache.
-// Owner: web storage. Inject the rebind at the I/O boundary, without sleep races.
-#[test]
-fn rebind_during_io_does_not_publish_old_session_content() {
-    enum Operation {
-        Store,
-        Load,
-    }
-    for operation in [Operation::Store, Operation::Load] {
-        let old_root = tempfile::tempdir().unwrap();
-        let new_root = tempfile::tempdir().unwrap();
-        let store = WebAccessStore::new();
-        store.bind_session(Some(old_root.path().to_path_buf()));
-        let response_id = new_response_id();
-        let expected = stored_body("old session");
-        match operation {
-            Operation::Store => {
-                store
-                    .store_with_writer(response_id.clone(), expected.clone(), |root, id, body| {
-                        assert_eq!(root, old_root.path());
-                        store.bind_session(Some(new_root.path().to_path_buf()));
-                        write_at(root, id, body)
-                    })
-                    .unwrap();
-            }
-            Operation::Load => {
-                write_at(old_root.path(), &response_id, &expected).unwrap();
-                let loaded = store
-                    .load_with_reader(&response_id, |root, id| {
-                        assert_eq!(root, old_root.path());
-                        store.bind_session(Some(new_root.path().to_path_buf()));
-                        read_at(root, id)
-                    })
-                    .unwrap();
-                assert_eq!(*loaded, expected);
-            }
-        }
-        assert!(!store.memory_contains(&response_id));
-        assert!(store.load(&response_id).is_err());
-        assert_eq!(read_at(old_root.path(), &response_id).unwrap(), expected);
-        store
-            .store(response_id.clone(), stored_body("new session"))
-            .unwrap();
-        assert_eq!(
-            *store.load(&response_id).unwrap(),
-            stored_body("new session")
-        );
-    }
-}
-
 fn stored_body(content: &str) -> StoredContent {
     StoredContent {
         kind: String::new(),

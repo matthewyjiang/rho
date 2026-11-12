@@ -39,8 +39,7 @@ async fn a_reopened_session_restores_its_saved_settings() {
 
     let id = saved.session_id().clone();
     let (stored, _) =
-        StoredSession::open_by_id_with_histories_in_root(root.path(), root.path(), id.as_str())
-            .unwrap();
+        StoredSession::open_by_id_in_root(root.path(), root.path(), id.as_str()).unwrap();
     let mut reopened = SessionRuntime::for_tests(
         idle_built(&config, id).await,
         SessionStorage::saved(stored),

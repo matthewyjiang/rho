@@ -1,12 +1,11 @@
 //! Settings the interactive TUI owns.
 //!
 //! `~/.rho/clients/tui.toml` holds the `tui` client's settings, declared in
-//! [`TUI_SETTINGS`] with the same mechanics as the agent registry. Following
-//! a daemon session, the TUI registers them with the daemon, which stores
-//! them there and serves them back (see `daemon_settings`); in process, the
-//! file is read once at startup and never written. `~/.rho/tui.toml` holds
-//! the theme and `[keybindings]` chords, which stay hand-edited. Missing
-//! files are the defaults.
+//! [`TUI_SETTINGS`] with the same mechanics as the agent registry. Following a
+//! daemon session, the TUI registers them with the daemon, which stores them
+//! there and serves them back (see `daemon_settings`). `~/.rho/tui.toml` holds
+//! the theme and `[keybindings]` chords, which stay hand-edited. Missing files
+//! are the defaults.
 
 use std::{collections::BTreeMap, path::Path};
 

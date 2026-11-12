@@ -11,7 +11,7 @@ use rho_sdk::{
 };
 use serde_json::json;
 
-use super::{build_runtime, RuntimeBuildOptions};
+use super::{build_runtime_with_max_steps, RuntimeBuildOptions};
 use crate::{
     app::policy::AppPolicy,
     compaction::CompactionConfig,
@@ -43,29 +43,32 @@ fn runtime_for(
     provider: &ScriptedProvider,
     workspace: Workspace,
 ) -> rho_sdk::Rho {
-    build_runtime(RuntimeBuildOptions {
-        provider: Arc::new(provider.clone()),
-        tools,
-        workspace,
-        workspace_policy: AppPolicy::for_mode(
-            PermissionMode::Bypass,
-            Default::default(),
-            /*search_path*/ None,
-        ),
-        approval_session: None,
-        system_prompt: SystemPrompt::None,
-        reasoning: rho_sdk::ReasoningLevel::Off,
-        service_tier: None,
-        compaction: CompactionConfig::from(config),
-        context_window: None,
-        usage_purpose: "agent",
-        usage_parent_session_id: None,
-        usage_recording: Default::default(),
-        hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
-        hooks: None,
-        diagnostics: crate::diagnostics::test_diagnostics("test", "test"),
-        recall: None,
-    })
+    build_runtime_with_max_steps(
+        RuntimeBuildOptions {
+            provider: Arc::new(provider.clone()),
+            tools,
+            workspace,
+            workspace_policy: AppPolicy::for_mode(
+                PermissionMode::Bypass,
+                Default::default(),
+                /*search_path*/ None,
+            ),
+            approval_session: None,
+            system_prompt: SystemPrompt::None,
+            reasoning: rho_sdk::ReasoningLevel::Off,
+            service_tier: None,
+            compaction: CompactionConfig::from(config),
+            context_window: None,
+            usage_purpose: "agent",
+            usage_parent_session_id: None,
+            usage_recording: Default::default(),
+            hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
+            hooks: None,
+            diagnostics: crate::diagnostics::test_diagnostics("test", "test"),
+            recall: None,
+        },
+        /*max_steps*/ None,
+    )
     .unwrap()
 }
 

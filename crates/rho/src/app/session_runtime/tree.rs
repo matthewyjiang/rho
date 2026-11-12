@@ -6,10 +6,8 @@
 //! stay in the tree. The session keeps its model, settings, tools, and
 //! added directories: those belong to the session, not to a node.
 
-use super::{model_scoped_config, SessionRuntime, SettingChangeError};
-use crate::{
-    app::interactive_runtime::startup::prompt_cache_key, config::Config, session::tree::NodeId,
-};
+use super::{model_scoped_config, open::prompt_cache_key, SessionRuntime, SettingChangeError};
+use crate::{config::Config, session::tree::NodeId};
 
 /// Why [`SessionRuntime::select_node`] left the conversation where it was.
 #[derive(Debug, thiserror::Error)]

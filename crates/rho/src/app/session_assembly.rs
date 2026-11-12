@@ -29,9 +29,7 @@ use super::{
         build_runtime_with_max_steps, configured_context_window, RuntimeBuildOptions,
     },
     sdk_config::SdkBootstrapOptions,
-    tools_prompt::{
-        assemble_tools_and_prompt, McpSamplingSupport, ToolsAndPrompt, ToolsAndPromptOptions,
-    },
+    tools_prompt::{assemble_tools_and_prompt, ToolsAndPrompt, ToolsAndPromptOptions},
 };
 use crate::{
     config::Config, diagnostics::RuntimeDiagnostics, permission::SessionWriteLog,
@@ -49,7 +47,6 @@ pub(super) struct SessionAssemblyOptions<'a, ExtendTools, Approval, Options> {
     pub no_subagents: bool,
     pub questionnaire_enabled: bool,
     pub mcp_elicitation: crate::tools::mcp::McpElicitationSupport,
-    pub mcp_sampling: McpSamplingSupport,
     pub tool_source_attach: super::tools_prompt::ToolSourceAttach,
     pub tool_source_load: super::tools_prompt::ToolSourceLoad,
     /// Whether the session starts its workspace's hooks.
@@ -196,7 +193,6 @@ where
         no_subagents,
         questionnaire_enabled,
         mcp_elicitation,
-        mcp_sampling,
         tool_source_attach,
         tool_source_load,
         hook_start,
@@ -262,12 +258,8 @@ where
         mut prompt,
         mut prompt_template,
         pending_tool_sources,
-        ..
     } = assemble_tools_and_prompt(ToolsAndPromptOptions {
         config,
-        // Subagent and automation assembly can run from a different cwd than
-        // bootstrap discovery; let the delegation tools rediscover.
-        catalog: None,
         config_path,
         cwd,
         no_system_prompt,
@@ -275,7 +267,6 @@ where
         no_subagents,
         questionnaire_enabled,
         mcp_elicitation,
-        mcp_sampling,
         tool_source_attach,
         mcp_authorization,
         await_catalog_names: false,

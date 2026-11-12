@@ -72,7 +72,7 @@ fn empty_root_is_session_start_and_remains_restorable() -> anyhow::Result<()> {
         session.snapshot_for_resume(baseline.provider().clone(), "unused".into())?,
         baseline
     );
-    assert!(session.histories_for_node(&baseline_id)?.display.is_empty());
+    assert!(session.active_display_history()?.is_empty());
     Ok(())
 }
 

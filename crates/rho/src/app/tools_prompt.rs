@@ -18,10 +18,6 @@ use super::agent_binding::BoundAgent;
 
 pub(crate) struct ToolsAndPromptOptions<'a> {
     pub(crate) config: &'a Config,
-    /// Bootstrap's discovered agent catalog. `None` when assembly may run from
-    /// a different cwd (subagents, automation); the delegation tool set then
-    /// rediscovers on its own.
-    pub(crate) catalog: Option<&'a crate::agent::DiscoveredAgentCatalog>,
     pub(crate) config_path: PathBuf,
     pub(crate) cwd: &'a Path,
     pub(crate) no_system_prompt: bool,
@@ -31,8 +27,6 @@ pub(crate) struct ToolsAndPromptOptions<'a> {
     /// Whether this run can put an MCP server's question in front of a person.
     /// Only a host that answers questionnaires may declare `elicitation`.
     pub(crate) mcp_elicitation: crate::tools::mcp::McpElicitationSupport,
-    /// Whether this run will bind a model that opted-in MCP servers may sample.
-    pub(crate) mcp_sampling: McpSamplingSupport,
     /// Whether this run starts MCP servers from user config and Agent Plugins
     /// and loads OpenAPI sources.
     pub(crate) tool_source_attach: ToolSourceAttach,
@@ -60,16 +54,6 @@ pub(crate) struct ToolsAndPromptOptions<'a> {
     pub(crate) environment: crate::session_environment::SessionEnvironment,
     /// Where delegated agents take capacity, and who else hears of them.
     pub(crate) subagent_pool: crate::app::subagent_pool::SubagentPool,
-}
-
-/// Whether this run offers MCP sampling at all.
-///
-/// A run that never binds a model must not declare the `sampling` capability,
-/// so the decision is made by the host rather than inferred later.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum McpSamplingSupport {
-    Available,
-    Unavailable,
 }
 
 /// Whether this session loads external tool sources: MCP servers from user
@@ -186,25 +170,15 @@ pub(crate) enum PendingToolSources {
     Unbound,
 }
 
-pub(crate) struct StartupInventory {
-    pub(crate) mcp: crate::tools::mcp::McpSessionReport,
-    pub(crate) plugins: crate::plugins::PluginLoadReport,
-}
-
 pub(crate) struct ToolsAndPrompt {
     pub(crate) tools: AppToolSet,
     /// Stable across tool-list changes, rebuilt when the conversation model changes.
     pub(super) prompt: super::active_prompt::ActivePrompt,
     pub(crate) prompt_template: Option<prompt::ModelPromptTemplate>,
-    pub(crate) inventory: StartupInventory,
     /// In-flight MCP connect and OpenAPI loading when the interactive host
     /// deferred them off the first frame. `None` when they were awaited or
     /// skipped.
     pub(crate) pending_tool_sources: Option<tokio::task::JoinHandle<ToolSourcesOutcome>>,
-    /// Late-bound model handle for MCP sampling. Bound once the runtime exists,
-    /// and rebound whenever the user changes models. Left unbound, every
-    /// sampling request fails closed.
-    pub(crate) mcp_sampling: crate::tools::mcp::McpSamplingBridge,
 }
 
 /// Capability resolution plus system prompt assembly for root interactive and
@@ -248,7 +222,7 @@ pub(crate) async fn assemble_tools_and_prompt(
         skills: plugin_skills,
         mcp: plugin_mcp,
         agents: _,
-        report: plugins_report,
+        report: _,
     } = plugin_discovery;
     let mcp_config = mcp_config_for_attach(options.config, plugin_mcp, options.tool_source_attach);
     // One decision for every external tool source, so MCP and OpenAPI attach
@@ -269,20 +243,13 @@ pub(crate) async fn assemble_tools_and_prompt(
     // when they load (#1659); MCP tool calls send the caller context current
     // when they run (#1765).
     let ambient = options.environment.current();
-    let mcp_sampling_bridge = crate::tools::mcp::McpSamplingBridge::new();
-    let mut mcp_options = crate::tools::mcp::McpSessionOptions::new(
+    let mcp_options = crate::tools::mcp::McpSessionOptions::new(
         options.config.max_output_bytes,
         crate::tools::mcp::McpRoots::for_workspace(options.cwd),
         options.mcp_authorization,
         options.environment.clone(),
     )
     .with_elicitation(options.mcp_elicitation);
-    match options.mcp_sampling {
-        McpSamplingSupport::Available => {
-            mcp_options = mcp_options.with_sampling(mcp_sampling_bridge.clone());
-        }
-        McpSamplingSupport::Unavailable => {}
-    }
     let openapi_plans = if attach_tool_sources {
         crate::tools::openapi::config::OpenApiSources::discover(
             &options.config.openapi,
@@ -366,9 +333,7 @@ pub(crate) async fn assemble_tools_and_prompt(
             tool_options = tool_options.delegation(DelegationConfig::new(
                 options.cwd.to_path_buf(),
                 options.config_path.clone(),
-                options
-                    .catalog
-                    .and_then(|discovered| discovered.for_cwd(options.cwd)),
+                /*catalog*/ None,
                 options.subagent_pool.clone(),
             ));
         }
@@ -462,12 +427,7 @@ pub(crate) async fn assemble_tools_and_prompt(
         tools,
         prompt,
         prompt_template,
-        inventory: StartupInventory {
-            mcp: mcp_report,
-            plugins: plugins_report,
-        },
         pending_tool_sources,
-        mcp_sampling: mcp_sampling_bridge,
     })
 }
 

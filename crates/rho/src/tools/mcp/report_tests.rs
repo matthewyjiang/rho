@@ -13,7 +13,7 @@ use super::{
 use crate::tools::mcp::config::{
     McpConfig, McpSamplingPolicy, McpServerConfig, McpToolFilter, McpTransport,
 };
-use crate::{app::session_mcp_inventory, tools::mcp::McpCatalog};
+use crate::{app::session_mcp::session_mcp_inventory, tools::mcp::McpCatalog};
 
 fn stdio_server(enabled: bool) -> McpServerConfig {
     McpServerConfig {

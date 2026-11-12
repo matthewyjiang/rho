@@ -1,5 +1,5 @@
 //! A composer turn as the `rho/session/prompt` content that runs it in a
-//! daemon session as the in-process TUI runs it (#1667).
+//! daemon session (#1667).
 //!
 //! The daemon resolves a prompt's leading command and loads the `$skill`s
 //! its text mentions itself, so the TUI sends its model text as is. Only a

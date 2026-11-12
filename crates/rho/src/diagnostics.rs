@@ -1,14 +1,10 @@
-#[cfg(test)]
-use std::sync::Mutex;
 use std::sync::{Arc, RwLock};
 
 use serde::Serialize;
 
 #[path = "diagnostics_compaction.rs"]
 mod compaction;
-pub(crate) use compaction::{
-    CompactionContext, CompactionDiagnostics, IdleCompactionCheck, IdleCompactionReason,
-};
+pub(crate) use compaction::{CompactionContext, CompactionDiagnostics};
 
 use crate::compaction_metrics::{CompactionMetrics, CompactionRecord, ToolFingerprint};
 
@@ -147,35 +143,14 @@ impl RuntimeState {
     }
 }
 
-/// Whether a ledger write has to finish before the caller continues.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum CompactionSave {
-    /// Queued off the async runtime. May not finish if the process exits.
-    Deferred,
-    /// Runs to completion on the caller. Required on shutdown.
-    Inline,
-}
-
-#[cfg(test)]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct CapturedCompaction {
-    pub(crate) save: CompactionSave,
-    pub(crate) record: CompactionRecord,
-}
-
 #[derive(Clone, Debug)]
 pub struct RuntimeDiagnostics {
     state: Arc<RwLock<RuntimeState>>,
-    /// Records handed to the ledger during tests. Production saves skip this.
-    #[cfg(test)]
-    saves: Arc<Mutex<Vec<CapturedCompaction>>>,
 }
 
 impl RuntimeDiagnostics {
     pub fn new(config: &Config) -> Self {
         Self {
-            #[cfg(test)]
-            saves: Arc::new(Mutex::new(Vec::new())),
             state: Arc::new(RwLock::new(RuntimeState {
                 identity: RuntimeIdentity::new(&config.provider, &config.model, config.reasoning),
                 context: None,
@@ -186,44 +161,6 @@ impl RuntimeDiagnostics {
                 config: config.into(),
                 hooks: None,
             })),
-        }
-    }
-
-    fn save_compaction(&self, record: Option<CompactionRecord>) {
-        self.persist(record, CompactionSave::Deferred);
-    }
-
-    /// Writes a follow-up that is still open so quitting mid-window keeps the
-    /// partial re-read counts. The write is inline: the usual save is
-    /// `spawn_blocking` and can be dropped when the process exits.
-    pub(crate) fn flush_unfinished_compaction(&self) {
-        let unfinished = self.write().compaction_metrics.take_unfinished();
-        self.persist(unfinished, CompactionSave::Inline);
-    }
-
-    #[cfg(test)]
-    pub(crate) fn captured_compactions(&self) -> Vec<CapturedCompaction> {
-        self.saves
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .clone()
-    }
-
-    fn persist(&self, record: Option<CompactionRecord>, save: CompactionSave) {
-        let Some(record) = record else {
-            return;
-        };
-        #[cfg(test)]
-        self.saves
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .push(CapturedCompaction {
-                save,
-                record: record.clone(),
-            });
-        match save {
-            CompactionSave::Deferred => crate::usage::save_compaction(Some(record)),
-            CompactionSave::Inline => crate::usage::save_compaction_inline(Some(record)),
         }
     }
 
@@ -242,7 +179,7 @@ impl RuntimeDiagnostics {
         state.compaction = None;
         let unfinished = std::mem::take(&mut state.compaction_metrics).take_unfinished();
         drop(state);
-        self.save_compaction(unfinished);
+        crate::usage::save_compaction(unfinished);
     }
 
     pub fn update_agent(&self, id: &str, fingerprint: &str) {
@@ -253,38 +190,6 @@ impl RuntimeDiagnostics {
 
     pub fn record_context(&self, context: ContextUsage) {
         self.write().context = Some(context);
-    }
-
-    pub(crate) fn compaction(&self) -> Option<CompactionDiagnostics> {
-        self.read().compaction_with_metrics()
-    }
-
-    pub(crate) fn clear_compaction(&self) {
-        let mut state = self.write();
-        state.compaction = None;
-        let unfinished = std::mem::take(&mut state.compaction_metrics).take_unfinished();
-        drop(state);
-        self.save_compaction(unfinished);
-    }
-
-    pub(crate) fn record_compaction_context(
-        &self,
-        current: CompactionContext,
-        last_provider_check: Option<rho_sdk::CompactionDecision>,
-        completed: rho_sdk::CompactionState,
-    ) {
-        let mut state = self.write();
-        let last_idle_check = state
-            .compaction
-            .as_mut()
-            .and_then(|previous| previous.last_idle_check.take());
-        state.compaction = Some(CompactionDiagnostics {
-            current,
-            last_idle_check,
-            last_provider_check: last_provider_check.map(Into::into),
-            last_compaction: None,
-            completed,
-        });
     }
 
     /// Records one compactor call and saves it to the usage ledger.
@@ -298,8 +203,8 @@ impl RuntimeDiagnostics {
     ) {
         let saved = record.clone();
         let superseded = self.write().compaction_metrics.record(record, removed);
-        self.save_compaction(superseded);
-        self.save_compaction(Some(saved));
+        crate::usage::save_compaction(superseded);
+        crate::usage::save_compaction(Some(saved));
     }
 
     /// The latest compactor call's record.
@@ -307,55 +212,11 @@ impl RuntimeDiagnostics {
         self.read().compaction_metrics.last().cloned()
     }
 
-    /// The SDK committed the latest compactor result; start its follow-up.
-    pub(crate) fn compaction_committed(&self) {
-        self.write().compaction_metrics.committed();
-    }
-
-    /// Feeds the latest provider-reported prompt size to the follow-up.
-    pub(crate) fn observe_prompt_tokens(&self, tokens: Option<u64>) {
-        let finished = self
-            .write()
-            .compaction_metrics
-            .observe_prompt_tokens(tokens);
-        self.save_compaction(finished);
-    }
-
-    /// Feeds a proposed tool call to the follow-up.
-    pub(crate) fn observe_tool_call(&self, call: &rho_sdk::model::ToolCall) {
-        let finished = self.write().compaction_metrics.observe_tool_call(call);
-        self.save_compaction(finished);
-    }
-
-    pub(crate) fn record_idle_compaction(&self, check: IdleCompactionCheck) {
-        if let Some(compaction) = self.write().compaction.as_mut() {
-            compaction.last_idle_check = Some(check);
-        }
-    }
-
     pub fn update_compaction_config(&self, config: &CompactionConfig) {
         let mut state = self.write();
         state.config.auto_compact = config.auto_compact;
         state.config.compact_threshold_percent = config.threshold_percent;
         state.config.compact_target_percent = config.target_percent;
-    }
-
-    /// Advisor mode applies to the next turn rather than the next process, so
-    /// the mirror follows every change instead of the startup value.
-    pub fn update_advisor_mode(&self, advisor_mode: bool) {
-        self.write().config.advisor_mode = advisor_mode;
-    }
-
-    /// `/codemode` applies to the next model request, so the mirror follows
-    /// every change instead of the startup value.
-    pub fn update_codemode_mode(&self, mode: crate::config::CodemodeMode) {
-        self.write().config.codemode_mode = mode.as_str().into();
-    }
-
-    /// Agent concurrency can change mid-session, so the mirror follows the live
-    /// pool rather than the process startup snapshot.
-    pub fn update_agent_concurrency(&self, agent_concurrency: usize) {
-        self.write().config.agent_concurrency = agent_concurrency;
     }
 
     pub fn update_prompt_sources(&self, sources: Vec<crate::prompt::PromptSource>) {

@@ -1,24 +1,19 @@
-//! Ask before provider-native context is omitted on resume or a loaded
-//! session.
+//! Ask before provider-native context is omitted on a loaded session.
 //!
 //! Model switches apply immediately and surface an omission notice instead;
 //! the send itself is confirmed by `send_confirm` before the next turn starts.
 //! Compaction can salvage portable text. It does not make native blocks
 //! sendable to an incompatible model.
 //!
-//! A daemon session holds its own conversation, so the TUI that follows one
-//! asks from what the daemon reports; see [`daemon`].
+//! The daemon session holds the conversation, so the TUI asks from what the
+//! daemon reports; see [`daemon`].
 
-use crate::session::Session;
 use crate::tui::DefaultTerminal;
-use rho_providers::model::{catalog::ModelSelection, Message};
 use rho_sdk::model::handoff::HandoffReport;
-use rho_sdk::model::ModelIdentity;
 
 use super::{
-    catalog, session_picker::short_session_id, App, ComposerMode, Entry, InlineChoice,
-    InlineChoiceModal, InlineChoiceOption, InlineChoicePending, InteractiveModelSelection,
-    InteractiveRuntime,
+    App, ComposerMode, InlineChoice, InlineChoiceModal, InlineChoiceOption, InlineChoicePending,
+    InteractiveModelSelection,
 };
 
 mod daemon;
@@ -29,24 +24,9 @@ pub(super) const ACTION_CONTINUE: &str = "continue";
 
 #[derive(Debug)]
 pub(super) struct PendingContextHandoff {
-    kind: ContextHandoffKind,
-    /// Switch here before compact / use-source when not already current.
+    /// The model that produced the native context, when the session may
+    /// switch to it.
     source_selection: Option<InteractiveModelSelection>,
-    /// Switch here after materialize/compact when not already current.
-    target_selection: Option<InteractiveModelSelection>,
-    materialize: Option<ResumeMaterialize>,
-}
-
-#[derive(Debug)]
-struct ResumeMaterialize {
-    session: Session,
-    display_history: Vec<Message>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ContextHandoffKind {
-    Resume,
-    LoadedSession,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -65,310 +45,83 @@ enum ContextHandoffDecision {
     ContinueDirect,
 }
 
-enum HandoffExec {
-    Done,
-    StartCompact { had_source: bool },
-}
-
 impl ContextHandoffImpact {
-    fn should_prompt(&self) -> bool {
-        self.omissions.has_omissions()
+    fn choice(&self) -> anyhow::Result<InlineChoice> {
+        InlineChoice::new(
+            format!("How should Rho continue on {}?", self.target_label),
+            self.description(),
+            self.options(),
+        )
     }
 
-    fn choice(&self, kind: ContextHandoffKind) -> anyhow::Result<InlineChoice> {
-        let title = match kind {
-            ContextHandoffKind::Resume => {
-                format!("How should Rho resume on {}?", self.target_label)
-            }
-            ContextHandoffKind::LoadedSession => {
-                format!("How should Rho continue on {}?", self.target_label)
-            }
-        };
-        InlineChoice::new(title, self.description(kind), self.options(kind))
+    fn description(&self) -> String {
+        let kinds = self.omissions.omitted_kinds.join(", ");
+        let blocks = self.omissions.omitted_provider_context;
+        format!(
+            "This conversation has {blocks} provider-native context block(s) ({kinds}). {} cannot use them. The transcript is already loaded. Compaction can summarize portable context first; it does not make native blocks sendable.",
+            self.target_label
+        )
     }
 
-    fn description(&self, kind: ContextHandoffKind) -> String {
-        if self.omissions.has_omissions() {
-            let kinds = self.omissions.omitted_kinds.join(", ");
-            let blocks = self.omissions.omitted_provider_context;
-            let native = format!(
-                "This conversation has {blocks} provider-native context block(s) ({kinds}). {} cannot use them.",
-                self.target_label
-            );
-            match kind {
-                ContextHandoffKind::Resume => format!(
-                    "{native} Compaction can summarize portable context first; it does not make native blocks sendable."
-                ),
-                ContextHandoffKind::LoadedSession => format!(
-                    "{native} The transcript is already loaded. Compaction can summarize portable context first; it does not make native blocks sendable."
-                ),
-            }
-        } else {
-            format!(
-                "Compacting uses {} and may reduce the context sent to {}.",
-                self.source_label, self.target_label
-            )
-        }
-    }
-
-    fn options(&self, kind: ContextHandoffKind) -> Vec<InlineChoiceOption> {
+    fn options(&self) -> Vec<InlineChoiceOption> {
         let mut options = Vec::new();
         let mut shortcut = '1';
 
         if self.offer_use_source {
-            let (label, detail): (String, String) = match kind {
-                ContextHandoffKind::LoadedSession => (
-                    format!("Switch to {}", self.source_label),
-                    "Use the model that produced the native context so it can be replayed.".into(),
-                ),
-                ContextHandoffKind::Resume => (
-                    format!("Resume with {}", self.source_label),
-                    "Keep provider-native context for the model that produced it.".into(),
-                ),
-            };
             options.push(InlineChoiceOption::available(
                 ACTION_USE_SOURCE,
                 shortcut,
-                label,
-                detail,
+                format!("Switch to {}", self.source_label),
+                "Use the model that produced the native context so it can be replayed.",
             ));
             shortcut = next_shortcut(shortcut);
         }
 
         if self.can_compact {
-            let detail = if self.omissions.has_omissions() {
+            options.push(InlineChoiceOption::available(
+                ACTION_COMPACT,
+                shortcut,
+                "Compact, then continue",
                 format!(
                     "Summarize with {}, then continue. {} native block(s) still will not be sent to {}.",
                     self.source_label,
                     self.omissions.omitted_provider_context,
                     self.target_label
-                )
-            } else {
-                format!("Compact with {}, then continue.", self.source_label)
-            };
-            let label = if self.omissions.has_omissions() {
-                "Compact, then continue"
-            } else {
-                "Compact and switch"
-            };
-            options.push(InlineChoiceOption::available(
-                ACTION_COMPACT,
-                shortcut,
-                label,
-                detail,
+                ),
             ));
             shortcut = next_shortcut(shortcut);
         }
 
-        let continue_label = match kind {
-            ContextHandoffKind::Resume => format!("Resume with {}", self.target_label),
-            ContextHandoffKind::LoadedSession => format!("Continue with {}", self.target_label),
-        };
-        let continue_detail = if self.omissions.has_omissions() {
-            format!(
-                "{} native block(s) will not be sent to {}. Transcript and tool history remain.",
-                self.omissions.omitted_provider_context, self.target_label
-            )
-        } else {
-            "Keep the full conversation context and continue now.".into()
-        };
         options.push(InlineChoiceOption::available(
             ACTION_CONTINUE,
             shortcut,
-            continue_label,
-            continue_detail,
+            format!("Continue with {}", self.target_label),
+            format!(
+                "{} native block(s) will not be sent to {}. Transcript and tool history remain.",
+                self.omissions.omitted_provider_context, self.target_label
+            ),
         ));
         options
     }
 }
 
 impl App {
-    pub(super) async fn request_model_selection(
-        &mut self,
-        selection: InteractiveModelSelection,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<()> {
-        self.prepare_model_selection(selection, agent).await
-    }
-
-    /// Model switches land immediately; the omission notice documents what the
-    /// new model will not receive, and `send_confirm` gates the next send.
-    async fn prepare_model_selection(
-        &mut self,
-        selection: InteractiveModelSelection,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<()> {
-        let target = &selection.selection;
-        let same_model = target.provider == self.info.runtime.provider
-            && target.model == self.info.runtime.model
-            && target.auth == self.info.runtime.auth;
-        if same_model {
-            return self.select_model(selection, agent).await;
-        }
-        self.select_model_with_omission_notice(selection, agent)
-            .await
-    }
-
-    pub(super) fn offer_resume_context_handoff(
-        &mut self,
-        session: &Session,
-        model_history: &[Message],
-        display_history: &[Message],
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<bool> {
-        let target_identity = agent.provider_identity();
-        let omissions =
-            rho_sdk::model::handoff::report_message_omissions(model_history, &target_identity);
-        if !omissions.has_omissions() {
-            return Ok(false);
-        }
-
-        let source_identity = session
-            .stored_provider_identity()?
-            .or_else(|| first_omitted_source_identity(model_history, &target_identity));
-        let source_selection = source_identity
-            .as_ref()
-            .and_then(|identity| self.selection_for_identity(identity));
-        let source_label = source_identity
-            .as_ref()
-            .map(|identity| {
-                rho_providers::provider::model_reference(&identity.provider, &identity.model)
-            })
-            .unwrap_or_else(|| "session model".into());
-        let target_label = rho_providers::provider::model_reference(
-            &self.info.runtime.provider,
-            &self.info.runtime.model,
-        );
-        let impact = ContextHandoffImpact {
-            source_label,
-            target_label,
-            omissions,
-            can_compact: source_selection.is_some() && agent.can_compact_messages(model_history),
-            offer_use_source: source_selection.is_some(),
-        };
-        if !impact.should_prompt() {
-            return Ok(false);
-        }
-
-        let choice = impact.choice(ContextHandoffKind::Resume)?;
-        self.open_context_handoff(
-            choice,
-            PendingContextHandoff {
-                kind: ContextHandoffKind::Resume,
-                source_selection,
-                target_selection: Some(current_runtime_selection(self)),
-                materialize: Some(ResumeMaterialize {
-                    session: session.clone(),
-                    display_history: display_history.to_vec(),
-                }),
-            },
-        );
-        Ok(true)
-    }
-
-    pub(super) fn maybe_offer_loaded_session_context_handoff(
-        &mut self,
-        agent: &mut InteractiveRuntime,
-        had_recovered_messages: bool,
-    ) -> anyhow::Result<()> {
-        if !matches!(self.input_ui.composer(), ComposerMode::Input) {
-            return Ok(());
-        }
-        if !had_recovered_messages {
-            self.insert_runtime_notices(agent);
-            // A daemon session's conversation is the daemon's to recover.
+    /// Asks the daemon about the loaded session's provider context once the
+    /// composer is free; the answer may open the handoff dialog.
+    pub(super) fn maybe_offer_loaded_session_context_handoff(&mut self) {
+        if matches!(self.input_ui.composer(), ComposerMode::Input) {
             self.request_daemon_context_handoff();
-            return Ok(());
         }
-
-        // Startup already warned on stderr; drain any structured pending omission
-        // without showing a duplicate notice if we are about to prompt.
-        let target_identity = agent.provider_identity();
-        let omissions = agent.provider_context_omissions(&target_identity);
-        if !omissions.has_omissions() {
-            self.insert_runtime_notices(agent);
-            return Ok(());
-        }
-        let _ = agent.take_pending_omission();
-
-        let source_identity = agent
-            .stored_session()
-            .and_then(|session| session.stored_provider_identity().ok().flatten())
-            .or_else(|| first_omitted_source_identity(&agent.history(), &target_identity));
-        let source_selection = source_identity
-            .as_ref()
-            .and_then(|identity| self.selection_for_identity(identity));
-        let source_label = source_identity
-            .as_ref()
-            .map(|identity| {
-                rho_providers::provider::model_reference(&identity.provider, &identity.model)
-            })
-            .unwrap_or_else(|| "session model".into());
-        let target_label = rho_providers::provider::model_reference(
-            &self.info.runtime.provider,
-            &self.info.runtime.model,
-        );
-        let impact = ContextHandoffImpact {
-            source_label,
-            target_label,
-            omissions,
-            can_compact: source_selection.is_some() && agent.can_compact(),
-            offer_use_source: source_selection.is_some(),
-        };
-        let choice = impact.choice(ContextHandoffKind::LoadedSession)?;
-        self.open_context_handoff(
-            choice,
-            PendingContextHandoff {
-                kind: ContextHandoffKind::LoadedSession,
-                source_selection,
-                target_selection: Some(current_runtime_selection(self)),
-                materialize: None,
-            },
-        );
-        Ok(())
     }
 
     fn open_context_handoff(&mut self, choice: InlineChoice, pending: PendingContextHandoff) {
-        let status = match pending.kind {
-            ContextHandoffKind::Resume => "choose resume handoff",
-            ContextHandoffKind::LoadedSession => "choose loaded-session handoff",
-        };
         self.input_ui
             .set_composer(ComposerMode::InlineChoice(InlineChoiceModal {
                 choice,
                 pending: InlineChoicePending::ContextHandoff(Box::new(pending)),
                 parent_picker: None,
             }));
-        self.set_status(status);
-    }
-
-    fn selection_for_identity(
-        &mut self,
-        identity: &ModelIdentity,
-    ) -> Option<InteractiveModelSelection> {
-        self.refresh_available_auths();
-        let selection = catalog::resolve_model_selection_for_provider(
-            &identity.provider,
-            &identity.model,
-            catalog::SelectionAuthContext {
-                current: Some(&self.info.runtime.auth),
-                available: &self.available_auths,
-            },
-        )
-        .ok()?;
-        if !self
-            .available_auths
-            .iter()
-            .any(|auth| auth == &selection.auth)
-        {
-            return None;
-        }
-        Some(InteractiveModelSelection {
-            selection,
-            alias: None,
-            reasoning_policy:
-                super::reasoning_metadata::ModelSwitchReasoningPolicy::PreserveExplicit,
-        })
+        self.set_status("choose loaded-session handoff");
     }
 
     pub(super) async fn resolve_context_handoff(
@@ -376,215 +129,13 @@ impl App {
         value: Option<&str>,
         pending: PendingContextHandoff,
         terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        let PendingContextHandoff {
-            kind,
-            source_selection,
-            target_selection,
-            materialize,
-        } = pending;
-        if self.info.session.daemon.is_some() {
-            self.resolve_daemon_context_handoff(value, source_selection, terminal)
-                .await?;
-            return self.reconcile_auto_classifier_gate(agent).await;
-        }
-        if let Some(value) = value {
-            let decision =
-                decision_from_value(value).unwrap_or(ContextHandoffDecision::ContinueDirect);
-            match self
-                .execute_context_handoff(
-                    decision,
-                    source_selection,
-                    target_selection.clone(),
-                    materialize,
-                    terminal,
-                    agent,
-                )
-                .await
-            {
-                Ok(HandoffExec::Done) => {}
-                Ok(HandoffExec::StartCompact { had_source }) => {
-                    if let Err(err) = self.start_compact(
-                        agent,
-                        super::compact_work::CompactFollowUp::None,
-                        /*instructions*/ None,
-                    ) {
-                        self.insert_entry(&Entry::Error(format!("model handoff failed: {err}")));
-                        self.set_status("model handoff failed");
-                    } else {
-                        self.compact_follow_up =
-                            super::compact_work::CompactFollowUp::ContextHandoff {
-                                target_selection,
-                                had_source,
-                            };
-                        return Ok(());
-                    }
-                }
-                Err(err) => {
-                    self.insert_entry(&Entry::Error(format!("model handoff failed: {err}")));
-                    self.set_status("model handoff failed");
-                }
-            }
-        } else {
-            self.set_status(match kind {
-                ContextHandoffKind::Resume => "resume cancelled",
-                ContextHandoffKind::LoadedSession => "ready",
-            });
-        }
-        // Loaded-session handoff opens before the startup Auto gate and owns the
+        self.resolve_daemon_context_handoff(value, pending.source_selection, terminal)
+            .await?;
+        // The handoff opens before the startup Auto gate and owns the
         // composer until resolved. Reconcile once the modal is gone so Auto
         // without a classifier cannot remain fail-closed.
-        self.reconcile_auto_classifier_gate(agent).await
-    }
-
-    async fn execute_context_handoff(
-        &mut self,
-        decision: ContextHandoffDecision,
-        source_selection: Option<InteractiveModelSelection>,
-        target_selection: Option<InteractiveModelSelection>,
-        materialize: Option<ResumeMaterialize>,
-        terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<HandoffExec> {
-        match decision {
-            ContextHandoffDecision::UseSourceModel => {
-                let Some(source) = source_selection else {
-                    anyhow::bail!("session model is unavailable");
-                };
-                self.select_model(source, agent).await?;
-                self.materialize_if_needed(materialize, terminal, agent)
-                    .await?;
-                Ok(HandoffExec::Done)
-            }
-            ContextHandoffDecision::CompactThenContinue => {
-                let had_source = source_selection.is_some();
-                if let Some(source) = source_selection {
-                    if !selection_matches_runtime(self, &source) {
-                        self.select_model(source, agent).await?;
-                    }
-                }
-                self.materialize_if_needed(materialize, terminal, agent)
-                    .await?;
-                if agent.is_compacting() {
-                    anyhow::bail!("already compacting context");
-                }
-                Ok(HandoffExec::StartCompact { had_source })
-            }
-            ContextHandoffDecision::ContinueDirect => {
-                let materialized = materialize.is_some();
-                self.materialize_if_needed(materialize, terminal, agent)
-                    .await?;
-                if let Some(target) = target_selection {
-                    if !selection_matches_runtime(self, &target) {
-                        self.select_model(target, agent).await?;
-                    } else if !materialized {
-                        self.set_status("ready");
-                    }
-                }
-                Ok(HandoffExec::Done)
-            }
-        }
-    }
-
-    pub(super) async fn complete_compact_handoff(
-        &mut self,
-        succeeded: bool,
-        target_selection: Option<InteractiveModelSelection>,
-        had_source: bool,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<()> {
-        if succeeded {
-            if let Some(target) = target_selection {
-                if !selection_matches_runtime(self, &target) {
-                    self.select_model(target, agent).await?;
-                }
-            }
-        } else {
-            let notice = if had_source {
-                "kept the session model because context was not compacted"
-            } else {
-                "model unchanged because context was not compacted"
-            };
-            self.insert_entry(&Entry::Notice(notice.into()));
-        }
-        self.reconcile_auto_classifier_gate(agent).await
-    }
-
-    async fn materialize_if_needed(
-        &mut self,
-        materialize: Option<ResumeMaterialize>,
-        terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<()> {
-        let Some(materialize) = materialize else {
-            return Ok(());
-        };
-        self.apply_resume_session(
-            materialize.session,
-            materialize.display_history,
-            terminal,
-            agent,
-        )
-        .await
-    }
-
-    pub(super) async fn apply_resume_session(
-        &mut self,
-        session: Session,
-        display_history: Vec<Message>,
-        terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<()> {
-        let full_id = session.id().to_string();
-        let short_id = short_session_id(&full_id);
-
-        self.discard_side_chat();
-        agent.resume(session).await?;
-        self.info.runtime.added_dirs = agent.added_dirs().clone();
-        // User already confirmed handoff when this path runs after a prompt; drop
-        // the structured omission so we do not re-announce it as a string notice.
-        let _ = agent.take_pending_omission();
-        self.info.session.session_id = Some(full_id);
-        self.pending_session_title = None;
-        self.session_title_locked = false;
-        self.input_ui.set_composer(ComposerMode::Input);
-        self.input_ui.clear_text();
-        self.input_ui.clear_paste_segments();
-        self.input_ui.set_shell_mode(None);
-        self.input_ui.set_cursor(0);
-        self.cancel_all_pending_attachments();
-        self.input_ui.clear_attachments();
-        self.input_ui.set_command_palette_dismissed(false);
-        self.clamp_command_selection();
-        self.reset_streams();
-        self.end_busy_ui();
-        self.reset_usage();
-        self.usage.current_context = None;
-        let entries = self.transcript_entries(&display_history);
-        self.set_history_entries(entries);
-        self.scroll_history_to_bottom();
-        self.clamp_history_scroll_for_terminal(terminal)?;
-        self.set_status(format!("resumed session {short_id}"));
-        self.sync_herdr_session().await;
-        self.reconcile_auto_classifier_gate(agent).await?;
-        Ok(())
-    }
-
-    pub(super) async fn select_model_with_omission_notice(
-        &mut self,
-        selection: InteractiveModelSelection,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<()> {
-        let report = self.select_model_report(selection, agent).await?;
-        if let Some(report) = report.filter(HandoffReport::has_omissions) {
-            self.insert_entry(&Entry::Notice(format!(
-                "model handoff omitted {} nonportable provider context block(s): {}; assistant text, tool history, and reasoning summaries were preserved",
-                report.omitted_provider_context,
-                report.omitted_kinds.join(", ")
-            )));
-        }
-        Ok(())
+        self.reconcile_auto_classifier_gate()
     }
 }
 
@@ -597,32 +148,10 @@ fn decision_from_value(value: &str) -> Option<ContextHandoffDecision> {
     }
 }
 
-fn current_runtime_selection(app: &App) -> InteractiveModelSelection {
-    InteractiveModelSelection {
-        selection: ModelSelection {
-            provider: app.info.runtime.provider.clone(),
-            model: app.info.runtime.model.clone(),
-            auth: app.info.runtime.auth.clone(),
-            from_catalog: true,
-        },
-        alias: None,
-        reasoning_policy: super::reasoning_metadata::ModelSwitchReasoningPolicy::PreserveExplicit,
-    }
-}
-
 fn selection_matches_runtime(app: &App, selection: &InteractiveModelSelection) -> bool {
     selection.selection.provider == app.info.runtime.provider
         && selection.selection.model == app.info.runtime.model
         && selection.selection.auth == app.info.runtime.auth
-}
-
-fn first_omitted_source_identity(
-    messages: &[Message],
-    target: &ModelIdentity,
-) -> Option<ModelIdentity> {
-    rho_sdk::model::handoff::omitted_message_context(messages, target)
-        .next()
-        .map(|block| block.identity.clone())
 }
 
 fn next_shortcut(current: char) -> char {

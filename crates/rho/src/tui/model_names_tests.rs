@@ -152,15 +152,15 @@ fn daemon_options(provider: &str, model: &str, label: &str) -> rho_protocol::Ses
 }
 
 // Covers: the footer names the session's model by its display name, from the
-// local catalog in process and from the daemon's label on a daemon session,
+// local catalog without a daemon label and from the daemon's label otherwise,
 // and shows the id when neither names it.
 // Owner: TUI model naming
 #[test]
 fn the_footer_names_the_model_in_process_and_on_a_daemon() {
     let model = "anthropic/claude-opus-5-5";
     for (case, catalog, label, shown, hidden) in [
-        ("in process, named", true, None, "GPT-5.5", "gpt-5.5"),
-        ("in process, unnamed", false, None, "gpt-5.5", "GPT-5.5"),
+        ("catalog, named", true, None, "GPT-5.5", "gpt-5.5"),
+        ("catalog, unnamed", false, None, "gpt-5.5", "GPT-5.5"),
         (
             "daemon, named",
             false,

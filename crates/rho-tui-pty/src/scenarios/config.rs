@@ -128,77 +128,28 @@ pub(super) const AUTO_PERMISSION_MODE_STARTUP_STEPS: &[Step] = &[
     Step::ExitCommand,
 ];
 
-pub(super) const AUTO_PERMISSION_MODE_RECOVERED_HANDOFF_ID: &str =
-    "auto_permission_mode_recovered_handoff";
-// Covers: the same resume when the daemon holds the session.
-// Owner: interactive TUI as a daemon client
+// Covers: resuming a session that needs a context handoff under Auto with no
+// classifier model opens the handoff, then the classifier gate.
+// Owner: interactive TUI
 #[cfg(unix)]
-pub(super) const DAEMON_AUTO_PERMISSION_MODE_RECOVERED_HANDOFF_ID: &str =
-    "daemon_auto_permission_mode_recovered_handoff";
-
 pub(super) const AUTO_RECOVERED_HANDOFF_SCENARIO: Scenario = Scenario::new(
-    AUTO_PERMISSION_MODE_RECOVERED_HANDOFF_ID,
-    "Resume a session under Auto without a classifier and force the model pick",
-    AUTO_RECOVERED_HANDOFF_SIZE,
-    &[],
-    /*smoke*/ false,
-);
-#[cfg(unix)]
-pub(super) const DAEMON_AUTO_RECOVERED_HANDOFF_SCENARIO: Scenario = Scenario::new(
-    DAEMON_AUTO_PERMISSION_MODE_RECOVERED_HANDOFF_ID,
+    "daemon_auto_permission_mode_recovered_handoff",
     "Resume a daemon session under Auto without a classifier and force the model pick",
-    AUTO_RECOVERED_HANDOFF_SIZE,
+    PtySize {
+        rows: 16,
+        cols: 100,
+    },
     &[],
     /*smoke*/ false,
 );
-const AUTO_RECOVERED_HANDOFF_SIZE: PtySize = PtySize {
-    rows: 16,
-    cols: 100,
-};
 
 /// Two-process scenario: seed a real session (with agent identity), rewrite its
 /// assistant message to carry non-replayable provider context, switch config to
 /// Auto without a classifier, resume, continue the handoff, then confirm the
 /// classifier gate still opens.
-// Owner: interactive TUI
-pub(super) fn auto_recovered_handoff_scenario(name: &str) -> Option<SessionHost> {
-    match name {
-        AUTO_PERMISSION_MODE_RECOVERED_HANDOFF_ID => Some(SessionHost::InProcess),
-        #[cfg(unix)]
-        DAEMON_AUTO_PERMISSION_MODE_RECOVERED_HANDOFF_ID => Some(SessionHost::Daemon),
-        _ => None,
-    }
-}
-
-/// Where the recovered-handoff scenario's sessions run.
-#[derive(Clone, Copy)]
-pub(super) enum SessionHost {
-    InProcess,
-    #[cfg(unix)]
-    Daemon,
-}
-
-impl SessionHost {
-    fn id(self) -> &'static str {
-        match self {
-            Self::InProcess => AUTO_PERMISSION_MODE_RECOVERED_HANDOFF_ID,
-            #[cfg(unix)]
-            Self::Daemon => DAEMON_AUTO_PERMISSION_MODE_RECOVERED_HANDOFF_ID,
-        }
-    }
-
-    fn launch(self, plan: crate::env::RhoLaunchPlan) -> crate::env::RhoLaunchPlan {
-        match self {
-            Self::InProcess => plan.with_env("RHO_TUI_DAEMON", "0"),
-            #[cfg(unix)]
-            Self::Daemon => plan.with_env("RHO_TUI_DAEMON", "1"),
-        }
-    }
-}
-
+#[cfg(unix)]
 pub(super) fn run_auto_recovered_handoff(
     runner: &crate::scenario::ScenarioRunner,
-    host: SessionHost,
 ) -> anyhow::Result<crate::scenario::ScenarioOutcome> {
     use std::fs;
 
@@ -210,7 +161,8 @@ pub(super) fn run_auto_recovered_handoff(
         scenario::ScenarioOutcome,
     };
 
-    const SIZE: PtySize = AUTO_RECOVERED_HANDOFF_SIZE;
+    const SIZE: PtySize = AUTO_RECOVERED_HANDOFF_SCENARIO.size;
+    const ID: &str = AUTO_RECOVERED_HANDOFF_SCENARIO.id;
     const SEED_PROMPT: &str = "recovered auto handoff seed";
 
     let home = IsolatedHome::new()?;
@@ -230,10 +182,8 @@ permission_mode = "bypass"
 credential_store = "file"
 "#,
     )?;
-    let seed_plan = host.launch(
-        RhoLaunchPlan::matrix(&runner.binary, &home, SIZE)
-            .with_env("OPENAI_API_KEY", "sk-test-matrix"),
-    );
+    let seed_plan = RhoLaunchPlan::matrix(&runner.binary, &home, SIZE)
+        .with_env("OPENAI_API_KEY", "sk-test-matrix");
     let mut seed = PtyHarness::spawn_named(&seed_plan, "auto_recovered_seed")?;
     seed.enable_timing(runner.record_timing);
     if let Some(root) = &runner.artifact_root {
@@ -254,7 +204,7 @@ credential_store = "file"
             let _ = seed.kill();
         }
         return Ok(ScenarioOutcome {
-            id: host.id().into(),
+            id: ID.into(),
             passed: false,
             message: format!("seed phase failed: {error:#}"),
             timing: seed.timing().clone(),
@@ -263,18 +213,16 @@ credential_store = "file"
     }
 
     let (session_id, session_path) = find_latest_session(&home)?;
-    // A daemon that hosted the seed still holds its session and config.
+    // The daemon that hosted the seed still holds its session and config.
     home.stop_daemon();
     inject_non_replayable_provider_context(&session_path, StoredProviderRewrite::ToAnthropic)?;
     setup_auto_without_classifier(&home)?;
 
-    let resume_plan = host.launch(
-        RhoLaunchPlan::matrix(&runner.binary, &home, SIZE)
-            .with_env("OPENAI_API_KEY", "sk-test-matrix")
-            .with_arg("--resume")
-            .with_arg(&session_id),
-    );
-    let mut harness = PtyHarness::spawn_named(&resume_plan, host.id())?;
+    let resume_plan = RhoLaunchPlan::matrix(&runner.binary, &home, SIZE)
+        .with_env("OPENAI_API_KEY", "sk-test-matrix")
+        .with_arg("--resume")
+        .with_arg(&session_id);
+    let mut harness = PtyHarness::spawn_named(&resume_plan, ID)?;
     harness.enable_timing(runner.record_timing);
     if let Some(root) = &runner.artifact_root {
         harness.set_artifact_writer(ArtifactWriter::new(root));
@@ -305,7 +253,7 @@ credential_store = "file"
 
     Ok(match result {
         Ok(()) => ScenarioOutcome {
-            id: host.id().into(),
+            id: ID.into(),
             passed: true,
             message: "ok".into(),
             timing: harness.timing().clone(),
@@ -316,7 +264,7 @@ credential_store = "file"
                 let _ = harness.kill();
             }
             ScenarioOutcome {
-                id: host.id().into(),
+                id: ID.into(),
                 passed: false,
                 message: format!("{error:#}"),
                 timing: harness.timing().clone(),
@@ -498,40 +446,3 @@ fn rewrite_message_value(value: &mut serde_json::Value) -> bool {
     });
     true
 }
-
-// Covers: an in-process TUI, which has no daemon to save settings, answers
-// `/config` and `/advisor` by saying how to get one, rather than editing
-// local state the next session would not see.
-// Owner: interactive TUI settings commands in process
-pub(super) const SETTINGS_NEED_THE_DAEMON: Scenario = Scenario::new(
-    "settings_need_the_daemon",
-    "Ask for /config and /advisor in process and get told they need the daemon",
-    DEFAULT_SIZE,
-    &[
-        Step::WaitText {
-            text: "Bypass ·",
-            timeout: STARTUP,
-        },
-        Step::SubmitText("/config"),
-        Step::WaitText {
-            text: "/config needs the rho daemon: start rho without RHO_TUI_DAEMON=0",
-            timeout: SETTLE,
-        },
-        Step::SubmitText("/advisor on"),
-        Step::WaitText {
-            text: "/advisor needs the rho daemon: start rho without RHO_TUI_DAEMON=0",
-            timeout: SETTLE,
-        },
-        Step::ExitCommand,
-    ],
-    /*smoke*/ false,
-)
-.with_env(IN_PROCESS_ENV);
-
-/// Keeps the TUI in process, which a launch otherwise leaves for the daemon.
-/// The in-process TUI still ships (`RHO_TUI_DAEMON=0`), so its answers keep
-/// their coverage.
-const IN_PROCESS_ENV: &[(&str, &str)] = &[
-    ("OPENAI_API_KEY", "fixture-openai-key"),
-    ("RHO_TUI_DAEMON", "0"),
-];

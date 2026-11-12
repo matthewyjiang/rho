@@ -64,7 +64,8 @@ fn resume_validates_the_stored_agent_definition() {
         (None, "unused", Some("no stored agent definition identity")),
     ] {
         let (_root, _cwd, session) = stored_session(stored_id, fingerprint);
-        let result = validate_resume_agent(&session, &bound_agent(definition.clone()));
+        let result = session
+            .validate_agent_definition_identity(bound_agent(definition.clone()).definition());
         match expected_error {
             None => result.unwrap(),
             Some(expected) => {

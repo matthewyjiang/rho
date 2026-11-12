@@ -34,23 +34,6 @@ impl CompactionContext {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum IdleCompactionReason {
-    Disabled,
-    UnknownContextWindow,
-    SessionBusy,
-    BelowThreshold,
-    NoCompactableHistory,
-    Ready,
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub(crate) struct IdleCompactionCheck {
-    pub context: CompactionContext,
-    pub reason: IdleCompactionReason,
-}
-
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct ProviderCompactionCheck {
     pub context_tokens: u64,
@@ -71,7 +54,6 @@ impl From<CompactionDecision> for ProviderCompactionCheck {
 pub(crate) struct CompactionDiagnostics {
     pub completed: rho_sdk::CompactionState,
     pub current: CompactionContext,
-    pub last_idle_check: Option<IdleCompactionCheck>,
     pub last_provider_check: Option<ProviderCompactionCheck>,
     /// Metrics for the latest compactor call, committed or not. Filled on
     /// read from the runtime's single metrics record.

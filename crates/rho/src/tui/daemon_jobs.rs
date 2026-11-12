@@ -1,4 +1,4 @@
-//! The rails of a daemon session: the subagent and workflow runs the
+//! The rails of the session: the subagent and workflow runs the
 //! session started, as the daemon's jobs name them, and the background
 //! processes it started (`daemon_processes`).
 //!
@@ -10,11 +10,10 @@
 //! turn runs or the last list named a run the rails show, the only times
 //! one can start or change, at most once per [`RAIL_POLL`].
 //!
-//! In process, a finished row leaves its rail when its result reaches the
-//! parent's transcript. The daemon delivers results itself. A finished
-//! subagent row leaves when the transcript shows its result, or
-//! [`ENDED_RETENTION`] after its run ended; a workflow row leaves once the
-//! daemon no longer lists its result as pending (`daemon_workflows`).
+//! The daemon delivers results itself. A finished subagent row leaves when
+//! the transcript shows its result, or [`ENDED_RETENTION`] after its run
+//! ended; a workflow row leaves once the daemon no longer lists its result
+//! as pending (`daemon_workflows`).
 
 use std::{
     collections::HashSet,
@@ -26,11 +25,11 @@ use rho_protocol::{JobId, JobKind, JobState, JobSummary};
 use super::{daemon_subagents::SubagentRuns, daemon_workflows::WorkflowRuns, App};
 use crate::subagent;
 
-/// The least time between two job lists: the tick the in-process rail
-/// refreshes on while a subagent runs (`app_loop.rs`).
+/// The least time between two job lists: the idle loop's tick while a rail
+/// shows runs (`app_loop.rs`).
 const RAIL_POLL: Duration = Duration::from_millis(500);
 
-/// How long a finished run stays on its rail, as the in-process subagent
+/// How long a finished run stays on its rail, as the subagent manager's
 /// rail keeps a run whose result it will not see delivered
 /// (`subagent_manager.rs`).
 pub(super) const ENDED_RETENTION: Duration = Duration::from_secs(10);
@@ -99,7 +98,7 @@ impl DaemonRail {
 
     /// Whether the rails show runs that change with no turn running, so
     /// the idle loop keeps asking after them. A process row keeps the loop
-    /// ticking itself, as in process.
+    /// ticking itself.
     pub(super) fn shows_runs(&self) -> bool {
         self.jobs.shows
     }
@@ -164,9 +163,7 @@ impl App {
     /// [`Self::show_daemon_jobs`] and [`Self::show_daemon_processes`].
     pub(super) fn refresh_daemon_rail(&mut self) {
         self.refresh_daemon_processes();
-        let Some(session) = &self.info.session.daemon else {
-            return;
-        };
+        let session = &self.info.session.daemon;
         // A run starts only in a turn, and changes only while it shows. An
         // open `/jobs` lists every session's jobs, which change whatever
         // this one is doing.
@@ -186,13 +183,13 @@ impl App {
     /// workflow rails. A failed list keeps the rows the rails have and is
     /// asked for again; the next one replaces them.
     pub(super) fn show_daemon_jobs(&mut self, jobs: Result<Vec<JobSummary>, String>) {
-        let (Some(session), Ok(jobs)) = (&self.info.session.daemon, jobs) else {
+        let Ok(jobs) = jobs else {
             // Whether a run shows is unknown, such as one the turn that
             // just ended started.
             self.daemon_rail.jobs.answered(/*shows*/ true);
             return;
         };
-        let session = session.id().to_owned();
+        let session = self.info.session.daemon.id().to_owned();
         let now = subagent::unix_now_secs();
         let workflows = rail_jobs(&jobs, &session, JobKind::Workflow, now);
         let subagents = rail_jobs(&jobs, &session, JobKind::Subagent, now);

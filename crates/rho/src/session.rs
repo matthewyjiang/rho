@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 #[cfg(test)]
 use rho_providers::model::ContentBlock;
-use rho_providers::model::{Message, ModelIdentity};
+use rho_providers::model::Message;
 use rho_sdk::SessionSnapshot;
 #[cfg(test)]
 use rho_sdk::{CompactionState, Revision, SessionId};
@@ -53,9 +53,7 @@ mod workspace_scope;
 use append_cursor::AppendCursor;
 #[cfg(test)]
 use layout::encode_cwd;
-use persistence::{
-    parse_timestamp, session_root, session_web_dir, unix_timestamp_secs, SessionStore,
-};
+use persistence::{parse_timestamp, session_root, unix_timestamp_secs, SessionStore};
 #[cfg(test)]
 use persistence::{
     read_entries, session_dir_in_root, summarize_session_file, SessionEntry, SESSION_VERSION,
@@ -82,12 +80,6 @@ pub struct Session {
     workspace_key: String,
     write_lock: Arc<Mutex<AppendCursor>>,
     _active_lease: SessionLease,
-}
-
-#[derive(Clone, Debug)]
-pub struct SessionHistories {
-    pub model: Vec<Message>,
-    pub display: Vec<Message>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -288,13 +280,6 @@ pub(super) struct SessionIndexRecord {
 }
 
 impl Session {
-    pub fn open_by_id_with_histories(
-        cwd: &Path,
-        id_prefix: &str,
-    ) -> anyhow::Result<(Self, SessionHistories)> {
-        Self::open_by_id_with_histories_in_root(&session_root()?, cwd, id_prefix)
-    }
-
     /// Resolves a resume prefix, with the workspace the session belongs to,
     /// which is another project's when the prefix matched none here,
     /// without opening the session or taking its writer lease. Daemon
@@ -305,13 +290,6 @@ impl Session {
         Ok(SessionTarget::new(resolved.id, resolved.cwd))
     }
 
-    /// Opens one exact workspace-scoped session without falling back to another workspace.
-    pub fn open_target_with_histories(
-        target: &SessionTarget,
-    ) -> anyhow::Result<(Self, SessionHistories)> {
-        Self::open_target_with_histories_in_root(&session_root()?, target)
-    }
-
     /// The workspace the session saved under exactly `id` belongs to, from
     /// any workspace, or `None` when nothing is saved under it. Opening it
     /// there is [`Self::open_exact_in_workspace`].
@@ -319,53 +297,34 @@ impl Session {
         SessionStore::workspace_of(&session_root()?, id)
     }
 
-    /// Opens the session saved under exactly `id` in `cwd`'s workspace, or
-    /// `None` when nothing is. Unlike [`Self::open_by_id_with_histories`],
-    /// `id` is never read as a prefix and no other workspace is searched.
+    /// Opens the session saved under exactly `id` in `cwd`'s workspace, with
+    /// its model history, or `None` when nothing is. `id` is never read as a
+    /// prefix and no other workspace is searched.
     pub(crate) fn open_exact_in_workspace(
         cwd: &Path,
         id: &str,
-    ) -> anyhow::Result<Option<(Self, SessionHistories)>> {
+    ) -> anyhow::Result<Option<(Self, Vec<Message>)>> {
         let session_root = session_root()?;
         let Some(resolved) = SessionStore::new(&session_root, cwd).resolve_exact_local(id)? else {
             return Ok(None);
         };
-        Self::open_resolved_with_histories(&session_root, resolved).map(Some)
+        Self::open_resolved_with_history(&session_root, resolved).map(Some)
     }
 
     #[cfg(test)]
-    fn open_by_id_in_root(
+    pub(crate) fn open_by_id_in_root(
         session_root: &Path,
         cwd: &Path,
         id_prefix: &str,
     ) -> anyhow::Result<(Self, Vec<Message>)> {
-        let (session, histories) =
-            Self::open_by_id_with_histories_in_root(session_root, cwd, id_prefix)?;
-        Ok((session, histories.model))
-    }
-
-    pub(crate) fn open_by_id_with_histories_in_root(
-        session_root: &Path,
-        cwd: &Path,
-        id_prefix: &str,
-    ) -> anyhow::Result<(Self, SessionHistories)> {
         let resolved = SessionStore::new(session_root, cwd).resolve(id_prefix)?;
-        Self::open_resolved_with_histories(session_root, resolved)
+        Self::open_resolved_with_history(session_root, resolved)
     }
 
-    pub(crate) fn open_target_with_histories_in_root(
-        session_root: &Path,
-        target: &SessionTarget,
-    ) -> anyhow::Result<(Self, SessionHistories)> {
-        let resolved =
-            SessionStore::new(session_root, &target.cwd).resolve_in_workspace(&target.id)?;
-        Self::open_resolved_with_histories(session_root, resolved)
-    }
-
-    fn open_resolved_with_histories(
+    fn open_resolved_with_history(
         session_root: &Path,
         resolved: persistence::ResolvedSession,
-    ) -> anyhow::Result<(Self, SessionHistories)> {
+    ) -> anyhow::Result<(Self, Vec<Message>)> {
         anyhow::ensure!(
             resolved.cwd.is_dir(),
             "session '{}' belongs to workspace {}, which is no longer an accessible directory. \
@@ -381,7 +340,7 @@ impl Session {
             LeasePurpose::Open,
         )?;
         let tree = tree::SessionTree::load(&resolved.path)?;
-        let histories = persistence::histories_from_tree(&tree)?;
+        let history = persistence::history_from_tree(&tree)?;
         let session = Self::from_parts_with_lease(
             session_root,
             resolved.cwd,
@@ -390,7 +349,7 @@ impl Session {
             active_lease,
         );
         session.cache_loaded_tree(tree);
-        Ok((session, histories))
+        Ok((session, history))
     }
 
     pub(crate) fn tree_facts_by_id(
@@ -515,14 +474,6 @@ impl Session {
     /// The child agent id when the session was rebound as a delegated agent.
     pub(crate) fn delegated_agent_id(&self) -> anyhow::Result<Option<String>> {
         agent_identity::read_delegated_agent_id(&self.path)
-    }
-
-    /// Provider/API/model identity stored on the session snapshot, when present.
-    pub(crate) fn stored_provider_identity(&self) -> anyhow::Result<Option<ModelIdentity>> {
-        Ok(persistence::read_session_state(&self.path)?
-            .snapshot
-            .as_ref()
-            .map(|snapshot| snapshot.provider().clone()))
     }
 
     /// Resume check that accepts the current fingerprint or an exact legacy
@@ -932,11 +883,6 @@ impl Session {
     #[cfg(test)]
     pub(crate) fn path(&self) -> &Path {
         &self.path
-    }
-
-    /// Web-access sidecar directory for this session, when the on-disk layout supports one.
-    pub(crate) fn web_dir(&self) -> Option<PathBuf> {
-        session_web_dir(&self.path)
     }
 
     /// Delegated run artifact directory owned by this folder-layout session.

@@ -5,30 +5,29 @@
 //! row is the daemon's `user_message` echo, and the busy chrome follows the
 //! job's state ([`super::daemon_transcript`]). While the job runs, or waits
 //! for input, the app loop hands the terminal to [`App::follow_daemon_turn`],
-//! which routes keys as an in-process turn does (`during_turn`), so Esc
-//! cancels, Enter queues a steer, which this sends to the daemon, and an
-//! open input request's prompt takes its keys (`daemon_answers`). Quitting
-//! leaves the turn running in the daemon, which keeps the session.
+//! which routes keys through `during_turn`, so Esc cancels, Enter queues a
+//! steer, which this sends to the daemon, and an open input request's prompt
+//! takes its keys (`daemon_answers`). Quitting leaves the turn running in the
+//! daemon, which keeps the session.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use rho_protocol::{PromptAuthor, TurnErrorKind, TurnOutcome};
 
 use super::{
-    daemon_prompt, daemon_session,
+    daemon_prompt,
     during_turn::RunningTerminalError,
     idle_input::{HeldOrigin, HeldTurn},
     pending_input::{AcceptedSteering, PendingInputAction},
     send_confirm::SendSubmission,
-    App, ChatMedia, DaemonSession, DefaultTerminal, Entry, FrameScheduler, InteractiveRuntime,
-    PasteSegment, QueuedPrompt, StreamControl, TurnPrompt,
+    App, ChatMedia, DefaultTerminal, Entry, FrameScheduler, PasteSegment, QueuedPrompt,
+    StreamControl, TurnPrompt,
 };
 
 impl App {
     /// Whether the followed daemon session runs a turn.
     pub(super) fn daemon_turn_runs(&self) -> bool {
-        self.info.session.daemon.is_some() && self.turn.is_provider_turn()
+        self.turn.is_provider_turn()
     }
 
     /// Sends `turn` with `media` to the daemon session as
@@ -36,7 +35,7 @@ impl App {
     /// the session's model cannot be sent some of the conversation
     /// (`send_confirm::daemon`): every prompt that starts a model request
     /// goes through here. One held while the session's MCP servers connect
-    /// is confirmed when it is released, as in process.
+    /// is confirmed when it is released.
     ///
     /// The daemon starts a turn only once those servers connected, and the
     /// TUI would wait for it meanwhile, so every path to
@@ -56,9 +55,9 @@ impl App {
         self.submit_daemon_submission(submission, terminal).await
     }
 
-    /// Sends a command that is no send to confirm, as `/compact`, which
-    /// passes no confirmation in process either: held like a prompt while
-    /// the session's MCP servers connect, and released the same way.
+    /// Sends a command that is no send to confirm, as `/compact`: held like
+    /// a prompt while the session's MCP servers connect, and released the
+    /// same way.
     pub(super) async fn send_daemon_command(
         &mut self,
         turn: TurnPrompt,
@@ -80,11 +79,7 @@ impl App {
     }
 
     pub(super) fn daemon_tool_sources_loading(&self) -> bool {
-        self.info
-            .session
-            .daemon
-            .as_ref()
-            .is_some_and(super::DaemonSession::tool_sources_loading)
+        self.info.session.daemon.tool_sources_loading()
     }
 
     /// Asks the daemon to run `turn` with `media`, now and unconfirmed: the
@@ -148,18 +143,21 @@ impl App {
         self.show_taken_daemon_views(terminal).await
     }
 
-    /// Sends the next queued follow-up once a daemon turn completed and the
-    /// composer is free; the in-process `start_next_follow_up` for a daemon
-    /// session. Reports whether anything changed.
-    pub(super) async fn start_next_daemon_follow_up(
+    /// Sends the next queued follow-up once a turn completed armed
+    /// `start_follow_ups` and the composer is free. Reports whether anything
+    /// changed.
+    pub(super) async fn start_next_follow_up(
         &mut self,
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<bool> {
         // Another client's turn may run meanwhile; its end arms this again.
-        if self.input_ui.composer().blocks_held_turn_start() || self.is_ui_busy() {
+        if !self.start_follow_ups
+            || self.input_ui.composer().blocks_held_turn_start()
+            || self.is_ui_busy()
+        {
             return Ok(false);
         }
-        self.start_follow_ups = None;
+        self.start_follow_ups = false;
         let Some((prompt, consent)) = self.pending.pop_follow_up_with_consent() else {
             return Ok(false);
         };
@@ -211,10 +209,9 @@ impl App {
     ) -> anyhow::Result<()> {
         // The person moved on from a report still on its way.
         self.awaited_daemon_report = None;
-        let Some(session) = self.info.session.daemon.as_mut() else {
-            anyhow::bail!("no daemon session is open");
-        };
-        session
+        self.info
+            .session
+            .daemon
             .prompt(daemon_prompt::prompt_content(turn, media), author)
             .await
     }
@@ -225,30 +222,20 @@ impl App {
         &mut self,
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
-        let views = self
-            .info
-            .session
-            .daemon
-            .as_mut()
-            .map(DaemonSession::take_views)
-            .unwrap_or_default();
+        let views = self.info.session.daemon.take_views();
         self.show_daemon_views(views, terminal).await
     }
 
     /// Follows the daemon session's running turn until it rests, or the
-    /// person quits, with the keys an in-process turn takes: Esc cancels it,
-    /// and Enter steers it.
+    /// person quits: Esc cancels it, and Enter steers it.
     pub(super) async fn follow_daemon_turn(
         &mut self,
         terminal: &mut DefaultTerminal,
-        agent: &InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        let interrupt_requested = AtomicBool::new(false);
-        let tool_call_active = AtomicBool::new(self.turn.tool_calls().is_running());
         let mut frame_scheduler = FrameScheduler::new(Instant::now());
         self.draw_running_frame(terminal, &mut frame_scheduler)?;
         while self.daemon_turn_runs() && !self.should_quit {
-            let mut needs_redraw = self.update_activity_panels(agent)?;
+            let mut needs_redraw = self.update_activity_panels()?;
             needs_redraw |= self.reconcile_overlays().await?;
             needs_redraw |= self.poll_sessions_task()?;
             needs_redraw |= self.finish_completed_inline_shells().await?;
@@ -261,15 +248,10 @@ impl App {
                 biased;
                 event = self.terminal_session.as_mut().expect("terminal session initialized").next_event() => {
                     let control = self
-                        .handle_running_terminal_events(
-                            event?,
-                            terminal,
-                            &interrupt_requested,
-                            &tool_call_active,
-                        )
+                        .handle_running_terminal_events(event?, terminal)
                         .await;
                     // Before any cancel: Esc at an approval denies it, then
-                    // cancels the turn, in that order, as in process.
+                    // cancels the turn, in that order.
                     let cancelling = matches!(control, Ok(StreamControl::Interrupt));
                     self.answer_daemon_input(terminal, cancelling).await?;
                     match control {
@@ -295,15 +277,11 @@ impl App {
                     self.pending_input_changed();
                     self.draw_running_frame(terminal, &mut frame_scheduler)?;
                 }
-                views = daemon_session::next_views(&mut self.info.session.daemon) => {
+                views = self.info.session.daemon.next_views() => {
                     self.show_daemon_views(views, terminal).await?;
-                    tool_call_active.store(self.turn.tool_calls().is_running(), Ordering::SeqCst);
                     if frame_scheduler.request_background_frame(Instant::now()) {
                         self.draw_running_frame(terminal, &mut frame_scheduler)?;
                     }
-                }
-                () = self.subagent_inbox.recv() => {
-                    self.draw_running_frame(terminal, &mut frame_scheduler)?;
                 }
                 _ = tokio::time::sleep_until(frame_deadline) => {
                     self.tick_questionnaire_timeout();
@@ -316,12 +294,19 @@ impl App {
         Ok(())
     }
 
+    pub(super) fn draw_running_frame(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+        frame_scheduler: &mut FrameScheduler,
+    ) -> anyhow::Result<()> {
+        terminal.draw(|frame| self.draw(frame))?;
+        frame_scheduler.rendered(Instant::now());
+        Ok(())
+    }
+
     /// Asks the daemon to stop its turn; the turn's end shows that it did.
     pub(super) async fn cancel_daemon_turn(&mut self) {
-        let Some(session) = self.info.session.daemon.as_ref() else {
-            return;
-        };
-        if let Err(error) = session.cancel().await {
+        if let Err(error) = self.info.session.daemon.cancel().await {
             self.insert_entry(&Entry::Error(format!(
                 "could not cancel the turn: {error:#}"
             )));
@@ -330,28 +315,21 @@ impl App {
 
     /// Sends what the pending panel asked for since: a steer to withdraw,
     /// then the steers queued meanwhile. A steer the daemon refuses, and
-    /// every one queued after it, becomes a follow-up, as in process.
+    /// every one queued after it, becomes a follow-up.
     async fn send_daemon_pending_input(&mut self) {
         if let Some(action) = self.pending.take_input_action() {
             let id = match &action {
                 PendingInputAction::EditAccepted { id, .. }
                 | PendingInputAction::DiscardAccepted { id } => id.clone(),
             };
-            let Some(session) = self.info.session.daemon.as_ref() else {
-                return;
-            };
-            let retraction = match session.unsteer(&id).await {
+            let retraction = match self.info.session.daemon.unsteer(&id).await {
                 Ok(outcome) => steering_retraction(outcome),
                 Err(error) => Err(format!("{error:#}")),
             };
             self.finish_steering_retraction(action, retraction);
         }
         while let Some(prompt) = self.pending.steering_prompts_mut().pop_front() {
-            let Some(session) = self.info.session.daemon.as_ref() else {
-                self.pending.steering_prompts_mut().push_front(prompt);
-                return;
-            };
-            match session.steer(prompt.prompt.clone()).await {
+            match self.info.session.daemon.steer(prompt.prompt.clone()).await {
                 Ok(id) => {
                     self.pending
                         .accepted_steering_mut()

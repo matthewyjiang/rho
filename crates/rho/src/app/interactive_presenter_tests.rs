@@ -232,13 +232,6 @@ fn advisor_cards_use_status_first_headers() {
         )
     );
 
-    let interrupted = interrupted_card(&view, "", dir.path());
-    assert_eq!(interrupted.status, ToolCardStatus::Interrupted);
-    assert_eq!(
-        interrupted.header,
-        ToolHeader::status_first("advisor", "interrupted")
-    );
-
     let finished = finished_card(
         &view,
         "final guidance",

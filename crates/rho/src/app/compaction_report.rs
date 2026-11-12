@@ -31,7 +31,6 @@ impl CompactionReport {
         let mut report = Self::default();
         let current = &diagnostics.current;
         if !current.enabled
-            && diagnostics.last_idle_check.is_none()
             && diagnostics.last_provider_check.is_none()
             && diagnostics.completed.completed_compactions() == 0
         {
@@ -72,16 +71,6 @@ impl CompactionReport {
         }
         if let Some(record) = &diagnostics.last_compaction {
             report.push_last_compaction(record);
-        }
-        if let Some(check) = &diagnostics.last_idle_check {
-            report.push(
-                "Idle check",
-                format!(
-                    "{:?}, {} tokens",
-                    check.reason,
-                    check.context.estimate.tokens()
-                ),
-            );
         }
         if let Some(check) = &diagnostics.last_provider_check {
             let check = check.decision;

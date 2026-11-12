@@ -1,7 +1,6 @@
 //! Run events beside the reply: a provider retry, the provider's own web
-//! search, and a failed turn's provider diagnostic. Each shows the same in
-//! process and with `RHO_TUI_DAEMON=1`, where the daemon runs the turn
-//! (#1667, #1685).
+//! search, and a failed turn's provider diagnostic, from a turn the daemon
+//! runs (#1667, #1685).
 
 use anyhow::Result;
 
@@ -26,18 +25,6 @@ pub(super) const PROVIDER_RETRY_SCENARIO: Scenario = Scenario::new(
     /*smoke*/ false,
 );
 
-// Covers: the same retry status on a daemon session's turn.
-// Owner: interactive TUI as a daemon client
-#[cfg(unix)]
-pub(super) const DAEMON_PROVIDER_RETRY_SCENARIO: Scenario = Scenario::new(
-    "daemon_provider_retry",
-    "Show a daemon turn's rate-limited provider retry, then its reply",
-    DEFAULT_SIZE,
-    PROVIDER_RETRY_STEPS,
-    /*smoke*/ false,
-)
-.with_env(super::daemon_resume::DAEMON_ENV);
-
 // Covers: the provider's own web search shows as a finished card with its
 // query, before the reply.
 // Owner: interactive TUI
@@ -49,18 +36,6 @@ pub(super) const WEB_SEARCH_ACTIVITY_SCENARIO: Scenario = Scenario::new(
     /*smoke*/ false,
 );
 
-// Covers: the same web search card on a daemon session's turn.
-// Owner: interactive TUI as a daemon client
-#[cfg(unix)]
-pub(super) const DAEMON_WEB_SEARCH_ACTIVITY_SCENARIO: Scenario = Scenario::new(
-    "daemon_web_search_activity",
-    "Show a daemon turn's provider web search as a finished card",
-    DEFAULT_SIZE,
-    WEB_SEARCH_STEPS,
-    /*smoke*/ false,
-)
-.with_env(super::daemon_resume::DAEMON_ENV);
-
 // Covers: a turn the provider failed with a diagnostic shows the
 // diagnostic, and the composer is free again.
 // Owner: interactive TUI
@@ -71,18 +46,6 @@ pub(super) const PROVIDER_DIAGNOSTIC_SCENARIO: Scenario = Scenario::new(
     PROVIDER_DIAGNOSTIC_STEPS,
     /*smoke*/ false,
 );
-
-// Covers: the same diagnostic on a daemon session's failed turn.
-// Owner: interactive TUI as a daemon client
-#[cfg(unix)]
-pub(super) const DAEMON_PROVIDER_DIAGNOSTIC_SCENARIO: Scenario = Scenario::new(
-    "daemon_provider_diagnostic",
-    "Show a daemon turn's provider diagnostic",
-    DEFAULT_SIZE,
-    PROVIDER_DIAGNOSTIC_STEPS,
-    /*smoke*/ false,
-)
-.with_env(super::daemon_resume::DAEMON_ENV);
 
 const PROVIDER_RETRY_STEPS: &[Step] = &[
     Step::Phase("startup"),

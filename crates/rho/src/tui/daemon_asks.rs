@@ -1,5 +1,5 @@
-//! A daemon input request as the prompt the in-process TUI shows for the
-//! same ask, and the person's reply as the daemon's answer (#1667).
+//! A daemon input request as the prompt the TUI shows for it, and the
+//! person's reply as the daemon's answer (#1667).
 //!
 //! - An approval is the approval prompt, and its decision the matching
 //!   answer.

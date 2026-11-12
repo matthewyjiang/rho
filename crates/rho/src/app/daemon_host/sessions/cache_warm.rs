@@ -1,14 +1,12 @@
 //! Keeps a session's provider prompt cache warm while its model idles on a
-//! `process start` that asked for `keep_warm`, as the in-process TUI does
-//! for its own session. The policy is [`crate::cache_warm`]'s; this is the
-//! daemon's host of it.
+//! `process start` that asked for `keep_warm`. The policy is
+//! [`crate::cache_warm`]'s; this is the daemon's host of it.
 //!
-//! A session whose `process` tool offers `keep_warm` has one watcher,
-//! started as the session is added. It steps the session's
-//! [`CacheWarmer`], sends the pings, and tells the session's clients what
-//! the in-process TUI shows: the ping counter and the pings' cost as a
-//! `cache_warm` event, and why warming stopped as a notice. The warming is
-//! the daemon's, so it goes on with no client attached.
+//! A session whose `process` tool offers `keep_warm` has one watcher, started
+//! as the session is added. It steps the session's [`CacheWarmer`], sends the
+//! pings, and tells the session's clients the ping counter and the pings'
+//! cost as a `cache_warm` event, and why warming stopped as a notice. The
+//! warming is the daemon's, so it goes on with no client attached.
 //!
 //! The watcher holds the session weakly: a process that holds the cache
 //! keeps the session loaded (see `unload`), and the watcher ends once the
@@ -415,7 +413,7 @@ impl LoadedSession {
 
     /// The session's conversation moved to another point of its tree, which
     /// is a new conversation to its clients: the warming starts over, and
-    /// its spend with it, as the in-process TUI's totals do.
+    /// its spend with it.
     pub(super) fn cache_warm_conversation_moved(&self) {
         let Some(keep) = &self.cache_warm else {
             return;
@@ -472,7 +470,7 @@ struct SentPing {
 }
 
 /// What a ping cost: the provider's figure, else the catalog's price of its
-/// usage, as the in-process TUI counts it.
+/// usage.
 fn ping_cost(usage: &ModelUsage, metadata: Option<&ModelMetadata>) -> Option<u64> {
     usage
         .cost_usd_micros

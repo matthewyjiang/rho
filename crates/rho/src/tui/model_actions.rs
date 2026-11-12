@@ -6,14 +6,11 @@ use rho_providers::model::provider_models::{
     refresh_provider_models_with_store, ProviderModelEndpoint,
 };
 
-use crate::agent::{
-    carry_internal_agent_reasoning, ADVISOR_AGENT_ID, PERMISSION_CLASSIFIER_AGENT_ID,
-};
+use crate::agent::{carry_internal_agent_reasoning, ADVISOR_AGENT_ID};
 
 use super::{
     agent_picker::InternalAgentModelPickerOrigin, catalog, favorites, provider, provider_picker,
-    reasoning_metadata, App, CommandInvocation, ComposerMode, Entry, InteractiveModelSelection,
-    InteractiveRuntime, ModelSelection,
+    App, ComposerMode, Entry, InteractiveModelSelection, ModelSelection,
 };
 
 pub(super) fn refresh_auth_for_provider(
@@ -97,11 +94,7 @@ impl App {
                 &self.available_auths,
             )?,
         };
-        Ok(InteractiveModelSelection {
-            selection,
-            alias,
-            reasoning_policy: reasoning_metadata::ModelSwitchReasoningPolicy::PreserveExplicit,
-        })
+        Ok(InteractiveModelSelection { selection, alias })
     }
 
     pub(in crate::tui) async fn refresh_model_lists(
@@ -196,53 +189,6 @@ impl App {
         )));
     }
 
-    pub(super) async fn execute_model_command(
-        &mut self,
-        invocation: CommandInvocation,
-        terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<()> {
-        let model = invocation.args.trim();
-        if model.is_empty() {
-            self.open_model_picker(terminal, agent).await?;
-            return Ok(());
-        }
-
-        self.refresh_available_auths();
-        match self.resolve_model_selection(
-            model,
-            &self.info.runtime.provider,
-            &self.info.runtime.auth,
-        ) {
-            Ok(selection) => self.request_model_selection(selection, agent).await,
-            Err(err) => {
-                self.insert_entry(&Entry::Error(err.to_string()));
-                self.set_status("model switch failed");
-                Ok(())
-            }
-        }
-    }
-
-    async fn open_model_picker(
-        &mut self,
-        terminal: &mut DefaultTerminal,
-        _agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<()> {
-        self.set_status("loading models");
-        terminal.draw(|frame| self.draw(frame))?;
-        self.refresh_available_auths();
-        let picker = self.conversation_model_picker();
-
-        if picker.items.is_empty() {
-            self.report_missing_cached_provider_models();
-            return Ok(());
-        }
-
-        self.input_ui.set_composer(ComposerMode::Picker(picker));
-        self.set_status("select model");
-        Ok(())
-    }
-
     pub(super) fn toggle_selected_model_favorite(&mut self) -> anyhow::Result<()> {
         let (value, filter) = match self.input_ui.composer() {
             ComposerMode::Picker(picker) if picker.is_model_list() => (
@@ -293,117 +239,6 @@ impl App {
         let action = if pinned { "pinned" } else { "unpinned" };
         self.set_status(format!("{action} {value}"));
         Ok(())
-    }
-
-    pub(super) async fn select_model(
-        &mut self,
-        resolved: InteractiveModelSelection,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<()> {
-        let _ = self.select_model_report(resolved, agent).await?;
-        Ok(())
-    }
-
-    pub(super) async fn select_model_report(
-        &mut self,
-        resolved: InteractiveModelSelection,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<Option<rho_sdk::model::handoff::HandoffReport>> {
-        let InteractiveModelSelection {
-            selection,
-            alias,
-            reasoning_policy,
-        } = resolved;
-        let provider = selection.provider;
-        let model = selection.model;
-        let auth = selection.auth;
-        let provider_model = rho_providers::provider::model_reference(&provider, &model);
-        let capabilities =
-            rho_providers::model::models_dev::current_reasoning_capabilities(&provider, &model);
-        let reasoning = match reasoning_metadata::resolve_model_switch_reasoning(
-            &capabilities,
-            self.info.runtime.reasoning,
-            self.info.runtime.reasoning_source,
-            reasoning_policy,
-        ) {
-            Ok(reasoning) => reasoning,
-            Err(requested) => {
-                self.insert_entry(&Entry::Error(format!(
-                    "could not switch to {provider_model}: reasoning level '{requested}' is not supported"
-                )));
-                self.set_status("model switch rejected");
-                return Ok(None);
-            }
-        };
-        let new_provider = match self
-            .build_provider_for_selection(&provider, &model, reasoning.effective, &auth)
-            .await
-        {
-            Ok(provider) => provider,
-            Err(err) => {
-                self.insert_entry(&Entry::Error(format!(
-                    "could not switch to {provider_model}: {err}"
-                )));
-                self.set_status("model switch failed");
-                return Ok(None);
-            }
-        };
-
-        let handoff = match agent.replace_provider(new_provider, reasoning.effective, &auth) {
-            Ok(handoff) => {
-                self.cache_warm_provider_replaced();
-                handoff
-            }
-            Err(error) => {
-                self.insert_entry(&Entry::Error(format!(
-                    "could not switch to {provider_model}: {error}"
-                )));
-                self.set_status("model switch failed");
-                return Ok(None);
-            }
-        };
-        if let Some(notice) = agent.model_prompt_notice() {
-            self.insert_entry(&Entry::Notice(notice));
-        }
-        self.info.runtime.provider = provider.clone();
-        self.info.runtime.prompt_cache_ttl = agent.prompt_cache_ttl();
-        self.info.runtime.model = model.clone();
-        self.info
-            .set_reasoning(reasoning.effective, reasoning.source);
-        self.info.runtime.auth = auth.clone();
-        self.info.services.auth_unavailable = None;
-        self.using_unavailable_provider = false;
-        self.start_model_metadata_fetch(agent);
-        match self.info.services.config_repository.update(|config| {
-            config.provider = provider.clone();
-            config.model = model.clone();
-            config.model_alias = alias.clone();
-            config.reasoning = reasoning.effective;
-            config.auth = auth.clone();
-        }) {
-            Ok(()) => {
-                self.set_status(format!(
-                    "model switched to {} with reasoning {} and saved to config",
-                    self.model_names().reference(&provider, &model),
-                    reasoning.effective
-                ));
-            }
-            Err(err) => {
-                self.insert_entry(&Entry::Error(format!(
-                    "model switched to {} with reasoning {} for this session, but saving config failed: {err}",
-                    self.model_names().reference(&provider, &model),
-                    reasoning.effective
-                )));
-                self.set_status("config save failed");
-            }
-        }
-        // Auto edit preference follows the new provider while the session is
-        // idle (model switches never land mid-run).
-        self.apply_auto_edit_tool_for_provider(&provider, agent)
-            .await;
-        self.finish_setup_screen();
-        self.reconcile_auto_classifier_gate(agent).await?;
-        Ok(Some(handoff))
     }
 
     pub(super) fn select_internal_agent_model(
@@ -473,18 +308,16 @@ impl App {
         };
         match save_result {
             Ok(()) => {
-                // A daemon session reads the saved config itself: the
-                // advisor's model before its next turn, any other agent's
-                // only when a session opens.
-                let applies = match &self.info.session.daemon {
-                    None => "",
-                    Some(_) if id == ADVISOR_AGENT_ID => {
-                        "; this session uses it from the next turn"
-                    }
-                    Some(_) => "; sessions opened from now on use it",
+                // The session reads the saved config itself: the advisor's
+                // model before its next turn, any other agent's only when a
+                // session opens.
+                let applies = if id == ADVISOR_AGENT_ID {
+                    "this session uses it from the next turn"
+                } else {
+                    "sessions opened from now on use it"
                 };
                 self.set_status(format!(
-                    "{subject} now uses {label}; saved to config{applies}"
+                    "{subject} now uses {label}; saved to config; {applies}"
                 ));
             }
             Err(err) => {
@@ -500,65 +333,22 @@ impl App {
         Ok(())
     }
 
-    pub(in crate::tui) async fn finish_internal_agent_model_flow(
+    /// Returns to where an internal-agent model picker was opened: the agents
+    /// picker reopens, and the startup classifier picker settles Auto.
+    pub(in crate::tui) fn finish_internal_agent_model_flow(
         &mut self,
         target: super::agent_picker::AgentModelTarget,
         selected: bool,
-        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        let id = target.id.as_str();
         match target.origin {
             InternalAgentModelPickerOrigin::AgentsPicker => {
-                use super::agent_picker::AgentModelDefault;
-                match target.default {
-                    // Delegated runs bind catalog agents from the runtime's
-                    // copy of the entries.
-                    AgentModelDefault::Definition(_) => {
-                        self.sync_internal_agents_runtime_config(agent);
-                    }
-                    AgentModelDefault::Internal if id == ADVISOR_AGENT_ID => {
-                        self.sync_advisor_runtime(agent).await;
-                    }
-                    AgentModelDefault::Internal if id == PERMISSION_CLASSIFIER_AGENT_ID => {
-                        self.sync_internal_agents_runtime_config(agent);
-                    }
-                    // The compactor reads its summarizer from saved config
-                    // the next time the session is idle.
-                    AgentModelDefault::Internal
-                        if selected && id == crate::agent::COMPACTION_AGENT_ID =>
-                    {
-                        self.compaction_reload_pending = true;
-                    }
-                    AgentModelDefault::Internal => {}
-                }
                 let status = self.status().to_string();
                 self.execute_agents_command()?;
                 self.set_status(status);
             }
-            InternalAgentModelPickerOrigin::PermissionModeCommand => {
-                let origin = target.origin;
-                self.internal_agent_model_target = None;
-                self.finish_permission_classifier_model_selection(selected, origin, agent)
-                    .await?;
-                if selected
-                    && self.info.runtime.permission_mode == crate::permission::PermissionMode::Auto
-                {
-                    self.open_screen_model_picker(
-                        InternalAgentModelPickerOrigin::PermissionScreenSetupCommand,
-                    );
-                }
-            }
             InternalAgentModelPickerOrigin::PermissionModeStartup => {
-                let origin = target.origin;
                 self.internal_agent_model_target = None;
-                self.finish_permission_classifier_model_selection(selected, origin, agent)
-                    .await?;
-            }
-            InternalAgentModelPickerOrigin::PermissionScreenSetupCommand => {
-                self.internal_agent_model_target = None;
-                if selected {
-                    self.sync_internal_agents_runtime_config(agent);
-                }
+                self.finish_permission_classifier_startup_selection(selected)?;
             }
         }
         Ok(())
@@ -566,18 +356,6 @@ impl App {
 
     pub(super) fn refresh_available_auths(&mut self) {
         self.available_auths = available_auth_modes(self.credential_store.as_ref());
-    }
-
-    pub(super) fn internal_agent_model_selection(
-        &self,
-        id: &str,
-    ) -> crate::config::InternalAgentModelConfig {
-        self.info
-            .runtime
-            .internal_agents
-            .get(id)
-            .cloned()
-            .unwrap_or_else(|| self.conversation_internal_agent_model())
     }
 
     /// Provider and auth context for resolving a partially-qualified Rho model
@@ -610,23 +388,6 @@ impl App {
             self.info.runtime.model.clone(),
             self.info.runtime.auth.clone(),
         )
-    }
-}
-
-/// The Rho half of a selection that is about to run on Rho's provider stack.
-///
-/// Only agents declaring `accepts_claude_runtime: false` reach here, and neither
-/// the config loader nor the picker will build a delegating selection for one.
-/// Failing loudly beats running a model this path never asked for.
-pub(super) fn expect_rho_internal_agent_model(
-    id: &str,
-    selection: crate::config::InternalAgentModelConfig,
-) -> crate::config::RhoInternalAgentModel {
-    match selection.target {
-        crate::config::InternalAgentTarget::Rho(model) => model,
-        crate::config::InternalAgentTarget::ClaudeCli { .. } => {
-            panic!("internal agent '{id}' declares accepts_claude_runtime: false")
-        }
     }
 }
 

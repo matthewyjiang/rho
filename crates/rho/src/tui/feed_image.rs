@@ -358,18 +358,6 @@ pub(super) struct VisibleImagePlacement {
     pub(super) skip_rows: usize,
 }
 
-pub(super) fn preview_generated_image(
-    image: &rho_providers::model::ImageContent,
-    picker: Option<&Picker>,
-) -> Result<Option<FeedImage>, String> {
-    let Some(picker) = picker else {
-        return Ok(None);
-    };
-    FeedImage::decode_base64_preview(&image.data)
-        .map(|decoded| Some(decoded.to_feed_image(picker)))
-        .map_err(|error| error.to_string())
-}
-
 fn load_optional_feed_image(
     picker: Option<&Picker>,
     asset: &ToolAsset,

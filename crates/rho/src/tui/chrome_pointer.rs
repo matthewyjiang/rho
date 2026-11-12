@@ -67,7 +67,7 @@ impl App {
                 StatusClick::Command(command) => self
                     .input_ui
                     .request_pointer_action(PointerAction::RunCommand(command.into())),
-                StatusClick::PermissionMode => self.open_permission_mode_picker(),
+                StatusClick::PermissionMode => self.open_daemon_permission_picker(),
                 StatusClick::CycleReasoning => self
                     .input_ui
                     .request_pointer_action(PointerAction::CycleReasoning),
@@ -109,19 +109,6 @@ impl App {
         // Hit spans come from the render at this width.
         self.statusline_lines(width);
         self.statusline.set_hovered_column(column);
-    }
-
-    /// Opens the permission mode chooser of a daemon session. In process,
-    /// where `/config` is gone, says how to change the mode instead.
-    fn open_permission_mode_picker(&mut self) {
-        if self.info.session.daemon.is_some() {
-            self.open_daemon_permission_picker();
-        } else {
-            self.set_status(format!(
-                "permission mode: {}; /permissions <mode> changes it",
-                self.info.runtime.permission_mode.as_str()
-            ));
-        }
     }
 
     /// Drop text selections and drags a chrome press supersedes.

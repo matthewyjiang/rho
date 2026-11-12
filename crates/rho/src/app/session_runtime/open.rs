@@ -22,10 +22,7 @@ use super::{
 use crate::{
     added_dirs::AddedDirs,
     agent::AgentCatalog,
-    app::{
-        agent_binding::BoundAgent,
-        interactive_runtime::startup::{prompt_cache_key, session_options_for_id},
-    },
+    app::agent_binding::BoundAgent,
     config::Config,
     credential_store::AppCredentialStore,
     session::{tree::ProjectedMessage, Session as StoredSession, SessionPersistence},
@@ -64,7 +61,7 @@ impl NodeSession {
     /// must be `agent`'s root session, by id and fingerprint; any other fails
     /// rather than run as an agent the plan did not approve.
     pub(crate) fn find(cwd: &Path, id: &SessionId, agent: &BoundAgent) -> anyhow::Result<Self> {
-        let Some((stored, histories)) = StoredSession::open_exact_in_workspace(cwd, id.as_str())?
+        let Some((stored, history)) = StoredSession::open_exact_in_workspace(cwd, id.as_str())?
         else {
             return Ok(Self::Unsaved);
         };
@@ -83,7 +80,7 @@ impl NodeSession {
             "session '{id}' is not a session of workflow agent '{}' as the plan froze it; refusing to continue the node in it",
             agent.id(),
         );
-        Ok(match final_reply(&histories.model) {
+        Ok(match final_reply(&history) {
             Some(reply) => Self::Answered(reply),
             None => Self::Saved(stored),
         })
@@ -290,4 +287,15 @@ impl SessionRuntime {
                 | Message::BoundaryInput(_) => true,
             })
     }
+}
+
+pub(super) fn prompt_cache_key(id: &str) -> String {
+    rho_providers::providers::openai::prompt_cache_key_from_session_id(id)
+        .unwrap_or_else(|| format!("rho:{id}"))
+}
+
+/// New session options with a stable prompt-cache key derived from the id.
+pub(super) fn session_options_for_id(id: SessionId) -> SessionOptions {
+    let key = prompt_cache_key(id.as_str());
+    SessionOptions::new().id(id).prompt_cache_key(key)
 }

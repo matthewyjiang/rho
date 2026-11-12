@@ -1,11 +1,7 @@
 use std::path::Path;
-use std::time::Duration;
 
 use ratatui::text::Line;
-use rho_sdk::{
-    CapabilityKind, CapabilityOperation, CapabilityRequest, CapabilitySource, ExecutableSelection,
-    PathScope, ProcessEnvironment, ProcessExecution,
-};
+use rho_sdk::CapabilityKind;
 
 use super::{ApprovalChoice, ApprovalComposer};
 use crate::{
@@ -31,10 +27,9 @@ pub(super) struct ApprovalDetails {
     pub(super) meta: Vec<String>,
 }
 
-/// What an approval prompt shows, whoever asks: its title, the details of
-/// what it would allow, and the policy's reason. Built once when the prompt
-/// opens, from the in-process runtime's request or a daemon session's ask
-/// (`daemon_ask`).
+/// What an approval prompt shows: its title, the details of what it would
+/// allow, and the policy's reason. Built once when the prompt opens, from a
+/// daemon session's ask (`daemon_ask`).
 #[derive(Clone, Debug)]
 pub(in crate::tui) struct ApprovalPrompt {
     pub(super) title: String,
@@ -53,15 +48,6 @@ impl ApprovalPrompt {
             .chain(self.details.meta.iter().cloned())
             .chain((!self.reason.is_empty()).then(|| self.reason.clone()))
             .collect()
-    }
-
-    /// The prompt for an in-process capability request.
-    pub(in crate::tui) fn of_capability(request: &CapabilityRequest, reason: &str) -> Self {
-        Self {
-            title: approval_title(request),
-            details: approval_detail_sections(request),
-            reason: reason.to_owned(),
-        }
     }
 }
 
@@ -205,16 +191,6 @@ fn wrapped_detail_lines(prompt: &ApprovalPrompt, width: usize) -> Vec<Line<'stat
     lines
 }
 
-pub(super) fn approval_title(request: &CapabilityRequest) -> String {
-    let actor = match request.source() {
-        CapabilitySource::BuiltInTool { name } => Actor::BuiltInTool(name),
-        CapabilitySource::HostProvidedTool { name } => Actor::HostTool(name),
-        CapabilitySource::PromptConstruction => Actor::Rho,
-        _ => Actor::Rho,
-    };
-    title(actor, Some(request.kind()))
-}
-
 /// Who asks for a capability, as an approval title names it.
 pub(super) enum Actor<'a> {
     BuiltInTool(&'a str),
@@ -245,53 +221,6 @@ pub(super) fn title(actor: Actor<'_>, kind: Option<CapabilityKind>) -> String {
     format!("{actor} wants to {verb}")
 }
 
-/// Flattened detail strings for security and layout tests.
-#[cfg(test)]
-pub(super) fn approval_details(request: &CapabilityRequest) -> Vec<String> {
-    let details = approval_detail_sections(request);
-    let mut flat = details.primary;
-    flat.extend(details.meta);
-    flat
-}
-
-fn approval_detail_sections(request: &CapabilityRequest) -> ApprovalDetails {
-    match request.operation() {
-        CapabilityOperation::ReadPath { path, scope }
-        | CapabilityOperation::WritePath { path, scope }
-        | CapabilityOperation::DiscoverInstructions { path, scope } => ApprovalDetails {
-            primary: vec![sanitize_controls(&path.to_string_lossy())],
-            meta: vec![format_path_scope(scope)],
-        },
-        CapabilityOperation::ExecuteProcess(execution) => process_details(execution),
-        CapabilityOperation::NetworkAccess(target) => ApprovalDetails {
-            primary: vec![sanitize_controls(
-                target.url().unwrap_or("tool-managed network access"),
-            )],
-            meta: Vec::new(),
-        },
-        CapabilityOperation::LoadSkill { name, path } => {
-            let mut meta = Vec::new();
-            if let Some(path) = path {
-                meta.push(format!(
-                    "path {}",
-                    sanitize_controls(&path.to_string_lossy())
-                ));
-            }
-            ApprovalDetails {
-                primary: vec![sanitize_controls(name)],
-                meta,
-            }
-        }
-        CapabilityOperation::ControlSession(target) => session_control_details(
-            target.action.label(),
-            target.session.as_ref().map(rho_sdk::SessionId::as_str),
-            &target.workspace,
-            target.text.as_deref(),
-        ),
-        _ => ApprovalDetails::default(),
-    }
-}
-
 /// What a session-control request does, `<action> session <id>` or, for a
 /// session it starts, `<action> session`, then the text it sends, and the
 /// session's workspace.
@@ -314,95 +243,6 @@ pub(super) fn session_control_details(
             "workspace {}",
             sanitize_controls(&workspace.to_string_lossy())
         )],
-    }
-}
-
-fn process_details(execution: &ProcessExecution) -> ApprovalDetails {
-    let invocation = execution.invocation();
-    let primary = if let Some(command) = invocation.shell_command() {
-        sanitize_controls(command)
-    } else {
-        format_direct_invocation(invocation.executable_path(), invocation.arguments())
-    };
-    ApprovalDetails {
-        primary: vec![primary],
-        meta: vec![format_process_meta(execution)],
-    }
-}
-
-fn format_process_meta(execution: &ProcessExecution) -> String {
-    let invocation = execution.invocation();
-    let mut parts = vec![format!(
-        "cwd {}",
-        sanitize_controls(&execution.working_directory().to_string_lossy())
-    )];
-
-    let lookup = format_executable_lookup(invocation.executable_selection());
-    if invocation.shell_command().is_some() {
-        parts.push(format!(
-            "via {} ({lookup})",
-            format_direct_invocation(invocation.executable_path(), invocation.arguments())
-        ));
-    } else {
-        parts.push(lookup.into());
-    }
-
-    parts.push(format_environment_summary(execution.environment()));
-
-    let limits = execution.output_limits();
-    parts.push(format!("{} B out", limits.max_output_bytes()));
-    parts.push(format_timeout(limits.timeout()));
-
-    parts.join(" · ")
-}
-
-fn format_executable_lookup(selection: ExecutableSelection) -> &'static str {
-    match selection {
-        ExecutableSelection::ExactPath => "exact path",
-        ExecutableSelection::SearchPath => "PATH",
-        _ => "unspecified",
-    }
-}
-
-pub(super) fn format_path_scope(scope: &PathScope) -> String {
-    match scope {
-        PathScope::PrimaryWorkspace => "scope primary workspace".into(),
-        PathScope::GrantedRoot { root } => format!(
-            "scope granted root {}",
-            sanitize_controls(&root.to_string_lossy())
-        ),
-        PathScope::UnrestrictedFilesystem => "scope unrestricted filesystem".into(),
-        _ => "scope unspecified".into(),
-    }
-}
-
-fn format_environment_summary(environment: &ProcessEnvironment) -> String {
-    match environment {
-        ProcessEnvironment::Empty => "env empty".into(),
-        ProcessEnvironment::InheritAll => "env inherit all".into(),
-        ProcessEnvironment::InheritExcept { variable_names } => {
-            // Scrub lists are not decision content; only the count matters.
-            format!("env inherit ({} stripped)", variable_names.len())
-        }
-        // Values are secrets; only the count is shown.
-        ProcessEnvironment::Explicit { variables } => {
-            format!("env explicit ({} variables)", variables.len())
-        }
-        ProcessEnvironment::InheritListed { variable_names } => {
-            // Allowlists are the authorization surface; show sanitized names.
-            format!(
-                "env {}",
-                format_json_strings(variable_names.iter().map(String::as_str))
-            )
-        }
-        _ => "env unspecified".into(),
-    }
-}
-
-fn format_timeout(timeout: Option<Duration>) -> String {
-    match timeout {
-        None => "no timeout".into(),
-        Some(timeout) => format!("timeout {timeout:?}"),
     }
 }
 

@@ -19,16 +19,19 @@ fn follow_up(text: &str) -> QueuedPrompt {
     }
 }
 
-fn pending_approval() -> rho_sdk::PendingApproval {
-    let request = rho_sdk::ApprovalRequest::new(
-        rho_sdk::CapabilityRequest::read_path(
-            "/workspace/file",
-            rho_sdk::PathScope::PrimaryWorkspace,
-            rho_sdk::CapabilitySource::built_in_tool("read_file"),
-        ),
-        "approval required",
-    );
-    rho_sdk::PendingApproval::new(request).0
+async fn open_approval(app: &mut App) {
+    let prompt = crate::tui::approval::ApprovalPrompt::of_daemon_ask(&rho_protocol::ApprovalAsk {
+        source: rho_protocol::ApprovalSource::BuiltInTool {
+            name: "read_file".into(),
+        },
+        operation: rho_protocol::Operation::ReadPath {
+            path: "/workspace/file".into(),
+            scope: rho_protocol::PathScope::Workspace,
+        },
+        reason: "approval required".into(),
+    });
+    let (reply, _decision) = tokio::sync::oneshot::channel();
+    app.open_replying_approval(prompt, reply).await;
 }
 
 fn model_picker() -> UiPicker {
@@ -65,7 +68,7 @@ fn focus_pending_input(app: &mut App) {
 }
 
 // Covers: Esc policy must pick one owner, overlays before background shells,
-// and idle/compact must not abort.
+// and idle must not abort.
 // Owner: tui running Esc policy
 #[tokio::test]
 async fn running_escape_action_picks_one_owner() {
@@ -232,7 +235,7 @@ async fn approval_escape_denies_and_aborts_first() {
             app.pending_inline_shells
                 .push(PendingShellTask::test_task("hello"));
         }
-        app.open_approval(pending_approval()).await;
+        open_approval(&mut app).await;
         assert_eq!(
             app.running_escape_action(),
             Some(RunningEscapeAction::DenyApprovalAndAbort),
@@ -262,11 +265,6 @@ async fn empty_composer_abort_hint_follows_esc_policy() {
             name: "provider turn",
             setup: |app| app.begin_provider_turn_ui(),
             expected: true,
-        },
-        Case {
-            name: "compact",
-            setup: |app| app.begin_compact_ui(),
-            expected: false,
         },
         Case {
             name: "shell mode",
@@ -336,7 +334,7 @@ async fn finishing_approval_restores_open_side_overlay() {
     for case in cases {
         let mut app = test_app();
         (case.setup)(&mut app);
-        app.open_approval(pending_approval()).await;
+        open_approval(&mut app).await;
         assert!(
             matches!(app.input_ui.composer(), ComposerMode::Approval(_)),
             "{}",

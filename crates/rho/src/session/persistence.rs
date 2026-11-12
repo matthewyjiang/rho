@@ -21,8 +21,8 @@ use super::agent_identity::{SavedAgent, SessionAgentRole};
 use super::append_cursor::AppendCursor;
 use super::tree::{NodeId, ProjectedMessage, SessionNode};
 use super::{
-    index, Session, SessionHistories, SessionIndexRecord, SessionOrigin, SessionProvenance,
-    SessionSummary, SessionTarget,
+    index, Session, SessionIndexRecord, SessionOrigin, SessionProvenance, SessionSummary,
+    SessionTarget,
 };
 
 pub(crate) use super::id_match::NoSessionFound;
@@ -31,9 +31,8 @@ use super::id_match::{matching_session_files, session_id, single_match, single_w
 // Layout helpers live in `layout`; re-export the historical `persistence::` surface.
 pub(super) use super::layout::{
     ensure_session_dir, parse_timestamp, resolve_transcript_path, session_dir_in_root,
-    session_id_from_path, session_root, session_web_dir, set_private_dir_permissions,
-    set_private_file_permissions, timestamp, unix_timestamp_secs, workspace_key, SessionUnit,
-    SESSION_TRANSCRIPT_FILE_NAME,
+    session_id_from_path, session_root, set_private_dir_permissions, set_private_file_permissions,
+    timestamp, unix_timestamp_secs, workspace_key, SessionUnit, SESSION_TRANSCRIPT_FILE_NAME,
 };
 
 /// Oldest session version this binary opens: the first whose files hold only
@@ -401,7 +400,10 @@ impl Session {
         message: &Message,
         display_message: Option<&Message>,
     ) -> anyhow::Result<()> {
-        let state = read_session_state(&self.path)?;
+        let state = super::tree::SessionTree::load(&self.path)?
+            .active_state()
+            .cloned()
+            .unwrap_or_default();
         let revision = next_revision(state.revision)?;
         let mut history = state.model;
         history.push(message.clone());
@@ -421,7 +423,10 @@ impl Session {
 
     #[cfg(test)]
     pub(super) fn append_replaced_history(&self, messages: &[Message]) -> anyhow::Result<()> {
-        let mut state = read_session_state(&self.path)?;
+        let mut state = super::tree::SessionTree::load(&self.path)?
+            .active_state()
+            .cloned()
+            .unwrap_or_default();
         apply_history_replacement(&mut state, messages.to_vec())?;
         let provider = state.snapshot.as_ref().map_or_else(
             || ModelIdentity::new("test", "test", "test"),
@@ -488,23 +493,14 @@ fn recoverable_jsonl_end(path: &Path) -> anyhow::Result<(u64, bool)> {
     }
 }
 
-pub(super) fn histories_from_tree(
-    tree: &super::tree::SessionTree,
-) -> anyhow::Result<SessionHistories> {
+/// The active leaf's model history, with placeholders for interrupted tool
+/// calls.
+pub(super) fn history_from_tree(tree: &super::tree::SessionTree) -> anyhow::Result<Vec<Message>> {
     if tree.active_leaf_id().is_none() {
-        return Ok(SessionHistories {
-            model: Vec::new(),
-            display: Vec::new(),
-        });
+        return Ok(Vec::new());
     }
     let state = tree.active_state().expect("active leaf has restored state");
-    Ok(SessionHistories {
-        model: insert_interrupted_tool_placeholders(state.model.clone()),
-        display: active_display_from_tree(tree)?
-            .into_iter()
-            .map(|projected| projected.message)
-            .collect(),
-    })
+    Ok(insert_interrupted_tool_placeholders(state.model.clone()))
 }
 
 /// The display transcript a load of the active leaf replays, with where each
@@ -532,13 +528,6 @@ pub(super) fn active_display_from_tree(
         },
     );
     Ok(messages)
-}
-
-pub(super) fn read_session_state(path: &Path) -> anyhow::Result<PersistedSessionState> {
-    Ok(super::tree::SessionTree::load(path)?
-        .active_state()
-        .cloned()
-        .unwrap_or_default())
 }
 
 /// Replaces the model history as a compaction would, for test sessions.

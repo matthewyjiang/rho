@@ -33,7 +33,6 @@ pub(crate) mod prompt_command;
 pub(crate) mod report;
 pub(crate) mod result;
 pub(crate) mod roots;
-pub(crate) mod sampling;
 pub(crate) mod session;
 mod tool;
 pub(crate) mod validate;
@@ -48,7 +47,6 @@ pub(crate) use report::{
     McpToolReport, McpTransportSummary,
 };
 pub(crate) use roots::McpRoots;
-pub(crate) use sampling::{McpSamplingBridge, McpSamplingModel};
 pub(crate) use validate::{
     parse_remote_url, parse_remote_url_with, validate_environment_header_names, validate_identity,
     validate_literal_headers, validate_oauth_client, validate_stdio_environment, McpHttpSecurity,
@@ -101,7 +99,6 @@ impl McpSessionOptions {
             authorization,
             services: session::McpSessionServices {
                 elicitation: McpElicitationSupport::Unavailable,
-                sampling: None,
             },
             environment,
         }
@@ -110,12 +107,6 @@ impl McpSessionOptions {
     /// Declare that this run can put a server's question in front of a person.
     pub(crate) fn with_elicitation(mut self, support: McpElicitationSupport) -> Self {
         self.services.elicitation = support;
-        self
-    }
-
-    /// Declare that this run will bind a model that opted-in servers may sample.
-    pub(crate) fn with_sampling(mut self, bridge: McpSamplingBridge) -> Self {
-        self.services.sampling = Some(bridge);
         self
     }
 }

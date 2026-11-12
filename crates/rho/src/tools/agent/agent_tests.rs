@@ -146,25 +146,6 @@ fn notification_prompts_bound_many_large_utf8_results_and_keep_run_statuses() {
         );
     }
     assert_eq!(model, notification_prompt(&notifications));
-
-    let newer = (0..96)
-        .map(|index| {
-            let id = format!("new{index:03}");
-            let mut notification = notification(&id, "reviewer", RunState::Ok);
-            notification.snapshot.status.result = Some("🦀".repeat(12 * 1024));
-            notification
-        })
-        .collect::<Vec<_>>();
-    let newer = notification_prompt(&newer);
-    let retried_context = merge_notification_context(Some(&model), &newer);
-    assert!(retried_context.len() <= NOTIFICATION_CONTEXT_BYTES);
-    assert!(retried_context.contains("agent new000 (reviewer): ok"));
-    // A boundary can combine multiple bounded sources. Retention may drop
-    // earlier context, but must keep the accepted newest batch intact.
-    let combined = format!("{model}\n\n{newer}");
-    for prior in [None, Some(model.as_str())] {
-        assert_eq!(merge_notification_context(prior, &combined), combined);
-    }
 }
 
 async fn spawn_background_run(manager: &SubagentManager, root: &Path) -> String {
@@ -281,70 +262,6 @@ async fn restored_notifications_can_drain_again() {
             .collect::<Vec<_>>(),
         vec![id]
     );
-}
-
-#[test]
-fn claim_terminal_costs_is_idempotent_and_session_scoped() {
-    let root = tempfile::tempdir().unwrap();
-    let fixture = manager(root.path());
-    let manager = fixture.manager();
-    manager.insert_completed_for_test("aaa111", "session-1", Some(0.034271));
-    manager.insert_completed_for_test("bbb222", "session-1", Some(0.01));
-    manager.insert_completed_for_test("ccc333", "session-2", Some(0.5));
-    manager.insert_completed_for_test("ddd444", "session-1", None);
-
-    assert_eq!(manager.claim_terminal_costs_usd_micros("session-1"), 44_271);
-    assert_eq!(manager.claim_terminal_costs_usd_micros("session-1"), 0);
-    assert_eq!(
-        manager.claim_terminal_costs_usd_micros("session-2"),
-        500_000
-    );
-}
-
-// Covers: a finished run leaves the rail when its result is delivered, not on a
-// timer; runs the session never receives must not flash historical terminals.
-// list() still returns the full registry.
-// Owner: subagent manager host list
-#[test]
-fn rail_summaries_keep_finished_runs_until_delivered() {
-    let root = tempfile::tempdir().unwrap();
-    let fixture = manager(root.path());
-    let manager = fixture.manager();
-    let now = crate::subagent::unix_now_secs();
-    let finished = |finished_ago: u64| crate::subagent::RunStatus {
-        state: crate::subagent::RunState::Ok,
-        started_at: Some(now.saturating_sub(finished_ago + 2)),
-        finished_at: Some(now.saturating_sub(finished_ago)),
-        ..crate::subagent::RunStatus::default()
-    };
-    // (id, parent session, seconds since finish, delivered, on rail)
-    let cases = [
-        ("aa0001", "session-1", 30, false, true),
-        ("aa0002", "session-1", 0, true, false),
-        ("aa0003", "session-2", 0, false, true),
-        ("aa0004", "session-2", 30, false, false),
-    ];
-    for (id, session, finished_ago, delivered, _) in cases {
-        manager.insert_completed_status_for_test(id, session, finished(finished_ago));
-        if delivered {
-            manager.observe(id).unwrap();
-        }
-    }
-    manager.insert_completed_for_test("aa0005", "session-2", None);
-
-    let mut ids = manager
-        .rail_summaries("session-1")
-        .into_iter()
-        .map(|snapshot| snapshot.id)
-        .collect::<Vec<_>>();
-    ids.sort();
-    let expected = cases
-        .iter()
-        .filter(|case| case.4)
-        .map(|case| case.0.to_string())
-        .collect::<Vec<_>>();
-    assert_eq!(ids, expected);
-    assert_eq!(manager.list().len(), 5);
 }
 
 // Covers: launches resolve the definition from disk, so an agent deleted

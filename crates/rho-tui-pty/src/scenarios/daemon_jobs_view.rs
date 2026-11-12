@@ -13,10 +13,7 @@ use crate::{
     scenario::{Scenario, ScenarioOutcome, ScenarioRunner, Step},
 };
 
-const ENV: &[(&str, &str)] = &[
-    ("RHO_TUI_DAEMON", "1"),
-    ("OPENAI_API_KEY", "sk-test-matrix"),
-];
+const ENV: &[(&str, &str)] = &[("OPENAI_API_KEY", "sk-test-matrix")];
 
 // Covers: from `/jobs`, `n` starts a session in a workspace with a first
 // prompt and it lists as running; a filter keeps the rows that match and
@@ -180,8 +177,7 @@ pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
         home.daemon_log()
     );
     let plan = RhoLaunchPlan::matrix(&runner.binary, &home, DEFAULT_SIZE)
-        .with_env("OPENAI_API_KEY", "sk-test-matrix")
-        .with_env("RHO_TUI_DAEMON", "1");
+        .with_env("OPENAI_API_KEY", "sk-test-matrix");
     let mut harness = PtyHarness::spawn_named(&plan, SCENARIO.id)?;
     harness.enable_timing(runner.record_timing);
     if let Some(root) = &runner.artifact_root {

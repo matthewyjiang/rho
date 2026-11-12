@@ -1,7 +1,4 @@
 //! `/compact` scenarios: the composer stays live while compaction runs.
-//!
-//! The daemon scenarios reuse the in-process steps unchanged: what `/compact`
-//! shows and how it queues must not depend on which side runs the session.
 
 use anyhow::{ensure, Context, Result};
 
@@ -11,8 +8,6 @@ use crate::{
     scenario::{Scenario, Step},
 };
 
-#[cfg(unix)]
-use super::daemon_resume::DAEMON_ENV;
 use super::{fixture_release::release_compact_fixture, DEFAULT_SIZE, STARTUP, STREAM};
 
 pub(super) const COMPACT_COMPLETES: Scenario = Scenario::new(
@@ -22,36 +17,6 @@ pub(super) const COMPACT_COMPLETES: Scenario = Scenario::new(
     COMPACT_COMPLETES_STEPS,
     /*smoke*/ false,
 );
-
-#[cfg(unix)]
-pub(super) const DAEMON_COMPACT_COMPLETES: Scenario = Scenario::new(
-    "daemon_compact_completes",
-    "A daemon session's completed /compact shows as the in-process one does",
-    DEFAULT_SIZE,
-    COMPACT_COMPLETES_STEPS,
-    /*smoke*/ false,
-)
-.with_env(DAEMON_ENV);
-
-#[cfg(unix)]
-pub(super) const DAEMON_TYPE_DURING_COMPACT: Scenario = Scenario::new(
-    "daemon_type_during_compact",
-    "Keep composer input responsive while a daemon session's /compact is running",
-    DEFAULT_SIZE,
-    TYPE_DURING_COMPACT_STEPS,
-    /*smoke*/ false,
-)
-.with_env(DAEMON_ENV);
-
-#[cfg(unix)]
-pub(super) const DAEMON_SUBMIT_DURING_COMPACT: Scenario = Scenario::new(
-    "daemon_submit_during_compact",
-    "A prompt submitted during a daemon session's /compact starts after compaction ends",
-    DEFAULT_SIZE,
-    SUBMIT_DURING_COMPACT_STEPS,
-    /*smoke*/ false,
-)
-.with_env(DAEMON_ENV);
 
 pub(super) const TYPE_DURING_COMPACT_STEPS: &[Step] = &[
     Step::Phase("startup"),

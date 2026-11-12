@@ -9,20 +9,15 @@
 //! parent passed down or deny, and the session gets no plan exit. Neither
 //! request then ever reaches the host.
 
-use std::sync::Arc;
+use std::{num::NonZeroUsize, path::PathBuf, sync::Arc};
 
-use rho_sdk::ApprovalSession;
+use rho_sdk::{ApprovalHandler, ApprovalRequestReceiver, ApprovalSession};
 
 use crate::{
     agent::PERMISSION_CLASSIFIER_AGENT_ID,
-    app::{
-        interactive_runtime::startup::{
-            approval_channel_for, ApprovalChannel, ApprovalChannelOptions,
-        },
-        session_assembly::{ApprovalInputs, SessionApproval},
-    },
+    app::session_assembly::{ApprovalInputs, SessionApproval},
     config::Config,
-    permission::PermissionMode,
+    permission::{remember_allowed_workspace_writes, PermissionMode, SessionWriteLog},
     permission_classifier_handler::ClassifierApprovalHandler,
 };
 
@@ -145,6 +140,80 @@ pub(crate) fn ensure_auto_classifier_model(
         );
     }
     crate::permission_classifier::check_screen_config(config, credentials)
+}
+
+struct ApprovalChannelOptions {
+    config: crate::config::Config,
+    workspace_path: PathBuf,
+    usage_recording: rho_sdk::ProviderRequestUsageRecording,
+    session_writes: SessionWriteLog,
+    /// The credentials Auto's classifier signs in with: the session's.
+    credentials: Arc<dyn rho_providers::credentials::CredentialStore>,
+}
+
+struct ApprovalChannel {
+    handler: Option<Arc<dyn ApprovalHandler>>,
+    receiver: Option<ApprovalRequestReceiver>,
+    classifier: Option<Arc<ClassifierApprovalHandler>>,
+}
+
+fn approval_channel_for(mode: PermissionMode, options: ApprovalChannelOptions) -> ApprovalChannel {
+    let ApprovalChannel {
+        handler,
+        receiver,
+        classifier,
+    } = match mode {
+        PermissionMode::Auto => {
+            let capacity = NonZeroUsize::new(16).expect("approval channel capacity is non-zero");
+            let (human_handler, receiver) = rho_sdk::approval_channel(capacity);
+            // Pass the raw human channel. The classifier records both its own
+            // allows and human escalations into `session_writes`, so a later
+            // isolate_for_run cannot leak grants into the template's log.
+            let classifier = ClassifierApprovalHandler::shared(
+                options.config,
+                options.workspace_path,
+                options.usage_recording,
+                options.credentials,
+                Some(Arc::new(human_handler)),
+                Some(options.session_writes.clone()),
+            );
+            ApprovalChannel {
+                handler: Some(classifier.clone()),
+                receiver: Some(receiver),
+                classifier: Some(classifier),
+            }
+        }
+        PermissionMode::AllowEdits | PermissionMode::Supervised => {
+            let capacity = NonZeroUsize::new(16).expect("approval channel capacity is non-zero");
+            let (handler, receiver) = rho_sdk::approval_channel(capacity);
+            ApprovalChannel {
+                handler: Some(Arc::new(handler)),
+                receiver: Some(receiver),
+                classifier: None,
+            }
+        }
+        PermissionMode::Bypass | PermissionMode::Plan => ApprovalChannel {
+            handler: None,
+            receiver: None,
+            classifier: None,
+        },
+    };
+    // Allow edits records human approvals. Auto records classifier allows and
+    // human escalations on the classifier handler itself. Supervised keeps
+    // every write behind the gate, so its handler stays unwrapped.
+    let handler = match (handler, mode) {
+        (Some(handler), PermissionMode::AllowEdits) => Some(remember_allowed_workspace_writes(
+            handler,
+            options.session_writes,
+            crate::permission::WriteAuthority::Human,
+        )),
+        (other, _) => other,
+    };
+    ApprovalChannel {
+        handler,
+        receiver,
+        classifier,
+    }
 }
 
 #[cfg(test)]

@@ -1,17 +1,17 @@
 //! Keeps the provider prompt cache warm while the model idles on a
 //! `process start` that asked for `keep_warm`.
 //!
-//! The policy both session hosts share. [`CacheWarmer`] is a small state
-//! machine its host steps: it pings once per TTL (minus a margin) after the
-//! last request that read the cached prefix, pauses while a turn or
-//! compaction owns the session, and halts on its budget, a missed ping, a
-//! ping the host did not cap, or a failed one. The hold itself lives on the
-//! process record, so it ends when the process exits or is stopped.
+//! [`CacheWarmer`] is a small state machine its host steps: it pings once
+//! per TTL (minus a margin) after the last request that read the cached
+//! prefix, pauses while a turn or compaction owns the session, and halts on
+//! its budget, a missed ping, a ping the host did not cap, or a failed one.
+//! The hold itself lives on the process record, so it ends when the process
+//! exits or is stopped.
 //!
 //! The host supplies the clock, the gate, and the prefix-read time, sends
 //! each [`CacheWarmPing`], and shows [`WarmProgress`] and [`halt_notice`]:
-//! the in-process TUI from its idle loop (`tui/cache_warm.rs`), the daemon
-//! from a watcher per session (`app/daemon_host/sessions/cache_warm.rs`).
+//! the daemon, from a watcher per session
+//! (`app/daemon_host/sessions/cache_warm.rs`).
 
 use std::time::{Duration, Instant};
 
@@ -204,9 +204,6 @@ impl CacheWarmer {
     /// The prompt prefix was rewritten, as by a compaction. A ping in flight
     /// read the old prefix, so its result says nothing of the new one: it is
     /// orphaned, and the budget and any halt stay as they are.
-    // The in-process TUI cannot tell a compaction that rewrote the prefix
-    // from one that failed (`ViewModelEvent::rewrites_prompt_prefix`), so
-    // only the daemon calls this.
     pub(crate) fn prefix_rewritten(&mut self) {
         if self.in_flight {
             self.in_flight = false;
@@ -323,11 +320,6 @@ impl CacheWarmer {
             pings: self.pings,
             max_pings: limits.max_pings,
         })
-    }
-
-    #[cfg(test)]
-    pub(crate) fn halt(&self) -> Option<WarmHalt> {
-        self.halt
     }
 }
 

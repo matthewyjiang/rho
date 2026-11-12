@@ -29,7 +29,7 @@ use tokio::{
 use crate::{
     app::{
         policy::AppPolicy,
-        runtime_builder::{build_runtime, RuntimeBuildOptions},
+        runtime_builder::{build_runtime_with_max_steps, RuntimeBuildOptions},
         session_runtime::{
             test_support::unattended_runtime_on, QuestionSupport, SessionRuntime, Turn, TurnIo,
             TurnOutcome,
@@ -149,29 +149,32 @@ fn agent_runtime(
     root: &std::path::Path,
     compaction: CompactionConfig,
 ) -> Rho {
-    build_runtime(RuntimeBuildOptions {
-        provider,
-        tools,
-        workspace: Workspace::new(root).unwrap(),
-        workspace_policy: AppPolicy::for_mode(
-            PermissionMode::Auto,
-            Default::default(),
-            /*search_path*/ None,
-        ),
-        approval_session: None,
-        system_prompt: SystemPrompt::None,
-        reasoning: rho_sdk::ReasoningLevel::Off,
-        service_tier: None,
-        compaction,
-        context_window: Some(1_000),
-        usage_purpose: "agent",
-        usage_parent_session_id: None,
-        usage_recording: Default::default(),
-        hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
-        hooks: None,
-        diagnostics: crate::diagnostics::test_diagnostics("test", "test"),
-        recall: None,
-    })
+    build_runtime_with_max_steps(
+        RuntimeBuildOptions {
+            provider,
+            tools,
+            workspace: Workspace::new(root).unwrap(),
+            workspace_policy: AppPolicy::for_mode(
+                PermissionMode::Auto,
+                Default::default(),
+                /*search_path*/ None,
+            ),
+            approval_session: None,
+            system_prompt: SystemPrompt::None,
+            reasoning: rho_sdk::ReasoningLevel::Off,
+            service_tier: None,
+            compaction,
+            context_window: Some(1_000),
+            usage_purpose: "agent",
+            usage_parent_session_id: None,
+            usage_recording: Default::default(),
+            hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
+            hooks: None,
+            diagnostics: crate::diagnostics::test_diagnostics("test", "test"),
+            recall: None,
+        },
+        /*max_steps*/ None,
+    )
     .unwrap()
 }
 

@@ -27,7 +27,6 @@ use super::{
     App, AssistantEntry, Entry, FinalAnswerDelta, LiveStreamPreview, ReasoningEntry, StreamKind,
     ToolEntry,
 };
-use rho_providers::model::ContentBlock;
 
 pub(super) fn final_answer_delta<'a>(emitted_text: &str, answer: &'a str) -> FinalAnswerDelta<'a> {
     match answer.strip_prefix(emitted_text) {
@@ -557,34 +556,6 @@ impl App {
         }
     }
 
-    pub(super) fn insert_assistant_images(&mut self, content: &[ContentBlock]) {
-        for block in content {
-            let ContentBlock::Image(image) = block else {
-                continue;
-            };
-            let preview =
-                super::feed_image::preview_generated_image(image, self.image_picker.as_ref());
-            self.insert_entry(&super::message_history::generated_image_entry(
-                preview, image,
-            ));
-        }
-    }
-
-    pub(super) fn insert_final_answer_suffix(&mut self, answer: &str) {
-        match final_answer_delta(self.streams.assistant_stream.emitted_text(), answer) {
-            FinalAnswerDelta::None => {}
-            FinalAnswerDelta::Append(suffix) => {
-                self.streams.assistant_stream.push_delta(suffix);
-                if let Some(fragment) = self.streams.assistant_stream.finish() {
-                    self.insert_stream_fragment(fragment, StreamKind::Assistant);
-                }
-            }
-            FinalAnswerDelta::Mismatch => {
-                self.replace_current_turn_assistant_transcript(answer);
-            }
-        }
-    }
-
     pub(super) fn insert_stream_fragment(&mut self, fragment: StreamFragment, kind: StreamKind) {
         let render_text = fragment.render_text();
         if !render_text.is_empty() {
@@ -592,32 +563,6 @@ impl App {
         }
         let text = fragment.into_text();
         self.push_transcript_entry(kind.entry(text));
-    }
-
-    pub(super) fn replace_current_turn_assistant_transcript(&mut self, answer: &str) {
-        let start = self.turn.current_turn_start().unwrap_or(0);
-        let assistant_indices = self
-            .history
-            .entries()
-            .iter()
-            .enumerate()
-            .skip(start)
-            .filter_map(|(index, entry)| matches!(entry, Entry::Assistant(_)).then_some(index))
-            .collect::<Vec<_>>();
-
-        let Some((first, stale)) = assistant_indices.split_first() else {
-            self.push_transcript_entry(Entry::Assistant(answer.to_string().into()));
-            return;
-        };
-
-        if let Entry::Assistant(assistant) = &mut self.history.entries_mut()[*first] {
-            assistant.text = answer.to_string();
-        }
-        self.history.images_mut().clear();
-        self.history.invalidate_from(*first);
-        for index in stale.iter().rev() {
-            self.history.entries_mut().remove(*index);
-        }
     }
 
     pub(super) fn insert_entry(&mut self, entry: &Entry) {

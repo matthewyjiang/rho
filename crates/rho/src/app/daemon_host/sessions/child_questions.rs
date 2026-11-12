@@ -1,5 +1,5 @@
 //! Takes the questions a session's subagents ask, whether or not a turn
-//! runs, as the in-process TUI's inbox does.
+//! runs.
 //!
 //! A subagent outlives the turn that started it and may ask long after, so
 //! the session, not the turn, owns its subagents' question queue. One

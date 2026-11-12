@@ -9,8 +9,8 @@ use super::sessions_hub_groups::{find_directory, DirectoryGroup, HubGroup};
 use super::sessions_hub_tasks::{plural, DeleteOrigin, SessionsDelete};
 use super::{
     picker::OverlayChrome, session_picker, statusline::path::compact_cwd, App, ComposerMode, Entry,
-    InlineChoice, InlineChoiceOption, InlineChoicePending, InteractiveRuntime, PickerBadge,
-    PickerBadgeTone, PickerCursor, PickerItem, PickerKeyHints, PickerLayout, UiPicker,
+    InlineChoice, InlineChoiceOption, InlineChoicePending, PickerBadge, PickerBadgeTone,
+    PickerCursor, PickerItem, PickerKeyHints, PickerLayout, UiPicker,
 };
 use crate::session::{is_cross_project, Session, SessionListing, SessionSummary, SessionTarget};
 
@@ -438,7 +438,6 @@ impl App {
         &mut self,
         value: &str,
         terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let Some(target) = self.sessions_hub_state.target(value) else {
             self.input_ui.set_composer(ComposerMode::Input);
@@ -467,7 +466,7 @@ impl App {
                 if self.refuse_while_sessions_delete_runs() {
                     return Ok(());
                 }
-                self.submit_resume_target(&target, terminal, agent).await
+                self.submit_resume_target(&target, terminal).await
             }
             SessionsHubTarget::Directory(cwd) => {
                 self.open_directory_sessions(&cwd, None);

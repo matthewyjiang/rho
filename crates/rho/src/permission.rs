@@ -352,19 +352,6 @@ impl SessionWriteLog {
         }
     }
 
-    /// Drops every remembered path. Used when the live session identity changes
-    /// so a later session cannot inherit another session's grants.
-    pub(crate) fn clear(&self) {
-        self.paths
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clear();
-        self.git_verdicts
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clear();
-    }
-
     fn granted_by(&self, path: &Path) -> Option<WriteAuthority> {
         self.paths
             .read()

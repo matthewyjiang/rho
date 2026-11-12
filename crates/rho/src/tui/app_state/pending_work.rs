@@ -75,10 +75,6 @@ impl PendingWorkUi {
         self.queued_prompts.push_front(prompt);
     }
 
-    pub(in crate::tui) fn pop_follow_up(&mut self) -> Option<QueuedPrompt> {
-        self.pop_follow_up_with_consent().map(|(prompt, _)| prompt)
-    }
-
     /// The next follow-up, with the consent given for it when it is the
     /// prompt [`Self::park_compact_send`] queued, unedited.
     pub(in crate::tui) fn pop_follow_up_with_consent(
@@ -131,14 +127,6 @@ impl PendingWorkUi {
         self.steering_prompts.clear();
         self.accepted_steering.clear();
         self.retracting_steering = None;
-    }
-
-    pub(in crate::tui) fn retracting_steering(&self) -> Option<&rho_sdk::SteeringId> {
-        self.retracting_steering.as_ref()
-    }
-
-    pub(in crate::tui) fn set_retracting_steering(&mut self, id: Option<rho_sdk::SteeringId>) {
-        self.retracting_steering = id;
     }
 
     pub(in crate::tui) fn input_panel(&self) -> &PendingInputPanel {

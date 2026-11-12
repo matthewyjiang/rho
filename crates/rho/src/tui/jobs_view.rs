@@ -772,12 +772,9 @@ impl PanelBody for JobsView {
 }
 
 impl App {
-    /// Opens `/jobs`, which only a session the daemon runs has.
+    /// Opens `/jobs`.
     pub(super) fn execute_jobs_command(&mut self) -> anyhow::Result<()> {
-        let Some(session) = &self.info.session.daemon else {
-            self.needs_daemon("jobs");
-            return Ok(());
-        };
+        let session = &self.info.session.daemon;
         let view = JobsView::new(
             session.daemon(),
             SessionId::new(session.id()),

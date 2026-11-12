@@ -18,7 +18,7 @@ use rho_sdk::{
         ToolProgress, ToolResource, ToolResourceAccess,
     },
     HostChoice, HostInputRefusal, HostInputRequest, HostInputResponse, HostQuestion, Rho,
-    SelectionMode, SessionId, UserInput,
+    SelectionMode, UserInput,
 };
 use serde_json::json;
 use tokio::{sync::Semaphore, time::timeout};
@@ -229,7 +229,6 @@ fn parent_of(bridge: &SubagentHostInputBridge) -> ParentQuestions {
         bridge: bridge.clone(),
         run_id: "run-1".into(),
         agent_id: "worker".into(),
-        parent: SessionId::new(),
     }
 }
 

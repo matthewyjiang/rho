@@ -1,11 +1,10 @@
-//! The process rail and peek view of a daemon session: the background
-//! processes its `process` tool started, which the daemon's session owns
-//! and reports (`rho/session/processes`). The rail asks for them on the
-//! rails' schedule (`daemon_jobs`), and with them for the new output of
-//! the process the peek view shows.
+//! The process rail and peek view of the session: the background processes
+//! its `process` tool started, which the daemon's session owns and reports
+//! (`rho/session/processes`). The rail asks for them on the rails' schedule
+//! (`daemon_jobs`), and with them for the new output of the process the
+//! peek view shows.
 //!
-//! The daemon lists what the in-process rail shows, so a finished row
-//! leaves once its result reached the model, as in process.
+//! A finished row leaves once its result reached the model.
 
 use rho_protocol::{
     ProcessOutput, ProcessOutputParams, ProcessState, ProcessStream, SessionProcess,
@@ -20,17 +19,14 @@ impl App {
     /// refresh. The answer arrives as a view; see
     /// [`Self::show_daemon_processes`].
     pub(super) fn refresh_daemon_processes(&mut self) {
-        let Some(session) = &self.info.session.daemon else {
-            return;
-        };
-        let output = self
-            .exclusive
-            .peek_view()
-            .and_then(|view| view.daemon_cursor())
-            .map(|(process, from)| ProcessOutputParams {
+        let session = &self.info.session.daemon;
+        let output = self.exclusive.peek_view().map(|view| {
+            let (process, from) = view.daemon_cursor();
+            ProcessOutputParams {
                 process: process.to_owned(),
                 from,
-            });
+            }
+        });
         // A process starts only in a turn, and changes only while its row
         // shows or the peek view follows it.
         let may_change = self.turn.is_provider_turn() || output.is_some();
@@ -66,7 +62,7 @@ impl App {
         if let Some(view) = self
             .exclusive
             .peek_view_mut()
-            .filter(|view| view.daemon_cursor() == Some((asked.process.as_str(), asked.from)))
+            .filter(|view| view.daemon_cursor() == (asked.process.as_str(), asked.from))
         {
             if let Some(next) = host_view(output) {
                 view.extend(next);

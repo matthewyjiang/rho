@@ -38,13 +38,6 @@ pub(crate) struct RuntimeBuildOptions<'a, P> {
     pub(crate) recall: Option<RecallStore>,
 }
 
-pub(crate) fn build_runtime<P>(options: RuntimeBuildOptions<'_, P>) -> Result<Rho, Error>
-where
-    P: WorkspacePolicy + 'static,
-{
-    build_runtime_with_max_steps(options, None)
-}
-
 /// Builds a runtime with an optional per-run model-step override.
 ///
 /// `None` keeps the configured SDK step limit. Automation uses `Some` for the

@@ -126,11 +126,6 @@ pub(super) fn resolve_transcript_path(path: &Path) -> Option<PathBuf> {
     SessionUnit::from_path(path).map(|unit| unit.transcript_path())
 }
 
-/// Web-access sidecar directory for a session transcript path.
-pub(super) fn session_web_dir(transcript_path: &Path) -> Option<PathBuf> {
-    SessionUnit::from_path(transcript_path).map(|unit| unit.web_dir())
-}
-
 pub(super) fn session_id_from_path(path: &Path) -> Option<String> {
     SessionUnit::from_path(path)?.id()
 }

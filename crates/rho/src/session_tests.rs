@@ -127,14 +127,15 @@ fn separate_display_message_round_trips_for_resume_and_export() {
         .append_message(&Message::assistant_text("working on it"))
         .unwrap();
 
-    let (_, histories) =
-        Session::open_by_id_with_histories_in_root(&root, &cwd, session.id()).unwrap();
+    let (opened, history) = Session::open_by_id_in_root(&root, &cwd, session.id()).unwrap();
+    let display = opened.active_display_history().unwrap();
+    drop(opened);
     assert!(matches!(
-        &histories.model[0],
+        &history[0],
         Message::User(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "expanded init instructions")
     ));
     assert!(matches!(
-        &histories.display[0],
+        &display[0].message,
         Message::User(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "/init all tests pass")
     ));
 
@@ -177,27 +178,27 @@ fn replace_history_is_append_only_but_model_replay_uses_latest_replacement() {
         SessionEntry::Node { node } if node.kind == SessionNodeKind::Compaction
     )));
 
-    let (_session, histories) =
-        Session::open_by_id_with_histories_in_root(&root, &cwd, session.id()).unwrap();
+    let (opened, history) = Session::open_by_id_in_root(&root, &cwd, session.id()).unwrap();
+    let display = opened.active_display_history().unwrap();
 
-    assert_eq!(histories.model.len(), 3);
+    assert_eq!(history.len(), 3);
     assert!(
-        matches!(&histories.model[0], Message::User(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "summary"))
+        matches!(&history[0], Message::User(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "summary"))
     );
     assert!(
-        matches!(&histories.model[2], Message::User(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "after replacement"))
+        matches!(&history[2], Message::User(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "after replacement"))
     );
-    assert_eq!(histories.display.len(), 4);
+    assert_eq!(display.len(), 4);
     assert!(
-        matches!(&histories.display[0], Message::User(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "old user"))
+        matches!(&display[0].message, Message::User(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "old user"))
     );
     assert!(
-        matches!(&histories.display[1], Message::Assistant(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "old assistant"))
+        matches!(&display[1].message, Message::Assistant(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "old assistant"))
     );
-    assert!(matches!(&histories.display[2], Message::Assistant(blocks)
+    assert!(matches!(&display[2].message, Message::Assistant(blocks)
             if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text.contains("Compacted context"))));
     assert!(
-        matches!(&histories.display[3], Message::User(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "after replacement"))
+        matches!(&display[3].message, Message::User(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "after replacement"))
     );
 }
 
@@ -534,21 +535,6 @@ fn opens_legacy_flat_jsonl_sessions_by_id() {
         messages.as_slice(),
         [Message::User(blocks)] if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "hello legacy")
     ));
-}
-
-#[test]
-fn session_web_dir_uses_folder_sidecar_and_legacy_companion() {
-    let folder = PathBuf::from("/tmp/ws/100_abc/session.jsonl");
-    assert_eq!(
-        super::persistence::session_web_dir(&folder),
-        Some(PathBuf::from("/tmp/ws/100_abc/web"))
-    );
-
-    let legacy = PathBuf::from("/tmp/ws/100_abc.jsonl");
-    assert_eq!(
-        super::persistence::session_web_dir(&legacy),
-        Some(PathBuf::from("/tmp/ws/100_abc.web"))
-    );
 }
 
 #[test]

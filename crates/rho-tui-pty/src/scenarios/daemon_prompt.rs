@@ -1,6 +1,6 @@
-//! With `RHO_TUI_DAEMON=1`, the TUI's prompts run in the daemon session:
-//! the reply and tool card stream into the transcript, Esc cancels a
-//! running turn, and the composer is back once the session rests (#1667).
+//! The TUI's prompts run in the daemon session: the reply and tool card
+//! stream into the transcript, Esc cancels a running turn, and the composer
+//! is back once the session rests (#1667).
 
 use anyhow::Result;
 
@@ -12,10 +12,7 @@ use crate::{
 
 use super::{daemon_resume::write_daemon_config, DEFAULT_SIZE, SETTLE, STARTUP, STREAM};
 
-const ENV: &[(&str, &str)] = &[
-    ("RHO_TUI_DAEMON", "1"),
-    ("OPENAI_API_KEY", "sk-test-matrix"),
-];
+const ENV: &[(&str, &str)] = &[("OPENAI_API_KEY", "sk-test-matrix")];
 /// The idle composer's placeholder; a running turn shows `esc abort`.
 const IDLE_COMPOSER: &str = "Type a message";
 

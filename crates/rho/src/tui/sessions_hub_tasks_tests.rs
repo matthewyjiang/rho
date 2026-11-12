@@ -28,10 +28,10 @@ fn a_batch_asks_the_daemon_only_for_sessions_held_open() {
         ..BatchDeleted::default()
     };
 
-    let batch = batch.retry_held(Some(Box::new(|sessions| {
+    let batch = batch.retry_held(Box::new(|sessions| {
         assert_eq!(sessions, ["held-idle", "held-busy"]);
         vec![Ok(()), Err("a turn is under way".into())]
-    })));
+    }));
 
     assert_eq!(batch.deleted, 4);
     assert_eq!(

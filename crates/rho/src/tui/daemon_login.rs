@@ -4,23 +4,23 @@
 //! what it shows: the pickers, the key prompt, the login's URL, and the
 //! browser, which opens here.
 //!
-//! Unlike in process, a login does not swap the running provider: the
-//! daemon's sessions pick the credential up at their next prompt. A
-//! logout of the profile in use marks the session signed out here, so the
-//! header says so and a prompt offers `/login` rather than failing; that
-//! is this TUI's reading of the shared credential store, checked again
-//! before each prompt it would hold back. A login does not make the
-//! session's provider and model the config's defaults either: only the
-//! default provider's auth profile follows it.
+//! A login does not swap the running provider: the daemon's sessions pick
+//! the credential up at their next prompt. A logout of the profile in use
+//! marks the session signed out here, so the header says so and a prompt
+//! offers `/login` rather than failing; that is this TUI's reading of the
+//! shared credential store, checked again before each prompt it would hold
+//! back. A login does not make the session's provider and model the
+//! config's defaults either: only the default provider's auth profile
+//! follows it.
 //! A login its provider cannot confirm (Ollama Cloud's device key) is
 //! recorded by the daemon as soon as the daemon runs it. So this process
 //! shows its prompt (`login_pending.rs`), which records nothing, and has
 //! the daemon run the login only on Enter: Esc before that is a real
-//! cancel, as it is in process. The prompt shown here names this process's
-//! device key, and the daemon records its own, which is the same file only
-//! when both resolve one key directory (`OLLAMA_DEVICE_KEY_DIR`, else each
-//! process's `~/.ollama`). So the daemon's prompt is compared with the one
-//! shown, and shown too when it names another key.
+//! cancel. The prompt shown here names this process's device key, and the
+//! daemon records its own, which is the same file only when both resolve
+//! one key directory (`OLLAMA_DEVICE_KEY_DIR`, else each process's
+//! `~/.ollama`). So the daemon's prompt is compared with the one shown, and
+//! shown too when it names another key.
 
 use rho_protocol::{LoginId, LoginOutcome, SessionChange};
 use rho_providers::{
@@ -431,10 +431,10 @@ impl App {
         }
         let in_use =
             target.provider == self.info.runtime.provider && target.auth == self.info.runtime.auth;
-        // A signed-out session moves to the provider just signed in to, as
-        // it does in process. Asked for, the switch counts as made: the
-        // daemon builds the provider from the credential it just saved,
-        // and says so in the session if it cannot.
+        // A signed-out session moves to the provider just signed in to. Asked
+        // for, the switch counts as made: the daemon builds the provider from
+        // the credential it just saved, and says so in the session if it
+        // cannot.
         if in_use {
             self.info.services.auth_unavailable = None;
         }
@@ -507,18 +507,10 @@ impl App {
     }
 
     fn daemon_session(&self) -> &super::DaemonSession {
-        self.info
-            .session
-            .daemon
-            .as_ref()
-            .expect("a daemon login requires a session")
+        &self.info.session.daemon
     }
 
     fn daemon_session_mut(&mut self) -> &mut super::DaemonSession {
-        self.info
-            .session
-            .daemon
-            .as_mut()
-            .expect("a daemon login requires a session")
+        &mut self.info.session.daemon
     }
 }

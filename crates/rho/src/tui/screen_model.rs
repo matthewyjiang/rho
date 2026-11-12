@@ -27,23 +27,6 @@ use crate::{
 };
 
 impl App {
-    /// Opens the screen-model picker, as a child of the config picker or
-    /// alone in the composer by `origin`.
-    pub(super) fn open_screen_model_picker(&mut self, origin: InternalAgentModelPickerOrigin) {
-        let picker = self.screen_model_picker(origin);
-        if origin.opens_standalone() {
-            self.input_ui.set_composer(ComposerMode::Picker(picker));
-        } else {
-            self.open_child_picker(picker);
-        }
-        self.set_status(match origin {
-            InternalAgentModelPickerOrigin::PermissionScreenSetupCommand => {
-                "auto is on. Choose a screen model, or Esc to keep the current one"
-            }
-            _ => "select a permission screen model",
-        });
-    }
-
     /// Builds the screen-model picker and records what a selection means.
     pub(super) fn screen_model_picker(
         &mut self,
@@ -136,24 +119,11 @@ impl App {
         if target.id != DECISION_SCREEN_ID {
             return false;
         }
-        let origin = target.origin;
         self.internal_agent_model_target = None;
         if restore_input {
             self.input_ui.set_composer(ComposerMode::Input);
         }
-        let status = match origin {
-            InternalAgentModelPickerOrigin::PermissionScreenSetupCommand => {
-                match self.info.runtime.internal_agents.get(DECISION_SCREEN_ID) {
-                    Some(screen) => format!(
-                        "permission mode: auto. The screen keeps {}",
-                        self.model_names().internal_agent(screen)
-                    ),
-                    None => "permission mode: auto. The classifier model answers the screen".into(),
-                }
-            }
-            _ => "permission screen model unchanged".into(),
-        };
-        self.set_status(status);
+        self.set_status("permission screen model unchanged");
         true
     }
 

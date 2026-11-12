@@ -47,7 +47,7 @@ pub(crate) enum StartedBy<'a> {
     /// their message.
     Person { display: &'a UserInput },
     /// A host on the person's behalf, as a workflow hub: the start saves no
-    /// user message, as an in-process hub's does not.
+    /// user message.
     Host,
 }
 
@@ -169,7 +169,6 @@ impl SessionRuntime {
         })?;
 
         let (model, started) = start_context_prompts(&run_id, &workflow_name, &program_digest);
-        // The two notices the in-process TUI shows for the same start.
         let notice = format!(
             "{}\n\n{started}",
             starting_notice(&start, &workflow_name, &run_id)

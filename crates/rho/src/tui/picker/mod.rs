@@ -191,8 +191,10 @@ pub(super) struct UiPicker {
     /// its rows from saved config; see [`crate::tui::App::pop_picker_level`].
     config_page: Option<crate::tui::settings_screen::ConfigPage>,
     parent: Option<Box<UiPicker>>,
-    matches: RefCell<PickerMatchCache>,
-    detail_wrap_cache: RefCell<DetailWrapCache>,
+    /// Boxed, like `overlay_chrome`, to keep the struct within the same
+    /// variant budget.
+    matches: Box<RefCell<PickerMatchCache>>,
+    detail_wrap_cache: Box<RefCell<DetailWrapCache>>,
 }
 
 #[derive(Clone, Debug)]
@@ -355,8 +357,8 @@ impl UiPicker {
             label_overflow: LabelOverflow::KeepStart,
             config_page: None,
             parent: None,
-            matches: RefCell::default(),
-            detail_wrap_cache: RefCell::default(),
+            matches: Box::default(),
+            detail_wrap_cache: Box::default(),
         }
     }
 

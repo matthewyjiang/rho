@@ -8,7 +8,6 @@ use std::time::Instant;
 
 use super::{
     activity::ActivityPhase,
-    compact_work::ReadyFollowUp,
     compaction_display::CompactionUiOutcome,
     daemon_events::{DaemonView, Rest, TurnState},
     event_adapter::{compact_finished_event, compact_started_event, ViewModelEvent},
@@ -19,7 +18,7 @@ use super::{
 use rho_protocol::display::Presentation;
 
 /// A turn of the followed daemon session that a `/compact` prompt started:
-/// the turn is the compaction, and shows as the in-process TUI shows one.
+/// the turn is the compaction, and shows as one.
 #[derive(Default)]
 pub(super) struct DaemonCompactTurn {
     /// How its compaction ended, as the status line says it; the turn rests
@@ -227,7 +226,7 @@ impl App {
                 // No turn shows busy to say it retries.
                 DaemonView::Retrying(_) => {}
                 DaemonView::Status(text) => self.set_status(text),
-                // Held until the message under way ends, as in process: a
+                // Held until the message under way ends: a
                 // notice such as a new title does not break into a reply.
                 DaemonView::Notice(text) => self.insert_entry(&Entry::Notice(text)),
                 DaemonView::Card(card) => {
@@ -293,10 +292,9 @@ impl App {
         }
     }
 
-    /// Starts showing the turn under way as the in-process TUI shows
-    /// `/compact`, which is no turn there: the card alone, without the
-    /// command's row, which the daemon sent just before the compaction
-    /// started.
+    /// Starts showing the turn under way as a `/compact`: the card alone,
+    /// without the command's row, which the daemon sent just before the
+    /// compaction started.
     fn begin_daemon_compact_turn(&mut self) {
         self.daemon_compact_turn = Some(DaemonCompactTurn::default());
         if matches!(self.history.last(), Some(Entry::User(_))) {
@@ -384,14 +382,12 @@ impl App {
         let (status, settled) = match rest {
             Rest::Ready => {
                 self.end_provider_turn_ui();
-                // In process `/compact` is no turn, so it shows no footer.
+                // A `/compact` turn shows no footer.
                 if let Some(worked) = worked.filter(|_| compact_turn.is_none()) {
                     self.attach_turn_worked(worked);
                 }
                 let status = if self.pending.has_follow_ups() {
-                    self.start_follow_ups = Some(ReadyFollowUp::Queued {
-                        allow_auto_compact: false,
-                    });
+                    self.start_follow_ups = true;
                     format!(
                         "running next queued message ({})",
                         self.pending.follow_up_len()
@@ -412,12 +408,10 @@ impl App {
             }
             Rest::Failed { error } => {
                 self.end_busy_ui();
-                // As in process, a failed compaction still sends what waited
-                // for it, as a prompt "Compact, then send" parked.
+                // A failed compaction still sends what waited for it, as a
+                // prompt "Compact, then send" parked.
                 if compact_turn.is_some() && self.pending.has_follow_ups() {
-                    self.start_follow_ups = Some(ReadyFollowUp::Queued {
-                        allow_auto_compact: false,
-                    });
+                    self.start_follow_ups = true;
                 }
                 (
                     Some("error".to_owned()),

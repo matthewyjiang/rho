@@ -12,7 +12,6 @@ use super::{model_context_window, SessionRuntime, SettingChangeError};
 use crate::{
     app::conversation_switch::{
         apply_conversation_switch, resolve_model_switch_reasoning, ConversationSwitch,
-        ModelSwitchReasoningPolicy, SwitchNotice,
     },
     compaction::CompactionConfig,
     config::Config,
@@ -99,23 +98,20 @@ impl SessionRuntime {
             .map(|template| template.build(&prompt_model))
             .transpose()?;
         // HandoffReport could reach the host later; no host has a place for it yet.
-        let _handoff = apply_conversation_switch(
-            ConversationSwitch {
-                prepared_prompt: prepared_prompt.as_ref(),
-                session: &self.built.session,
-                tools: &self.built.tools,
-                previous_provider: Arc::clone(&self.built.provider),
-                new_provider: Arc::clone(&provider),
-                new_reasoning: config.reasoning,
-                auth: &config.auth,
-                compaction: CompactionConfig::from(config),
-                context_window,
-                previous_context_window,
-                usage_recording: self.built.runtime.usage_recording(),
-                diagnostics: self.built.diagnostics.clone(),
-            },
-            SwitchNotice::SessionMessage,
-        )?;
+        let _handoff = apply_conversation_switch(ConversationSwitch {
+            prepared_prompt: prepared_prompt.as_ref(),
+            session: &self.built.session,
+            tools: &self.built.tools,
+            previous_provider: Arc::clone(&self.built.provider),
+            new_provider: Arc::clone(&provider),
+            new_reasoning: config.reasoning,
+            auth: &config.auth,
+            compaction: CompactionConfig::from(config),
+            context_window,
+            previous_context_window,
+            usage_recording: self.built.runtime.usage_recording(),
+            diagnostics: self.built.diagnostics.clone(),
+        })?;
         self.build.host.cache_warming.bind(provider.as_ref());
         self.built.provider = provider;
         self.credentials.mark_read(read);
@@ -141,7 +137,6 @@ fn resolve_switch_reasoning(
         &capabilities,
         requested,
         ReasoningRequestSource::PersistedOrDefault,
-        ModelSwitchReasoningPolicy::PreserveExplicit,
     ) {
         Ok(resolved) => Ok(resolved.effective),
         Err(level) => {

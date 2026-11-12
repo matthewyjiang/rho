@@ -13,17 +13,12 @@ use crate::tui::{
     ToolEntry,
 };
 
-/// TUI session phase distinct from provider run controller state.
-///
-/// `ProviderTurn` should stay aligned with `InteractiveRuntime::is_run_active`
-/// except for brief setup before `start` succeeds. `Compacting` is UI-only busy
-/// work with no active provider run.
+/// TUI session phase. `ProviderTurn` follows the session's running turn.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(in crate::tui) enum SessionUiPhase {
     #[default]
     Idle,
     ProviderTurn,
-    Compacting,
 }
 
 impl SessionUiPhase {
@@ -35,12 +30,7 @@ impl SessionUiPhase {
         matches!(self, Self::ProviderTurn)
     }
 
-    pub(in crate::tui) const fn allows_idle_subagent_delivery(self) -> bool {
-        matches!(self, Self::Idle)
-    }
-
-    /// Esc on the composer aborts this phase. Compact stays out: that path
-    /// does not use the running-turn Esc handler.
+    /// Esc on the composer aborts this phase.
     pub(in crate::tui) const fn esc_aborts_operation(self) -> bool {
         matches!(self, Self::ProviderTurn)
     }
@@ -112,16 +102,8 @@ impl TurnUi {
         self.session_ui.is_provider_turn()
     }
 
-    pub(in crate::tui) fn is_compacting(&self) -> bool {
-        matches!(self.session_ui, SessionUiPhase::Compacting)
-    }
-
     pub(in crate::tui) fn enter_provider_turn(&mut self) {
         self.session_ui = SessionUiPhase::ProviderTurn;
-    }
-
-    pub(in crate::tui) fn enter_compact(&mut self) {
-        self.session_ui = SessionUiPhase::Compacting;
     }
 
     pub(in crate::tui) fn end_busy(&mut self) {

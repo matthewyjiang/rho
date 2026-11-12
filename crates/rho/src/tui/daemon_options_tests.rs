@@ -141,8 +141,8 @@ fn a_signed_out_first_launch_has_a_model_to_choose_only_from_another_auth() {
 }
 
 // Covers: a daemon session's model picker lists the models the daemon
-// offers under the TUI's own pins and scope, as the in-process picker does,
-// and a picker opened mid-turn marks the model already asked for.
+// offers under the TUI's own pins and scope, and a picker opened mid-turn
+// marks the model already asked for.
 // Owner: tui daemon session options
 #[test]
 fn the_model_picker_lays_offered_models_out_by_pin_and_pending_switch() {

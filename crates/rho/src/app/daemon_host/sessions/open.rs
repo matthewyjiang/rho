@@ -325,8 +325,8 @@ async fn open_runtime(
     .await?;
     // Warming is for a model that ends its turn and sits idle on a process,
     // which only a session whose turns do not wait for one does. Decided as
-    // the session opens, like the in-process TUI's: the setting's later
-    // changes stop or resume the warming, not the offer.
+    // the session opens: the setting's later changes stop or resume the
+    // warming, not the offer.
     let cache_warming = match idle_turns {
         IdleTurns::Host if config.keep_cache_warm => CacheWarming::Host(Default::default()),
         IdleTurns::Host | IdleTurns::Never => CacheWarming::None,

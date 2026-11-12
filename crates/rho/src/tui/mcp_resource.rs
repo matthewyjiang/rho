@@ -14,7 +14,7 @@ use rho_providers::model::ImageContent;
 use crate::tools::mcp::{McpResource, McpResourceContent};
 
 use super::{
-    mcp_source::McpSource,
+    daemon_session::DaemonMcp,
     media_attach::{MediaAttachOutcome, MediaAttachTask},
     App, ChatMedia, ChatTextDocument, ComposerMode, MediaAttachId, PendingAttachmentSource,
 };
@@ -71,7 +71,7 @@ impl App {
 
 /// Read one resource and turn its bodies into a single attachment.
 async fn read_resource_attachment(
-    source: McpSource,
+    source: DaemonMcp,
     server: String,
     uri: String,
     max_output_bytes: usize,

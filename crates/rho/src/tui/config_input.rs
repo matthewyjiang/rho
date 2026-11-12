@@ -3,7 +3,7 @@
 use crate::{keybindings::ReservedComposerKey, tui::DefaultTerminal};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use super::{text_input::TextInputTarget, App, ComposerMode, InteractiveRuntime};
+use super::{text_input::TextInputTarget, App, ComposerMode};
 
 impl App {
     pub(super) fn handle_interactive_pending_key(&mut self, key: KeyEvent) -> anyhow::Result<bool> {
@@ -43,7 +43,6 @@ impl App {
         &mut self,
         key: KeyEvent,
         terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<bool> {
         match self.apply_secret_key(key) {
             SecretKeyResult::NotSecret => Ok(false),
@@ -53,8 +52,7 @@ impl App {
             }
             SecretKeyResult::Submit(submission) => {
                 self.clear_transient_key_state();
-                self.submit_api_key_login(submission, terminal, agent)
-                    .await?;
+                self.submit_api_key_login(submission, terminal).await?;
                 Ok(true)
             }
         }
@@ -186,16 +184,12 @@ impl App {
         Ok(true)
     }
 
-    pub(super) async fn handle_reasoning_cycle_key(
-        &mut self,
-        key: KeyEvent,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<bool> {
+    pub(super) fn handle_reasoning_cycle_key(&mut self, key: KeyEvent) -> anyhow::Result<bool> {
         if ReservedComposerKey::from_key(key) != Some(ReservedComposerKey::ReasoningCycle) {
             return Ok(false);
         }
 
-        self.cycle_reasoning(agent).await?;
+        self.cycle_daemon_reasoning()?;
         self.clear_transient_key_state();
         Ok(true)
     }

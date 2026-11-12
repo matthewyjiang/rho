@@ -1,13 +1,11 @@
 use super::{
-    provider_actions::{ProviderActivation, ProviderActivationOutcome},
-    setup_screen::SetupStep,
-    InlineChoice, InlineChoiceModal, InlineChoiceOption, InlineChoicePending, *,
+    setup_screen::SetupStep, InlineChoice, InlineChoiceModal, InlineChoiceOption,
+    InlineChoicePending, *,
 };
 use {
     rho_providers::auth::login_dispatch::{
         AuthenticationMethod, InteractiveLoginMode, ProviderAuthentication,
     },
-    rho_providers::model::registry,
     rho_providers::provider,
 };
 
@@ -118,7 +116,6 @@ impl App {
         &mut self,
         invocation: CommandInvocation,
         terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         if invocation.args.is_empty() {
             self.open_login_picker();
@@ -127,7 +124,6 @@ impl App {
         self.start_sign_in(
             login_target::SignInTarget::parse(&invocation.args),
             terminal,
-            agent,
         )
         .await
     }
@@ -135,12 +131,9 @@ impl App {
     pub(super) async fn execute_logout_command(
         &mut self,
         invocation: CommandInvocation,
-        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        if self.info.session.daemon.is_some() {
-            // The daemon wrote the store since this process last read it.
-            crate::credential_store::AppCredentialStore::reread_external_logins();
-        }
+        // The daemon wrote the store since this process last read it.
+        crate::credential_store::AppCredentialStore::reread_external_logins();
         if invocation.args.is_empty() {
             let claude_signed_in = Self::claude_signed_in().await;
             let config = self.info.services.config_repository.load()?;
@@ -172,9 +165,7 @@ impl App {
             }
             // Nothing is stored for a host that was never created.
             login_target::SignInTarget::NewCustomHost { .. } => Ok(()),
-            login_target::SignInTarget::Provider(provider) => {
-                self.logout_provider(&provider, agent).await
-            }
+            login_target::SignInTarget::Provider(provider) => self.logout_provider(&provider).await,
         }
     }
 
@@ -231,7 +222,6 @@ impl App {
         choice: InlineChoice,
         next: StoreChoiceNext,
         terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let backend = selected_credential_store_backend(&choice);
         let config_path = match self.info.services.config_repository.configured_path() {
@@ -259,12 +249,10 @@ impl App {
 
         match next {
             StoreChoiceNext::Provider(provider) => {
-                self.start_login_for_provider(&provider, terminal, agent)
-                    .await
+                self.start_login_for_provider(&provider, terminal).await
             }
             StoreChoiceNext::SaveApiKey { target, key } => {
-                self.persist_api_key_and_finish(target, key, terminal, agent)
-                    .await
+                self.persist_api_key_and_finish(target, key, terminal).await
             }
         }
     }
@@ -274,7 +262,6 @@ impl App {
         &mut self,
         target: login_target::SignInTarget,
         terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         match target {
             login_target::SignInTarget::ClaudeCode => {
@@ -289,8 +276,7 @@ impl App {
                 Ok(())
             }
             login_target::SignInTarget::Provider(provider) => {
-                self.start_login_for_provider(&provider, terminal, agent)
-                    .await
+                self.start_login_for_provider(&provider, terminal).await
             }
         }
     }
@@ -303,7 +289,6 @@ impl App {
         &mut self,
         provider: &str,
         terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let provider = provider.trim();
         // A fully keyless provider has no login target or group, so it would
@@ -325,7 +310,7 @@ impl App {
         if let Some(target) = catalog::login_target_for_auth(provider)
             .or_else(|| catalog::login_target_for_provider(provider))
         {
-            return self.start_resolved_login(target, terminal, agent).await;
+            return self.start_resolved_login(target, terminal).await;
         }
         if let Some(group) = catalog::login_group(provider) {
             match super::provider_picker::login_group_next(group) {
@@ -339,7 +324,7 @@ impl App {
                         self.set_status("login failed");
                         return Ok(());
                     };
-                    return self.start_resolved_login(target, terminal, agent).await;
+                    return self.start_resolved_login(target, terminal).await;
                 }
                 super::provider_picker::LoginGroupNext::MethodPicker(picker) => {
                     self.input_ui.set_composer(ComposerMode::Picker(*picker));
@@ -371,7 +356,6 @@ impl App {
         &mut self,
         target: LoginTarget,
         terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         if provider::provider_descriptor(&target.provider)
             .is_some_and(|descriptor| descriptor.collects_login_endpoint())
@@ -382,7 +366,7 @@ impl App {
         if self.begin_store_choice_if_needed(StoreChoiceNext::Provider(target.provider.clone())) {
             return Ok(());
         }
-        self.start_login_for_target(target, terminal, agent).await
+        self.start_login_for_target(target, terminal).await
     }
 
     fn report_login_not_required(&mut self, provider: &str) {
@@ -395,7 +379,6 @@ impl App {
         &mut self,
         target: LoginTarget,
         terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         match ProviderAuthentication::method(&target.auth)
             .expect("catalog returned unsupported login provider")
@@ -431,7 +414,6 @@ impl App {
                     provider_label,
                     InteractiveLoginMode::Browser,
                     terminal,
-                    agent,
                 )
                 .await
             }
@@ -442,7 +424,6 @@ impl App {
         &mut self,
         submission: ApiKeySubmission,
         terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         match submission {
             ApiKeySubmission::Rejected => {
@@ -456,10 +437,9 @@ impl App {
                     &target.auth,
                 ) {
                     Ok(has_key) => {
-                        self.finish_login(
+                        self.finish_daemon_login(
                             resolve_blank_optional_key(target, has_key),
                             terminal,
-                            agent,
                         )
                         .await
                     }
@@ -477,8 +457,7 @@ impl App {
                 }) {
                     return Ok(());
                 }
-                self.persist_api_key_and_finish(target, key, terminal, agent)
-                    .await
+                self.persist_api_key_and_finish(target, key, terminal).await
             }
             // A reusable key means a store was already chosen, so no store choice.
             ApiKeySubmission::Reuse { target, source } => {
@@ -486,9 +465,7 @@ impl App {
                 let detail =
                     match ProviderAuthentication::shared_api_key(store, source, &target.auth) {
                         Ok(Some(key)) => {
-                            return self
-                                .persist_api_key_and_finish(target, key, terminal, agent)
-                                .await;
+                            return self.persist_api_key_and_finish(target, key, terminal).await;
                         }
                         Ok(None) => "it is no longer stored".to_string(),
                         Err(err) => err.to_string(),
@@ -506,107 +483,10 @@ impl App {
         target: LoginTarget,
         key: String,
         terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         self.cancel_limits_command().await;
         self.cancel_doctor_command().await;
-        if self.info.session.daemon.is_some() {
-            return self.save_daemon_api_key(target, key, terminal).await;
-        }
-        let saved = ProviderAuthentication::save_api_key(
-            self.credential_store.as_ref(),
-            &target.auth,
-            &key,
-        );
-        match saved {
-            Ok(()) => self.finish_login(target, terminal, agent).await,
-            Err(err) => {
-                self.insert_entry(&Entry::Error(err.to_string()));
-                self.set_status("login failed");
-                Ok(())
-            }
-        }
-    }
-
-    pub(super) async fn finish_login(
-        &mut self,
-        target: LoginTarget,
-        terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<()> {
-        if self.info.session.daemon.is_some() {
-            return self.finish_daemon_login(target, terminal).await;
-        }
-        // Write the keyed profile once. Later activate/reload failures must not
-        // leave a stored custom key behind as `auth = "none"`.
-        self.persist_login_auth(&target);
-        self.refresh_available_auths();
-        self.refresh_model_list_after_login(&target, terminal)
-            .await?;
-        if self.finish_decision_host_login(&target).await {
-            return Ok(());
-        }
-        if self.using_unavailable_provider {
-            if self.activate_provider_after_login(&target, agent).await? {
-                self.set_status(format!(
-                    "stored credentials for {} and selected {}",
-                    target.provider,
-                    rho_providers::provider::model_reference(
-                        &self.info.runtime.provider,
-                        &self.info.runtime.model,
-                    )
-                ));
-            }
-        } else if target.provider == self.info.runtime.provider {
-            if self
-                .reload_active_provider_after_login(&target, agent)
-                .await?
-            {
-                self.set_status(format!(
-                    "stored credentials for {} and refreshed the active provider. Switch models with /model when you want to use another provider.",
-                    target.provider
-                ));
-            }
-        } else if target.auth == "none" {
-            self.set_status(format!(
-                "{} is ready. Switch models with /model when you want to use it.",
-                target.provider
-            ));
-        } else {
-            self.set_status(format!(
-                "stored credentials for {}. Switch models with /model when you want to use it.",
-                target.provider
-            ));
-        }
-        self.announce_held_prompt_after_login();
-        self.advance_setup_screen_after_login(terminal);
-        self.report_resting_herdr_state().await;
-        Ok(())
-    }
-
-    pub(super) fn resolve_reasoning_after_login(
-        &mut self,
-        provider: &str,
-        model: &str,
-    ) -> Option<reasoning_metadata::ModelSwitchReasoningResolution> {
-        let capabilities =
-            rho_providers::model::models_dev::current_reasoning_capabilities(provider, model);
-        match reasoning_metadata::resolve_model_switch_reasoning(
-            &capabilities,
-            self.info.runtime.reasoning,
-            self.info.runtime.reasoning_source,
-            reasoning_metadata::ModelSwitchReasoningPolicy::PreserveExplicit,
-        ) {
-            Ok(reasoning) => Some(reasoning),
-            Err(requested) => {
-                self.insert_entry(&Entry::Error(format!(
-                    "stored credentials, but reasoning level '{requested}' is not supported by {}",
-                    rho_providers::provider::model_reference(provider, model)
-                )));
-                self.set_status("login saved");
-                None
-            }
-        }
+        self.save_daemon_api_key(target, key, terminal).await
     }
 
     /// Finishes a login to a host that serves decision models only, and
@@ -631,123 +511,9 @@ impl App {
         true
     }
 
-    async fn reload_active_provider_after_login(
-        &mut self,
-        target: &LoginTarget,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<bool> {
-        let provider = self.info.runtime.provider.clone();
-        let model = self.info.runtime.model.clone();
-        let Some(reasoning) = self.resolve_reasoning_after_login(&provider, &model) else {
-            return Ok(false);
-        };
-        let new_provider = match self
-            .build_provider_for_selection(&provider, &model, reasoning.effective, &target.auth)
-            .await
-        {
-            Ok(provider) => provider,
-            Err(err) => {
-                self.insert_entry(&Entry::Error(format!(
-                    "stored credentials, but could not refresh {}: {err}",
-                    target.provider
-                )));
-                self.set_status("login saved");
-                return Ok(false);
-            }
-        };
-
-        let activation = ProviderActivation {
-            provider,
-            model,
-            reasoning,
-            auth: target.auth.clone(),
-            replacement: new_provider,
-        };
-        match self.activate_provider(activation, agent).await? {
-            ProviderActivationOutcome::Saved => self.set_status("login saved"),
-            ProviderActivationOutcome::ConfigSaveFailed(err) => {
-                self.insert_entry(&Entry::Error(format!(
-                    "login applied, but saving config failed: {err}"
-                )));
-                self.set_status("config save failed");
-            }
-        }
-        Ok(true)
-    }
-
-    async fn activate_provider_after_login(
-        &mut self,
-        target: &LoginTarget,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<bool> {
-        let Some(model) = catalog::default_model_for_provider(&target.provider) else {
-            self.set_status(format!(
-                "stored credentials for {}, but no cached models are available. Run /refresh-models before switching to it.",
-                target.provider
-            ));
-            return Ok(false);
-        };
-        let Some(reasoning) = self.resolve_reasoning_after_login(&target.provider, &model) else {
-            return Ok(false);
-        };
-        let new_provider = match self
-            .build_provider_for_selection(
-                &target.provider,
-                &model,
-                reasoning.effective,
-                &target.auth,
-            )
-            .await
-        {
-            Ok(provider) => provider,
-            Err(err) => {
-                self.insert_entry(&Entry::Error(format!(
-                    "stored credentials, but could not activate {}: {err}",
-                    target.provider
-                )));
-                self.set_status("login saved");
-                return Ok(false);
-            }
-        };
-
-        let activation = ProviderActivation {
-            provider: target.provider.clone(),
-            model,
-            reasoning,
-            auth: target.auth.clone(),
-            replacement: new_provider,
-        };
-        match self.activate_provider(activation, agent).await? {
-            ProviderActivationOutcome::Saved => {
-                self.set_status(format!(
-                    "model: {}",
-                    rho_providers::provider::model_reference(
-                        &self.info.runtime.provider,
-                        &self.info.runtime.model,
-                    )
-                ));
-            }
-            ProviderActivationOutcome::ConfigSaveFailed(err) => {
-                self.insert_entry(&Entry::Error(format!(
-                    "selected {}, but saving config failed: {err}",
-                    rho_providers::provider::model_reference(
-                        &self.info.runtime.provider,
-                        &self.info.runtime.model,
-                    )
-                )));
-                self.set_status("config save failed");
-            }
-        }
-        Ok(true)
-    }
-
     /// Delete a Rho provider credential. See [`Self::start_login_for_provider`]
     /// for why the external runtime cannot arrive here.
-    pub(super) async fn logout_provider(
-        &mut self,
-        provider: &str,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<()> {
+    pub(super) async fn logout_provider(&mut self, provider: &str) -> anyhow::Result<()> {
         let provider = provider.trim();
         let Some(target) = catalog::login_target_for_provider(provider) else {
             if let Some(group) = catalog::login_group(provider) {
@@ -768,98 +534,14 @@ impl App {
 
         self.cancel_limits_command().await;
         self.cancel_doctor_command().await;
-        if self.info.session.daemon.is_some() {
-            return self.sign_out_of_daemon(&target).await;
-        }
-        let deleted = ProviderAuthentication::delete_credentials(
-            self.credential_store.as_ref(),
-            &target.auth,
-        );
-
-        match deleted {
-            Ok(deleted) => {
-                let forgot_login = match self.forget_endpoint_login(&target.provider) {
-                    Ok(forgot) => forgot,
-                    Err(err) => {
-                        self.insert_entry(&Entry::Error(format!(
-                            "could not remove the {} login from config: {err}",
-                            target.provider
-                        )));
-                        false
-                    }
-                };
-                self.refresh_available_auths();
-                let removed = RemovedLogin {
-                    forgot_login,
-                    deleted,
-                };
-                self.insert_entry(&Entry::Notice(removed.notice(&target)));
-                if self.invalidate_active_provider_if_needed(&target, forgot_login, agent) {
-                    self.insert_entry(&Entry::Notice(ACTIVE_PROVIDER_SIGNED_OUT.into()));
-                }
-                self.report_resting_herdr_state().await;
-                Ok(())
-            }
-            Err(err) => {
-                self.insert_entry(&Entry::Error(err.to_string()));
-                self.set_status("logout failed");
-                Ok(())
-            }
-        }
-    }
-
-    /// `forgot_login` is set when logout removed an endpoint login (Ollama),
-    /// which signs out every auth mode of that provider, keyless included.
-    fn invalidate_active_provider_if_needed(
-        &mut self,
-        target: &LoginTarget,
-        forgot_login: bool,
-        agent: &mut InteractiveRuntime,
-    ) -> bool {
-        if self.info.runtime.provider != target.provider
-            || (self.info.runtime.auth != target.auth && !forgot_login)
-        {
-            self.set_status("logout complete");
-            return false;
-        }
-        if ProviderAuthentication::has_credentials(self.credential_store.as_ref(), &target.auth)
-            .unwrap_or(false)
-        {
-            self.set_status("logout complete");
-            return false;
-        }
-
-        let error = registry::missing_credentials_error(&target.provider);
-        // Credentials are gone either way; only claim the stub is active after
-        // replace_provider succeeds (it rolls back on post-replace failures).
-        self.info.services.auth_unavailable = Some(error.to_string());
-        match agent.replace_provider(
-            std::sync::Arc::new(UnavailableProvider::new(error)),
-            self.info.runtime.reasoning,
-            &self.info.runtime.auth,
-        ) {
-            Ok(_) => {
-                self.cache_warm_provider_replaced();
-                self.using_unavailable_provider = true;
-                self.set_status(NO_PROVIDER_STATUS);
-            }
-            Err(swap_error) => {
-                // Runtime still holds the prior provider object.
-                self.using_unavailable_provider = false;
-                self.insert_entry(&Entry::Error(format!(
-                    "could not detach the logged-out provider: {swap_error}"
-                )));
-                self.set_status("logout complete; provider detach failed");
-            }
-        }
-        true
+        self.sign_out_of_daemon(&target).await
     }
 }
 
 /// What a logout of a login target removed.
 pub(super) struct RemovedLogin {
-    /// It removed an endpoint login (Ollama); see
-    /// [`App::forget_endpoint_login`].
+    /// It removed an endpoint login (Ollama), which signs out every auth
+    /// mode of that provider, keyless included.
     pub(super) forgot_login: bool,
     /// It deleted stored credentials.
     pub(super) deleted: bool,

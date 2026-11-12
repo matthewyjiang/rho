@@ -1,18 +1,15 @@
 //! `/add-dir [path]` adds a directory to the session's workspace scope.
 
-use super::{App, CommandInvocation, Entry, InteractiveRuntime};
-use crate::app::interactive_runtime::AddDirOutcome;
+use super::{App, CommandInvocation, Entry};
 
 impl App {
-    pub(super) async fn execute_add_dir_command(
+    pub(super) fn execute_add_dir_command(
         &mut self,
         invocation: &CommandInvocation,
-        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let raw = invocation.args.trim();
         if raw.is_empty() {
-            // Kept current by each add here, and by a daemon session's
-            // options.
+            // Kept current by the session's options.
             let dirs = self.info.runtime.added_dirs.as_slice();
             let listing = if dirs.is_empty() {
                 "none".to_string()
@@ -38,30 +35,7 @@ impl App {
                 return Ok(());
             }
         };
-        if self.info.session.daemon.is_some() {
-            // The daemon's notice says it was added; a refusal says why not.
-            return self.configure_daemon(rho_protocol::SessionChange::AddDirectory { path: dir });
-        }
-        match agent.add_dir(dir.clone()).await {
-            Ok(AddDirOutcome::Added) => {
-                self.insert_entry(&Entry::Notice(format!(
-                    "added directory {}",
-                    crate::paths::display(&dir)
-                )));
-                self.set_status("directory added");
-            }
-            Ok(AddDirOutcome::AlreadyCovered(root)) => {
-                self.insert_entry(&Entry::Notice(format!(
-                    "{} is already in scope through {}",
-                    crate::paths::display(&dir),
-                    crate::paths::display(&root)
-                )));
-            }
-            Err(error) => {
-                self.insert_entry(&Entry::Error(format!("could not add directory: {error}")));
-            }
-        }
-        self.info.runtime.added_dirs = agent.added_dirs().clone();
-        Ok(())
+        // The daemon's notice says it was added; a refusal says why not.
+        self.configure_daemon(rho_protocol::SessionChange::AddDirectory { path: dir })
     }
 }

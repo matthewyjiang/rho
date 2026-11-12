@@ -1,5 +1,5 @@
 use crossterm::event::{KeyCode, KeyEvent};
-use rho_sdk::{ApprovalDecision, PendingApproval};
+use rho_sdk::ApprovalDecision;
 use tokio::sync::oneshot;
 
 use super::{composer_pointer::ChoiceClick, App, ComposerMode, UserWait};
@@ -65,39 +65,12 @@ impl ApprovalChoice {
     }
 }
 
-/// Where an approval prompt's decision goes.
-#[derive(Debug)]
-// Unboxed: boxing the runtime's request only moves the same lint onto
-// `ComposerMode`, whose sizes it balances. T6 (#1667) deletes the runtime
-// variant with `InteractiveRuntime`.
-#[allow(clippy::large_enum_variant)]
-enum ApprovalResponder {
-    /// The in-process runtime's request.
-    Runtime(PendingApproval),
-    /// A channel its opener reads, as for a daemon session's request.
-    /// Dropped unanswered, it says nothing was decided.
-    Channel(Option<oneshot::Sender<ApprovalDecision>>),
-}
-
-impl ApprovalResponder {
-    fn respond(&mut self, decision: ApprovalDecision) {
-        match self {
-            Self::Runtime(pending) => {
-                let _ = pending.respond(decision);
-            }
-            Self::Channel(reply) => {
-                if let Some(reply) = reply.take() {
-                    let _ = reply.send(decision);
-                }
-            }
-        }
-    }
-}
-
 #[derive(Debug)]
 pub(super) struct ApprovalComposer {
     prompt: ApprovalPrompt,
-    responder: ApprovalResponder,
+    /// Where the decision goes. Dropped unanswered, it says nothing was
+    /// decided.
+    reply: Option<oneshot::Sender<ApprovalDecision>>,
     active: ApprovalChoice,
     /// First visible detail line, measured from the start of the request.
     detail_offset: usize,
@@ -106,10 +79,14 @@ pub(super) struct ApprovalComposer {
 }
 
 impl ApprovalComposer {
-    fn new(prompt: ApprovalPrompt, responder: ApprovalResponder, restore_side: bool) -> Self {
+    fn new(
+        prompt: ApprovalPrompt,
+        reply: oneshot::Sender<ApprovalDecision>,
+        restore_side: bool,
+    ) -> Self {
         Self {
             prompt,
-            responder,
+            reply: Some(reply),
             active: ApprovalChoice::Deny,
             detail_offset: 0,
             restore_side,
@@ -154,35 +131,25 @@ impl ApprovalComposer {
     }
 
     fn respond(&mut self, decision: ApprovalDecision) {
-        self.responder.respond(decision);
+        if let Some(reply) = self.reply.take() {
+            let _ = reply.send(decision);
+        }
     }
 }
 
 impl App {
-    pub(super) async fn open_approval(&mut self, pending: PendingApproval) {
-        let request = pending.request();
-        let prompt = ApprovalPrompt::of_capability(request.capability(), request.reason());
-        self.open_approval_prompt(prompt, ApprovalResponder::Runtime(pending))
-            .await;
-    }
-
     /// Opens the approval prompt for `prompt`, whose decision goes to
-    /// `reply`, as a daemon session's request does.
+    /// `reply`.
     pub(super) async fn open_replying_approval(
         &mut self,
         prompt: ApprovalPrompt,
         reply: oneshot::Sender<ApprovalDecision>,
     ) {
-        self.open_approval_prompt(prompt, ApprovalResponder::Channel(Some(reply)))
-            .await;
-    }
-
-    async fn open_approval_prompt(&mut self, prompt: ApprovalPrompt, responder: ApprovalResponder) {
         let restore_side = self.side_overlay_open();
         self.input_ui
             .set_composer(ComposerMode::Approval(ApprovalComposer::new(
                 prompt,
-                responder,
+                reply,
                 restore_side,
             )));
         self.set_status("approval requested");
@@ -262,14 +229,6 @@ impl App {
         approval.set_active(choice);
         if click == ChoiceClick::Double {
             self.finish_approval(None);
-        }
-    }
-
-    pub(super) fn cancel_approval(&mut self) {
-        if matches!(self.input_ui.composer(), ComposerMode::Approval(_)) {
-            self.finish_approval(Some(ApprovalDecision::Deny {
-                reason: crate::permission::DENIED_BY_USER.into(),
-            }));
         }
     }
 

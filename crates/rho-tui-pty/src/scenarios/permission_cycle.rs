@@ -180,15 +180,3 @@ pub(super) const QUEUED: Scenario = Scenario::new(
 )
 .with_setup(remember_config)
 .with_env(OPENAI_KEY_ENV);
-
-// Covers: a permission change asked for during a daemon turn says it is
-// queued for the next turn, in the in-process words, and applies after.
-// Owner: interactive TUI as a daemon client
-#[cfg(unix)]
-pub(super) const DAEMON_QUEUED: Scenario = Scenario {
-    id: "daemon_permission_cycle_queued",
-    description: "Queue a permission change during a daemon turn",
-    env: super::daemon_resume::DAEMON_ENV,
-    smoke: false,
-    ..QUEUED
-};

@@ -42,10 +42,7 @@ pub(super) const HEADER_HINTS_SCENARIO: Scenario = Scenario::new(
     /*smoke*/ false,
 )
 .with_setup(setup_hidden_hints)
-.with_env(&[
-    ("RHO_TUI_DAEMON", "1"),
-    ("OPENAI_API_KEY", "sk-test-matrix"),
-]);
+.with_env(&[("OPENAI_API_KEY", "sk-test-matrix")]);
 
 fn setup_hidden_hints(home: &IsolatedHome) -> Result<()> {
     write_daemon_config(home)?;

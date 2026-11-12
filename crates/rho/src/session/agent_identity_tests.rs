@@ -63,8 +63,7 @@ fn fresh_agent_identity_rewrite_preserves_append_and_resume() {
         );
         // A restart before any turn checkpoint must see both binding halves.
         let (reopened, _) =
-            Session::open_by_id_with_histories_in_root(root.path(), cwd.path(), session.id())
-                .unwrap();
+            Session::open_by_id_in_root(root.path(), cwd.path(), session.id()).unwrap();
         assert_eq!(reopened.stored_agent_identity().unwrap(), expected_identity);
         assert_eq!(reopened.root_agent().unwrap(), expected_root);
         assert_eq!(
@@ -87,17 +86,19 @@ fn fresh_agent_identity_rewrite_preserves_append_and_resume() {
             .rebind_fresh_delegated_agent("root", "old", /*initial_snapshot*/ None)
             .is_err());
         assert_eq!(fs::read(&session.path).unwrap(), before);
-        let (reopened, histories) =
-            Session::open_by_id_with_histories_in_root(root.path(), cwd.path(), session.id())
-                .unwrap();
+        let (reopened, history) =
+            Session::open_by_id_in_root(root.path(), cwd.path(), session.id()).unwrap();
         assert_eq!(reopened.stored_agent_identity().unwrap(), expected_identity);
         assert_eq!(
             reopened.delegated_agent_id().unwrap(),
             Some("restricted-child".into())
         );
-        assert_eq!(
-            (histories.model, histories.display),
-            (vec![message.clone()], vec![message])
-        );
+        let display: Vec<_> = reopened
+            .active_display_history()
+            .unwrap()
+            .into_iter()
+            .map(|row| row.message)
+            .collect();
+        assert_eq!((history, display), (vec![message.clone()], vec![message]));
     }
 }

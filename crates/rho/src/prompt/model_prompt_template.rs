@@ -10,13 +10,6 @@ use super::{
     PromptSource, PromptSourceKind, SystemPrompt, BASE_SYSTEM_PROMPT,
 };
 
-/// Instruction files remain cached within a session, including model switches.
-#[derive(Clone, Copy)]
-pub(crate) enum PromptSession {
-    Current,
-    Different,
-}
-
 /// Ordered assembly parts keep each retained section's text and provenance together.
 #[derive(Clone)]
 enum PromptPart {
@@ -27,8 +20,8 @@ enum PromptPart {
     ProjectInstructions(ProjectInstructions),
 }
 
-/// Snapshot of tool, skill and host context. Entering a different session reloads
-/// AGENTS.md; model switches only reload model-specific behavioral text.
+/// Snapshot of tool, skill and host context. Model switches reload only
+/// model-specific behavioral text.
 #[derive(Clone)]
 pub(crate) struct ModelPromptTemplate {
     home: Option<PathBuf>,
@@ -118,27 +111,6 @@ impl ModelPromptTemplate {
     /// A model switch preserves instruction files cached for the current session.
     pub(crate) fn build(&self, running: &PromptModel) -> anyhow::Result<SystemPrompt> {
         let selected = model_prompts::load(self.home.as_deref(), running)?;
-        Ok(self.render(running, selected.as_ref()))
-    }
-
-    /// Validate model prompts before refreshing instructions, then render once.
-    /// Tools, skills, and host context are retained without rediscovery.
-    pub(crate) fn build_for_session(
-        &mut self,
-        running: &PromptModel,
-        session: PromptSession,
-    ) -> anyhow::Result<SystemPrompt> {
-        let selected = model_prompts::load(self.home.as_deref(), running)?;
-        match session {
-            PromptSession::Current => {}
-            PromptSession::Different => {
-                for part in &mut self.parts {
-                    if let PromptPart::ProjectInstructions(instructions) = part {
-                        instructions.reload(self.home.as_deref());
-                    }
-                }
-            }
-        }
         Ok(self.render(running, selected.as_ref()))
     }
 

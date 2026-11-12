@@ -38,8 +38,7 @@ pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
     setup_workflow(&home)?;
     let runs = home.rho_home().join("workflows/runs");
     let plan = RhoLaunchPlan::matrix(&runner.binary, &home, DEFAULT_SIZE)
-        .with_env("OPENAI_API_KEY", "sk-test-matrix")
-        .with_env("RHO_TUI_DAEMON", "1");
+        .with_env("OPENAI_API_KEY", "sk-test-matrix");
     let spawn = |plan: &RhoLaunchPlan| -> Result<PtyHarness> {
         let mut harness = PtyHarness::spawn_named(plan, SCENARIO.id)?;
         harness.enable_timing(runner.record_timing);
@@ -58,7 +57,7 @@ pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
         harness.inject_key(&Key::Enter)?;
         assert_live_rail(&mut harness)?;
         // The prompt the hub sent for the start is the hub's spelling and
-        // has no row, as in process: the start's notice stands alone.
+        // has no row: the start's notice stands alone.
         assert_hub_prompt_hidden(&mut harness)?;
         let started = record_ids(&runs)?;
         ensure!(started.len() == 1, "the hub started one run: {started:?}");

@@ -27,8 +27,7 @@ pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
     let home = IsolatedHome::new()?;
     write_config(&home, "daemon-session-server")?;
     let plan = RhoLaunchPlan::matrix(&runner.binary, &home, DEFAULT_SIZE)
-        .with_env("OPENAI_API_KEY", "sk-test-matrix")
-        .with_env("RHO_TUI_DAEMON", "1");
+        .with_env("OPENAI_API_KEY", "sk-test-matrix");
     let spawn = |plan: &RhoLaunchPlan| -> Result<PtyHarness> {
         let mut harness = PtyHarness::spawn_named(plan, SCENARIO.id)?;
         harness.enable_timing(runner.record_timing);
@@ -51,7 +50,7 @@ pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
         );
 
         // The daemon keeps the active session and its original MCP config.
-        // Only the next client's unused in-process runtime sees this server.
+        // Only the next client's own config names this server.
         write_config(&home, "client-config-server")?;
         harness = spawn(&plan.clone().with_arg("--resume").with_arg(&session))?;
         harness.set_phase("inventory_bypasses_queued_configure");

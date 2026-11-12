@@ -1,5 +1,5 @@
-//! Opens the daemon session an interactive launch follows (#1667),
-//! from the CLI flags the in-process path would read.
+//! Opens the daemon session an interactive launch follows (#1667), from the
+//! launch's CLI flags.
 //!
 //! The daemon reads config for the session's workspace itself, so the
 //! flags that override this process's settings (`--provider`, `--model`,
@@ -59,7 +59,7 @@ pub(super) async fn open(
     if config_path.is_some() {
         // The daemon's sessions share the config in its Rho home.
         anyhow::bail!(
-            "--config is not supported in a daemon session: the daemon reads the config in its Rho home; set RHO_HOME to run on another, or RHO_TUI_DAEMON=0 to keep this session in process"
+            "--config is not supported in a daemon session: the daemon reads the config in its Rho home; set RHO_HOME to run on another"
         );
     }
 
@@ -114,8 +114,8 @@ pub(super) async fn open(
             // The TUI follows the session, so it shows the turn the daemon
             // starts when a workflow or background process finishes.
             idle_wake: IdleWake::Turn,
-            // A session without a login opens signed out, as in process,
-            // and the TUI offers /login.
+            // A session without a login opens signed out, and the TUI
+            // offers /login.
             sign_in: SignIn::Later,
         },
     };
@@ -138,8 +138,8 @@ pub(super) async fn open(
     }
     let target = match startup {
         StartupSession::Fresh | StartupSession::Picker => tui::DaemonTarget::New,
-        // Resolve as in process, but never take the writer lease from
-        // the daemon that may still be running this session's turn.
+        // Resolve the id, but never take the writer lease from the daemon
+        // that may still be running this session's turn.
         StartupSession::ById(prefix) => {
             resumed(Session::resolve_target(cwd, prefix)?, agent, bound)?
         }
@@ -149,8 +149,7 @@ pub(super) async fn open(
 }
 
 /// Resuming `session`. It runs as the agent it was saved as, so `--agent`
-/// may only name that one, unchanged since, as when the session is resumed
-/// in process.
+/// may only name that one, unchanged since.
 fn resumed(
     session: crate::session::SessionTarget,
     agent: &Option<String>,

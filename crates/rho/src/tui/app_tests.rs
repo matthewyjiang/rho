@@ -1,6 +1,6 @@
 use super::{
     command_palette::{complete_slash_command, slash_command_args},
-    message_history::{generated_image_entry, transcript_entries_from_messages},
+    event_adapter::ViewModelEvent,
     paste_burst::normalize_paste,
     transcript_events::final_answer_delta,
     *,
@@ -11,7 +11,7 @@ use ratatui::text::Line;
 use rho_providers::credentials::{
     save_provider_api_key, CredentialError, CredentialResult, MemoryCredentialStore,
 };
-use std::sync::atomic::AtomicBool;
+use std::time::Instant;
 
 #[path = "tests/activity_phase_tests.rs"]
 mod activity_phase_tests;
@@ -23,8 +23,6 @@ mod questionnaire_interaction_tests;
 mod reasoning_chrome_tests;
 #[path = "tests/shell_composer_tests.rs"]
 mod shell_composer_tests;
-#[path = "tests/subagent_notification_tests.rs"]
-mod subagent_notification_tests;
 #[path = "tests/usage_tests.rs"]
 mod usage_tests;
 
@@ -61,7 +59,6 @@ pub(super) fn test_bootstrap() -> TuiBootstrap {
             zen_mode: false,
             advisor_mode: false,
             cache_miss_notices: false,
-            keep_cache_warm: true,
             prompt_cache_ttl: crate::config::ProviderConfigs::DEFAULT_PROMPT_CACHE_TTL,
             show_header_hints: true,
             notifications: true,
@@ -76,11 +73,10 @@ pub(super) fn test_bootstrap() -> TuiBootstrap {
         session: SessionBootstrap {
             no_save: false,
             session_id: None,
-            recovered_messages: Vec::new(),
             open_resume_picker: false,
             resume_launch: Default::default(),
             startup_prompt: None,
-            daemon: None,
+            daemon: crate::tui::DaemonSession::ended_for_tests(PathBuf::from("/tmp/project")),
         },
         services: ApplicationServices {
             config_repository: ConfigRepository::temporary_for_tests().unwrap(),
@@ -111,9 +107,6 @@ pub(super) fn test_app() -> App {
     App::new_with_credentials(
         test_bootstrap(),
         store,
-        crate::tools::mcp::McpSessionReport::default(),
-        crate::tools::mcp::McpCatalog::default(),
-        crate::plugins::PluginLoadReport::default(),
         super::program_status::ProgramStatusSupport::Unsupported,
     )
 }
@@ -161,18 +154,6 @@ fn minimum_terminal_layout_keeps_composer_visible() {
     );
     assert_eq!(layout.statusline.height, 2);
     assert_eq!(layout.bottom_divider.height, 1);
-}
-
-#[test]
-fn interrupt_during_tool_ends_turn_immediately() {
-    let mut app = test_app();
-    let interrupt_requested = AtomicBool::new(false);
-    let tool_call_active = AtomicBool::new(true);
-
-    let control = app.request_running_interrupt(&interrupt_requested, &tool_call_active);
-
-    assert!(interrupt_requested.load(Ordering::SeqCst));
-    assert!(matches!(control, StreamControl::Interrupt));
 }
 
 #[test]
@@ -318,116 +299,6 @@ fn normalize_paste_converts_carriage_returns() {
 }
 
 #[test]
-fn recovered_session_messages_become_transcript_entries() {
-    let entries = transcript_entries_from_messages(
-        &[
-            Message::System("system".into()),
-            Message::User(vec![
-                ContentBlock::Text("hello".into()),
-                ContentBlock::Image(ImageContent {
-                    data: "aW1n".into(),
-                    mime_type: "image/png".into(),
-                }),
-            ]),
-            Message::Assistant(vec![ContentBlock::Text("hi".into())]),
-            Message::Assistant(vec![ContentBlock::ToolCall(
-                rho_tools::tool::ToolCall::new(
-                    "call_1".into(),
-                    "read_file".into(),
-                    serde_json::json!({"path": "src/main.rs"}),
-                ),
-            )]),
-            Message::ToolResult(rho_tools::tool::ToolResult::failed(
-                "call_1",
-                "missing file",
-            )),
-        ],
-        std::path::Path::new(""),
-        Default::default(),
-    );
-
-    assert!(matches!(entries[0], Entry::User(ref text) if text == "hello\n[image: image/png 3 B]"));
-    assert!(matches!(entries[1], Entry::Assistant(ref assistant) if assistant.text == "hi"));
-    assert!(matches!(
-        entries[2],
-        Entry::Tool(ToolEntry {
-            presentation: rho_protocol::display::Presentation::Card(ref card),
-            ..
-        }) if card.header_text().contains("read_file")
-            && card.header_text().contains("src/main.rs")
-            && card.status == rho_protocol::display::ToolCardStatus::Error
-    ));
-}
-
-// Covers: recovered assistant images become summary cards, not decoded previews.
-// Owner: tui transcript reconstruction
-#[test]
-fn recovered_assistant_images_become_summary_cards() {
-    use rho_protocol::display::{ToolFact, ToolHeader};
-    use rho_providers::model::image_summary;
-
-    let image = ImageContent {
-        data: "aW1n".into(),
-        mime_type: "image/png".into(),
-    };
-    let entries = transcript_entries_from_messages(
-        &[Message::Assistant(vec![ContentBlock::Image(image.clone())])],
-        std::path::Path::new(""),
-        Default::default(),
-    );
-    let Entry::Tool(tool) = &entries[0] else {
-        panic!("expected generated image card");
-    };
-    let rho_protocol::display::Presentation::Card(card) = &tool.presentation else {
-        panic!("expected generated image card");
-    };
-    assert_eq!(card.header, ToolHeader::call("image_generation", None));
-    assert!(tool.image.is_none());
-    assert_eq!(
-        card.facts,
-        vec![
-            ToolFact::Text {
-                text: image_summary(&image),
-            },
-            ToolFact::Meta {
-                text: "finished".into(),
-            },
-        ]
-    );
-}
-
-// Covers: a failed live preview still becomes an image card with the error fact.
-// Owner: tui transcript reconstruction
-#[test]
-fn generated_image_entry_records_preview_errors() {
-    use rho_protocol::display::{ToolFact, ToolHeader};
-
-    let image = ImageContent {
-        data: "aW1n".into(),
-        mime_type: "image/png".into(),
-    };
-    let Entry::Tool(tool) = generated_image_entry(Err("boom".into()), &image) else {
-        panic!("expected generated image card");
-    };
-    let rho_protocol::display::Presentation::Card(card) = &tool.presentation else {
-        panic!("expected generated image card");
-    };
-    assert_eq!(card.header, ToolHeader::call("image_generation", None));
-    assert!(tool.image.is_none());
-    assert_eq!(
-        card.facts,
-        vec![
-            ToolFact::Error {
-                text: "image preview unavailable: boom".into(),
-            },
-            ToolFact::Meta {
-                text: "finished".into(),
-            },
-        ]
-    );
-}
-
-#[test]
 fn final_answer_delta_handles_unstreamed_suffix_and_mismatch() {
     assert_eq!(
         final_answer_delta("", "final"),
@@ -442,41 +313,6 @@ fn final_answer_delta_handles_unstreamed_suffix_and_mismatch() {
         final_answer_delta("hello", "goodbye"),
         FinalAnswerDelta::Mismatch
     );
-}
-
-#[test]
-fn final_answer_mismatch_replaces_transcript_without_duplicating_entry() {
-    for (case, answer) in [("non-empty answer", "final"), ("empty answer", "")] {
-        let mut app = test_app();
-        app.push_transcript_entry(Entry::Assistant("streamed".into()));
-
-        app.replace_current_turn_assistant_transcript(answer);
-
-        assert!(
-            matches!(
-                app.history.entries(),
-                [Entry::Assistant(assistant)] if assistant.text == answer
-            ),
-            "{case}"
-        );
-    }
-}
-
-#[test]
-fn final_answer_mismatch_replaces_interleaved_current_turn_assistant_fragments() {
-    let mut app = test_app();
-    app.push_transcript_entry(Entry::User("prompt".into()));
-    app.turn.set_current_turn_start(Some(app.history.len()));
-    app.push_transcript_entry(Entry::Assistant("hel".into()));
-    app.push_transcript_entry(Entry::Reasoning("thinking".into()));
-    app.push_transcript_entry(Entry::Assistant("lo".into()));
-
-    app.replace_current_turn_assistant_transcript("goodbye");
-
-    assert!(matches!(
-        app.history.entries(),
-        [Entry::User(_), Entry::Assistant(assistant), Entry::Reasoning(_)] if assistant.text == "goodbye"
-    ));
 }
 
 #[test]

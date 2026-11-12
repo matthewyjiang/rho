@@ -800,17 +800,15 @@ for line in sys.stdin:
     bundle.shutdown().await;
 }
 
-// Covers: the two server-to-client services must behave the same on the wire as
-// they do in isolation. Rho declares elicitation only when the run can ask a
-// person and sampling only for a server that opted in, an elicitation it cannot
-// put in front of anyone comes back as a decline rather than an invented
-// answer, a server that did not opt in gets `sampling/createMessage` refused as
-// unknown, and an opted-in server whose run has no model bound is refused too.
+// Covers: Rho declares elicitation when the run can ask a person and sampling
+// to no server, even one whose config opts in; an elicitation it cannot put in
+// front of anyone comes back as a decline rather than an invented answer, and
+// every `sampling/createMessage` is refused as unknown.
 // Prerequisite: `python3` must be available on PATH (Unix-gated test).
 // Owner: MCP server-to-client protocol boundary.
 #[cfg(unix)]
 #[tokio::test]
-async fn elicitation_and_sampling_are_served_under_their_gates() {
+async fn elicitation_is_served_and_sampling_refused() {
     let _guard = MCP_CONNECT_TEST_LOCK.lock().await;
     let directory = tempfile::tempdir().unwrap();
     let script = directory.path().join("server.py");
@@ -907,11 +905,8 @@ while True:
         ]),
         invalid_servers: Vec::new(),
     };
-    // The bridge is deliberately left unbound: this run offers sampling but
-    // never binds a model, which is exactly the fail-closed case.
-    let options = test_options()
-        .with_elicitation(crate::tools::mcp::McpElicitationSupport::Available)
-        .with_sampling(crate::tools::mcp::McpSamplingBridge::new());
+    let options =
+        test_options().with_elicitation(crate::tools::mcp::McpElicitationSupport::Available);
     let outcome = McpBundle::connect(&config, options).await;
     let bundle = outcome.bundle.unwrap();
     let cancellation = CancellationToken::new();
@@ -941,22 +936,18 @@ while True:
     assert_eq!(declared["sampling"], serde_json::Value::Null);
     let declared: serde_json::Value =
         serde_json::from_str(&call("mcp__offered__capabilities").await).unwrap();
-    assert_eq!(declared["sampling"], serde_json::json!({}));
+    assert_eq!(declared["sampling"], serde_json::Value::Null);
 
     // No host in this run answers questionnaires, so the question has nowhere
     // to go and the server is told so rather than given an answer.
     let elicited: serde_json::Value = serde_json::from_str(&call("mcp__plain__ask").await).unwrap();
     assert_eq!(elicited, serde_json::json!({"action": "decline"}));
 
-    let unoffered: serde_json::Value =
-        serde_json::from_str(&call("mcp__plain__sample").await).unwrap();
-    assert_eq!(unoffered["code"], serde_json::json!(-32601));
-    let unbound: serde_json::Value =
-        serde_json::from_str(&call("mcp__offered__sample").await).unwrap();
-    assert_eq!(
-        unbound["message"],
-        serde_json::json!("Rho has no model bound for MCP sampling in this run")
-    );
+    for server in ["plain", "offered"] {
+        let refused: serde_json::Value =
+            serde_json::from_str(&call(&format!("mcp__{server}__sample")).await).unwrap();
+        assert_eq!(refused["code"], serde_json::json!(-32601), "{server}");
+    }
 
     bundle.shutdown().await;
 }

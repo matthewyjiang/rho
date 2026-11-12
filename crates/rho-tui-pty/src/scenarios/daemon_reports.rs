@@ -34,8 +34,7 @@ pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
         .join("shared-notes");
     std::fs::create_dir(&extra)?;
     let plan = RhoLaunchPlan::matrix(&runner.binary, &home, DEFAULT_SIZE)
-        .with_env("OPENAI_API_KEY", "sk-test-matrix")
-        .with_env("RHO_TUI_DAEMON", "1");
+        .with_env("OPENAI_API_KEY", "sk-test-matrix");
     let spawn = |plan: &RhoLaunchPlan| -> Result<PtyHarness> {
         let mut harness = PtyHarness::spawn_named(plan, SCENARIO.id)?;
         harness.enable_timing(runner.record_timing);

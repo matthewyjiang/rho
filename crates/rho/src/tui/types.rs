@@ -89,8 +89,6 @@ pub(super) struct SessionHeaderCache {
 pub(super) struct InteractiveModelSelection {
     pub(in crate::tui) selection: ModelSelection,
     pub(in crate::tui) alias: Option<String>,
-    pub(in crate::tui) reasoning_policy:
-        crate::app::conversation_switch::ModelSwitchReasoningPolicy,
 }
 
 /// Live assistant/reasoning stream UI state owned by [`super::App`].
@@ -222,7 +220,6 @@ pub(super) enum StatusSource {
 pub(super) enum InputSubmissionMode {
     #[default]
     ParseCommands,
-    Prompt,
 }
 
 #[derive(Debug, Default)]
@@ -276,13 +273,6 @@ impl ComposerMode {
             | Self::Panel(_)
             | Self::TranscriptSearch(_)
             | Self::Side => true,
-        }
-    }
-
-    pub(super) fn blocks_auto_continue(&self) -> bool {
-        match self {
-            Self::InlineChoice(modal) => modal.blocks_auto_continue(),
-            _ => false,
         }
     }
 
@@ -352,29 +342,12 @@ impl PasteSegment {
     }
 }
 
-#[derive(Debug)]
-pub(super) struct SessionTitleResult {
-    pub(in crate::tui) session_id: String,
-    pub(in crate::tui) title: anyhow::Result<String>,
-}
-
 #[derive(Clone, Debug)]
 pub(super) struct CommandChoice {
     pub(in crate::tui) name: String,
     pub(in crate::tui) usage: String,
     pub(in crate::tui) description: String,
     pub(in crate::tui) kind: CommandChoiceKind,
-}
-
-#[derive(Debug, PartialEq)]
-pub(super) enum TurnOutcome {
-    Completed,
-    Interrupted,
-    /// User cancelled interactive work such as a questionnaire.
-    Cancelled,
-    Failed {
-        message: String,
-    },
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -390,13 +363,6 @@ pub(super) enum HistoryScroll {
 pub(super) enum CommandChoiceKind {
     Builtin(&'static CommandSpec),
     BuiltinArgument(&'static commands::CommandArgumentChoice),
-    PromptTemplate(String),
-    Skill,
-    /// `/workflow:<name>`: starts a workspace workflow on submit.
-    Workflow,
-    /// A prompt offered by a connected MCP server. Expanded on submit, because
-    /// `prompts/get` is a round-trip the palette cannot make.
-    McpPrompt,
     /// A daemon-advertised command, completed verbatim and resolved by its host.
     SessionCommand,
     /// One value a server suggested for the prompt argument under the cursor.

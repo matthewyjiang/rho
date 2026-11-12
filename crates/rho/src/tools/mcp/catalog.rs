@@ -200,12 +200,6 @@ impl McpCatalog {
         McpCatalogHandle { server }
     }
 
-    pub(crate) fn is_empty(&self) -> bool {
-        self.read()
-            .iter()
-            .all(|server| server.entry().prompts.is_empty() && server.entry().resources.is_empty())
-    }
-
     /// Every prompt, ordered by server then prompt name so palette results are
     /// stable between keystrokes.
     pub(crate) fn prompts(&self) -> Vec<McpPrompt> {

@@ -1,22 +1,6 @@
 use std::sync::Arc;
 
 use crate::agent::{AgentCapabilities, ToolCapability};
-use rho_sdk::tool::Tool;
-
-/// Build the mid-session/startup edit tool with one shared options policy.
-pub(super) fn edit_tool(
-    edit_format: rho_tools::EditFormat,
-    max_output_bytes: usize,
-    mutation_observer: Arc<dyn rho_tools::WorkspaceMutationObserver>,
-) -> Arc<dyn Tool> {
-    rho_tools::coding_tool(
-        rho_tools::CodingToolKind::Edit,
-        rho_tools::CodingToolOptions::new()
-            .max_output_bytes(max_output_bytes)
-            .edit_tool(edit_format)
-            .mutation_observer(mutation_observer),
-    )
-}
 
 pub(super) fn sdk_bundle(
     capabilities: &AgentCapabilities,
