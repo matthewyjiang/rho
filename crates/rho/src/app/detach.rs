@@ -189,6 +189,12 @@ async fn start(
             _ => AutomationExit::other(message),
         }
     })?;
+    crate::worktree::require(new.worktree, opened.worktree.as_ref())
+        .map_err(|error| AutomationExit::configuration(error.to_string()))?;
+    // Before the prompt, so a turn that fails to start still names it.
+    if let Some(worktree) = &opened.worktree {
+        let _ = writeln!(io::stderr(), "rho: {}", crate::worktree::hint(worktree));
+    }
     let session = opened.session;
     client
         .request::<SessionPrompt>(&SessionPromptParams {
@@ -218,10 +224,7 @@ async fn start(
             "could not write the session id {session}: {error}; the turn runs on in the daemon"
         ))
     })?;
-    // Only hints: the run already succeeded.
-    if let Some(worktree) = &opened.worktree {
-        let _ = writeln!(io::stderr(), "rho: {}", crate::worktree::hint(worktree));
-    }
+    // Only a hint: the run already succeeded.
     let _ = writeln!(
         io::stderr(),
         "rho: the turn runs in the daemon; follow it with `rho attach {session}`"

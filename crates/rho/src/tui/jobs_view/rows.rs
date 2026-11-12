@@ -89,10 +89,7 @@ pub(super) fn groups(jobs: &[JobSummary], filter: &str) -> Vec<Group> {
             .is_none_or(|parent| !ids.contains(parent))
     });
     for root in roots {
-        let project = root
-            .worktree
-            .as_ref()
-            .map_or(root.workspace.as_path(), |worktree| &worktree.origin);
+        let project = root.project();
         let mut stack = vec![(*root, 0)];
         while let Some((job, depth)) = stack.pop() {
             let row = row(job, depth);

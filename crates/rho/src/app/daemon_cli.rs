@@ -385,21 +385,28 @@ async fn status(paths: &DaemonPaths, json: bool) -> anyhow::Result<()> {
     if json {
         println!("{}", serde_json::to_string_pretty(&status)?);
     } else {
-        let jobs = client
-            .request::<methods::JobList>(&JobListParams {})
-            .await?;
-        let worktrees: Vec<_> = jobs
-            .jobs
-            .into_iter()
-            .filter_map(|job| job.worktree)
-            .collect();
+        // Only what is still on disk: a person removes worktrees, not the
+        // daemon. A list the daemon cannot give drops the row, not the
+        // status.
+        let worktrees: Vec<_> = match client.request::<methods::JobList>(&JobListParams {}).await {
+            Ok(jobs) => jobs
+                .jobs
+                .into_iter()
+                .filter_map(|job| job.worktree)
+                .filter(|worktree| worktree.path.exists())
+                .collect(),
+            Err(error) => {
+                tracing::debug!(%error, "could not list the daemon's jobs");
+                Vec::new()
+            }
+        };
         print!("{}", status_text(&status, &worktrees));
     }
     Ok(())
 }
 
-/// The status text, with the worktrees the daemon's sessions work in, which
-/// it never removes (#1673).
+/// The status text, with the worktrees the daemon's sessions work in that
+/// are still there (#1673).
 fn status_text(status: &DaemonStatus, worktrees: &[SessionWorktree]) -> String {
     let DaemonStatus {
         pid,

@@ -246,9 +246,10 @@ impl JobsView {
 
     /// Sends `request` without waiting; a refusal becomes the notice
     /// `could not <what>: <why>`.
-    fn send<F>(&self, what: &'static str, request: impl FnOnce(Arc<Daemon>) -> F)
+    fn send<F, E>(&self, what: &'static str, request: impl FnOnce(Arc<Daemon>) -> F)
     where
-        F: std::future::Future<Output = Result<(), DaemonError>> + Send + 'static,
+        F: std::future::Future<Output = Result<(), E>> + Send + 'static,
+        E: std::fmt::Display,
     {
         let notice = Arc::clone(&self.notice);
         let request = request(Arc::clone(&self.daemon));
@@ -356,14 +357,10 @@ impl JobsView {
     }
 
     fn begin_new_session(&mut self) {
+        // A session in a worktree offers the project it came from.
         let workspace = self.selected_job().map_or_else(
             || self.launch.cwd.clone(),
-            // A session in a worktree offers the project it came from.
-            |job| {
-                job.worktree
-                    .as_ref()
-                    .map_or_else(|| job.workspace.clone(), |worktree| worktree.origin.clone())
-            },
+            |job| job.project().to_path_buf(),
         );
         self.mode = Mode::NewWorkspace {
             path: workspace.to_string_lossy().into_owned(),
@@ -446,8 +443,10 @@ impl JobsView {
                         grant: None,
                         worktree,
                     };
-                    let session = daemon.request::<SessionNew>(&params).await?.session;
-                    prompt(daemon, session, text).await
+                    let opened = daemon.request::<SessionNew>(&params).await?;
+                    // Nothing runs in a checkout the person kept it out of.
+                    crate::worktree::require(worktree, opened.worktree.as_ref())?;
+                    Ok::<_, anyhow::Error>(prompt(daemon, opened.session, text).await?)
                 });
             }
         }

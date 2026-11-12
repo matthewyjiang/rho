@@ -240,6 +240,11 @@ rho attach "$SESSION"
   `rho attach` or prompt reopens it.
 - Slash commands resolve as they do in a foreground run, and `/compact` and
   `/workflow:<name>` run too; TUI-only commands fail with exit 2.
+- `--output`, `--output-file`, `--max-steps`, and `--no-save` do not apply and
+  are refused.
+- Unlike a foreground run's, the session is listed like one you had yourself,
+  and titled in the background after its first answered turn with one small
+  model call, as the TUI titles its sessions.
 - `--worktree` has the daemon open the session in a git worktree of its own,
   as described below.
 
@@ -269,11 +274,6 @@ git branch -D rho/api-3fa2c1d0
 
 `rho daemon status` lists the worktrees of the daemon's sessions, and
 `git worktree list` lists every worktree of a repository.
-- `--output`, `--output-file`, `--max-steps`, and `--no-save` do not apply and
-  are refused.
-- Unlike a foreground run's, the session is listed like one you had yourself,
-  and titled in the background after its first answered turn with one small
-  model call, as the TUI titles its sessions.
 
 ### Attaching to a daemon session
 

@@ -4,15 +4,13 @@
 //! with `--worktree` runs in a git worktree the daemon adds for it. Which
 //! flags it refuses is `cli_config`'s, tested there.
 
-use std::{
-    path::Path,
-    process::{Command, Output, Stdio},
-};
+use std::process::{Output, Stdio};
 
 use pretty_assertions::assert_eq;
 use rho_protocol::{JobState, Operation, PathScope, SessionId};
 
 use super::{
+    git_repo::{git, init_repo},
     sessions::{settled_job, Sandbox, REPLY},
     setup::{asked_operation, extra_dir},
 };
@@ -164,43 +162,6 @@ async fn a_detached_run_passes_its_added_directories_to_the_daemon() {
         "log:\n{}",
         sandbox.isolated.daemon_log()
     );
-}
-
-/// Runs `git args` in `dir` with an identity and no signing, whatever the
-/// machine's config, and returns its trimmed stdout.
-pub(super) fn git(dir: &Path, args: &[&str]) -> String {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args([
-            "-c",
-            "user.name=rho",
-            "-c",
-            "user.email=rho@example.com",
-            "-c",
-            "commit.gpgsign=false",
-        ])
-        .args(args)
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .env_remove("GIT_INDEX_FILE")
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "git {args:?}: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8(output.stdout).unwrap().trim().to_owned()
-}
-
-/// Makes `dir` a git repository whose one commit has `shared.txt` say
-/// "base".
-pub(super) fn init_repo(dir: &Path) {
-    git(dir, &["init", "--quiet", "--initial-branch=main"]);
-    std::fs::write(dir.join("shared.txt"), "base").unwrap();
-    git(dir, &["add", "shared.txt"]);
-    git(dir, &["commit", "--quiet", "-m", "base"]);
 }
 
 // Covers: two `rho run --detach --worktree` runs in one repository write

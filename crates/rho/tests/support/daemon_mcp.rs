@@ -829,7 +829,7 @@ async fn a_host_starts_a_session_in_a_worktree_over_mcp() {
     let sandbox = Sandbox::new();
     sandbox.set_permission_mode("bypass");
     let workspace = elsewhere(&sandbox);
-    crate::detach::init_repo(&workspace);
+    crate::git_repo::init_repo(&workspace);
     let host = stdio_server(&sandbox, "tool-call", &[], &[]).await;
 
     let started = call(
@@ -856,10 +856,10 @@ async fn a_host_starts_a_session_in_a_worktree_over_mcp() {
         (
             ended["state"].clone(),
             worktree["origin"].clone(),
-            crate::detach::git(&path, &["branch", "--show-current"]),
+            crate::git_repo::git(&path, &["branch", "--show-current"]),
             std::fs::read_to_string(path.join("where.txt")).unwrap(),
             listed["sessions"][0]["worktree"].clone(),
-            crate::detach::git(&workspace, &["status", "--porcelain"]),
+            crate::git_repo::git(&workspace, &["status", "--porcelain"]),
         ),
         (
             json!("completed"),

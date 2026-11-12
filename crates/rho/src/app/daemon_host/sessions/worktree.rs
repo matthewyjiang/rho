@@ -10,7 +10,7 @@ use super::open::Workspace;
 
 /// Adds a worktree under `root` for a session asked to open in
 /// `workspace`: the workspace in it the session opens in, and the worktree.
-pub(super) async fn add(
+pub(super) async fn add_for_session(
     root: &Path,
     workspace: &Workspace,
 ) -> Result<(Workspace, SessionWorktree), RpcError> {
@@ -27,7 +27,9 @@ pub(super) async fn add(
         path = %added.worktree.path.display(),
         "added a session worktree"
     );
-    Ok((Workspace::parse(&added.cwd)?, added.worktree))
+    let workspace =
+        Workspace::parse(&added.cwd).map_err(|error| kept(error, Some(&added.worktree)))?;
+    Ok((workspace, added.worktree))
 }
 
 /// `error`, of a session that failed to open, naming the worktree added for

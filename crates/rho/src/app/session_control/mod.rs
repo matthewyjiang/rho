@@ -165,12 +165,14 @@ impl SessionControl {
             .into_iter()
             .filter(|job| job.kind == JobKind::Session)
             .filter(|job| {
-                workspaces_of(job).any(|place| caller.grant.scope.workspaces.allows(place))
+                workspaces_of(job)
+                    .into_iter()
+                    .any(|place| caller.grant.scope.workspaces.allows(place))
             })
             .filter(|job| {
                 workspace
                     .as_ref()
-                    .is_none_or(|only| workspaces_of(job).any(|place| place == only))
+                    .is_none_or(|only| workspaces_of(job).into_iter().any(|place| place == only))
             })
             .filter(|job| params.state.is_none_or(|state| job.state == state))
             .filter_map(|job| SessionEntry::of_job(job, &writers))
@@ -211,6 +213,10 @@ impl SessionControl {
                 worktree: params.worktree,
             })
             .await?;
+        // Before the first turn, so nothing runs in a checkout the caller
+        // asked to keep out of.
+        crate::worktree::require(params.worktree, opened.worktree.as_ref())
+            .map_err(|error| ControlError::Invalid(error.to_string()))?;
         if let Some(model) = params.model {
             let model = choose_model(&opened.options.model.available, &model)?;
             self.daemon
@@ -358,38 +364,31 @@ impl SessionControl {
 
     /// The workspace of `session`, which must be one the daemon knows,
     /// in the caller's grant's workspaces. A session in a worktree is in
-    /// them when the workspace the worktree was added from is.
+    /// them when its project is.
     async fn reach_session(
         &self,
         caller: &Caller,
         session: &SessionId,
     ) -> Result<PathBuf, ControlError> {
-        let (workspace, origin) = self.workspace_of(session).await?;
-        match origin {
-            Some(origin) if caller.grant.scope.workspaces.allows(&origin) => {}
-            Some(_) | None => caller.grant.reach(&workspace)?,
+        let place = self.place_of(session).await?;
+        if !caller.grant.scope.workspaces.allows(&place.project) {
+            caller.grant.reach(&place.workspace)?;
         }
-        Ok(workspace)
+        Ok(place.workspace)
     }
 
-    /// The workspace of `session`: its job's, or, for a saved session no
-    /// daemon has run, the catalog's; and for a session in a worktree, the
-    /// workspace the worktree was added from.
-    async fn workspace_of(
-        &self,
-        session: &SessionId,
-    ) -> Result<(PathBuf, Option<PathBuf>), ControlError> {
+    /// Where `session` works: its job's workspace and project, or, for a
+    /// saved session no daemon has run, the catalog's workspace.
+    async fn place_of(&self, session: &SessionId) -> Result<Place, ControlError> {
         let jobs = self.jobs().await?;
         if let Some(job) = jobs
             .iter()
             .find(|job| job.session.as_ref() == Some(session))
         {
-            return Ok((
-                job.workspace.clone(),
-                job.worktree
-                    .as_ref()
-                    .map(|worktree| worktree.origin.clone()),
-            ));
+            return Ok(Place {
+                workspace: job.workspace.clone(),
+                project: job.project().to_path_buf(),
+            });
         }
         let mut cursor = None;
         loop {
@@ -402,7 +401,10 @@ impl SessionControl {
                 })
                 .await?;
             if let Some(saved) = page.sessions.iter().find(|saved| &saved.session == session) {
-                return Ok((saved.cwd.clone(), None));
+                return Ok(Place {
+                    workspace: saved.cwd.clone(),
+                    project: saved.cwd.clone(),
+                });
             }
             match page.next_cursor {
                 Some(next) => cursor = Some(next),
@@ -442,19 +444,22 @@ impl SessionControl {
     }
 }
 
-/// The catalog page `workspace_of` walks: the daemon's largest
+/// The catalog page `place_of` walks: the daemon's largest
 /// (`rho/session/list` refuses more than 1000).
 const CATALOG_PAGE: u32 = 1000;
 
+/// Where a session works: its workspace, and the project it works for,
+/// which for a session in a worktree is the workspace the worktree was
+/// added from (`JobSummary::project`).
+struct Place {
+    workspace: PathBuf,
+    project: PathBuf,
+}
+
 /// The workspaces `job` counts as in, for the grant and `list`'s filter: its
-/// own, and for a session in a worktree, the one the worktree was added
-/// from.
-fn workspaces_of(job: &JobSummary) -> impl Iterator<Item = &Path> {
-    std::iter::once(job.workspace.as_path()).chain(
-        job.worktree
-            .iter()
-            .map(|worktree| worktree.origin.as_path()),
-    )
+/// own and its project.
+fn workspaces_of(job: &JobSummary) -> [&Path; 2] {
+    [job.workspace.as_path(), job.project()]
 }
 
 /// `path` resolved through symlinks, as the daemon records workspaces.

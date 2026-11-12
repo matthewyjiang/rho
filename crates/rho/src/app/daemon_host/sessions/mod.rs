@@ -619,7 +619,8 @@ impl Sessions {
         let (workspace, worktree) = match worktree {
             false => (workspace, None),
             true => {
-                let (workspace, added) = worktree::add(&self.worktrees, &workspace).await?;
+                let (workspace, added) =
+                    worktree::add_for_session(&self.worktrees, &workspace).await?;
                 (workspace, Some(added))
             }
         };
