@@ -79,8 +79,10 @@ impl Drop for PromptScope {
 
 impl SessionRuntime {
     /// Starts a prompt: refuses it while a compaction's rewrite is unsaved,
-    /// opens the window in which a cancel reaches it, renews credentials
-    /// a logout or a refused request left stale, and waits for tool sources
+    /// opens the window in which a cancel reaches it, rebuilds what the
+    /// session built on providers `process_config` changed (see
+    /// `providers.rs`), renews credentials a logout or a refused request
+    /// left stale, and waits for tool sources
     /// the session still loads. Hold the returned scope
     /// for the whole prompt and pass it to each of the prompt's calls.
     pub(crate) async fn begin_prompt(
@@ -91,7 +93,11 @@ impl SessionRuntime {
             return Err(super::UnsavedCompaction.into());
         }
         let mut scope = PromptScope::begin(&self.handle);
-        let renewed = self.renew_stale_credentials(process_config).await;
+        // Providers first: their rebuild reads the credentials too.
+        let renewed = match self.refresh_providers(process_config).await {
+            Ok(()) => self.renew_stale_credentials(process_config).await,
+            Err(error) => Err(error),
+        };
         // With nothing to renew from, as after a logout, the renewal's read
         // cached the miss in the OS store, and the login that fixes it may
         // run in another process: the next prompt rereads.

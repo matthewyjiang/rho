@@ -112,6 +112,9 @@ mod compaction;
 #[path = "support/key_checking_provider.rs"]
 mod key_checking_provider;
 
+#[path = "support/scripted_host.rs"]
+mod scripted_host;
+
 use sessions::Sandbox;
 
 fn stderr(output: &Output) -> String {

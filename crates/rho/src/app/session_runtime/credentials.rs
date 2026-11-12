@@ -162,6 +162,13 @@ impl SessionRuntime {
             #[cfg(test)]
             SessionCredentials::Scripted => return Ok(()),
         }
+        self.rebuild_provider(process_config).await
+    }
+
+    /// Rebuilds the session's provider for the same model and auth from
+    /// what `process_config` and the credential store hold now, which
+    /// rebinds the compactor too.
+    pub(super) async fn rebuild_provider(&mut self, process_config: &Config) -> anyhow::Result<()> {
         let read = AppCredentialStore::generation();
         let mut config = model_scoped_config(&self.current_model(), process_config);
         config.reasoning = self.built.session.reasoning_level();
@@ -176,8 +183,7 @@ impl SessionRuntime {
         // The model switch path also rebinds the compactor, which holds its
         // own provider. The model is unchanged, so no switch notice is saved.
         self.switch_provider(provider, &config, read)
-            .map_err(|error| anyhow::anyhow!("could not renew credentials: {error}"))?;
-        Ok(())
+            .map_err(|error| anyhow::anyhow!("could not rebuild the session's provider: {error}"))
     }
 
     /// Marks the provider stale when `result` failed on its credentials, so

@@ -7,7 +7,7 @@ use crate::{
     config::{Config, InternalAgentModelConfig},
     permission::PermissionMode,
     tools::{
-        advisor::{AdvisorModel, AdvisorSessionStore},
+        advisor::AdvisorSessionStore,
         sdk_registry::{AppToolSet, ToolSetOptions},
     },
 };
@@ -71,14 +71,11 @@ async fn advisor_rebuild_keeps_the_session_mode_approvals() {
 
     runtime
         .set_advisor(
-            Some(AdvisorModel {
-                selection: InternalAgentModelConfig::new(
-                    "test".into(),
-                    "advisor".into(),
-                    "none".into(),
-                ),
-                providers: Default::default(),
-            }),
+            Some(InternalAgentModelConfig::new(
+                "test".into(),
+                "advisor".into(),
+                "none".into(),
+            )),
             &opening,
         )
         .await

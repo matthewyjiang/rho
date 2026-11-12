@@ -657,7 +657,7 @@ impl Config {
 pub(crate) struct NextTurnChanges {
     /// Advisor mode, model, or reasoning changed.
     pub(crate) advisor: bool,
-    /// An automatic compaction setting changed.
+    /// An automatic compaction setting or the compaction model changed.
     pub(crate) compaction: bool,
     /// The codemode mode changed.
     pub(crate) codemode: bool,
@@ -668,12 +668,18 @@ impl Config {
     /// (`Apply::NextTurn` in the registry) and changed in the global config
     /// from `was` to `now`, keeping the rest of this session's config,
     /// its agent's own values included, and reports what changed here.
+    ///
+    /// The configured providers come along, with the title and compaction
+    /// models, which only ever resolve on them: a custom provider added or
+    /// edited since the session opened reaches it. The session runtime
+    /// rebuilds what it built on the providers when its next prompt starts
+    /// (see `SessionRuntime::begin_prompt`), so they need no hook here.
     pub(crate) fn take_next_turn_settings(
         &mut self,
         was: &Config,
         now: &Config,
     ) -> NextTurnChanges {
-        use crate::agent::ADVISOR_AGENT_ID;
+        use crate::agent::{ADVISOR_AGENT_ID, COMPACTION_AGENT_ID, SESSION_TITLE_AGENT_ID};
         let advisor = |config: &Config| {
             (
                 config.advisor_mode,
@@ -685,35 +691,48 @@ impl Config {
                 config.auto_compact,
                 config.compact_threshold_percent,
                 config.compact_target_percent,
+                config.internal_agents.get(COMPACTION_AGENT_ID).cloned(),
             )
         };
         let mut changes = NextTurnChanges::default();
         if advisor(was) != advisor(now) {
             changes.advisor = advisor(self) != advisor(now);
             self.advisor_mode = now.advisor_mode;
-            match now.internal_agents.get(ADVISOR_AGENT_ID) {
-                Some(selection) => {
-                    self.internal_agents
-                        .insert(ADVISOR_AGENT_ID.into(), selection.clone());
-                }
-                None => {
-                    self.internal_agents.remove(ADVISOR_AGENT_ID);
-                }
-            }
+            self.take_internal_agent(now, ADVISOR_AGENT_ID);
         }
         if compaction(was) != compaction(now) {
             changes.compaction = compaction(self) != compaction(now);
-            (
-                self.auto_compact,
-                self.compact_threshold_percent,
-                self.compact_target_percent,
-            ) = compaction(now);
+            self.auto_compact = now.auto_compact;
+            self.compact_threshold_percent = now.compact_threshold_percent;
+            self.compact_target_percent = now.compact_target_percent;
+            self.take_internal_agent(now, COMPACTION_AGENT_ID);
         }
         if was.codemode.mode != now.codemode.mode {
             changes.codemode = self.codemode.mode != now.codemode.mode;
             self.codemode.mode = now.codemode.mode;
         }
+        if was.providers != now.providers {
+            self.providers = now.providers.clone();
+        }
+        if was.internal_agents.get(SESSION_TITLE_AGENT_ID)
+            != now.internal_agents.get(SESSION_TITLE_AGENT_ID)
+        {
+            self.take_internal_agent(now, SESSION_TITLE_AGENT_ID);
+        }
         changes
+    }
+
+    /// Gives this config the model `from` has for internal agent `id`, or
+    /// none when `from` has none.
+    pub(crate) fn take_internal_agent(&mut self, from: &Config, id: &str) {
+        match from.internal_agents.get(id) {
+            Some(selection) => {
+                self.internal_agents.insert(id.into(), selection.clone());
+            }
+            None => {
+                self.internal_agents.remove(id);
+            }
+        }
     }
 }
 

@@ -274,11 +274,12 @@ impl SessionRuntime {
                 workspace_root,
             },
             config.auth.clone(),
+            config.providers.clone(),
         )
     }
 
     /// A runtime around `built`, saved through `storage`, running as
-    /// `build`'s launch agent with `permission` and `auth`, for host
+    /// `build`'s launch agent with `permission`, `auth` and `providers`, for host
     /// fixtures that script their own session. It has none of a host's MCP
     /// servers or roots.
     pub(in crate::app) fn from_built_for_tests(
@@ -287,6 +288,7 @@ impl SessionRuntime {
         storage: SessionStorage,
         permission: SessionPermission,
         auth: String,
+        providers: crate::config::ProviderConfigs,
     ) -> Self {
         let agent = build.launch.agent.clone();
         Self::new(OpenedSession {
@@ -300,6 +302,7 @@ impl SessionRuntime {
             permission,
             reopen_notice: None,
             credentials: SessionCredentials::Scripted,
+            providers,
         })
     }
 

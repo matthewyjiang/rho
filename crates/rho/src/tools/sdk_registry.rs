@@ -338,9 +338,11 @@ impl AppToolSet {
             tool_set.add_bundle(super::sdk_features::questionnaire_bundle());
         }
         if let (true, Some(store)) = (capabilities.contains(&ToolCapability::Advisor), advisor) {
-            // The tool set owns advisor initialization: the model and the
-            // registration state both come from the same config read.
-            store.set_model(super::advisor::AdvisorModel::from_config(config));
+            // The tool set owns advisor initialization: the model, the
+            // providers it is looked up on and the registration state all
+            // come from the same config read.
+            store.set_model(super::advisor::advisor_model(config).cloned());
+            store.set_providers(config.providers.clone());
             tool_set.advisor = Some(AdvisorTools {
                 registration: HostToolRegistration::new(super::advisor::advisor_tool(
                     store.clone(),

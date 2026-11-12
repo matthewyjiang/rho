@@ -79,30 +79,6 @@ pub(crate) fn advisor_available(config: &Config) -> bool {
     config.advisor_mode && advisor_model(config).is_some()
 }
 
-/// The advisor's model and the configured providers a Rho one is looked up
-/// on: those of the config the model was chosen in. A session takes a new
-/// advisor from the global config at its next turn, and a custom provider
-/// added since the session opened is only in that config's providers.
-///
-/// Unlike [`crate::agent::ResolvedRhoModel`], the selection stays unresolved:
-/// the advisor may run on Claude Code, and its reasoning resolves per call.
-#[derive(Clone, Debug)]
-pub struct AdvisorModel {
-    pub selection: InternalAgentModelConfig,
-    pub providers: ProviderConfigs,
-}
-
-impl AdvisorModel {
-    /// `config`'s advisor model (see [`advisor_model`]) on `config`'s
-    /// providers.
-    pub(crate) fn from_config(config: &Config) -> Option<Self> {
-        advisor_model(config).map(|selection| Self {
-            selection: selection.clone(),
-            providers: config.providers.clone(),
-        })
-    }
-}
-
 /// Builds the `advisor` tool, whose Claude Code advisor runs in the session's
 /// `environment`.
 ///
@@ -135,7 +111,12 @@ pub struct AdvisorSessionStore {
 struct AdvisorSessionState {
     session: Option<Session>,
     system_prompt: Option<String>,
-    model: Option<AdvisorModel>,
+    model: Option<InternalAgentModelConfig>,
+    /// The session's configured providers, which a Rho advisor model is
+    /// looked up on. The session refreshes them when its config's change
+    /// (see `SessionRuntime::begin_prompt`), between turns, so a call reads
+    /// those of the turn it runs in.
+    providers: ProviderConfigs,
     /// Provider-reported advisor spend not yet folded into the parent TUI total.
     unclaimed_cost_usd_micros: u64,
 }
@@ -170,13 +151,19 @@ impl AdvisorSessionStore {
 
     /// Replaces the advisor model, so a `/advisor` model change applies to the
     /// next call without rebuilding the tool set.
-    pub fn set_model(&self, model: Option<AdvisorModel>) {
+    pub fn set_model(&self, model: Option<InternalAgentModelConfig>) {
         self.lock().model = model;
     }
 
     /// Currently configured advisor model, if any.
-    pub fn model(&self) -> Option<AdvisorModel> {
+    pub fn model(&self) -> Option<InternalAgentModelConfig> {
         self.lock().model.clone()
+    }
+
+    /// Replaces the configured providers a Rho advisor model is looked up
+    /// on, for the next call.
+    pub(crate) fn set_providers(&self, providers: ProviderConfigs) {
+        self.lock().providers = providers;
     }
 
     /// Fold provider-reported cost from a finished advisor call into the
@@ -224,6 +211,7 @@ impl AdvisorSessionStore {
         let messages = session.live_history();
         Ok(AdvisorRequest {
             model,
+            providers: state.providers.clone(),
             session_id: session.id().clone(),
             transcript: transcript::render_transcript(
                 state.system_prompt.as_deref(),
@@ -236,7 +224,8 @@ impl AdvisorSessionStore {
 
 #[derive(Debug)]
 struct AdvisorRequest {
-    model: AdvisorModel,
+    model: InternalAgentModelConfig,
+    providers: ProviderConfigs,
     session_id: SessionId,
     transcript: String,
 }
@@ -331,23 +320,21 @@ async fn consult_advisor(
     progress: ToolProgressSender,
 ) -> Result<(String, ModelUsage), ToolError> {
     let AdvisorRequest {
-        model: AdvisorModel {
-            selection,
-            providers,
-        },
+        model,
+        providers,
         session_id,
         transcript,
     } = request;
-    let reasoning = advisor_effective_reasoning(&selection);
-    match &selection.target {
-        InternalAgentTarget::Rho(rho) => {
-            let reference = selection.display_reference();
+    let reasoning = advisor_effective_reasoning(&model);
+    match &model.target {
+        InternalAgentTarget::Rho(selection) => {
+            let reference = model.display_reference();
             let provider = build_provider(
                 &providers,
-                &rho.provider,
-                &rho.model,
+                &selection.provider,
+                &selection.model,
                 reasoning,
-                &rho.auth,
+                &selection.auth,
                 environment.credentials(),
             )
             .await

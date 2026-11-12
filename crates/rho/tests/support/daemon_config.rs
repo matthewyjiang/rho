@@ -3,20 +3,25 @@
 //! `config.toml`, reaches every client reading the settings and the next
 //! turn of a loaded session; a stale or refused change writes nothing; a
 //! hand edit is served, and a broken one keeps the last good values in
-//! force; a client's own settings outlast the daemon.
+//! force; a client's own settings outlast the daemon. A custom provider
+//! added, edited or removed reaches a loaded session at its next turn.
 
 use pretty_assertions::assert_eq;
 use rho_protocol::{
-    methods::{ConfigGet, ConfigRegister, ConfigSet, SessionAttach},
+    methods::{ConfigGet, ConfigRegister, ConfigSet, SessionAttach, SessionConfigure},
     Applies, Client, ClientError, ClientName, ConfigChangedParams, ConfigError, ConfigGetParams,
     ConfigGetResponse, ConfigLayer, ConfigNamespace, ConfigRegisterParams, ConfigRevision,
     ConfigSetParams, ConfigWriter, DaemonNotification, ErrorCode, ModelSelection, Notifications,
-    RpcError, SessionAttachParams, SessionEvent, SessionId, SessionSetup, SettingChange,
-    SettingEntry, SettingKey, SettingKind, SettingSpec, SettingValue, ValueSource,
+    PermissionMode, RpcError, SessionAttachParams, SessionChange, SessionConfigureParams,
+    SessionEvent, SessionId, SessionSetup, SettingChange, SettingEntry, SettingKey, SettingKind,
+    SettingSpec, SettingValue, TurnError, TurnErrorKind, TurnOutcome, ValueSource,
 };
 use serde_json::Value;
 
-use super::sessions::{Sandbox, DEADLINE};
+use super::{
+    scripted_host::{Reply, ScriptedHost},
+    sessions::{Sandbox, DEADLINE},
+};
 
 async fn get(client: &Client, namespace: ConfigNamespace) -> ConfigGetResponse {
     client
@@ -240,70 +245,252 @@ async fn a_change_is_saved_and_reaches_readers_and_a_loaded_sessions_next_turn()
     );
 }
 
-// Covers: an advisor on a custom provider added to `config.toml` after a
-// session opened answers that session's next turn: the advisor model is
-// looked up on the providers of the config it came from, not the ones the
-// session opened with, which do not know the provider.
-// Owner: daemon settings store (next-turn advisor).
+// Covers: a custom provider added to `config.toml` after a session opened,
+// with the session's advisor, title, compaction and permission-classifier
+// models on it, reaches each of them from the session's next turn: the
+// session takes the providers with those models, and rebuilds what it
+// built on the ones it opened with (#1685).
+// Owner: daemon next-turn providers.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn an_advisor_on_a_custom_provider_added_later_answers_a_loaded_session() {
-    const KEY: &str = "advisor-key";
+async fn a_provider_added_later_reaches_each_internal_agent_of_a_loaded_session() {
+    const MODELS: &[&str] = &["advisor", "classifier", "compaction", "title"];
     let sandbox = Sandbox::new();
     let client = sandbox.start_daemon("tool-call").await;
-    let environment: rho_protocol::ClientEnvironment = sandbox
-        .client_environment()
-        .into_iter()
-        .chain([("RHO_MOCK_API_KEY".to_owned(), KEY.to_owned())])
-        .collect();
-    let session = sandbox
-        .new_session_with_environment(&client, environment.clone())
-        .await;
-    let (follower, mut events) = sandbox.connect_following().await;
-    follower
-        .request::<SessionAttach>(&SessionAttachParams {
+    let session = sandbox.new_session(&client).await;
+    let (_follower, mut events) = follow(&sandbox, &session).await;
+
+    let host = ScriptedHost::spawn(MODELS, |_| Reply::Text("answered"));
+    let config = std::fs::read_to_string(&sandbox.isolated.config_path).unwrap();
+    let agent = |id: &str, model: &str| {
+        format!(
+            "[internal_agents.{id}]\nprovider = \"mock\"\nmodel = \"{model}\"\nauth = \"none\"\n"
+        )
+    };
+    std::fs::write(
+        &sandbox.isolated.config_path,
+        format!(
+            "{config}\n[behavior]\nadvisor_mode = true\n\n{}\n{}\n{}\n{}\n{}",
+            agent("advisor", "advisor"),
+            agent("permission-classifier", "classifier"),
+            agent("compaction", "compaction"),
+            agent("session-title", "title"),
+            host.provider_table("mock"),
+        ),
+    )
+    .unwrap();
+    // Taken from the config as it is now, the classifier model on the
+    // provider the session does not have yet.
+    client
+        .request::<SessionConfigure>(&SessionConfigureParams {
             session: session.clone(),
-            after: None,
-            environment: environment.clone(),
-            setup: SessionSetup::default(),
+            change: SessionChange::PermissionMode {
+                mode: PermissionMode::Auto,
+            },
         })
         .await
         .unwrap();
 
-    let address = super::key_checking_provider::spawn_provider(std::sync::Arc::new(
-        std::sync::Mutex::new(KEY.to_owned()),
-    ));
-    let config = std::fs::read_to_string(&sandbox.isolated.config_path).unwrap();
-    std::fs::write(
-        &sandbox.isolated.config_path,
-        format!(
-            r#"{config}
-[behavior]
-advisor_mode = true
-
-[internal_agents.advisor]
-provider = "mock"
-model = "mock-model"
-auth = "mock-api-key"
-
-[providers.custom.mock]
-base_url = "http://{address}/v1"
-"#
-        ),
-    )
-    .unwrap();
-    // The fixture makes the call; its reply is the call's result.
+    // The fixture makes each call; the advisor's reply is the call's result,
+    // and the turn's reply names the session.
     sandbox
-        .prompt_tool_call_with_environment(
+        .prompt_tool_call(
             &client,
             &session,
             &serde_json::json!({"id": "consult", "name": "advisor", "arguments": {}}),
-            environment,
         )
         .await;
-
     let (reply, _) = next_turn_reply(&mut events, &session).await;
-    // `answered` is what the custom host says to every request.
     assert_eq!(reply, "answered", "log:\n{}", sandbox.isolated.daemon_log());
+    // A command Auto asks the classifier about.
+    sandbox
+        .prompt_tool_call(
+            &client,
+            &session,
+            &serde_json::json!({
+                "id": "run",
+                "name": "bash",
+                "arguments": {"command": "echo classified"},
+            }),
+        )
+        .await;
+    next_turn_reply(&mut events, &session).await;
+    sandbox
+        .prompt_text(&client, &session, "/compact")
+        .await
+        .unwrap();
+    next_turn_reply(&mut events, &session).await;
+
+    let asked = sandbox
+        .poll_until("every internal agent to ask the added host", async || {
+            let mut asked = host.models();
+            asked.sort();
+            asked.dedup();
+            (asked == MODELS).then_some(asked)
+        })
+        .await;
+    assert_eq!(asked, MODELS);
+}
+
+// Covers: a `base_url` edited while a turn runs is not what the rest of
+// that turn's requests go to; the session's next turn goes to the edited
+// one (#1685).
+// Owner: daemon next-turn providers.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_edited_base_url_reaches_the_next_turn_not_the_running_one() {
+    let (asked, mut asked_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (release, released) = std::sync::mpsc::channel::<()>();
+    let released = std::sync::Mutex::new(Some(released));
+    // Holds the first request's answer, a tool call, until the test
+    // releases it, and answers every later one, such as the request after
+    // the call's result or the title agent's, `old`.
+    let old = ScriptedHost::spawn(&["mock-model"], move |_| {
+        let Some(released) = released.lock().unwrap().take() else {
+            return Reply::Text("old");
+        };
+        asked.send(()).unwrap();
+        released.recv().unwrap();
+        Reply::ToolCall {
+            name: "read_file",
+            arguments: serde_json::json!({"path": "notes.txt"}),
+        }
+    });
+    let new = ScriptedHost::spawn(&["mock-model"], |_| Reply::Text("new"));
+    let sandbox = Sandbox::new();
+    std::fs::write(sandbox.workspace.join("notes.txt"), "notes\n").unwrap();
+    let client = start_on_custom_host(&sandbox, &old).await;
+    let session = sandbox.new_session(&client).await;
+    let (_follower, mut events) = follow(&sandbox, &session).await;
+
+    sandbox.prompt(&client, &session).await.unwrap();
+    tokio::time::timeout(DEADLINE, asked_rx.recv())
+        .await
+        .expect("the turn asks the host")
+        .unwrap();
+    write_custom_host_config(&sandbox, &new);
+    // The daemon reads the edit before the turn goes on.
+    get(&client, ConfigNamespace::Agent).await;
+    release.send(()).unwrap();
+    let running = next_turn_end(&mut events, &session).await;
+    sandbox.prompt(&client, &session).await.unwrap();
+    let next = next_turn_end(&mut events, &session).await;
+
+    // The running turn's request after the call went to the old host,
+    // the only one that answers `old`; the session's title, asked for with
+    // that turn, may still go there.
+    assert_eq!(
+        (answer(running), answer(next), new.models()),
+        (
+            "old".to_owned(),
+            "new".to_owned(),
+            vec!["mock-model".to_owned()]
+        ),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
+// Covers: a session whose model's custom provider was removed from the
+// config fails its next turn with one configuration error that says so,
+// rather than running on the provider it opened with (#1685).
+// Owner: daemon next-turn providers.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_removed_provider_fails_the_next_turn_with_one_clear_error() {
+    let host = ScriptedHost::spawn(&["mock-model"], |_| Reply::Text("answered"));
+    let sandbox = Sandbox::new();
+    let client = start_on_custom_host(&sandbox, &host).await;
+    let session = sandbox.new_session(&client).await;
+    let (_follower, mut events) = follow(&sandbox, &session).await;
+    // The default model moves off it, so the config still loads.
+    std::fs::write(
+        &sandbox.isolated.config_path,
+        format!("[model]\nprovider = \"xai\"\nmodel = \"grok-fixture\"\nauth = \"xai-oauth\"\n\n{CUSTOM_HOST_CONFIG_REST}"),
+    )
+    .unwrap();
+
+    // The turn ends before it begins, which the prompt answers.
+    let prompted = sandbox.prompt(&client, &session).await;
+
+    assert_eq!(
+        (
+            prompted,
+            next_turn_end(&mut events, &session).await,
+            host.models()
+        ),
+        (
+            Err(Some(ErrorCode::TurnEnded)),
+            TurnOutcome::Failed {
+                error: TurnError {
+                    kind: TurnErrorKind::Configuration,
+                    message: "invalid configuration: the session's model mock/mock-model is on provider 'mock', which is no longer configured; add it back, or switch the session to another model".into(),
+                },
+            },
+            Vec::<String>::new(),
+        ),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
+/// The config after its `[model]` table in the tests whose session runs on
+/// a custom host.
+const CUSTOM_HOST_CONFIG_REST: &str = "[web_search]\nmode = \"off\"\n";
+
+/// Writes a config whose model is `mock/mock-model` on `host`.
+fn write_custom_host_config(sandbox: &Sandbox, host: &ScriptedHost) {
+    std::fs::write(
+        &sandbox.isolated.config_path,
+        format!(
+            "[model]\nprovider = \"mock\"\nmodel = \"mock-model\"\nauth = \"none\"\n\n{CUSTOM_HOST_CONFIG_REST}\n{}",
+            host.provider_table("mock")
+        ),
+    )
+    .unwrap();
+}
+
+/// Starts the daemon with the model on `host`, so new sessions run on it,
+/// without the fixture provider, which would stand in for it.
+async fn start_on_custom_host(sandbox: &Sandbox, host: &ScriptedHost) -> Client {
+    write_custom_host_config(sandbox, host);
+    let mut command = sandbox.rho("fixed");
+    command.env_remove("RHO_AUTOMATION_TEST_MODE");
+    sandbox.spawn_daemon(command, &[]).await.1
+}
+
+/// A following client attached to `session`, and its notifications.
+async fn follow(sandbox: &Sandbox, session: &SessionId) -> (Client, Notifications) {
+    let (follower, events) = sandbox.connect_following().await;
+    follower
+        .request::<SessionAttach>(&SessionAttachParams {
+            session: session.clone(),
+            after: None,
+            environment: sandbox.client_environment(),
+            setup: SessionSetup::default(),
+        })
+        .await
+        .unwrap();
+    (follower, events)
+}
+
+/// How `session`'s next turn ended.
+async fn next_turn_end(notifications: &mut Notifications, session: &SessionId) -> TurnOutcome {
+    loop {
+        let DaemonNotification::SessionEvent(params) = next_notification(notifications).await
+        else {
+            continue;
+        };
+        assert_eq!(&params.session, session);
+        if let SessionEvent::TurnEnded { outcome, .. } = params.event {
+            return outcome;
+        }
+    }
+}
+
+/// The answer of a turn that ended `outcome`.
+fn answer(outcome: TurnOutcome) -> String {
+    match outcome {
+        TurnOutcome::Answered { text, .. } => text,
+        outcome => panic!("the turn did not answer: {outcome:?}"),
+    }
 }
 
 // Covers: `codemode.mode`, which `/codemode` writes, reaches a session
