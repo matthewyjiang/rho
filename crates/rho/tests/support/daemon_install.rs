@@ -81,7 +81,7 @@ mod unix {
     };
 
     use pretty_assertions::assert_eq;
-    use rho_protocol::JobState;
+    use rho_protocol::{methods::SessionCancel, JobState, SessionCancelParams};
     use tempfile::TempDir;
 
     use super::*;
@@ -129,16 +129,18 @@ mod unix {
         /// sandbox is offline, so the update goes ahead without knowing
         /// the latest release.
         fn update(&self, sandbox: &Sandbox, mode: &str) -> Output {
-            run(
-                sandbox
-                    .rho_at(&self.path, mode)
-                    .arg("update")
-                    .env("PATH", tools(self.dir.path()))
-                    .env("RHO_INSTALL_METHOD", "cargo")
-                    .env("RHO_TEST_INSTALL_PATH", &self.path)
-                    .env("RHO_TEST_RHO", env!("CARGO_BIN_EXE_rho")),
-                "",
-            )
+            run(&mut self.update_command(sandbox, mode), "")
+        }
+
+        fn update_command(&self, sandbox: &Sandbox, mode: &str) -> Command {
+            let mut command = sandbox.rho_at(&self.path, mode);
+            command
+                .arg("update")
+                .env("PATH", tools(self.dir.path()))
+                .env("RHO_INSTALL_METHOD", "cargo")
+                .env("RHO_TEST_INSTALL_PATH", &self.path)
+                .env("RHO_TEST_RHO", env!("CARGO_BIN_EXE_rho"));
+            command
         }
 
         /// Whether the rho that the update installed has run as the daemon.
@@ -174,6 +176,40 @@ mod unix {
                 (status.pid, status.upgrade)
             ),
             (true, true, (daemon.id(), None)),
+            "update: {update:?}\ndaemon log:\n{}",
+            sandbox.isolated.daemon_log()
+        );
+    }
+
+    // Covers: an installer that goes on after it wrote the binary, until
+    // the daemon has already re-executed it, still leaves that daemon
+    // running: `rho update` does not take it for one the update missed.
+    // Owner: CLI process (update and the daemon's upgrade in place).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn update_keeps_a_daemon_that_restarted_before_the_installer_returned() {
+        let sandbox = Sandbox::new();
+        let install = Install::new();
+        let (daemon, _client) = sandbox
+            .spawn_daemon(sandbox.rho_at(&install.path, "fixed"), &[])
+            .await;
+
+        let update = run(
+            install
+                .update_command(&sandbox, "fixed")
+                .env("RHO_TEST_INSTALL_OUTLASTS_RESTART", "1"),
+            "",
+        );
+        // Waits while the daemon re-executes.
+        let status = sandbox
+            .connect()
+            .await
+            .request::<Status>(&StatusParams {})
+            .await
+            .unwrap();
+
+        assert_eq!(
+            (update.status.success(), status.pid),
+            (true, daemon.id()),
             "update: {update:?}\ndaemon log:\n{}",
             sandbox.isolated.daemon_log()
         );
@@ -215,6 +251,49 @@ mod unix {
         );
     }
 
+    /// `rho` as mise installs it: in a directory of its version's own, which
+    /// an update leaves as it is.
+    struct MiseInstall {
+        root: TempDir,
+        installs: PathBuf,
+        version: PathBuf,
+        rho: PathBuf,
+    }
+
+    impl MiseInstall {
+        fn new() -> Self {
+            // A hard link, which needs the built executable's filesystem:
+            // rho resolves a symlink to its target, outside mise's directory.
+            let root =
+                TempDir::new_in(Path::new(env!("CARGO_BIN_EXE_rho")).parent().unwrap()).unwrap();
+            let installs = root.path().canonicalize().unwrap().join("installs");
+            let version = installs.join("rho/1.0.0");
+            let rho = version.join("bin/rho");
+            fs::create_dir_all(rho.parent().unwrap()).unwrap();
+            fs::hard_link(env!("CARGO_BIN_EXE_rho"), &rho).unwrap();
+            Self {
+                root,
+                installs,
+                version,
+                rho,
+            }
+        }
+
+        /// `rho update` from the mise install, which runs the stand-in
+        /// `mise upgrade`.
+        fn update(&self, sandbox: &Sandbox, mode: &str) -> Output {
+            run(
+                sandbox
+                    .rho_at(&self.rho, mode)
+                    .arg("update")
+                    .env("PATH", tools(self.root.path()))
+                    .env("MISE_INSTALLS_DIR", &self.installs)
+                    .env("RHO_TEST_MISE_INSTALL", &self.version),
+                "",
+            )
+        }
+    }
+
     // Covers: an update that installs the new version in a directory of its
     // own, as mise does, leaves nothing at the daemon's path to re-execute:
     // `rho update` stops the idle daemon, so the next client starts the
@@ -223,32 +302,69 @@ mod unix {
     #[tokio::test]
     async fn update_stops_an_idle_daemon_that_cannot_reach_the_installed_binary() {
         let sandbox = Sandbox::new();
-        // A hard link, which needs the built executable's filesystem: rho
-        // resolves a symlink to its target, outside mise's directory.
-        let root = TempDir::new_in(Path::new(env!("CARGO_BIN_EXE_rho")).parent().unwrap()).unwrap();
-        let installs = root.path().canonicalize().unwrap().join("installs");
-        let version = installs.join("rho/1.0.0");
-        let rho = version.join("bin/rho");
-        fs::create_dir_all(rho.parent().unwrap()).unwrap();
-        fs::hard_link(env!("CARGO_BIN_EXE_rho"), &rho).unwrap();
+        let install = MiseInstall::new();
         let (_daemon, client) = sandbox
-            .spawn_daemon(sandbox.rho_at(&rho, "fixed"), &[])
+            .spawn_daemon(sandbox.rho_at(&install.rho, "fixed"), &[])
             .await;
         drop(client);
 
-        let update = run(
-            sandbox
-                .rho_at(&rho, "fixed")
-                .arg("update")
-                .env("PATH", tools(root.path()))
-                .env("MISE_INSTALLS_DIR", &installs)
-                .env("RHO_TEST_MISE_INSTALL", &version),
-            "",
-        );
+        let update = install.update(&sandbox, "fixed");
 
         assert_eq!(
             (update.status.success(), daemon_runs(&sandbox)),
             (true, false),
+            "update: {update:?}\ndaemon log:\n{}",
+            sandbox.isolated.daemon_log()
+        );
+    }
+
+    // Covers: that update leaves a daemon running whose only work is a
+    // background process a session's cancelled turn left behind, which a
+    // stop would kill though no job is in progress.
+    // Owner: CLI process (update and the daemon lifecycle).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn update_leaves_a_daemon_with_a_background_process_running() {
+        let sandbox = Sandbox::new();
+        sandbox.set_permission_mode("bypass");
+        let install = MiseInstall::new();
+        let (_daemon, client) = sandbox
+            .spawn_daemon(sandbox.rho_at(&install.rho, "tool-call"), &[])
+            .await;
+        let session = sandbox.new_session(&client).await;
+        let release = fifo(sandbox.workspace.join("background.fifo"));
+        let background = serde_json::json!({
+            "id": "background",
+            "name": "process",
+            "arguments": {
+                "action": "start",
+                "command": "touch started && read _ < background.fifo",
+            },
+        });
+        sandbox
+            .prompt_tool_call(&client, &session, &background)
+            .await;
+        sandbox
+            .poll_until("the background process to start", async || {
+                sandbox.workspace.join("started").exists().then_some(())
+            })
+            .await;
+        // A turn waits for the processes it started, so only its cancel
+        // lets one outlive it.
+        client
+            .request::<SessionCancel>(&SessionCancelParams {
+                session: session.clone(),
+            })
+            .await
+            .unwrap();
+        let turn = settled_job(&sandbox, &client, &session).await.state;
+
+        let update = install.update(&sandbox, "tool-call");
+        let kept = daemon_runs(&sandbox);
+        open_gate(&sandbox, &release).await;
+
+        assert_eq!(
+            (turn, update.status.success(), kept),
+            (JobState::Cancelled, true, true),
             "update: {update:?}\ndaemon log:\n{}",
             sandbox.isolated.daemon_log()
         );

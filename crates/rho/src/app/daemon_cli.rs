@@ -396,6 +396,7 @@ fn status_text(status: &DaemonStatus) -> String {
         protocol,
         uptime_secs,
         jobs,
+        in_progress: _,
         socket,
         credential_store,
         upgrade,

@@ -20,7 +20,7 @@ use rho_protocol::{methods, ClientError, PendingUpgrade, StatusParams};
 
 use super::daemon_cli;
 use crate::daemon::{
-    self, ConnectAs, ConnectError, DaemonPaths, LockHolder, DAEMON_RESTART_TIMEOUT,
+    self, ConnectAs, ConnectError, DaemonPaths, Executable, LockHolder, DAEMON_RESTART_TIMEOUT,
 };
 
 /// How long `rho update` waits for the daemon to notice the executable it
@@ -49,23 +49,60 @@ pub(crate) enum Installed {
     AtAnotherPath,
 }
 
-/// Gets the running daemon out of an installer's way, before `rho update`
-/// installs, where it would otherwise keep the installer from replacing the
-/// executable. An idle daemon is stopped; one with jobs in progress is left
-/// alone, and `output` says how to stop it.
-pub(crate) async fn make_way_for_update(output: &mut impl Write) -> anyhow::Result<()> {
-    if daemon::REPLACEABLE_WHILE_RUNNING {
-        return Ok(());
-    }
-    match stop_if_idle(&daemon_cli::paths()?).await? {
+/// The daemon as `rho update` found it before installing, to follow once
+/// the installer ran.
+pub(crate) struct Watched {
+    /// The rho that runs the update, by the path an installer writes over.
+    updating: Option<Executable>,
+    daemon: Before,
+}
+
+/// What ran before the installer did.
+enum Before {
+    /// No daemon, or one already dealt with.
+    Nothing,
+    /// A connection to the daemon, held while the installer runs: the
+    /// daemon closes it as it restarts, however long the installer goes on
+    /// after writing the new binary.
+    Running(Box<daemon::Connection>),
+    /// A daemon of another protocol, which answers no request.
+    OtherProtocol,
+}
+
+/// Finds the running daemon before `rho update` installs. Where the daemon
+/// would keep the installer from replacing the executable, an idle one is
+/// stopped, and `output` says how to stop a busy one.
+pub(crate) async fn before_update(output: &mut impl Write) -> anyhow::Result<Watched> {
+    let paths = daemon_cli::paths()?;
+    let daemon = if daemon::REPLACEABLE_WHILE_RUNNING {
+        match daemon::connect(&paths, ConnectAs::Command.hello()).await {
+            Ok(connection) => Before::Running(Box::new(connection)),
+            Err(ConnectError::NotRunning) => Before::Nothing,
+            Err(ConnectError::Handshake(_)) => Before::OtherProtocol,
+            Err(error) => return Err(error.into()),
+        }
+    } else {
+        make_way(&paths, output).await?;
+        Before::Nothing
+    };
+    Ok(Watched {
+        updating: Executable::of_this_process().ok(),
+        daemon,
+    })
+}
+
+/// Stops an idle daemon so an installer can replace the executable it
+/// holds; says how to stop one that is busy.
+async fn make_way(paths: &DaemonPaths, output: &mut impl Write) -> anyhow::Result<()> {
+    match stop_if_idle(paths).await? {
         Retired::NotRunning => {}
         Retired::Stopped => writeln!(
             output,
             "stopped the idle rho daemon so the installer can replace the rho executable; the next rho command starts it again"
         )?,
-        Retired::Busy { pid, jobs, .. } => writeln!(
+        Retired::Busy { pid, in_progress, .. } => writeln!(
             output,
-            "the rho daemon (pid {pid}) keeps the rho executable open and has {jobs} job(s) in progress; once they finish, run `rho daemon stop` before the command below"
+            "the rho daemon (pid {pid}) keeps the rho executable open and has {in_progress} {IN_PROGRESS}; once that finished, run `rho daemon stop` before the command below"
         )?,
         Retired::OtherProtocol => writeln!(
             output,
@@ -75,53 +112,76 @@ pub(crate) async fn make_way_for_update(output: &mut impl Write) -> anyhow::Resu
     Ok(())
 }
 
-/// Moves the running daemon to the rho `rho update` just `installed`, or
-/// says when it moves. Nothing is interrupted: a daemon with work in
-/// progress is left to finish it.
-pub(crate) async fn follow_update(
-    installed: Installed,
-    output: &mut impl Write,
-) -> anyhow::Result<()> {
-    // Nothing was installed over a daemon that holds its executable.
-    if !daemon::REPLACEABLE_WHILE_RUNNING {
-        return Ok(());
-    }
-    let paths = daemon_cli::paths()?;
-    match installed {
-        Installed::OverTheExecutable => {}
-        Installed::AtAnotherPath => return retire(&paths, output).await,
-    }
-    let daemon::Connection {
-        client,
-        mut notifications,
-        hello,
-    } = match daemon::connect(&paths, ConnectAs::Command.hello()).await {
-        Ok(connection) => connection,
-        Err(ConnectError::NotRunning) => return Ok(()),
-        // A daemon of another protocol answers no status request.
-        Err(ConnectError::Handshake(_)) => return retire(&paths, output).await,
-        Err(error) => return Err(error.into()),
-    };
-    let pid = hello.daemon.pid;
-    match noticed(&client, &mut notifications).await {
-        Noticed::Restarting => {
-            drop(client);
-            restarted(&paths, pid, output).await
+/// What a daemon's count of work in progress counts, after the number.
+const IN_PROGRESS: &str = "job(s), login(s), or session task(s) in progress";
+
+impl Watched {
+    /// Moves the daemon to the rho the update `installed`, or says when it
+    /// moves. Nothing is interrupted: a daemon with work in progress is
+    /// left to finish it.
+    pub(crate) async fn follow(
+        self,
+        installed: Installed,
+        output: &mut impl Write,
+    ) -> anyhow::Result<()> {
+        // Nothing was installed over a daemon that holds its executable.
+        if !daemon::REPLACEABLE_WHILE_RUNNING {
+            return Ok(());
         }
-        Noticed::Waiting(PendingUpgrade {
-            version,
-            waiting_for,
-        }) => {
-            writeln!(
-                output,
-                "rho daemon (pid {pid}) restarts onto rho {version} once the {waiting_for} in progress finished; nothing is interrupted"
-            )?;
-            Ok(())
+        let paths = daemon_cli::paths()?;
+        match installed {
+            Installed::OverTheExecutable => {}
+            Installed::AtAnotherPath => {
+                drop(self.daemon);
+                return retire(&paths, output).await;
+            }
         }
-        // It runs from another path than the one installed over.
-        Noticed::Nothing => {
-            drop(client);
-            retire(&paths, output).await
+        // An installer that found nothing newer leaves this rho's file as
+        // it was, and the daemon as it is.
+        if self
+            .updating
+            .is_some_and(|updating| updating.replacement().is_none())
+        {
+            return Ok(());
+        }
+        let daemon::Connection {
+            client,
+            mut notifications,
+            hello,
+        } = match self.daemon {
+            Before::Nothing => return Ok(()),
+            Before::OtherProtocol => {
+                writeln!(
+                    output,
+                    "a rho daemon of another version is still running; run `rho daemon restart` to move it to the updated rho, which interrupts the work in progress"
+                )?;
+                return Ok(());
+            }
+            Before::Running(connection) => *connection,
+        };
+        let rho_protocol::DaemonInfo { pid, version, .. } = hello.daemon;
+        match noticed(&client, &mut notifications).await {
+            Noticed::Restarting => {
+                drop(client);
+                restarted(&paths, pid, output).await
+            }
+            Noticed::Waiting(PendingUpgrade {
+                version,
+                waiting_for,
+            }) => {
+                writeln!(
+                    output,
+                    "rho daemon (pid {pid}) restarts onto rho {version} once its {waiting_for} {IN_PROGRESS} finish; nothing is interrupted"
+                )?;
+                Ok(())
+            }
+            Noticed::Nothing => {
+                writeln!(
+                    output,
+                    "rho daemon (pid {pid}, version {version}) did not restart within UPGRADE_NOTICE_TIMEOUT ({UPGRADE_NOTICE_TIMEOUT:?}): it runs another rho executable than the one updated. Run `rho daemon restart` from the updated rho to move it over, which interrupts the work in progress"
+                )?;
+                Ok(())
+            }
         }
     }
 }
@@ -133,15 +193,19 @@ async fn retire(paths: &DaemonPaths, output: &mut impl Write) -> anyhow::Result<
         Retired::NotRunning => {}
         Retired::Stopped => writeln!(
             output,
-            "stopped the idle rho daemon, which ran the rho this update replaced; the next rho command starts the updated one"
+            "stopped the idle rho daemon; the next rho command starts it from the updated rho"
         )?,
-        Retired::Busy { pid, version, jobs } => writeln!(
+        Retired::Busy {
+            pid,
+            version,
+            in_progress,
+        } => writeln!(
             output,
-            "rho daemon (pid {pid}) still runs rho {version} and has {jobs} job(s) in progress; once they finish, run `rho daemon restart` to move it to the updated rho"
+            "rho daemon (pid {pid}) still runs rho {version} and has {in_progress} {IN_PROGRESS}; once that finished, run `rho daemon restart` to move it to the updated rho"
         )?,
         Retired::OtherProtocol => writeln!(
             output,
-            "a rho daemon of another version is still running; run `rho daemon restart` to move it to the updated rho, which interrupts the turns under way"
+            "a rho daemon of another version is still running; run `rho daemon restart` to move it to the updated rho, which interrupts the work in progress"
         )?,
     }
     Ok(())
@@ -150,22 +214,22 @@ async fn retire(paths: &DaemonPaths, output: &mut impl Write) -> anyhow::Result<
 /// What [`stop_if_idle`] found and did.
 enum Retired {
     NotRunning,
-    /// It had no job in progress and was stopped.
+    /// Nothing was in progress, and it was stopped.
     Stopped,
-    /// It was left running its jobs.
+    /// It was left to its work.
     Busy {
         pid: u32,
         version: String,
-        jobs: u64,
+        in_progress: u64,
     },
     /// It speaks a protocol this rho cannot, so it could not say what it
     /// runs and was left alone.
     OtherProtocol,
 }
 
-/// Stops the daemon unless it has a job in progress, as `rho daemon stop`
-/// does. A job that starts between the check and the stop is recorded
-/// interrupted, as by any stop.
+/// Stops the daemon unless a stop would interrupt something: what its
+/// upgrade in place waits for too. Work that starts between the check and
+/// the stop is recorded interrupted, as by any stop.
 async fn stop_if_idle(paths: &DaemonPaths) -> anyhow::Result<Retired> {
     let connection = match daemon::connect(paths, ConnectAs::Command.hello()).await {
         Ok(connection) => connection,
@@ -175,18 +239,18 @@ async fn stop_if_idle(paths: &DaemonPaths) -> anyhow::Result<Retired> {
         )) => return Ok(Retired::OtherProtocol),
         Err(error) => return Err(error.into()),
     };
-    let jobs = connection
+    let in_progress = connection
         .client
         .request::<methods::Status>(&StatusParams {})
         .await?
-        .jobs;
+        .in_progress;
     let daemon = connection.hello.daemon;
     drop(connection.client);
-    if jobs > 0 {
+    if in_progress > 0 {
         return Ok(Retired::Busy {
             pid: daemon.pid,
             version: daemon.version,
-            jobs,
+            in_progress,
         });
     }
     daemon_cli::stop(paths).await?;
@@ -199,7 +263,8 @@ enum Noticed {
     Restarting,
     /// It waits for work in progress, then restarts.
     Waiting(PendingUpgrade),
-    /// Its executable is the one it started from.
+    /// It said nothing in time: its executable is not the one installed
+    /// over.
     Nothing,
 }
 

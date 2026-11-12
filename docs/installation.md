@@ -96,8 +96,10 @@ Rho runs your sessions in a per-user [daemon](/daemon) that the first `rho` comm
 | Install script (`install.sh`) and release archives on macOS and Linux | None | The new binary replaces the old one at the same path. The daemon [re-executes it in place](/daemon#upgrading-in-place) once nothing would be cut short, and `rho update` waits to report the restart, or says what the daemon is waiting for. |
 | Cargo (`cargo install rho-coding-agent`) | None | As the install script. |
 | Arch `PKGBUILD` (pacman) | None. The package ships `/usr/bin/rho` and its license only. | As the install script. |
-| mise | None | mise gives each version a directory of its own, so the daemon has nothing to re-execute. `rho update` stops an idle daemon, and the next `rho` command starts the updated one. A daemon with jobs in progress keeps running the old version: run `rho daemon restart` once they finish. |
-| Scoop bucket, install script (`install.ps1`), and release archives on Windows | None | Windows does not let an installer replace the executable of a running daemon. `rho update` stops an idle daemon and then prints the update command for you to run. If the daemon has jobs in progress, run `rho daemon stop` once they finish, then the command. |
+| mise | None | mise gives each version a directory of its own, so the daemon has nothing to re-execute. `rho update` stops an idle daemon, and the next `rho` command starts the updated one. A daemon with work in progress keeps running the old version: run `rho daemon restart` once that finished. |
+| Scoop bucket, install script (`install.ps1`), and release archives on Windows | None | Windows does not let an installer replace the executable of a running daemon. `rho update` stops an idle daemon and then prints the update command for you to run. If the daemon has work in progress, run `rho daemon stop` once that finished, then the command. |
+
+An idle daemon is one a stop would interrupt nothing in: no job queued, running, or waiting for input, no login under way, and no session with a background process, subagent, or workflow run of its own. That is what the daemon itself waits for before it upgrades in place.
 
 The same holds when you update without `rho update`, by running the package manager or the install script yourself. On macOS and Linux a daemon whose executable was replaced upgrades itself. With mise, and on Windows, run `rho daemon restart` or `rho daemon stop` as the table says.
 

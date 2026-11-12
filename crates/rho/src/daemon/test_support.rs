@@ -88,6 +88,7 @@ pub(super) fn test_status() -> DaemonStatus {
         started_at: 0,
         uptime_secs: 0,
         jobs: 0,
+        in_progress: 0,
         socket: "/test/daemon.sock".into(),
         credential_store: CredentialStoreStatus {
             store: CredentialStoreKind::File,

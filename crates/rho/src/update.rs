@@ -207,16 +207,21 @@ pub async fn run_update(current_version: &str) -> anyhow::Result<()> {
     let mut output = std::io::stdout();
     // The daemon is a courtesy to the update, never a reason to fail it: one
     // that could not be asked is reported and the update goes on.
-    if let Err(error) = daemon_install::make_way_for_update(&mut output).await {
-        eprintln!(
-            "warning: could not check the running rho daemon: {error:#}; run `rho daemon stop` if the installer cannot replace rho"
-        );
-    }
+    let watched = daemon_install::before_update(&mut output)
+        .await
+        .inspect_err(|error| {
+            eprintln!(
+                "warning: could not check the running rho daemon: {error:#}; run `rho daemon stop` if the installer cannot replace rho"
+            );
+        })
+        .ok();
     run_update_command(method, &git_ref).await?;
-    if let Err(error) = daemon_install::follow_update(method.installs(), &mut output).await {
-        eprintln!(
-            "warning: could not check the running rho daemon: {error:#}; `rho daemon restart` moves it to the updated rho"
-        );
+    if let Some(watched) = watched {
+        if let Err(error) = watched.follow(method.installs(), &mut output).await {
+            eprintln!(
+                "warning: could not follow the running rho daemon: {error:#}; `rho daemon restart` moves it to the updated rho"
+            );
+        }
     }
     Ok(())
 }

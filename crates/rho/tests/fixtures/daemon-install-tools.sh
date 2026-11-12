@@ -4,7 +4,8 @@
 #
 # `cargo install` puts a new rho at $RHO_TEST_INSTALL_PATH by a rename, as an
 # installer does. That rho runs the binary under test, $RHO_TEST_RHO, and
-# leaves `<install path>.daemon` behind once it ran as the daemon.
+# leaves `<install path>.daemon` behind once it ran as the daemon. With
+# $RHO_TEST_INSTALL_OUTLASTS_RESTART set, the install returns only then.
 # `mise` names $RHO_TEST_MISE_INSTALL as the one install of its tool `rho`,
 # and its upgrade installs nothing over it, as mise gives each version a
 # directory of its own.
@@ -22,6 +23,10 @@ exec '$RHO_TEST_RHO' "\$@"
 SCRIPT
         chmod 755 "$staged"
         mv "$staged" "$RHO_TEST_INSTALL_PATH"
+        # As an installer that has more to do after it wrote the binary.
+        if [ -n "${RHO_TEST_INSTALL_OUTLASTS_RESTART:-}" ]; then
+            until [ -e "$RHO_TEST_INSTALL_PATH.daemon" ]; do sleep 0.05; done
+        fi
         ;;
     mise)
         case "$1" in

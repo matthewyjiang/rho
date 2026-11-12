@@ -1334,6 +1334,12 @@
           "$ref": "#/$defs/CredentialStoreStatus",
           "description": "The credential store the daemon keeps provider credentials in, what\nchose it, and whether the daemon can reach it."
         },
+        "in_progress": {
+          "description": "How many things stopping or restarting the daemon would interrupt:\nthe jobs counted in `jobs`, logins under way, and sessions with work\nof their own, such as a background process. Zero is what the daemon\nwaits for before it upgrades in place.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "jobs": {
           "description": "Jobs with a turn in progress: [`crate::JobState::Running`] or\n[`crate::JobState::WaitingForInput`].",
           "format": "uint64",
@@ -1386,6 +1392,7 @@
         "started_at",
         "uptime_secs",
         "jobs",
+        "in_progress",
         "socket",
         "credential_store"
       ],

@@ -235,6 +235,7 @@ impl Service for DaemonHost {
             started_at: self.started_at,
             uptime_secs: self.started.elapsed().as_secs(),
             jobs: u64::try_from(in_progress).unwrap_or(u64::MAX),
+            in_progress: self.in_progress(),
             socket: self.socket.clone(),
             credential_store: store::status(self.store_environment).await,
             upgrade: self.upgrades.pending().map(|version| PendingUpgrade {
