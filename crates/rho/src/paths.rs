@@ -23,7 +23,7 @@ const MAX_PLAIN_PATH: usize = 260;
 /// means the same without it: Windows parses a plain path, so a long one, a
 /// device name such as `NUL`, and a name ending in a dot or a space would
 /// then name something else. No path has that prefix on other platforms.
-fn without_verbatim_prefix(path: PathBuf) -> PathBuf {
+pub(crate) fn without_verbatim_prefix(path: PathBuf) -> PathBuf {
     let mut components = path.components();
     let Some(Component::Prefix(prefix)) = components.next() else {
         return path;

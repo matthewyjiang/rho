@@ -110,9 +110,9 @@ impl Sandbox {
         }
     }
 
-    /// The workspace as a session's tools and the runs it starts name it:
-    /// resolved by the file system, which on Windows puts the verbatim
-    /// prefix on it, in a daemon and out of one.
+    /// The workspace as a session's tools name it: resolved by the file
+    /// system, which on Windows puts the verbatim prefix on it, in a daemon
+    /// and out of one.
     pub(super) fn resolved_workspace(&self) -> PathBuf {
         self.workspace.canonicalize().unwrap()
     }
@@ -978,7 +978,7 @@ async fn a_subagent_is_a_child_job_of_its_session() {
             JobState::Completed,
             JobKind::Subagent,
             JobState::Completed,
-            sandbox.resolved_workspace(),
+            sandbox.workspace.clone(),
             None,
             None,
         ),
@@ -1044,7 +1044,7 @@ async fn a_workflow_run_is_a_child_job_of_its_session() {
                 None
             ),
             (JobKind::Subagent, JobState::Completed, None),
-            (sandbox.resolved_workspace(), sandbox.resolved_workspace()),
+            (sandbox.workspace.clone(), sandbox.workspace.clone()),
         ),
         "log:\n{log}"
     );

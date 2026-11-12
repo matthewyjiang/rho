@@ -26,6 +26,7 @@
 
 use std::{
     collections::HashMap,
+    path::PathBuf,
     sync::{Arc, Mutex, MutexGuard, PoisonError},
 };
 
@@ -150,6 +151,13 @@ impl Drop for Listing {
     }
 }
 
+/// A run's `workspace` as the daemon lists it: named as its session's job
+/// names the same directory. A run names the directory as its tools
+/// resolved it, which on Windows has the verbatim prefix.
+fn listed_workspace(workspace: PathBuf) -> PathBuf {
+    crate::paths::without_verbatim_prefix(workspace)
+}
+
 /// Records the runs a session or workflow run starts as children of its
 /// job.
 #[derive(Clone)]
@@ -164,6 +172,7 @@ struct ChildJobs {
 impl ChildObserver for ChildJobs {
     fn workflow_started(&self, run: StartedWorkflow) -> HostedWorkflow {
         let StartedWorkflow { run_id, workspace } = run;
+        let workspace = listed_workspace(workspace);
         let (end, ended) = oneshot::channel();
         let record = JobRecord::new_workflow(self.parent.clone(), workspace, run_id);
         let job = record.id.clone();
@@ -199,6 +208,7 @@ impl ChildObserver for ChildJobs {
             queue,
             events,
         } = run;
+        let workspace = listed_workspace(workspace);
         let record = JobRecord::new_subagent(
             self.parent.clone(),
             workspace.clone(),
