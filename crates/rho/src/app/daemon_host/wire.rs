@@ -71,12 +71,14 @@ pub(super) fn state_event(moved: &Moved) -> wire::SessionEvent {
 /// `record` as `rho/job/list` reports it, with where the job waits for
 /// capacity, if it does. `undelivered` names the workflow runs whose result
 /// a session has yet to be given, and `live` is what the daemon follows of
-/// the job, if it streams the job's session.
+/// the job, if it streams the job's session. `worktree_stale` is whether
+/// its worktree is stale (see `sessions::worktree_stale`).
 pub(super) fn job_summary(
     record: JobRecord,
     queue: Option<QueuePlace>,
     undelivered: &HashSet<String>,
     live: Option<wire::JobLive>,
+    worktree_stale: bool,
 ) -> wire::JobSummary {
     let JobRecord {
         id,
@@ -124,6 +126,7 @@ pub(super) fn job_summary(
         queue: queue.map(Into::into),
         live,
         worktree,
+        worktree_stale,
     }
 }
 

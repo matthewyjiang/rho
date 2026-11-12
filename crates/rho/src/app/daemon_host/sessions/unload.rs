@@ -25,7 +25,7 @@ use std::{sync::Arc, time::Duration};
 use rho_sdk::SessionId;
 use tokio::time::Instant;
 
-use super::{LoadedSession, Sessions};
+use super::{worktree::Prune, LoadedSession, Sessions};
 use crate::app::{daemon_host::jobs::SessionJob, session_runtime::SessionRuntime};
 
 /// How long a session sits idle before the daemon unloads or discards it,
@@ -148,8 +148,13 @@ impl Sessions {
             );
         } else {
             // Nothing on disk could reopen a session that saved nothing, so
-            // its job goes with it.
+            // its job goes with it, and its worktree when cleanup may
+            // remove it: nothing would remember it after.
+            let record = self.jobs.get(&session.job);
             self.jobs.remove(&session.job);
+            if let Some(record) = record {
+                self.prune_worktree(&record, Prune::Remove).await;
+            }
             tracing::info!(
                 session = %id,
                 job = %session.job,

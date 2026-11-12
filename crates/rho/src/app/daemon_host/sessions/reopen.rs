@@ -28,7 +28,7 @@ use super::{
     open::{open_session, OpenWith, Opening},
     open_failed,
     store::{store_blocking, store_failed},
-    writing, LoadedSession, SessionJobRecord, Sessions, TurnSlot,
+    worktree, writing, LoadedSession, SessionJobRecord, Sessions, TurnSlot,
 };
 use crate::{
     app::daemon_host::{
@@ -112,6 +112,9 @@ impl Sessions {
             SessionJob::Last(record) => Some(*record),
             SessionJob::New => None,
         };
+        if let Some(record) = &last {
+            worktree::restore(record).await?;
+        }
         let stored = saved_session(id, SavedFor::Turns).await?;
         // The session opens under the grant `with` brings, held to its
         // job's limit, whatever its last turn ran under, so its record never

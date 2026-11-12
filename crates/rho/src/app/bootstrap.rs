@@ -27,7 +27,7 @@ use super::{
     daemon_cli, doctor_cli, interactive, login, mcp_cli, plugins_cli,
     sdk_config::SdkBootstrapOptions,
     session_runtime::LeftOut,
-    sessions_cli, workflow_cli,
+    sessions_cli, workflow_cli, worktrees_cli,
 };
 
 pub async fn run(cli: Cli) -> anyhow::Result<()> {
@@ -210,6 +210,9 @@ async fn dispatch_early_command(cli: &Cli) -> anyhow::Result<EarlyDispatch> {
             daemon_cli::run(command.clone()).await,
         ));
     }
+    if let Some(Command::Worktrees { command }) = &cli.command {
+        return Ok(EarlyDispatch::Handled(worktrees_cli::run(command).await));
+    }
     if let Some(Command::Doctor { json }) = &cli.command {
         return Ok(EarlyDispatch::Handled(doctor_cli::run(*json, cli).await));
     }
@@ -341,7 +344,10 @@ async fn prepare_startup(cli: Cli) -> anyhow::Result<PreparedStartup> {
         };
         let root = crate::worktree::root(&crate::paths::rho_dir()?);
         let added = crate::worktree::add(&root, &workspace).await?;
-        eprintln!("rho: {}", crate::worktree::hint(&added.worktree));
+        eprintln!(
+            "rho: {}",
+            crate::worktree::hint(&added.worktree, crate::worktree::Removal::Manual)
+        );
         std::env::set_current_dir(&added.cwd)?;
         (added.cwd, output_file, config_repository)
     } else {

@@ -5,7 +5,8 @@
 //! [`setup`], changing their settings in [`configure`], and listing,
 //! renaming, and deleting them in [`catalog`],
 //! `rho attach` following them in [`attach`], and `rho run --detach`
-//! starting them in [`detach`]; the tool processes the daemon's stop ends
+//! starting them in [`detach`], and cleaning up the git worktrees they
+//! work in in [`worktrees`]; the tool processes the daemon's stop ends
 //! are in [`tools`], signing it in and out over its socket in [`auth`],
 //! and the interactive logins it relays to clients, `rho login` among
 //! them, in [`login`], signing in where no OS credential store answers in
@@ -50,6 +51,9 @@ mod detach;
 
 #[path = "support/git_repo.rs"]
 mod git_repo;
+
+#[path = "support/daemon_worktrees.rs"]
+mod worktrees;
 
 // Unix: the tool processes are shell commands, found by process group.
 #[cfg(unix)]

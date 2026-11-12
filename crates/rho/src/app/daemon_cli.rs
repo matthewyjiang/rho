@@ -259,6 +259,10 @@ async fn run_foreground(
         let host = Arc::clone(&host);
         tokio::spawn(async move { host.unload_idle_sessions(unload_idle_after).await })
     };
+    let worktree_prunes = {
+        let host = Arc::clone(&host);
+        tokio::spawn(async move { host.prune_worktrees_daily().await })
+    };
     let upgrades = executable.clone().map(|executable| {
         let host = Arc::clone(&host);
         tokio::spawn(async move { host.upgrade_when_replaced(&executable).await })
@@ -303,6 +307,7 @@ async fn run_foreground(
     // Also waits for a session the idle unload is tearing down.
     let drained = host.stop_sessions(stop_requested).await;
     unloads.abort();
+    worktree_prunes.abort();
     if let Some(upgrades) = upgrades {
         upgrades.abort();
     }
@@ -376,15 +381,15 @@ async fn status(paths: &DaemonPaths, json: bool) -> anyhow::Result<()> {
     if json {
         println!("{}", serde_json::to_string_pretty(&status)?);
     } else {
-        // Only what is still on disk: a person removes worktrees, not the
-        // daemon. A list the daemon cannot give drops the row, not the
-        // status.
+        // Only what is still on disk: the daemon removed the merged ones,
+        // and a person may have removed others. A list the daemon cannot
+        // give drops the row, not the status.
         let worktrees: Vec<_> = match client.request::<methods::JobList>(&JobListParams {}).await {
             Ok(jobs) => jobs
                 .jobs
                 .into_iter()
-                .filter_map(|job| job.worktree)
-                .filter(|worktree| worktree.path.exists())
+                .filter_map(|job| Some((job.worktree?, job.worktree_stale)))
+                .filter(|(worktree, _)| worktree.path.exists())
                 .collect(),
             Err(error) => {
                 tracing::debug!(%error, "could not list the daemon's jobs");
@@ -397,8 +402,8 @@ async fn status(paths: &DaemonPaths, json: bool) -> anyhow::Result<()> {
 }
 
 /// The status text, with the worktrees the daemon's sessions work in that
-/// are still there (#1673).
-fn status_text(status: &DaemonStatus, worktrees: &[SessionWorktree]) -> String {
+/// are still there, each with whether it is stale (#1673).
+fn status_text(status: &DaemonStatus, worktrees: &[(SessionWorktree, bool)]) -> String {
     let DaemonStatus {
         pid,
         version,
@@ -429,10 +434,15 @@ fn status_text(status: &DaemonStatus, worktrees: &[SessionWorktree]) -> String {
     let worktrees: String = worktrees
         .iter()
         .enumerate()
-        .map(|(at, worktree)| {
+        .map(|(at, (worktree, stale))| {
             let label = if at == 0 { "worktrees" } else { "" };
+            let stale = if *stale {
+                " (stale: unused for 14 days)"
+            } else {
+                ""
+            };
             format!(
-                "\n  {label:<12} {} {}",
+                "\n  {label:<12} {} {}{stale}",
                 worktree.branch,
                 worktree.path.display()
             )

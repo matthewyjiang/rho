@@ -12,6 +12,7 @@ The rho daemon is one long-lived background process per user and rho home (`~/.r
 | `rho daemon stop` | Ask the daemon to shut down and wait for it to exit. |
 | `rho daemon restart` | Restart the daemon ([in place](#upgrading-in-place) on Linux and macOS) and wait until it answers again. Turns under way are interrupted and recorded `interrupted`. With no daemon running, it starts one. |
 | `rho mcp serve` | Serve the daemon's sessions as an MCP server, so another agent can start, follow, and steer them. See [MCP server](/mcp-server). |
+| `rho worktrees prune [--dry-run]` | Remove the [session worktrees](#sessions-in-worktrees) that are clean and merged now, instead of at the daemon's next daily pass, and say why each other one stays. `--dry-run` only lists what it would do. |
 | `rho attach <ID>` | Follow a session's turn until it ends, and exit as it ended; answer its requests, steer it, or cancel it from the terminal; Ctrl+C detaches. See [Attaching to a daemon session](/automation-cli#attaching-to-a-daemon-session). |
 
 `status`, `stop`, and `attach` never start a daemon. With none running, they print `rho daemon is not running` and exit with status 1.
@@ -69,9 +70,12 @@ The job records the worktree, so `rho/job/list` names its `branch`, its `path`, 
 
 ```text
   worktrees    rho/api-3fa2c1d0 /home/me/.rho/worktrees/api-3fa2c1d0
+               rho/api-91bd22aa /home/me/.rho/worktrees/api-91bd22aa (stale: unused for 14 days)
 ```
 
-The daemon never removes a worktree or its branch: they hold the session's work, committed or not. Remove them from the repository once you have kept what you want, with `git worktree remove <path>` (`--force` drops uncommitted edits) and `git branch -D <branch>`. A worktree whose session failed to open stays too, and the error names it. A client that asks for a worktree refuses a session a daemon older than itself opened without one, before anything runs in it; run `rho daemon restart` once its jobs finish. Attach to a worktree session with `rho attach <ID>`, or start the TUI in its worktree; a TUI in the origin project attaches only to that project's own sessions.
+The daemon removes a worktree only when nothing in it can be lost: its session is neither loaded nor running, no job works in it, it has no uncommitted or untracked changes, and what it has checked out is merged into the current `HEAD` of the checkout it was added from. It runs `git worktree remove` without `--force` and keeps the branch. It checks when it starts and once a day, and [`rho worktrees prune`](/automation-cli#cleaning-up-worktrees) checks at once. Reopening the session later adds the worktree back from its branch, so the session works where it did. A session discarded before it saved anything has its worktree checked as it goes.
+
+Every other worktree stays, however old. One unused for 14 days is stale: `rho daemon status` and `/jobs` flag it. Remove it from the repository once you have kept what you want, with `git worktree remove <path>` (`--force` drops uncommitted edits) and `git branch -D <branch>`. A worktree whose session failed to open stays too, and the error names it; the daemon has no job to tie it to, so it never removes that one. A client that asks for a worktree refuses a session a daemon older than itself opened without one, before anything runs in it; run `rho daemon restart` once its jobs finish. Attach to a worktree session with `rho attach <ID>`, or start the TUI in its worktree; a TUI in the origin project attaches only to that project's own sessions.
 
 ### Sessions other sessions start
 

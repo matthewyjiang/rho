@@ -258,22 +258,48 @@ repository. The run works at the current directory's place in the worktree, and
 says where on stderr:
 
 ```text
-rho: the session works in worktree /home/me/.rho/worktrees/api-3fa2c1d0 on branch rho/api-3fa2c1d0; rho never removes it
+rho: the session works in worktree /home/me/.rho/worktrees/api-3fa2c1d0 on branch rho/api-3fa2c1d0; rho removes it once it is clean and merged, and keeps the branch
 ```
 
 Outside a git repository, `--worktree` fails with exit 2. A repository with no
 commit has no `HEAD` to branch from, and fails the same way.
 
-Rho never removes a worktree or its branch, finished or not. Review the branch,
-merge what you keep, then remove both from the repository:
+#### Cleaning up worktrees
+
+The daemon removes a session's worktree once nothing in it can be lost:
+
+- its session is neither loaded nor running,
+- it has no uncommitted or untracked changes, and
+- its branch is merged into the current `HEAD` of the checkout you started it
+  from.
+
+It runs `git worktree remove` (never with `--force`), keeps the branch, and
+checks when it starts and once a day. If you reopen the session later, the
+daemon adds the worktree back from the branch. A squash or rebase merge
+leaves the branch looking unmerged, so that worktree stays until you remove it.
+
+Every other worktree stays. After 14 days unused, `rho daemon status` and
+[`/jobs`](/interactive-tui) flag it as stale. Merge what you want, then remove
+it yourself:
 
 ```bash
 git worktree remove ~/.rho/worktrees/api-3fa2c1d0   # add --force to drop uncommitted edits
 git branch -D rho/api-3fa2c1d0
 ```
 
-`rho daemon status` lists the worktrees of the daemon's sessions, and
-`git worktree list` lists every worktree of a repository.
+`rho worktrees prune` runs the cleanup now and prints what it removed and why
+it kept the rest. `--dry-run` only lists what it would do:
+
+```text
+$ rho worktrees prune --dry-run
+would remove rho/api-3fa2c1d0 /home/me/.rho/worktrees/api-3fa2c1d0: clean and merged into main; the branch stays
+kept         rho/api-91bd22aa /home/me/.rho/worktrees/api-91bd22aa: not merged into main; stale: unused for 14 days
+kept         rho/api-07c1e5f2 /home/me/.rho/worktrees/api-07c1e5f2: uncommitted or untracked changes
+```
+
+A foreground `rho run --worktree` has no daemon, so nothing removes its
+worktree; its stderr line says so. `git worktree list` lists every worktree of
+a repository.
 
 ### Attaching to a daemon session
 
@@ -503,6 +529,7 @@ Rho accepts global options before an optional subcommand. Provider, model, auth,
 | `rho plugins disable <NAME>` | Disable a plugin without deleting package files. |
 | `rho plugins remove <NAME> [--yes]` | Remove a package from a managed root; keeps plugin data. |
 | `rho daemon [run\|status [--json]\|stop]` | Run the per-user [daemon](/daemon) in the foreground, show its status, or stop it. `status` and `stop` exit with status 1 when no daemon is running. |
+| `rho worktrees prune [--dry-run]` | Remove the daemon's session worktrees that are clean and merged, keep their branches, and say why each other one stays. `--dry-run` changes nothing. See [Cleaning up worktrees](#cleaning-up-worktrees). |
 | `rho doctor [--json]` | Run the same setup diagnostics as the interactive `/doctor` overlay and print a text report (or one JSON document). Root `--provider`, `--model`, `--auth`, and `--reasoning` apply to this invocation the same way they do for `rho run`. It also checks the [daemon](/daemon#checking-the-daemon), never starting one: whether it runs and matches this `rho`, its socket's permissions, the always-on service, its environment, and the credential store it can reach. Exits with status 1 when any check fails; warnings exit 0. |
 | `rho update` | Update Rho using the detected installation method. |
 | `rho uninstall [--purge] [--dry-run]` | Preview and confirm uninstall; preserve local data unless `--purge` is given. |

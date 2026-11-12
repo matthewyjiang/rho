@@ -306,7 +306,7 @@ impl Admission {
 }
 
 /// The current Unix time in seconds; 0 on a clock set before 1970.
-fn unix_now() -> u64 {
+pub(super) fn unix_now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |since_epoch| since_epoch.as_secs())

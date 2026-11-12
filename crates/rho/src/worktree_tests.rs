@@ -3,7 +3,7 @@ use std::{path::Path, process::Command};
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 
-use super::{add, WorktreeError};
+use super::{add, inspect, remove, restore, Holds, WorktreeError};
 
 /// Runs `git args` in `dir`, isolated from the caller's repository and
 /// config, and returns its trimmed stdout.
@@ -98,5 +98,128 @@ async fn a_workspace_outside_git_is_refused() {
     assert!(
         matches!(&refused, Err(WorktreeError::NotARepository(path)) if path == &workspace),
         "{refused:?}"
+    );
+}
+
+/// A repository in `home` whose one commit on `main` has `shared.txt`.
+fn repository(home: &Path) -> std::path::PathBuf {
+    let repository = home.join("repo");
+    std::fs::create_dir_all(&repository).unwrap();
+    git(&repository, &["init", "--quiet", "--initial-branch=main"]);
+    std::fs::write(repository.join("shared.txt"), "base").unwrap();
+    git(&repository, &["add", "."]);
+    git(&repository, &["commit", "--quiet", "-m", "base"]);
+    crate::paths::canonicalize(&repository).unwrap()
+}
+
+// Covers: cleanup reads a worktree with uncommitted, staged, or untracked
+// changes as holding changes, one whose commit its origin's HEAD lacks as
+// unmerged, and one with nothing new, or whose commit was merged, as
+// merged, naming the origin's branch, or its commit when detached.
+// Owner: session worktrees (git plumbing under the daemon's cleanup).
+#[tokio::test]
+async fn inspect_reads_what_removing_a_worktree_would_lose() {
+    let home = TempDir::new().unwrap();
+    let origin = repository(home.path());
+    let root = home.path().join("worktrees");
+    let commit = |path: &Path| {
+        std::fs::write(path.join("new.txt"), "work").unwrap();
+        git(path, &["add", "."]);
+        git(path, &["commit", "--quiet", "-m", "work"]);
+    };
+    let mut found = Vec::new();
+    let mut expected = Vec::new();
+    let main = || Holds::Merged {
+        base: "main".to_owned(),
+    };
+    let cases: [(&str, &dyn Fn(&Path), Holds); 6] = [
+        ("nothing new", &|_| {}, main()),
+        (
+            "untracked",
+            &|path| std::fs::write(path.join("new.txt"), "work").unwrap(),
+            Holds::Changes,
+        ),
+        (
+            "modified",
+            &|path| std::fs::write(path.join("shared.txt"), "edit").unwrap(),
+            Holds::Changes,
+        ),
+        (
+            "staged",
+            &|path| {
+                std::fs::write(path.join("shared.txt"), "edit").unwrap();
+                git(path, &["add", "."]);
+            },
+            Holds::Changes,
+        ),
+        (
+            "unmerged commit",
+            &commit,
+            Holds::Unmerged {
+                base: "main".to_owned(),
+            },
+        ),
+        (
+            "merged commit",
+            &|path| {
+                commit(path);
+                let branch = git(path, &["branch", "--show-current"]);
+                git(&origin, &["merge", "--quiet", "--ff-only", branch.as_str()]);
+            },
+            main(),
+        ),
+    ];
+    for (case, arrange, holds) in cases {
+        let added = add(&root, &origin).await.unwrap();
+        arrange(&added.worktree.path);
+        found.push((case, inspect(&added.worktree).await.unwrap()));
+        expected.push((case, holds));
+    }
+    git(&origin, &["checkout", "--quiet", "--detach"]);
+    let detached = add(&root, &origin).await.unwrap();
+    found.push((
+        "detached origin",
+        inspect(&detached.worktree).await.unwrap(),
+    ));
+    expected.push((
+        "detached origin",
+        Holds::Merged {
+            base: git(&origin, &["rev-parse", "--short", "HEAD"]),
+        },
+    ));
+
+    assert_eq!(found, expected);
+}
+
+// Covers: removing a worktree keeps its branch, and restoring it checks
+// that branch out at the same path again, with the session's directory in
+// it made even when git tracks nothing there.
+// Owner: session worktrees (git plumbing under the daemon's cleanup).
+#[tokio::test]
+async fn a_removed_worktree_keeps_its_branch_and_comes_back_from_it() {
+    let home = TempDir::new().unwrap();
+    let origin = repository(home.path());
+    let added = add(&home.path().join("worktrees"), &origin).await.unwrap();
+    let worktree = &added.worktree;
+
+    remove(worktree).await.unwrap();
+    let removed = (
+        worktree.path.exists(),
+        git(&origin, &["branch", "--list", worktree.branch.as_str()]),
+    );
+    let cwd = worktree.path.join("untracked/dir");
+    restore(worktree, &cwd).await.unwrap();
+
+    assert_eq!(
+        (
+            removed,
+            git(&worktree.path, &["branch", "--show-current"]),
+            cwd.is_dir(),
+        ),
+        (
+            (false, worktree.branch.clone()),
+            worktree.branch.clone(),
+            true,
+        )
     );
 }

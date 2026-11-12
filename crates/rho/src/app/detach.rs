@@ -193,7 +193,11 @@ async fn start(
         .map_err(|error| AutomationExit::configuration(error.to_string()))?;
     // Before the prompt, so a turn that fails to start still names it.
     if let Some(worktree) = &opened.worktree {
-        let _ = writeln!(io::stderr(), "rho: {}", crate::worktree::hint(worktree));
+        let _ = writeln!(
+            io::stderr(),
+            "rho: {}",
+            crate::worktree::hint(worktree, crate::worktree::Removal::Daemon)
+        );
     }
     let session = opened.session;
     client

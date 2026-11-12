@@ -28,6 +28,7 @@ fn drive(id: &str, run: RunId, created_at: u64, state: JobState) -> JobSummary {
         grant: None,
         grant_limit: None,
         worktree: None,
+        worktree_stale: false,
     }
 }
 
