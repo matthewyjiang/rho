@@ -21,6 +21,7 @@ fn reasoning_summaries_are_portable_but_opaque_context_is_not() {
             data: json!({"type": "reasoning", "encrypted_content": "signed"}),
             replay: crate::model::ReplayScope::ExactModel,
         }],
+        created_at: None,
     };
 
     let prepared = prepare_assistant(message, &target);

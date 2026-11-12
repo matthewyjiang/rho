@@ -127,6 +127,7 @@ pub(crate) fn split_system_and_messages(
                     provenance: message.provenance.clone(),
                     reasoning_summary: message.reasoning_summary.clone(),
                     provider_context: message.provider_context.clone(),
+                    created_at: None,
                 };
                 enriched
                     .content
@@ -404,6 +405,7 @@ mod tests {
                     data: json!({"type": "reasoning", "encrypted_content": "signed"}),
                     replay: crate::model::ReplayScope::ExactModel,
                 }],
+                created_at: None,
             })],
             &target(),
             ProviderContextReplay::Enabled,
@@ -467,6 +469,7 @@ mod tests {
                     }),
                     replay: crate::model::ReplayScope::ExactModel,
                 }],
+                created_at: None,
             })],
             &target,
             ProviderContextReplay::Enabled,
@@ -499,6 +502,7 @@ mod tests {
                     }),
                     replay: crate::model::ReplayScope::ExactModel,
                 }],
+                created_at: None,
             })],
             &target,
             ProviderContextReplay::Disabled,

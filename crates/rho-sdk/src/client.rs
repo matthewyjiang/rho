@@ -187,6 +187,7 @@ pub struct RhoBuilder {
     hook_delegation: crate::hooks::HookDelegation,
     hook_host_labels: crate::hooks::HookHostLabels,
     force_publish_live_history: bool,
+    record_reply_times: bool,
     tool_visibility: Option<Arc<dyn crate::tool::ToolVisibility>>,
     request_context: Option<Arc<dyn crate::RequestContext>>,
 }
@@ -394,6 +395,16 @@ impl RhoBuilder {
         self
     }
 
+    /// Records when each assistant reply finished
+    /// ([`crate::model::AssistantMessage::created_at`]) or was cut off
+    /// ([`crate::model::AbortedAssistant::stopped_at`]). Off by default.
+    /// Requests never show these times; a host reports them to the model by
+    /// stamping its next input with [`crate::model::UserStamp`].
+    pub fn record_reply_times(mut self, enabled: bool) -> Self {
+        self.record_reply_times = enabled;
+        self
+    }
+
     pub fn build(self) -> Result<Rho, Error> {
         let provider = self.provider.ok_or_else(|| Error::InvalidConfiguration {
             message: "a model provider is required".into(),
@@ -469,6 +480,7 @@ impl RhoBuilder {
             )
             .with_host_labels(self.hook_host_labels),
             publish_live_history,
+            record_reply_times: self.record_reply_times,
             lifecycle: Arc::new(RuntimeLifecycle::default()),
             boundary_inputs: None,
             tool_visibility: self.tool_visibility,
@@ -505,6 +517,8 @@ pub struct Rho {
     /// reads, or the host forced publication, so runs publish the turn in flight
     /// for [`crate::Session::live_history`].
     pub(crate) publish_live_history: bool,
+    /// Whether runs record when replies finished or were cut off.
+    pub(crate) record_reply_times: bool,
     pub(crate) lifecycle: Arc<RuntimeLifecycle>,
     /// Advertised subset per model request; `None` advertises every tool.
     pub(crate) tool_visibility: Option<Arc<dyn crate::tool::ToolVisibility>>,

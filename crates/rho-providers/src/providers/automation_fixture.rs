@@ -103,6 +103,11 @@ impl ModelProvider for AutomationFixtureProvider {
 
     fn send_turn<'a>(&'a self, request: ModelRequest<'a>) -> ProviderFuture<'a> {
         Box::pin(async move {
+            let messages = super::fixture_message_times::without_times(request.messages);
+            let request = ModelRequest {
+                messages: &messages,
+                ..request
+            };
             let turn = self.turn.fetch_add(1, Ordering::SeqCst);
             match self.mode {
                 Mode::Inspect => completed(inspect_request(&self.identity, &request)),

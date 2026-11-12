@@ -417,9 +417,25 @@ fn turn_base(
 
 /// One turn's SDK checkpoint store, installed by
 /// [`SessionRuntime::install_turn_checkpoint`].
+#[derive(Clone)]
 pub(super) struct TurnCheckpoint(Arc<CheckpointStore>);
 
+impl std::fmt::Debug for TurnCheckpoint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TurnCheckpoint").finish_non_exhaustive()
+    }
+}
+
 impl TurnCheckpoint {
+    /// Records the row shown for a steer the run may apply as `model`, so
+    /// saves write `shown` in place of the stamped copy.
+    pub(super) fn record_steer(&self, model: &UserInput, shown: &UserInput) {
+        self.0.lock_display().steered.push((
+            Message::User(model.blocks().to_vec()),
+            Message::User(shown.blocks().to_vec()),
+        ));
+    }
+
     /// Records the row shown for a background result the run applied as
     /// `input`, so saves write it in place of the model's copy.
     pub(super) fn record_display(&self, input: &UserInput, shown: Message) {
@@ -510,6 +526,9 @@ struct TurnDisplay {
     /// Background results applied and not yet written: the model's copy
     /// and the row shown for it, in the order the run applied them.
     applied: VecDeque<(Message, Message)>,
+    /// Steers offered to the run: the model's stamped copy and the row shown
+    /// for it. A withdrawn steer never matches a history row.
+    steered: Vec<(Message, Message)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -546,6 +565,7 @@ impl TurnDisplay {
             history_start,
             followed: Followed::Tracking { written: 0 },
             applied: VecDeque::new(),
+            steered: Vec::new(),
         }
     }
 
@@ -581,7 +601,11 @@ impl TurnDisplay {
                 // writes it.
                 break;
             } else {
-                rows.push(row.clone());
+                let shown = self
+                    .steered
+                    .iter()
+                    .find_map(|(model, shown)| (model == row).then_some(shown));
+                rows.push(shown.unwrap_or(row).clone());
             }
             taken += 1;
         }
@@ -604,6 +628,7 @@ impl TurnDisplay {
             history_start,
             followed: Followed::Tracking { written: 0 },
             applied: VecDeque::new(),
+            steered: Vec::new(),
         }
     }
 

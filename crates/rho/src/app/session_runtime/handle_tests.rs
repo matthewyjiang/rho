@@ -8,7 +8,7 @@ use std::{
 
 use pretty_assertions::assert_eq;
 use rho_sdk::{
-    model::{ContentBlock, Message, ModelIdentity, ModelRequest, ModelResponse},
+    model::{ContentBlock, Message, MessageTime, ModelIdentity, ModelRequest, ModelResponse},
     provider::{ModelProvider, ProviderFuture},
     RunEvent, UserInput,
 };
@@ -75,7 +75,8 @@ fn steered<T>(result: &Result<T, SteerError>) -> Steered {
 }
 
 // Covers: a steer through the session's handle reaches the running model
-// turn at its next provider request, and is refused, not lost, before the
+// turn at its next provider request, stamped with when it arrived while the
+// saved transcript shows it as sent, and is refused, not lost, before the
 // run starts, after it ends, and once the prompt is over
 // Owner: session runtime handle and prompt gate
 #[tokio::test]
@@ -113,9 +114,11 @@ async fn steering_through_the_handle_reaches_only_a_running_model_turn() {
             }
         }
         provider.started.notified().await;
+        let before = MessageTime::now();
         let receipt = handle
             .steer(UserInput::text("change course"))
             .expect("a running model turn takes steering");
+        let after = MessageTime::now();
         provider.release.notify_one();
         let mut applied = Vec::new();
         while let Some(event) = shown.recv().await {
@@ -123,10 +126,14 @@ async fn steering_through_the_handle_reaches_only_a_running_model_turn() {
                 applied.extend(ids);
             }
         }
-        (receipt.await.expect("the run accepted the steer"), applied)
+        (
+            receipt.await.expect("the run accepted the steer"),
+            applied,
+            [before, after],
+        )
     };
 
-    let (ended, (accepted, applied)) = timeout(TEST_BUDGET, async {
+    let (ended, (accepted, applied, steer_window)) = timeout(TEST_BUDGET, async {
         tokio::join!(
             runtime.run_turn(&prompt, turn, TurnIo { events, control }, &config),
             parent
@@ -140,12 +147,34 @@ async fn steering_through_the_handle_reaches_only_a_running_model_turn() {
     drop(prompt);
     let after_prompt = steered(&handle.steer(UserInput::text("after the prompt")));
 
+    // The steer took the time on either side of it, a minute apart at most.
     let reached_model = provider
         .requests
         .lock()
         .unwrap()
         .get(1)
-        .is_some_and(|messages| messages.contains(&Message::user_text("change course")));
+        .is_some_and(|messages| {
+            steer_window.iter().any(|time| {
+                messages.contains(&Message::user_text(format!("{time}\nchange course")))
+            })
+        });
+    let shown_users = runtime
+        .storage
+        .file()
+        .expect("the session is saved")
+        .active_display_history()
+        .unwrap()
+        .into_iter()
+        .map(|row| row.message)
+        .filter(|message| matches!(message, Message::User(_)))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        shown_users,
+        vec![
+            Message::user_text("go"),
+            Message::user_text("change course")
+        ]
+    );
     assert_eq!(
         (
             [before_prompt, while_starting, after_run, after_prompt],

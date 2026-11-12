@@ -4994,6 +4994,7 @@ dependencies = [
 name = "rho-sdk"
 version = "6.0.0"
 dependencies = [
+ "chrono",
  "pretty_assertions",
  "proptest",
  "serde",

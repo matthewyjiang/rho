@@ -47,6 +47,7 @@ fn enriched_assistant_context_round_trips_for_resume() {
                 data: serde_json::json!({"type": "reasoning", "encrypted_content": "signed"}),
                 replay: rho_sdk::model::ReplayScope::ExactModel,
             }],
+            created_at: None,
         }))
         .unwrap();
 
@@ -275,6 +276,7 @@ fn inserts_interrupted_tool_results_on_load() {
         )),
         reasoning_summary: None,
         provider_context: Vec::new(),
+        created_at: None,
     });
 
     for assistant in [plain, enriched] {

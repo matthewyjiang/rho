@@ -2,7 +2,12 @@
 
 use std::{future::Future, sync::Mutex};
 
-use rho_sdk::{CancellationToken, SteeringHandle, SteeringId, SteeringRetraction, UserInput};
+use rho_sdk::{
+    model::{MessageTime, UserStamp},
+    CancellationToken, SteeringHandle, SteeringId, SteeringRetraction, UserInput,
+};
+
+use super::persist::TurnCheckpoint;
 
 /// Carries cancellation for the session's current prompt, and steering for
 /// its model run. A runtime runs one prompt at a time, since its host holds
@@ -59,15 +64,26 @@ pub(super) struct ActiveWork {
     token: CancellationToken,
     /// Set for a model run; a command (`/compact`, `/workflow:`) takes no
     /// steering.
-    steering: Option<SteeringHandle>,
+    steering: Option<RunSteering>,
+}
+
+/// A model run's steering, and the turn checkpoint that saves each steer's
+/// shown row in place of its stamped model copy.
+#[derive(Debug)]
+struct RunSteering {
+    handle: SteeringHandle,
+    checkpoint: TurnCheckpoint,
 }
 
 impl ActiveWork {
     /// An SDK model run, which a steer reaches.
-    pub(super) fn model_run(run: &rho_sdk::Run) -> Self {
+    pub(super) fn model_run(run: &rho_sdk::Run, checkpoint: TurnCheckpoint) -> Self {
         Self {
             token: run.cancellation_handle(),
-            steering: Some(run.steering_handle()),
+            steering: Some(RunSteering {
+                handle: run.steering_handle(),
+                checkpoint,
+            }),
         }
     }
 
@@ -164,6 +180,9 @@ impl PromptGate {
     /// steer or comes after the run accepted it. `None` while no prompt
     /// runs, it is still starting, it runs a command, or it was cancelled:
     /// a cancelling run could accept a steer it never applies.
+    ///
+    /// The run gets `input` stamped with the time it arrived; the saved
+    /// transcript shows it as sent.
     pub(super) fn steer(
         &self,
         input: UserInput,
@@ -174,10 +193,18 @@ impl PromptGate {
         >,
     > {
         match &self.slot().state {
-            PromptGateState::Active(work) if !work.token.is_cancelled() => work
-                .steering
-                .as_ref()
-                .map(|steering| steering.request_steer_retractable(input)),
+            PromptGateState::Active(work) if !work.token.is_cancelled() => {
+                work.steering.as_ref().map(|steering| {
+                    // The reply this steer interrupts is still running, so
+                    // the stamp carries only when the steer arrived.
+                    let model = input.clone().stamped(UserStamp {
+                        sent: MessageTime::now(),
+                        previous_reply: None,
+                    });
+                    steering.checkpoint.record_steer(&model, &input);
+                    steering.handle.request_steer_retractable(model)
+                })
+            }
             PromptGateState::Active(_)
             | PromptGateState::Idle
             | PromptGateState::Starting(_)
@@ -201,7 +228,7 @@ impl PromptGate {
             PromptGateState::Active(work) if !work.token.is_cancelled() => work
                 .steering
                 .as_ref()
-                .map(|steering| steering.request_steering_retraction(id)),
+                .map(|steering| steering.handle.request_steering_retraction(id)),
             PromptGateState::Active(_)
             | PromptGateState::Idle
             | PromptGateState::Starting(_)
