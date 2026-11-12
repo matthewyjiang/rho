@@ -171,10 +171,11 @@ async fn output_larger_than_the_bound_is_captured_up_to_the_bound_and_flagged() 
     assert!(output.stderr.starts_with(rho_sdk::ELLIPSIS));
 }
 
-// Covers: a hook's command gets exactly its session's base set and
-// allowlist, read from the session's environment, such as a daemon client's,
-// and nothing else of it; an unset allowlisted name stays absent, and an
-// allowlist cannot override the recursion marker (#1659).
+// Covers: a hook's command gets exactly its session's base set, where the
+// session's daemon is, and allowlist, read from the session's environment,
+// such as a daemon client's, and nothing else of it; an unset allowlisted
+// name stays absent, and an allowlist cannot override the recursion marker
+// (#1659).
 // Owner: hook spawn contract (`build_command`)
 #[test]
 fn a_handler_gets_exactly_its_sessions_base_set_and_allowlist() {
@@ -192,9 +193,12 @@ fn a_handler_gets_exactly_its_sessions_base_set_and_allowlist() {
         (crate::hooks::IN_HOOK_ENV, "0"),
         ("OPENAI_API_KEY", "secret"),
         ("UNRELATED", "value"),
+        // As the client spelled it, relative to its own directory.
+        ("RHO_HOME", "rho-dev"),
+        ("XDG_RUNTIME_DIR", "/run/user/client"),
     ]);
 
-    let command = build_command(&hook, &session);
+    let command = build_command(&hook, &session, Some(Path::new("/srv/rho")));
 
     let environment = command
         .as_std()
@@ -204,6 +208,8 @@ fn a_handler_gets_exactly_its_sessions_base_set_and_allowlist() {
     let expected = [
         ("PATH", "/client/bin"),
         ("HOME", "/home/client"),
+        ("RHO_HOME", "/srv/rho"),
+        ("XDG_RUNTIME_DIR", "/run/user/client"),
         ("MY_HOOK_TOKEN", "token"),
         (crate::hooks::IN_HOOK_ENV, "1"),
     ]
@@ -212,13 +218,17 @@ fn a_handler_gets_exactly_its_sessions_base_set_and_allowlist() {
 }
 
 // Covers: a running hook sees exactly what its command was given from a
-// client's environment, so nothing of this process's own reaches it through
-// the spawn, such as `CARGO_MANIFEST_DIR`, which only the test process has
-// (#1659). `env` runs directly, not through a shell that would export
-// variables of its own.
+// client's environment and this process's rho home, so nothing else of this
+// process's own reaches it through the spawn, such as `CARGO_MANIFEST_DIR`,
+// which only the test process has (#1659). `env` runs directly, not through
+// a shell that would export variables of its own.
 // Owner: hook spawn (`run_hook`)
+// The lock keeps a test that sets `RHO_HOME` from changing it between the
+// spawn's read and the expectation's.
+#[allow(clippy::await_holding_lock)]
 #[tokio::test]
 async fn a_running_handler_sees_only_its_clients_base_set_and_allowlist() {
+    let _env = crate::paths::process_env_lock();
     let home = TempDir::new().unwrap();
     let mut hook = hook_running("true", "10s", &["MY_HOOK_TOKEN"], &home);
     hook.executable = which::which("env").expect("the test machine has `env`");
@@ -238,11 +248,15 @@ async fn a_running_handler_sees_only_its_clients_base_set_and_allowlist() {
         .lines()
         .filter_map(|line| line.split_once('='))
         .collect::<BTreeMap<_, _>>();
-    let expected = BTreeMap::from([
+    let rho_home = crate::child_env::rho_home().map(|home| home.display().to_string());
+    let expected = [
         ("PATH", "/usr/bin:/bin"),
         ("MY_HOOK_TOKEN", "token"),
         (crate::hooks::IN_HOOK_ENV, "1"),
-    ]);
+    ]
+    .into_iter()
+    .chain(rho_home.as_deref().map(|home| ("RHO_HOME", home)))
+    .collect::<BTreeMap<_, _>>();
     assert_eq!(environment, expected);
 }
 

@@ -274,8 +274,12 @@ The child environment is not inherited. It contains:
 - a fixed base set: `PATH`, `HOME`, `LANG`, `LC_ALL`, `LC_CTYPE`, `TZ` on Unix;
   `PATH`, `SystemRoot`, `SystemDrive`, `ComSpec`, `PATHEXT`, `TEMP`, `TMP`,
   `USERPROFILE` on Windows;
+- `RHO_HOME`, set to the rho home of the process running the session, and the
+  session's `XDG_RUNTIME_DIR`, which together locate the session's
+  [daemon](../daemon.md), so a `rho` the hook runs reaches it;
 - `RHO_IN_HOOK=1`;
-- whatever names you listed in `env`, when they are set in the parent.
+- whatever names you listed in `env`, when they are set in the parent. A name
+  listed here replaces the value above, except `RHO_IN_HOOK`.
 
 A variable that is unset in the parent is simply absent from the child. In a
 [daemon](../daemon.md) session, the parent's environment is the session's: the

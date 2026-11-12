@@ -225,9 +225,8 @@ fn spawn_contract(hook: &HookDefinition, active: bool) -> HookSpawnContract {
         // The names `build_command` gives the child: the base set, Rho's own
         // marker, and the hook's allowlist.
         environment: crate::child_env::base_names()
-            .iter()
-            .map(|name| (*name).to_owned())
-            .chain(std::iter::once(super::IN_HOOK_ENV.to_owned()))
+            .chain([super::IN_HOOK_ENV])
+            .map(str::to_owned)
             .chain(hook.env().iter().cloned())
             .collect(),
         warning: partial_edit_coverage_warning(hook.tools()),

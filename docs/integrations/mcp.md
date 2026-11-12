@@ -36,7 +36,7 @@ allow = ["read_file", "list_directory"]
 deny = []
 ```
 
-Rho starts the child with the same sanitized base environment hooks use (paths, home, locale, and on Windows the loader/interpreter variables). It does not copy credentials or other variables by default. It does set `RHO_HOME` to the rho home of the daemon running the session and pass on the session's `XDG_RUNTIME_DIR`, which together locate that daemon, and the session's depth and scope (`RHO_SESSION_DEPTH`, `RHO_SESSION_SCOPE`), so a [`rho mcp serve`](../mcp-server.md#registering-over-stdio) child acts for the session on the session's daemon. `env` adds literal values. Use `env_from_env` for secrets so they do not enter the config file. Its keys are child variable names and its values are ambient variable names:
+Rho starts the child with the same sanitized base environment hooks use (paths, home, locale, and on Windows the loader/interpreter variables), plus `RHO_HOME`, set to the rho home of the daemon running the session, and the session's `XDG_RUNTIME_DIR`, which together locate that daemon. It does not copy credentials or other variables by default. It does pass on the session's depth and scope (`RHO_SESSION_DEPTH`, `RHO_SESSION_SCOPE`), so a [`rho mcp serve`](../mcp-server.md#registering-over-stdio) child acts for the session on the session's daemon. `env` adds literal values. Use `env_from_env` for secrets so they do not enter the config file. Its keys are child variable names and its values are ambient variable names:
 
 ```toml
 [mcp.servers.github]

@@ -316,6 +316,67 @@ timeout = "10s"
     );
 }
 
+// Covers: a `rho` a daemon session's hook runs reaches that session's
+// daemon, though the hook's sanitized environment names neither its rho
+// home nor its runtime directory: the session passes on where the daemon
+// is, even when its rho home is not the hook's `~/.rho`.
+// Owner: hook spawn environment, nested rho.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_rho_a_hook_runs_reaches_its_sessions_daemon() {
+    let sandbox = Sandbox::new();
+    let root = sandbox.workspace.parent().unwrap().to_path_buf();
+    let status = root.join("nested-status.txt");
+    // Records what the nested `rho daemon status`, which never starts a
+    // daemon, printed, or why it failed, then lets the call go on.
+    let hook =
+        "\"$0\" daemon status --json > \"$1\" 2>&1; printf '{\"version\": 1, \"decision\": \"continue\"}'";
+    std::fs::write(
+        sandbox.isolated.rho_home().join("hooks.toml"),
+        format!(
+            r#"version = 1
+
+[[hook]]
+id = "nested"
+on = "before_tool_use"
+tools = ["bash"]
+command = ["/bin/sh", "-c", {hook:?}, {:?}, {:?}]
+timeout = "30s"
+"#,
+            env!("CARGO_BIN_EXE_rho"),
+            status.display().to_string(),
+        ),
+    )
+    .unwrap();
+    sandbox.set_permission_mode("bypass");
+    let (daemon, client) = sandbox.spawn_daemon(sandbox.rho("tool-call"), &[]).await;
+    let session = sandbox.new_session(&client).await;
+    // A `HOME` whose `~/.rho` is not the daemon's rho home, as for a client
+    // that sets `RHO_HOME`.
+    let elsewhere = root.join("elsewhere-home");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    let environment = sandbox
+        .client_environment()
+        .into_iter()
+        .chain([("HOME".to_owned(), elsewhere.display().to_string())])
+        .collect();
+    let call = json!({"id": "bash", "name": "bash", "arguments": {"command": "true"}});
+    sandbox
+        .prompt_tool_call_with_environment(&client, &session, &call, environment)
+        .await;
+    settled_job(&sandbox, &client, &session).await;
+    let printed = std::fs::read_to_string(&status).unwrap_or_default();
+    let reached = serde_json::from_str::<serde_json::Value>(&printed)
+        .ok()
+        .and_then(|status| status["pid"].as_u64());
+
+    assert_eq!(
+        reached,
+        Some(u64::from(daemon.id())),
+        "nested rho printed:\n{printed}\nlog:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
 // Covers: a daemon session's CLI agent (Claude Code here) is found on the
 // prompting client's `PATH` and runs with that client's whole environment,
 // credentials included, since it signs in itself; a workflow run the

@@ -58,9 +58,14 @@ impl Ambient {
     }
 
     /// Clears `command`'s environment and installs the sanitized base set of
-    /// [`crate::child_env`], read from this environment.
-    pub(crate) fn apply_base(&self, command: &mut tokio::process::Command) {
-        crate::child_env::apply_base(command, |name| self.read_os(name));
+    /// [`crate::child_env`], read from this environment, with `rho_home` as
+    /// the daemon's home (see [`crate::child_env::apply_base`]).
+    pub(crate) fn apply_base(
+        &self,
+        command: &mut tokio::process::Command,
+        rho_home: Option<&std::path::Path>,
+    ) {
+        crate::child_env::apply_base(command, rho_home, |name| self.read_os(name));
     }
 
     /// Gives `command` this whole environment, provider credentials
