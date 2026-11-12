@@ -128,6 +128,45 @@ impl<'a> CommandScope<'a> {
         }
     }
 
+    /// Where the session's command definitions are found.
+    pub(crate) fn files(&self) -> CommandFiles<'a> {
+        CommandFiles {
+            cwd: self.cwd,
+            home: self.home,
+            project_trust: self.project_trust,
+            config: self.config,
+        }
+    }
+
+    /// The prompt templates `/prompt:<name>` expands.
+    pub(crate) fn templates(&self) -> prompt_templates::PromptTemplates {
+        self.files().templates()
+    }
+
+    /// The agent definitions `/agent:<name>` binds.
+    pub(crate) fn agent_catalog(&self) -> Result<AgentCatalog, AgentCatalogError> {
+        self.files().agent_catalog()
+    }
+
+    /// The skills a prompt can mention.
+    pub(crate) fn skills(&self) -> Vec<Skill> {
+        self.files().skills()
+    }
+}
+
+/// Where a session's command definitions are found, which needs no session:
+/// a client lists them for one it has not opened yet. `home` roots user
+/// skills and prompt templates; `project_trust` finds project agents and
+/// project plugins' skills.
+#[derive(Clone, Copy)]
+pub(crate) struct CommandFiles<'a> {
+    pub(crate) cwd: &'a Path,
+    pub(crate) home: Option<&'a Path>,
+    pub(crate) project_trust: crate::workspace::ProjectTrusts,
+    pub(crate) config: &'a Config,
+}
+
+impl CommandFiles<'_> {
     /// The prompt templates `/prompt:<name>` expands.
     pub(crate) fn templates(&self) -> prompt_templates::PromptTemplates {
         prompt_templates::load(self.cwd, self.home, self.config.prompt_templates.clone())

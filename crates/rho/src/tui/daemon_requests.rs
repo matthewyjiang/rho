@@ -1,6 +1,9 @@
 //! Serial configuration and prompt requests on the attached connection.
 //!
-//! The queues follow the session's [`Target`]: while the daemon restarts
+//! The queues follow the session's [`Target`]. Before a new session opened,
+//! there is nothing to send a request about it to, so those are refused,
+//! while requests about the daemon (its jobs, settings, saved sessions) go
+//! on its connection. While the daemon restarts
 //! in place (#1713) they wait for the session to attach again, so a change
 //! queued meanwhile still applies, in order, on the new connection.
 //!
@@ -41,7 +44,7 @@ use super::{
     daemon_events::{DaemonView, ReportRefusal},
     daemon_options::change_failure,
 };
-use crate::app::daemon_client::Link;
+use crate::app::daemon_client::{Daemon, Link};
 
 enum Request {
     Configure(SessionChange, Asked),
@@ -66,6 +69,8 @@ enum Asked {
 /// Where the session's requests go, as the session publishes it.
 #[derive(Clone)]
 pub(super) enum Target {
+    /// Before the first prompt opens the session in the daemon.
+    Unopened,
     /// The connection the session is attached on, and the session's id.
     Attached { link: Arc<Link>, session: SessionId },
     /// The daemon restarts: requests wait until the session attached again.
@@ -77,22 +82,45 @@ pub(super) enum Target {
 const LOST: &str = "lost the connection to the rho daemon";
 
 /// The connection and session the next request goes to, once the session
-/// is attached on a connection that is still open; `None` once following
-/// ended. An attachment whose connection closed waits for what the session
-/// makes of that: a reattach after a restart, or the end of following.
+/// is attached on a connection that is still open; `None` before it opened
+/// and once following ended. An attachment whose connection closed waits
+/// for what the session makes of that: a reattach after a restart, or the
+/// end of following.
 async fn attached(target: &mut watch::Receiver<Target>) -> Option<(Arc<Link>, SessionId)> {
     let current = target
         .wait_for(|target| match target {
             Target::Attached { link, .. } => link.is_alive(),
             Target::Reconnecting => false,
-            Target::Ended => true,
+            Target::Unopened | Target::Ended => true,
         })
         .await
         .ok()?;
     match &*current {
         Target::Attached { link, session } => Some((Arc::clone(link), session.clone())),
-        Target::Reconnecting | Target::Ended => None,
+        Target::Unopened | Target::Reconnecting | Target::Ended => None,
     }
+}
+
+/// Sends a request about the daemon rather than the session with `send`:
+/// on the session's attachment, as [`on_attachment`] does, or before the
+/// session opened, on `daemon`'s connection, connecting when it closed.
+/// `None` once following ended, or when no daemon could be reached.
+async fn on_connection<T, F, Fut>(
+    target: &mut watch::Receiver<Target>,
+    daemon: &Daemon,
+    mut send: F,
+) -> Option<Result<T, ClientError>>
+where
+    F: FnMut(Arc<Link>) -> Fut,
+    Fut: Future<Output = Result<T, ClientError>>,
+{
+    if matches!(*target.borrow(), Target::Unopened) {
+        let link = daemon.link().await.ok()?;
+        return Some(send(link).await);
+    }
+    on_attachment(target, |link, _| send(link))
+        .await
+        .map(|(_, answer)| answer)
 }
 
 /// Sends a request with `send` on the session's attachment, and returns the
@@ -118,7 +146,7 @@ where
                 target
                     .wait_for(|target| match target {
                         Target::Attached { link: current, .. } => !Arc::ptr_eq(current, &link),
-                        Target::Reconnecting | Target::Ended => true,
+                        Target::Unopened | Target::Reconnecting | Target::Ended => true,
                     })
                     .await
                     .ok()?;
@@ -179,8 +207,9 @@ pub(super) struct DaemonRequests {
 
 impl DaemonRequests {
     /// Sends to where `target` says the session is attached, never to a
-    /// connection the session has not attached on.
-    pub(super) fn new(target: watch::Receiver<Target>) -> Self {
+    /// connection the session has not attached on; before it opened,
+    /// requests about the daemon go on `daemon`'s.
+    pub(super) fn new(target: watch::Receiver<Target>, daemon: Arc<Daemon>) -> Self {
         let (sender, mut requests) = mpsc::unbounded_channel();
         let (views, receiver) = mpsc::unbounded_channel();
         let (control, mut control_requests) = mpsc::unbounded_channel();
@@ -210,12 +239,13 @@ impl DaemonRequests {
                         let _ = control_views.send(DaemonView::McpInventory(result));
                     }
                     Control::Jobs => {
-                        let answer = on_attachment(&mut control_target, |link, _| async move {
-                            link.request::<JobList>(&JobListParams {}).await
-                        })
-                        .await;
+                        let answer =
+                            on_connection(&mut control_target, &daemon, |link| async move {
+                                link.request::<JobList>(&JobListParams {}).await
+                            })
+                            .await;
                         let jobs = match answer {
-                            Some((_, answer)) => answer
+                            Some(answer) => answer
                                 .map(|answer| answer.jobs)
                                 .map_err(|error| error.to_string()),
                             None => Err(LOST.to_owned()),
@@ -298,19 +328,17 @@ impl DaemonRequests {
                                 session: SessionId::new(session),
                                 unless_attached: true,
                             };
-                            let answer = on_attachment(&mut control_target, |link, _| {
+                            let answer = on_connection(&mut control_target, &daemon, |link| {
                                 let params = params.clone();
                                 async move { link.request::<SessionDelete>(&params).await }
                             })
                             .await;
                             answers.push(match answer {
-                                Some((_, Ok(_))) => Ok(()),
+                                Some(Ok(_)) => Ok(()),
                                 // The daemon's own words name the session
                                 // and what holds it.
-                                Some((_, Err(ClientError::Rpc { error, .. }))) => {
-                                    Err(error.message)
-                                }
-                                Some((_, Err(error))) => Err(error.to_string()),
+                                Some(Err(ClientError::Rpc { error, .. })) => Err(error.message),
+                                Some(Err(error)) => Err(error.to_string()),
                                 None => Err(LOST.to_owned()),
                             });
                         }
@@ -318,7 +346,7 @@ impl DaemonRequests {
                     }
                     Control::SetConfig { mut params, label } => {
                         params.writer = Some(writer.clone());
-                        let answer = on_attachment(&mut control_target, |link, _| {
+                        let answer = on_connection(&mut control_target, &daemon, |link| {
                             let params = params.clone();
                             async move { link.request::<ConfigSet>(&params).await }
                         })
@@ -326,8 +354,8 @@ impl DaemonRequests {
                         // `rho/config/changed`, not this response, updates
                         // what the TUI shows.
                         let view = match answer {
-                            Some((_, Ok(_))) => continue,
-                            Some((_, Err(error)))
+                            Some(Ok(_)) => continue,
+                            Some(Err(error))
                                 if error.error_code() == Some(ErrorCode::ConfigConflict) =>
                             {
                                 // Another client's change or a hand edit;
@@ -335,7 +363,7 @@ impl DaemonRequests {
                                 // across a daemon restart.
                                 DaemonView::Status("settings changed; try again".into())
                             }
-                            Some((_, Err(error))) => {
+                            Some(Err(error)) => {
                                 DaemonView::Error(format!("could not save {label}: {error}"))
                             }
                             None => DaemonView::Error(format!("could not save {label}: {LOST}")),

@@ -248,6 +248,17 @@ pub(super) const DAEMON_ADVISOR: Scenario = Scenario::new(
             text: "Bypass ·",
             timeout: STARTUP,
         },
+        // A first prompt opens the session, so the change below reaches one
+        // the daemon has loaded.
+        Step::SubmitText("hello"),
+        Step::WaitText {
+            text: "fixture response: hello",
+            timeout: STREAM,
+        },
+        Step::WaitText {
+            text: "Type a message",
+            timeout: SETTLE,
+        },
         Step::SubmitText("/advisor on"),
         Step::WaitText {
             text: "Advisor model · Type to search",

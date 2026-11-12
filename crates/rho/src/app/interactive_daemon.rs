@@ -1,5 +1,6 @@
 //! Opens the daemon session an interactive launch follows (#1667), from the
-//! launch's CLI flags.
+//! launch's CLI flags. A new session opens with its first prompt, so until
+//! then the TUI shows the options this launch's config and agent give it.
 //!
 //! The daemon reads config for the session's workspace itself, so the
 //! flags that override this process's settings (`--provider`, `--model`,
@@ -15,8 +16,9 @@ use crate::{added_dirs::AddedDirs, cli::Cli, config::Config, tui};
 
 use super::{super::agent_binding::BoundAgent, StartupSession};
 
-/// Opens or resumes the session `startup` names in the daemon, which starts
-/// when none runs, and attaches to it. `config` is this launch's, with the
+/// Resumes the session `startup` names in the daemon, which starts when
+/// none runs, and attaches to it, or connects for a new one its first
+/// prompt opens. `config` is this launch's, with the
 /// CLI's overrides applied, and `bound` the agent it bound: `--agent`'s, or
 /// the default.
 pub(super) async fn open(
@@ -118,11 +120,12 @@ pub(super) async fn open(
             // offers /login.
             sign_in: SignIn::Later,
         },
+        config: std::sync::Arc::new(config.clone()),
     };
 
-    // The picker opens over a new session, which the daemon discards
-    // unused, and switches to its choice, which runs as it was saved: a
-    // flag for the session has nothing to apply to yet.
+    // The picker opens over a new session, which opens only if prompted,
+    // and switches to its choice, which runs as it was saved: a flag for
+    // the session has nothing to apply to yet.
     if matches!(startup, StartupSession::Picker) && !changes.is_empty() {
         anyhow::bail!(
             "--provider, --model, --auth, --reasoning, and --permission-mode need a session id with --resume"
@@ -136,8 +139,13 @@ pub(super) async fn open(
             "--no-save cannot be combined with --resume or --continue: a resumed session keeps saving"
         );
     }
-    let target = match startup {
-        StartupSession::Fresh | StartupSession::Picker => tui::DaemonTarget::New,
+    let id = match startup {
+        // The flags are this launch's config, which the draft is built
+        // from, so the first prompt opens the session with them.
+        StartupSession::Fresh | StartupSession::Picker => {
+            let options = new_options(&launch, bound).await;
+            return tui::DaemonSession::draft(launch, options).await;
+        }
         // Resolve the id, but never take the writer lease from the daemon
         // that may still be running this session's turn.
         StartupSession::ById(prefix) => {
@@ -145,7 +153,36 @@ pub(super) async fn open(
         }
         StartupSession::Latest(target) => resumed(target.clone(), agent, bound)?,
     };
-    tui::DaemonSession::open(launch, target, tui::InitialSettings::Required(changes)).await
+    tui::DaemonSession::open(launch, id, tui::InitialSettings::Required(changes)).await
+}
+
+/// The options a new session of `launch` starts with, as its config and
+/// `bound`, its agent, give them: the commands it lists before its MCP
+/// servers connect, as the daemon's would.
+async fn new_options(
+    launch: &tui::DaemonLaunch,
+    bound: &BoundAgent,
+) -> crate::app::session_options::DraftOptions {
+    use crate::app::{
+        daemon_host::DAEMON_COMMANDS,
+        session_commands::CommandFiles,
+        session_options::{available_auths, drafted_commands, DraftOptions},
+    };
+
+    let home = crate::paths::home_dir();
+    let files = CommandFiles {
+        cwd: &launch.cwd,
+        home: home.as_deref(),
+        project_trust: crate::workspace::ProjectTrusts::of_this_process(),
+        config: &launch.config,
+    };
+    let commands = drafted_commands(&files, bound.rho_capabilities(), DAEMON_COMMANDS);
+    DraftOptions::new(
+        (*launch.config).clone(),
+        available_auths().await,
+        commands,
+        launch.setup.additional_directories.clone(),
+    )
 }
 
 /// Resuming `session`. It runs as the agent it was saved as, so `--agent`
@@ -154,14 +191,12 @@ fn resumed(
     session: crate::session::SessionTarget,
     agent: &Option<String>,
     bound: &BoundAgent,
-) -> anyhow::Result<tui::DaemonTarget> {
+) -> anyhow::Result<rho_protocol::SessionId> {
     if agent.is_some() {
         crate::session::Session::validate_agent_definition_identity_of(
             &session,
             bound.definition(),
         )?;
     }
-    Ok(tui::DaemonTarget::Resume(rho_protocol::SessionId::new(
-        session.id,
-    )))
+    Ok(rho_protocol::SessionId::new(session.id))
 }

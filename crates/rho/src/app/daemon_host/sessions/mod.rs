@@ -115,6 +115,7 @@ use queued::Queued;
 use reopen::ReopenLocks;
 use start::{Entered, KeyedTurn};
 use t3_wake::{T3Wake, WakeDir};
+pub(in crate::app) use turn::DAEMON_COMMANDS;
 use turn::{PromptStart, TurnLimit, TurnTask};
 use unload::Residency;
 pub(in crate::app) use unload::UNLOAD_IDLE_AFTER;

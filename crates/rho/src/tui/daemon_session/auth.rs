@@ -56,7 +56,7 @@ impl DaemonSession {
             key,
             environment: ClientEnvironment::of_this_process(),
         };
-        let link = self.attached_link().await?;
+        let link = self.connected_link().await?;
         Ok(link.request::<AuthKey>(&params).await?)
     }
 
@@ -66,7 +66,7 @@ impl DaemonSession {
             auth: auth.to_owned(),
             environment: ClientEnvironment::of_this_process(),
         };
-        let link = self.attached_link().await?;
+        let link = self.connected_link().await?;
         link.request::<AuthLogout>(&params).await?;
         Ok(())
     }
@@ -79,7 +79,7 @@ impl DaemonSession {
         auth: &str,
         flow: LoginFlow,
     ) -> anyhow::Result<(LoginId, LoginUpdate)> {
-        let link = self.attached_link().await?;
+        let link = self.connected_link().await?;
         let (sender, logins) = mpsc::unbounded_channel();
         self.daemon.route_login(sender);
         self.logins = Some(logins);
@@ -111,11 +111,21 @@ impl DaemonSession {
     /// Asks the daemon to cancel `login`. Its end still arrives as a view:
     /// a login its provider approved first is saved all the same.
     pub(in crate::tui) fn cancel_login(&self, login: LoginId) {
-        let Target::Attached { link, .. } = &*self.target.borrow() else {
-            return;
+        let link = match &*self.target.borrow() {
+            Target::Attached { link, .. } => Some(Arc::clone(link)),
+            Target::Unopened => None,
+            Target::Reconnecting | Target::Ended => return,
         };
-        let link = Arc::clone(link);
+        let daemon = Arc::clone(&self.daemon);
         tokio::spawn(async move {
+            // Before the session opened, the login runs on the daemon's
+            // own connection.
+            let Some(link) = (match link {
+                Some(link) => Some(link),
+                None => daemon.current().await,
+            }) else {
+                return;
+            };
             let _ = link
                 .request::<AuthLoginCancel>(&AuthLoginCancelParams { login })
                 .await;

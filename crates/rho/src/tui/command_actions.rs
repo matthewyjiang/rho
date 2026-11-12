@@ -88,6 +88,14 @@ impl App {
             CommandRoute::Ui => {}
         }
         match invocation.id {
+            // These read what only an opened session has: its context,
+            // hooks, and MCP servers. Asking opens a new session as its
+            // first prompt would, though it saves nothing until prompted.
+            CommandId::Context | CommandId::Hooks | CommandId::Doctor | CommandId::Mcp
+                if !self.open_daemon_draft(terminal).await? =>
+            {
+                Ok(())
+            }
             CommandId::AddDir => self.execute_add_dir_command(&invocation),
             CommandId::Exit => self.execute_exit_command(),
             CommandId::New => self.execute_new_command(terminal).await,

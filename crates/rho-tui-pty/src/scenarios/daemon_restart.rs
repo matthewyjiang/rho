@@ -34,7 +34,8 @@ const IDLE_COMPOSER: &str = "Type a message";
 // TUI setting, which the restarted daemon knows only once the TUI
 // registers and reads its settings again; a TUI whose session had saved nothing yet,
 // which the restarted daemon cannot reopen, goes on in a new session that
-// keeps the settings the person changed.
+// keeps the settings the person changed, and one whose first prompt had not
+// opened it yet opens it in the restarted daemon with them.
 // Owner: interactive TUI as a daemon client
 pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
     let home = IsolatedHome::new()?;
@@ -102,11 +103,35 @@ pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
         let code = harness.quit_with_exit_command()?;
         ensure!(code == 0, "the TUI exited with code {code}");
 
+        // A session the first prompt opens has nothing in the daemon to
+        // lose: the prompt after the restart opens it there.
+        harness = spawn()?;
+        harness.set_phase("restart_before_the_first_prompt");
+        harness.wait_for_text("Bypass ·", STARTUP)?;
+        harness.submit_text("/permissions supervised")?;
+        harness.wait_for_text("Supervised ·", SETTLE)?;
+        restart()?;
+        harness.submit_text("hello after a restart")?;
+        harness.wait_for_text("fixture response: hello after a restart", STREAM)?;
+        harness.wait_for_text(IDLE_COMPOSER, SETTLE)?;
+        let screen = harness.screen().contents();
+        ensure!(
+            screen.contains("Supervised ·") && !screen.contains("could not"),
+            "the first prompt after a restart lost a setting or failed:\n{screen}"
+        );
+        let code = harness.quit_with_exit_command()?;
+        ensure!(code == 0, "the TUI exited with code {code}");
+
+        // `/context` opens the session, which saves nothing until prompted.
         harness = spawn()?;
         harness.set_phase("restart_unsaved");
         harness.wait_for_text("Bypass ·", STARTUP)?;
         harness.submit_text("/permissions supervised")?;
         harness.wait_for_text("Supervised ·", SETTLE)?;
+        harness.submit_text("/context")?;
+        harness.wait_for_text("System prompt", SETTLE)?;
+        harness.inject_key(&Key::Esc)?;
+        harness.wait_for_text(IDLE_COMPOSER, SETTLE)?;
         restart()?;
         harness.wait_for_text("(new session)", STREAM)?;
         let screen = harness.screen().contents();

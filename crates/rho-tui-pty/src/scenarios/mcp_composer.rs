@@ -119,6 +119,19 @@ const MCP_COMPOSER_STEPS: &[Step] = &[
         text: "gpt-5.5",
         timeout: STARTUP,
     },
+    // A new session's servers connect once it opens, which `/mcp` does
+    // before its first prompt.
+    Step::Phase("open_session"),
+    Step::SubmitText("/mcp"),
+    Step::WaitText {
+        text: "MCP servers",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Esc),
+    Step::WaitText {
+        text: "Type a message",
+        timeout: SETTLE,
+    },
     // Typed while the server may still connect: the row appears once it has.
     Step::Phase("mention_resource"),
     Step::TypeText("@release"),

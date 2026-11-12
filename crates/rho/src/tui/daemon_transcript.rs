@@ -310,7 +310,7 @@ impl App {
     /// Empties the transcript for a reset replay. A turn that shows busy
     /// keeps its chrome and clock, but its rows are gone: the replay's
     /// running state places its start again, as a first attach does.
-    fn clear_daemon_transcript(&mut self) {
+    pub(super) fn clear_daemon_transcript(&mut self) {
         // Before the rows go: what the stream held is replayed with them.
         self.reset_streams();
         self.usage.live_stream.clear();

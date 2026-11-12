@@ -123,7 +123,11 @@ impl App {
     ) -> anyhow::Result<(SendOmissions, ProviderContextReport)> {
         let session = &self.info.session.daemon;
         let report = session.provider_context().await?;
-        let id = SessionId::from_string(session.id())?;
+        let id = SessionId::from_string(
+            session
+                .id()
+                .ok_or_else(|| anyhow::anyhow!("the session has not opened"))?,
+        )?;
         Ok((SendOmissions::reported(id, &report), report))
     }
 

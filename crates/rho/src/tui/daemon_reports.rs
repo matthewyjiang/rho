@@ -90,6 +90,10 @@ impl App {
     /// Reads the Compaction section of the `/info` overlay just opened: now,
     /// or once the turn under way ends.
     pub(super) fn open_daemon_info_compaction(&mut self) {
+        // A session not opened yet has compacted nothing.
+        if self.info.session.daemon.is_draft() {
+            return;
+        }
         let step = InfoCompactionRead::opened(self.daemon_turn_runs());
         self.step_info_compaction(step);
     }

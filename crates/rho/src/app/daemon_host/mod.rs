@@ -53,7 +53,7 @@ mod wire;
 
 use jobs::{JobRegistry, JobStore, JobSubject};
 use logins::Logins;
-pub(super) use sessions::UNLOAD_IDLE_AFTER;
+pub(super) use sessions::{DAEMON_COMMANDS, UNLOAD_IDLE_AFTER};
 use sessions::{worktree_stale, Prune, Sessions};
 use upgrade::UPGRADE_CHECK_INTERVAL;
 use upgrade::{Check, Upgrades, Watch};

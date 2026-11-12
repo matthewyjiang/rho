@@ -189,7 +189,8 @@ impl App {
             self.daemon_rail.jobs.answered(/*shows*/ true);
             return;
         };
-        let session = self.info.session.daemon.id().to_owned();
+        // A session not opened yet runs nothing.
+        let session = self.info.session.daemon.id().unwrap_or_default().to_owned();
         let now = subagent::unix_now_secs();
         let workflows = rail_jobs(&jobs, &session, JobKind::Workflow, now);
         let subagents = rail_jobs(&jobs, &session, JobKind::Subagent, now);
