@@ -131,6 +131,11 @@ pub(super) fn probe(name: &OsStr) -> io::Result<Opened<File>> {
     )
 }
 
+/// Tries once to connect to the pipe `name`.
+pub(super) fn try_open(name: &OsStr) -> io::Result<Opened<NamedPipeClient>> {
+    opened(ClientOptions::new().open(name))
+}
+
 /// Connects to the pipe `name`, waiting while every instance is taken. The
 /// server learns who connected and cannot impersonate them: `ClientOptions`
 /// opens with the identification level.
@@ -138,7 +143,7 @@ pub(super) fn probe(name: &OsStr) -> io::Result<Opened<File>> {
 pub(super) async fn open(name: &OsStr) -> io::Result<Option<NamedPipeClient>> {
     let started = Instant::now();
     loop {
-        match opened(ClientOptions::new().open(name))? {
+        match try_open(name)? {
             Opened::Client(client) => return Ok(Some(client)),
             Opened::Missing => return Ok(None),
             Opened::Foreign => return Err(foreign(name)),

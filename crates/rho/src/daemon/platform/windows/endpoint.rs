@@ -85,13 +85,19 @@ pub(in crate::daemon) async fn connect(paths: &DaemonPaths) -> io::Result<Option
 
 /// Connects to a daemon that is restarting. It closes its pipe and another
 /// process creates it again (see `restart`), so this waits until one
-/// listens; the caller bounds the wait.
+/// listens, however long the old one takes to drain; the caller bounds the
+/// wait.
 pub(in crate::daemon) async fn connect_restarting(
     paths: &DaemonPaths,
 ) -> io::Result<Option<Stream>> {
+    let pipe = paths.socket.as_os_str();
     loop {
-        if let Some(stream) = connect(paths).await? {
-            return Ok(Some(stream));
+        match pipe::try_open(pipe)? {
+            Opened::Client(stream) => return Ok(Some(stream)),
+            Opened::Foreign => return Err(pipe::foreign(pipe)),
+            // Gone, or only the connections the old daemon is still
+            // answering keep its name: the new one is not listening yet.
+            Opened::Missing | Opened::Busy => {}
         }
         tokio::time::sleep(RESTART_POLL_INTERVAL).await;
     }
