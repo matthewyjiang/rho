@@ -305,6 +305,9 @@ fn format_capability_operation(request: &CapabilityRequest) -> anyhow::Result<Ve
             )];
             if let Some(command) = invocation.shell_command() {
                 lines.push(field("command", json_str(command)));
+                if let Some(requested) = execution.requested_command() {
+                    lines.push(field("requested_command", json_str(requested)));
+                }
             } else {
                 lines.push(field(
                     "executable",

@@ -24,7 +24,7 @@ When RTK is available and enabled:
 2. If rewrite returns a different non-empty command, that rewritten form is what the [permission mode](/configuration/permissions) checks and what runs. An approval prompt shows `rtk git status`, not `git status`.
 3. After the command finishes, Rho writes RTK-compatible analytics records so `rtk gain` and `rtk discover` can account for Rho shell use.
 
-The tool card and the transcript keep the command the agent wrote. [Hooks](/hooks/protocol) get both: `shell_command` is the rewritten command that runs, and `requested_command` is the one the agent wrote, present only when RTK rewrote it. A deny hook that anchors on `^git push` should check `requested_command` when it is set, so it still blocks `rtk git push`. The Auto classifier sees only the rewritten command.
+The tool card and the transcript keep the command the agent wrote. [Hooks](/hooks/protocol) get both: `shell_command` is the rewritten command that runs, and `requested_command` is the one the agent wrote, present only when RTK rewrote it. A deny hook that anchors on `^git push` should check `requested_command` when it is set, so it still blocks `rtk git push`. The [Auto](/configuration/permissions#auto) classifier also sees both, and judges the agent's intent by the command it wrote. Approval, including **Allow for session**, still applies to the rewritten command that runs.
 
 Commands that already start with `rtk ` are left unchanged. Empty commands are not rewritten. Rewrite is skipped when the environment the command runs in sets `RTK_DISABLED=1`: your shell's, or for a [daemon](/daemon#environment) session the environment of the client that last prompted it.
 
