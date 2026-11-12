@@ -104,6 +104,5 @@ Some settings need you:
 - **Stopping the daemon stops your work.** `rho daemon stop` and `rho daemon restart` interrupt running turns and end the commands and background processes your sessions started.
 - **The daemon keeps its own settings.** Network settings such as `HTTPS_PROXY`, and `RHO_LOG`, come from the environment the daemon started with. After you change them, run `rho daemon stop`, and the next `rho` command starts the daemon with your shell's settings. On Linux, `rho doctor` warns when they differ from your shell's.
 - **Unsaved sessions are lost on restart.** A session started with `--no-save` lives only in the daemon's memory. Quitting the TUI cancels its turn, and a daemon restart loses it.
-- **Compaction statistics.** The "After run" figures that `/info` shows for a compaction are not collected in Rho 3 yet ([#1908](https://github.com/matthewyjiang/rho/issues/1908)).
 
 If you build on Rho's Rust libraries, the [changelog](/changelog) lists their API changes.
