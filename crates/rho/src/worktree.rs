@@ -265,13 +265,13 @@ async fn has_changes_of(dir: &Path, base: &str, commit: &str) -> Result<bool, Wo
     let tree = match answered(dir, "merge-tree", merge).await {
         Ok(Some(tree)) => tree,
         Ok(None) => return Ok(false),
-        // The checks above ran, so this is most likely a git before 2.38,
-        // which has no `--write-tree`: it cannot tell a squash merge, so
-        // the worktree reads as unmerged and stays, as before.
+        // As on a git before 2.38, which has no `--write-tree`, or for
+        // unrelated histories: no squash merge can be told, so the worktree
+        // reads as unmerged and stays, as before.
         Err(error) => {
             tracing::warn!(
                 %error,
-                "could not check for a squash merge, which needs git 2.38 or later; \
+                "could not check for a squash merge (it needs git 2.38 or later); \
                  the worktree reads as unmerged"
             );
             return Ok(false);
@@ -309,7 +309,7 @@ pub(crate) enum Checkout {
 /// directory in it, when git does not track it. When git no longer has
 /// `commit`, as once a squash-merged branch is deleted and git collects
 /// what only it held, it starts from the origin's `HEAD`, which [`inspect`]
-/// found has its changes.
+/// found has its changes while the origin stays on the branch it checked.
 pub(crate) async fn restore(
     worktree: &SessionWorktree,
     commit: &str,
@@ -321,9 +321,20 @@ pub(crate) async fn restore(
     let branch: &OsStr = worktree.branch.as_ref();
     let object = format!("{commit}^{{commit}}");
     let exists = ["rev-parse", "--verify", "--quiet", object.as_str()];
+    let head;
     let commit: &OsStr = match answered(origin, "rev-parse", exists).await? {
         Some(_) => commit.as_ref(),
-        None => "HEAD".as_ref(),
+        None => {
+            head = succeeded(origin, "rev-parse", ["rev-parse", "HEAD"]).await?;
+            tracing::warn!(
+                branch = %worktree.branch,
+                missing = %commit,
+                %head,
+                "git no longer has the commit a session worktree was removed at; \
+                 adding it back at the origin's HEAD"
+            );
+            head.as_ref()
+        }
     };
     let args: Vec<&OsStr> = match checkout {
         Checkout::Branch => {
