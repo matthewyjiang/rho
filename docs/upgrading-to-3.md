@@ -24,7 +24,17 @@ You rarely need these commands, but they are there:
 | `rho daemon restart` | Restart the daemon, for example to switch it to a version you just installed. |
 | `rho doctor` | Check your setup, the daemon included. |
 
-When you update Rho, a running daemon switches to the new version by itself once nothing is running. If you installed Rho with a tool that puts each version in its own directory, such as mise or Homebrew, the daemon stays on the old version. Run `rho daemon restart` after you update ([Upgrading in place](/daemon#upgrading-in-place)).
+### Update and uninstall
+
+`rho update` moves a running daemon to the new version without interrupting its work. What happens depends on how you installed Rho:
+
+- **Install script, Cargo, or pacman, on macOS and Linux.** The daemon switches to the new version as soon as nothing is running. `rho update` tells you when it did, or what the daemon is still waiting for.
+- **mise.** `rho update` stops an idle daemon, and your next `rho` command starts the new version. If the daemon is busy, `rho update` says so: run `rho daemon restart` once that work is done.
+- **Windows.** Windows can't replace Rho's file while the daemon runs. `rho update` stops an idle daemon and prints the update command for you to run. If the daemon is busy, run `rho daemon stop` once its work is done, then that command.
+
+If you update with the install script or your package manager directly, the same applies. On macOS and Linux, the daemon picks up a replaced file by itself. With mise, run `rho daemon restart` afterwards. On Windows, run `rho daemon stop` first.
+
+`rho uninstall` stops the daemon, interrupting any running turns, and removes a saved `rho mcp serve --http` service. [The daemon and services](/installation#the-daemon-and-services) has the details for each install method.
 
 ## What's new
 
