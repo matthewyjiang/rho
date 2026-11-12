@@ -10,7 +10,7 @@ Unknown keys in any of these files are a load error, so typos fail loudly. A val
 
 ## Upgrading from Rho 2.x
 
-Rho 2.x kept everything in `config.toml`. When Rho 3.0 starts and finds 2.x keys in `config.toml`, it rewrites the file to the 3.0 layout and prints what it moved. The check runs at every start, so a 2.x key added by hand later is rewritten the same way, with a new backup:
+Rho 2.x kept everything in `config.toml`. When Rho 3.0 starts and finds 2.x keys in `config.toml`, it rewrites the file to the 3.0 layout and prints what it moved. The next TUI you open shows that summary once in its transcript, whichever Rho process did the upgrade. The check runs at every start, so a 2.x key added by hand later is rewritten the same way, with a new backup:
 
 - `[display]` settings, `behavior.check_for_updates`, and `keybindings.editing_mode` move to `clients/tui.toml`.
 - `display.theme` and the `[keybindings]` chords move to `tui.toml`.

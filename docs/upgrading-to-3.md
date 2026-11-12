@@ -73,7 +73,7 @@ Tools now run on the machine where the daemon runs. Rho no longer asks the edito
 
 ### Configuration
 
-The first time Rho 3 starts, it rewrites your 2.x `config.toml` into the 3.0 layout. Display and keybinding settings move to their own files, and web-search API keys move to your credential store. Rho prints what it moved and saves the original as `config.toml.2x.bak`. [Upgrading from Rho 2.x](/configuration#upgrading-from-rho-2-x) lists every key.
+The first time Rho 3 starts, it rewrites your 2.x `config.toml` into the 3.0 layout. Display and keybinding settings move to their own files, and web-search API keys move to your credential store. Rho prints what it moved and saves the original as `config.toml.2x.bak`. The next time you open the TUI, it shows the same summary once in the transcript, even if another Rho command or the daemon did the upgrade. [Upgrading from Rho 2.x](/configuration#upgrading-from-rho-2-x) lists every key.
 
 Some settings need you:
 

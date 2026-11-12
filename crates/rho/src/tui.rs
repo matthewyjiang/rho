@@ -473,6 +473,9 @@ pub struct ApplicationServices {
     pub(crate) first_run: Option<first_run::SetupEntry>,
     pub auth_unavailable: Option<String>,
     pub update_notice: Option<String>,
+    /// What an upgrade of a 2.x `config.toml` did, which stderr showed only
+    /// before the TUI took the screen. Shown once in the transcript.
+    pub(crate) config_upgrade_note: Option<String>,
     pub pending_update_notice: Option<tokio::task::JoinHandle<Option<String>>>,
     pub pending_custom_models: Option<tokio::task::JoinHandle<()>>,
     /// Bat grammar dump loading off the UI thread. First paint stays plain if

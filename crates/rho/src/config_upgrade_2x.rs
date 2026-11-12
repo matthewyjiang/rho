@@ -7,7 +7,9 @@
 //! last, so an interrupted upgrade runs again from the same 2.x file and
 //! ends in the same place. A value `tui.toml` or `clients/tui.toml` already
 //! holds wins over the 2.x one. Keys neither version knows stay in
-//! `config.toml`, where loading names them.
+//! `config.toml`, where loading names them. Besides the stderr notice, the
+//! upgrade leaves a note the next TUI shows once
+//! ([`super::upgrade_2x_note`]).
 
 use std::path::{Path, PathBuf};
 
@@ -21,7 +23,7 @@ use super::{
 };
 use crate::config_writer::write_bytes_atomically;
 
-/// What one upgrade did, for the startup notice.
+/// What one upgrade did, for the startup notice and the TUI's note.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Upgraded {
     /// The 2.x `config.toml`, as it was.
@@ -36,7 +38,8 @@ pub(crate) struct Upgraded {
     pub(crate) secrets_error: Option<String>,
 }
 
-/// Upgrades the 2.x `config_path`, writing the TUI's files under `rho_dir`.
+/// Upgrades the 2.x `config_path`, writing the TUI's files and its note
+/// under `rho_dir`.
 /// `None` when the file holds no 2.x key, which leaves every file alone.
 ///
 /// `save_secrets` stores the web-search keys 2.x kept in plaintext, given
@@ -133,24 +136,53 @@ pub(crate) fn upgrade_2x(
             Err(error) => secrets_error = Some(format!("{error:#}")),
         }
     }
-    write(config_path, &agent.text())?;
-    Ok(Some(Upgraded {
+    let upgraded = Upgraded {
         backup,
         report: migrated.report,
         already_set,
         secrets_error,
-    }))
+    };
+    write(config_path, &agent.text())?;
+    // After `config.toml`, so the note tells only of an upgrade that was
+    // done. A note that cannot be written costs only the TUI's copy of the
+    // notice.
+    if let Err(error) = super::upgrade_2x_note::leave(rho_dir, config_path, &upgraded) {
+        tracing::warn!("could not leave the config upgrade note: {error:#}");
+    }
+    Ok(Some(upgraded))
+}
+
+/// Whether a line of an upgrade's report needs the user to act.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Severity {
+    Note,
+    Warning,
 }
 
 impl Upgraded {
-    /// The lines startup prints: what moved where, and one warning for
-    /// everything that was not carried over.
+    /// The lines startup prints: where the original is, what moved where,
+    /// and one warning for everything that was not carried over.
     pub(crate) fn notice(&self, config_path: &Path) -> Vec<String> {
-        let mut lines = vec![format!(
+        let header = format!(
             "note: updated {} from the rho 2.x layout; the original is at {}",
             config_path.display(),
             self.backup.display()
-        )];
+        );
+        std::iter::once(header)
+            .chain(self.changes().into_iter().map(|(severity, line)| {
+                let prefix = match severity {
+                    Severity::Note => "note",
+                    Severity::Warning => "warning",
+                };
+                format!("{prefix}: {line}")
+            }))
+            .collect()
+    }
+
+    /// What the upgrade changed and what it left out, one line each. Both
+    /// the startup notice and the TUI's note list these.
+    pub(crate) fn changes(&self) -> Vec<(Severity, String)> {
+        let mut lines = Vec::new();
         for (file, name) in [
             (MigratedFile::Agent, "their 3.0 keys in config.toml"),
             (MigratedFile::ClientTui, "clients/tui.toml"),
@@ -168,7 +200,10 @@ impl Upgraded {
                 })
                 .collect::<Vec<_>>();
             if !moved.is_empty() {
-                lines.push(format!("note: moved to {name}: {}", moved.join(", ")));
+                lines.push((
+                    Severity::Note,
+                    format!("moved to {name}: {}", moved.join(", ")),
+                ));
             }
         }
         let mut ignored = Vec::new();
@@ -177,7 +212,7 @@ impl Upgraded {
             match change {
                 Change::Moved { .. } => {}
                 Change::Rewritten { key, from, to } => {
-                    lines.push(format!("note: `{key}`: {from} is now {to}"));
+                    lines.push((Severity::Note, format!("`{key}`: {from} is now {to}")));
                 }
                 Change::Dropped { key } => ignored.push(key.as_str()),
                 Change::Secret { key } if self.already_set.contains(key) => {}
@@ -186,21 +221,27 @@ impl Upgraded {
         }
         ignored.extend(self.already_set.iter().map(String::as_str));
         if !ignored.is_empty() {
-            lines.push(format!(
-                "warning: ignored 2.x keys that 3.0 does not read, or that 3.0 already sets to another value: {}",
-                ignored.join(", ")
+            lines.push((
+                Severity::Warning,
+                format!(
+                    "ignored 2.x keys that 3.0 does not read, or that 3.0 already sets to another value: {}",
+                    ignored.join(", ")
+                ),
             ));
         }
         match (&self.secrets_error, stored.is_empty()) {
             (_, true) => {}
-            (None, false) => lines.push(format!(
-                "note: moved to the credential store: {}",
-                stored.join(", ")
+            (None, false) => lines.push((
+                Severity::Note,
+                format!("moved to the credential store: {}", stored.join(", ")),
             )),
-            (Some(error), false) => lines.push(format!(
-                "warning: could not move {} to the credential store ({error}); set them again from the copy in {}",
-                stored.join(", "),
-                self.backup.display()
+            (Some(error), false) => lines.push((
+                Severity::Warning,
+                format!(
+                    "could not move {} to the credential store ({error}); set them again from the copy in {}",
+                    stored.join(", "),
+                    self.backup.display()
+                ),
             )),
         }
         lines
