@@ -6,14 +6,17 @@
 use std::process::{ExitStatus, Stdio};
 
 use pretty_assertions::assert_eq;
-use rho_protocol::{JobState, SessionId};
+use rho_protocol::{methods::JobList, JobListParams, JobState, SessionEvent, SessionId};
 use serde_json::{json, Value};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines},
     process::{Child, ChildStderr, ChildStdin, ChildStdout},
 };
 
-use super::sessions::{prompt_a_supervised_write, settled_job, Sandbox, DEADLINE, REPLY};
+use super::sessions::{
+    answer, blue, first_request, prompt_a_supervised_write, settled_job, Follower, Sandbox,
+    DEADLINE, REPLY,
+};
 
 /// A `rho attach` process and its JSONL stream.
 struct Attach {
@@ -416,6 +419,101 @@ async fn attach_cancels_the_turn_on_a_cancel_line() {
         (status, told.last().cloned()),
         (Some(1), Some("Error: the turn was cancelled".to_owned())),
         "{told:#?}\nlog:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
+// Covers: `rho attach` follows a subagent run by its job's id: it shows the
+// run's events while the run is under way, here the question the run asks
+// its parent, and ends with the run, exit 0, once the parent's client
+// answered; attached again after the run ended, it replays the session the
+// run saved and exits 0 (#1668).
+// Owner: rho attach CLI (process contract).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn attach_follows_a_subagent_run() {
+    let sandbox = Sandbox::new();
+    // The fixture makes the call the prompt spells out as JSON.
+    let client = sandbox.start_daemon("tool-call").await;
+    let session = sandbox.new_session(&client).await;
+    let (mut parent, _) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
+    // The run's prompt is a call too: it asks its parent and waits.
+    let ask = json!({
+        "id": "ask",
+        "name": "questionnaire",
+        "arguments": {
+            "questions": [{
+                "id": "color",
+                "question": "Which color?",
+                "choices": ["Red", "Blue"],
+            }],
+        },
+    });
+    let delegate = json!({
+        "id": "delegate",
+        "name": "agent",
+        "arguments": {"agent_id": "default", "prompt": ask.to_string()},
+    });
+    sandbox.prompt_tool_call(&client, &session, &delegate).await;
+    parent
+        .read_until(|event| matches!(event, SessionEvent::InputRequested { .. }))
+        .await;
+    let request = first_request(&parent.events).id;
+    let parent_job = job_of(&client, &session).await.id;
+    let run = client
+        .request::<JobList>(&JobListParams {})
+        .await
+        .unwrap()
+        .jobs
+        .into_iter()
+        .find(|job| job.parent.as_ref() == Some(&parent_job))
+        .expect("the run's job");
+    let run_session = run
+        .session
+        .clone()
+        .expect("a Rho subagent writes a session");
+
+    let mut live = Attach::spawn(
+        &sandbox,
+        "tool-call",
+        &[run.id.as_str(), "--output", "jsonl"],
+    );
+    live.read_until(|line| line["event"]["type"] == "tool_call")
+        .await;
+    answer(&client, &session, request, blue()).await.unwrap();
+    let (status, lines) = live.finish().await;
+    let (after_status, after_lines) = Attach::spawn(
+        &sandbox,
+        "tool-call",
+        &[run.id.as_str(), "--output", "jsonl"],
+    )
+    .finish()
+    .await;
+
+    let run_started = json!({
+        "type": "run_started",
+        "session": run_session.as_str(),
+        "workspace": sandbox.workspace,
+    });
+    let completed = json!({"type": "run_ended", "reason": "completed", "exit_code": 0});
+    let ended: Vec<_> = events(&lines)
+        .into_iter()
+        .filter(|event| event["type"] == "turn_ended")
+        .map(|event| event["outcome"]["type"].clone())
+        .collect();
+    assert_eq!(
+        (status.code(), ends(&lines), ended),
+        (
+            Some(0),
+            (run_started.clone(), completed.clone()),
+            vec![json!("answered")],
+        ),
+        "{lines:#?}\nlog:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+    assert_eq!(
+        (after_status.code(), ends(&after_lines)),
+        (Some(0), (run_started, completed)),
+        "{after_lines:#?}\nlog:\n{}",
         sandbox.isolated.daemon_log()
     );
 }

@@ -10,6 +10,9 @@
 
 use std::{path::PathBuf, sync::Arc};
 
+use rho_protocol::{SessionEvent as WireEvent, SessionOptions};
+use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
+
 use super::{
     agent_concurrency::{AgentConcurrency, QueueWatch},
     agent_executor::AgentRunHandle,
@@ -104,6 +107,30 @@ pub(crate) trait ChildObserver: Send + Sync {
     fn workflow_started(&self, run: StartedWorkflow) -> HostedWorkflow;
 }
 
+/// What a Rho child run tells the observer that follows it (#1668).
+pub(crate) enum ChildEvent {
+    /// The run opened its session, which runs with these options. Sent
+    /// once, before any [`Self::Session`].
+    Opened(Box<SessionOptions>),
+    /// One event of the run's session, as the daemon protocol's.
+    Session(WireEvent),
+}
+
+/// Where a Rho child run sends its [`ChildEvent`]s. Unbounded: the observer
+/// drains it on a task of its own into a stream that bounds what it keeps.
+pub(crate) type ChildEventSender = UnboundedSender<ChildEvent>;
+
+/// The observer's end of a [`ChildEventSender`].
+pub(crate) type ChildEvents = UnboundedReceiver<ChildEvent>;
+
+/// The event channel of a run about to start: both ends when `observer`
+/// will hear of the run, neither when nobody follows it.
+pub(crate) fn child_events(
+    observer: Option<&Arc<dyn ChildObserver>>,
+) -> (Option<ChildEventSender>, Option<ChildEvents>) {
+    observer.map(|_| mpsc::unbounded_channel()).unzip()
+}
+
 /// A subagent run that just started, as its observer follows it.
 pub(crate) struct StartedSubagent {
     /// The run's id among its parent session's runs.
@@ -117,17 +144,28 @@ pub(crate) struct StartedSubagent {
     pub(crate) status: tokio::sync::watch::Receiver<RunStatus>,
     /// Where the run waits for capacity, while it does.
     pub(crate) queue: QueueWatch,
+    /// What the run tells of the session it writes, from its opening;
+    /// `None` for a run launched without the sender. A run on another
+    /// runtime sends nothing.
+    pub(crate) events: Option<ChildEvents>,
 }
 
 impl StartedSubagent {
-    /// The run `handle` follows, started as `run_id` in `workspace`.
-    pub(crate) fn of(run_id: String, workspace: PathBuf, handle: &AgentRunHandle) -> Self {
+    /// The run `handle` follows, started as `run_id` in `workspace`, which
+    /// sends its session's events to `events`.
+    pub(crate) fn of(
+        run_id: String,
+        workspace: PathBuf,
+        handle: &AgentRunHandle,
+        events: Option<ChildEvents>,
+    ) -> Self {
         Self {
             run_id,
             session: handle.session().cloned(),
             workspace,
             status: handle.clone_status_watch(),
             queue: handle.queue(),
+            events,
         }
     }
 }

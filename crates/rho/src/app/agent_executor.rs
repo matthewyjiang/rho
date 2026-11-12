@@ -21,6 +21,7 @@ use super::{
         NoticePostError, NoticePoster, SteeringSlot, SubagentNotice, SubagentNoticeBridge,
         ValidatedMessage,
     },
+    subagent_pool::ChildEventSender,
 };
 
 #[derive(Clone)]
@@ -56,6 +57,9 @@ pub(crate) struct AgentLaunchRequest {
     /// Whether the run's session is saved, as its parent's is.
     pub(crate) persistence: SessionPersistence,
     pub(crate) output_file: PathBuf,
+    /// Where a Rho child sends its session's events, when its host follows
+    /// them.
+    pub(crate) events: Option<ChildEventSender>,
 }
 
 /// Launch request whose agent definition was resolved and frozen at plan time.
@@ -68,6 +72,9 @@ pub(crate) struct FrozenAgentLaunchRequest {
     /// The session a Rho runtime agent runs in, which its node recorded.
     /// A Rho agent's launch needs one; agents on other runtimes have none.
     pub(crate) session: Option<ChildSession>,
+    /// Where a Rho child sends its session's events, when its host follows
+    /// them.
+    pub(crate) events: Option<ChildEventSender>,
 }
 
 /// How a live handle can accept parent plain-text messages.
@@ -403,6 +410,7 @@ impl AgentExecutor {
             frozen_cli: None,
             hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
             session: ChildSession::New(rho_sdk::SessionId::new()),
+            events: request.events,
         })
     }
 
@@ -455,6 +463,7 @@ impl AgentExecutor {
             frozen_cli,
             hook_host_labels: request.hook_host_labels,
             session,
+            events: request.events,
         })
     }
 
@@ -471,6 +480,7 @@ impl AgentExecutor {
             frozen_cli,
             hook_host_labels,
             session,
+            events,
         } = request;
 
         let capacity_class = bound.runtime().capacity_class();
@@ -628,6 +638,7 @@ impl AgentExecutor {
                         session,
                         added_dirs,
                         environment,
+                        events,
                     })
                     .await
                 }
@@ -695,6 +706,9 @@ struct BoundLaunchRequest {
     hook_host_labels: rho_sdk::hooks::HookHostLabels,
     /// The session a Rho runtime child runs in; other runtimes ignore it.
     session: ChildSession,
+    /// Where a Rho runtime child sends its session's events; other runtimes
+    /// ignore it.
+    events: Option<ChildEventSender>,
 }
 
 struct FrozenCliLaunch {

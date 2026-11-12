@@ -16,7 +16,7 @@ use {
         agent_executor::{AgentExecutor, AgentLaunchRequest, AgentRunHandle},
         subagent_host_input::{SubagentHostInputBridge, SubagentHostInputRequest},
         subagent_messaging::{SubagentNotice, SubagentNoticeBridge},
-        subagent_pool::{ChildObserver, StartedSubagent, SubagentPool},
+        subagent_pool::{child_events, ChildObserver, StartedSubagent, SubagentPool},
     },
     crate::session::SessionPersistence,
     crate::subagent::{self, RunStatus},
@@ -287,6 +287,7 @@ impl SubagentManager {
         })
         .await??;
         let output_file = directory.join(subagent::RESULT_FILE_NAME);
+        let (events, followed) = child_events(self.observer.as_ref());
         let launch = AgentLaunchRequest {
             definition: Arc::new(definition.clone()),
             model_override: model_override.map(str::to_owned),
@@ -296,6 +297,7 @@ impl SubagentManager {
             parent_workspace,
             persistence,
             output_file,
+            events,
         };
         let handle = match self.executor.spawn(launch) {
             Ok(handle) => handle,
@@ -315,7 +317,12 @@ impl SubagentManager {
             }
         };
         if let Some(observer) = &self.observer {
-            observer.subagent_started(StartedSubagent::of(id.clone(), cwd.to_path_buf(), &handle));
+            observer.subagent_started(StartedSubagent::of(
+                id.clone(),
+                cwd.to_path_buf(),
+                &handle,
+                followed,
+            ));
         }
         let mut ending = handle.clone();
         self.inner.lock().expect("delegated registry lock").insert(

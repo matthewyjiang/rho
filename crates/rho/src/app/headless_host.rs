@@ -158,7 +158,7 @@ pub(super) async fn run_prompt<'v>(
     let tripwire = Tripwire::default();
     let work = Box::pin(async {
         let mut runtime = open.await?;
-        view.bind(&runtime);
+        view.bind(&runtime, process_config);
         let ended = cancel_on_stop(&tripwire, runtime.handle(), async {
             // The prompt begins on the first poll, before a stop's cancel
             // can land, so even a stop that already came reaches it.

@@ -2,7 +2,9 @@
 //! as an attach does, for a client that only reads it, such as the `read`
 //! and `wait` tools of `rho mcp serve` (#1672). Observing never loads a
 //! session. One the daemon has loaded is followed as an attach follows it,
-//! keeping the environment it runs with. A saved one it has not loaded is
+//! keeping the environment it runs with. One a subagent or workflow agent
+//! node run is writing is followed through the run's stream, from when the
+//! run opens it until the run ends (#1668; see `child_feeds`). A saved one it has not loaded is
 //! opened only to be read, starting none of its MCP servers, OpenAPI
 //! sources, or hooks, replayed as its file keeps it with how its last turn
 //! ended, and shut down again; the client is then detached as
@@ -20,7 +22,7 @@ use super::{
     open::open_to_read,
     opening_feed,
     options::available_auths,
-    reopen::{parse_session, saved_session},
+    reopen::{parse_session, saved_session, SavedFor},
     writing, Sessions,
 };
 use crate::app::daemon_host::jobs::{JobId, JobRecord, SessionJob};
@@ -50,6 +52,10 @@ impl Sessions {
                     session.feed.attach(after),
                 ));
             }
+            // A subagent run under way writes it: its stream is the run's.
+            if let Some(observed) = self.subagents.feeds().attach(&id, after).await {
+                return Ok(observed);
+            }
             // Held while reading, so no request loads the session meanwhile
             // and the read does not find its file held.
             let _reopening = self.reopening.lock(&id).await;
@@ -75,7 +81,7 @@ impl Sessions {
             SessionJob::Last(record) => Some(*record),
             SessionJob::New => None,
         };
-        let stored = saved_session(id).await?;
+        let stored = saved_session(id, SavedFor::Reading).await?;
         // A session no daemon has run is idle, with no last turn. Its job
         // is not registered: reading it records nothing.
         let job = last.unwrap_or_else(|| {

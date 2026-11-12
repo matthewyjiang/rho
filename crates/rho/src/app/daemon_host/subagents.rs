@@ -14,6 +14,12 @@
 //! stopped because the daemon is stopping ends `interrupted`, as does one
 //! the daemon's stop leaves unfinished (see `JobRegistry`).
 //!
+//! A run on the Rho runtime also streams its session's events (#1668): the
+//! task that follows its status writes them to a stream clients observe by
+//! the run's session (see `sessions::child_feeds`), with the job's states
+//! and how the run ended. Runs on other runtimes keep no Rho session and
+//! stream nothing.
+//!
 //! A workflow run's job is `running` while the session drives the run, then
 //! takes how the drive ended. A drive the daemon's stop cuts short ends
 //! `interrupted`, and the run resumes like one whose process died.
@@ -23,17 +29,21 @@ use std::{
     sync::{Arc, Mutex, MutexGuard, PoisonError},
 };
 
+use rho_protocol::{AnswerStop, DetachReason, TurnError, TurnErrorKind, TurnOutcome};
 use rho_sdk::CancellationToken;
 use tokio::sync::{oneshot, watch};
 
-use super::jobs::{JobEvent, JobId, JobRecord, JobRegistry, JobState, RegisterError, TurnEnd};
+use super::{
+    jobs::{JobEvent, JobId, JobRecord, JobRegistry, JobState, RegisterError, TurnEnd},
+    sessions::{ChildFeeds, ChildStream},
+};
 use crate::{
     app::{
         agent_binding::CapacityClass,
         agent_concurrency::{AgentConcurrency, QueuePlace, QueueWatch, QueuedRun},
         subagent_pool::{
-            ChildObserver, HostedWorkflow, StartedSubagent, StartedWorkflow, SubagentPool,
-            WorkflowEnd,
+            ChildEvent, ChildEvents, ChildObserver, HostedWorkflow, StartedSubagent,
+            StartedWorkflow, SubagentPool, WorkflowEnd,
         },
     },
     config::DEFAULT_AGENT_CONCURRENCY,
@@ -45,6 +55,8 @@ pub(super) struct Subagents {
     concurrency: AgentConcurrency,
     jobs: Arc<JobRegistry>,
     queues: Queues,
+    /// The event streams of the runs under way.
+    feeds: ChildFeeds,
     /// Cancelled once the daemon starts stopping.
     stopping: CancellationToken,
 }
@@ -61,8 +73,14 @@ impl Subagents {
             concurrency: AgentConcurrency::from_config(DEFAULT_AGENT_CONCURRENCY),
             jobs,
             queues: Queues::default(),
+            feeds: ChildFeeds::default(),
             stopping,
         }
+    }
+
+    /// The event streams of the runs under way, which a client observes.
+    pub(super) fn feeds(&self) -> &ChildFeeds {
+        &self.feeds
     }
 
     /// The daemon-wide budget, whose limit the settings store sets from
@@ -81,6 +99,7 @@ impl Subagents {
                 parent,
                 jobs: Arc::clone(&self.jobs),
                 queues: Arc::clone(&self.queues),
+                feeds: self.feeds.clone(),
                 stopping: self.stopping.clone(),
             }),
         }
@@ -138,6 +157,7 @@ struct ChildJobs {
     parent: JobId,
     jobs: Arc<JobRegistry>,
     queues: Queues,
+    feeds: ChildFeeds,
     stopping: CancellationToken,
 }
 
@@ -177,10 +197,21 @@ impl ChildObserver for ChildJobs {
             workspace,
             status,
             queue,
+            events,
         } = run;
-        let record =
-            JobRecord::new_subagent(self.parent.clone(), workspace, session, run_id.clone());
+        let record = JobRecord::new_subagent(
+            self.parent.clone(),
+            workspace.clone(),
+            session.clone(),
+            run_id.clone(),
+        );
         let job = record.id.clone();
+        // Listed before the job is, so a client that finds the job finds
+        // its stream.
+        let followed = session.zip(events).map(|(session, events)| Followed {
+            events: Some(events),
+            stream: self.feeds.list(session, workspace, &record.state),
+        });
         if let Err(error) = self.jobs.register(record) {
             unlisted(&error, &self.parent, &run_id, "subagent");
             return;
@@ -190,6 +221,7 @@ impl ChildObserver for ChildJobs {
         tokio::spawn(follow(
             job,
             status,
+            followed,
             Arc::clone(&self.jobs),
             Arc::clone(&self.queues),
             self.stopping.clone(),
@@ -211,10 +243,91 @@ fn unlisted(error: &RegisterError, parent: &JobId, run: &str, kind: &str) {
     }
 }
 
-/// Moves job `job` along with its run's `status` until the run ends.
+/// A run whose session's events the daemon streams.
+struct Followed {
+    /// What the run's child tells; `None` once the child let go of it.
+    events: Option<ChildEvents>,
+    stream: ChildStream,
+}
+
+impl Followed {
+    /// The next thing the run's child tells; never ready once the child
+    /// let go.
+    async fn next(&mut self) -> ChildEvent {
+        loop {
+            match &mut self.events {
+                Some(events) => match events.recv().await {
+                    Some(event) => return event,
+                    None => self.events = None,
+                },
+                None => return std::future::pending().await,
+            }
+        }
+    }
+
+    fn show(&self, event: ChildEvent) {
+        match event {
+            ChildEvent::Opened(options) => self.stream.open(*options),
+            ChildEvent::Session(event) => self.stream.publish([event]),
+        }
+    }
+
+    /// Shows what the child told and this task has not read yet. The child
+    /// tells everything before its run's status is terminal.
+    fn show_rest(&mut self) {
+        while let Some(event) = self
+            .events
+            .as_mut()
+            .and_then(|events| events.try_recv().ok())
+        {
+            self.show(event);
+        }
+    }
+
+    /// Tells the run's clients its job moved to `state`, as `run` stands:
+    /// a job that ended ends the run's turn, after the rest of its events.
+    fn moved(&mut self, state: &JobState, run: &RunStatus) {
+        match state {
+            JobState::Ended(end) => {
+                self.show_rest();
+                self.stream.end(outcome(end, run), state);
+            }
+            JobState::Idle | JobState::Queued | JobState::Running | JobState::WaitingForInput => {
+                self.stream.moved(state);
+            }
+        }
+    }
+}
+
+/// How the turn of a run that ended as `end`, with status `run`, ended, as
+/// its clients are told; `None` for one the daemon's stop interrupted,
+/// whose job state says so.
+fn outcome(end: &TurnEnd, run: &RunStatus) -> Option<TurnOutcome> {
+    match end {
+        // A run's status keeps its answer, not why the model stopped.
+        TurnEnd::Completed => Some(TurnOutcome::Answered {
+            text: run.result.clone().unwrap_or_default(),
+            stop: AnswerStop::EndTurn,
+        }),
+        TurnEnd::Cancelled => Some(TurnOutcome::Cancelled),
+        TurnEnd::Failed(message) => Some(TurnOutcome::Failed {
+            error: TurnError {
+                kind: TurnErrorKind::Other,
+                message: message.clone(),
+            },
+        }),
+        TurnEnd::Interrupted => None,
+        // A run has no time limit of the daemon's.
+        TurnEnd::TimedOut { .. } => None,
+    }
+}
+
+/// Moves job `job` along with its run's `status` until the run ends,
+/// streaming the events of a `followed` run to its clients meanwhile.
 async fn follow(
     job: JobId,
     mut status: watch::Receiver<RunStatus>,
+    mut followed: Option<Followed>,
     jobs: Arc<JobRegistry>,
     queues: Queues,
     stopping: CancellationToken,
@@ -224,7 +337,12 @@ async fn follow(
         let run = status.borrow_and_update().clone();
         if let Some(event) = next_event(&state, &run, stopping.is_cancelled()) {
             match jobs.record(&job, event) {
-                Ok(next) => state = next.state,
+                Ok(next) => {
+                    state = next.state;
+                    if let Some(followed) = &mut followed {
+                        followed.moved(&state, &run);
+                    }
+                }
                 // Only the daemon's stop moves a subagent job on besides
                 // this task, by recording it interrupted, which no later
                 // event of the run undoes.
@@ -237,7 +355,17 @@ async fn follow(
         if run.state.is_terminal() {
             break;
         }
-        if status.changed().await.is_err() {
+        let changed = loop {
+            tokio::select! {
+                changed = status.changed() => break changed,
+                event = next_child_event(&mut followed) => {
+                    if let Some(followed) = &followed {
+                        followed.show(event);
+                    }
+                }
+            }
+        };
+        if changed.is_err() {
             // The executor sends a terminal status before it lets go of
             // the run, even when the run panicked, so only a runtime that
             // shuts down under it gets here.
@@ -246,13 +374,30 @@ async fn follow(
             } else {
                 TurnEnd::Failed("the subagent run ended without a status".into())
             };
-            if let Err(error) = jobs.record(&job, JobEvent::TurnEnded(end)) {
-                tracing::debug!(%job, %error, "subagent job already ended");
+            match jobs.record(&job, JobEvent::TurnEnded(end)) {
+                Ok(next) => {
+                    if let Some(followed) = &mut followed {
+                        followed.moved(&next.state, &run);
+                    }
+                }
+                Err(error) => tracing::debug!(%job, %error, "subagent job already ended"),
             }
             break;
         }
     }
+    if let Some(followed) = followed.filter(|_| stopping.is_cancelled()) {
+        followed.stream.close(DetachReason::DaemonStopping);
+    }
     lock(&queues).remove(&job);
+}
+
+/// The next thing a `followed` run's child tells; never ready for a run
+/// nobody follows.
+async fn next_child_event(followed: &mut Option<Followed>) -> ChildEvent {
+    match followed {
+        Some(followed) => followed.next().await,
+        None => std::future::pending().await,
+    }
 }
 
 /// Ends workflow job `job` with how its drive `ended`.

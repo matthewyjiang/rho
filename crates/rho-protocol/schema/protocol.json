@@ -5191,7 +5191,7 @@
       "type": "object"
     },
     "SessionObserveParams": {
-      "description": "Params of [`SESSION_OBSERVE`]. A session the daemon has loaded is\nattached as [`SESSION_ATTACH`] attaches it. A saved session it has not\nloaded stays unloaded: the daemon replays it as its file keeps it, with\nhow its last turn ended, then detaches the client as\n[`DetachReason::NotLoaded`]. Observing starts nothing of the session, no\nMCP server, OpenAPI source, or hook, and so carries no environment or\nsetup. With no MCP server connected, such a replay titles the session's\nMCP tool calls by their names alone.",
+      "description": "Params of [`SESSION_OBSERVE`]. A session the daemon has loaded is\nattached as [`SESSION_ATTACH`] attaches it. A saved session it has not\nloaded stays unloaded: the daemon replays it as its file keeps it, with\nhow its last turn ended, then detaches the client as\n[`DetachReason::NotLoaded`]. Observing starts nothing of the session, no\nMCP server, OpenAPI source, or hook, and so carries no environment or\nsetup. With no MCP server connected, such a replay titles the session's\nMCP tool calls by their names alone.\n\nA session a subagent run under way is writing is followed through the\nrun's stream: the response comes once the run has opened the session,\nthe stream's one turn is the run, and the client is detached as\n[`DetachReason::NotLoaded`] after the run ends.",
       "properties": {
         "after": {
           "anyOf": [

@@ -20,7 +20,8 @@
 //!
 //! Clients attach to a loaded session to follow its events (#1657); see
 //! [`feed`]. A client that only reads a session observes it instead, which
-//! never loads it; see [`observe`]. A client may change the session's settings, which apply
+//! never loads it; see [`observe`]. Observing is also how a client follows
+//! a subagent run, by the session the run writes; see [`child_feeds`]. A client may change the session's settings, which apply
 //! between turns, a change sent during a turn once it ends, and which the
 //! session keeps with its file; see [`configure`] and [`options`]. A
 //! session that sits idle, with no turn under way and no client attached,
@@ -68,6 +69,7 @@ use crate::{
 mod budget;
 mod cache_warm;
 mod catalog;
+mod child_feeds;
 mod child_questions;
 mod configure;
 mod cost;
@@ -100,6 +102,7 @@ mod workflows;
 
 use super::settings::ConfigStore;
 use cache_warm::KeepWarm;
+pub(super) use child_feeds::{ChildFeeds, ChildStream};
 use child_questions::ChildQuestions;
 use feed::{Attached, Feed};
 use idle_wake::IdleWatch;
