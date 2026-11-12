@@ -55,7 +55,7 @@ pub(crate) enum DoctorProbeOutcome {
     Rtk {
         available: bool,
     },
-    Daemon(Vec<DoctorCheck>),
+    Daemon(super::daemon_observe::DaemonObservation),
     /// The task was aborted or panicked before producing a result.
     Failed(DoctorProbeId),
     /// The host stopped waiting.
@@ -72,8 +72,8 @@ pub(crate) enum DoctorProbeGate {
 
 /// Probes this host should spawn: the active OpenAI-compatible endpoint when
 /// it is probeable, any other host the user configured an endpoint for, plus
-/// the Claude Code, Cursor, and Antigravity binaries, and rtk unless
-/// `[behavior].rtk` is off. Built-in defaults for unused keyless hosts are not
+/// the Claude Code, Cursor, and Antigravity binaries, rtk unless
+/// `[behavior].rtk` is off, and the daemon. Built-in defaults for unused keyless hosts are not
 /// probed; those would fail `rho doctor` on machines that never run them.
 ///
 /// `active_provider` is the host the session is using. That can differ from
@@ -137,7 +137,7 @@ pub(crate) async fn run_probe(
         DoctorProbeId::Rtk => DoctorProbeOutcome::Rtk {
             available: probe_rtk().await,
         },
-        DoctorProbeId::Daemon => DoctorProbeOutcome::Daemon(super::daemon_observe::checks().await),
+        DoctorProbeId::Daemon => DoctorProbeOutcome::Daemon(super::daemon_observe::observe().await),
     }
 }
 
@@ -226,7 +226,7 @@ pub(crate) fn probe_checks(
         DoctorProbeOutcome::Cursor(snapshot) => vec![checks::cursor_check(snapshot)],
         DoctorProbeOutcome::Antigravity(status) => vec![checks::antigravity_check(status)],
         DoctorProbeOutcome::Rtk { available } => vec![checks::rtk_check(*available)],
-        DoctorProbeOutcome::Daemon(rows) => rows.clone(),
+        DoctorProbeOutcome::Daemon(observation) => observation.rows(),
         DoctorProbeOutcome::Failed(id) => failed_rows(
             id,
             active_provider,
@@ -244,7 +244,8 @@ pub(crate) fn probe_checks(
 
 /// Active endpoint timeouts and panics fail CI the same way `Unreachable`
 /// does. Unused configured hosts stay informational; Claude and rtk stay
-/// warnings because they are optional runtimes.
+/// warnings because they are optional runtimes, and the daemon rows warn as
+/// they do for a daemon that does not answer.
 fn failed_rows(
     id: &DoctorProbeId,
     active_provider: &str,

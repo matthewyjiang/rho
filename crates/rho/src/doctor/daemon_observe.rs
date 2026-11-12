@@ -1,9 +1,9 @@
 //! What `/doctor` and `rho doctor` observe about the daemon (#1674), from
 //! outside and without ever starting one: the handshake and status of the
 //! one running, the socket's permissions, the documented service's files,
-//! and, where the OS shows it, the daemon's environment. `super::daemon` and
-//! `super::daemon_store` turn each observation into a row; hosts run
-//! [`checks`] as the [`super::DoctorProbeId::Daemon`] probe.
+//! and, where the OS shows it, the daemon's environment. Hosts run
+//! [`observe`] as the [`super::DoctorProbeId::Daemon`] probe;
+//! [`DaemonObservation::rows`] turns what it found into rows.
 //!
 //! This is a boundary that reads the process environment and the user's
 //! files; the functions it calls take what was read.
@@ -25,16 +25,42 @@ use super::{
         environment_check, process_check, service_check, socket_check, DaemonEnvironment,
         DaemonProcess, DaemonService, DaemonSocket,
     },
-    daemon_store_check, DaemonStore, DoctorCheck,
+    daemon_store::{daemon_store_check, DaemonStore},
+    report::DoctorCheck,
 };
 
 /// How long the daemon has to complete the handshake and report its status:
-/// the runtime probes' 10 s budget, under `rho doctor`'s 20 s deadline, so a
-/// hung daemon reports why on its own rows instead of a bare `timed out`.
+/// the runtime probes' 10 s budget. `rho doctor` gives every probe 20 s, so a
+/// hung daemon reports why on its own rows instead of a bare `timed out`;
+/// `/doctor` sets no probe deadline, so this is its only bound on the daemon.
 const STATUS_DEADLINE: Duration = Duration::from_secs(10);
 
-/// Every daemon row.
-pub(super) async fn checks() -> Vec<DoctorCheck> {
+/// What the daemon probe found, one observation per row.
+#[derive(Debug)]
+pub(crate) struct DaemonObservation {
+    process: DaemonProcess,
+    socket: DaemonSocket,
+    service: DaemonService,
+    environment: DaemonEnvironment,
+    store: DaemonStore,
+}
+
+impl DaemonObservation {
+    /// One row per observation, in [`super::daemon::ROWS`] order, the order
+    /// the probe's placeholders show.
+    pub(super) fn rows(&self) -> Vec<DoctorCheck> {
+        vec![
+            process_check(&self.process, env!("CARGO_PKG_VERSION")),
+            socket_check(&self.socket),
+            service_check(&self.service),
+            environment_check(&self.environment),
+            daemon_store_check(&self.store),
+        ]
+    }
+}
+
+/// Observes the daemon from outside, never starting one.
+pub(super) async fn observe() -> DaemonObservation {
     let service = match crate::paths::home_dir() {
         Some(home) => find_service(
             &home,
@@ -88,24 +114,13 @@ pub(super) async fn checks() -> Vec<DoctorCheck> {
             )
         }
     };
-    rows(&process, &socket, &service, &environment, &store)
-}
-
-/// One row per observation, in [`super::daemon::ROWS`] order.
-fn rows(
-    process: &DaemonProcess,
-    socket: &DaemonSocket,
-    service: &DaemonService,
-    environment: &DaemonEnvironment,
-    store: &DaemonStore,
-) -> Vec<DoctorCheck> {
-    vec![
-        process_check(process, env!("CARGO_PKG_VERSION")),
-        socket_check(socket),
-        service_check(service),
-        environment_check(environment),
-        daemon_store_check(store),
-    ]
+    DaemonObservation {
+        process,
+        socket,
+        service,
+        environment,
+        store,
+    }
 }
 
 /// Completes the handshake with the running daemon and asks its status,
@@ -146,7 +161,9 @@ async fn ask(paths: &DaemonPaths, deadline: Duration) -> (DaemonProcess, DaemonS
     };
     match tokio::time::timeout(deadline, ask).await {
         Ok(answer) => answer,
-        Err(_) => unanswered(format!("it did not report its status within {deadline:?}")),
+        Err(_) => unanswered(format!(
+            "it did not report its status within STATUS_DEADLINE ({deadline:?})"
+        )),
     }
 }
 
@@ -157,8 +174,7 @@ fn not_answering(paths: &DaemonPaths) -> (DaemonProcess, DaemonStore) {
     let record = match daemon::lock_holder(paths) {
         LockHolder::Nobody => return (DaemonProcess::NotRunning, DaemonStore::NotRunning),
         LockHolder::Unrecorded => {
-            let reason =
-                "it is starting or stopping; run `rho doctor` again in a moment".to_owned();
+            let reason = "it is starting or stopping; check again in a moment".to_owned();
             return (
                 DaemonProcess::Unanswered(reason.clone()),
                 DaemonStore::Unanswered(reason),

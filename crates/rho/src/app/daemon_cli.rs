@@ -1,9 +1,9 @@
 //! CLI handler for `rho daemon`.
 //!
 //! `rho daemon run` wires the daemon host (`app::daemon_host`) to the generic
-//! transport (`crate::daemon`). This is also the boundary that reads process
-//! environment (`RHO_HOME`, `XDG_RUNTIME_DIR`, `RHO_LOG`, `JOURNAL_STREAM`);
-//! `crate::daemon` takes the resolved values. `start` is the clients' ensure
+//! transport (`crate::daemon`). It reads the logging environment (`RHO_LOG`,
+//! `JOURNAL_STREAM`); [`DaemonPaths::of_this_process`] reads where the
+//! daemon's files go (`RHO_HOME`, `XDG_RUNTIME_DIR`). `start` is the clients' ensure
 //! running path ([`connect`]) as a command; `status` and `stop` never start a
 //! daemon. `restart` re-executes the running daemon in place (#1713), as a
 //! replaced executable does once the daemon is idle.

@@ -73,7 +73,7 @@ enum Before {
 /// would keep the installer from replacing the executable, an idle one is
 /// stopped, and `output` says how to stop a busy one.
 pub(crate) async fn before_update(output: &mut impl Write) -> anyhow::Result<Watched> {
-    let paths = crate::daemon::DaemonPaths::of_this_process()?;
+    let paths = DaemonPaths::of_this_process()?;
     let daemon = if daemon::REPLACEABLE_WHILE_RUNNING {
         match daemon::connect(&paths, ConnectAs::Command.hello()).await {
             Ok(connection) => Before::Running(Box::new(connection)),
@@ -128,7 +128,7 @@ impl Watched {
         if !daemon::REPLACEABLE_WHILE_RUNNING {
             return Ok(());
         }
-        let paths = crate::daemon::DaemonPaths::of_this_process()?;
+        let paths = DaemonPaths::of_this_process()?;
         match installed {
             Installed::OverTheExecutable => {}
             Installed::AtAnotherPath => {
@@ -349,7 +349,7 @@ pub(crate) struct RunningDaemon {
 /// sent, so a daemon of any protocol is found. A rho home that cannot be
 /// resolved has none this process could stop.
 pub(crate) fn running_daemon() -> Option<RunningDaemon> {
-    let paths = crate::daemon::DaemonPaths::of_this_process().ok()?;
+    let paths = DaemonPaths::of_this_process().ok()?;
     match daemon::lock_holder(&paths) {
         LockHolder::Nobody => None,
         LockHolder::Unrecorded => Some(RunningDaemon { pid: None }),
@@ -362,7 +362,7 @@ pub(crate) fn running_daemon() -> Option<RunningDaemon> {
 /// Stops this rho home's daemon as `rho daemon stop` does and waits for it
 /// to exit. One that exited meanwhile counts as stopped.
 pub(crate) async fn stop_for_uninstall() -> anyhow::Result<()> {
-    let paths = crate::daemon::DaemonPaths::of_this_process()?;
+    let paths = DaemonPaths::of_this_process()?;
     match daemon_cli::stop(&paths).await {
         Err(_) if daemon::lock_holder(&paths) == LockHolder::Nobody => Ok(()),
         stopped => stopped,
