@@ -33,19 +33,7 @@ pub struct CompactionConfig {
     pub target_percent: u8,
     /// Model that writes text summaries, from `[internal_agents.compaction]`.
     /// `None` uses the session model, which can reuse the session's prompt cache.
-    pub summarizer: Option<SummarizerModel>,
-}
-
-/// A separately configured text-summary model and the reasoning it runs at.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SummarizerModel {
-    /// The configured providers the model is looked up on, so a custom
-    /// provider or configured endpoint can summarize.
-    pub providers: crate::config::ProviderConfigs,
-    pub provider: String,
-    pub model: String,
-    pub auth: String,
-    pub reasoning: rho_sdk::ReasoningLevel,
+    pub summarizer: Option<crate::agent::ResolvedRhoModel>,
 }
 
 /// Single source of truth for compaction defaults; `Config::default()` derives

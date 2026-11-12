@@ -120,6 +120,24 @@ async fn next_turn(
     notifications: &mut Notifications,
     session: &SessionId,
 ) -> (Vec<String>, Vec<String>) {
+    let (answer, notices) = next_turn_reply(notifications, session).await;
+    let request: Value =
+        serde_json::from_str(&answer).unwrap_or_else(|error| panic!("{error}: {answer}"));
+    let tools = request["tools"]
+        .as_array()
+        .expect("the request lists its tools")
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap().to_owned())
+        .collect();
+    (tools, notices)
+}
+
+/// The text `session`'s next turn answered with, and the notices it showed
+/// before it ended.
+async fn next_turn_reply(
+    notifications: &mut Notifications,
+    session: &SessionId,
+) -> (String, Vec<String>) {
     let (mut answer, mut notices) = (String::new(), Vec::new());
     loop {
         let DaemonNotification::SessionEvent(params) = next_notification(notifications).await
@@ -134,15 +152,7 @@ async fn next_turn(
             _ => {}
         }
     }
-    let request: Value =
-        serde_json::from_str(&answer).unwrap_or_else(|error| panic!("{error}: {answer}"));
-    let tools = request["tools"]
-        .as_array()
-        .expect("the request lists its tools")
-        .iter()
-        .map(|tool| tool["name"].as_str().unwrap().to_owned())
-        .collect();
-    (tools, notices)
+    (answer, notices)
 }
 
 // Covers: a change set through the protocol is saved to `config.toml`,
@@ -228,6 +238,72 @@ async fn a_change_is_saved_and_reaches_readers_and_a_loaded_sessions_next_turn()
         1,
         "one notice says the advisor is on: {notices:?}"
     );
+}
+
+// Covers: an advisor on a custom provider added to `config.toml` after a
+// session opened answers that session's next turn: the advisor model is
+// looked up on the providers of the config it came from, not the ones the
+// session opened with, which do not know the provider.
+// Owner: daemon settings store (next-turn advisor).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_advisor_on_a_custom_provider_added_later_answers_a_loaded_session() {
+    const KEY: &str = "advisor-key";
+    let sandbox = Sandbox::new();
+    let client = sandbox.start_daemon("tool-call").await;
+    let environment: rho_protocol::ClientEnvironment = sandbox
+        .client_environment()
+        .into_iter()
+        .chain([("RHO_MOCK_API_KEY".to_owned(), KEY.to_owned())])
+        .collect();
+    let session = sandbox
+        .new_session_with_environment(&client, environment.clone())
+        .await;
+    let (follower, mut events) = sandbox.connect_following().await;
+    follower
+        .request::<SessionAttach>(&SessionAttachParams {
+            session: session.clone(),
+            after: None,
+            environment: environment.clone(),
+            setup: SessionSetup::default(),
+        })
+        .await
+        .unwrap();
+
+    let address = super::key_checking_provider::spawn_provider(std::sync::Arc::new(
+        std::sync::Mutex::new(KEY.to_owned()),
+    ));
+    let config = std::fs::read_to_string(&sandbox.isolated.config_path).unwrap();
+    std::fs::write(
+        &sandbox.isolated.config_path,
+        format!(
+            r#"{config}
+[behavior]
+advisor_mode = true
+
+[internal_agents.advisor]
+provider = "mock"
+model = "mock-model"
+auth = "mock-api-key"
+
+[providers.custom.mock]
+base_url = "http://{address}/v1"
+"#
+        ),
+    )
+    .unwrap();
+    // The fixture makes the call; its reply is the call's result.
+    sandbox
+        .prompt_tool_call_with_environment(
+            &client,
+            &session,
+            &serde_json::json!({"id": "consult", "name": "advisor", "arguments": {}}),
+            environment,
+        )
+        .await;
+
+    let (reply, _) = next_turn_reply(&mut events, &session).await;
+    // `answered` is what the custom host says to every request.
+    assert_eq!(reply, "answered", "log:\n{}", sandbox.isolated.daemon_log());
 }
 
 // Covers: `codemode.mode`, which `/codemode` writes, reaches a session

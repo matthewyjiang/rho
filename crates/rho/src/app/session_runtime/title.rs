@@ -23,14 +23,14 @@ use rho_sdk::{
 
 use super::{model_scoped_config, SessionRuntime};
 use crate::{
+    agent::ResolvedRhoModel,
     config::Config,
     session::{NoSessionFound, Session as StoredSession},
-    title::TitleModel,
 };
 
 /// What the title agent needs to name one session.
 pub(crate) struct TitleJob {
-    model: TitleModel,
+    model: ResolvedRhoModel,
     /// The first exchange, as the title agent reads it.
     input: String,
     sdk_session_id: rho_sdk::SessionId,

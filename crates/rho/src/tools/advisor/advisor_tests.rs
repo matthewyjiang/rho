@@ -11,12 +11,21 @@ use rho_sdk::{
 use crate::config::{Config, InternalAgentModelConfig};
 
 use super::{
-    advisor_effective_reasoning, advisor_model, consult_advisor_with_provider, AdvisorSessionStore,
-    AdvisorTool, DEFAULT_TRANSCRIPT_BUDGET, NO_MODEL_MESSAGE, NO_SESSION_MESSAGE,
+    advisor_effective_reasoning, advisor_model, consult_advisor_with_provider, AdvisorModel,
+    AdvisorSessionStore, AdvisorTool, DEFAULT_TRANSCRIPT_BUDGET, NO_MODEL_MESSAGE,
+    NO_SESSION_MESSAGE,
 };
 
 fn advisor_selection() -> InternalAgentModelConfig {
     InternalAgentModelConfig::new("anthropic".into(), "claude-test".into(), "api-key".into())
+}
+
+/// `selection` on no configured providers.
+fn advisor(selection: InternalAgentModelConfig) -> AdvisorModel {
+    AdvisorModel {
+        selection,
+        providers: Default::default(),
+    }
 }
 
 fn config_with(advisor_mode: bool, model: Option<InternalAgentModelConfig>) -> Config {
@@ -66,7 +75,11 @@ fn advisor_reasoning_prefers_the_override_over_the_definition_level() {
 fn a_request_reports_its_missing_prerequisite() {
     for (case, model, expected) in [
         ("no model", None, NO_MODEL_MESSAGE),
-        ("no session", Some(advisor_selection()), NO_SESSION_MESSAGE),
+        (
+            "no session",
+            Some(advisor(advisor_selection())),
+            NO_SESSION_MESSAGE,
+        ),
     ] {
         let store = AdvisorSessionStore::new();
         if model.is_some() {
@@ -276,17 +289,16 @@ fn the_description_never_names_the_reviewer_model() {
     let tool = AdvisorTool::new(
         store.clone(),
         DEFAULT_TRANSCRIPT_BUDGET,
-        Default::default(),
         crate::session_environment::SessionEnvironment::default(),
     );
     let baseline = tool.spec().description;
 
-    store.set_model(Some(advisor_selection()));
+    store.set_model(Some(advisor(advisor_selection())));
     assert_eq!(tool.spec().description, baseline);
 
-    store.set_model(Some(InternalAgentModelConfig::claude_cli(Some(
+    store.set_model(Some(advisor(InternalAgentModelConfig::claude_cli(Some(
         "opus".into(),
-    ))));
+    )))));
     assert_eq!(tool.spec().description, baseline);
     assert!(!baseline.contains("claude-test"));
     assert!(!baseline.contains("claude-code/"));

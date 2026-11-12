@@ -5,7 +5,7 @@ use rho_providers::{
     reasoning::ReasoningLevel,
 };
 
-use crate::config::{InternalAgentModelConfig, InternalAgentTarget};
+use crate::config::{InternalAgentModelConfig, InternalAgentTarget, ProviderConfigs};
 
 use super::{AgentDefinition, AgentId, AgentRuntimeSpec, ModelPolicy, PromptPolicy, ToolPolicy};
 
@@ -178,6 +178,21 @@ static CLAUDE_REASONING_CAPABILITIES: LazyLock<ReasoningCapabilities> = LazyLock
 /// Reasoning for an overridden model of an internal agent whose definition
 /// inherits the session's reasoning.
 const OVERRIDE_DEFAULT_REASONING: ReasoningLevel = ReasoningLevel::Low;
+
+/// An internal agent's model on Rho's own provider stack, resolved from a
+/// config with its reasoning worked out, ready for a run.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResolvedRhoModel {
+    /// The configured providers the model is looked up on, so a custom
+    /// provider or configured endpoint reaches it.
+    pub providers: ProviderConfigs,
+    pub provider: String,
+    pub model: String,
+    pub auth: String,
+    /// The agent's effective reasoning (see
+    /// [`effective_internal_agent_reasoning`]).
+    pub reasoning: ReasoningLevel,
+}
 
 /// Reasoning level an internal-agent one-shot will use for `selection`.
 ///

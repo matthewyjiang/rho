@@ -358,7 +358,7 @@ async fn configured_summarizer_gets_the_transcript_and_falls_back_on_failure() {
             usage.clone(),
             Some(100_000),
             Some(super::Summarizer::with_provider(
-                crate::compaction::SummarizerModel {
+                crate::agent::ResolvedRhoModel {
                     providers: Default::default(),
                     provider: "openai".into(),
                     model: "gpt-mini".into(),

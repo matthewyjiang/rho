@@ -599,7 +599,7 @@ async fn escalation_elides_only_the_transcript_summary() {
             tiered_compactor(session.clone(), RecordingUsage::default(), Some(recall));
         if configured {
             compactor.summarizer = Some(super::Summarizer::with_provider(
-                crate::compaction::SummarizerModel {
+                crate::agent::ResolvedRhoModel {
                     providers: Default::default(),
                     provider: "opencode-go".into(),
                     model: "muse-mini".into(),

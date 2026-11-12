@@ -447,7 +447,7 @@ fn a_claude_cli_advisor_round_trips_through_save() {
 // Owner: config to compaction wiring
 #[test]
 fn compaction_internal_agent_selects_the_summarizer_model() {
-    use crate::compaction::{CompactionConfig, SummarizerModel};
+    use crate::{agent::ResolvedRhoModel, compaction::CompactionConfig};
     use rho_sdk::ReasoningLevel;
 
     for (case, entry, expected) in [
@@ -455,7 +455,7 @@ fn compaction_internal_agent_selects_the_summarizer_model() {
         (
             "alias with default reasoning",
             "[internal_agents.compaction]\nmodel = \"@cheap\"\n",
-            Some(SummarizerModel {
+            Some(ResolvedRhoModel {
                 providers: Default::default(),
                 provider: "anthropic".into(),
                 model: "claude-haiku-4-5".into(),
@@ -466,7 +466,7 @@ fn compaction_internal_agent_selects_the_summarizer_model() {
         (
             "explicit reasoning",
             "[internal_agents.compaction]\nprovider = \"openai\"\nmodel = \"gpt-5.5-mini\"\nauth = \"api-key\"\nreasoning = \"medium\"\n",
-            Some(SummarizerModel {
+            Some(ResolvedRhoModel {
                 providers: Default::default(),
                 provider: "openai".into(),
                 model: "gpt-5.5-mini".into(),
@@ -477,7 +477,7 @@ fn compaction_internal_agent_selects_the_summarizer_model() {
         (
             "custom host",
             "[providers.custom.summhost]\nbase_url = \"http://127.0.0.1:9/v1\"\n\n[internal_agents.compaction]\nprovider = \"summhost\"\nmodel = \"local-model\"\nauth = \"none\"\n",
-            Some(SummarizerModel {
+            Some(ResolvedRhoModel {
                 providers: Default::default(),
                 provider: "summhost".into(),
                 model: "local-model".into(),
@@ -498,7 +498,7 @@ fn compaction_internal_agent_selects_the_summarizer_model() {
 
         let config = Config::load(Some(path)).unwrap();
         // Every summarizer is built on the providers of its config.
-        let expected = expected.map(|model| SummarizerModel {
+        let expected = expected.map(|model| ResolvedRhoModel {
             providers: config.providers.clone(),
             ..model
         });

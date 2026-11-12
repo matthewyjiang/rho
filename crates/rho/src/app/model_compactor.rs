@@ -24,10 +24,11 @@ use rho_sdk::{
 };
 
 use crate::{
+    agent::ResolvedRhoModel,
     compaction::{
         build_session_summary_request, build_summary_request_messages, elide_tool_results,
         partition_messages_for_compaction, summary_replacement, summary_reserve_tokens,
-        CompactionConfig, CompactionPartition, SummarizerModel,
+        CompactionConfig, CompactionPartition,
     },
     compaction_metrics::{
         removed_tool_calls, CompactionRecord, CompactionRunOutcome, CompactionTier, RecordIdentity,
@@ -56,7 +57,7 @@ pub(crate) struct ModelCompactor {
 /// The configured summarizer model. Its provider is built on first use and
 /// kept for the compactor's lifetime; a config change rebuilds the compactor.
 pub(super) struct Summarizer {
-    model: SummarizerModel,
+    model: ResolvedRhoModel,
     /// Whose sign-in the provider is built with.
     credentials: Arc<dyn CredentialStore>,
     provider: tokio::sync::OnceCell<Arc<dyn ModelProvider>>,
@@ -65,7 +66,7 @@ pub(super) struct Summarizer {
 impl Summarizer {
     /// A summarizer on `model`, signed in with `credentials` when it first
     /// runs.
-    pub(super) fn new(model: SummarizerModel, credentials: Arc<dyn CredentialStore>) -> Self {
+    pub(super) fn new(model: ResolvedRhoModel, credentials: Arc<dyn CredentialStore>) -> Self {
         Self {
             model,
             credentials,
@@ -75,7 +76,7 @@ impl Summarizer {
 
     /// A summarizer whose provider is already built.
     #[cfg(test)]
-    pub(super) fn with_provider(model: SummarizerModel, provider: Arc<dyn ModelProvider>) -> Self {
+    pub(super) fn with_provider(model: ResolvedRhoModel, provider: Arc<dyn ModelProvider>) -> Self {
         Self {
             model,
             credentials: Arc::new(crate::credential_store::AppCredentialStore),
@@ -86,7 +87,7 @@ impl Summarizer {
     async fn provider(&self) -> Result<&Arc<dyn ModelProvider>, Error> {
         self.provider
             .get_or_try_init(|| async {
-                let SummarizerModel {
+                let ResolvedRhoModel {
                     providers,
                     provider,
                     model,

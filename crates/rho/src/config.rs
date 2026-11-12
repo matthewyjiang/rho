@@ -725,7 +725,7 @@ impl From<&Config> for CompactionConfig {
                 // The compaction agent cannot delegate, so config load keeps
                 // every selection on Rho's stack.
                 let rho = selection.rho()?;
-                Some(crate::compaction::SummarizerModel {
+                Some(crate::agent::ResolvedRhoModel {
                     providers: config.providers.clone(),
                     provider: rho.provider.clone(),
                     model: rho.model.clone(),
