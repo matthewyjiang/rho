@@ -236,7 +236,7 @@ Scenarios launch Rho with:
 
 ### When to use Herdr instead
 
-Use the Herdr sibling-pane workflow for exploratory checks, novel bugs that are not yet encoded as scenarios, or parity checks against a real terminal renderer. See the [Herdr](/integrations/herdr) page and the `rho-tui-pty-testing` and `rho-tui-herdr-testing` skills.
+Use the Herdr sibling-pane workflow for exploratory checks, novel bugs that are not yet encoded as scenarios, or parity checks against a real terminal renderer. See the [Herdr](/integrations/herdr) page.
 
 ## Performance investigations
 

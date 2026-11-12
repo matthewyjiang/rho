@@ -42,7 +42,7 @@ Load the `rho-test-selection` skill before adding, expanding, reviewing, or dele
 Short checks while reviewing the diff:
 
 - Prefer behavior or integration tests for user-visible behavior and unit tests for focused pure logic.
-- Put new test modules in sibling `*_tests.rs` files with an explicit `#[path = "..."] mod tests;` when practical.
+- Put new test modules in sibling `*_tests.rs` files with an explicit `#[path = "..."] mod tests;`.
 - Prefer `pretty_assertions::assert_eq` and whole-object comparisons when available.
 - Do not test static constants or removed behavior; do not lock copy behind string-contains tests.
 - Avoid mutating process environment; inject environment-derived values or dependencies instead.
@@ -145,7 +145,7 @@ Full mode runs policy and script checks, Clippy for all workspace targets and fe
 
 Do not raise architecture line budgets merely to pass. Extract cohesive modules instead. Full mode includes the architecture self-test, so run that self-test separately only when changing the checker and not running full mode.
 
-For interactive TUI behavior, load and follow `rho-tui-pty-testing` first. Run the PTY smoke suite or a named scenario when the change touches interactive flows. Fall back to `rho-tui-herdr-testing` only for exploratory validation or when a PTY scenario cannot cover the behavior yet. Record the path used and its result here.
+For interactive TUI behavior, load and follow `rho-tui-pty-testing` first. Run the PTY smoke suite or a named scenario when the change touches interactive flows. Record the scenarios run and their results here.
 
 ### TUI proof plate
 
