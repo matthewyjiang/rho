@@ -132,9 +132,17 @@ impl ConfigStore {
         }
     }
 
+    /// `config.toml` as a person reads it: on Windows, without the verbatim
+    /// prefix the daemon's canonical home carries.
+    fn shown_path(&self) -> String {
+        crate::paths::without_verbatim_prefix(self.agent_path.clone())
+            .display()
+            .to_string()
+    }
+
     fn unloaded(&self, errors: &[WireError]) -> ConfigUnloaded {
         ConfigUnloaded {
-            path: self.agent_path.display().to_string(),
+            path: self.shown_path(),
             errors: listed(errors),
         }
     }
@@ -241,7 +249,7 @@ impl ConfigStore {
                 // Logged once per broken edit: only a changed file is read
                 // again.
                 tracing::warn!(
-                    path = %self.agent_path.display(),
+                    path = %self.shown_path(),
                     errors = %listed(&errors),
                     "config does not load; new sessions fail to open until it is fixed"
                 );

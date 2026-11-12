@@ -96,18 +96,17 @@ impl Sandbox {
     pub(super) fn new() -> Self {
         let isolated = IsolatedHome::new().unwrap();
         std::fs::write(&isolated.config_path, CONFIG).unwrap();
-        let workspace = isolated.workspace.canonicalize().unwrap();
-        #[cfg(windows)]
-        let workspace = PathBuf::from(
-            workspace
-                .to_str()
-                .and_then(|path| path.strip_prefix(r"\\?\"))
-                .expect("a canonical path on a drive"),
-        );
+        let workspace = plain_canonical(&isolated.workspace);
         Self {
             isolated,
             workspace,
         }
+    }
+
+    /// `config.toml` as the daemon names it in errors: under its canonical
+    /// home, on Windows without the verbatim prefix.
+    pub(super) fn shown_config_path(&self) -> PathBuf {
+        plain_canonical(&self.isolated.config_path)
     }
 
     /// The workspace as a session's tools name it: resolved by the file
@@ -2192,4 +2191,17 @@ async fn a_held_question_waits_for_the_users_answer() {
         "log:\n{}",
         sandbox.isolated.daemon_log()
     );
+}
+
+/// `path` canonicalized, on Windows without the verbatim prefix, as the
+/// daemon shows the paths it resolved.
+fn plain_canonical(path: &Path) -> PathBuf {
+    let path = path.canonicalize().unwrap();
+    #[cfg(windows)]
+    let path = PathBuf::from(
+        path.to_str()
+            .and_then(|path| path.strip_prefix(r"\\?\"))
+            .expect("a canonical path on a drive"),
+    );
+    path
 }

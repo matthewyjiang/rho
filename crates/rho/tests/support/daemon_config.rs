@@ -672,7 +672,7 @@ async fn a_broken_config_fails_the_new_session_not_the_daemon() {
                 ErrorCode::SessionOpenFailed,
                 format!(
                     "could not open session: invalid config file {}:\n`behavior.edit_tool`: must be one of auto, str_replace, apply_patch; got \"sed\"",
-                    sandbox.isolated.config_path.display()
+                    sandbox.shown_config_path().display()
                 ),
             )),
             Ok(()),
@@ -897,7 +897,7 @@ async fn a_hand_edit_is_served_and_a_broken_one_keeps_the_last_good_values() {
             ErrorCode::SessionOpenFailed,
             format!(
                 "could not open session: invalid config file {}:\n`output.max_output_bytes`: must be at least 1; got 0",
-                sandbox.isolated.config_path.display()
+                sandbox.shown_config_path().display()
             ),
         ))
     );
