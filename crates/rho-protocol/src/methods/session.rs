@@ -5,7 +5,7 @@
 //! disconnects. A client that attaches to a session receives its events as
 //! notifications until it detaches (#1657).
 
-use std::{collections::BTreeMap, fmt, path::PathBuf};
+use std::{collections::BTreeMap, ffi::OsString, fmt, path::PathBuf};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -85,10 +85,21 @@ pub struct ClientEnvironment(BTreeMap<String, String>);
 
 impl ClientEnvironment {
     /// This process's environment. A variable whose name or value is not
-    /// UTF-8 is left out, since the wire carries strings.
+    /// UTF-8 is left out, since the wire carries strings. So is one whose
+    /// name holds `=`, which no command can be started with: Windows keeps
+    /// each drive's working directory in the environment under such a name
+    /// (`=C:`), and the daemon refuses an environment that has one.
     pub fn of_this_process() -> Self {
-        std::env::vars_os()
+        Self::of(std::env::vars_os())
+    }
+
+    /// The variables of `environment` a client sends (see
+    /// [`Self::of_this_process`]).
+    fn of(environment: impl IntoIterator<Item = (OsString, OsString)>) -> Self {
+        environment
+            .into_iter()
             .filter_map(|(name, value)| Some((name.into_string().ok()?, value.into_string().ok()?)))
+            .filter(|(name, _)| !name.contains('='))
             .collect()
     }
 

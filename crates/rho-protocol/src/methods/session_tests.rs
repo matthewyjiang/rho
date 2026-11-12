@@ -62,3 +62,21 @@ fn a_prompt_carries_its_message_as_content_blocks() {
         params
     );
 }
+
+// Covers: a client sends no variable the daemon would refuse its whole
+// environment for. Windows keeps each drive's working directory under a
+// name that holds `=`, so every session a client opened from `cmd.exe` was
+// refused.
+// Owner: protocol client environment.
+#[test]
+fn a_clients_environment_leaves_out_names_no_command_takes() {
+    let environment = ClientEnvironment::of(
+        [("PATH", r"C:\bin"), ("=C:", r"C:\work"), ("EMPTY", "")]
+            .map(|(name, value)| (name.into(), value.into())),
+    );
+
+    assert_eq!(
+        environment.iter().collect::<Vec<_>>(),
+        [("EMPTY", ""), ("PATH", r"C:\bin")]
+    );
+}
