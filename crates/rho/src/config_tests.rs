@@ -441,8 +441,9 @@ fn a_claude_cli_advisor_round_trips_through_save() {
 }
 
 // Covers: `[internal_agents.compaction]` fails to route text-summary
-// compaction to the configured model, loses an alias, or ignores reasoning;
-// an unset entry must keep the session model.
+// compaction to the configured model, loses an alias, ignores reasoning, or
+// drops the config's providers, which a custom host needs to be found; an
+// unset entry must keep the session model.
 // Owner: config to compaction wiring
 #[test]
 fn compaction_internal_agent_selects_the_summarizer_model() {
@@ -455,6 +456,7 @@ fn compaction_internal_agent_selects_the_summarizer_model() {
             "alias with default reasoning",
             "[internal_agents.compaction]\nmodel = \"@cheap\"\n",
             Some(SummarizerModel {
+                providers: Default::default(),
                 provider: "anthropic".into(),
                 model: "claude-haiku-4-5".into(),
                 auth: "anthropic-api-key".into(),
@@ -465,10 +467,22 @@ fn compaction_internal_agent_selects_the_summarizer_model() {
             "explicit reasoning",
             "[internal_agents.compaction]\nprovider = \"openai\"\nmodel = \"gpt-5.5-mini\"\nauth = \"api-key\"\nreasoning = \"medium\"\n",
             Some(SummarizerModel {
+                providers: Default::default(),
                 provider: "openai".into(),
                 model: "gpt-5.5-mini".into(),
                 auth: "api-key".into(),
                 reasoning: ReasoningLevel::Medium,
+            }),
+        ),
+        (
+            "custom host",
+            "[providers.custom.summhost]\nbase_url = \"http://127.0.0.1:9/v1\"\n\n[internal_agents.compaction]\nprovider = \"summhost\"\nmodel = \"local-model\"\nauth = \"none\"\n",
+            Some(SummarizerModel {
+                providers: Default::default(),
+                provider: "summhost".into(),
+                model: "local-model".into(),
+                auth: "none".into(),
+                reasoning: ReasoningLevel::Low,
             }),
         ),
     ] {
@@ -482,8 +496,12 @@ fn compaction_internal_agent_selects_the_summarizer_model() {
         )
         .unwrap();
 
-        let config = Config::load(Some(path))
-        .unwrap();
+        let config = Config::load(Some(path)).unwrap();
+        // Every summarizer is built on the providers of its config.
+        let expected = expected.map(|model| SummarizerModel {
+            providers: config.providers.clone(),
+            ..model
+        });
 
         assert_eq!(CompactionConfig::from(&config).summarizer, expected, "{case}");
     }

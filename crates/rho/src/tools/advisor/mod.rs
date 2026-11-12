@@ -29,7 +29,7 @@ use crate::{
         run_one_shot_with_provider, OneShotAgentRequest, OneShotPhase, OneShotUpdate,
         ADVISOR_AGENT_ID,
     },
-    config::{Config, InternalAgentModelConfig, InternalAgentTarget},
+    config::{Config, InternalAgentModelConfig, InternalAgentTarget, ProviderConfigs},
     credential_store::build_provider,
     session_environment::{Ambient, SessionEnvironment},
 };
@@ -79,19 +79,22 @@ pub(crate) fn advisor_available(config: &Config) -> bool {
     config.advisor_mode && advisor_model(config).is_some()
 }
 
-/// Builds the `advisor` tool, whose Claude Code advisor runs in the session's
-/// `environment`.
+/// Builds the `advisor` tool, whose Rho advisor model is looked up on the
+/// session's configured `providers` and whose Claude Code advisor runs in the
+/// session's `environment`.
 ///
 /// It owns no resources beyond the store and needs no shutdown, so the tool set
 /// registers it directly instead of through a bundle. That also lets advisor
 /// mode register and remove it mid-session without rebuilding the tool set.
 pub(super) fn advisor_tool(
     store: AdvisorSessionStore,
+    providers: ProviderConfigs,
     environment: SessionEnvironment,
 ) -> Arc<dyn SdkTool> {
     Arc::new(AdvisorTool::new(
         store,
         DEFAULT_TRANSCRIPT_BUDGET,
+        providers,
         environment,
     ))
 }
@@ -220,6 +223,9 @@ struct AdvisorRequest {
 pub(crate) struct AdvisorTool {
     store: AdvisorSessionStore,
     budget: TranscriptBudget,
+    /// The session's configured providers, which a Rho advisor model is
+    /// looked up on.
+    providers: ProviderConfigs,
     /// The session's environment, which a Claude Code advisor runs in as it
     /// is when called (#1659).
     environment: SessionEnvironment,
@@ -229,11 +235,13 @@ impl AdvisorTool {
     pub(crate) fn new(
         store: AdvisorSessionStore,
         budget: TranscriptBudget,
+        providers: ProviderConfigs,
         environment: SessionEnvironment,
     ) -> Self {
         Self {
             store,
             budget,
+            providers,
             environment,
         }
     }
@@ -275,6 +283,7 @@ impl SdkTool for AdvisorTool {
             let request = self.store.request(self.budget)?;
             let (advice, usage) = consult_advisor(
                 request,
+                &self.providers,
                 workspace_path,
                 &self.environment,
                 context.cancellation().clone(),
@@ -301,6 +310,7 @@ impl SdkTool for AdvisorTool {
 /// text plus a phase in metadata; the final tool output stays plain guidance.
 async fn consult_advisor(
     request: AdvisorRequest,
+    providers: &ProviderConfigs,
     workspace_path: PathBuf,
     environment: &SessionEnvironment,
     cancellation: CancellationToken,
@@ -316,6 +326,7 @@ async fn consult_advisor(
         InternalAgentTarget::Rho(selection) => {
             let reference = model.display_reference();
             let provider = build_provider(
+                providers,
                 &selection.provider,
                 &selection.model,
                 reasoning,
