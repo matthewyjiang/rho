@@ -194,7 +194,6 @@ pub(crate) fn replacement_from_compact_output<'a>(
             provenance: Some(identity),
             reasoning_summary: None,
             provider_context,
-            created_at: None,
         }
         .with_portable_fallback(portable_handoff_notice),
     ));

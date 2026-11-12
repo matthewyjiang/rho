@@ -24,7 +24,7 @@ mod wire;
 
 pub use compaction_summary::CompactionSummary;
 pub use legacy_tool_images::attach_legacy_tool_images;
-pub use message_time::{MessageTime, ReplyEnd, UserStamp};
+pub use message_time::MessageTime;
 pub use provider_context::{ProviderContextBlock, ReplayScope};
 pub(crate) use reasoning_shift::record as record_reasoning_shift;
 pub use reasoning_shift::ReasoningShift;
@@ -193,10 +193,6 @@ pub struct AbortedAssistant {
     pub provider_context: Vec<ProviderContextBlock>,
     pub tool_calls: Vec<PartialToolCall>,
     pub usage: ModelUsage,
-    /// When the output was cut off. Never sent with it; the next user
-    /// message's [`UserStamp`] reports it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub stopped_at: Option<MessageTime>,
 }
 
 /// Exact provider, API, and model identity for replay-sensitive context.
@@ -233,10 +229,6 @@ pub struct AssistantMessage {
     /// Opaque provider data filtered by [`ProviderContextBlock::is_replayable_to`].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub provider_context: Vec<ProviderContextBlock>,
-    /// When the provider finished this output. Never sent with it; the next
-    /// user message's [`UserStamp`] reports it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub created_at: Option<MessageTime>,
 }
 
 impl AssistantMessage {
@@ -296,8 +288,6 @@ struct AssistantMessageRepr {
     portable_fallback: Option<String>,
     #[serde(default)]
     provider_context: Vec<ProviderContextBlock>,
-    #[serde(default)]
-    created_at: Option<MessageTime>,
 }
 
 impl<'de> Deserialize<'de> for AssistantMessage {
@@ -311,7 +301,6 @@ impl<'de> Deserialize<'de> for AssistantMessage {
             provenance: repr.provenance,
             reasoning_summary: repr.reasoning_summary,
             provider_context: repr.provider_context,
-            created_at: repr.created_at,
         };
         Ok(match repr.portable_fallback {
             Some(fallback) => message.with_portable_fallback(fallback),

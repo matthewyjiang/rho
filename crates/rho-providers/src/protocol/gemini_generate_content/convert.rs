@@ -71,7 +71,6 @@ pub fn build_request<'a>(
                         provenance: message.provenance.clone(),
                         reasoning_summary: message.reasoning_summary.clone(),
                         provider_context: message.provider_context.clone(),
-                        created_at: None,
                     },
                     target,
                 );

@@ -1,17 +1,14 @@
-//! When conversation entries were created, as the model reads it.
+//! When user messages were sent, as the model reads it.
 //!
-//! Times are captured once and stored with the session. Only user messages
-//! carry a rendered stamp, written into their content when they are created,
-//! so replays and resumed sessions send the same bytes and keep the provider
-//! prompt cache warm. Assistant output stays exactly as the model wrote it; its
-//! times surface in the next user message's stamp.
+//! Only user messages carry a stamp: the time they were sent, written into
+//! their content when they are created, so replays and resumed sessions send
+//! the same bytes and keep the provider prompt cache warm. Assistant output
+//! stays exactly as the model wrote it.
 
 use std::fmt;
 
 use chrono::{DateTime, FixedOffset, Local, NaiveDateTime, Offset, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
-
-use super::Message;
 
 /// A wall-clock instant and the UTC offset of the zone it was read in.
 ///
@@ -39,6 +36,15 @@ impl MessageTime {
         Some(Self {
             at: at.with_timezone(&offset),
         })
+    }
+
+    /// The rest of `text` after a leading line that is exactly a rendered
+    /// time, or `None` when it has none. For readers that must see past the
+    /// stamp to the words the user typed, such as scripted test providers.
+    pub fn strip_rendered_prefix(text: &str) -> Option<&str> {
+        let (line, rest) = text.split_once('\n').unwrap_or((text, ""));
+        let time = Self::parse(line)?;
+        (time.to_string() == line).then_some(rest)
     }
 
     /// Reads a time [`fmt::Display`] wrote; the caller checks it round-trips.
@@ -78,101 +84,6 @@ impl fmt::Display for MessageTime {
             }
         }
         f.write_str(")")
-    }
-}
-
-/// The line a user message leads with in model requests: when it was sent,
-/// and how the reply before it ended.
-///
-/// Renders as `<sent>`, `<sent>. Previous reply finished <time>.`, or
-/// `<sent>. Previous reply interrupted at <time>.`
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct UserStamp {
-    pub sent: MessageTime,
-    pub previous_reply: Option<ReplyEnd>,
-}
-
-impl UserStamp {
-    /// A message sent now, after the latest reply in `history`.
-    pub fn now_after(history: &[Message]) -> Self {
-        Self {
-            sent: MessageTime::now(),
-            previous_reply: ReplyEnd::last_in(history),
-        }
-    }
-
-    /// The rest of `text` after a leading line that is exactly a rendered
-    /// stamp, or `None` when it has none. For readers that must see past the
-    /// stamp to the words the user typed, such as scripted test providers.
-    pub fn strip_rendered_prefix(text: &str) -> Option<&str> {
-        let (line, rest) = text.split_once('\n').unwrap_or((text, ""));
-        let stamp = Self::parse(line)?;
-        (stamp.to_string() == line).then_some(rest)
-    }
-
-    /// Reads a line [`fmt::Display`] wrote; the caller checks it round-trips.
-    fn parse(line: &str) -> Option<Self> {
-        let Some((sent, previous)) = line.split_once(". Previous reply ") else {
-            return Some(Self {
-                sent: MessageTime::parse(line)?,
-                previous_reply: None,
-            });
-        };
-        let previous = previous.strip_suffix('.')?;
-        let previous_reply = match previous.strip_prefix("finished ") {
-            Some(time) => ReplyEnd::Finished(MessageTime::parse(time)?),
-            None => ReplyEnd::Interrupted(MessageTime::parse(
-                previous.strip_prefix("interrupted at ")?,
-            )?),
-        };
-        Some(Self {
-            sent: MessageTime::parse(sent)?,
-            previous_reply: Some(previous_reply),
-        })
-    }
-}
-
-impl fmt::Display for UserStamp {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.sent)?;
-        match self.previous_reply {
-            None => Ok(()),
-            Some(ReplyEnd::Finished(time)) => write!(f, ". Previous reply finished {time}."),
-            Some(ReplyEnd::Interrupted(time)) => {
-                write!(f, ". Previous reply interrupted at {time}.")
-            }
-        }
-    }
-}
-
-/// How an assistant reply ended, and when.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ReplyEnd {
-    /// The model finished its output ([`super::AssistantMessage::created_at`]).
-    Finished(MessageTime),
-    /// The output was cut off ([`super::AbortedAssistant::stopped_at`]).
-    Interrupted(MessageTime),
-}
-
-impl ReplyEnd {
-    /// How the reply to the latest user message in `history` ended. `None`
-    /// when there is no such reply, or it recorded no time.
-    pub fn last_in(history: &[Message]) -> Option<Self> {
-        history
-            .iter()
-            .rev()
-            .find_map(|message| match message {
-                Message::EnrichedAssistant(reply) => Some(reply.created_at.map(Self::Finished)),
-                Message::AbortedAssistant(reply) => Some(reply.stopped_at.map(Self::Interrupted)),
-                Message::Assistant(_) | Message::User(_) => Some(None),
-                Message::System(_)
-                | Message::ToolResult(_)
-                | Message::CompactionSummary(_)
-                | Message::ModelContext(_)
-                | Message::BoundaryInput(_)
-                | Message::ReasoningShift(_) => None,
-            })
-            .flatten()
     }
 }
 

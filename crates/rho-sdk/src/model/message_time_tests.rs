@@ -1,7 +1,7 @@
 use pretty_assertions::assert_eq;
 
 use super::*;
-use crate::model::{AbortedAssistant, AssistantMessage, ContentBlock, ImageContent};
+use crate::model::{AssistantMessage, ContentBlock, ImageContent, Message};
 
 // 2026-11-12 05:39:00 UTC.
 const INSTANT: i64 = 1_794_461_940;
@@ -51,99 +51,51 @@ fn at(offset_minutes: i64) -> MessageTime {
     MessageTime::from_parts(INSTANT + offset_minutes * 60, -5 * 3600).unwrap()
 }
 
-// Covers: a user stamp spells out when the message was sent and how the reply
-// before it ended, and a reader sees past exactly that line and nothing that
+// Covers: a reader sees past exactly one rendered stamp line and nothing that
 // only resembles it.
 // Owner: SDK user stamp rendering.
 #[test]
-fn user_stamps_render_and_strip_exactly() {
-    let cases = [
-        (None, "Thursday, Nov 12, 2026, 12:39 AM (UTC-5)"),
-        (
-            Some(ReplyEnd::Finished(at(-1))),
-            "Thursday, Nov 12, 2026, 12:39 AM (UTC-5). Previous reply finished Thursday, Nov 12, 2026, 12:38 AM (UTC-5).",
-        ),
-        (
-            Some(ReplyEnd::Interrupted(at(-2))),
-            "Thursday, Nov 12, 2026, 12:39 AM (UTC-5). Previous reply interrupted at Thursday, Nov 12, 2026, 12:37 AM (UTC-5).",
-        ),
-    ];
-    for (previous_reply, expected) in cases {
-        let stamp = UserStamp {
-            sent: at(0),
-            previous_reply,
-        };
-        assert_eq!(stamp.to_string(), expected);
-        assert_eq!(
-            UserStamp::strip_rendered_prefix(&format!("{stamp}\nhello\nthere")),
-            Some("hello\nthere")
-        );
-        assert_eq!(UserStamp::strip_rendered_prefix(expected), Some(""));
-    }
+fn strip_rendered_prefix_sees_past_exactly_the_stamp() {
+    let stamp = at(0).to_string();
+    assert_eq!(
+        MessageTime::strip_rendered_prefix(&format!("{stamp}\nhello\nthere")),
+        Some("hello\nthere")
+    );
+    assert_eq!(MessageTime::strip_rendered_prefix(&stamp), Some(""));
     for text in [
         "hello",
         "Friday, Nov 12, 2026, 12:39 AM (UTC-5)\nhello",
         "Thursday, Nov 12, 2026, 12:39 AM (UTC-05)\nhello",
         "Thursday, Nov 12, 2026, 12:39 AM (UTC-5) note\nhello",
-        "Thursday, Nov 12, 2026, 12:39 AM (UTC-5). Previous reply ended Thursday, Nov 12, 2026, 12:38 AM (UTC-5).\nhello",
     ] {
-        assert_eq!(UserStamp::strip_rendered_prefix(text), None, "{text}");
+        assert_eq!(MessageTime::strip_rendered_prefix(text), None, "{text}");
     }
 }
 
-// Covers: the previous reply is the one answering the latest user message,
-// finished or cut off, and only when it recorded its time.
-// Owner: SDK user stamp history reading.
+// Covers: sessions saved while replies recorded their finish or cut-off time
+// still load, and the user text stamped then is kept byte for byte so a
+// resume sends what was sent before.
+// Owner: SDK session history persistence.
 #[test]
-fn previous_reply_is_the_latest_users_timed_reply() {
-    let finished = |time| {
-        Message::assistant(AssistantMessage {
-            created_at: time,
-            ..AssistantMessage::from_content(vec![ContentBlock::Text("done".into())])
-        })
-    };
-    let cut_off = Message::AbortedAssistant(Box::new(AbortedAssistant {
-        stopped_at: Some(at(-2)),
-        ..AbortedAssistant::default()
-    }));
-    let tool_result = Message::ToolResult(crate::model::ToolResult::succeeded("call", "ok"));
-    let user = Message::user_text("hi");
-    let cases = [
-        ("no reply yet", vec![], None),
-        (
-            "finished after tools",
-            vec![
-                user.clone(),
-                finished(Some(at(-3))),
-                tool_result.clone(),
-                finished(Some(at(-1))),
-            ],
-            Some(ReplyEnd::Finished(at(-1))),
-        ),
-        (
-            "cut off",
-            vec![
-                user.clone(),
-                finished(Some(at(-3))),
-                tool_result.clone(),
-                cut_off,
-            ],
-            Some(ReplyEnd::Interrupted(at(-2))),
-        ),
-        (
-            "unanswered user",
-            vec![finished(Some(at(-3))), user.clone()],
-            None,
-        ),
-        (
-            "untimed reply",
-            vec![user, finished(None), tool_result],
-            None,
-        ),
+fn sessions_saved_with_reply_times_still_load() {
+    let old_stamp = "Thursday, Nov 12, 2026, 12:39 AM (UTC-5). Previous reply finished Thursday, Nov 12, 2026, 12:38 AM (UTC-5).\nnext";
+    let history = vec![
+        Message::user_text("hello"),
+        Message::assistant(AssistantMessage::from_content(vec![ContentBlock::Text(
+            "done".into(),
+        )])),
+        Message::AbortedAssistant(Box::default()),
+        Message::user_text(old_stamp),
     ];
-    for (name, history, expected) in cases {
-        assert_eq!(ReplyEnd::last_in(&history), expected, "{name}");
-    }
+    let time = serde_json::to_value(at(-1)).unwrap();
+    let mut saved = serde_json::to_value(&history).unwrap();
+    saved[1]["EnrichedAssistant"]["created_at"] = time.clone();
+    saved[2]["AbortedAssistant"]["stopped_at"] = time;
+
+    assert_eq!(
+        serde_json::from_value::<Vec<Message>>(saved).unwrap(),
+        history
+    );
 }
 
 // Covers: stamping user input puts the stamp on its own line before the
@@ -151,10 +103,7 @@ fn previous_reply_is_the_latest_users_timed_reply() {
 // Owner: SDK user input stamping.
 #[test]
 fn stamped_input_leads_with_its_stamp() {
-    let stamp = UserStamp {
-        sent: at(0),
-        previous_reply: None,
-    };
+    let stamp = at(0);
     let image = ContentBlock::Image(ImageContent {
         data: "AA==".into(),
         mime_type: "image/png".into(),

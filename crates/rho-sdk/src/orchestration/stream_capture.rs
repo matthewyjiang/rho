@@ -96,7 +96,6 @@ impl StreamCapture {
                 .map(|call| call.partial)
                 .collect(),
             usage: self.usage,
-            stopped_at: None,
         })
     }
 }

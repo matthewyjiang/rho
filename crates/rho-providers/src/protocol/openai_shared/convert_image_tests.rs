@@ -60,7 +60,6 @@ fn assistant_image_with_slim_replay() -> Message {
             }),
             replay: crate::model::ReplayScope::ExactModel,
         }],
-        created_at: None,
     })
 }
 

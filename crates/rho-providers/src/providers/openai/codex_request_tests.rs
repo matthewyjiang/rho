@@ -43,7 +43,6 @@ fn codex_model_switch_preserves_native_context_on_repeated_sends() {
                     "portable summary when native context cannot replay".into(),
                 ),
                 provider_context,
-                created_at: None,
             })];
             let stored = history.clone();
 
