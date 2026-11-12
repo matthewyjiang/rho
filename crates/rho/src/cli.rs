@@ -543,7 +543,7 @@ pub enum WorktreesCommand {
     /// A worktree is removed when its session is neither loaded nor
     /// running, it has no uncommitted or untracked changes, and its branch
     /// is merged into the current HEAD of the checkout it was added from.
-    /// The daemon does the same when it starts and once a day. Starts the
+    /// The daemon does the same soon after it starts and once a day. Starts the
     /// daemon when none is running.
     Prune {
         /// List what would be removed, and why, without removing anything.

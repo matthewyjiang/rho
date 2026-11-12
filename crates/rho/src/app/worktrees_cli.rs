@@ -16,8 +16,8 @@ pub(super) async fn run(command: &WorktreesCommand) -> anyhow::Result<()> {
 }
 
 async fn prune(dry_run: bool) -> anyhow::Result<()> {
-    // A daemon started here would run its own pass at once, so a dry run
-    // only asks one already running.
+    // A dry run must change nothing, so it only asks a daemon already
+    // running: one started here would run its own pass a minute later.
     let reach = match dry_run {
         true => Reach::Running,
         false => Reach::StartIfNeeded,

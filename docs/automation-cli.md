@@ -274,7 +274,7 @@ The daemon removes a session's worktree once nothing in it can be lost:
   from.
 
 It runs `git worktree remove` (never with `--force`) and keeps the branch.
-It checks when it starts and once a day, and only removes worktrees whose
+It checks a minute after it starts and once a day, and only removes worktrees whose
 session has been unused for a day. Files git ignores, such as `.env`,
 `node_modules`, or `target/`, go with the worktree. If you reopen or read the
 session later, the daemon adds the worktree back on the branch, at the commit

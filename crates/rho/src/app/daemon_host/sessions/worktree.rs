@@ -12,7 +12,7 @@
 //! so a read never fails on the branch. A worktree a person removed has no
 //! commit recorded, and the daemon never adds it back.
 //!
-//! The daemon's own pass runs at its start and once a day, and skips
+//! The daemon's own pass runs a minute after its start and once a day, and skips
 //! worktrees whose session changed within [`QUIET_BEFORE_DAILY`], so a
 //! session a client reconnects to after a restart keeps its worktree and
 //! the files git ignores there. `rho/worktree/prune` checks every worktree

@@ -65,6 +65,16 @@ use upgrade::{Check, Upgrades, Watch};
 // A pass runs git on each kept worktree, so it does not run per listing.
 const WORKTREE_PRUNE_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 
+/// How long after the daemon starts its first worktree pass runs.
+//
+// Tripwire, not measured to the millisecond: a client that starts the
+// daemon, as `rho worktrees prune` can, sends its request well under a
+// second after the daemon answers (each e2e prune test runs in about 1 s
+// whole), so its own pass removes, and reports, what the daemon's would
+// have. The daemon's pass skips sessions used within the last day, so
+// waiting a minute delays nothing it would remove.
+const WORKTREE_PRUNE_AFTER_START: Duration = Duration::from_secs(60);
+
 /// The daemon's job records, opened before the daemon binds its socket, so
 /// a daemon that cannot keep records stops before any client reaches it.
 pub(super) struct JobRecords(Arc<JobRegistry>);
@@ -222,15 +232,18 @@ impl DaemonHost {
         self.sessions.unload_idle(grace).await;
     }
 
-    /// Prunes the session worktrees now and every
-    /// [`WORKTREE_PRUNE_INTERVAL`] after, until the daemon starts stopping.
+    /// Prunes the session worktrees [`WORKTREE_PRUNE_AFTER_START`] after
+    /// the daemon starts and every [`WORKTREE_PRUNE_INTERVAL`] after that,
+    /// until the daemon starts stopping.
     pub(super) async fn prune_worktrees_daily(&self) {
+        let mut wait = WORKTREE_PRUNE_AFTER_START;
         loop {
-            self.sessions.prune_worktrees(Prune::Daily).await;
             tokio::select! {
-                () = tokio::time::sleep(WORKTREE_PRUNE_INTERVAL) => {}
+                () = tokio::time::sleep(wait) => {}
                 () = self.shutdown.requested() => return,
             }
+            self.sessions.prune_worktrees(Prune::Daily).await;
+            wait = WORKTREE_PRUNE_INTERVAL;
         }
     }
 
