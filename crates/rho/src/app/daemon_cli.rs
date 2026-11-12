@@ -22,8 +22,8 @@ use {
     crate::logging::{self, LogSink},
     anyhow::Context,
     rho_protocol::{
-        methods, ClientError, DaemonStatus, JobListParams, PendingUpgrade, RestartParams,
-        SessionWorktree, StatusParams, StopParams,
+        methods, ClientError, DaemonStatus, JobListParams, JobSummary, PendingUpgrade,
+        RestartParams, StatusParams, StopParams,
     },
     std::{ffi::OsString, sync::Arc, time::Duration},
 };
@@ -388,8 +388,11 @@ async fn status(paths: &DaemonPaths, json: bool) -> anyhow::Result<()> {
             Ok(jobs) => jobs
                 .jobs
                 .into_iter()
-                .filter_map(|job| Some((job.worktree?, job.worktree_stale)))
-                .filter(|(worktree, _)| worktree.path.exists())
+                .filter(|job| {
+                    job.worktree
+                        .as_ref()
+                        .is_some_and(|worktree| worktree.path.exists())
+                })
                 .collect(),
             Err(error) => {
                 tracing::debug!(%error, "could not list the daemon's jobs");
@@ -401,9 +404,10 @@ async fn status(paths: &DaemonPaths, json: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// The status text, with the worktrees the daemon's sessions work in that
-/// are still there, each with whether it is stale (#1673).
-fn status_text(status: &DaemonStatus, worktrees: &[(SessionWorktree, bool)]) -> String {
+/// The status text, with the worktrees of `worktree_jobs`, the jobs of the
+/// daemon's sessions whose worktree is still there, flagging stale ones
+/// (#1673).
+fn status_text(status: &DaemonStatus, worktree_jobs: &[JobSummary]) -> String {
     let DaemonStatus {
         pid,
         version,
@@ -431,16 +435,13 @@ fn status_text(status: &DaemonStatus, worktrees: &[(SessionWorktree, bool)]) -> 
         None => String::new(),
         Some(reason) => format!("\n  unreachable  {reason}"),
     };
-    let worktrees: String = worktrees
+    let worktrees: String = worktree_jobs
         .iter()
+        .filter_map(|job| Some((job.worktree.as_ref()?, job.worktree_stale)))
         .enumerate()
         .map(|(at, (worktree, stale))| {
             let label = if at == 0 { "worktrees" } else { "" };
-            let stale = if *stale {
-                " (stale: unused for 14 days)"
-            } else {
-                ""
-            };
+            let stale = if stale { " (stale)" } else { "" };
             format!(
                 "\n  {label:<12} {} {}{stale}",
                 worktree.branch,

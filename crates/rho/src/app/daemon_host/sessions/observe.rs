@@ -23,7 +23,7 @@ use super::{
     opening_feed,
     options::available_auths,
     reopen::{parse_session, saved_session, SavedFor},
-    writing, Sessions,
+    worktree, writing, Sessions,
 };
 use crate::app::daemon_host::jobs::{JobId, JobRecord, SessionJob};
 
@@ -81,6 +81,9 @@ impl Sessions {
             SessionJob::Last(record) => Some(*record),
             SessionJob::New => None,
         };
+        if let Some(record) = &last {
+            worktree::restore(record).await?;
+        }
         let stored = saved_session(id, SavedFor::Reading).await?;
         // A session no daemon has run is idle, with no last turn. Its job
         // is not registered: reading it records nothing.

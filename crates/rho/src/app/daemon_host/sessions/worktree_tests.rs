@@ -39,7 +39,7 @@ fn a_kept_worktree_turns_stale_after_fourteen_unused_days() {
     };
     let cases = [
         (
-            "a day short",
+            "a second short",
             record(Some(&worktree), fourteen_days - 1),
             &unused,
             false,
@@ -75,6 +75,36 @@ fn a_kept_worktree_turns_stale_after_fourteen_unused_days() {
         cases
             .iter()
             .map(|(case, _, _, stale)| (*case, *stale))
+            .collect::<Vec<_>>()
+    );
+}
+
+// Covers: the daemon's own pass leaves the worktree of a session used
+// within the last day alone, so a client reconnecting after a restart or
+// upgrade keeps its worktree and the files git ignores there, while a
+// person's prune, and its dry run, check every worktree.
+// Owner: daemon worktree cleanup (which passes check a worktree).
+#[test]
+fn only_the_daemons_own_pass_waits_for_a_quiet_day() {
+    let now = 2_000_000_000;
+    let day = QUIET_BEFORE_DAILY.as_secs();
+    let cases = [
+        (Prune::Daily, day - 1, false),
+        (Prune::Daily, day, true),
+        (Prune::Now, 0, true),
+        (Prune::DryRun, 0, true),
+    ];
+
+    let checks: Vec<_> = cases
+        .iter()
+        .map(|(prune, idle, _)| (*prune, *idle, prune.checks(now - idle, now)))
+        .collect();
+
+    assert_eq!(
+        checks,
+        cases
+            .iter()
+            .map(|(prune, idle, checks)| (*prune, *idle, *checks))
             .collect::<Vec<_>>()
     );
 }

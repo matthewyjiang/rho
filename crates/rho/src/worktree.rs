@@ -195,7 +195,20 @@ pub(crate) async fn add(root: &Path, workspace: &Path) -> Result<Added, Worktree
 /// the worktree has checked out, which is its branch unless a session
 /// switched: removing a worktree keeps every branch.
 pub(crate) async fn inspect(worktree: &SessionWorktree) -> Result<Holds, WorktreeError> {
-    let status = succeeded(&worktree.path, "status", ["status", "--porcelain"]).await?;
+    // Every untracked file and submodule change, whatever the repository's
+    // `status.showUntrackedFiles` or submodule settings hide: `git worktree
+    // remove` follows those too, so it would not refuse what they hide.
+    let status = succeeded(
+        &worktree.path,
+        "status",
+        [
+            "status",
+            "--porcelain",
+            "--untracked-files=all",
+            "--ignore-submodules=none",
+        ],
+    )
+    .await?;
     if !status.is_empty() {
         return Ok(Holds::Changes);
     }
@@ -239,23 +252,54 @@ pub(crate) async fn remove(worktree: &SessionWorktree) -> Result<(), WorktreeErr
         .map(drop)
 }
 
-/// Adds `worktree` back where it was, on its branch, after [`remove`], and
+/// Adds `worktree` back where it was after [`remove`], on its branch, and
 /// makes `cwd`, the session's directory in it, when git does not track it.
+/// A branch deleted since, as merged branches often are, is made again from
+/// the origin's `HEAD`, which held the worktree's work when it was removed.
+/// It first clears git's record of a worktree whose directory a person
+/// deleted, which would refuse the path.
 pub(crate) async fn restore(worktree: &SessionWorktree, cwd: &Path) -> Result<(), WorktreeError> {
-    let args: [&OsStr; 4] = [
-        "worktree".as_ref(),
-        "add".as_ref(),
-        worktree.path.as_os_str(),
-        worktree.branch.as_ref(),
-    ];
-    succeeded(&worktree.origin, "worktree add", args).await?;
-    if cwd.starts_with(&worktree.path) {
-        std::fs::create_dir_all(cwd).map_err(|error| WorktreeError::Io {
-            path: cwd.to_path_buf(),
-            error,
-        })?;
-    }
-    Ok(())
+    let origin = &worktree.origin;
+    succeeded(origin, "worktree prune", ["worktree", "prune"]).await?;
+    let reference = format!("refs/heads/{}", worktree.branch);
+    let kept = match git(
+        origin,
+        ["rev-parse", "--verify", "--quiet", reference.as_str()],
+        &[],
+    )
+    .await?
+    {
+        Ran::Succeeded(_) => true,
+        Ran::Failed { code: Some(1), .. } => false,
+        Ran::Failed { stderr, .. } => {
+            return Err(WorktreeError::Git {
+                action: "rev-parse".to_owned(),
+                repository: origin.clone(),
+                detail: stderr,
+            })
+        }
+    };
+    let path = worktree.path.as_os_str();
+    let branch: &OsStr = worktree.branch.as_ref();
+    let args: Vec<&OsStr> = match kept {
+        true => vec!["worktree".as_ref(), "add".as_ref(), path, branch],
+        false => {
+            tracing::info!(branch = %worktree.branch, "making a deleted worktree branch again from HEAD");
+            vec![
+                "worktree".as_ref(),
+                "add".as_ref(),
+                "-b".as_ref(),
+                branch,
+                path,
+                "HEAD".as_ref(),
+            ]
+        }
+    };
+    succeeded(origin, "worktree add", args).await?;
+    std::fs::create_dir_all(cwd).map_err(|error| WorktreeError::Io {
+        path: cwd.to_path_buf(),
+        error,
+    })
 }
 
 /// Refuses a session opened for a request that `asked` for a worktree

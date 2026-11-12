@@ -6,17 +6,22 @@
 //! loaded in it and no job in it under way, no uncommitted or untracked
 //! change, and what it has checked out merged into its origin's `HEAD`. It
 //! keeps the branch, and a session reopened later gets its worktree back
-//! from it. A pass runs at the daemon's start, once a day, and on
-//! `rho/worktree/prune`; an unsaved session's worktree is checked as the
-//! session is discarded, since nothing would remember it after. Every
-//! check and removal of one worktree holds its session's reopen lock, so
-//! the session cannot load meanwhile.
+//! from it, or, when someone deleted the branch since, from the origin's
+//! `HEAD` that held its work. Reading the session does the same.
 //!
-//! A worktree kept for [`STALE_AFTER`] without use is stale: clients flag
-//! it, and only a person removes it.
+//! The daemon's own pass runs at its start and once a day, and skips
+//! worktrees whose session changed within [`QUIET_BEFORE_DAILY`], so a
+//! session a client reconnects to after a restart keeps its worktree and
+//! the files git ignores there. `rho/worktree/prune` checks every worktree
+//! at once. An unsaved session's worktree is checked as the session is
+//! discarded, since nothing would remember it after. Every check and
+//! removal of one worktree holds its session's reopen lock, so the session
+//! cannot load meanwhile.
+//!
+//! A worktree that stays on disk unused for [`STALE_AFTER`] is stale:
+//! clients flag it, and only a person removes it.
 
 use std::{
-    collections::HashMap,
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -29,19 +34,42 @@ use crate::{
     worktree::Holds,
 };
 
-/// How long a worktree cleanup keeps sits unused before it is stale: no
-/// change to its session's job, nothing loaded or under way in it.
+/// How long a worktree sits on disk unused before it is stale: no change
+/// to its session's job, nothing loaded or under way in it.
 //
 // Policy, not a measurement: the cleanup proposal Matt approved in #1917.
-pub(in crate::app::daemon_host) const STALE_AFTER: Duration =
-    Duration::from_secs(14 * 24 * 60 * 60);
+const STALE_AFTER: Duration = Duration::from_secs(14 * 24 * 60 * 60);
 
-/// Whether a cleanup pass removes the worktrees it may.
+/// How long a session's job must be unchanged before the daemon's own pass
+/// removes its worktree.
+//
+// Policy: as long as the pass's period, so a worktree goes within two days
+// of its last use. It only has to outlast a client reconnecting after a
+// restart or upgrade, which takes seconds; the daily pass makes anything
+// shorter than a day remove nothing sooner.
+const QUIET_BEFORE_DAILY: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// What a cleanup pass does with the worktrees it may remove.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::app::daemon_host) enum Prune {
-    Remove,
-    /// Only report what it would remove.
+    /// The daemon's own pass: removes those whose session has been quiet
+    /// for [`QUIET_BEFORE_DAILY`], and skips the rest unreported.
+    Daily,
+    /// A person's request: removes them all now.
+    Now,
+    /// Only reports what [`Self::Now`] would remove.
     DryRun,
+}
+
+impl Prune {
+    /// Whether this pass checks the worktree of a job last changed at
+    /// `updated_at`, Unix seconds, at `now`.
+    fn checks(self, updated_at: u64, now: u64) -> bool {
+        match self {
+            Self::Daily => now.saturating_sub(updated_at) >= QUIET_BEFORE_DAILY.as_secs(),
+            Self::Now | Self::DryRun => true,
+        }
+    }
 }
 
 /// The workspaces the daemon's jobs use now: those of loaded sessions and
@@ -94,9 +122,9 @@ pub(super) fn kept(mut error: RpcError, worktree: Option<&SessionWorktree>) -> R
     error
 }
 
-/// Adds back the worktree of `record`, a session's job about to reopen, if
-/// a cleanup removed it, from its kept branch, so the session works where
-/// it did.
+/// Adds back the worktree of `record`, the job of a session about to be
+/// reopened or read, if a cleanup removed it, so the session works where it
+/// did (see `crate::worktree::restore`).
 pub(super) async fn restore(record: &JobRecord) -> Result<(), RpcError> {
     let Some(worktree) = &record.worktree else {
         return Ok(());
@@ -120,21 +148,18 @@ pub(super) async fn restore(record: &JobRecord) -> Result<(), RpcError> {
     Ok(())
 }
 
-/// Whether a session job that last changed at `updated_at`, Unix seconds,
-/// has gone unused long enough at `now` for its kept worktree to be stale.
-fn stale_at(updated_at: u64, now: u64) -> bool {
-    now.saturating_sub(updated_at) >= STALE_AFTER.as_secs()
-}
-
-/// Whether `record`'s worktree is stale at `now`: still on disk, not
-/// `in_use`, and its job unchanged for [`STALE_AFTER`].
+/// Whether `record`'s worktree is stale at `now`, Unix seconds: still on
+/// disk, not `in_use`, and its job unchanged for [`STALE_AFTER`]. The one
+/// rule `rho/job/list` and `rho/worktree/prune` both report.
 pub(in crate::app::daemon_host) fn worktree_stale(
     record: &JobRecord,
     in_use: &InUse,
     now: u64,
 ) -> bool {
     record.worktree.as_ref().is_some_and(|worktree| {
-        stale_at(record.updated_at, now) && !in_use.holds(&worktree.path) && worktree.path.exists()
+        now.saturating_sub(record.updated_at) >= STALE_AFTER.as_secs()
+            && !in_use.holds(&worktree.path)
+            && worktree.path.exists()
     })
 }
 
@@ -160,27 +185,22 @@ impl Sessions {
         &self,
         prune: Prune,
     ) -> Vec<WorktreeReport> {
-        // One record per worktree: a session's latest job holds it.
-        let mut latest: HashMap<PathBuf, JobRecord> = HashMap::new();
-        let mut order = Vec::new();
-        for record in self.jobs.list() {
-            let Some(worktree) = &record.worktree else {
-                continue;
-            };
-            if !latest.contains_key(&worktree.path) {
-                order.push(worktree.path.clone());
-            }
-            latest.insert(worktree.path.clone(), record);
-        }
+        // Only a new session's job gets a worktree, and a reopen reuses
+        // that job, so one record holds each.
         let mut reports = Vec::new();
-        for path in order {
-            let Some(record) = latest.remove(&path) else {
-                continue;
-            };
-            let JobSubject::Session { session } = &record.subject else {
+        for listed in self.jobs.list() {
+            let (Some(_), JobSubject::Session { session }) = (&listed.worktree, &listed.subject)
+            else {
                 continue;
             };
             let _reopening = self.reopening.lock(session).await;
+            // Read again under the lock: the session may have run since.
+            let Some(record) = self.jobs.get(&listed.id) else {
+                continue;
+            };
+            if !prune.checks(record.updated_at, unix_now()) {
+                continue;
+            }
             reports.extend(self.prune_worktree(&record, prune).await);
         }
         let removed = reports
@@ -217,7 +237,7 @@ impl Sessions {
                 Ok(Holds::Unmerged { base }) => WorktreeVerdict::Unmerged { base },
                 Ok(Holds::Merged { base }) => match prune {
                     Prune::DryRun => WorktreeVerdict::Merged { base },
-                    Prune::Remove => match crate::worktree::remove(worktree).await {
+                    Prune::Daily | Prune::Now => match crate::worktree::remove(worktree).await {
                         Ok(()) => {
                             tracing::info!(
                                 branch = %worktree.branch,
@@ -237,10 +257,8 @@ impl Sessions {
                 },
             },
         };
-        let stale = !matches!(
-            verdict,
-            WorktreeVerdict::InUse | WorktreeVerdict::Merged { .. }
-        ) && stale_at(record.updated_at, unix_now());
+        // A removed worktree is no longer on disk, so it is not stale.
+        let stale = worktree_stale(record, &in_use, unix_now());
         Some(WorktreeReport {
             job: (&record.id).into(),
             worktree: worktree.clone(),

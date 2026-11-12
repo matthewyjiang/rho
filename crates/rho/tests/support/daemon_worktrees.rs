@@ -1,8 +1,9 @@
-//! Cleaning up session worktrees through the real binary (#1673): the
-//! daemon removes a worktree that is clean and merged when it starts, and
-//! `rho worktrees prune` does on demand, keeping the branch; it keeps
-//! every other one, and never touches one a session uses. A session
-//! reopened after gets its worktree back from the kept branch.
+//! Cleaning up session worktrees through the real binary (#1673):
+//! `rho worktrees prune` removes a worktree that is clean and merged,
+//! keeping the branch, keeps every other one, and never touches one a
+//! session uses. A session reopened or read after gets its worktree back,
+//! from the kept branch or, once someone deleted it, from the repository's
+//! HEAD. When the daemon's own pass runs is unit-tested beside it.
 
 use std::{
     path::Path,
@@ -10,7 +11,10 @@ use std::{
 };
 
 use pretty_assertions::assert_eq;
-use rho_protocol::{methods::JobList, Client, JobListParams, SessionId, SessionWorktree};
+use rho_protocol::{
+    methods::{JobList, SessionObserve},
+    Client, JobListParams, SessionId, SessionObserveParams, SessionWorktree,
+};
 
 use super::{
     detach::{attach, detach, session_of},
@@ -75,14 +79,13 @@ fn sorted_lines(output: &Output) -> Vec<String> {
 }
 
 // Covers: `rho worktrees prune --dry-run` lists which worktrees would go
-// and why, changing nothing; the daemon's start then removes the worktree
-// that is clean and whose commit is merged into the repository's HEAD, its
-// branch kept, and keeps the one with an untracked file and the one with an
-// unmerged commit.
-// Owner: daemon worktree cleanup through `rho worktrees prune` and the
-// daemon's start.
+// and why, changing nothing; `rho worktrees prune` then removes the
+// worktree that is clean and whose commit is merged into the repository's
+// HEAD, its branch kept, and keeps the one with an untracked file and the
+// one with an unmerged commit.
+// Owner: daemon worktree cleanup through `rho worktrees prune`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_daemon_removes_only_clean_merged_worktrees_and_keeps_their_branches() {
+async fn prune_removes_only_clean_merged_worktrees_and_keeps_their_branches() {
     let sandbox = Sandbox::new();
     init_repo(&sandbox.workspace);
     let client = sandbox.start_daemon_with("fixed", &UNLOAD_SOON).await;
@@ -100,50 +103,38 @@ async fn the_daemon_removes_only_clean_merged_worktrees_and_keeps_their_branches
 
     let dry_run = prune(&sandbox, "fixed", &["--dry-run"]);
     let after_dry_run = on_disk();
-    let restarted = sandbox
-        .rho("fixed")
-        .args(["daemon", "restart"])
-        .status()
-        .unwrap();
-    sandbox
-        .poll_until(
-            "the daemon's start to remove the merged worktree",
-            async || (!merged.path.exists()).then_some(()),
-        )
-        .await;
+    let pruned = prune(&sandbox, "fixed", &[]);
 
-    let mut expected = vec![
-        line(
-            "would remove",
-            &merged,
-            "clean and merged into main; the branch stays",
-        ),
-        line("kept", &dirty, "uncommitted or untracked changes"),
-        line("kept", &unmerged, "not merged into main"),
-    ];
-    expected.sort();
+    let report = |merged_action: &str| {
+        let mut lines = vec![
+            line(
+                merged_action,
+                &merged,
+                "clean and merged into main; the branch stays",
+            ),
+            line("kept", &dirty, "uncommitted or untracked changes"),
+            line("kept", &unmerged, "not merged into main"),
+        ];
+        lines.sort();
+        lines
+    };
     assert_eq!(
         (
-            dry_run.status.code(),
-            sorted_lines(&dry_run),
-            after_dry_run,
-            restarted.success(),
-            on_disk(),
+            (dry_run.status.code(), sorted_lines(&dry_run), after_dry_run),
+            (pruned.status.code(), sorted_lines(&pruned), on_disk()),
             git(
                 &sandbox.workspace,
                 &["branch", "--list", merged.branch.as_str()]
             ),
         ),
         (
-            Some(0),
-            expected,
-            [true, true, true],
-            true,
-            [false, true, true],
+            (Some(0), report("would remove"), [true, true, true]),
+            (Some(0), report("removed"), [false, true, true]),
             merged.branch.clone(),
         ),
-        "stderr: {}\nlog:\n{}",
+        "stderr: {}{}\nlog:\n{}",
         String::from_utf8_lossy(&dry_run.stderr),
+        String::from_utf8_lossy(&pruned.stderr),
         sandbox.isolated.daemon_log()
     );
 }
@@ -225,6 +216,47 @@ async fn a_reopened_session_gets_its_removed_worktree_back() {
         "stderr: {}\n{}\nlog:\n{}",
         String::from_utf8_lossy(&pruned.stderr),
         String::from_utf8_lossy(&attached.stderr),
+        sandbox.isolated.daemon_log()
+    );
+}
+
+// Covers: reading a session whose worktree was pruned and whose merged
+// branch someone then deleted, as `rho mcp serve`'s `read` does, adds the
+// worktree back on that branch, made again from the repository's HEAD.
+// Owner: daemon worktree cleanup through `rho/session/observe`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn reading_a_session_brings_back_its_worktree_after_its_branch_was_deleted() {
+    let sandbox = Sandbox::new();
+    init_repo(&sandbox.workspace);
+    let client = sandbox.start_daemon_with("fixed", &UNLOAD_SOON).await;
+    let (session, worktree) = finished_worktree_session(&sandbox, &client).await;
+    let pruned = prune(&sandbox, "fixed", &[]);
+    git(
+        &sandbox.workspace,
+        &["branch", "--quiet", "-d", worktree.branch.as_str()],
+    );
+
+    let observed = client
+        .request::<SessionObserve>(&SessionObserveParams {
+            session,
+            after: None,
+        })
+        .await;
+
+    assert_eq!(
+        (
+            pruned.status.code(),
+            observed.map(drop).map_err(|error| error.to_string()),
+            git(&worktree.path, &["branch", "--show-current"]),
+            git(&worktree.path, &["rev-parse", "HEAD"]),
+        ),
+        (
+            Some(0),
+            Ok(()),
+            worktree.branch.clone(),
+            git(&sandbox.workspace, &["rev-parse", "HEAD"]),
+        ),
+        "log:\n{}",
         sandbox.isolated.daemon_log()
     );
 }

@@ -226,7 +226,7 @@ impl DaemonHost {
     /// [`WORKTREE_PRUNE_INTERVAL`] after, until the daemon starts stopping.
     pub(super) async fn prune_worktrees_daily(&self) {
         loop {
-            self.sessions.prune_worktrees(Prune::Remove).await;
+            self.sessions.prune_worktrees(Prune::Daily).await;
             tokio::select! {
                 () = tokio::time::sleep(WORKTREE_PRUNE_INTERVAL) => {}
                 () = self.shutdown.requested() => return,
@@ -479,7 +479,7 @@ impl Service for DaemonHost {
         let WorktreePruneParams { dry_run } = params;
         let prune = match dry_run {
             true => Prune::DryRun,
-            false => Prune::Remove,
+            false => Prune::Now,
         };
         Ok(WorktreePruneResponse {
             worktrees: self.sessions.prune_worktrees(prune).await,

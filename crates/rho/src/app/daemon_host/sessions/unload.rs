@@ -22,6 +22,8 @@
 
 use std::{sync::Arc, time::Duration};
 
+use rho_protocol::WorktreeVerdict;
+
 use rho_sdk::SessionId;
 use tokio::time::Instant;
 
@@ -152,8 +154,21 @@ impl Sessions {
             // remove it: nothing would remember it after.
             let record = self.jobs.get(&session.job);
             self.jobs.remove(&session.job);
-            if let Some(record) = record {
-                self.prune_worktree(&record, Prune::Remove).await;
+            let kept = match record {
+                Some(record) => self.prune_worktree(&record, Prune::Now).await,
+                None => None,
+            };
+            // No record names it now, so nothing flags it stale later.
+            if let Some(kept) =
+                kept.filter(|kept| !matches!(kept.verdict, WorktreeVerdict::Merged { .. }))
+            {
+                tracing::warn!(
+                    session = %id,
+                    branch = %kept.worktree.branch,
+                    path = %kept.worktree.path.display(),
+                    verdict = ?kept.verdict,
+                    "kept the worktree of a discarded unsaved session; rho no longer tracks it"
+                );
             }
             tracing::info!(
                 session = %id,

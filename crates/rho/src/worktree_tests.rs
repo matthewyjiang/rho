@@ -113,7 +113,8 @@ fn repository(home: &Path) -> std::path::PathBuf {
 }
 
 // Covers: cleanup reads a worktree with uncommitted, staged, or untracked
-// changes as holding changes, one whose commit its origin's HEAD lacks as
+// changes as holding changes, also when the repository's config hides
+// untracked files from `git status` and `git worktree remove`, one whose commit its origin's HEAD lacks as
 // unmerged, and one with nothing new, or whose commit was merged, as
 // merged, naming the origin's branch, or its commit when detached.
 // Owner: session worktrees (git plumbing under the daemon's cleanup).
@@ -134,7 +135,7 @@ async fn inspect_reads_what_removing_a_worktree_would_lose() {
     };
     // What a case does in its new worktree before the check.
     type Arrange<'a> = &'a dyn Fn(&Path);
-    let cases: [(&str, Arrange, Holds); 6] = [
+    let cases: [(&str, Arrange, Holds); 7] = [
         ("nothing new", &|_| {}, main()),
         (
             "untracked",
@@ -169,6 +170,15 @@ async fn inspect_reads_what_removing_a_worktree_would_lose() {
                 git(&origin, &["merge", "--quiet", "--ff-only", branch.as_str()]);
             },
             main(),
+        ),
+        // Last: the setting is the whole repository's.
+        (
+            "untracked, hidden by config",
+            &|path| {
+                git(path, &["config", "status.showUntrackedFiles", "no"]);
+                std::fs::write(path.join("hidden.txt"), "work").unwrap();
+            },
+            Holds::Changes,
         ),
     ];
     for (case, arrange, holds) in cases {

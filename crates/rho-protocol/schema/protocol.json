@@ -2261,7 +2261,7 @@
           "description": "The git worktree a [`JobKind::Session`] job's session works in, for\none opened with [`super::SessionNewParams::worktree`]; `workspace`\nis then in it."
         },
         "worktree_stale": {
-          "description": "Whether `worktree` is stale: still on disk, neither its session\nloaded nor a job in it under way, and no change to this job for 14\ndays. The daemon removes a worktree only once it is clean and its\nbranch merged ([`super::WORKTREE_PRUNE`]), so a stale one holds work\nnobody merged; it stays until a person merges or removes it.",
+          "description": "Whether `worktree` is stale: still on disk, neither its session\nloaded nor a job in it under way, and no change to this job for 14\ndays. The daemon's daily pass removes one that is clean and merged\n([`super::WORKTREE_PRUNE`]), so a stale one almost always holds\nuncommitted or unmerged work, and stays until a person merges or\nremoves it.",
           "type": "boolean"
         }
       },

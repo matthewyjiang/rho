@@ -273,10 +273,13 @@ The daemon removes a session's worktree once nothing in it can be lost:
 - its branch is merged into the current `HEAD` of the checkout you started it
   from.
 
-It runs `git worktree remove` (never with `--force`), keeps the branch, and
-checks when it starts and once a day. If you reopen the session later, the
-daemon adds the worktree back from the branch. A squash or rebase merge
-leaves the branch looking unmerged, so that worktree stays until you remove it.
+It runs `git worktree remove` (never with `--force`) and keeps the branch.
+It checks when it starts and once a day, and only removes worktrees whose
+session has been unused for a day. Files git ignores, such as `.env`,
+`node_modules`, or `target/`, go with the worktree. If you reopen or read the
+session later, the daemon adds the worktree back from the branch, or from
+`HEAD` if you deleted the merged branch. A squash or rebase merge leaves the
+branch looking unmerged, so that worktree stays until you remove it.
 
 Every other worktree stays. After 14 days unused, `rho daemon status` and
 [`/jobs`](/interactive-tui) flag it as stale. Merge what you want, then remove
@@ -287,13 +290,15 @@ git worktree remove ~/.rho/worktrees/api-3fa2c1d0   # add --force to drop uncomm
 git branch -D rho/api-3fa2c1d0
 ```
 
-`rho worktrees prune` runs the cleanup now and prints what it removed and why
-it kept the rest. `--dry-run` only lists what it would do:
+`rho worktrees prune` runs the cleanup now, without waiting a day, and prints
+what it removed and why it kept the rest. `--dry-run` only lists what it would
+do, and needs the daemon running, since a daemon it started would run its own
+cleanup:
 
 ```text
 $ rho worktrees prune --dry-run
 would remove rho/api-3fa2c1d0 /home/me/.rho/worktrees/api-3fa2c1d0: clean and merged into main; the branch stays
-kept         rho/api-91bd22aa /home/me/.rho/worktrees/api-91bd22aa: not merged into main; stale: unused for 14 days
+kept         rho/api-91bd22aa /home/me/.rho/worktrees/api-91bd22aa: not merged into main; stale
 kept         rho/api-07c1e5f2 /home/me/.rho/worktrees/api-07c1e5f2: uncommitted or untracked changes
 ```
 

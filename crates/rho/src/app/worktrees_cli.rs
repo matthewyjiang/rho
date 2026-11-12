@@ -5,8 +5,9 @@
 
 use rho_protocol::{methods, WorktreePruneParams, WorktreeReport, WorktreeVerdict};
 
-use super::daemon_cli;
+use super::daemon_cli::{self, Reach};
 use crate::cli::WorktreesCommand;
+use crate::daemon::ConnectAs;
 
 pub(super) async fn run(command: &WorktreesCommand) -> anyhow::Result<()> {
     match command {
@@ -15,7 +16,13 @@ pub(super) async fn run(command: &WorktreesCommand) -> anyhow::Result<()> {
 }
 
 async fn prune(dry_run: bool) -> anyhow::Result<()> {
-    let connection = daemon_cli::connect().await?;
+    // A daemon started here would run its own pass at once, so a dry run
+    // only asks one already running.
+    let reach = match dry_run {
+        true => Reach::Running,
+        false => Reach::StartIfNeeded,
+    };
+    let connection = daemon_cli::connect_with(reach, ConnectAs::Command).await?;
     let pruned = connection
         .client
         .request::<methods::WorktreePrune>(&WorktreePruneParams { dry_run })
@@ -47,11 +54,7 @@ fn prune_text(reports: &[WorktreeReport], dry_run: bool) -> String {
                     "the daemon gave a reason this rho does not know".to_owned(),
                 ),
             };
-            let stale = if report.stale {
-                "; stale: unused for 14 days"
-            } else {
-                ""
-            };
+            let stale = if report.stale { "; stale" } else { "" };
             format!(
                 "{action:<12} {} {}: {reason}{stale}\n",
                 report.worktree.branch,
