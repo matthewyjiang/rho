@@ -378,6 +378,7 @@ fn opening_feed(
     );
     if let Some(saved) = saved_replay(&mut live, runtime, &job.id) {
         feed.end_turn(saved);
+        feed.seed_usage(&live.context_usage(runtime.context_estimate()));
     }
     // An outcome is recorded with the turn it is of.
     if let (Some(outcome), Some(turn)) = (job.outcome.clone(), last.turn.clone()) {
@@ -547,6 +548,13 @@ impl Sessions {
     /// The daemon's settings.
     pub(super) fn settings(&self) -> &ConfigStore {
         &self.settings
+    }
+
+    /// What `rho/job/list` reports of loaded session `session`'s job from
+    /// its stream; `None` for a session the daemon has not loaded.
+    pub(super) fn session_live(&self, session: &SessionId) -> Option<rho_protocol::JobLive> {
+        let loaded = self.loaded().get(session).cloned()?;
+        Some(loaded.feed.live())
     }
 
     /// The sessions' subagents: the daemon-wide budget and its queue.

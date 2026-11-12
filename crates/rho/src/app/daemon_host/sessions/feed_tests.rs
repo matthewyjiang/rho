@@ -349,3 +349,34 @@ fn events_json_cannot_hold_are_dropped_live_and_saved() {
         (Replay::Reset, vec![(1, notice("saved"))])
     );
 }
+
+// Covers: the job list's usage starts as what a reopened session was
+// seeded with, and a turn's usage, which holds the session's cost, replaces
+// it.
+// Owner: daemon session feed.
+#[test]
+fn the_listed_usage_is_the_seeded_one_until_a_turn_reports_it() {
+    let usage = |used_tokens, cost_usd_micros| wire::SessionEvent::Usage {
+        used_tokens,
+        window_tokens: Some(1_000),
+        cost_usd_micros,
+    };
+    let listed = |used_tokens, cost_usd_micros| {
+        Some(wire::JobUsage {
+            used_tokens,
+            window_tokens: Some(1_000),
+            cost_usd_micros,
+        })
+    };
+    let feed = idle_feed();
+    let new = feed.live().usage;
+    feed.seed_usage(&usage(10, None));
+    let reopened = feed.live().usage;
+    feed.publish([usage(20, Some(5))]);
+    let live = feed.live().usage;
+
+    assert_eq!(
+        (new, reopened, live, feed.buffered_for_tests().len()),
+        (None, listed(10, None), listed(20, Some(5)), 1)
+    );
+}

@@ -70,11 +70,13 @@ pub(super) fn state_event(moved: &Moved) -> wire::SessionEvent {
 
 /// `record` as `rho/job/list` reports it, with where the job waits for
 /// capacity, if it does. `undelivered` names the workflow runs whose result
-/// a session has yet to be given.
+/// a session has yet to be given, and `live` is what the daemon follows of
+/// the job, if it streams the job's session.
 pub(super) fn job_summary(
     record: JobRecord,
     queue: Option<QueuePlace>,
     undelivered: &HashSet<String>,
+    live: Option<wire::JobLive>,
 ) -> wire::JobSummary {
     let JobRecord {
         id,
@@ -119,6 +121,7 @@ pub(super) fn job_summary(
         updated_at,
         error: failure(&state),
         queue: queue.map(Into::into),
+        live,
     }
 }
 

@@ -51,7 +51,7 @@ mod subagents;
 mod upgrade;
 mod wire;
 
-use jobs::{JobRegistry, JobStore};
+use jobs::{JobRegistry, JobStore, JobSubject};
 use logins::Logins;
 use sessions::Sessions;
 pub(super) use sessions::UNLOAD_IDLE_AFTER;
@@ -430,7 +430,20 @@ impl Service for DaemonHost {
                 .into_iter()
                 .map(|record| {
                     let queue = self.sessions.subagents().queue_place(&record.id);
-                    wire::job_summary(record, queue, &undelivered)
+                    let live = match &record.subject {
+                        JobSubject::Session { session } => self.sessions.session_live(session),
+                        // Only the run under way: an ended run of the same
+                        // session, as a workflow node that ran again has,
+                        // is followed no more.
+                        JobSubject::Subagent {
+                            session: Some(session),
+                            run: _,
+                        } if record.state.in_progress() => {
+                            self.sessions.subagents().feeds().live(session)
+                        }
+                        JobSubject::Subagent { .. } | JobSubject::Workflow { .. } => None,
+                    };
+                    wire::job_summary(record, queue, &undelivered, live)
                 })
                 .collect(),
         }

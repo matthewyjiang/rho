@@ -2028,6 +2028,53 @@
       ],
       "type": "object"
     },
+    "JobLive": {
+      "description": "What the daemon follows of a job whose session's events it streams: the\nlast its stream said of each. A client lists jobs to show these without\nattaching to every session.",
+      "properties": {
+        "inputs": {
+          "description": "The input requests open on the session, oldest first, each answered\nwith [`super::SESSION_ANSWER`]: the turn's own, which put the job in\n[`JobState::WaitingForInput`], and its subagents' questions, which\ndo not.",
+          "items": {
+            "$ref": "#/$defs/InputRequest"
+          },
+          "type": "array"
+        },
+        "model": {
+          "$ref": "#/$defs/ModelRef",
+          "description": "The model the session runs on."
+        },
+        "title": {
+          "description": "The session's title, once it has one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "turn_elapsed_ms": {
+          "description": "How long the turn under way has run, in milliseconds; absent while\nnone is.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "usage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JobUsage"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The session's context use and spend, as its last\n[`super::SessionEvent::Usage`] said; absent before the first."
+        }
+      },
+      "required": [
+        "model"
+      ],
+      "type": "object"
+    },
     "JobState": {
       "anyOf": [
         {
@@ -2120,6 +2167,17 @@
         "kind": {
           "$ref": "#/$defs/JobKind"
         },
+        "live": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JobLive"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What the daemon follows of the job right now. Present for a\n[`JobKind::Session`] job whose session the daemon has loaded, and\nfor a [`JobKind::Subagent`] job whose run is under way and has\nopened its session; absent for every other job."
+        },
         "parent": {
           "anyOf": [
             {
@@ -2192,6 +2250,37 @@
         "workspace",
         "created_at",
         "updated_at"
+      ],
+      "type": "object"
+    },
+    "JobUsage": {
+      "description": "A session's context use and spend, as [`super::SessionEvent::Usage`]\nreports them.",
+      "properties": {
+        "cost_usd_micros": {
+          "description": "The session's whole spend so far in millionths of a US dollar.\nAbsent while no request has a price, for a subagent run, whose\nspend its parent session's counts, and for a session the daemon\nreopened, until its next turn reports usage.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "used_tokens": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "window_tokens": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "used_tokens"
       ],
       "type": "object"
     },

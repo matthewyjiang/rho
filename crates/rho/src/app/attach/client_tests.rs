@@ -20,6 +20,7 @@ fn job(id: &str, kind: JobKind, parent: Option<&str>, session: Option<&str>) -> 
         updated_at: 0,
         error: None,
         queue: None,
+        live: None,
         grant: None,
         grant_limit: None,
     }

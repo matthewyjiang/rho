@@ -420,7 +420,8 @@ async fn attach_cancels_the_turn_on_a_cancel_line() {
     );
 }
 
-// Covers: `rho attach` follows a subagent run by its job's id: it shows the
+// Covers: `rho/job/list` follows a subagent run that opened its session;
+// `rho attach` follows the run by its job's id: it shows the
 // run's events while the run is under way, here the question the run asks
 // its parent, and ends with the run, exit 0, once the parent's client
 // answered; attached again after the run ended, it replays the session the
@@ -456,18 +457,22 @@ async fn attach_follows_a_subagent_run() {
         .await;
     let request = first_request(&parent.events).id;
     let parent_job = job_of(&client, &session).await.id;
-    let run = client
-        .request::<JobList>(&JobListParams {})
-        .await
-        .unwrap()
-        .jobs
-        .into_iter()
-        .find(|job| job.parent.as_ref() == Some(&parent_job))
-        .expect("the run's job");
+    // The run asked, so its session is open; the daemon follows it once
+    // it has read that from the run, which it does on a task of its own.
+    let run = sandbox
+        .poll_until("the daemon to follow the run", async || {
+            let jobs = client.request::<JobList>(&JobListParams {}).await.unwrap();
+            jobs.jobs
+                .into_iter()
+                .find(|job| job.parent.as_ref() == Some(&parent_job))
+                .filter(|job| job.live.is_some())
+        })
+        .await;
     let run_session = run
         .session
         .clone()
         .expect("a Rho subagent writes a session");
+    let followed = run.live.as_ref().map(|live| live.inputs.clone());
 
     let mut live = Attach::spawn(
         &sandbox,
@@ -498,8 +503,10 @@ async fn attach_follows_a_subagent_run() {
         .map(|event| event["outcome"]["type"].clone())
         .collect();
     assert_eq!(
-        (status.code(), ends(&lines), ended),
+        (followed, status.code(), ends(&lines), ended),
         (
+            // The question is its parent session's request, not the run's.
+            Some(Vec::new()),
             Some(0),
             (run_started, completed.clone()),
             vec![json!("answered")],

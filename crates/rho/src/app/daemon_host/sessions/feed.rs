@@ -88,6 +88,9 @@ struct FeedState {
     title: Option<String>,
     /// The session's options, as the last options event sent them.
     options: wire::SessionOptions,
+    /// The session's context use and spend, as the last usage event sent
+    /// them.
+    usage: Option<wire::JobUsage>,
     subscribers: Vec<Publisher>,
     /// Set by [`Feed::close`]: a client attaching later is detached at once.
     closed: Option<DetachReason>,
@@ -144,10 +147,13 @@ impl Feed {
                 transcript: Vec::new(),
                 job,
                 turn,
-                turn_since: None,
+                // A stream that opens on a turn under way, as a subagent
+                // run's does, times the turn from here.
+                turn_since: job.in_progress().then(Instant::now),
                 inputs: BTreeMap::new(),
                 title,
                 options,
+                usage: None,
                 subscribers: Vec::new(),
                 closed: None,
             }),
@@ -200,9 +206,10 @@ impl Feed {
     /// replay from the saved rows: it joins the transcript, and resets stop
     /// replaying those turns' live events.
     pub(super) fn end_turn(&self, saved: Vec<wire::SessionEvent>) {
-        let saved = saved
+        let saved: Vec<_> = saved
             .into_iter()
-            .filter(|event| encoded_len(event).is_some());
+            .filter(|event| encoded_len(event).is_some())
+            .collect();
         let mut state = self.state();
         state.transcript.extend(saved);
         state.turn_start = state.last;
@@ -263,6 +270,33 @@ impl Feed {
         }
     }
 
+    /// Starts the session's usage at `usage`, a usage event of the context
+    /// its saved conversation fills, which no saved row holds. Sent to no
+    /// client: a turn's usage replaces it, with the session's cost.
+    pub(super) fn seed_usage(&self, usage: &wire::SessionEvent) {
+        self.state().usage = usage_of(usage);
+    }
+
+    /// The session's title, if it has one.
+    pub(super) fn title(&self) -> Option<String> {
+        self.state().title.clone()
+    }
+
+    /// What `rho/job/list` reports of the session's job from its stream.
+    pub(super) fn live(&self) -> wire::JobLive {
+        let state = self.state();
+        wire::JobLive {
+            title: state.title.clone(),
+            model: state.options.model.current.clone(),
+            // Far below `u64::MAX` milliseconds.
+            turn_elapsed_ms: state
+                .turn_since
+                .map(|since| u64::try_from(since.elapsed().as_millis()).unwrap_or(u64::MAX)),
+            usage: state.usage,
+            inputs: state.inputs.values().cloned().collect(),
+        }
+    }
+
     /// Whether a client still follows the session's events.
     pub(super) fn followed(&self) -> bool {
         let mut state = self.state();
@@ -318,6 +352,7 @@ impl FeedState {
                 }
             }
             wire::SessionEvent::TitleChanged { title } => self.title = Some(title.clone()),
+            wire::SessionEvent::Usage { .. } => self.usage = usage_of(&event),
             wire::SessionEvent::OptionsChanged { options } => self.options = (**options).clone(),
             _ => {}
         }
@@ -394,6 +429,23 @@ impl FeedState {
         }
         events.extend(self.events_after(self.turn_start));
         events
+    }
+}
+
+/// What `event` says of the session's context use and spend, if it is a
+/// usage event.
+fn usage_of(event: &wire::SessionEvent) -> Option<wire::JobUsage> {
+    match event {
+        wire::SessionEvent::Usage {
+            used_tokens,
+            window_tokens,
+            cost_usd_micros,
+        } => Some(wire::JobUsage {
+            used_tokens: *used_tokens,
+            window_tokens: *window_tokens,
+            cost_usd_micros: *cost_usd_micros,
+        }),
+        _ => None,
     }
 }
 

@@ -265,22 +265,35 @@ impl Followed {
         }
     }
 
-    fn show(&self, event: ChildEvent) {
+    /// Shows the run's `status` where the stream carries it: its title,
+    /// once the stream is open.
+    fn show_status(&self, status: &RunStatus) {
+        if let Some(title) = &status.title {
+            self.stream.titled(title);
+        }
+    }
+
+    /// Shows what the run's child told, with the run's `status` as it
+    /// stands: a stream that opens takes the title the run already has.
+    fn show(&self, event: ChildEvent, status: &RunStatus) {
         match event {
-            ChildEvent::Opened(options) => self.stream.open(*options),
+            ChildEvent::Opened(options) => {
+                self.stream.open(*options);
+                self.show_status(status);
+            }
             ChildEvent::Session(event) => self.stream.publish([event]),
         }
     }
 
     /// Shows what the child told and this task has not read yet. The child
     /// tells everything before its run's status is terminal.
-    fn show_rest(&mut self) {
+    fn show_rest(&mut self, status: &RunStatus) {
         while let Some(event) = self
             .events
             .as_mut()
             .and_then(|events| events.try_recv().ok())
         {
-            self.show(event);
+            self.show(event, status);
         }
     }
 
@@ -289,7 +302,7 @@ impl Followed {
     fn moved(&mut self, state: &JobState, run: &RunStatus) {
         match state {
             JobState::Ended(end) => {
-                self.show_rest();
+                self.show_rest(run);
                 self.stream.end(outcome(end, run), state);
             }
             JobState::Idle | JobState::Queued | JobState::Running | JobState::WaitingForInput => {
@@ -335,6 +348,9 @@ async fn follow(
     let mut state = JobState::Queued;
     loop {
         let run = status.borrow_and_update().clone();
+        if let Some(followed) = &followed {
+            followed.show_status(&run);
+        }
         if let Some(event) = next_event(&state, &run, stopping.is_cancelled()) {
             match jobs.record(&job, event) {
                 Ok(next) => {
@@ -360,7 +376,7 @@ async fn follow(
                 changed = status.changed() => break changed,
                 event = next_child_event(&mut followed) => {
                     if let Some(followed) = &followed {
-                        followed.show(event);
+                        followed.show(event, &status.borrow());
                     }
                 }
             }
