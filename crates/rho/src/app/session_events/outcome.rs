@@ -42,9 +42,15 @@ pub(crate) fn turn_error(error: &anyhow::Error, model: &Config) -> TurnError {
 /// `message` led by the provider that failed and the API base its requests
 /// went to, the one `rho doctor` probes, so a failure such as a refused
 /// connection says which host to check. Config loading refuses a base with
-/// credentials or a query, so it shows whole.
+/// credentials or a query, so it shows whole. A compaction summarizer on
+/// another provider may be the one that failed, and the error cannot say
+/// which, so then it names no host rather than maybe the wrong one.
 fn provider_message(model: &Config, message: &str) -> String {
     let provider = &model.provider;
+    let summarizer = crate::compaction::CompactionConfig::from(model).summarizer;
+    if summarizer.is_some_and(|summarizer| summarizer.provider != *provider) {
+        return message.to_owned();
+    }
     match model.resolved_provider_endpoint(provider) {
         Some(base) => format!("{provider} at {base}: {message}"),
         None => format!("{provider}: {message}"),

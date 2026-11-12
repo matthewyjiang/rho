@@ -729,6 +729,17 @@ fn a_retry_says_why() {
             ],
         ),
         (
+            "failed after a hosted search",
+            vec![SessionEvent::Run(RunEvent::WebSearch {
+                detail: "rho docs".into(),
+            })],
+            unavailable(),
+            vec![
+                WireEvent::ResponseDiscarded,
+                retry(RetryReason::ProviderError, None),
+            ],
+        ),
+        (
             "the retry of a streamed response could not connect",
             vec![delta("partial"), unavailable()],
             unavailable(),

@@ -142,6 +142,41 @@ fn a_failure_is_classified_by_type_and_hides_authentication_text() {
     }
 }
 
+// Covers: a provider failure in a session whose compaction summarizer runs
+// on another provider names no host, since the summarizer may be the one
+// that failed; a summarizer on the session's own provider keeps the name.
+// Owner: turn outcome on the wire.
+#[test]
+fn a_provider_failure_names_no_host_another_summarizer_may_own() {
+    let error = anyhow::Error::new(rho_sdk::Error::Provider(rho_sdk::ProviderError::new(
+        rho_sdk::ProviderErrorKind::Unavailable,
+        "provider request failed to connect",
+        rho_sdk::Retryability::Retryable,
+    )));
+    for (summarizer, expected) in [
+        (
+            "provider = \"openai\"\nmodel = \"gpt-5.5-mini\"\nauth = \"api-key\"\n",
+            "provider failed: provider request failed to connect",
+        ),
+        (
+            "provider = \"xai\"\nmodel = \"grok-4\"\nauth = \"xai-oauth\"\n",
+            "xai: provider failed: provider request failed to connect",
+        ),
+    ] {
+        let session = Config {
+            provider: "xai".into(),
+            auth: "xai-oauth".into(),
+            ..Config::parse_settings(&format!("[internal_agents.compaction]\n{summarizer}"))
+                .unwrap()
+        };
+        assert_eq!(
+            turn_error(&error, &session).message,
+            expected,
+            "{summarizer}"
+        );
+    }
+}
+
 // Covers: a failed turn shows its provider's diagnostic, unless the turn
 // failed to authenticate, whose diagnostic may echo a credential: that one
 // is withheld for the host's log, and no other is.

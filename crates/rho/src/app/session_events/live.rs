@@ -121,8 +121,9 @@ pub(crate) struct LiveEvents {
     /// The message the latest chunk belongs to, while later chunks of its
     /// kind still continue it.
     message: Option<OpenMessage>,
-    /// Whether the provider attempt under way streamed text clients were
-    /// sent. A reset discards a response only when its attempt showed one.
+    /// Whether the provider attempt under way showed clients its output:
+    /// text, or a hosted tool's card. A reset discards a response only when
+    /// its attempt showed one.
     attempt_streamed: bool,
     /// The content of each steer the daemon recorded that has not applied,
     /// by the id the run accepted it under. The run's end clears it.
@@ -516,8 +517,14 @@ impl LiveEvents {
                 reason: RetryReason::RequestFailed,
                 retry_after_ms: None,
             }],
-            RunEvent::WebSearch { detail } => vec![hosted_activity("web_search", detail)],
-            RunEvent::HostedToolActivity { name, detail } => vec![hosted_activity(name, detail)],
+            RunEvent::WebSearch { detail } => {
+                self.attempt_streamed = true;
+                vec![hosted_activity("web_search", detail)]
+            }
+            RunEvent::HostedToolActivity { name, detail } => {
+                self.attempt_streamed = true;
+                vec![hosted_activity(name, detail)]
+            }
             RunEvent::ToolCallUpdated {
                 index,
                 id,
