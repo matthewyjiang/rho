@@ -15,7 +15,7 @@ use std::path::Path;
 
 use anyhow::Context;
 
-use super::upgrade_2x::Upgraded;
+use super::upgrade_2x::{Severity, Upgraded};
 use crate::config_writer::write_bytes_atomically;
 
 /// The note's file in the rho home, until a TUI takes it.
@@ -64,7 +64,7 @@ pub(crate) fn take_upgrade_note(rho_dir: &Path) -> Option<String> {
 }
 
 /// What the upgrade did: the startup notice's lines, as a list under a
-/// header, then where the original is and where to read more.
+/// header with warnings marked, then where the original is and where to read more.
 fn text(config_path: &Path, upgraded: &Upgraded) -> String {
     let header = format!(
         "rho 3 updated your config from the 2.x layout: {}",
@@ -73,7 +73,10 @@ fn text(config_path: &Path, upgraded: &Upgraded) -> String {
     let changes = upgraded
         .changes()
         .into_iter()
-        .map(|(_severity, line)| format!("- {line}"));
+        .map(|(severity, line)| match severity {
+            Severity::Note => format!("- {line}"),
+            Severity::Warning => format!("- warning: {line}"),
+        });
     let footer = [
         format!(
             "the original is saved at {}",
