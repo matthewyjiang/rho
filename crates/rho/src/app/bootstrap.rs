@@ -181,9 +181,9 @@ async fn dispatch_early_command(cli: &Cli) -> anyhow::Result<EarlyDispatch> {
         ));
     }
     if let Some(Command::Uninstall { purge, dry_run }) = &cli.command {
-        return Ok(EarlyDispatch::Handled(crate::uninstall::run(
-            *purge, *dry_run,
-        )));
+        return Ok(EarlyDispatch::Handled(
+            crate::uninstall::run(*purge, *dry_run).await,
+        ));
     }
     if let Some(Command::Workflow { command }) = &cli.command {
         return Ok(EarlyDispatch::Handled(

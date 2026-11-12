@@ -11,6 +11,7 @@
 //! | Private files | [`DaemonPathError`], [`create_private_dir`], [`prepare_private_dir`], [`create_private_file`], [`sync_dir`], [`open_lock_file`], [`open_log_file`], [`path_bytes`], [`FileIdentity`], [`running_identity`], [`account_lock_path`], [`lock_account_file`] |
 //! | Process | [`detach`], [`MACHINE_VARIABLES`], [`is_variable`], [`request_stop`], [`StopRequests`], [`stderr_is_journal_stream`] |
 //! | Restart | [`relaunch`], [`take_handoff`] |
+//! | Install | [`REPLACEABLE_WHILE_RUNNING`], [`stop_service`] |
 //!
 //! What each must guarantee:
 //!
@@ -33,6 +34,11 @@
 //!   daemon does, and [`connect_restarting`] waits for it instead. Either way
 //!   `Listener::hold_for_restart` leaves no connection open to a client
 //!   that nothing will serve.
+//! - **Install.** [`REPLACEABLE_WHILE_RUNNING`] says whether an installer can put a
+//!   new file at the daemon's path while the daemon runs, which decides
+//!   whether an update restarts the daemon after installing or stops it
+//!   before. [`stop_service`] asks the manager of a saved
+//!   `rho mcp serve --http` service to stop it and not start it again.
 
 #[cfg(unix)]
 mod unix;
@@ -46,11 +52,12 @@ use windows as imp;
 pub(crate) use imp::{
     account_lock_path, create_private_dir, create_private_file, lock_account_file,
     stderr_is_journal_stream, sync_dir, DaemonPathError, FileIdentity, StopRequests,
+    REPLACEABLE_WHILE_RUNNING,
 };
 pub(super) use imp::{
     connect, connect_restarting, detach, endpoint, inspect_endpoint, is_variable, open_lock_file,
     open_log_file, path_bytes, prepare_private_dir, relaunch, remove_endpoint, request_stop,
-    running_identity, take_handoff, Listener, Stream, MACHINE_VARIABLES,
+    running_identity, stop_service, take_handoff, Listener, Stream, MACHINE_VARIABLES,
 };
 
 #[cfg(test)]
