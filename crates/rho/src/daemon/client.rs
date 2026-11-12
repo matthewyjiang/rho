@@ -2,10 +2,11 @@
 
 use std::{io, path::PathBuf, time::Duration};
 
+use super::{
+    paths::DaemonPaths,
+    platform::{self, Stream},
+};
 use rho_protocol::{Client, ClientError, ClientHello, ClientInfo, HelloResponse, Notifications};
-use tokio::net::UnixStream;
-
-use super::paths::DaemonPaths;
 
 /// How long a client waits, once the daemon began restarting in place, for
 /// the restarted daemon to answer: `rho daemon restart`, and a client
@@ -74,17 +75,28 @@ pub(crate) async fn connect(
     paths: &DaemonPaths,
     hello: ClientHello,
 ) -> Result<Connection, ConnectError> {
-    let stream = match UnixStream::connect(&paths.socket).await {
-        Ok(stream) => stream,
-        // No socket, or a socket left by a daemon that died without cleanup.
-        Err(error)
-            if matches!(
-                error.kind(),
-                io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused
-            ) =>
-        {
-            return Err(ConnectError::NotRunning)
-        }
+    handshake(paths, platform::connect(paths).await, hello).await
+}
+
+/// Connects to a daemon that began restarting in place, once the restarted
+/// daemon answers, and completes the handshake. Bound it with
+/// [`DAEMON_RESTART_TIMEOUT`]: where a restart closes the endpoint, this
+/// waits until one listens again.
+pub(crate) async fn connect_restarting(
+    paths: &DaemonPaths,
+    hello: ClientHello,
+) -> Result<Connection, ConnectError> {
+    handshake(paths, platform::connect_restarting(paths).await, hello).await
+}
+
+async fn handshake(
+    paths: &DaemonPaths,
+    connected: io::Result<Option<Stream>>,
+    hello: ClientHello,
+) -> Result<Connection, ConnectError> {
+    let stream = match connected {
+        Ok(Some(stream)) => stream,
+        Ok(None) => return Err(ConnectError::NotRunning),
         Err(source) => {
             return Err(ConnectError::Io {
                 socket: paths.socket.clone(),

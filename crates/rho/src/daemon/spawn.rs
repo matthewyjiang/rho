@@ -3,9 +3,8 @@
 //! (#1776).
 
 use std::{
-    fs::{File, OpenOptions},
+    fs::File,
     io,
-    os::unix::{fs::OpenOptionsExt, process::CommandExt},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     time::{Duration, Instant},
@@ -16,7 +15,8 @@ use rho_protocol::{ClientError, ClientHello, VersionFix, VersionMismatch};
 use super::{
     client::{connect, ConnectError, Connection},
     lock::{self, LockError},
-    paths::{DaemonPathError, DaemonPaths},
+    paths::DaemonPaths,
+    platform::{self, DaemonPathError},
     spawn_env::daemon_environment,
 };
 
@@ -29,7 +29,7 @@ use super::{
 const DAEMON_START_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Interval between connection attempts while a new daemon starts. Each
-/// attempt is one `connect(2)` on a local socket.
+/// attempt is one connect on a local endpoint.
 const START_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 /// How long a client waits for a daemon that holds the lock without
@@ -75,9 +75,9 @@ pub(crate) trait DaemonSpawner: Send + Sync {
 /// `RHO_HOME` and `XDG_RUNTIME_DIR` are what produced the caller's
 /// [`DaemonPaths`], so the child resolves the same socket the caller then
 /// polls. Passing a different home here would start a daemon the caller can
-/// never reach. It runs in `/`, so `RHO_HOME` is pinned to the home's
-/// canonical path: a relative one would otherwise name another directory
-/// there.
+/// never reach. It does not run in the caller's directory, so `RHO_HOME` is
+/// pinned to the home's canonical path: a relative one would otherwise name
+/// another directory there.
 pub(crate) struct ProcessSpawner {
     executable: PathBuf,
 }
@@ -95,19 +95,13 @@ impl DaemonSpawner for ProcessSpawner {
         let mut command = Command::new(&self.executable);
         command
             .args(["daemon", "run"])
-            // Its own process group, so Ctrl+C in the caller's terminal does
-            // not reach the daemon.
-            .process_group(0)
-            // Not the caller's directory, which the daemon would otherwise
-            // hold for its whole life (blocking an unmount, say). It opens
-            // each session in that session's own workspace.
-            .current_dir("/")
             .env_clear()
             .envs(daemon_environment(std::env::vars_os()))
             .env("RHO_HOME", &paths.home)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
+        platform::detach(&mut command, paths);
         let mut child = command.spawn()?;
         // Reap the daemon if it exits while this process is still running.
         std::thread::spawn(move || child.wait());
@@ -248,18 +242,18 @@ fn is_unused_older_daemon(refusal: &ConnectError) -> bool {
 
 /// Stops the older daemon that refused this client and waits until it lets
 /// go of the lock, so the caller can start this rho in its place. It speaks
-/// another protocol, so it cannot take a stop request and is signalled
-/// instead, which stops it as gracefully: work that began since it reported
-/// none is recorded interrupted, as `rho daemon stop` records it, and a
-/// client that connected since is detached as from any stop.
+/// another protocol, so it cannot take a stop request and is asked outside
+/// the protocol instead, which stops it as gracefully: work that began since
+/// it reported none is recorded interrupted, as `rho daemon stop` records
+/// it, and a client that connected since is detached as from any stop.
 async fn stop_older(paths: &DaemonPaths) -> Result<(), SpawnError> {
-    let signalled = Instant::now();
+    let asked = Instant::now();
     lock::terminate_recorded_daemon(paths).map_err(SpawnError::StopOlder)?;
     match lock::wait_until_released(paths, DRAIN_WAIT_TIMEOUT).await? {
         Some(_) => Ok(()),
         None => Err(SpawnError::StillStopping {
             limit: DRAIN_WAIT_TIMEOUT,
-            elapsed: signalled.elapsed(),
+            elapsed: asked.elapsed(),
             log_file: paths.log_file.clone(),
         }),
     }
@@ -313,14 +307,7 @@ async fn wait_while_held(
 async fn lock_spawn(path: &Path) -> Result<File, SpawnError> {
     let lock_path = path.to_path_buf();
     let locked = tokio::task::spawn_blocking(move || -> io::Result<File> {
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .mode(0o600)
-            .custom_flags(libc::O_NOFOLLOW)
-            .open(&lock_path)?;
+        let file = platform::open_lock_file(&lock_path)?;
         fs2::FileExt::lock_exclusive(&file)?;
         Ok(file)
     })

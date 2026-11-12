@@ -17,7 +17,7 @@ use {
         daemon_host::{DaemonHost, JobRecords, UNLOAD_IDLE_AFTER},
     },
     crate::daemon::{
-        self, ConnectAs, DaemonPaths, Ending, Executable, Handoff, Served, Shutdown,
+        self, ConnectAs, DaemonPaths, Ending, Executable, Served, Shutdown, StopRequests,
         DAEMON_RESTART_TIMEOUT,
     },
     crate::logging::{self, LogSink},
@@ -49,12 +49,8 @@ pub(super) async fn run(command: Option<DaemonCommand>) -> anyhow::Result<()> {
             unload_idle_after,
             exec_handoff,
         } => {
-            let handoff = exec_handoff
-                .map(|value| value.parse::<Handoff>())
-                .transpose()
-                .map_err(|error| anyhow::anyhow!("invalid --exec-handoff: {error}"))?;
             let unload_idle_after = unload_idle_after.unwrap_or(UNLOAD_IDLE_AFTER);
-            run_foreground(&paths, unload_idle_after, handoff).await
+            run_foreground(&paths, unload_idle_after, exec_handoff.as_deref()).await
         }
         DaemonCommand::Start => start().await,
         DaemonCommand::Status { json } => status(&paths, json).await,
@@ -178,13 +174,13 @@ pub(super) fn runs_daemon(command: Option<&Command>) -> bool {
 const DAEMON_STOP_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Runs the daemon until it stops, unloading each session once it sat idle
-/// for `unload_idle_after`. A daemon re-executed in place takes over its
-/// predecessor's lock and socket from `handoff`.
+/// for `unload_idle_after`. A daemon restarted in place takes over its
+/// predecessor's lock and socket from `handoff`, the token it was run with.
 #[cfg(unix)]
 async fn run_foreground(
     paths: &DaemonPaths,
     unload_idle_after: Duration,
-    handoff: Option<Handoff>,
+    handoff: Option<&str>,
 ) -> anyhow::Result<()> {
     // Without it the daemon runs on, only unable to restart in place.
     let executable = Executable::of_this_process()
@@ -199,8 +195,8 @@ async fn run_foreground(
         .ok()
         .filter(|filter| !filter.trim().is_empty())
         .unwrap_or_else(|| "info".to_owned());
-    let journald =
-        std::env::var_os("JOURNAL_STREAM").is_some_and(|stream| stderr_is_journal_stream(&stream));
+    let journald = std::env::var_os("JOURNAL_STREAM")
+        .is_some_and(|stream| daemon::stderr_is_journal_stream(&stream));
     let sink = if journald {
         LogSink::Journal
     } else {
@@ -257,9 +253,9 @@ async fn run_foreground(
             (lock, Some(socket))
         }
     };
-    // Install handlers before the socket exists so an early SIGTERM still
+    // Listen before the socket exists so an early request to stop still
     // shuts down cleanly.
-    let mut signals = super::shutdown_signal::ShutdownSignals::install()?;
+    let mut stops = StopRequests::listen(paths)?;
     // Everything the host needs is open before the socket is published, so
     // a client never reaches a daemon that cannot serve it.
     open_credential_store();
@@ -305,20 +301,13 @@ async fn run_foreground(
     // stop` began it, forces the exit instead.
     let signal_task = tokio::spawn(async move {
         loop {
-            match signals.recv().await {
-                Ok(signal) if on_signal.stopping() => {
-                    tracing::warn!(%signal, "exiting without waiting for in-flight requests");
-                    std::process::exit(1);
-                }
-                Ok(signal) => {
-                    tracing::info!(%signal, "shutting down on signal");
-                    on_signal.begin_stop();
-                }
-                Err(error) => {
-                    tracing::warn!(%error, "signal handling failed");
-                    return;
-                }
+            let signal = stops.recv().await;
+            if on_signal.stopping() {
+                tracing::warn!(%signal, "exiting without waiting for in-flight requests");
+                std::process::exit(1);
             }
+            tracing::info!(%signal, "shutting down on signal");
+            on_signal.begin_stop();
         }
     });
     // `stop_requested` is when the stop was asked for, whether by `rho
@@ -351,8 +340,10 @@ async fn run_foreground(
     signal_task.abort();
     match (served, shutdown.ending(), executable) {
         (Served::Restarting(restarting), Ending::Restart, Some(executable)) if drained => {
-            let args = |handoff| reexec_args(unload_idle_after, handoff);
-            Err(restarting.reexec(&executable, args)).context("could not re-execute the rho daemon")
+            let args = |handoff| rerun_args(unload_idle_after, handoff);
+            restarting
+                .relaunch(&executable, args)
+                .context("could not re-execute the rho daemon")
         }
         // A turn stuck past the drain budget holds processes only exiting
         // ends, as a stop does; the next client starts a new daemon.
@@ -360,23 +351,21 @@ async fn run_foreground(
     }
 }
 
-/// The arguments that run `rho daemon run` again in place, as it ran,
-/// handing it the daemon's lock and socket.
+/// The arguments that run `rho daemon run` again in this daemon's place, as
+/// it ran, with the `handoff` token that passes the new run the daemon's
+/// lock and socket where the platform's restart keeps them.
 #[cfg(unix)]
-fn reexec_args(unload_idle_after: Duration, handoff: Handoff) -> Vec<OsString> {
+fn rerun_args(unload_idle_after: Duration, handoff: Option<String>) -> Vec<OsString> {
     let unload_idle_after = humantime::format_duration(unload_idle_after).to_string();
-    let handoff = handoff.to_string();
-    [
-        "daemon",
-        "run",
-        "--unload-idle-after",
-        &unload_idle_after,
-        "--exec-handoff",
-        &handoff,
-    ]
-    .into_iter()
-    .map(OsString::from)
-    .collect()
+    let run = ["daemon", "run", "--unload-idle-after"].map(str::to_owned);
+    let handoff = handoff
+        .into_iter()
+        .flat_map(|handoff| ["--exec-handoff".to_owned(), handoff]);
+    run.into_iter()
+        .chain([unload_idle_after])
+        .chain(handoff)
+        .map(OsString::from)
+        .collect()
 }
 
 /// Opens the credential store every session's provider reads as the
@@ -394,26 +383,6 @@ fn open_credential_store() {
     if let Err(error) = opened {
         tracing::warn!(error = %format!("{error:#}"), "could not open the credential store");
     }
-}
-
-/// Whether stderr is the journal stream systemd describes in `JOURNAL_STREAM`
-/// (`<device>:<inode>`). Per systemd.exec(5), the variable alone is not
-/// enough: a child of a systemd service inherits it even when its stderr was
-/// redirected elsewhere.
-#[cfg(unix)]
-fn stderr_is_journal_stream(stream: &std::ffi::OsStr) -> bool {
-    use std::os::{fd::AsFd, unix::fs::MetadataExt};
-    let Some((device, inode)) = stream.to_str().and_then(|value| value.split_once(':')) else {
-        return false;
-    };
-    let (Ok(device), Ok(inode)) = (device.parse::<u64>(), inode.parse::<u64>()) else {
-        return false;
-    };
-    std::io::stderr()
-        .as_fd()
-        .try_clone_to_owned()
-        .and_then(|fd| std::fs::File::from(fd).metadata())
-        .is_ok_and(|stderr| stderr.dev() == device && stderr.ino() == inode)
 }
 
 /// `rho daemon start`: connects to the running daemon, or starts one and
@@ -487,9 +456,10 @@ async fn stop(paths: &DaemonPaths) -> anyhow::Result<()> {
                 .await?;
             connection.hello.daemon.pid
         }
-        // An incompatible daemon cannot take requests. SIGTERM triggers the
-        // same graceful shutdown, so the version-mismatch advice to run
-        // `rho daemon restart`, which stops it this way, still works.
+        // An incompatible daemon cannot take requests. Asking it outside the
+        // protocol triggers the same graceful shutdown, so the
+        // version-mismatch advice to run `rho daemon restart`, which stops
+        // it this way, still works.
         Err(daemon::ConnectError::Handshake(
             ClientError::VersionMismatch(_) | ClientError::UnreadableHello(_),
         )) => daemon::terminate_recorded_daemon(paths)?.ok_or(daemon::ConnectError::NotRunning)?,
@@ -546,11 +516,10 @@ async fn restart(paths: &DaemonPaths) -> anyhow::Result<()> {
     let pid = hello.daemon.pid;
     let restarted = tokio::time::timeout(DAEMON_RESTART_TIMEOUT, async {
         // The daemon closes this connection as it restarts. The restarted
-        // daemon answers on the same socket, and a connection made before
-        // it does waits in the socket's backlog.
+        // daemon answers on the same socket.
         while notifications.recv().await.is_some() {}
         drop(client);
-        daemon::connect(paths, ConnectAs::Command.hello()).await
+        daemon::connect_restarting(paths, ConnectAs::Command.hello()).await
     })
     .await;
     match restarted {

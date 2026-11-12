@@ -1,4 +1,4 @@
-use std::{os::unix::fs::PermissionsExt, path::Path, time::Duration};
+use std::{path::Path, time::Duration};
 
 use pretty_assertions::assert_eq;
 use rho_protocol::{methods, StatusParams, StopParams, StopResponse};
@@ -7,6 +7,7 @@ use tempfile::TempDir;
 use super::*;
 use crate::daemon::{
     client, lock,
+    paths::SocketFound,
     shutdown::Shutdown,
     test_support::{test_status, StubHost},
 };
@@ -40,8 +41,7 @@ async fn daemon_serves_status_and_cleans_up_on_stop() {
             .release()
     });
 
-    let socket_mode = fs::metadata(&paths.socket).unwrap().permissions().mode() & 0o777;
-    assert_eq!(socket_mode, 0o600);
+    assert_eq!(paths.inspect_socket(), Ok(SocketFound::Private));
     let client::Connection { client, hello, .. } =
         client::connect(&paths, client::ConnectAs::Command.hello())
             .await
