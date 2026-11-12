@@ -94,6 +94,7 @@ impl App {
             return Ok(());
         }
         if self.handle_panel_overlay_key(key, terminal) {
+            self.refuse_jobs_view_attach();
             return Ok(());
         }
         if self.handle_side_chat_key(key, terminal) {
@@ -388,6 +389,7 @@ impl App {
             CommandId::Changelog => self.execute_changelog_command(&invocation, terminal),
             CommandId::Diff => self.execute_diff_command(),
             CommandId::Doctor => self.start_doctor_command(),
+            CommandId::Jobs => self.execute_jobs_command(),
             CommandId::Copy => self.execute_copy_command(),
             CommandId::Export => self.execute_export_command(&invocation),
             CommandId::Mcp => self.execute_mcp_command(),

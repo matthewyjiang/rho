@@ -41,6 +41,7 @@ impl CommandContext {
             | CommandId::Codemode
             | CommandId::Diff
             | CommandId::Doctor
+            | CommandId::Jobs
             | CommandId::Limits
             | CommandId::Export
             | CommandId::Mcp

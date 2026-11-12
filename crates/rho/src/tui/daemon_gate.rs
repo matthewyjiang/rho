@@ -43,6 +43,7 @@ pub(super) fn command_route(command: CommandId) -> CommandRoute {
         // run beside it on a copy of its transcript (`/side`).
         | CommandId::Info
         | CommandId::Doctor
+        | CommandId::Jobs
         | CommandId::Limits
         | CommandId::Export
         | CommandId::Title

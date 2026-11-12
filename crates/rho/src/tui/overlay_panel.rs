@@ -251,6 +251,18 @@ pub(super) trait PanelBody {
     fn copy_text(&self) -> Option<String> {
         None
     }
+    /// Rows kept under the scrolled body whatever its scroll, at `width`,
+    /// such as a field the panel takes typing in. Empty for most panels.
+    fn pinned_lines(&self, _width: usize) -> Vec<Line<'static>> {
+        Vec::new()
+    }
+    /// The body rows a panel with a cursor of its own is on, at `width`:
+    /// the cursor's row and what the panel shows with it. The dispatcher
+    /// keeps them in view after each key the panel handles, the first row
+    /// when they do not all fit. `None` for a panel without a cursor.
+    fn cursor_rows(&self, _width: usize) -> Option<std::ops::Range<usize>> {
+        None
+    }
     /// Feature keys, checked before the shared keys.
     fn handle_key(&mut self, _key: crossterm::event::KeyEvent) -> PanelKeyOutcome {
         PanelKeyOutcome::Unhandled
@@ -274,12 +286,12 @@ pub(super) fn panel_frame(
     area: Rect,
     now: std::time::Instant,
 ) -> OverlayPanelFrame {
-    let lines = panel.body_lines(overlay_panel_body_width(area), now);
+    let width = overlay_panel_body_width(area);
     render_overlay_panel(
         panel.title(),
         panel.footer(),
-        lines,
-        Vec::new(),
+        panel.body_lines(width, now),
+        panel.pinned_lines(width),
         panel.state().scroll.offset(),
         area,
     )
@@ -287,11 +299,40 @@ pub(super) fn panel_frame(
 
 /// Moves the panel's scroll toward `target`, clamped to its body at `area`.
 pub(super) fn scroll_panel(panel: &mut dyn PanelBody, area: Rect, target: PanelScrollTarget) {
-    let body_len = panel
-        .body_lines(overlay_panel_body_width(area), std::time::Instant::now())
-        .len();
-    let body_rows = overlay_panel_layout(area, body_len).body_rows;
+    let (body_len, body_rows) = panel_scroll_extent(panel, area);
     panel.state_mut().scroll.apply(target, body_len, body_rows);
+}
+
+/// How many rows the panel's body has at `area`, and how many of them show
+/// at once above its pinned rows, as [`render_overlay_panel`] lays them out.
+fn panel_scroll_extent(panel: &dyn PanelBody, area: Rect) -> (usize, usize) {
+    let width = overlay_panel_body_width(area);
+    let body_len = panel.body_lines(width, std::time::Instant::now()).len();
+    let pinned = panel.pinned_lines(width).len();
+    let rows = overlay_panel_layout(area, body_len + pinned).body_rows;
+    (body_len, rows - pinned.min(rows))
+}
+
+/// Scrolls the panel just far enough that its cursor rows show at `area`.
+pub(super) fn reveal_panel_cursor(panel: &mut dyn PanelBody, area: Rect) {
+    let width = overlay_panel_body_width(area);
+    let Some(rows) = panel.cursor_rows(width) else {
+        return;
+    };
+    let (body_len, body_rows) = panel_scroll_extent(panel, area);
+    let offset = panel.state().scroll.offset();
+    let target = if rows.start < offset {
+        rows.start
+    } else if rows.end > offset + body_rows {
+        // The first row stays in view when the rows outgrow the body.
+        rows.end.saturating_sub(body_rows).min(rows.start)
+    } else {
+        return;
+    };
+    panel
+        .state_mut()
+        .scroll
+        .apply(PanelScrollTarget::Absolute(target), body_len, body_rows);
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

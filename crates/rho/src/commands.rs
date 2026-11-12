@@ -37,6 +37,7 @@ pub enum CommandId {
     Codemode,
     Diff,
     Doctor,
+    Jobs,
     Limits,
     Export,
     Mcp,
@@ -355,6 +356,13 @@ pub static COMMANDS: &[CommandSpec] = &[
         name: "init",
         usage: "/init",
         description: "survey the repository and write AGENTS.md",
+        argument_choices: &[],
+    },
+    CommandSpec {
+        id: CommandId::Jobs,
+        name: "jobs",
+        usage: "/jobs",
+        description: "watch and control every job the daemon runs, across projects",
         argument_choices: &[],
     },
     CommandSpec {
