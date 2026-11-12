@@ -380,7 +380,7 @@ async fn establish_session(
             // The home this process serves, as the daemon's spawner pins it:
             // canonical, so it names the same directory from the child's.
             let rho_home = crate::paths::rho_dir().and_then(|home| {
-                std::fs::canonicalize(&home)
+                crate::daemon::real_home(&home)
                     .with_context(|| format!("could not resolve rho home {}", home.display()))
             })?;
             // Start from the shared sanitized base. Servers opt into all other
