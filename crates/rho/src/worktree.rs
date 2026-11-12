@@ -8,11 +8,12 @@
 //! The daemon adds one for a session opened with
 //! `SessionNewParams::worktree`, and a foreground `rho run --worktree` for
 //! its own session. The daemon removes one of its sessions' worktrees once
-//! it is clean and what it has checked out is merged ([`inspect`],
-//! [`remove`]), keeping the branch, and adds it back at the commit it
-//! removed when the session reopens ([`restore`]). It never removes one holding work
-//! nobody merged, and nothing removes a foreground run's: a person does,
-//! with `git worktree remove <path>` and `git branch -D <branch>`.
+//! it is clean and its origin's `HEAD` has what it has checked out,
+//! however it was merged ([`inspect`], [`remove`]), keeping the branch, and
+//! adds it back at the commit it removed when the session reopens
+//! ([`restore`]). It never removes one holding work nobody merged, and
+//! nothing removes a foreground run's: a person does, with
+//! `git worktree remove <path>` and `git branch -D <branch>`.
 
 use std::{
     ffi::OsStr,
@@ -89,10 +90,11 @@ enum Ran {
 pub(crate) enum Holds {
     /// Uncommitted or untracked changes, which removing would lose.
     Changes,
-    /// Nothing but `commit`, merged into `base`, the `HEAD` of the checkout
-    /// the worktree was added from: removing loses nothing.
+    /// Nothing but `commit`, whose changes `base`, the `HEAD` of the
+    /// checkout the worktree was added from, already has, merged, rebased,
+    /// or squashed in: removing loses nothing.
     Merged { base: String, commit: String },
-    /// Commits `base` does not have.
+    /// Changes `base` does not have.
     Unmerged { base: String },
 }
 
@@ -191,9 +193,9 @@ pub(crate) async fn add(root: &Path, workspace: &Path) -> Result<Added, Worktree
 }
 
 /// What `worktree` holds: whether removing it would lose uncommitted or
-/// untracked changes, or commits its origin's `HEAD` lacks. It checks what
-/// the worktree has checked out, which is its branch unless a session
-/// switched: removing a worktree keeps every branch.
+/// untracked changes, or committed changes its origin's `HEAD` lacks. It
+/// checks what the worktree has checked out, which is its branch unless a
+/// session switched: removing a worktree keeps every branch.
 pub(crate) async fn inspect(worktree: &SessionWorktree) -> Result<Holds, WorktreeError> {
     // Every untracked file and submodule change, whatever the repository's
     // `status.showUntrackedFiles` or submodule settings hide: `git worktree
@@ -214,6 +216,8 @@ pub(crate) async fn inspect(worktree: &SessionWorktree) -> Result<Holds, Worktre
     }
     let head = succeeded(&worktree.path, "rev-parse", ["rev-parse", "HEAD"]).await?;
     let origin = &worktree.origin;
+    // One commit for every check, though the origin's `HEAD` moves meanwhile.
+    let base_commit = succeeded(origin, "rev-parse", ["rev-parse", "HEAD"]).await?;
     let base = match succeeded(origin, "rev-parse", ["rev-parse", "--abbrev-ref", "HEAD"]).await? {
         // A detached `HEAD`, which only its commit names.
         detached if detached == "HEAD" => {
@@ -221,21 +225,50 @@ pub(crate) async fn inspect(worktree: &SessionWorktree) -> Result<Holds, Worktre
         }
         branch => branch,
     };
-    match git(
-        origin,
-        ["merge-base", "--is-ancestor", head.as_str(), "HEAD"],
-        &[],
-    )
-    .await?
-    {
-        Ran::Succeeded(_) => Ok(Holds::Merged { base, commit: head }),
-        // `--is-ancestor` answers no with exit 1 and fails with others.
-        Ran::Failed { code: Some(1), .. } => Ok(Holds::Unmerged { base }),
-        Ran::Failed { stderr, .. } => Err(WorktreeError::Git {
-            action: "merge-base".to_owned(),
-            repository: origin.clone(),
-            detail: stderr,
-        }),
+    Ok(match has_changes_of(origin, &base_commit, &head).await? {
+        true => Holds::Merged { base, commit: head },
+        false => Holds::Unmerged { base },
+    })
+}
+
+/// Whether `base` already has the changes of `commit`, both in the
+/// repository at `dir`: it contains `commit`, as after a fast-forward or a
+/// merge commit; it has a commit with the same patch as each of
+/// `commit`'s own, as after a rebase merge or cherry-picks; or merging
+/// `commit` into it would change nothing, as after a squash merge.
+async fn has_changes_of(dir: &Path, base: &str, commit: &str) -> Result<bool, WorktreeError> {
+    let failed = |action: &str, detail| WorktreeError::Git {
+        action: action.to_owned(),
+        repository: dir.to_path_buf(),
+        detail,
+    };
+    // `--is-ancestor` answers no with exit 1 and fails with others.
+    match git(dir, ["merge-base", "--is-ancestor", commit, base], &[]).await? {
+        Ran::Succeeded(_) => return Ok(true),
+        Ran::Failed { code: Some(1), .. } => {}
+        Ran::Failed { stderr, .. } => return Err(failed("merge-base", stderr)),
+    }
+    // One line for each commit `base` lacks, merge commits left out: `-`
+    // when `base` has one with the same patch, `+` when not. With every
+    // commit a merge it lists none, which proves nothing. Unlike the tree
+    // check below, it still matches once `base` edits those lines again.
+    let cherry = succeeded(dir, "cherry", ["cherry", base, commit]).await?;
+    if !cherry.is_empty() && cherry.lines().all(|line| line.starts_with('-')) {
+        return Ok(true);
+    }
+    // The tree merging `commit` into `base` makes, without touching any
+    // checkout: `base`'s own when `base` has every change. Unlike patches,
+    // it still matches when `base` changed lines next to them first, as
+    // the squash commit of a branch behind its base does. Exit 1 is a
+    // conflict, and others fail, as on a git before 2.38.
+    match git(dir, ["merge-tree", "--write-tree", base, commit], &[]).await? {
+        Ran::Succeeded(stdout) => {
+            let base_tree = format!("{base}^{{tree}}");
+            let base_tree = succeeded(dir, "rev-parse", ["rev-parse", base_tree.as_str()]).await?;
+            Ok(stdout.lines().next() == Some(base_tree.as_str()))
+        }
+        Ran::Failed { code: Some(1), .. } => Ok(false),
+        Ran::Failed { stderr, .. } => Err(failed("merge-tree", stderr)),
     }
 }
 

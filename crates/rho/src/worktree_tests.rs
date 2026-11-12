@@ -208,6 +208,119 @@ async fn inspect_reads_what_removing_a_worktree_would_lose() {
     assert_eq!(found, expected);
 }
 
+// Covers: cleanup reads a branch whose changes the origin's HEAD has as
+// merged however they got there: a merge commit, a squash merge, or a
+// rebase merge (cherry-picks), each after HEAD changed a line next to the
+// branch's, as a base moving on under a branch does, and a rebase merge
+// whose lines HEAD edited again since; it reads one HEAD has only some of,
+// or none, as unmerged.
+// Owner: session worktrees (git plumbing under the daemon's cleanup).
+#[tokio::test]
+async fn inspect_reads_squash_and_rebase_merges_as_merged() {
+    // The branch edits lines 10 and 12. Line 8 is in the context of its
+    // diff, so the origin editing it first gives a merge different patches;
+    // line 3 is not.
+    const NEXT_TO: usize = 8;
+    // What a case does in the origin once the branch is ahead and the
+    // origin edited a line; given the origin and the branch's two commits,
+    // oldest first.
+    type Merge = fn(&Path, &[String; 2]);
+    let cases: [(&str, usize, Merge, bool); 6] = [
+        (
+            "merge commit",
+            NEXT_TO,
+            |origin, [_, last]| {
+                git(
+                    origin,
+                    &["merge", "--quiet", "--no-ff", "--no-edit", last.as_str()],
+                );
+            },
+            true,
+        ),
+        (
+            "squash merge",
+            NEXT_TO,
+            |origin, [_, last]| {
+                git(origin, &["merge", "--quiet", "--squash", last.as_str()]);
+                git(origin, &["commit", "--quiet", "-m", "squash"]);
+            },
+            true,
+        ),
+        (
+            "rebase merge",
+            NEXT_TO,
+            |origin, [first, last]| {
+                git(origin, &["cherry-pick", first.as_str(), last.as_str()]);
+            },
+            true,
+        ),
+        (
+            "rebase merge, its lines edited since",
+            3,
+            |origin, [first, last]| {
+                git(origin, &["cherry-pick", first.as_str(), last.as_str()]);
+                edit_line(origin, 10, "ten, edited again");
+            },
+            true,
+        ),
+        (
+            "half rebased",
+            NEXT_TO,
+            |origin, [first, _]| {
+                git(origin, &["cherry-pick", first.as_str()]);
+            },
+            false,
+        ),
+        ("not merged", NEXT_TO, |_, _| {}, false),
+    ];
+    let mut found = Vec::new();
+    let mut expected = Vec::new();
+    for (case, origin_edits, merge, merged) in cases {
+        let home = TempDir::new().unwrap();
+        let origin = repository(home.path());
+        edit_line(&origin, 1, "1");
+        let added = add(&home.path().join("worktrees"), &origin).await.unwrap();
+        let path = &added.worktree.path;
+        let commits = [(10, "ten"), (12, "twelve")].map(|(line, text)| {
+            edit_line(path, line, text);
+            git(path, &["rev-parse", "HEAD"])
+        });
+        edit_line(&origin, origin_edits, "moved on");
+        merge(&origin, &commits);
+
+        found.push((case, inspect(&added.worktree).await.unwrap()));
+        let [_, head] = commits;
+        expected.push((
+            case,
+            match merged {
+                true => Holds::Merged {
+                    base: "main".to_owned(),
+                    commit: head,
+                },
+                false => Holds::Unmerged {
+                    base: "main".to_owned(),
+                },
+            },
+        ));
+    }
+
+    assert_eq!(found, expected);
+}
+
+/// Commits, in the checkout at `dir`, `lines.txt` with line `number` of 20
+/// set to `text`; the first commit writes the lines `1` to `20`.
+fn edit_line(dir: &Path, number: usize, text: &str) {
+    let file = dir.join("lines.txt");
+    let mut lines: Vec<String> = match std::fs::read_to_string(&file) {
+        Ok(content) => content.lines().map(str::to_owned).collect(),
+        Err(_) => (1..=20).map(|line| line.to_string()).collect(),
+    };
+    lines[number - 1] = text.to_owned();
+    std::fs::write(&file, lines.join("\n") + "\n").unwrap();
+    git(dir, &["add", "lines.txt"]);
+    git(dir, &["commit", "--quiet", "-m", text]);
+}
+
 // Covers: removing a worktree keeps its branch, and restoring it at the
 // commit it was removed at checks the branch out at the same path again,
 // makes the branch again at that commit, not the origin's HEAD, when

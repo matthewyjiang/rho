@@ -81,9 +81,9 @@ fn sorted_lines(output: &Output) -> Vec<String> {
 
 // Covers: `rho worktrees prune --dry-run` lists which worktrees would go
 // and why, changing nothing; `rho worktrees prune` then removes the
-// worktree that is clean and whose commit is merged into the repository's
-// HEAD, its branch kept, and keeps the one with an untracked file and the
-// one with an unmerged commit.
+// worktree that is clean and whose commit is squash-merged into the
+// repository's HEAD, its branch kept, and keeps the one with an untracked
+// file and the one with an unmerged commit.
 // Owner: daemon worktree cleanup through `rho worktrees prune`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn prune_removes_only_clean_merged_worktrees_and_keeps_their_branches() {
@@ -94,10 +94,13 @@ async fn prune_removes_only_clean_merged_worktrees_and_keeps_their_branches() {
     let (_, dirty) = finished_worktree_session(&sandbox, &client).await;
     let (_, unmerged) = finished_worktree_session(&sandbox, &client).await;
     commit(&merged.path, "merged.txt");
+    // Squashed, as a forge merges a pull request: the branch is no
+    // ancestor of HEAD.
     git(
         &sandbox.workspace,
-        &["merge", "--quiet", "--ff-only", merged.branch.as_str()],
+        &["merge", "--quiet", "--squash", merged.branch.as_str()],
     );
+    git(&sandbox.workspace, &["commit", "--quiet", "-m", "squash"]);
     std::fs::write(dirty.path.join("notes.txt"), "draft").unwrap();
     commit(&unmerged.path, "unmerged.txt");
     let on_disk = || [&merged, &dirty, &unmerged].map(|worktree| worktree.path.exists());
