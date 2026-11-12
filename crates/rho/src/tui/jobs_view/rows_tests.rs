@@ -209,7 +209,9 @@ fn a_worktree_session_lists_under_its_project_with_its_branch() {
         ),
     ];
 
-    let listed: Vec<(String, Vec<(String, Vec<String>)>)> = groups(&jobs, "")
+    // Each row's job and facts.
+    type Facts = (String, Vec<String>);
+    let listed: Vec<(String, Vec<Facts>)> = groups(&jobs, "")
         .into_iter()
         .map(|group| {
             (
