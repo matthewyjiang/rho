@@ -526,12 +526,10 @@ impl PtyHarness {
         // Keep draining while waiting so restoration sequences are captured.
         let deadline = started + timeout.duration;
         let mut saw_clean_exit_marker = false;
-        let mut marker_at = None;
         loop {
             self.pump(Duration::from_millis(20));
             if !saw_clean_exit_marker && self.observed_clean_exit_marker() {
                 saw_clean_exit_marker = true;
-                marker_at = Some(Instant::now());
                 self.log("observed clean TUI exit marker");
             }
             // `pump` paces the loop; reap without a second sleep.
@@ -545,11 +543,13 @@ impl PtyHarness {
                 self.poll(Duration::from_millis(50));
                 return Ok(Some(code));
             }
-            // On some macOS runners the process prints the post-TUI resume
-            // summary but lingers before reaping. Once the clean exit path is
-            // observable, force-reap after a short grace period.
-            if let Some(marker_at) = marker_at {
-                if marker_at.elapsed() >= Duration::from_millis(750) {
+            if Instant::now() >= deadline {
+                // On some macOS runners the process prints the post-TUI resume
+                // summary but lingers before reaping. Reap one that showed the
+                // clean exit path only at the deadline: an earlier kill can
+                // drop the rest of the receipt, which a loaded ConPTY may not
+                // have drawn yet when its first line shows (#1915).
+                if saw_clean_exit_marker {
                     self.log("force-reaping child after clean TUI exit markers");
                     let _ = self.pty.kill();
                     self.poll(Duration::from_millis(50));
@@ -559,8 +559,6 @@ impl PtyHarness {
                     }
                     return Ok(Some(0));
                 }
-            }
-            if Instant::now() >= deadline {
                 self.log(format!(
                     "exit probe timed out ({}); child still running",
                     timeout.label

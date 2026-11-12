@@ -43,7 +43,7 @@ fn resolve_display_version(matrix: bool, override_version: Option<&str>, package
 pub(crate) fn seed_matrix_model_cache() {
     if matrix_enabled() {
         use rho_providers::model::provider_models::{
-            replace_cached_provider_models_for_tests, ProviderModel,
+            cached_provider_models, replace_cached_provider_models_for_tests, ProviderModel,
         };
         // One model per provider keeps scripted picker navigation stable.
         // Poolside is visible only in scenarios injecting its credential; its
@@ -57,6 +57,12 @@ pub(crate) fn seed_matrix_model_cache() {
                 max_output_tokens: Some(128_000),
                 reasoning_capabilities: Default::default(),
             }];
+            // Every launch of a scenario seeds the same cache, which the
+            // daemon an earlier launch started also uses; a write there can
+            // stall startup for seconds (#1915), so write only what is missing.
+            if cached_provider_models(provider) == models {
+                continue;
+            }
             // A failed seed leaves pickers empty, which scenario assertions report.
             let _ = replace_cached_provider_models_for_tests(provider, &models);
         }
