@@ -152,15 +152,37 @@ pub(crate) fn upgrade_2x(
     Ok(Some(upgraded))
 }
 
+/// Whether a line of an upgrade's report needs the user to act.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Severity {
+    Note,
+    Warning,
+}
+
 impl Upgraded {
-    /// The lines startup prints: what moved where, and one warning for
-    /// everything that was not carried over.
+    /// The lines startup prints: where the original is, what moved where,
+    /// and one warning for everything that was not carried over.
     pub(crate) fn notice(&self, config_path: &Path) -> Vec<String> {
-        let mut lines = vec![format!(
+        let header = format!(
             "note: updated {} from the rho 2.x layout; the original is at {}",
             config_path.display(),
             self.backup.display()
-        )];
+        );
+        std::iter::once(header)
+            .chain(self.changes().into_iter().map(|(severity, line)| {
+                let prefix = match severity {
+                    Severity::Note => "note",
+                    Severity::Warning => "warning",
+                };
+                format!("{prefix}: {line}")
+            }))
+            .collect()
+    }
+
+    /// What the upgrade changed and what it left out, one line each. Both
+    /// the startup notice and the TUI's note list these.
+    pub(crate) fn changes(&self) -> Vec<(Severity, String)> {
+        let mut lines = Vec::new();
         for (file, name) in [
             (MigratedFile::Agent, "their 3.0 keys in config.toml"),
             (MigratedFile::ClientTui, "clients/tui.toml"),
@@ -178,7 +200,10 @@ impl Upgraded {
                 })
                 .collect::<Vec<_>>();
             if !moved.is_empty() {
-                lines.push(format!("note: moved to {name}: {}", moved.join(", ")));
+                lines.push((
+                    Severity::Note,
+                    format!("moved to {name}: {}", moved.join(", ")),
+                ));
             }
         }
         let mut ignored = Vec::new();
@@ -187,7 +212,7 @@ impl Upgraded {
             match change {
                 Change::Moved { .. } => {}
                 Change::Rewritten { key, from, to } => {
-                    lines.push(format!("note: `{key}`: {from} is now {to}"));
+                    lines.push((Severity::Note, format!("`{key}`: {from} is now {to}")));
                 }
                 Change::Dropped { key } => ignored.push(key.as_str()),
                 Change::Secret { key } if self.already_set.contains(key) => {}
@@ -196,21 +221,27 @@ impl Upgraded {
         }
         ignored.extend(self.already_set.iter().map(String::as_str));
         if !ignored.is_empty() {
-            lines.push(format!(
-                "warning: ignored 2.x keys that 3.0 does not read, or that 3.0 already sets to another value: {}",
-                ignored.join(", ")
+            lines.push((
+                Severity::Warning,
+                format!(
+                    "ignored 2.x keys that 3.0 does not read, or that 3.0 already sets to another value: {}",
+                    ignored.join(", ")
+                ),
             ));
         }
         match (&self.secrets_error, stored.is_empty()) {
             (_, true) => {}
-            (None, false) => lines.push(format!(
-                "note: moved to the credential store: {}",
-                stored.join(", ")
+            (None, false) => lines.push((
+                Severity::Note,
+                format!("moved to the credential store: {}", stored.join(", ")),
             )),
-            (Some(error), false) => lines.push(format!(
-                "warning: could not move {} to the credential store ({error}); set them again from the copy in {}",
-                stored.join(", "),
-                self.backup.display()
+            (Some(error), false) => lines.push((
+                Severity::Warning,
+                format!(
+                    "could not move {} to the credential store ({error}); set them again from the copy in {}",
+                    stored.join(", "),
+                    self.backup.display()
+                ),
             )),
         }
         lines

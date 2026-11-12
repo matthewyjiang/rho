@@ -109,9 +109,12 @@ async fn run_inner(startup: Startup<'_>) -> anyhow::Result<()> {
     // Background credential reads must stop writing to stderr before the TUI
     // takes ownership of the terminal.
     drop(keyring_notice);
-    // Taken here, after this process's own upgrade, so any rho process's
-    // upgrade (the daemon's included) shows in the first TUI after it.
-    let config_upgrade_note = crate::config::take_upgrade_note(&crate::paths::rho_dir()?);
+    // Taken after this process's own upgrade and `daemon::open`, so an
+    // upgrade this or any earlier rho process did (a daemon, `rho acp`)
+    // shows here. An unknown home only means no note.
+    let config_upgrade_note = crate::paths::rho_dir()
+        .ok()
+        .and_then(|rho_dir| crate::config::take_upgrade_note(&rho_dir));
     let prompt_cache_ttl = config.providers.resolved_prompt_cache_ttl(&config.provider);
     let result = tui::run(TuiBootstrap {
         runtime: RuntimeModelView {
