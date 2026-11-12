@@ -380,3 +380,45 @@ fn the_listed_usage_is_the_seeded_one_until_a_turn_reports_it() {
         (None, listed(10, None), listed(20, Some(5)), 1)
     );
 }
+
+// Covers: a client that attaches to a session, as `rho --resume` and
+// `/jobs` do, shows its context and spend at once. Saved rows hold no usage,
+// so a reset that replays only them left the gauges blank until the next
+// turn. The replayed usage is the one as of the last save, a reopened
+// session's seed included; the turn in progress replays its own after it.
+// Owner: daemon session feed.
+#[test]
+fn a_reset_replays_the_usage_as_of_the_last_save() {
+    let usage = |used_tokens| wire::SessionEvent::Usage {
+        used_tokens,
+        window_tokens: Some(1_000),
+        cost_usd_micros: Some(5),
+    };
+    let reopened = idle_feed();
+    reopened.seed_usage(&usage(10));
+    reopened.end_turn(notices(&["saved prompt"]));
+    let loaded = idle_feed();
+    loaded.publish([notice("prompt"), usage(10), notice("reply"), usage(20)]);
+    loaded.end_turn(notices(&["saved prompt", "saved reply"]));
+    loaded.publish([notice("next prompt"), usage(30)]);
+
+    assert_eq!(
+        (replay(&reopened, None), replay(&loaded, None)),
+        (
+            (
+                Replay::Reset,
+                vec![(0, notice("saved prompt")), (0, usage(10))]
+            ),
+            (
+                Replay::Reset,
+                vec![
+                    (0, notice("saved prompt")),
+                    (0, notice("saved reply")),
+                    (4, usage(20)),
+                    (5, notice("next prompt")),
+                    (6, usage(30)),
+                ]
+            ),
+        ),
+    );
+}
