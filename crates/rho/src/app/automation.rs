@@ -161,6 +161,7 @@ pub(super) fn prompt_for_command(command: &Option<Command>) -> anyhow::Result<Op
             | Command::Update
             | Command::Uninstall { .. }
             | Command::Doctor { .. }
+            | Command::Worktrees { .. }
             | Command::Acp(_)
             | Command::Daemon { .. },
         )

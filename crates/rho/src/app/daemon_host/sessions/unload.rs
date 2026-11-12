@@ -22,10 +22,12 @@
 
 use std::{sync::Arc, time::Duration};
 
+use rho_protocol::WorktreeVerdict;
+
 use rho_sdk::SessionId;
 use tokio::time::Instant;
 
-use super::{LoadedSession, Sessions};
+use super::{worktree::Prune, LoadedSession, Sessions};
 use crate::app::{daemon_host::jobs::SessionJob, session_runtime::SessionRuntime};
 
 /// How long a session sits idle before the daemon unloads or discards it,
@@ -148,8 +150,26 @@ impl Sessions {
             );
         } else {
             // Nothing on disk could reopen a session that saved nothing, so
-            // its job goes with it.
+            // its job goes with it, and its worktree when cleanup may
+            // remove it: nothing would remember it after.
+            let record = self.jobs.get(&session.job);
             self.jobs.remove(&session.job);
+            let kept = match record {
+                Some(record) => self.prune_worktree(&record, Prune::Now).await,
+                None => None,
+            };
+            // No record names it now, so nothing flags it stale later.
+            if let Some(kept) =
+                kept.filter(|kept| !matches!(kept.verdict, WorktreeVerdict::Merged { .. }))
+            {
+                tracing::warn!(
+                    session = %id,
+                    branch = %kept.worktree.branch,
+                    path = %kept.worktree.path.display(),
+                    verdict = ?kept.verdict,
+                    "kept the worktree of a discarded unsaved session; rho no longer tracks it"
+                );
+            }
             tracing::info!(
                 session = %id,
                 job = %session.job,

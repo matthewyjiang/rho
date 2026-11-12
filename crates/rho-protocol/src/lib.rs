@@ -173,6 +173,9 @@ pub use methods::{
     SessionMcpResourceContent, SessionMcpResourceParams, SessionMcpResourceResponse,
     SESSION_MCP_CATALOG, SESSION_MCP_COMPLETE, SESSION_MCP_RESOURCE,
 };
+pub use methods::{
+    WorktreePruneParams, WorktreePruneResponse, WorktreeReport, WorktreeVerdict, WORKTREE_PRUNE,
+};
 pub use server::{serve_connection, Service, CLOSE_GRACE};
 pub use server_settings::SettingsService;
 pub use subscription::{subscription, Published, Publisher, Subscription};

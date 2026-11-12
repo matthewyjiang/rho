@@ -31,6 +31,7 @@
 //! | [`SESSION_RENAME`] | [`SessionRenameParams`] | [`SessionRenameResponse`] |
 //! | [`SESSION_DELETE`] | [`SessionDeleteParams`] | [`SessionDeleteResponse`] |
 //! | [`JOB_LIST`] | [`JobListParams`] | [`JobListResponse`] |
+//! | [`WORKTREE_PRUNE`] | [`WorktreePruneParams`] | [`WorktreePruneResponse`] |
 //! | [`AUTH_LIST`] | [`AuthListParams`] | [`AuthListResponse`] |
 //! | [`AUTH_KEY`] | [`AuthKeyParams`] | [`AuthKeyResponse`] |
 //! | [`AUTH_LOGOUT`] | [`AuthLogoutParams`] | [`AuthLogoutResponse`] |
@@ -79,6 +80,7 @@ mod process;
 mod session;
 mod setup;
 mod store;
+mod worktree;
 
 pub use auth::{
     AuthKeyParams, AuthKeyResponse, AuthKind, AuthListParams, AuthListResponse, AuthLogoutParams,
@@ -158,6 +160,9 @@ pub use setup::{ChildThreads, IdleWake, McpServer, SecretMap, SessionPart, Sessi
 pub use store::{
     AuthChooseStoreParams, AuthChooseStoreResponse, CredentialStoreKind, CredentialStoreStatus,
     StoreSelectedBy, AUTH_CHOOSE_STORE,
+};
+pub use worktree::{
+    WorktreePruneParams, WorktreePruneResponse, WorktreeReport, WorktreeVerdict, WORKTREE_PRUNE,
 };
 
 /// A request method with typed params and result.
@@ -255,6 +260,7 @@ protocol! {
         SessionRename = SESSION_RENAME: SessionRenameParams => SessionRenameResponse,
         SessionDelete = SESSION_DELETE: SessionDeleteParams => SessionDeleteResponse,
         JobList = JOB_LIST: JobListParams => JobListResponse,
+        WorktreePrune = WORKTREE_PRUNE: WorktreePruneParams => WorktreePruneResponse,
         AuthList = AUTH_LIST: AuthListParams => AuthListResponse,
         AuthKey = AUTH_KEY: AuthKeyParams => AuthKeyResponse,
         AuthLogout = AUTH_LOGOUT: AuthLogoutParams => AuthLogoutResponse,

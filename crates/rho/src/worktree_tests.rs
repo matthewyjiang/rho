@@ -3,7 +3,7 @@ use std::{path::Path, process::Command};
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 
-use super::{add, WorktreeError};
+use super::{add, inspect, remove, restore, Checkout, Holds, WorktreeError};
 
 /// Runs `git args` in `dir`, isolated from the caller's repository and
 /// config, and returns its trimmed stdout.
@@ -99,4 +99,168 @@ async fn a_workspace_outside_git_is_refused() {
         matches!(&refused, Err(WorktreeError::NotARepository(path)) if path == &workspace),
         "{refused:?}"
     );
+}
+
+/// A repository in `home` whose one commit on `main` has `shared.txt`.
+fn repository(home: &Path) -> std::path::PathBuf {
+    let repository = home.join("repo");
+    std::fs::create_dir_all(&repository).unwrap();
+    git(&repository, &["init", "--quiet", "--initial-branch=main"]);
+    std::fs::write(repository.join("shared.txt"), "base").unwrap();
+    git(&repository, &["add", "."]);
+    git(&repository, &["commit", "--quiet", "-m", "base"]);
+    crate::paths::canonicalize(&repository).unwrap()
+}
+
+// Covers: cleanup reads a worktree with uncommitted, staged, or untracked
+// changes as holding changes, also when the repository's config hides
+// untracked files from `git status` and `git worktree remove`, one whose
+// commit its origin's HEAD lacks as unmerged, and one with nothing new, or
+// whose commit was merged, as merged at its commit, naming the origin's
+// branch, or the origin's commit when detached.
+// Owner: session worktrees (git plumbing under the daemon's cleanup).
+#[tokio::test]
+async fn inspect_reads_what_removing_a_worktree_would_lose() {
+    let home = TempDir::new().unwrap();
+    let origin = repository(home.path());
+    let root = home.path().join("worktrees");
+    let commit = |path: &Path| {
+        std::fs::write(path.join("new.txt"), "work").unwrap();
+        git(path, &["add", "."]);
+        git(path, &["commit", "--quiet", "-m", "work"]);
+    };
+    let mut found = Vec::new();
+    let mut expected = Vec::new();
+    // What the check finds, given the worktree's commit.
+    type Finds = fn(String) -> Holds;
+    let main: Finds = |commit| Holds::Merged {
+        base: "main".to_owned(),
+        commit,
+    };
+    let changes: Finds = |_| Holds::Changes;
+    // What a case does in its new worktree before the check.
+    type Arrange<'a> = &'a dyn Fn(&Path);
+    let cases: [(&str, Arrange, Finds); 7] = [
+        ("nothing new", &|_| {}, main),
+        (
+            "untracked",
+            &|path| std::fs::write(path.join("new.txt"), "work").unwrap(),
+            changes,
+        ),
+        (
+            "modified",
+            &|path| std::fs::write(path.join("shared.txt"), "edit").unwrap(),
+            changes,
+        ),
+        (
+            "staged",
+            &|path| {
+                std::fs::write(path.join("shared.txt"), "edit").unwrap();
+                git(path, &["add", "."]);
+            },
+            changes,
+        ),
+        ("unmerged commit", &commit, |_| Holds::Unmerged {
+            base: "main".to_owned(),
+        }),
+        (
+            "merged commit",
+            &|path| {
+                commit(path);
+                let branch = git(path, &["branch", "--show-current"]);
+                git(&origin, &["merge", "--quiet", "--ff-only", branch.as_str()]);
+            },
+            main,
+        ),
+        // Last: the setting is the whole repository's.
+        (
+            "untracked, hidden by config",
+            &|path| {
+                git(path, &["config", "status.showUntrackedFiles", "no"]);
+                std::fs::write(path.join("hidden.txt"), "work").unwrap();
+            },
+            changes,
+        ),
+    ];
+    for (case, arrange, holds) in cases {
+        let added = add(&root, &origin).await.unwrap();
+        arrange(&added.worktree.path);
+        found.push((case, inspect(&added.worktree).await.unwrap()));
+        expected.push((
+            case,
+            holds(git(&added.worktree.path, &["rev-parse", "HEAD"])),
+        ));
+    }
+    git(&origin, &["checkout", "--quiet", "--detach"]);
+    let detached = add(&root, &origin).await.unwrap();
+    found.push((
+        "detached origin",
+        inspect(&detached.worktree).await.unwrap(),
+    ));
+    expected.push((
+        "detached origin",
+        Holds::Merged {
+            base: git(&origin, &["rev-parse", "--short", "HEAD"]),
+            commit: git(&origin, &["rev-parse", "HEAD"]),
+        },
+    ));
+
+    assert_eq!(found, expected);
+}
+
+// Covers: removing a worktree keeps its branch, and restoring it at the
+// commit it was removed at checks the branch out at the same path again,
+// makes the branch again at that commit, not the origin's HEAD, when
+// someone deleted it, and checks the commit out alone when asked to, as a
+// read does when the branch is checked out elsewhere. The session's
+// directory in it is made even when git tracks nothing there.
+// Owner: session worktrees (git plumbing under the daemon's cleanup).
+#[tokio::test]
+async fn a_removed_worktree_comes_back_at_the_commit_it_was_removed_at() {
+    let home = TempDir::new().unwrap();
+    let origin = repository(home.path());
+    let root = home.path().join("worktrees");
+    let removed_at = git(&origin, &["rev-parse", "HEAD"]);
+    let mut found = Vec::new();
+    let mut expected = Vec::new();
+    for (case, delete_branch, checkout) in [
+        ("branch kept", false, Checkout::Branch),
+        ("branch deleted", true, Checkout::Branch),
+        ("detached", false, Checkout::Detached),
+    ] {
+        let added = add(&root, &origin).await.unwrap();
+        let worktree = &added.worktree;
+        remove(worktree).await.unwrap();
+        let branch_kept = !git(&origin, &["branch", "--list", worktree.branch.as_str()]).is_empty();
+        if delete_branch {
+            git(
+                &origin,
+                &["branch", "--quiet", "-D", worktree.branch.as_str()],
+            );
+        }
+        // The origin moves on, so a branch made from its HEAD would differ.
+        std::fs::write(origin.join(format!("{case}.txt")), case).unwrap();
+        git(&origin, &["add", "."]);
+        git(&origin, &["commit", "--quiet", "-m", case]);
+        let cwd = worktree.path.join("untracked/dir");
+
+        restore(worktree, &removed_at, &cwd, checkout)
+            .await
+            .unwrap();
+
+        found.push((
+            case,
+            branch_kept,
+            git(&worktree.path, &["branch", "--show-current"]),
+            git(&worktree.path, &["rev-parse", "HEAD"]),
+            cwd.is_dir(),
+        ));
+        let branch = match checkout {
+            Checkout::Branch => worktree.branch.clone(),
+            Checkout::Detached => String::new(),
+        };
+        expected.push((case, true, branch, removed_at.clone(), true));
+    }
+
+    assert_eq!(found, expected);
 }

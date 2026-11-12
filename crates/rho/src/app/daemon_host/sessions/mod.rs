@@ -118,6 +118,7 @@ use t3_wake::{T3Wake, WakeDir};
 use turn::{PromptStart, TurnLimit, TurnTask};
 use unload::Residency;
 pub(in crate::app) use unload::UNLOAD_IDLE_AFTER;
+pub(super) use worktree::{worktree_stale, Prune};
 
 /// How long the daemon's stop waits for its turns to save once it was
 /// asked to stop, before it records them interrupted and exits anyway.

@@ -168,6 +168,12 @@ pub(super) struct JobRecord {
     /// for a session in its own workspace and for other jobs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) worktree: Option<rho_protocol::SessionWorktree>,
+    /// The commit `worktree` had checked out when the daemon's cleanup
+    /// removed it, which a reopen or read adds it back at. `None` while it
+    /// is on disk, and for one a person removed: the daemon never adds that
+    /// back.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) worktree_removed_at: Option<String>,
     /// Whether the record has a file. Never read from one: a record a file
     /// holds is kept.
     #[serde(skip)]
@@ -289,6 +295,7 @@ impl JobRecord {
             outcome: None,
             turn: None,
             worktree: None,
+            worktree_removed_at: None,
             keeping: Keeping::Stored,
         }
     }
@@ -306,7 +313,7 @@ impl Admission {
 }
 
 /// The current Unix time in seconds; 0 on a clock set before 1970.
-fn unix_now() -> u64 {
+pub(super) fn unix_now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |since_epoch| since_epoch.as_secs())

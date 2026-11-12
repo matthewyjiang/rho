@@ -18,7 +18,7 @@ use crate::methods::{
     ProcessStream, PromptAuthor, ReasoningLevel, Resolution, RetryReason, Selection,
     SessionControlAction, SessionEvent, SessionMcpMode, SessionMcpResourceContent,
     SessionMcpStatus, SettingKind, StoreSelectedBy, ToolContent, ToolKind, ToolStatus,
-    TurnErrorKind, TurnOutcome, UncheckedReason, UnsteerOutcome, ValueSource,
+    TurnErrorKind, TurnOutcome, UncheckedReason, UnsteerOutcome, ValueSource, WorktreeVerdict,
 };
 
 // Covers: the committed schema/protocol.json is what the wire types
@@ -58,7 +58,7 @@ fn enums_marked_open_read_unknown_values_as_unknown() {
     let unseen = || json!("from_a_newer_daemon");
     let unseen_tag = || json!({ "type": "from_a_newer_daemon" });
     let unseen_kind = || json!({ "kind": "from_a_newer_daemon" });
-    let cases: [(&str, bool); 59] = [
+    let cases: [(&str, bool); 60] = [
         (
             "SessionMcpResourceContent",
             reads_as(unseen_tag(), SessionMcpResourceContent::Unknown),
@@ -184,6 +184,10 @@ fn enums_marked_open_read_unknown_values_as_unknown() {
         ("ValueSource", reads_as(unseen(), ValueSource::Unknown)),
         ("ConfigLayer", reads_as(unseen(), ConfigLayer::Unknown)),
         ("PromptAuthor", reads_as(unseen(), PromptAuthor::Unknown)),
+        (
+            "WorktreeVerdict",
+            reads_as(unseen_kind(), WorktreeVerdict::Unknown),
+        ),
     ];
 
     let document = super::document();

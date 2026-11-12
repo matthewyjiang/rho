@@ -36,12 +36,13 @@ use crate::{
         SessionObserve, SessionObserveParams, SessionProcessesParams, SessionProcessesResponse,
         SessionPromptParams, SessionPromptResponse, SessionRenameParams, SessionRenameResponse,
         SessionSteerParams, SessionSteerResponse, SessionUnsteerParams, SessionUnsteerResponse,
-        AUTH_CHOOSE_STORE, AUTH_KEY, AUTH_LIST, AUTH_LOGIN, AUTH_LOGIN_CANCEL, AUTH_LOGOUT,
-        CONFIG_GET, HELLO, SESSION_ANSWER, SESSION_ATTACH, SESSION_CANCEL, SESSION_CONFIGURE,
-        SESSION_DELETE, SESSION_DETACH, SESSION_HOLD, SESSION_INSPECT, SESSION_LIST, SESSION_MCP,
-        SESSION_MCP_CATALOG, SESSION_MCP_COMPLETE, SESSION_MCP_RESOURCE, SESSION_NEW,
-        SESSION_OBSERVE, SESSION_PROCESSES, SESSION_PROMPT, SESSION_RENAME, SESSION_STEER,
-        SESSION_UNSTEER,
+        WorktreePruneParams, WorktreePruneResponse, AUTH_CHOOSE_STORE, AUTH_KEY, AUTH_LIST,
+        AUTH_LOGIN, AUTH_LOGIN_CANCEL, AUTH_LOGOUT, CONFIG_GET, HELLO, SESSION_ANSWER,
+        SESSION_ATTACH, SESSION_CANCEL, SESSION_CONFIGURE, SESSION_DELETE, SESSION_DETACH,
+        SESSION_HOLD, SESSION_INSPECT, SESSION_LIST, SESSION_MCP, SESSION_MCP_CATALOG,
+        SESSION_MCP_COMPLETE, SESSION_MCP_RESOURCE, SESSION_NEW, SESSION_OBSERVE,
+        SESSION_PROCESSES, SESSION_PROMPT, SESSION_RENAME, SESSION_STEER, SESSION_UNSTEER,
+        WORKTREE_PRUNE,
     },
     subscription::Subscription,
     BuildId, BuildSkew, DaemonInfo, DaemonStatus, ErrorCode, FrameError, HelloResponse, Message,
@@ -326,6 +327,16 @@ pub trait Service: SettingsService + Send + Sync {
 
     /// Answers `rho/job/list`.
     fn list_jobs(&self) -> impl Future<Output = JobListResponse> + Send;
+
+    /// Handles `rho/worktree/prune`: remove the session worktrees that are
+    /// safe to remove, or with `dry_run` only say which, and report each.
+    fn prune_worktrees(
+        &self,
+        params: WorktreePruneParams,
+    ) -> impl Future<Output = Result<WorktreePruneResponse, RpcError>> + Send {
+        let _ = params;
+        unsupported(WORKTREE_PRUNE)
+    }
 
     /// Handles `rho/auth/key`: check the key with its provider and save it.
     /// The params hold a secret: never log them, nor an error that may
