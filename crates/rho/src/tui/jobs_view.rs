@@ -23,9 +23,9 @@ use ratatui::{
 };
 use rho_protocol::{
     methods::{SessionAnswer, SessionCancel, SessionNew, SessionPrompt, SessionSteer},
-    Ask, ClientEnvironment, ContentBlock, InputAnswer, InputRequest, JobId, JobKind, JobSummary,
-    PromptAuthor, SessionAnswerParams, SessionCancelParams, SessionId, SessionNewParams,
-    SessionPromptParams, SessionSetup, SessionSteerParams,
+    Ask, ClientEnvironment, ContentBlock, ErrorCode, InputAnswer, InputRequest, JobId, JobKind,
+    JobSummary, PromptAuthor, SessionAnswerParams, SessionCancelParams, SessionId,
+    SessionNewParams, SessionPromptParams, SessionSetup, SessionSteerParams,
 };
 
 use super::{
@@ -54,13 +54,10 @@ enum Mode {
     Browse,
     /// Typing the filter, which applies as it is typed.
     Filter,
-    /// Typing a message for session `session`, whose turn it steers when
-    /// one is `under_way` and whose next it starts when none is.
-    Message {
-        session: SessionId,
-        under_way: bool,
-        text: String,
-    },
+    /// Typing a message for session `session`, which steers its turn when
+    /// one is under way as the message is sent, and starts its next when
+    /// none is.
+    Message { session: SessionId, text: String },
     /// Typing the directory a new session works in.
     NewWorkspace { path: String },
     /// Typing the new session's first prompt.
@@ -274,14 +271,22 @@ impl JobsView {
     }
 
     fn begin_message(&mut self) {
-        let Some((job, session)) = self.session_of_selected() else {
+        let Some((_, session)) = self.session_of_selected() else {
             return self.say("could not message job: no session of the daemon's started it");
         };
         self.mode = Mode::Message {
             session: session.clone(),
-            under_way: job.state.in_progress(),
             text: String::new(),
         };
+    }
+
+    /// Whether `session`'s job has a turn under way, as last listed.
+    fn turn_under_way(&self, session: &SessionId) -> bool {
+        self.jobs.iter().flatten().any(|job| {
+            job.kind == JobKind::Session
+                && job.session.as_ref() == Some(session)
+                && job.state.in_progress()
+        })
     }
 
     fn begin_new_session(&mut self) {
@@ -300,21 +305,12 @@ impl JobsView {
         match std::mem::replace(&mut self.mode, Mode::Browse) {
             Mode::Browse | Mode::Filter => {}
             Mode::Message { text, .. } if text.trim().is_empty() => {}
-            Mode::Message {
-                session,
-                under_way: true,
-                text,
-            } => {
-                let params = SessionSteerParams { session, text };
-                self.send("steer the turn", |daemon| async move {
-                    daemon.request::<SessionSteer>(&params).await.map(|_| ())
+            Mode::Message { session, text } => {
+                let under_way = self.turn_under_way(&session);
+                self.send("send the message", move |daemon| {
+                    message(daemon, session, text, under_way)
                 });
             }
-            Mode::Message {
-                session,
-                under_way: false,
-                text,
-            } => self.send("send the message", |daemon| prompt(daemon, session, text)),
             Mode::NewWorkspace { path } => {
                 let workspace = PathBuf::from(path.trim());
                 if workspace.is_absolute() {
@@ -410,6 +406,8 @@ impl JobsView {
             }
             (KeyModifiers::NONE, KeyCode::Enter) => {
                 match self.session_of_selected() {
+                    // Already followed: closing the view shows it.
+                    Some((_, session)) if session == &self.followed => {}
                     Some((_, session)) => {
                         self.attach = Some(Attach {
                             session: session.clone(),
@@ -475,10 +473,12 @@ impl JobsView {
         }
         match &self.mode {
             Mode::Browse | Mode::Filter => {}
-            Mode::Message {
-                under_way, text, ..
-            } => {
-                let label = if *under_way { "Steer" } else { "Message" };
+            Mode::Message { session, text } => {
+                let label = if self.turn_under_way(session) {
+                    "Steer"
+                } else {
+                    "Message"
+                };
                 lines.push(input_line(label, text, /*typing*/ true));
             }
             Mode::NewWorkspace { path } => {
@@ -513,6 +513,37 @@ impl JobsView {
         asks.iter()
             .flat_map(|line| indented_wrapped_lines(line, 5, width, Theme::text()))
             .collect()
+    }
+}
+
+/// Hands `text` to `session`: steers its turn when one is `under_way`,
+/// else starts its next. The list that said which is up to a poll old, so
+/// a turn that ended or began since takes the message the other way.
+async fn message(
+    daemon: Arc<Daemon>,
+    session: SessionId,
+    text: String,
+    under_way: bool,
+) -> Result<(), DaemonError> {
+    let steer = |daemon: Arc<Daemon>, session: SessionId, text: String| async move {
+        let params = SessionSteerParams { session, text };
+        daemon.request::<SessionSteer>(&params).await.map(|_| ())
+    };
+    let refused_as = |error: &DaemonError, code: ErrorCode| matches!(error, DaemonError::Request(error) if error.error_code() == Some(code));
+    if under_way {
+        match steer(Arc::clone(&daemon), session.clone(), text.clone()).await {
+            Err(error) if refused_as(&error, ErrorCode::NotSteerable) => {
+                prompt(daemon, session, text).await
+            }
+            steered => steered,
+        }
+    } else {
+        match prompt(Arc::clone(&daemon), session.clone(), text.clone()).await {
+            Err(error) if refused_as(&error, ErrorCode::SessionBusy) => {
+                steer(daemon, session, text).await
+            }
+            prompted => prompted,
+        }
     }
 }
 
@@ -654,22 +685,12 @@ impl App {
         }
     }
 
-    /// Follows the session a closed `/jobs` asked to attach to, unless it
-    /// is the one followed already. Only between turns: a session switch
-    /// leaves the turn under way behind.
+    /// Follows the session a closed `/jobs` asked to attach to. Only
+    /// between turns: a session switch leaves the turn under way behind.
     pub(super) async fn attach_from_jobs_view(&mut self, terminal: &mut DefaultTerminal) {
         let Some(Attach { session }) = self.jobs_view_attach.take() else {
             return;
         };
-        let followed = self
-            .info
-            .session
-            .daemon
-            .as_ref()
-            .is_some_and(|daemon| daemon.id() == session.as_str());
-        if followed {
-            return;
-        }
         if let Err(error) = self.resume_daemon_session(session.as_str(), terminal).await {
             self.set_status(format!("could not attach session: {error:#}"));
         }
