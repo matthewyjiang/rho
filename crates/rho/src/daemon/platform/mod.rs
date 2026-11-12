@@ -28,7 +28,9 @@
 //!   listener across the restart passes them as a handoff token, which the
 //!   new run gives back to [`take_handoff`]; clients then wait in the
 //!   endpoint's backlog. One that cannot releases both and starts another
-//!   process, and [`connect_restarting`] waits for it instead.
+//!   process, and [`connect_restarting`] waits for it instead. Either way
+//!   `Listener::hold_for_restart` leaves no connection open to a client
+//!   that nothing will serve.
 
 #[cfg(unix)]
 mod unix;

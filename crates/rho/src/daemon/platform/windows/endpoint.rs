@@ -38,7 +38,8 @@ pub(in crate::daemon) fn endpoint(
 
 /// The daemon's listening pipe.
 pub(in crate::daemon) struct Listener {
-    pipe: PipeServer,
+    /// `None` once the daemon stopped listening to restart.
+    pipe: Option<PipeServer>,
 }
 
 impl Listener {
@@ -48,14 +49,25 @@ impl Listener {
     /// someone else's.
     pub(in crate::daemon) fn bind(paths: &DaemonPaths) -> io::Result<Self> {
         Ok(Self {
-            pipe: PipeServer::create(paths.socket.as_os_str())?,
+            pipe: Some(PipeServer::create(paths.socket.as_os_str())?),
         })
     }
 
     /// The next connection. Only the user who owns the daemon can open the
     /// pipe, so every connection is theirs. Cancel safe.
     pub(in crate::daemon) async fn accept(&mut self) -> io::Result<NamedPipeServer> {
-        self.pipe.accept().await
+        match &mut self.pipe {
+            Some(pipe) => pipe.accept().await,
+            None => std::future::pending().await,
+        }
+    }
+
+    /// Called once serving ended for a restart. Closes the pipe: a restart
+    /// here starts another process, which creates the pipe again, and a pipe
+    /// has no backlog to hold a client for it. An instance left waiting
+    /// would take a client's connection that nothing ever serves.
+    pub(in crate::daemon) fn hold_for_restart(&mut self) {
+        self.pipe = None;
     }
 }
 

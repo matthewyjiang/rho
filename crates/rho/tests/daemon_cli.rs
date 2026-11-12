@@ -248,6 +248,40 @@ fn an_unknown_credential_store_stops_only_a_daemon_start() {
     assert_eq!(start("fiel"), (Some(0), String::new()));
 }
 
+// Covers: `rho daemon restart` returns once a daemon answers again, however
+// the platform restarts one: in place, where a client waits in the socket's
+// backlog, or as a new process, where the old one must leave nothing a
+// client could connect to in between.
+// Owner: CLI process (daemon restart).
+#[test]
+fn restart_returns_once_a_daemon_answers_again() {
+    let sandbox = Sandbox::new();
+    let run = |args: &[&str]| {
+        sandbox
+            .rho("fixed")
+            .args(args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .unwrap()
+    };
+    let started = run(&["daemon", "start"]);
+
+    let restarted = run(&["daemon", "restart"]);
+    let status = run(&["daemon", "status"]);
+
+    assert_eq!(
+        [started, restarted, status].map(|output| (output.status.code(), stderr(&output))),
+        [
+            (Some(0), String::new()),
+            (Some(0), String::new()),
+            (Some(0), String::new())
+        ],
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
 // Covers: dropping a sandbox stops the daemon a client in it started, so a
 // test that fails, or forgets to stop it, leaves no daemon running.
 // Owner: daemon test sandbox teardown (process).

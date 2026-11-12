@@ -258,11 +258,13 @@ impl BoundDaemon {
         };
         // A stopping daemon closes its socket now, so a client that
         // connects meanwhile finds nothing listening and waits for the lock
-        // instead. A restarting one keeps it, so that client waits in the
-        // backlog for the binary it re-executes.
+        // instead. A restarting one holds it as the platform's restart
+        // needs: where the new run inherits the socket, that client waits in
+        // its backlog.
         let listener = match (&result, shutdown.ending()) {
             (Ok(()), Ending::Restart) => {
                 tracing::info!("rho daemon restarting");
+                listener.hold_for_restart();
                 Some(listener)
             }
             (_, Ending::Stop | Ending::Restart) => {

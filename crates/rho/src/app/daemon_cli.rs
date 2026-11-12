@@ -318,6 +318,10 @@ async fn run_foreground(
         upgrades.abort();
     }
     signal_task.abort();
+    // A cancelled task resolves only once its future is dropped, and with
+    // it what the daemon listens for stops on. A successor that started
+    // before then could find that still taken.
+    let _ = signal_task.await;
     match (served, shutdown.ending(), executable) {
         (Served::Restarting(restarting), Ending::Restart, Some(executable)) if drained => {
             let args = |handoff| rerun_args(unload_idle_after, handoff);
