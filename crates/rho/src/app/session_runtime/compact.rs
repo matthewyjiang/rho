@@ -70,6 +70,8 @@ impl SessionRuntime {
             self.unsaved_compaction = true;
             return Err(error.context("could not save compacted context"));
         }
+        // Follow-up starts only once the compaction is durable.
+        self.built.diagnostics.compaction_committed();
         Ok(Some(outcome))
     }
 }

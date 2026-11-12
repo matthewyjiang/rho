@@ -24,6 +24,18 @@ pub(crate) fn save_compaction(record: Option<CompactionRecord>) {
     }
 }
 
+/// Saves `record` before the caller continues. Closing a session uses this
+/// because a `spawn_blocking` task may not run before the process exits.
+pub(crate) fn save_compaction_inline(record: Option<CompactionRecord>) {
+    let Some(record) = record else {
+        return;
+    };
+    if cfg!(test) {
+        return;
+    }
+    write_compaction(record);
+}
+
 fn write_compaction(record: CompactionRecord) {
     let recorder = DEFAULT_RECORDER.get_or_init(|| {
         SqliteUsageRecorder::at_default_path()

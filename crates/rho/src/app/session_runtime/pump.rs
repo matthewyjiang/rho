@@ -8,6 +8,9 @@
 //! answers or the turn withdraws them: a cancel answers open approvals as
 //! cancelled and withdraws plan approvals and questions, and the end of the
 //! run withdraws its questions, which wait on the user rather than the run.
+//!
+//! Every run event also feeds the session's compaction follow-up (see
+//! [`crate::compaction_metrics`]) before the host sees it.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -34,6 +37,7 @@ use super::{
 };
 use crate::{
     app::subagent_host_input::{OpenChildQuestions, SubagentHostInputRequest},
+    diagnostics::RuntimeDiagnostics,
     display_transcript::DisplayTranscript,
     tools::plan_exit::{PlanExitDecision, PlanPermissionReceiver, PlanPermissionRequest},
 };
@@ -121,6 +125,9 @@ pub(super) struct PumpSources<'a> {
     /// Questions the session's subagents ask, which wait for the same
     /// person; `None` when the session runs no subagents of its own.
     pub(super) child_questions: Option<&'a mut mpsc::Receiver<SubagentHostInputRequest>>,
+    /// The session's diagnostics, whose latest compaction counts what
+    /// follows its commit.
+    pub(super) diagnostics: &'a RuntimeDiagnostics,
 }
 
 /// Background results handed to the model during one turn. Each is shown
@@ -175,6 +182,7 @@ pub(super) async fn pump(sources: PumpSources<'_>, io: &mut TurnIo) -> anyhow::R
         hooks,
         session,
         mut child_questions,
+        diagnostics,
     } = sources;
     let mut cancelled = cancel.is_cancelled();
     let mut events_open = true;
@@ -218,6 +226,7 @@ pub(super) async fn pump(sources: PumpSources<'_>, io: &mut TurnIo) -> anyhow::R
                         io.emit(SessionEvent::BoundaryApplied { transcript });
                     }
                 }
+                diagnostics.observe_run_event(&event);
                 let asked = match &event {
                     RunEvent::HostInputRequested { request } => Some((request.clone(), None)),
                     RunEvent::ToolHostInputRequested { call_id, request } => {

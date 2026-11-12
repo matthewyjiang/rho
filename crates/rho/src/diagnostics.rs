@@ -212,6 +212,48 @@ impl RuntimeDiagnostics {
         self.read().compaction_metrics.last().cloned()
     }
 
+    /// Feeds one of a session's run events to the latest compaction's
+    /// follow-up: the SDK committing an automatic compaction, the prompt size
+    /// a step's request starts from, and each proposed tool call.
+    pub(crate) fn observe_run_event(&self, event: &rho_sdk::RunEvent) {
+        match event {
+            rho_sdk::RunEvent::CompactionCompleted { .. } => self.compaction_committed(),
+            rho_sdk::RunEvent::StepStarted {
+                context_estimate, ..
+            } => self.observe_prompt_tokens(context_estimate.provider_reported_tokens()),
+            rho_sdk::RunEvent::ToolProposed { call } => self.observe_tool_call(call),
+            _ => {}
+        }
+    }
+
+    /// The SDK committed the latest compactor result; start its follow-up.
+    pub(crate) fn compaction_committed(&self) {
+        self.write().compaction_metrics.committed();
+    }
+
+    /// Feeds the latest provider-reported prompt size to the follow-up.
+    pub(crate) fn observe_prompt_tokens(&self, tokens: Option<u64>) {
+        let finished = self
+            .write()
+            .compaction_metrics
+            .observe_prompt_tokens(tokens);
+        crate::usage::save_compaction(finished);
+    }
+
+    fn observe_tool_call(&self, call: &rho_sdk::model::ToolCall) {
+        let finished = self.write().compaction_metrics.observe_tool_call(call);
+        crate::usage::save_compaction(finished);
+    }
+
+    /// Saves a follow-up that is still open, so a session that closes
+    /// mid-window keeps its partial re-read counts. The write finishes before
+    /// this returns: the usual save runs on a blocking task, which a process
+    /// exit can drop.
+    pub(crate) fn flush_unfinished_compaction(&self) {
+        let unfinished = self.write().compaction_metrics.take_unfinished();
+        crate::usage::save_compaction_inline(unfinished);
+    }
+
     pub fn update_compaction_config(&self, config: &CompactionConfig) {
         let mut state = self.write();
         state.config.auto_compact = config.auto_compact;

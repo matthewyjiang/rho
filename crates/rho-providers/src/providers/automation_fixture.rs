@@ -19,6 +19,8 @@ const COMMAND_ENV: &str = "RHO_AUTOMATION_TEST_COMMAND";
 const PATH_ENV: &str = "RHO_AUTOMATION_TEST_PATH";
 /// When set, every response reports this provider cost in USD micros.
 const COST_ENV: &str = "RHO_AUTOMATION_TEST_COST_USD_MICROS";
+/// When set, every response reports a prompt of this many input tokens.
+const PROMPT_TOKENS_ENV: &str = "RHO_AUTOMATION_TEST_PROMPT_TOKENS";
 
 pub(super) fn from_env(
     provider: &str,
@@ -31,19 +33,29 @@ pub(super) fn from_env(
         .into_string()
         .map_err(|_| format!("{MODE_ENV} must be valid UTF-8"))?;
     let mode = Mode::parse(&mode)?;
-    let cost_usd_micros = std::env::var_os(COST_ENV)
-        .map(|cost| {
-            cost.to_str()
-                .and_then(|cost| cost.parse::<u64>().ok())
-                .ok_or_else(|| format!("{COST_ENV} must be a whole number of USD micros"))
-        })
-        .transpose()?;
+    let usage = ModelUsage {
+        cost_usd_micros: whole_number_env(COST_ENV, "USD micros")?,
+        input_tokens: whole_number_env(PROMPT_TOKENS_ENV, "tokens")?,
+        ..ModelUsage::default()
+    };
     Ok(Some(std::sync::Arc::new(AutomationFixtureProvider {
         identity: ModelIdentity::new(provider, "automation-test-fixture", model),
         mode,
-        cost_usd_micros,
+        usage: (usage != ModelUsage::default()).then_some(usage),
         turn: AtomicUsize::new(0),
     })))
+}
+
+/// The whole number in the environment variable `name`, counting `unit`.
+fn whole_number_env(name: &str, unit: &str) -> Result<Option<u64>, String> {
+    std::env::var_os(name)
+        .map(|value| {
+            value
+                .to_str()
+                .and_then(|value| value.parse::<u64>().ok())
+                .ok_or_else(|| format!("{name} must be a whole number of {unit}"))
+        })
+        .transpose()
 }
 
 #[derive(Clone, Copy)]
@@ -92,7 +104,8 @@ impl Mode {
 struct AutomationFixtureProvider {
     identity: ModelIdentity,
     mode: Mode,
-    cost_usd_micros: Option<u64>,
+    /// What every response reports, when a cost or prompt size is set.
+    usage: Option<ModelUsage>,
     turn: AtomicUsize,
 }
 
@@ -205,7 +218,8 @@ impl ModelProvider for AutomationFixtureProvider {
         })
     }
 
-    /// The SDK default stream, plus one usage report when a cost is set.
+    /// The SDK default stream, plus one usage report when a cost or prompt
+    /// size is set.
     /// Deltas go through the public `send`, so unlike the default they carry
     /// observation times; fixture turns have no meaningful timing either way.
     fn send_turn_stream<'a>(
@@ -228,12 +242,8 @@ impl ModelProvider for AutomationFixtureProvider {
                     events.send(ModelEvent::OutputDelta(text.clone())).await?;
                 }
             }
-            if let Some(cost_usd_micros) = self.cost_usd_micros {
-                let usage = ModelUsage {
-                    cost_usd_micros: Some(cost_usd_micros),
-                    ..ModelUsage::default()
-                };
-                events.send(ModelEvent::Usage(usage)).await?;
+            if let Some(usage) = &self.usage {
+                events.send(ModelEvent::Usage(usage.clone())).await?;
             }
             Ok(response)
         })
