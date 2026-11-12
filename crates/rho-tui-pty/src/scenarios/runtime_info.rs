@@ -38,6 +38,17 @@ pub(super) const RUNTIME_INFO_STEPS: &[Step] = &[
         text: "Permissions",
         timeout: SETTLE,
     },
+    // The external-runtime probes and the daemon's Compaction section fill
+    // in after the overlay opens and grow it, which moves the rows the
+    // selection below aims at: wait for both before measuring.
+    Step::WaitTextGone {
+        text: "checking…",
+        timeout: SETTLE,
+    },
+    Step::WaitText {
+        text: "Compaction",
+        timeout: SETTLE,
+    },
     Step::Custom(assert_info_overlay_is_single_pane),
     Step::Custom(copy_and_select_info),
     Step::Resize { rows: 44, cols: 30 },
