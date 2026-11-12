@@ -89,6 +89,12 @@ async fn run_inner(startup: Startup<'_>) -> anyhow::Result<()> {
         reasoning_source,
         added_dirs,
     } = startup;
+    // Name the workspace as the daemon does, canonicalized, so `--resume`
+    // and `--continue` look in the directory the daemon saves its sessions
+    // in. A short (8.3) Windows path otherwise names another workspace, and
+    // `--resume` falls back to the all-workspace index, which can miss a
+    // session whose turn the daemon is finishing (#1915).
+    let cwd = crate::paths::canonicalize(&cwd).unwrap_or(cwd);
     let startup_session = StartupSession::from_cli(cli, &cwd)?;
     // Before the daemon builds the session's options from the cache.
     #[cfg(debug_assertions)]

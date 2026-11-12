@@ -18,19 +18,11 @@ use super::{
     App, StatusSource, StreamUi, TuiBootstrap, UsageUi,
 };
 
-#[cfg(debug_assertions)]
-use super::smoke_injection;
-
 impl App {
     pub(super) fn new(
         info: TuiBootstrap,
         program_status_support: super::program_status::ProgramStatusSupport,
     ) -> Self {
-        // Matrix mode is debug-only (matrix_enabled is always false in release).
-        #[cfg(debug_assertions)]
-        if smoke_injection::matrix_enabled() {
-            smoke_injection::seed_matrix_model_cache();
-        }
         Self::new_with_credentials(info, Arc::new(AppCredentialStore), program_status_support)
     }
 
