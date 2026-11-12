@@ -142,12 +142,13 @@ pub(crate) fn upgrade_2x(
         already_set,
         secrets_error,
     };
-    // Before `config.toml`, so a note is left whenever the upgrade is done.
-    // A note that cannot be written costs only the TUI's copy of the notice.
+    write(config_path, &agent.text())?;
+    // After `config.toml`, so the note tells only of an upgrade that was
+    // done. A note that cannot be written costs only the TUI's copy of the
+    // notice.
     if let Err(error) = super::upgrade_2x_note::leave(rho_dir, config_path, &upgraded) {
         tracing::warn!("could not leave the config upgrade note: {error:#}");
     }
-    write(config_path, &agent.text())?;
     Ok(Some(upgraded))
 }
 

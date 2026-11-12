@@ -77,7 +77,8 @@ impl App {
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<Option<ExitReceipt>> {
         self.show_taken_daemon_views(terminal).await?;
-        // After a resumed conversation, so the note is the newest entry.
+        // After the replay the attach already delivered, so the note follows
+        // a resumed conversation rather than opening it.
         if let Some(note) = self.info.services.config_upgrade_note.take() {
             self.insert_entry(&super::Entry::Notice(note));
         }

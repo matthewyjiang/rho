@@ -6,6 +6,10 @@
 //! the rho home, and the next TUI to start takes it and shows it in its
 //! transcript. Nothing else reads the note, so it reaches no session or
 //! model.
+//!
+//! The TUI removes the note before its first frame. A TUI that then quits
+//! before the note is drawn, or whose transcript is reset by a session
+//! switch or a daemon replay, does not show it again: once beats every start.
 
 use std::path::Path;
 
@@ -22,10 +26,19 @@ const NOTE_FILE: &str = "config-2x-upgrade-note.txt";
 
 const UPGRADE_GUIDE: &str = "https://matthewyjiang.github.io/rho/upgrading-to-3#configuration";
 
-/// Leaves the note on `upgraded` for the next TUI, replacing one no TUI took.
+/// Leaves the note on `upgraded` for the next TUI, after any note no TUI
+/// took yet: an earlier upgrade's note names the backup of the full 2.x file.
 pub(super) fn leave(rho_dir: &Path, config_path: &Path, upgraded: &Upgraded) -> anyhow::Result<()> {
     let path = rho_dir.join(NOTE_FILE);
-    write_bytes_atomically(&path, text(config_path, upgraded).as_bytes())
+    let mut note = match std::fs::read_to_string(&path) {
+        Ok(earlier) => earlier + "\n\n",
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => {
+            return Err(error).with_context(|| format!("failed to read {}", path.display()))
+        }
+    };
+    note.push_str(&text(config_path, upgraded));
+    write_bytes_atomically(&path, note.as_bytes())
         .with_context(|| format!("failed to write {}", path.display()))
 }
 
@@ -90,7 +103,7 @@ fn text(config_path: &Path, upgraded: &Upgraded) -> String {
         crate::paths::display(config_path)
     )];
     if renamed {
-        lines.push("- settings rho 3 renamed now use their new names in config.toml".to_owned());
+        lines.push("- some settings now use their rho 3 names or values in config.toml".to_owned());
     }
     for (file, keys) in [("tui.toml", tui_local), ("clients/tui.toml", client_tui)] {
         if !keys.is_empty() {
