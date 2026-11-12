@@ -11,6 +11,16 @@ use rho_sdk::{
 use serde_json::json;
 
 use super::{diagnostic_notice, finished, turn_error, withheld_diagnostic};
+use crate::config::Config;
+
+/// A session config whose model runs on `provider` with `auth`.
+fn model(provider: &str, auth: &str) -> Config {
+    Config {
+        provider: provider.into(),
+        auth: auth.into(),
+        ..Config::default()
+    }
+}
 
 /// The outcome of a scripted run whose one model step is `response`,
 /// limited to `max_steps` steps when given.
@@ -102,7 +112,7 @@ fn a_failure_is_classified_by_type_and_hides_authentication_text() {
         (
             provider(rho_sdk::ProviderErrorKind::Other),
             TurnErrorKind::Provider,
-            "provider failed: token fixture-secret rejected",
+            "xai: provider failed: token fixture-secret rejected",
         ),
         (
             tool,
@@ -122,7 +132,7 @@ fn a_failure_is_classified_by_type_and_hides_authentication_text() {
     ];
     for (error, kind, message) in cases {
         assert_eq!(
-            turn_error(&error, "xai", "xai-oauth"),
+            turn_error(&error, &model("xai", "xai-oauth")),
             TurnError {
                 kind,
                 message: message.into(),
@@ -211,7 +221,7 @@ fn an_authentication_failure_names_the_way_to_log_in() {
         ),
     ] {
         assert_eq!(
-            turn_error(&error, provider, auth).message,
+            turn_error(&error, &model(provider, auth)).message,
             expected,
             "{provider}/{auth}"
         );

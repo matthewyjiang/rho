@@ -585,7 +585,7 @@ async fn a_turn_tells_clients_how_it_ended() {
             TurnOutcome::Failed {
                 error: TurnError {
                     kind: TurnErrorKind::Provider,
-                    message: "provider failed: deterministic provider failure".into(),
+                    message: "xai: provider failed: deterministic provider failure".into(),
                 },
             },
             JobState::Failed,

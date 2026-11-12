@@ -27,6 +27,10 @@ pub struct TransportError {
     /// The status of a response the client turned into an error, such as
     /// `error_for_status` does.
     status: Option<http::StatusCode>,
+    /// The OS error at the root of the failure, such as a refused
+    /// connection or a failed name lookup. Unlike `message`, it never holds
+    /// the request URL.
+    os_cause: Option<String>,
 }
 
 impl TransportError {
@@ -48,6 +52,11 @@ impl TransportError {
         self.status
     }
 
+    /// Why the OS failed the request, when an OS error is at its root.
+    pub(crate) fn os_cause(&self) -> Option<&str> {
+        self.os_cause.as_deref()
+    }
+
     pub(crate) fn from_reqwest(error: reqwest::Error) -> Self {
         let kind = if error.is_timeout() {
             TransportFailureKind::Timeout
@@ -58,10 +67,16 @@ impl TransportError {
         } else {
             TransportFailureKind::Other
         };
+        let os_cause =
+            std::iter::successors(std::error::Error::source(&error), |cause| cause.source())
+                .filter_map(|cause| cause.downcast_ref::<std::io::Error>())
+                .last()
+                .map(ToString::to_string);
         Self {
             kind,
             message: error.to_string(),
             status: error.status(),
+            os_cause,
         }
     }
 }

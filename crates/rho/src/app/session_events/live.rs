@@ -121,6 +121,9 @@ pub(crate) struct LiveEvents {
     /// The message the latest chunk belongs to, while later chunks of its
     /// kind still continue it.
     message: Option<OpenMessage>,
+    /// Whether the provider attempt under way streamed text clients were
+    /// sent. A reset discards a response only when its attempt showed one.
+    attempt_streamed: bool,
     /// The content of each steer the daemon recorded that has not applied,
     /// by the id the run accepted it under. The run's end clears it.
     steers: HashMap<SteeringId, Vec<ContentBlock>>,
@@ -202,6 +205,7 @@ impl LiveEvents {
             replayed_rows: 0,
             compaction: None,
             message: None,
+            attempt_streamed: false,
             steers: HashMap::new(),
             applied_unseen: HashSet::new(),
             late_steers: Vec::new(),
@@ -416,6 +420,7 @@ impl LiveEvents {
                 context_estimate, ..
             } => {
                 self.message = None;
+                self.attempt_streamed = false;
                 // A step numbers its calls from zero again, and a call the
                 // last one streamed has started by now if it ever will.
                 let unstarted = self.fail_pending();
@@ -498,9 +503,13 @@ impl LiveEvents {
                 self.proposed.clear();
                 self.presenter.step_started();
                 let discarded = self.fail_pending();
+                // An attempt that failed before streaming, as one that could
+                // not connect, has no response to discard: only the retry.
+                let streamed = std::mem::take(&mut self.attempt_streamed) || !discarded.is_empty();
                 discarded
                     .into_iter()
-                    .chain([WireEvent::ResponseDiscarded, provider_retry(reason)])
+                    .chain(streamed.then_some(WireEvent::ResponseDiscarded))
+                    .chain([provider_retry(reason)])
                     .collect()
             }
             RunEvent::ProviderRequestRetry => vec![WireEvent::ProviderRetry {
@@ -585,6 +594,7 @@ impl LiveEvents {
     /// A chunk of the open message of `kind`, or of a new message when the
     /// previous event was anything else.
     fn chunk(&mut self, kind: ChunkKind, text: &str) -> WireEvent {
+        self.attempt_streamed = true;
         let message = match &self.message {
             Some(open) if open.kind == kind => open.id.clone(),
             _ => {

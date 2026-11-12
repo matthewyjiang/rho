@@ -5,7 +5,7 @@
 use rho_protocol::{AnswerStop, TurnError, TurnErrorKind, TurnOutcome};
 use rho_sdk::{RunOutcome, StopReason};
 
-use crate::app::session_runtime::CommandRejected;
+use crate::{app::session_runtime::CommandRejected, config::Config};
 
 /// The outcome of a turn whose run finished with `outcome`.
 pub(crate) fn finished(outcome: &RunOutcome) -> TurnOutcome {
@@ -26,17 +26,29 @@ pub(crate) fn finished(outcome: &RunOutcome) -> TurnOutcome {
 }
 
 /// Why a turn that failed with `error` failed, in a session whose model
-/// runs on `provider` with `auth`: its kind, and the error with its causes.
-pub(crate) fn turn_error(error: &anyhow::Error, provider: &str, auth: &str) -> TurnError {
+/// runs as `model` selects: its kind, and the error with its causes.
+pub(crate) fn turn_error(error: &anyhow::Error, model: &Config) -> TurnError {
     let kind = failure_kind(error);
-    // The provider's text may echo credentials, so an authentication
-    // failure names only the selection and how to fix it.
-    let message = if kind == TurnErrorKind::Authentication {
-        authentication_message(provider, auth)
-    } else {
-        chain_message(error)
+    let message = match kind {
+        // The provider's text may echo credentials, so an authentication
+        // failure names only the selection and how to fix it.
+        TurnErrorKind::Authentication => authentication_message(&model.provider, &model.auth),
+        TurnErrorKind::Provider => provider_message(model, &chain_message(error)),
+        _ => chain_message(error),
     };
     TurnError { kind, message }
+}
+
+/// `message` led by the provider that failed and the API base its requests
+/// went to, the one `rho doctor` probes, so a failure such as a refused
+/// connection says which host to check. Config loading refuses a base with
+/// credentials or a query, so it shows whole.
+fn provider_message(model: &Config, message: &str) -> String {
+    let provider = &model.provider;
+    match model.resolved_provider_endpoint(provider) {
+        Some(base) => format!("{provider} at {base}: {message}"),
+        None => format!("{provider}: {message}"),
+    }
 }
 
 /// The notice that shows a failed turn's provider diagnostic: `None` when no

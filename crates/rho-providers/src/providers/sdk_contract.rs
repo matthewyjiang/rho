@@ -198,7 +198,10 @@ fn provider_error_from_transport_request(error: TransportError) -> ProviderError
         ),
         TransportFailureKind::Connect => ProviderError::new(
             ProviderErrorKind::Unavailable,
-            "provider request failed to connect",
+            match error.os_cause() {
+                Some(cause) => format!("provider request failed to connect: {cause}"),
+                None => "provider request failed to connect".into(),
+            },
             Retryability::Retryable,
         ),
         TransportFailureKind::Other => ProviderError::new(
