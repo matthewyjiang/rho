@@ -1,9 +1,10 @@
 //! The workflow hub and rail, and `/codemode`, in a daemon session.
 
-use anyhow::{ensure, Context, Result};
+use anyhow::{ensure, Result};
 
 use super::{
     config,
+    daemon_config::{close_config, open_category},
     daemon_resume::write_daemon_config,
     workflow_background::{assert_live_rail, record_ids, release_gate, setup_workflow},
     DEFAULT_SIZE, SETTLE, STARTUP, STREAM,
@@ -82,19 +83,18 @@ pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
         harness.set_phase("codemode");
         harness.submit_text("/codemode only")?;
         harness.wait_for_text("codemode: Only; applies next turn", SETTLE)?;
-        // `/codemode` reads the settings the daemon publishes once it
-        // saved them.
-        let deadline = std::time::Instant::now() + SETTLE.duration;
-        while !std::fs::read_to_string(&home.config_path)
-            .context("read the config")?
-            .contains("mode = \"only\"")
-        {
-            ensure!(
-                std::time::Instant::now() < deadline,
-                "the daemon did not save the mode"
-            );
-            harness.pump(std::time::Duration::from_millis(25));
-        }
+        // The status above is set as the write is sent; `/codemode` reads
+        // the TUI's copy of the settings, which the daemon's change
+        // notification updates once it saved them. The `/config` row's
+        // badge reads the same copy.
+        open_category(&mut harness, "tools", "Codemode")?;
+        harness.wait_for_screen("the codemode row shows Only", SETTLE, |screen| {
+            screen
+                .rows_text()
+                .iter()
+                .any(|row| row.contains("Codemode") && row.contains("Only"))
+        })?;
+        close_config(&mut harness)?;
         harness.submit_text("/codemode")?;
         harness.wait_for_text("codemode only: tools use codemode", SETTLE)?;
         let code = harness.quit_with_exit_command()?;
