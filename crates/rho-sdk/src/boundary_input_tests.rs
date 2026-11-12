@@ -100,7 +100,7 @@ async fn completion_checkpoint_incorporates_input_before_committing() {
     let expected = inputs.map(|text| {
         vec![
             summary.clone(),
-            Message::BoundaryInput(vec![ContentBlock::Text(text.into())]),
+            Message::BoundaryInput(vec![ContentBlock::Text(text.into())].into()),
         ]
     });
     assert_eq!(compacted, expected);
@@ -236,7 +236,7 @@ async fn accepted_input_survives_event_consumer_loss() {
     );
     let expected = vec![
         Message::user_text("work"),
-        Message::BoundaryInput(vec![ContentBlock::Text("unseen failure".into())]),
+        Message::BoundaryInput(vec![ContentBlock::Text("unseen failure".into())].into()),
     ];
     assert_eq!(core.committed_history(), expected);
     assert_eq!(core.revision(), Revision::INITIAL.checked_next().unwrap());

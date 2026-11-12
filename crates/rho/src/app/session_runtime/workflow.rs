@@ -194,7 +194,7 @@ impl SessionRuntime {
             StartedBy::Person { display } => self
                 .append_context(
                     model,
-                    Message::User(display.blocks().to_vec()),
+                    Message::User(display.blocks().into()),
                     [Message::assistant_text(notice)],
                 )
                 .map(|(inserted, [reply])| (Some(inserted), reply)),

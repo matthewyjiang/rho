@@ -65,7 +65,7 @@ fn blocks_auto_continuation(item: &Value) -> bool {
 }
 
 pub(super) fn steer_items(content: &[ContentBlock]) -> Result<Vec<Value>, ModelError> {
-    lower_codex_history_message(&Message::User(content.to_vec()), &mut Vec::new(), None)
+    lower_codex_history_message(&Message::User(content.into()), &mut Vec::new(), None)
 }
 
 pub(super) fn steer_frame(

@@ -358,8 +358,8 @@ async fn codex_trigger_compaction_streams_item_and_retains_users() {
         messages[..3],
         [
             Message::System("system".into()),
-            Message::User(vec![ContentBlock::Text("first ask".into())]),
-            Message::User(vec![ContentBlock::Text("second ask".into())]),
+            Message::User(vec![ContentBlock::Text("first ask".into())].into()),
+            Message::User(vec![ContentBlock::Text("second ask".into())].into()),
         ]
     );
     let [.., Message::EnrichedAssistant(marker)] = messages else {

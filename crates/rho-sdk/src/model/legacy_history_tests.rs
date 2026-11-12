@@ -76,10 +76,13 @@ fn legacy_encodings_load_as_typed_history() {
         (
             "ordinary user text",
             json!({"User": [{"Text": "please compact"}, {"Text": "summary"}]}),
-            Message::User(vec![
-                ContentBlock::Text("please compact".into()),
-                ContentBlock::Text("summary".into()),
-            ]),
+            Message::User(
+                vec![
+                    ContentBlock::Text("please compact".into()),
+                    ContentBlock::Text("summary".into()),
+                ]
+                .into(),
+            ),
         ),
         (
             "async-call marker",

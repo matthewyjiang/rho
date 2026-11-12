@@ -73,7 +73,7 @@ async fn breakdown_parts_sum_to_session_estimate_and_attribute_tool_results() {
     );
 
     for message in [
-        Message::ToolResult(ToolResult::succeeded("unknown-call", "orphan")),
+        Message::ToolResult(ToolResult::succeeded("unknown-call", "orphan").into()),
         Message::compaction_summary(CompactionTrigger::Manual, "earlier work"),
     ] {
         session.append_message(message).unwrap();

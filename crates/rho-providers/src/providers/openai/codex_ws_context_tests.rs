@@ -74,11 +74,10 @@ async fn tool_loop_projects_fresh_context_without_replaying_history() {
             panic!("expected websocket tool response");
         };
         let ModelResponse::Assistant(blocks) = response.response;
-        history.push(ModelMessage::Assistant(blocks));
-        history.push(ModelMessage::ToolResult(ToolResult::succeeded(
-            format!("call_{index}"),
-            format!("contents {index}"),
-        )));
+        history.push(ModelMessage::Assistant(blocks.into()));
+        history.push(ModelMessage::ToolResult(
+            (ToolResult::succeeded(format!("call_{index}"), format!("contents {index}"))).into(),
+        ));
     }
     let frames = immediate(server).await.unwrap();
     assert_eq!(frames, expected_frames);

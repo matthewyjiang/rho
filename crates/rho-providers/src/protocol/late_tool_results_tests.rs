@@ -7,11 +7,14 @@ use super::{normalize_late_tool_results, LATE_PLACEHOLDER};
 use crate::model::{ContentBlock, ImageContent, Message, ModelIdentity, ToolCall, ToolResult};
 
 fn call(id: &str, name: &str) -> Message {
-    Message::Assistant(vec![ContentBlock::ToolCall(ToolCall::new(
-        id.into(),
-        name.into(),
-        json!({}),
-    ))])
+    Message::Assistant(
+        (vec![ContentBlock::ToolCall(ToolCall::new(
+            id.into(),
+            name.into(),
+            json!({}),
+        ))])
+        .into(),
+    )
 }
 
 fn calls(entries: &[(&str, &str)]) -> Message {
@@ -26,11 +29,11 @@ fn calls(entries: &[(&str, &str)]) -> Message {
 }
 
 fn result(id: &str, content: &str) -> Message {
-    Message::ToolResult(ToolResult::succeeded(id, content))
+    Message::ToolResult(ToolResult::succeeded(id, content).into())
 }
 
 fn placeholder(id: &str) -> Message {
-    Message::ToolResult(ToolResult::succeeded(id, LATE_PLACEHOLDER))
+    Message::ToolResult(ToolResult::succeeded(id, LATE_PLACEHOLDER).into())
 }
 
 fn late_user(id: &str, name: &str, content: &str) -> Message {
@@ -144,10 +147,11 @@ fn tool_result_images_allow_late_results_in_every_provider_protocol() {
 
     let with_image = |id: &str, content: &str, data: &str| {
         Message::ToolResult(
-            ToolResult::succeeded(id, content).with_images(vec![ImageContent {
+            (ToolResult::succeeded(id, content).with_images(vec![ImageContent {
                 data: data.into(),
                 mime_type: "image/png".into(),
-            }]),
+            }]))
+            .into(),
         )
     };
     let label = |id: &str| {
@@ -157,13 +161,16 @@ fn tool_result_images_allow_late_results_in_every_provider_protocol() {
         )
     };
     let images = |id: &str, data: &str| {
-        Message::User(vec![
-            ContentBlock::Text(label(id)),
-            ContentBlock::Image(ImageContent {
-                data: data.into(),
-                mime_type: "image/png".into(),
-            }),
-        ])
+        Message::User(
+            (vec![
+                ContentBlock::Text(label(id)),
+                ContentBlock::Image(ImageContent {
+                    data: data.into(),
+                    mime_type: "image/png".into(),
+                }),
+            ])
+            .into(),
+        )
     };
     for delivered in [false, true] {
         let mut history = vec![

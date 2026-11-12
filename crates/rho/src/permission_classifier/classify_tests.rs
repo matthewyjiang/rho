@@ -36,12 +36,15 @@ fn source(name: &str) -> CapabilitySource {
 
 fn sample_history() -> Vec<Message> {
     vec![
-        Message::User(vec![ContentBlock::Text("please update config.toml".into())]),
-        Message::Assistant(vec![ContentBlock::ToolCall(ToolCall::new(
-            "call-1".into(),
-            "write".into(),
-            serde_json::json!({"path": "config.toml", "content": "x=1"}),
-        ))]),
+        Message::User(vec![ContentBlock::Text("please update config.toml".into())].into()),
+        Message::Assistant(
+            (vec![ContentBlock::ToolCall(ToolCall::new(
+                "call-1".into(),
+                "write".into(),
+                serde_json::json!({"path": "config.toml", "content": "x=1"}),
+            ))])
+            .into(),
+        ),
     ]
 }
 
@@ -349,17 +352,17 @@ fn request_state(request: &rho_sdk::provider::RecordedModelRequest) -> String {
 async fn screen_on_another_model_reads_a_transcript_fitted_to_its_budget() {
     let mut history = sample_history();
     for index in 0..200 {
-        history.push(Message::Assistant(vec![ContentBlock::ToolCall(
-            ToolCall::new(
+        history.push(Message::Assistant(
+            (vec![ContentBlock::ToolCall(ToolCall::new(
                 format!("old-{index}"),
                 "bash".into(),
                 serde_json::json!({"command": "x".repeat(500)}),
-            ),
-        )]));
-        history.push(Message::ToolResult(ToolResult::succeeded(
-            format!("old-{index}"),
-            "done",
-        )));
+            ))])
+            .into(),
+        ));
+        history.push(Message::ToolResult(
+            (ToolResult::succeeded(format!("old-{index}"), "done")).into(),
+        ));
     }
     let pending = pending_write();
     let screen_budget = TranscriptBudget::Tokens(10_500);
@@ -626,7 +629,7 @@ async fn stages_share_the_cache_prefix_and_differ_in_reasoning() {
         let [Message::System(system), Message::User(blocks)] = request.messages.as_slice() else {
             panic!("unexpected messages {:?}", request.messages);
         };
-        let [ContentBlock::Text(state), ContentBlock::Text(questions)] = blocks.as_slice() else {
+        let [ContentBlock::Text(state), ContentBlock::Text(questions)] = blocks.as_ref() else {
             panic!("unexpected blocks {blocks:?}");
         };
         (

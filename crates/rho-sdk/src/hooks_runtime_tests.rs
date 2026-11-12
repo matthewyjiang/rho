@@ -178,7 +178,7 @@ async fn tool_result_content(harness: &Harness) -> String {
         .history()
         .into_iter()
         .find_map(|message| match message {
-            crate::model::Message::ToolResult(result) => Some(result.content),
+            crate::model::Message::ToolResult(result) => Some(result.content.clone()),
             _ => None,
         })
         .expect("the run recorded a tool result")

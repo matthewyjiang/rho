@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use pretty_assertions::assert_eq;
 use serde_json::json;
 
@@ -64,7 +66,7 @@ fn request_maps_system_tools_results_and_thought_signatures() {
             ],
             ..AssistantMessage::default()
         }),
-        Message::ToolResult(ToolResult::succeeded("call-1", "/tmp")),
+        Message::ToolResult((ToolResult::succeeded("call-1", "/tmp")).into()),
     ];
     let tools = [ToolSpec {
         name: "bash".into(),
@@ -121,20 +123,23 @@ fn parallel_tool_results_share_one_user_content() {
     let identity = ModelIdentity::new("google", "gemini-generate-content", "gemini-3.5-flash");
     let messages = vec![
         Message::user_text("run both"),
-        Message::Assistant(vec![
-            ContentBlock::ToolCall(ToolCall::new(
-                "call-1".into(),
-                "bash".into(),
-                json!({"command":"pwd"}),
-            )),
-            ContentBlock::ToolCall(ToolCall::new(
-                "call-2".into(),
-                "read_file".into(),
-                json!({"path":"README.md"}),
-            )),
-        ]),
-        Message::ToolResult(ToolResult::succeeded("call-1", "/tmp")),
-        Message::ToolResult(ToolResult::succeeded("call-2", "readme")),
+        Message::Assistant(
+            (vec![
+                ContentBlock::ToolCall(ToolCall::new(
+                    "call-1".into(),
+                    "bash".into(),
+                    json!({"command":"pwd"}),
+                )),
+                ContentBlock::ToolCall(ToolCall::new(
+                    "call-2".into(),
+                    "read_file".into(),
+                    json!({"path":"README.md"}),
+                )),
+            ])
+            .into(),
+        ),
+        Message::ToolResult((ToolResult::succeeded("call-1", "/tmp")).into()),
+        Message::ToolResult(ToolResult::succeeded("call-2", "readme").into()),
     ];
 
     let body = build_request(&messages, &[], &identity, None).unwrap();
@@ -222,7 +227,7 @@ fn missing_function_call_ids_stay_local_and_replay_as_absent() {
             provider_context,
             ..AssistantMessage::default()
         }),
-        Message::ToolResult(ToolResult::succeeded(first_call_id, "pong")),
+        Message::ToolResult(ToolResult::succeeded(first_call_id, "pong").into()),
     ];
     let body = build_request(&messages, &[], &identity, None).unwrap();
 
@@ -271,7 +276,7 @@ fn aborted_assistant_replays_thought_signatures_before_abort_marker() {
     let identity = ModelIdentity::new("google", "gemini-generate-content", "gemini-3.1-flash-lite");
     let messages = vec![
         Message::user_text("run it"),
-        Message::AbortedAssistant(Box::new(crate::model::AbortedAssistant {
+        Message::AbortedAssistant(Arc::new(crate::model::AbortedAssistant {
             // Real cancellation stores text-only content and keeps tool calls separately.
             content: Vec::new(),
             provenance: Some(identity.clone()),
@@ -289,7 +294,7 @@ fn aborted_assistant_replays_thought_signatures_before_abort_marker() {
             }],
             ..crate::model::AbortedAssistant::default()
         })),
-        Message::ToolResult(ToolResult::succeeded("call-1", "/tmp")),
+        Message::ToolResult((ToolResult::succeeded("call-1", "/tmp")).into()),
     ];
 
     let body = build_request(&messages, &[], &identity, None).unwrap();
@@ -316,7 +321,7 @@ fn aborted_parallel_tool_calls_keep_stream_order_not_id_order() {
     let identity = ModelIdentity::new("google", "gemini-generate-content", "gemini-3.1-flash-lite");
     let messages = vec![
         Message::user_text("run both"),
-        Message::AbortedAssistant(Box::new(crate::model::AbortedAssistant {
+        Message::AbortedAssistant(Arc::new(crate::model::AbortedAssistant {
             content: Vec::new(),
             provenance: Some(identity.clone()),
             provider_context: vec![
@@ -371,7 +376,7 @@ fn foreign_aborted_tool_calls_are_not_promoted_to_gemini_function_calls() {
     let target = ModelIdentity::new("google", "gemini-generate-content", "gemini-3.1-flash-lite");
     let messages = vec![
         Message::user_text("continue"),
-        Message::AbortedAssistant(Box::new(crate::model::AbortedAssistant {
+        Message::AbortedAssistant(Arc::new(crate::model::AbortedAssistant {
             content: vec![ContentBlock::Text("partial".into())],
             provenance: Some(ModelIdentity::new("openai", "openai-responses", "gpt-test")),
             tool_calls: vec![crate::model::PartialToolCall {
@@ -402,7 +407,7 @@ fn aborted_mixed_tool_and_text_keeps_signature_targets() {
     let identity = ModelIdentity::new("google", "gemini-generate-content", "gemini-3.1-flash-lite");
     let messages = vec![
         Message::user_text("run"),
-        Message::AbortedAssistant(Box::new(crate::model::AbortedAssistant {
+        Message::AbortedAssistant(Arc::new(crate::model::AbortedAssistant {
             // Cancellation capture now stores tool calls in content at stream positions.
             content: vec![
                 ContentBlock::ToolCall(ToolCall::new(
@@ -449,7 +454,7 @@ fn aborted_signed_text_keeps_nonzero_signature_position() {
     let identity = ModelIdentity::new("google", "gemini-generate-content", "gemini-3.1-flash-lite");
     let messages = vec![
         Message::user_text("hi"),
-        Message::AbortedAssistant(Box::new(crate::model::AbortedAssistant {
+        Message::AbortedAssistant(Arc::new(crate::model::AbortedAssistant {
             content: vec![
                 ContentBlock::Text("hello".into()),
                 ContentBlock::Text(" world".into()),

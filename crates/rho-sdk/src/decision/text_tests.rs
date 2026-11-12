@@ -271,10 +271,13 @@ async fn text_model_asks_one_turn_and_reads_the_answer() {
         (
             &vec![
                 Message::System(system_prompt("Shared rules.")),
-                Message::User(vec![
-                    ContentBlock::Text("the state".into()),
-                    ContentBlock::Text(questions_block(&questions, AnswerStyle::Direct)),
-                ]),
+                Message::User(
+                    vec![
+                        ContentBlock::Text("the state".into()),
+                        ContentBlock::Text(questions_block(&questions, AnswerStyle::Direct)),
+                    ]
+                    .into()
+                ),
             ],
             true
         )

@@ -1,6 +1,6 @@
 mod support;
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::Arc};
 
 use pretty_assertions::assert_eq;
 use rho_sdk::{
@@ -80,8 +80,8 @@ fn content_list(rng: &mut DeterministicRng) -> Vec<ContentBlock> {
 fn message(rng: &mut DeterministicRng) -> Message {
     match rng.usize(6) {
         0 => Message::System(rng.string(80)),
-        1 => Message::User(content_list(rng)),
-        2 => Message::Assistant(content_list(rng)),
+        1 => Message::User(content_list(rng).into()),
+        2 => Message::Assistant(content_list(rng).into()),
         3 => Message::assistant(AssistantMessage {
             content: content_list(rng),
             provenance: Some(model_identity(rng)),
@@ -94,7 +94,7 @@ fn message(rng: &mut DeterministicRng) -> Message {
                 replay: rho_sdk::model::ReplayScope::ExactModel,
             }],
         }),
-        4 => Message::AbortedAssistant(Box::new(AbortedAssistant {
+        4 => Message::AbortedAssistant(Arc::new(AbortedAssistant {
             content: content_list(rng),
             reasoning: rng.string(32),
             provenance: Some(model_identity(rng)),
@@ -110,15 +110,18 @@ fn message(rng: &mut DeterministicRng) -> Message {
                 ..ModelUsage::default()
             },
         })),
-        _ => Message::ToolResult(ToolResult::new(
-            rng.string(16),
-            if rng.usize(2) == 0 {
-                ToolResultStatus::Succeeded
-            } else {
-                ToolResultStatus::Failed
-            },
-            rng.string(80),
-        )),
+        _ => Message::ToolResult(
+            (ToolResult::new(
+                rng.string(16),
+                if rng.usize(2) == 0 {
+                    ToolResultStatus::Succeeded
+                } else {
+                    ToolResultStatus::Failed
+                },
+                rng.string(80),
+            ))
+            .into(),
+        ),
     }
 }
 

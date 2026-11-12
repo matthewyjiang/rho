@@ -208,9 +208,9 @@ async fn tool_images_ride_on_committed_results_and_survive_resume() {
         let snapshot = SessionSnapshot::new(
             Default::default(),
             rho_sdk::Revision::INITIAL,
-            vec![Message::Assistant(vec![ContentBlock::ToolCall(call(
-                "old-dangling",
-            ))])],
+            vec![Message::Assistant(
+                vec![ContentBlock::ToolCall(call("old-dangling"))].into(),
+            )],
             identity(),
             Default::default(),
         );
@@ -245,7 +245,7 @@ async fn tool_images_ride_on_committed_results_and_survive_resume() {
             let mut results = last
                 .iter()
                 .filter_map(|message| match message {
-                    Message::ToolResult(result) => Some(result.clone()),
+                    Message::ToolResult(result) => Some((**result).clone()),
                     _ => None,
                 })
                 .collect::<Vec<_>>();
@@ -376,10 +376,12 @@ async fn host_started_tool_commits_paired_image_before_first_provider_request() 
     assert_eq!(
         provider.recorded_requests()[0].messages,
         vec![
-            Message::User(vec![ContentBlock::Text("capture".into())]),
-            Message::Assistant(vec![ContentBlock::ToolCall(call("first"))]),
+            Message::User(vec![ContentBlock::Text("capture".into())].into()),
+            Message::Assistant(vec![ContentBlock::ToolCall(call("first"))].into()),
             Message::ToolResult(
-                ToolResult::succeeded("first", "captured").with_images(vec![image()])
+                ToolResult::succeeded("first", "captured")
+                    .with_images(vec![image()])
+                    .into()
             ),
         ]
     );

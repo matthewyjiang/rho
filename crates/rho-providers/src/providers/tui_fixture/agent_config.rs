@@ -119,7 +119,7 @@ fn verify(
         let [Message::User(content)] = notices else {
             anyhow::bail!("expected one appended catalog notice, got {notices:?}");
         };
-        let [ContentBlock::Text(text)] = content.as_slice() else {
+        let [ContentBlock::Text(text)] = content.as_ref() else {
             anyhow::bail!("catalog notice must contain only its text payload");
         };
         let payload = text

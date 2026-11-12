@@ -146,7 +146,7 @@ async fn run_tool(fixture: &Fixture, trust: ProjectTrust, tool: &'static str) ->
         .history()
         .into_iter()
         .find_map(|message| match message {
-            rho_sdk::model::Message::ToolResult(result) => Some(result.content),
+            rho_sdk::model::Message::ToolResult(result) => Some(result.content.clone()),
             _ => None,
         })
         .expect("a tool result was recorded");

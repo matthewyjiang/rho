@@ -226,7 +226,7 @@ fn tool_results_in(messages: &[Message]) -> Vec<ToolResult> {
     messages
         .iter()
         .filter_map(|message| match message {
-            Message::ToolResult(result) => Some(result.clone()),
+            Message::ToolResult(result) => Some((**result).clone()),
             _ => None,
         })
         .collect()
@@ -382,10 +382,9 @@ async fn pending_job_then_end_turn_continues_with_result() {
     assert_eq!(requests.len(), 3);
     assert_eq!(
         requests[2].last(),
-        Some(&Message::ToolResult(ToolResult::succeeded(
-            "call-a",
-            "slow done"
-        )))
+        Some(&Message::ToolResult(
+            ToolResult::succeeded("call-a", "slow done").into()
+        ))
     );
 }
 
@@ -683,7 +682,7 @@ async fn cancel_while_awaiting_interrupts_jobs() {
             .history()
             .into_iter()
             .filter_map(|message| match message {
-                Message::ToolResult(result) => Some(result),
+                Message::ToolResult(result) => Some(Arc::unwrap_or_clone(result)),
                 _ => None,
             })
             .collect::<Vec<_>>(),
@@ -780,7 +779,7 @@ async fn cancel_while_async_tool_awaits_approval_pairs_the_batch() {
         .history()
         .into_iter()
         .filter_map(|message| match message {
-            Message::ToolResult(result) => Some(result),
+            Message::ToolResult(result) => Some(Arc::unwrap_or_clone(result)),
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -918,7 +917,7 @@ async fn max_steps_with_pending_job_interrupts_before_commit() {
             .history()
             .into_iter()
             .filter_map(|message| match message {
-                Message::ToolResult(result) => Some(result),
+                Message::ToolResult(result) => Some(Arc::unwrap_or_clone(result)),
                 _ => None,
             })
             .collect::<Vec<_>>(),
@@ -1094,7 +1093,7 @@ async fn steer_during_await_jobs_applies_at_boundary() {
     assert!(
         last.iter().any(|message| matches!(
             message,
-            Message::User(content) if content == &vec![ContentBlock::Text("nudge".into())]
+            Message::User(content) if **content == [ContentBlock::Text("nudge".into())]
         )),
         "steering missing from last request: {last:?}"
     );
@@ -1317,6 +1316,6 @@ async fn overflow_with_pending_job_compacts_prefix_and_retries() {
     assert_eq!(requests[4].messages[1..], history[1..4]);
     assert_eq!(
         history[3],
-        Message::ToolResult(ToolResult::succeeded("call-a", "slow done"))
+        Message::ToolResult(ToolResult::succeeded("call-a", "slow done").into())
     );
 }

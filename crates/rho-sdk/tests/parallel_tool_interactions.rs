@@ -757,7 +757,7 @@ async fn steering_during_parallel_batch_applies_after_all_results_close() {
             matches!(
                 message,
                 Message::User(content)
-                    if matches!(content.as_slice(), [ContentBlock::Text(text)] if text == "steered")
+                    if matches!(content.as_ref(), [ContentBlock::Text(text)] if text == "steered")
             )
         })
         .unwrap();

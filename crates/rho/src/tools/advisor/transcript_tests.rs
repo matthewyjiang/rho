@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use pretty_assertions::assert_eq;
 use rho_sdk::model::{
     AbortedAssistant, AssistantMessage, ContentBlock, ImageContent, Message, PartialToolCall,
@@ -30,11 +32,14 @@ fn renders_every_role_in_session_order() {
                 json!({ "command": "cargo test" }),
             )),
         ])),
-        Message::ToolResult(ToolResult::failed("call-1", "1 failed")),
-        Message::Assistant(vec![ContentBlock::Image(ImageContent {
-            data: "AAAA".into(),
-            mime_type: "image/png".into(),
-        })]),
+        Message::ToolResult(ToolResult::failed("call-1", "1 failed").into()),
+        Message::Assistant(
+            (vec![ContentBlock::Image(ImageContent {
+                data: "AAAA".into(),
+                mime_type: "image/png".into(),
+            })])
+            .into(),
+        ),
     ];
 
     let rendered = render_transcript(Some("You are a coding agent."), &messages, generous());
@@ -104,7 +109,7 @@ fn keeps_empty_object_args_on_the_call_line() {
                 json!(""),
             )),
         ])),
-        Message::AbortedAssistant(Box::new(AbortedAssistant {
+        Message::AbortedAssistant(Arc::new(AbortedAssistant {
             content: vec![ContentBlock::Text("Interrupted mid-call.".into())],
             tool_calls: vec![
                 PartialToolCall {
@@ -165,12 +170,15 @@ fn clips_oversized_items_to_their_own_budgets() {
         tool_result_bytes: 8,
     };
     let messages = vec![
-        Message::Assistant(vec![ContentBlock::ToolCall(ToolCall::new(
-            "call-1".into(),
-            "bash".into(),
-            json!({ "command": "echo a very long command line" }),
-        ))]),
-        Message::ToolResult(ToolResult::succeeded("call-1", "a very long tool result")),
+        Message::Assistant(
+            (vec![ContentBlock::ToolCall(ToolCall::new(
+                "call-1".into(),
+                "bash".into(),
+                json!({ "command": "echo a very long command line" }),
+            ))])
+            .into(),
+        ),
+        Message::ToolResult(ToolResult::succeeded("call-1", "a very long tool result").into()),
     ];
 
     let rendered = render_transcript(
@@ -268,7 +276,7 @@ fn labels_compaction_context_without_user_attribution() {
     let Message::User(blocks) = &restatement else {
         panic!("expected user-shaped host context");
     };
-    let [ContentBlock::Text(header), ContentBlock::Text(list)] = blocks.as_slice() else {
+    let [ContentBlock::Text(header), ContentBlock::Text(list)] = blocks.as_ref() else {
         panic!("expected checklist restatement");
     };
     let messages = vec![

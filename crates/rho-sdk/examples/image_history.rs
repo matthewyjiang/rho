@@ -36,7 +36,7 @@ async fn main() -> Result<(), rho_sdk::Error> {
     assert_eq!(request.messages.len(), 2);
     assert!(matches!(
         &request.messages[1],
-        Message::User(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(_), ContentBlock::Image(_)])
+        Message::User(blocks) if matches!(blocks.as_ref(), [ContentBlock::Text(_), ContentBlock::Image(_)])
     ));
     Ok(())
 }

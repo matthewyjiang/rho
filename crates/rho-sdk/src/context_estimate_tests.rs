@@ -320,7 +320,7 @@ async fn context_compaction_estimate_excludes_protected_boundary_input() {
     let (source, mut requests) = crate::boundary_input_channel();
     session.set_boundary_inputs(Some(source)).unwrap();
     let mut pending = Some(crate::UserInput::text("protected input".repeat(100)));
-    let fresh = Message::BoundaryInput(pending.as_ref().unwrap().blocks().to_vec());
+    let fresh = Message::BoundaryInput(pending.as_ref().unwrap().blocks().into());
     let mut run = session.start(crate::UserInput::text("work")).await.unwrap();
     loop {
         tokio::select! {

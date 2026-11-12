@@ -23,18 +23,23 @@ fn image() -> ImageContent {
 fn gate_strips_images_only_for_models_marked_text_only() {
     let history = vec![
         Message::user_text("look"),
-        Message::User(vec![ContentBlock::Image(image())]),
+        Message::User(vec![ContentBlock::Image(image())].into()),
         Message::ToolResult(
-            ToolResult::succeeded("call-1", "image/png image (8 bytes)").with_images(vec![image()]),
+            (ToolResult::succeeded("call-1", "image/png image (8 bytes)")
+                .with_images(vec![image()]))
+            .into(),
         ),
     ];
     let stripped = vec![
         Message::user_text("look"),
-        Message::User(vec![ContentBlock::Text(IMAGE_UNSUPPORTED_TEXT.into())]),
-        Message::ToolResult(ToolResult::succeeded(
-            "call-1",
-            format!("image/png image (8 bytes)\n{IMAGE_UNSUPPORTED_TEXT}"),
-        )),
+        Message::User(vec![ContentBlock::Text(IMAGE_UNSUPPORTED_TEXT.into())].into()),
+        Message::ToolResult(
+            (ToolResult::succeeded(
+                "call-1",
+                format!("image/png image (8 bytes)\n{IMAGE_UNSUPPORTED_TEXT}"),
+            ))
+            .into(),
+        ),
     ];
 
     let cache = tempfile::tempdir().unwrap();

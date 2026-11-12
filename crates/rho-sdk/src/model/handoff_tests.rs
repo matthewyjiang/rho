@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use serde_json::json;
 
 use super::*;
@@ -63,7 +65,7 @@ fn opaque_context_replays_only_to_exact_model_identity() {
 fn interrupted_context_is_reported_as_nonportable() {
     let source = identity("openai-codex", "openai-responses", "gpt-test");
     let target = identity("anthropic", "anthropic-messages", "claude-test");
-    let messages = [Message::AbortedAssistant(Box::new(
+    let messages = [Message::AbortedAssistant(Arc::new(
         crate::model::AbortedAssistant {
             provider_context: vec![ProviderContextBlock {
                 identity: source,

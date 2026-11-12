@@ -150,17 +150,20 @@ pub(crate) fn is_restatement(message: &Message) -> bool {
     matches!(
         message,
         Message::User(blocks)
-            if matches!(blocks.as_slice(), [ContentBlock::Text(header), ContentBlock::Text(_)] if header == RESTATEMENT_HEADER)
+            if matches!(blocks.as_ref(), [ContentBlock::Text(header), ContentBlock::Text(_)] if header == RESTATEMENT_HEADER)
     )
 }
 
 /// History message restating `list`; `None` for a cleared list.
 fn restatement(list: &TodoList) -> Option<Message> {
     (!list.todos.is_empty()).then(|| {
-        Message::User(vec![
-            ContentBlock::Text(RESTATEMENT_HEADER.into()),
-            ContentBlock::Text(serde_json::to_string(list).expect("todo lists serialize")),
-        ])
+        Message::User(
+            vec![
+                ContentBlock::Text(RESTATEMENT_HEADER.into()),
+                ContentBlock::Text(serde_json::to_string(list).expect("todo lists serialize")),
+            ]
+            .into(),
+        )
     })
 }
 

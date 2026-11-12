@@ -26,15 +26,18 @@ fn message(message: Message) -> ExportedMessage {
 }
 
 fn tool_call(id: &str, name: &str, arguments: serde_json::Value) -> Message {
-    Message::Assistant(vec![ContentBlock::ToolCall(ToolCall::new(
-        id.into(),
-        name.into(),
-        arguments,
-    ))])
+    Message::Assistant(
+        vec![ContentBlock::ToolCall(ToolCall::new(
+            id.into(),
+            name.into(),
+            arguments,
+        ))]
+        .into(),
+    )
 }
 
 fn tool_result(id: &str, content: &str) -> Message {
-    Message::ToolResult(ToolResult::succeeded(id, content))
+    Message::ToolResult(ToolResult::succeeded(id, content).into())
 }
 
 #[test]

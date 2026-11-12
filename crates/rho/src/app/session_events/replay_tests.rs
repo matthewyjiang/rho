@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 
 use pretty_assertions::assert_eq;
 use rho_protocol::{
@@ -105,11 +105,14 @@ fn background_transcript() -> DisplayTranscript {
 fn saved_conversation() -> Vec<Message> {
     vec![
         Message::user_text("list files"),
-        Message::Assistant(vec![
-            model::ContentBlock::Text("Let me look.".into()),
-            call_block("call-1"),
-        ]),
-        Message::ToolResult(ToolResult::succeeded("call-1", "a.rs")),
+        Message::Assistant(
+            vec![
+                model::ContentBlock::Text("Let me look.".into()),
+                call_block("call-1"),
+            ]
+            .into(),
+        ),
+        Message::ToolResult(ToolResult::succeeded("call-1", "a.rs").into()),
         background_transcript().display_message(),
         Message::assistant_text("Found a.rs."),
     ]
@@ -256,13 +259,16 @@ fn replay_pairs_out_of_order_results_with_their_images() {
     ] {
         let messages = vec![
             Message::user_text("read images"),
-            Message::Assistant(vec![
-                call_block("a"),
-                model::ContentBlock::Text("between".into()),
-                call_block("b"),
-            ]),
-            Message::ToolResult(result.with_images(vec![image()])),
-            Message::ToolResult(ToolResult::succeeded("a", String::new())),
+            Message::Assistant(
+                vec![
+                    call_block("a"),
+                    model::ContentBlock::Text("between".into()),
+                    call_block("b"),
+                ]
+                .into(),
+            ),
+            Message::ToolResult(result.with_images(vec![image()]).into()),
+            Message::ToolResult(ToolResult::succeeded("a", String::new()).into()),
         ];
         assert_eq!(
             without_display(replay_messages(&messages)),
@@ -285,11 +291,11 @@ fn replay_pairs_out_of_order_results_with_their_images() {
 #[test]
 fn replay_closes_incomplete_calls_and_opens_orphan_results() {
     for message in [
-        Message::Assistant(vec![call_block("a")]),
-        Message::EnrichedAssistant(Box::new(AssistantMessage::from_content(vec![call_block(
+        Message::Assistant(vec![call_block("a")].into()),
+        Message::EnrichedAssistant(Arc::new(AssistantMessage::from_content(vec![call_block(
             "a",
         )]))),
-        Message::AbortedAssistant(Box::new(AbortedAssistant {
+        Message::AbortedAssistant(Arc::new(AbortedAssistant {
             content: vec![call_block("a")],
             ..Default::default()
         })),
@@ -307,7 +313,7 @@ fn replay_closes_incomplete_calls_and_opens_orphan_results() {
         (ToolResult::failed("orphan", "output"), ToolStatus::Failed),
     ] {
         assert_eq!(
-            without_display(replay_messages(&[Message::ToolResult(result)])),
+            without_display(replay_messages(&[Message::ToolResult(result.into())])),
             vec![WireEvent::tool_call(ToolCallUpdate {
                 id: ToolCallId::new("orphan"),
                 title: Some("tool".into()),
@@ -329,12 +335,14 @@ fn replay_closes_incomplete_calls_and_opens_orphan_results() {
 #[test]
 fn replay_gives_reused_provider_ids_their_own_calls() {
     let messages = vec![
-        Message::Assistant(vec![call_block("reused")]),
-        Message::Assistant(vec![call_block("reused")]),
+        Message::Assistant(vec![call_block("reused")].into()),
+        Message::Assistant(vec![call_block("reused")].into()),
         Message::ToolResult(
-            ToolResult::failed("reused", "second output").with_images(vec![image()]),
+            ToolResult::failed("reused", "second output")
+                .with_images(vec![image()])
+                .into(),
         ),
-        Message::Assistant(vec![call_block("reused")]),
+        Message::Assistant(vec![call_block("reused")].into()),
     ];
     assert_eq!(
         without_display(replay_messages(&messages)),
@@ -372,7 +380,7 @@ fn replayed_messages_split_where_live_ones_do() {
     let messages = vec![
         Message::user_text("continue"),
         Message::assistant(assistant),
-        Message::ToolResult(ToolResult::succeeded("a", String::new())),
+        Message::ToolResult(ToolResult::succeeded("a", String::new()).into()),
         Message::user_text("continue"),
     ];
     assert_eq!(
@@ -472,7 +480,7 @@ fn replay_ends_with_the_current_plan() {
 fn a_replay_with_no_new_rows_reports_nothing_saved() {
     let tool_set = AppToolSet::disabled();
     let tools = || SessionTools::of_tool_set_for_tests(&tool_set);
-    let rows = saved_rows(&[Message::Assistant(vec![call_block("call")])]);
+    let rows = saved_rows(&[Message::Assistant(vec![call_block("call")].into())]);
     let mut live = LiveEvents::new(Path::new("/work"), tools(), /*configured_window*/ None);
     assert!(live.replay(&rows, Path::new("/work"), tools()).is_some());
     assert_eq!(live.replay(&rows, Path::new("/work"), tools()), None);
@@ -488,8 +496,8 @@ fn live_calls_continue_the_numbering_of_the_saved_transcript() {
     let tool_set = AppToolSet::disabled();
     let tools = || SessionTools::of_tool_set_for_tests(&tool_set);
     let saved = vec![
-        Message::Assistant(vec![call_block("reused")]),
-        Message::ToolResult(ToolResult::succeeded("reused", "a.rs")),
+        Message::Assistant(vec![call_block("reused")].into()),
+        Message::ToolResult(ToolResult::succeeded("reused", "a.rs").into()),
     ];
     let mut live = LiveEvents::new(Path::new("/work"), tools(), /*configured_window*/ None);
     live.replay(&saved_rows(&saved), Path::new("/work"), tools());
@@ -516,8 +524,8 @@ fn live_calls_continue_the_numbering_of_the_saved_transcript() {
 
     let mut whole = saved;
     whole.extend([
-        Message::Assistant(vec![call_block("reused")]),
-        Message::ToolResult(ToolResult::succeeded("reused", "b.rs")),
+        Message::Assistant(vec![call_block("reused")].into()),
+        Message::ToolResult(ToolResult::succeeded("reused", "b.rs").into()),
     ]);
     let replayed_tail = replay_messages(&whole).split_off(2);
     assert_eq!(

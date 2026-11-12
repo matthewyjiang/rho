@@ -26,7 +26,7 @@ pub(super) async fn collect(
     if let Some(input) = &input {
         // Typed so readers never mistake host input for human steering;
         // providers still receive the host-framed blocks as user content.
-        history.push(Message::BoundaryInput(input.blocks().to_vec()));
+        history.push(Message::BoundaryInput(input.blocks().into()));
         // Acknowledgement releases host reservations. Checkpoint first so an
         // event-consumer disconnect or dropped Run cannot discard accepted
         // findings with the rest of an uncommitted working history.

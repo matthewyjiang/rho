@@ -21,6 +21,8 @@ fn completed_failures_drop_images() {
     );
     assert_eq!(
         history,
-        vec![Message::ToolResult(ToolResult::failed("call", "result"))]
+        vec![Message::ToolResult(
+            ToolResult::failed("call", "result").into()
+        )]
     );
 }

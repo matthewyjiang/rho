@@ -133,11 +133,10 @@ async fn continuation_reruns_read_only_calls_and_interrupts_the_rest() {
     assert_eq!(rerun, ["read"]);
     let mut expected = saved.history().to_vec();
     expected.extend([
-        Message::ToolResult(ToolResult::failed(
-            "write-1",
-            "tool call interrupted before completion",
-        )),
-        Message::ToolResult(ToolResult::succeeded("read-1", "read again")),
+        Message::ToolResult(
+            ToolResult::failed("write-1", "tool call interrupted before completion").into(),
+        ),
+        Message::ToolResult(ToolResult::succeeded("read-1", "read again").into()),
     ]);
     assert_eq!(provider.recorded_requests()[0].messages, expected);
 }
@@ -173,7 +172,7 @@ async fn host_batch_is_checkpointed_before_its_calls_start() {
         saved.history(),
         [
             Message::user_text("load both"),
-            Message::Assistant(calls.map(ContentBlock::ToolCall).to_vec()),
+            Message::Assistant(calls.map(ContentBlock::ToolCall).into()),
         ]
     );
 }
@@ -381,7 +380,7 @@ async fn unchanged_history_is_not_saved_again() {
 async fn first_checkpoint_saves_an_unchanged_restored_history() {
     let restored = vec![
         Message::user_text("inspect"),
-        Message::Assistant(vec![ContentBlock::Text("looked".into())]),
+        Message::Assistant(vec![ContentBlock::Text("looked".into())].into()),
     ];
     let provider =
         ScriptedProvider::new(identity(), [ScriptedTurn::completed(text_response("done"))]);

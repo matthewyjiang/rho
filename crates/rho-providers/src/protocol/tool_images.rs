@@ -46,10 +46,13 @@ pub(crate) fn defer_tool_result_images<'a>(
         match tool_images_message(result) {
             Some(images) => {
                 deferred.push(Cow::Owned(images));
-                out.push(Cow::Owned(Message::ToolResult(ToolResult {
-                    images: Vec::new(),
-                    ..result.clone()
-                })));
+                out.push(Cow::Owned(Message::ToolResult(
+                    ToolResult {
+                        images: Vec::new(),
+                        ..(**result).clone()
+                    }
+                    .into(),
+                )));
             }
             None => out.push(message),
         }

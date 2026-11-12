@@ -5,6 +5,8 @@
 //! attribution text block followed only by image blocks. Saved history still
 //! holds those messages, so loaders move them back onto their results.
 
+use std::sync::Arc;
+
 use serde::Deserialize;
 
 use super::{ContentBlock, ImageContent, Message};
@@ -49,7 +51,7 @@ pub fn attach_legacy_tool_images<T>(
             continue;
         };
         if let Message::ToolResult(result) = message(&mut entries[owner]) {
-            result.images.extend(images);
+            Arc::make_mut(result).images.extend(images);
         }
         entries.remove(index);
     }

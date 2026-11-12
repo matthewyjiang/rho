@@ -34,7 +34,7 @@ pub(super) async fn commit_terminal(
     events: &mpsc::Sender<RunEvent>,
 ) -> Result<RunOutcome, Error> {
     if let Some(aborted) = capture.into_aborted_assistant() {
-        history.push(Message::AbortedAssistant(Box::new(aborted)));
+        history.push(Message::AbortedAssistant(Arc::new(aborted)));
     }
     commit_terminal_history(core, history, kind, events).await
 }

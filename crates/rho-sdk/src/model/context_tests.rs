@@ -58,8 +58,8 @@ fn estimates_include_every_request_part() {
             "tool calls and results",
             estimate_context_tokens(
                 &[
-                    Message::Assistant(vec![ContentBlock::ToolCall(call.clone())]),
-                    Message::ToolResult(result.clone()),
+                    Message::Assistant(vec![ContentBlock::ToolCall(call.clone())].into()),
+                    Message::ToolResult(result.clone().into()),
                 ],
                 &[],
             ),

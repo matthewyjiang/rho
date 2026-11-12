@@ -60,7 +60,7 @@ fn replacement_uses_server_output_users_and_compaction_marker() {
     assert!(matches!(
         &replacement[1],
         Message::User(blocks) if matches!(
-            blocks.as_slice(),
+            blocks.as_ref(),
             [ContentBlock::Text(text)] if text == "recent user"
         )
     ));
@@ -236,7 +236,7 @@ fn retained_messages_keep_systems_and_newest_users_within_budget() {
             .iter()
             .map(|message| match message {
                 Message::System(text) => text.as_str(),
-                Message::User(blocks) => match blocks.as_slice() {
+                Message::User(blocks) => match blocks.as_ref() {
                     [ContentBlock::Text(text)] => text.as_str(),
                     _ => panic!("{name}: unexpected user blocks"),
                 },

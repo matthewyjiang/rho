@@ -40,8 +40,12 @@ fn legacy_history_moves_tool_images_onto_results() {
     assert_eq!(
         history,
         vec![
-            Message::ToolResult(ToolResult::succeeded("a", "captured").with_images(vec![image])),
-            Message::ToolResult(ToolResult::failed("b", "failed")),
+            Message::ToolResult(
+                ToolResult::succeeded("a", "captured")
+                    .with_images(vec![image])
+                    .into()
+            ),
+            Message::ToolResult(ToolResult::failed("b", "failed").into()),
             serde_json::from_value(supplement("missing")).unwrap(),
             serde_json::from_value(upload).unwrap(),
         ]

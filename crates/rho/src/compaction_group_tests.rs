@@ -5,11 +5,14 @@ use super::completed_tool_group_end;
 use rho_providers::model::{ContentBlock, Message, ToolCall, ToolResult};
 
 fn call(id: &str) -> Message {
-    Message::Assistant(vec![ContentBlock::ToolCall(ToolCall::new(
-        id.into(),
-        "agent".into(),
-        json!({}),
-    ))])
+    Message::Assistant(
+        (vec![ContentBlock::ToolCall(ToolCall::new(
+            id.into(),
+            "agent".into(),
+            json!({}),
+        ))])
+        .into(),
+    )
 }
 
 fn calls(ids: &[&str]) -> Message {
@@ -23,7 +26,7 @@ fn calls(ids: &[&str]) -> Message {
 }
 
 fn result(id: &str) -> Message {
-    Message::ToolResult(ToolResult::succeeded(id, "ok"))
+    Message::ToolResult(ToolResult::succeeded(id, "ok").into())
 }
 
 // Covers: compaction groups an assistant with later/out-of-order results, and

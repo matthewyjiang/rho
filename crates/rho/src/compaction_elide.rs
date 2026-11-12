@@ -77,11 +77,14 @@ pub(crate) fn elide_tool_results(
             continue;
         }
         // The stub drops the images; the original keeps them for recall.
-        let stub = Message::ToolResult(ToolResult::new(
-            result.id.clone(),
-            result.status,
-            stub_text(result, owners.call(index)),
-        ));
+        let stub = Message::ToolResult(
+            ToolResult::new(
+                result.id.clone(),
+                result.status,
+                stub_text(result, owners.call(index)),
+            )
+            .into(),
+        );
         tokens = tokens
             .saturating_sub(estimate_message_tokens(message))
             .saturating_add(estimate_message_tokens(&stub));
@@ -97,7 +100,7 @@ pub(crate) fn elide_tool_results(
         .map(|(index, message)| match stubs.remove(&index) {
             Some(stub) => {
                 if let Message::ToolResult(result) = message {
-                    originals.push(result.clone());
+                    originals.push(ToolResult::clone(result));
                 }
                 stub
             }

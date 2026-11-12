@@ -338,7 +338,7 @@ fn tool_result_for_name<'a>(
             })
     })?;
     current_turn.iter().find_map(|message| match message {
-        Message::ToolResult(result) if result.id == call_id => Some(result),
+        Message::ToolResult(result) if result.id == call_id => Some(&**result),
         _ => None,
     })
 }
@@ -352,7 +352,7 @@ fn current_turn_tool_results<'a>(
         .rev()
         .take_while(|message| !starts_turn(message))
         .filter_map(|message| match message {
-            Message::ToolResult(result) => Some(result),
+            Message::ToolResult(result) => Some(&**result),
             _ => None,
         })
 }
@@ -453,15 +453,14 @@ mod tests {
     fn questionnaire_count_is_scoped_to_the_current_user_turn() {
         let messages = vec![
             Message::user_text("fixture questionnaire"),
-            Message::ToolResult(rho_sdk::model::ToolResult::succeeded(
-                QUESTIONNAIRE_CALL_ID,
-                "old answer",
-            )),
+            Message::ToolResult(
+                rho_sdk::model::ToolResult::succeeded(QUESTIONNAIRE_CALL_ID, "old answer").into(),
+            ),
             Message::user_text("fixture questionnaire"),
-            Message::ToolResult(rho_sdk::model::ToolResult::succeeded(
-                QUESTIONNAIRE_CALL_ID,
-                "current answer",
-            )),
+            Message::ToolResult(
+                rho_sdk::model::ToolResult::succeeded(QUESTIONNAIRE_CALL_ID, "current answer")
+                    .into(),
+            ),
         ];
         let request = ModelRequest {
             messages: &messages,

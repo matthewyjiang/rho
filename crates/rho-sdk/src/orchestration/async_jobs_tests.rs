@@ -137,7 +137,7 @@ async fn cancelled_harvest_preserves_all_ready_tool_results() {
         jobs.completions_tx
             .send(JobCompletion { call_id, result })
             .unwrap();
-        expected.push(Message::ToolResult(ToolResult::succeeded(id, id)));
+        expected.push(Message::ToolResult(ToolResult::succeeded(id, id).into()));
     }
     // One terminal event per ready call, with enough capacity for cleanup too.
     let (events, _receiver) = mpsc::channel(expected.len());

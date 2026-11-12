@@ -84,7 +84,7 @@ fn sessions_saved_with_reply_times_still_load() {
         Message::assistant(AssistantMessage::from_content(vec![ContentBlock::Text(
             "done".into(),
         )])),
-        Message::AbortedAssistant(Box::default()),
+        Message::AbortedAssistant(Default::default()),
         Message::user_text(old_stamp),
     ];
     let time = serde_json::to_value(at(-1)).unwrap();
