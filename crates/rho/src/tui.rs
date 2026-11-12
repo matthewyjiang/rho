@@ -137,6 +137,7 @@ mod inline_prompt_input;
 pub(crate) use inline_prompt_input::InlinePromptInput;
 mod inline_shell;
 mod inline_shell_config;
+mod jobs_view;
 mod keybindings;
 mod keyboard_modes;
 mod limits_command;
@@ -660,6 +661,8 @@ struct App {
     sessions_hub_state: sessions_hub::SessionsHubState,
     /// Session list or delete running off the event loop.
     pending_sessions_task: Option<sessions_hub_tasks::PendingSessionsTask>,
+    /// The session a `/jobs` that just closed asked to attach to.
+    jobs_view_attach: Option<jobs_view::Attach>,
     pending_session_title: Option<PendingSessionTitle>,
     daemon_options: Option<rho_protocol::SessionOptions>,
     daemon_option_requests: std::collections::VecDeque<rho_protocol::SessionChange>,

@@ -187,6 +187,8 @@ impl App {
                     .processes()
                     .is_some_and(crate::tools::process::ProcessManager::has_pending_notification)
                 || self.daemon_rail.shows_runs()
+                // Lists every session's jobs, which change with no turn here.
+                || self.jobs_view_open()
                 || self.pending_subagent_questionnaire.is_some()
                 || self.subagent_inbox.has_queued_questionnaires()
                 || self.subagent_inbox.has_parent_action_requests();

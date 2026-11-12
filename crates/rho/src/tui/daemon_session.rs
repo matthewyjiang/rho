@@ -343,6 +343,12 @@ impl DaemonSession {
                     .is_some_and(DaemonRequests::saved_rows))
     }
 
+    /// The daemon the session runs in, for requests about its other
+    /// sessions and jobs.
+    pub(in crate::tui) fn daemon(&self) -> Arc<Daemon> {
+        Arc::clone(&self.daemon)
+    }
+
     /// The directory the session works in, as the daemon reports it.
     pub(crate) fn workspace(&self) -> &Path {
         &self.workspace

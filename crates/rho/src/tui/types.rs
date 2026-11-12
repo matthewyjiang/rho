@@ -255,6 +255,7 @@ pub(super) enum PanelOverlay {
     Context(Box<super::context_overlay::ContextOverlay>),
     Spend(Box<super::spend_overlay::SpendOverlay>),
     Todo(super::todo_overlay::TodoOverlay),
+    Jobs(Box<super::jobs_view::JobsView>),
 }
 
 impl ComposerMode {

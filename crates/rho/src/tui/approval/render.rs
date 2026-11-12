@@ -43,6 +43,15 @@ pub(in crate::tui) struct ApprovalPrompt {
 }
 
 impl ApprovalPrompt {
+    /// The prompt as plain lines, for a view that lists it rather than
+    /// opens it: its title, what it would allow, and the policy's reason.
+    pub(in crate::tui) fn summary(&self) -> Vec<String> {
+        std::iter::once(self.title.clone())
+            .chain(self.details.primary.iter().cloned())
+            .chain((!self.reason.is_empty()).then(|| self.reason.clone()))
+            .collect()
+    }
+
     /// The prompt for an in-process capability request.
     pub(in crate::tui) fn of_capability(request: &CapabilityRequest, reason: &str) -> Self {
         Self {

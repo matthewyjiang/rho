@@ -16,8 +16,8 @@ use crate::tui::DefaultTerminal;
 
 use super::{
     overlay_panel::{
-        classify_panel_key, is_copy_key, panel_frame, scroll_panel, terminal_area,
-        OverlayPanelFrame, PanelBody, PanelKey, PanelKeyOutcome, PanelScrollTarget,
+        classify_panel_key, is_copy_key, panel_frame, reveal_panel_cursor, scroll_panel,
+        terminal_area, OverlayPanelFrame, PanelBody, PanelKey, PanelKeyOutcome, PanelScrollTarget,
     },
     panel_pointer::{PanelPointer, PanelPointerEffect, PanelPointerEvent},
     App, ComposerMode, PanelOverlay,
@@ -34,6 +34,7 @@ impl PanelOverlay {
             Self::Context(overlay) => overlay.as_ref(),
             Self::Spend(overlay) => overlay.as_ref(),
             Self::Todo(overlay) => overlay,
+            Self::Jobs(overlay) => overlay.as_ref(),
         }
     }
 
@@ -47,6 +48,7 @@ impl PanelOverlay {
             Self::Context(overlay) => overlay.as_mut(),
             Self::Spend(overlay) => overlay.as_mut(),
             Self::Todo(overlay) => overlay,
+            Self::Jobs(overlay) => overlay.as_mut(),
         }
     }
 
@@ -61,6 +63,7 @@ impl PanelOverlay {
             Self::Context(overlay) => overlay,
             Self::Spend(overlay) => overlay,
             Self::Todo(overlay) => Box::new(overlay),
+            Self::Jobs(overlay) => overlay,
         }
     }
 
@@ -97,7 +100,12 @@ impl App {
             return false;
         };
         match panel.body_mut().handle_key(key) {
-            PanelKeyOutcome::Handled => return true,
+            PanelKeyOutcome::Handled => {
+                if let Some(area) = terminal_area(terminal) {
+                    reveal_panel_cursor(panel.body_mut(), area);
+                }
+                return true;
+            }
             PanelKeyOutcome::Unhandled => {}
         }
         if is_copy_key(key) {

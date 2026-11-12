@@ -167,11 +167,19 @@ impl App {
         let Some(session) = &self.info.session.daemon else {
             return;
         };
-        // A run starts only in a turn, and changes only while it shows.
+        // A run starts only in a turn, and changes only while it shows. An
+        // open `/jobs` lists every session's jobs, which change whatever
+        // this one is doing.
+        let may_change = self.turn.is_provider_turn() || self.jobs_view_open();
         let jobs = &mut self.daemon_rail.jobs;
-        if jobs.due(self.turn.is_provider_turn()) && session.request_jobs().is_ok() {
+        if jobs.due(may_change) && session.request_jobs().is_ok() {
             jobs.asked();
         }
+    }
+
+    /// Owes the job list one more read, whatever the session is doing.
+    pub(super) fn owe_daemon_jobs(&mut self) {
+        self.daemon_rail.jobs.owe();
     }
 
     /// Puts the followed session's runs among `jobs` on the subagent and
@@ -185,6 +193,7 @@ impl App {
             return;
         };
         let session = session.id().to_owned();
+        self.show_jobs_view(&jobs);
         let now = subagent::unix_now_secs();
         let workflows = rail_jobs(&jobs, &session, JobKind::Workflow, now);
         let subagents = rail_jobs(&jobs, &session, JobKind::Subagent, now);

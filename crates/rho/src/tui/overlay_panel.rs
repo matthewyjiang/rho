@@ -251,6 +251,12 @@ pub(super) trait PanelBody {
     fn copy_text(&self) -> Option<String> {
         None
     }
+    /// The body row a panel with a cursor of its own is on, at `width`,
+    /// which the dispatcher keeps in view after each key the panel handles;
+    /// `None` for a panel without one.
+    fn cursor_row(&self, _width: usize) -> Option<usize> {
+        None
+    }
     /// Feature keys, checked before the shared keys.
     fn handle_key(&mut self, _key: crossterm::event::KeyEvent) -> PanelKeyOutcome {
         PanelKeyOutcome::Unhandled
@@ -292,6 +298,28 @@ pub(super) fn scroll_panel(panel: &mut dyn PanelBody, area: Rect, target: PanelS
         .len();
     let body_rows = overlay_panel_layout(area, body_len).body_rows;
     panel.state_mut().scroll.apply(target, body_len, body_rows);
+}
+
+/// Scrolls the panel just far enough that its cursor row shows at `area`.
+pub(super) fn reveal_panel_cursor(panel: &mut dyn PanelBody, area: Rect) {
+    let width = overlay_panel_body_width(area);
+    let Some(row) = panel.cursor_row(width) else {
+        return;
+    };
+    let body_len = panel.body_lines(width, std::time::Instant::now()).len();
+    let body_rows = overlay_panel_layout(area, body_len).body_rows;
+    let offset = panel.state().scroll.offset();
+    let target = if row < offset {
+        row
+    } else if row >= offset + body_rows {
+        row + 1 - body_rows.max(1)
+    } else {
+        return;
+    };
+    panel
+        .state_mut()
+        .scroll
+        .apply(PanelScrollTarget::Absolute(target), body_len, body_rows);
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

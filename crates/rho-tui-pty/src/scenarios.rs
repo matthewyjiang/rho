@@ -30,6 +30,8 @@ mod daemon_config;
 mod daemon_context;
 mod daemon_detach;
 mod daemon_doctor;
+#[cfg(unix)]
+mod daemon_jobs_view;
 mod daemon_login;
 mod daemon_mcp;
 mod daemon_mcp_owner;
@@ -612,6 +614,10 @@ const ALL_SCENARIOS: &[Scenario] = &[
     daemon_restart_mcp::SCENARIO,
     #[cfg(unix)]
     daemon_build_skew::SCENARIO,
+    #[cfg(unix)]
+    daemon_jobs_view::SCENARIO,
+    #[cfg(unix)]
+    daemon_jobs_view::ACTIONS_SCENARIO,
     #[cfg(unix)]
     daemon_mcp::SCENARIO,
     #[cfg(unix)]
