@@ -473,14 +473,6 @@ impl JobsView {
     fn rows(&self, width: usize) -> (Vec<Line<'static>>, Option<std::ops::Range<usize>>) {
         let mut lines = Vec::new();
         let mut selected_rows = None;
-        if !self.filter.is_empty() || matches!(self.mode, Mode::Filter) {
-            lines.push(input_line(
-                "Filter",
-                &self.filter,
-                matches!(self.mode, Mode::Filter),
-            ));
-            lines.push(Line::default());
-        }
         let groups = self.groups();
         if groups.is_empty() {
             let empty = match (&self.jobs, self.filter.is_empty()) {
@@ -506,6 +498,17 @@ impl JobsView {
             }
             lines.push(Line::default());
         }
+        (lines, selected_rows)
+    }
+
+    /// The rows that stay in view under the list: the filter, the field a
+    /// typing mode fills, and why the last request failed.
+    fn pinned(&self, width: usize) -> Vec<Line<'static>> {
+        let mut lines = Vec::new();
+        let filtering = matches!(self.mode, Mode::Filter);
+        if filtering || !self.filter.is_empty() {
+            lines.push(input_line("Filter", &self.filter, filtering));
+        }
         match &self.mode {
             Mode::Browse | Mode::Filter => {}
             Mode::Message { session, text } => {
@@ -520,13 +523,13 @@ impl JobsView {
                 lines.push(input_line("Workspace", path, /*typing*/ true));
             }
             Mode::NewPrompt { text, .. } => {
-                lines.push(input_line("Prompt", text, /*typing*/ true))
+                lines.push(input_line("Prompt", text, /*typing*/ true));
             }
         }
         if let Some(notice) = self.notice() {
             lines.extend(indented_wrapped_lines(&notice, 1, width, Theme::warning()));
         }
-        (lines, selected_rows)
+        lines
     }
 
     /// What the selected job's open request asks, under its row.
@@ -668,6 +671,10 @@ impl PanelBody for JobsView {
 
     fn body_lines(&self, width: usize, _now: Instant) -> Vec<Line<'static>> {
         self.rows(width).0
+    }
+
+    fn pinned_lines(&self, width: usize) -> Vec<Line<'static>> {
+        self.pinned(width)
     }
 
     fn cursor_rows(&self, width: usize) -> Option<std::ops::Range<usize>> {
