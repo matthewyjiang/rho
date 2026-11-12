@@ -6,7 +6,7 @@
 
 use std::fmt;
 
-use chrono::{DateTime, FixedOffset, Local, Offset, Utc};
+use chrono::{DateTime, FixedOffset, Local, NaiveDateTime, Offset, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 
 use super::{ContentBlock, Message};
@@ -36,6 +36,38 @@ impl MessageTime {
         let at = DateTime::<Utc>::from_timestamp(unix_seconds, 0)?;
         Some(Self {
             at: at.with_timezone(&offset),
+        })
+    }
+
+    /// The rest of `text` after a leading line that is exactly a rendered
+    /// time, or `None` when it has none. For readers of request text that must
+    /// see past the stamp, such as provider continuations that compare it
+    /// with the unstamped output the provider returned.
+    pub fn strip_rendered_prefix(text: &str) -> Option<&str> {
+        let (line, rest) = text.split_once('\n').unwrap_or((text, ""));
+        let time = Self::parse_line(line)?;
+        (time.to_string() == line).then_some(rest)
+    }
+
+    /// Reads a line [`fmt::Display`] wrote; the caller checks it round-trips.
+    fn parse_line(line: &str) -> Option<Self> {
+        let (local, zone) = line.strip_suffix(')')?.rsplit_once(" (UTC")?;
+        let offset_seconds = match zone {
+            "" => 0,
+            zone => {
+                let (sign, magnitude) = match zone.as_bytes().first()? {
+                    b'+' => (1, &zone[1..]),
+                    b'-' => (-1, &zone[1..]),
+                    _ => return None,
+                };
+                let (hours, minutes) = magnitude.split_once(':').unwrap_or((magnitude, "0"));
+                sign * (hours.parse::<i32>().ok()? * 3600 + minutes.parse::<i32>().ok()? * 60)
+            }
+        };
+        let offset = FixedOffset::east_opt(offset_seconds)?;
+        let local = NaiveDateTime::parse_from_str(local, "%A, %b %d, %Y, %I:%M %p").ok()?;
+        Some(Self {
+            at: offset.from_local_datetime(&local).single()?,
         })
     }
 

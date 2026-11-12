@@ -425,3 +425,40 @@ fn continuation_with_context_fails_closed_on_history_rewrites() {
         );
     }
 }
+
+// Covers: replayed assistant text carries the time the SDK stamped on it,
+// which the server's copy lacks; the continuation still chains on it.
+// Owner: Codex continuation matching.
+#[test]
+fn continuation_reads_past_the_stamp_on_replayed_assistant_text() {
+    let time = MessageTime::from_parts(1_794_461_940, -5 * 3600).unwrap();
+    let first = candidate(vec![
+        json!({"role":"user","content":[{"type":"input_text","text":"one"}]}),
+    ]);
+    let next = candidate(vec![
+        json!({"role":"user","content":[{"type":"input_text","text":"one"}]}),
+        json!({"role":"assistant","content":format!("{time}\ntwo")}),
+        json!({"role":"user","content":[{"type":"input_text","text":"three"}]}),
+    ]);
+    let mut state = CodexContinuationState::default();
+    state.record_success(
+        first,
+        CodexContinuationResponse::from_response(
+            &text_response("two"),
+            Some("resp_1".into()),
+            vec![json!({"id":"msg_1","type":"message","role":"assistant","content":[{"type":"output_text","text":"two"}]})],
+        ),
+    );
+
+    let plan = state
+        .continuation_delta(&next)
+        .expect("the stamped replay extends this turn");
+
+    assert_eq!(
+        (&plan["previous_response_id"], &plan["input"]),
+        (
+            &json!("resp_1"),
+            &json!([{"role":"user","content":[{"type":"input_text","text":"three"}]}])
+        )
+    );
+}

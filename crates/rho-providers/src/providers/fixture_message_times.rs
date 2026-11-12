@@ -2,17 +2,7 @@
 //! assistant text ([`rho_sdk::model::MessageTime`]), as a real model would;
 //! their scenarios match the words the user typed.
 
-use rho_sdk::model::{ContentBlock, Message};
-
-const WEEKDAYS: [&str; 7] = [
-    "Monday,",
-    "Tuesday,",
-    "Wednesday,",
-    "Thursday,",
-    "Friday,",
-    "Saturday,",
-    "Sunday,",
-];
+use rho_sdk::model::{ContentBlock, Message, MessageTime};
 
 /// `messages` with each user and assistant entry's leading time line removed.
 pub(crate) fn without_times(messages: &[Message]) -> Vec<Message> {
@@ -39,13 +29,5 @@ pub(crate) fn without_times(messages: &[Message]) -> Vec<Message> {
 }
 
 fn without_time(text: &str) -> &str {
-    let (line, rest) = text.split_once('\n').unwrap_or((text, ""));
-    let stamped = WEEKDAYS.iter().any(|day| line.starts_with(day))
-        && line.ends_with(')')
-        && line.contains(" (UTC");
-    if stamped {
-        rest
-    } else {
-        text
-    }
+    MessageTime::strip_rendered_prefix(text).unwrap_or(text)
 }

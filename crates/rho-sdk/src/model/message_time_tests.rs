@@ -72,3 +72,32 @@ fn stamped_input_leads_with_its_time() {
         assert_eq!(input.blocks(), expected.as_slice());
     }
 }
+
+// Covers: a reader can see past exactly the line a time renders as, for every
+// offset form, and nothing that only resembles one.
+// Owner: SDK message time rendering.
+#[test]
+fn strips_only_a_rendered_time_line() {
+    for offset in [-5 * 3600, 0, 5 * 3600 + 1800, -(9 * 3600 + 1800)] {
+        let time = MessageTime::from_parts(INSTANT, offset).unwrap();
+        let text = format!("{time}\nhello\nthere");
+        assert_eq!(
+            MessageTime::strip_rendered_prefix(&text),
+            Some("hello\nthere"),
+            "{text}"
+        );
+        assert_eq!(
+            MessageTime::strip_rendered_prefix(&time.to_string()),
+            Some("")
+        );
+    }
+    for text in [
+        "hello",
+        "Thursday, Nov 12, 2026, 12:39 AM\nhello",
+        "Friday, Nov 12, 2026, 12:39 AM (UTC-5)\nhello",
+        "Thursday, Nov 12, 2026, 12:39 AM (UTC-05)\nhello",
+        "Thursday, Nov 12, 2026, 12:39 AM (UTC-5) note\nhello",
+    ] {
+        assert_eq!(MessageTime::strip_rendered_prefix(text), None, "{text}");
+    }
+}
