@@ -172,19 +172,27 @@ impl ShellPlan {
         let resolved_cwd = workspace
             .resolve_for_read(workspace.root())
             .map_err(|error| ToolError::new(ToolErrorKind::PolicyDenied, error.to_string()))?;
+        let requested = arguments.command;
         let Prepared { command, record } = match rtk {
             Some(rtk) => {
-                rtk.prepare(arguments.command, resolved_cwd.path(), &environment)
+                rtk.prepare(requested.clone(), resolved_cwd.path(), &environment)
                     .await
             }
-            None => Prepared::unchanged(arguments.command),
+            None => Prepared::unchanged(requested.clone()),
         };
+        let rewritten = command != requested;
         let execution = ProcessExecution::new(
             resolved_cwd.path(),
             kind.invocation(command),
             environment,
             ProcessOutputLimits::new(max_output_bytes, timeout),
         );
+        // Hooks see what the model asked for next to what runs.
+        let execution = if rewritten {
+            execution.with_requested_command(requested)
+        } else {
+            execution
+        };
         Ok(Self {
             execution,
             resolved_cwd,

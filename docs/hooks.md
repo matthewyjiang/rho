@@ -81,7 +81,7 @@ configuration error names the file, the hook ID, and the field.
 
 ## Events
 
-Delivered at schema version 2. Most events are observational. Only
+Delivered at schema version 3. Most events are observational. Only
 `before_tool_use` can stop work.
 
 ```mermaid

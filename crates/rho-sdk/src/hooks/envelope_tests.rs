@@ -64,7 +64,8 @@ fn before_tool_use_wire_shape_is_stable() {
             working_directory: "/work".into(),
             executable: "bash".into(),
             arguments: vec!["-lc".into()],
-            shell_command: Some("git push --force".into()),
+            shell_command: Some("rtk git push --force".into()),
+            requested_command: Some("git push --force".into()),
             environment: HookProcessEnvironment::InheritAll,
         },
         policy: HookPolicyOutcome::RequireApproval,
@@ -73,7 +74,7 @@ fn before_tool_use_wire_shape_is_stable() {
     assert_eq!(
         wire_shape(&envelope(payload)),
         json!({
-            "schema_version": 2,
+            "schema_version": 3,
             "event": "before_tool_use",
             "event_id": "<id>",
             "timestamp_unix_ms": 0,
@@ -95,7 +96,8 @@ fn before_tool_use_wire_shape_is_stable() {
                     "working_directory": "/work",
                     "executable": "bash",
                     "arguments": ["-lc"],
-                    "shell_command": "git push --force",
+                    "shell_command": "rtk git push --force",
+                    "requested_command": "git push --force",
                     "environment": "inherit_all",
                 },
                 "policy": "require_approval",
@@ -113,6 +115,8 @@ fn after_tool_use_wire_shape_is_stable() {
             executable: "bash".into(),
             arguments: vec!["-lc".into()],
             shell_command: Some("git push --force".into()),
+            // Nothing was rewritten, so the wire omits the field.
+            requested_command: None,
             environment: HookProcessEnvironment::InheritAll,
         }),
         process: Some(HookProcessResult {
