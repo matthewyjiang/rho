@@ -1250,6 +1250,22 @@ fn daemon_build_skew_shows_at_launch() {
     assert_pass("daemon_build_skew");
 }
 
+// Covers: `/jobs` lists jobs running in two projects, and a permission
+// prompt the other project's job waits on is answered from the view (#1668).
+// Owner: interactive TUI as a daemon client
+#[test]
+fn daemon_jobs_view_lists_projects_and_answers_a_prompt() {
+    assert_pass("daemon_jobs_view");
+}
+
+// Covers: `/jobs` starts a session, cancels its turn, messages it, filters
+// the list, and attaches to it (#1668).
+// Owner: interactive TUI as a daemon client
+#[test]
+fn daemon_jobs_view_starts_cancels_messages_and_attaches() {
+    assert_pass("daemon_jobs_view_actions");
+}
+
 // Covers: a prompt sent while a restarted daemon connects the session's MCP
 // servers again is held, as at startup, and runs once they have.
 // Owner: interactive TUI as a daemon client

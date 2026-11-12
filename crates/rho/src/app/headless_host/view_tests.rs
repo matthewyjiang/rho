@@ -287,7 +287,7 @@ async fn questions_go_to_a_listening_parent_or_are_declined() {
         )
         .await;
         let mut view = HeadlessView::new().with_parent_questions(parent);
-        view.bind(&runtime);
+        view.bind(&runtime, &config);
 
         let reply = timeout(TEST_BUDGET, run_prompt(&mut runtime, &mut view, &config))
             .await
@@ -320,7 +320,7 @@ async fn a_question_waiting_on_the_parent_does_not_stall_the_run() {
     .await;
     let parent = parent_of(&bridge);
     let mut view = HeadlessView::new().with_parent_questions(Some(parent));
-    view.bind(&runtime);
+    view.bind(&runtime, &config);
 
     let parent_side = async {
         let request = timeout(TEST_BUDGET, requests.recv())

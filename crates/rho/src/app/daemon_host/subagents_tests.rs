@@ -143,6 +143,7 @@ async fn a_child_job_reports_its_queue_place_until_it_runs() {
         workspace: PathBuf::from("/work"),
         status: status_rx,
         queue: queued.watch(),
+        events: None,
     });
     let job = registry.list().pop().expect("the run's job").id;
     assert_eq!(
@@ -166,4 +167,94 @@ async fn a_child_job_reports_its_queue_place_until_it_runs() {
     stopping.cancel();
     status_tx.send_replace(status(RunState::Stopped));
     wait_for_state(&registry, &job, JobState::Ended(TurnEnd::Interrupted)).await;
+}
+
+// Covers: the daemon follows a run once the run opened its session, with
+// the model the session runs on, and takes the run's title from its status
+// whether the title came before the session opened or after; a run that
+// ended is followed no more.
+// Owner: daemon subagent jobs.
+#[tokio::test(flavor = "current_thread")]
+async fn a_followed_run_lists_its_model_and_title() {
+    let home = TempDir::new().unwrap();
+    let registry = Arc::new(JobRegistry::open(JobStore::open(home.path()).unwrap()));
+    let subagents = Subagents::new(Arc::clone(&registry), CancellationToken::new());
+    let SubagentPool::Shared { observer, .. } = subagents.pool_for(JobId::generate()) else {
+        panic!("the daemon shares its pool");
+    };
+    let model = rho_protocol::ModelRef {
+        provider: "xai".into(),
+        model: "grok-fixture".into(),
+    };
+    let options = rho_protocol::SessionOptions {
+        model: rho_protocol::ModelOptions {
+            current: model.clone(),
+            auth: "api-key".into(),
+            available: Vec::new(),
+        },
+        reasoning: None,
+        fast_mode: None,
+        permission_mode: rho_protocol::PermissionModeOptions {
+            current: rho_protocol::PermissionMode::Auto,
+            available: Vec::new(),
+        },
+        commands: Vec::new(),
+        added_dirs: Vec::new(),
+    };
+    let titled = |title: &str| RunStatus {
+        title: Some(title.into()),
+        ..status(RunState::Running)
+    };
+    let (status_tx, status_rx) = watch::channel(titled("Early title"));
+    let (events, followed) = tokio::sync::mpsc::unbounded_channel();
+    let session = rho_sdk::SessionId::new();
+    let queued = subagents.concurrency().join(CapacityClass::Rho);
+    observer.subagent_started(StartedSubagent {
+        run_id: "run-1".into(),
+        session: Some(session.clone()),
+        workspace: PathBuf::from("/work"),
+        status: status_rx,
+        queue: queued.watch(),
+        events: Some(followed),
+    });
+    let listed = |title: Option<&'static str>| {
+        let (feeds, session) = (subagents.feeds().clone(), session.clone());
+        async move {
+            for _ in 0..10_000 {
+                let live = feeds.live(&session);
+                if live.as_ref().map(|live| live.title.as_deref()) == Some(title) {
+                    return live.map(|live| live.model);
+                }
+                tokio::task::yield_now().await;
+            }
+            panic!(
+                "the run never listed title {title:?}: {:?}",
+                feeds.live(&session)
+            );
+        }
+    };
+    let unopened = subagents.feeds().live(&session);
+
+    events
+        .send(crate::app::subagent_pool::ChildEvent::Opened(Box::new(
+            options,
+        )))
+        .unwrap();
+    let early = listed(Some("Early title")).await;
+    status_tx.send_replace(titled("Late title"));
+    let late = listed(Some("Late title")).await;
+    status_tx.send_replace(status(RunState::Ok));
+    let job = registry.list().pop().expect("the run's job").id;
+    wait_for_state(&registry, &job, JobState::Ended(TurnEnd::Completed)).await;
+    for _ in 0..10_000 {
+        if subagents.feeds().live(&session).is_none() {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+
+    assert_eq!(
+        (unopened, early, late, subagents.feeds().live(&session)),
+        (None, Some(model.clone()), Some(model), None)
+    );
 }

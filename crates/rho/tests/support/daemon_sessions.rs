@@ -1686,7 +1686,7 @@ fn test_client() -> ClientInfo {
 }
 
 /// Answers `request` of `session` with `answer` on `client`.
-async fn answer(
+pub(super) async fn answer(
     client: &Client,
     session: &SessionId,
     request: InputRequestId,
@@ -1720,6 +1720,87 @@ pub(super) async fn prompt_a_supervised_write(sandbox: &Sandbox) -> (Client, Ses
     });
     sandbox.prompt_tool_call(&client, &session, &call).await;
     (client, session)
+}
+
+// Covers: `rho/job/list` tells what the daemon follows of a loaded
+// session's job without an attach: the model it runs on, the turn's time
+// under way, and the request it waits on, the same one an attach reports,
+// which a client that never attached answers by it (#1668).
+// Owner: daemon job list.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_job_list_tells_what_a_waiting_job_asks() {
+    let sandbox = Sandbox::new();
+    let (client, session) = prompt_a_supervised_write(&sandbox).await;
+    let waiting = sandbox
+        .poll_until("the turn to ask", async || {
+            let jobs = client.request::<JobList>(&JobListParams {}).await.unwrap();
+            jobs.jobs.into_iter().find(|job| {
+                job.session.as_ref() == Some(&session) && job.state == JobState::WaitingForInput
+            })
+        })
+        .await;
+    let live = waiting.live.expect("the daemon follows a loaded session");
+    let (_follower, attached) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
+
+    assert_eq!(
+        (
+            live.model,
+            live.inputs.clone(),
+            live.turn_elapsed_ms.is_some(),
+        ),
+        (attached.options.model.current, attached.inputs, true),
+    );
+    let request = live.inputs.first().expect("the request is open").id;
+    assert_eq!(
+        answer(&client, &session, request, InputAnswer::AllowOnce).await,
+        Ok(())
+    );
+    let job = settled_job(&sandbox, &client, &session).await;
+    assert_eq!(
+        (job.state, job.live.map(|live| live.inputs)),
+        (JobState::Completed, Some(Vec::new())),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
+// Covers: a session a later daemon reopens lists the context its saved
+// conversation fills, with no cost, before it runs another turn; until it
+// is reopened the daemon follows nothing of its job.
+// Owner: daemon job list.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_reopened_session_lists_its_context() {
+    let sandbox = Sandbox::new();
+    let (mut daemon, client) = sandbox.spawn_daemon(sandbox.rho("fixed"), &[]).await;
+    let session = sandbox.new_session(&client).await;
+    assert_eq!(sandbox.prompt(&client, &session).await, Ok(()));
+    settled_job(&sandbox, &client, &session).await;
+    drop(client);
+    let stop = sandbox
+        .rho("fixed")
+        .args(["daemon", "stop"])
+        .status()
+        .unwrap();
+    assert!(stop.success(), "log:\n{}", sandbox.isolated.daemon_log());
+    daemon.wait().unwrap();
+
+    let client = sandbox.start_daemon("fixed").await;
+    let unloaded = settled_job(&sandbox, &client, &session).await.live;
+    let (_follower, _) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
+    let usage = settled_job(&sandbox, &client, &session)
+        .await
+        .live
+        .and_then(|live| live.usage);
+
+    assert_eq!(
+        (
+            unloaded,
+            usage.map(|usage| (usage.used_tokens > 0, usage.cost_usd_micros)),
+        ),
+        (None, Some((true, None))),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
 }
 
 // Covers: a supervised turn's approval, asked while no client is attached,
@@ -1955,7 +2036,7 @@ async fn ask_color_with_fallback(sandbox: &Sandbox, client: &Client, session: &S
     sandbox.prompt_tool_call(client, session, &call).await;
 }
 
-fn blue() -> InputAnswer {
+pub(super) fn blue() -> InputAnswer {
     InputAnswer::Answers {
         answers: [("color".to_owned(), vec!["Blue".to_owned()])].into(),
     }
@@ -1988,7 +2069,7 @@ async fn color_result(follower: &mut Follower) -> serde_json::Value {
 }
 
 /// The first input request `events` open.
-fn first_request(events: &[(Seq, SessionEvent)]) -> InputRequest {
+pub(super) fn first_request(events: &[(Seq, SessionEvent)]) -> InputRequest {
     events
         .iter()
         .find_map(|(_, event)| match event {

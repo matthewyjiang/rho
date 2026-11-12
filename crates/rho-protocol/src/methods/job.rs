@@ -8,7 +8,7 @@ use std::{fmt, path::PathBuf};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::SessionId;
+use super::{InputRequest, ModelRef, SessionId};
 
 /// List every job the daemon knows.
 pub const JOB_LIST: &str = "rho/job/list";
@@ -158,6 +158,53 @@ pub struct JobSummary {
     /// [`JobState::Queued`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub queue: Option<QueuePlace>,
+    /// What the daemon follows of the job right now. Present for a
+    /// [`JobKind::Session`] job whose session the daemon has loaded, and
+    /// for a [`JobKind::Subagent`] job whose run is under way and has
+    /// opened its session; absent for every other job.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub live: Option<JobLive>,
+}
+
+/// What the daemon follows of a job whose session's events it streams: the
+/// last its stream said of each. A client lists jobs to show these without
+/// attaching to every session.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct JobLive {
+    /// The session's title, once it has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// The model the session runs on.
+    pub model: ModelRef,
+    /// How long the turn under way has run, in milliseconds; absent while
+    /// none is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_elapsed_ms: Option<u64>,
+    /// The session's context use and spend, as its last
+    /// [`super::SessionEvent::Usage`] said; absent before the first.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<JobUsage>,
+    /// The input requests open on the session, oldest first, each answered
+    /// with [`super::SESSION_ANSWER`]: the turn's own, which put the job in
+    /// [`JobState::WaitingForInput`], and its subagents' questions, which
+    /// do not.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub inputs: Vec<InputRequest>,
+}
+
+/// A session's context use and spend, as [`super::SessionEvent::Usage`]
+/// reports them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct JobUsage {
+    pub used_tokens: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_tokens: Option<u64>,
+    /// The session's whole spend so far in millionths of a US dollar.
+    /// Absent while no request has a price, for a subagent run, whose
+    /// spend its parent session's counts, and for a session the daemon
+    /// reopened, until its next turn reports usage.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_usd_micros: Option<u64>,
 }
 
 /// Where a queued job waits: the budget it waits on, that budget's limit,

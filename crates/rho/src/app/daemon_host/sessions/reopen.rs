@@ -112,7 +112,7 @@ impl Sessions {
             SessionJob::Last(record) => Some(*record),
             SessionJob::New => None,
         };
-        let stored = saved_session(id).await?;
+        let stored = saved_session(id, SavedFor::Turns).await?;
         // The session opens under the grant `with` brings, held to its
         // job's limit, whatever its last turn ran under, so its record never
         // says another than its environment carries.
@@ -207,11 +207,25 @@ async fn saved_workspace(id: &SessionId) -> Result<PathBuf, RpcError> {
     lookup.ok_or_else(|| not_found(id))
 }
 
-/// The session saved under `id`, opened in its own workspace.
-pub(super) async fn saved_session(id: &SessionId) -> Result<StoredSession, RpcError> {
+/// What a saved session is opened for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum SavedFor {
+    /// A client's turns, which a child session refuses: only its parent
+    /// continues it, and a client's turns there would interleave with the
+    /// parent's when it resumes the child.
+    Turns,
+    /// Reading what it saved, as an observe does, a child session's too.
+    Reading,
+}
+
+/// The session saved under `id`, opened in its own workspace for `purpose`.
+pub(super) async fn saved_session(
+    id: &SessionId,
+    purpose: SavedFor,
+) -> Result<StoredSession, RpcError> {
     let cwd = saved_workspace(id).await?;
     let id = id.clone();
-    tokio::task::spawn_blocking(move || open_saved(&cwd, &id))
+    tokio::task::spawn_blocking(move || open_saved(&cwd, &id, purpose))
         .await
         .map_err(|error| store_failed(LOOK_UP, &error.into()))?
 }
@@ -219,11 +233,10 @@ pub(super) async fn saved_session(id: &SessionId) -> Result<StoredSession, RpcEr
 /// What a failed lookup of a saved session could not do.
 const LOOK_UP: &str = "look the session up";
 
-/// Opens the session saved under `id` in `cwd`'s workspace, unless another
-/// process has it open or it is a child session, which only its parent
-/// continues: a client's turns there would interleave with the parent's
-/// when it resumes the child. Blocking.
-fn open_saved(cwd: &Path, id: &SessionId) -> Result<StoredSession, RpcError> {
+/// Opens the session saved under `id` in `cwd`'s workspace for `purpose`,
+/// unless another process has it open or it is a child session opened for
+/// turns (see [`SavedFor`]). Blocking.
+fn open_saved(cwd: &Path, id: &SessionId, purpose: SavedFor) -> Result<StoredSession, RpcError> {
     let stored = match StoredSession::open_exact_in_workspace(cwd, id.as_str()) {
         Ok(Some((stored, _history))) => stored,
         // Deleted since the index named it.
@@ -233,6 +246,9 @@ fn open_saved(cwd: &Path, id: &SessionId) -> Result<StoredSession, RpcError> {
         }
         Err(error) => return Err(open_failed(error)),
     };
+    if purpose == SavedFor::Reading {
+        return Ok(stored);
+    }
     let child = match stored.origin().map_err(open_failed)? {
         Some(SessionOrigin::Subagent) => Some("a subagent run"),
         Some(SessionOrigin::WorkflowNode) => Some("a workflow node"),

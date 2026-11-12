@@ -278,8 +278,15 @@ rho attach "$SESSION" --output jsonl | jq -c 'select(.type == "event") | .event.
 - A client that cancels the turn ends it with the reason `cancelled`, exit 1;
   a daemon that stops before the turn ends, with `interrupted`, exit 1. A turn
   the daemon cancelled at its `--timeout` ends with `timeout`, exit 124.
-- Subagent and workflow runs do not stream their events yet (#1668): their
-  job ids are refused, and the error names the session they run in.
+- A subagent job's id, or the id of the session its run writes, follows the
+  run instead: its events as they come, then exit 0 when the run completed.
+  This also holds for the agent nodes of a workflow run. Following a run only
+  reads it. The run's questions go to its parent session, so `rho attach`
+  takes no answers or steering there. A run that already ended replays the
+  session it saved. A subagent on another runtime (Claude, Cursor,
+  Antigravity) keeps no Rho session, and a workflow run's own job has no
+  events besides its agent nodes'. Both are refused, and the error names the
+  session they run in.
 - A session another process has open, such as a TUI or a foreground
   `rho run`, is refused until that process closes it; `rho attach` fails with
   exit 1.

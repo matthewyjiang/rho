@@ -5,7 +5,7 @@ use crate::{
         agent_concurrency::QueuePlace,
         agent_executor::{AgentExecutor, FrozenAgentLaunchRequest},
         headless_host::ChildSession,
-        subagent_pool::{ChildObserver, StartedSubagent},
+        subagent_pool::{child_events, ChildObserver, StartedSubagent},
     },
     subagent::RunState,
     workflow::{ArtifactObservation, NodeTerminalState, ValidatedOutputRef, WorkflowValue},
@@ -82,6 +82,7 @@ impl WorkflowAgentExecutor {
             "workflow:{}:{}:{}",
             request.run_id, request.node, request.attempt
         );
+        let (events, followed) = child_events(self.observer.as_ref());
         let mut handle = self
             .executor
             .spawn_frozen(FrozenAgentLaunchRequest {
@@ -98,6 +99,7 @@ impl WorkflowAgentExecutor {
                     AgentSession::New(id) => ChildSession::New(id),
                     AgentSession::Reopen(id) => ChildSession::Reopen(id),
                 }),
+                events,
             })
             .map_err(|error| RuntimeError::Executor(error.to_string()))?;
         if let Some(observer) = &self.observer {
@@ -105,6 +107,7 @@ impl WorkflowAgentExecutor {
                 run_id,
                 self.executor.cwd().to_path_buf(),
                 &handle,
+                followed,
             ));
         }
         if let Some(progress) = &request.progress {

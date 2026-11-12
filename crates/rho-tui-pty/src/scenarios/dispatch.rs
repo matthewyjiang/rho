@@ -87,6 +87,10 @@ pub fn run_named(runner: &ScenarioRunner, name: &str) -> Result<ScenarioOutcome>
         return super::daemon_build_skew::run(runner);
     }
     #[cfg(unix)]
+    if name == super::daemon_jobs_view::SCENARIO.id {
+        return super::daemon_jobs_view::run(runner);
+    }
+    #[cfg(unix)]
     if name == super::daemon_mcp::SCENARIO.id {
         return super::daemon_mcp::run(runner);
     }

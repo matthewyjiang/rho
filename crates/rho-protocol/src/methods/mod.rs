@@ -119,8 +119,8 @@ pub use input::{
 };
 pub use inspect::{SessionInspectParams, SessionInspectResponse, SessionReport, SESSION_INSPECT};
 pub use job::{
-    Budget, JobId, JobKind, JobListParams, JobListResponse, JobState, JobSummary, QueuePlace,
-    JOB_LIST,
+    Budget, JobId, JobKind, JobListParams, JobListResponse, JobLive, JobState, JobSummary,
+    JobUsage, QueuePlace, JOB_LIST,
 };
 pub use login::{
     AuthLoginCancelParams, AuthLoginCancelResponse, AuthLoginFinishedParams, AuthLoginParams,

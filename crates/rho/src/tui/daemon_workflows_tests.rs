@@ -24,6 +24,7 @@ fn drive(id: &str, run: RunId, created_at: u64, state: JobState) -> JobSummary {
         updated_at: created_at,
         error: None,
         queue: None,
+        live: None,
         grant: None,
         grant_limit: None,
     }

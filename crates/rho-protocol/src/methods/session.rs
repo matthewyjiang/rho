@@ -402,6 +402,12 @@ pub struct SessionAttachParams {
 /// MCP server, OpenAPI source, or hook, and so carries no environment or
 /// setup. With no MCP server connected, such a replay titles the session's
 /// MCP tool calls by their names alone.
+///
+/// A session a subagent run under way is writing is followed through the
+/// run's stream, once the run has opened the session; until then the
+/// observe is refused as `SessionBusy`. The stream's one turn is the run,
+/// and the client is detached as [`DetachReason::NotLoaded`] after the run
+/// ends.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SessionObserveParams {
     pub session: SessionId,

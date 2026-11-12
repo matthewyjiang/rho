@@ -172,7 +172,12 @@ impl App {
                 DaemonView::ToolSourcesLoaded => self.show_daemon_tool_sources_loaded(),
                 DaemonView::Report { report, result } => self.show_daemon_report(report, result),
                 DaemonView::Login(update) => self.show_daemon_login(update, terminal).await?,
-                DaemonView::Jobs(jobs) => self.show_daemon_jobs(jobs),
+                DaemonView::Jobs(jobs) => {
+                    if let Ok(jobs) = &jobs {
+                        self.show_jobs_view(jobs, terminal);
+                    }
+                    self.show_daemon_jobs(jobs);
+                }
                 DaemonView::Processes { asked, result } => {
                     self.show_daemon_processes(asked, result);
                 }

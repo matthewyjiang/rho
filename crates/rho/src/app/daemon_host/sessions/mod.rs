@@ -20,7 +20,8 @@
 //!
 //! Clients attach to a loaded session to follow its events (#1657); see
 //! [`feed`]. A client that only reads a session observes it instead, which
-//! never loads it; see [`observe`]. A client may change the session's settings, which apply
+//! never loads it; see [`observe`]. Observing is also how a client follows
+//! a subagent run, by the session the run writes; see [`child_feeds`]. A client may change the session's settings, which apply
 //! between turns, a change sent during a turn once it ends, and which the
 //! session keeps with its file; see [`configure`] and [`options`]. A
 //! session that sits idle, with no turn under way and no client attached,
@@ -68,6 +69,7 @@ use crate::{
 mod budget;
 mod cache_warm;
 mod catalog;
+mod child_feeds;
 mod child_questions;
 mod configure;
 mod cost;
@@ -100,6 +102,7 @@ mod workflows;
 
 use super::settings::ConfigStore;
 use cache_warm::KeepWarm;
+pub(super) use child_feeds::{ChildFeeds, ChildStream};
 use child_questions::ChildQuestions;
 use feed::{Attached, Feed};
 use idle_wake::IdleWatch;
@@ -375,6 +378,7 @@ fn opening_feed(
     );
     if let Some(saved) = saved_replay(&mut live, runtime, &job.id) {
         feed.end_turn(saved);
+        feed.seed_usage(&live.context_usage(runtime.context_estimate()));
     }
     // An outcome is recorded with the turn it is of.
     if let (Some(outcome), Some(turn)) = (job.outcome.clone(), last.turn.clone()) {
@@ -544,6 +548,13 @@ impl Sessions {
     /// The daemon's settings.
     pub(super) fn settings(&self) -> &ConfigStore {
         &self.settings
+    }
+
+    /// What `rho/job/list` reports of loaded session `session`'s job from
+    /// its stream; `None` for a session the daemon has not loaded.
+    pub(super) fn session_live(&self, session: &SessionId) -> Option<rho_protocol::JobLive> {
+        let loaded = self.loaded().get(session).cloned()?;
+        Some(loaded.feed.live())
     }
 
     /// The sessions' subagents: the daemon-wide budget and its queue.

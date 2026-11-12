@@ -157,6 +157,8 @@ impl App {
             {
                 Duration::from_millis(100)
             } else if self.daemon_rail.shows_runs()
+                // Lists every session's jobs, which change with no turn here.
+                || self.jobs_view_open()
                 || self.process_panel.is_active()
                 || self.questionnaire_timeout_running()
             {

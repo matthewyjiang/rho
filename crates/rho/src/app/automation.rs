@@ -392,7 +392,7 @@ async fn run_text(
                     Err(error) => error,
                 })?;
             // The rebound agent has tools of its own.
-            view.bind(runtime);
+            view.bind(runtime, process_config);
             // The command stays the shown message; the model gets the task.
             let turn = Turn {
                 display: input,

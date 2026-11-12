@@ -106,6 +106,7 @@ impl App {
             agent_editor_session: None,
             sessions_hub_state: super::sessions_hub::SessionsHubState::default(),
             pending_sessions_task: None,
+            jobs_view_attach: None,
             daemon_options: None,
             daemon_option_requests: std::collections::VecDeque::new(),
             daemon_login_selected: None,
