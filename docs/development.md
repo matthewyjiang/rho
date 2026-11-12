@@ -236,7 +236,7 @@ Scenarios launch Rho with:
 
 ### When to use Herdr instead
 
-Use the Herdr sibling-pane workflow for exploratory checks, novel bugs that are not yet encoded as scenarios, or parity checks against a real terminal renderer. See the [Herdr](/integrations/herdr) page.
+Run Rho in a separate [Herdr](/integrations/herdr) pane for exploratory checks, novel bugs that are not yet encoded as scenarios, or parity checks against a real terminal renderer. A debug build started with `RHO_TUI_TEST_MODE=matrix` uses the same offline fixture provider as the PTY scenarios.
 
 ## Performance investigations
 
