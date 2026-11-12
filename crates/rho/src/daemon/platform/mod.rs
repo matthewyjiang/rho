@@ -8,7 +8,7 @@
 //! | Concern | Items |
 //! |---|---|
 //! | Endpoint | [`endpoint`], [`Listener`], [`Stream`], [`connect`], [`connect_restarting`], [`remove_endpoint`], [`inspect_endpoint`] |
-//! | Private files | [`DaemonPathError`], [`create_private_dir`], [`prepare_private_dir`], [`create_private_file`], [`sync_dir`], [`open_lock_file`], [`open_log_file`], [`path_bytes`], [`FileIdentity`], [`running_identity`], [`account_lock_path`], [`lock_account_file`] |
+//! | Private files | [`DaemonPathError`], [`create_private_dir`], [`prepare_private_dir`], [`create_private_file`], [`sync_dir`], [`open_lock_file`], [`open_log_file`], [`FileIdentity`], [`running_identity`], [`account_lock_path`], [`lock_account_file`] |
 //! | Process | [`spawn_detached`], [`MACHINE_VARIABLES`], [`is_variable`], [`request_stop`], [`StopRequests`], [`stderr_is_journal_stream`] |
 //! | Restart | [`relaunch`], [`take_handoff`] |
 //! | Install | [`REPLACEABLE_WHILE_RUNNING`], [`stop_service`] |
@@ -59,19 +59,9 @@ pub(crate) use imp::{
 };
 pub(super) use imp::{
     connect, connect_restarting, endpoint, inspect_endpoint, is_variable, open_lock_file,
-    open_log_file, path_bytes, prepare_private_dir, relaunch, remove_endpoint, request_stop,
-    running_identity, spawn_detached, stop_service, take_handoff, Listener, Stream,
-    MACHINE_VARIABLES,
+    open_log_file, prepare_private_dir, relaunch, remove_endpoint, request_stop, running_identity,
+    spawn_detached, stop_service, take_handoff, Listener, Stream, MACHINE_VARIABLES,
 };
 
 #[cfg(test)]
 pub(crate) use imp::test_support::StopTarget;
-
-/// Where a rho home's daemon listens, as [`endpoint`] lays it out.
-pub(super) struct Endpoint {
-    /// The private directory that holds the spawn lock and, where the
-    /// endpoint is a file, the endpoint.
-    pub(super) runtime_dir: std::path::PathBuf,
-    /// What clients connect to, in the form the daemon reports it.
-    pub(super) socket: std::path::PathBuf,
-}

@@ -47,6 +47,12 @@
 //! [`Notifications`]; [`serve_connection`] implements the daemon side around a
 //! [`Service`], which publishes events through [`subscription()`].
 //!
+//! # Finding the daemon
+//!
+//! Each rho home has one daemon, listening where [`DaemonEndpoint::locate`]
+//! says. On Unix, [`LocalDaemon`] connects a frontend to it, and starts it
+//! with `rho daemon start` when none runs, as the `rho` CLI does.
+//!
 //! # Methods
 //!
 //! [`methods`] lists every method with its params and result types. A
@@ -71,9 +77,12 @@ mod build_id;
 mod client;
 mod declared;
 pub mod display;
+mod endpoint;
 mod error;
 mod forward;
 mod jsonrpc;
+#[cfg(unix)]
+mod local_daemon;
 mod login_relay;
 pub mod methods;
 pub mod schema;
@@ -87,12 +96,17 @@ mod version;
 
 pub use build_id::BuildId;
 pub use client::{Client, ClientError, DaemonNotification, Notifications};
+pub use endpoint::DaemonEndpoint;
+#[cfg(unix)]
+pub use endpoint::SocketPathTooLong;
 pub use error::ErrorCode;
 pub use forward::ConfigWatch;
 pub use jsonrpc::{
     FrameError, Message, MessageReader, MessageWriter, Notification, ParseError, Request,
     RequestId, Response, RpcError, MAX_LINE_BYTES,
 };
+#[cfg(unix)]
+pub use local_daemon::{LocalDaemon, LocalDaemonError};
 pub use login_relay::{login_relay, LoginRelay, LoginStream};
 pub use methods::{
     AnswerStop, ApprovalAsk, ApprovalSource, Ask, AuthKeyParams, AuthKeyResponse, AuthLogoutParams,

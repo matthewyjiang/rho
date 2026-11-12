@@ -10,57 +10,26 @@ use std::{
 
 use tokio::net::{UnixListener, UnixStream};
 
+use rho_protocol::DaemonEndpoint;
+
 use super::files::{current_uid, verify_private_dir, DaemonPathError};
-use crate::daemon::{
-    paths::{home_id, DaemonPaths, SocketFound},
-    platform::Endpoint,
-};
-
-/// Bytes in `sockaddr_un.sun_path`, which holds a Unix socket path plus its
-/// NUL terminator.
-#[cfg(any(target_os = "linux", target_os = "android"))]
-const SUN_PATH_BYTES: usize = 108;
-#[cfg(not(any(target_os = "linux", target_os = "android")))]
-const SUN_PATH_BYTES: usize = 104;
-
-/// Longest socket path `bind(2)` accepts on this platform.
-pub(super) const MAX_SOCKET_PATH_BYTES: usize = SUN_PATH_BYTES - 1;
+use crate::daemon::paths::{DaemonPaths, SocketFound};
 
 /// A connection between the daemon and one client.
 pub(in crate::daemon) type Stream = UnixStream;
 
-/// Where the daemon of `rho_home` listens: `daemon.sock` in
-/// `$XDG_RUNTIME_DIR/rho/<home id>` when `env` gives `XDG_RUNTIME_DIR` as
-/// an absolute path, else in `<rho home>/run`.
-///
-/// The per-user `$XDG_RUNTIME_DIR` is shared by every rho home of that
-/// user, so the socket goes in a subdirectory named after the home (see
-/// [`home_id`]); two homes never reach the same daemon.
+/// Where the daemon of `rho_home` listens: `daemon.sock` under the
+/// `XDG_RUNTIME_DIR` that `env` gives, as [`DaemonEndpoint::locate`] lays it
+/// out for every client.
 pub(in crate::daemon) fn endpoint(
     rho_home: &Path,
     env: impl Fn(&str) -> Option<OsString>,
-) -> Result<Endpoint, DaemonPathError> {
-    // XDG: a relative value is invalid and must be ignored.
-    let xdg_runtime_dir = env("XDG_RUNTIME_DIR")
-        .map(PathBuf::from)
-        .filter(|dir| dir.is_absolute());
-    let runtime_dir = match xdg_runtime_dir {
-        Some(dir) => dir.join("rho").join(home_id(rho_home)),
-        None => rho_home.join("run"),
-    };
-    let socket = runtime_dir.join("daemon.sock");
-    let len = socket.as_os_str().len();
-    if len > MAX_SOCKET_PATH_BYTES {
-        return Err(DaemonPathError::SocketPathTooLong {
-            path: socket,
-            len,
-            max: MAX_SOCKET_PATH_BYTES,
-        });
-    }
-    Ok(Endpoint {
-        runtime_dir,
-        socket,
-    })
+) -> Result<DaemonEndpoint, DaemonPathError> {
+    let xdg_runtime_dir = env("XDG_RUNTIME_DIR").map(PathBuf::from);
+    Ok(DaemonEndpoint::locate(
+        rho_home,
+        xdg_runtime_dir.as_deref(),
+    )?)
 }
 
 /// The daemon's listening socket.

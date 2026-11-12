@@ -18,7 +18,7 @@ pub(crate) use files::{
     REPLACEABLE_WHILE_RUNNING,
 };
 pub(in crate::daemon) use files::{
-    open_lock_file, open_log_file, path_bytes, prepare_private_dir, running_identity,
+    open_lock_file, open_log_file, prepare_private_dir, running_identity,
 };
 pub(in crate::daemon) use handoff::{relaunch, take_handoff};
 pub(in crate::daemon) use process::{is_variable, request_stop, spawn_detached, MACHINE_VARIABLES};

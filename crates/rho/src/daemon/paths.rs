@@ -11,9 +11,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use sha2::{Digest, Sha256};
+use rho_protocol::DaemonEndpoint;
 
-use super::platform::{self, DaemonPathError, Endpoint};
+use super::platform::{self, DaemonPathError};
 
 /// Every file the daemon and its clients use.
 ///
@@ -27,7 +27,8 @@ pub(crate) struct DaemonPaths {
     /// The rho home's canonical path, which the rest lay out under.
     pub(crate) home: PathBuf,
     /// Holds the spawn lock and, where the endpoint is a file, the endpoint.
-    /// The platform decides where it is (see [`platform::endpoint`]).
+    /// `rho_protocol::DaemonEndpoint` decides where it is, as it does for
+    /// every frontend.
     pub(crate) runtime_dir: PathBuf,
     /// What clients connect to.
     pub(crate) socket: PathBuf,
@@ -63,7 +64,7 @@ impl DaemonPaths {
         rho_home: &Path,
         env: impl Fn(&str) -> Option<OsString>,
     ) -> Result<Self, DaemonPathError> {
-        let Endpoint {
+        let DaemonEndpoint {
             runtime_dir,
             socket,
         } = platform::endpoint(rho_home, env)?;
@@ -108,15 +109,6 @@ impl DaemonPaths {
         }
         platform::open_log_file(&self.log_file)
     }
-}
-
-/// Names a rho home's runtime subdirectory: the first 16 hex digits of the
-/// SHA-256 of `rho_home`, the home's canonical path from [`real_home`]. Short,
-/// so the endpoint's name stays far under the platform's limit, and stable across
-/// rho versions, so clients and daemons of different versions still find each
-/// other.
-pub(super) fn home_id(rho_home: &Path) -> String {
-    hex::encode(&Sha256::digest(platform::path_bytes(rho_home))[..8])
 }
 
 /// Creates `rho_home`, private to this user, if it is missing, then returns

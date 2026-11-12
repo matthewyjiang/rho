@@ -25,8 +25,15 @@ daemon and its frontends: the Rho TUI, rho-ui, the `rho acp` adapter, and MCP.
   and the reason of a publisher that already closed, still reach the client.
 - `serve_connection` implements the daemon side around a `Service` with one
   async method per protocol method, fed by one `subscription` per attached
-  session. `Client` implements the frontend side: overlapping requests, and
-  the daemon's notifications on a separate `Notifications` stream.
+  session. A method the service does not override answers
+  `MethodNotFound`, so a partial daemon, such as a test double, implements
+  only what it serves. `Client` implements the frontend side: overlapping
+  requests, and the daemon's notifications on a separate `Notifications`
+  stream.
+- `DaemonEndpoint::locate` says where a rho home's daemon listens, the same
+  layout the `rho` CLI uses. On Unix, `LocalDaemon` connects a frontend to
+  that daemon and, when none runs, starts it with `rho daemon start`, the
+  CLI's own ensure-running path.
 - The [`methods`](https://docs.rs/rho-protocol/latest/rho_protocol/methods/)
   module lists every method and notification with its params and result. A
   session's turns run in the daemon and outlive the client that started them.

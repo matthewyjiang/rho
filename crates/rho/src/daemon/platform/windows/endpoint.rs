@@ -10,10 +10,9 @@ use super::{
     files::DaemonPathError,
     pipe::{self, Opened, PipeServer},
 };
-use crate::daemon::{
-    paths::{home_id, DaemonPaths, SocketFound},
-    platform::Endpoint,
-};
+use rho_protocol::DaemonEndpoint;
+
+use crate::daemon::paths::{DaemonPaths, SocketFound};
 
 /// Interval between connection attempts while a daemon restarts. Each
 /// attempt is one `CreateFile` on a local pipe.
@@ -24,19 +23,14 @@ const RESTART_POLL_INTERVAL: Duration = Duration::from_millis(10);
 /// daemon sees it leave.
 pub(in crate::daemon) type Stream = CloseOnShutdown<NamedPipeClient>;
 
-/// Where the daemon of `rho_home` listens: a pipe named after the home (see
-/// [`home_id`]), so two homes never reach the same daemon. Pipes live in one
-/// namespace for the whole machine and not in a directory, so the runtime
-/// directory, `<rho home>\run`, holds only the spawn lock. `env` places
+/// Where the daemon of `rho_home` listens: a pipe named after the home, as
+/// [`DaemonEndpoint::locate`] lays it out for every client. `env` places
 /// nothing here.
 pub(in crate::daemon) fn endpoint(
     rho_home: &Path,
     _env: impl Fn(&str) -> Option<OsString>,
-) -> Result<Endpoint, DaemonPathError> {
-    Ok(Endpoint {
-        runtime_dir: rho_home.join("run"),
-        socket: format!(r"\\.\pipe\rho-daemon-{}", home_id(rho_home)).into(),
-    })
+) -> Result<DaemonEndpoint, DaemonPathError> {
+    Ok(DaemonEndpoint::locate(rho_home))
 }
 
 /// The daemon's listening pipe.

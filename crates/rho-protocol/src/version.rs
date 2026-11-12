@@ -162,6 +162,22 @@ impl VersionMismatch {
             restart: None,
         })
     }
+
+    /// Whether the daemon refused a client newer than itself and reported
+    /// that restarting it is free, so the client may replace it with a
+    /// daemon of its own version: that interrupts nothing and disconnects
+    /// no one (#1776). A daemon that does not say what a restart costs is
+    /// in use.
+    pub fn is_unused_older_daemon(&self) -> bool {
+        matches!(
+            self,
+            Self {
+                fix: VersionFix::RestartDaemon,
+                restart: Some(cost),
+                ..
+            } if cost.is_free()
+        )
+    }
 }
 
 impl fmt::Display for VersionMismatch {

@@ -3,19 +3,8 @@
 use std::sync::Arc;
 
 use rho_protocol::{
-    AuthChooseStoreParams, AuthChooseStoreResponse, AuthKeyParams, AuthKeyResponse, AuthListParams,
-    AuthListResponse, AuthLoginCancelParams, AuthLoginCancelResponse, AuthLoginParams,
-    AuthLoginResponse, AuthLogoutParams, AuthLogoutResponse, BuildId, ConfigGetParams,
-    ConfigRegisterParams, ConfigRegisterResponse, ConfigSchema, ConfigSetParams, ConfigSetResponse,
-    ConfigWatch, CredentialStoreKind, CredentialStoreStatus, DaemonStatus, ErrorCode,
-    JobListResponse, LoginStream, RpcError, Service, SessionAnswerParams, SessionAnswerResponse,
-    SessionAttachParams, SessionAttachResponse, SessionCancelParams, SessionCancelResponse,
-    SessionConfigureParams, SessionConfigureResponse, SessionDeleteParams, SessionDeleteResponse,
-    SessionHoldParams, SessionHoldResponse, SessionListParams, SessionListResponse,
-    SessionNewParams, SessionNewResponse, SessionPromptParams, SessionPromptResponse,
-    SessionRenameParams, SessionRenameResponse, SessionSteerParams, SessionSteerResponse,
-    SessionUnsteerParams, SessionUnsteerResponse, SettingsService, StoreSelectedBy, Subscription,
-    PROTOCOL_VERSION,
+    BuildId, CredentialStoreKind, CredentialStoreStatus, DaemonStatus, ErrorCode, JobListResponse,
+    RpcError, Service, SettingsService, StoreSelectedBy, PROTOCOL_VERSION,
 };
 
 use super::{
@@ -60,7 +49,7 @@ impl RefusingListener {
 
 /// Answers `status` with [`test_status`] and, like the real host, stops the
 /// daemon on `rho/daemon/stop` by requesting its shutdown. It hosts no
-/// sessions.
+/// sessions, and leaves every other method to [`Service`]'s defaults.
 pub(super) struct StubHost {
     shutdown: Shutdown,
 }
@@ -120,203 +109,9 @@ impl Service for StubHost {
         self.shutdown.request(Ending::Stop, |_| {});
     }
 
-    async fn new_session(&self, _: SessionNewParams) -> Result<SessionNewResponse, RpcError> {
-        Err(no_sessions())
-    }
-
-    async fn prompt_session(
-        &self,
-        _: SessionPromptParams,
-    ) -> Result<SessionPromptResponse, RpcError> {
-        Err(no_sessions())
-    }
-
-    async fn cancel_session(
-        &self,
-        _: SessionCancelParams,
-    ) -> Result<SessionCancelResponse, RpcError> {
-        Err(no_sessions())
-    }
-
-    async fn steer_session(&self, _: SessionSteerParams) -> Result<SessionSteerResponse, RpcError> {
-        Err(no_sessions())
-    }
-
-    async fn unsteer_session(
-        &self,
-        _: SessionUnsteerParams,
-    ) -> Result<SessionUnsteerResponse, RpcError> {
-        Err(no_sessions())
-    }
-
-    async fn answer_session(
-        &self,
-        _: SessionAnswerParams,
-    ) -> Result<SessionAnswerResponse, RpcError> {
-        Err(no_sessions())
-    }
-
-    async fn hold_session(&self, _: SessionHoldParams) -> Result<SessionHoldResponse, RpcError> {
-        Err(no_sessions())
-    }
-
-    async fn session_mcp(
-        &self,
-        _: rho_protocol::SessionMcpParams,
-    ) -> Result<rho_protocol::SessionMcpInventory, RpcError> {
-        Err(no_sessions())
-    }
-
-    async fn session_mcp_catalog(
-        &self,
-        _: rho_protocol::SessionMcpCatalogParams,
-    ) -> Result<rho_protocol::SessionMcpCatalog, RpcError> {
-        Err(no_sessions())
-    }
-
-    async fn session_mcp_resource(
-        &self,
-        _: rho_protocol::SessionMcpResourceParams,
-    ) -> Result<rho_protocol::SessionMcpResourceResponse, RpcError> {
-        Err(no_sessions())
-    }
-
-    async fn session_mcp_complete(
-        &self,
-        _: rho_protocol::SessionMcpCompleteParams,
-    ) -> Result<rho_protocol::SessionMcpCompleteResponse, RpcError> {
-        Err(no_sessions())
-    }
-
-    async fn observe_session(
-        &self,
-        _: rho_protocol::SessionObserveParams,
-    ) -> Result<(SessionAttachResponse, Subscription), RpcError> {
-        Err(no_sessions())
-    }
-
-    async fn session_processes(
-        &self,
-        _: rho_protocol::SessionProcessesParams,
-    ) -> Result<rho_protocol::SessionProcessesResponse, RpcError> {
-        Err(no_sessions())
-    }
-
-    async fn inspect_session(
-        &self,
-        _: rho_protocol::SessionInspectParams,
-    ) -> Result<rho_protocol::SessionInspectResponse, RpcError> {
-        Err(no_sessions())
-    }
-
-    async fn configure_session(
-        &self,
-        _: SessionConfigureParams,
-    ) -> Result<SessionConfigureResponse, RpcError> {
-        Err(no_sessions())
-    }
-
-    async fn attach_session(
-        &self,
-        _: SessionAttachParams,
-    ) -> Result<(SessionAttachResponse, Subscription), RpcError> {
-        Err(no_sessions())
-    }
-
-    async fn list_sessions(&self, _: SessionListParams) -> Result<SessionListResponse, RpcError> {
-        Ok(SessionListResponse {
-            sessions: Vec::new(),
-            next_cursor: None,
-        })
-    }
-
-    async fn rename_session(
-        &self,
-        _: SessionRenameParams,
-    ) -> Result<SessionRenameResponse, RpcError> {
-        Err(no_sessions())
-    }
-
-    async fn delete_session(
-        &self,
-        _: SessionDeleteParams,
-    ) -> Result<SessionDeleteResponse, RpcError> {
-        Err(no_sessions())
-    }
-
     async fn list_jobs(&self) -> JobListResponse {
         JobListResponse { jobs: Vec::new() }
     }
-
-    async fn save_auth_key(&self, _: AuthKeyParams) -> Result<AuthKeyResponse, RpcError> {
-        Err(no_credential_store())
-    }
-
-    async fn logout_auth(&self, _: AuthLogoutParams) -> Result<AuthLogoutResponse, RpcError> {
-        Err(no_credential_store())
-    }
-
-    async fn list_auths(&self, _params: AuthListParams) -> Result<AuthListResponse, RpcError> {
-        Err(no_credential_store())
-    }
-
-    async fn login(
-        &self,
-        _: AuthLoginParams,
-    ) -> Result<(AuthLoginResponse, LoginStream), RpcError> {
-        Err(no_credential_store())
-    }
-
-    async fn cancel_login(
-        &self,
-        _: AuthLoginCancelParams,
-    ) -> Result<AuthLoginCancelResponse, RpcError> {
-        Err(no_credential_store())
-    }
-
-    async fn choose_store(
-        &self,
-        _: AuthChooseStoreParams,
-    ) -> Result<AuthChooseStoreResponse, RpcError> {
-        Err(no_credential_store())
-    }
 }
 
-impl SettingsService for StubHost {
-    async fn config_schema(&self) -> Result<ConfigSchema, RpcError> {
-        Err(no_settings())
-    }
-
-    async fn register_config(
-        &self,
-        _: ConfigRegisterParams,
-    ) -> Result<ConfigRegisterResponse, RpcError> {
-        Err(no_settings())
-    }
-
-    async fn get_config(&self, _: ConfigGetParams) -> Result<ConfigWatch, RpcError> {
-        Err(no_settings())
-    }
-
-    async fn set_config(&self, _: ConfigSetParams) -> Result<ConfigSetResponse, RpcError> {
-        Err(no_settings())
-    }
-}
-
-fn no_settings() -> RpcError {
-    RpcError::new(ErrorCode::MethodNotFound, "the stub keeps no settings")
-}
-
-fn no_sessions() -> RpcError {
-    RpcError::new(
-        ErrorCode::SessionNotFound,
-        "the stub host hosts no sessions",
-    )
-}
-
-fn no_credential_store() -> RpcError {
-    RpcError::new(
-        ErrorCode::CredentialStoreUnavailable,
-        "the stub host has no credential store",
-    )
-}
+impl SettingsService for StubHost {}

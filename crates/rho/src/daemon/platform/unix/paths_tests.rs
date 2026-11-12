@@ -8,8 +8,8 @@ use std::{
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 
-use super::{endpoint::MAX_SOCKET_PATH_BYTES, DaemonPathError};
-use crate::daemon::paths::{home_id, real_home, DaemonPaths};
+use super::DaemonPathError;
+use crate::daemon::paths::{real_home, DaemonPaths};
 
 fn resolve(rho_home: &Path, xdg_runtime_dir: Option<&str>) -> Result<DaemonPaths, DaemonPathError> {
     DaemonPaths::resolve(rho_home, |name| match name {
@@ -18,23 +18,25 @@ fn resolve(rho_home: &Path, xdg_runtime_dir: Option<&str>) -> Result<DaemonPaths
     })
 }
 
-// Covers: the socket lives under $XDG_RUNTIME_DIR, in a directory of its own
-// home, only when that variable is a usable absolute path; the lock and info
-// file stay in the home whatever the runtime directory, so daemons started
-// with different XDG_RUNTIME_DIRs for one home still exclude each other.
+// Covers: the socket goes where `XDG_RUNTIME_DIR` from the environment puts
+// it, while the lock and info file stay in the home whatever the runtime
+// directory, so daemons started with different XDG_RUNTIME_DIRs for one home
+// still exclude each other. Where in a runtime directory the socket goes is
+// `rho_protocol::DaemonEndpoint`'s.
 // Owner: daemon path policy.
 #[test]
-fn the_socket_follows_an_absolute_xdg_runtime_dir_and_the_lock_stays_home() {
+fn the_socket_follows_xdg_runtime_dir_and_the_lock_stays_home() {
     let home = Path::new("/home/user/.rho");
-    let in_xdg = PathBuf::from("/run/user/1000/rho").join(home_id(home));
-    for (xdg, expected) in [
-        (Some("/run/user/1000"), in_xdg.as_path()),
-        (Some(""), Path::new("/home/user/.rho/run")),
-        (Some("relative/run"), Path::new("/home/user/.rho/run")),
-        (None, Path::new("/home/user/.rho/run")),
+    for (xdg, runtime_root) in [
+        (Some("/run/user/1000"), Path::new("/run/user/1000/rho")),
+        (None, Path::new("/home/user/.rho")),
     ] {
         let paths = resolve(home, xdg).unwrap();
-        assert_eq!(paths.runtime_dir, expected, "XDG_RUNTIME_DIR={xdg:?}");
+        assert_eq!(
+            paths.runtime_dir.parent(),
+            Some(runtime_root),
+            "XDG_RUNTIME_DIR={xdg:?}"
+        );
         assert_eq!(paths.socket, paths.runtime_dir.join("daemon.sock"));
         assert_eq!(
             (paths.lock, paths.info_file),
@@ -45,39 +47,6 @@ fn the_socket_follows_an_absolute_xdg_runtime_dir_and_the_lock_stays_home() {
             "XDG_RUNTIME_DIR={xdg:?}"
         );
     }
-}
-
-// Covers: two rho homes of one user share $XDG_RUNTIME_DIR but never a
-// socket, so neither daemon can reach, or remove, the other's.
-// Owner: daemon path policy.
-#[test]
-fn homes_sharing_an_xdg_runtime_dir_get_their_own_sockets() {
-    let xdg = Some("/run/user/1000");
-    let first = resolve(Path::new("/home/user/.rho"), xdg).unwrap();
-    let second = resolve(Path::new("/home/other/.rho"), xdg).unwrap();
-
-    assert_ne!(first.socket, second.socket);
-    assert_eq!(first.runtime_dir.parent(), second.runtime_dir.parent());
-}
-
-// Covers: a socket path bind(2) would truncate fails up front, naming the
-// limit and the actual length.
-// Owner: daemon path policy.
-#[test]
-fn overlong_socket_path_is_rejected_with_its_length() {
-    let home = PathBuf::from(format!("/{}", "h".repeat(MAX_SOCKET_PATH_BYTES)));
-    let socket = home.join("run").join("daemon.sock");
-
-    let error = resolve(&home, None).unwrap_err();
-
-    assert_eq!(
-        error,
-        DaemonPathError::SocketPathTooLong {
-            len: socket.as_os_str().len(),
-            path: socket,
-            max: MAX_SOCKET_PATH_BYTES,
-        }
-    );
 }
 
 // Covers: the runtime directory is created private, and an existing one that
