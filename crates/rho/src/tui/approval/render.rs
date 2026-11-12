@@ -44,10 +44,13 @@ pub(in crate::tui) struct ApprovalPrompt {
 
 impl ApprovalPrompt {
     /// The prompt as plain lines, for a view that lists it rather than
-    /// opens it: its title, what it would allow, and the policy's reason.
+    /// opens it: its title, what it would allow with the context the full
+    /// prompt shows, such as a command's directory, and the policy's
+    /// reason.
     pub(in crate::tui) fn summary(&self) -> Vec<String> {
         std::iter::once(self.title.clone())
             .chain(self.details.primary.iter().cloned())
+            .chain(self.details.meta.iter().cloned())
             .chain((!self.reason.is_empty()).then(|| self.reason.clone()))
             .collect()
     }
