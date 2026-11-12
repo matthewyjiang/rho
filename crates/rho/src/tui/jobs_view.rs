@@ -94,9 +94,10 @@ pub(super) struct JobsView {
     mode: Mode,
     /// Why the last request failed, until the next key.
     notice: Arc<Mutex<Option<String>>>,
-    /// A message left unsent with Esc, and the session it was for, which
-    /// `m` on that session takes up again.
-    draft: Option<(SessionId, String)>,
+    /// A message left unsent, with Esc or because the daemon refused it,
+    /// and the session it was for, which `m` on that session takes up
+    /// again.
+    draft: Arc<Mutex<Option<(SessionId, String)>>>,
     attach: Option<Attach>,
     panel: PanelState,
 }
@@ -122,7 +123,7 @@ impl JobsView {
             filter: String::new(),
             mode: Mode::Browse,
             notice: Arc::default(),
-            draft: None,
+            draft: Arc::default(),
             attach: None,
             panel: PanelState::default(),
         }
@@ -309,7 +310,12 @@ impl JobsView {
             return self.say("could not message job: it waits on a request; answer it first");
         }
         // Another session's draft waits for its own `m`.
-        let text = match self.draft.take_if(|(drafted, _)| *drafted == session) {
+        let text = match self
+            .draft
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take_if(|(drafted, _)| *drafted == session)
+        {
             Some((_, text)) => text,
             None => String::new(),
         };
@@ -360,9 +366,16 @@ impl JobsView {
                 );
             }
             Mode::Message { session, text } => {
+                // A message the daemon refuses comes back as the draft.
                 let under_way = self.turn_under_way(&session);
-                self.send("send the message", move |daemon| {
-                    message(daemon, session, text, under_way)
+                let draft = Arc::clone(&self.draft);
+                self.send("send the message", move |daemon| async move {
+                    let sent = message(daemon, session.clone(), text.clone(), under_way).await;
+                    if sent.is_err() {
+                        *draft.lock().unwrap_or_else(PoisonError::into_inner) =
+                            Some((session, text));
+                    }
+                    sent
                 });
             }
             Mode::NewWorkspace { path } => {
@@ -422,7 +435,8 @@ impl JobsView {
                 // Kept, so a request that held it back can be answered
                 // from the list first.
                 Mode::Message { session, text } if !text.trim().is_empty() => {
-                    self.draft = Some((session, text));
+                    *self.draft.lock().unwrap_or_else(PoisonError::into_inner) =
+                        Some((session, text));
                 }
                 Mode::Browse
                 | Mode::Message { .. }
