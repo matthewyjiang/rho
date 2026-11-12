@@ -604,18 +604,24 @@ async fn bind_local() -> (tokio::net::TcpListener, std::net::SocketAddr) {
     (listener, address)
 }
 
-/// A request to a closed port, and the OS's own words for the refusal.
+/// A request to a port nothing listens on, and the OS's own words for the
+/// refusal. The port stays bound to a socket that never listens until both
+/// connections were refused: a port that was only closed is free for a
+/// test running beside this one to bind, and its server would then answer.
 async fn connection_refused_error(secret: &str) -> (reqwest::Error, String) {
-    let (listener, address) = bind_local().await;
-    drop(listener);
+    let held = tokio::net::TcpSocket::new_v4().expect("create a socket");
+    held.bind(([127, 0, 0, 1], 0).into())
+        .expect("bind a local port");
+    let address = held.local_addr().expect("the bound port");
     let refused = std::net::TcpStream::connect(address)
-        .expect_err("closed listener should refuse the connection")
+        .expect_err("a socket that does not listen should refuse the connection")
         .to_string();
     let error = crate::reqwest_client()
         .get(secret_url(address, secret))
         .send()
         .await
-        .expect_err("closed listener should refuse the connection");
+        .expect_err("a socket that does not listen should refuse the connection");
+    drop(held);
     (error, refused)
 }
 
