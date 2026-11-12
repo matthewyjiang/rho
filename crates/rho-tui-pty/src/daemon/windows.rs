@@ -1,7 +1,10 @@
 //! The Windows daemon as the harness reaches it: the named pipe its record
 //! names, and the stop pipe beside it.
 
-use std::{ffi::OsString, fs, path::PathBuf, process::Command};
+use std::{ffi::OsString, fs, os::windows::fs::OpenOptionsExt, path::PathBuf, process::Command};
+
+/// `SECURITY_IDENTIFICATION`, from the Windows SDK.
+const SECURITY_IDENTIFICATION: u32 = 0x0001_0000;
 
 use crate::env::IsolatedHome;
 
@@ -34,6 +37,9 @@ pub(super) fn ask_to_stop(home: &IsolatedHome, _pid: u32) -> bool {
     fs::File::options()
         .read(true)
         .write(true)
+        // The pipe's server may only learn who connected, as rho's own
+        // clients allow it.
+        .security_qos_flags(SECURITY_IDENTIFICATION)
         .open(stop)
         .is_ok()
 }

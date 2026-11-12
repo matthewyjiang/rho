@@ -5,14 +5,17 @@ use std::{
     ffi::{OsStr, OsString},
     fs::File,
     io,
-    os::windows::io::AsRawHandle,
+    os::windows::{fs::OpenOptionsExt, io::AsRawHandle},
     time::{Duration, Instant},
 };
 
 use tokio::net::windows::named_pipe::{
     ClientOptions, NamedPipeClient, NamedPipeServer, ServerOptions,
 };
-use windows_sys::Win32::Foundation::{ERROR_NO_DATA, ERROR_PIPE_BUSY};
+use windows_sys::Win32::{
+    Foundation::{ERROR_NO_DATA, ERROR_PIPE_BUSY},
+    Storage::FileSystem::SECURITY_IDENTIFICATION,
+};
 
 use super::security::{owned_by_current_user, OwnerOnly};
 
@@ -115,10 +118,22 @@ fn opened<Client: AsRawHandle>(result: io::Result<Client>) -> io::Result<Opened<
 
 /// Opens the pipe `name` once, without a runtime, to look at it.
 pub(super) fn probe(name: &OsStr) -> io::Result<Opened<File>> {
-    opened(File::options().read(true).write(true).open(name))
+    opened(
+        File::options()
+            .read(true)
+            .write(true)
+            // A pipe's server may impersonate a client that opens it with
+            // the default level, before the owner check here says whose
+            // server it is. Identification lets it learn who connected and
+            // nothing more, which is also what `ClientOptions` asks for.
+            .security_qos_flags(SECURITY_IDENTIFICATION)
+            .open(name),
+    )
 }
 
-/// Connects to the pipe `name`, waiting while every instance is taken.
+/// Connects to the pipe `name`, waiting while every instance is taken. The
+/// server learns who connected and cannot impersonate them: `ClientOptions`
+/// opens with the identification level.
 /// `None` when no pipe of that name exists.
 pub(super) async fn open(name: &OsStr) -> io::Result<Option<NamedPipeClient>> {
     let started = Instant::now();
