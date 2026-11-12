@@ -42,8 +42,7 @@
       "component": "rho-protocol",
       "changelog-path": "CHANGELOG.md",
       "draft": true,
-      "bump-minor-pre-major": true,
-      "release-as": "0.1.0"
+      "release-as": "1.0.0"
     }
   },
   "plugins": ["cargo-workspace"]
