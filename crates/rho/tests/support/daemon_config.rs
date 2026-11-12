@@ -301,15 +301,16 @@ async fn a_provider_added_later_reaches_each_internal_agent_of_a_loaded_session(
         .await;
     let (reply, _) = next_turn_reply(&mut events, &session).await;
     assert_eq!(reply, "answered", "log:\n{}", sandbox.isolated.daemon_log());
-    // A command Auto asks the classifier about.
+    // A write to an untracked file, which Auto asks the classifier about;
+    // a write, not a command, so it runs on every platform's tool set.
     sandbox
         .prompt_tool_call(
             &client,
             &session,
             &serde_json::json!({
-                "id": "run",
-                "name": "bash",
-                "arguments": {"command": "echo classified"},
+                "id": "write",
+                "name": "write",
+                "arguments": {"path": "classified.txt", "content": "classified\n"},
             }),
         )
         .await;
