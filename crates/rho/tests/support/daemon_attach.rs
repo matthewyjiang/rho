@@ -457,19 +457,21 @@ async fn attach_follows_a_subagent_run() {
         .await;
     let request = first_request(&parent.events).id;
     let parent_job = job_of(&client, &session).await.id;
-    let run = client
-        .request::<JobList>(&JobListParams {})
-        .await
-        .unwrap()
-        .jobs
-        .into_iter()
-        .find(|job| job.parent.as_ref() == Some(&parent_job))
-        .expect("the run's job");
+    // The run asked, so its session is open; the daemon follows it once
+    // it has read that from the run, which it does on a task of its own.
+    let run = sandbox
+        .poll_until("the daemon to follow the run", async || {
+            let jobs = client.request::<JobList>(&JobListParams {}).await.unwrap();
+            jobs.jobs
+                .into_iter()
+                .find(|job| job.parent.as_ref() == Some(&parent_job))
+                .filter(|job| job.live.is_some())
+        })
+        .await;
     let run_session = run
         .session
         .clone()
         .expect("a Rho subagent writes a session");
-    // The run asked, so its session is open and the daemon follows it.
     let followed = run.live.as_ref().map(|live| live.inputs.clone());
 
     let mut live = Attach::spawn(

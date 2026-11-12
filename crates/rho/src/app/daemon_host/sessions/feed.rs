@@ -269,6 +269,11 @@ impl Feed {
         }
     }
 
+    /// The session's title, if it has one.
+    pub(super) fn title(&self) -> Option<String> {
+        self.state().title.clone()
+    }
+
     /// What `rho/job/list` reports of the session's job from its stream.
     pub(super) fn live(&self) -> wire::JobLive {
         let state = self.state();

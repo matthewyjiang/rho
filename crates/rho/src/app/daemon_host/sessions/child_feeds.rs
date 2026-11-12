@@ -162,7 +162,7 @@ impl ChildStream {
     /// they know.
     pub(in crate::app::daemon_host) fn titled(&self, title: &str) {
         if let Some(feed) = self.feed.borrow().as_ref() {
-            if feed.live().title.as_deref() != Some(title) {
+            if feed.title().as_deref() != Some(title) {
                 feed.publish([wire::SessionEvent::TitleChanged {
                     title: title.to_owned(),
                 }]);
