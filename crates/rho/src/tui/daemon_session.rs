@@ -344,8 +344,8 @@ impl DaemonSession {
     }
 
     /// What this launch opens its sessions with.
-    pub(in crate::tui) fn launch_setup(&self) -> rho_protocol::SessionSetup {
-        self.launch.setup.clone()
+    pub(in crate::tui) fn launch(&self) -> &DaemonLaunch {
+        &self.launch
     }
 
     /// The daemon the session runs in, for requests about its other

@@ -25,11 +25,12 @@ use rho_protocol::{
     methods::{SessionAnswer, SessionCancel, SessionNew, SessionPrompt, SessionSteer},
     Ask, ClientEnvironment, ContentBlock, ErrorCode, InputAnswer, InputRequest, JobId, JobKind,
     JobSummary, PromptAuthor, SessionAnswerParams, SessionCancelParams, SessionId,
-    SessionNewParams, SessionPromptParams, SessionSetup, SessionSteerParams,
+    SessionNewParams, SessionPromptParams, SessionSteerParams,
 };
 
 use super::{
     approval::ApprovalPrompt,
+    daemon_launch::DaemonLaunch,
     overlay_panel::{reveal_panel_cursor, terminal_area, PanelBody, PanelKeyOutcome, PanelState},
     panel_text::indented_wrapped_lines,
     render::truncate_one_line,
@@ -75,9 +76,11 @@ pub(super) struct JobsView {
     daemon: Arc<Daemon>,
     /// The session this TUI follows, whose job the view opens on.
     followed: SessionId,
-    /// What this TUI opens its sessions with, which one started here
-    /// opens with too.
-    setup: SessionSetup,
+    /// What this TUI opens its sessions with. A session started here opens
+    /// with its setup, and in this TUI's project as its agent too, so
+    /// attaching finds the agent the launch named. Another project may not
+    /// define that agent, so a session there runs as its default.
+    launch: DaemonLaunch,
     /// The daemon's jobs as last listed; `None` before the first answer.
     jobs: Option<Vec<JobSummary>>,
     selected: Option<JobId>,
@@ -100,11 +103,11 @@ impl std::fmt::Debug for JobsView {
 }
 
 impl JobsView {
-    fn new(daemon: Arc<Daemon>, followed: SessionId, setup: SessionSetup) -> Self {
+    fn new(daemon: Arc<Daemon>, followed: SessionId, launch: DaemonLaunch) -> Self {
         Self {
             daemon,
             followed,
-            setup,
+            launch,
             jobs: None,
             selected: None,
             filter: String::new(),
@@ -341,12 +344,15 @@ impl JobsView {
             }
             Mode::NewPrompt { text, .. } if text.trim().is_empty() => {}
             Mode::NewPrompt { workspace, text } => {
-                let setup = self.setup.clone();
+                let setup = self.launch.setup.clone();
+                let agent = (workspace == self.launch.cwd)
+                    .then(|| self.launch.agent.clone())
+                    .flatten();
                 self.send("start session", |daemon| async move {
                     let params = SessionNewParams {
                         cwd: workspace,
                         environment: ClientEnvironment::of_this_process(),
-                        agent: None,
+                        agent,
                         setup,
                         parent: None,
                         grant: None,
@@ -684,7 +690,7 @@ impl App {
         let view = JobsView::new(
             session.daemon(),
             SessionId::new(session.id()),
-            session.launch_setup(),
+            session.launch().clone(),
         );
         self.input_ui
             .set_composer(ComposerMode::Panel(PanelOverlay::Jobs(Box::new(view))));
