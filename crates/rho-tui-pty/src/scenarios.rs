@@ -553,7 +553,6 @@ const ALL_SCENARIOS: &[Scenario] = &[
     daemon_resume::SCENARIO,
     #[cfg(unix)]
     pre_tree_session::SCENARIO,
-    #[cfg(unix)]
     daemon_detach::SCENARIO,
     #[cfg(unix)]
     daemon_context::SCENARIO,
