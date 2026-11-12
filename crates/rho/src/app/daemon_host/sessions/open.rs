@@ -61,8 +61,9 @@ use crate::{
     workspace::{ProjectTrust, ProjectTrusts},
 };
 
-/// The directory a session works in: an existing directory, canonicalized.
-/// Parsed once from the request's `cwd`.
+/// The directory a session works in: an existing directory, canonicalized
+/// to the form its commands take as a working directory and other `rho`
+/// processes name it by. Parsed once from the request's `cwd`.
 pub(super) struct Workspace(PathBuf);
 
 impl Workspace {
@@ -78,7 +79,7 @@ impl Workspace {
         if !cwd.is_absolute() {
             return Err(invalid("not an absolute path".to_owned()));
         }
-        let path = std::fs::canonicalize(cwd).map_err(|error| invalid(error.to_string()))?;
+        let path = crate::paths::canonicalize(cwd).map_err(|error| invalid(error.to_string()))?;
         if !path.is_dir() {
             return Err(invalid("not a directory".to_owned()));
         }

@@ -87,7 +87,8 @@ Do the task.
 pub(super) struct Sandbox {
     /// The sandbox's home, log, and socket: tests reach them only here.
     pub(super) isolated: IsolatedHome,
-    /// The session's workspace, canonicalized as the daemon records it.
+    /// The session's workspace, canonicalized as the daemon records it:
+    /// on Windows, without the verbatim prefix.
     pub(super) workspace: PathBuf,
 }
 
@@ -96,10 +97,24 @@ impl Sandbox {
         let isolated = IsolatedHome::new().unwrap();
         std::fs::write(&isolated.config_path, CONFIG).unwrap();
         let workspace = isolated.workspace.canonicalize().unwrap();
+        #[cfg(windows)]
+        let workspace = PathBuf::from(
+            workspace
+                .to_str()
+                .and_then(|path| path.strip_prefix(r"\\?\"))
+                .expect("a canonical path on a drive"),
+        );
         Self {
             isolated,
             workspace,
         }
+    }
+
+    /// The workspace as a session's tools and the runs it starts name it:
+    /// resolved by the file system, which on Windows puts the verbatim
+    /// prefix on it, in a daemon and out of one.
+    pub(super) fn resolved_workspace(&self) -> PathBuf {
+        self.workspace.canonicalize().unwrap()
     }
 
     /// `rho` in the workspace, in the sandbox, with the fixture provider in
@@ -870,9 +885,6 @@ async fn a_prompts_image_and_resource_reach_the_model() {
 // whose replay need not hold that event, gets it in the attach response
 // (#1670).
 // Owner: daemon session titles.
-// Unix: fails on Windows for a reason in the daemon host, not the transport
-// (#1895).
-#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_answered_session_is_titled_for_its_clients() {
     let sandbox = Sandbox::new();
@@ -935,9 +947,6 @@ enum Ending {
 // completed once it finished, with the session it saved its reply in, which
 // a client cannot reopen: only its parent continues it (#1661).
 // Owner: daemon subagent jobs.
-// Unix: fails on Windows for a reason in the daemon host, not the transport
-// (#1895).
-#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_subagent_is_a_child_job_of_its_session() {
     let sandbox = Sandbox::new();
@@ -969,7 +978,7 @@ async fn a_subagent_is_a_child_job_of_its_session() {
             JobState::Completed,
             JobKind::Subagent,
             JobState::Completed,
-            sandbox.workspace.clone(),
+            sandbox.resolved_workspace(),
             None,
             None,
         ),
@@ -995,7 +1004,9 @@ async fn a_subagent_is_a_child_job_of_its_session() {
 // child job of the session's job, completed once the run succeeded; each of
 // its agent nodes is a subagent job whose parent is the workflow job.
 // Owner: daemon workflow jobs.
-// Unix: fails on Windows for a reason in the daemon host, not the transport
+// Unix: on Windows the `workflow` tool refuses every source as outside the
+// workspace, in a daemon and out of one: it compares the path the file
+// system resolved, which has the verbatim prefix, with the workspace's
 // (#1895).
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1038,7 +1049,7 @@ async fn a_workflow_run_is_a_child_job_of_its_session() {
                 None
             ),
             (JobKind::Subagent, JobState::Completed, None),
-            (sandbox.workspace.clone(), sandbox.workspace.clone()),
+            (sandbox.resolved_workspace(), sandbox.resolved_workspace()),
         ),
         "log:\n{log}"
     );
@@ -1294,9 +1305,6 @@ async fn a_turn_ended_early_is_recorded_and_its_session_continues() {
 // has run no turn yet, replaying its saved conversation, and it takes the
 // next prompt.
 // Owner: daemon session reopening.
-// Unix: fails on Windows for a reason in the daemon host, not the transport
-// (#1895).
-#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_session_another_process_saved_reopens_once_it_lets_go() {
     let sandbox = Sandbox::new();
@@ -1782,7 +1790,7 @@ async fn an_approval_waits_for_any_client_to_answer() {
                         name: "write".into(),
                     },
                     operation: Operation::WritePath {
-                        path: sandbox.workspace.join("note.txt"),
+                        path: sandbox.resolved_workspace().join("note.txt"),
                         scope: PathScope::Workspace,
                     },
                     reason,

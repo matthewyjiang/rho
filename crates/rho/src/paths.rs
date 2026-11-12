@@ -1,8 +1,71 @@
 use std::{
-    ffi::OsString,
-    fs,
-    path::{Component, Path, PathBuf},
+    ffi::{OsStr, OsString},
+    fs, io,
+    path::{Component, Path, PathBuf, Prefix},
 };
+
+/// `path` resolved to the one name of its file, in the form people and other
+/// programs write a path.
+///
+/// On Windows [`fs::canonicalize`] answers with a verbatim path,
+/// `\\?\C:\dir`, which `cmd.exe` refuses as a working directory and
+/// which is not the name [`std::env::current_dir`] gives the same directory.
+/// This gives `C:\dir` wherever that names the same file.
+pub(crate) fn canonicalize(path: &Path) -> io::Result<PathBuf> {
+    fs::canonicalize(path).map(without_verbatim_prefix)
+}
+
+/// The longest path Windows takes without the verbatim prefix (`MAX_PATH`),
+/// counting the terminator.
+const MAX_PLAIN_PATH: usize = 260;
+
+/// `path` without the Windows verbatim prefix of a drive, when the path
+/// means the same without it: Windows parses a plain path, so a long one, a
+/// device name such as `NUL`, and a name ending in a dot or a space would
+/// then name something else. No path has that prefix on other platforms.
+fn without_verbatim_prefix(path: PathBuf) -> PathBuf {
+    let mut components = path.components();
+    let Some(Component::Prefix(prefix)) = components.next() else {
+        return path;
+    };
+    let Prefix::VerbatimDisk(drive) = prefix.kind() else {
+        return path;
+    };
+    let rest = components.as_path();
+    let parses_as_written = rest.components().all(|component| match component {
+        Component::RootDir => true,
+        Component::Normal(name) => is_plain_windows_name(name),
+        Component::Prefix(_) | Component::CurDir | Component::ParentDir => false,
+    });
+    let mut plain = OsString::from(format!("{}:", char::from(drive)));
+    plain.push(rest);
+    if parses_as_written && plain.len() < MAX_PLAIN_PATH {
+        PathBuf::from(plain)
+    } else {
+        path
+    }
+}
+
+/// Whether Windows takes `name` as written in a plain path: it is no DOS
+/// device name, with or without an extension, and ends in neither a dot nor
+/// a space.
+fn is_plain_windows_name(name: &OsStr) -> bool {
+    let Some(name) = name.to_str() else {
+        // Not Unicode, so none of the ASCII names below.
+        return true;
+    };
+    let stem = name.split('.').next().unwrap_or(name).trim_end();
+    let device = ["CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"]
+        .iter()
+        .any(|device| stem.eq_ignore_ascii_case(device))
+        || (stem.len() == 4
+            && stem.ends_with(|digit: char| digit.is_ascii_digit())
+            && ["COM", "LPT"].iter().any(|port| {
+                stem.get(..3)
+                    .is_some_and(|stem| stem.eq_ignore_ascii_case(port))
+            }));
+    !device && !name.ends_with(['.', ' '])
+}
 
 /// Renders paths consistently in user-facing text and structured output.
 pub(crate) fn display(path: &Path) -> String {
@@ -383,6 +446,34 @@ mod tests {
     fn prompt_encoders_normalize_windows_separators() {
         assert_eq!(prompt_data(Path::new(r"C:\Users\rho")), "\"C:/Users/rho\"");
         assert_eq!(prompt_attr(Path::new(r"C:\Users\rho")), "\"C:/Users/rho\"");
+    }
+
+    // Covers: a canonical path loses the verbatim prefix only where the
+    // plain path names the same file: not for a share, a device name, a name
+    // Windows would trim, or a path over MAX_PATH.
+    // Owner: path resolution
+    #[cfg(windows)]
+    #[test]
+    fn a_verbatim_drive_path_is_written_plainly_when_it_means_the_same() {
+        let long = format!(r"\\?\C:\{}", "long".repeat(70));
+        let cases = [
+            (r"\\?\C:\Users\rho", r"C:\Users\rho"),
+            (r"\\?\C:\", r"C:\"),
+            (r"C:\Users\rho", r"C:\Users\rho"),
+            (r"\\?\UNC\server\share\dir", r"\\?\UNC\server\share\dir"),
+            (r"\\?\C:\dir\NUL", r"\\?\C:\dir\NUL"),
+            (r"\\?\C:\dir\com1.txt", r"\\?\C:\dir\com1.txt"),
+            (r"\\?\C:\dir\name.", r"\\?\C:\dir\name."),
+            (r"\\?\C:\dir \name", r"\\?\C:\dir \name"),
+            (r"\\?\C:\dir\common", r"C:\dir\common"),
+            (long.as_str(), long.as_str()),
+        ];
+        let written: Vec<PathBuf> = cases
+            .iter()
+            .map(|(path, _)| without_verbatim_prefix(PathBuf::from(path)))
+            .collect();
+        let expected: Vec<PathBuf> = cases.iter().map(|(_, plain)| plain.into()).collect();
+        assert_eq!(written, expected);
     }
 
     // Covers: home resolution falls back to the Windows profile variables when

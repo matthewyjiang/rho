@@ -103,7 +103,8 @@ fn a_foreign_cursor_is_unknown() {
 fn listed_store_sessions_open_by_their_listed_id() {
     let root = tempfile::tempdir().unwrap();
     let workspace = tempfile::tempdir().unwrap();
-    let cwd = workspace.path().canonicalize().unwrap();
+    // As a session names its workspace, which is how the catalog looks it up.
+    let cwd = crate::paths::canonicalize(workspace.path()).unwrap();
     let saved_id = saved_session(root.path(), &cwd);
     drop(StoredSession::create_in_root(root.path(), &cwd).unwrap());
 
