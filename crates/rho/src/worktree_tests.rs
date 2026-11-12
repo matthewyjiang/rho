@@ -213,7 +213,7 @@ async fn inspect_reads_what_removing_a_worktree_would_lose() {
 // rebase merge (cherry-picks), each after HEAD changed a line next to the
 // branch's, as a base moving on under a branch does, and a rebase merge
 // whose lines HEAD edited again since; it reads one HEAD has only some of,
-// or none, as unmerged.
+// none of, or conflicting changes for, as unmerged.
 // Owner: session worktrees (git plumbing under the daemon's cleanup).
 #[tokio::test]
 async fn inspect_reads_squash_and_rebase_merges_as_merged() {
@@ -225,7 +225,7 @@ async fn inspect_reads_squash_and_rebase_merges_as_merged() {
     // origin edited a line; given the origin and the branch's two commits,
     // oldest first.
     type Merge = fn(&Path, &[String; 2]);
-    let cases: [(&str, usize, Merge, bool); 6] = [
+    let cases: [(&str, usize, Merge, bool); 7] = [
         (
             "merge commit",
             NEXT_TO,
@@ -262,6 +262,12 @@ async fn inspect_reads_squash_and_rebase_merges_as_merged() {
                 edit_line(origin, 10, "ten, edited again");
             },
             true,
+        ),
+        (
+            "conflicts with HEAD",
+            NEXT_TO,
+            |origin, _| edit_line(origin, 10, "ten, another way"),
+            false,
         ),
         (
             "half rebased",

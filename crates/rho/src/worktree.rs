@@ -221,7 +221,8 @@ pub(crate) async fn inspect(worktree: &SessionWorktree) -> Result<Holds, Worktre
     let base = match succeeded(origin, "rev-parse", ["rev-parse", "--abbrev-ref", "HEAD"]).await? {
         // A detached `HEAD`, which only its commit names.
         detached if detached == "HEAD" => {
-            succeeded(origin, "rev-parse", ["rev-parse", "--short", "HEAD"]).await?
+            let short = ["rev-parse", "--short", base_commit.as_str()];
+            succeeded(origin, "rev-parse", short).await?
         }
         branch => branch,
     };
@@ -237,16 +238,9 @@ pub(crate) async fn inspect(worktree: &SessionWorktree) -> Result<Holds, Worktre
 /// `commit`'s own, as after a rebase merge or cherry-picks; or merging
 /// `commit` into it would change nothing, as after a squash merge.
 async fn has_changes_of(dir: &Path, base: &str, commit: &str) -> Result<bool, WorktreeError> {
-    let failed = |action: &str, detail| WorktreeError::Git {
-        action: action.to_owned(),
-        repository: dir.to_path_buf(),
-        detail,
-    };
-    // `--is-ancestor` answers no with exit 1 and fails with others.
-    match git(dir, ["merge-base", "--is-ancestor", commit, base], &[]).await? {
-        Ran::Succeeded(_) => return Ok(true),
-        Ran::Failed { code: Some(1), .. } => {}
-        Ran::Failed { stderr, .. } => return Err(failed("merge-base", stderr)),
+    let ancestor = ["merge-base", "--is-ancestor", commit, base];
+    if answered(dir, "merge-base", ancestor).await?.is_some() {
+        return Ok(true);
     }
     // One line for each commit `base` lacks, merge commits left out: `-`
     // when `base` has one with the same patch, `+` when not. With every
@@ -260,16 +254,26 @@ async fn has_changes_of(dir: &Path, base: &str, commit: &str) -> Result<bool, Wo
     // checkout: `base`'s own when `base` has every change. Unlike patches,
     // it still matches when `base` changed lines next to them first, as
     // the squash commit of a branch behind its base does. Exit 1 is a
-    // conflict, and others fail, as on a git before 2.38.
-    match git(dir, ["merge-tree", "--write-tree", base, commit], &[]).await? {
-        Ran::Succeeded(stdout) => {
-            let base_tree = format!("{base}^{{tree}}");
-            let base_tree = succeeded(dir, "rev-parse", ["rev-parse", base_tree.as_str()]).await?;
-            Ok(stdout.lines().next() == Some(base_tree.as_str()))
+    // conflict.
+    let merge = ["merge-tree", "--write-tree", base, commit];
+    let tree = match answered(dir, "merge-tree", merge).await {
+        Ok(Some(tree)) => tree,
+        Ok(None) => return Ok(false),
+        // The checks above ran, so this is most likely a git before 2.38,
+        // which has no `--write-tree`: it cannot tell a squash merge, so
+        // the worktree reads as unmerged and stays, as before.
+        Err(error) => {
+            tracing::warn!(
+                %error,
+                "could not check for a squash merge, which needs git 2.38 or later; \
+                 the worktree reads as unmerged"
+            );
+            return Ok(false);
         }
-        Ran::Failed { code: Some(1), .. } => Ok(false),
-        Ran::Failed { stderr, .. } => Err(failed("merge-tree", stderr)),
-    }
+    };
+    let base_tree = format!("{base}^{{tree}}");
+    let base_tree = succeeded(dir, "rev-parse", ["rev-parse", base_tree.as_str()]).await?;
+    Ok(tree.lines().next() == Some(base_tree.as_str()))
 }
 
 /// Removes `worktree` with `git worktree remove`, which refuses one with
@@ -311,10 +315,10 @@ pub(crate) async fn restore(
         Checkout::Branch => {
             let reference = format!("refs/heads/{}", worktree.branch);
             let verify = ["rev-parse", "--verify", "--quiet", reference.as_str()];
-            match git(origin, verify, &[]).await? {
-                Ran::Succeeded(_) => vec!["worktree".as_ref(), "add".as_ref(), path, branch],
+            match answered(origin, "rev-parse", verify).await? {
+                Some(_) => vec!["worktree".as_ref(), "add".as_ref(), path, branch],
                 // Deleted since, as merged branches often are.
-                Ran::Failed { code: Some(1), .. } => vec![
+                None => vec![
                     "worktree".as_ref(),
                     "add".as_ref(),
                     "-b".as_ref(),
@@ -322,13 +326,6 @@ pub(crate) async fn restore(
                     path,
                     commit,
                 ],
-                Ran::Failed { stderr, .. } => {
-                    return Err(WorktreeError::Git {
-                        action: "rev-parse".to_owned(),
-                        repository: origin.clone(),
-                        detail: stderr,
-                    })
-                }
             }
         }
         Checkout::Detached => vec![
@@ -387,6 +384,25 @@ async fn succeeded(
 ) -> Result<String, WorktreeError> {
     match git(dir, args, &[]).await? {
         Ran::Succeeded(stdout) => Ok(stdout),
+        Ran::Failed { stderr, .. } => Err(WorktreeError::Git {
+            action: action.to_owned(),
+            repository: dir.to_path_buf(),
+            detail: stderr,
+        }),
+    }
+}
+
+/// The output of `git args` in `dir`, or `None` when git answers no with
+/// exit 1, as `merge-base --is-ancestor` and `rev-parse --verify --quiet`
+/// do; any other failure is one as `action` there.
+async fn answered(
+    dir: &Path,
+    action: &str,
+    args: impl IntoIterator<Item = impl AsRef<OsStr>>,
+) -> Result<Option<String>, WorktreeError> {
+    match git(dir, args, &[]).await? {
+        Ran::Succeeded(stdout) => Ok(Some(stdout)),
+        Ran::Failed { code: Some(1), .. } => Ok(None),
         Ran::Failed { stderr, .. } => Err(WorktreeError::Git {
             action: action.to_owned(),
             repository: dir.to_path_buf(),

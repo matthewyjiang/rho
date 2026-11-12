@@ -286,8 +286,8 @@ commit with the same patch as each of the branch's own (a rebase merge or
 cherry-picks), or when merging the branch into `HEAD` would change nothing (a
 squash merge). Pull the merged pull request into that checkout first; rho
 checks only local git, never the forge. The squash check needs git 2.38 or
-later. With an older git, a worktree that the other two checks don't find
-merged is reported as failed and kept. A squash-merged branch with more than
+later. With an older git, a squash-merged worktree looks unmerged and stays,
+and the daemon log says why. A squash-merged branch with more than
 one commit, whose lines `HEAD` has since edited again, can look unmerged, so
 that worktree stays until you remove it.
 
