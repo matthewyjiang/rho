@@ -39,7 +39,7 @@ use super::{
 };
 use crate::{
     app::daemon_client::{Daemon, DaemonError},
-    session::{is_cross_project, Session},
+    session::Session,
 };
 
 mod rows;
@@ -397,9 +397,14 @@ impl JobsView {
                 // one kept in memory alone is discarded once idle, and
                 // attaching finds a session by its file.
                 setup.without.remove(&SessionPart::Saving);
-                // Compared as `/resume` compares projects: the daemon lists
-                // a workspace canonicalized, which the launch's need not be.
-                let agent = (!is_cross_project(&workspace, &self.launch.cwd))
+                // The same directory however each path spells it: the
+                // daemon lists a workspace canonicalized, and a typed path
+                // or the launch's need not be. A path that does not resolve
+                // is compared as written.
+                let resolved = |path: &PathBuf| {
+                    crate::paths::canonicalize(path).unwrap_or_else(|_| path.clone())
+                };
+                let agent = (resolved(&workspace) == resolved(&self.launch.cwd))
                     .then(|| self.launch.agent.clone())
                     .flatten();
                 self.send("start session", |daemon| async move {
