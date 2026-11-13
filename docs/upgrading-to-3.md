@@ -22,7 +22,7 @@ You rarely need these commands, but they are there:
 | `rho daemon status` | Show whether the daemon is running and what it is doing. |
 | `rho daemon stop` | Stop the daemon. Turns that are running stop and show as interrupted. |
 | `rho daemon restart` | Restart the daemon, for example to switch it to a version you just installed. |
-| `rho doctor` | Check your setup, the daemon included. |
+| `rho doctor` | Check your setup, the daemon included. `/doctor` shows the same checks in the TUI. |
 
 ### Update and uninstall
 
@@ -39,12 +39,12 @@ If you update with the install script or your package manager directly, the same
 ## What's new
 
 - **Sessions outlive the TUI.** Quit while the agent is working and the turn keeps going. `rho --resume <id>` reopens the session and shows what happened while you were away. The id is printed when you quit.
-- **`/jobs`** shows everything the daemon is running, in every project. From there you can answer questions, send messages, cancel work, and open a session ([Interactive TUI](/interactive-tui)).
+- **`/jobs`** shows everything the daemon is running, in every project. From there you can answer questions, send messages, cancel work, and open a session ([Interactive TUI](/interactive-tui)). A new TUI session reaches the daemon with its first prompt, so opening `rho` and quitting without typing leaves nothing in `/jobs`.
 - **Run in the background from a script.** `rho run --detach "<prompt>"` starts a run, prints its id, and exits. `rho attach <id>` follows it, answers its questions, and exits when the turn ends. It also follows a subagent ([Running in the daemon](/automation-cli#running-in-the-daemon)).
 - **Editor sessions keep running.** Closing an editor that runs `rho acp`, or one of its threads, leaves the session running. Open it again from the editor or with `rho --resume` ([Agent Client Protocol](/integrations/acp)). In T3 Code with `--t3code`, a background process or workflow that finishes after a prompt has ended wakes the idle thread with its result ([T3 Code](/integrations/acp/t3-code#wake-on-background-results)).
-- **Sessions can work in their own git worktree.** `rho run --worktree`, `Tab` when you start a session from `/jobs`, or the `worktree` option of the MCP server's `new` gives a session a new branch checked out under `~/.rho/worktrees/`, so sessions running at once in one repository don't overwrite each other's edits. Once a session is done and its branch is merged, the daemon removes a clean worktree and keeps the branch. It never removes one with uncommitted or unmerged work. Those are flagged as stale after 14 days, for you to merge or remove. `rho worktrees prune --dry-run` shows what would go and why ([Cleaning up worktrees](/automation-cli#cleaning-up-worktrees)).
+- **Sessions can work in their own git worktree.** `rho run --worktree`, `Tab` when you start a session from `/jobs`, or the `worktree` option of the MCP server's `new` gives a session a new branch checked out under `~/.rho/worktrees/`, so sessions running at once in one repository don't overwrite each other's edits. Once a daemon session is done and its branch is merged, squash and rebase merges included, the daemon removes its worktree if it is clean and keeps the branch. It never removes one with uncommitted or unmerged work. Those are flagged as stale after 14 days, for you to merge or remove. A foreground `rho run --worktree`, without `--detach`, does not run in the daemon, so its worktree stays until you remove it. `rho worktrees prune --dry-run` shows what would go and why ([Cleaning up worktrees](/automation-cli#cleaning-up-worktrees)).
 - **Other agents can drive Rho.** Add `rho mcp serve` as an MCP server in Claude Code, Codex, or another Rho, and that agent can list your Rho sessions, start new ones, and follow them to their answer. Approvals and questions still wait for you ([Serving Rho to other agents](/integrations/mcp#serving-rho-to-other-agents)).
-- **Commands see your shell's environment.** Each prompt carries the environment of the terminal or editor it came from, so `PATH`, `mise` tools, and exported variables work as they do in your shell ([Environment](/daemon#environment)).
+- **Commands see your shell's environment.** Each prompt carries the environment of the terminal or editor it came from, so `PATH`, `mise` tools, and exported variables work as they do in your shell. Hooks and MCP servers start from that environment too, and a `rho` command that a hook or MCP server runs reaches the session's daemon ([Environment](/daemon#environment)).
 - **The model knows when you wrote.** Each message you send reaches the model with the date and time you sent it. Your transcript shows the message as you typed it.
 - **Keep-warm works without the TUI.** With `behavior.keep_cache_warm` on, the daemon keeps the provider's prompt cache warm whether or not a TUI is open.
 
@@ -83,10 +83,12 @@ Some settings need you:
 
 `edit_tool = "hashline"` changes to `"str_replace"` by itself.
 
+Edits to `config.toml` need no daemon restart. Each new session reads the file as it is when the session opens, including one you start with `/new` in a TUI that is already open. A session that is already open keeps most settings until it reopens; some, such as providers and the advisor, reach it at its next turn. If the file no longer loads, a new session fails with an error that names the file and each problem, and open sessions keep the last good settings ([Configuration changes](/daemon#configuration-changes)).
+
 ### Sessions
 
 - **Sessions from Rho 1.11 and later** open in Rho 3. Once Rho 3 saves to one, Rho 2.x cannot open it.
-- **Sessions from before Rho 1.11** do not open, and show `this session was created by rho before 1.11 (session format v2) and can't be opened in rho 3; open it with rho 2.x`. Rho 2.x still opens them.
+- **Sessions from before Rho 1.11** do not open, and show an error that starts `this session was created by rho before 1.11`. Rho 2.x still opens them.
 - **One program at a time.** Rho 2.x and the Rho 3 daemon cannot use the same session at the same time. Rho 3 then reports that the session `is open in another Rho process; close it there first`. The daemon lets go of a session one to two minutes after its last activity ([One process per session](/sessions#one-process-per-session)).
 
 ### Scripts
