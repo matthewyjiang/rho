@@ -1,6 +1,5 @@
 //! Deterministic workflow planning, graph policy, and durable data primitives.
 
-mod agent_checkpoint;
 mod canonical;
 mod condition;
 mod durable;
@@ -20,6 +19,7 @@ mod secure_fs;
 mod secure_fs_control;
 mod secure_fs_directory;
 mod secure_fs_opened;
+mod secure_fs_shebang;
 mod secure_fs_spawn;
 #[cfg(windows)]
 mod secure_fs_windows;
@@ -39,7 +39,6 @@ mod validation;
 mod value;
 mod wire;
 
-pub(crate) use agent_checkpoint::AttemptCheckpoint;
 pub(crate) use canonical::program_digest;
 pub(crate) use condition::{evaluate_condition, ConditionContext};
 pub(crate) use durable::{apply_durable_event, derive_snapshot, DurableReplayState};
@@ -61,21 +60,24 @@ pub(crate) use secure_fs::{
     ensure_directory_beneath, freeze_directory_identity, freeze_executable_identity,
     freeze_opened_executable, open_executable, open_executable_candidate,
     open_private_file_beneath, read_resolved_utf8, read_source_beneath, verify_directory_identity,
-    verify_executable_identity, write_file_beneath, ContentHash, ExecutableInterpreterRequest,
-    OpenedExecutable, VerifiedExecutable, VerifiedPath,
+    verify_executable_identity, write_file_beneath, ContentHash, OpenedExecutable,
+    VerifiedExecutable, VerifiedPath,
 };
 pub(crate) use secure_fs_directory::{
     open_verified_directory, open_verified_file_in_directory, opened_directory_names,
 };
-pub(crate) use secure_fs_spawn::{configure_handle_inheritance, verified_handle_path};
+pub(crate) use secure_fs_shebang::ExecutableInterpreterRequest;
+pub(crate) use secure_fs_spawn::{
+    configure_handle_inheritance, verified_handle_path, HandleLaunch,
+};
 
 pub(crate) use service::WorkflowService;
 pub(crate) use starlark::StarlarkPlanner;
 pub(crate) use starlark_diagnostics::Diagnostic;
 pub(crate) use starlark_loader::{CollectedSources, SourceBytes, SourceCollector};
 pub(crate) use store::{
-    LegacyRun, LegacyWorkflowState, PlanInventoryItem, RecordAccess, RunInventoryItem,
-    RunMutationGuard, RunRecord, WorkflowStore,
+    Inventory, PlanInventory, PlanInventoryItem, RunInventory, RunInventoryItem, RunMutationGuard,
+    UnsupportedRecord, WorkflowStore,
 };
 pub(crate) use transition::{
     scope_result, validate_lifecycle_transition, validate_reset_transition, validate_transition,

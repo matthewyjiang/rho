@@ -2,8 +2,7 @@ use ratatui::text::Line;
 
 use super::super::{
     activity::ActivityStatus, app_state::SessionUiPhase, command_palette::slash_command_args,
-    commands, goal, paste_burst, tests::test_app, ActivityPhase, ChatMedia, ChatTextDocument,
-    TurnPrompt,
+    commands, paste_burst, tests::test_app, ActivityPhase, ChatMedia, ChatTextDocument, TurnPrompt,
 };
 use super::HeldTurn;
 
@@ -17,32 +16,25 @@ fn attached_document() -> ChatMedia {
     })
 }
 
-// Covers: status and early-return goal commands must not leave attachments in composer state.
+// Covers: a command that sends no prompt must not leave attachments in composer state.
 // Owner: slash-command submission ownership
 #[test]
-fn goal_commands_take_queued_media() {
-    let overlong = format!("/goal {}", "x".repeat(goal::MAX_GOAL_CHARS + 1));
-    for (case, command) in [
-        ("status", "/goal"),
-        ("clear", "/goal clear"),
-        ("resume", "/goal resume"),
-        ("invalid overlong", overlong.as_str()),
-    ] {
-        let mut app = test_app();
-        app.input_ui
-            .push_ready_attachment(attached_document(), None);
-        app.input_ui.set_text(command.to_owned());
-        let invocation = commands::parse_command(command).unwrap().unwrap();
+fn command_submission_takes_queued_media() {
+    let command = "/help";
+    let mut app = test_app();
+    app.input_ui
+        .push_ready_attachment(attached_document(), None);
+    app.input_ui.set_text(command.to_owned());
+    let invocation = commands::parse_command(command).unwrap().unwrap();
 
-        let submission = app.take_command_submission(
-            invocation,
-            TurnPrompt::standard(command.to_owned(), command.to_owned()),
-        );
+    let submission = app.take_command_submission(
+        invocation,
+        TurnPrompt::standard(command.to_owned(), command.to_owned()),
+    );
 
-        assert_eq!(submission.media_len(), 1, "{case}");
-        assert!(app.input_ui.attachments().is_empty(), "{case}");
-        assert!(app.input_ui.text().is_empty(), "{case}");
-    }
+    assert_eq!(submission.media_len(), 1);
+    assert!(app.input_ui.attachments().is_empty());
+    assert!(app.input_ui.text().is_empty());
 }
 
 fn held_turn(display: &str) -> HeldTurn {
@@ -50,6 +42,7 @@ fn held_turn(display: &str) -> HeldTurn {
         turn: TurnPrompt::standard(display.to_owned(), display.to_owned()),
         media: Vec::new(),
         paste_segments: Vec::new(),
+        origin: super::HeldOrigin::Composer,
     }
 }
 
@@ -73,50 +66,36 @@ fn esc_takes_back_held_turns_newest_first() {
     assert_eq!(app.held_turns.len(), 1);
 }
 
+// Covers: esc must cancel a workflow launch the hub is holding even while
+// the composer holds a draft, which it leaves alone, since the launch has
+// no text to hand back; an older composer hold then stays held.
+// Owner: idle input key handling
+#[test]
+fn esc_cancels_a_held_hub_launch_over_a_draft() {
+    let mut app = test_app();
+    app.held_turns.push_back(held_turn("typed"));
+    app.held_turns.push_back(HeldTurn {
+        origin: super::HeldOrigin::WorkflowHub,
+        ..held_turn("/workflow:build")
+    });
+    app.input_ui.set_text("draft".to_owned());
+
+    app.take_back_held_turn();
+    app.take_back_held_turn();
+
+    let held: Vec<_> = app
+        .held_turns
+        .iter()
+        .map(|held| held.turn.display.as_str())
+        .collect();
+    assert_eq!((app.input_ui.text(), held), ("draft", vec!["typed"]));
+}
+
 fn line_text(line: &Line<'_>) -> String {
     line.spans
         .iter()
         .map(|span| span.content.as_ref())
         .collect()
-}
-
-// Covers: compact-time prompts use the pending-input list, not held turns.
-// Enter during idle compact is a follow-up; the queue-prompt chord is the same list.
-// Owner: idle input key handling
-#[test]
-fn compact_prompts_use_the_pending_input_list() {
-    let mut app = test_app();
-    app.begin_compact_ui();
-    app.queue_steering_prompt("steer me".into(), "steer me".into(), Vec::new())
-        .unwrap();
-    app.queue_prompt(
-        "next turn".into(),
-        "next turn".into(),
-        Vec::new(),
-        Vec::new(),
-    )
-    .unwrap();
-
-    assert!(app.held_turns.is_empty());
-    assert_eq!(app.pending.steering_prompts().len(), 1);
-    assert_eq!(app.pending.queued_prompts().len(), 1);
-    let lines = app.pending_input_lines(80);
-    assert!(line_text(&lines[0]).contains("1 steer"));
-    assert!(line_text(&lines[0]).contains("1 follow-up"));
-    assert!(line_text(&lines[1]).contains("STEER"));
-    assert!(line_text(&lines[2]).contains("NEXT"));
-    assert!(line_text(&lines[2]).contains("after compact"));
-}
-
-// Covers: Unchanged/Failed compaction still starts the parked follow-up; cancel does not.
-// Owner: compact follow-up drain
-#[test]
-fn unchanged_and_failed_compact_start_follow_ups_cancel_does_not() {
-    use super::super::compaction_display::CompactionUiOutcome;
-
-    assert!(CompactionUiOutcome::unchanged().starts_follow_ups());
-    assert!(CompactionUiOutcome::failed("boom").starts_follow_ups());
-    assert!(!CompactionUiOutcome::Cancelled.starts_follow_ups());
 }
 
 // Covers: an MCP hold is idle UI with LoadingToolSources activity, not a pending-input item.
@@ -190,12 +169,10 @@ fn pasted_agents_create_request_strips_create_token() {
     app.insert_input_text("/agents create ");
     app.insert_pasted_input_text(&pasted);
     let expanded = app.expanded_input().trim().to_string();
-    let display = app.input_ui.text().trim().to_string();
     let invocation = app.parse_input_command().unwrap().unwrap();
-    let turn = TurnPrompt::standard(expanded.clone(), display.clone());
     assert_eq!(
-        super::super::agent_creator_command::create_agent_model_prompt(&invocation, &turn),
-        format!("Create a new Rho agent through the guided workflow. User request: {pasted}")
+        crate::commands::create_agent_request(&invocation.name, slash_command_args(&expanded)),
+        pasted
     );
 }
 
@@ -219,16 +196,4 @@ fn esc_restores_held_command_display_exactly() {
     app.take_back_held_turn();
     assert_eq!(app.input_ui.text(), display);
     assert!(app.held_turns.is_empty());
-}
-
-// Covers: an MCP hold must not start a turn while a compact job holds the session.
-// Owner: idle input hold/release
-#[test]
-fn mcp_holds_are_not_releasable_while_compacting() {
-    let mut app = test_app();
-    app.held_turns.push_back(held_turn("after mcp"));
-
-    assert!(app.first_held_turn_is_releasable(false, false));
-    assert!(!app.first_held_turn_is_releasable(false, true));
-    assert!(!app.first_held_turn_is_releasable(true, false));
 }

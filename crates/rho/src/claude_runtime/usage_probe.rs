@@ -20,11 +20,11 @@ use super::auth::{self, ClaudeAuthError};
 #[cfg(any(unix, test))]
 use super::rate_limit::RateLimitState;
 #[cfg(any(unix, test))]
-use super::usage_parse::{named_window_keys, parse_usage_screen};
-#[cfg(any(unix, test))]
-use super::window_kind::WindowKind;
+use super::usage_parse::{named_window_keys, panel_top_hidden, parse_usage_screen};
 #[cfg(unix)]
 use super::{executable, rate_limit};
+#[cfg(unix)]
+use crate::session_environment::Ambient;
 use crate::usage_limits::UsageFailure;
 
 #[cfg(unix)]
@@ -222,7 +222,7 @@ fn persist_probe_state(state: RateLimitState) -> Result<UsageProbeOutcome, Usage
 
 #[cfg(unix)]
 fn probe_usage_blocking(abort: &AtomicBool) -> Result<RateLimitState, UsageProbeError> {
-    let executable = executable::resolve().map_err(|error| match error {
+    let executable = executable::resolve(&Ambient::ThisProcess).map_err(|error| match error {
         ClaudeAuthError::BinaryMissing => UsageProbeError::BinaryMissing,
         other => UsageProbeError::Auth(other),
     })?;
@@ -313,7 +313,7 @@ enum UsageScreen {
     Refreshing,
     /// The panel names a window that has no percentage yet.
     Incomplete,
-    /// Week windows parsed but the "Current session" header is missing: the
+    /// Windows parsed, but the chrome above the first header is missing: the
     /// panel outgrew the PTY and scrolled its top off the viewport.
     Clipped,
     Ready(RateLimitState),
@@ -352,20 +352,13 @@ fn classify_usage_screen(screen: &str, now_unix: i64) -> UsageScreen {
     // percentages and may remove windows as well as add them.
     match parse_usage_screen(screen, now_unix) {
         Some(state) if waiting_on_named_windows(screen, Some(&state)) => UsageScreen::Incomplete,
-        // Every plan's panel leads with "Current session". Accepting a read
-        // without it would silently leave a stale 5-hour window in the cache.
-        Some(state) if !has_window(&state, WindowKind::FiveHour) => UsageScreen::Clipped,
+        // Some plans (Ultra) have no "Current session" window, so a missing
+        // 5-hour header is not a clip. Judge the clip from the panel top
+        // instead; accepting a clipped read would drop cached windows.
+        Some(_) if panel_top_hidden(screen) => UsageScreen::Clipped,
         Some(state) => UsageScreen::Ready(state),
         None => UsageScreen::Incomplete,
     }
-}
-
-#[cfg(any(unix, test))]
-fn has_window(state: &RateLimitState, kind: WindowKind) -> bool {
-    state
-        .windows
-        .iter()
-        .any(|window| window.info.window_key() == kind.key())
 }
 
 #[cfg(any(unix, test))]

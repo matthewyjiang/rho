@@ -1,6 +1,6 @@
 //! Protocol terminal classification; process exit is not an ACP stop reason.
 
-use agent_client_protocol::schema::v1::StopReason;
+use agent_client_protocol::v1::schema::StopReason;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum TurnClassification {

@@ -4,8 +4,8 @@
 //! both show this card. They differ only in who owns the session: idle work vs
 //! the live turn.
 
+use rho_protocol::display::{ToolCard, ToolCardStatus, ToolFact, ToolFamily, ToolHeader};
 use rho_sdk::ToolCallId;
-use rho_tools::tool_card::{ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus};
 
 use super::usage_cost::{format_token_count, format_usd};
 
@@ -36,6 +36,23 @@ impl CompactionDisplayFacts {
         }
     }
 
+    /// The counts a daemon session reports for a completed compaction.
+    pub(super) fn from_wire(counts: rho_protocol::CompactionCounts) -> Self {
+        Self {
+            previous_messages: usize::try_from(counts.previous_messages).unwrap_or(usize::MAX),
+            current_messages: usize::try_from(counts.current_messages).unwrap_or(usize::MAX),
+            previous_tokens: counts.previous_tokens,
+            current_tokens: counts.current_tokens,
+            cost_usd_micros: counts.cost_usd_micros,
+        }
+    }
+
+    /// Whether the compaction left fewer messages or tokens, as
+    /// [`crate::compaction::outcome_reduced_context`] decides for an outcome.
+    fn reduced_context(self) -> bool {
+        self.current_messages < self.previous_messages || self.removed_tokens() > 0
+    }
+
     pub(super) fn removed_tokens(self) -> u64 {
         self.previous_tokens.saturating_sub(self.current_tokens)
     }
@@ -56,8 +73,14 @@ pub(super) enum CompactionUiOutcome {
 
 impl CompactionUiOutcome {
     pub(super) fn from_sdk_outcome(outcome: &rho_sdk::CompactionOutcome) -> Self {
-        if crate::compaction::outcome_reduced_context(outcome) {
-            Self::Completed(CompactionDisplayFacts::from_outcome(outcome))
+        Self::from_facts(CompactionDisplayFacts::from_outcome(outcome))
+    }
+
+    /// A compaction that ran to its end: completed when it reduced the
+    /// context, unchanged otherwise.
+    pub(super) fn from_facts(facts: CompactionDisplayFacts) -> Self {
+        if facts.reduced_context() {
+            Self::Completed(facts)
         } else {
             Self::unchanged()
         }
@@ -66,16 +89,6 @@ impl CompactionUiOutcome {
     pub(super) fn unchanged() -> Self {
         Self::Unchanged {
             detail: "compaction ran but did not reduce context".into(),
-        }
-    }
-
-    pub(super) fn from_task_result(
-        result: anyhow::Result<Option<rho_sdk::CompactionOutcome>>,
-    ) -> Self {
-        match result {
-            Ok(Some(outcome)) => Self::from_sdk_outcome(&outcome),
-            Ok(None) => Self::unchanged(),
-            Err(err) => Self::failed(err.to_string()),
         }
     }
 
@@ -102,18 +115,12 @@ impl CompactionUiOutcome {
             Self::Cancelled => "context compaction cancelled",
         }
     }
-
-    /// Auto-compact parks the triggering turn as a follow-up. Start it after
-    /// any settlement except a user cancel.
-    pub(super) fn starts_follow_ups(&self) -> bool {
-        !matches!(self, Self::Cancelled)
-    }
 }
 
 /// Running compaction card.
 pub(super) fn running_card() -> ToolCard {
     ToolCard::new(
-        ToolStatus::Running,
+        ToolCardStatus::Running,
         ToolFamily::Default,
         ToolHeader::call("compact", None),
     )
@@ -125,7 +132,7 @@ pub(super) fn running_card() -> ToolCard {
 /// Finished compaction card driven only by available facts.
 pub(super) fn completed_card(facts: CompactionDisplayFacts) -> ToolCard {
     let mut card = ToolCard::new(
-        ToolStatus::Ok,
+        ToolCardStatus::Ok,
         ToolFamily::Default,
         ToolHeader::call("compact", None),
     );
@@ -160,7 +167,7 @@ pub(super) fn completed_card(facts: CompactionDisplayFacts) -> ToolCard {
 /// Failed compact card.
 pub(super) fn failed_card(detail: impl Into<String>) -> ToolCard {
     ToolCard::new(
-        ToolStatus::Error,
+        ToolCardStatus::Error,
         ToolFamily::Default,
         ToolHeader::call("compact", None),
     )
@@ -177,7 +184,7 @@ pub(super) fn failed_card(detail: impl Into<String>) -> ToolCard {
 /// Cancelled compact card.
 pub(super) fn cancelled_card() -> ToolCard {
     ToolCard::new(
-        ToolStatus::Interrupted,
+        ToolCardStatus::Interrupted,
         ToolFamily::Default,
         ToolHeader::call("compact", None),
     )
@@ -189,7 +196,7 @@ pub(super) fn cancelled_card() -> ToolCard {
 /// Unchanged / not-enough-history finished card.
 pub(super) fn unchanged_card(detail: impl Into<String>) -> ToolCard {
     ToolCard::new(
-        ToolStatus::Ok,
+        ToolCardStatus::Ok,
         ToolFamily::Default,
         ToolHeader::call("compact", None),
     )

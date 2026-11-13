@@ -21,6 +21,7 @@ fn plan_follows_gate_and_selected_or_configured_hosts() {
             DoctorProbeId::Cursor,
             DoctorProbeId::Antigravity,
             DoctorProbeId::Rtk,
+            DoctorProbeId::Daemon,
         ]
     );
     let rtk_off = Config {
@@ -33,6 +34,7 @@ fn plan_follows_gate_and_selected_or_configured_hosts() {
             DoctorProbeId::Claude,
             DoctorProbeId::Cursor,
             DoctorProbeId::Antigravity,
+            DoctorProbeId::Daemon,
         ]
     );
 
@@ -78,7 +80,8 @@ fn assert_endpoint_then_binaries(config: &Config, active_provider: &str, provide
             DoctorProbeId::Claude,
             DoctorProbeId::Cursor,
             DoctorProbeId::Antigravity,
-            DoctorProbeId::Rtk
+            DoctorProbeId::Rtk,
+            DoctorProbeId::Daemon,
         ]
     );
 }

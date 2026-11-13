@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - daemon-v3
   pull_request:
 
 permissions:
@@ -19,6 +20,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          # The commit before this change, to hold an unstable protocol to.
+          # A pull request is checked out as its merge into the base, whose
+          # first parent is the base.
+          fetch-depth: 2
       - name: Check architecture guardrails
         run: python3 scripts/check_architecture.py
       - name: Test architecture guardrails
@@ -37,6 +43,10 @@ jobs:
         uses: swatinem/rust-cache@v2
       - name: Test validation scripts
         run: python3 -m unittest discover -s scripts/tests -p 'test_*.py'
+      - name: Check protocol compatibility with the last release
+        run: python3 scripts/check_protocol_compat.py
+      - name: Check an unstable protocol's version against the commit before
+        run: python3 scripts/check_protocol_compat.py --baseline-ref HEAD^1 --unstable-only
       - name: Install cargo-nextest
         uses: taiki-e/install-action@v2
         with:

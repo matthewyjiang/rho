@@ -71,6 +71,19 @@ impl Parser {
                 segment = cursor;
                 continue;
             }
+            // A device attributes reply is the terminal answering the startup
+            // probe after it gave up waiting, as a loaded console can: drop
+            // it, as crossterm does on Unix, so it never types into the
+            // composer.
+            if let Some(len) = (!self.pasting)
+                .then(|| device_attributes_reply_len(tail))
+                .flatten()
+            {
+                self.parse_ansi(&bytes[segment..cursor], /*more*/ false, &mut events);
+                cursor += len;
+                segment = cursor;
+                continue;
+            }
             let marker = if self.pasting {
                 b"\x1b[201~"
             } else {
@@ -184,6 +197,17 @@ impl Parser {
             InputEvent::PixelMouse(_) | InputEvent::Wake => None,
         }
     }
+}
+
+/// The length of the primary device attributes reply (`CSI ? Ps ; ... c`)
+/// that `bytes` starts with, if it starts with one.
+fn device_attributes_reply_len(bytes: &[u8]) -> Option<usize> {
+    let params = bytes.strip_prefix(b"\x1b[?")?;
+    let digits = params
+        .iter()
+        .take_while(|byte| byte.is_ascii_digit() || **byte == b';')
+        .count();
+    (params.get(digits) == Some(&b'c')).then_some(3 + digits + 1)
 }
 
 fn modifiers(mods: Modifiers) -> KeyModifiers {

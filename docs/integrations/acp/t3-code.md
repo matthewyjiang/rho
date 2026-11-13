@@ -2,19 +2,19 @@
 
 Parent: [Agent Client Protocol](/integrations/acp).
 
-[T3 Code](https://github.com/pingdotgg/t3code) runs Rho over ACP. Launch it with `--t3code` so Rho subagents run as T3 threads and background results wake an idle thread:
+[T3 Code](https://github.com/pingdotgg/t3code) runs Rho over ACP. In T3 Code, add Rho as an ACP agent with the command `rho` and the arguments `acp --t3code`:
 
 ```bash
 rho acp --t3code
 ```
 
-In T3 Code, add Rho as an ACP agent with the command `rho` and the arguments `acp --t3code`. Without the flag, Rho still works in T3 Code as a plain ACP agent, but subagents run inside Rho and background work holds the prompt open, as described in [Background work](/integrations/acp#background-work).
+With `--t3code`, Rho subagents run as [T3 threads](#subagents-run-as-t3-threads) and background results [wake an idle thread](#wake-on-background-results). Without the flag, Rho still works in T3 Code as a plain ACP agent: its subagents run in the daemon, and background work holds the prompt open, as described in [Background work](/integrations/acp#background-work).
 
 Rho negotiates ACP v2 when T3 Code requests it; v1 remains available when a host requests v1. Use an up-to-date T3 Code build: versions predating the October 30, 2026 prompt-echo fix can show the injected `<t3_code_instructions>` as a duplicate user message on v2. Upgrade T3 Code rather than downgrading Rho. Notices use native notice rows instead of assistant reply text.
 
 ## Sign in
 
-T3 Code's sign-in terminal appends `--login <auth-profile>` to the configured command, for example `rho acp --t3code --login codex`, which runs Rho's login flow instead of the ACP server. Sign-in works even when the configured provider has no credentials yet, and it does not need T3's MCP server. When credentials are missing, unreadable, or refused, at session start or mid-session, T3 Code reports that the agent needs terminal authentication. See [Sign in](/integrations/acp#sign-in).
+T3 Code's sign-in terminal appends `--login <auth-profile>` to the configured command, for example `rho acp --t3code --login codex`, which signs in through the daemon instead of serving ACP. Sign-in works even when the configured provider has no credentials yet. When a prompt finds credentials missing, unreadable, or refused, T3 Code reports that the agent needs terminal authentication. See [Sign in](/integrations/acp#sign-in).
 
 ## Subagents run as T3 threads
 
@@ -35,30 +35,27 @@ sequenceDiagram
 ```
 
 - Rho calls the `delegate_task` tool of T3's `t3-code` MCP server, with `/agent:<name> <task>` as the child's first prompt. The `agents` tool's `status` and `stop` actions map to T3's `task_status` and `task_cancel`. There is no `message` action.
-- T3 derives each child's title from its task. Rho sends the full task and leaves T3's separate title field alone. The local `agents list` label is the task's first nonempty line.
-- A per-call `agent.model` travels in that `/agent:` command and is resolved by the child Rho. If the model cannot be resolved or signed in, the child task fails. It never reports success on a fallback model.
-- So that the child's thread shows the model it runs on, Rho asks T3's `orchestrator_capabilities` tool whether the parent's provider offers that `provider/model`. If it does, Rho also sets `target.model` and repeats the parent's options, such as permission mode and thought level, because T3 keeps them only for an unchanged model. Otherwise Rho sends no target and the thread keeps the parent's model label, while the child still runs on the requested model. Only a `provider/model` reference is looked up; an alias or bare model ID keeps the parent's label without a lookup. A model T3 does not list, a parent option the model does not accept, a failed or unreadable capabilities reply, or a T3 without that tool also keep the parent's label.
-- Only agents that use Rho's own runtime are offered. Agents that run through Claude Code, Cursor, or Antigravity are rejected, since T3 runs those providers itself. The model can start one with T3's `delegate_task` tool directly.
-- Workflows still run inside Rho.
+- A per-call `agent.model` travels in that `/agent:` command and is resolved by the child Rho. If the model cannot be resolved or signed in, the child task fails.
+- So that the child's thread shows the model it runs on, Rho asks T3's `orchestrator_capabilities` tool whether the parent's provider offers that `provider/model` with the parent's options, such as permission mode and thought level. If it does, Rho sets it as the launch `target`. Otherwise the thread keeps the parent's model label, and the child still runs on the requested model.
+- Only agents that use Rho's own runtime are offered. Agents that run through Claude Code, Cursor, or Antigravity are rejected; the model can start those with T3's `delegate_task` tool directly.
+- Workflows still run in the daemon.
+- `rho acp --t3code` asks for T3 threads each time it opens or reloads a session, so they hold across reloads and daemon restarts. The session does not save the choice: a client that reopens it without asking, such as `rho sessions attach`, runs its children in the daemon.
 
-Without `--t3code`, Rho never delegates through T3's task tools, even when T3's MCP server is attached.
-
-### When T3's tools are missing
-
-Rho needs T3's `delegate_task`, `task_status`, and `task_cancel` tools. If any of them is missing, the session still starts, so T3's provider status check passes. The `agent` tool and the `agents` `status` and `stop` actions then fail with an error that names the missing tool. `agents list` still returns the session's local runs. Rho never falls back to in-process subagents under `--t3code`.
+Rho needs T3's `delegate_task`, `task_status`, and `task_cancel` tools. If any of them is missing, the session still starts, but the `agent` tool and the `agents` `status` and `stop` actions fail with an error that names the missing tool. Rho never falls back to running the child in the daemon.
 
 ## Wake on background results
 
 Under `--t3code`, a prompt that ends while background processes or workflows are still running does not stay open. The thread goes idle, so you can keep talking to it. The first result to finish wakes it with a new turn that delivers the result.
 
-ACP v2 permits agent-initiated turns, but T3 Code does not enable that lifecycle for generic ACP agents such as Rho. T3 also refuses a thread's own requests once its turn ends. It does wake a parent when a delegated task finishes, so Rho still delegates one watcher task:
+The daemon never starts a turn by itself, and T3 refuses a thread's own requests once its turn ends. T3 does wake a parent when a delegated task finishes, so Rho delegates one watcher task:
 
 - The watcher is titled `waiting: <command>` and makes no model call. It runs `/rho-wake <token>`, a command Rho never lists in the menu.
 - It waits until the parent signals a finished result, then ends, and T3 wakes the parent. The model gets T3's notice with a note that the watcher holds no result. The results follow it as usual.
 - One watcher covers everything still running. Work that finishes during a prompt is delivered in that prompt, so most short commands never start one.
-- If the watched work is delivered during a later prompt, Rho cancels the watcher. A watcher also ends when the session that started it closes or its Rho process exits, and it reports that the work did not finish.
-- When T3 Code restarts, it tells each thread whose turn it cut short to continue. A watcher treats any such message as a prompt to resume waiting, or to repeat the result T3 missed, never as a model turn. If its parent did not survive the restart, it ends at once and reports that the work did not finish.
+- If the watched work is delivered during a later prompt, Rho cancels the watcher. A watcher also ends when its parent session is deleted or unloaded, or the daemon stops, and it reports that the work did not finish. The daemon never unloads a session whose background work still runs.
+- When T3 Code restarts, it tells each thread the restart cut off to continue. A watcher that already answered repeats its answer instead of running a model turn. A watcher cut off while it waits resumes the wait, whether T3 quit or crashed.
 - If T3 refuses the watcher, Rho says so in the transcript and the results arrive with your next message.
+- Watchers keep their files in `~/.rho/t3-wakes`, readable only by you. A watcher that starts cleans up files no watcher can use any more once they are 30 days old.
 
 The same applies to a finished `/workflow:` command: it wakes the thread instead of waiting for your next message.
 

@@ -60,13 +60,14 @@ Ways to enable it:
 - `/advisor` or `/advisor on` in the [interactive TUI](/interactive-tui#commands).
   Without a model, the command opens a model picker first. The mode turns on after you
   select one. `esc` leaves the mode off. `/advisor off` turns it off.
-- `/advisor model` to change the advisor model without changing the mode. When
-  the model has selectable reasoning levels, a second picker lists only those
-  levels. Models without a reasoning choice skip that picker.
-- `/config` → **Agent behavior** → **Advisor mode**, **Advisor model**, and
+- `/advisor model` to change the advisor model without changing the mode.
+- `/config` → **Agent** → **Advisor mode**, **Advisor model**, and
   **Advisor reasoning**
 - `/agents`, then choose the `advisor` internal agent and pick a model
 - a hand edit of `~/.rho/config.toml`
+
+`/advisor` and `/config` save through the [daemon](/daemon#configuration-changes).
+The change reaches loaded sessions at their next turn.
 
 ```toml
 [behavior]
@@ -107,7 +108,9 @@ The rows appear only when `claude-agent-acp` is on `PATH`
 ([installation](/installation#claude-code-binary-optional)). Sign in first with
 `/login claude-code`; Rho never stores a Claude token. A signed-out Claude Code
 makes the advisor call fail with `Authentication required`, and the executor's
-turn survives it.
+turn survives it. In a [daemon](/daemon#environment) session, each call finds
+`claude-agent-acp` on the prompting client's `PATH` and runs it with that
+client's whole environment.
 
 The equivalent config is:
 
@@ -202,7 +205,7 @@ advice stays on the same card as `advisor  completed`, collapsed past the
 | --- | --- |
 | `[behavior].advisor_mode` | Offers the `advisor` tool when a model is also set. Default: `false`. |
 | `[internal_agents.advisor]` | The reviewer. On the default `rho` runtime: required provider, model, and auth. With `runtime = "claude-cli"`: optional pass-through `model` only. Optional `reasoning` either way. No conversation-model fallback. |
-| [`display.max_tool_output_lines`](/configuration#tool-output-limit) | How many lines of advice show inline before the TUI collapses the card. |
+| [`max_tool_output_lines`](/configuration#tool-output-limit) | How many lines of advice show inline before the TUI collapses the card. |
 
 See also: [`/advisor`](/interactive-tui#commands),
 [internal agent models](/configuration#internal-agent-models), and the

@@ -8,7 +8,7 @@ use tokio::io::unix::AsyncFd;
 
 fn shell_request(dir: &Path, body: &str) -> (super::AcpSessionRequest, TestPolicy) {
     let mut request = request(dir, None);
-    request.overrides.executable = Some(CliExecutable::resolve("sh").expect("Unix shell"));
+    request.overrides.executable = Some(CliExecutable::from_path("/bin/sh"));
     let mut policy = TestPolicy::new(dir);
     policy.argv = vec!["-c".into(), body.into()];
     (request, policy)
@@ -153,7 +153,7 @@ exec tail -f /dev/null
     assert_eq!(
         (
             status.state,
-            status.claude_session_id,
+            status.runtime_session_id,
             terminal_events(&events)
         ),
         (
@@ -162,4 +162,70 @@ exec tail -f /dev/null
             vec![AttachmentEvent::Cancelled]
         )
     );
+}
+
+// Covers: a CLI agent inherits this process's whole environment when its
+// session has no daemon client, and is found on and runs in the client's
+// whole environment, provider credentials included, in place of this
+// process's when it has one: a variable only this process has, `HOME`, is
+// gone. The plan's overrides win either way (#1659).
+// Owner: `spawn_agent` environment composition.
+#[tokio::test]
+async fn an_agent_runs_in_its_sessions_whole_environment_under_the_plans_overrides() {
+    use crate::session_environment::Ambient;
+    use tokio::io::AsyncReadExt;
+
+    let this_process = |name: &str| std::env::var(name).unwrap_or_else(|_| "unset".into());
+    let cases = [
+        (
+            Ambient::ThisProcess,
+            [
+                this_process("RHO_1659_CLIENT"),
+                this_process("PATH"),
+                this_process("ANTHROPIC_API_KEY"),
+                "plan".into(),
+                this_process("HOME"),
+            ],
+        ),
+        (
+            Ambient::client(&[
+                ("PATH", "/usr/bin:/bin"),
+                ("RHO_1659_CLIENT", "client"),
+                ("ANTHROPIC_API_KEY", "client-key"),
+                ("RHO_1659_OVERRIDE", "client"),
+            ]),
+            ["client", "/usr/bin:/bin", "client-key", "plan", "unset"].map(String::from),
+        ),
+    ];
+    let dir = tempfile::tempdir().unwrap();
+    for (environment, expected) in cases {
+        let shell = CliExecutable::resolve_in("sh", environment.path().as_deref())
+            .expect("sh on the session's PATH");
+        let plan = super::AcpSpawnPlan {
+            argv: vec![
+                "-c".into(),
+                r#"printf '%s\n' "${RHO_1659_CLIENT-unset}" "${PATH-unset}" "${ANTHROPIC_API_KEY-unset}" "${RHO_1659_OVERRIDE-unset}" "${HOME-unset}""#.into(),
+            ],
+            cwd: dir.path().into(),
+            env: vec![("RHO_1659_OVERRIDE".into(), "plan".into())],
+        };
+        let (mut child, _stdin, mut stdout) = super::session::spawn_agent(
+            "fake-acp",
+            &shell,
+            plan,
+            std::process::Stdio::null(),
+            /*before_spawn*/ None,
+            &environment,
+        )
+        .unwrap();
+        let mut seen = String::new();
+        stdout.read_to_string(&mut seen).await.unwrap();
+        child.wait().await.unwrap();
+
+        assert_eq!(
+            seen.lines().collect::<Vec<_>>(),
+            expected,
+            "environment={environment:?}"
+        );
+    }
 }

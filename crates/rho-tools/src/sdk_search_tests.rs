@@ -121,11 +121,7 @@ async fn invalid_regex_fails_prepare_without_capability_requests() {
         ModelIdentity::new("scripted", "test", "model"),
         [
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                ToolCall {
-                    id: "call-1".into(),
-                    name: "grep".into(),
-                    arguments: json!({"pattern": "("}),
-                },
+                ToolCall::new("call-1".into(), "grep".into(), json!({"pattern": "("})),
             )])),
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
                 "done".into(),
@@ -167,18 +163,10 @@ async fn allowed_policy_runs_grep_and_glob_with_search_metadata() {
         ModelIdentity::new("scripted", "test", "model"),
         [
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                ToolCall {
-                    id: "call-1".into(),
-                    name: "grep".into(),
-                    arguments: json!({"pattern": "hello"}),
-                },
+                ToolCall::new("call-1".into(), "grep".into(), json!({"pattern": "hello"})),
             )])),
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                ToolCall {
-                    id: "call-2".into(),
-                    name: "glob".into(),
-                    arguments: json!({"pattern": "*.rs"}),
-                },
+                ToolCall::new("call-2".into(), "glob".into(), json!({"pattern": "*.rs"})),
             )])),
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
                 "done".into(),
@@ -200,7 +188,7 @@ async fn allowed_policy_runs_grep_and_glob_with_search_metadata() {
     while let Some(event) = run.next_event().await {
         match event {
             RunEvent::ToolFinished { result, .. } => match result {
-                ToolCompletion::Success(output) => {
+                ToolCompletion::Completed(output) => {
                     assert_eq!(
                         output.presentation().operation_kind(),
                         Some(&OperationKind::Search)
@@ -235,7 +223,7 @@ async fn grep_structured_paths_chain_into_read_file() {
     // Grep displays paths with forward slashes on every platform.
     let shown = |path: &std::path::Path| crate::paths::display(path);
     let ws = workspace(&dir).with_granted_root(&outside_root).unwrap();
-    let options = CodingToolOptions::new().edit_tool(crate::EditFormat::Hashline);
+    let options = CodingToolOptions::new();
     let host = ToolHost::builder()
         .workspace(ws)
         .workspace_policy(
@@ -247,7 +235,6 @@ async fn grep_structured_paths_chain_into_read_file() {
         .tool_shared(coding_tool(CodingToolKind::ReadFile, options))
         .build()
         .unwrap();
-    let tag = crate::hashline::compute_file_hash(body);
 
     for (case, root, expected_path) in [
         ("workspace", ".".to_owned(), "src/lib.rs".to_owned()),
@@ -291,7 +278,7 @@ async fn grep_structured_paths_chain_into_read_file() {
         );
         assert_eq!(
             output.content(),
-            format!("[{expected_path}#{tag}]\n1 | needle\n\n1 matches in 1 files"),
+            format!("{expected_path}\n1 | needle\n\n1 matches in 1 files"),
             "{case}"
         );
         let read = host

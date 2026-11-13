@@ -75,12 +75,12 @@ impl MetaAuthManager {
     }
 }
 
-/// Non-blank `META_API_KEY`, when set. This key is not a Muse session.
-pub(crate) fn env_api_key(env_var: &str) -> Option<String> {
-    match std::env::var(env_var) {
-        Ok(key) if !key.trim().is_empty() => Some(key),
-        _ => None,
-    }
+/// Non-blank `META_API_KEY`, when set in the environment of `store`'s
+/// party. This key is not a Muse session.
+pub(crate) fn env_api_key(store: &dyn CredentialStore, env_var: &str) -> Option<String> {
+    store
+        .environment_variable(env_var)
+        .filter(|key| !key.trim().is_empty())
 }
 
 pub(crate) fn meta_api_key_is_expiring(tokens: &MetaTokens, now: i64) -> bool {

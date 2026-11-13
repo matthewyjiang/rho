@@ -5,7 +5,7 @@ use pretty_assertions::assert_eq;
 use ratatui::layout::Rect;
 use tempfile::TempDir;
 
-use super::{super::chrome::AttachChrome, *};
+use super::*;
 use rho_sdk::model::ModelUsage;
 
 fn resolved_identity_line(
@@ -16,14 +16,38 @@ fn resolved_identity_line(
     identity_line(status, status.and_then(attach_reasoning), usage, now)
 }
 
+/// The display settings of a parent TUI on the default settings.
+fn default_display() -> AttachmentDisplaySettings {
+    let settings = crate::tui::TuiSettings::default();
+    AttachmentDisplaySettings {
+        show_reasoning_output: settings.show_reasoning_output,
+        zen_mode: settings.zen_mode,
+        max_tool_output_lines: settings.max_tool_output_lines,
+    }
+}
+
 fn test_app() -> (TempDir, AttachmentApp) {
     let directory = TempDir::new().unwrap();
-    let app = AttachmentApp::new(
-        "abc123",
-        directory.path().to_path_buf(),
-        AttachmentDisplaySettings::default(),
-    );
+    let app = AttachmentApp::new("abc123", directory.path().to_path_buf(), default_display());
     (directory, app)
+}
+
+/// The view's first three header rows as drawn at 100 columns.
+fn header_rows(app: &mut AttachmentApp) -> Vec<String> {
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 24)).unwrap();
+    terminal
+        .draw(|frame| app.draw(frame, /*parent_notice*/ None))
+        .unwrap();
+    let buffer = terminal.backend().buffer();
+    (0..3)
+        .map(|y| {
+            (0..buffer.area.width)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>()
+                .trim_end()
+                .to_owned()
+        })
+        .collect()
 }
 
 fn line_text(lines: &[Line<'static>]) -> Vec<String> {
@@ -41,32 +65,31 @@ fn line_text(lines: &[Line<'static>]) -> Vec<String> {
 #[test]
 fn parallel_pending_tools_keep_independent_slots() {
     let (_directory, mut app) = test_app();
-    let card_a = rho_tools::tool_card::ToolCard::new(
-        rho_tools::tool_card::ToolStatus::Running,
-        rho_tools::tool_card::ToolFamily::FileCommand,
-        rho_tools::tool_card::ToolHeader::call("read_file", Some("a.rs".into())),
+    let card_a = rho_protocol::display::ToolCard::new(
+        rho_protocol::display::ToolCardStatus::Running,
+        rho_protocol::display::ToolFamily::FileCommand,
+        rho_protocol::display::ToolHeader::call("read_file", Some("a.rs".into())),
     );
-    let card_b = rho_tools::tool_card::ToolCard::new(
-        rho_tools::tool_card::ToolStatus::Running,
-        rho_tools::tool_card::ToolFamily::FileCommand,
-        rho_tools::tool_card::ToolHeader::call("read_file", Some("b.rs".into())),
+    let card_b = rho_protocol::display::ToolCard::new(
+        rho_protocol::display::ToolCardStatus::Running,
+        rho_protocol::display::ToolFamily::FileCommand,
+        rho_protocol::display::ToolHeader::call("read_file", Some("b.rs".into())),
     );
     app.apply_event(AttachmentEvent::ToolStarted {
         key: Some("call-a".into()),
-        card: card_a.clone().into(),
+        card: card_a.clone(),
     });
     app.apply_event(AttachmentEvent::ToolStarted {
         key: Some("call-b".into()),
-        card: card_b.clone().into(),
+        card: card_b.clone(),
     });
     app.apply_event(AttachmentEvent::ToolUpdated {
         key: Some("call-a".into()),
         card: card_a
             .clone()
-            .with_facts(vec![rho_tools::tool_card::ToolFact::Meta {
+            .with_facts(vec![rho_protocol::display::ToolFact::Meta {
                 text: "reading".into(),
-            }])
-            .into(),
+            }]),
     });
     assert_eq!(
         app.pending_order,
@@ -78,7 +101,7 @@ fn parallel_pending_tools_keep_independent_slots() {
         key: Some("call-b".into()),
         presentation: card_b
             .clone()
-            .with_facts(vec![rho_tools::tool_card::ToolFact::Count {
+            .with_facts(vec![rho_protocol::display::ToolFact::Count {
                 label: "lines".into(),
                 value: 2,
                 detail: None,
@@ -90,7 +113,7 @@ fn parallel_pending_tools_keep_independent_slots() {
     assert!(!app.pending_tools.contains_key("call-b"));
     match app.transcript.last() {
         Some(Entry::Tool(ToolEntry {
-            presentation: crate::presentation::Presentation::Card(card),
+            presentation: rho_protocol::display::Presentation::Card(card),
             ..
         })) => {
             assert_eq!(card.header_text(), "● read_file(b.rs)");
@@ -108,10 +131,10 @@ fn provider_retry_replaces_output_but_preserves_presented_events() {
     app.apply_event(AttachmentEvent::Notice("keep notice".into()));
     app.apply_event(AttachmentEvent::ToolFinished {
         key: None,
-        presentation: rho_tools::tool_card::ToolCard::new(
-            rho_tools::tool_card::ToolStatus::Ok,
-            rho_tools::tool_card::ToolFamily::Default,
-            rho_tools::tool_card::ToolHeader::call("keep tool", None),
+        presentation: rho_protocol::display::ToolCard::new(
+            rho_protocol::display::ToolCardStatus::Ok,
+            rho_protocol::display::ToolFamily::Default,
+            rho_protocol::display::ToolHeader::call("keep tool", None),
         )
         .into(),
     });
@@ -124,7 +147,7 @@ fn provider_retry_replaces_output_but_preserves_presented_events() {
         [
             Entry::User(prompt),
             Entry::Notice(notice),
-            Entry::Tool(ToolEntry { presentation: crate::presentation::Presentation::Card(card), .. }),
+            Entry::Tool(ToolEntry { presentation: rho_protocol::display::Presentation::Card(card), .. }),
             Entry::Assistant(answer)
         ] if prompt == "delegated task"
             && notice == "keep notice"
@@ -220,20 +243,16 @@ fn multi_step_usage_replaces_live_run_snapshot() {
 #[test]
 fn history_lines_follow_display_settings() {
     let directory = TempDir::new().unwrap();
-    let mut app = AttachmentApp::new(
-        "abc123",
-        directory.path().to_path_buf(),
-        AttachmentDisplaySettings::default(),
-    );
+    let mut app = AttachmentApp::new("abc123", directory.path().to_path_buf(), default_display());
     app.apply_event(AttachmentEvent::Prompt("task".into()));
     app.apply_event(AttachmentEvent::ReasoningDelta("secret plan".into()));
     app.apply_event(AttachmentEvent::AssistantTextDelta("answer".into()));
     app.apply_event(AttachmentEvent::ToolFinished {
         key: None,
-        presentation: rho_tools::tool_card::ToolCard::new(
-            rho_tools::tool_card::ToolStatus::Ok,
-            rho_tools::tool_card::ToolFamily::Default,
-            rho_tools::tool_card::ToolHeader::call("read_file", Some("a.rs".into())),
+        presentation: rho_protocol::display::ToolCard::new(
+            rho_protocol::display::ToolCardStatus::Ok,
+            rho_protocol::display::ToolFamily::Default,
+            rho_protocol::display::ToolHeader::call("read_file", Some("a.rs".into())),
         )
         .into(),
     });
@@ -291,16 +310,16 @@ fn zen_keeps_conversation_notifications_between_tool_summaries() {
     app.display.zen_mode = true;
     let tool = || AttachmentEvent::ToolFinished {
         key: None,
-        presentation: rho_tools::tool_card::ToolCard::new(
-            rho_tools::tool_card::ToolStatus::Ok,
-            rho_tools::tool_card::ToolFamily::Default,
-            rho_tools::tool_card::ToolHeader::call("read_file", Some("a.rs".into())),
+        presentation: rho_protocol::display::ToolCard::new(
+            rho_protocol::display::ToolCardStatus::Ok,
+            rho_protocol::display::ToolFamily::Default,
+            rho_protocol::display::ToolHeader::call("read_file", Some("a.rs".into())),
         )
         .into(),
     };
     let card = crate::presentation::parent_message_card(
         "keep going".into(),
-        crate::presentation::NotificationDelivery::Received,
+        rho_protocol::display::NotificationDelivery::Received,
         "detail".into(),
     );
     app.apply_event(tool());
@@ -308,7 +327,7 @@ fn zen_keeps_conversation_notifications_between_tool_summaries() {
     app.apply_event(tool());
 
     let notification = Entry::Tool(ToolEntry::new(
-        crate::presentation::Presentation::Notification(Box::new(card)),
+        rho_protocol::display::Presentation::Notification(Box::new(card)),
         /*expanded*/ false,
         /*image*/ None,
         /*started_at*/ None,
@@ -344,54 +363,24 @@ fn history_lines_honor_max_tool_output_lines() {
         directory.path().to_path_buf(),
         AttachmentDisplaySettings {
             max_tool_output_lines: 1,
-            ..AttachmentDisplaySettings::default()
+            ..default_display()
         },
     );
     let body = (0..5).map(|i| format!("line-{i}")).collect::<Vec<_>>();
     app.apply_event(AttachmentEvent::ToolFinished {
         key: None,
-        presentation: rho_tools::tool_card::ToolCard::new(
-            rho_tools::tool_card::ToolStatus::Ok,
-            rho_tools::tool_card::ToolFamily::Default,
-            rho_tools::tool_card::ToolHeader::call("bash", None),
+        presentation: rho_protocol::display::ToolCard::new(
+            rho_protocol::display::ToolCardStatus::Ok,
+            rho_protocol::display::ToolFamily::Default,
+            rho_protocol::display::ToolHeader::call("bash", None),
         )
-        .with_body(rho_tools::tool_card::ToolBody::Lines(body))
+        .with_body(rho_protocol::display::ToolBody::Lines(body))
         .into(),
     });
 
     let lines = line_text(&app.paint_history(80).lines);
     assert!(lines.iter().any(|line| line.contains("line-0")));
     assert!(lines.iter().all(|line| !line.contains("line-4")));
-}
-
-#[test]
-fn herdr_state_follows_attached_subagent_state() {
-    let status = |state| RunStatus {
-        state,
-        last_activity: Some("working".into()),
-        ..RunStatus::default()
-    };
-
-    assert_eq!(
-        herdr_status("abc123", &status(RunState::Starting)).0,
-        HerdrState::Working
-    );
-    assert_eq!(
-        herdr_status("abc123", &status(RunState::Running)).0,
-        HerdrState::Working
-    );
-    assert_eq!(
-        herdr_status("abc123", &status(RunState::Ok)).0,
-        HerdrState::Idle
-    );
-    assert_eq!(
-        herdr_status("abc123", &status(RunState::Stopped)).0,
-        HerdrState::Idle
-    );
-    assert_eq!(
-        herdr_status("abc123", &status(RunState::Error)).0,
-        HerdrState::Blocked
-    );
 }
 
 fn activity_line(app: &AttachmentApp, activity: &str) -> String {
@@ -530,24 +519,24 @@ fn format_run_cost_prefers_status_total_via_shared_usd_helper() {
     );
 }
 
-fn long_body_card() -> rho_tools::tool_card::ToolCard {
-    rho_tools::tool_card::ToolCard::new(
-        rho_tools::tool_card::ToolStatus::Ok,
-        rho_tools::tool_card::ToolFamily::FileCommand,
-        rho_tools::tool_card::ToolHeader::shell("$", Some("seq 20".into())),
+fn long_body_card() -> rho_protocol::display::ToolCard {
+    rho_protocol::display::ToolCard::new(
+        rho_protocol::display::ToolCardStatus::Ok,
+        rho_protocol::display::ToolFamily::FileCommand,
+        rho_protocol::display::ToolHeader::shell("$", Some("seq 20".into())),
     )
-    .with_body(rho_tools::tool_card::ToolBody::Lines(
+    .with_body(rho_protocol::display::ToolBody::Lines(
         (0..20).map(|i| format!("out-{i}")).collect(),
     ))
 }
 
-fn short_body_card() -> rho_tools::tool_card::ToolCard {
-    rho_tools::tool_card::ToolCard::new(
-        rho_tools::tool_card::ToolStatus::Ok,
-        rho_tools::tool_card::ToolFamily::Default,
-        rho_tools::tool_card::ToolHeader::call("echo", None),
+fn short_body_card() -> rho_protocol::display::ToolCard {
+    rho_protocol::display::ToolCard::new(
+        rho_protocol::display::ToolCardStatus::Ok,
+        rho_protocol::display::ToolFamily::Default,
+        rho_protocol::display::ToolHeader::call("echo", None),
     )
-    .with_body(rho_tools::tool_card::ToolBody::Lines(vec!["ok".into()]))
+    .with_body(rho_protocol::display::ToolBody::Lines(vec!["ok".into()]))
 }
 
 fn mouse(kind: MouseEventKind, column: u16, row: u16) -> Event {
@@ -610,7 +599,7 @@ fn mouse_events_reuse_painted_history() {
     let mut terminal =
         ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 30)).expect("test terminal");
     terminal
-        .draw(|frame| app.draw(frame, AttachChrome::Standalone))
+        .draw(|frame| app.draw(frame, /*parent_notice*/ None))
         .expect("baseline draw");
     let painted_ptr = app
         .painted
@@ -623,7 +612,7 @@ fn mouse_events_reuse_painted_history() {
     app.handle_event(mouse(MouseEventKind::Down(MouseButton::Left), 8, 5));
     app.handle_event(mouse(MouseEventKind::Up(MouseButton::Left), 8, 6));
     terminal
-        .draw(|frame| app.draw(frame, AttachChrome::Standalone))
+        .draw(|frame| app.draw(frame, /*parent_notice*/ None))
         .expect("hover draw");
     assert_eq!(
         app.painted
@@ -642,7 +631,7 @@ fn mouse_events_reuse_painted_history() {
     );
 
     terminal
-        .draw(|frame| app.draw(frame, AttachChrome::Standalone))
+        .draw(|frame| app.draw(frame, /*parent_notice*/ None))
         .expect("toggle draw");
     let after_toggle_ptr = app
         .painted
@@ -722,7 +711,7 @@ fn draw_hover_lift_follows_pointer_and_survives_toggle() {
     let mut terminal =
         ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 30)).expect("test terminal");
     terminal
-        .draw(|frame| app.draw(frame, AttachChrome::Standalone))
+        .draw(|frame| app.draw(frame, /*parent_notice*/ None))
         .expect("baseline draw");
 
     let baseline = row_look(&terminal, 5);
@@ -731,7 +720,7 @@ fn draw_hover_lift_follows_pointer_and_survives_toggle() {
     // Pointer over the header, outside the history viewport: no lift.
     app.handle_event(mouse(MouseEventKind::Moved, 8, 1));
     terminal
-        .draw(|frame| app.draw(frame, AttachChrome::Standalone))
+        .draw(|frame| app.draw(frame, /*parent_notice*/ None))
         .expect("header draw");
     assert_eq!(
         row_look(&terminal, 5),
@@ -742,7 +731,7 @@ fn draw_hover_lift_follows_pointer_and_survives_toggle() {
     // Pointer over the card: lift.
     app.handle_event(mouse(MouseEventKind::Moved, 8, 5));
     terminal
-        .draw(|frame| app.draw(frame, AttachChrome::Standalone))
+        .draw(|frame| app.draw(frame, /*parent_notice*/ None))
         .expect("hover draw");
     assert_ne!(
         row_look(&terminal, 5),
@@ -754,7 +743,7 @@ fn draw_hover_lift_follows_pointer_and_survives_toggle() {
     // reshaped card under the stationary pointer instead of dropping it.
     click_card(&mut app, 8, 5);
     terminal
-        .draw(|frame| app.draw(frame, AttachChrome::Standalone))
+        .draw(|frame| app.draw(frame, /*parent_notice*/ None))
         .expect("toggle draw");
     assert!(transcript_tool(&app, 0).expanded);
     assert_ne!(
@@ -860,11 +849,11 @@ fn pending_finish_during_click_still_toggles_with_sibling_pending() {
     let (_directory, mut app) = test_app();
     app.apply_event(AttachmentEvent::ToolStarted {
         key: Some("first".into()),
-        card: long_body_card().into(),
+        card: long_body_card(),
     });
     app.apply_event(AttachmentEvent::ToolStarted {
         key: Some("second".into()),
-        card: long_body_card().into(),
+        card: long_body_card(),
     });
     sync_view(&mut app, 80, 40);
     let first_height = HistoryItem::Pending {
@@ -899,7 +888,7 @@ fn pending_finish_then_reset_still_toggles_pressed_card() {
     app.apply_event(AttachmentEvent::AssistantTextDelta("retry this".into()));
     app.apply_event(AttachmentEvent::ToolStarted {
         key: Some("live".into()),
-        card: long_body_card().into(),
+        card: long_body_card(),
     });
     sync_view(&mut app, 80, 40);
     let pending_row = {
@@ -961,7 +950,7 @@ fn ctrl_o_prefers_pending_and_collapses_others() {
     });
     app.apply_event(AttachmentEvent::ToolStarted {
         key: Some("live".into()),
-        card: long_body_card().into(),
+        card: long_body_card(),
     });
     sync_view(&mut app, 80, 40);
 
@@ -992,4 +981,47 @@ fn ctrl_o_prefers_pending_and_collapses_others() {
     )));
     assert!(!transcript_tool(&app, 0).expanded);
     assert!(transcript_tool(&app, 1).expanded);
+}
+
+// Covers: the open view follows the run's status file as the run finishes:
+// state, activity, and the finished elapsed time replace the running ones.
+// Owner: AttachmentApp::refresh
+#[test]
+fn refresh_follows_the_run_status_to_completion() {
+    let (directory, mut app) = test_app();
+    let status_path = directory.path().join(subagent::RESULT_FILE_NAME);
+    std::fs::write(
+        &status_path,
+        r#"{"state": "running", "agent_id": "explorer", "started_at": 1700000000,
+            "turns": 1, "last_activity": "assistant text"}"#,
+    )
+    .unwrap();
+    assert!(app.refresh().unwrap());
+    let running = header_rows(&mut app);
+    // The running elapsed time counts from the wall clock; skip that row.
+    assert_eq!(
+        [&running[0], &running[2]],
+        ["rho  attach abc123 · explorer · running", "assistant text"]
+    );
+    assert!(
+        !app.refresh().unwrap(),
+        "an unchanged status is not a change"
+    );
+
+    std::fs::write(
+        &status_path,
+        r#"{"state": "ok", "agent_id": "explorer", "started_at": 1700000000,
+            "finished_at": 1700000065, "turns": 1, "last_activity": "complete",
+            "result": "watchable answer"}"#,
+    )
+    .unwrap();
+    assert!(app.refresh().unwrap());
+    assert_eq!(
+        header_rows(&mut app),
+        [
+            "rho  attach abc123 · explorer · ok",
+            "turn 1 · 1m 05s",
+            "complete",
+        ]
+    );
 }

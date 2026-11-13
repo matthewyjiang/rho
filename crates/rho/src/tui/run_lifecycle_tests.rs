@@ -141,18 +141,3 @@ fn next_turn_start_clears_turn_finished_attention() {
 
     assert!(!app.turn_finished_attention);
 }
-
-// Covers: a trailing auto-compact end_busy must not wipe an unseen cue.
-// Owner: behavior (turn-finished attention cue)
-#[test]
-fn compact_finish_does_not_clear_unseen_turn_finished_attention() {
-    let mut app = test_app();
-    app.begin_provider_turn_ui();
-    app.history.scroll_chrome_mut().set_top_line(100, 10, 0);
-    app.end_provider_turn_ui();
-
-    app.begin_compact_ui();
-    app.end_busy_ui();
-
-    assert_eq!(app.jump_chip_state(), JumpChipState::ResponseReady);
-}

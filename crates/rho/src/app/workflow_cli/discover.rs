@@ -1,22 +1,33 @@
-//! Workspace workflow entry files and the `/workflow:<name>` commands that
-//! start them. The TUI hub lists these sources; the TUI and ACP sessions both
-//! resolve `/workflow:<name> [inputs]` through [`resolve_start_command`].
+//! Workspace workflow entry files and the `/workflow:` commands that start
+//! their runs. The TUI hub lists these sources; a session's prompts resolve
+//! `/workflow:<name> [inputs]`, `/workflow:plan/<plan id>`, and
+//! `/workflow:run/<run id> [recover]` through [`resolve_launch`].
 
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
+    str::FromStr,
 };
+
+use crate::workflow::{PlanId, RunId};
 
 /// Slash-command prefix for starting one discovered workflow.
 pub(crate) const COMMAND_PREFIX: &str = "workflow:";
+/// What follows the prefix to name a saved plan, and a run.
+const PLAN_PREFIX: &str = "plan/";
+const RUN_PREFIX: &str = "run/";
+/// The argument that lets a resumed run repeat nodes of unknown outcome.
+const RECOVER: &str = "recover";
 
 /// A workflow source the hub can validate or plan.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct DiscoveredWorkflow {
-    /// Workspace-relative path using `/` separators.
+    /// Workspace-relative path to the entry `.star` file, using `/`
+    /// separators. A run is planned from this path, which the workflow store
+    /// resolves under the workspace as it names it: the workspace's
+    /// canonical path, which on Windows is not the one a session names it
+    /// by.
     pub(crate) relative_path: String,
-    /// Absolute path to the entry `.star` file.
-    pub(crate) absolute_path: PathBuf,
     /// Short label for picker rows and the `/workflow:<label>` command.
     pub(crate) label: String,
 }
@@ -47,6 +58,22 @@ pub(crate) struct StartCommand {
     pub(crate) workflow: DiscoveredWorkflow,
     /// Explicit input values; omitted inputs use their declared defaults.
     pub(crate) inputs: BTreeMap<String, serde_json::Value>,
+}
+
+/// What a `/workflow:` prompt starts in the background.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum WorkflowLaunch {
+    /// A new run of a workspace workflow, planned now.
+    Source(StartCommand),
+    /// A new run of a saved plan.
+    Plan(PlanId),
+    /// A run that stopped, taken up again.
+    Resume {
+        run: RunId,
+        /// Whether nodes whose outcome is unknown run again: the person
+        /// said nothing of theirs still runs.
+        recover_uncertain: bool,
+    },
 }
 
 /// Finds workflow entry files under `.rho/workflows`.
@@ -96,7 +123,7 @@ pub(crate) fn discover_workflow_sources(workspace: &Path) -> Vec<DiscoveredWorkf
 
 /// Workflows that have a command, one per command name. When `<name>.star`
 /// and `<name>/workflow.star` both exist, or two names differ only by case,
-/// the name is listed once and [`resolve_start_command`] reports the ambiguity.
+/// the name is listed once and [`resolve_launch`] reports the ambiguity.
 pub(crate) fn command_workflows(workspace: &Path) -> Vec<DiscoveredWorkflow> {
     let mut workflows = discover_workflow_sources(workspace);
     workflows.retain(|workflow| workflow.command_name().is_some());
@@ -105,20 +132,65 @@ pub(crate) fn command_workflows(workspace: &Path) -> Vec<DiscoveredWorkflow> {
     workflows
 }
 
-/// Resolves the slash token `name` (without `/`) and its trailing `args`.
+/// Resolves the slash token `name` (without `/`) and its trailing `args` to
+/// what it starts: a workspace workflow by name, or `plan/<plan id>` and
+/// `run/<run id> [recover]`, the hub's rows for saved plans and stopped
+/// runs. A name is a file stem, so it never contains the `/` those have.
 ///
-/// The prefix and the name match without regard to ASCII case, like
-/// `/prompt:<name>`. `None` means `name` is not a workflow command.
-/// `Some(Err)` carries a user-facing reason: no such workflow, an ambiguous
-/// name, or inputs that are not one JSON object.
-pub(crate) fn resolve_start_command(
+/// The prefix and the name match without regard to ASCII case. `None` means
+/// `name` is not a workflow command. `Some(Err)` carries a user-facing
+/// reason: no such workflow, an ambiguous name, or inputs that are not one
+/// JSON object.
+pub(crate) fn resolve_launch(
     workspace: &Path,
     name: &str,
     args: &str,
-) -> Option<Result<StartCommand, String>> {
-    name.get(..COMMAND_PREFIX.len())
+) -> Option<Result<WorkflowLaunch, String>> {
+    let target = name
+        .get(..COMMAND_PREFIX.len())
         .filter(|prefix| prefix.eq_ignore_ascii_case(COMMAND_PREFIX))
-        .map(|_| resolve_label(workspace, &name[COMMAND_PREFIX.len()..], args))
+        .map(|_| &name[COMMAND_PREFIX.len()..])?;
+    let args = args.trim();
+    Some(if let Some(plan) = target.strip_prefix(PLAN_PREFIX) {
+        match (PlanId::from_str(plan), args) {
+            (Ok(plan), "") => Ok(WorkflowLaunch::Plan(plan)),
+            (Ok(_), _) => Err("a saved plan takes no inputs".to_owned()),
+            (Err(_), _) => Err(format!("'{plan}' is not a plan id")),
+        }
+    } else if let Some(run) = target.strip_prefix(RUN_PREFIX) {
+        let recover_uncertain = match args {
+            "" => Ok(false),
+            RECOVER => Ok(true),
+            other => Err(format!("unknown option '{other}'; use `{RECOVER}`")),
+        };
+        match (RunId::from_str(run), recover_uncertain) {
+            (Ok(run), Ok(recover_uncertain)) => Ok(WorkflowLaunch::Resume {
+                run,
+                recover_uncertain,
+            }),
+            (Ok(_), Err(detail)) => Err(detail),
+            (Err(_), _) => Err(format!("'{run}' is not a run id")),
+        }
+    } else {
+        resolve_label(workspace, target, args).map(WorkflowLaunch::Source)
+    })
+}
+
+impl WorkflowLaunch {
+    /// The prompt that starts a run of saved plan `plan`.
+    pub(crate) fn plan_command(plan: PlanId) -> String {
+        format!("/{COMMAND_PREFIX}{PLAN_PREFIX}{plan}")
+    }
+
+    /// The prompt that takes run `run` up again.
+    pub(crate) fn resume_command(run: RunId, recover_uncertain: bool) -> String {
+        let command = format!("/{COMMAND_PREFIX}{RUN_PREFIX}{run}");
+        if recover_uncertain {
+            format!("{command} {RECOVER}")
+        } else {
+            command
+        }
+    }
 }
 
 fn resolve_label(workspace: &Path, label: &str, args: &str) -> Result<StartCommand, String> {
@@ -176,7 +248,6 @@ fn push_discovered(workspace: &Path, absolute: PathBuf, out: &mut Vec<Discovered
     let label = workflow_label(&relative_path);
     out.push(DiscoveredWorkflow {
         relative_path,
-        absolute_path: absolute,
         label,
     });
 }

@@ -1,0 +1,129 @@
+use std::sync::Arc;
+
+use pretty_assertions::assert_eq;
+use rho_sdk::{
+    model::{Message, ModelIdentity},
+    provider::{ModelProvider, ScriptedProvider},
+    SessionOptions,
+};
+
+use crate::{
+    agent::{AgentCapabilities, ToolCapability},
+    app::{
+        active_prompt::ActivePrompt,
+        session_assembly::BuiltSession,
+        session_runtime::{SessionRuntime, SessionStorage},
+    },
+    config::Config,
+    diagnostics::RuntimeDiagnostics,
+    model_identity::PromptModel,
+    prompt,
+    session::Session as StoredSession,
+    tools::{
+        advisor::AdvisorSessionStore,
+        sdk_registry::{AppToolSet, ToolSetOptions},
+    },
+};
+
+// Covers: a model switch must replace the advisor's cached executor prompt
+// together with its live history, including model-specific replacements.
+// Owner: session runtime model switch, without credential/network discovery
+#[tokio::test]
+async fn model_prompt_switch_rebinds_advisor_with_live_history() {
+    let home = tempfile::tempdir().unwrap();
+    let directory = home.path().join(".rho/model-prompts");
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(
+        directory.join("next.md"),
+        "---\nprovider: test\nmodel: next\nmode: replace\n---\nnext behavior",
+    )
+    .unwrap();
+    let provider: Arc<dyn ModelProvider> = Arc::new(ScriptedProvider::new(
+        ModelIdentity::new("test", "test", "first"),
+        Vec::new(),
+    ));
+    let running = PromptModel::from_sdk_identity(&provider.identity());
+    let template = prompt::system_prompt_template_with_home_and_models(
+        &[],
+        home.path(),
+        Some(home.path()),
+        prompt::PromptModels {
+            running: &running,
+            advisor: None,
+        },
+    );
+    let prepared = template.build(&running).unwrap();
+    let runtime = rho_sdk::Rho::builder()
+        .provider_shared(provider.clone())
+        .system_prompt(rho_sdk::SystemPrompt::Custom(prepared.text.clone()))
+        .build()
+        .unwrap();
+    let session = runtime.session(SessionOptions::new()).await.unwrap();
+    session
+        .append_message(Message::user_text("retained conversation"))
+        .unwrap();
+    let config = Config {
+        provider: "test".into(),
+        model: "next".into(),
+        ..Config::default()
+    };
+    let diagnostics = RuntimeDiagnostics::new(&config);
+    let advisor = AdvisorSessionStore::new();
+    advisor.bind_session(session.clone());
+    let tools = AppToolSet::new(
+        &config,
+        diagnostics.clone(),
+        ToolSetOptions::new(AgentCapabilities::new(
+            [ToolCapability::Advisor].into_iter().collect(),
+        ))
+        .advisor(advisor.clone()),
+    );
+    let mut active = ActivePrompt::default();
+    active.adopt(
+        ActivePrompt::from_prepared(prepared),
+        &diagnostics,
+        Some(&advisor),
+    );
+    let built = BuiltSession {
+        runtime,
+        session,
+        provider,
+        tools,
+        hooks: None,
+        approval_receiver: None,
+        prompt_template: Some(template),
+        prompt: active,
+        diagnostics,
+        tool_sources: None,
+        provider_credentials: crate::app::session_assembly::ProviderCredentials::Found,
+    };
+    let stored = StoredSession::create_in_root(home.path(), home.path()).unwrap();
+    let mut runtime = SessionRuntime::for_tests(built, SessionStorage::saved(stored), &config);
+    let next: Arc<dyn ModelProvider> = Arc::new(ScriptedProvider::new(
+        ModelIdentity::new("test", "test", "next"),
+        Vec::new(),
+    ));
+    let expected = runtime
+        .built
+        .prompt_template
+        .as_ref()
+        .unwrap()
+        .build(&PromptModel::from_sdk_identity(&next.identity()))
+        .unwrap();
+    let read = crate::credential_store::AppCredentialStore::generation();
+    runtime.switch_provider(next, &config, read).unwrap();
+    assert_eq!(advisor.system_prompt(), Some(expected.text.clone()));
+    assert_eq!(
+        &runtime.built.session.history()[..2],
+        &[
+            Message::System(expected.text),
+            Message::user_text("retained conversation"),
+        ]
+    );
+    assert_eq!(
+        runtime.built.prompt.provenance,
+        expected.model_prompt.as_ref().map(Into::into)
+    );
+    assert_eq!(runtime.built.diagnostics.prompt_sources(), expected.sources);
+    runtime.shutdown().await;
+}

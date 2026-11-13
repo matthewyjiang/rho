@@ -2,15 +2,14 @@
 
 use super::policy::AcpAgentPolicy;
 use agent_client_protocol::{
-    schema::{
-        v1::{
-            AuthenticateRequest, Implementation, InitializeRequest, SessionConfigKind,
-            SessionConfigOption, SessionConfigSelectOptions, SessionConfigValueId, SessionModeId,
-            SessionUpdate, SetSessionConfigOptionRequest, SetSessionModeRequest,
-        },
-        ProtocolVersion,
+    schema::ProtocolVersion,
+    v1::schema::{
+        AuthenticateRequest, Implementation, InitializeRequest, NewSessionResponse,
+        SessionConfigKind, SessionConfigOption, SessionConfigSelectOptions, SessionConfigValueId,
+        SessionModeId, SessionUpdate, SetSessionConfigOptionRequest, SetSessionModeRequest,
     },
-    ActiveSession, Agent, ConnectionTo, Error,
+    v1::{ActiveSession, ConnectionTo},
+    Agent, Error,
 };
 use std::{future::Future, sync::Mutex, time::Duration};
 
@@ -100,11 +99,12 @@ pub(super) fn check_mode_update(
 
 pub(super) async fn require_mode<P: AcpAgentPolicy>(
     session: &ActiveSession<'_, Agent>,
+    created: &NewSessionResponse,
     policy: &Mutex<P>,
 ) -> Result<(), Error> {
     let mode = policy.lock().expect("ACP policy").session_mode();
     if let Some(mode) = mode {
-        if !session.modes().is_some_and(|modes| {
+        if !created.modes.as_ref().is_some_and(|modes| {
             modes
                 .available_modes
                 .iter()
@@ -135,10 +135,11 @@ pub(super) async fn require_mode<P: AcpAgentPolicy>(
 /// so later choices are checked against the latest one.
 pub(super) async fn require_config<P: AcpAgentPolicy>(
     session: &ActiveSession<'_, Agent>,
+    created: &NewSessionResponse,
     policy: &Mutex<P>,
 ) -> Result<(), Error> {
     let choices = policy.lock().expect("ACP policy").session_config();
-    let mut options = session.config_options().unwrap_or_default().to_vec();
+    let mut options = created.config_options.clone().unwrap_or_default();
     for choice in choices {
         let step = format!("session/set_config_option `{}`", choice.id);
         let Some((current, values)) = options

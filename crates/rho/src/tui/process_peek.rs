@@ -21,7 +21,7 @@ use super::{
 };
 use crate::{
     subagent,
-    tools::process::{Chunk, HostProcessView, ProcessManager, Stream},
+    tools::process::{Chunk, HostProcessView, LiveProcessSummary, Snapshot, Stream},
 };
 
 const FOOTER_HINT: &str = "read-only · scroll · q back · ctrl+c back/again quit";
@@ -43,10 +43,14 @@ enum PeekBodyLine {
     Output { stream: Stream, text: String },
 }
 
+/// The peeked process runs in the daemon, which is asked for its output
+/// from [`ProcessPeekView::daemon_cursor`] on; each answer goes to
+/// [`ProcessPeekView::extend`].
 pub(super) struct ProcessPeekView {
     process_id: String,
     view: HostProcessView,
-    manager: ProcessManager,
+    /// Set until a refresh has shown the last answer.
+    fresh: bool,
     scroll: HistoryScrollChrome,
     last_drawn_elapsed_secs: Option<u64>,
     viewport_height: usize,
@@ -55,17 +59,57 @@ pub(super) struct ProcessPeekView {
 }
 
 impl ProcessPeekView {
-    fn new(view: HostProcessView, manager: ProcessManager) -> Self {
+    /// A view of the session's process as its rail row `process` has it,
+    /// with no output until the daemon's first answer.
+    pub(super) fn of_daemon(process: &LiveProcessSummary) -> Self {
+        let view = HostProcessView {
+            snapshot: Snapshot {
+                process_id: process.process_id.clone(),
+                command: process.command.clone(),
+                state: process.state,
+                runtime_seconds: process.elapsed_seconds as f64,
+                first_cursor: 0,
+                next_cursor: 0,
+                available_cursor: 0,
+                truncated: false,
+                output_pending: false,
+                chunks: Vec::new(),
+                exit_code: process.exit_code,
+                terminal_detail: None,
+            },
+            elapsed_seconds: process.elapsed_seconds,
+            quiet_seconds: process.quiet_seconds,
+        };
         Self {
             process_id: view.snapshot.process_id.clone(),
             view,
-            manager,
+            fresh: false,
             scroll: HistoryScrollChrome::default(),
             last_drawn_elapsed_secs: None,
             viewport_height: 0,
             history_area: Rect::default(),
             content_len: 0,
         }
+    }
+
+    /// The process this view shows and the cursor its output is read from
+    /// next.
+    pub(super) fn daemon_cursor(&self) -> (&str, u64) {
+        (&self.process_id, self.view.snapshot.next_cursor)
+    }
+
+    /// Takes the daemon's answer to a read from [`Self::daemon_cursor`]:
+    /// `next` holds the chunks from that cursor on, which follow the ones
+    /// held that the daemon still retains.
+    pub(super) fn extend(&mut self, mut next: HostProcessView) {
+        let mut chunks = std::mem::take(&mut self.view.snapshot.chunks);
+        chunks.retain(|chunk| chunk.cursor >= next.snapshot.first_cursor);
+        chunks.append(&mut next.snapshot.chunks);
+        next.snapshot.chunks = chunks;
+        // As a read from the start reports it.
+        next.snapshot.truncated = next.snapshot.first_cursor > 0;
+        self.view = next;
+        self.fresh = true;
     }
 
     pub(super) fn should_redraw(&self, now: Instant) -> bool {
@@ -84,15 +128,9 @@ impl ProcessPeekView {
             .then_some(self.view.elapsed_seconds)
     }
 
+    /// Whether an answer arrived since the last refresh.
     pub(super) fn refresh(&mut self) -> bool {
-        let Ok(next) = self.manager.host_view(&self.process_id) else {
-            return false;
-        };
-        if !view_changed(&self.view, &next) {
-            return false;
-        }
-        self.view = next;
-        true
+        std::mem::take(&mut self.fresh)
     }
 
     fn handle_event(&mut self, event: Event) -> PeekInput {
@@ -231,15 +269,16 @@ impl App {
     }
 
     pub(super) fn enter_peek_view(&mut self, process_id: &str) -> anyhow::Result<()> {
-        let view = self.process_panel.host_view(process_id)?;
-        let manager = self
+        let process = self
             .process_panel
-            .manager()
-            .cloned()
-            .ok_or_else(|| anyhow::anyhow!("process manager unavailable"))?;
-        let command = process_panel::command_identity(&view.snapshot.command).to_owned();
+            .process(process_id)
+            .ok_or_else(|| anyhow::anyhow!("unknown process_id"))?;
+        // Its output is read with the rail's next refresh: now.
+        self.daemon_rail.processes.owe();
+        let view = ProcessPeekView::of_daemon(process);
+        let command = process_panel::command_identity(&view.view.snapshot.command).to_owned();
         self.exclusive = ExclusiveOccupant::Peek {
-            view: Box::new(ProcessPeekView::new(view, manager)),
+            view: Box::new(view),
         };
         self.notify_status(format!("peeking {command}"));
         Ok(())
@@ -267,19 +306,6 @@ impl App {
         }
         resize
     }
-}
-
-fn view_changed(previous: &HostProcessView, next: &HostProcessView) -> bool {
-    previous.elapsed_seconds != next.elapsed_seconds
-        || previous.quiet_seconds != next.quiet_seconds
-        || previous.snapshot.state != next.snapshot.state
-        || previous.snapshot.exit_code != next.snapshot.exit_code
-        || previous.snapshot.truncated != next.snapshot.truncated
-        || previous.snapshot.first_cursor != next.snapshot.first_cursor
-        || previous.snapshot.next_cursor != next.snapshot.next_cursor
-        || previous.snapshot.available_cursor != next.snapshot.available_cursor
-        || previous.snapshot.command != next.snapshot.command
-        || previous.snapshot.chunks != next.snapshot.chunks
 }
 
 fn peek_header_lines(view: &HostProcessView, width: usize) -> Vec<Line<'static>> {

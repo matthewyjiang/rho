@@ -46,12 +46,12 @@ sequenceDiagram
 ### Ordering rules
 
 1. `Started` is first and includes the starting revision.
-2. Each provider loop emits `StepStarted` before that step's provider activity. `StepStarted.estimated_context_tokens` is a provider-neutral token estimate of the request history and tool schemas. Hosts should treat this as a display estimate and replace it when `UsageUpdated` reports provider input.
+2. Each provider loop emits `StepStarted` before that step's provider activity. `StepStarted.context_estimate` is the `ContextEstimate` for that step's request history, request-only context, and tool schemas: `tokens()` is calibrated against the latest applicable provider report and `estimated_tokens()` stays provider-neutral. Hosts should treat it as a display estimate and replace it when `UsageUpdated` reports provider input.
 3. Provider deltas, tool-call assembly, usage, activity, and context updates retain source arrival order.
 4. A complete tool call emits `ToolProposed` before execution.
 5. An available tool emits `ToolStarted`, zero or more `ToolUpdated`, then exactly one `ToolFinished`.
 6. An unavailable tool emits `ToolFinished` with `Unavailable` and no `ToolStarted`.
-7. An honoured async call emits `ToolDetached` after `ToolStarted`. The loop continues; `ToolFinished` for that id may arrive after later `StepStarted` events. Hosts should keep the card alive until `ToolFinished`.
+7. An honoured async call emits `ToolStarted` with `execution: ToolExecution::Detached`. The loop continues; `ToolFinished` for that id may arrive after later `StepStarted` events. Hosts should keep the card alive until `ToolFinished`.
 8. Calls in one model response may overlap. All `ToolProposed` events keep model order, while start, update, host-input, detach, and finish events from different calls may interleave.
 9. Every per-call event and host-input request carries its `ToolCallId`. Within one available call, `ToolStarted` precedes all `ToolUpdated` events and one `ToolFinished` ends the call.
 10. Sync calls in one model response still enter provider and persisted history in model order. Async results enter history in completion order and may be non-adjacent to the original call.
@@ -89,11 +89,11 @@ event internally and never lowers it to a `RunEvent` or persists it.
 
 `Run::steer` sends an additional user input to the active run and waits until the worker accepts it. Accepted steering is incorporated at a model-step boundary. It does not mutate completed history independently.
 
-`Run::steer_retractable` is the same acceptance path but returns a `SteeringId`. While the input is still staged (provider streaming or tools running), the host may call `Run::retract_steering`. The runtime decides the race atomically and returns `SteeringRetraction::Retracted`, `AlreadyApplied`, or `NotFound`. Prefer retractable steering when the UI lets users pull back queued steer text.
+`Run::steer_retractable` is the same acceptance path but returns a `SteeringId`. While the input is still staged (provider streaming or tools running), the host may call `Run::retract_steering`. The runtime decides the race atomically and returns `SteeringRetraction::Retracted`, `Delivered`, `AlreadyApplied`, or `NotFound`. Prefer retractable steering when the UI lets users pull back queued steer text.
 
-Providers that implement `ModelProvider::send_turn_stream_steerable` may claim a staged steer while the current turn is still streaming. `RunEvent::SteeringDelivered` means the backend acknowledged that input inside the current model turn. `RunEvent::SteeringApplied` still fires when the same id crosses into conversation history. The default provider method drops the steering port, so those steers apply only at the boundary and never emit `SteeringDelivered`.
+Providers that read the steering port on `ProviderTurnContext` in `ModelProvider::send_turn_stream` may claim a staged steer while the current turn is still streaming. `RunEvent::SteeringDelivered` means the backend acknowledged that input inside the current model turn. `RunEvent::SteeringApplied` still fires when the same id crosses into conversation history. The default provider method drops the steering port, as should any provider that cannot steer, so those steers apply only at the boundary and never emit `SteeringDelivered`.
 
-Retracting a steer that the provider already claimed or delivered returns `AlreadyApplied` in this major. The next major can add `SteeringRetraction::Delivered` for that case (`NEXT_MAJOR(rho-sdk): add SteeringRetraction::Delivered for steering already forwarded to the provider mid-turn`).
+Retracting a steer that the provider already claimed or delivered mid-turn returns `Delivered`: the backend owns it, and it still crosses into history at the next boundary. `AlreadyApplied` means the input is already in conversation history.
 
 `ToolHostInputRequested` moves the session into `WaitingForHostInput` and includes the owning tool call ID. The legacy `HostInputRequested` variant remains available for source compatibility. `Run::respond` validates a response and delivers it to a matching pending request exactly once. When no requests remain, the session returns to running. A response can fail because the ID is unknown, the shape is invalid, the requester was dropped, or the run no longer accepts commands (`Error::RunFinished`).
 

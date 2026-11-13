@@ -13,7 +13,7 @@ use tokio::{
 };
 
 use crate::{
-    event::{ToolCompletion, ToolFailure},
+    event::{ToolCompletion, ToolExecution, ToolFailure},
     model::{Message, ToolCall, ToolResult},
     session::SessionCore,
     tool::{
@@ -272,13 +272,13 @@ impl RunControl<'_> {
                         events,
                         cancellation,
                         RunEvent::ToolStarted {
-                            call_id: id.clone(),
+                            call_id: id,
                             name: call.name.clone(),
                             metadata,
+                            execution: ToolExecution::Detached,
                         },
                     )
                     .await?;
-                    emit(events, cancellation, RunEvent::ToolDetached { call_id: id }).await?;
                 }
                 Ok(Err(error)) => {
                     let job = jobs
@@ -290,11 +290,7 @@ impl RunControl<'_> {
                         error.kind(),
                         error.message().to_owned(),
                     ));
-                    let result = ToolResult {
-                        id: call.id.clone(),
-                        ok: false,
-                        content: error.message().to_owned(),
-                    };
+                    let result = ToolResult::failed(call.id.clone(), error.message().to_owned());
                     fail_call(
                         hooks,
                         events,
@@ -323,11 +319,7 @@ impl RunControl<'_> {
                         error.kind(),
                         error.message().to_owned(),
                     ));
-                    let result = ToolResult {
-                        id: call.id.clone(),
-                        ok: false,
-                        content: error.message().to_owned(),
-                    };
+                    let result = ToolResult::failed(call.id.clone(), error.message().to_owned());
                     fail_call(
                         hooks,
                         events,
@@ -361,7 +353,7 @@ impl AsyncJobSet {
         history.extend(
             std::mem::take(&mut self.unstarted)
                 .into_iter()
-                .map(|entry| Message::ToolResult(interrupted_result(&entry.call))),
+                .map(|entry| Message::ToolResult(interrupted_result(&entry.call).into())),
         );
         outputs.drain_interrupted(history);
         let jobs = std::mem::take(&mut self.jobs);
@@ -375,7 +367,7 @@ impl AsyncJobSet {
             let (result, completion) = settle_job(job).await;
             let _ = send_tool_finished(events, id.clone(), completion.clone()).await;
             hooks.after_tool_use(&name, &id, &completion, duration, capability.as_ref());
-            history.push(Message::ToolResult(result));
+            history.push(Message::ToolResult(result.into()));
         }
     }
 }
@@ -429,6 +421,7 @@ async fn fail_call(
             call_id: id.clone(),
             name: call.name.clone(),
             metadata: Default::default(),
+            execution: ToolExecution::Attached,
         },
     )
     .await?;
@@ -452,6 +445,7 @@ async fn send_tool_finished(
         .await
         .map_err(|_| Error::Interrupted {
             message: "run event consumer was dropped".into(),
+            source: None,
         })
 }
 

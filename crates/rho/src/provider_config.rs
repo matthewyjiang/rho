@@ -76,6 +76,16 @@ impl ProviderEndpointConfig {
             .map(|ttl| parse_prompt_cache_ttl(&ttl_field, &ttl))
             .transpose()?;
 
+        let edit_tool_field = format!("providers.custom.{provider}.edit_tool");
+        let edit_tool = endpoint
+            .edit_tool
+            .map(|value| {
+                value
+                    .parse::<rho_tools::EditFormat>()
+                    .map_err(|error| anyhow::anyhow!("{edit_tool_field} {error}"))
+            })
+            .transpose()?;
+
         let compression_field = format!("providers.custom.{provider}.request_compression");
         let request_compression = endpoint
             .request_compression
@@ -91,7 +101,7 @@ impl ProviderEndpointConfig {
             catalog,
             catalog_lookup,
             api,
-            edit_tool: endpoint.edit_tool,
+            edit_tool,
             prompt_cache_ttl,
             request_compression,
         })
@@ -120,9 +130,15 @@ impl ProviderConfigs {
         std::time::Duration::from_secs(30 * 60);
 
     fn endpoint(&self, provider: &str) -> Option<&Url> {
+        self.host(provider).map(|endpoint| &endpoint.base_url)
+    }
+
+    /// The configured host `provider` names: the Ollama endpoint or a
+    /// custom host. `None` for any other provider.
+    pub(crate) fn host(&self, provider: &str) -> Option<&ProviderEndpointConfig> {
         match provider {
-            "ollama" => self.ollama.as_ref().map(|endpoint| &endpoint.base_url),
-            name => self.custom.get(name).map(|endpoint| &endpoint.base_url),
+            "ollama" => self.ollama.as_ref(),
+            name => self.custom.get(name),
         }
     }
 
@@ -509,23 +525,13 @@ impl Config {
     pub(crate) fn resolved_provider_endpoint(&self, provider: &str) -> Option<Url> {
         self.configured_provider_endpoint(provider)
             .cloned()
-            .or_else(
-                || match rho_providers::model::registry::provider_runtime(provider) {
-                    Some(
-                        rho_providers::model::registry::ProviderRuntime::OpenAiCompatible {
-                            default_api_base,
-                            ..
-                        }
-                        | rho_providers::model::registry::ProviderRuntime::SystemOne {
-                            default_api_base,
-                        },
-                    ) => Some(
-                        Url::parse(default_api_base)
-                            .expect("built-in provider API bases must be valid URLs"),
-                    ),
-                    _ => None,
-                },
-            )
+            .or_else(|| {
+                rho_providers::model::registry::provider_runtime(provider)
+                    .and_then(rho_providers::provider::ProviderRuntime::default_api_base)
+                    .map(|base| {
+                        Url::parse(base).expect("built-in provider API bases must be valid URLs")
+                    })
+            })
     }
 }
 
@@ -670,7 +676,8 @@ pub(super) struct PartialEndpointConfig {
     pub(super) catalog: Option<String>,
     pub(super) catalog_mode: Option<String>,
     pub(super) api: Option<String>,
-    pub(super) edit_tool: Option<rho_tools::EditFormat>,
+    /// Parsed per host so a bad value names its host.
+    pub(super) edit_tool: Option<String>,
     pub(super) prompt_cache_ttl: Option<String>,
     pub(super) request_compression: Option<String>,
 }

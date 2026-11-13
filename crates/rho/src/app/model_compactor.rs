@@ -10,6 +10,8 @@
 
 use std::sync::Arc;
 
+use rho_providers::credentials::CredentialStore;
+
 use rho_sdk::{
     model::{
         context::estimate_context_tokens, Message, ModelIdentity, ModelRequest, ModelResponse,
@@ -22,10 +24,11 @@ use rho_sdk::{
 };
 
 use crate::{
+    agent::ResolvedRhoModel,
     compaction::{
         build_session_summary_request, build_summary_request_messages, elide_tool_results,
         partition_messages_for_compaction, summary_replacement, summary_reserve_tokens,
-        CompactionConfig, CompactionPartition, SummarizerModel,
+        CompactionConfig, CompactionPartition,
     },
     compaction_metrics::{
         removed_tool_calls, CompactionRecord, CompactionRunOutcome, CompactionTier, RecordIdentity,
@@ -54,23 +57,29 @@ pub(crate) struct ModelCompactor {
 /// The configured summarizer model. Its provider is built on first use and
 /// kept for the compactor's lifetime; a config change rebuilds the compactor.
 pub(super) struct Summarizer {
-    model: SummarizerModel,
+    model: ResolvedRhoModel,
+    /// Whose sign-in the provider is built with.
+    credentials: Arc<dyn CredentialStore>,
     provider: tokio::sync::OnceCell<Arc<dyn ModelProvider>>,
 }
 
 impl Summarizer {
-    pub(super) fn new(model: SummarizerModel) -> Self {
+    /// A summarizer on `model`, signed in with `credentials` when it first
+    /// runs.
+    pub(super) fn new(model: ResolvedRhoModel, credentials: Arc<dyn CredentialStore>) -> Self {
         Self {
             model,
+            credentials,
             provider: tokio::sync::OnceCell::new(),
         }
     }
 
     /// A summarizer whose provider is already built.
     #[cfg(test)]
-    pub(super) fn with_provider(model: SummarizerModel, provider: Arc<dyn ModelProvider>) -> Self {
+    pub(super) fn with_provider(model: ResolvedRhoModel, provider: Arc<dyn ModelProvider>) -> Self {
         Self {
             model,
+            credentials: Arc::new(crate::credential_store::AppCredentialStore),
             provider: tokio::sync::OnceCell::new_with(Some(provider)),
         }
     }
@@ -78,20 +87,29 @@ impl Summarizer {
     async fn provider(&self) -> Result<&Arc<dyn ModelProvider>, Error> {
         self.provider
             .get_or_try_init(|| async {
-                let SummarizerModel {
+                let ResolvedRhoModel {
+                    providers,
                     provider,
                     model,
                     auth,
                     reasoning,
                 } = &self.model;
-                crate::credential_store::build_provider(provider, model, *reasoning, auth)
-                    .await
-                    .map_err(|error| Error::InvalidConfiguration {
-                        message: format!(
-                            "could not build the compaction model {}: {error}",
-                            rho_providers::provider::model_reference(provider, model)
-                        ),
-                    })
+                crate::credential_store::build_provider(
+                    providers,
+                    provider,
+                    model,
+                    *reasoning,
+                    auth,
+                    Arc::clone(&self.credentials),
+                )
+                .await
+                .map_err(|error| Error::InvalidConfiguration {
+                    message: format!(
+                        "could not build the compaction model {}: {error}",
+                        rho_providers::provider::model_reference(provider, model)
+                    ),
+                    source: None,
+                })
             })
             .await
     }
@@ -577,10 +595,7 @@ impl ModelCompactor {
             Some(tier) => ModelRequestOptions::default().with_service_tier(tier),
             None => ModelRequestOptions::default(),
         };
-        let Some(future) = self
-            .provider
-            .native_compact_with_options(model_request, options)
-        else {
+        let Some(future) = self.provider.native_compact(model_request, options) else {
             return NativeCompactionResult::Unavailable;
         };
         let response = future.await;

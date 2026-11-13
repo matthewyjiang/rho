@@ -9,7 +9,7 @@
 
 use std::path::{Path, PathBuf};
 
-use agent_client_protocol::schema::v1::{
+use agent_client_protocol::v1::schema::{
     AuthMethod, AuthMethodId, Meta, RequestPermissionRequest, SessionModeId, SessionUpdate,
 };
 use serde_json::{json, Map, Value};
@@ -154,8 +154,11 @@ impl AcpAgentPolicy for ClaudeAcpPolicy {
         CLAUDE_LABEL
     }
 
-    fn resolve_executable(&self) -> Result<CliExecutable, String> {
-        executable::resolve().map_err(|error| error.to_string())
+    fn resolve_executable(
+        &self,
+        environment: &crate::session_environment::Ambient,
+    ) -> Result<CliExecutable, String> {
+        executable::resolve(environment).map_err(|error| error.to_string())
     }
 
     /// The adapter takes no arguments: identity rides `session/new`. It runs
@@ -243,7 +246,7 @@ impl AcpAgentPolicy for ClaudeAcpPolicy {
         }
         if let Some(model) = meta.get(MODEL_META).and_then(Value::as_str) {
             effects.push(StreamEffect::Status(StatusPatch {
-                claude_model: Some(model.to_owned()),
+                runtime_model: Some(model.to_owned()),
                 ..StatusPatch::default()
             }));
         }

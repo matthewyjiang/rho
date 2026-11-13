@@ -7,7 +7,9 @@ use std::{
 use rho_sdk::model::{ContextUsage, ModelUsage};
 use serde::{Deserialize, Serialize};
 
-use crate::{app::interactive_presenter::PresentedToolCard, subagent};
+use rho_protocol::display::ToolCard;
+
+use crate::subagent;
 
 use super::previews::{PreviewReader, ToolPreviews};
 
@@ -15,32 +17,32 @@ use super::previews::{PreviewReader, ToolPreviews};
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub(crate) enum AttachmentEvent {
     Prompt(String),
-    Message(Box<crate::presentation::NotificationCard>),
+    Message(Box<rho_protocol::display::NotificationCard>),
     AssistantTextDelta(String),
     ReasoningDelta(String),
     /// Delivery-only growing argument card. Never serialized into events.jsonl.
     #[serde(skip)]
     ToolPreview {
         key: String,
-        card: PresentedToolCard,
+        card: ToolCard,
     },
     ToolStarted {
         /// Stable tool identity for concurrent live cards. Absent on legacy journals.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
-        card: PresentedToolCard,
+        card: ToolCard,
     },
     ToolUpdated {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
-        card: PresentedToolCard,
+        card: ToolCard,
     },
     ToolFinished {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
         // Retain the legacy {card: ...} wire shape; messages write {message: ...}.
         #[serde(flatten)]
-        presentation: crate::presentation::Presentation,
+        presentation: rho_protocol::display::Presentation,
     },
     Notice(String),
     ContextUsage(ContextUsage),
@@ -61,7 +63,7 @@ pub(crate) enum AttachmentEvent {
     Failed(String),
 }
 
-/// Generic attachment journal mechanics for `rho attach`.
+/// Generic attachment journal mechanics for the attach view.
 ///
 /// Owns private file creation, durable event appends, and replaceable previews.
 /// Runtime-specific translation (SDK events, ACP session updates) stays

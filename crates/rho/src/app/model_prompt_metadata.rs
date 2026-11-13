@@ -24,10 +24,6 @@ impl From<&ModelPrompt> for ModelPromptProvenance {
     }
 }
 
-pub(super) fn selection_notice(prompt: Option<&ModelPrompt>) -> String {
-    provenance_notice(prompt.map(ModelPromptProvenance::from).as_ref())
-}
-
 pub(super) fn provenance_notice(prompt: Option<&ModelPromptProvenance>) -> String {
     match prompt {
         Some(prompt) => format!("model prompt: {} ({})", prompt.path, prompt.mode.as_str(),),

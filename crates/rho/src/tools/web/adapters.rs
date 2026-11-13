@@ -35,9 +35,10 @@ impl WebSearch {
         config: &Config,
         client: reqwest::Client,
         store: WebAccessStore,
+        credentials: std::sync::Arc<dyn rho_providers::credentials::CredentialStore>,
     ) -> Self {
         Self {
-            config: SearchBackendConfig::from_config(config),
+            config: SearchBackendConfig::from_config(config, credentials),
             client,
             store,
         }
@@ -267,11 +268,10 @@ impl GetSearchContent {
     ) -> Result<ToolResult, ToolError> {
         let stored = self.store.load(&args.response_id)?;
         let item = select_stored_item(&stored, &args)?;
-        Ok(ToolResult {
+        Ok(ToolResult::succeeded(
             id,
-            ok: true,
-            content: format_stored_item(item, max_output_bytes),
-        })
+            format_stored_item(item, max_output_bytes),
+        ))
     }
 }
 

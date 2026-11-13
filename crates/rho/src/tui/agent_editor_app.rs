@@ -6,7 +6,6 @@ use crate::tui::DefaultTerminal;
 
 use super::*;
 use crate::agent::{save_definition, AgentRuntime, PromptPolicy, SaveDefinitionError};
-use crate::app::interactive_runtime::InteractiveRuntime;
 use crate::tui::text_input::{AgentField, TextInput};
 
 impl App {
@@ -105,7 +104,6 @@ impl App {
         &mut self,
         value: &str,
         terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let phase = self
             .agent_editor_session
@@ -116,10 +114,7 @@ impl App {
             return Ok(());
         };
         match phase {
-            AgentEditPhase::Fields => {
-                self.submit_agent_field_selection(value, terminal, agent)
-                    .await
-            }
+            AgentEditPhase::Fields => self.submit_agent_field_selection(value, terminal).await,
             AgentEditPhase::Choosing(field) => {
                 self.submit_agent_field_choice(field, value);
                 Ok(())
@@ -139,7 +134,6 @@ impl App {
         &mut self,
         value: &str,
         terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let Some(draft) = self
             .agent_editor_session
@@ -180,7 +174,7 @@ impl App {
                 self.open_agent_choice(AgentChoiceField::InheritClaudeConfig, &draft);
             }
             AGENT_FIELD_FAST => self.open_agent_choice(AgentChoiceField::Fast, &draft),
-            AGENT_FIELD_SAVE => self.save_agent_editor(agent)?,
+            AGENT_FIELD_SAVE => self.save_agent_editor()?,
             AGENT_FIELD_CANCEL => self.cancel_agent_editor(),
             _ => {}
         }
@@ -555,7 +549,7 @@ impl App {
         self.set_status(format!("edit agent {}", draft.id));
     }
 
-    fn save_agent_editor(&mut self, agent: &mut InteractiveRuntime) -> anyhow::Result<()> {
+    fn save_agent_editor(&mut self) -> anyhow::Result<()> {
         let Some(session) = &self.agent_editor_session else {
             self.cancel_agent_editor();
             return Ok(());
@@ -590,7 +584,7 @@ impl App {
                     "saved agent {id}: {}",
                     crate::paths::display(&path)
                 )));
-                let Some(mut picker) = self.agents_picker_after_change(agent) else {
+                let Some(mut picker) = self.agents_picker_after_change() else {
                     return Ok(());
                 };
                 Self::restore_picker_position(&mut picker, &id, String::new());

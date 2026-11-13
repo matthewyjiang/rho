@@ -15,6 +15,9 @@ use rho_sdk::{
     WorkspacePolicy,
 };
 
+/// What a tool learns when a person denies its approval without a reason.
+pub(crate) const DENIED_BY_USER: &str = "denied by user";
+
 /// Lightweight permission mode that gates the model's most sensitive actions.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum PermissionMode {
@@ -45,6 +48,39 @@ pub(crate) enum PermissionMode {
     /// process execution, other reads outside configured workspace roots, and
     /// unrecognized capability classes require interactive approval.
     Supervised,
+}
+
+/// A wire permission mode this rho does not know, such as one a newer
+/// daemon or client sends.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct UnknownMode;
+
+impl TryFrom<rho_protocol::PermissionMode> for PermissionMode {
+    type Error = UnknownMode;
+
+    fn try_from(mode: rho_protocol::PermissionMode) -> Result<Self, UnknownMode> {
+        match mode {
+            rho_protocol::PermissionMode::Bypass => Ok(Self::Bypass),
+            rho_protocol::PermissionMode::Auto => Ok(Self::Auto),
+            rho_protocol::PermissionMode::AllowEdits => Ok(Self::AllowEdits),
+            rho_protocol::PermissionMode::Plan => Ok(Self::Plan),
+            rho_protocol::PermissionMode::Supervised => Ok(Self::Supervised),
+            // `rho_protocol::PermissionMode` is non-exhaustive.
+            _ => Err(UnknownMode),
+        }
+    }
+}
+
+impl From<PermissionMode> for rho_protocol::PermissionMode {
+    fn from(mode: PermissionMode) -> Self {
+        match mode {
+            PermissionMode::Bypass => Self::Bypass,
+            PermissionMode::Auto => Self::Auto,
+            PermissionMode::AllowEdits => Self::AllowEdits,
+            PermissionMode::Plan => Self::Plan,
+            PermissionMode::Supervised => Self::Supervised,
+        }
+    }
 }
 
 impl PermissionMode {
@@ -157,6 +193,11 @@ impl PermissionMode {
                 CapabilityKind::Write | CapabilityKind::Process => PolicyDecision::Deny {
                     reason: "capability is not allowed in plan mode".into(),
                 },
+                // Starting or driving another session is acting, not
+                // planning.
+                CapabilityKind::SessionControl => PolicyDecision::Deny {
+                    reason: "session control is not allowed in plan mode".into(),
+                },
                 CapabilityKind::Read
                 | CapabilityKind::Network
                 | CapabilityKind::Skill
@@ -168,11 +209,11 @@ impl PermissionMode {
             Self::Auto | Self::AllowEdits | Self::Supervised => match kind {
                 // Empty reason: the approval prompt itself is the signal. Keep a
                 // specific reason only when it adds information the chrome lacks.
-                CapabilityKind::Write | CapabilityKind::Process => {
-                    PolicyDecision::RequireApproval {
-                        reason: String::new(),
-                    }
-                }
+                CapabilityKind::Write
+                | CapabilityKind::Process
+                | CapabilityKind::SessionControl => PolicyDecision::RequireApproval {
+                    reason: String::new(),
+                },
                 CapabilityKind::Read
                 | CapabilityKind::Network
                 | CapabilityKind::Skill
@@ -189,7 +230,10 @@ impl PermissionMode {
     /// path.
     ///
     /// Snapshots user-instruction and host-owned surfaces at construction
-    /// (HOME / `RHO_HOME` / `PATH`). Bypass returns `None` before that I/O.
+    /// (HOME / `RHO_HOME` / `search_path`). `search_path` is the `PATH` of
+    /// the environment the session's commands run in, a daemon session's
+    /// client's, whose directories the `workflow` tool may read (#1779).
+    /// Bypass returns `None` before that I/O.
     /// The returned policy starts from [`Self::decision_for`] and, for
     /// [`Self::Auto`] and [`Self::AllowEdits`], allows workspace and
     /// added-directory writes to git-tracked files and to paths already
@@ -203,14 +247,18 @@ impl PermissionMode {
     ///
     /// `session_writes` carries the paths whose first write already passed the
     /// gate this session.
-    pub fn workspace_policy(self, session_writes: SessionWriteLog) -> Option<ModePolicy> {
+    pub fn workspace_policy(
+        self,
+        session_writes: SessionWriteLog,
+        search_path: Option<std::ffi::OsString>,
+    ) -> Option<ModePolicy> {
         if matches!(self, Self::Bypass) {
             return None;
         }
         self.workspace_policy_with(
             session_writes,
             crate::paths::UserInstructionSurfaces::from_process(),
-            crate::paths::HostOwnedSurfaces::from_process(),
+            crate::paths::HostOwnedSurfaces::on_search_path(search_path),
         )
     }
 
@@ -302,19 +350,6 @@ impl SessionWriteLog {
         } else {
             Self::default()
         }
-    }
-
-    /// Drops every remembered path. Used when the live session identity changes
-    /// so a later session cannot inherit another session's grants.
-    pub(crate) fn clear(&self) {
-        self.paths
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clear();
-        self.git_verdicts
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clear();
     }
 
     fn granted_by(&self, path: &Path) -> Option<WriteAuthority> {

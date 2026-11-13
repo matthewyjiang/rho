@@ -1,6 +1,6 @@
 use {crate::commands::CommandInvocation, crate::export};
 
-use super::{App, Entry, Session};
+use super::{App, Entry};
 
 impl App {
     pub(super) fn execute_export_command(
@@ -13,7 +13,7 @@ impl App {
             );
             return Ok(());
         }
-        let Some(session_id) = self.info.session.session_id.clone() else {
+        let Some(session_id) = self.current_session_id() else {
             self.set_status("no active session to export; send a message first");
             return Ok(());
         };
@@ -50,22 +50,15 @@ impl App {
             self.set_status("usage: /title <name>");
             return Ok(());
         }
-        let Some(session_id) = self.info.session.session_id.clone() else {
+        if self.current_session_id().is_none() {
             self.set_status("no active session to rename; send a message first");
             return Ok(());
-        };
-        // Only cancel pending auto-title after the manual write succeeds so a
-        // failed rename leaves generation in place.
-        match Session::set_title(&self.info.runtime.cwd, &session_id, title) {
-            Ok(updated) => {
-                self.pending_session_title = None;
-                self.session_title_locked = true;
-                self.set_status(format!("session titled: {}", updated.title));
-            }
-            Err(error) => {
-                self.insert_entry(&Entry::Error(format!("unable to rename session: {error}")));
-                self.set_status("rename failed");
-            }
+        }
+        // The daemon holds the session's file; its `TitleChanged` reports the
+        // rename, and it never generates over a set title.
+        if let Err(error) = self.info.session.daemon.rename(title.to_owned()) {
+            self.insert_entry(&Entry::Error(format!("could not rename session: {error}")));
+            self.set_status("rename failed");
         }
         Ok(())
     }

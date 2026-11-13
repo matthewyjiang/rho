@@ -8,8 +8,6 @@
 //! when the model list cannot be refreshed, for example before a local server
 //! is back up.
 
-use std::path::PathBuf;
-
 use rho_providers::model::ReasoningCapabilities;
 use rho_providers::reasoning::ReasoningLevel;
 
@@ -21,8 +19,6 @@ use crate::permission::PermissionMode;
 /// Everything else is either live runtime state or read from config.
 #[derive(Clone, Debug, Default)]
 pub struct ResumeLaunchOptions {
-    /// Absolute `--config` path, when one was passed.
-    pub config: Option<PathBuf>,
     /// `--agent` id, when one was passed.
     pub agent: Option<String>,
     /// The bound agent's definition. Its model policy is part of what a plain
@@ -260,9 +256,6 @@ pub(super) fn resume_argv(
     session_id: &str,
 ) -> Vec<String> {
     let mut argv = vec!["rho".to_string()];
-    if let Some(config) = &launch.config {
-        argv.extend(["--config".into(), config.display().to_string()]);
-    }
     if let Some(agent) = &launch.agent {
         argv.extend(["--agent".into(), agent.clone()]);
     }

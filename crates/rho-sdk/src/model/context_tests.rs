@@ -12,22 +12,19 @@ use super::*;
 // Owner: SDK context estimation.
 #[test]
 fn estimates_include_every_request_part() {
-    let call = ToolCall {
-        id: "call_1".into(),
-        name: "read_file".into(),
-        arguments: json!({"path": "src/main.rs"}),
-    };
-    let result = ToolResult {
-        id: "call_1".into(),
-        ok: true,
-        content: "file contents".into(),
-    };
+    let call = ToolCall::new(
+        "call_1".into(),
+        "read_file".into(),
+        json!({"path": "src/main.rs"}),
+    );
+    let result = ToolResult::succeeded("call_1", "file contents");
     let identity = ModelIdentity::new("openai-codex", "openai-responses", "gpt-test");
     let context = ProviderContextBlock {
         identity: identity.clone(),
         kind: "openai_response_output_item".into(),
         position: Some(0),
         data: json!({"type": "reasoning", "encrypted_content": "x".repeat(400)}),
+        replay: crate::model::ReplayScope::ExactModel,
     };
     let replay = Message::assistant(AssistantMessage {
         content: vec![ContentBlock::Text("answer".into())],
@@ -61,8 +58,8 @@ fn estimates_include_every_request_part() {
             "tool calls and results",
             estimate_context_tokens(
                 &[
-                    Message::Assistant(vec![ContentBlock::ToolCall(call.clone())]),
-                    Message::ToolResult(result.clone()),
+                    Message::Assistant(vec![ContentBlock::ToolCall(call.clone())].into()),
+                    Message::ToolResult(result.clone().into()),
                 ],
                 &[],
             ),

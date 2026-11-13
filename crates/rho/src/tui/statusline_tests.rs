@@ -32,25 +32,18 @@ fn reasoning_capabilities_refresh_on_catalog_and_metadata_changes() {
         let mut info = test_info(dir.path().to_path_buf());
         info.provider = "openai".into();
         info.model = "gpt-4o".into();
-        write_cached_model_metadata_for_tests(
-            &info.provider,
-            &info.model,
-            &ModelMetadata {
-                reasoning_capabilities_known: true,
-                reasoning_metadata_complete: true,
-                ..ModelMetadata::default()
-            },
-        );
+        let mut metadata = ModelMetadata::default();
+        metadata.reasoning_capabilities_known = true;
+        metadata.reasoning_metadata_complete = true;
+        write_cached_model_metadata_for_tests(&info.provider, &info.model, &metadata);
         let mut app = crate::tui::tests::test_app();
         app.info.runtime = info;
         app.statusline = StatusLine::new(&app.info.runtime);
         for levels in [Some(vec![ReasoningLevel::High]), None] {
-            let metadata = ModelMetadata {
-                supported_reasoning_levels: levels.clone(),
-                reasoning_capabilities_known: true,
-                reasoning_metadata_complete: true,
-                ..ModelMetadata::default()
-            };
+            let mut metadata = ModelMetadata::default();
+            metadata.supported_reasoning_levels = levels.clone();
+            metadata.reasoning_capabilities_known = true;
+            metadata.reasoning_metadata_complete = true;
             let before = app.statusline.state.reasoning_configurable;
             write_cached_model_metadata_for_tests(
                 &app.info.runtime.provider,
@@ -77,102 +70,6 @@ fn reasoning_capabilities_refresh_on_catalog_and_metadata_changes() {
             );
         }
     });
-}
-
-// Covers: a resumed startup catalog completion refreshes capabilities without
-// rebuilding an unrelated MCP picker and losing its selected server/filter.
-// Owner: TUI startup-result dispatch. PTY cannot gate catalog completion while
-// retaining a complete selected metadata row without a production test hook.
-#[tokio::test(flavor = "current_thread")]
-async fn startup_catalog_completion_preserves_mcp_picker() {
-    use crate::{
-        app::interactive_runtime::test_startup_runtime,
-        tools::mcp::{
-            report::{ConnectedServerReport, McpLiveServerState},
-            McpServerReport, McpSessionReport, McpTransportSummary,
-        },
-        tui::ComposerMode,
-    };
-    use rho_providers::model::models_dev::{
-        age_catalog_snapshot_for_tests, write_cached_model_metadata_for_tests,
-        ModelsDevCacheDirGuard,
-    };
-
-    let home = tempfile::tempdir().unwrap();
-    let _cache_dir = ModelsDevCacheDirGuard::new(home.path().to_path_buf());
-    let mut app = crate::tui::tests::test_app();
-    let mut metadata = ModelMetadata {
-        reasoning_capabilities_known: true,
-        reasoning_metadata_complete: true,
-        ..ModelMetadata::default()
-    };
-    write_cached_model_metadata_for_tests(
-        &app.info.runtime.provider,
-        &app.info.runtime.model,
-        &metadata,
-    );
-    age_catalog_snapshot_for_tests();
-    app.statusline = StatusLine::new(&app.info.runtime);
-    assert!(!app.statusline.state.reasoning_configurable);
-    app.mcp_report = McpSessionReport {
-        servers: ["docs", "search"]
-            .map(|identity| {
-                McpServerReport::connected(ConnectedServerReport {
-                    identity: identity.into(),
-                    transport: McpTransportSummary::Stdio {
-                        command: "fixture".into(),
-                        args: Vec::new(),
-                    },
-                    tools: Vec::new(),
-                    instructions: None,
-                    live: McpLiveServerState::default(),
-                    filtered_out_count: 0,
-                    collision_skipped_count: 0,
-                })
-            })
-            .to_vec(),
-        ..Default::default()
-    };
-    app.execute_mcp_command().unwrap();
-    let ComposerMode::Picker(picker) = app.input_ui.composer_mut() else {
-        panic!("expected MCP picker");
-    };
-    picker.filter = "search".into();
-    picker.selected = 2;
-    let cursor = (picker.filter.clone(), picker.selected);
-
-    let stored = crate::session::Session::create_in_root(home.path(), home.path()).unwrap();
-    let (release, catalog) = tokio::sync::oneshot::channel();
-    let (finished, completion) = tokio::sync::oneshot::channel();
-    let mut agent = test_startup_runtime(home.path(), Some(stored), async move {
-        catalog.await.unwrap();
-        finished.send(()).unwrap();
-        0
-    })
-    .await;
-    app.start_model_metadata_fetch(&mut agent);
-    assert!(!app
-        .tasks
-        .contains(|id| { *id == crate::tui::background_tasks::TaskId::ModelMetadata }));
-    assert!(!app.poll_startup_hydrates(&mut agent).await.unwrap());
-
-    metadata.supported_reasoning_levels = Some(vec![ReasoningLevel::High]);
-    write_cached_model_metadata_for_tests(
-        &app.info.runtime.provider,
-        &app.info.runtime.model,
-        &metadata,
-    );
-    release.send(()).unwrap();
-    completion.await.unwrap();
-    assert!(app.poll_startup_hydrates(&mut agent).await.unwrap());
-    assert!(app.statusline.state.reasoning_configurable);
-    let ComposerMode::Picker(picker) = app.input_ui.composer() else {
-        panic!("expected MCP picker");
-    };
-    assert!(picker.is_mcp_inventory());
-    assert_eq!((picker.filter.clone(), picker.selected), cursor);
-    assert!(!app.poll_startup_hydrates(&mut agent).await.unwrap());
-    agent.shutdown().await;
 }
 
 fn fully_populated_statusline() -> StatusLine {
@@ -212,24 +109,32 @@ fn statusline_rows_use_display_width_for_alignment() {
     assert_eq!(display_width(&line_text(&line)), 10);
 }
 
-/// Painted `(key, columns)` of every clickable field on the fields row,
+/// Painted `(action, columns)` of every click target on the fields row,
 /// found by walking the emitted spans rather than the recorded hits.
-fn painted_field_columns(
+/// Neighboring fields with one action are one target spanning the separator.
+fn painted_targets(
     line: &Line<'_>,
     fields: &[StatusField],
     width: usize,
-) -> Vec<(FieldKey, std::ops::Range<usize>)> {
+) -> Vec<(StatusClick, std::ops::Range<usize>)> {
     let mut column = 0;
-    let mut painted = Vec::new();
-    let mut remaining = fields.iter().filter(|field| field.action.is_some());
+    let mut painted: Vec<(StatusClick, std::ops::Range<usize>)> = Vec::new();
+    let mut remaining = fields.iter();
     let mut next = remaining.next();
+    let mut previous = None;
     for span in &line.spans {
         let span_width = display_width(span.content.as_ref());
         if let Some(field) = next.filter(|field| field.text == span.content.as_ref()) {
             let columns = column.min(width)..(column + span_width).min(width);
-            if !columns.is_empty() {
-                painted.push((field.key, columns));
+            if let Some(action) = field.action.filter(|_| !columns.is_empty()) {
+                match painted.last_mut() {
+                    Some((last, range)) if previous == Some(action) && *last == action => {
+                        range.end = columns.end;
+                    }
+                    _ => painted.push((action, columns)),
+                }
             }
+            previous = field.action;
             next = remaining.next();
         }
         column += span_width;
@@ -237,8 +142,8 @@ fn painted_field_columns(
     painted
 }
 
-// Covers: click spans must land on the columns each clickable field is
-// painted at, across rank drops and truncation.
+// Covers: click spans must land on the columns each click target is painted
+// at, across rank drops and truncation.
 // Owner: pure layout policy (statusline paint).
 #[test]
 fn field_hits_match_painted_columns_across_widths() {
@@ -249,41 +154,40 @@ fn field_hits_match_painted_columns_across_widths() {
         let (line, hits) = status_fields_line(&left, &right, width, /*hovered*/ None);
         let recorded = hits
             .into_iter()
-            .map(|hit| (hit.key, hit.columns))
+            .map(|hit| (hit.action, hit.columns))
             .collect::<Vec<_>>();
         assert_eq!(
             recorded,
-            painted_field_columns(&line, &fields, width),
+            painted_targets(&line, &fields, width),
             "width {width}"
         );
     }
 }
 
-// Covers: hover emphasizes only the hovered clickable field, repaints the
-// cached row, and an inert field (zen) never takes hover.
+// Covers: hover emphasizes only the hovered click target, all of it, repaints
+// the cached row, and an inert field (zen) never takes hover.
 // Owner: pure layout policy (statusline paint).
 #[test]
-fn hover_lifts_only_the_hovered_clickable_field() {
+fn hover_lifts_only_the_hovered_click_target() {
     let mut statusline = fully_populated_statusline();
-    let before = statusline.lines(100, None)[FIELDS_ROW].clone();
+    let before = statusline.lines(100)[FIELDS_ROW].clone();
     let model = statusline
         .cache
         .hits
         .iter()
-        .find(|hit| hit.key == FieldKey::Model)
+        .find(|hit| hit.action == StatusClick::Command("/model"))
         .cloned()
         .expect("model field is clickable at width 100");
-    statusline.set_hovered_column(Some(model.columns.start));
-    let after = statusline.lines(100, None)[FIELDS_ROW].clone();
+    statusline.set_hovered_column(Some(model.columns.end - 1));
+    let after = statusline.lines(100)[FIELDS_ROW].clone();
     let changed = before
         .spans
         .iter()
         .zip(&after.spans)
         .filter(|(before, after)| before.style != after.style)
         .map(|(_, after)| after.content.to_string())
-        .collect::<Vec<_>>();
-    assert_eq!(changed.len(), 1, "{changed:?}");
-    assert_eq!(display_width(&changed[0]), model.columns.len());
+        .collect::<String>();
+    assert_eq!(display_width(&changed), model.columns.len(), "{changed:?}");
     assert_eq!(line_text(&before), line_text(&after));
 
     let text = line_text(&after);
@@ -322,7 +226,7 @@ fn context_without_known_window_still_shows_tokens() {
     let mut statusline = StatusLine::new(&test_info(PathBuf::from("/tmp/project")));
     statusline.update_usage(None, Some(&ContextUsage::estimated(1_234, None)), 0);
 
-    let line = statusline.lines(80, None)[1].clone();
+    let line = statusline.lines(80)[1].clone();
     assert_eq!(
         span_style(&line, "1.2K"),
         Some(Theme::dim()),
@@ -458,23 +362,6 @@ fn bottom_row_drops_fields_by_global_rank() {
         vec![FieldKey::Permission],
         "permission is kept last"
     );
-
-    // Granted desktop access outranks permission when they cannot both fit.
-    // Their combined width is 6 + 3 + 11 = 20 cells; computer alone needs 11.
-    let mut connected = fully_populated_statusline();
-    connected.state.permission_mode = PermissionMode::Bypass;
-    connected.update_computer(ComputerUseStatus::Connected);
-    for (width, expected) in [
-        (20, vec![FieldKey::Permission, FieldKey::Computer]),
-        (18, vec![FieldKey::Computer]),
-        (11, vec![FieldKey::Computer]),
-    ] {
-        assert_eq!(
-            packed_keys(&connected.state, width),
-            expected,
-            "width {width}"
-        );
-    }
 }
 
 #[test]
@@ -507,12 +394,12 @@ fn signed_out_keeps_not_signed_in_over_permission() {
 fn permission_mode_update_invalidates_cache() {
     let mut info = test_info(PathBuf::from("/tmp/project"));
     let mut statusline = StatusLine::new(&info);
-    statusline.lines(18, None);
+    statusline.lines(18);
     let initial_render_count = statusline.render_count();
 
     info.permission_mode = crate::permission::PermissionMode::Plan;
     statusline.update_model(&info);
-    let _ = statusline.lines(18, None);
+    let _ = statusline.lines(18);
 
     assert_eq!(statusline.render_count(), initial_render_count + 1);
 }
@@ -593,11 +480,11 @@ fn git_branch_is_cached_until_explicit_refresh() {
     fs::write(git_dir.join("HEAD"), "ref: refs/heads/main\n").unwrap();
     let mut statusline = StatusLine::new(&test_info(temp.path().to_path_buf()));
 
-    let initial = statusline.lines(80, None).to_vec();
+    let initial = statusline.lines(80).to_vec();
     fs::write(git_dir.join("HEAD"), "ref: refs/heads/feature\n").unwrap();
-    let cached = statusline.lines(80, None).to_vec();
+    let cached = statusline.lines(80).to_vec();
     statusline.refresh_git_branch();
-    let refreshed = statusline.lines(80, None).to_vec();
+    let refreshed = statusline.lines(80).to_vec();
 
     assert_eq!(cached, initial);
     assert_ne!(refreshed, initial);

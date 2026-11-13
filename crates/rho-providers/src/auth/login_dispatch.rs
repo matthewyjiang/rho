@@ -35,58 +35,13 @@ pub enum InteractiveLoginMode {
 pub use super::browser::{BrowserAvailability, BrowserEnvironment, BrowserOpen};
 use super::login_prompt::LoginPrompt;
 
-/// Deprecated presentation of an interactive login.
-///
-/// # Next major
-///
-/// NEXT_MAJOR(rho-providers): remove InteractiveUserAction and the InteractiveLogin::user_action field; LoginPrompt is the only login presentation surface
-///
-/// This minor keeps the 2.0 variants so existing matches still compile. New
-/// code should read [`LoginPrompt`] from [`InteractiveLogin::prompt`].
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[deprecated(
-    since = "2.1.0",
-    note = "use InteractiveLogin::prompt (LoginPrompt) instead of matching InteractiveUserAction"
-)]
-pub enum InteractiveUserAction {
-    BrowserOpened,
-    /// Show a URL to open manually (no device code). Used by Ollama device-key connect.
-    OpenUrl {
-        url: String,
-        instruction: String,
-    },
-    DeviceCode {
-        verification_uri: String,
-        user_code: String,
-        verification_uri_complete: Option<String>,
-    },
-}
-
-#[allow(deprecated)]
-impl From<&LoginPrompt> for InteractiveUserAction {
-    fn from(prompt: &LoginPrompt) -> Self {
-        if let Some(user_code) = prompt.user_code.clone() {
-            Self::DeviceCode {
-                verification_uri: prompt.url.clone(),
-                user_code,
-                verification_uri_complete: prompt.url_with_code.clone(),
-            }
-        } else if prompt.browser == BrowserOpen::Launched {
-            Self::BrowserOpened
-        } else {
-            Self::OpenUrl {
-                url: prompt.url.clone(),
-                instruction: prompt.instruction.clone(),
-            }
-        }
-    }
-}
-
 pub enum InteractiveLoginCompletion {
     Confirm(AuthenticationFuture),
     /// The external setup has started, but the provider cannot reliably confirm completion.
     Unconfirmed {
         instruction: &'static str,
+        /// Records the login once the user says they approved it.
+        authentication: UnconfirmedAuthentication,
     },
 }
 
@@ -94,42 +49,23 @@ impl std::fmt::Debug for InteractiveLoginCompletion {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Confirm(_) => formatter.write_str("Confirm(<authentication future>)"),
-            Self::Unconfirmed { instruction } => formatter
+            Self::Unconfirmed {
+                instruction,
+                authentication,
+            } => formatter
                 .debug_struct("Unconfirmed")
                 .field("instruction", instruction)
+                .field("authentication", authentication)
                 .finish(),
         }
     }
 }
 
-#[allow(deprecated)]
+#[derive(Debug)]
 pub struct InteractiveLogin {
     pub provider_label: &'static str,
     pub prompt: LoginPrompt,
-    /// Deprecated dual-emit of [`Self::prompt`].
-    ///
-    /// # Next major
-    ///
-    /// NEXT_MAJOR(rho-providers): remove InteractiveUserAction and the InteractiveLogin::user_action field; LoginPrompt is the only login presentation surface
-    #[deprecated(
-        since = "2.1.0",
-        note = "use InteractiveLogin::prompt (LoginPrompt) instead of user_action"
-    )]
-    pub user_action: InteractiveUserAction,
     pub completion: InteractiveLoginCompletion,
-}
-
-impl std::fmt::Debug for InteractiveLogin {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        #[allow(deprecated)]
-        formatter
-            .debug_struct("InteractiveLogin")
-            .field("provider_label", &self.provider_label)
-            .field("prompt", &self.prompt)
-            .field("user_action", &self.user_action)
-            .field("completion", &self.completion)
-            .finish()
-    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -152,6 +88,40 @@ pub enum AuthenticationError {
 
 pub struct CompletedAuthentication {
     credentials: LoginCredentials,
+}
+
+/// A login the provider cannot confirm, from [`InteractiveLoginCompletion::Unconfirmed`].
+///
+/// The provider sends no completion callback, so Rho trusts the user.
+/// Interactive hosts should call [`Self::accept`] once the user confirms they
+/// approved; hosts that cannot ask may call it after showing the instruction.
+/// Without it, the mode (the Ollama Cloud device key) never becomes signed in.
+/// Holds no secret, so hosts may clone it into their pending-login state.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UnconfirmedAuthentication {
+    credentials: UnconfirmedCredentials,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum UnconfirmedCredentials {
+    OllamaDevice,
+}
+
+impl UnconfirmedAuthentication {
+    /// Records the login so its auth mode counts as signed in.
+    pub fn accept(self, store: &dyn CredentialStore) -> CredentialResult<()> {
+        match self.credentials {
+            UnconfirmedCredentials::OllamaDevice => credentials::sign_in_ollama_device(store),
+        }
+    }
+
+    /// The Ollama Cloud device-key handle, for host tests of pending-login state.
+    #[doc(hidden)]
+    pub fn ollama_device_for_tests() -> Self {
+        Self {
+            credentials: UnconfirmedCredentials::OllamaDevice,
+        }
+    }
 }
 
 impl CompletedAuthentication {
@@ -253,38 +223,26 @@ impl ProviderAuthentication {
         }
     }
 
-    /// Start an interactive login using process browser availability.
-    ///
-    /// # Next major
-    ///
-    /// NEXT_MAJOR(rho-providers): remove the 2-arg start_interactive_login wrapper and rename start_interactive_login_with_availability back to start_interactive_login
-    ///
-    /// Prefer [`Self::start_interactive_login_with_availability`] so callers
-    /// pass availability explicitly instead of sniffing the process.
-    #[deprecated(
-        since = "2.1.0",
-        note = "use start_interactive_login_with_availability so browser availability is explicit"
-    )]
-    pub async fn start_interactive_login(
-        provider_or_auth: &str,
-        mode: InteractiveLoginMode,
-    ) -> Result<InteractiveLogin, AuthenticationError> {
-        Self::start_interactive_login_with_availability(
-            provider_or_auth,
-            mode,
-            BrowserAvailability::from_process(),
-        )
-        .await
-    }
-
     /// Start an interactive login. Bind or device setup finishes before return
-    /// so [`InteractiveLogin::prompt`] already has the authorize URL.
-    pub async fn start_interactive_login_with_availability(
+    /// so [`InteractiveLogin::prompt`] already has the authorize URL. The
+    /// browser opens only when `availability` is
+    /// [`BrowserAvailability::Graphical`].
+    ///
+    /// `store` is the credentials of whoever signs in, the store the login
+    /// is later saved to. A login that keeps something outside it reads
+    /// where from their environment through it: the Ollama Cloud device key
+    /// is created in their `OLLAMA_DEVICE_KEY_DIR`.
+    pub async fn start_interactive_login(
+        store: &dyn CredentialStore,
         provider_or_auth: &str,
         mode: InteractiveLoginMode,
         availability: BrowserAvailability,
     ) -> Result<InteractiveLogin, AuthenticationError> {
         let profile = resolve_login_profile(provider_or_auth)?;
+        #[cfg(debug_assertions)]
+        if let Some(started) = fixture::start(profile.auth.id).await {
+            return Ok(interactive_login(started?, availability));
+        }
         let started = match profile.auth_kind() {
             ProviderAuthKind::None | ProviderAuthKind::ApiKey { .. } => {
                 return Err(AuthenticationError::NotInteractive(provider_or_auth.into()));
@@ -294,7 +252,7 @@ impl ProviderAuthentication {
             ProviderAuthKind::KimiOAuth { .. } => start_kimi().await?,
             ProviderAuthKind::MetaOAuth { .. } => start_meta().await?,
             ProviderAuthKind::XaiOAuth { .. } => start_xai(mode).await?,
-            ProviderAuthKind::OllamaDeviceKey { .. } => start_ollama_device().await?,
+            ProviderAuthKind::OllamaDeviceKey { .. } => start_ollama_device(store).await?,
             ProviderAuthKind::BearerCredential { acquisition, .. } => match acquisition {
                 BearerCredentialAcquisition::BrowserOAuth(BrowserOAuthFlow::OpenRouter) => {
                     // OpenRouter has no device-code grant. `--device-auth` still
@@ -326,37 +284,6 @@ impl ProviderAuthentication {
             credentials::delete_auth_credentials(store, provider_or_auth)
         } else {
             credentials::delete_provider_credentials(store, provider_or_auth)
-        }
-    }
-
-    /// Records a login that finished as [`InteractiveLoginCompletion::Unconfirmed`].
-    ///
-    /// # Next major
-    ///
-    /// NEXT_MAJOR(rho-providers): carry an acceptance handle on InteractiveLoginCompletion::Unconfirmed (mirroring CompletedAuthentication::save) and remove accept_unconfirmed_login
-    ///
-    /// The provider sends no completion callback, so Rho trusts the user.
-    /// Interactive hosts should call this once the user confirms they approved;
-    /// hosts that cannot ask may call it after showing the instruction. Without
-    /// it, the mode (the Ollama Cloud device key) never becomes signed in.
-    pub fn accept_unconfirmed_login(
-        store: &dyn CredentialStore,
-        provider_or_auth: &str,
-    ) -> CredentialResult<()> {
-        // Unknown ids could not have started a login, so there is nothing to record.
-        let Ok(profile) = resolve_login_profile(provider_or_auth) else {
-            return Ok(());
-        };
-        match profile.auth_kind() {
-            ProviderAuthKind::OllamaDeviceKey { .. } => credentials::sign_in_ollama_device(store),
-            ProviderAuthKind::None
-            | ProviderAuthKind::ApiKey { .. }
-            | ProviderAuthKind::CodexOAuth { .. }
-            | ProviderAuthKind::GithubCopilotDevice { .. }
-            | ProviderAuthKind::XaiOAuth { .. }
-            | ProviderAuthKind::BearerCredential { .. }
-            | ProviderAuthKind::KimiOAuth { .. }
-            | ProviderAuthKind::MetaOAuth { .. } => Ok(()),
         }
     }
 
@@ -663,8 +590,10 @@ async fn start_xai(mode: InteractiveLoginMode) -> Result<StartedLogin, Authentic
     })
 }
 
-async fn start_ollama_device() -> Result<StartedLogin, AuthenticationError> {
-    let login = ollama_device::start_ollama_device_login(/* open_browser */ false)
+async fn start_ollama_device(
+    store: &dyn CredentialStore,
+) -> Result<StartedLogin, AuthenticationError> {
+    let login = ollama_device::start_ollama_device_login(store)
         .await
         .map_err(flow_error)?;
     Ok(StartedLogin {
@@ -675,20 +604,20 @@ async fn start_ollama_device() -> Result<StartedLogin, AuthenticationError> {
         ),
         completion: InteractiveLoginCompletion::Unconfirmed {
             instruction: "Approve the device in your browser, then use an Ollama Cloud model. Rho does not receive a completion callback.",
+            authentication: UnconfirmedAuthentication {
+                credentials: UnconfirmedCredentials::OllamaDevice,
+            },
         },
     })
 }
 
-#[allow(deprecated)]
 fn interactive_login(started: StartedLogin, availability: BrowserAvailability) -> InteractiveLogin {
     let url = started.prompt.copyable_url().to_string();
-    let prompt = started
-        .prompt
-        .with_browser(browser::try_open(&url, availability));
     InteractiveLogin {
         provider_label: started.provider_label,
-        user_action: InteractiveUserAction::from(&prompt),
-        prompt,
+        prompt: started
+            .prompt
+            .with_browser(browser::try_open(&url, availability)),
         completion: started.completion,
     }
 }
@@ -696,6 +625,10 @@ fn interactive_login(started: StartedLogin, availability: BrowserAvailability) -
 fn flow_error(error: impl std::fmt::Display) -> AuthenticationError {
     AuthenticationError::Flow(error.to_string())
 }
+
+#[cfg(debug_assertions)]
+#[path = "login_fixture.rs"]
+mod fixture;
 
 #[cfg(test)]
 #[path = "login_dispatch_tests.rs"]

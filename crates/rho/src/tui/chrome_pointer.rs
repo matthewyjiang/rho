@@ -2,11 +2,12 @@
 //! attachments.
 //!
 //! A statusline field press runs that field's slash command through the event
-//! loop's [`PointerAction`], exactly like typing it, or opens its picker
-//! directly when no command opens it. A press on an attachment's `✕` button
-//! removes that attachment. Hover for both derives from the last pointer cell
-//! at draw time, so scroll, resize, and removal re-anchor it without extra
-//! state, and hover and clicks share one gate ([`App::chrome_pointer_live`]).
+//! loop's [`PointerAction`], exactly like typing it, opens its picker directly
+//! when no command opens it, or steps the reasoning effort like Shift+Tab. A
+//! press on an attachment's `✕` button removes that attachment. Hover for both
+//! derives from the last pointer cell at draw time, so scroll, resize, and
+//! removal re-anchor it without extra state, and hover and clicks share one
+//! gate ([`App::chrome_pointer_live`]).
 
 use std::time::Instant;
 
@@ -15,7 +16,6 @@ use ratatui::layout::{Position, Rect};
 use super::{
     app_state::PointerAction,
     composer_attachments::attachment_target_at,
-    config_picker::{permission_mode_picker, PERMISSION_MODE_VALUE},
     screen_layout::{terminal_meets_minimum, ScreenLayout},
     statusline::{StatusClick, FIELDS_ROW},
     App, ComposerMode,
@@ -67,7 +67,10 @@ impl App {
                 StatusClick::Command(command) => self
                     .input_ui
                     .request_pointer_action(PointerAction::RunCommand(command.into())),
-                StatusClick::PermissionMode => self.open_permission_mode_picker(),
+                StatusClick::PermissionMode => self.open_daemon_permission_picker(),
+                StatusClick::CycleReasoning => self
+                    .input_ui
+                    .request_pointer_action(PointerAction::CycleReasoning),
             }
             return true;
         }
@@ -106,19 +109,6 @@ impl App {
         // Hit spans come from the render at this width.
         self.statusline_lines(width);
         self.statusline.set_hovered_column(column);
-    }
-
-    /// Open the permission mode chooser under its config row, so Esc walks
-    /// back through config like picking the row by hand. Mid-turn it still
-    /// opens; committing a change is what a turn blocks, and the config
-    /// commit path reports that.
-    fn open_permission_mode_picker(&mut self) {
-        if let Err(error) = self.open_main_config_picker_selected(PERMISSION_MODE_VALUE) {
-            self.set_status(format!("could not open config: {error}"));
-            return;
-        }
-        let child = permission_mode_picker(self.info.runtime.permission_mode);
-        self.open_child_picker(child);
     }
 
     /// Drop text selections and drags a chrome press supersedes.

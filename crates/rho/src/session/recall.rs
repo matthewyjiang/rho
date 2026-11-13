@@ -143,8 +143,8 @@ pub(crate) fn recall(
     let output = serde_json::to_string(&RecallResponse {
         note: UNTRUSTED,
         recall_id,
+        ok: !result.is_failure(),
         tool_call_id: result.id,
-        ok: result.ok,
         text,
         start,
         end,

@@ -114,11 +114,11 @@ async fn session_summary_reuses_the_cached_history_and_falls_back_to_the_transcr
             vec![rho_sdk::model::ModelEvent::Usage(usage_with_cache_reads(
                 900,
             ))],
-            ModelResponse::Assistant(vec![ContentBlock::ToolCall(rho_sdk::model::ToolCall {
-                id: "call".into(),
-                name: "read".into(),
-                arguments: serde_json::json!({}),
-            })]),
+            ModelResponse::Assistant(vec![ContentBlock::ToolCall(rho_sdk::model::ToolCall::new(
+                "call".into(),
+                "read".into(),
+                serde_json::json!({}),
+            ))]),
         )
     };
     let summary = || {
@@ -256,11 +256,7 @@ async fn session_summary_reuses_the_cached_history_and_falls_back_to_the_transcr
             "{}",
             case.name
         );
-        let record = compactor
-            .diagnostics
-            .compaction()
-            .and_then(|compaction| compaction.last_compaction)
-            .unwrap();
+        let record = compactor.diagnostics.last_compaction().unwrap();
         assert_eq!(
             (
                 record.outcome,
@@ -362,7 +358,8 @@ async fn configured_summarizer_gets_the_transcript_and_falls_back_on_failure() {
             usage.clone(),
             Some(100_000),
             Some(super::Summarizer::with_provider(
-                crate::compaction::SummarizerModel {
+                crate::agent::ResolvedRhoModel {
+                    providers: Default::default(),
                     provider: "openai".into(),
                     model: "gpt-mini".into(),
                     auth: "api-key".into(),
@@ -444,11 +441,7 @@ async fn failed_summary_request_usage_is_charged_to_the_compaction_record() {
         .unwrap();
 
     assert_eq!(output.usage().cache_read_tokens, Some(100));
-    let record = compactor
-        .diagnostics
-        .compaction()
-        .and_then(|compaction| compaction.last_compaction)
-        .unwrap();
+    let record = compactor.diagnostics.last_compaction().unwrap();
     assert_eq!(record.request_path, Some(SummaryRequestPath::Transcript));
     assert_eq!(record.cache_read_tokens, Some(1_000));
 }

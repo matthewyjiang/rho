@@ -62,18 +62,22 @@ pub struct DelegationConfig {
     /// Catalog already discovered for `cwd`; the agent tool rediscovers when
     /// absent.
     catalog: Option<Arc<crate::agent::AgentCatalog>>,
+    /// Where the delegated agents take capacity, and who else hears of them.
+    pool: crate::app::subagent_pool::SubagentPool,
 }
 
 impl DelegationConfig {
-    pub fn new(
+    pub(crate) fn new(
         cwd: PathBuf,
         config_path: PathBuf,
         catalog: Option<Arc<crate::agent::AgentCatalog>>,
+        pool: crate::app::subagent_pool::SubagentPool,
     ) -> Self {
         Self {
             cwd,
             config_path,
             catalog,
+            pool,
         }
     }
 }
@@ -86,7 +90,7 @@ pub struct ToolSetOptions {
     workflow: Option<Arc<dyn super::workflow::WorkflowToolService>>,
     workflow_tracker: super::workflow_tracker::WorkflowRunTracker,
     process_keep_warm: super::process::KeepWarmOffer,
-    host_io: crate::tools::host_io::HostIo,
+    environment: crate::session_environment::SessionEnvironment,
 }
 
 impl Default for ToolSetOptions {
@@ -104,20 +108,22 @@ impl ToolSetOptions {
             workflow: None,
             workflow_tracker: super::workflow_tracker::WorkflowRunTracker::new(),
             process_keep_warm: super::process::KeepWarmOffer::Hidden,
-            host_io: Default::default(),
+            environment: Default::default(),
         }
     }
 
-    /// What the host does in place of local disk and processes: file tools
-    /// use its files, the shell tool its terminals, and delegated Rho agents
-    /// both.
-    pub(crate) fn host_io(mut self, host_io: crate::tools::host_io::HostIo) -> Self {
-        self.host_io = host_io;
+    /// The environment the session's children see: process tools, the
+    /// advisor, workflow runs, and delegated Rho agents share it.
+    pub(crate) fn environment(
+        mut self,
+        environment: crate::session_environment::SessionEnvironment,
+    ) -> Self {
+        self.environment = environment;
         self
     }
 
     /// Advertises `keep_warm` on `process start`. Only a host that runs a
-    /// cache warmer (the interactive TUI) may offer it.
+    /// cache warmer (the daemon) may offer it.
     pub(crate) fn process_keep_warm(mut self, offer: super::process::KeepWarmOffer) -> Self {
         self.process_keep_warm = offer;
         self
@@ -169,16 +175,10 @@ struct AdvisorTools {
 
 struct PlanExitTools {
     slot: super::plan_exit::PlanExitSlot,
-    classifier_configured: Arc<std::sync::atomic::AtomicBool>,
     registration: HostToolRegistration,
     /// Approvals the tool asks a permission-prompt host, between the host's
     /// prompts. A running prompt takes it to answer them.
     permission_requests: Option<super::plan_exit::PlanPermissionReceiver>,
-}
-
-struct ComputerTools {
-    session: super::computer_use::ComputerUseSession,
-    registration: HostToolRegistration,
 }
 
 /// Retains ownership independently of whether a host-controlled tool is advertised.
@@ -213,7 +213,6 @@ pub struct AppToolSet {
     inventory: ToolInventory,
     bundles: Vec<Box<dyn ToolBundle>>,
     advisor: Option<AdvisorTools>,
-    computer_use: Option<ComputerTools>,
     plan_exit: Option<PlanExitTools>,
     subagents: Option<SubagentManager>,
     /// The agent catalog the `agent` tool spec advertises, when registered.
@@ -226,25 +225,32 @@ pub struct AppToolSet {
     mcp_report: super::mcp::McpSessionReport,
     mcp_catalog: super::mcp::McpCatalog,
     openapi_report: super::openapi::report::OpenApiReport,
-    file_view: rho_tools::FileViewPolicy,
-    /// Kept so a mid-session edit-tool switch uses the same host I/O.
-    host_io: crate::tools::host_io::HostIo,
     session_search: super::sessions::SessionBinding,
     /// Present only when the `sessions` tool is installed, since recall is
     /// the only way to read an elided result back.
     recall: Option<crate::session::recall::RecallStore>,
     todo: super::todo::TodoState,
+    /// The credentials of the session the tools belong to.
+    credentials: Arc<dyn rho_providers::credentials::CredentialStore>,
 }
 
 impl AppToolSet {
-    pub fn disabled() -> Self {
+    /// No tools, for a session that reads this process's own credentials.
+    #[cfg(test)]
+    pub(crate) fn disabled() -> Self {
+        Self::disabled_for(Arc::new(crate::credential_store::AppCredentialStore))
+    }
+
+    /// No tools, for a session whose credentials are `credentials`.
+    pub(crate) fn disabled_for(
+        credentials: Arc<dyn rho_providers::credentials::CredentialStore>,
+    ) -> Self {
         Self {
             inventory: ToolInventory::default(),
             bundles: Vec::new(),
             advisor: None,
             subagents: None,
             advertised_agents: None,
-            computer_use: None,
             plan_exit: None,
             processes: None,
             workflow_tracker: super::workflow_tracker::WorkflowRunTracker::new(),
@@ -256,11 +262,10 @@ impl AppToolSet {
             mcp_report: super::mcp::McpSessionReport::default(),
             mcp_catalog: super::mcp::McpCatalog::default(),
             openapi_report: super::openapi::report::OpenApiReport::default(),
-            file_view: rho_tools::FileViewPolicy::default(),
-            host_io: Default::default(),
             session_search: super::sessions::SessionBinding::default(),
             recall: None,
             todo: super::todo::TodoState::default(),
+            credentials,
         }
     }
 
@@ -272,32 +277,26 @@ impl AppToolSet {
             workflow,
             workflow_tracker,
             process_keep_warm,
-            host_io,
+            environment,
         } = options;
-        let mut tool_set = Self::disabled();
+        let mut tool_set = Self::disabled_for(environment.credentials());
         tool_set.workflow_tracker = workflow_tracker;
-        tool_set.host_io = host_io;
         tool_set.checkpoint_tracker = Arc::new(
             crate::session::workspace_checkpoint::WorkspaceCheckpointTracker::new(
                 config.workspace_rewind,
             ),
         );
-        // Compose one child-process environment policy for every process tool.
-        // Provider credential env vars are excluded so agent commands cannot
-        // read host API keys from the ambient environment.
-        let process_environment =
-            rho_sdk::ProcessEnvironment::inherit_except(rho_providers::credential_env_vars());
+        // One child-process environment for every process tool, which
+        // delegated agents share through `environment`.
+        let process_environment = environment.process();
 
-        let edit_format = config.resolved_edit_tool();
-        tool_set.file_view.set(edit_format);
         tool_set.add_bundle(super::coding::sdk_bundle(
             &capabilities,
             config.max_output_bytes,
             process_environment.clone(),
             tool_set.checkpoint_tracker.clone(),
-            tool_set.file_view.clone(),
+            config.resolved_edit_tool(),
             config.rtk,
-            &tool_set.host_io,
         ));
         if capabilities.contains(&ToolCapability::Process) {
             let bundle = super::process::sdk_bundle(
@@ -310,7 +309,10 @@ impl AppToolSet {
             tool_set.add_bundle(bundle);
         }
         if capabilities.contains(&ToolCapability::Skill) {
-            tool_set.add_bundle(super::sdk_features::skill_bundle(config.max_output_bytes));
+            tool_set.add_bundle(super::sdk_features::skill_bundle(
+                config.max_output_bytes,
+                environment.project_trust(),
+            ));
         }
         if capabilities.contains(&ToolCapability::Sessions) {
             let recall = crate::session::recall::RecallStore::default();
@@ -319,10 +321,15 @@ impl AppToolSet {
                 tool_set.session_search.clone(),
                 recall,
                 config.max_output_bytes,
+                environment.clone(),
             ));
         }
         if capabilities.contains(&ToolCapability::Rho) {
-            tool_set.add_bundle(super::rho::sdk_bundle(diagnostics, config.max_output_bytes));
+            tool_set.add_bundle(super::rho::sdk_bundle(
+                diagnostics,
+                config.max_output_bytes,
+                environment.project_trust(),
+            ));
         }
         if capabilities.contains(&ToolCapability::Todo) {
             tool_set.add_bundle(super::todo::sdk_bundle(tool_set.todo.clone()));
@@ -331,12 +338,15 @@ impl AppToolSet {
             tool_set.add_bundle(super::sdk_features::questionnaire_bundle());
         }
         if let (true, Some(store)) = (capabilities.contains(&ToolCapability::Advisor), advisor) {
-            // The tool set owns advisor initialization: the model and the
-            // registration state both come from the same config read.
+            // The tool set owns advisor initialization: the model, the
+            // providers it is looked up on and the registration state all
+            // come from the same config read.
             store.set_model(super::advisor::advisor_model(config).cloned());
+            store.set_providers(config.providers.clone());
             tool_set.advisor = Some(AdvisorTools {
                 registration: HostToolRegistration::new(super::advisor::advisor_tool(
                     store.clone(),
+                    environment.clone(),
                 )),
                 store,
             });
@@ -362,6 +372,7 @@ impl AppToolSet {
             &capabilities,
             process_environment,
             web_access,
+            tool_set.credentials(),
         ));
 
         let delegation_tools = DelegationToolSelection::from_capabilities(&capabilities);
@@ -373,7 +384,8 @@ impl AppToolSet {
                     tools: selection,
                     config_path: delegation.config_path,
                     catalog: delegation.catalog,
-                    host_io: tool_set.host_io.clone(),
+                    environment: environment.clone(),
+                    pool: delegation.pool,
                 },
                 tool_set.checkpoint_tracker.clone(),
             );
@@ -443,33 +455,10 @@ impl AppToolSet {
         self.todo.clone()
     }
 
-    /// Attach the root interactive session's host-controlled desktop grant.
-    pub(crate) fn with_computer_use(
-        mut self,
-        session: super::computer_use::ComputerUseSession,
-    ) -> Self {
-        let connected = session.status() == super::computer_use::ComputerUseStatus::Connected;
-        self.set_computer_use_registered(false);
-        self.computer_use = Some(ComputerTools {
-            registration: HostToolRegistration::new(session.tool()),
-            session,
-        });
-        self.set_computer_use_registered(connected);
-        self
-    }
-
-    pub(crate) fn computer_use(&self) -> Option<&super::computer_use::ComputerUseSession> {
-        self.computer_use.as_ref().map(|computer| &computer.session)
-    }
-
-    /// Advertising is separate from authorization. The runtime reconciles this
-    /// at idle boundaries; retained tool handles enforce the grant themselves.
-    pub(crate) fn set_computer_use_registered(&mut self, registered: bool) -> bool {
-        let Some(computer) = self.computer_use.as_mut() else {
-            return false;
-        };
-        self.inventory
-            .mutate(|tools| computer.registration.set_registered(tools, registered))
+    /// The credentials of the session the tools belong to, which the models
+    /// that run beside it, such as a compaction summarizer, sign in with.
+    pub(crate) fn credentials(&self) -> Arc<dyn rho_providers::credentials::CredentialStore> {
+        Arc::clone(&self.credentials)
     }
 
     /// Prompts and resources connected servers offer the user.
@@ -529,18 +518,20 @@ impl AppToolSet {
             .map(|(_, tool)| tool.clone())
     }
 
-    /// Replaces delegation only when launch was enabled for this session.
-    /// The native bundle stays alive (with an idle manager) for lifecycle and
-    /// permission updates; replacement tools own their own execution state.
-    pub(crate) fn replace_delegation_tools(&mut self, replacements: [Arc<dyn Tool>; 2]) -> bool {
-        if !self.contains("agent") {
-            return false;
-        }
+    /// Replaces the native `agent` and `agents` tools the session has with
+    /// `agent` and `agents`, adding neither one it lacks. The native bundle
+    /// stays alive (with an idle manager) for lifecycle and permission
+    /// updates; replacement tools own their own execution state.
+    pub(crate) fn replace_delegation_tools(&mut self, agent: Arc<dyn Tool>, agents: Arc<dyn Tool>) {
         self.inventory.mutate(|tools| {
-            tools.retain(|tool| !matches!(tool.spec().name.as_str(), "agent" | "agents"));
-            tools.extend(replacements);
+            for tool in tools.iter_mut() {
+                match tool.spec().name.as_str() {
+                    "agent" => *tool = Arc::clone(&agent),
+                    "agents" => *tool = Arc::clone(&agents),
+                    _ => {}
+                }
+            }
         });
-        true
     }
 
     /// The advisor's session store, present whenever the run may offer the
@@ -569,41 +560,21 @@ impl AppToolSet {
             .mutate(|tools| advisor.registration.set_registered(tools, registered))
     }
 
-    /// Installs plan handoff for an interactive host that can ask the user.
-    /// A questionnaire host needs the questionnaire tool, which exists only
-    /// when the host can draw questionnaires.
-    pub(crate) fn with_plan_exit_host(
-        mut self,
-        config: &Config,
-        host: super::plan_exit::PlanExitHost,
-    ) -> Self {
-        use super::plan_exit::{PlanExitHost, PlanExitPrompt};
-
-        let (prompt, permission_requests) = match host {
-            PlanExitHost::Questionnaire if self.contains("questionnaire") => {
-                (PlanExitPrompt::Questionnaire, None)
-            }
-            PlanExitHost::Questionnaire => return self,
-            PlanExitHost::Permission => {
-                let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
-                (PlanExitPrompt::Permission(sender), Some(receiver))
-            }
-        };
+    /// Installs plan handoff for an interactive host that asks the user with
+    /// a permission prompt.
+    pub(crate) fn with_plan_exit_host(mut self, config: &Config) -> Self {
+        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
         let slot = super::plan_exit::PlanExitSlot::default();
-        let classifier_configured = Arc::new(std::sync::atomic::AtomicBool::new(
-            config
-                .internal_agents
-                .contains_key(crate::agent::PERMISSION_CLASSIFIER_AGENT_ID),
-        ));
         self.plan_exit = Some(PlanExitTools {
             registration: HostToolRegistration::new(Arc::new(super::plan_exit::PlanExitTool {
                 slot: Some(slot.clone()),
-                prompt,
-                classifier_configured: classifier_configured.clone(),
+                permission_requests: sender,
+                classifier_configured: config
+                    .internal_agents
+                    .contains_key(crate::agent::PERMISSION_CLASSIFIER_AGENT_ID),
             })),
             slot,
-            classifier_configured,
-            permission_requests,
+            permission_requests: Some(receiver),
         });
         self.set_plan_exit_registered(config.permission_mode);
         self
@@ -640,64 +611,8 @@ impl AppToolSet {
         })
     }
 
-    pub(crate) fn update_plan_exit_classifier(&self, config: &Config) {
-        if let Some(plan_exit) = &self.plan_exit {
-            plan_exit.classifier_configured.store(
-                config
-                    .internal_agents
-                    .contains_key(crate::agent::PERMISSION_CLASSIFIER_AGENT_ID),
-                std::sync::atomic::Ordering::Relaxed,
-            );
-        }
-    }
-
     pub(crate) fn take_plan_exit_decision(&self) -> Option<super::plan_exit::PlanExitDecision> {
         self.plan_exit.as_ref()?.slot.take()
-    }
-
-    /// Replaces the advertised built-in file edit tool.
-    ///
-    /// Returns the previous format when the advertised tool list changed so
-    /// callers can rebuild the runtime and tell the model. No-ops when this
-    /// run has no edit tool or the selection is already active.
-    ///
-    /// Matches built-in edit tool names (`edit`, `apply_patch`, `str_replace`).
-    pub fn set_edit_tool(
-        &mut self,
-        edit_tool: rho_tools::EditFormat,
-        max_output_bytes: usize,
-    ) -> Option<rho_tools::EditFormat> {
-        let previous = self.edit_tool()?;
-        if previous == edit_tool {
-            return None;
-        }
-        let position = self
-            .tools()
-            .iter()
-            .position(|tool| rho_tools::EditFormat::is_edit_tool_name(tool.spec().name.as_str()))?;
-        let mutation_observer: Arc<dyn rho_tools::WorkspaceMutationObserver> =
-            self.checkpoint_tracker.clone();
-        let replacement = super::coding::edit_tool(
-            edit_tool,
-            max_output_bytes,
-            mutation_observer,
-            &self.host_io,
-        );
-        self.inventory.mutate(|tools| tools[position] = replacement);
-        self.file_view.set(edit_tool);
-        Some(previous)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn file_view_style(&self) -> rho_tools::FileViewStyle {
-        self.file_view.style()
-    }
-
-    /// The currently advertised built-in edit format, when this run exposes one.
-    pub fn edit_tool(&self) -> Option<rho_tools::EditFormat> {
-        self.tools()
-            .iter()
-            .find_map(|tool| rho_tools::EditFormat::from_tool_name(tool.spec().name.as_str()))
     }
 
     pub fn subagents(&self) -> Option<&SubagentManager> {
@@ -716,11 +631,6 @@ impl AppToolSet {
         self.advertised_agents = Some(advertised);
     }
 
-    #[cfg(test)]
-    pub(crate) fn set_subagents_for_tests(&mut self, manager: SubagentManager) {
-        self.subagents = Some(manager);
-    }
-
     pub fn processes(&self) -> Option<&super::process::ProcessManager> {
         self.processes.as_ref()
     }
@@ -729,46 +639,23 @@ impl AppToolSet {
         &self.workflow_tracker
     }
 
+    /// Makes a tool set built without a config take workspace checkpoints.
+    #[cfg(test)]
+    pub(crate) fn take_checkpoints_for_tests(&mut self) {
+        self.checkpoint_tracker = Arc::new(
+            crate::session::workspace_checkpoint::WorkspaceCheckpointTracker::new(
+                /*enabled*/ true,
+            ),
+        );
+    }
+
     pub fn checkpoint_tracker(
         &self,
     ) -> &Arc<crate::session::workspace_checkpoint::WorkspaceCheckpointTracker> {
         &self.checkpoint_tracker
     }
 
-    /// Replace only search, retaining content storage and all other live tools.
-    pub(crate) fn replace_web_search(&mut self, config: &Config) -> Option<Arc<dyn Tool>> {
-        let replacement = if self.web_search_capable {
-            super::web::sdk_web_search(config, self.web_access.clone(), config.max_output_bytes)
-        } else {
-            None
-        };
-        self.inventory.mutate(|tools| {
-            let previous = tools
-                .iter()
-                .position(|tool| tool.spec().name == super::web::WEB_SEARCH_TOOL_NAME)
-                .map(|index| tools.remove(index));
-            if let Some(tool) = replacement {
-                tools.push(Arc::new(tool));
-            }
-            previous
-        })
-    }
-
-    pub(crate) fn restore_web_search(&mut self, previous: Option<Arc<dyn Tool>>) {
-        self.inventory.mutate(|tools| {
-            tools.retain(|tool| tool.spec().name != super::web::WEB_SEARCH_TOOL_NAME);
-            tools.extend(previous);
-        });
-    }
-
-    pub fn web_access(&self) -> &super::web::WebAccessStore {
-        &self.web_access
-    }
-
     pub async fn shutdown(&self) {
-        if let Some(computer) = &self.computer_use {
-            computer.session.disconnect().await;
-        }
         for bundle in &self.bundles {
             bundle.shutdown().await;
         }

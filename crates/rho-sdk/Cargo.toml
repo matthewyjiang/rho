@@ -1,6 +1,6 @@
 [package]
 name = "rho-sdk"
-version = "5.15.2"
+version = "6.0.0"
 edition = "2021"
 rust-version = "1.86"
 description = "Embeddable, headless agent runtime for Rho"
@@ -16,7 +16,8 @@ categories = ["asynchronous", "development-tools"]
 default = []
 
 [dependencies]
-serde = { version = "1", features = ["derive"] }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
 thiserror = "2"
 tokio = { version = "1", features = ["macros", "rt", "sync", "time"] }

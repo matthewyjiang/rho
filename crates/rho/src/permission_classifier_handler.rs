@@ -37,6 +37,8 @@ pub(crate) struct ClassificationInput {
     pub(crate) request: Arc<ApprovalRequest>,
     pub(crate) workspace_path: PathBuf,
     pub(crate) usage_recording: ProviderRequestUsageRecording,
+    /// The credentials of the session whose requests are classified.
+    pub(crate) credentials: Arc<dyn rho_providers::credentials::CredentialStore>,
 }
 
 /// Approval handler that classifies Auto-mode capability requests.
@@ -54,6 +56,8 @@ pub(crate) struct ClassifierApprovalHandler {
     config: RwLock<Config>,
     workspace_path: PathBuf,
     usage_recording: ProviderRequestUsageRecording,
+    /// The session's credentials, which the classifier's models sign in with.
+    credentials: Arc<dyn rho_providers::credentials::CredentialStore>,
     classifier: ClassifyFn,
     inner: Option<Arc<dyn ApprovalHandler>>,
     session_writes: Option<SessionWriteLog>,
@@ -101,6 +105,7 @@ impl ClassifierApprovalHandler {
         config: Config,
         workspace_path: PathBuf,
         usage_recording: ProviderRequestUsageRecording,
+        credentials: Arc<dyn rho_providers::credentials::CredentialStore>,
         inner: Option<Arc<dyn ApprovalHandler>>,
         session_writes: Option<SessionWriteLog>,
     ) -> Self {
@@ -108,6 +113,7 @@ impl ClassifierApprovalHandler {
             config: RwLock::new(config),
             workspace_path,
             usage_recording,
+            credentials,
             classifier: default_classifier(),
             inner,
             session_writes,
@@ -121,6 +127,7 @@ impl ClassifierApprovalHandler {
         config: Config,
         workspace_path: PathBuf,
         usage_recording: ProviderRequestUsageRecording,
+        credentials: Arc<dyn rho_providers::credentials::CredentialStore>,
         human: Option<Arc<dyn ApprovalHandler>>,
         session_writes: Option<SessionWriteLog>,
     ) -> Arc<Self> {
@@ -128,6 +135,7 @@ impl ClassifierApprovalHandler {
             config,
             workspace_path,
             usage_recording,
+            credentials,
             human,
             session_writes,
         ))
@@ -142,6 +150,7 @@ impl ClassifierApprovalHandler {
             config: RwLock::new(Config::default()),
             workspace_path: PathBuf::from("/workspace"),
             usage_recording: ProviderRequestUsageRecording::default(),
+            credentials: Arc::new(crate::credential_store::AppCredentialStore),
             classifier,
             inner,
             session_writes: None,
@@ -154,13 +163,6 @@ impl ClassifierApprovalHandler {
     pub(crate) fn with_session_writes(mut self, session_writes: SessionWriteLog) -> Self {
         self.session_writes = Some(session_writes);
         self
-    }
-
-    pub(crate) fn update_config(&self, config: Config) {
-        *self
-            .config
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = config;
     }
 
     /// Clones classifier config for an isolated agent/command run.
@@ -196,6 +198,7 @@ impl ClassifierApprovalHandler {
             config: RwLock::new(config),
             workspace_path: self.workspace_path.clone(),
             usage_recording: self.usage_recording.clone(),
+            credentials: Arc::clone(&self.credentials),
             classifier: Arc::clone(&self.classifier),
             inner: self.inner.clone(),
             session_writes,
@@ -215,6 +218,7 @@ impl ClassifierApprovalHandler {
             request,
             workspace_path: self.workspace_path.clone(),
             usage_recording: self.usage_recording.clone(),
+            credentials: Arc::clone(&self.credentials),
         }
     }
 
@@ -331,6 +335,7 @@ fn default_classifier() -> ClassifyFn {
             let context = input.request.context();
             classify_capability_request(
                 &input.config,
+                input.credentials,
                 ClassifyRequest {
                     history: context.history(),
                     pending: &input.request,

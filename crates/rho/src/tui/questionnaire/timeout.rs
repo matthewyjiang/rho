@@ -9,8 +9,23 @@ use super::QuestionnaireComposer;
 /// no idle-resume timer that could submit a user's partially edited answers.
 #[derive(Debug)]
 pub(super) enum QuestionnaireTimer {
-    Running { opened: Instant, duration: Duration },
+    Running {
+        opened: Instant,
+        duration: Duration,
+        at_deadline: AtDeadline,
+    },
     Paused,
+}
+
+/// Who answers once a running timer reaches its deadline.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum AtDeadline {
+    /// The form submits the request's fallback itself.
+    SubmitFallback,
+    /// Someone else does, as the daemon answers a daemon session's question
+    /// itself: the form only counts down, since an answer it sent would
+    /// count as the user's own.
+    OtherAnswers,
 }
 
 impl QuestionnaireComposer {
@@ -20,7 +35,19 @@ impl QuestionnaireComposer {
             .map(|seconds| QuestionnaireTimer::Running {
                 opened: now,
                 duration: Duration::from_secs(seconds.get()),
+                at_deadline: AtDeadline::SubmitFallback,
             });
+    }
+
+    /// Counts down `remaining` until someone else answers with the
+    /// request's fallback, replacing any timer of the form's own. Any
+    /// interaction pauses it, as it pauses a timer of the form's own.
+    pub(in crate::tui) fn count_down_to_other_answer(&mut self, remaining: Duration, now: Instant) {
+        self.timeout = Some(QuestionnaireTimer::Running {
+            opened: now,
+            duration: remaining,
+            at_deadline: AtDeadline::OtherAnswers,
+        });
     }
 
     pub(in crate::tui) fn observe_input(&mut self, event: &crossterm::event::Event) {
@@ -32,7 +59,7 @@ impl QuestionnaireComposer {
 
     /// Deferred paste can edit a newly opened form without another terminal
     /// event. Keep the edit guard with the composer, not in shared paste helpers.
-    pub(super) fn pause_timeout(&mut self) {
+    pub(in crate::tui) fn pause_timeout(&mut self) {
         if self.timeout.is_some() {
             self.timeout = Some(QuestionnaireTimer::Paused);
         }
@@ -44,7 +71,9 @@ impl QuestionnaireComposer {
 
     pub(super) fn timeout_notice(&self, now: Instant) -> Option<String> {
         match self.timeout.as_ref()? {
-            QuestionnaireTimer::Running { opened, duration } => {
+            QuestionnaireTimer::Running {
+                opened, duration, ..
+            } => {
                 let remaining = duration.saturating_sub(now.saturating_duration_since(*opened));
                 let seconds = remaining
                     .as_secs()
@@ -58,7 +87,12 @@ impl QuestionnaireComposer {
     }
 
     pub(in crate::tui) fn submit_timeout_if_due(&mut self, now: Instant) -> Option<String> {
-        let Some(QuestionnaireTimer::Running { opened, duration }) = &self.timeout else {
+        let Some(QuestionnaireTimer::Running {
+            opened,
+            duration,
+            at_deadline: AtDeadline::SubmitFallback,
+        }) = &self.timeout
+        else {
             return None;
         };
         if now.saturating_duration_since(*opened) < *duration {

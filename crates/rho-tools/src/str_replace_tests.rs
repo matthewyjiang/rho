@@ -75,11 +75,6 @@ async fn replaces_unique_occurrence_with_numbered_snapshot() {
         "{}",
         outcome.content
     );
-    assert!(
-        !outcome.content.contains("[sample.txt#"),
-        "{}",
-        outcome.content
-    );
     assert!(outcome.content.contains("1:alpha delta gamma"));
     assert!(!outcome.content.contains("@@"));
     assert!(outcome.diff.contains("-alpha beta gamma"));

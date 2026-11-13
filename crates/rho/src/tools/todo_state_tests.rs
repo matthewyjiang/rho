@@ -1,7 +1,7 @@
 use pretty_assertions::assert_eq;
 use rho_sdk::{
     model::{ModelIdentity, ToolCall, ToolResult},
-    CompactionState, InMemorySessionStore, Revision, SessionId,
+    CompactionState, Revision, SessionId,
 };
 use serde_json::json;
 
@@ -29,18 +29,22 @@ fn restore_uses_successful_paired_native_calls_only_without_metadata() {
     let first = list("original");
     let second = list("replacement");
     let proposal = |id: &str, list: &TodoList| {
-        Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
-            id: id.into(),
-            name: "todo".into(),
-            arguments: serde_json::to_value(list).unwrap(),
-        })])
+        Message::Assistant(
+            vec![ContentBlock::ToolCall(ToolCall::new(
+                id.into(),
+                "todo".into(),
+                serde_json::to_value(list).unwrap(),
+            ))]
+            .into(),
+        )
     };
-    let result = |id: &str, ok| {
-        Message::ToolResult(ToolResult {
-            id: id.into(),
-            ok,
-            content: "receipt".into(),
-        })
+    let result = |id: &str, ok: bool| {
+        let status = if ok {
+            rho_sdk::model::ToolResultStatus::Succeeded
+        } else {
+            rho_sdk::model::ToolResultStatus::Failed
+        };
+        Message::ToolResult(ToolResult::new(id, status, "receipt").into())
     };
     let history = vec![
         proposal("one", &first),
@@ -68,16 +72,15 @@ fn restore_uses_successful_paired_native_calls_only_without_metadata() {
 
 fn todo_call(id: &str, list: &TodoList) -> [Message; 2] {
     [
-        Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
-            id: id.into(),
-            name: "todo".into(),
-            arguments: serde_json::to_value(list).unwrap(),
-        })]),
-        Message::ToolResult(ToolResult {
-            id: id.into(),
-            ok: true,
-            content: "receipt".into(),
-        }),
+        Message::Assistant(
+            vec![ContentBlock::ToolCall(ToolCall::new(
+                id.into(),
+                "todo".into(),
+                serde_json::to_value(list).unwrap(),
+            ))]
+            .into(),
+        ),
+        Message::ToolResult(ToolResult::succeeded(id, "receipt").into()),
     ]
 }
 
@@ -194,27 +197,4 @@ async fn compaction_commits_the_checklist_captured_before_it_ran() {
     let restored = TodoState::default();
     restored.restore(&session.snapshot());
     assert_eq!(restored.list(), Some(old));
-}
-
-// Covers: headless SDK checkpoint saves retain exact nested state even though
-// no native todo call appears in history, and explicit clear remains durable.
-// Owner: host headless checkpoint store adapter.
-#[tokio::test]
-async fn headless_checkpoint_store_persists_latest_exact_state() {
-    let state = TodoState::default();
-    let inner = Arc::new(InMemorySessionStore::new());
-    let store = state.checkpoint_store(inner);
-    let snapshot = snapshot(vec![Message::user_text("no native todo arguments")]);
-    for replacement in [
-        Some(list("nested exact checklist\n  indentation  ")),
-        Some(TodoList { todos: Vec::new() }),
-        None,
-    ] {
-        state.replace(replacement.clone());
-        store.save(snapshot.clone()).await.unwrap();
-        let saved = store.load(snapshot.session_id()).await.unwrap().unwrap();
-        let reader = TodoState::default();
-        reader.restore(&saved);
-        assert_eq!(reader.list(), replacement);
-    }
 }

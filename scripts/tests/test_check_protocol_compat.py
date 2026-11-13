@@ -1,0 +1,432 @@
+from __future__ import annotations
+
+import contextlib
+import copy
+import io
+import json
+import tempfile
+import unittest
+from collections.abc import Callable
+from pathlib import Path
+
+from scripts import check_protocol_compat
+
+COMMITTED = json.loads((check_protocol_compat.ROOT / check_protocol_compat.SCHEMA).read_text())
+# A stable release of the committed schema, whatever version that is at: the
+# rules for minors and majors start at major 1.
+MAJOR, MINOR = 1, 0
+RELEASED = {**COMMITTED, "protocol": {"major": MAJOR, "minor": MINOR}}
+
+
+def changed(change: Callable[[dict], None], *, major: int = 0, minor: int = 1) -> dict:
+    """The committed schema with `change` applied, its version raised by
+    `major` and `minor`; a new major starts its minors at 0."""
+    document = copy.deepcopy(RELEASED)
+    change(document)
+    document["protocol"] = (
+        {"major": MAJOR + major, "minor": 0} if major else {"major": MAJOR, "minor": MINOR + minor}
+    )
+    return document
+
+
+def defs(document: dict) -> dict:
+    return document["$defs"]
+
+
+def add_optional_field(document: dict) -> None:
+    defs(document)["SessionAttachParams"]["properties"]["follow"] = {"type": ["boolean", "null"]}
+
+
+def add_required_field(document: dict) -> None:
+    add_optional_field(document)
+    defs(document)["SessionAttachParams"]["required"].append("follow")
+
+
+def require_optional_field(document: dict) -> None:
+    defs(document)["SessionAttachParams"]["required"].append("after")
+
+
+def retype_tuple_position(document: dict) -> None:
+    defs(document)["DiffRow"]["properties"]["stats"]["prefixItems"][1]["type"] = "string"
+
+
+def retype_field(document: dict) -> None:
+    defs(document)["Seq"]["type"] = "string"
+
+
+def remove_event_field(document: dict) -> None:
+    for variant in defs(document)["SessionEvent"]["anyOf"]:
+        variant["properties"].pop("text", None)
+        if "text" in variant.get("required", []):
+            variant["required"].remove("text")
+
+
+def add_value(name: str) -> Callable[[dict], None]:
+    def add(document: dict) -> None:
+        enum = defs(document)[name]
+        enum.get("oneOf", enum.get("anyOf")).insert(0, {"const": "paused", "type": "string"})
+
+    return add
+
+
+def close_enum(document: dict) -> None:
+    enum = defs(document)["DetachReason"]
+    enum["anyOf"] = [variant for variant in enum["anyOf"] if "x-rho-other" not in variant]
+
+
+def remove_method(document: dict) -> None:
+    del document["methods"]["rho/session/steer"]
+
+
+def add_method(document: dict) -> None:
+    document["methods"]["rho/session/fork"] = copy.deepcopy(
+        document["methods"]["rho/session/cancel"]
+    )
+
+
+def remove_error(document: dict) -> None:
+    del document["errors"]["-32011"]
+
+
+def require_restart_cost(document: dict) -> None:
+    defs(document)["VersionMismatch"]["required"].append("restart")
+
+
+def retype_version(document: dict) -> None:
+    defs(document)["ProtocolVersion"]["properties"]["major"]["type"] = "string"
+
+
+def rename_client_field(document: dict) -> None:
+    client = defs(document)["ClientInfo"]
+    client["properties"]["build"] = client["properties"].pop("version")
+    client["required"] = ["build" if name == "version" else name for name in client["required"]]
+
+
+def refuse_unknown_fields(document: dict) -> None:
+    defs(document)["HelloResponse"]["additionalProperties"] = False
+
+
+def cap_length(document: dict) -> None:
+    defs(document)["SessionSteerParams"]["properties"]["text"]["maxLength"] = 10
+
+
+def reword(document: dict) -> None:
+    defs(document)["SessionEvent"]["description"] = "Something that happened."
+
+
+def rename_error(document: dict) -> None:
+    document["errors"]["-32003"]["name"] = "SessionUnknown"
+
+
+def inline_option(document: dict) -> None:
+    """`Option<JobId>` written as a nullable string, as `Option<String>` is."""
+    parent = defs(document)["JobSummary"]["properties"]["parent"]
+    del parent["anyOf"]
+    parent["type"] = ["string", "null"]
+
+
+def reorder_option(document: dict) -> None:
+    defs(document)["ToolCallUpdate"]["properties"]["kind"]["anyOf"].reverse()
+
+
+def unmodelled_keyword(document: dict) -> None:
+    defs(document)["SessionSteerParams"]["properties"]["text"]["if"] = {"type": "string"}
+
+
+def recursive_type(document: dict) -> None:
+    defs(document)["Cursor"]["properties"]["next"] = {"$ref": "#/$defs/Cursor"}
+
+
+def close_event(document: dict) -> None:
+    defs(document)["SessionEvent"]["additionalProperties"] = False
+
+
+def narrow_through_all_of(document: dict) -> None:
+    defs(document)["Replay"]["allOf"] = [{"enum": ["tail"]}]
+
+
+def cap_twice(document: dict) -> None:
+    text = defs(document)["SessionSteerParams"]["properties"]["text"]
+    text["maxLength"] = 10
+    text["allOf"] = [{"maxLength": 3}]
+
+
+def narrow_other(document: dict) -> None:
+    """The open enum's catch-all back to the literal it replaces."""
+    enum = defs(document)["DetachReason"]
+    other = next(variant for variant in enum["anyOf"] if "x-rho-other" in variant)
+    other["const"] = "unknown"
+
+
+def other_under_one_of(document: dict) -> None:
+    enum = defs(document)["JobKind"]
+    enum["oneOf"] = enum.pop("anyOf")
+
+
+def narrow_other_tag(document: dict) -> None:
+    enum = defs(document)["ToolContent"]
+    other = next(variant for variant in enum["anyOf"] if "x-rho-other" in variant)
+    other["properties"]["type"]["const"] = "unknown"
+
+
+class CompatibilityTests(unittest.TestCase):
+    def check(self, current: dict) -> list[str]:
+        return check_protocol_compat.check(RELEASED, current, "the release")
+
+    def test_a_minor_may_only_add(self) -> None:
+        for name, change in [
+            ("an optional field", add_optional_field),
+            ("a method", add_method),
+            ("a value of an open enum", add_value("DetachReason")),
+        ]:
+            with self.subTest(name):
+                self.assertEqual(self.check(changed(change)), [])
+
+    def test_breaking_changes_need_a_major(self) -> None:
+        for name, change, expected in [
+            (
+                "a new required field",
+                add_required_field,
+                "method rho/session/attach params.follow: added as required",
+            ),
+            (
+                "a field made required",
+                require_optional_field,
+                "method rho/session/attach params.after required: optional became required",
+            ),
+            (
+                "a retyped field",
+                retype_field,
+                "notification rho/session/event params.seq: "
+                'integer (format "uint64", minimum 0) became string (format "uint64", minimum 0)',
+            ),
+            (
+                "a removed event field",
+                remove_event_field,
+                'notification rho/session/event params.event <type="notice">.text: removed',
+            ),
+            (
+                "a value added to a closed enum",
+                add_value("Replay"),
+                'method rho/session/attach result.replay: added "paused" to a closed enum',
+            ),
+            (
+                "an open enum closed",
+                close_enum,
+                "notification rho/session/detached params.reason: "
+                'one of "daemon_stopping", "deleted", "lagged", "not_loaded", "restarting" (open) '
+                'became one of "daemon_stopping", "deleted", "lagged", "not_loaded", "restarting"',
+            ),
+            (
+                "a retyped tuple value",
+                retype_tuple_position,
+                'notification rho/session/event params.event <type="tool_call">.display <#0>.card'
+                '.body <kind="diff">.lines[].stats[1]: '
+                'integer (format "uint64", minimum 0) became string (format "uint64", minimum 0)',
+            ),
+            ("a removed method", remove_method, "method rho/session/steer params: removed"),
+            ("a removed error code", remove_error, "error -32011: removed"),
+            (
+                "unknown fields refused",
+                refuse_unknown_fields,
+                "method rho/hello result: object became object (no unknown fields)",
+            ),
+            (
+                "a constrained field",
+                cap_length,
+                "method rho/session/steer params.text: string became string (maxLength 10)",
+            ),
+        ]:
+            with self.subTest(name):
+                problems = self.check(changed(change))
+                self.assertIn(f"{expected} (needs a new protocol major)", problems)
+                self.assertEqual(self.check(changed(change, major=1)), [])
+
+    def test_any_change_to_the_wire_needs_a_new_minor(self) -> None:
+        self.assertEqual(
+            self.check(changed(add_method, minor=0)),
+            [
+                "the protocol changed since the release but PROTOCOL_VERSION is still "
+                f"{MAJOR}.{MINOR}; raise the minor"
+            ],
+        )
+
+    def test_rewrites_that_keep_the_wire_change_nothing(self) -> None:
+        for name, change in [
+            ("a description", reword),
+            ("an error's name", rename_error),
+            ("an option written as a nullable type", inline_option),
+            ("an option's variants reordered", reorder_option),
+        ]:
+            with self.subTest(name):
+                self.assertEqual(self.check(changed(change, minor=0)), [])
+
+    def test_schemas_the_check_cannot_judge_fail_loudly(self) -> None:
+        for name, change, expected in [
+            (
+                "an unmodelled keyword",
+                unmodelled_keyword,
+                "method rho/session/steer params.text: the check does not model if",
+            ),
+            (
+                "a closed tagged enum",
+                close_event,
+                "notification rho/session/event params.event: the check does not model "
+                "additionalProperties, anyOf together",
+            ),
+            (
+                "an enum narrowed through allOf",
+                narrow_through_all_of,
+                "method rho/session/attach result.replay: the check does not model enum, oneOf together",
+            ),
+            (
+                "a constraint given twice",
+                cap_twice,
+                "method rho/session/steer params.text: the check does not model two values of maxLength",
+            ),
+            (
+                "an open enum's catch-all narrowed",
+                narrow_other,
+                "notification rho/session/detached params.reason: its x-rho-other variant must be "
+                "any string or any tagged object, under anyOf",
+            ),
+            (
+                "an open enum under oneOf",
+                other_under_one_of,
+                'method rho/job/list result.jobs[].kind: its x-rho-other variant must be '
+                "any string or any tagged object, under anyOf",
+            ),
+            (
+                "an open tagged enum's catch-all tag narrowed",
+                narrow_other_tag,
+                'notification rho/session/event params.event <type="tool_call">.content[]: its '
+                "x-rho-other variant must be any string or any tagged object, under anyOf",
+            ),
+            (
+                "a recursive type",
+                recursive_type,
+                "method rho/session/attach params.after.next: Cursor contains itself; "
+                "the check does not model recursion",
+            ),
+        ]:
+            with self.subTest(name):
+                with self.assertRaises(ValueError) as raised:
+                    self.check(changed(change))
+                self.assertEqual(str(raised.exception), expected)
+
+    def test_a_field_added_to_a_closed_object_needs_a_major(self) -> None:
+        closed = changed(refuse_unknown_fields, minor=0)
+        with_field = copy.deepcopy(closed)
+        defs(with_field)["HelloResponse"]["properties"]["uptime"] = {"type": ["integer", "null"]}
+        with_field["protocol"]["minor"] += 1
+        self.assertEqual(
+            check_protocol_compat.check(closed, with_field, "the release"),
+            [
+                "method rho/hello result.uptime: added to an object that refuses unknown fields "
+                "(needs a new protocol major)"
+            ],
+        )
+
+    def test_the_version_never_goes_down(self) -> None:
+        released = changed(lambda _: None, minor=3)
+        self.assertEqual(
+            check_protocol_compat.check(released, RELEASED, "the release"),
+            [f"PROTOCOL_VERSION {MAJOR}.{MINOR} is below the release's {MAJOR}.{MINOR + 3}"],
+        )
+
+
+class UnstableProtocolTests(unittest.TestCase):
+    """Major 0, where a minor may change anything (#1776)."""
+
+    UNSTABLE = {**COMMITTED, "protocol": {"major": 0, "minor": 4}}
+
+    def at(self, change: Callable[[dict], None], major: int, minor: int) -> dict:
+        document = copy.deepcopy(self.UNSTABLE)
+        change(document)
+        document["protocol"] = {"major": major, "minor": minor}
+        return document
+
+    def check(self, current: dict) -> list[str]:
+        return check_protocol_compat.check(self.UNSTABLE, current, "the base")
+
+    def test_any_change_is_allowed_without_a_new_minor(self) -> None:
+        for name, change in [
+            ("an added method", add_method),
+            ("a removed method", remove_method),
+            ("a retyped field", retype_field),
+        ]:
+            with self.subTest(name):
+                self.assertEqual(self.check(self.at(change, 0, 4)), [])
+
+    def test_the_minor_may_be_reset_but_not_raised(self) -> None:
+        # Nothing of major 0 is released, so the beta sets its version once.
+        self.assertEqual(self.check(self.at(add_method, 0, 1)), [])
+        self.assertEqual(
+            self.check(self.at(add_method, 0, 5)),
+            [
+                "PROTOCOL_VERSION rose from 0.4 to 0.5; major 0 is unreleased, so its version "
+                "stays put until the beta sets it once"
+            ],
+        )
+
+    def test_the_handshake_may_only_gain_optional_fields(self) -> None:
+        # A client and a daemon of different versions still read these, so a
+        # new minor does not excuse breaking them. Compared by where the
+        # problem is: what it says is the stable protocol's wording.
+        for name, change, expected in [
+            (
+                "the refusal's data gains a required field",
+                require_restart_cost,
+                ["error -32001 data.restart required"],
+            ),
+            (
+                "the version a hello names is retyped",
+                retype_version,
+                [
+                    "method rho/hello params.protocol.major",
+                    "error -32001 data.client.major",
+                    "error -32001 data.daemon.major",
+                ],
+            ),
+            ("the rest of a hello changes", rename_client_field, []),
+        ]:
+            with self.subTest(name):
+                problems = self.check(self.at(change, 0, 4))
+                self.assertEqual([problem.split(":")[0] for problem in problems], expected)
+
+    def test_unstable_only_holds_a_change_to_its_base_while_both_are_unstable(self) -> None:
+        # Leaving major 0 without raising the minor of a stable protocol
+        # would fail the release rules; between two commits it breaks none.
+        stable = {**COMMITTED, "protocol": {"major": 1, "minor": 0}}
+        for name, baseline, current, expected in [
+            ("both unstable", self.UNSTABLE, self.at(remove_method, 0, 5), 1),
+            ("entering major 0", stable, self.at(remove_method, 0, 1), 0),
+            ("leaving major 0", self.UNSTABLE, self.at(remove_method, 1, 0), 0),
+            ("both stable", stable, self.at(add_method, 1, 0), 0),
+        ]:
+            with self.subTest(name), tempfile.TemporaryDirectory() as directory:
+                paths = [Path(directory) / "baseline.json", Path(directory) / "current.json"]
+                for path, document in zip(paths, [baseline, current]):
+                    path.write_text(json.dumps(document))
+                arguments = ["--baseline", str(paths[0]), "--current", str(paths[1])]
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(
+                    io.StringIO()
+                ):
+                    code = check_protocol_compat.main([*arguments, "--unstable-only"])
+                self.assertEqual(code, expected)
+
+
+class LatestReleaseTests(unittest.TestCase):
+    def test_picks_the_newest_version_not_the_last_in_text_order(self) -> None:
+        tags = [
+            "rho-coding-agent-v2.9.0",
+            "rho-coding-agent-v2.33.1",
+            "rho-coding-agent-v2.4.10",
+            "rho-sdk-v6.0.0",
+        ]
+        self.assertEqual(check_protocol_compat.latest_release(tags), "rho-coding-agent-v2.33.1")
+        self.assertIsNone(check_protocol_compat.latest_release(["rho-sdk-v6.0.0"]))
+
+
+if __name__ == "__main__":
+    unittest.main()

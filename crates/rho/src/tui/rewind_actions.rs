@@ -1,40 +1,85 @@
 use std::collections::HashMap;
 
+use rho_protocol::SessionChange;
+
 use crate::tui::DefaultTerminal;
 
 use crate::{
+    app::{
+        sdk_config::WorkspaceOptions,
+        workspace_rewind::{classification_label, limitation_label, PlannedRewind},
+    },
     commands::CommandInvocation,
     session::{
         tree::NodeId,
         workspace_checkpoint::{
-            CheckpointFileBudgetExceeded, RestoreAudit, RestoreClassification, RestorePlan,
-            WorkspaceCheckpoint,
+            CheckpointFileBudgetExceeded, RestoreClassification, RestorePlan, WorkspaceCheckpoint,
+            WorkspaceCheckpointStore,
         },
     },
 };
 
 use super::{
-    picker::OverlayChrome, App, ComposerMode, Entry, InteractiveRuntime, PickerBadge,
-    PickerBadgeTone, PickerItem, PickerLayout, UiPicker,
+    picker::OverlayChrome, App, ComposerMode, PickerBadge, PickerBadgeTone, PickerItem,
+    PickerLayout, UiPicker,
 };
 
 impl App {
+    /// The followed session's checkpoint store, or `None` when it has saved
+    /// nothing or keeps no checkpoints.
+    fn checkpoint_store(&self) -> anyhow::Result<Option<WorkspaceCheckpointStore>> {
+        match self.current_session_id() {
+            Some(id) => crate::session::Session::workspace_checkpoint_store_by_id(
+                &self.info.runtime.cwd,
+                &id,
+            ),
+            None => Ok(None),
+        }
+    }
+
     pub(super) fn execute_rewind_command(
         &mut self,
         invocation: CommandInvocation,
-        agent: &InteractiveRuntime,
     ) -> anyhow::Result<()> {
         if self.info.session.no_save {
             self.set_status("workspace rewind unavailable with --no-save");
             return Ok(());
         }
-        if !agent.workspace_rewind_enabled() {
+        // The daemon holds the session open; its checkpoints and tree are
+        // read from the files both share.
+        let checkpoints = match self.checkpoint_store()? {
+            Some(store) => store.list()?,
+            None => Vec::new(),
+        };
+        // A turn's checkpoint names the node the turn ended on, which later
+        // saves, such as a settings change, may follow.
+        let prompts = match self.current_session_id() {
+            Some(id) => crate::session::Session::turn_prompts_by_id(
+                &self.info.runtime.cwd,
+                &id,
+                checkpoints
+                    .iter()
+                    .map(|checkpoint| checkpoint.node_id.clone()),
+            )?,
+            None => HashMap::new(),
+        };
+        // The session takes the setting when it opens, so one opened after
+        // a change may have checkpoints the configured setting would not
+        // expect: the setting only explains an empty list. A config that
+        // cannot be read explains nothing.
+        if checkpoints.is_empty()
+            && self
+                .info
+                .services
+                .config_repository
+                .load()
+                .is_ok_and(|config| !config.workspace_rewind)
+        {
             self.set_status(
-                "workspace rewind is off; set behavior.workspace_rewind = true and restart Rho",
+                "workspace rewind is off; set behavior.workspace_rewind = true and start a new session",
             );
             return Ok(());
         }
-        let checkpoints = agent.workspace_checkpoints()?;
         if checkpoints.is_empty() {
             self.set_status("this session has no workspace checkpoints");
             return Ok(());
@@ -49,28 +94,17 @@ impl App {
                 "turn '{}' must match exactly one workspace checkpoint",
                 invocation.args
             );
-            return self.open_rewind_preview(matching[0].node_id.as_str(), agent);
+            return self.submit_rewind_preview(matching[0].node_id.as_str());
         }
 
-        let previews = agent
-            .stored_session()
-            .map(|storage| storage.tree_items())
-            .transpose()?
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(|item| {
-                item.first_user_text
-                    .map(|preview| (item.id.to_string(), preview))
-            })
-            .collect::<HashMap<_, _>>();
         let items = checkpoints
             .into_iter()
             .rev()
             .map(|checkpoint| {
                 let id = checkpoint.node_id.to_string();
                 let short_id = &id[..id.len().min(8)];
-                let preview = previews
-                    .get(&id)
+                let preview = prompts
+                    .get(&checkpoint.node_id)
                     .cloned()
                     .unwrap_or_else(|| format!("turn {short_id}"));
                 PickerItem {
@@ -102,23 +136,19 @@ impl App {
         Ok(())
     }
 
-    pub(super) fn submit_rewind_preview(
-        &mut self,
-        value: &str,
-        agent: &InteractiveRuntime,
-    ) -> anyhow::Result<()> {
-        self.open_rewind_preview(value, agent)
-    }
-
-    fn open_rewind_preview(
-        &mut self,
-        value: &str,
-        agent: &InteractiveRuntime,
-    ) -> anyhow::Result<()> {
+    pub(super) fn submit_rewind_preview(&mut self, value: &str) -> anyhow::Result<()> {
         let node_id = NodeId::from_string(value)?;
-        let (checkpoint, plan) = agent.preview_workspace_rewind(&node_id)?;
-        let detail = rewind_preview_text(&checkpoint, &plan, agent.workspace_path());
-        let blocked = plan.entries.iter().any(|entry| {
+        // Planned here against the files as they are; the daemon plans again
+        // when it restores.
+        let store = self
+            .checkpoint_store()?
+            .ok_or_else(|| anyhow::anyhow!("workspace rewind is unavailable for this session"))?;
+        let root = self.info.runtime.cwd.clone();
+        let workspace = WorkspaceOptions { root: root.clone() }
+            .build_workspace(&self.info.runtime.added_dirs)?;
+        let planned = PlannedRewind::new(&store, &workspace, &node_id)?;
+        let detail = rewind_preview_text(&planned.checkpoint, &planned.plan, &root);
+        let blocked = planned.plan.entries.iter().any(|entry| {
             matches!(
                 entry.classification,
                 RestoreClassification::Conflict | RestoreClassification::Unsupported
@@ -152,30 +182,18 @@ impl App {
         Ok(())
     }
 
+    /// The daemon restores the files, says what became of each, and has
+    /// every client replay the conversation it returned to.
     pub(super) async fn submit_rewind_confirmation(
         &mut self,
         value: &str,
         _terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let node_id = NodeId::from_string(value)?;
-        let result = agent.restore_workspace_rewind(&node_id).await?;
-        let conversation_selected = result.display.is_some();
-        if let Some((before, display)) = result.display {
-            let entries = self.transcript_entries(&display);
-            self.present_tree_selection(entries, &before, agent);
-        } else {
-            self.input_ui.set_composer(ComposerMode::Input);
-        }
-        self.insert_entry(&Entry::Notice(rewind_audit_text(
-            &result.audit,
-            agent.workspace_path(),
-            conversation_selected,
-        )));
-        if let Some(error) = result.selection_error {
-            return Err(error);
-        }
-        Ok(())
+        self.input_ui.set_composer(ComposerMode::Input);
+        self.configure_daemon(SessionChange::RewindWorkspace {
+            checkpoint: node_id.to_string(),
+        })
     }
 }
 
@@ -217,59 +235,4 @@ fn rewind_preview_text(
         ));
     }
     lines.join("\n")
-}
-
-fn rewind_audit_text(
-    audit: &RestoreAudit,
-    workspace: &std::path::Path,
-    conversation_selected: bool,
-) -> String {
-    let mut lines = vec![if conversation_selected {
-        "workspace rewind audit; conversation restored to before the turn".into()
-    } else {
-        "workspace rewind audit; conversation state was not selected".into()
-    }];
-    for entry in &audit.entries {
-        let result =
-            entry
-                .error
-                .as_deref()
-                .unwrap_or(if entry.changed { "restored" } else { "skipped" });
-        lines.push(format!(
-            "{}  {}  {result}",
-            classification_label(entry.classification),
-            rho_tools::compact_display_path(workspace, &entry.path.to_string_lossy())
-        ));
-    }
-    for limitation in &audit.limitations {
-        lines.push(format!(
-            "warning  {} effects from '{}' were not restored",
-            limitation_label(&limitation.kind),
-            limitation.source
-        ));
-    }
-    lines.join("\n")
-}
-
-fn classification_label(classification: RestoreClassification) -> &'static str {
-    match classification {
-        RestoreClassification::Create => "create",
-        RestoreClassification::Modify => "modify",
-        RestoreClassification::Delete => "delete",
-        RestoreClassification::Conflict => "conflict",
-        RestoreClassification::Unsupported => "unsupported",
-        RestoreClassification::Skipped => "skip",
-    }
-}
-
-fn limitation_label(
-    kind: &crate::session::workspace_checkpoint::UntrackedEffectKind,
-) -> &'static str {
-    match kind {
-        crate::session::workspace_checkpoint::UntrackedEffectKind::ShellCommand => "shell",
-        crate::session::workspace_checkpoint::UntrackedEffectKind::UntrackedMutatingTool => {
-            "process"
-        }
-        crate::session::workspace_checkpoint::UntrackedEffectKind::ExternalEffect => "external",
-    }
 }

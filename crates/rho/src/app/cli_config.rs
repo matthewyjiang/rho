@@ -2,9 +2,11 @@ use std::sync::Arc;
 
 use tracing::Instrument;
 
+use super::agent_binding::BoundAgent;
 use {
-    crate::cli::Cli,
+    crate::cli::{Cli, Command},
     crate::config::{Config, ProviderConfigs},
+    crate::diagnostics::RuntimeDiagnostics,
     crate::model_aliases::ResolvedModelReference,
     rho_providers::credentials::{self, CredentialStore},
     rho_providers::model::{
@@ -32,6 +34,9 @@ impl ProviderRefreshStatus {
 
 pub(super) fn validate(cli: &Cli) -> anyhow::Result<()> {
     if cli.no_save && cli.command.is_some() {
+        if matches!(cli.command, Some(Command::Run { .. })) {
+            anyhow::bail!("--no-save goes after run: rho run --no-save <PROMPT>");
+        }
         anyhow::bail!("--no-save is only supported for interactive sessions");
     }
     if cli.resume.is_some() && cli.command.is_some() {
@@ -48,7 +53,41 @@ pub(super) fn validate(cli: &Cli) -> anyhow::Result<()> {
             anyhow::bail!("--prompt requires non-empty prompt text");
         }
     }
+    // `rho login` saves through the daemon, under the daemon's config
+    // (#1662).
+    if let (Some(Command::Login { .. }), Some(_)) = (&cli.command, &cli.config) {
+        anyhow::bail!(
+            "rho login does not take --config: the rho daemon saves the credential under its own config"
+        );
+    }
+    // `rho acp` sessions run in the rho daemon under its config (#1670);
+    // the host picks the model and mode per session.
+    if let (Some(Command::Acp(_)), Some(flag)) = (&cli.command, acp_refused_flag(cli)) {
+        anyhow::bail!(
+            "rho acp does not take {flag}: its sessions run in the rho daemon, under its own config; choose the model and mode in the ACP host"
+        );
+    }
+    if let Some(Command::Run { detach: true, .. }) = &cli.command {
+        if let Err(refused) = super::detach::detach_flags(cli) {
+            anyhow::bail!(super::detach::refusal(&refused));
+        }
+    }
     Ok(())
+}
+
+/// The first flag given that `rho acp` cannot honor.
+fn acp_refused_flag(cli: &Cli) -> Option<&'static str> {
+    [
+        ("--provider", cli.provider.is_some()),
+        ("--model", cli.model.is_some()),
+        ("--config", cli.config.is_some()),
+        ("--auth", cli.auth.is_some()),
+        ("--reasoning", cli.reasoning.is_some()),
+        ("--permission-mode", cli.permission_mode.is_some()),
+        ("--save", cli.save),
+    ]
+    .into_iter()
+    .find_map(|(flag, given)| given.then_some(flag))
 }
 
 pub(super) async fn refresh_model_cache(
@@ -370,7 +409,7 @@ fn cli_auth_profile(cli: &Cli) -> anyhow::Result<Option<&'static provider::Provi
         .transpose()
 }
 
-pub(super) fn normalize_reasoning_for_cli(
+pub(super) fn normalize_reasoning(
     config: &mut Config,
     source: rho_providers::model::ReasoningRequestSource,
 ) -> anyhow::Result<bool> {
@@ -437,6 +476,39 @@ pub(super) async fn prepare_model_metadata(
     // it as the authoritative capability source.
 }
 
+/// A bound agent's config, settled for its session, and the diagnostics a
+/// session on it reports.
+pub(super) struct SettledConfig {
+    pub(super) config: Config,
+    pub(super) diagnostics: RuntimeDiagnostics,
+}
+
+/// Settles `config`, the config a session of `agent` runs with. Every Rho
+/// launch settles its bound agent here: the CLI, ACP, subagents, and daemon
+/// sessions.
+///
+/// The model's capabilities are fetched when the cache lacks them and
+/// `provider_refresh` did not just fetch them, and the reasoning is
+/// normalized to what the model supports, or refused when an `Explicit`
+/// request does not fit. Custom providers must be active already. The fetch
+/// signs in with `credentials`, those of whoever the session runs for.
+pub(super) async fn settle_bound_config(
+    mut config: Config,
+    agent: &BoundAgent,
+    credentials: &dyn CredentialStore,
+    provider_refresh: &ProviderRefreshStatus,
+    reasoning: rho_providers::model::ReasoningRequestSource,
+) -> anyhow::Result<SettledConfig> {
+    prepare_model_metadata(&config, credentials, provider_refresh).await;
+    normalize_reasoning(&mut config, reasoning)?;
+    let diagnostics = RuntimeDiagnostics::new(&config);
+    diagnostics.update_agent(agent.id().as_str(), &agent.fingerprint().to_string());
+    Ok(SettledConfig {
+        config,
+        diagnostics,
+    })
+}
+
 fn needs_startup_capability_refresh(
     config: &Config,
     provider_refresh: &ProviderRefreshStatus,
@@ -447,22 +519,6 @@ fn needs_startup_capability_refresh(
             .require_endpoint_login(&config.provider)
             .is_ok()
         && provider_model_capabilities_need_refresh(&config.provider, &config.model)
-}
-
-pub(super) fn normalize_reasoning(config: &mut Config) -> bool {
-    normalize_reasoning_from(
-        config,
-        rho_providers::model::ReasoningRequestSource::PersistedOrDefault,
-    )
-}
-
-fn normalize_reasoning_from(
-    config: &mut Config,
-    source: rho_providers::model::ReasoningRequestSource,
-) -> bool {
-    let capabilities = cached_reasoning_capabilities(&config.provider, &config.model);
-    let resolution = capabilities.resolve(config.reasoning, source);
-    apply_reasoning_resolution(config, resolution)
 }
 
 fn apply_reasoning_resolution(
@@ -498,7 +554,7 @@ fn apply_provider_override(
         match cached_models {
             CachedModelRequirement::Optional => None,
             CachedModelRequirement::Required => anyhow::bail!(
-                "no cached models for provider '{provider}'. Open /config and choose Refresh model lists, or pass a cached provider/model with --model"
+                "no cached models for provider '{provider}'. Run /refresh-models in the TUI, or pass a cached provider/model with --model"
             ),
         }
     };

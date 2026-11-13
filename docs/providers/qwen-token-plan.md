@@ -50,7 +50,7 @@ Rho sends the key as a Bearer token. Do not put the key in `config.toml` or comm
 
 ## Models and reasoning
 
-Use `/config` and choose **Refresh model lists** to fetch the current models for your Token Plan account. Rho maps models.dev reasoning metadata for the `alibaba-token-plan` catalog:
+Run `/refresh-models` to fetch the current models for your Token Plan account. Rho maps models.dev reasoning metadata for the `alibaba-token-plan` catalog:
 
 - `qwen3.8-max` and `qwen3.8-max-preview`: `low`, `medium`, and `xhigh` (API default is `xhigh` when the field is omitted)
 - Models that only advertise a thinking toggle may not expose a full effort cycle until models.dev lists exact effort values

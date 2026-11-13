@@ -3,7 +3,7 @@ use std::{path::Path, sync::Arc};
 use serde::Deserialize;
 
 use {
-    crate::diagnostics::RuntimeDiagnostics,
+    crate::{diagnostics::RuntimeDiagnostics, workspace::ProjectTrusts},
     rho_sdk::tool::{
         OperationKind, PreparedToolInvocation, Tool as SdkTool, ToolError as SdkToolError,
         ToolErrorKind, ToolInvocation, ToolMetadata, ToolOutput, ToolPreparationContext,
@@ -12,36 +12,51 @@ use {
     rho_tools::tool::{AppToolFuture, Tool, ToolContext, ToolError, ToolResult, ToolSpec},
 };
 
+/// The `rho` tool, whose `agents` action reads project agents under the
+/// session's `project_trust`.
 pub(super) fn sdk_bundle(
     diagnostics: RuntimeDiagnostics,
     max_output_bytes: usize,
+    project_trust: ProjectTrusts,
 ) -> super::sdk_registry::StaticToolBundle {
     super::sdk_registry::StaticToolBundle::new(vec![Arc::new(SdkRho::with_max_output_bytes(
         diagnostics,
         max_output_bytes,
+        project_trust,
     ))])
 }
 
 pub(super) struct SdkRho {
     diagnostics: RuntimeDiagnostics,
     max_output_bytes: usize,
+    /// The session's project trust.
+    project_trust: ProjectTrusts,
 }
 
 impl SdkRho {
     #[cfg(test)]
     pub(super) fn new(diagnostics: RuntimeDiagnostics) -> Self {
-        Self::with_max_output_bytes(diagnostics, rho_tools::DEFAULT_MAX_OUTPUT_BYTES)
+        Self::with_max_output_bytes(
+            diagnostics,
+            rho_tools::DEFAULT_MAX_OUTPUT_BYTES,
+            ProjectTrusts::UNTRUSTED,
+        )
     }
 
-    fn with_max_output_bytes(diagnostics: RuntimeDiagnostics, max_output_bytes: usize) -> Self {
+    fn with_max_output_bytes(
+        diagnostics: RuntimeDiagnostics,
+        max_output_bytes: usize,
+        project_trust: ProjectTrusts,
+    ) -> Self {
         Self {
             diagnostics,
             max_output_bytes: max_output_bytes.max(1),
+            project_trust,
         }
     }
 
     fn execute(&self, args: Args, cwd: Option<&Path>) -> Result<ToolOutput, SdkToolError> {
-        respond(&self.diagnostics, &args.action, cwd)
+        respond(&self.diagnostics, &args.action, cwd, self.project_trust)
             .map(|content| {
                 ToolOutput::text(rho_tools::tool::truncate(content, self.max_output_bytes))
             })
@@ -51,7 +66,7 @@ impl SdkRho {
 
 impl SdkTool for SdkRho {
     fn spec(&self) -> rho_sdk::model::ToolSpec {
-        Rho::new(self.diagnostics.clone()).spec()
+        Rho::new(self.diagnostics.clone(), self.project_trust).spec()
     }
 
     fn security(&self) -> ToolSecurity {
@@ -81,12 +96,13 @@ impl SdkTool for SdkRho {
     }
 }
 
-/// Answers one action: `agents` from disk for `cwd`, the rest from the
-/// diagnostics snapshot.
+/// Answers one action: `agents` from disk for `cwd`, project ones under
+/// `project_trust`, the rest from the diagnostics snapshot.
 fn respond(
     diagnostics: &RuntimeDiagnostics,
     action: &str,
     cwd: Option<&Path>,
+    project_trust: ProjectTrusts,
 ) -> Result<String, String> {
     if action != crate::diagnostics::AGENTS_ACTION {
         return diagnostics.response(action);
@@ -96,8 +112,8 @@ fn respond(
     let report = crate::agent::check_agents(
         cwd,
         home.as_deref(),
-        crate::workspace::ProjectTrust::from_agents_env(),
-        &crate::plugins::agent_tiers(cwd, home.as_deref()),
+        project_trust.agents,
+        &crate::plugins::agent_tiers(cwd, home.as_deref(), project_trust),
     );
     serde_json::to_string_pretty(&report).map_err(|error| error.to_string())
 }
@@ -121,11 +137,16 @@ fn parse_args(arguments: serde_json::Value) -> Result<Args, SdkToolError> {
 
 pub struct Rho {
     diagnostics: RuntimeDiagnostics,
+    /// The session's project trust.
+    project_trust: ProjectTrusts,
 }
 
 impl Rho {
-    pub fn new(diagnostics: RuntimeDiagnostics) -> Self {
-        Self { diagnostics }
+    pub fn new(diagnostics: RuntimeDiagnostics, project_trust: ProjectTrusts) -> Self {
+        Self {
+            diagnostics,
+            project_trust,
+        }
     }
 }
 
@@ -163,13 +184,14 @@ impl Tool for Rho {
     ) -> AppToolFuture<'a> {
         Box::pin(async move {
             let args: Args = serde_json::from_value(args)?;
-            let content = respond(&self.diagnostics, &args.action, Some(&ctx.cwd))
-                .map_err(ToolError::Message)?;
-            Ok(ToolResult {
-                id,
-                ok: true,
-                content,
-            })
+            let content = respond(
+                &self.diagnostics,
+                &args.action,
+                Some(&ctx.cwd),
+                self.project_trust,
+            )
+            .map_err(ToolError::Message)?;
+            Ok(ToolResult::succeeded(id, content))
         })
     }
 }

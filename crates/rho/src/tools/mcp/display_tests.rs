@@ -1,7 +1,7 @@
 use pretty_assertions::assert_eq;
 use serde_json::json;
 
-use rho_tools::tool_card::{ToolFact, ToolHeader};
+use rho_protocol::display::{ToolFact, ToolHeader};
 
 use super::{argument_summary, mcp_header_and_facts, primary_argument};
 use crate::tools::mcp::exported_name::{parse_exported_name, McpToolIdentity};

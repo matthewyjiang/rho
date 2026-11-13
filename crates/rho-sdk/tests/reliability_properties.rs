@@ -1,15 +1,15 @@
 mod support;
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::Arc};
 
 use pretty_assertions::assert_eq;
 use rho_sdk::{
     model::{
         AbortedAssistant, AssistantMessage, ContentBlock, ImageContent, Message, ModelEvent,
         ModelIdentity, ModelRequest, ModelUsage, PartialToolCall, ProviderContextBlock, ToolCall,
-        ToolResult,
+        ToolResult, ToolResultStatus,
     },
-    provider::{ModelProvider, ProviderEventSender, ProviderFuture},
+    provider::{ModelProvider, ProviderFuture, ProviderTurnContext},
     Error, RunEvent, SessionSnapshot, Workspace, SESSION_SNAPSHOT_SCHEMA_VERSION,
 };
 use serde_json::{json, Value};
@@ -68,11 +68,7 @@ fn content(rng: &mut DeterministicRng) -> ContentBlock {
             data: rng.string(48),
             mime_type: rng.string(16),
         }),
-        _ => ContentBlock::ToolCall(ToolCall {
-            id: rng.string(16),
-            name: rng.string(16),
-            arguments: rng.value(),
-        }),
+        _ => ContentBlock::ToolCall(ToolCall::new(rng.string(16), rng.string(16), rng.value())),
     }
 }
 
@@ -84,8 +80,8 @@ fn content_list(rng: &mut DeterministicRng) -> Vec<ContentBlock> {
 fn message(rng: &mut DeterministicRng) -> Message {
     match rng.usize(6) {
         0 => Message::System(rng.string(80)),
-        1 => Message::User(content_list(rng)),
-        2 => Message::Assistant(content_list(rng)),
+        1 => Message::User(content_list(rng).into()),
+        2 => Message::Assistant(content_list(rng).into()),
         3 => Message::assistant(AssistantMessage {
             content: content_list(rng),
             provenance: Some(model_identity(rng)),
@@ -95,9 +91,10 @@ fn message(rng: &mut DeterministicRng) -> Message {
                 kind: rng.string(16),
                 position: Some(rng.usize(32)),
                 data: rng.value(),
+                replay: rho_sdk::model::ReplayScope::ExactModel,
             }],
         }),
-        4 => Message::AbortedAssistant(Box::new(AbortedAssistant {
+        4 => Message::AbortedAssistant(Arc::new(AbortedAssistant {
             content: content_list(rng),
             reasoning: rng.string(32),
             provenance: Some(model_identity(rng)),
@@ -113,11 +110,18 @@ fn message(rng: &mut DeterministicRng) -> Message {
                 ..ModelUsage::default()
             },
         })),
-        _ => Message::ToolResult(ToolResult {
-            id: rng.string(16),
-            ok: rng.usize(2) == 0,
-            content: rng.string(80),
-        }),
+        _ => Message::ToolResult(
+            (ToolResult::new(
+                rng.string(16),
+                if rng.usize(2) == 0 {
+                    ToolResultStatus::Succeeded
+                } else {
+                    ToolResultStatus::Failed
+                },
+                rng.string(80),
+            ))
+            .into(),
+        ),
     }
 }
 
@@ -210,8 +214,9 @@ impl ModelProvider for FragmentProvider {
     fn send_turn_stream<'a>(
         &'a self,
         request: ModelRequest<'a>,
-        events: ProviderEventSender,
+        context: ProviderTurnContext,
     ) -> ProviderFuture<'a> {
+        let events = context.events;
         Box::pin(async move {
             for (index, id, name, arguments) in &self.fragments {
                 events

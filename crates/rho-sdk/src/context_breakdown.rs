@@ -20,16 +20,16 @@ pub enum ContextItem {
     ToolSchema { name: String },
     /// The leading system message, which holds the session system prompt.
     SystemPrompt,
-    /// A later system message in history.
+    /// A later system message in history, or a reasoning-level shift.
     System,
-    /// A user-role message that is neither a compaction summary nor a tool
-    /// image supplement. This includes context the host appended as a user message.
+    /// A user message, or host input accepted at a runtime boundary. This
+    /// includes context the host appended as a user message.
     User,
     /// A compaction summary that replaced earlier history.
     CompactionSummary,
     /// Assistant output, including reasoning replay and tool call arguments.
     Assistant,
-    /// A tool result or its image supplement. `tool` is `None` when no earlier
+    /// A tool result, including its images. `tool` is `None` when no earlier
     /// assistant tool call carries the result's id.
     ToolResult { tool: Option<String> },
     /// One request-only message from the host's [`crate::RequestContext`],
@@ -91,11 +91,12 @@ impl ContextBreakdown {
         for (index, message) in history.iter().enumerate() {
             let item = match message.semantic() {
                 SemanticMessage::System(_) if index == 0 => ContextItem::SystemPrompt,
-                SemanticMessage::System(_) => ContextItem::System,
-                SemanticMessage::User(_) if message.as_compaction_summary().is_some() => {
-                    ContextItem::CompactionSummary
+                SemanticMessage::System(_) | SemanticMessage::ReasoningShift(_) => {
+                    ContextItem::System
                 }
-                SemanticMessage::User(_) => ContextItem::User,
+                SemanticMessage::CompactionSummary(_) => ContextItem::CompactionSummary,
+                SemanticMessage::User(_) | SemanticMessage::BoundaryInput(_) => ContextItem::User,
+                SemanticMessage::ModelContext(_) => ContextItem::RequestContext,
                 SemanticMessage::Assistant(content) => {
                     record_calls(&mut call_names, content);
                     ContextItem::Assistant
@@ -110,9 +111,6 @@ impl ContextBreakdown {
                 }
                 SemanticMessage::ToolResult(result) => ContextItem::ToolResult {
                     tool: call_names.get(result.id.as_str()).cloned(),
-                },
-                SemanticMessage::ToolImageSupplement(supplement) => ContextItem::ToolResult {
-                    tool: Some(supplement.tool_name().to_owned()),
                 },
             };
             parts.push(ContextPart {

@@ -1,19 +1,33 @@
+use std::path::PathBuf;
+
 use pretty_assertions::assert_eq;
-use rho_sdk::{
-    ApprovalDecision, CapabilityRequest, CapabilitySource, NetworkTarget, PathScope,
-    ProcessEnvironment, ProcessExecution, ProcessInvocation, ProcessOutputLimits,
-};
+use rho_protocol::{ApprovalAsk, ApprovalSource, Operation, PathScope};
+use rho_sdk::ApprovalDecision;
 
 use super::{
-    render::{
-        approval_detail_page_lines, approval_details, approval_frame_for_position, approval_title,
-        format_direct_invocation,
-    },
-    ApprovalChoice,
+    render::{approval_detail_page_lines, approval_frame_for_position, format_direct_invocation},
+    ApprovalChoice, ApprovalPrompt,
 };
 
-fn source() -> CapabilitySource {
-    CapabilitySource::built_in_tool("bash")
+fn bash() -> ApprovalSource {
+    ApprovalSource::BuiltInTool {
+        name: "bash".into(),
+    }
+}
+
+fn prompt(source: ApprovalSource, operation: Operation, reason: &str) -> ApprovalPrompt {
+    ApprovalPrompt::of_daemon_ask(&ApprovalAsk {
+        source,
+        operation,
+        reason: reason.into(),
+    })
+}
+
+/// Detail rows, primary first, as flat strings.
+fn details(prompt: &ApprovalPrompt) -> Vec<String> {
+    let mut flat = prompt.details.primary.clone();
+    flat.extend(prompt.details.meta.iter().cloned());
+    flat
 }
 
 fn line_text(lines: &[ratatui::text::Line<'_>]) -> Vec<String> {
@@ -28,19 +42,28 @@ fn line_text(lines: &[ratatui::text::Line<'_>]) -> Vec<String> {
         .collect()
 }
 
-fn long_process_request() -> CapabilityRequest {
-    CapabilityRequest::process(
-        ProcessExecution::new(
-            "/work",
-            ProcessInvocation::shell_from_path(
-                "sh",
-                vec!["-c".into()],
-                "printf segment-01; printf segment-02; printf segment-03; printf segment-04; printf segment-05; echo DANGEROUS_SUFFIX_INSPECTABLE",
-            ),
-            ProcessEnvironment::Empty,
-            ProcessOutputLimits::new(1024, None),
-        ),
-        source(),
+fn write_path(path: &str) -> Operation {
+    Operation::WritePath {
+        path: path.into(),
+        scope: PathScope::Workspace,
+    }
+}
+
+fn shell(cwd: &str, program: &str, flag: &str, command: &str) -> Operation {
+    Operation::RunProcess {
+        program: program.into(),
+        args: vec![flag.into(), command.into()],
+        shell_command: Some(command.into()),
+        cwd: cwd.into(),
+    }
+}
+
+fn long_process() -> Operation {
+    shell(
+        "/work",
+        "sh",
+        "-c",
+        "printf segment-01; printf segment-02; printf segment-03; printf segment-04; printf segment-05; echo DANGEROUS_SUFFIX_INSPECTABLE",
     )
 }
 
@@ -98,15 +121,13 @@ fn direct_invocation_formatter_preserves_argument_boundaries() {
 
 #[test]
 fn every_rendered_line_respects_narrow_width() {
-    let request = CapabilityRequest::write_path(
-        "src/a-very-long-directory/main.rs",
-        PathScope::PrimaryWorkspace,
-        source(),
-    );
     let width = 14;
     let lines = approval_frame_for_position(
-        &request,
-        "a long reason that must wrap",
+        &prompt(
+            bash(),
+            write_path("src/a-very-long-directory/main.rs"),
+            "a long reason that must wrap",
+        ),
         ApprovalChoice::AllowForSession,
         0,
         width,
@@ -124,25 +145,22 @@ fn every_rendered_line_respects_narrow_width() {
 // Owner: tui approval layout
 #[test]
 fn detail_window_starts_at_head_and_grows_with_viewport() {
-    let request = long_process_request();
     let width = 40;
-    let short = line_text(
-        &approval_frame_for_position(&request, "", ApprovalChoice::Deny, 0, width, 14).lines,
-    );
-    let tall = line_text(
-        &approval_frame_for_position(&request, "", ApprovalChoice::Deny, 0, width, 60).lines,
-    );
-    let with_reason = line_text(
-        &approval_frame_for_position(
-            &request,
-            "custom audit reason",
-            ApprovalChoice::Deny,
-            0,
-            width,
-            60,
+    let frame = |reason: &str, viewport_height| {
+        line_text(
+            &approval_frame_for_position(
+                &prompt(bash(), long_process(), reason),
+                ApprovalChoice::Deny,
+                0,
+                width,
+                viewport_height,
+            )
+            .lines,
         )
-        .lines,
-    );
+    };
+    let short = frame("", 14);
+    let tall = frame("", 60);
+    let with_reason = frame("custom audit reason", 60);
 
     assert!(
         short
@@ -175,63 +193,6 @@ fn detail_window_starts_at_head_and_grows_with_viewport() {
     );
 }
 
-// Covers: env scrub lists collapse to a count; allowlists keep sanitized names;
-// process meta is one packed line with JSON via-args and raw byte limits.
-// Owner: tui approval layout
-#[test]
-fn process_meta_is_one_line_and_summarizes_env_modes() {
-    let scrubbed = CapabilityRequest::process(
-        ProcessExecution::new(
-            "/work",
-            ProcessInvocation::shell_from_path("bash", vec!["-lc".into()], "echo hi"),
-            ProcessEnvironment::InheritExcept {
-                variable_names: vec![
-                    "ANTHROPIC_API_KEY".into(),
-                    "OPENAI_API_KEY".into(),
-                    "GITHUB_COPILOT_TOKEN".into(),
-                ],
-            },
-            ProcessOutputLimits::new(64_000, None),
-        ),
-        source(),
-    );
-    let scrubbed_details = approval_details(&scrubbed);
-    assert_eq!(scrubbed_details.len(), 2, "{scrubbed_details:?}");
-    assert_eq!(scrubbed_details[0], "echo hi");
-    let scrubbed_meta = &scrubbed_details[1];
-    assert!(scrubbed_meta.contains("cwd /work"), "{scrubbed_meta}");
-    assert!(
-        scrubbed_meta.contains(r#"via ["bash", "-lc"] (PATH)"#),
-        "{scrubbed_meta}"
-    );
-    assert!(
-        scrubbed_meta.contains("env inherit (3 stripped)"),
-        "{scrubbed_meta}"
-    );
-    assert!(scrubbed_meta.contains("64000 B out"), "{scrubbed_meta}");
-    assert!(scrubbed_meta.contains("no timeout"), "{scrubbed_meta}");
-    assert!(!scrubbed_meta.contains("ANTHROPIC_API_KEY"));
-    assert!(!scrubbed_meta.contains("executable resolution:"));
-    assert!(!scrubbed_meta.contains("shell invocation"));
-
-    let allowlisted = CapabilityRequest::process(
-        ProcessExecution::new(
-            "/work",
-            ProcessInvocation::shell_from_path("bash", vec!["-lc".into()], "echo hi"),
-            ProcessEnvironment::InheritListed {
-                variable_names: vec!["PATH".into(), "HOME".into()],
-            },
-            ProcessOutputLimits::new(1024, None),
-        ),
-        source(),
-    );
-    let allowlisted_meta = &approval_details(&allowlisted)[1];
-    assert!(
-        allowlisted_meta.contains(r#"env ["PATH", "HOME"]"#),
-        "{allowlisted_meta}"
-    );
-}
-
 // Covers: every approval leads with its bare primary target (JSON argv for
 // direct processes, then path, URL, or skill name) so the user sees what is
 // being approved before any meta.
@@ -240,39 +201,31 @@ fn process_meta_is_one_line_and_summarizes_env_modes() {
 fn approvals_lead_with_the_primary_target() {
     let cases = [
         (
-            CapabilityRequest::process(
-                ProcessExecution::new(
-                    "/work",
-                    ProcessInvocation::executable(
-                        "/usr/bin/git",
-                        vec!["status".into(), "--short".into()],
-                    ),
-                    ProcessEnvironment::Empty,
-                    ProcessOutputLimits::new(2048, Some(std::time::Duration::from_secs(30))),
-                ),
-                source(),
-            ),
+            Operation::RunProcess {
+                program: "/usr/bin/git".into(),
+                args: vec!["status".into(), "--short".into()],
+                shell_command: None,
+                cwd: "/work".into(),
+            },
             r#"["/usr/bin/git", "status", "--short"]"#,
         ),
+        (write_path("src/main.rs"), "src/main.rs"),
         (
-            CapabilityRequest::write_path("src/main.rs", PathScope::PrimaryWorkspace, source()),
-            "src/main.rs",
-        ),
-        (
-            CapabilityRequest::network(NetworkTarget::Url("https://example.test".into()), source()),
+            Operation::Network {
+                url: Some("https://example.test".into()),
+            },
             "https://example.test",
         ),
         (
-            CapabilityRequest::skill(
-                "demo-skill",
-                Some(std::path::PathBuf::from("/skills/demo/SKILL.md")),
-                source(),
-            ),
+            Operation::LoadSkill {
+                name: "demo-skill".into(),
+                path: Some(PathBuf::from("/skills/demo/SKILL.md")),
+            },
             "demo-skill",
         ),
     ];
-    for (request, primary) in cases {
-        assert_eq!(approval_details(&request)[0], primary);
+    for (operation, primary) in cases {
+        assert_eq!(details(&prompt(bash(), operation, ""))[0], primary);
     }
 }
 
@@ -281,60 +234,57 @@ fn approvals_lead_with_the_primary_target() {
 // Owner: tui approval layout
 #[test]
 fn title_marks_host_provided_source_without_changing_primary() {
-    let built_in = CapabilityRequest::write_path(
-        "src/main.rs",
-        PathScope::PrimaryWorkspace,
-        CapabilitySource::built_in_tool("workspace_patch"),
+    let host_tool = |name: &str| ApprovalSource::HostTool { name: name.into() };
+    let built_in = prompt(
+        ApprovalSource::BuiltInTool {
+            name: "workspace_patch".into(),
+        },
+        write_path("src/main.rs"),
+        "",
     );
-    let host = CapabilityRequest::write_path(
-        "src/main.rs",
-        PathScope::PrimaryWorkspace,
-        CapabilitySource::host_tool("workspace_patch"),
-    );
-    let host_hostile = CapabilityRequest::process(
-        ProcessExecution::new(
-            "/work",
-            ProcessInvocation::shell_from_path("sh", vec!["-c".into()], "echo ok"),
-            ProcessEnvironment::Empty,
-            ProcessOutputLimits::new(1024, None),
-        ),
-        CapabilitySource::host_tool("evil\u{202e}tool"),
+    let host = prompt(host_tool("workspace_patch"), write_path("src/main.rs"), "");
+    let host_hostile = prompt(
+        host_tool("evil\u{202e}tool"),
+        shell("/work", "sh", "-c", "echo ok"),
+        "",
     );
 
-    assert_ne!(approval_title(&host), approval_title(&built_in));
+    assert_ne!(host.title, built_in.title);
     assert_eq!(
-        approval_title(&host_hostile),
+        host_hostile.title,
         "host evil\\u{202e}tool wants to run a command"
     );
 
     // Primary body stays the path/command; provenance lives only in the title.
-    assert_eq!(approval_details(&host), approval_details(&built_in));
-    assert_eq!(approval_details(&host_hostile)[0], "echo ok");
+    assert_eq!(details(&host), details(&built_in));
+    assert_eq!(details(&host_hostile)[0], "echo ok");
 }
 
-// Covers: paging can reach a long command suffix and the trailing meta context.
+// Covers: paging can reach a long command's suffix and its cwd meta, and an
+// oversized offset clamps onto the last window.
 // Owner: tui approval layout
 #[test]
 fn detail_paging_reaches_command_suffix_and_meta() {
-    let request = long_process_request();
     let width = 40;
     let viewport_height = 14;
-
-    let mut saw_suffix = false;
-    let mut saw_cwd = false;
-    let mut saw_earlier = false;
-    for offset in 0..32 {
-        let lines = line_text(
+    let frame = |offset| {
+        line_text(
             &approval_frame_for_position(
-                &request,
-                "",
+                &prompt(bash(), long_process(), ""),
                 ApprovalChoice::Deny,
                 offset,
                 width,
                 viewport_height,
             )
             .lines,
-        );
+        )
+    };
+
+    let mut saw_suffix = false;
+    let mut saw_cwd = false;
+    let mut saw_earlier = false;
+    for offset in 0..32 {
+        let lines = frame(offset);
         saw_suffix |= lines
             .iter()
             .any(|line| line.contains("DANGEROUS_SUFFIX_INSPECTABLE"));
@@ -358,20 +308,11 @@ fn detail_paging_reaches_command_suffix_and_meta() {
         "once scrolled past the head, the prompt should offer paging back"
     );
 
-    let end = line_text(
-        &approval_frame_for_position(
-            &request,
-            "",
-            ApprovalChoice::Deny,
-            10_000,
-            width,
-            viewport_height,
-        )
-        .lines,
-    );
+    let end = frame(10_000);
     assert!(
-        end.iter().any(|line| line.contains("cwd /work")),
-        "oversized offsets should clamp onto the trailing meta window: {end:?}"
+        end.iter()
+            .any(|line| line.contains("DANGEROUS_SUFFIX_INSPECTABLE")),
+        "oversized offsets should clamp onto the last detail window: {end:?}"
     );
     assert!(
         end.iter().any(|line| line.contains("↑ earlier")),
@@ -381,37 +322,28 @@ fn detail_paging_reaches_command_suffix_and_meta() {
 
 #[test]
 fn escapes_unicode_format_controls_in_all_security_sensitive_fields() {
-    let process = CapabilityRequest::process(
-        ProcessExecution::new(
+    let process = prompt(
+        ApprovalSource::BuiltInTool {
+            name: "ba\u{2066}sh".into(),
+        },
+        shell(
             "/work\u{202e}space",
-            ProcessInvocation::shell_from_path(
-                "sh\u{2066}",
-                vec!["-c\u{200f}".into()],
-                "echo safe\u{200f}danger",
-            ),
-            ProcessEnvironment::InheritListed {
-                variable_names: vec!["PA\u{202e}TH".into()],
-            },
-            ProcessOutputLimits::new(1024, None),
+            "sh\u{2066}",
+            "-c\u{200f}",
+            "echo safe\u{200f}danger",
         ),
-        CapabilitySource::built_in_tool("ba\u{2066}sh"),
+        "",
     );
-    let details = approval_details(&process).join("\n");
+    let shown = details(&process).join("\n");
 
-    assert_eq!(
-        approval_title(&process),
-        "ba\\u{2066}sh wants to run a command"
-    );
-    assert!(details.contains("/work\\u{202e}space"));
-    assert!(details.contains("echo safe\\u{200f}danger"));
-    assert!(details.contains("sh\\u{2066}"));
-    assert!(details.contains("-c\\u{200f}"));
-    // Allowlist names stay visible after sanitize so reviewers can audit them.
-    assert!(details.contains("PA\\u{202e}TH"));
+    assert_eq!(process.title, "ba\\u{2066}sh wants to run a command");
+    assert!(shown.contains("/work\\u{202e}space"));
+    assert!(shown.contains("echo safe\\u{200f}danger"));
+    assert!(shown.contains("sh\\u{2066}"));
+    assert!(shown.contains("-c\\u{200f}"));
 
-    let path =
-        CapabilityRequest::write_path("safe\u{202e}txt", PathScope::PrimaryWorkspace, source());
-    assert!(approval_details(&path)[0].contains("safe\\u{202e}txt"));
+    let path = prompt(bash(), write_path("safe\u{202e}txt"), "");
+    assert!(details(&path)[0].contains("safe\\u{202e}txt"));
 
     assert_eq!(
         format_direct_invocation(

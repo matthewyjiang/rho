@@ -789,19 +789,21 @@ impl Theme {
     }
 
     /// Status marker color for Call + Children tool cards.
-    pub(super) fn tool_marker(status: rho_tools::tool_card::ToolStatus) -> Style {
-        use rho_tools::tool_card::ToolStatus;
+    pub(super) fn tool_marker(status: rho_protocol::display::ToolCardStatus) -> Style {
+        use rho_protocol::display::ToolCardStatus;
         match status {
-            ToolStatus::Running => Self::accent(),
-            ToolStatus::Ok => Self::success(),
-            ToolStatus::Error => Self::error(),
-            ToolStatus::Interrupted => Self::warning(),
+            ToolCardStatus::Running => Self::accent(),
+            ToolCardStatus::Ok => Self::success(),
+            ToolCardStatus::Error => Self::error(),
+            ToolCardStatus::Interrupted => Self::warning(),
+            // `Unknown`, or a status a newer protocol adds.
+            _ => Self::dim(),
         }
     }
 
     /// Family color for the tool verb / shell prompt.
-    pub(super) fn tool_verb(family: rho_tools::tool_card::ToolFamily) -> Style {
-        use rho_tools::tool_card::ToolFamily;
+    pub(super) fn tool_verb(family: rho_protocol::display::ToolFamily) -> Style {
+        use rho_protocol::display::ToolFamily;
         let palette = Palette::current();
         match family {
             ToolFamily::FileCommand | ToolFamily::FileDiff => Style::default().fg(palette.success),
@@ -810,6 +812,8 @@ impl Theme {
             ToolFamily::Form => Style::default().fg(palette.warning),
             ToolFamily::Agent => Self::text(),
             ToolFamily::Default => Self::dim(),
+            // `Unknown`, or a family a newer protocol adds.
+            _ => Self::dim(),
         }
     }
 
@@ -843,11 +847,13 @@ impl Theme {
         Self::dim()
     }
 
-    pub(super) fn tool_exit(status: rho_tools::tool_card::ToolStatus) -> Style {
-        use rho_tools::tool_card::ToolStatus;
+    pub(super) fn tool_exit(status: rho_protocol::display::ToolCardStatus) -> Style {
+        use rho_protocol::display::ToolCardStatus;
         match status {
-            ToolStatus::Ok | ToolStatus::Running => Self::success(),
-            ToolStatus::Error | ToolStatus::Interrupted => Self::error(),
+            ToolCardStatus::Ok | ToolCardStatus::Running => Self::success(),
+            ToolCardStatus::Error | ToolCardStatus::Interrupted => Self::error(),
+            // `Unknown`, or a status a newer protocol adds.
+            _ => Self::dim(),
         }
     }
 

@@ -3,8 +3,9 @@
 //! A `tools/call` is an RPC on a session the host already owns, so the tool
 //! itself holds no process or network capability. What it does own is the live
 //! link between one invocation and the server: the progress token the server
-//! reports against, and the request handle that carries a real
-//! `notifications/cancelled` when the turn is cancelled.
+//! reports against, the request handle that carries a real
+//! `notifications/cancelled` when the turn is cancelled, and, for a server
+//! that reads it, the calling session's caller context (#1765).
 
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -14,14 +15,15 @@ use std::sync::{
 use rho_sdk::{
     model::ToolSpec,
     tool::{
-        PreparedToolInvocation, Tool, ToolContext, ToolError, ToolErrorKind, ToolInvocation,
-        ToolMetadata, ToolOutput, ToolPreparationContext, ToolPrepareFuture, ToolProgressSender,
-        ToolSecurity,
+        PreparedToolInvocation, Tool, ToolError, ToolErrorKind, ToolInvocation, ToolMetadata,
+        ToolPreparationContext, ToolPrepareFuture, ToolProgressSender, ToolSecurity,
     },
     CancellationToken,
 };
 use rmcp::{
-    model::{CallToolRequest, CallToolRequestParams, ClientRequest, ServerResult},
+    model::{
+        CallToolRequest, CallToolRequestParams, ClientRequest, RequestMetaObject, ServerResult,
+    },
     service::{PeerRequestOptions, RequestHandle, ServiceError, ServiceRole},
     Peer, RoleClient,
 };
@@ -30,6 +32,7 @@ use super::{
     config::McpTransport, definition::McpToolDefinition, inflight::McpInFlightCalls,
     progress::McpProgressRouter, result,
 };
+use crate::{caller_context::CallerContext, session_environment::SessionEnvironment};
 
 // Bound in-flight tool calls so an unresponsive server cannot hang a turn.
 pub(super) const MCP_TOOL_CALL_BUDGET: std::time::Duration = std::time::Duration::from_secs(120);
@@ -138,18 +141,38 @@ impl McpToolSlot {
     }
 }
 
-pub(crate) struct McpTool {
+pub(super) struct McpTool {
     pub(super) slot: Arc<McpToolSlot>,
     pub(super) identity: String,
     pub(super) remote_name: String,
     pub(super) peer: Peer<RoleClient>,
     pub(super) progress: McpProgressRouter,
-    /// Where this invocation publishes itself so the server's elicitation and
-    /// sampling requests can be routed back to it.
+    /// Where this invocation publishes itself so the server's elicitation
+    /// requests can be routed back to it.
     pub(super) calls: McpInFlightCalls,
     pub(super) transport: McpTransport,
     pub(super) max_output_bytes: usize,
-    pub(super) image_delivery: super::McpImageDelivery,
+    /// The session's environment, whose caller context each call sends.
+    pub(super) environment: SessionEnvironment,
+}
+
+impl McpTool {
+    /// The calling session's context as it is now, for a server that
+    /// declared it reads one ([`CallerContext::to_send`]).
+    fn caller_context(&self) -> Result<Option<CallerContext>, ToolError> {
+        let Some(info) = self.peer.peer_info() else {
+            return Ok(None);
+        };
+        CallerContext::to_send(&info.capabilities, &self.environment.current()).map_err(|error| {
+            ToolError::new(
+                ToolErrorKind::Execution,
+                format!(
+                    "could not send this session's caller context to MCP server `{}`: {error:#}",
+                    self.identity
+                ),
+            )
+        })
+    }
 }
 
 impl Tool for McpTool {
@@ -181,45 +204,6 @@ impl Tool for McpTool {
         &'a self,
         invocation: ToolInvocation,
         _context: ToolPreparationContext,
-    ) -> ToolPrepareFuture<'a> {
-        self.prepare_with_completion(invocation, None)
-    }
-}
-
-/// Whether the remote returned a tools/call result. Transport errors and
-/// cancellation do not establish completion, regardless of ToolErrorKind.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) enum McpCallCompletion {
-    #[default]
-    Unconfirmed,
-    Answered,
-}
-
-impl McpTool {
-    /// Keep provenance per invocation, separate from SDK errors and metadata.
-    /// Preparation, execution, rendering and assets use the normal MCP path.
-    pub(crate) async fn call_with_completion(
-        &self,
-        invocation: ToolInvocation,
-        context: ToolContext,
-    ) -> (McpCallCompletion, Result<ToolOutput, ToolError>) {
-        let call = ObservedCall {
-            tool: self,
-            completion: Mutex::new(McpCallCompletion::Unconfirmed),
-        };
-        let result = call.call(invocation, context).await;
-        (
-            call.completion
-                .into_inner()
-                .unwrap_or_else(|error| error.into_inner()),
-            result,
-        )
-    }
-
-    fn prepare_with_completion<'a>(
-        &'a self,
-        invocation: ToolInvocation,
-        completion: Option<&'a Mutex<McpCallCompletion>>,
     ) -> ToolPrepareFuture<'a> {
         let arguments = invocation.into_arguments();
         Box::pin(async move {
@@ -255,9 +239,7 @@ impl McpTool {
                         // when this future ends, so a server request that
                         // arrives mid-call has a caller and one that arrives
                         // after it does not.
-                        // Call-scoped registration: its token cancels when this future
-                        // ends (success, error, turn cancel, or budget), so
-                        // nested sampling cannot outlive the tools/call.
+                        let caller = self.caller_context()?;
                         let (_registration, questions) = self.calls.register();
                         let budget = CallBudget::new(MCP_TOOL_CALL_BUDGET);
                         let call = call_remote_tool(
@@ -268,12 +250,11 @@ impl McpTool {
                                 remote_name: self.remote_name.clone(),
                                 arguments,
                                 expectation,
-                                image_delivery: self.image_delivery,
+                                caller,
                             },
                             context.cancellation(),
                             Some(context.progress().clone()),
                             self.max_output_bytes,
-                            completion,
                         );
                         // The question service never finishes on its own, so
                         // the call is always what ends the select. Both are
@@ -290,36 +271,6 @@ impl McpTool {
                 },
             ))
         })
-    }
-}
-
-/// A single invocation uses the SDK preparation/authorization path while
-/// retaining transport provenance outside its public result contract.
-struct ObservedCall<'a> {
-    tool: &'a McpTool,
-    completion: Mutex<McpCallCompletion>,
-}
-
-impl Tool for ObservedCall<'_> {
-    fn spec(&self) -> ToolSpec {
-        self.tool.spec()
-    }
-
-    fn security(&self) -> ToolSecurity {
-        self.tool.security()
-    }
-
-    fn output_schema(&self) -> Option<serde_json::Value> {
-        self.tool.output_schema()
-    }
-
-    fn prepare<'a>(
-        &'a self,
-        invocation: ToolInvocation,
-        _context: ToolPreparationContext,
-    ) -> ToolPrepareFuture<'a> {
-        self.tool
-            .prepare_with_completion(invocation, Some(&self.completion))
     }
 }
 
@@ -358,7 +309,8 @@ pub(super) struct McpCall<'a> {
     pub(super) arguments: serde_json::Map<String, serde_json::Value>,
     /// What the tool's declaration says the result must contain.
     pub(super) expectation: super::result::ResultExpectation,
-    pub(super) image_delivery: super::McpImageDelivery,
+    /// The calling session's context, sent in the request's `_meta`.
+    pub(super) caller: Option<CallerContext>,
 }
 
 /// Issue one `tools/call` and return its model and script views.
@@ -372,7 +324,6 @@ pub(super) async fn call_remote_tool(
     cancellation: &CancellationToken,
     progress_sender: Option<ToolProgressSender>,
     max_output_bytes: usize,
-    completion: Option<&Mutex<McpCallCompletion>>,
 ) -> Result<rho_tools::Rendered<serde_json::Value>, ToolError> {
     let McpCall {
         peer,
@@ -381,13 +332,17 @@ pub(super) async fn call_remote_tool(
         remote_name,
         arguments,
         expectation,
-        image_delivery,
+        caller,
     } = call;
     let params = CallToolRequestParams::new(remote_name).with_arguments(arguments);
+    let mut options = PeerRequestOptions::no_options();
+    if let Some(caller) = caller {
+        options = options.with_meta(RequestMetaObject(caller.to_meta().into()));
+    }
     let mut handle = peer
         .send_cancellable_request(
             ClientRequest::CallToolRequest(CallToolRequest::new(params)),
-            PeerRequestOptions::no_options(),
+            options,
         )
         .await
         .map_err(execution_error)?;
@@ -422,11 +377,7 @@ pub(super) async fn call_remote_tool(
     };
     match response {
         Ok(Ok(ServerResult::CallToolResult(result))) => {
-            if let Some(completion) = completion {
-                *completion.lock().unwrap_or_else(|error| error.into_inner()) =
-                    McpCallCompletion::Answered;
-            }
-            result::render(result, &expectation, max_output_bytes, image_delivery)
+            result::render(result, &expectation, max_output_bytes)
         }
         Ok(Ok(_)) => Err(ToolError::new(
             ToolErrorKind::Execution,

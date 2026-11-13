@@ -129,16 +129,15 @@ async fn native_output_fit_uses_the_checklist_that_will_actually_be_retained() {
     let restatement = state.checkpoint().restatement().unwrap();
     let older = todo_state("old task").checkpoint().restatement().unwrap();
     let native_call = vec![
-        Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
-            id: "todo-1".into(),
-            name: "todo".into(),
-            arguments: serde_json::to_value(state.list().unwrap()).unwrap(),
-        })]),
-        Message::ToolResult(ToolResult {
-            id: "todo-1".into(),
-            ok: true,
-            content: "receipt".into(),
-        }),
+        Message::Assistant(
+            vec![ContentBlock::ToolCall(ToolCall::new(
+                "todo-1".into(),
+                "todo".into(),
+                serde_json::to_value(state.list().unwrap()).unwrap(),
+            ))]
+            .into(),
+        ),
+        Message::ToolResult(ToolResult::succeeded("todo-1", "receipt").into()),
     ];
     let base = Message::assistant_text("native replacement");
     let cleared = todo_state("unused");

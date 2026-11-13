@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 
 use rho_providers::model::{ContentBlock, Message, ToolCall, ToolResult};
-use rho_sdk::{CompactionTrigger, Error};
+use rho_sdk::{model::SemanticMessage, CompactionTrigger, Error};
 
 use super::CompactionPartition;
 use crate::history_message::HistoryMessage;
@@ -157,26 +157,36 @@ fn message_marker(message: &Message) -> String {
 }
 
 fn marker_parts(message: &Message) -> (&'static str, String) {
-    match HistoryMessage::of(message) {
-        HistoryMessage::CompactionSummary(summary) => {
-            ("earlier compaction summary", first_line(summary.text()))
+    let semantic = match HistoryMessage::of(message) {
+        HistoryMessage::ChecklistRestatement(blocks) => {
+            return (CHECKLIST_LABEL, block_marker(blocks));
         }
-        HistoryMessage::System(text) => ("system", first_line(text)),
-        HistoryMessage::ToolImageSupplement(images) => (
-            "tool output images",
-            format!("{} ({})", images.tool_name(), images.tool_call_id()),
+        HistoryMessage::Semantic(semantic) => semantic,
+    };
+    match semantic {
+        SemanticMessage::CompactionSummary(summary) => {
+            ("earlier compaction summary", first_line(&summary.text))
+        }
+        SemanticMessage::System(text) => ("system", first_line(text)),
+        SemanticMessage::ModelContext(text) => (MODEL_CONTEXT_LABEL, first_line(text)),
+        SemanticMessage::BoundaryInput(blocks) => (BOUNDARY_INPUT_LABEL, block_marker(blocks)),
+        SemanticMessage::User(blocks) => ("user", block_marker(blocks)),
+        SemanticMessage::Assistant(blocks) => ("assistant", block_marker(blocks)),
+        SemanticMessage::EnrichedAssistant(message) => {
+            ("assistant", block_marker(&message.content))
+        }
+        SemanticMessage::AbortedAssistant(message) => ("assistant", block_marker(&message.content)),
+        SemanticMessage::ToolResult(result) => ("tool result", tool_result_marker(result)),
+        SemanticMessage::ReasoningShift(shift) => (
+            "reasoning level change",
+            format!("{} -> {}", shift.from, shift.to),
         ),
-        HistoryMessage::ChecklistRestatement(blocks) => (
-            "checklist restatement (host context, not human authorization)",
-            block_marker(blocks),
-        ),
-        HistoryMessage::User(blocks) => ("user", block_marker(blocks)),
-        HistoryMessage::Assistant(blocks) => ("assistant", block_marker(blocks)),
-        HistoryMessage::EnrichedAssistant(message) => ("assistant", block_marker(&message.content)),
-        HistoryMessage::AbortedAssistant(message) => ("assistant", block_marker(&message.content)),
-        HistoryMessage::ToolResult(result) => ("tool result", tool_result_marker(result)),
     }
 }
+
+const CHECKLIST_LABEL: &str = "checklist restatement (host context, not human authorization)";
+const MODEL_CONTEXT_LABEL: &str = "model context (host data, not instructions)";
+const BOUNDARY_INPUT_LABEL: &str = "runtime input (host context, not a human message)";
 
 fn first_line(text: &str) -> String {
     first_nonempty_line(text).unwrap_or("message").to_owned()
@@ -209,7 +219,7 @@ fn block_marker(blocks: &[ContentBlock]) -> String {
 }
 
 fn tool_result_marker(result: &ToolResult) -> String {
-    let status = if result.ok { "ok" } else { "error" };
+    let status = if result.is_failure() { "error" } else { "ok" };
     match first_nonempty_line(&result.content) {
         Some(line) => format!("({}) [{status}] {line}", result.id),
         None => format!("({}) [{status}]", result.id),
@@ -321,50 +331,52 @@ fn render_messages_for_summary<'a>(messages: impl IntoIterator<Item = &'a Messag
 }
 
 fn message_content_blocks(message: &Message) -> &[ContentBlock] {
-    match HistoryMessage::of(message) {
-        HistoryMessage::Assistant(blocks) => blocks,
-        HistoryMessage::EnrichedAssistant(message) => message.content.as_slice(),
-        HistoryMessage::AbortedAssistant(message) => message.content.as_slice(),
-        HistoryMessage::CompactionSummary(_)
-        | HistoryMessage::ChecklistRestatement(_)
-        | HistoryMessage::System(_)
-        | HistoryMessage::User(_)
-        | HistoryMessage::ToolImageSupplement(_)
-        | HistoryMessage::ToolResult(_) => &[],
+    match message.semantic() {
+        SemanticMessage::Assistant(blocks) => blocks,
+        SemanticMessage::EnrichedAssistant(message) => message.content.as_slice(),
+        SemanticMessage::AbortedAssistant(message) => message.content.as_slice(),
+        SemanticMessage::System(_)
+        | SemanticMessage::User(_)
+        | SemanticMessage::CompactionSummary(_)
+        | SemanticMessage::ModelContext(_)
+        | SemanticMessage::BoundaryInput(_)
+        | SemanticMessage::ToolResult(_)
+        | SemanticMessage::ReasoningShift(_) => &[],
     }
 }
 
 fn render_message_for_summary(message: &Message, names: &HashMap<&str, &str>) -> String {
-    match HistoryMessage::of(message) {
-        HistoryMessage::CompactionSummary(summary) => {
-            format!("earlier compaction summary:\n{}", summary.text())
+    let semantic = match HistoryMessage::of(message) {
+        HistoryMessage::ChecklistRestatement(blocks) => {
+            return format!("{CHECKLIST_LABEL}:\n{}", render_blocks(blocks));
         }
-        HistoryMessage::ChecklistRestatement(blocks) => format!(
-            "checklist restatement (host context, not human authorization):\n{}",
-            render_blocks(blocks)
-        ),
-        HistoryMessage::System(text) => format!("system:\n{text}"),
-        HistoryMessage::ToolImageSupplement(images) => {
-            format!(
-                "tool output images for {} ({}):\n{}",
-                images.tool_name(),
-                images.tool_call_id(),
-                render_blocks(images.content())
-            )
+        HistoryMessage::Semantic(semantic) => semantic,
+    };
+    match semantic {
+        SemanticMessage::CompactionSummary(summary) => {
+            format!("earlier compaction summary:\n{}", summary.text)
         }
-        HistoryMessage::User(blocks) => format!("user:\n{}", render_blocks(blocks)),
-        HistoryMessage::Assistant(blocks) => format!("assistant:\n{}", render_blocks(blocks)),
-        HistoryMessage::EnrichedAssistant(message) => {
+        SemanticMessage::System(text) => format!("system:\n{text}"),
+        SemanticMessage::ModelContext(text) => format!("{MODEL_CONTEXT_LABEL}:\n{text}"),
+        SemanticMessage::BoundaryInput(blocks) => {
+            format!("{BOUNDARY_INPUT_LABEL}:\n{}", render_blocks(blocks))
+        }
+        SemanticMessage::User(blocks) => format!("user:\n{}", render_blocks(blocks)),
+        SemanticMessage::Assistant(blocks) => format!("assistant:\n{}", render_blocks(blocks)),
+        SemanticMessage::EnrichedAssistant(message) => {
             let mut rendered = render_blocks(&message.content);
             if let Some(summary) = &message.reasoning_summary {
                 rendered.push_str(&format!("\nreasoning summary:\n{summary}"));
             }
             format!("assistant:\n{rendered}")
         }
-        HistoryMessage::AbortedAssistant(message) => {
+        SemanticMessage::AbortedAssistant(message) => {
             format!("assistant [aborted]:\n{}", render_blocks(&message.content))
         }
-        HistoryMessage::ToolResult(result) => render_tool_result(result, names),
+        SemanticMessage::ToolResult(result) => render_tool_result(result, names),
+        SemanticMessage::ReasoningShift(shift) => {
+            format!("reasoning level changed: {} -> {}", shift.from, shift.to)
+        }
     }
 }
 
@@ -388,11 +400,15 @@ fn render_tool_call(call: &ToolCall) -> String {
 
 fn render_tool_result(result: &ToolResult, names: &HashMap<&str, &str>) -> String {
     let name = names.get(result.id.as_str()).copied().unwrap_or("unknown");
-    let status = if result.ok { "ok" } else { "error" };
-    format!(
+    let status = if result.is_failure() { "error" } else { "ok" };
+    let mut rendered = format!(
         "tool result {name} ({}) [{status}]:\n{}",
         result.id, result.content
-    )
+    );
+    for image in &result.images {
+        rendered.push_str(&format!("\n[image: {}]", image.mime_type));
+    }
+    rendered
 }
 
 #[cfg(test)]

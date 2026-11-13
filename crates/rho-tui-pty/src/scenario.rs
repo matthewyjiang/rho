@@ -61,7 +61,7 @@ pub struct Scenario {
     /// Extra environment pairs layered on the matrix launch plan, for scenarios
     /// that need a startup state the isolated home cannot express.
     pub env: &'static [(&'static str, &'static str)],
-    /// Extra CLI args after the matrix `--config` launch args.
+    /// Extra CLI args for the matrix launch plan.
     pub args: &'static [&'static str],
     pub steps: &'static [Step],
     pub smoke: bool,

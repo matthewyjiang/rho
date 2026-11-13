@@ -79,11 +79,24 @@ impl App {
                 UiOutput::InfoRuntimes(result).into()
             });
         if self.info_tree_loading() {
-            let Some(session_id) = self.info.session.session_id.clone() else {
+            let Some(session_id) = self.current_session_id() else {
                 return;
             };
             self.spawn_info_tree_read(session_id);
         }
+    }
+
+    /// Fills the Compaction section of an open overlay with what the daemon
+    /// answered.
+    pub(super) fn apply_info_compaction(
+        &mut self,
+        report: Result<crate::app::compaction_report::CompactionReport, String>,
+    ) {
+        let ComposerMode::Panel(PanelOverlay::Info(overlay)) = self.input_ui.composer_mut() else {
+            return;
+        };
+        overlay.info.set_compaction(report);
+        overlay.panel.pointer.clear_selection();
     }
 
     fn spawn_info_tree_read(&mut self, session_id: String) {
@@ -98,6 +111,7 @@ impl App {
     /// Drop the refresh tasks. Called once the overlay has left the composer.
     fn end_info_overlay(&mut self) {
         self.info_tree_deferred = false;
+        self.info_compaction_read = Default::default();
         self.abort_info_refresh();
     }
 
@@ -157,7 +171,7 @@ impl App {
         ) {
             return false;
         }
-        let Some(session_id) = self.info.session.session_id.clone() else {
+        let Some(session_id) = self.current_session_id() else {
             return false;
         };
         self.mark_info_tree_loading();

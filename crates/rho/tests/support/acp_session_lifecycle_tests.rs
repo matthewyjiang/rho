@@ -1,5 +1,6 @@
 //! Session history lifecycle over the real stdio server: deleting, listing
-//! with workspace roots, and resuming saved sessions.
+//! with workspace roots, resuming saved sessions, and sharing a session
+//! between processes.
 
 use pretty_assertions::assert_eq;
 use serde_json::{json, Value};
@@ -101,7 +102,7 @@ fn delete_converges_whatever_the_session_state() {
 #[test]
 fn listed_roots_round_trip_through_load() {
     let workspace = Workspace::new();
-    let gone = workspace.home.path().canonicalize().unwrap().join("gone");
+    let gone = workspace.home.home.canonicalize().unwrap().join("gone");
     std::fs::create_dir_all(&gone).unwrap();
     let (mut server, _) = initialized(&workspace);
     let session_id = new_session(&mut server, &workspace, json!([workspace.extra, gone]));
@@ -183,4 +184,37 @@ fn resume_restores_the_saved_session_without_replay() {
         .filter(|update| update["sessionUpdate"] == "user_message_chunk")
         .count();
     assert_eq!(replayed_prompts, 2, "{replay:#?}");
+}
+
+// Covers: `rho acp` processes are clients of one daemon session, so a
+// session live in one loads in another without waiting for it to close,
+// replaying what it saved; and `session/close` only detaches the closing
+// process (it neither deletes nor unloads the session), so the other
+// prompts on after the first exits. This is the order a host such as T3 Code
+// may use to restart an agent: `session/load` in a new process, then the old
+// one closes it and quits.
+// Owner: ACP session attach and close over the daemon, across real processes
+#[test]
+fn a_session_open_in_one_process_loads_in_another() {
+    let workspace = Workspace::new();
+    let (mut first, _) = initialized(&workspace);
+    let session_id = new_session(&mut first, &workspace, json!([]));
+    first.prompt(&session_id, "read the shared notes");
+
+    let (mut second, _) = initialized(&workspace);
+    let reopen = json!({"sessionId": session_id, "cwd": workspace.project, "mcpServers": []});
+    let (loaded, replay) = second.request("session/load", reopen);
+    loaded.unwrap();
+    let replayed_prompts = replay
+        .iter()
+        .filter(|update| update["sessionUpdate"] == "user_message_chunk")
+        .count();
+    assert_eq!(replayed_prompts, 1, "{replay:#?}");
+
+    let (closed, _) = first.request("session/close", json!({"sessionId": session_id}));
+    closed.unwrap();
+    first.quit();
+    // `prompt` panics unless the turn ends; a deleted or unloaded session
+    // would refuse it.
+    second.prompt(&session_id, "still here?");
 }

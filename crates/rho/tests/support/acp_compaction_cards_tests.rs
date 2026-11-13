@@ -3,26 +3,26 @@
 //! the rest.
 
 use pretty_assertions::assert_eq;
+use rho_tui_pty::IsolatedHome;
 use serde_json::{json, Value};
-use tempfile::TempDir;
 
 use super::AcpServer;
 
 /// A fixture home whose model has `window` usable tokens, so a small window
 /// makes every prompt compact automatically.
-fn server(window: Option<u32>) -> (TempDir, AcpServer) {
-    let home = TempDir::new().unwrap();
-    let rho_home = home.path().join(".rho");
+fn server(window: Option<u32>) -> (IsolatedHome, AcpServer) {
+    let home = IsolatedHome::new().unwrap();
+    let rho_home = home.rho_home();
     std::fs::create_dir_all(&rho_home).unwrap();
     std::fs::write(
-        home.path().join("config.toml"),
-        r#"provider = "xai"
+        &home.config_path,
+        r#"[model]
+provider = "xai"
 model = "grok-fixture"
 auth = "xai-oauth"
 
 [web_search]
-hosted = false
-provider = "disabled"
+mode = "off"
 "#,
     )
     .unwrap();
@@ -33,9 +33,7 @@ provider = "disabled"
         )
         .unwrap();
     }
-    let project = home.path().join("project");
-    std::fs::create_dir_all(&project).unwrap();
-    let server = AcpServer::spawn(home.path(), &project, "fixed", &project);
+    let server = AcpServer::spawn(&home, "fixed", &home.workspace);
     (home, server)
 }
 
@@ -99,8 +97,9 @@ fn agent_text(updates: &[Value]) -> Vec<&str> {
 
 // Covers: `/compact` must report as one compaction card that opens in
 // progress and completes, with no status text posing as the retained
-// summary, when the host advertised compaction, and as the agent message otherwise (ACP forbids the card
-// then), so the capability negotiated at initialize reaches the session.
+// summary, only when the host advertised compaction (ACP forbids the card
+// otherwise), so the capability negotiated at initialize reaches the
+// session. Every host gets what the compaction did as the agent message.
 // Owner: ACP session updates, over the real stdio server
 #[test]
 fn manual_compaction_reports_a_card_only_to_hosts_that_advertise_it() {
@@ -112,12 +111,12 @@ fn manual_compaction_reports_a_card_only_to_hosts_that_advertise_it() {
                 ("in_progress".to_owned(), false),
                 ("completed".to_owned(), false),
             ],
-            0,
+            1,
         ),
         ("baseline host", json!({}), Vec::new(), 1),
     ] {
         let (home, mut server) = server(None);
-        let cwd = home.path().join("project");
+        let cwd = home.workspace.clone();
         let session_id = start_session(&mut server, capabilities, &cwd);
         prompt(&mut server, &session_id, "hello");
         let updates = prompt(&mut server, &session_id, "/compact");
@@ -135,7 +134,7 @@ fn manual_compaction_reports_a_card_only_to_hosts_that_advertise_it() {
 #[test]
 fn automatic_compaction_reports_a_card() {
     let (home, mut server) = server(Some(1_000));
-    let cwd = home.path().join("project");
+    let cwd = home.workspace.clone();
     let session_id = start_session(&mut server, json!({"session": {"compaction": {}}}), &cwd);
     let mut lifecycles = Vec::new();
     for text in ["hello", "again"] {

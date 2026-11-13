@@ -1,11 +1,8 @@
 //! Builds structured [`ToolCard`] values for interactive tool presentation.
 
+use rho_protocol::display::{ToolBody, ToolCard, ToolCardStatus, ToolFact, ToolFamily, ToolHeader};
 use rho_sdk::tool::{OperationKind, ToolMetadata, ToolProgress};
-use rho_tools::{
-    resolve_path,
-    tool::compact_display_path,
-    tool_card::{ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus},
-};
+use rho_tools::{resolve_path, tool::compact_display_path};
 
 #[path = "interactive_presenter_results.rs"]
 mod results;
@@ -28,50 +25,17 @@ use str_replace_format::str_replace_card;
 mod plan_exit_format;
 
 use super::{
-    agent_format, codemode_format, sessions_format, todo_format, tool_search_format,
-    PresentedToolCard, ToolBodySyntax, ToolKind, ToolPresentation, ToolView,
+    agent_format, codemode_format, sessions_format, todo_format, tool_search_format, ToolKind,
+    ToolPresentation, ToolView,
 };
 use crate::tools::mcp::exported_name::McpToolNames;
-
-pub(super) fn body_syntax(kind: &ToolKind) -> ToolBodySyntax {
-    match kind {
-        ToolKind::Codemode => codemode_format::body_syntax(super::ToolBodyWindow::Head),
-        ToolKind::Advisor
-        | ToolKind::Agent
-        | ToolKind::Agents
-        | ToolKind::Bash
-        | ToolKind::PowerShell
-        | ToolKind::Process
-        | ToolKind::ListDir
-        | ToolKind::Grep
-        | ToolKind::Glob
-        | ToolKind::ReadFile
-        | ToolKind::WriteFile
-        | ToolKind::Edit(_)
-        | ToolKind::Skill
-        | ToolKind::WebSearch
-        | ToolKind::FetchContent
-        | ToolKind::GetSearchContent
-        | ToolKind::Questionnaire
-        | ToolKind::Todo
-        | ToolKind::ExitPlanMode
-        | ToolKind::Sessions
-        | ToolKind::ToolSearch
-        | ToolKind::Workflow
-        | ToolKind::Mcp(_)
-        | ToolKind::Other => ToolBodySyntax::Plain,
-    }
-}
 
 pub(super) fn presentation(view: &ToolView, mut card: ToolCard) -> ToolPresentation {
     card.push_notice_facts(view.metadata.presentation_notices());
     // Metadata can refine Process/Other family after start; keep builders honest.
     card.family = family_for_kind(&view.kind, Some(&view.metadata));
     ToolPresentation {
-        card: PresentedToolCard {
-            card,
-            body_syntax: body_syntax(&view.kind),
-        },
+        card,
         image_asset: view
             .metadata
             .assets()
@@ -82,11 +46,15 @@ pub(super) fn presentation(view: &ToolView, mut card: ToolCard) -> ToolPresentat
 }
 
 /// Build a card with a real family so intermediate state stays renderable.
-pub(super) fn draft_card(status: ToolStatus, family: ToolFamily, header: ToolHeader) -> ToolCard {
+pub(super) fn draft_card(
+    status: ToolCardStatus,
+    family: ToolFamily,
+    header: ToolHeader,
+) -> ToolCard {
     ToolCard::new(status, family, header)
 }
 
-fn kind_card(status: ToolStatus, kind: &ToolKind, header: ToolHeader) -> ToolCard {
+fn kind_card(status: ToolCardStatus, kind: &ToolKind, header: ToolHeader) -> ToolCard {
     draft_card(status, family_for_kind(kind, None), header)
 }
 
@@ -96,9 +64,25 @@ pub(super) fn start_card(view: &ToolView, cwd: &std::path::Path) -> ToolCard {
         &view.name,
         Some(&view.arguments),
         cwd,
-        ToolStatus::Running,
+        ToolCardStatus::Running,
     );
     with_summary_primary(&view.kind, &view.metadata, card)
+}
+
+/// [`start_card`] for a call that already ran, as a saved transcript shows
+/// it. The file a `str_replace` changed no longer shows the change the call
+/// was about to make, so its card projects the call's arguments instead,
+/// the same each time it is drawn.
+pub(super) fn saved_start_card(view: &ToolView, cwd: &std::path::Path) -> ToolCard {
+    match &view.kind {
+        ToolKind::Edit(rho_tools::EditFormat::StrReplace) => str_replace_card(
+            &view.arguments,
+            cwd,
+            ToolCardStatus::Running,
+            /*live_file*/ None,
+        ),
+        _ => start_card(view, cwd),
+    }
 }
 
 /// Generic tools describe a call through metadata; a `command_summary` fills
@@ -139,6 +123,32 @@ pub(crate) fn call_header(
     with_summary_primary(&kind, metadata, card).header
 }
 
+/// The finished card of hosted tool `name`, which the provider ran itself,
+/// such as `web_search`, with `detail` from its activity: a verb-only
+/// header, then the detail when present, then "finished". The header keeps
+/// operator-heavy queries out of `verb(primary)` parens and gives every
+/// hosted lookup the same chrome. Hosted lookups return no result body to
+/// the client, so the "finished" fact keeps the card from being a bare
+/// header.
+pub(crate) fn hosted_activity_card(name: &str, detail: &str) -> ToolCard {
+    let family = match name {
+        // Hosted X Search is a network lookup too.
+        "web_search" | "x_search" => ToolFamily::Web,
+        _ => ToolFamily::Default,
+    };
+    let mut card = ToolCard::new(ToolCardStatus::Ok, family, ToolHeader::call(name, None));
+    let detail = detail.trim();
+    if !detail.is_empty() {
+        card.push_fact(ToolFact::Text {
+            text: detail.to_owned(),
+        });
+    }
+    card.push_fact(ToolFact::Meta {
+        text: "finished".into(),
+    });
+    card
+}
+
 /// Live tool-call argument preview while the provider is still streaming
 /// JSON. Builds from the arguments alone and must not read files:
 /// [`call_header`] runs it for every ACP tool call. `trailing_line` says
@@ -155,24 +165,26 @@ pub(super) fn streaming_preview_card(
             arguments.unwrap_or(&serde_json::Value::Object(Default::default())),
         ),
         ToolKind::Edit(format) => arguments.map_or_else(
-            || kind_card(ToolStatus::Running, kind, ToolHeader::call(name, None)),
+            || kind_card(ToolCardStatus::Running, kind, ToolHeader::call(name, None)),
             |arguments| match format {
-                rho_tools::EditFormat::Hashline => {
-                    edit_document_card(arguments, cwd, ToolStatus::Running)
-                }
                 rho_tools::EditFormat::ApplyPatch => {
-                    apply_patch_card(arguments, cwd, ToolStatus::Running, trailing_line)
+                    apply_patch_card(arguments, cwd, ToolCardStatus::Running, trailing_line)
                 }
                 // Streaming skips the file read; rows get numbers once proposed.
                 rho_tools::EditFormat::StrReplace => {
-                    str_replace_card(arguments, cwd, ToolStatus::Running, /*live_file*/ None)
+                    str_replace_card(
+                        arguments,
+                        cwd,
+                        ToolCardStatus::Running,
+                        /*live_file*/ None,
+                    )
                 }
                 // Published enum stays non_exhaustive; unknown future formats
-                // get a generic path/header card rather than hashline parsing.
-                _ => preview_card(kind, name, Some(arguments), cwd, ToolStatus::Running),
+                // get a generic path/header card.
+                _ => preview_card(kind, name, Some(arguments), cwd, ToolCardStatus::Running),
             },
         ),
-        _ => preview_card(kind, name, arguments, cwd, ToolStatus::Running),
+        _ => preview_card(kind, name, arguments, cwd, ToolCardStatus::Running),
     }
 }
 
@@ -181,7 +193,7 @@ pub(super) fn preview_card(
     name: &str,
     arguments: Option<&serde_json::Value>,
     cwd: &std::path::Path,
-    status: ToolStatus,
+    status: ToolCardStatus,
 ) -> ToolCard {
     let Some(arguments) = arguments else {
         return match kind {
@@ -329,10 +341,9 @@ fn edit_preview_card(
     format: rho_tools::EditFormat,
     arguments: &serde_json::Value,
     cwd: &std::path::Path,
-    status: ToolStatus,
+    status: ToolCardStatus,
 ) -> ToolCard {
     match format {
-        rho_tools::EditFormat::Hashline => edit_planned_card(arguments, cwd, status),
         rho_tools::EditFormat::ApplyPatch => apply_patch_card(
             arguments,
             cwd,
@@ -345,7 +356,7 @@ fn edit_preview_card(
             str_replace_card(arguments, cwd, status, live_file.as_deref())
         }
         // Published enum stays non_exhaustive; unknown future formats get a
-        // path header rather than hashline/document parsing.
+        // path header.
         _ => kind_card(
             status,
             &ToolKind::Edit(format),
@@ -357,49 +368,6 @@ fn edit_preview_card(
     }
 }
 
-fn edit_document_card(
-    arguments: &serde_json::Value,
-    cwd: &std::path::Path,
-    status: ToolStatus,
-) -> ToolCard {
-    let Some(input) = arguments.get("input").and_then(serde_json::Value::as_str) else {
-        return kind_card(
-            status,
-            &ToolKind::Edit(rho_tools::EditFormat::Hashline),
-            ToolHeader::call("edit", None),
-        );
-    };
-    edit_card_from_preview(rho_tools::hashline::proposed_edit(input), cwd, status)
-}
-
-/// Approval / start / interrupted cards: dry-run against live files when
-/// readable so removals are visible. Falls back to document projection per path.
-fn edit_planned_card(
-    arguments: &serde_json::Value,
-    cwd: &std::path::Path,
-    status: ToolStatus,
-) -> ToolCard {
-    let Some(input) = arguments.get("input").and_then(serde_json::Value::as_str) else {
-        return kind_card(
-            status,
-            &ToolKind::Edit(rho_tools::EditFormat::Hashline),
-            ToolHeader::call("edit", None),
-        );
-    };
-    let cwd_buf = cwd.to_path_buf();
-    let mut referenced = 0usize;
-    let planned = rho_tools::hashline::planned_edit(input, |path| {
-        if referenced >= MAX_EDIT_PLAN_FILES {
-            return None;
-        }
-        referenced += 1;
-        read_planned_edit_file(&cwd_buf, path)
-    });
-    edit_card_from_preview(planned, cwd, status)
-}
-
-/// Max files the interactive edit card will load for a live dry-run.
-const MAX_EDIT_PLAN_FILES: usize = 32;
 /// Max bytes per file for interactive edit planning (sync path).
 const MAX_EDIT_PLAN_FILE_BYTES: u64 = 1_048_576;
 
@@ -418,39 +386,6 @@ fn read_planned_edit_file(cwd: &std::path::Path, path: &str) -> Option<String> {
     std::fs::read_to_string(path_canon).ok()
 }
 
-fn edit_card_from_preview(
-    preview: rho_tools::hashline::EditPreview,
-    cwd: &std::path::Path,
-    status: ToolStatus,
-) -> ToolCard {
-    let warn_unverified = preview.warns_unverified();
-    let files = preview
-        .files
-        .into_iter()
-        .map(|mut file| {
-            file.path = compact_display_path(cwd, &file.path);
-            if let Some(source) = file.source_path.take() {
-                file.source_path = Some(compact_display_path(cwd, &source));
-            }
-            file
-        })
-        .collect::<Vec<_>>();
-    let mut card = diff_card(
-        status,
-        "edit",
-        Vec::new(),
-        files,
-        EmptyDiffState::Silent,
-        preview.truncated,
-    );
-    if warn_unverified {
-        card.push_fact(ToolFact::Meta {
-            text: rho_tools::hashline::EDIT_DOCUMENT_ONLY_NOTICE.into(),
-        });
-    }
-    card
-}
-
 pub(super) fn finished_card(
     view: &ToolView,
     content: &str,
@@ -458,7 +393,7 @@ pub(super) fn finished_card(
     cwd: &std::path::Path,
     data: Option<&serde_json::Value>,
 ) -> ToolCard {
-    let status = ToolStatus::from_finished(ok);
+    let status = ToolCardStatus::from_finished(ok);
     match &view.kind {
         ToolKind::Advisor => advisor_finished_card(content, ok),
         ToolKind::Agent => agent_format::agent_finished_card(view, content, ok),
@@ -559,12 +494,12 @@ pub(super) fn progress_card(
             return advisor_progress_card(progress);
         }
         if view.kind == ToolKind::Agent {
-            return agent_format::agent_progress_card(view, progress.text());
+            return agent_format::agent_progress_card(view, progress.message());
         }
         if view.kind == ToolKind::Codemode {
             return codemode_format::preview_card(
                 &view.arguments,
-                ToolStatus::Running,
+                ToolCardStatus::Running,
                 /*primary*/ None,
             );
         }
@@ -577,29 +512,29 @@ pub(super) fn progress_card(
             return shell_result_card(
                 prompt,
                 &view.arguments,
-                progress.text(),
-                ToolStatus::Running,
+                progress.message(),
+                ToolCardStatus::Running,
             );
         }
     }
     let mut card = view.map_or_else(
         || {
             kind_card(
-                ToolStatus::Running,
+                ToolCardStatus::Running,
                 &ToolKind::Other,
                 ToolHeader::call("tool", None),
             )
         },
         |(view, cwd)| start_card(view, cwd),
     );
-    if !progress.text().trim().is_empty() {
+    if !progress.message().trim().is_empty() {
         if card.body.is_diff() {
             // Keep an existing proposed/result diff visible; progress is metadata.
             card.push_fact(ToolFact::Meta {
-                text: progress.text().to_string(),
+                text: progress.message().to_string(),
             });
         } else {
-            card.body = ToolBody::Lines(split_body_lines(progress.text()));
+            card.body = ToolBody::Lines(split_body_lines(progress.message()));
         }
     }
     if let (Some(completed), total) = (progress.completed_units(), progress.total_units()) {
@@ -608,7 +543,7 @@ pub(super) fn progress_card(
     card
 }
 
-fn advisor_card(status: ToolStatus, detail: impl Into<String>) -> ToolCard {
+fn advisor_card(status: ToolCardStatus, detail: impl Into<String>) -> ToolCard {
     kind_card(
         status,
         &ToolKind::Advisor,
@@ -618,65 +553,28 @@ fn advisor_card(status: ToolStatus, detail: impl Into<String>) -> ToolCard {
 
 fn advisor_progress_card(progress: &ToolProgress) -> ToolCard {
     let phase = progress
-        .presentation()
+        .metadata()
         .command_summary_text()
         .unwrap_or(crate::agent::OneShotPhase::WaitingForProvider.label());
-    let mut card = advisor_card(ToolStatus::Running, phase);
-    if !progress.text().trim().is_empty() {
-        card.body = ToolBody::Lines(split_body_lines(progress.text()));
+    let mut card = advisor_card(ToolCardStatus::Running, phase);
+    if !progress.message().trim().is_empty() {
+        card.body = ToolBody::Lines(split_body_lines(progress.message()));
     }
     card
 }
 
 fn advisor_finished_card(content: &str, ok: bool) -> ToolCard {
-    let status = ToolStatus::from_finished(ok);
+    let status = ToolCardStatus::from_finished(ok);
     let mut card = advisor_card(status, if ok { "completed" } else { "failed" });
     if content.trim().is_empty() {
         return card;
     }
-    if status == ToolStatus::Error {
+    if status == ToolCardStatus::Error {
         push_error_output(&mut card, content);
     } else {
         card.body = ToolBody::Lines(split_body_lines(content));
     }
     card
-}
-
-pub(super) fn interrupted_card(
-    view: &ToolView,
-    partial_arguments: &str,
-    cwd: &std::path::Path,
-) -> ToolCard {
-    match &view.kind {
-        // A partial argument buffer for a no-argument tool is only `{}` noise.
-        ToolKind::Advisor => advisor_card(ToolStatus::Interrupted, "interrupted"),
-        ToolKind::Agent => agent_format::agent_interrupted_card(&view.arguments),
-        ToolKind::Agents => agent_format::agents_interrupted_card(&view.arguments),
-        ToolKind::Codemode => {
-            codemode_format::preview_card(&view.arguments, ToolStatus::Interrupted, None)
-        }
-        ToolKind::Workflow => crate::presentation::workflow::preview_card(
-            &view.arguments,
-            cwd,
-            ToolStatus::Interrupted,
-        ),
-        ToolKind::Edit(format) => {
-            edit_preview_card(*format, &view.arguments, cwd, ToolStatus::Interrupted)
-        }
-        _ => {
-            let mut card = preview_card(
-                &view.kind,
-                &view.name,
-                Some(&view.arguments),
-                cwd,
-                ToolStatus::Interrupted,
-            );
-            if !partial_arguments.is_empty() && card.body.is_empty() && card.facts.is_empty() {
-                card.body = ToolBody::Lines(vec![partial_arguments.to_string()]);
-            }
-            card
-        }
-    }
 }
 
 pub(super) fn family_for_kind(kind: &ToolKind, metadata: Option<&ToolMetadata>) -> ToolFamily {
@@ -777,14 +675,6 @@ pub(super) fn edit_paths(
             .unwrap_or_default()
             .into_iter()
             .map(|path| compact_display_path(cwd, &path))
-            .collect(),
-        rho_tools::EditFormat::Hashline => arguments
-            .get("input")
-            .and_then(|value| value.as_str())
-            .map(rho_tools::hashline::proposed_sections)
-            .unwrap_or_default()
-            .into_iter()
-            .map(|section| compact_display_path(cwd, &section.path))
             .collect(),
         _ => Vec::new(),
     }

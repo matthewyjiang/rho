@@ -4,7 +4,10 @@
 //! from this fixed base set. Callers add their own allowlists and overlays on
 //! top. Hooks and MCP stdio share this contract so the two cannot drift.
 
-use std::collections::BTreeMap;
+use std::{
+    ffi::OsString,
+    path::{Path, PathBuf},
+};
 
 /// Variables every sanitized child receives, on every platform.
 #[cfg(unix)]
@@ -24,29 +27,53 @@ const BASE_NAMES: &[&str] = &[
     "USERPROFILE",
 ];
 
-/// Names in the documented base set.
-pub(crate) fn base_names() -> &'static [&'static str] {
-    BASE_NAMES
-}
+// Together they locate the daemon serving the session (see [`apply_base`]).
+const RHO_HOME_NAME: &str = "RHO_HOME";
+const RUNTIME_DIR_NAME: &str = "XDG_RUNTIME_DIR";
 
-/// Builds a map of base names that are set in the parent via `read`.
-pub(crate) fn collect_base<F>(mut read: F) -> BTreeMap<String, String>
-where
-    F: FnMut(&str) -> Option<String>,
-{
+/// Names [`apply_base`] may give a child, part of the hook spawn contract
+/// that diagnostics print before a project is trusted.
+pub(crate) fn base_names() -> impl Iterator<Item = &'static str> {
     BASE_NAMES
         .iter()
         .copied()
-        .filter_map(|name| read(name).map(|value| (name.to_owned(), value)))
-        .collect()
+        .chain([RHO_HOME_NAME, RUNTIME_DIR_NAME])
 }
 
-/// Clears the child environment and installs only the base set from the parent.
-pub(crate) fn apply_base(command: &mut tokio::process::Command) {
+/// This process's rho home, as the daemon's spawner pins it: canonical, so
+/// it names the same directory from a child's working directory, and created
+/// first when it is missing. `None` when it does not resolve; only a nested
+/// `rho` reads it, so that keeps no child from starting.
+pub(crate) fn rho_home() -> Option<PathBuf> {
+    crate::paths::rho_dir()
+        .ok()
+        .and_then(|home| crate::daemon::real_home(&home).ok())
+}
+
+/// Clears the child environment and installs only the base names that `read`
+/// finds, such as a session's (see [`crate::session_environment::Ambient`]).
+/// A base name `read` does not find is absent from the child, never invented.
+///
+/// Then sets `RHO_HOME` to `rho_home` (callers pass [`rho_home`]; `None`
+/// leaves it unset) and passes on the `XDG_RUNTIME_DIR` `read` finds, which
+/// together locate the daemon serving the session, so a nested `rho` reaches
+/// it rather than the daemon of the default home or runtime directory. A
+/// client whose `XDG_RUNTIME_DIR` differs from the daemon's could not have
+/// reached it, so the session's is the daemon's.
+pub(crate) fn apply_base<F>(
+    command: &mut tokio::process::Command,
+    rho_home: Option<&Path>,
+    mut read: F,
+) where
+    F: FnMut(&str) -> Option<OsString>,
+{
     command.env_clear();
-    for name in BASE_NAMES {
-        if let Some(value) = std::env::var_os(name) {
+    for name in BASE_NAMES.iter().copied().chain([RUNTIME_DIR_NAME]) {
+        if let Some(value) = read(name) {
             command.env(name, value);
         }
+    }
+    if let Some(rho_home) = rho_home {
+        command.env(RHO_HOME_NAME, rho_home);
     }
 }

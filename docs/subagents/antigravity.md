@@ -11,7 +11,7 @@ flowchart LR
     parent[Rho parent session] --> agentTool[agent tool]
     agentTool --> agy[agy acp child]
     agy --> sub[agy Google sign-in]
-    agy --> attach[rho attach / completion]
+    agy --> attach["/attach view / completion"]
 ```
 
 ## When this is useful
@@ -72,7 +72,7 @@ flowchart TD
 
 4. **Delegate from a Rho root session** through the `agent` tool. The call returns a run ID immediately, followed by an automatic completion notification.
 
-5. **Watch and cancel** with `rho attach <run-id>`. `agents` action `message` queues plain text for a running child; Rho sends it as the next `session/prompt` once the current turn ends.
+5. **Watch and cancel** with `/attach` in the TUI or a click on the run's activity-rail row. `agents` action `message` queues plain text for a running child; Rho sends it as the next `session/prompt` once the current turn ends.
 
 ## Permission modes
 
@@ -101,13 +101,15 @@ agy's `default` mode also honors your agy `toolPermission` setting, which can ap
 | Permission mode | Plan or Bypass only |
 | Launch | Rho parent `agent` tool, delegated only |
 | Messaging | `agents` action `message`; delivered as the next turn |
-| Inspect | `rho attach <id>` |
+| Inspect | `/attach` |
 
 ## Execution details
 
 Rho runs `agy acp --cli_dir_name rho --add-dir <run>/agy --agent rho-run-<random>` in the workspace. agy 1.5.0 finds custom agents only in `.agents/agents/` under a workspace root, its global config, or a plugin, so each run writes `<run>/agy/.agents/agents/rho-run-<random>.md` under its own run directory and adds that folder to the workspace. Your project and agy configuration are untouched; the child can see the added folder, which holds only that file. The random name keeps a project's own `.agents/agents/` from supplying the agent. Its `initialize` identifies it as `rho` in `clientInfo` and advertises no client filesystem or terminal capabilities. Each ACP setup step (`initialize`, `session/new`, `session/set_mode`, `session/set_config_option`) has a 10 s budget; measured with agy 1.5.0, `initialize` took under 0.1 s and `session/new` about 1.5 s.
 
 Rho never calls ACP `authenticate` during a run. A signed-out agy fails `session/new` with `Authentication required`; run `/login antigravity`.
+
+In a [daemon](/daemon#environment) session, Rho finds `agy` on the `PATH` of the client you prompted from and runs it with that client's whole environment, credentials included.
 
 Cancel sends `session/cancel`. Rho always terminates `agy acp` after the last turn. The ACP session id is recorded but there is no resume command.
 

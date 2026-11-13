@@ -1,15 +1,12 @@
-use rho_sdk::{
-    model::{ContentBlock, ImageContent, Message},
-    CompactionTrigger,
-};
+use rho_sdk::model::{ContentBlock, Message, SemanticMessage};
 
 use super::HistoryMessage;
 
-// Covers: summaries and host-restated checklists never classify as user input,
-// while ordinary user text and tool images keep their semantic meaning.
+// Covers: host-restated checklists never classify as user input, while
+// ordinary user text keeps its semantic meaning.
 // Owner: model-history classification
 #[test]
-fn compaction_context_is_not_user_input() {
+fn checklist_restatement_is_not_user_input() {
     let todo = crate::tools::todo::TodoState::default();
     todo.replace(Some(
         crate::tools::todo::TodoList::parse(serde_json::json!({
@@ -18,42 +15,25 @@ fn compaction_context_is_not_user_input() {
         .unwrap(),
     ));
     let restatement = todo.checkpoint().restatement().unwrap();
-    let image = ImageContent {
-        data: "aW1hZ2U=".into(),
-        mime_type: "image/png".into(),
-    };
     let cases = [
         (restatement, "checklist"),
-        (
-            Message::compaction_summary(CompactionTrigger::Manual, "s"),
-            "summary",
-        ),
-        (
-            Message::user_text(
-                "Automatic compaction summary of earlier conversation for model context only:\n\nold",
-            ),
-            "summary",
-        ),
         (Message::user_text("fix the test"), "user"),
         (
-            Message::User(vec![
-                ContentBlock::Text("please compact".into()),
-                ContentBlock::Text("summary".into()),
-            ]),
+            Message::User(
+                vec![
+                    ContentBlock::Text("please compact".into()),
+                    ContentBlock::Text("summary".into()),
+                ]
+                .into(),
+            ),
             "user",
-        ),
-        (
-            Message::tool_image_supplement("computer", "call-1", vec![image]).unwrap(),
-            "tool images",
         ),
     ];
 
     for (message, expected) in cases {
         let kind = match HistoryMessage::of(&message) {
-            HistoryMessage::CompactionSummary(_) => "summary",
             HistoryMessage::ChecklistRestatement(_) => "checklist",
-            HistoryMessage::User(_) => "user",
-            HistoryMessage::ToolImageSupplement(_) => "tool images",
+            HistoryMessage::Semantic(SemanticMessage::User(_)) => "user",
             other => panic!("unexpected {other:?}"),
         };
         assert_eq!(kind, expected, "{message:?}");

@@ -11,7 +11,7 @@ use serde::Serialize;
 use crate::{
     cli::SessionsCommand,
     export::{self, ExportWriteOptions},
-    session::{is_cross_project, DeleteOptions, Session, SessionSummary},
+    session::{is_cross_project, DeleteOptions, Session, SessionListing, SessionSummary},
 };
 
 pub(super) fn run(command: &SessionsCommand) -> anyhow::Result<()> {
@@ -24,9 +24,9 @@ pub(super) fn run(command: &SessionsCommand) -> anyhow::Result<()> {
             json,
         } => {
             let mut sessions = if *all_projects {
-                Session::list_all()?
+                Session::list_all(SessionListing::PersonFacing)?
             } else {
-                Session::list(&cwd)?
+                Session::list(&cwd, SessionListing::PersonFacing)?
             };
             if let Some(query) = search.as_deref() {
                 sessions.retain(|session| session_matches(session, query));
@@ -42,11 +42,7 @@ pub(super) fn run(command: &SessionsCommand) -> anyhow::Result<()> {
             format,
             force,
         } => export_one(&cwd, id_prefix, output.as_deref(), *format, *force)?,
-        SessionsCommand::Rm { ids, force, yes } => {
-            for id in ids {
-                delete_one(&cwd, id, *force, *yes)?;
-            }
-        }
+        SessionsCommand::Rm { ids, force, yes } => delete_sessions(&cwd, ids, *force, *yes)?,
         SessionsCommand::Cleanup { force, yes } => {
             cleanup_missing_workspaces(*force, *yes)?;
         }
@@ -196,47 +192,65 @@ fn rename_one(cwd: &Path, id_prefix: &str, title: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn delete_one(cwd: &Path, id_prefix: &str, force: bool, yes: bool) -> anyhow::Result<()> {
-    // Resolve once so confirmation and deletion retain the same workspace identity.
-    let session = resolve_candidate(cwd, id_prefix)?;
-
-    if is_cross_project(&session.cwd, cwd) && !yes {
-        confirm_cross_project(&session)?;
+/// Deletes the sessions `ids` name. Every id is resolved, and confirmed
+/// when it is another workspace's, before any is deleted; they are deleted
+/// in one batch, so naming a child after the parent it went with is no
+/// failure, and one that fails does not stop the rest.
+fn delete_sessions(cwd: &Path, ids: &[String], force: bool, yes: bool) -> anyhow::Result<()> {
+    let mut targets = Vec::with_capacity(ids.len());
+    for id_prefix in ids {
+        // Resolve once so confirmation and deletion retain the same workspace identity.
+        let session = resolve_candidate(cwd, id_prefix)?;
+        if is_cross_project(&session.cwd, cwd) && !yes {
+            confirm_cross_project(&session)?;
+        }
+        targets.push(session.target());
     }
 
-    let outcome = Session::delete_target(
-        &session.target(),
+    let outcome = Session::delete_targets(
+        &targets,
         DeleteOptions {
             force,
             protected_session: None,
         },
     )?;
 
-    if !outcome.forced_run_ids.is_empty() {
-        eprintln!(
-            "warning: force-deleted non-terminal run(s): {}",
-            outcome.forced_run_ids.join(", ")
+    let counted = |count: usize, noun: &str| match count {
+        0 => String::new(),
+        1 => format!(" and 1 {noun}"),
+        count => format!(" and {count} {noun}s"),
+    };
+    for deleted in &outcome.deleted {
+        if !deleted.forced_run_ids.is_empty() {
+            eprintln!(
+                "warning: force-deleted non-terminal run(s) for session {}: {}",
+                short_id(&deleted.id),
+                deleted.forced_run_ids.join(", ")
+            );
+        }
+        println!(
+            "deleted session {} ({}){}{}",
+            short_id(&deleted.id),
+            crate::paths::display(&deleted.cwd),
+            counted(deleted.deleted_child_session_count, "child session"),
+            counted(deleted.deleted_run_count, "related run"),
         );
     }
-
-    println!(
-        "deleted session {} ({}){}",
-        short_id(&outcome.id),
-        crate::paths::display(&outcome.cwd),
-        if outcome.deleted_run_count > 0 {
-            format!(
-                " and {} related run{}",
-                outcome.deleted_run_count,
-                if outcome.deleted_run_count == 1 {
-                    ""
-                } else {
-                    "s"
-                }
-            )
-        } else {
-            String::new()
-        }
-    );
+    for failure in &outcome.failures {
+        eprintln!(
+            "could not delete session {} ({}): {}",
+            short_id(&failure.id),
+            crate::paths::display(&failure.cwd),
+            failure.error
+        );
+    }
+    if !outcome.failures.is_empty() {
+        anyhow::bail!(
+            "could not delete {} of {} session(s)",
+            outcome.failures.len(),
+            targets.len()
+        );
+    }
     Ok(())
 }
 
@@ -432,6 +446,7 @@ mod tests {
             first_user_message: Some("please fix auth".into()),
             last_user_message: Some("retry".into()),
             added_dirs: Vec::new(),
+            origin: None,
         };
         assert!(session_matches(&session, "aaaa"));
         assert!(session_matches(&session, "LOGIN"));

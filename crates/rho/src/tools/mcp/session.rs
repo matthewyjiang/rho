@@ -18,8 +18,8 @@ use rmcp::{
     model::SetLevelRequestParams,
     service::{PeerRequestOptions, RunningService},
     transport::{
-        streamable_http_client::StreamableHttpClientTransportConfig, which_command,
-        StreamableHttpClientTransport, TokioChildProcess,
+        streamable_http_client::StreamableHttpClientTransportConfig, StreamableHttpClientTransport,
+        TokioChildProcess,
     },
     Peer, RoleClient, ServiceExt,
 };
@@ -35,11 +35,10 @@ use super::{
     oauth::{self, McpAuthorizationMode, McpHttpClient},
     progress::McpProgressRouter,
     report::McpLiveServerState,
-    roots::McpRoots,
-    sampling::{McpSamplingBridge, McpSamplingService},
     tool::McpToolSlot,
-    validate,
+    validate, McpSessionOptions,
 };
+use crate::session_environment::Ambient;
 
 pub(super) type McpSession = RunningService<RoleClient, McpClientHandler>;
 
@@ -101,8 +100,6 @@ enum ToolDiscoveryError {
 #[derive(Clone, Debug)]
 pub(super) struct McpSessionServices {
     pub(super) elicitation: McpElicitationSupport,
-    /// `Some` when this run will bind a model for sampling.
-    pub(super) sampling: Option<McpSamplingBridge>,
 }
 
 /// Which optional primitives a server declared at `initialize`.
@@ -137,19 +134,27 @@ impl McpServerOffers {
     }
 }
 
-/// Establish and discover under one startup budget. After the session exists,
-/// failures and timeouts always attempt a bounded close instead of relying on
-/// Drop alone.
+/// Establish and discover under one startup budget, with the server started in,
+/// and its headers read from, the environment of `options` (#1659). After the
+/// session exists, failures and timeouts always attempt a bounded close instead
+/// of relying on Drop alone.
 pub(super) async fn connect_server_bounded(
     identity: &str,
     server: &McpServerConfig,
-    roots: &McpRoots,
-    services: &McpSessionServices,
-    authorization: McpAuthorizationMode,
+    options: &McpSessionOptions,
 ) -> ConnectResult {
+    let environment = &options.environment.current();
     // Authorization runs before the startup clock. It carries its own budgets,
     // and a browser login is a person's pace, not a server's.
-    let http_client = match resolve_http_client(identity, server, authorization).await {
+    let http_client = match resolve_http_client(
+        identity,
+        server,
+        options.authorization,
+        environment,
+        options.environment.untracked_credentials(),
+    )
+    .await
+    {
         Ok(http_client) => http_client,
         Err(error) => return ConnectResult::Failed { error },
     };
@@ -160,14 +165,20 @@ pub(super) async fn connect_server_bounded(
     let (event_sender, events) = tokio::sync::mpsc::unbounded_channel();
     let handler = McpClientHandler::new(
         identity,
-        roots.clone(),
+        options.roots.clone(),
         progress.clone(),
         event_sender,
-        client_services(identity, server, services, &calls),
+        McpClientServices {
+            elicit: McpElicitationService::new(
+                identity,
+                calls.clone(),
+                options.services.elicitation,
+            ),
+        },
     );
     let session = match tokio::time::timeout_at(
         deadline,
-        establish_session(identity, server, handler, http_client),
+        establish_session(identity, server, handler, http_client, environment),
     )
     .await
     {
@@ -254,28 +265,6 @@ async fn compile_tool_definitions(
     Ok(discovered)
 }
 
-/// Resolve what this session declares and answers for one server.
-///
-/// Sampling needs both halves of its double gate before the capability is
-/// declared: the server opted in through config, and this run has somewhere to
-/// get a model from.
-fn client_services(
-    identity: &str,
-    server: &McpServerConfig,
-    services: &McpSessionServices,
-    calls: &McpInFlightCalls,
-) -> McpClientServices {
-    let sample = services
-        .sampling
-        .clone()
-        .filter(|_| server.sampling.is_offered())
-        .map(|bridge| McpSamplingService::new(identity, server.sampling, bridge, calls.clone()));
-    McpClientServices {
-        elicit: McpElicitationService::new(identity, calls.clone(), services.elicitation),
-        sample,
-    }
-}
-
 /// Ask the server to emit logs at the configured level. A server that does not
 /// declare `logging` is left alone; asking anyway would fail the request and
 /// tell the user nothing useful.
@@ -321,12 +310,15 @@ async fn apply_log_level(
 /// Resolve the HTTP client a remote session runs on. A stdio server has none.
 ///
 /// Headers are resolved here and again when the transport is built. Resolution
-/// is a pure read of config plus the environment, so repeating it costs
-/// nothing and keeps each step's inputs local to it.
+/// is a pure read of config plus `environment`, so repeating it costs nothing
+/// and keeps each step's inputs local to it. A server's OAuth tokens are
+/// kept in `tokens`, the session's own store.
 async fn resolve_http_client(
     identity: &str,
     server: &McpServerConfig,
     authorization: McpAuthorizationMode,
+    environment: &Ambient,
+    tokens: Arc<dyn rho_providers::credentials::CredentialStore>,
 ) -> anyhow::Result<McpHttpClient> {
     let McpTransport::StreamableHttp {
         url,
@@ -342,13 +334,14 @@ async fn resolve_http_client(
         url,
         validate::McpHttpSecurity::from_allow_insecure_http(*allow_insecure_http),
     )?;
-    let headers = resolve_headers(literal_headers, headers_from_env)?;
+    let headers = resolve_headers(literal_headers, headers_from_env, environment)?;
     oauth::prepare_http_client(
         identity,
         url,
         oauth_config.as_ref(),
         &headers,
         authorization,
+        tokens,
     )
     .await
 }
@@ -358,6 +351,7 @@ async fn establish_session(
     server: &McpServerConfig,
     handler: McpClientHandler,
     http_client: McpHttpClient,
+    environment: &Ambient,
 ) -> anyhow::Result<McpSession> {
     prepare_server_filesystem(server)?;
     match &server.transport {
@@ -371,15 +365,27 @@ async fn establish_session(
             if command.trim().is_empty() {
                 bail!("stdio command must not be empty");
             }
-            let mut command = which_command(command)
+            // Looked up on the session's `PATH`; a path with a separator
+            // resolves against this process's working directory.
+            let working_directory = std::env::current_dir().with_context(|| {
+                format!("cannot read the working directory to find MCP executable `{command}`")
+            })?;
+            let executable = which::which_in(command, environment.path(), working_directory)
                 .with_context(|| format!("MCP executable `{command}` was not found"))?;
+            let mut command = tokio::process::Command::new(executable);
             command.args(args);
             if let Some(cwd) = cwd {
                 command.current_dir(cwd);
             }
             // Start from the shared sanitized base. Servers opt into all other
             // inherited variables through `env_from_env`.
-            apply_stdio_environment(&mut command, env, env_from_env)?;
+            apply_stdio_environment(
+                &mut command,
+                env,
+                env_from_env,
+                environment,
+                crate::child_env::rho_home().as_deref(),
+            )?;
             // Servers and anything they launch must not take over the TUI's terminal.
             #[cfg(unix)]
             rho_tools::process_session::start_new_session(command.as_std_mut());
@@ -402,7 +408,7 @@ async fn establish_session(
                 url,
                 validate::McpHttpSecurity::from_allow_insecure_http(*allow_insecure_http),
             )?;
-            let headers = resolve_headers(literal_headers, headers_from_env)?;
+            let headers = resolve_headers(literal_headers, headers_from_env, environment)?;
             // Redirects are disabled on every client used here, so configured
             // headers and bearer tokens never cross origins through a
             // redirect. This satisfies the Agent Plugins header-forwarding
@@ -421,6 +427,7 @@ async fn establish_session(
 fn resolve_headers(
     literal_headers: &BTreeMap<String, String>,
     headers_from_env: &BTreeMap<String, String>,
+    environment: &Ambient,
 ) -> anyhow::Result<std::collections::HashMap<HeaderName, HeaderValue>> {
     validate::validate_literal_headers(literal_headers)?;
     validate::validate_environment_header_names(headers_from_env)?;
@@ -431,7 +438,7 @@ fn resolve_headers(
         headers.insert(header_name(name)?, header_value(name, value)?);
     }
     for (name, variable) in headers_from_env {
-        let value = std::env::var(variable).with_context(|| {
+        let value = environment.read(variable).with_context(|| {
             format!("environment variable `{variable}` for MCP header `{name}` is not set")
         })?;
         headers.insert(header_name(name)?, header_value(name, &value)?);
@@ -658,15 +665,29 @@ async fn refresh_tools(maintenance: &SessionMaintenance) {
     maintenance.live.record_tool_changes(added, removed);
 }
 
+/// Gives a stdio server the base set from `environment`, which says where the
+/// session's daemon is (`rho_home`, see [`crate::child_env::apply_base`]), and
+/// the session's caller context, then its config's `env`, then its
+/// `env_from_env` read from `environment`.
 fn apply_stdio_environment(
     command: &mut tokio::process::Command,
     env: &BTreeMap<String, String>,
     env_from_env: &BTreeMap<String, String>,
+    environment: &Ambient,
+    rho_home: Option<&Path>,
 ) -> anyhow::Result<()> {
-    crate::child_env::apply_base(command);
+    environment.apply_base(command, rho_home);
+    // A `rho mcp serve` registered as a session's server starts from the
+    // session's depth and scope, so its caps hold across hops (#1672). Each
+    // call then carries the session's current ones (#1765).
+    for name in crate::caller_context::ENV_NAMES {
+        if let Some(value) = environment.read_os(name) {
+            command.env(name, value);
+        }
+    }
     command.envs(env);
     for (name, variable) in env_from_env {
-        let value = std::env::var(variable).with_context(|| {
+        let value = environment.read(variable).with_context(|| {
             format!("environment variable `{variable}` for MCP child variable `{name}` is not set")
         })?;
         command.env(name, value);

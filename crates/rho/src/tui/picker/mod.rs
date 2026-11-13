@@ -20,7 +20,7 @@ mod overlay;
 mod overlay_layout;
 mod overlay_state;
 mod rows;
-pub(in crate::tui) mod runner;
+mod runner;
 pub(in crate::tui) mod standalone;
 
 use action::PickerFilterMode;
@@ -189,10 +189,12 @@ pub(super) struct UiPicker {
     pub(super) label_overflow: LabelOverflow,
     /// Config page this picker shows. Returning to it from a child rebuilds
     /// its rows from saved config; see [`crate::tui::App::pop_picker_level`].
-    config_page: Option<crate::tui::config_picker::ConfigPage>,
+    config_page: Option<crate::tui::settings_screen::ConfigPage>,
     parent: Option<Box<UiPicker>>,
-    matches: RefCell<PickerMatchCache>,
-    detail_wrap_cache: RefCell<DetailWrapCache>,
+    /// Boxed, like `overlay_chrome`, to keep the struct within the same
+    /// variant budget.
+    matches: Box<RefCell<PickerMatchCache>>,
+    detail_wrap_cache: Box<RefCell<DetailWrapCache>>,
 }
 
 #[derive(Clone, Debug)]
@@ -207,6 +209,10 @@ pub(super) struct PickerItem {
     pub(super) selection_verb: Option<&'static str>,
     /// When false, Tab does not copy this row into the filter.
     pub(super) allow_filter_completion: bool,
+    /// Whether Space, not only Enter, confirms this row while the filter is
+    /// empty, as for an on/off setting. Once a filter is typed, and on
+    /// other rows, Space types into the filter.
+    pub(super) space_confirms: bool,
     /// Hidden terms the filter also matches, such as the labels and values of
     /// choices nested under this row. Never rendered.
     pub(super) search_terms: Vec<String>,
@@ -234,6 +240,7 @@ impl PickerItem {
             value,
             selection_verb: None,
             allow_filter_completion: true,
+            space_confirms: false,
             search_terms: Vec::new(),
         }
     }
@@ -350,20 +357,17 @@ impl UiPicker {
             label_overflow: LabelOverflow::KeepStart,
             config_page: None,
             parent: None,
-            matches: RefCell::default(),
-            detail_wrap_cache: RefCell::default(),
+            matches: Box::default(),
+            detail_wrap_cache: Box::default(),
         }
     }
 
     picker_ctors! {
         models => SelectModel,
         internal_agent_models => SelectInternalAgentModel,
-        advisor_reasoning => SelectAdvisorReasoning,
         login_group => LoginGroup,
         login_provider => LoginProvider,
         logout_provider => LogoutProvider,
-        switch_auth_mode => SwitchAuthMode,
-        refresh_model_list => RefreshModelList,
         insert_skill => InsertSkillCommand,
         prompt_history => RecallPrompt,
         view_agent => ViewAgent,
@@ -384,7 +388,6 @@ impl UiPicker {
     }
 
     picker_is! {
-        is_config => Config,
         is_theme => SelectTheme,
         is_mcp_inventory => ViewMcpServers,
         is_edit_agent => EditAgent,
@@ -392,7 +395,6 @@ impl UiPicker {
         is_attach_subagent => AttachSubagent,
         is_conversation_model => SelectModel,
         is_internal_agent_model => SelectInternalAgentModel,
-        is_advisor_reasoning => SelectAdvisorReasoning,
         is_manage_sessions => ManageSessions,
         is_resume_session => ResumeSession,
         is_workflow => Workflow,
@@ -403,8 +405,22 @@ impl UiPicker {
         self.action.is_model_list()
     }
 
+    /// Selects the first row badged as selected, such as a value page's
+    /// current value; leaves the selection alone when none is.
+    pub(super) fn select_badged(&mut self) {
+        if let Some(index) = self.items.iter().position(|item| {
+            item.badge
+                .as_ref()
+                .is_some_and(|badge| badge.tone == PickerBadgeTone::Selected)
+        }) {
+            self.selected = index;
+        }
+    }
+
     pub(in crate::tui) fn space_confirms_selection(&self) -> bool {
-        self.space_confirms || self.action.space_confirms_selection()
+        self.space_confirms
+            || (self.filter.is_empty()
+                && self.selected_item().is_some_and(|item| item.space_confirms))
     }
 
     pub(in crate::tui) fn restore_status(&self) -> &'static str {
@@ -641,10 +657,8 @@ impl UiPicker {
         } else {
             parts.push(format!("Enter {confirm}"));
         }
-        if self.space_confirms {
+        if self.space_confirms_selection() {
             parts.push(format!("Space {confirm}"));
-        } else if self.action.space_confirms_selection() {
-            parts.push("Space confirm".into());
         }
         if let Some(key) = &self.key_hints.pin_toggle {
             parts.push(format!("{key} pin/unpin"));
@@ -720,13 +734,16 @@ impl UiPicker {
         self
     }
 
-    pub(super) fn with_config_page(mut self, page: crate::tui::config_picker::ConfigPage) -> Self {
+    pub(super) fn with_config_page(
+        mut self,
+        page: crate::tui::settings_screen::ConfigPage,
+    ) -> Self {
         self.config_page = Some(page);
         self
     }
 
-    pub(super) fn config_page(&self) -> Option<crate::tui::config_picker::ConfigPage> {
-        self.config_page
+    pub(super) fn config_page(&self) -> Option<crate::tui::settings_screen::ConfigPage> {
+        self.config_page.clone()
     }
 
     pub(super) fn has_parent(&self) -> bool {

@@ -9,7 +9,7 @@ use std::{
 use crate::{
     client::Rho,
     event::RunOutcome,
-    model::{ContentBlock, ImageContent, Message, ToolCall},
+    model::{ContentBlock, ImageContent, Message, MessageTime, ToolCall},
     orchestration::execute_run,
     provider::ModelProvider,
     run::Run,
@@ -56,6 +56,7 @@ impl UserInput {
         if content.is_empty() {
             return Err(Error::InvalidConfiguration {
                 message: "user input must contain at least one content block".into(),
+                source: None,
             });
         }
         Ok(Self { content })
@@ -74,6 +75,23 @@ impl UserInput {
         &self.content
     }
 
+    /// Puts `sent`, the time the input arrived, on its own line at the start
+    /// of this input's text, or in a text block of its own when it has none.
+    ///
+    /// The stamp becomes part of the content, so stamp the copy sent to the
+    /// model, not the one shown to the user.
+    pub fn stamped(mut self, sent: MessageTime) -> Self {
+        let stamp = sent.to_string();
+        match self.content.iter_mut().find_map(|block| match block {
+            ContentBlock::Text(text) => Some(text),
+            ContentBlock::Image(_) | ContentBlock::ToolCall(_) => None,
+        }) {
+            Some(text) => *text = format!("{stamp}\n{text}"),
+            None => self.content.insert(0, ContentBlock::Text(stamp)),
+        }
+        self
+    }
+
     pub(crate) fn into_blocks(self) -> Vec<ContentBlock> {
         self.content
     }
@@ -88,6 +106,7 @@ impl HostToolCalls {
         if calls.is_empty() {
             return Err(Error::InvalidConfiguration {
                 message: "host tool call batch must contain at least one call".into(),
+                source: None,
             });
         }
         let mut ids = BTreeSet::new();
@@ -97,11 +116,13 @@ impl HostToolCalls {
                     message: format!(
                         "host tool call {index} requires a nonempty ID and name plus object arguments"
                     ),
+                    source: None,
                 });
             }
             if !ids.insert(call.id.as_str()) {
                 return Err(Error::InvalidConfiguration {
                     message: format!("duplicate host tool call ID '{}'", call.id),
+                    source: None,
                 });
             }
         }
@@ -173,6 +194,7 @@ impl SessionData {
             .checked_next()
             .ok_or_else(|| Error::Persistence {
                 message: "session revision is exhausted".into(),
+                source: None,
             })
     }
 }
@@ -544,8 +566,23 @@ impl Session {
         self.core.runtime().reasoning_level
     }
 
+    /// Changes the reasoning level for future runs while the session is idle.
+    ///
+    /// Once the conversation has started, a change is recorded in history as
+    /// [`crate::model::Message::ReasoningShift`] so providers can pin effort
+    /// mid-conversation without rewriting the cached request prefix.
     pub fn set_reasoning_level(&self, reasoning_level: crate::ReasoningLevel) -> Result<(), Error> {
         let _inactive = self.core.lock_inactive()?;
+        let previous = self.core.runtime().reasoning_level;
+        let mut history = self.history();
+        let committed_len = history.len();
+        if crate::model::record_reasoning_shift(&mut history, previous, reasoning_level) {
+            if history.len() <= committed_len {
+                // The pending shift was rewritten or removed, not appended.
+                self.core.invalidate_context();
+            }
+            self.core.commit(history)?;
+        }
         let mut runtime = self
             .core
             .runtime
@@ -584,6 +621,7 @@ impl Session {
         if policy.is_some() && compactor.is_none() {
             return Err(Error::InvalidConfiguration {
                 message: "automatic compaction policy requires a compactor".into(),
+                source: None,
             });
         }
         let mut runtime = self
@@ -789,6 +827,7 @@ impl Session {
                 .cloned()
                 .ok_or_else(|| Error::InvalidConfiguration {
                     message: "no compactor is configured".into(),
+                    source: None,
                 })?;
         let run_id = RunId::new();
         self.core.begin_run(&run_id)?;
@@ -836,6 +875,17 @@ impl Session {
         let mut history = self.history();
         history.push(message);
         self.core.commit(history)
+    }
+
+    /// Advances the revision while the session is idle, for host state a
+    /// store adds to each snapshot, such as settings in its metadata, that
+    /// changed without a commit: the snapshot saved next records the change
+    /// as a new revision.
+    pub fn advance_revision(&self) -> Result<Revision, Error> {
+        let _inactive = self.core.lock_inactive()?;
+        let mut data = self.core.lock_data();
+        data.revision = data.next_revision()?;
+        Ok(data.revision)
     }
 
     /// Replaces committed history while the session is idle.

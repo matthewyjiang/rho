@@ -8,8 +8,10 @@ use std::{collections::BTreeMap, path::Path};
 
 use serde::{Deserialize, Serialize};
 
+use rho_protocol::display::ToolCard;
+
 use super::AttachmentEvent;
-use crate::{app::interactive_presenter::PresentedToolCard, config_writer};
+use crate::config_writer;
 
 const FILE_NAME: &str = "tool-previews.json";
 
@@ -17,11 +19,11 @@ const FILE_NAME: &str = "tool-previews.json";
 pub(super) struct ToolPreviews {
     pub(super) journal_offset: u64,
     // Preserve first-seen order for concurrent calls, including index-only keys.
-    pub(super) cards: Vec<(String, PresentedToolCard)>,
+    pub(super) cards: Vec<(String, ToolCard)>,
 }
 
 impl ToolPreviews {
-    pub(super) fn upsert(&mut self, key: &str, card: &PresentedToolCard) {
+    pub(super) fn upsert(&mut self, key: &str, card: &ToolCard) {
         if let Some((_, previous)) = self.cards.iter_mut().find(|(id, _)| id == key) {
             previous.clone_from(card);
         } else {

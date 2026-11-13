@@ -1,0 +1,32 @@
+[package]
+name = "rho-protocol"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.86"
+description = "Versioned JSON-RPC protocol between the Rho daemon and its frontends"
+license = "MIT"
+repository = "https://github.com/matthewyjiang/rho"
+readme = "README.md"
+keywords = ["agent", "ai", "json-rpc", "protocol"]
+categories = ["asynchronous", "network-programming"]
+
+# Frontends (the TUI, rho-ui, `rho acp`, MCP) depend on this crate, so it must
+# not depend on rho-sdk: an SDK major must never break a frontend build.
+# scripts/architecture.json enforces that boundary.
+[dependencies]
+# Publishes the wire types as JSON Schema (`schema/protocol.json`).
+schemars = "1.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Names a rho home's daemon endpoint (`DaemonEndpoint`).
+sha2 = "0.11"
+thiserror = "2"
+# 1.36 adds `JoinSet::try_join_next`, which reaps a connection's finished
+# request tasks. `time` bounds a closing connection's writes. `net` and
+# `process` reach and start the daemon (`LocalDaemon`).
+tokio = { version = "1.36", features = ["io-util", "macros", "net", "process", "rt", "sync", "time"] }
+
+[dev-dependencies]
+pretty_assertions = "1"
+tempfile = "3"
+tokio = { version = "1.36", features = ["test-util", "time"] }

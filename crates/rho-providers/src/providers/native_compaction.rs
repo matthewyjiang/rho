@@ -43,7 +43,7 @@ pub(crate) fn native_compact_from_response_body(
     retained_messages: &[Message],
     body: &serde_json::Value,
     portable_handoff_notice: &str,
-    user_retention: CompactUserRetention,
+    user_retention: CompactUserRetention<'_>,
     assistant_context: &[ProviderContextBlock],
     failed_attempts: Vec<rho_sdk::provider::NativeCompactionFailedAttempt>,
 ) -> rho_sdk::provider::NativeCompactionResponse {
@@ -66,7 +66,7 @@ pub(crate) struct CompactParsePolicy<'a> {
     /// System prompts, plus recent user turns for trigger compaction.
     pub(crate) retained_messages: &'a [Message],
     pub(crate) portable_handoff_notice: &'a str,
-    pub(crate) user_retention: CompactUserRetention,
+    pub(crate) user_retention: CompactUserRetention<'a>,
     pub(crate) assistant_context: &'a [ProviderContextBlock],
 }
 

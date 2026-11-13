@@ -11,10 +11,10 @@ fn retry_removes_only_replaceable_provider_output() {
         Entry::Assistant("discard assistant".into()),
         Entry::Notice("keep notice".into()),
         Entry::Tool(ToolEntry::new(
-            rho_tools::tool_card::ToolCard::new(
-                rho_tools::tool_card::ToolStatus::Running,
-                rho_tools::tool_card::ToolFamily::Default,
-                rho_tools::tool_card::ToolHeader::call("keep tool", None),
+            rho_protocol::display::ToolCard::new(
+                rho_protocol::display::ToolCardStatus::Running,
+                rho_protocol::display::ToolFamily::Default,
+                rho_protocol::display::ToolHeader::call("keep tool", None),
             ),
             false,
             None,
@@ -29,7 +29,7 @@ fn retry_removes_only_replaceable_provider_output() {
     assert_eq!(attempt.reset_output(&mut transcript), Some(1));
     assert!(matches!(
         transcript.as_slice(),
-        [Entry::User(prompt), Entry::Notice(notice), Entry::Tool(ToolEntry { presentation: crate::presentation::Presentation::Card(card), .. })]
+        [Entry::User(prompt), Entry::Notice(notice), Entry::Tool(ToolEntry { presentation: rho_protocol::display::Presentation::Card(card), .. })]
             if prompt == "prompt"
                 && notice == "keep notice"
                 && card.header_text() == "● keep tool"

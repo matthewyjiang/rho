@@ -54,7 +54,7 @@ fn test_identity() -> RunArtifactIdentity {
     }
 }
 
-// Covers: a stream far larger than the writer queue must keep `rho attach`
+// Covers: a stream far larger than the writer queue must keep attach journal
 // recording alive and replay the exact ordered text, even when the sink
 // coalesces bursts. Windows journal flush is slower; the sink budget must
 // still accept the burst instead of disabling recording.
@@ -257,4 +257,25 @@ fn continue_from_keeps_a_title_written_during_construction() {
     assert_eq!(sink.status.title.as_deref(), Some("Review the auth path"));
     assert_eq!(rx.borrow().title.as_deref(), Some("Review the auth path"));
     assert_eq!(rx.borrow().last_activity.as_deref(), Some("tool: read"));
+}
+
+// Covers: a run that leaves the queue keeps its spawn time, so the elapsed
+// time panels and `agents status` show never jumps back on admit.
+// Owner: run artifact status.
+#[test]
+fn a_run_leaving_the_queue_keeps_its_start_time() {
+    let mut status = test_identity().queued_status();
+    assert!(
+        status.started_at.is_some(),
+        "a queued run counts from its spawn"
+    );
+    // Spawned long before it got capacity, so a restamp would show.
+    status.started_at = Some(1);
+
+    status.start_now();
+
+    assert_eq!(
+        (status.state, status.started_at),
+        (RunState::Starting, Some(1))
+    );
 }

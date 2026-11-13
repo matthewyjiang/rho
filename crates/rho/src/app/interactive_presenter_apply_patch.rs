@@ -4,17 +4,16 @@
 //! diffs silent, and preserves truncation/path compaction from the shared
 //! diff-card helpers.
 
-use rho_tools::{
-    tool::compact_display_path,
-    tool_card::{DiffCardChange, DiffCardFile, ToolCard, ToolHeader, ToolStatus},
-};
+use crate::presentation::diff::{DiffCardChange, DiffCardFile};
+use rho_protocol::display::{ToolCard, ToolCardStatus, ToolHeader};
+use rho_tools::tool::compact_display_path;
 
 use super::{diff_card, kind_card, EmptyDiffState, ToolKind};
 
 pub(super) fn apply_patch_card(
     arguments: &serde_json::Value,
     cwd: &std::path::Path,
-    status: ToolStatus,
+    status: ToolCardStatus,
     trailing_line: rho_tools::apply_patch::ProposedDiffTrailingLine,
 ) -> ToolCard {
     let Some(input) = arguments.get("input").and_then(serde_json::Value::as_str) else {

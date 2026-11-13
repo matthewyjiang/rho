@@ -26,17 +26,18 @@ async fn archive_access_is_authorized_before_search_execution() {
             binding: binding.clone(),
             recall: Default::default(),
             max_output_bytes: rho_tools::DEFAULT_MAX_OUTPUT_BYTES,
+            environment: Default::default(),
             root: Ok(root.path().to_path_buf()),
         };
         let provider = ScriptedProvider::new(
             ModelIdentity::new("scripted", "test", "model"),
             [
                 ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                    ToolCall {
-                        id: "search".into(),
-                        name: "sessions".into(),
-                        arguments: json!({"action":"search","query":"permissionneedle"}),
-                    },
+                    ToolCall::new(
+                        "search".into(),
+                        "sessions".into(),
+                        json!({"action":"search","query":"permissionneedle"}),
+                    ),
                 )])),
                 ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
                     "done".into(),
@@ -71,7 +72,7 @@ async fn archive_access_is_authorized_before_search_execution() {
         }
         run.outcome().await.unwrap();
         match (allow_archive, result.unwrap()) {
-            (true, ToolCompletion::Success(output)) => {
+            (true, ToolCompletion::Completed(output)) => {
                 let output: Value = serde_json::from_str(output.content()).unwrap();
                 assert_eq!(output["sessions"][0]["id"], prior.id());
             }
@@ -84,4 +85,66 @@ async fn archive_access_is_authorized_before_search_execution() {
         assert_eq!(std::fs::read(prior.path()).unwrap(), original);
         runtime.shutdown();
     }
+}
+
+// Covers: the core's argument schemas merge into the tool's as standalone
+// schemas: an argument whose type the core defines once, such as `list`'s
+// `state`, carries that definition instead of a `$ref` to a `$defs` the
+// merged schema does not have, which providers reject (#1714).
+// Owner: sessions tool schema, generated from the session-control core.
+#[test]
+fn control_arguments_carry_their_definitions() {
+    let schema = input_schema();
+    let state = &schema["properties"]["state"];
+
+    assert_eq!(
+        (
+            schema.to_string().contains("$ref"),
+            // The job states, as `enum` or `oneOf` of `const`s.
+            state.to_string().contains(r#""waiting_for_input""#),
+        ),
+        (false, true),
+        "state: {state}"
+    );
+}
+
+// Covers: an argument a model fills with `null`, as models do with the flat
+// schema's unused arguments, counts as absent for every action: a history
+// call is not refused for a control argument it does not take, and a `read`
+// with a `null` anchor reads the live session, not history (#1714).
+// Owner: sessions tool's argument routing.
+#[test]
+fn null_arguments_count_as_absent_for_every_action() {
+    let route = |arguments: Value| match Action::parse(arguments) {
+        Ok(Action::Index(_)) => "history",
+        Ok(Action::Recall(_)) => "recall",
+        Ok(Action::Control(_)) => "control",
+        Err(_) => "refused",
+    };
+    let nulls = json!({
+        "workspace": null, "prompt": null, "timeout_secs": null, "cursor": null,
+        "anchor": null, "scope": null, "recall_id": null,
+    });
+    let with_nulls = |call: Value| {
+        let mut call = call;
+        for (name, null) in nulls.as_object().unwrap() {
+            call.as_object_mut()
+                .unwrap()
+                .entry(name.clone())
+                .or_insert(null.clone());
+        }
+        call
+    };
+
+    let routes: Vec<&str> = [
+        json!({"action": "search", "query": "q"}),
+        json!({"action": "recall", "recall_id": "r"}),
+        json!({"action": "read", "session": "s", "anchor": "a"}),
+        json!({"action": "read", "session": "s"}),
+    ]
+    .into_iter()
+    .map(|call| route(with_nulls(call)))
+    .collect();
+
+    assert_eq!(routes, ["history", "recall", "history", "control"]);
 }

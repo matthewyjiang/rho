@@ -19,16 +19,14 @@ pub(super) async fn collect(
     let reply = tokio::select! {
         biased;
         () = cancellation.cancelled() => return Err(Error::Cancelled),
-        () = events.closed() => return Err(Error::Interrupted { message: "run event consumer disconnected".into() }),
+        () = events.closed() => return Err(Error::Interrupted { message: "run event consumer disconnected".into(), source: None }),
         reply = source.request(session_id, run_id, boundary) => reply?,
     };
     let input = reply.input;
     if let Some(input) = &input {
-        // NEXT_MAJOR(rho-sdk): represent internal boundary input with a typed history message instead of User blocks.
-        // Message is exhaustive in the public model. Keep wire-compatible user
-        // blocks for now; the host frames their origin and the runtime emits a
-        // distinct event rather than treating them as human steering.
-        history.push(Message::User(input.blocks().to_vec()));
+        // Typed so readers never mistake host input for human steering;
+        // providers still receive the host-framed blocks as user content.
+        history.push(Message::BoundaryInput(input.blocks().into()));
         // Acknowledgement releases host reservations. Checkpoint first so an
         // event-consumer disconnect or dropped Run cannot discard accepted
         // findings with the rest of an uncommitted working history.

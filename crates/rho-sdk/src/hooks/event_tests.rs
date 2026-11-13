@@ -27,6 +27,7 @@ fn every_event_has_an_explicit_post_action_classification() {
             (HookEventKind::AfterToolUse, true),
             (HookEventKind::RunCompleted, true),
             (HookEventKind::RunFailed, true),
+            (HookEventKind::InputRequested, false),
             (HookEventKind::SessionCompleted, false),
             (HookEventKind::SessionFailed, true),
         ]
@@ -48,6 +49,7 @@ fn version_one_delivers_exactly_the_documented_events() {
             "after_tool_use",
             "run_completed",
             "run_failed",
+            "input_requested",
             "session_completed",
             "session_failed",
         ]

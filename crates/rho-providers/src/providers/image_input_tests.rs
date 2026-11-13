@@ -5,7 +5,8 @@ use rho_sdk::model::{ContentBlock, ImageContent, Message, ModelIdentity, ToolRes
 
 use super::{gate_images, IMAGE_UNSUPPORTED_TEXT};
 use crate::model::models_dev::{
-    with_models_dev_cache_dir_for_tests, write_cached_image_input_for_tests, ImageInput,
+    with_models_dev_cache_dir_for_tests, write_cached_model_metadata_for_tests, ImageInput,
+    ModelMetadata,
 };
 
 fn image() -> ImageContent {
@@ -20,24 +21,26 @@ fn image() -> ImageContent {
 // Owner: provider request shaping
 #[test]
 fn gate_strips_images_only_for_models_marked_text_only() {
-    let supplement = Message::tool_image_supplement("read_file", "call-1", vec![image()]).unwrap();
     let history = vec![
         Message::user_text("look"),
-        Message::ToolResult(ToolResult {
-            id: "call-1".into(),
-            ok: true,
-            content: "image/png image (8 bytes)".into(),
-        }),
-        supplement.clone(),
+        Message::User(vec![ContentBlock::Image(image())].into()),
+        Message::ToolResult(
+            (ToolResult::succeeded("call-1", "image/png image (8 bytes)")
+                .with_images(vec![image()]))
+            .into(),
+        ),
     ];
-    let Message::User(supplement_blocks) = &supplement else {
-        unreachable!("supplements are user-role messages");
-    };
-    let mut stripped = history.clone();
-    stripped[2] = Message::User(vec![
-        supplement_blocks[0].clone(),
-        ContentBlock::Text(IMAGE_UNSUPPORTED_TEXT.into()),
-    ]);
+    let stripped = vec![
+        Message::user_text("look"),
+        Message::User(vec![ContentBlock::Text(IMAGE_UNSUPPORTED_TEXT.into())].into()),
+        Message::ToolResult(
+            (ToolResult::succeeded(
+                "call-1",
+                format!("image/png image (8 bytes)\n{IMAGE_UNSUPPORTED_TEXT}"),
+            ))
+            .into(),
+        ),
+    ];
 
     let cache = tempfile::tempdir().unwrap();
     with_models_dev_cache_dir_for_tests(cache.path().to_path_buf(), || {
@@ -45,7 +48,14 @@ fn gate_strips_images_only_for_models_marked_text_only() {
             ("vision", ImageInput::Supported),
             ("text-only", ImageInput::Unsupported),
         ] {
-            write_cached_image_input_for_tests("openai", model, image_input);
+            write_cached_model_metadata_for_tests(
+                "openai",
+                model,
+                &ModelMetadata {
+                    image_input,
+                    ..ModelMetadata::default()
+                },
+            );
         }
 
         for (model, expected) in [

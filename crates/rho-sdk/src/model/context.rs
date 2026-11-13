@@ -1,6 +1,8 @@
 use serde::Serialize;
 
-use super::{ContentBlock, Message, ProviderContextBlock, ToolSpec};
+use super::{
+    ContentBlock, ImageContent, Message, ProviderContextBlock, ToolResultStatus, ToolSpec,
+};
 
 pub(crate) const REQUEST_OVERHEAD_TOKENS: u64 = 3;
 const MESSAGE_OVERHEAD_TOKENS: u64 = 4;
@@ -23,8 +25,15 @@ pub fn estimate_messages_tokens(messages: &[Message]) -> u64 {
 pub fn estimate_message_tokens(message: &Message) -> u64 {
     match message {
         Message::System(text) => MESSAGE_OVERHEAD_TOKENS.saturating_add(text_tokens(text)),
-        Message::User(blocks) | Message::Assistant(blocks) => MESSAGE_OVERHEAD_TOKENS
-            .saturating_add(blocks.iter().map(content_block_tokens).sum::<u64>()),
+        Message::User(blocks) | Message::Assistant(blocks) | Message::BoundaryInput(blocks) => {
+            blocks_message_tokens(blocks)
+        }
+        Message::CompactionSummary(summary) => blocks_message_tokens(&summary.user_role_content()),
+        Message::ModelContext(text) => {
+            blocks_message_tokens(&super::model_context::user_role_content(text))
+        }
+        // Sends nothing to most providers and an empty marker to the rest.
+        Message::ReasoningShift(_) => 0,
         Message::EnrichedAssistant(message) => assistant_message_tokens(
             &message.content,
             message.reasoning_summary.as_deref(),
@@ -37,10 +46,24 @@ pub fn estimate_message_tokens(message: &Message) -> u64 {
             /*portable_fallback*/ None,
             &message.provider_context,
         ),
-        Message::ToolResult(result) => {
-            TOOL_RESULT_OVERHEAD_TOKENS.saturating_add(json_tokens(result))
-        }
+        Message::ToolResult(result) => TOOL_RESULT_OVERHEAD_TOKENS
+            .saturating_add(json_tokens(&ToolResultText {
+                id: &result.id,
+                status: result.status,
+                content: &result.content,
+            }))
+            .saturating_add(
+                result
+                    .images
+                    .iter()
+                    .map(|image| CONTENT_BLOCK_OVERHEAD_TOKENS.saturating_add(image_tokens(image)))
+                    .sum::<u64>(),
+            ),
     }
+}
+
+fn blocks_message_tokens(blocks: &[ContentBlock]) -> u64 {
+    MESSAGE_OVERHEAD_TOKENS.saturating_add(blocks.iter().map(content_block_tokens).sum::<u64>())
 }
 
 fn assistant_message_tokens(
@@ -65,11 +88,22 @@ fn assistant_message_tokens(
 fn content_block_tokens(block: &ContentBlock) -> u64 {
     CONTENT_BLOCK_OVERHEAD_TOKENS.saturating_add(match block {
         ContentBlock::Text(text) => text_tokens(text),
-        ContentBlock::Image(image) => {
-            85_u64.saturating_add((image.data.len() as u64).div_ceil(4096))
-        }
+        ContentBlock::Image(image) => image_tokens(image),
         ContentBlock::ToolCall(call) => TOOL_CALL_OVERHEAD_TOKENS.saturating_add(json_tokens(call)),
     })
+}
+
+fn image_tokens(image: &ImageContent) -> u64 {
+    85_u64.saturating_add((image.data.len() as u64).div_ceil(4096))
+}
+
+/// A tool result's text fields, serialized as a text-only `ToolResult`.
+/// Images are estimated like image blocks, not as base64 JSON.
+#[derive(Serialize)]
+struct ToolResultText<'a> {
+    id: &'a str,
+    status: ToolResultStatus,
+    content: &'a str,
 }
 
 pub(crate) fn tool_spec_tokens(spec: &ToolSpec) -> u64 {

@@ -13,7 +13,7 @@ use rho_sdk::{
     model::{
         ContentBlock, ModelEvent, ModelIdentity, ModelRequest, ModelResponse, ToolCall, ToolSpec,
     },
-    provider::{ModelProvider, ProviderEventSender, ProviderFuture},
+    provider::{ModelProvider, ProviderFuture, ProviderTurnContext},
     tool::{Tool, ToolContext, ToolFuture, ToolInvocation, ToolOutput},
     ProviderError, Rho, Session, SessionOptions,
 };
@@ -30,11 +30,11 @@ pub fn text_response(text: impl Into<String>) -> ModelResponse {
 }
 
 pub fn tool_call_response(id: &str, name: &str) -> ModelResponse {
-    ModelResponse::Assistant(vec![ContentBlock::ToolCall(ToolCall {
-        id: id.into(),
-        name: name.into(),
-        arguments: json!({}),
-    })])
+    ModelResponse::Assistant(vec![ContentBlock::ToolCall(ToolCall::new(
+        id.into(),
+        name.into(),
+        json!({}),
+    ))])
 }
 
 pub async fn session_with<P>(provider: P) -> Session
@@ -131,8 +131,9 @@ impl ModelProvider for FloodProvider {
     fn send_turn_stream<'a>(
         &'a self,
         request: ModelRequest<'a>,
-        events: ProviderEventSender,
+        context: ProviderTurnContext,
     ) -> ProviderFuture<'a> {
+        let events = context.events;
         Box::pin(async move {
             let _guard = DropGuard::new(&self.probe);
             self.probe.started.store(true, Ordering::Release);

@@ -2,13 +2,17 @@
 
 Rho can connect native agents to ordinary [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) servers. MCP support does not require an Agent Plugin package.
 
+Rho is also an MCP server. `rho mcp serve` lets another agent start, follow, and steer Rho sessions; see [MCP server](/mcp-server).
+
 ## Configuration source and precedence
 
-Add servers under `[mcp.servers]` in Rho's config file. Rho reads `~/.rho/config.toml` by default. To keep project MCP settings with a project, select that file through the existing config override:
+Add servers under `[mcp.servers]` in Rho's config file. Rho reads `~/.rho/config.toml` by default. To keep MCP settings with a project, pass that file with `--config` on a command such as `rho run`:
 
 ```bash
-rho --config .rho/config.toml
+rho --config .rho/config.toml run "..."
 ```
+
+The interactive TUI refuses `--config`, since its session runs in the [daemon](/daemon#daemon-backed-tui) and uses the config in the daemon's Rho home. To use another config there, set `RHO_HOME`.
 
 An explicit `--config` file replaces the default user config. Rho does not merge the two files. The selected file is the only ordinary MCP configuration source for that run. Plugin packages contribute servers separately through [Agent Plugins](/integrations/plugins); they merge with the servers below at session start.
 
@@ -32,7 +36,7 @@ allow = ["read_file", "list_directory"]
 deny = []
 ```
 
-Rho starts the child with the same sanitized base environment hooks use (paths, home, locale, and on Windows the loader/interpreter variables). It does not copy credentials or other variables by default. `env` adds literal values. Use `env_from_env` for secrets so they do not enter the config file. Its keys are child variable names and its values are ambient variable names:
+Rho starts the child with the same sanitized base environment hooks use (paths, home, locale, and on Windows the loader/interpreter variables). It also sets `RHO_HOME` and `XDG_RUNTIME_DIR`, so a [`rho mcp serve`](../mcp-server.md#registering-over-stdio) child reaches the session's daemon. It does not copy credentials or other variables by default. `env` adds literal values. Use `env_from_env` for secrets so they do not enter the config file. Its keys are child variable names and its values are ambient variable names:
 
 ```toml
 [mcp.servers.github]
@@ -41,6 +45,8 @@ command = "github-mcp-server"
 args = ["stdio"]
 env_from_env = { GITHUB_PERSONAL_ACCESS_TOKEN = "GITHUB_TOKEN" }
 ```
+
+In a [daemon](../daemon.md) session, the ambient environment is that of the client that opened the session. Rho finds `command` on its `PATH` and reads `env_from_env` and `headers_from_env` from it. A running server keeps that environment. See [Environment](../daemon.md#environment).
 
 The explicit overlay is applied after sanitization, so it may intentionally restore a variable under the name a server expects. **Configuration is the trust boundary:** enabling a server is permission to start it for discovery and to expose its tools. Tool calls are RPCs on that already-running session; they do not re-request process or network capabilities and are not blocked by plan mode. The process is not an operating-system sandbox and runs with the current user's rights.
 
@@ -118,7 +124,7 @@ Rho identifies itself in `initialize` as `rho` with the running version, and dec
 
 - `roots`: Rho advertises the session workspace as one `file://` root. The declaration sets `listChanged: false`, because a session's workspace never changes and Rho would never send the notification.
 - `elicitation`: declared only in a run that can put a question in front of a person, and only in form mode with `schemaValidation: false`. See [Questions from a server](#questions-from-a-server).
-- `sampling`: declared only to a server that opted in with `sampling = "ask"`, and only in a run that has a model to spend. See [Completions for a server](#completions-for-a-server).
+- `sampling`: not declared. See [Completions for a server](#completions-for-a-server).
 
 Rho never declares a capability it would then always refuse. A run that cannot show a questionnaire, such as `rho mcp list --connect` or an automation run started without a host-input responder, declares no `elicitation`, so a well-behaved server never asks.
 
@@ -334,31 +340,13 @@ While a form is open, the tool call's two-minute budget is paused. The budget ex
 
 ## Completions for a server
 
-A server may ask Rho's model to write something with `sampling/createMessage`. This spends the user's tokens on work the user did not ask for, so it is behind **two independent gates that both have to open**.
+Rho does not answer `sampling/createMessage`. It declares no `sampling` capability and rejects the request.
 
-**Gate one, config.** The server opts in per entry. The default is `deny`, and a server left at the default never sees `sampling` in Rho's declared capabilities:
+Rho 2.x answered sampling for a server set to `sampling = "ask"`. Rho 3 still accepts that key, so your config loads, but it has no effect.
 
-```toml
-[mcp.servers.reviewer]
-transport = "stdio"
-command = "reviewer-mcp"
-sampling = "ask"
-```
+## Serving rho to other agents
 
-Plugin-provided servers cannot opt themselves in; only the selected config file can.
-
-**Gate two, the user.** Every individual request still raises a question naming the server, the number of messages, and the token ceiling it asked for. A refusal rejects the request and no model call happens. The gate is a question rather than a permission prompt on purpose: Rho's default `bypass` permission mode allows every capability by policy, so an approval prompt would never reach a person there, and token spend a server asked for is not something that mode ever opted into.
-
-Sampling is routed to the in-flight tool call the same way elicitation is, and refuses under the same rules: no call in flight, or more than one, and the request is rejected. A run with no model bound, such as `rho run` or `rho mcp list --connect`, rejects every sampling request and declares no `sampling` capability. Sampling spend is recorded in the usage ledger under the `mcp_sampling` purpose, so it is attributable apart from the user's own turns.
-
-**Fidelity limits.**
-
-- **`modelPreferences` is ignored.** The provider, model, and credentials are the user's configuration. Letting a server steer them would let it choose which of the user's accounts pays and which model sees the prompt. Rho always uses the session's current model and reports its name in the result.
-- **The conversation is flattened.** Rho's one-shot path takes a system prompt and one user turn, so a multi-turn sampling conversation is rendered as labelled text. Non-text blocks are named but not sent; Rho does not forward a server's images or tool results into the user's model.
-- **`maxTokens` is not enforced.** Rho shows the requested ceiling in the confirmation but has no per-request token cap to apply.
-- **`includeContext`, `temperature`, `stopSequences`, `tools`, and `toolChoice` are not honored.** Rho declares no sampling sub-capabilities, so a server should not expect them.
-
-A sampling call is bounded at three minutes. Cancelling the turn cancels it.
+`rho mcp serve` works in the other direction. It serves Rho's sessions to Claude Code, Codex, or another Rho session, which can then start sessions, wait for their turns, and read the answers. [MCP server](/mcp-server) covers [registering it over stdio](/mcp-server#registering-over-stdio), [following a turn](/mcp-server#following-a-turn), the [limits](/mcp-server#limits), and [serving over HTTP](/mcp-server#over-http) with tokens.
 
 ## Inspect status
 

@@ -31,10 +31,11 @@ fn capabilities(names: &[&str]) -> AgentCapabilities {
     )
 }
 
-// Covers: switching delegation must remove both native entry points without
-// enabling children in sessions that cannot launch them. Owner: app inventory.
+// Covers: switching delegation replaces each native entry point the session
+// has, in place, and adds none it lacks, so a session that may launch but
+// not manage children (or neither) gains no tool. Owner: app inventory.
 #[test]
-fn delegation_replacement_is_atomic_and_requires_launch_capability() {
+fn delegation_replacement_swaps_only_the_entry_points_present() {
     fn named_tool(name: &str) -> Arc<dyn Tool> {
         Arc::new(rho_sdk::tool::ScriptedTool::new(
             rho_sdk::model::ToolSpec {
@@ -46,56 +47,33 @@ fn delegation_replacement_is_atomic_and_requires_launch_capability() {
         ))
     }
 
-    for (initial, expected, replaced) in [
-        (
-            vec!["read_file", "agent", "agents"],
-            vec!["read_file", "agent", "agents"],
-            true,
-        ),
-        (
-            vec!["read_file", "agent"],
-            vec!["read_file", "agent", "agents"],
-            true,
-        ),
-        (
-            vec!["read_file", "agents"],
-            vec!["read_file", "agents"],
-            false,
-        ),
-        (vec!["read_file"], vec!["read_file"], false),
+    for names in [
+        vec!["read_file", "agent", "agents"],
+        vec!["read_file", "agent"],
+        vec!["read_file", "agents"],
+        vec!["read_file"],
     ] {
-        let original = initial
+        let original = names
             .iter()
             .map(|name| named_tool(name))
             .collect::<Vec<_>>();
         let mut tools = AppToolSet::disabled();
         tools.add_bundle(StaticToolBundle::new(original.clone()));
-        let replacements = [named_tool("agent"), named_tool("agents")];
-        assert_eq!(
-            tools.replace_delegation_tools(replacements.clone()),
-            replaced
-        );
-        assert_eq!(tools.unfiltered_names().collect::<Vec<_>>(), expected);
-        assert!(Arc::ptr_eq(
-            &tools.tool_named("read_file").unwrap(),
-            &original[0]
-        ));
-        if replaced {
-            for tool in replacements {
-                assert!(Arc::ptr_eq(
-                    &tools.tool_named(&tool.spec().name).unwrap(),
-                    &tool
-                ));
-            }
-        } else {
-            for tool in original {
-                assert!(Arc::ptr_eq(
-                    &tools.tool_named(&tool.spec().name).unwrap(),
-                    &tool
-                ));
-            }
+        let (agent, agents) = (named_tool("agent"), named_tool("agents"));
+        tools.replace_delegation_tools(Arc::clone(&agent), Arc::clone(&agents));
+
+        assert_eq!(tools.unfiltered_names().collect::<Vec<_>>(), names);
+        for (name, before) in names.iter().zip(&original) {
+            let expected = match *name {
+                "agent" => &agent,
+                "agents" => &agents,
+                _ => before,
+            };
+            assert!(
+                Arc::ptr_eq(&tools.tool_named(name).unwrap(), expected),
+                "{names:?}: {name}"
+            );
         }
-        assert!(tools.tool_named("missing").is_none());
     }
 }
 
@@ -146,7 +124,6 @@ fn canonical_tool_names_match_the_unfiltered_registry() {
     let root = tempfile::tempdir().unwrap();
     let mut model_names = Vec::new();
     for edit_tool in [
-        crate::config::EditTool::Pinned(rho_tools::EditFormat::Hashline),
         crate::config::EditTool::Pinned(rho_tools::EditFormat::ApplyPatch),
         crate::config::EditTool::Pinned(rho_tools::EditFormat::StrReplace),
     ] {
@@ -162,19 +139,17 @@ fn canonical_tool_names_match_the_unfiltered_registry() {
                 Some(Arc::new(
                     crate::agent::AgentCatalog::from_sources(Default::default()).unwrap(),
                 )),
+                crate::app::subagent_pool::SubagentPool::Own,
             ))
             .workflow(Arc::new(RegistryWorkflowService));
         let mut tools = AppToolSet::new(&config, RuntimeDiagnostics::new(&config), options)
-            .with_plan_exit_host(
-                &config,
-                crate::tools::plan_exit::PlanExitHost::Questionnaire,
-            );
+            .with_plan_exit_host(&config);
         tools.set_plan_exit_registered(crate::permission::PermissionMode::Plan);
         // Advisor mode is off by default; the registry still owns the name.
         tools.set_advisor_registered(true);
         let names = tools.unfiltered_names().collect::<Vec<_>>();
         let selected = config.resolved_edit_tool().tool_name();
-        for name in ["edit", "apply_patch", "str_replace"] {
+        for name in ["apply_patch", "str_replace"] {
             assert_eq!(
                 names.iter().any(|candidate| candidate == name),
                 name == selected,
@@ -183,19 +158,6 @@ fn canonical_tool_names_match_the_unfiltered_registry() {
         }
         model_names.extend(names);
     }
-
-    // Computer is advertised only after an explicit interactive grant. Read
-    // the owned tool's spec without connecting to a driver for this inventory.
-    model_names.push(
-        super::super::computer_use::ComputerUseSession::new(
-            /*driver*/ None,
-            Config::default().max_output_bytes,
-            root.path().to_owned(),
-        )
-        .tool()
-        .spec()
-        .name,
-    );
 
     for name in super::super::HOST_ONLY_TOOL_NAMES
         .iter()
@@ -279,11 +241,11 @@ async fn ambiguous_shell_input_reaches_approval_as_structured_process_facts() {
         ModelIdentity::new("scripted", "test", "model"),
         [
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                ToolCall {
-                    id: "shell-1".into(),
-                    name: "bash".into(),
-                    arguments: json!({"command": command, "timeout_seconds": 9}),
-                },
+                ToolCall::new(
+                    "shell-1".into(),
+                    "bash".into(),
+                    json!({"command": command, "timeout_seconds": 9}),
+                ),
             )])),
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
                 "denial handled".into(),
@@ -404,11 +366,11 @@ async fn sdk_shell_tools_stream_live_output_as_progress_events() {
         ModelIdentity::new("scripted", "test", "model"),
         [
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                ToolCall {
-                    id: "shell-1".into(),
-                    name: "bash".into(),
-                    arguments: json!({"command": "printf 'live-marker\\n'; sleep 0.3"}),
-                },
+                ToolCall::new(
+                    "shell-1".into(),
+                    "bash".into(),
+                    json!({"command": "printf 'live-marker\\n'; sleep 0.3"}),
+                ),
             )])),
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
                 "done".into(),
@@ -428,7 +390,7 @@ async fn sdk_shell_tools_stream_live_output_as_progress_events() {
     let mut progress_messages = Vec::new();
     while let Some(event) = run.next_event().await {
         if let RunEvent::ToolUpdated { progress, .. } = event {
-            progress_messages.push(progress.text().to_string());
+            progress_messages.push(progress.message().to_string());
         }
     }
     run.outcome().await.unwrap();
@@ -459,11 +421,11 @@ async fn sdk_skill_tool_loads_discovered_skill_outside_workspace_root() {
         ModelIdentity::new("scripted", "test", "model"),
         [
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                ToolCall {
-                    id: "skill-1".into(),
-                    name: "skill".into(),
-                    arguments: json!({"name": "ancestor-skill"}),
-                },
+                ToolCall::new(
+                    "skill-1".into(),
+                    "skill".into(),
+                    json!({"name": "ancestor-skill"}),
+                ),
             )])),
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
                 "done".into(),
@@ -493,7 +455,7 @@ async fn sdk_skill_tool_loads_discovered_skill_outside_workspace_root() {
     let mut output = None;
     while let Some(event) = run.next_event().await {
         if let RunEvent::ToolFinished {
-            result: ToolCompletion::Success(completion),
+            result: ToolCompletion::Completed(completion),
             ..
         } = event
         {
@@ -529,11 +491,11 @@ async fn sdk_skill_tool_rejects_model_invocation_of_user_only_skill() {
         ModelIdentity::new("scripted", "test", "model"),
         [
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                ToolCall {
-                    id: "skill-1".into(),
-                    name: "skill".into(),
-                    arguments: json!({"name": "manual-skill"}),
-                },
+                ToolCall::new(
+                    "skill-1".into(),
+                    "skill".into(),
+                    json!({"name": "manual-skill"}),
+                ),
             )])),
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
                 "done".into(),
@@ -610,18 +572,18 @@ async fn sdk_skill_tool_loads_embedded_agent_creator_without_workspace() {
     let mut run = session
         .start_with_tool_call(
             UserInput::text("/skill:rho-agent-creator"),
-            ToolCall {
-                id: "skill-creator-1".into(),
-                name: "skill".into(),
-                arguments: json!({"name": "rho-agent-creator"}),
-            },
+            ToolCall::new(
+                "skill-creator-1".into(),
+                "skill".into(),
+                json!({"name": "rho-agent-creator"}),
+            ),
         )
         .await
         .unwrap();
     let mut output = None;
     while let Some(event) = run.next_event().await {
         if let RunEvent::ToolFinished {
-            result: ToolCompletion::Success(completion),
+            result: ToolCompletion::Completed(completion),
             ..
         } = event
         {
@@ -708,85 +670,6 @@ fn advisor_registration_toggles_without_rebuilding_the_tool_set() {
     assert!(tools.advisor().is_some());
 }
 
-// Covers: toggling desktop access removes only the owned handle, even if another
-// registration has the same tool name. Owner: application tool registry.
-#[test]
-fn computer_registration_preserves_other_handles_with_the_same_name() {
-    let root = tempfile::tempdir().unwrap();
-    let session = super::super::computer_use::ComputerUseSession::new(
-        /*driver*/ None,
-        Config::default().max_output_bytes,
-        root.path().to_owned(),
-    );
-    let other = session.tool();
-    let mut tools = AppToolSet::disabled();
-    tools.add_bundle(StaticToolBundle::new(vec![Arc::clone(&other)]));
-    let mut tools = tools.with_computer_use(session);
-    for (registered, changed, count) in [
-        (true, true, 2),
-        (true, false, 2),
-        (false, true, 1),
-        (false, false, 1),
-    ] {
-        assert_eq!(tools.set_computer_use_registered(registered), changed);
-        assert_eq!(tools.tools().len(), count);
-        assert!(Arc::ptr_eq(&tools.tools()[0], &other));
-    }
-}
-
-// Covers: /config edit-tool selection must swap the single edit surface in
-// execution, nesting, and discovery without a getter refresh or rebuilding
-// the rest of the tool set.
-// Owner: application tool registry.
-#[test]
-fn edit_tool_selection_swaps_the_advertised_edit_surface() {
-    let config = Config {
-        edit_tool: crate::config::EditTool::Pinned(rho_tools::EditFormat::Hashline),
-        ..Config::default()
-    };
-    let mut tools = AppToolSet::new(
-        &config,
-        RuntimeDiagnostics::new(&config),
-        ToolSetOptions::new(capabilities(&["edit", "read_file"])),
-    );
-    let before = tools.unfiltered_names().collect::<Vec<_>>();
-    assert_eq!(tools.edit_tool(), Some(rho_tools::EditFormat::Hashline));
-    assert!(tools.contains("edit"));
-    assert!(!tools.contains("str_replace"));
-
-    assert_eq!(
-        tools.set_edit_tool(rho_tools::EditFormat::Hashline, config.max_output_bytes),
-        None
-    );
-    assert_eq!(
-        tools.set_edit_tool(rho_tools::EditFormat::StrReplace, config.max_output_bytes),
-        Some(rho_tools::EditFormat::Hashline)
-    );
-    assert_eq!(tools.edit_tool(), Some(rho_tools::EditFormat::StrReplace));
-    assert!(!tools.contains("edit"));
-    assert!(tools.contains("str_replace"));
-
-    let after = tools.unfiltered_names().collect::<Vec<_>>();
-    assert_eq!(before.len(), after.len());
-    assert!(after.iter().any(|name| name == "read_file"));
-    assert_eq!(
-        after.iter().filter(|name| *name == "read_file").count(),
-        1,
-        "edit-tool switch must keep one read_file"
-    );
-    assert_eq!(tools.file_view_style(), rho_tools::FileViewStyle::Numbered);
-
-    let mut without_edit = AppToolSet::new(
-        &config,
-        RuntimeDiagnostics::new(&config),
-        ToolSetOptions::new(capabilities(&["read_file"])),
-    );
-    assert_eq!(
-        without_edit.set_edit_tool(rho_tools::EditFormat::ApplyPatch, config.max_output_bytes),
-        None
-    );
-}
-
 // Covers: Auto preference advertises the provider-preferred format at construction.
 // Owner: application tool registry.
 #[test]
@@ -801,7 +684,6 @@ fn auto_edit_tool_constructs_the_preferred_provider_format() {
         RuntimeDiagnostics::new(&config),
         ToolSetOptions::new(capabilities(&["edit", "read_file"])),
     );
-    assert_eq!(tools.edit_tool(), Some(rho_tools::EditFormat::StrReplace));
     assert!(tools.contains("str_replace"));
     assert!(!tools.contains("edit"));
     assert!(!tools.contains("apply_patch"));

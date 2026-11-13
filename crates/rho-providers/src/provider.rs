@@ -78,13 +78,9 @@ pub enum OpenAiRuntimeAuth {
 /// Owned on [`ProviderDescriptor`] so adding a provider is a single table row
 /// rather than a parallel match arm in the registry.
 ///
-/// # Next major
-///
-/// NEXT_MAJOR(rho-providers): mark ProviderRuntime `#[non_exhaustive]` so new runtimes are minor-compatible.
-///
-/// New runtimes land in minor releases, as the repo has added providers since
-/// 1.x; an exhaustive match outside this crate breaks on each one until then.
+/// Non-exhaustive: new runtimes land in minor releases.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ProviderRuntime {
     OpenAi {
         auth_mode: OpenAiRuntimeAuth,
@@ -134,6 +130,21 @@ impl ProviderRuntime {
             | Self::SystemOne { .. } => CatalogConstruction::Runtime,
         }
     }
+
+    /// API base used when config sets no endpoint, for runtimes that have one.
+    pub fn default_api_base(self) -> Option<&'static str> {
+        match self {
+            Self::OpenAiCompatible {
+                default_api_base, ..
+            }
+            | Self::SystemOne { default_api_base } => Some(default_api_base),
+            Self::OpenAi { .. }
+            | Self::Anthropic
+            | Self::Google
+            | Self::GithubCopilot
+            | Self::Xai => None,
+        }
+    }
 }
 
 /// Provider families that share one backend for auth-profile switching.
@@ -171,13 +182,11 @@ pub(crate) fn shared_api_key_auths(auth: &str) -> impl Iterator<Item = &'static 
 /// Config-defined OpenAI-compatible hosts share [`Self::OpenAiCompatible`].
 /// Distinguish those hosts by [`ProviderDescriptor::name`].
 ///
-/// # Next major
-///
-/// NEXT_MAJOR(rho-providers): mark ProviderId `#[non_exhaustive]` so new providers are minor-compatible.
-///
-/// New providers land in minor releases, as the repo has added providers since
-/// 1.x; an exhaustive match outside this crate breaks on each one until then.
+/// Non-exhaustive: new providers land in minor releases. Put per-provider
+/// behavior on a descriptor field or a method here instead of matching on the
+/// id outside this crate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum ProviderId {
     Ollama,
     OllamaCloud,
@@ -721,16 +730,26 @@ pub fn providers() -> Vec<&'static ProviderDescriptor> {
 /// Environment variable names used as provider credential overrides.
 ///
 /// Built-in auth kinds, interned custom hosts, and any currently set
-/// `RHO_*_API_KEY`. Callers typically snapshot this into
-/// [`rho_sdk::ProcessEnvironment::inherit_except`] at tool-set construction;
-/// scanning the live environment covers an override for a host that `/login`
-/// interns later in the same session.
+/// `RHO_*_API_KEY`. Rho snapshots this into
+/// [`rho_sdk::ProcessEnvironment::inherit_except`] when a session's
+/// environment is created (its `SessionEnvironment`, #1659), so the snapshot
+/// predates hosts interned later. Scanning the live environment for
+/// `RHO_*_API_KEY` covers those: an override for a custom host that `/login`
+/// interns later in the same session is already withheld.
 ///
 /// Intern config-defined hosts before calling this: a host that has never been
 /// interned has no descriptor and therefore no override name to report, unless
 /// its `RHO_*_API_KEY` is already set.
 pub fn credential_env_vars() -> Vec<String> {
     credential_env_vars_from(std::env::vars().map(|(name, _)| name))
+}
+
+/// Whether `name` is one of [`credential_env_vars`] in an environment that
+/// sets it, such as a daemon client's (#1659).
+pub fn is_credential_env_var(name: &str) -> bool {
+    credential_env_vars_from([name])
+        .iter()
+        .any(|credential| credential == name)
 }
 
 pub(crate) fn credential_env_vars_from(

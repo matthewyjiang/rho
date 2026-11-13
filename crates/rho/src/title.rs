@@ -6,7 +6,7 @@ use rho_sdk::{CancellationToken, ProviderRequestUsageRecording, SessionId};
 
 use crate::agent::{
     effective_internal_agent_reasoning, internal_definition, run_one_shot_agent,
-    OneShotAgentRequest, SESSION_TITLE_AGENT_ID,
+    OneShotAgentRequest, ResolvedRhoModel, SESSION_TITLE_AGENT_ID,
 };
 use crate::config::{Config, InternalAgentModelConfig, InternalAgentTarget};
 
@@ -23,18 +23,11 @@ const TITLE_MAX_CHARS: usize = 80;
 
 const TITLE_TIMEOUT: Duration = Duration::from_secs(20);
 
-pub(crate) struct TitleModel {
-    pub provider: String,
-    pub model: String,
-    pub auth: String,
-    pub reasoning: rho_providers::reasoning::ReasoningLevel,
-}
-
 /// Resolve the session-title internal agent onto Rho's provider stack.
 ///
 /// The reserved title agent does not accept Claude Code, so a delegating
 /// selection is ignored and the conversation model is used instead.
-pub(crate) fn title_model_from_config(config: &Config) -> TitleModel {
+pub(crate) fn title_model_from_config(config: &Config) -> ResolvedRhoModel {
     let configured = config
         .internal_agents
         .get(SESSION_TITLE_AGENT_ID)
@@ -50,7 +43,8 @@ pub(crate) fn title_model_from_config(config: &Config) -> TitleModel {
     let rho = match configured.target {
         InternalAgentTarget::Rho(model) => model,
         InternalAgentTarget::ClaudeCli { .. } => {
-            return TitleModel {
+            return ResolvedRhoModel {
+                providers: config.providers.clone(),
                 provider: config.provider.clone(),
                 model: config.model.clone(),
                 auth: config.auth.clone(),
@@ -58,7 +52,8 @@ pub(crate) fn title_model_from_config(config: &Config) -> TitleModel {
             };
         }
     };
-    TitleModel {
+    ResolvedRhoModel {
+        providers: config.providers.clone(),
         provider: rho.provider,
         model: rho.model,
         auth: rho.auth,
@@ -72,10 +67,11 @@ pub(crate) fn first_turn_input(user: &str, assistant: &str) -> String {
 }
 
 pub(crate) async fn generate_title(
-    model: TitleModel,
+    model: ResolvedRhoModel,
     input: String,
     session_id: SessionId,
     workspace_path: std::path::PathBuf,
+    credentials: std::sync::Arc<dyn rho_providers::credentials::CredentialStore>,
     usage_recording: ProviderRequestUsageRecording,
     cancellation: CancellationToken,
 ) -> anyhow::Result<String> {
@@ -92,9 +88,11 @@ pub(crate) async fn generate_title(
             session_id: &session_id,
             workspace_path: &workspace_path,
         },
+        &model.providers,
         &model.provider,
         &model.model,
         &model.auth,
+        credentials,
         usage_recording,
     );
     tokio::pin!(request);

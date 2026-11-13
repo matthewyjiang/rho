@@ -5,14 +5,6 @@ use tokio::sync::mpsc;
 use super::ToolMetadata;
 
 /// Progress emitted during one tool invocation.
-///
-/// # Next major
-///
-/// NEXT_MAJOR(rho-sdk): name each field once: `ToolProgress::new(message)`
-/// with `with_metadata`, read back through `message()` and `metadata()`.
-///
-/// `message` constructs and `metadata` sets, so the getters had to take other
-/// names (`text`, `presentation`); swapping them in a minor would break calls.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ToolProgress {
     message: String,
@@ -22,7 +14,7 @@ pub struct ToolProgress {
 }
 
 impl ToolProgress {
-    pub fn message(message: impl Into<String>) -> Self {
+    pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
             completed_units: None,
@@ -37,12 +29,12 @@ impl ToolProgress {
         self
     }
 
-    pub fn metadata(mut self, metadata: ToolMetadata) -> Self {
+    pub fn with_metadata(mut self, metadata: ToolMetadata) -> Self {
         self.metadata = metadata;
         self
     }
 
-    pub fn text(&self) -> &str {
+    pub fn message(&self) -> &str {
         &self.message
     }
 
@@ -54,7 +46,7 @@ impl ToolProgress {
         self.total_units
     }
 
-    pub fn presentation(&self) -> &ToolMetadata {
+    pub fn metadata(&self) -> &ToolMetadata {
         &self.metadata
     }
 }

@@ -2,8 +2,8 @@
 //! the fixture provider's priced responses are recorded into.
 
 use pretty_assertions::assert_eq;
+use rho_tui_pty::IsolatedHome;
 use serde_json::{json, Value};
-use tempfile::TempDir;
 
 use super::AcpServer;
 
@@ -11,29 +11,27 @@ use super::AcpServer;
 const RESPONSE_COST_USD_MICROS: &str = "1250";
 
 /// A fixture home; in `fixed` mode every prompt is one provider request.
-fn home() -> TempDir {
-    let home = TempDir::new().unwrap();
+fn home() -> IsolatedHome {
+    let home = IsolatedHome::new().unwrap();
     std::fs::write(
-        home.path().join("config.toml"),
-        r#"provider = "xai"
+        &home.config_path,
+        r#"[model]
+provider = "xai"
 model = "grok-fixture"
 auth = "xai-oauth"
 
 [web_search]
-hosted = false
-provider = "disabled"
+mode = "off"
 "#,
     )
     .unwrap();
-    std::fs::create_dir_all(home.path().join("project")).unwrap();
     home
 }
 
 /// An initialized server whose responses each cost `cost` USD micros, or
 /// carry no price when `None`.
-fn server(home: &TempDir, cost: Option<&str>) -> AcpServer {
-    let project = home.path().join("project");
-    let mut command = AcpServer::command(home.path(), &project, "fixed", &project);
+fn server(home: &IsolatedHome, cost: Option<&str>) -> AcpServer {
+    let mut command = AcpServer::command(home, "fixed", &home.workspace);
     if let Some(cost) = cost {
         command.env("RHO_AUTOMATION_TEST_COST_USD_MICROS", cost);
     }
@@ -87,7 +85,7 @@ fn usage_updates_report_cumulative_session_cost_across_load() {
         ("unpriced", None, Value::Null, Value::Null),
     ] {
         let home = home();
-        let project = home.path().join("project");
+        let project = &home.workspace;
         let mut server = server(&home, cost);
         let created = server
             .request("session/new", json!({"cwd": project, "mcpServers": []}))

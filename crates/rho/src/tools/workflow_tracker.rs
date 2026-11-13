@@ -13,7 +13,9 @@ use std::{
 
 use crate::{
     app::workflow_runtime::RuntimeEvent,
-    workflow::{NodeState, RunLifecycle, StoredRun, WorkflowOutcome, WorkflowValue},
+    workflow::{
+        NodeState, RunLifecycle, StoredRun, TaskInstanceId, WorkflowOutcome, WorkflowValue,
+    },
 };
 
 const MODEL_NOTIFICATION_BYTES: usize = 16 * 1024;
@@ -46,7 +48,8 @@ pub(crate) struct WorkflowNotification {
     pub(crate) finished: WorkflowFinishedSnapshot,
 }
 
-/// In-memory activity snapshot; drawing never reads the durable workflow store.
+/// One run's row on the workflow rail, held in memory: drawing never reads
+/// the durable workflow store, whoever filled the row in.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct WorkflowRailSummary {
     pub(crate) run_id: String,
@@ -60,7 +63,52 @@ pub(crate) struct WorkflowRailSummary {
     pub(crate) elapsed_seconds: u64,
 }
 
+/// Every task of `run` with its saved state, by task id.
+fn stored_tasks(run: &StoredRun) -> BTreeMap<String, NodeState> {
+    run.state
+        .state
+        .tasks()
+        .map(|(id, state)| (id.to_string(), state.clone()))
+        .collect()
+}
+
+/// How many of `tasks` reached a final state.
+fn completed_tasks(tasks: &BTreeMap<String, NodeState>) -> usize {
+    tasks
+        .values()
+        .filter(|state| state.terminal().is_some())
+        .count()
+}
+
+/// The label of the first of `tasks` that is running.
+fn active_task(tasks: &BTreeMap<String, NodeState>) -> Option<String> {
+    tasks.iter().find_map(|(id, state)| {
+        matches!(state, NodeState::Running { .. }).then(|| {
+            id.parse::<TaskInstanceId>()
+                .map_or_else(|_| id.clone(), |task| task.label())
+        })
+    })
+}
+
 impl WorkflowRailSummary {
+    /// The row for `run` as its saved state has it, for a host that does
+    /// not drive the run itself and so fills in whether the drive failed
+    /// and how long it has gone.
+    pub(crate) fn from_stored(run: &StoredRun) -> Self {
+        let tasks = stored_tasks(run);
+        Self {
+            run_id: run.manifest.run_id.to_string(),
+            workflow_name: run.graph.program.name.as_str().to_owned(),
+            lifecycle: run.state.state.lifecycle,
+            outcome: run.state.state.outcome(),
+            failed: false,
+            completed_tasks: completed_tasks(&tasks),
+            total_tasks: tasks.len(),
+            active_task: active_task(&tasks),
+            elapsed_seconds: 0,
+        }
+    }
+
     pub(crate) fn is_live(&self) -> bool {
         !self.failed
             && matches!(
@@ -104,6 +152,7 @@ struct Inner {
 #[derive(Clone, Default)]
 pub struct WorkflowRunTracker {
     inner: Arc<Mutex<Inner>>,
+    started: Arc<tokio::sync::Notify>,
     finished: Arc<tokio::sync::Notify>,
 }
 
@@ -163,6 +212,8 @@ impl WorkflowRunTracker {
                 explicitly_observed: false,
             },
         );
+        drop(inner);
+        self.started.notify_waiters();
         true
     }
 
@@ -178,12 +229,7 @@ impl WorkflowRunTracker {
         }
         entry.lifecycle = run.state.state.lifecycle;
         entry.outcome = run.state.state.outcome();
-        entry.tasks = run
-            .state
-            .state
-            .tasks()
-            .map(|(id, state)| (id.to_string(), state.clone()))
-            .collect();
+        entry.tasks = stored_tasks(run);
     }
 
     /// Apply transient node activity without filesystem reads. Late events from
@@ -248,15 +294,9 @@ impl WorkflowRunTracker {
                     .finished
                     .as_ref()
                     .is_some_and(|snapshot| snapshot.error.is_some()),
-                completed_tasks: entry
-                    .tasks
-                    .values()
-                    .filter(|state| state.terminal().is_some())
-                    .count(),
+                completed_tasks: completed_tasks(&entry.tasks),
                 total_tasks: entry.tasks.len(),
-                active_task: entry.tasks.iter().find_map(|(id, state)| {
-                    matches!(state, NodeState::Running { .. }).then(|| id.clone())
-                }),
+                active_task: active_task(&entry.tasks),
                 elapsed_seconds: entry
                     .finished_at
                     .unwrap_or_else(Instant::now)
@@ -293,6 +333,12 @@ impl WorkflowRunTracker {
         entry.finished = Some(finished);
         drop(inner);
         self.finished.notify_waiters();
+    }
+
+    /// Fires when a run starts. Subscribe before reading the runs, so a
+    /// start during the wait is not lost.
+    pub(crate) fn started_owned(&self) -> impl std::future::Future<Output = ()> + Send + 'static {
+        self.started.clone().notified_owned()
     }
 
     /// Fires when any run finishes. Subscribe before checking pending
@@ -356,6 +402,23 @@ impl WorkflowRunTracker {
                     && entry.finished.is_some()
                     && !entry.observed
             })
+    }
+
+    /// The runs of the session that finished and whose result has not been
+    /// delivered yet.
+    pub(crate) fn undelivered_runs(&self, session_id: &str) -> Vec<String> {
+        self.inner
+            .lock()
+            .expect("workflow tracker lock")
+            .runs
+            .values()
+            .filter(|entry| {
+                entry.session_id.as_deref() == Some(session_id)
+                    && entry.finished.is_some()
+                    && !entry.observed
+            })
+            .map(|entry| entry.run_id.clone())
+            .collect()
     }
 
     /// Whether a run for the session that started at or after `since` is
@@ -426,6 +489,45 @@ impl WorkflowRunTracker {
             }
         }
     }
+}
+
+/// What a host starts in the background, as its notice says.
+pub(crate) enum BackgroundStart<'a> {
+    /// A workflow source, planned with its declared default inputs or with
+    /// inputs given.
+    Source { default_inputs: bool },
+    /// The saved plan `plan_id`.
+    Plan { plan_id: &'a str },
+    /// A run that existed already.
+    Resume,
+}
+
+/// The notice a host shows as it starts run `run_id` of `workflow_name` in
+/// the background. The TUI and the daemon share it, so a hub start reads
+/// the same whichever runs it.
+pub(crate) fn starting_notice(
+    start: &BackgroundStart<'_>,
+    workflow_name: &str,
+    run_id: &str,
+) -> String {
+    let short = |id: &str| id.chars().take(8).collect::<String>();
+    let run = short(run_id);
+    let started = match start {
+        BackgroundStart::Source { default_inputs } => {
+            let inputs = if *default_inputs {
+                " Default inputs."
+            } else {
+                ""
+            };
+            format!("Starting '{workflow_name}' in the background (run {run}).{inputs}")
+        }
+        BackgroundStart::Plan { plan_id } => format!(
+            "Starting plan {} in the background (run {run}).",
+            short(plan_id)
+        ),
+        BackgroundStart::Resume => format!("Resuming run {run} in the background."),
+    };
+    format!("{started} Completion is delivered automatically.")
 }
 
 pub(crate) fn start_context_prompts(

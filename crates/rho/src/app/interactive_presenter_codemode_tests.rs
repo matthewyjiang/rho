@@ -1,18 +1,22 @@
 use pretty_assertions::assert_eq;
-use rho_tools::tool_card::{ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus};
+use rho_protocol::display::{
+    CodeWindow, ToolBody, ToolCard, ToolCardStatus, ToolFact, ToolFamily, ToolHeader,
+};
 use serde_json::json;
 
 use super::finished_card;
 
-fn expected(status: ToolStatus, primary: Option<&str>, script: &[&str]) -> ToolCard {
+fn expected(status: ToolCardStatus, primary: Option<&str>, script: &[&str]) -> ToolCard {
     ToolCard::new(
         status,
         ToolFamily::Default,
         ToolHeader::call("codemode", primary.map(str::to_string)),
     )
-    .with_body(ToolBody::Lines(
-        script.iter().map(|line| line.to_string()).collect(),
-    ))
+    .with_body(ToolBody::Code {
+        language: "python".into(),
+        window: CodeWindow::Head,
+        lines: script.iter().map(|line| line.to_string()).collect(),
+    })
 }
 
 // Covers: bridge progress rows never reach the running card, so it keeps the
@@ -27,12 +31,15 @@ fn running_card_ignores_call_rows() {
         arguments: arguments.clone(),
         metadata: Default::default(),
     };
-    let rows = rho_sdk::tool::ToolProgress::message("✓ read_file a.rs 1ms\n● bash sleep 5");
+    let rows = rho_sdk::tool::ToolProgress::new("✓ read_file a.rs 1ms\n● bash sleep 5");
     let card = crate::app::interactive_presenter::format::progress_card(
         Some((&view, std::path::Path::new("."))),
         &rows,
     );
-    assert_eq!(card, expected(ToolStatus::Running, None, &["result = 1"]));
+    assert_eq!(
+        card,
+        expected(ToolCardStatus::Running, None, &["result = 1"])
+    );
 }
 
 // Covers: finished cards are the script with the call count, live and replayed
@@ -40,34 +47,28 @@ fn running_card_ignores_call_rows() {
 // Owner: codemode presenter.
 #[test]
 fn finished_card_is_the_script() {
-    use crate::app::interactive_presenter::{InteractiveToolPresenter, PresentedToolCard};
+    use crate::app::interactive_presenter::InteractiveToolPresenter;
     use rho_sdk::{model::ToolCall, tool::ToolOutput, ToolCallId, ToolCompletion};
 
-    let call = ToolCall {
-        id: "script-call".into(),
-        name: "codemode".into(),
-        arguments: json!({"script": "a = 1\nresult = a"}),
-    };
+    let call = ToolCall::new(
+        "script-call".into(),
+        "codemode".into(),
+        json!({"script": "a = 1\nresult = a"}),
+    );
     let script = ["a = 1", "result = a"];
     let mut presenter = InteractiveToolPresenter::new(".".into(), Default::default());
     presenter.proposed(call.clone());
     let output = ToolOutput::text("printed line").with_structured_content(json!({"calls": 3}));
     let (ok, live) = presenter.finished(
         &ToolCallId::from_string(call.id.clone()).unwrap(),
-        ToolCompletion::from_output(output),
+        &ToolCompletion::Completed(output),
     );
     assert!(ok);
-    let want = PresentedToolCard {
-        card: expected(ToolStatus::Ok, Some("3 calls"), &script),
-        body_syntax: super::body_syntax(super::ToolBodyWindow::Head),
-    };
+    let want = expected(ToolCardStatus::Ok, Some("3 calls"), &script);
     assert_eq!(live.presentation, want.into());
 
     let replayed = presenter.historical(&call, /*ok*/ true, "printed line");
-    let want = PresentedToolCard {
-        card: expected(ToolStatus::Ok, None, &script),
-        body_syntax: super::body_syntax(super::ToolBodyWindow::Head),
-    };
+    let want = expected(ToolCardStatus::Ok, None, &script);
     assert_eq!(replayed.presentation, want.into());
 
     presenter.proposed(call.clone());
@@ -76,18 +77,14 @@ fn finished_card_is_the_script() {
         .with_structured_content(json!({"calls": 1, "error": "x"}));
     let (ok, failed) = presenter.finished(
         &ToolCallId::from_string(call.id).unwrap(),
-        ToolCompletion::from_output(failed_output),
+        &ToolCompletion::Completed(failed_output),
     );
     assert!(!ok);
-    let mut card = expected(ToolStatus::Error, Some("1 call"), &script);
+    let mut card = expected(ToolCardStatus::Error, Some("1 call"), &script);
     card.push_fact(ToolFact::Error {
         text: "script failed: x".into(),
     });
-    let want = PresentedToolCard {
-        card,
-        body_syntax: super::body_syntax(super::ToolBodyWindow::Head),
-    };
-    assert_eq!(failed.presentation, want.into());
+    assert_eq!(failed.presentation, card.into());
 }
 
 // Covers: traceback tails survive live structured output and historical text;
@@ -135,7 +132,7 @@ fn failed_cards_keep_full_diagnostics_without_mistaking_prints_for_errors() {
         ),
         ("empty output", "", None, None),
     ] {
-        let mut want = expected(ToolStatus::Error, None, &[r#"fail("x")"#]);
+        let mut want = expected(ToolCardStatus::Error, None, &[r#"fail("x")"#]);
         if let Some(reason) = reason {
             want.push_fact(ToolFact::Error {
                 text: reason.into(),

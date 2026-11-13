@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use super::*;
 use crate::model::{
     AbortedAssistant, ContentBlock, Message, PartialToolCall, ReasoningCapabilities,
@@ -180,7 +182,9 @@ fn native_compact_is_advertised_only_for_first_party_hosts() {
         };
 
         assert_eq!(
-            provider.native_compact(request).is_some(),
+            provider
+                .native_compact(request, ModelRequestOptions::default())
+                .is_some(),
             expected,
             "identity_provider={identity_provider}"
         );
@@ -361,6 +365,8 @@ fn completed_tool_call_arguments_are_published_exactly_once() {
             | ModelEvent::Usage(_)
             | ModelEvent::GenerationOutputTokens(_)
             | ModelEvent::HostedToolActivity { .. }
+            | ModelEvent::ToolCallAccepted { .. }
+            | ModelEvent::Stopped(_)
             | ModelEvent::ServiceTierFallback { .. } => None,
         })
         .collect::<String>();
@@ -399,6 +405,8 @@ fn parallel_tool_calls_stream_arguments_per_output_index() {
             | ModelEvent::Usage(_)
             | ModelEvent::GenerationOutputTokens(_)
             | ModelEvent::HostedToolActivity { .. }
+            | ModelEvent::ToolCallAccepted { .. }
+            | ModelEvent::Stopped(_)
             | ModelEvent::ServiceTierFallback { .. } => None,
         })
         .collect::<Vec<_>>();
@@ -508,6 +516,8 @@ fn codex_sse_line_emits_reasoning_summary_delta() {
                 ModelEvent::Usage(_) => {}
                 ModelEvent::GenerationOutputTokens(_)
                 | ModelEvent::HostedToolActivity { .. }
+                | ModelEvent::ToolCallAccepted { .. }
+                | ModelEvent::Stopped(_)
                 | ModelEvent::ServiceTierFallback { .. } => {}
             }
             Ok(())
@@ -597,7 +607,10 @@ fn codex_sse_line_emits_x_search_from_custom_tool_call() {
                 ModelEvent::ProviderContext { .. } => {}
                 ModelEvent::ToolCallDelta { .. } => {}
                 ModelEvent::Usage(_) => {}
-                ModelEvent::GenerationOutputTokens(_) | ModelEvent::ServiceTierFallback { .. } => {}
+                ModelEvent::GenerationOutputTokens(_)
+                | ModelEvent::ServiceTierFallback { .. }
+                | ModelEvent::ToolCallAccepted { .. }
+                | ModelEvent::Stopped(_) => {}
             }
             Ok(())
         }),
@@ -867,7 +880,7 @@ fn codex_sse_search_action_url_and_pattern_are_bare_detail() {
 #[test]
 fn serializes_aborted_codex_tool_calls_as_non_executable_context() {
     let input = codex_input_items(
-        &[Message::AbortedAssistant(Box::new(AbortedAssistant {
+        &[Message::AbortedAssistant(Arc::new(AbortedAssistant {
             content: vec![ContentBlock::Text("partial answer".into())],
             tool_calls: vec![PartialToolCall {
                 id: Some("call_1".into()),

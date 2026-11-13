@@ -11,9 +11,10 @@ use tokio::sync::mpsc;
 use super::{
     agent_binding::{AgentBinder, AgentInvocation, AgentRole, BoundAgent},
     session_assembly::{
-        assemble_session, ApprovalInputs, BuiltSession, SessionApproval, SessionAssemblyOptions,
+        assemble_session, ApprovalInputs, BuiltSession, HookStart, SessionApproval,
+        SessionAssemblyOptions, SignIn,
     },
-    tools_prompt::{McpSamplingSupport, ToolSourceAttach},
+    tools_prompt::ToolSourceAttach,
 };
 use crate::{
     agent::{
@@ -236,8 +237,10 @@ async fn assemble_side_session(launch: &SideChatLaunch) -> anyhow::Result<BuiltS
         no_subagents: true,
         questionnaire_enabled: false,
         mcp_elicitation: crate::tools::mcp::McpElicitationSupport::Unavailable,
-        mcp_sampling: McpSamplingSupport::Unavailable,
         tool_source_attach: ToolSourceAttach::None,
+        tool_source_load: super::tools_prompt::ToolSourceLoad::Inline,
+        hook_start: HookStart::Start,
+        sign_in: SignIn::Required,
         mcp_authorization: crate::tools::mcp::McpAuthorizationMode::NonInteractive,
         diagnostics: &diagnostics,
         agent: &agent,
@@ -246,7 +249,10 @@ async fn assemble_side_session(launch: &SideChatLaunch) -> anyhow::Result<BuiltS
         usage_parent_session_id: Some(launch.parent_session_id.clone()),
         hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
         added_dirs: &launch.added_dirs,
-        host_io: Default::default(),
+        environment: Default::default(),
+        subagent_pool: crate::app::subagent_pool::SubagentPool::Own,
+        // A side chat starts no process the session would idle on.
+        process_keep_warm: crate::tools::process::KeepWarmOffer::Hidden,
         extend_tools: std::convert::identity,
         system_prompt_suffix: None,
         approval: |_: ApprovalInputs| {
@@ -258,7 +264,9 @@ async fn assemble_side_session(launch: &SideChatLaunch) -> anyhow::Result<BuiltS
         session_options: move |_| {
             Ok(SessionOptions::new()
                 .id(SessionId::new())
-                .history(vec![Message::User(vec![ContentBlock::Text(snapshot)])]))
+                .history(vec![Message::User(
+                    vec![ContentBlock::Text(snapshot)].into(),
+                )]))
         },
     })
     .await?;

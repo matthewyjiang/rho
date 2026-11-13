@@ -1,4 +1,10 @@
-use std::{collections::BTreeMap, fmt, future::Future, pin::Pin, sync::Mutex};
+use std::{
+    collections::BTreeMap,
+    fmt,
+    future::Future,
+    pin::Pin,
+    sync::{Arc, Mutex},
+};
 
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
 
@@ -9,8 +15,10 @@ use crate::{
 
 /// Oldest portable session snapshot schema accepted by this SDK.
 pub const MIN_SESSION_SNAPSHOT_SCHEMA_VERSION: u32 = 1;
-/// Current portable session snapshot schema.
-pub const SESSION_SNAPSHOT_SCHEMA_VERSION: u32 = 2;
+/// Current portable session snapshot schema. Version 3 (rho-sdk 6.0) stores
+/// typed history entries and tool-result status, so older SDKs reject it with
+/// this version instead of failing on an unknown message variant.
+pub const SESSION_SNAPSHOT_SCHEMA_VERSION: u32 = 3;
 
 /// Versioned, portable state required to continue an SDK session.
 ///
@@ -104,8 +112,11 @@ impl SessionSnapshot {
     /// Raw aborted-assistant reasoning is cleared. Other messages are unchanged.
     pub fn sanitize_history(mut history: Vec<Message>) -> Vec<Message> {
         for message in &mut history {
+            // A shared message is copied only when it holds reasoning.
             if let Message::AbortedAssistant(assistant) = message {
-                assistant.reasoning.clear();
+                if !assistant.reasoning.is_empty() {
+                    Arc::make_mut(assistant).reasoning.clear();
+                }
             }
         }
         history
@@ -149,12 +160,14 @@ impl SessionSnapshot {
     pub fn to_json(&self) -> Result<String, Error> {
         serde_json::to_string_pretty(self).map_err(|error| Error::Persistence {
             message: format!("failed to serialize session snapshot: {error}"),
+            source: Some(Box::new(error)),
         })
     }
 
     pub fn from_json(json: &str) -> Result<Self, Error> {
         serde_json::from_str(json).map_err(|error| Error::Persistence {
             message: format!("failed to deserialize session snapshot: {error}"),
+            source: Some(Box::new(error)),
         })
     }
 }

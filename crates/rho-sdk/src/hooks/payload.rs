@@ -49,6 +49,7 @@ pub enum HookProcessEnvironment {
     InheritAll,
     InheritListed,
     InheritExcept,
+    Explicit,
 }
 
 /// Safe structured summary of the authority a tool asked for.
@@ -73,7 +74,13 @@ pub enum HookCapability {
         executable: PathBuf,
         arguments: Vec<String>,
         /// Script text, present only when execution really goes through a shell.
+        /// This is the command that runs, after any host rewrite.
         shell_command: Option<String>,
+        /// The command the model asked for, present only when the host
+        /// rewrote it (for example, RTK turning `git push` into
+        /// `rtk git push`). Omitted from the wire when absent.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        requested_command: Option<String>,
         environment: HookProcessEnvironment,
     },
     NetworkAccess {
@@ -90,6 +97,16 @@ pub enum HookCapability {
     DiscoverInstructions {
         path: PathBuf,
         scope: HookPathScope,
+    },
+    /// Acting on another agent session: `action` is what the tool does to
+    /// it (`new`, `prompt`, `steer`, or `cancel`), `session` the session,
+    /// `null` for one it starts, `workspace` the session's workspace, and
+    /// `text` what the operation sends, `null` for a cancel.
+    ControlSession {
+        action: String,
+        session: Option<String>,
+        workspace: PathBuf,
+        text: Option<String>,
     },
 }
 
@@ -209,8 +226,7 @@ impl<'a> From<&'a crate::ToolCompletion> for ToolOutcomeRef<'a> {
     fn from(completion: &'a crate::ToolCompletion) -> Self {
         match completion {
             // `status` reads the failure flag from the output itself.
-            crate::ToolCompletion::Success(output)
-            | crate::ToolCompletion::CompletedFailure(output) => Self::Completed(output),
+            crate::ToolCompletion::Completed(output) => Self::Completed(output),
             crate::ToolCompletion::Failure(failure) => {
                 Self::Failed(failure.kind(), failure.message())
             }
@@ -269,6 +285,7 @@ pub enum HookPayload {
     AfterToolUse(AfterToolUsePayload),
     RunCompleted(RunCompletedPayload),
     RunFailed(RunFailedPayload),
+    InputRequested(InputRequestedPayload),
     SessionCompleted(SessionCompletedPayload),
     SessionFailed(SessionFailedPayload),
 }
@@ -287,30 +304,18 @@ pub struct BeforeToolUsePayload {
 }
 
 /// Outcome of a tool call delivered to observational hooks.
-///
-/// # Next major
-///
-/// NEXT_MAJOR(rho-sdk): add `capability: Option<HookCapability>` and
-/// `process: Option<HookProcessResult>` as public fields on this struct and stop
-/// carrying them on [`super::HookEnvelope`].
-///
-/// This minor keeps the existing constructor fields so downstream struct
-/// literals stay valid.
-///
-/// Read the first authorized capability from
-/// [`super::HookEnvelope::after_tool_use_capability`] or the envelope JSON
-/// `payload.capability` key. `None` / JSON `null` means the call never
-/// authorized. Multi-capability calls still emit one `before_tool_use` per
-/// request; the after payload reports only the first. Policy denials still
-/// include the request.
-///
-/// Read the process result from
-/// [`super::HookEnvelope::after_tool_use_process`] or `payload.process`.
-/// `None` / JSON `null` means the call ran no process to completion: the tool
-/// runs none, or the call was denied, timed out, or was cancelled.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct AfterToolUsePayload {
     pub tool: HookTool,
+    /// First capability the call passed to authorize; `None` (JSON `null`)
+    /// when it never authorized. Multi-capability calls still emit one
+    /// `before_tool_use` per request; this reports only the first. Policy
+    /// denials still include the request.
+    pub capability: Option<HookCapability>,
+    /// How the process the call ran exited; `None` (JSON `null`) when it ran
+    /// no process to completion: the tool runs none, or the call was denied,
+    /// timed out, or was cancelled.
+    pub process: Option<HookProcessResult>,
     pub status: HookToolStatus,
     pub failure: Option<HookFailure>,
     pub duration_ms: Option<u64>,
@@ -325,6 +330,29 @@ pub struct RunCompletedPayload {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct RunFailedPayload {
     pub failure: HookFailure,
+}
+
+/// What a run waits for a person to answer.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct InputRequestedPayload {
+    pub kind: HookInputKind,
+    /// What is asked, in one line: an approval's operation and any policy
+    /// reason, a plan's first line, or a questionnaire's title.
+    pub summary: String,
+}
+
+/// The kind of answer a run waits for. Plan approvals are reported by hosts
+/// that offer a plan mode; the SDK itself asks only for the other two.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum HookInputKind {
+    /// May a tool use a capability?
+    Approval,
+    /// May the session leave plan mode to carry out its plan?
+    PlanApproval,
+    /// Questions for the user.
+    Question,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -345,6 +373,7 @@ impl HookPayload {
             Self::AfterToolUse(_) => super::HookEventKind::AfterToolUse,
             Self::RunCompleted(_) => super::HookEventKind::RunCompleted,
             Self::RunFailed(_) => super::HookEventKind::RunFailed,
+            Self::InputRequested(_) => super::HookEventKind::InputRequested,
             Self::SessionCompleted(_) => super::HookEventKind::SessionCompleted,
             Self::SessionFailed(_) => super::HookEventKind::SessionFailed,
         }
@@ -358,6 +387,7 @@ impl HookPayload {
             Self::SessionStarted(_)
             | Self::RunCompleted(_)
             | Self::RunFailed(_)
+            | Self::InputRequested(_)
             | Self::SessionCompleted(_)
             | Self::SessionFailed(_) => None,
         }
@@ -373,7 +403,7 @@ impl HookPayload {
             }
             Self::RunCompleted(_) | Self::SessionCompleted(_) => Some(true),
             Self::RunFailed(_) | Self::SessionFailed(_) => Some(false),
-            Self::SessionStarted(_) | Self::BeforeToolUse(_) => None,
+            Self::SessionStarted(_) | Self::BeforeToolUse(_) | Self::InputRequested(_) => None,
         }
     }
 }
@@ -427,6 +457,7 @@ impl From<&ProcessEnvironment> for HookProcessEnvironment {
             ProcessEnvironment::InheritAll => Self::InheritAll,
             ProcessEnvironment::InheritListed { .. } => Self::InheritListed,
             ProcessEnvironment::InheritExcept { .. } => Self::InheritExcept,
+            ProcessEnvironment::Explicit { .. } => Self::Explicit,
         }
     }
 }
@@ -460,6 +491,27 @@ pub(crate) fn summarize_capability(
             path: path
                 .as_deref()
                 .map(|path| bounded_path(path, "payload.capability.path", bounds, truncation)),
+        },
+        CapabilityOperation::ControlSession(target) => HookCapability::ControlSession {
+            action: target.action.label().to_owned(),
+            session: target.session.as_ref().map(|session| {
+                bounded_string(
+                    session.as_str().to_owned(),
+                    "payload.capability.session",
+                    bounds,
+                    truncation,
+                )
+            }),
+            workspace: bounded_path(
+                &target.workspace,
+                "payload.capability.workspace",
+                bounds,
+                truncation,
+            ),
+            text: target
+                .text
+                .clone()
+                .map(|text| bounded_string(text, "payload.capability.text", bounds, truncation)),
         },
     }
 }
@@ -510,6 +562,14 @@ fn summarize_process(
         ),
         arguments,
         shell_command,
+        requested_command: execution.requested_command().map(|command| {
+            bounded_string(
+                command.to_owned(),
+                "payload.capability.requested_command",
+                bounds,
+                truncation,
+            )
+        }),
         environment: execution.environment().into(),
     }
 }

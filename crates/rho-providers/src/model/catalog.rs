@@ -45,13 +45,9 @@ pub struct ModelSelection {
 
 /// Why a `provider/model` reference cannot be the chat model.
 ///
-/// # Next major
-///
-/// NEXT_MAJOR(rho-providers): mark ModelSelectionError `#[non_exhaustive]` so new variants are minor-compatible.
-///
-/// New variants land in minor releases, as `DecisionOnly` did in 2.14; an
-/// exhaustive match outside this crate breaks on each one until then.
+/// Non-exhaustive: new variants land in minor releases.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
 pub enum ModelSelectionError {
     #[error("unknown provider '{provider}' for model selection")]
     UnknownProvider { provider: String },
@@ -512,7 +508,7 @@ fn unavailable_model_error(provider: &str, model: &str) -> ModelSelectionError {
         // Rho refreshes such a host only after its /login, which also refreshes.
         "Run /login for this provider to set it up and refresh its models."
     } else if provider_uses_cached_models(provider) {
-        "Open /config and choose Refresh model lists to update available models."
+        "Run /refresh-models to update available models."
     } else {
         "Choose a model from the provider allowlist."
     };

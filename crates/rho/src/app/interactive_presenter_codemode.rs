@@ -4,46 +4,51 @@
 //! the transcript jump, so the TUI ignores the bridge's progress rows (ACP and
 //! the automation protocol still forward them).
 
-use rho_tools::tool_card::{ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus};
+use rho_protocol::display::{
+    CodeWindow, ToolBody, ToolCard, ToolCardStatus, ToolFact, ToolFamily, ToolHeader,
+};
 use serde_json::Value;
 
-use super::{format::string_arg, ToolBodySyntax, ToolBodyWindow};
+use super::format::string_arg;
 
 /// Starlark is Python-shaped, and the bundled syntax set has no Starlark grammar.
 const SCRIPT_LANGUAGE: &str = "python";
-
-pub(super) fn body_syntax(window: ToolBodyWindow) -> ToolBodySyntax {
-    ToolBodySyntax::Code {
-        language: SCRIPT_LANGUAGE.into(),
-        window,
-    }
-}
 
 /// Every codemode card: the script as source, with an optional header detail.
 /// Streaming, started, running, and interrupted cards pass no detail.
 pub(super) fn preview_card(
     arguments: &Value,
-    status: ToolStatus,
+    status: ToolCardStatus,
     primary: Option<String>,
 ) -> ToolCard {
     let lines = string_arg(arguments, "script")
         .map(|script| script.trim_end().lines().map(str::to_string).collect())
         .unwrap_or_default();
-    script_card(lines, status, primary)
+    script_card(lines, CodeWindow::Head, status, primary)
 }
 
 /// The source decoder already assembled these rows; retain the full history.
+/// Collapsed, the card follows the newest generated rows.
 pub(super) fn streaming_card(lines: Vec<String>) -> ToolCard {
-    script_card(lines, ToolStatus::Running, None)
+    script_card(lines, CodeWindow::Tail, ToolCardStatus::Running, None)
 }
 
-fn script_card(lines: Vec<String>, status: ToolStatus, primary: Option<String>) -> ToolCard {
+fn script_card(
+    lines: Vec<String>,
+    window: CodeWindow,
+    status: ToolCardStatus,
+    primary: Option<String>,
+) -> ToolCard {
     ToolCard::new(
         status,
         ToolFamily::Default,
         ToolHeader::call(crate::tools::code_mode::CODEMODE_TOOL_NAME, primary),
     )
-    .with_body(ToolBody::Lines(lines))
+    .with_body(ToolBody::Code {
+        language: SCRIPT_LANGUAGE.into(),
+        window,
+        lines,
+    })
 }
 
 /// Finished card: the call count, the failure reason when the script failed,
@@ -63,7 +68,7 @@ pub(super) fn finished_card(
         Some(1) => Some("1 call".into()),
         Some(count) => Some(format!("{count} calls")),
     };
-    let mut card = preview_card(arguments, ToolStatus::from_finished(ok), primary);
+    let mut card = preview_card(arguments, ToolCardStatus::from_finished(ok), primary);
     if !ok {
         let reason = data
             .and_then(|data| data.get("error"))

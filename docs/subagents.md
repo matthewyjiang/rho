@@ -116,7 +116,7 @@ as `/model`: `provider/model`, an unambiguous catalog model ID, or `@alias`.
 Only the first slash separates provider and model: `myproxy/vendor/model` selects
 `vendor/model` on `myproxy`. A bare alias target keeps the parent's provider.
 Custom/discovered models must already be in the local model cache; refresh model
-lists through `/config` if necessary. Delegation does not discover or invent models.
+lists with `/refresh-models` if necessary. Delegation does not discover or invent models.
 
 Compatible available parent auth is preferred; otherwise selection uses an
 available login for the target model/provider. Definition auth pins do not carry
@@ -128,18 +128,13 @@ the account has access; provider-side auth/access errors still fail the child.
 Per-call overrides require `runtime: rho`. Claude CLI, Cursor, and Antigravity use
 different model namespaces and reject this field; their existing definition-based
 selection is unchanged. CLI, TUI, and ACP native delegation use the same binder.
-Under `rho acp --t3code`, the override travels with the child's `/agent:` rebind
-command, so it reaches the actual Rho child. T3's model picker for that thread
-[follows it when T3 offers the model](/integrations/acp/t3-code#subagents-run-as-t3-threads).
 
 Native `agent` receipts and `agents` structured status include the bound `provider`
 and `model`; completion/status text and run artifacts also report that selection.
-T3 owns host-managed task receipts and completion metadata; Rho does not label a
-requested model as confirmed before the child's rebind succeeds.
 
-Completions reach the parent automatically at safe provider boundaries. The parent can continue independent work or end its turn to wait for required results, without polling. Interactive sessions wake an idle parent. CLI and ACP runs wait for outstanding children before natural completion and deliver their results back into the same run, preserving its step limit and cancellation handling. They wait the same way for workflows and for background processes started during the run, except under `rho acp --t3code`, where those [wake the idle thread](/integrations/acp/t3-code#wake-on-background-results) instead. Side chats still disable delegation.
+Completions reach the parent automatically at safe provider boundaries. The parent can continue independent work or end its turn to wait for required results, without polling. Interactive sessions wake an idle parent. CLI and ACP runs wait for outstanding children before natural completion and deliver their results back into the same run, preserving its step limit and cancellation handling. They wait the same way for workflows and for background processes started during the run. Side chats still disable delegation.
 
-Cancellation, errors, and step limits end CLI and ACP runs without waiting for more child results. A CLI run then stops its remaining children; their saved status and artifacts remain available for inspection. An ACP session keeps them running, as the TUI does across cancelled turns, because hosts such as T3 Code cancel the open prompt to send each mid-turn message. The next prompt waits for the children Rho runs and delivers their results. Children that run as T3 threads under `rho acp --t3code` report to the parent through T3 instead and never hold a prompt open. Stop children with the `agents` tool, or by closing or reloading the session.
+Cancellation, errors, and step limits end CLI and ACP runs without waiting for more child results. A CLI run then stops its remaining children; their saved status and artifacts remain available for inspection. An ACP session keeps them running, as the TUI does across cancelled turns, because hosts such as T3 Code cancel the open prompt to send each mid-turn message. The next prompt waits for the children and delivers their results. ACP sessions run in the [daemon](/daemon#subagents), so closing or reloading the session in the host does not stop its children either. Stop children with the `agents` tool. Under `rho acp --t3code`, children run as [T3 threads](/integrations/acp/t3-code#subagents-run-as-t3-threads) instead: they report to the parent through T3 and never hold a prompt open.
 
 Rho-runtime agents stay in-process. `runtime: claude-cli` agents spawn the external `claude-agent-acp` adapter and still report through the same status and attachment files. The `agents` tool lists, inspects, cancels, or messages handles tracked by `SubagentManager`. Parent shutdown cancels active handles and waits for bounded cleanup. Delegated agents run without their own TUI. Questionnaires raised by delegated Rho agents surface in an interactive parent session; approvals still cannot.
 
@@ -172,7 +167,7 @@ Background Rho agents with an interactive parent have two non-blocking messaging
 | `message_parent` | A useful, nonurgent finding that cannot wait for the final result | Queued for an otherwise-scheduled parent turn; never wakes an idle parent on its own |
 | `request_parent_action` | A blocking decision or immediate coordination need, such as conflicting edits | Wakes an idle parent at a safe turn boundary; the message must state what action is needed |
 
-Pending notices share a batch with action requests and completion notifications. Multiple notices already waiting at a boundary become one parent turn, not one turn per message. While the parent is working, notices wait for a safe provider boundary rather than interrupt streaming or tool work. A parent pursuing a goal can also handle action requests while waiting for children to finish. Idle delivery still respects input and confirmation gates.
+Pending notices share a batch with action requests and completion notifications. Multiple notices already waiting at a boundary become one parent turn, not one turn per message. While the parent is working, notices wait for a safe provider boundary rather than interrupt streaming or tool work. Idle delivery still respects input and confirmation gates.
 
 Delivered messages appear in left-rail transcript cards, distinct from human input.
 Each card shows the task, sender, run ID, event type, and message body. Bodies use
@@ -217,8 +212,8 @@ Messages sent through `agents` action `message` show the task title first, then 
 run has no generated title yet, its first nonempty prompt line identifies the task.
 This keeps different tasks using the same agent role distinguishable.
 
-The excerpt uses your `display.max_tool_output_lines` setting. Press `Ctrl+O` or click
-the card to see the complete message, full task title, run ID, and attach command.
+The excerpt uses your `max_tool_output_lines` setting. Press `Ctrl+O` or click
+the card to see the complete message, full task title, and run ID.
 Surrounding whitespace is trimmed to match the text accepted for delivery. The
 durable receipt remains plain text for ACP clients and exported transcripts.
 Short messages can also expand to show those details. Queued means the message was
@@ -227,7 +222,7 @@ Child-to-parent `message_parent` notices keep their existing notification displa
 
 ## Binding and security
 
-Every invocation goes through the same binder. Rho-runtime agents resolve aliases and tool capabilities against the host. Claude-cli agents are delegated-only and keep Claude's model/tool vocabulary. Delegated Rho agents cannot recurse through `agent`/`agents`.
+Every invocation goes through the same binder. Rho-runtime agents resolve aliases and tool capabilities against the host. Claude-cli agents are delegated-only and keep Claude's model/tool vocabulary. Delegated Rho agents cannot recurse through `agent`/`agents`, or start workflow runs, whose agent nodes would run outside the parent session's agent budget.
 
 Details: [Binding and security](/subagents/binding-and-security).
 
@@ -257,8 +252,8 @@ Full guide: [Google Antigravity as a delegated runtime](/subagents/antigravity).
 
 ## Attachment and artifacts
 
-Watch a delegated run with `rho attach` or `rho attach <id>`. The picker lists
-runs from the current directory. Detaching does not cancel the run. Artifacts
+Watch a delegated run with `/attach` or a click on its activity-rail row. The
+picker lists runs from the current directory. Detaching does not cancel the run. Artifacts
 live under the parent session folder when available, otherwise under
 `~/.rho/subagents/<id>/`. The title model names each run so the activity rail
 and attach picker can show role and title instead of a run id.

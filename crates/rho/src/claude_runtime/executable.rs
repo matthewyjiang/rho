@@ -6,11 +6,11 @@
 //! surface and the CLI always matches the adapter's Agent SDK. Resolution and
 //! invocation rules are generic and live in [`crate::cli_runtime`].
 
-use crate::cli_runtime::CliExecutable;
+use crate::{cli_runtime::CliExecutable, session_environment::Ambient};
 
 use super::auth::ClaudeAuthError;
 
-/// Program name resolved on `PATH`.
+/// Program name resolved on the `PATH` of the environment it runs in.
 pub(crate) const ADAPTER_PROGRAM: &str = "claude-agent-acp";
 
 /// `claude-agent-acp --cli <args>` runs the bundled Claude CLI with `<args>`.
@@ -20,8 +20,10 @@ pub(crate) const CLI: &str = "--cli";
 pub(crate) const INSTALL_HINT: &str =
     "install it with `npm install -g @agentclientprotocol/claude-agent-acp` (or `bun add -g`)";
 
-/// Locate `claude-agent-acp` for spawning. On Windows, prefer real binaries
-/// and then `.cmd` / `.ps1` shims that Rust's bare-name lookup will not find.
-pub(crate) fn resolve() -> Result<CliExecutable, ClaudeAuthError> {
-    CliExecutable::resolve(ADAPTER_PROGRAM).ok_or(ClaudeAuthError::BinaryMissing)
+/// Locate `claude-agent-acp` on the `PATH` of `environment`, the one it will
+/// run in. On Windows, prefer real binaries and then `.cmd` / `.ps1` shims
+/// that Rust's bare-name lookup will not find.
+pub(crate) fn resolve(environment: &Ambient) -> Result<CliExecutable, ClaudeAuthError> {
+    CliExecutable::resolve_in(ADAPTER_PROGRAM, environment.path().as_deref())
+        .ok_or(ClaudeAuthError::BinaryMissing)
 }

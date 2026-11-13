@@ -1,0 +1,102 @@
+use std::path::PathBuf;
+
+use pretty_assertions::assert_eq;
+use rho_protocol::{JobId, JobKind, JobState, JobSummary, SessionId};
+
+use super::rail_jobs;
+
+const NOW: u64 = 1_000;
+
+fn job(id: &str, kind: JobKind, parent: Option<&str>) -> JobSummary {
+    JobSummary {
+        id: JobId::new(id),
+        kind,
+        state: JobState::Running,
+        workspace: PathBuf::from("/work"),
+        parent: parent.map(JobId::new),
+        session: None,
+        run: None,
+        workflow_run: None,
+        result_pending: false,
+        created_at: 0,
+        updated_at: 0,
+        error: None,
+        queue: None,
+        live: None,
+        grant: None,
+        grant_limit: None,
+        worktree: None,
+        worktree_stale: false,
+    }
+}
+
+fn session(id: &str, session: &str) -> JobSummary {
+    JobSummary {
+        session: Some(SessionId::new(session)),
+        ..job(id, JobKind::Session, None)
+    }
+}
+
+fn run(id: &str, parent: &str, state: JobState, updated_at: u64) -> JobSummary {
+    JobSummary {
+        state,
+        updated_at,
+        run: Some(format!("run-{id}")),
+        ..job(id, JobKind::Subagent, Some(parent))
+    }
+}
+
+// Covers: the rail shows the runs the followed session started itself,
+// whatever order the jobs list in, and drops a finished run once it ended
+// long enough ago unless its result is still owed to the session, so a
+// workflow's agent nodes, another session's children and old history never
+// show.
+// Owner: daemon subagent rail (pure selection)
+#[test]
+fn the_rail_takes_the_sessions_live_and_just_ended_runs() {
+    let jobs = [
+        // Listed before its session: both began the same second.
+        run("early", "mine", JobState::Running, 0),
+        // A workflow's agent node, which the workflow panel shows.
+        run("node", "workflow", JobState::Running, 0),
+        job("workflow", JobKind::Workflow, Some("mine")),
+        JobSummary {
+            state: JobState::Completed,
+            updated_at: NOW - 60,
+            result_pending: true,
+            ..job("owed", JobKind::Workflow, Some("mine"))
+        },
+        JobSummary {
+            state: JobState::Completed,
+            updated_at: NOW - 60,
+            ..job("delivered", JobKind::Workflow, Some("mine"))
+        },
+        session("mine", "s1"),
+        session("theirs", "s2"),
+        run("live", "mine", JobState::Running, 0),
+        run("queued", "mine", JobState::Queued, 0),
+        run("old", "mine", JobState::Completed, NOW - 60),
+        run("fresh", "mine", JobState::Failed, NOW - 3),
+        run("foreign", "theirs", JobState::Running, 0),
+        // A record from before jobs kept the run id.
+        job("unnamed", JobKind::Subagent, Some("mine")),
+    ];
+
+    let rail = |kind| rail_jobs(&jobs, "s1", kind, NOW);
+    assert_eq!(
+        (
+            rail(JobKind::Subagent)
+                .into_iter()
+                .filter_map(|job| job.run.as_deref())
+                .collect::<Vec<_>>(),
+            rail(JobKind::Workflow)
+                .into_iter()
+                .map(|job| job.id.as_str())
+                .collect::<Vec<_>>(),
+        ),
+        (
+            vec!["run-early", "run-live", "run-queued", "run-fresh"],
+            vec!["workflow", "owed"],
+        )
+    );
+}

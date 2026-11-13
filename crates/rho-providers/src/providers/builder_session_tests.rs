@@ -3,7 +3,7 @@ use std::num::NonZeroUsize;
 use pretty_assertions::assert_eq;
 use rho_sdk::{
     model::{Message, ModelRequest},
-    provider::provider_event_channel,
+    provider::{provider_event_channel, ProviderTurnContext},
 };
 use tokio::{io::AsyncWriteExt, net::TcpListener};
 use url::Url;
@@ -88,7 +88,7 @@ async fn opencode_session_headers_reach_every_adapter() {
                     reasoning_level: ReasoningLevel::Off,
                     prompt_cache_key: cache_key,
                 },
-                sender,
+                ProviderTurnContext::new(sender),
             );
             let server = async {
                 let (mut stream, _) = listener.accept().await.unwrap();

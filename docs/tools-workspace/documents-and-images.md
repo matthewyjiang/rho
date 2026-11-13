@@ -42,9 +42,8 @@ They do not page through a PDF or spreadsheet.
 2. If the magic bytes match PNG, JPEG, GIF, or WebP, build an image preview.
 3. Else if the path or bytes look like a supported rich document, run the shared
    extractor and return rendered text.
-4. Else treat the body as UTF-8 text and return numbered lines. The header is a
-   `[path#TAG]` snapshot tag only when the edit tool is the legacy
-   [`hashline`](/tools-workspace/edit-format); otherwise it is the plain path.
+4. Else treat the body as UTF-8 text and return numbered lines under the plain
+   path.
 
 Rich documents are not editable source files. Use their extracted text to reason
 about them; write results back with `write` or the selected edit tool on real source files.
@@ -150,8 +149,8 @@ text view.
 
 ## Related
 
-- [Edit format](/tools-workspace/edit-format) - legacy hashline tags from text
-  `read_file` results
+- [Edit formats](/tools-workspace/edit-format) - editing text files after
+  `read_file`
 - [Web access](/tools-workspace/web-access) - `fetch_content` targets and
   storage
 - [Attachments](/interactive-tui/attachments) - paste and path drop in the TUI

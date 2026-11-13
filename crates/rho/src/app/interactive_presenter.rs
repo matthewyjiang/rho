@@ -6,13 +6,9 @@ use rho_sdk::{
     ToolCallId, ToolCompletion,
 };
 
-use rho_tools::tool_card::ToolCard;
+use rho_protocol::display::ToolCard;
 
 use crate::tools::mcp::exported_name::{McpToolIdentity, McpToolNames};
-
-#[path = "interactive_presenter_tool_card.rs"]
-mod tool_card;
-pub(crate) use tool_card::{PresentedToolCard, ToolBodySyntax, ToolBodyWindow};
 
 #[path = "interactive_presenter_script_stream.rs"]
 mod script_stream;
@@ -31,17 +27,17 @@ mod sessions_format;
 mod todo_format;
 #[path = "interactive_presenter_tool_search.rs"]
 mod tool_search_format;
-pub(crate) use format::call_header;
 use format::*;
+pub(crate) use format::{call_header, hosted_activity_card};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ToolPresentation {
-    pub(crate) card: PresentedToolCard,
+    pub(crate) card: ToolCard,
     pub(crate) image_asset: Option<ToolAsset>,
 }
 
 pub(crate) struct FinishedToolPresentation {
-    pub(crate) presentation: crate::presentation::Presentation,
+    pub(crate) presentation: rho_protocol::display::Presentation,
     pub(crate) image_asset: Option<ToolAsset>,
 }
 
@@ -115,6 +111,8 @@ impl ToolKind {
             "workflow" => Self::Workflow,
             crate::tools::code_mode::CODEMODE_TOOL_NAME => Self::Codemode,
             crate::tools::code_mode::TOOL_SEARCH_NAME => Self::ToolSearch,
+            // Includes saved calls to the removed hashline `edit` tool, which
+            // replay as generic cards.
             _ => Self::Other,
         }
     }
@@ -205,6 +203,27 @@ pub(crate) struct InteractiveToolPresenter {
     mcp_tools: McpToolNames,
     calls: BTreeMap<String, ToolView>,
     streamed: BTreeMap<usize, StreamedPreview>,
+    calls_shown: CallsShown,
+}
+
+/// Whether a presenter draws calls as they run or calls a session saved.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CallsShown {
+    /// A start card may read the workspace, such as the file an edit is
+    /// about to change.
+    Live,
+    /// Start cards come from the saved call alone, so drawing the same
+    /// call again draws the same card (`saved_start_card`).
+    Saved,
+}
+
+impl CallsShown {
+    fn start_card(self, view: &ToolView, cwd: &std::path::Path) -> ToolCard {
+        match self {
+            Self::Live => start_card(view, cwd),
+            Self::Saved => saved_start_card(view, cwd),
+        }
+    }
 }
 
 impl InteractiveToolPresenter {
@@ -214,6 +233,16 @@ impl InteractiveToolPresenter {
             mcp_tools,
             calls: BTreeMap::new(),
             streamed: BTreeMap::new(),
+            calls_shown: CallsShown::Live,
+        }
+    }
+
+    /// A presenter for calls a session saved, as a replay of its transcript
+    /// draws them: their cards never depend on the workspace as it is now.
+    pub(crate) fn for_saved_calls(cwd: PathBuf, mcp_tools: McpToolNames) -> Self {
+        Self {
+            calls_shown: CallsShown::Saved,
+            ..Self::new(cwd, mcp_tools)
         }
     }
 
@@ -268,10 +297,7 @@ impl InteractiveToolPresenter {
             }
             preview.last_card = Some(card.clone());
             return Some(ToolPresentation {
-                card: PresentedToolCard {
-                    card,
-                    body_syntax: codemode_format::body_syntax(ToolBodyWindow::Tail),
-                },
+                card,
                 image_asset: None,
             });
         }
@@ -302,35 +328,9 @@ impl InteractiveToolPresenter {
         // Streaming previews carry no notices or image assets; skip a second
         // argument parse just to assemble ToolPresentation.
         Some(ToolPresentation {
-            card: PresentedToolCard {
-                card,
-                body_syntax: body_syntax(&kind),
-            },
+            card,
             image_asset: None,
         })
-    }
-
-    pub(crate) fn interrupted(
-        &self,
-        name: Option<&str>,
-        partial_arguments: &str,
-    ) -> ToolPresentation {
-        let name = name.unwrap_or("tool call");
-        let arguments = if ToolKind::from_name(name, &self.mcp_tools) == ToolKind::Codemode {
-            let mut script = script_stream::ScriptStream::default();
-            script.update(partial_arguments);
-            serde_json::json!({"script": script.lines().join("\n")})
-        } else {
-            parse_incomplete_json(partial_arguments)
-                .unwrap_or_else(|| serde_json::Value::Object(Default::default()))
-        };
-        let view = ToolView {
-            kind: ToolKind::from_name(name, &self.mcp_tools),
-            name: name.into(),
-            arguments,
-            metadata: ToolMetadata::default(),
-        };
-        presentation(&view, interrupted_card(&view, partial_arguments, &self.cwd))
     }
 
     pub(crate) fn historical(
@@ -356,7 +356,7 @@ impl InteractiveToolPresenter {
             arguments: call.arguments,
             metadata: ToolMetadata::default(),
         };
-        let presented = presentation(&view, start_card(&view, &self.cwd));
+        let presented = presentation(&view, self.calls_shown.start_card(&view, &self.cwd));
         self.calls.insert(id, view);
         presented
     }
@@ -378,7 +378,7 @@ impl InteractiveToolPresenter {
         view.kind = ToolKind::from_name(&name, &self.mcp_tools);
         view.name = name;
         view.metadata = metadata;
-        presentation(view, start_card(view, &self.cwd))
+        presentation(view, self.calls_shown.start_card(view, &self.cwd))
     }
 
     pub(crate) fn updated(
@@ -387,8 +387,8 @@ impl InteractiveToolPresenter {
         progress: &ToolProgress,
     ) -> ToolPresentation {
         if let Some(view) = self.calls.get_mut(&call_id.to_string()) {
-            if progress.presentation() != &ToolMetadata::default() {
-                view.metadata = progress.presentation().clone();
+            if progress.metadata() != &ToolMetadata::default() {
+                view.metadata = progress.metadata().clone();
             }
             let card = progress_card(Some((view, &self.cwd)), progress);
             return presentation(view, card);
@@ -403,10 +403,16 @@ impl InteractiveToolPresenter {
         presentation(&view, card)
     }
 
+    /// Forgets call `id`, whose start was drawn: a replay draws its result
+    /// with [`Self::historical`], from the saved call.
+    pub(crate) fn forget(&mut self, id: &str) {
+        self.calls.remove(id);
+    }
+
     pub(crate) fn finished(
         &mut self,
         call_id: &ToolCallId,
-        result: ToolCompletion,
+        result: &ToolCompletion,
     ) -> (bool, FinishedToolPresentation) {
         let mut view = self
             .calls
@@ -417,8 +423,8 @@ impl InteractiveToolPresenter {
                 arguments: serde_json::Value::Object(Default::default()),
                 metadata: ToolMetadata::default(),
             });
-        let (ok, content, data) = match &result {
-            ToolCompletion::Success(output) | ToolCompletion::CompletedFailure(output) => {
+        let (ok, content, data) = match result {
+            ToolCompletion::Completed(output) => {
                 if output.presentation() != &ToolMetadata::default() {
                     view.metadata = output.presentation().clone();
                 }
@@ -445,7 +451,7 @@ impl InteractiveToolPresenter {
     ) -> FinishedToolPresentation {
         if let Some(message) = message_format::finished_message(view, content, ok) {
             return FinishedToolPresentation {
-                presentation: crate::presentation::Presentation::Notification(message),
+                presentation: rho_protocol::display::Presentation::Notification(message),
                 image_asset: None,
             };
         }
@@ -453,7 +459,7 @@ impl InteractiveToolPresenter {
             if let Some(mut card) = sessions_format::finished_card(&view.arguments, content, ok) {
                 card.push_notice_facts(view.metadata.presentation_notices());
                 return FinishedToolPresentation {
-                    presentation: crate::presentation::Presentation::SummaryCard(card.into()),
+                    presentation: rho_protocol::display::Presentation::SummaryCard(card),
                     image_asset: None,
                 };
             }
@@ -466,7 +472,7 @@ impl InteractiveToolPresenter {
             presentation: if view.kind == ToolKind::Workflow
                 || (matches!(view.kind, ToolKind::Skill | ToolKind::ExitPlanMode) && ok)
             {
-                crate::presentation::Presentation::SummaryCard(presented.card)
+                rho_protocol::display::Presentation::SummaryCard(presented.card)
             } else {
                 presented.card.into()
             },

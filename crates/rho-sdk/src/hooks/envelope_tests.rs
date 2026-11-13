@@ -3,8 +3,9 @@ use serde_json::json;
 
 use crate::{
     hooks::payload::{
-        AfterToolUsePayload, BeforeToolUsePayload, HookCapability, HookPathScope, HookPayload,
-        HookPolicyOutcome, HookProcessEnvironment, HookProcessResult, HookTool, HookToolStatus,
+        AfterToolUsePayload, BeforeToolUsePayload, HookCapability, HookFailure, HookPathScope,
+        HookPayload, HookPolicyOutcome, HookProcessEnvironment, HookProcessResult, HookTool,
+        HookToolStatus,
     },
     RunId, SessionId,
 };
@@ -32,20 +33,6 @@ fn envelope_builder() -> HookEnvelopeBuilder {
 
 fn envelope(payload: HookPayload) -> HookEnvelope {
     envelope_builder().finish(payload)
-}
-
-fn after_envelope(
-    payload: AfterToolUsePayload,
-    capability: Option<HookCapability>,
-    process: Option<HookProcessResult>,
-) -> HookEnvelope {
-    envelope_builder().assemble(
-        HookPayload::AfterToolUse(payload),
-        AfterToolUseExtras {
-            capability,
-            process,
-        },
-    )
 }
 
 fn tool(name: &str, call_id: Option<&str>) -> HookTool {
@@ -77,7 +64,8 @@ fn before_tool_use_wire_shape_is_stable() {
             working_directory: "/work".into(),
             executable: "bash".into(),
             arguments: vec!["-lc".into()],
-            shell_command: Some("git push --force".into()),
+            shell_command: Some("rtk git push --force".into()),
+            requested_command: Some("git push --force".into()),
             environment: HookProcessEnvironment::InheritAll,
         },
         policy: HookPolicyOutcome::RequireApproval,
@@ -86,7 +74,7 @@ fn before_tool_use_wire_shape_is_stable() {
     assert_eq!(
         wire_shape(&envelope(payload)),
         json!({
-            "schema_version": 2,
+            "schema_version": 3,
             "event": "before_tool_use",
             "event_id": "<id>",
             "timestamp_unix_ms": 0,
@@ -108,7 +96,8 @@ fn before_tool_use_wire_shape_is_stable() {
                     "working_directory": "/work",
                     "executable": "bash",
                     "arguments": ["-lc"],
-                    "shell_command": "git push --force",
+                    "shell_command": "rtk git push --force",
+                    "requested_command": "git push --force",
                     "environment": "inherit_all",
                 },
                 "policy": "require_approval",
@@ -119,30 +108,30 @@ fn before_tool_use_wire_shape_is_stable() {
 
 #[test]
 fn after_tool_use_wire_shape_is_stable() {
-    let envelope = after_envelope(
-        AfterToolUsePayload {
-            tool: tool("bash", Some("call-2")),
-            status: HookToolStatus::Failed,
-            failure: Some(HookFailure {
-                kind: "execution".into(),
-                message: "rejected".into(),
-            }),
-            duration_ms: Some(42),
-        },
-        Some(HookCapability::ExecuteProcess {
+    let envelope = envelope(HookPayload::AfterToolUse(AfterToolUsePayload {
+        tool: tool("bash", Some("call-2")),
+        capability: Some(HookCapability::ExecuteProcess {
             working_directory: "/work".into(),
             executable: "bash".into(),
             arguments: vec!["-lc".into()],
             shell_command: Some("git push --force".into()),
+            // Nothing was rewritten, so the wire omits the field.
+            requested_command: None,
             environment: HookProcessEnvironment::InheritAll,
         }),
-        Some(HookProcessResult {
+        process: Some(HookProcessResult {
             exit_code: Some(1),
             stdout: String::new(),
             stderr: "rejected".into(),
             truncated: false,
         }),
-    );
+        status: HookToolStatus::Failed,
+        failure: Some(HookFailure {
+            kind: "execution".into(),
+            message: "rejected".into(),
+        }),
+        duration_ms: Some(42),
+    }));
 
     assert_eq!(
         wire_shape(&envelope)["payload"],
@@ -302,22 +291,19 @@ fn an_oversized_envelope_is_refused_rather_than_silently_shortened() {
 
 #[test]
 fn accessors_report_what_was_built() {
-    let process = HookProcessResult {
-        exit_code: None,
-        stdout: "partial".into(),
-        stderr: String::new(),
-        truncated: true,
-    };
-    let envelope = after_envelope(
-        AfterToolUsePayload {
-            tool: tool("grep", None),
-            status: HookToolStatus::Unavailable,
-            failure: None,
-            duration_ms: None,
-        },
-        None,
-        Some(process.clone()),
-    );
+    let envelope = envelope(HookPayload::AfterToolUse(AfterToolUsePayload {
+        tool: tool("grep", None),
+        capability: None,
+        process: Some(HookProcessResult {
+            exit_code: None,
+            stdout: "partial".into(),
+            stderr: String::new(),
+            truncated: true,
+        }),
+        status: HookToolStatus::Unavailable,
+        failure: None,
+        duration_ms: None,
+    }));
 
     assert_eq!(envelope.schema_version(), HOOK_SCHEMA_VERSION);
     assert_eq!(envelope.event(), HookEventKind::AfterToolUse);
@@ -328,8 +314,6 @@ fn accessors_report_what_was_built() {
     assert_eq!(envelope.identity(), &identity());
     assert!(!envelope.truncation().is_truncated());
     assert_eq!(envelope.payload().tool_name(), Some("grep"));
-    assert_eq!(envelope.after_tool_use_capability(), None);
-    assert_eq!(envelope.after_tool_use_process(), Some(&process));
     assert!(!envelope.event_id().as_str().is_empty());
 }
 

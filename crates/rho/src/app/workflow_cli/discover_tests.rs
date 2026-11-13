@@ -1,4 +1,4 @@
-use super::{command_workflows, discover_workflow_sources, resolve_start_command};
+use super::{command_workflows, discover_workflow_sources, resolve_launch, WorkflowLaunch};
 use pretty_assertions::assert_eq;
 
 fn workspace(files: &[&str]) -> tempfile::TempDir {
@@ -66,62 +66,6 @@ fn discover_skips_nested_workflow_star_symlinks() {
     );
 }
 
-// Covers: a command resolves to exactly one entry file with its JSON inputs,
-// and every other request fails with the reason instead of reaching the model.
-// Owner: `/workflow:<name>` resolution shared by the TUI and ACP.
-#[test]
-fn start_command_resolves_one_workflow_and_its_inputs() {
-    let root = workspace(&[
-        ".rho/workflows/review/workflow.star",
-        ".rho/workflows/twin.star",
-        ".rho/workflows/twin/workflow.star",
-        ".rho/workflows/Lint.star",
-        ".rho/workflows/Case.star",
-        ".rho/workflows/case/workflow.star",
-    ]);
-    let resolve = |name: &str, args: &str| {
-        resolve_start_command(root.path(), name, args).map(|resolved| {
-            resolved.map(|command| (command.workflow.relative_path, command.inputs))
-        })
-    };
-
-    assert_eq!(resolve("prompt:review", ""), None);
-    assert_eq!(
-        resolve("workflow:review", r#" {"target": "src", "depth": 2} "#),
-        Some(Ok((
-            ".rho/workflows/review/workflow.star".to_owned(),
-            [
-                ("depth".to_owned(), serde_json::json!(2)),
-                ("target".to_owned(), serde_json::json!("src")),
-            ]
-            .into(),
-        )))
-    );
-    assert_eq!(
-        resolve("workflow:review", "").map(|resolved| resolved.map(|(_, inputs)| inputs)),
-        Some(Ok(Default::default()))
-    );
-    for name in ["workflow:lint", "Workflow:LINT"] {
-        assert_eq!(
-            resolve(name, "").map(|resolved| resolved.map(|(path, _)| path)),
-            Some(Ok(".rho/workflows/Lint.star".to_owned())),
-            "/{name} ignores ASCII case"
-        );
-    }
-    for (name, args) in [
-        ("workflow:missing", ""),
-        ("workflow:twin", ""),
-        ("workflow:case", ""),
-        ("workflow:review", "src"),
-        ("workflow:review", "[1]"),
-    ] {
-        assert!(
-            matches!(resolve(name, args), Some(Err(_))),
-            "/{name} {args} should be rejected"
-        );
-    }
-}
-
 // Covers: command menus list each name once, so `<name>.star` beside
 // `<name>/workflow.star`, or names that differ only by case, cannot advertise
 // two commands for one ambiguous name.
@@ -143,5 +87,58 @@ fn command_workflows_lists_each_name_once() {
     assert_eq!(
         names,
         vec!["workflow:Case", "workflow:solo", "workflow:twin"]
+    );
+}
+
+// Covers: the hub's prompts for a saved plan and a stopped run resolve to
+// that plan and run, with recovery only when asked for, and each prompt the
+// hub writes resolves back to what it names; a malformed id or stray
+// argument is refused with the reason, and a workflow's name still starts
+// its source.
+// Owner: `/workflow:` resolution shared by every session host.
+#[test]
+fn launch_resolves_plans_runs_and_sources() {
+    let root = workspace(&[".rho/workflows/review.star"]);
+    let (plan, run) = (
+        crate::workflow::PlanId::new(),
+        crate::workflow::RunId::new(),
+    );
+    let resolve = |prompt: &str| {
+        let (name, args) = prompt[1..].split_once(' ').unwrap_or((&prompt[1..], ""));
+        resolve_launch(root.path(), name, args).map(|resolved| resolved.is_ok().then_some(resolved))
+    };
+    let launch = |prompt: &str| resolve(prompt).flatten().and_then(Result::ok);
+
+    assert_eq!(
+        (
+            launch(&WorkflowLaunch::plan_command(plan)),
+            launch(&WorkflowLaunch::resume_command(
+                run, /*recover_uncertain*/ false
+            )),
+            launch(&WorkflowLaunch::resume_command(
+                run, /*recover_uncertain*/ true
+            )),
+            launch("/workflow:review").map(|launch| matches!(launch, WorkflowLaunch::Source(_))),
+            resolve(&format!("/workflow:plan/{plan} extra")),
+            resolve("/workflow:plan/nope"),
+            resolve(&format!("/workflow:run/{run} again")),
+            resolve("/prompt:review"),
+        ),
+        (
+            Some(WorkflowLaunch::Plan(plan)),
+            Some(WorkflowLaunch::Resume {
+                run,
+                recover_uncertain: false
+            }),
+            Some(WorkflowLaunch::Resume {
+                run,
+                recover_uncertain: true
+            }),
+            Some(true),
+            Some(None),
+            Some(None),
+            Some(None),
+            None,
+        )
     );
 }

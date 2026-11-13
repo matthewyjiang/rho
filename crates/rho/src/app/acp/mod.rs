@@ -1,154 +1,67 @@
-mod agent;
+//! `rho acp`: an ACP agent over stdio that relays the rho daemon.
+//!
+//! The daemon runs every session; this process is one of its clients, with
+//! one connection for all the sessions its host opens (`app::daemon_client`,
+//! whose errors `daemon.rs` maps to ACP errors). Each ACP request becomes
+//! daemon requests (`sessions.rs`, `prompt.rs`, `auth.rs`), and each
+//! session's daemon events become ACP updates (`updates.rs`) and host
+//! prompts (`inputs.rs`). A connection that negotiates ACP v2 is served by
+//! translating at its boundary (`v2`).
+
 mod auth;
-mod auth_key;
-mod auth_login;
-mod auth_logout;
-mod auth_store;
-mod client_files;
-mod client_io;
-mod client_terminals;
-mod commands;
-mod compaction_card;
-mod config_options;
+mod daemon;
 mod elicitation;
-mod events;
-mod fast_mode;
 mod host_features;
-mod host_mcp;
+mod inputs;
+mod options;
 mod permission;
-mod prompt_acceptance;
-mod session_host;
-mod session_list;
-mod signals;
-mod skills;
-mod startup;
-mod t3_wake;
-mod thought_level;
+mod prompt;
+mod requests;
+mod sessions;
+mod updates;
 mod v2;
 
-use std::{future::Future, path::PathBuf, pin::Pin, sync::Arc};
+use std::{collections::BTreeSet, future::Future, pin::Pin, sync::Arc};
 
-use agent_client_protocol::schema::v1::{
-    DeleteSessionRequest, ListSessionsRequest, ResumeSessionRequest,
-};
 use agent_client_protocol::{
-    schema::v1::{
-        AuthenticateRequest, CancelNotification, CloseSessionRequest,
-        CompleteElicitationNotification, CreateElicitationRequest, CreateElicitationResponse,
-        InitializeRequest, LoadSessionRequest, LogoutRequest, NewSessionRequest, PromptRequest,
-        ReadTextFileRequest, ReadTextFileResponse, RequestPermissionRequest,
-        RequestPermissionResponse, SessionNotification, SetSessionConfigOptionRequest,
-        SetSessionModeRequest, WriteTextFileRequest, WriteTextFileResponse,
+    schema::ProtocolVersion,
+    v1::schema::{
+        AgentAuthCapabilities, AgentCapabilities, AuthenticateRequest, CancelNotification,
+        CloseSessionRequest, CompleteElicitationNotification, CreateElicitationRequest,
+        CreateElicitationResponse, DeleteSessionRequest, Implementation, InitializeRequest,
+        InitializeResponse, ListSessionsRequest, ListSessionsResponse, LoadSessionRequest,
+        LoadSessionResponse, LogoutCapabilities, LogoutRequest, McpCapabilities, NewSessionRequest,
+        NewSessionResponse, PromptCapabilities, PromptRequest, PromptResponse,
+        RequestPermissionRequest, RequestPermissionResponse, ResumeSessionRequest,
+        ResumeSessionResponse, SessionAdditionalDirectoriesCapabilities, SessionCapabilities,
+        SessionCloseCapabilities, SessionDeleteCapabilities, SessionId, SessionListCapabilities,
+        SessionNotification, SessionResumeCapabilities, SetSessionConfigOptionRequest,
+        SetSessionModeRequest, StopReason,
     },
-    Agent, Client, ConnectTo, ConnectionTo, Error as AcpError, JsonRpcResponse, Responder, Role,
-    Stdio,
+    v1::{ConnectionTo, Responder},
+    Agent, Client, ConnectTo, Error as AcpError, JsonRpcResponse, Role, Stdio,
 };
+use rho_protocol::{methods::SessionList, ChildThreads, SessionListParams, SessionPart};
 
-use crate::{config::Config, diagnostics::RuntimeDiagnostics, herdr::HerdrReporter};
+use super::{
+    daemon_client::Daemon,
+    shutdown_signal::{ShutdownSignals, TerminalClosed},
+};
+use crate::{
+    cli::Cli,
+    herdr::{HerdrReporter, HerdrSource},
+};
+use auth::LoginFlight;
+use host_features::{NegotiatedFeatures, Turns};
+use requests::Launch;
+use sessions::{Sessions, Started};
 
-use super::agent_binding::BoundAgent;
-use agent::RhoAcpAgent;
-use client_terminals::{TerminalRequest, TerminalResponse};
-pub(super) use host_features::HostFeatures;
-
-/// The ACP client Rho integrates with, chosen at launch rather than inferred
-/// from the tools a host happens to offer.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum AcpHost {
-    /// Any ACP client. Subagents run in-process.
-    Generic,
-    /// T3 Code (`rho acp --t3code`). Subagents run as T3 child threads.
-    T3Code,
-}
-
-impl AcpHost {
-    pub(super) fn from_args(args: &crate::cli::AcpArgs) -> Self {
-        if args.t3code {
-            Self::T3Code
-        } else {
-            Self::Generic
-        }
-    }
-}
-
-/// Prepared process state for a `rho acp` stdio server.
-pub(super) struct AcpStartup {
-    pub(super) host: AcpHost,
-    pub(super) config: Config,
-    pub(super) config_path: PathBuf,
-    pub(super) cwd: PathBuf,
-    pub(super) no_system_prompt: bool,
-    pub(super) no_tools: bool,
-    pub(super) no_subagents: bool,
-    pub(super) agent: BoundAgent,
-    pub(super) diagnostics: RuntimeDiagnostics,
-    pub(super) herdr: HerdrReporter,
-    /// `--add-dir` directories granted to every ACP session.
-    pub(super) added_dirs: crate::added_dirs::AddedDirs,
-    /// Optional features the host advertised at `initialize`.
-    pub(super) host_features: HostFeatures,
-    /// `logout`s so far, which mark sessions' credentials stale.
-    pub(super) logouts: auth_logout::Logouts,
-    /// The connection `initialize` arrived on, for host-served files and
-    /// terminals. `None` until `initialize` runs.
-    pub(super) client: Option<Arc<dyn AcpClientPort>>,
-}
-
-#[cfg(test)]
-impl AcpStartup {
-    /// Startup for session-host fixtures: `config` bound to a plain root agent
-    /// with every tool, rooted at `cwd`.
-    pub(super) fn for_tests(config: Config, cwd: &std::path::Path) -> Self {
-        use crate::{
-            agent::{
-                AgentCapabilities, AgentDefinition, AgentId, AgentRuntimeSpec, ModelPolicy,
-                PromptPolicy, ToolPolicy,
-            },
-            app::agent_binding::{AgentBinder, AgentInvocation, AgentRole},
-        };
-        let agent = AgentBinder::bind(
-            Arc::new(AgentDefinition {
-                id: AgentId::new("rho").expect("test agent id"),
-                description: "test".into(),
-                prompt: PromptPolicy::Extend(String::new()),
-                runtime: AgentRuntimeSpec::Rho {
-                    tools: ToolPolicy::All,
-                    model: ModelPolicy::Inherit,
-                    reasoning: None,
-                },
-            }),
-            AgentInvocation {
-                role: AgentRole::AutomationRoot,
-                available_tools: AgentCapabilities::all_host_tools(),
-            },
-            &config,
-        )
-        .expect("bind test agent");
-        Self {
-            host: AcpHost::Generic,
-            diagnostics: RuntimeDiagnostics::new(&config),
-            config,
-            config_path: cwd.join("rho-test-config.toml"),
-            cwd: cwd.to_path_buf(),
-            no_system_prompt: false,
-            no_tools: false,
-            no_subagents: false,
-            agent,
-            herdr: HerdrReporter::default(),
-            added_dirs: Default::default(),
-            host_features: HostFeatures::default(),
-            logouts: Default::default(),
-            client: None,
-        }
-    }
-}
-
-/// Outbound ACP host port used by session hosts and tests.
+/// Outbound ACP host port: session updates, permission prompts, and
+/// elicitations, as one connection's protocol version sends them.
 ///
-/// Implementors deliver session updates, permission prompts, and questions to
-/// the editor host. Keep the trait object-safe so tests can inject fakes.
-/// Dropping a returned request future before it resolves abandons the
-/// request; the connection port then sends `$/cancel_request`.
+/// Implemented by [`ConnectionPort`] for v1 and `v2::port::V2Port` for v2.
+/// Keep it object-safe. Dropping a returned request future before it
+/// resolves abandons the request; the port then sends `$/cancel_request`.
 pub(super) trait AcpClientPort: Send + Sync {
     fn send_session_notification(
         &self,
@@ -160,63 +73,107 @@ pub(super) trait AcpClientPort: Send + Sync {
         request: RequestPermissionRequest,
     ) -> Pin<Box<dyn Future<Output = Result<RequestPermissionResponse, AcpError>> + Send + '_>>;
 
-    /// `elicitation/create`. Session hosts send it only to hosts that
-    /// advertised the request's mode; fakes that never see one keep this
-    /// default.
+    /// `elicitation/create`, sent only to hosts that advertised its mode.
     fn create_elicitation(
         &self,
-        _request: CreateElicitationRequest,
-    ) -> Pin<Box<dyn Future<Output = Result<CreateElicitationResponse, AcpError>> + Send + '_>>
-    {
-        Box::pin(async { Err(AcpError::method_not_found()) })
-    }
+        request: CreateElicitationRequest,
+    ) -> Pin<Box<dyn Future<Output = Result<CreateElicitationResponse, AcpError>> + Send + '_>>;
 
     /// `elicitation/complete`: the out-of-band step behind a URL-mode
-    /// elicitation finished. Fakes that send no URL elicitation keep this.
+    /// elicitation finished.
     fn complete_elicitation(
         &self,
-        _notification: CompleteElicitationNotification,
-    ) -> Pin<Box<dyn Future<Output = Result<(), AcpError>> + Send + '_>> {
-        Box::pin(async { Ok(()) })
+        notification: CompleteElicitationNotification,
+    ) -> Pin<Box<dyn Future<Output = Result<(), AcpError>> + Send + '_>>;
+
+    /// The turn of session `session_id` that the host was told is running
+    /// ended as `end`, leaving `background` work: the turn of its own
+    /// prompt, once acknowledged, or one it did not prompt, which was
+    /// running when it attached or that began since. The session's pump
+    /// tells it, so nothing it reports of later work can come first.
+    /// [`TurnEnd::Unseen`] also repeats an idle state the host was not
+    /// told while its prompt waited to be acknowledged. Only ACP v2
+    /// reports turn state (`state_update`), so a v1 host has nothing to
+    /// hear.
+    fn turn_ended(
+        &self,
+        _session_id: &SessionId,
+        _end: TurnEnd,
+        _background: &[rho_protocol::BackgroundWork],
+    ) {
     }
 
-    /// `fs/read_text_file`. Sent only to hosts that advertised `fs`; see
-    /// `client_files`.
-    fn read_text_file(
-        &self,
-        _request: ReadTextFileRequest,
-    ) -> Pin<Box<dyn Future<Output = Result<ReadTextFileResponse, AcpError>> + Send + '_>> {
-        Box::pin(async { Err(AcpError::method_not_found()) })
-    }
+    /// Session `session_id`'s background work changed. Only ACP v2 reports
+    /// background work (a `state_update`'s `background`), so a v1 host has
+    /// nothing to hear.
+    fn background_changed(&self, _session_id: &SessionId, _change: BackgroundChanged<'_>) {}
 
-    /// `fs/write_text_file`. Sent only to hosts that advertised `fs`.
-    fn write_text_file(
+    /// Session `session_id`'s foreground work is now `foreground`, which no
+    /// prompt of the host's reports: a turn it did not prompt began, or the
+    /// turn it follows began or stopped waiting for a person. Never
+    /// [`Foreground::Idle`], whose turn end [`Self::turn_ended`] reports. Only ACP v2 reports turn
+    /// state, so a v1 host has nothing to hear.
+    fn foreground_changed(
         &self,
-        _request: WriteTextFileRequest,
-    ) -> Pin<Box<dyn Future<Output = Result<WriteTextFileResponse, AcpError>> + Send + '_>> {
-        Box::pin(async { Err(AcpError::method_not_found()) })
-    }
-
-    /// One `terminal/*` request. Sent only to hosts that advertised
-    /// `terminal`; see `client_terminals`.
-    fn terminal(
-        &self,
-        _request: TerminalRequest,
-    ) -> Pin<Box<dyn Future<Output = Result<TerminalResponse, AcpError>> + Send + '_>> {
-        Box::pin(async { Err(AcpError::method_not_found()) })
+        _session_id: &SessionId,
+        _foreground: Foreground,
+        _background: &[rho_protocol::BackgroundWork],
+    ) {
     }
 }
 
-/// ACP connection adapter. Session hosts talk to this instead of the crate
-/// connection type so tests can inject a fake port.
+/// A session's background work went from `previous` to `current`.
+pub(super) struct BackgroundChanged<'a> {
+    pub(super) previous: &'a [rho_protocol::BackgroundWork],
+    pub(super) current: &'a [rho_protocol::BackgroundWork],
+    /// What the host was told the session's foreground work is doing,
+    /// which the repeated state reports; `None` while a prompt of the
+    /// host's waits to be acknowledged, whose `running` will carry the
+    /// list, so no state is repeated before it.
+    pub(super) foreground: Option<Foreground>,
+}
+
+/// What a session's foreground work is doing, as ACP v2's `state_update`
+/// reports it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Foreground {
+    Running,
+    /// A turn is under way and waits for a person to answer.
+    RequiresAction,
+    Idle,
+}
+
+impl Foreground {
+    /// The foreground of a session whose job is in `state`. A state a newer
+    /// daemon sends counts as idle, as it does for a prompt.
+    pub(super) fn of(state: rho_protocol::JobState) -> Self {
+        use rho_protocol::JobState;
+        match state {
+            JobState::Running | JobState::Queued => Self::Running,
+            JobState::WaitingForInput => Self::RequiresAction,
+            JobState::Idle
+            | JobState::Completed
+            | JobState::Failed
+            | JobState::Cancelled
+            | JobState::TimedOut
+            | JobState::Interrupted
+            | JobState::Unknown => Self::Idle,
+            _ => Self::Idle,
+        }
+    }
+}
+
+/// How a turn ended, as far as the host can tell.
+pub(super) enum TurnEnd {
+    /// With this stop reason, or the error it failed with.
+    Ended(Result<StopReason, AcpError>),
+    /// While the host was not following it, so how is unknown.
+    Unseen,
+}
+
+/// The [`AcpClientPort`] of an ACP v1 connection.
 struct ConnectionPort {
     cx: ConnectionTo<Client>,
-}
-
-impl ConnectionPort {
-    fn new(cx: ConnectionTo<Client>) -> Self {
-        Self { cx }
-    }
 }
 
 impl AcpClientPort for ConnectionPort {
@@ -249,72 +206,211 @@ impl AcpClientPort for ConnectionPort {
     ) -> Pin<Box<dyn Future<Output = Result<(), AcpError>> + Send + '_>> {
         Box::pin(async move { self.cx.send_notification(notification) })
     }
+}
 
-    fn read_text_file(
-        &self,
-        request: ReadTextFileRequest,
-    ) -> Pin<Box<dyn Future<Output = Result<ReadTextFileResponse, AcpError>> + Send + '_>> {
-        Box::pin(async move { self.cx.send_request(request).block_task().await })
+/// One `rho acp` process: its daemon connection and the sessions its host
+/// has open.
+pub(super) struct Adapter {
+    daemon: Arc<Daemon>,
+    launch: Launch,
+    negotiated: NegotiatedFeatures,
+    sessions: Sessions,
+    herdr: HerdrReporter,
+    logins: LoginFlight,
+}
+
+impl Adapter {
+    fn new(cli: &Cli) -> anyhow::Result<Self> {
+        let cwd = std::env::current_dir()?;
+        let added_dirs = crate::added_dirs::launch_added_dirs(&cli.add_dirs, &cwd)?;
+        let without = [
+            (cli.no_tools, SessionPart::Tools),
+            (cli.no_system_prompt, SessionPart::SystemPrompt),
+            (cli.no_subagents, SessionPart::Subagents),
+        ]
+        .into_iter()
+        .filter_map(|(left_out, part)| left_out.then_some(part))
+        .collect::<BTreeSet<_>>();
+        Ok(Self {
+            // An editor's host answers its sessions' approvals.
+            daemon: Arc::new(Daemon::for_frontend()),
+            launch: Launch {
+                agent: cli.agent.clone(),
+                added_dirs: added_dirs.as_slice().to_vec(),
+                without,
+                child_threads: match &cli.command {
+                    Some(crate::cli::Command::Acp(args)) if args.t3code => ChildThreads::Host,
+                    _ => ChildThreads::Daemon,
+                },
+            },
+            negotiated: NegotiatedFeatures::default(),
+            sessions: Sessions::default(),
+            // Headless, so Herdr does not treat the pane as an interactive
+            // Rho.
+            herdr: HerdrReporter::from_env().with_source(HerdrSource::Headless),
+            logins: LoginFlight::default(),
+        })
     }
 
-    fn write_text_file(
+    /// Keeps the host's features and connection from `initialize`.
+    pub(super) fn record_client(
         &self,
-        request: WriteTextFileRequest,
-    ) -> Pin<Box<dyn Future<Output = Result<WriteTextFileResponse, AcpError>> + Send + '_>> {
-        Box::pin(async move { self.cx.send_request(request).block_task().await })
+        request: &InitializeRequest,
+        port: Arc<dyn AcpClientPort>,
+        turns: Turns,
+    ) {
+        self.negotiated.record(request, port, turns);
     }
 
-    fn terminal(
+    /// The v1 handshake. The v2 adapter translates the response.
+    pub(super) async fn initialize(&self, request: &InitializeRequest) -> InitializeResponse {
+        InitializeResponse::new(ProtocolVersion::V1)
+            .agent_capabilities(
+                AgentCapabilities::new()
+                    .load_session(true)
+                    .prompt_capabilities(
+                        PromptCapabilities::new()
+                            .image(true)
+                            .audio(false)
+                            .embedded_context(true),
+                    )
+                    // Host stdio servers are the ACP baseline; Streamable
+                    // HTTP is the transport Rho also speaks. SSE is not.
+                    .mcp_capabilities(McpCapabilities::new().http(true))
+                    // `additionalDirectories` on `session/new`, `session/load`,
+                    // and `session/resume`; `session/close`; `session/list` and
+                    // `session/delete` for host history.
+                    .session_capabilities(
+                        SessionCapabilities::new()
+                            .additional_directories(SessionAdditionalDirectoriesCapabilities::new())
+                            .resume(SessionResumeCapabilities::new())
+                            .close(SessionCloseCapabilities::new())
+                            .list(SessionListCapabilities::new())
+                            .delete(SessionDeleteCapabilities::new()),
+                    )
+                    .auth(AgentAuthCapabilities::new().logout(LogoutCapabilities::new())),
+            )
+            .auth_methods(self.auth_methods(request).await)
+            // Hosts display `version` as the agent version; it matches `rho --version`.
+            .agent_info(Implementation::new("rho", env!("CARGO_PKG_VERSION")).title("Rho"))
+    }
+
+    /// `session/list`: the daemon's saved sessions, a page at a time.
+    pub(super) async fn list_sessions(
         &self,
-        request: TerminalRequest,
-    ) -> Pin<Box<dyn Future<Output = Result<TerminalResponse, AcpError>> + Send + '_>> {
-        Box::pin(async move { client_terminals::send(&self.cx, request).await })
+        request: &ListSessionsRequest,
+    ) -> Result<ListSessionsResponse, AcpError> {
+        let params = SessionListParams {
+            cwd: request.cwd.clone(),
+            cursor: request.cursor.clone(),
+            limit: None,
+        };
+        let page = self.daemon.request::<SessionList>(&params).await?;
+        Ok(requests::session_list(page))
+    }
+
+    fn toggles(&self) -> host_features::Toggles {
+        self.negotiated.get().toggles
     }
 }
 
-pub(super) async fn run(cli: crate::cli::Cli) -> anyhow::Result<()> {
-    // Probe stdin before the transport starts reading it; on Windows a later
-    // probe would wait behind that read forever. See `stdin_is_terminal`.
+/// The v1 responses to the requests that open a session, showing its
+/// options as a host with `toggles` draws them.
+impl Started {
+    fn new_session_response(&self, toggles: host_features::Toggles) -> NewSessionResponse {
+        NewSessionResponse::new(self.session_id.clone())
+            .config_options(options::config_options(&self.options, toggles))
+            .modes(options::modes(&self.options.permission_mode))
+    }
+
+    fn load_session_response(&self, toggles: host_features::Toggles) -> LoadSessionResponse {
+        LoadSessionResponse::new()
+            .config_options(options::config_options(&self.options, toggles))
+            .modes(options::modes(&self.options.permission_mode))
+    }
+
+    fn resume_session_response(&self, toggles: host_features::Toggles) -> ResumeSessionResponse {
+        ResumeSessionResponse::new()
+            .config_options(options::config_options(&self.options, toggles))
+            .modes(options::modes(&self.options.permission_mode))
+    }
+}
+
+pub(super) async fn run(cli: Cli) -> anyhow::Result<()> {
+    // Probe stdin before the transport starts reading it. See
+    // `stdin_is_terminal`.
     let _ = crate::stdio::stdin_is_terminal();
-    let agent = Arc::new(startup::LazyAgent::new(cli)?);
+    // Installed before the host can reach this agent, so a stop signal
+    // always detaches its sessions.
+    let mut stops = ShutdownSignals::install()?;
+    let mut hangup = TerminalClosed::install()?;
+    let adapter = Arc::new(Adapter::new(&cli)?);
     // Host integrations do not change protocol negotiation: each connection
     // uses the highest version both sides support.
     let server = Agent
         .protocol_router()
-        .with_v1(v1_agent(Arc::clone(&agent)))
-        .with_v2(v2::agent(agent))
+        .with_v1(v1_agent(Arc::clone(&adapter)))
+        .with_v2(v2::agent(Arc::clone(&adapter)))
         .connect_to(Stdio::new());
-    // Request handlers run inside this future. On the main thread they had
-    // Windows' 1 MiB stack, which deep session setup overflowed; a runtime
-    // worker has tokio's 2 MiB.
-    tokio::spawn(server)
-        .await
-        .map_err(|error| anyhow::anyhow!("ACP server task failed: {error}"))?
-        .map_err(acp_error)
+    let served = tokio::select! {
+        served = tokio::spawn(server) => served
+            .map_err(|error| anyhow::anyhow!("ACP server task failed: {error}"))
+            .and_then(|served| served.map_err(acp_error)),
+        () = stopped(&mut stops, &mut hangup) => Ok(()),
+    };
+    // Cancels this host's prompts and detaches, so no turn of this host's
+    // runs on unwatched; a second signal stops waiting for the daemon.
+    tokio::select! {
+        () = adapter.close_all() => {}
+        () = stopped(&mut stops, &mut hangup) => {}
+    }
+    served
+}
+
+/// Returns once this process is told to stop: by a shutdown signal, or by
+/// the terminal closing, as when a host closes the one it ran the agent in.
+async fn stopped(stops: &mut ShutdownSignals, hangup: &mut TerminalClosed) {
+    tokio::select! {
+        _ = stops.recv() => {}
+        () = hangup.recv() => {}
+    }
 }
 
 /// The ACP v1 agent for one connection.
-fn v1_agent(agent: Arc<startup::LazyAgent>) -> impl ConnectTo<Client> {
+fn v1_agent(adapter: Arc<Adapter>) -> impl ConnectTo<Client> {
     Agent
-        .builder()
+        .v1()
         .name("rho")
         .on_receive_request(
             {
-                let agent = Arc::clone(&agent);
+                let adapter = Arc::clone(&adapter);
                 async move |request: InitializeRequest, responder, cx| {
-                    agent.record_client(&request, Arc::new(ConnectionPort::new(cx)));
-                    responder.respond(RhoAcpAgent::initialize(&request, agent.sign_in()))
+                    adapter.record_client(
+                        &request,
+                        Arc::new(ConnectionPort { cx: cx.clone() }),
+                        Turns::Prompted,
+                    );
+                    let adapter = Arc::clone(&adapter);
+                    spawn_response(&cx, responder, async move {
+                        Ok(adapter.initialize(&request).await)
+                    })
                 }
             },
             agent_client_protocol::on_receive_request!(),
         )
         .on_receive_request(
             {
-                let agent = Arc::clone(&agent);
+                let adapter = Arc::clone(&adapter);
                 async move |request: NewSessionRequest, responder, cx| {
-                    let agent = Arc::clone(&agent);
-                    spawn_session_start(&cx, responder, async move {
-                        agent.ready().await?.new_session(request).await
+                    let adapter = Arc::clone(&adapter);
+                    let port: Arc<dyn AcpClientPort> = Arc::new(ConnectionPort { cx: cx.clone() });
+                    cx.spawn(async move {
+                        let started = adapter.new_session(&request).await;
+                        let toggles = adapter.toggles();
+                        respond_started(responder, &port, started, |started| {
+                            started.new_session_response(toggles)
+                        })
+                        .await
                     })
                 }
             },
@@ -322,12 +418,17 @@ fn v1_agent(agent: Arc<startup::LazyAgent>) -> impl ConnectTo<Client> {
         )
         .on_receive_request(
             {
-                let agent = Arc::clone(&agent);
+                let adapter = Arc::clone(&adapter);
                 async move |request: LoadSessionRequest, responder, cx| {
-                    let agent = Arc::clone(&agent);
-                    let port = ConnectionPort::new(cx.clone());
-                    spawn_session_start(&cx, responder, async move {
-                        agent.ready().await?.load_session(request, &port).await
+                    let adapter = Arc::clone(&adapter);
+                    let port: Arc<dyn AcpClientPort> = Arc::new(ConnectionPort { cx: cx.clone() });
+                    cx.spawn(async move {
+                        let started = adapter.load_session(&request, Arc::clone(&port)).await;
+                        let toggles = adapter.toggles();
+                        respond_started(responder, &port, started, |started| {
+                            started.load_session_response(toggles)
+                        })
+                        .await
                     })
                 }
             },
@@ -335,11 +436,17 @@ fn v1_agent(agent: Arc<startup::LazyAgent>) -> impl ConnectTo<Client> {
         )
         .on_receive_request(
             {
-                let agent = Arc::clone(&agent);
+                let adapter = Arc::clone(&adapter);
                 async move |request: ResumeSessionRequest, responder, cx| {
-                    let agent = Arc::clone(&agent);
-                    spawn_session_start(&cx, responder, async move {
-                        agent.ready().await?.resume_session(request).await
+                    let adapter = Arc::clone(&adapter);
+                    let port: Arc<dyn AcpClientPort> = Arc::new(ConnectionPort { cx: cx.clone() });
+                    cx.spawn(async move {
+                        let started = adapter.resume_session(&request).await;
+                        let toggles = adapter.toggles();
+                        respond_started(responder, &port, started, |started| {
+                            started.resume_session_response(toggles)
+                        })
+                        .await
                     })
                 }
             },
@@ -347,34 +454,38 @@ fn v1_agent(agent: Arc<startup::LazyAgent>) -> impl ConnectTo<Client> {
         )
         .on_receive_request(
             {
-                let agent = Arc::clone(&agent);
+                let adapter = Arc::clone(&adapter);
                 async move |request: PromptRequest, responder, cx| {
-                    let agent = Arc::clone(&agent);
-                    let port: Arc<dyn AcpClientPort> = Arc::new(ConnectionPort::new(cx.clone()));
+                    let adapter = Arc::clone(&adapter);
                     spawn_response(&cx, responder, async move {
-                        agent
-                            .ready()
-                            .await?
-                            .prompt(request, port, prompt_acceptance::PromptAcceptance::Implicit)
-                            .await
+                        let stop = adapter
+                            .prompt(&request.session_id, &request.prompt, /*accept*/ None)
+                            .await?;
+                        Ok(PromptResponse::new(stop))
                     })
                 }
             },
             agent_client_protocol::on_receive_request!(),
         )
         .on_receive_request(
-            async move |request: ListSessionsRequest, responder, cx| {
-                spawn_response(&cx, responder, session_list::list(request))
+            {
+                let adapter = Arc::clone(&adapter);
+                async move |request: ListSessionsRequest, responder, cx| {
+                    let adapter = Arc::clone(&adapter);
+                    spawn_response(&cx, responder, async move {
+                        adapter.list_sessions(&request).await
+                    })
+                }
             },
             agent_client_protocol::on_receive_request!(),
         )
         .on_receive_request(
             {
-                let agent = Arc::clone(&agent);
+                let adapter = Arc::clone(&adapter);
                 async move |request: DeleteSessionRequest, responder, cx| {
-                    let agent = Arc::clone(&agent);
+                    let adapter = Arc::clone(&adapter);
                     spawn_response(&cx, responder, async move {
-                        agent.delete_session(request).await
+                        adapter.delete_session(&request).await
                     })
                 }
             },
@@ -382,12 +493,11 @@ fn v1_agent(agent: Arc<startup::LazyAgent>) -> impl ConnectTo<Client> {
         )
         .on_receive_request(
             {
-                let agent = Arc::clone(&agent);
+                let adapter = Arc::clone(&adapter);
                 async move |request: SetSessionConfigOptionRequest, responder, cx| {
-                    let agent = Arc::clone(&agent);
-                    let port = ConnectionPort::new(cx.clone());
+                    let adapter = Arc::clone(&adapter);
                     spawn_response(&cx, responder, async move {
-                        agent.ready().await?.set_config_option(request, &port).await
+                        adapter.set_config_option(&request).await
                     })
                 }
             },
@@ -395,12 +505,11 @@ fn v1_agent(agent: Arc<startup::LazyAgent>) -> impl ConnectTo<Client> {
         )
         .on_receive_request(
             {
-                let agent = Arc::clone(&agent);
+                let adapter = Arc::clone(&adapter);
                 async move |request: SetSessionModeRequest, responder, cx| {
-                    let agent = Arc::clone(&agent);
-                    let port = ConnectionPort::new(cx.clone());
+                    let adapter = Arc::clone(&adapter);
                     spawn_response(&cx, responder, async move {
-                        agent.ready().await?.set_session_mode(request, &port).await
+                        adapter.set_session_mode(&request).await
                     })
                 }
             },
@@ -408,11 +517,11 @@ fn v1_agent(agent: Arc<startup::LazyAgent>) -> impl ConnectTo<Client> {
         )
         .on_receive_request(
             {
-                let agent = Arc::clone(&agent);
+                let adapter = Arc::clone(&adapter);
                 async move |request: CloseSessionRequest, responder, cx| {
-                    let agent = Arc::clone(&agent);
+                    let adapter = Arc::clone(&adapter);
                     spawn_response(&cx, responder, async move {
-                        agent.ready().await?.close_session(request).await
+                        adapter.close_session(&request).await
                     })
                 }
             },
@@ -420,16 +529,17 @@ fn v1_agent(agent: Arc<startup::LazyAgent>) -> impl ConnectTo<Client> {
         )
         .on_receive_request(
             {
-                let agent = Arc::clone(&agent);
+                let adapter = Arc::clone(&adapter);
                 async move |request: AuthenticateRequest, responder, cx| {
-                    let agent = Arc::clone(&agent);
-                    let port = ConnectionPort::new(cx.clone());
+                    let adapter = Arc::clone(&adapter);
+                    let port = ConnectionPort { cx: cx.clone() };
                     let request_id = responder.id().clone();
-                    // A host that cancels sign-in drops the login with it.
+                    // A host that cancels sign-in cancels the login with it.
                     let cancellation = responder.cancellation();
                     spawn_response(&cx, responder, async move {
-                        cancellation
-                            .run_until_cancelled(agent.authenticate(request, request_id, &port))
+                        let auth = &request.method_id.0;
+                        adapter
+                            .authenticate(auth, request_id, &port, cancellation)
                             .await
                     })
                 }
@@ -438,35 +548,58 @@ fn v1_agent(agent: Arc<startup::LazyAgent>) -> impl ConnectTo<Client> {
         )
         .on_receive_request(
             {
-                let agent = Arc::clone(&agent);
+                let adapter = Arc::clone(&adapter);
                 async move |_request: LogoutRequest, responder, cx| {
-                    let agent = Arc::clone(&agent);
-                    spawn_response(&cx, responder, async move { agent.logout().await })
+                    let adapter = Arc::clone(&adapter);
+                    spawn_response(&cx, responder, async move { adapter.logout().await })
                 }
             },
             agent_client_protocol::on_receive_request!(),
         )
         .on_receive_notification(
             {
-                let agent = Arc::clone(&agent);
+                let adapter = Arc::clone(&adapter);
                 async move |notification: CancelNotification, _cx| {
-                    // Cancellation targets an ongoing prompt, not a future
-                    // turn after session setup. No prompt exists before ready.
-                    if let Some(agent) = agent.started() {
-                        agent.cancel(notification).await;
-                    }
+                    adapter.cancel(&notification.session_id).await;
                     Ok(())
                 }
             },
             agent_client_protocol::on_receive_notification!(),
         )
         .on_close({
-            let agent = Arc::clone(&agent);
+            let adapter = Arc::clone(&adapter);
             async move |_cx| {
-                agent.shutdown().await;
+                adapter.close_all().await;
                 Ok(())
             }
         })
+}
+
+/// Answers `session/new`, `session/load`, or `session/resume` with
+/// `respond(started)`, then sends the session's commands and lets its live
+/// updates through: updates name a session the host learns from the
+/// response, so they follow it.
+async fn respond_started<Resp: JsonRpcResponse>(
+    responder: Responder<Resp>,
+    port: &Arc<dyn AcpClientPort>,
+    started: Result<Started, AcpError>,
+    respond: impl FnOnce(&Started) -> Resp,
+) -> Result<(), AcpError> {
+    let started = match started {
+        Ok(started) => started,
+        Err(error) => return responder.respond_with_error(error),
+    };
+    responder.respond(respond(&started))?;
+    let commands = updates::notification(
+        &started.session_id,
+        updates::commands_update(&started.options.commands),
+        updates::Delivery::Live,
+    );
+    if let Err(error) = port.send_session_notification(commands).await {
+        tracing::warn!(%error, "could not advertise ACP commands");
+    }
+    started.open();
+    Ok(())
 }
 
 fn spawn_response<Resp, Counterpart, Fut>(
@@ -487,37 +620,11 @@ where
     })
 }
 
-/// Like [`spawn_response`] for `session/new`, `session/load`, and
-/// `session/resume`, then sends the session's command advertisement. Updates
-/// name a session the client learns from the response, so they follow it on
-/// the wire.
-fn spawn_session_start<Resp, Fut>(
-    cx: &ConnectionTo<Client>,
-    responder: Responder<Resp>,
-    work: Fut,
-) -> Result<(), AcpError>
-where
-    Resp: JsonRpcResponse + Send + 'static,
-    Fut: Future<Output = Result<agent::SessionStart<Resp>, AcpError>> + Send + 'static,
-{
-    let port = ConnectionPort::new(cx.clone());
-    cx.spawn(async move {
-        let agent::SessionStart {
-            response,
-            commands,
-            publication,
-        } = match work.await {
-            Ok(started) => started,
-            Err(error) => return responder.respond_with_error(error),
-        };
-        responder.respond(response)?;
-        if let Err(error) = port.send_session_notification(commands).await {
-            tracing::warn!(%error, "could not advertise ACP commands");
-        } else {
-            publication.sent();
-        }
-        Ok(())
-    })
+/// `resource_not_found` as ACP v1 writes it, for a session the host names
+/// that this adapter does not hold. The adapter speaks v1 on every
+/// connection, so v2 hosts get the same error.
+fn resource_not_found(uri: Option<String>) -> AcpError {
+    agent_client_protocol::v1::schema::Error::resource_not_found(uri).into()
 }
 
 fn acp_error(error: AcpError) -> anyhow::Error {

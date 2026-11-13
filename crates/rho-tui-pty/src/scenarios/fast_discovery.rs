@@ -72,11 +72,12 @@ fn setup(home: &IsolatedHome) -> Result<()> {
     // matrix mode replaces the provider transport, including after switches.
     std::fs::write(
         &home.config_path,
-        r#"provider = "openai-codex"
+        r#"web_search.mode = "off"
+
+[model]
+provider = "openai-codex"
 model = "gpt-5.5"
 auth = "codex"
-check_for_updates = false
-web_search.mode = "off"
 
 [behavior]
 credential_store = "file"
@@ -174,3 +175,47 @@ fn wait_for_draft(harness: &mut PtyHarness, draft: &str) -> Result<()> {
         );
     }
 }
+
+// Covers: fast mode turned off on a model that has none stays off when the
+// daemon session returns to a model that has it. The preference outlives the
+// switch, so the bare toggle at the end turns it on rather than off.
+// Owner: interactive TUI as a daemon client
+#[cfg(unix)]
+pub(super) const DAEMON_FAST_OFF_SCENARIO: Scenario = Scenario {
+    id: "daemon_fast_off_without_fast_mode",
+    description: "Turn a daemon session's fast mode off from a model without one",
+    smoke: false,
+    steps: &[
+        Step::WaitText {
+            text: "OpenAI Codex · gpt-5.5",
+            timeout: STARTUP,
+        },
+        Step::SubmitText("/fast on"),
+        Step::WaitText {
+            text: "fast mode is on",
+            timeout: SETTLE,
+        },
+        Step::SubmitText("/model openai-codex/gpt-5.3-codex-spark"),
+        Step::WaitText {
+            text: "OpenAI Codex · gpt-5.3-codex-spark",
+            timeout: SETTLE,
+        },
+        Step::SubmitText("/fast off"),
+        Step::WaitText {
+            text: "fast mode is off",
+            timeout: SETTLE,
+        },
+        Step::SubmitText("/model openai-codex/gpt-5.5"),
+        Step::WaitText {
+            text: "model switched to openai-codex/gpt-5.5",
+            timeout: SETTLE,
+        },
+        Step::SubmitText("/fast"),
+        Step::WaitText {
+            text: "fast mode is on",
+            timeout: SETTLE,
+        },
+        Step::ExitCommand,
+    ],
+    ..FAST_DISCOVERY_SCENARIO
+};

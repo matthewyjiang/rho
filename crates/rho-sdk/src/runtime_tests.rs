@@ -18,8 +18,7 @@ use crate::{
         ModelResponse, ToolCall, ToolSpec,
     },
     provider::{
-        ModelProvider, ModelRequestOptions, ProviderEventSender, ProviderFuture,
-        ProviderSteeringReceiver, ScriptedProvider, ScriptedTurn,
+        ModelProvider, ProviderFuture, ProviderTurnContext, ScriptedProvider, ScriptedTurn,
     },
     tool::{
         ScriptedTool, ScriptedToolOutcome, Tool, ToolContext, ToolError, ToolErrorKind, ToolFuture,
@@ -137,7 +136,7 @@ async fn history_initialization_system_prompt_and_image_input_are_explicit() {
         provider.recorded_requests()[0].messages.as_slice(),
         [Message::System(system), Message::User(_), Message::User(content)]
             if system == "custom system"
-                && matches!(content.as_slice(), [ContentBlock::Text(_), ContentBlock::Image(value)] if value == &image)
+                && matches!(content.as_ref(), [ContentBlock::Text(_), ContentBlock::Image(value)] if *value == image)
     ));
 }
 
@@ -179,6 +178,7 @@ async fn reset_preserves_prompt_policy_and_provider_replacement_reports_handoff(
             kind: "opaque".into(),
             position: None,
             data: json!({"secret": "provider-owned"}),
+            replay: crate::model::ReplayScope::ExactModel,
         }],
     })];
     let runtime = Rho::builder()
@@ -644,11 +644,7 @@ async fn questionnaire_tool_waits_for_one_valid_typed_host_response() {
         identity(),
         [
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                ToolCall {
-                    id: "question-1".into(),
-                    name: "questionnaire".into(),
-                    arguments: json!({}),
-                },
+                ToolCall::new("question-1".into(), "questionnaire".into(), json!({})),
             )])),
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
                 "configured".into(),
@@ -691,7 +687,7 @@ async fn questionnaire_tool_waits_for_one_valid_typed_host_response() {
     assert_eq!(outcome.text(), "configured");
     assert!(matches!(
         &provider.recorded_requests()[1].messages[2],
-        Message::ToolResult(result) if result.ok && result.content == "safe"
+        Message::ToolResult(result) if !result.is_failure() && result.content == "safe"
     ));
 }
 
@@ -730,8 +726,9 @@ impl ModelProvider for SteeringProvider {
     fn send_turn_stream<'a>(
         &'a self,
         request: ModelRequest<'a>,
-        events: ProviderEventSender,
+        context: ProviderTurnContext,
     ) -> ProviderFuture<'a> {
+        let events = context.events;
         Box::pin(async move {
             self.requests
                 .lock()
@@ -915,11 +912,7 @@ impl ModelProvider for BlockingToolProvider {
                 .push(request.messages.to_vec());
             if self.calls.fetch_add(1, Ordering::AcqRel) == 0 {
                 Ok(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                    ToolCall {
-                        id: "blocked-call".into(),
-                        name: "blocking".into(),
-                        arguments: json!({}),
-                    },
+                    ToolCall::new("blocked-call".into(), "blocking".into(), json!({})),
                 )]))
             } else {
                 self.second_started.notify_one();
@@ -1021,11 +1014,7 @@ async fn between_step_steer_is_applied_before_next_request() {
         identity(),
         [
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                ToolCall {
-                    id: "call-1".into(),
-                    name: "read".into(),
-                    arguments: json!({}),
-                },
+                ToolCall::new("call-1".into(), "read".into(), json!({})),
             )])),
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
                 "done".into(),
@@ -1105,13 +1094,15 @@ impl ModelProvider for MidTurnSteeringProvider {
         })
     }
 
-    fn send_turn_stream_steerable<'a>(
+    fn send_turn_stream<'a>(
         &'a self,
         request: ModelRequest<'a>,
-        _options: ModelRequestOptions,
-        events: ProviderEventSender,
-        mut steering: ProviderSteeringReceiver,
+        context: ProviderTurnContext,
     ) -> ProviderFuture<'a> {
+        let ProviderTurnContext {
+            events, steering, ..
+        } = context;
+        let mut steering = steering.expect("the runtime offers a steering port");
         Box::pin(async move {
             self.requests
                 .lock()
@@ -1320,8 +1311,9 @@ impl ModelProvider for PartialProvider {
     fn send_turn_stream<'a>(
         &'a self,
         request: ModelRequest<'a>,
-        events: ProviderEventSender,
+        context: ProviderTurnContext,
     ) -> ProviderFuture<'a> {
+        let events = context.events;
         Box::pin(async move {
             events
                 .send(ModelEvent::OutputDelta("partial".into()))
@@ -1668,21 +1660,17 @@ impl Tool for LiveHistoryTool {
 
 fn scripted_tool_call(id: &str) -> ScriptedTurn {
     ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-        ToolCall {
-            id: id.into(),
-            name: "peek".into(),
-            arguments: json!({}),
-        },
+        ToolCall::new(id.into(), "peek".into(), json!({})),
     )]))
 }
 
 fn assistant_tool_call(id: &str) -> Message {
     Message::assistant(crate::model::AssistantMessage {
-        content: vec![ContentBlock::ToolCall(ToolCall {
-            id: id.into(),
-            name: "peek".into(),
-            arguments: json!({}),
-        })],
+        content: vec![ContentBlock::ToolCall(ToolCall::new(
+            id.into(),
+            "peek".into(),
+            json!({}),
+        ))],
         provenance: Some(identity()),
         reasoning_summary: None,
         provider_context: Vec::new(),
@@ -1727,11 +1715,7 @@ async fn live_history_exposes_the_turn_in_flight_to_tools() {
             vec![
                 Message::user_text("hi"),
                 assistant_tool_call("call-1"),
-                Message::ToolResult(crate::model::ToolResult {
-                    id: "call-1".into(),
-                    ok: true,
-                    content: "peeked".into(),
-                }),
+                Message::ToolResult(crate::model::ToolResult::succeeded("call-1", "peeked").into()),
                 assistant_tool_call("call-2"),
             ],
         ]

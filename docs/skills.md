@@ -127,7 +127,7 @@ choose them:
   skills the rest of the prompt mentions.
 
 Mentions load only for prompts you send, including queued follow-ups. A
-steering message sent during a turn, a goal continuation, and the prompts that
+steering message sent during a turn and the prompts that
 `/init` and the agent creator write leave `$` text as prose. ACP hosts follow
 the same rule; see [Agent Client Protocol](/integrations/acp/reference#skills).
 

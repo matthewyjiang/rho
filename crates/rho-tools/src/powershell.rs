@@ -4,22 +4,15 @@ use crate::tool::*;
 use rho_sdk::{ProcessEnvironment, ProcessExecution, ProcessInvocation, ProcessOutputLimits};
 use tokio::process::Command;
 
-pub struct PowerShell {
-    rtk_enabled: bool,
-}
+/// The application PowerShell tool. It runs commands unchanged; agent hosts use
+/// [`crate::shell_tool`], which adds authorization and the optional RTK rewrite
+/// configured through [`crate::ShellToolOptions::rtk`].
+#[derive(Clone, Copy, Debug, Default)]
+pub struct PowerShell;
 
 impl PowerShell {
-    /// Builds the application tool. `rtk_enabled` rewrites commands through
-    /// RTK inside [`Tool::call`], after any caller has seen the original.
-    ///
-    /// # Next major
-    ///
-    /// NEXT_MAJOR(rho-agent-tools): drop `rtk_enabled` and take no arguments; RTK belongs to [`crate::ShellToolOptions::rtk`] only.
-    ///
-    /// Agent hosts use [`crate::shell_tool`], which rewrites before authorization.
-    /// The parameter stays because this constructor is public.
-    pub const fn new(rtk_enabled: bool) -> Self {
-        Self { rtk_enabled }
+    pub const fn new() -> Self {
+        Self
     }
 }
 
@@ -68,14 +61,8 @@ impl Tool for PowerShell {
         on_update: &'a mut (dyn FnMut(Vec<String>) + Send),
     ) -> AppToolFuture<'a> {
         Box::pin(async move {
-            let mut args = ShellArgs::parse(args)?;
-            // Validate before RTK rewrite so invalid timeouts never launch `rtk`.
+            let args = ShellArgs::parse(args)?;
             let timeout = args.timeout()?;
-            if self.rtk_enabled {
-                if let Some(command) = super::rtk::rewrite(&args.command).await {
-                    args.command = command;
-                }
-            }
             let execution = ProcessExecution::new(
                 &ctx.cwd,
                 ProcessInvocation::shell_from_path(
@@ -90,13 +77,9 @@ impl Tool for PowerShell {
                 ProcessEnvironment::InheritAll,
                 ProcessOutputLimits::new(ctx.max_output_bytes, timeout),
             );
-            let result = execute_process(execution, cancellation, on_update)
+            Ok(execute_process(execution, cancellation, on_update)
                 .await?
-                .into_result(id);
-            if self.rtk_enabled {
-                super::rtk::log_execution(&ctx.cwd, &args.command, &result).await;
-            }
-            Ok(result)
+                .into_result(id))
         })
     }
 }

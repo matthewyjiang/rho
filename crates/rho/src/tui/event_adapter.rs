@@ -1,10 +1,8 @@
+use crate::app::interactive_presenter::{hosted_activity_card, InteractiveToolPresenter};
+use rho_protocol::display::ToolCard;
 use rho_sdk::{
     model::{ContextUsage, ModelUsage},
     HostInputRequest, ModelCallMetrics, ModelCallProfile, RunEvent,
-};
-use {
-    crate::app::interactive_presenter::{InteractiveToolPresenter, PresentedToolCard},
-    rho_tools::tool_card::{ToolCard, ToolFamily, ToolHeader, ToolStatus},
 };
 
 use super::{
@@ -22,7 +20,7 @@ pub(super) enum ViewModelEvent {
     SteeringDelivered(rho_sdk::SteeringId),
     ToolStarted {
         call_id: rho_sdk::ToolCallId,
-        card: PresentedToolCard,
+        card: ToolCard,
     },
     ProviderStreamReset(ProviderRetryHint),
     ProviderRetry,
@@ -36,7 +34,7 @@ pub(super) enum ViewModelEvent {
     },
     ToolUpdated {
         call_id: rho_sdk::ToolCallId,
-        card: PresentedToolCard,
+        card: ToolCard,
     },
     /// Display-only stream text for live usage estimates (tool-call JSON, etc.).
     ///
@@ -49,7 +47,7 @@ pub(super) enum ViewModelEvent {
         /// Present when the streamed preview card changed. Identity-only binds
         /// may omit a card so the batch can attach a late call id without a
         /// forced re-render.
-        card: Option<PresentedToolCard>,
+        card: Option<ToolCard>,
     },
     /// Final proposal for a tool call, keyed only by call id.
     ///
@@ -57,11 +55,11 @@ pub(super) enum ViewModelEvent {
     /// index in the provider output_index namespace.
     ToolCallProposed {
         call_id: rho_sdk::ToolCallId,
-        card: PresentedToolCard,
+        card: ToolCard,
     },
     ToolFinished {
         call_id: rho_sdk::ToolCallId,
-        presentation: crate::presentation::Presentation,
+        presentation: rho_protocol::display::Presentation,
         image_asset: Option<rho_sdk::tool::ToolAsset>,
     },
     ToolDetached {
@@ -113,10 +111,7 @@ impl ViewModelEvent {
 #[derive(Clone, Debug)]
 pub(super) enum ViewEvent {
     Update(ViewModelEvent),
-    Questionnaire {
-        call_id: rho_sdk::ToolCallId,
-        request: HostInputRequest,
-    },
+    Questionnaire { request: HostInputRequest },
     Notice(String),
     Completed,
     Cancelled,
@@ -304,12 +299,20 @@ impl SdkEventAdapter {
                 call_id,
                 name,
                 metadata,
+                execution,
             } => {
                 let presented = self.presenter().started(call_id.clone(), name, metadata);
-                vec![ViewEvent::Update(ViewModelEvent::ToolStarted {
-                    call_id,
+                let started = ViewEvent::Update(ViewModelEvent::ToolStarted {
+                    call_id: call_id.clone(),
                     card: presented.card,
-                })]
+                });
+                match execution {
+                    rho_sdk::ToolExecution::Attached => vec![started],
+                    rho_sdk::ToolExecution::Detached => vec![
+                        started,
+                        ViewEvent::Update(ViewModelEvent::ToolDetached { call_id }),
+                    ],
+                }
             }
             RunEvent::ToolUpdated { call_id, progress } => {
                 let presented = self.presenter().updated(&call_id, &progress);
@@ -319,15 +322,12 @@ impl SdkEventAdapter {
                 })]
             }
             RunEvent::ToolFinished { call_id, result } => {
-                let (_ok, presented) = self.presenter().finished(&call_id, result);
+                let (_ok, presented) = self.presenter().finished(&call_id, &result);
                 vec![ViewEvent::Update(ViewModelEvent::ToolFinished {
                     call_id,
                     presentation: presented.presentation,
                     image_asset: presented.image_asset,
                 })]
-            }
-            RunEvent::ToolDetached { call_id } => {
-                vec![ViewEvent::Update(ViewModelEvent::ToolDetached { call_id })]
             }
             RunEvent::UsageUpdated { usage } => {
                 vec![ViewEvent::Update(ViewModelEvent::Usage(usage))]
@@ -339,18 +339,10 @@ impl SdkEventAdapter {
                 })]
             }
             RunEvent::WebSearch { detail } => {
-                vec![provider_native_activity_finished(
-                    "web_search",
-                    detail,
-                    ToolFamily::Web,
-                )]
+                vec![provider_native_activity_finished("web_search", &detail)]
             }
             RunEvent::HostedToolActivity { name, detail } => {
-                vec![provider_native_activity_finished(
-                    &name,
-                    detail,
-                    hosted_tool_family(&name),
-                )]
+                vec![provider_native_activity_finished(&name, &detail)]
             }
             RunEvent::ProviderRequestRetry => {
                 vec![ViewEvent::Update(ViewModelEvent::ProviderRetry)]
@@ -370,14 +362,9 @@ impl SdkEventAdapter {
                 ))]
             }
             RunEvent::ProviderServiceTierFallback { .. } => Vec::new(),
-            RunEvent::HostInputRequested { request } => {
-                vec![ViewEvent::Questionnaire {
-                    call_id: rho_sdk::ToolCallId::new(),
-                    request,
-                }]
-            }
-            RunEvent::ToolHostInputRequested { call_id, request } => {
-                vec![ViewEvent::Questionnaire { call_id, request }]
+            RunEvent::HostInputRequested { request }
+            | RunEvent::ToolHostInputRequested { request, .. } => {
+                vec![ViewEvent::Questionnaire { request }]
             }
             RunEvent::CompactionStarted { .. } => {
                 self.compaction_open = true;
@@ -426,37 +413,14 @@ impl SdkEventAdapter {
 pub(super) fn compact_started_event() -> ViewModelEvent {
     ViewModelEvent::ToolStarted {
         call_id: compaction_call_id(),
-        card: super::compaction_display::running_card().into(),
+        card: super::compaction_display::running_card(),
     }
 }
 
-fn hosted_tool_family(name: &str) -> ToolFamily {
-    match name {
-        // Hosted X Search is a network lookup; keep the web chrome.
-        "x_search" => ToolFamily::Web,
-        _ => ToolFamily::Default,
-    }
-}
-
-fn provider_native_activity_finished(name: &str, detail: String, family: ToolFamily) -> ViewEvent {
-    // Hosted activity card: verb-only header, optional detail fact, then
-    // "finished". Keeps operator-heavy queries out of `verb(primary)` parens
-    // and gives every hosted lookup the same chrome (not search-only).
-    let mut card = ToolCard::new(ToolStatus::Ok, family, ToolHeader::call(name, None));
-    let detail = detail.trim();
-    if !detail.is_empty() {
-        card.push_fact(rho_tools::tool_card::ToolFact::Text {
-            text: detail.to_owned(),
-        });
-    }
-    // Hosted lookups have no client result body; keep a finished fact so the
-    // card is not a bare header.
-    card.push_fact(rho_tools::tool_card::ToolFact::Meta {
-        text: "finished".into(),
-    });
+fn provider_native_activity_finished(name: &str, detail: &str) -> ViewEvent {
     ViewEvent::Update(ViewModelEvent::ToolFinished {
         call_id: rho_sdk::ToolCallId::new(),
-        presentation: card.into(),
+        presentation: hosted_activity_card(name, detail).into(),
         image_asset: None,
     })
 }

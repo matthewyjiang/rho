@@ -1,13 +1,16 @@
 //! Agent-owned decisions consumed by the generic ACP driver.
 
 use super::permission::PermissionDecision;
-use crate::cli_runtime::{
-    agent_event::AgentEvent,
-    status_sink::{RateLimitRecorder, RuntimeLabel},
-    stream_effect::StreamEffect,
-    CliExecutable,
+use crate::{
+    cli_runtime::{
+        agent_event::AgentEvent,
+        status_sink::{RateLimitRecorder, RuntimeLabel},
+        stream_effect::StreamEffect,
+        CliExecutable,
+    },
+    session_environment::Ambient,
 };
-use agent_client_protocol::schema::v1::{
+use agent_client_protocol::v1::schema::{
     AuthMethod, AuthMethodId, Meta, RequestPermissionRequest, SessionConfigId,
     SessionConfigValueId, SessionModeId, SessionUpdate,
 };
@@ -27,7 +30,9 @@ use std::{
 /// agent's system prompt (ACP has no system-role override).
 pub(crate) trait AcpAgentPolicy: Send + 'static {
     fn label(&self) -> RuntimeLabel;
-    fn resolve_executable(&self) -> Result<CliExecutable, String>;
+    /// The agent's program on the `PATH` of `environment`, the one it will
+    /// run in (#1659).
+    fn resolve_executable(&self, environment: &Ambient) -> Result<CliExecutable, String>;
     /// Regenerate permission-sensitive flags; frozen argv overlays identity only.
     fn spawn_plan(&self, frozen: Option<Vec<String>>) -> Result<AcpSpawnPlan, String>;
     /// Per-run setup; returned notices are rendered before the agent is spawned.
@@ -68,7 +73,8 @@ pub(crate) trait AcpAgentPolicy: Send + 'static {
     }
 }
 
-/// Fully materialized launch; environment overrides apply to this child only.
+/// Fully materialized launch; `env` overrides apply to this child only, on
+/// top of the environment the run gives it (see [`Ambient::apply_full`]).
 pub(crate) struct AcpSpawnPlan {
     pub(crate) argv: Vec<OsString>,
     pub(crate) cwd: PathBuf,

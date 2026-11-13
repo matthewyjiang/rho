@@ -2,6 +2,7 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet},
+    ffi::OsStr,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -11,8 +12,8 @@ use crate::{
     app::agent_binding::{AgentBinder, AgentInvocation, AgentRole, BoundRuntime},
     app::sdk_config,
     workflow::{
-        freeze_directory_identity, freeze_executable_identity, ExecutableIdentity, NodeExecution,
-        ResolvedAgent, ResolvedCommand, ResolvedNode,
+        freeze_directory_identity, freeze_executable_identity, ExecutableIdentity, HandleLaunch,
+        NodeExecution, ResolvedAgent, ResolvedCommand, ResolvedNode,
     },
 };
 
@@ -25,6 +26,9 @@ pub(crate) trait PlanHost: Send + Sync {
     fn config(&self) -> &crate::config::Config;
     fn catalog(&self) -> &crate::agent::AgentCatalog;
     fn available_tools(&self) -> &crate::agent::AgentCapabilities;
+    /// The credentials of whoever the run will act for, which decide the
+    /// models its agent nodes can use.
+    fn credentials(&self) -> &dyn rho_providers::credentials::CredentialStore;
 
     fn resolve_executable(&self, executable: &str)
         -> anyhow::Result<(PathBuf, ExecutableIdentity)>;
@@ -36,18 +40,27 @@ pub(crate) struct DiscoveringPlanHost<'a> {
     config: &'a crate::config::Config,
     catalog: crate::agent::AgentCatalog,
     available_tools: &'a crate::agent::AgentCapabilities,
+    /// The `PATH` bare executables and `#!/usr/bin/env` interpreters are
+    /// found on: that of the environment the run will start in (#1659).
+    search_path: Option<&'a OsStr>,
+    credentials: &'a dyn rho_providers::credentials::CredentialStore,
 }
 
 impl<'a> DiscoveringPlanHost<'a> {
+    /// A host finding bare executables on `search_path` and project agents
+    /// under `trust`, and binding agents with `credentials`, all of the
+    /// environment the run will start in.
     pub(crate) fn new(
         workspace: &'a Path,
         config: &'a crate::config::Config,
         available_tools: &'a crate::agent::AgentCapabilities,
         workflow_entry: &Path,
+        search_path: Option<&'a OsStr>,
+        trust: crate::workspace::ProjectTrusts,
+        credentials: &'a dyn rho_providers::credentials::CredentialStore,
     ) -> anyhow::Result<Self> {
         let home = crate::paths::home_dir();
-        let trust = crate::workspace::ProjectTrust::from_agents_env();
-        let plugins = crate::plugins::agent_tiers(workspace, home.as_deref());
+        let plugins = crate::plugins::agent_tiers(workspace, home.as_deref(), trust);
         Ok(Self {
             workspace,
             config,
@@ -55,10 +68,12 @@ impl<'a> DiscoveringPlanHost<'a> {
                 workspace,
                 workflow_entry,
                 home.as_deref(),
-                trust,
+                trust.agents,
                 &plugins,
             )?,
             available_tools,
+            search_path,
+            credentials,
         })
     }
 }
@@ -80,12 +95,16 @@ impl PlanHost for DiscoveringPlanHost<'_> {
         self.available_tools
     }
 
+    fn credentials(&self) -> &dyn rho_providers::credentials::CredentialStore {
+        self.credentials
+    }
+
     fn resolve_executable(
         &self,
         executable: &str,
     ) -> anyhow::Result<(PathBuf, ExecutableIdentity)> {
-        let path = resolve_executable_path(executable, self.workspace)?;
-        let identity = freeze_executable_identity(&path)?;
+        let path = resolve_executable_path(executable, self.workspace, self.search_path)?;
+        let identity = freeze_executable_identity(&path, self.search_path)?;
         Ok((path, identity))
     }
 }
@@ -97,6 +116,7 @@ pub(crate) struct AuthorizedPlanHost<'a> {
     catalog: &'a crate::agent::AgentCatalog,
     available_tools: &'a crate::agent::AgentCapabilities,
     executables: &'a BTreeMap<String, ExecutableIdentity>,
+    credentials: &'a dyn rho_providers::credentials::CredentialStore,
 }
 
 impl<'a> AuthorizedPlanHost<'a> {
@@ -106,6 +126,7 @@ impl<'a> AuthorizedPlanHost<'a> {
         catalog: &'a crate::agent::AgentCatalog,
         available_tools: &'a crate::agent::AgentCapabilities,
         executables: &'a BTreeMap<String, ExecutableIdentity>,
+        credentials: &'a dyn rho_providers::credentials::CredentialStore,
     ) -> Self {
         Self {
             workspace,
@@ -113,6 +134,7 @@ impl<'a> AuthorizedPlanHost<'a> {
             catalog,
             available_tools,
             executables,
+            credentials,
         }
     }
 }
@@ -134,6 +156,10 @@ impl PlanHost for AuthorizedPlanHost<'_> {
         self.available_tools
     }
 
+    fn credentials(&self) -> &dyn rho_providers::credentials::CredentialStore {
+        self.credentials
+    }
+
     fn resolve_executable(
         &self,
         executable: &str,
@@ -148,11 +174,54 @@ impl PlanHost for AuthorizedPlanHost<'_> {
     }
 }
 
+/// A workflow program whose nodes can all launch on the planning target.
+///
+/// Node resolution and executable-read authorization take only this, so no
+/// planning adapter can skip [`ensure_program_launchable`].
+#[derive(Clone, Copy)]
+pub(crate) struct LaunchableProgram<'a>(&'a crate::workflow::WorkflowProgram);
+
+impl<'a> LaunchableProgram<'a> {
+    pub(crate) fn program(self) -> &'a crate::workflow::WorkflowProgram {
+        self.0
+    }
+}
+
+/// Rejects `program` when `launch` cannot start one of its nodes, before any
+/// node resolves or has its executable read authorized (#1736). Command
+/// nodes and agents on an external CLI runtime launch a frozen process from
+/// verified handles; in-process Rho agents launch none.
+pub(crate) fn ensure_program_launchable<'a>(
+    program: &'a crate::workflow::WorkflowProgram,
+    catalog: &crate::agent::AgentCatalog,
+    launch: HandleLaunch,
+) -> anyhow::Result<LaunchableProgram<'a>> {
+    if launch == HandleLaunch::Supported {
+        return Ok(LaunchableProgram(program));
+    }
+    for node in program.root.nodes.values() {
+        let launches_process = match &node.execution {
+            NodeExecution::Command(_) => true,
+            NodeExecution::Agent(agent) => catalog
+                .find(&agent.agent)?
+                .definition
+                .runtime
+                .runtime()
+                .is_external_cli(),
+        };
+        if launches_process {
+            launch.ensure()?;
+        }
+    }
+    Ok(LaunchableProgram(program))
+}
+
 pub(crate) fn resolve_nodes_with_host(
-    program: &crate::workflow::WorkflowProgram,
+    program: LaunchableProgram<'_>,
     host: &dyn PlanHost,
 ) -> anyhow::Result<BTreeMap<crate::workflow::NodeId, ResolvedNode>> {
     program
+        .program()
         .root
         .nodes
         .iter()
@@ -160,13 +229,15 @@ pub(crate) fn resolve_nodes_with_host(
             let resolved = match &node.execution {
                 NodeExecution::Agent(agent) => {
                     let entry = host.catalog().find(&agent.agent)?;
-                    let bound = AgentBinder::bind(
+                    let bound = AgentBinder::bind_with_credentials(
                         Arc::new(entry.definition.clone()),
                         AgentInvocation {
                             role: AgentRole::Workflow,
                             available_tools: host.available_tools().clone(),
                         },
                         host.config(),
+                        /*model_override*/ None,
+                        host.credentials(),
                     )?;
                     ResolvedNode::Agent(Box::new(resolve_agent(entry, bound, host)?))
                 }
@@ -374,13 +445,19 @@ fn frozen_capabilities(capabilities: &crate::agent::AgentCapabilities) -> BTreeS
         .collect()
 }
 
-fn resolve_executable_path(executable: &str, workspace: &Path) -> anyhow::Result<PathBuf> {
+/// `executable` canonicalized: a bare name found on `search_path`, a
+/// relative path under `workspace`.
+fn resolve_executable_path(
+    executable: &str,
+    workspace: &Path,
+    search_path: Option<&OsStr>,
+) -> anyhow::Result<PathBuf> {
     let path = Path::new(executable);
     // Every branch canonicalizes: validation requires the frozen path to equal
     // the identity's canonical path, and PATH entries are often symlinks
     // (`~/.local/bin/cursor-agent -> versions/<v>/cursor-agent`).
     let resolved = if path.components().count() == 1 {
-        crate::executable::find_on_path(executable)
+        crate::executable::find_on(executable, search_path)
             .ok_or_else(|| anyhow::anyhow!("executable '{executable}' was not found on PATH"))?
             .canonicalize()?
     } else if path.is_absolute() {
@@ -390,3 +467,7 @@ fn resolve_executable_path(executable: &str, workspace: &Path) -> anyhow::Result
     };
     Ok(resolved)
 }
+
+#[cfg(test)]
+#[path = "plan_host_tests.rs"]
+mod tests;

@@ -18,10 +18,7 @@ pub(super) const ATTACH_PICKER_STEPS: &[Step] = &[
         text: "subagent rail fixture dispatched",
         timeout: STREAM,
     },
-    Step::WaitText {
-        text: "worker",
-        timeout: SETTLE,
-    },
+    Step::Custom(super::subagent_rail::wait_for_worker_row),
     Step::Phase("open_attach_picker"),
     Step::SubmitText("/attach"),
     Step::WaitText {
@@ -56,25 +53,3 @@ pub(super) const ATTACH_PICKER_SCENARIO: Scenario = Scenario::new(
     ATTACH_PICKER_STEPS,
     /*smoke*/ false,
 );
-
-pub(super) const ATTACH_CLI_EMPTY_STEPS: &[Step] = &[
-    Step::Phase("open_empty_cli_attach_picker"),
-    Step::WaitText {
-        text: "attach subagent",
-        timeout: STARTUP,
-    },
-    Step::AssertText("SUBAGENTS"),
-    Step::AssertText("0/0"),
-    // Submitting an empty standalone attach picker exits, unlike /attach.
-    Step::Key(Key::Enter),
-    Step::WaitExit { timeout: SETTLE },
-];
-
-pub(super) const ATTACH_CLI_EMPTY_SCENARIO: Scenario = Scenario::new(
-    "attach_cli_empty",
-    "Submit rho attach with no running subagents and exit cleanly",
-    DEFAULT_SIZE,
-    ATTACH_CLI_EMPTY_STEPS,
-    /*smoke*/ false,
-)
-.with_args(&["attach"]);

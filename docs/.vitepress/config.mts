@@ -78,6 +78,7 @@ const appSidebar: DefaultTheme.SidebarItem[] = [
       { text: 'Overview', link: '/' },
       { text: 'Getting started', link: '/getting-started' },
       { text: 'Installation', link: '/installation' },
+      { text: 'Upgrading to Rho 3', link: '/upgrading-to-3' },
       { text: 'Authentication and models', link: '/authentication-and-models' },
       {
         text: 'Providers',
@@ -118,6 +119,15 @@ const appSidebar: DefaultTheme.SidebarItem[] = [
       },
       { text: 'Sessions', link: '/sessions' },
       {
+        text: 'Daemon',
+        collapsed: true,
+        items: [
+          { text: 'Overview', link: '/daemon' },
+          { text: 'MCP server', link: '/mcp-server' },
+          { text: 'Protocol', link: '/protocol' },
+        ],
+      },
+      {
         text: 'Integrations',
         collapsed: true,
         items: [
@@ -126,7 +136,6 @@ const appSidebar: DefaultTheme.SidebarItem[] = [
           { text: 'RTK', link: '/integrations/rtk' },
           { text: 'Model Context Protocol', link: '/integrations/mcp' },
           { text: 'OpenAPI', link: '/integrations/openapi' },
-          { text: 'Computer use', link: '/integrations/computer-use' },
           {
             text: 'Agent Client Protocol',
             collapsed: true,
@@ -163,7 +172,7 @@ const appSidebar: DefaultTheme.SidebarItem[] = [
         collapsed: true,
         items: [
           { text: 'Overview', link: '/tools-workspace' },
-          { text: 'Edit format', link: '/tools-workspace/edit-format' },
+          { text: 'Edit formats', link: '/tools-workspace/edit-format' },
           { text: 'Search tools', link: '/tools-workspace/search' },
           { text: 'Documents and images', link: '/tools-workspace/documents-and-images' },
           { text: 'Web access', link: '/tools-workspace/web-access' },

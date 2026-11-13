@@ -6,18 +6,11 @@
 //! Owner: interactive workflow lifecycle; existing CLI scenarios use a matrix
 //! driver and never exercise model-facing tools or source-start persistence.
 
-use std::{
-    ffi::CString,
-    fs::{self, OpenOptions},
-    io::{ErrorKind, Write},
-    os::unix::{ffi::OsStrExt, fs::OpenOptionsExt},
-    path::Path,
-    time::{Duration, Instant},
-};
+use std::{fs, path::Path};
 
 use anyhow::{ensure, Context, Result};
 
-use super::{assert_helpers::wait_for_turn_completion_after, DEFAULT_SIZE, STARTUP, STREAM};
+use super::{assert_helpers::wait_for_turn_completion_after, fifo, DEFAULT_SIZE, STARTUP, STREAM};
 use crate::{
     env::IsolatedHome,
     keys::{Key, MouseButton},
@@ -63,14 +56,10 @@ pub(super) const WORKFLOW_HUB_PLANNED_RETRY_SCENARIO: Scenario = Scenario::new(
 )
 .with_setup(setup_workflow);
 
-fn setup_workflow(home: &IsolatedHome) -> Result<()> {
-    let gate = CString::new(home.workspace.join(GATE).as_os_str().as_bytes())?;
+pub(super) fn setup_workflow(home: &IsolatedHome) -> Result<()> {
     // A FIFO read blocks in the real command runner until the PTY writes it.
     // No Python, fixture runtime, polling shell, or timing-based release.
-    let created = unsafe { libc::mkfifo(gate.as_ptr(), libc::S_IRUSR | libc::S_IWUSR) };
-    if created != 0 {
-        return Err(std::io::Error::last_os_error()).context("create workflow release FIFO");
-    }
+    fifo::create(&home.workspace.join(GATE))?;
     let directory = home.workspace.join(".rho/workflows");
     fs::create_dir_all(&directory)?;
     // The retry's held command spans seven bounded waits before release:
@@ -128,7 +117,11 @@ fn retry_planned_run(harness: &mut PtyHarness) -> Result<()> {
     // after chat startup so its own classifier setup does not intercept us.
     fs::write(
         &config,
-        format!("permission_mode = \"auto\"\n{original_config}"),
+        original_config.replacen(
+            "[behavior]\n",
+            "[behavior]\npermission_mode = \"auto\"\n",
+            1,
+        ),
     )?;
     harness.submit_text("/workflow")?;
     harness.wait_for_text("Workflows", STREAM)?;
@@ -151,7 +144,11 @@ fn retry_planned_run(harness: &mut PtyHarness) -> Result<()> {
     wait_for_turn_completion_after(harness, &response)?;
     fs::write(
         &config,
-        format!("permission_mode = \"bypass\"\n{original_config}"),
+        original_config.replacen(
+            "[behavior]\n",
+            "[behavior]\npermission_mode = \"bypass\"\n",
+            1,
+        ),
     )?;
 
     harness.set_phase("watch_ready_run_without_launching");
@@ -361,7 +358,7 @@ fn click_live_workflow(harness: &mut PtyHarness) -> Result<()> {
     harness.mouse(MouseButton::Left, 5, row, false)
 }
 
-fn assert_live_rail(harness: &mut PtyHarness) -> Result<()> {
+pub(super) fn assert_live_rail(harness: &mut PtyHarness) -> Result<()> {
     harness.wait_for_text(LIVE_PROGRESS, STREAM)?;
     ensure!(
         harness
@@ -375,36 +372,12 @@ fn assert_live_rail(harness: &mut PtyHarness) -> Result<()> {
     Ok(())
 }
 
-fn release_gate(harness: &mut PtyHarness) -> Result<()> {
+pub(super) fn release_gate(harness: &mut PtyHarness) -> Result<()> {
     let gate = harness
         .working_directory()
         .context("workflow working directory")?
         .join(GATE);
-    let deadline = Instant::now() + STREAM.duration;
-    loop {
-        match OpenOptions::new()
-            .write(true)
-            .custom_flags(libc::O_NONBLOCK)
-            .open(&gate)
-        {
-            Ok(mut writer) => {
-                return writer
-                    .write_all(b"release\n")
-                    .context("release workflow command")
-            }
-            Err(error)
-                if error.raw_os_error() == Some(libc::ENXIO)
-                    || error.kind() == ErrorKind::WouldBlock => {}
-            Err(error) => return Err(error).context("open workflow release FIFO"),
-        }
-        ensure!(
-            harness.is_running() && Instant::now() < deadline,
-            "workflow command never opened its release FIFO:\n{}",
-            harness.screen().debug_dump()
-        );
-        // Poll PTY output while waiting on the explicit reader-ready condition.
-        harness.pump(Duration::from_millis(25));
-    }
+    fifo::release(harness, &gate)
 }
 
 fn wait_for_completion(harness: &mut PtyHarness, run_id: &str) -> Result<()> {
@@ -420,7 +393,7 @@ fn wait_for_completion(harness: &mut PtyHarness, run_id: &str) -> Result<()> {
     wait_for_turn_completion_after(harness, &response)
 }
 
-fn record_ids(directory: &Path) -> Result<Vec<String>> {
+pub(super) fn record_ids(directory: &Path) -> Result<Vec<String>> {
     let mut ids = Vec::new();
     for entry in fs::read_dir(directory)? {
         let entry = entry?;

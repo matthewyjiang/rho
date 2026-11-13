@@ -20,10 +20,12 @@ pub use contract::AbortedAssistant;
 pub use contract::{
     AssistantMessage, ContentBlock, ImageContent, Message, ModelError, ModelEvent, ModelIdentity,
     ModelRequest, ModelResponse, ModelUsage, PartialToolCall, ProviderContextBlock,
-    ProviderReportedErrorKind, ToolCall, ToolResult, ToolSpec,
+    ProviderReportedErrorKind, ReasoningShift, ReplayScope, ToolCall, ToolResult, ToolResultStatus,
+    ToolSpec, WireMessage,
 };
 pub use display_name::{
-    ensure_model_catalog_names, model_display_name, model_reference_with_display_name,
+    ensure_model_catalog_names, forget_model_display_names, model_display_name,
+    model_reference_with_display_name,
 };
 pub use image::image_summary;
 pub use models_dev::{

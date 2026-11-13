@@ -15,6 +15,24 @@ pub(crate) fn stdin_is_terminal() -> bool {
     *STDIN_IS_TERMINAL.get_or_init(|| std::io::stdin().is_terminal())
 }
 
+/// Whether stdin is a terminal this process may read: one it runs in the
+/// foreground of. A background job that reads its terminal is stopped, so a
+/// command that only takes input when someone can type it asks this first.
+/// Windows has no background jobs, so there any terminal counts.
+pub(crate) fn stdin_is_foreground_terminal() -> bool {
+    if !stdin_is_terminal() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        // SAFETY: both only read the calling process's state; `tcgetpgrp`
+        // takes any descriptor and reports an error as -1.
+        unsafe { libc::tcgetpgrp(libc::STDIN_FILENO) == libc::getpgrp() }
+    }
+    #[cfg(not(unix))]
+    true
+}
+
 /// True when stdin is a pipe, socket, or redirected file rather than a TTY or
 /// null device.
 ///

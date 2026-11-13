@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use serde_json::json;
 
 use super::*;
@@ -19,6 +21,7 @@ fn reasoning_summaries_are_portable_but_opaque_context_is_not() {
             kind: "openai_response_output_item".into(),
             position: None,
             data: json!({"type": "reasoning", "encrypted_content": "signed"}),
+            replay: crate::model::ReplayScope::ExactModel,
         }],
     };
 
@@ -41,6 +44,7 @@ fn opaque_context_replays_only_to_exact_model_identity() {
         kind: "anthropic_content_block".into(),
         position: Some(0),
         data: json!({"type": "thinking", "thinking": "private", "signature": "sig"}),
+        replay: crate::model::ReplayScope::ExactModel,
     };
     let message = AssistantMessage {
         content: vec![ContentBlock::Text("answer".into())],
@@ -61,13 +65,14 @@ fn opaque_context_replays_only_to_exact_model_identity() {
 fn interrupted_context_is_reported_as_nonportable() {
     let source = identity("openai-codex", "openai-responses", "gpt-test");
     let target = identity("anthropic", "anthropic-messages", "claude-test");
-    let messages = [Message::AbortedAssistant(Box::new(
+    let messages = [Message::AbortedAssistant(Arc::new(
         crate::model::AbortedAssistant {
             provider_context: vec![ProviderContextBlock {
                 identity: source,
                 kind: "openai_response_output_item".into(),
                 position: None,
                 data: json!({"type": "reasoning"}),
+                replay: crate::model::ReplayScope::ExactModel,
             }],
             ..crate::model::AbortedAssistant::default()
         },
@@ -90,12 +95,14 @@ fn handoff_report_names_every_omitted_context_kind() {
                 kind: "zeta".into(),
                 position: None,
                 data: json!(1),
+                replay: crate::model::ReplayScope::ExactModel,
             },
             ProviderContextBlock {
                 identity: source,
                 kind: "alpha".into(),
                 position: None,
                 data: json!(2),
+                replay: crate::model::ReplayScope::ExactModel,
             },
         ],
         ..AssistantMessage::default()
@@ -120,17 +127,14 @@ fn provider_notes_are_never_omitted_or_replayed() {
         reasoning_summary: Some("checked the arithmetic".into()),
         provider_context: vec![ProviderContextBlock {
             identity: source.clone(),
-            kind: ProviderContextBlock::provider_note_kind("effort"),
+            kind: "effort".into(),
             position: None,
             data: json!("high"),
+            replay: crate::model::ReplayScope::Never,
         }],
         ..AssistantMessage::default()
     };
 
-    assert_eq!(
-        message.provider_context[0].provider_note_name(),
-        Some("effort")
-    );
     for target in [&source, &other] {
         assert!(!report_omissions([&message], target).has_omissions());
         let prepared = prepare_assistant(message.clone(), target);
@@ -156,6 +160,7 @@ fn portable_fallback_is_sent_only_when_opaque_context_cannot_replay() {
             kind: "openai_response_output_item".into(),
             position: Some(0),
             data: json!({"type": "compaction", "encrypted_content": "blob"}),
+            replay: crate::model::ReplayScope::ExactModel,
         }],
         ..AssistantMessage::default()
     }
@@ -185,6 +190,7 @@ fn portable_fallback_takes_priority_over_reasoning_summary_on_foreign_handoff() 
             kind: "openai_response_output_item".into(),
             position: None,
             data: json!({"type": "compaction", "encrypted_content": "blob"}),
+            replay: crate::model::ReplayScope::ExactModel,
         }],
         ..AssistantMessage::default()
     }

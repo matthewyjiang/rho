@@ -1,6 +1,6 @@
-use std::{fs, path::PathBuf};
+use std::fs;
 
-use rho_providers::model::{ContentBlock, Message};
+use rho_providers::model::{ContentBlock, Message, ModelIdentity};
 use rho_sdk::{CompactionState, Revision, SessionId, SessionSnapshot};
 use rho_tools::tool::ToolCall;
 use tempfile::TempDir;
@@ -21,95 +21,21 @@ fn write_entries(path: &std::path::Path, entries: &[SessionEntry]) {
     fs::write(path, contents).unwrap();
 }
 
-fn fixture_path(root: &TempDir, cwd: &TempDir, id: &str, created_at: u64) -> PathBuf {
-    let dir = session_dir_in_root(root.path(), cwd.path());
-    fs::create_dir_all(&dir).unwrap();
-    dir.join(format!("{created_at}_{id}.jsonl"))
-}
-
-#[test]
-fn pure_legacy_replace_history_uses_display_not_model_replacement() {
-    let root = TempDir::new().unwrap();
-    let cwd = TempDir::new().unwrap();
-    let id = "legacy-replace";
-    let path = fixture_path(&root, &cwd, id, 100);
-    write_entries(
-        &path,
-        &[
-            SessionEntry::Session {
-                version: 1,
-                id: id.into(),
-                timestamp: "100".into(),
-                cwd: cwd.path().to_path_buf(),
-                agent_id: None,
-                agent_fingerprint: None,
-                agent_role: crate::session::agent_identity::SessionAgentRole::Root,
-            },
-            SessionEntry::Message {
-                timestamp: "101".into(),
-                message: Message::user_text("model prompt"),
-                display_message: Some(Box::new(Message::user_text("/goal model prompt"))),
-            },
-            SessionEntry::Message {
-                timestamp: "102".into(),
-                message: Message::assistant_text("answer"),
-                display_message: None,
-            },
-            SessionEntry::ReplaceHistory {
-                timestamp: "103".into(),
-                messages: vec![Message::user_text("compacted model summary")],
-            },
-            SessionEntry::Message {
-                timestamp: "104".into(),
-                message: Message::assistant_text("after"),
-                display_message: None,
-            },
-        ],
-    );
-
-    let summary = summarize_session_file(&path, cwd.path()).unwrap().summary;
-    // Tree active display keeps pre-replacement display messages; ReplaceHistory
-    // only rewrites model history.
-    assert_eq!(summary.message_count, 3);
-    assert_eq!(
-        summary.first_user_message.as_deref(),
-        Some("/goal model prompt")
-    );
-    assert_eq!(
-        summary.last_user_message.as_deref(),
-        Some("/goal model prompt")
-    );
-    assert_eq!(summary.updated_at, 104);
-    assert_eq!(summary.created_at, 100);
-}
-
 #[test]
 fn summarize_prefers_display_message_over_model_message() {
     let root = TempDir::new().unwrap();
     let cwd = TempDir::new().unwrap();
-    let id = "display-pref";
-    let path = fixture_path(&root, &cwd, id, 200);
-    write_entries(
-        &path,
-        &[
-            SessionEntry::Session {
-                version: 3,
-                id: id.into(),
-                timestamp: "200".into(),
-                cwd: cwd.path().to_path_buf(),
-                agent_id: None,
-                agent_fingerprint: None,
-                agent_role: crate::session::agent_identity::SessionAgentRole::Root,
-            },
-            SessionEntry::Message {
-                timestamp: "201".into(),
-                message: Message::user_text("hidden model text"),
-                display_message: Some(Box::new(Message::user_text("visible display text"))),
-            },
-        ],
-    );
+    let session = Session::create_in_root(root.path(), cwd.path()).unwrap();
+    session
+        .append_message_with_display(
+            &Message::user_text("hidden model text"),
+            &Message::user_text("visible display text"),
+        )
+        .unwrap();
 
-    let summary = summarize_session_file(&path, cwd.path()).unwrap().summary;
+    let summary = summarize_session_file(session.path(), cwd.path())
+        .unwrap()
+        .summary;
     assert_eq!(summary.message_count, 1);
     assert_eq!(
         summary.first_user_message.as_deref(),
@@ -182,39 +108,25 @@ fn tree_summary_follows_active_leaf_after_branch_switch() {
 fn summarize_counts_incomplete_active_display() {
     let root = TempDir::new().unwrap();
     let cwd = TempDir::new().unwrap();
-    let id = "tool-tail";
-    let path = fixture_path(&root, &cwd, id, 300);
-    write_entries(
-        &path,
-        &[
-            SessionEntry::Session {
-                version: 3,
-                id: id.into(),
-                timestamp: "300".into(),
-                cwd: cwd.path().to_path_buf(),
-                agent_id: None,
-                agent_fingerprint: None,
-                agent_role: crate::session::agent_identity::SessionAgentRole::Root,
-            },
-            SessionEntry::Message {
-                timestamp: "301".into(),
-                message: Message::user_text("please run"),
-                display_message: None,
-            },
-            SessionEntry::Message {
-                timestamp: "302".into(),
-                message: Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
-                    id: "call-1".into(),
-                    name: "bash".into(),
-                    arguments: serde_json::json!({}),
-                })]),
-                display_message: None,
-            },
-            // Incomplete: tool result missing.
-        ],
-    );
+    let session = Session::create_in_root(root.path(), cwd.path()).unwrap();
+    session
+        .append_message(&Message::user_text("please run"))
+        .unwrap();
+    // Incomplete: the tool result is missing.
+    session
+        .append_message(&Message::Assistant(
+            (vec![ContentBlock::ToolCall(ToolCall::new(
+                "call-1".into(),
+                "bash".into(),
+                serde_json::json!({}),
+            ))])
+            .into(),
+        ))
+        .unwrap();
 
-    let summary = summarize_session_file(&path, cwd.path()).unwrap().summary;
+    let summary = summarize_session_file(session.path(), cwd.path())
+        .unwrap()
+        .summary;
     assert_eq!(summary.message_count, 2);
     assert_eq!(summary.first_user_message.as_deref(), Some("please run"));
     assert_eq!(summary.last_user_message.as_deref(), Some("please run"));
@@ -249,6 +161,9 @@ fn v4_tree_session_summary_matches_active_display() {
                 agent_id: None,
                 agent_fingerprint: None,
                 agent_role: crate::session::agent_identity::SessionAgentRole::Root,
+                launch_agent: None,
+                origin: None,
+                parent_session: None,
             },
             SessionEntry::Node {
                 node: SessionNode {

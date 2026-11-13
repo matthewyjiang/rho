@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use pretty_assertions::assert_eq;
-use rho_tools::tool_card::{
-    DiffRow, DiffRowKind, ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus,
+use rho_protocol::display::{
+    DiffRow, DiffRowKind, ToolBody, ToolCard, ToolCardStatus, ToolFact, ToolFamily, ToolHeader,
 };
 
 use super::{card_is_toggleable, live_shell_elapsed, push_tool_card};
@@ -35,7 +35,7 @@ fn render(card: &ToolCard, width: usize) -> Vec<String> {
 #[test]
 fn mid_fact_wrap_keeps_box_stem_before_later_sibling() {
     let mut card = ToolCard::new(
-        ToolStatus::Ok,
+        ToolCardStatus::Ok,
         ToolFamily::Web,
         ToolHeader::call("x_search", None),
     );
@@ -66,7 +66,7 @@ fn mid_fact_wrap_keeps_box_stem_before_later_sibling() {
 #[test]
 fn last_fact_wrap_uses_space_hang_not_stem() {
     let mut card = ToolCard::new(
-        ToolStatus::Ok,
+        ToolCardStatus::Ok,
         ToolFamily::Web,
         ToolHeader::call("x_search", None),
     );
@@ -101,7 +101,7 @@ fn last_fact_wrap_uses_space_hang_not_stem() {
 #[test]
 fn multi_file_diff_connects_body_under_section_headers() {
     let card = ToolCard::new(
-        ToolStatus::Ok,
+        ToolCardStatus::Ok,
         ToolFamily::FileDiff,
         ToolHeader::call("edit", Some("2 files".into())),
     )
@@ -149,7 +149,7 @@ fn multi_file_diff_connects_body_under_section_headers() {
 #[test]
 fn fact_wrap_breaks_on_whitespace() {
     let mut card = ToolCard::new(
-        ToolStatus::Ok,
+        ToolCardStatus::Ok,
         ToolFamily::Default,
         ToolHeader::call("tool", None),
     );
@@ -181,7 +181,7 @@ fn fact_wrap_breaks_on_whitespace() {
 #[test]
 fn body_wrap_breaks_on_whitespace() {
     let card = ToolCard::new(
-        ToolStatus::Ok,
+        ToolCardStatus::Ok,
         ToolFamily::Default,
         ToolHeader::call("tool", None),
     )
@@ -210,7 +210,7 @@ fn file_diff_rows_apply_soft_wash_with_fg_signs() {
     Theme::apply_committed("one-half-dark");
 
     let card = ToolCard::new(
-        ToolStatus::Ok,
+        ToolCardStatus::Ok,
         ToolFamily::FileDiff,
         ToolHeader::call("edit", Some("notes.txt".into())),
     )
@@ -320,7 +320,7 @@ fn file_diff_syntax_tokens_keep_row_wash() {
     Theme::apply_committed("one-half-dark");
 
     let card = ToolCard::new(
-        ToolStatus::Ok,
+        ToolCardStatus::Ok,
         ToolFamily::FileDiff,
         ToolHeader::call("write", Some("src/lib.rs".into())),
     )
@@ -381,7 +381,7 @@ fn large_rust_diff_card(lines: usize) -> ToolCard {
         })
         .collect();
     ToolCard::new(
-        ToolStatus::Ok,
+        ToolCardStatus::Ok,
         ToolFamily::FileDiff,
         ToolHeader::call("write", Some("src/big.rs".into())),
     )
@@ -442,9 +442,7 @@ fn toggle_check_does_not_highlight() {
     let card = large_rust_diff_card(120);
     reset_highlight_line_calls();
     assert!(card_is_toggleable(
-        &card.clone().into(),
-        /*width*/ 100,
-        /*max_tool_output_lines*/ 10,
+        &card, /*width*/ 100, /*max_tool_output_lines*/ 10,
     ));
     assert_eq!(
         take_highlight_line_calls(),
@@ -453,7 +451,7 @@ fn toggle_check_does_not_highlight() {
     );
 }
 
-// Covers: grep body gets language roles and match overlay from match_pattern
+// Covers: grep body gets language roles and match overlay from its search query
 // Owner: pure TUI (grep search highlight)
 #[test]
 fn grep_body_highlights_language_and_match() {
@@ -461,16 +459,20 @@ fn grep_body_highlights_language_and_match() {
     // Styles are derived from the theme at paint time and re-derived at assert
     // time; hold the lock so theme-switching tests cannot flip them in between.
     let card = ToolCard::new(
-        ToolStatus::Ok,
+        ToolCardStatus::Ok,
         ToolFamily::FileCommand,
         ToolHeader::call("grep", Some("answer, src".into())),
     )
-    .with_match_pattern("answer")
-    .with_body(ToolBody::Lines(vec![
-        "src/lib.rs".into(),
-        "1 | let answer = 42;".into(),
-        "1 matches in 1 file".into(),
-    ]));
+    .with_body(ToolBody::Search {
+        pattern: "answer".into(),
+        literal: false,
+        case_sensitive: true,
+        lines: vec![
+            "src/lib.rs".into(),
+            "1 | let answer = 42;".into(),
+            "1 matches in 1 file".into(),
+        ],
+    });
 
     let mut lines = Vec::new();
     push_tool_card(
@@ -525,7 +527,7 @@ fn shell_headers_highlight_commands_by_prompt_dialect() {
         ),
     ] {
         let card = ToolCard::new(
-            ToolStatus::Ok,
+            ToolCardStatus::Ok,
             ToolFamily::FileCommand,
             ToolHeader::shell(prompt, Some(command.into())),
         );
@@ -556,7 +558,7 @@ fn shell_headers_highlight_commands_by_prompt_dialect() {
 #[test]
 fn push_tool_card_paints_live_elapsed_into_timeout_fact() {
     let mut card = ToolCard::new(
-        ToolStatus::Running,
+        ToolCardStatus::Running,
         ToolFamily::FileCommand,
         ToolHeader::shell("$", Some("sleep 1".into())),
     );
@@ -597,12 +599,12 @@ fn live_shell_elapsed_requires_shell_header_and_running_status() {
     let started = std::time::Instant::now() - Duration::from_millis(250);
     let shell = ToolHeader::shell("$", Some("sleep 1".into()));
     for (header, status, expected) in [
-        (shell.clone(), ToolStatus::Running, true),
-        (shell.clone(), ToolStatus::Ok, false),
-        (shell, ToolStatus::Error, false),
+        (shell.clone(), ToolCardStatus::Running, true),
+        (shell.clone(), ToolCardStatus::Ok, false),
+        (shell, ToolCardStatus::Error, false),
         (
             ToolHeader::call("read_file", Some("a.rs".into())),
-            ToolStatus::Running,
+            ToolCardStatus::Running,
             false,
         ),
     ] {

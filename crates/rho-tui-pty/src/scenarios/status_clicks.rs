@@ -12,6 +12,7 @@ use crate::{
     harness::{PtyHarness, WaitTimeout},
     keys::{Key, MouseButton},
     scenario::{Scenario, Step},
+    screen::ScreenModel,
 };
 
 const CLICK: WaitTimeout = WaitTimeout::secs(5, "status click");
@@ -19,19 +20,37 @@ const CLICK: WaitTimeout = WaitTimeout::secs(5, "status click");
 /// Model id the isolated home configures; painted on the statusline.
 const MODEL: &str = "gpt-5.5";
 
-/// 0-based `(column, row)` of `needle` on the last screen row, the
-/// statusline fields row.
-fn statusline_cell(harness: &PtyHarness, needle: &str) -> Result<(u16, u16)> {
-    let rows = harness.screen().rows_text();
+/// Display name of the configured provider, painted left of the model.
+const PROVIDER: &str = "OpenAI";
+
+/// Reasoning levels the statusline can paint as the row's last field.
+const REASONING_LEVELS: &[&str] = &["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+
+/// The statusline fields row: the last screen row.
+fn statusline_row(screen: &ScreenModel) -> (usize, String) {
+    let rows = screen.rows_text();
     let row = rows.len().saturating_sub(1);
-    if let Some(offset) = rows.get(row).and_then(|line| line.find(needle)) {
-        let column = UnicodeWidthStr::width(&rows[row][..offset]);
+    (row, rows.get(row).cloned().unwrap_or_default())
+}
+
+/// 0-based `(column, row)` of `needle` on the statusline fields row.
+fn statusline_cell(harness: &PtyHarness, needle: &str) -> Result<(u16, u16)> {
+    let (row, line) = statusline_row(harness.screen());
+    if let Some(offset) = line.find(needle) {
+        let column = UnicodeWidthStr::width(&line[..offset]);
         return Ok((column as u16, row as u16));
     }
     anyhow::bail!(
         "{needle:?} not on the statusline row:\n{}",
         harness.screen().debug_dump()
     );
+}
+
+/// The reasoning level painted as the statusline row's last field, if any.
+fn painted_reasoning(screen: &ScreenModel) -> Option<String> {
+    let (_, line) = statusline_row(screen);
+    let last = line.split_whitespace().last()?;
+    REASONING_LEVELS.contains(&last).then(|| last.to_owned())
 }
 
 /// Whether every cell of `width` columns from 0-based (`column`, `row`) is
@@ -41,14 +60,15 @@ fn span_underlined(harness: &PtyHarness, (column, row): (u16, u16), width: u16) 
     (column..column + width).all(|col| screen.cell(row, col).is_some_and(|cell| cell.underline))
 }
 
-/// Poll until the model span's underline matches `want`, failing with `what`.
+/// Poll until the `text` span at `cell` has underline `want`, failing with `what`.
 fn wait_for_underline(
     harness: &mut PtyHarness,
     cell: (u16, u16),
+    text: &str,
     want: bool,
     what: &str,
 ) -> Result<()> {
-    let width = UnicodeWidthStr::width(MODEL) as u16;
+    let width = UnicodeWidthStr::width(text) as u16;
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         harness.pump(Duration::from_millis(20));
@@ -62,21 +82,69 @@ fn wait_for_underline(
     }
 }
 
-// Covers: hovering a clickable statusline field lifts it and leaving drops
-// the lift; a click on the model field runs `/model` and opens the picker.
-// Owner: interactive UX (PTY).
-fn hover_then_click_model_field(harness: &mut PtyHarness) -> Result<()> {
-    let cell = statusline_cell(harness, MODEL)?;
-    wait_for_underline(harness, cell, false, "model field starts lifted")?;
+/// Press and release the primary button at 0-based `cell`.
+fn click_cell(harness: &mut PtyHarness, (column, row): (u16, u16)) -> Result<()> {
     // SGR mouse coordinates are 1-based.
-    let (column, row) = (cell.0 + 2, cell.1 + 1);
-    harness.mouse_move(column, row)?;
-    wait_for_underline(harness, cell, true, "hover did not lift the model field")?;
+    click(harness, (column + 1, row + 1))
+}
+
+// Covers: provider and model are one click target. Hovering the provider
+// lifts the model too, leaving drops the lift, and a click on the provider
+// runs `/model` and opens the model picker.
+// Owner: interactive UX (PTY).
+fn hover_then_click_provider_and_model(harness: &mut PtyHarness) -> Result<()> {
+    let provider = statusline_cell(harness, PROVIDER)?;
+    let model = statusline_cell(harness, MODEL)?;
+    wait_for_underline(harness, model, MODEL, false, "model field starts lifted")?;
+    let pointer = (provider.0 + 2, provider.1 + 1);
+    harness.mouse_move(pointer.0, pointer.1)?;
+    wait_for_underline(
+        harness,
+        provider,
+        PROVIDER,
+        true,
+        "hover did not lift the provider",
+    )?;
+    wait_for_underline(
+        harness,
+        model,
+        MODEL,
+        true,
+        "provider hover did not lift the model",
+    )?;
     harness.mouse_move(1, 1)?;
-    wait_for_underline(harness, cell, false, "lift stayed after the pointer left")?;
-    harness.mouse(MouseButton::Left, column, row, true)?;
-    harness.mouse(MouseButton::Left, column, row, false)?;
+    wait_for_underline(
+        harness,
+        model,
+        MODEL,
+        false,
+        "lift stayed after the pointer left",
+    )?;
+    click_cell(harness, provider)?;
     harness.wait_for_text("select model", CLICK)
+}
+
+// Covers: a click on the reasoning field steps the effort in place: the
+// field shows the next level and no picker opens.
+// Owner: interactive UX (PTY).
+fn click_reasoning_cycles_effort(harness: &mut PtyHarness) -> Result<()> {
+    let Some(before) = painted_reasoning(harness.screen()) else {
+        anyhow::bail!(
+            "no reasoning field on the statusline row:\n{}",
+            harness.screen().debug_dump()
+        );
+    };
+    click_cell(harness, statusline_cell(harness, &before)?)?;
+    harness.wait_for_screen(&format!("reasoning to leave {before:?}"), CLICK, |screen| {
+        painted_reasoning(screen).is_some_and(|level| level != before)
+    })?;
+    if harness.screen().contains_text("select model") {
+        anyhow::bail!(
+            "a reasoning click opened the model picker:\n{}",
+            harness.screen().debug_dump()
+        );
+    }
+    Ok(())
 }
 
 const MODEL_FIELD_CLICK_STEPS: &[Step] = &[
@@ -85,24 +153,84 @@ const MODEL_FIELD_CLICK_STEPS: &[Step] = &[
         text: MODEL,
         timeout: STARTUP,
     },
-    Step::Phase("hover_and_click_model"),
-    Step::Custom(hover_then_click_model_field),
+    Step::Phase("hover_and_click_provider"),
+    Step::Custom(hover_then_click_provider_and_model),
     Step::Key(Key::Esc),
-    Step::WaitQuiet {
-        quiet_for: Duration::from_millis(150),
+    Step::WaitTextGone {
+        text: "select model",
         timeout: SETTLE,
     },
+    Step::Phase("click_reasoning"),
+    Step::Custom(click_reasoning_cycles_effort),
     Step::ExitCommand,
 ];
 
 pub(super) const STATUSLINE_MODEL_CLICK_SCENARIO: Scenario = Scenario::new(
     "statusline_model_click",
-    "Lift a statusline field on hover and open the model picker by clicking the model",
+    "Open the model picker from the provider and model, and cycle reasoning from its field",
     DEFAULT_SIZE,
     MODEL_FIELD_CLICK_STEPS,
     /* smoke */ false,
 )
 .with_env(OPENAI_KEY_ENV);
+
+const COPILOT_TOKEN_ENV: &[(&str, &str)] = &[("GITHUB_COPILOT_TOKEN", "fixture-copilot-token")];
+
+/// A model whose provider never takes a reasoning level.
+const NO_REASONING_MODEL: &str = "gpt-4.1";
+
+fn setup_no_reasoning_model(home: &IsolatedHome) -> Result<()> {
+    std::fs::write(
+        &home.config_path,
+        format!(
+            r#"web_search.mode = "off"
+
+[model]
+provider = "github-copilot"
+model = "{NO_REASONING_MODEL}"
+
+[behavior]
+credential_store = "file"
+"#
+        ),
+    )?;
+    Ok(())
+}
+
+// Covers: a model without reasoning paints no reasoning target, so there is
+// nothing for a click to cycle: the row ends at the model.
+// Owner: interactive UX (PTY).
+fn no_reasoning_target_without_reasoning(harness: &mut PtyHarness) -> Result<()> {
+    let (_, line) = statusline_row(harness.screen());
+    if !line.trim_end().ends_with(NO_REASONING_MODEL) {
+        anyhow::bail!(
+            "statusline row does not end at the model:\n{}",
+            harness.screen().debug_dump()
+        );
+    }
+    Ok(())
+}
+
+const NO_REASONING_CLICK_STEPS: &[Step] = &[
+    Step::Phase("startup"),
+    Step::WaitText {
+        text: NO_REASONING_MODEL,
+        timeout: STARTUP,
+    },
+    Step::Phase("no_reasoning_target"),
+    Step::Custom(no_reasoning_target_without_reasoning),
+    Step::ExitCommand,
+];
+
+pub(super) const STATUSLINE_NO_REASONING_CLICK_SCENARIO: Scenario = Scenario::new(
+    "statusline_no_reasoning_click",
+    "Paint no reasoning target for a model without reasoning",
+    DEFAULT_SIZE,
+    NO_REASONING_CLICK_STEPS,
+    /* smoke */ false,
+)
+.with_setup(setup_no_reasoning_model)
+.with_env(COPILOT_TOKEN_ENV);
 
 const IMAGE_FILE: &str = "click-remove-fixture.png";
 

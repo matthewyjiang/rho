@@ -81,12 +81,6 @@ pub(super) struct InlineChoiceModal {
 
 #[derive(Debug)]
 pub(super) enum InlineChoicePending {
-    ComputerAccess,
-    ComputerInstall,
-    ComputerUpdate {
-        from: String,
-        to: String,
-    },
     CredentialStore {
         next: super::login::StoreChoiceNext,
     },
@@ -112,24 +106,12 @@ pub(super) enum InlineChoicePending {
     DeleteWorkflowRun {
         run_id: String,
     },
-    PromptHistoryLimit {
-        new_limit: usize,
-    },
     ClearPromptHistory,
-    TestWebSearch,
-}
-
-impl InlineChoiceModal {
-    pub(super) fn blocks_auto_continue(&self) -> bool {
-        matches!(
-            self.pending,
-            InlineChoicePending::ContextHandoff(_)
-                | InlineChoicePending::ConfirmSend(_)
-                | InlineChoicePending::ComputerAccess
-                | InlineChoicePending::ComputerInstall
-                | InlineChoicePending::ComputerUpdate { .. }
-        )
-    }
+    /// `change` lowers the prompt history limit, which deletes older
+    /// prompts, so it waits for a yes.
+    LowerPromptHistoryLimit {
+        change: rho_protocol::SettingChange,
+    },
 }
 
 impl InlineChoice {

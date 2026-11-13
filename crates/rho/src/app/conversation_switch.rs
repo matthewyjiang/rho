@@ -1,9 +1,9 @@
 //! Conversation-model change on an assembled SDK session.
 //!
-//! Interactive TUI wraps this with display history, MCP sampling, and run
-//! transition. ACP calls it directly, also to install a same-model provider
-//! rebuilt with renewed credentials. Both keep provider, reasoning,
-//! compaction, the switch notice, and delegated selection on one path.
+//! The session runtime calls this for every model change, also to install a
+//! same-model provider rebuilt with renewed credentials, so provider,
+//! reasoning, compaction, the switch notice, and delegated selection stay on
+//! one path.
 
 use std::sync::Arc;
 
@@ -29,27 +29,12 @@ pub(crate) struct ModelSwitchReasoningResolution {
     pub(crate) source: ReasoningRequestSource,
 }
 
-/// Whether a model switch may adapt an unsupported explicit preference.
-/// This is operation policy, not the provenance of the user's preference.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ModelSwitchReasoningPolicy {
-    PreserveExplicit,
-    NormalizeUnsupported,
-}
-
 pub(crate) fn resolve_model_switch_reasoning(
     capabilities: &ReasoningCapabilities,
     requested: ReasoningLevel,
     source: ReasoningRequestSource,
-    policy: ModelSwitchReasoningPolicy,
 ) -> Result<ModelSwitchReasoningResolution, ReasoningLevel> {
-    let resolution_source = match policy {
-        ModelSwitchReasoningPolicy::PreserveExplicit => source,
-        ModelSwitchReasoningPolicy::NormalizeUnsupported => {
-            ReasoningRequestSource::PersistedOrDefault
-        }
-    };
-    let resolution = capabilities.resolve(requested, resolution_source);
+    let resolution = capabilities.resolve(requested, source);
     match resolution {
         ReasoningResolution::UnsupportedExplicit(requested) => Err(requested),
         ReasoningResolution::Normalized { effective, .. } => Ok(ModelSwitchReasoningResolution {
@@ -64,16 +49,6 @@ pub(crate) fn resolve_model_switch_reasoning(
             source,
         }),
     }
-}
-
-/// How the model-switch notice is written after the session accepts the new
-/// provider.
-///
-/// ACP records only the model-visible line. Interactive TUI also persists the
-/// host-visible display line.
-pub(crate) enum SwitchNotice<'a> {
-    SessionMessage,
-    WithDisplay(&'a mut dyn FnMut(String, String) -> Result<(), Error>),
 }
 
 pub(crate) struct ConversationSwitch<'a> {
@@ -94,7 +69,6 @@ pub(crate) struct ConversationSwitch<'a> {
 
 pub(crate) fn apply_conversation_switch(
     switch: ConversationSwitch<'_>,
-    notice: SwitchNotice<'_>,
 ) -> Result<HandoffReport, Error> {
     let previous_provider = Arc::clone(&switch.previous_provider);
     let previous_reasoning = switch.session.reasoning_level();
@@ -143,14 +117,9 @@ pub(crate) fn apply_conversation_switch(
     }
     let current_prompt_model = PromptModel::from_sdk_identity(&switch.new_provider.identity());
     if session_started && current_prompt_model != previous_prompt_model {
-        let (context, mut display) =
+        let (context, _) =
             model_switch_context(ModelSwitchKind::Conversation, &current_prompt_model);
-        if let Some(prompt) = switch.prepared_prompt {
-            let detail =
-                super::model_prompt_metadata::selection_notice(prompt.model_prompt.as_ref());
-            display.push_str(&format!("\n{detail}"));
-        }
-        if let Err(error) = record_switch_notice(switch.session, notice, context, display) {
+        if let Err(error) = record_switch_notice(switch.session, context) {
             return Err(restore_after_failed_step(
                 &switch,
                 previous_reasoning,
@@ -185,21 +154,16 @@ pub(crate) fn replace_system_prompt(session: &Session, text: &str) -> Result<(),
     session.replace_history(history).map(|_| ())
 }
 
-fn record_switch_notice(
-    session: &Session,
-    notice: SwitchNotice<'_>,
-    context: String,
-    display: String,
-) -> Result<(), Error> {
-    let result = match notice {
-        SwitchNotice::SessionMessage => session
-            .append_message(Message::user_text(context))
-            .map(|_| ()),
-        SwitchNotice::WithDisplay(record) => record(context, display),
-    };
-    result.map_err(|error| Error::InvalidConfiguration {
-        message: format!("could not record the conversation model switch for the model: {error}"),
-    })
+fn record_switch_notice(session: &Session, context: String) -> Result<(), Error> {
+    session
+        .append_message(Message::user_text(context))
+        .map(|_| ())
+        .map_err(|error| Error::InvalidConfiguration {
+            message: format!(
+                "could not record the conversation model switch for the model: {error}"
+            ),
+            source: None,
+        })
 }
 
 fn refresh_session_compaction(switch: &ConversationSwitch<'_>) -> Result<(), Error> {
@@ -214,6 +178,7 @@ fn refresh_session_compaction(switch: &ConversationSwitch<'_>) -> Result<(), Err
         recall: switch.tools.recall_store(),
         todo: Some(switch.tools.todo_state()),
         code_mode: Some(switch.tools.code_mode().clone()),
+        credentials: switch.tools.credentials(),
     });
     switch
         .session
@@ -234,6 +199,7 @@ fn restore_after_failed_step(
             message: format!(
                 "{primary}; also failed to restore the previous reasoning: {rollback_error}"
             ),
+            source: None,
         };
     }
     if let Err(rollback_error) = session.replace_provider(Arc::clone(&previous_provider)) {
@@ -241,6 +207,7 @@ fn restore_after_failed_step(
             message: format!(
                 "{primary}; also failed to restore the previous provider: {rollback_error}"
             ),
+            source: None,
         };
     }
     if matches!(compaction, RestoreCompaction::Required) {
@@ -255,12 +222,14 @@ fn restore_after_failed_step(
             recall: switch.tools.recall_store(),
             todo: Some(switch.tools.todo_state()),
             code_mode: Some(switch.tools.code_mode().clone()),
+            credentials: switch.tools.credentials(),
         });
         if let Err(refresh_error) = session.set_compaction(Some(Arc::new(compactor)), policy) {
             return Error::InvalidConfiguration {
                 message: format!(
                     "{primary}; could not restore compaction for the previous provider: {refresh_error}"
                 ),
+                source: None,
             };
         }
     }
@@ -268,6 +237,7 @@ fn restore_after_failed_step(
         Ok(_) => primary,
         Err(rollback) => Error::InvalidConfiguration {
             message: format!("{primary}; could not restore previous prompt/history: {rollback}"),
+            source: None,
         },
     }
 }

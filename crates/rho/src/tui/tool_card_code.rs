@@ -2,7 +2,7 @@
 
 use ratatui::text::Line;
 
-use crate::app::interactive_presenter::ToolBodyWindow;
+use rho_protocol::display::CodeWindow;
 
 use super::ChildGroup;
 use crate::tui::tool_code::CodeSyntax;
@@ -18,7 +18,7 @@ pub(super) struct CodeBodyRender {
 pub(super) fn render_code_body(
     lines: &[String],
     language: &str,
-    window: ToolBodyWindow,
+    window: CodeWindow,
     width: usize,
     paint_remaining: &mut usize,
 ) -> CodeBodyRender {
@@ -35,8 +35,10 @@ pub(super) fn render_code_body(
         .copied()
         .fold(0usize, usize::saturating_add);
     let mut skip = match window {
-        ToolBodyWindow::Head => 0,
-        ToolBodyWindow::Tail => total_rows.saturating_sub(*paint_remaining),
+        CodeWindow::Head => 0,
+        CodeWindow::Tail => total_rows.saturating_sub(*paint_remaining),
+        // `Unknown`, or a window a newer protocol adds, reads as `Head`.
+        _ => 0,
     };
     let mut syntax = CodeSyntax::new(language);
     let mut groups = Vec::new();

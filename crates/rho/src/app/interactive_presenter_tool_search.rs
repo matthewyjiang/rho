@@ -1,7 +1,7 @@
 //! `tool_search` cards: the query, a hit count, and one `name · description`
 //! row per hit. Parameter summaries are for the model, not a reader.
 
-use rho_tools::tool_card::{ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus};
+use rho_protocol::display::{ToolBody, ToolCard, ToolCardStatus, ToolFact, ToolFamily, ToolHeader};
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -22,7 +22,7 @@ struct Hit {
     description: String,
 }
 
-pub(super) fn preview_card(arguments: &Value, status: ToolStatus) -> ToolCard {
+pub(super) fn preview_card(arguments: &Value, status: ToolCardStatus) -> ToolCard {
     let primary = string_arg(arguments, "query")
         .filter(|query| !query.trim().is_empty())
         .map(|query| quoted(&query, QUERY_MAX_CHARS));
@@ -36,7 +36,7 @@ pub(super) fn preview_card(arguments: &Value, status: ToolStatus) -> ToolCard {
 /// Hits arrive as JSON, optionally preceded by a one-line loading notice.
 /// Keep older bare-JSON results readable on replay; other output stays literal.
 pub(super) fn finished_card(arguments: &Value, content: &str, ok: bool) -> ToolCard {
-    let mut card = preview_card(arguments, ToolStatus::from_finished(ok));
+    let mut card = preview_card(arguments, ToolCardStatus::from_finished(ok));
     if !ok {
         push_error_output(&mut card, content);
         return card;

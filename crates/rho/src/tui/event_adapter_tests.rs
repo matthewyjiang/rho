@@ -1,13 +1,10 @@
 use std::time::Duration;
 
 use pretty_assertions::assert_eq;
+use rho_protocol::display::{ToolCardStatus, ToolFact, ToolFamily, ToolHeader};
 use rho_sdk::{
-    model::ToolCall,
-    tool::{OperationKind, ToolAsset, ToolMetadata, ToolOutput, ToolProgress},
+    tool::{OperationKind, ToolAsset, ToolMetadata, ToolOutput},
     ProviderStreamResetReason, Revision, RunEvent, ToolCallId, ToolCompletion,
-};
-use rho_tools::tool_card::{
-    DiffRow, DiffRowKind, ToolBody, ToolFact, ToolFamily, ToolHeader, ToolStatus,
 };
 
 use super::{SdkEventAdapter, ViewEvent, ViewModelEvent};
@@ -77,7 +74,7 @@ fn provider_native_web_search_maps_to_tool_finished_view() {
     let mut adapter = SdkEventAdapter::default();
 
     let ViewEvent::Update(ViewModelEvent::ToolFinished {
-        presentation: crate::presentation::Presentation::Card(card),
+        presentation: rho_protocol::display::Presentation::Card(card),
         ..
     }) = only_event(adapter.translate(RunEvent::WebSearch {
         detail: "rho docs".into(),
@@ -85,16 +82,16 @@ fn provider_native_web_search_maps_to_tool_finished_view() {
     else {
         panic!("expected web search tool finished");
     };
-    assert_eq!(card.status, ToolStatus::Ok);
+    assert_eq!(card.status, ToolCardStatus::Ok);
     assert_eq!(card.family, ToolFamily::Web);
     assert_eq!(card.header, ToolHeader::call("web_search", None));
     assert_eq!(
         card.facts,
         vec![
-            rho_tools::tool_card::ToolFact::Text {
+            rho_protocol::display::ToolFact::Text {
                 text: "rho docs".into(),
             },
-            rho_tools::tool_card::ToolFact::Meta {
+            rho_protocol::display::ToolFact::Meta {
                 text: "finished".into(),
             },
         ]
@@ -136,7 +133,7 @@ fn hosted_tool_activity_maps_to_tool_finished_view() {
     ] {
         let mut adapter = SdkEventAdapter::default();
         let ViewEvent::Update(ViewModelEvent::ToolFinished {
-            presentation: crate::presentation::Presentation::Card(card),
+            presentation: rho_protocol::display::Presentation::Card(card),
             ..
         }) = only_event(adapter.translate(RunEvent::HostedToolActivity {
             name: name.into(),
@@ -146,205 +143,31 @@ fn hosted_tool_activity_maps_to_tool_finished_view() {
             panic!("{case}: expected hosted tool activity finished");
         };
         assert_eq!(
-            (card.status, card.family, card.card.header, card.card.facts),
-            (ToolStatus::Ok, family, ToolHeader::call(name, None), facts),
+            (card.status, card.family, card.header, card.facts),
+            (
+                ToolCardStatus::Ok,
+                family,
+                ToolHeader::call(name, None),
+                facts
+            ),
             "{case}"
         );
     }
 }
 
 #[test]
-fn edit_keeps_one_diff_card_from_stream_through_completion() {
-    let mut adapter = SdkEventAdapter::default();
-    let call_id = ToolCallId::from_string("call-1").unwrap();
-    let input = "[src/lib.rs#A1B2]\nPUT 1.=1:\n+new\n";
-    let partial_arguments = r#"{"input":"[src/lib.rs#A1B2]\nPUT 1.=1:\n+new\n"#;
-    let partial_events = adapter.translate(RunEvent::ToolCallUpdated {
-        index: 0,
-        id: None,
-        name: None,
-        arguments_delta: partial_arguments.into(),
-    });
-    // Argument-only deltas meter live usage without forcing a card event.
-    assert!(matches!(
-        only_event(partial_events),
-        ViewEvent::Update(ViewModelEvent::LiveOutputText(text))
-            if text == partial_arguments
-    ));
-    let ViewEvent::Update(ViewModelEvent::ToolCallUpdated { card, .. }) =
-        only_event(adapter.translate(RunEvent::ToolCallUpdated {
-            index: 0,
-            id: None,
-            name: Some("edit".into()),
-            arguments_delta: String::new(),
-        }))
-    else {
-        panic!("expected streamed tool call");
-    };
-    let stream_card = rho_tools::tool_card::ToolCard::new(
-        ToolStatus::Running,
-        ToolFamily::FileDiff,
-        ToolHeader::call("edit", Some("src/lib.rs".into())),
-    )
-    .with_facts(vec![ToolFact::DiffStat {
-        added: 1,
-        removed: 1,
-        // Single-file header already names the path.
-        path: None,
-    }])
-    .with_body(ToolBody::Diff(vec![
-        DiffRow::new(DiffRowKind::Meta, None, "PUT 1"),
-        DiffRow::new(DiffRowKind::Added, None, "new"),
-    ]));
-    assert_eq!(card, Some(stream_card.clone().into()));
-    assert!(matches!(
-        only_event(adapter.translate(RunEvent::ToolCallUpdated {
-            index: 0,
-            id: Some(call_id.to_string()),
-            name: None,
-            arguments_delta: String::new(),
-        })),
-        ViewEvent::Update(ViewModelEvent::ToolCallUpdated {
-            call_id: Some(bound_id),
-            card: None,
-            ..
-        }) if bound_id == call_id
-    ));
-    // Planned path (propose/start/interrupt): missing live files stamp
-    // document-only notices. Stream previews intentionally stay quieter.
-    let notice = rho_tools::hashline::EDIT_DOCUMENT_ONLY_NOTICE;
-    let planned_card = rho_tools::tool_card::ToolCard::new(
-        ToolStatus::Running,
-        ToolFamily::FileDiff,
-        ToolHeader::call("edit", Some("src/lib.rs".into())),
-    )
-    .with_facts(vec![
-        ToolFact::DiffStat {
-            added: 1,
-            removed: 1,
-            path: None,
-        },
-        ToolFact::Meta {
-            text: notice.into(),
-        },
-    ])
-    .with_body(ToolBody::Diff(vec![
-        DiffRow::new(DiffRowKind::Meta, None, notice),
-        DiffRow::new(DiffRowKind::Meta, None, "PUT 1"),
-        DiffRow::new(DiffRowKind::Added, None, "new"),
-    ]));
-    let mut interrupted_card = planned_card.clone();
-    interrupted_card.status = ToolStatus::Interrupted;
-    assert_eq!(
-        crate::app::interactive_presenter::InteractiveToolPresenter::new(
-            std::path::PathBuf::new(),
-            Default::default()
-        )
-        .interrupted(Some("edit"), partial_arguments)
-        .card,
-        interrupted_card.into()
-    );
-
-    let call = ToolCall {
-        id: call_id.to_string(),
-        name: "edit".into(),
-        arguments: serde_json::json!({"input": input}),
-    };
-    assert!(matches!(
-        only_event(adapter.translate(RunEvent::ToolProposed { call })),
-        ViewEvent::Update(ViewModelEvent::ToolCallProposed { card, .. })
-            if card.card == planned_card
-    ));
-    assert!(matches!(
-        only_event(adapter.translate(RunEvent::ToolStarted {
-            call_id: call_id.clone(),
-            name: "edit".into(),
-            metadata: ToolMetadata::new().operation(OperationKind::Write),
-        })),
-        ViewEvent::Update(ViewModelEvent::ToolStarted { card, .. })
-            if card.card == planned_card
-    ));
-    let progress = ToolProgress::message("applying").units(1, 2);
-    let ViewEvent::Update(ViewModelEvent::ToolUpdated { card, .. }) =
-        only_event(adapter.translate(RunEvent::ToolUpdated {
-            call_id: call_id.clone(),
-            progress,
-        }))
-    else {
-        panic!("expected tool progress");
-    };
-    assert!(
-        card.body.is_diff()
-            || card
-                .facts
-                .iter()
-                .any(|fact| matches!(fact, ToolFact::DiffStat { .. }))
-            || matches!(card.body, ToolBody::Lines(_))
-    );
-    assert!(
-        card.facts.contains(&ToolFact::Meta {
-            text: "applying".into(),
-        }) || matches!(
-            &card.body,
-            ToolBody::Lines(lines) if lines.iter().any(|line| line.contains("applying"))
-        ),
-        "progress should surface applying text: {card:?}"
-    );
-    assert!(card.facts.contains(&ToolFact::Progress {
-        completed: 1,
-        total: Some(2),
-    }));
-    let output = ToolOutput::text("updated").metadata(
-        ToolMetadata::new()
-            .affected_path("src/lib.rs")
-            .diff("--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-old\n+new\n"),
-    );
-
-    let ViewEvent::Update(ViewModelEvent::ToolFinished {
-        call_id: translated_call_id,
-        presentation: crate::presentation::Presentation::Card(card),
-        ..
-    }) = only_event(adapter.translate(RunEvent::ToolFinished {
-        call_id: call_id.clone(),
-        result: ToolCompletion::Success(output),
-    }))
-    else {
-        panic!("expected translated tool completion");
-    };
-
-    assert_eq!(translated_call_id, call_id);
-    assert_eq!(card.status, ToolStatus::Ok);
-    assert_eq!(
-        card.header,
-        ToolHeader::call("edit", Some("src/lib.rs".into()))
-    );
-    assert_eq!(
-        card.facts,
-        vec![ToolFact::DiffStat {
-            added: 1,
-            removed: 1,
-            path: None,
-        }]
-    );
-    assert_eq!(
-        card.body,
-        ToolBody::Diff(vec![
-            DiffRow::new(DiffRowKind::Removed, Some(1), "old"),
-            DiffRow::new(DiffRowKind::Added, Some(1), "new"),
-        ])
-    );
-}
-
-#[test]
 fn edit_binds_a_late_call_id_after_a_large_preview_stride() {
     let mut adapter = SdkEventAdapter::default();
     let call_id = ToolCallId::from_string("call-large-preview").unwrap();
-    let input = format!("[large.txt#DEAD]\nPUT 1.=1:\n{}", "+line\n".repeat(45_000));
+    let input = format!(
+        "*** Begin Patch\n*** Add File: large.txt\n{}*** End Patch\n",
+        "+line\n".repeat(45_000)
+    );
     let arguments = serde_json::to_string(&serde_json::json!({"input": input})).unwrap();
     let events = adapter.translate(RunEvent::ToolCallUpdated {
         index: 0,
         id: None,
-        name: Some("edit".into()),
+        name: Some("apply_patch".into()),
         arguments_delta: arguments,
     });
     assert!(events
@@ -383,45 +206,6 @@ fn edit_binds_a_late_call_id_after_a_large_preview_stride() {
         .is_empty());
 }
 
-// Covers: multi-file edit previews keep each path identity
-// Owner: interactive presenter format
-#[test]
-fn edit_preview_preserves_multi_file_identity() {
-    let input = "[a.txt#AAAA]\nPUT 1.=1:\n+A\n\n[b.txt#BBBB]\nCUT 1.=1\n";
-    // Multi-file: path + stats live once on structured File rows (not DiffStat).
-    let expected = rho_tools::tool_card::ToolCard::new(
-        ToolStatus::Running,
-        ToolFamily::FileDiff,
-        ToolHeader::call("edit", Some("2 files".into())),
-    )
-    .with_body(ToolBody::Diff(vec![
-        DiffRow::file_header("a.txt", Some((1, 1))),
-        DiffRow::new(DiffRowKind::Meta, None, "PUT 1"),
-        DiffRow::new(DiffRowKind::Added, None, "A"),
-        // Pure CUT is in-file content change, not path deletion.
-        DiffRow::file_header("b.txt", Some((0, 1))),
-        DiffRow::new(DiffRowKind::Meta, None, "CUT 1"),
-    ]));
-
-    let mut adapter = SdkEventAdapter::default();
-    let arguments = serde_json::to_string(&serde_json::json!({"input": input})).unwrap();
-    let events = adapter.translate(RunEvent::ToolCallUpdated {
-        index: 0,
-        id: None,
-        name: Some("edit".into()),
-        arguments_delta: arguments,
-    });
-    let Some(card) = events.into_iter().find_map(|event| match event {
-        ViewEvent::Update(ViewModelEvent::ToolCallUpdated {
-            card: Some(card), ..
-        }) => Some(card),
-        _ => None,
-    }) else {
-        panic!("expected streamed edit card");
-    };
-    assert_eq!(card.card, expected);
-}
-
 #[test]
 fn write_does_not_label_a_mixed_omitted_diff_as_no_changes() {
     let mut adapter = SdkEventAdapter::default();
@@ -430,6 +214,7 @@ fn write_does_not_label_a_mixed_omitted_diff_as_no_changes() {
         call_id: call_id.clone(),
         name: "write".into(),
         metadata: ToolMetadata::new().operation(OperationKind::Write),
+        execution: rho_sdk::ToolExecution::Attached,
     }));
     let output = ToolOutput::text("updated").metadata(
         ToolMetadata::new()
@@ -439,11 +224,11 @@ fn write_does_not_label_a_mixed_omitted_diff_as_no_changes() {
     );
 
     let ViewEvent::Update(ViewModelEvent::ToolFinished {
-        presentation: crate::presentation::Presentation::Card(card),
+        presentation: rho_protocol::display::Presentation::Card(card),
         ..
     }) = only_event(adapter.translate(RunEvent::ToolFinished {
         call_id,
-        result: ToolCompletion::Success(output),
+        result: ToolCompletion::Completed(output),
     }))
     else {
         panic!("expected translated tool completion");
@@ -470,6 +255,7 @@ fn forwards_image_asset_on_tool_completion() {
         call_id: call_id.clone(),
         name: "read_file".into(),
         metadata: ToolMetadata::new(),
+        execution: rho_sdk::ToolExecution::Attached,
     }));
     let asset = ToolAsset::new("image/png", vec![1, 2, 3, 4]);
     let output = ToolOutput::text("image/png image (4 bytes)").metadata(
@@ -481,11 +267,11 @@ fn forwards_image_asset_on_tool_completion() {
     let ViewEvent::Update(ViewModelEvent::ToolFinished {
         call_id: translated_call_id,
         image_asset,
-        presentation: crate::presentation::Presentation::Card(card),
+        presentation: rho_protocol::display::Presentation::Card(card),
         ..
     }) = only_event(adapter.translate(RunEvent::ToolFinished {
         call_id: call_id.clone(),
-        result: ToolCompletion::Success(output),
+        result: ToolCompletion::Completed(output),
     }))
     else {
         panic!("expected translated tool completion");
@@ -493,7 +279,7 @@ fn forwards_image_asset_on_tool_completion() {
 
     assert_eq!(translated_call_id, call_id);
     assert_eq!(image_asset, Some(asset));
-    assert_eq!(card.status, ToolStatus::Ok);
+    assert_eq!(card.status, ToolCardStatus::Ok);
     assert_eq!(card.header, ToolHeader::call("read_file", None));
     assert_eq!(
         card.facts,
@@ -520,7 +306,7 @@ fn compaction_failure_closes_open_tool_block_before_run_failed() {
         })),
         ViewEvent::Update(ViewModelEvent::ToolStarted { call_id, card, .. })
             if call_id == crate::tui::compaction_display::compaction_call_id()
-                && card.card == crate::tui::compaction_display::running_card()
+                && card == crate::tui::compaction_display::running_card()
     ));
 
     let events = adapter.translate(RunEvent::Failed {
@@ -533,10 +319,10 @@ fn compaction_failure_closes_open_tool_block_before_run_failed() {
         &events[0],
         ViewEvent::Update(ViewModelEvent::ToolFinished {
             call_id,
-            presentation: crate::presentation::Presentation::Card(card),
+            presentation: rho_protocol::display::Presentation::Card(card),
             ..
         }) if call_id == &crate::tui::compaction_display::compaction_call_id()
-            && card.status == ToolStatus::Error
+            && card.status == ToolCardStatus::Error
             && card.facts.iter().any(|fact| matches!(
                 fact,
                 ToolFact::Meta { text } if text == "failed"
@@ -563,10 +349,10 @@ fn compaction_cancel_closes_open_tool_block_before_run_cancelled() {
         &events[0],
         ViewEvent::Update(ViewModelEvent::ToolFinished {
             call_id,
-            presentation: crate::presentation::Presentation::Card(card),
+            presentation: rho_protocol::display::Presentation::Card(card),
             ..
         }) if call_id == &crate::tui::compaction_display::compaction_call_id()
-            && card.status == ToolStatus::Interrupted
+            && card.status == ToolCardStatus::Interrupted
     ));
     assert!(matches!(&events[1], ViewEvent::Cancelled));
 }

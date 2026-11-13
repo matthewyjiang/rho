@@ -15,16 +15,44 @@ use crate::{
     PtyHarness,
 };
 
+/// Whether `line` is the rail row of a subagent running as `role`. The
+/// agent tool's card names the role too, before the rail lists the run.
+fn is_rail_row(line: &str, role: &str) -> bool {
+    ["└ ◉ ", "├ ◉ ", "└ ", "├ "]
+        .iter()
+        .any(|branch| line.contains(&format!("{branch}{role}")))
+}
+
+/// Waits until the rail lists a subagent running as `role`. `/attach`
+/// offers only runs the rail lists, and a daemon session's rail learns of a
+/// run from the daemon's jobs, after the card that started it shows.
+fn wait_for_rail_row(harness: &mut PtyHarness, role: &'static str) -> Result<()> {
+    harness.wait_for_screen("the subagent's rail row", super::SETTLE, |screen| {
+        screen
+            .rows_text()
+            .iter()
+            .any(|line| is_rail_row(line, role))
+    })
+}
+
+pub(super) fn wait_for_worker_row(harness: &mut PtyHarness) -> Result<()> {
+    wait_for_rail_row(harness, "worker")
+}
+
+pub(super) fn wait_for_explorer_row(harness: &mut PtyHarness) -> Result<()> {
+    wait_for_rail_row(harness, "explorer")
+}
+
 fn active_subagent_row(harness: &mut PtyHarness) -> Result<u16> {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         harness.pump(Duration::from_millis(20));
-        if let Some(row) = harness.screen().rows_text().iter().position(|line| {
-            line.contains("└ ◉ worker")
-                || line.contains("├ ◉ worker")
-                || line.contains("└ worker")
-                || line.contains("├ worker")
-        }) {
+        if let Some(row) = harness
+            .screen()
+            .rows_text()
+            .iter()
+            .position(|line| is_rail_row(line, "worker"))
+        {
             return Ok(row as u16 + 1);
         }
         if Instant::now() >= deadline {

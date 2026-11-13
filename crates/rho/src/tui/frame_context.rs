@@ -33,7 +33,6 @@ impl App {
     /// live history, and theme can all change between them. Pointer hover is
     /// not part of the snapshot; paint applies it on top.
     pub(super) fn frame_context(&mut self, area: Rect) -> FrameContext {
-        self.workflow_panel.refresh();
         let width = area.width as usize;
         let height = area.height as usize;
         let composer = self.composer_frame(width, height);

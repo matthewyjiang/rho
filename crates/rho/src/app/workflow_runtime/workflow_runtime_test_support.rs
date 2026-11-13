@@ -281,7 +281,8 @@ pub(super) fn command_workflow(
         node_id("inspect"),
         ResolvedNode::Command(Box::new(ResolvedCommand {
             executable: executable.to_string_lossy().into_owned(),
-            executable_identity: freeze_executable_identity(&executable).unwrap(),
+            executable_identity: freeze_executable_identity(&executable, /*search_path*/ None)
+                .unwrap(),
             exact_path: true,
             cwd: cwd.to_string_lossy().into_owned(),
             cwd_identity: freeze_directory_identity(&cwd).unwrap(),

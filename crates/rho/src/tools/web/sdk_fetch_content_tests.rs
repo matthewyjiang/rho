@@ -63,8 +63,9 @@ async fn run_fetch(
         arguments,
         SdkFetchContent::new(
             12_000,
-            rho_sdk::ProcessEnvironment::InheritAll,
+            rho_sdk::ProcessEnvironment::InheritAll.into(),
             super::storage::WebAccessStore::new(),
+            std::sync::Arc::new(crate::credential_store::AppCredentialStore),
         ),
     )
     .await
@@ -80,11 +81,7 @@ async fn run_fetch_with_tool(
         ModelIdentity::new("scripted", "test", "model"),
         [
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                ToolCall {
-                    id: "fetch-1".into(),
-                    name: FETCH_CONTENT_TOOL.into(),
-                    arguments,
-                },
+                ToolCall::new("fetch-1".into(), FETCH_CONTENT_TOOL.into(), arguments),
             )])),
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
                 "done".into(),
@@ -151,7 +148,7 @@ async fn local_target_reads_only_after_workspace_authorization() {
     )
     .await;
 
-    let ToolCompletion::Success(output) = completion else {
+    let ToolCompletion::Completed(output) = completion else {
         panic!("authorized local fetch should succeed");
     };
     assert!(output.content().contains("workspace content"));
@@ -219,7 +216,7 @@ async fn granted_root_still_requires_explicit_outside_workspace_policy() {
         json!({"urls": [file]}),
     )
     .await;
-    assert!(matches!(allowed, ToolCompletion::Success(_)));
+    assert!(matches!(allowed, ToolCompletion::Completed(_)));
 }
 
 #[tokio::test]
@@ -301,7 +298,7 @@ async fn authorized_http_target_executes_the_authorized_url() {
     .await;
     server.join().unwrap();
 
-    let ToolCompletion::Success(output) = completion else {
+    let ToolCompletion::Completed(output) = completion else {
         panic!("authorized HTTP fetch should succeed");
     };
     assert!(output.content().contains("authorized response"));

@@ -4,20 +4,18 @@ mod firecrawl;
 pub(super) mod openai;
 
 use {
-    crate::{
-        config::{
-            Config, ExaSearchConnection, OpenAiSearchConnection, SearchBackend, WebSearchSettings,
-        },
-        credential_store::AppCredentialStore,
+    crate::config::{
+        Config, ExaSearchConnection, OpenAiSearchConnection, SearchBackend, WebSearchSettings,
     },
     rho_providers::{
         credentials::{
             load_codex_tokens, load_provider_api_key, load_web_search_api_key, CodexTokens,
-            WebSearchCredential,
+            CredentialStore, WebSearchCredential,
         },
         providers::openai::auth::CodexAuthSource,
     },
     rho_tools::tool::ToolError,
+    std::sync::Arc,
 };
 
 use super::fetch::fetch_url_text;
@@ -46,13 +44,19 @@ enum ReadyBackend {
 pub(super) struct SearchBackendConfig {
     pub(super) settings: WebSearchSettings,
     ready: Result<ReadyBackend, String>,
+    /// The credentials the keys were read from, which a refreshed Codex
+    /// token is saved back to.
+    pub(super) credentials: Arc<dyn CredentialStore>,
 }
 
 impl SearchBackendConfig {
-    pub(super) fn from_config(config: &Config) -> Self {
+    /// The backend `config` selects, ready when `credentials` hold its key:
+    /// those of the session that searches.
+    pub(super) fn from_config(config: &Config, credentials: Arc<dyn CredentialStore>) -> Self {
         Self {
             settings: config.web_search.clone(),
-            ready: resolve_ready_backend(config),
+            ready: resolve_ready_backend(config, credentials.as_ref()),
+            credentials,
         }
     }
 
@@ -73,14 +77,17 @@ impl SearchBackendConfig {
     }
 }
 
-fn resolve_ready_backend(config: &Config) -> Result<ReadyBackend, String> {
+fn resolve_ready_backend(
+    config: &Config,
+    credentials: &dyn CredentialStore,
+) -> Result<ReadyBackend, String> {
     let settings = &config.web_search;
     match settings.backend {
-        SearchBackend::OpenAi => resolve_openai(config).map(ReadyBackend::OpenAi),
+        SearchBackend::OpenAi => resolve_openai(config, credentials).map(ReadyBackend::OpenAi),
         SearchBackend::Exa => match settings.exa.connection {
             ExaSearchConnection::Api => Ok(ReadyBackend::ExaApi {
                 key: require_key(
-                    load_search_key(config, WebSearchCredential::Exa),
+                    load_search_key(WebSearchCredential::Exa, credentials),
                     "EXA_API_KEY",
                 )?,
             }),
@@ -88,12 +95,12 @@ fn resolve_ready_backend(config: &Config) -> Result<ReadyBackend, String> {
         },
         SearchBackend::Brave => Ok(ReadyBackend::Brave {
             key: require_key(
-                load_search_key(config, WebSearchCredential::Brave),
+                load_search_key(WebSearchCredential::Brave, credentials),
                 "BRAVE_SEARCH_API_KEY",
             )?,
         }),
         SearchBackend::Firecrawl => {
-            let key = load_search_key(config, WebSearchCredential::Firecrawl);
+            let key = load_search_key(WebSearchCredential::Firecrawl, credentials);
             if key.is_none()
                 && settings
                     .destination(SearchBackend::Firecrawl)
@@ -106,17 +113,20 @@ fn resolve_ready_backend(config: &Config) -> Result<ReadyBackend, String> {
     }
 }
 
-fn resolve_openai(config: &Config) -> Result<openai::OpenAiSearchAuth, String> {
+fn resolve_openai(
+    config: &Config,
+    credentials: &dyn CredentialStore,
+) -> Result<openai::OpenAiSearchAuth, String> {
     match config.web_search.openai.connection {
         OpenAiSearchConnection::Codex => {
-            let (tokens, source) = resolve_codex_tokens();
+            let (tokens, source) = resolve_codex_tokens(credentials);
             let tokens = tokens.ok_or_else(|| {
                 "OpenAI Codex web search unavailable: sign in with /login openai-codex".to_string()
             })?;
             Ok(openai::OpenAiSearchAuth::Codex { tokens, source })
         }
         OpenAiSearchConnection::Api => {
-            let key = load_openai_api_key(config).ok_or_else(|| {
+            let key = load_openai_api_key(credentials).ok_or_else(|| {
                 "OpenAI web search unavailable: /login openai or set OPENAI_API_KEY".to_string()
             })?;
             Ok(openai::OpenAiSearchAuth::ApiKey(key))
@@ -133,44 +143,50 @@ fn require_key(key: Option<String>, name: &str) -> Result<String, String> {
     key.ok_or_else(|| format!("{name} is not set"))
 }
 
-fn load_search_key(config: &Config, credential: WebSearchCredential) -> Option<String> {
-    env_search_key(credential).or_else(|| stored_or_legacy(config, credential))
+fn load_search_key(
+    credential: WebSearchCredential,
+    credentials: &dyn CredentialStore,
+) -> Option<String> {
+    env_search_key(credential, credentials).or_else(|| stored_key(credential, credentials))
 }
 
-fn env_search_key(credential: WebSearchCredential) -> Option<String> {
-    credential
-        .env_vars()
-        .iter()
-        .find_map(|name| std::env::var(name).ok().and_then(nonempty_credential))
+fn env_search_key(
+    credential: WebSearchCredential,
+    credentials: &dyn CredentialStore,
+) -> Option<String> {
+    credential.env_vars().iter().find_map(|name| {
+        credentials
+            .environment_variable(name)
+            .and_then(nonempty_credential)
+    })
 }
 
-fn load_openai_api_key(config: &Config) -> Option<String> {
-    env_search_key(WebSearchCredential::OpenAi)
-        .or_else(|| stored_or_legacy(config, WebSearchCredential::OpenAi))
+fn load_openai_api_key(credentials: &dyn CredentialStore) -> Option<String> {
+    env_search_key(WebSearchCredential::OpenAi, credentials)
+        .or_else(|| stored_key(WebSearchCredential::OpenAi, credentials))
         .or_else(|| {
-            load_provider_api_key(&AppCredentialStore, "openai")
+            load_provider_api_key(credentials, "openai")
                 .ok()
                 .flatten()
                 .and_then(nonempty_credential)
         })
 }
 
-fn stored_or_legacy(config: &Config, credential: WebSearchCredential) -> Option<String> {
-    load_web_search_api_key(&AppCredentialStore, credential)
+fn stored_key(
+    credential: WebSearchCredential,
+    credentials: &dyn CredentialStore,
+) -> Option<String> {
+    load_web_search_api_key(credentials, credential)
         .ok()
         .flatten()
         .and_then(nonempty_credential)
-        .or_else(|| {
-            config
-                .legacy_web_search_api_key(credential)
-                .map(str::to_string)
-                .and_then(nonempty_credential)
-        })
 }
 
-fn resolve_codex_tokens() -> (Option<CodexTokens>, CodexAuthSource) {
-    if let Some(access_token) = std::env::var("CODEX_ACCESS_TOKEN")
-        .ok()
+fn resolve_codex_tokens(
+    credentials: &dyn CredentialStore,
+) -> (Option<CodexTokens>, CodexAuthSource) {
+    if let Some(access_token) = credentials
+        .environment_variable("CODEX_ACCESS_TOKEN")
         .and_then(nonempty_credential)
     {
         return (
@@ -178,12 +194,12 @@ fn resolve_codex_tokens() -> (Option<CodexTokens>, CodexAuthSource) {
                 access_token,
                 refresh_token: None,
                 id_token: None,
-                account_id: std::env::var("CODEX_ACCOUNT_ID").ok(),
+                account_id: credentials.environment_variable("CODEX_ACCOUNT_ID"),
             }),
             CodexAuthSource::Env,
         );
     }
-    match load_codex_tokens(&AppCredentialStore) {
+    match load_codex_tokens(credentials) {
         Ok(Some(tokens)) if !tokens.access_token.trim().is_empty() => {
             (Some(tokens), CodexAuthSource::Store)
         }

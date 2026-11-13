@@ -9,31 +9,34 @@ fn env_lock() -> std::sync::MutexGuard<'static, ()> {
     crate::paths::process_env_lock()
 }
 
-// Covers: an environment backend overrides the configured one, and an unknown
+// Covers: an environment backend overrides the configured one and says so,
+// config comes next, the OS store is the default, and an unknown
 // environment value is an error instead of a silent fallback.
 // Owner: credential store backend resolution
 #[test]
 fn environment_backend_overrides_config_and_rejects_unknown_values() {
-    let configured = Some(CredentialStoreBackend::File);
+    use CredentialStoreBackend::{File, Os};
+    let resolve = |environment: Option<&str>, config| {
+        selection::parse_environment(environment)
+            .map(|environment| StoreSelection::resolve(environment, config))
+    };
+    let selected = |backend, selected_by| StoreSelection {
+        backend,
+        selected_by,
+    };
     assert_eq!(
-        resolve_backend_from(Some("os"), configured).unwrap(),
-        CredentialStoreBackend::Os
+        [
+            resolve(Some("os"), Some(File)).unwrap(),
+            resolve(Some(" "), Some(File)).unwrap(),
+            resolve(None, None).unwrap(),
+        ],
+        [
+            selected(Os, SelectedBy::Environment),
+            selected(File, SelectedBy::Config),
+            selected(Os, SelectedBy::Default),
+        ]
     );
-    assert!(resolve_backend_from(Some("plaintext-maybe"), configured).is_err());
-}
-
-#[test]
-fn needs_choice_only_when_unset_and_no_env() {
-    assert!(needs_explicit_choice_from(false, None));
-    assert!(!needs_explicit_choice_from(true, None));
-    assert!(!needs_explicit_choice_from(
-        false,
-        Some(CredentialStoreBackend::Os)
-    ));
-    assert!(!needs_explicit_choice_from(
-        true,
-        Some(CredentialStoreBackend::File)
-    ));
+    assert!(resolve(Some("plaintext-maybe"), Some(File)).is_err());
 }
 
 #[test]
@@ -61,7 +64,7 @@ auth = "api-key"
         let saved = set_backend(CredentialStoreBackend::File, Some(path.clone())).unwrap();
         assert_eq!(saved, path);
 
-        let config = Config::load_settings_only(path.clone()).unwrap();
+        let config = Config::load(Some(path.clone())).unwrap();
         assert_eq!(config.credential_store, Some(CredentialStoreBackend::File));
         let text = fs::read_to_string(saved).unwrap();
         assert!(text.contains("credential_store = \"file\""));
@@ -150,7 +153,7 @@ auth = "api-key"
     std::env::set_var("RHO_HOME", rho_dir.path());
 
     let result = std::panic::catch_unwind(|| {
-        let mut config = Config::load_settings_only(config_path.clone()).unwrap();
+        let mut config = Config::load(Some(config_path.clone())).unwrap();
         assert!(config.credential_store.is_none());
         initialize_from_config(&mut config, &config_path).unwrap();
         assert_eq!(config.credential_store, Some(CredentialStoreBackend::File));
@@ -158,7 +161,7 @@ auth = "api-key"
             !legacy_path.exists(),
             "startup migration removes legacy file"
         );
-        let reloaded = Config::load_settings_only(config_path.clone()).unwrap();
+        let reloaded = Config::load(Some(config_path.clone())).unwrap();
         assert_eq!(
             reloaded.credential_store,
             Some(CredentialStoreBackend::File)

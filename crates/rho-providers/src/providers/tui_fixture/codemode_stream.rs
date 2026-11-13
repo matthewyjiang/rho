@@ -23,10 +23,10 @@ pub(super) async fn intercept(
         _ => return None,
     };
     if let Some(result) = tool_result(request, CODEMODE_CALL_ID) {
-        return Some(completed(if result.ok {
-            "codemode fixture complete"
-        } else {
+        return Some(completed(if result.is_failure() {
             "codemode fixture failed"
+        } else {
+            "codemode fixture complete"
         }));
     }
     Some(stream(request, events, large).await)

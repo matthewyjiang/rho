@@ -24,10 +24,6 @@ impl ProjectInstructions {
         }
     }
 
-    pub(super) fn reload(&mut self, home: Option<&Path>) {
-        self.files = agent_instruction_files(&self.cwd, &self.added_dirs, home);
-    }
-
     /// Replaces the added directories. Files already loaded keep their cached
     /// contents; only new candidates are read. Returns the newly loaded files,
     /// in prompt order.

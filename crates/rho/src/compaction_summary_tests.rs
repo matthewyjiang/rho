@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use pretty_assertions::assert_eq;
 use rho_providers::model::{AssistantMessage, ImageContent};
 use serde_json::json;
@@ -63,7 +65,7 @@ fn session_summary_request_names_the_deleted_span() {
     let Message::User(blocks) = &request[history.len()] else {
         panic!("expected a trailing user instruction");
     };
-    let [ContentBlock::Text(instruction)] = blocks.as_slice() else {
+    let [ContentBlock::Text(instruction)] = blocks.as_ref() else {
         panic!("expected one text block, got {blocks:?}");
     };
     assert!(
@@ -99,7 +101,7 @@ fn summary_requests_append_guidance_without_changing_the_prefix() {
         let Some(Message::User(blocks)) = expected.last_mut() else {
             panic!("expected a trailing user instruction for {name}");
         };
-        let [ContentBlock::Text(instruction)] = blocks.as_mut_slice() else {
+        let [ContentBlock::Text(instruction)] = Arc::make_mut(blocks) else {
             panic!("expected one text block for {name}");
         };
         instruction.push_str(&format!(
@@ -120,22 +122,21 @@ fn session_summary_markers_name_tool_calls_instead_of_json() {
     let history = vec![
         Message::System("system".into()),
         Message::user_text("build the thing"),
-        Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
-            id: "call-old".into(),
-            name: "read_file".into(),
-            arguments: json!({"path": payload}),
-        })]),
-        Message::ToolResult(ToolResult {
-            id: "call-old".into(),
-            ok: false,
-            content: format!("missing\n{payload}"),
-        }),
+        Message::Assistant(
+            (vec![ContentBlock::ToolCall(ToolCall::new(
+                "call-old".into(),
+                "read_file".into(),
+                json!({"path": payload}),
+            ))])
+            .into(),
+        ),
+        Message::ToolResult((ToolResult::failed("call-old", format!("missing\n{payload}"))).into()),
         Message::assistant(AssistantMessage::from_content(vec![
-            ContentBlock::ToolCall(ToolCall {
-                id: "call-new".into(),
-                name: "bash".into(),
-                arguments: json!({"command": "true"}),
-            }),
+            ContentBlock::ToolCall(ToolCall::new(
+                "call-new".into(),
+                "bash".into(),
+                json!({"command": "true"}),
+            )),
         ])),
     ];
     let request =
@@ -143,7 +144,7 @@ fn session_summary_markers_name_tool_calls_instead_of_json() {
     let Message::User(blocks) = request.last().expect("trailing instruction") else {
         panic!("expected a trailing user instruction");
     };
-    let [ContentBlock::Text(instruction)] = blocks.as_slice() else {
+    let [ContentBlock::Text(instruction)] = blocks.as_ref() else {
         panic!("expected one text block, got {blocks:?}");
     };
 
@@ -161,16 +162,17 @@ fn session_summary_markers_name_tool_calls_instead_of_json() {
     let result_history = vec![
         Message::System("system".into()),
         Message::user_text("build the thing"),
-        Message::ToolResult(ToolResult {
-            id: "call-lost".into(),
-            ok: false,
-            content: format!("missing file\n{payload}"),
-        }),
-        Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
-            id: "call-new".into(),
-            name: "bash".into(),
-            arguments: json!({"command": "true"}),
-        })]),
+        Message::ToolResult(
+            (ToolResult::failed("call-lost", format!("missing file\n{payload}"))).into(),
+        ),
+        Message::Assistant(
+            (vec![ContentBlock::ToolCall(ToolCall::new(
+                "call-new".into(),
+                "bash".into(),
+                json!({"command": "true"}),
+            ))])
+            .into(),
+        ),
     ];
     let result_request = build_session_summary_request(
         &result_history,
@@ -180,7 +182,7 @@ fn session_summary_markers_name_tool_calls_instead_of_json() {
     let Message::User(blocks) = result_request.last().expect("trailing instruction") else {
         panic!("expected a trailing user instruction");
     };
-    let [ContentBlock::Text(instruction)] = blocks.as_slice() else {
+    let [ContentBlock::Text(instruction)] = blocks.as_ref() else {
         panic!("expected one text block, got {blocks:?}");
     };
     assert!(
@@ -208,7 +210,7 @@ fn summary_request_updates_previous_summary_instead_of_resummarizing() {
         let [Message::System(_), Message::User(blocks)] = request.as_slice() else {
             panic!("unexpected request shape: {request:?}");
         };
-        let [ContentBlock::Text(body)] = blocks.as_slice() else {
+        let [ContentBlock::Text(body)] = blocks.as_ref() else {
             panic!("unexpected body: {blocks:?}");
         };
         let expected =
@@ -280,48 +282,35 @@ fn summary_transcript_renders_tool_calls_and_results_as_text() {
     let messages = vec![
         Message::assistant(AssistantMessage::from_content(vec![
             ContentBlock::Text("reading".into()),
-            ContentBlock::ToolCall(ToolCall {
-                id: "call-1".into(),
-                name: "read_file".into(),
-                arguments: json!({"path": "src/a.rs", "offset": 1}),
-            }),
+            ContentBlock::ToolCall(ToolCall::new(
+                "call-1".into(),
+                "read_file".into(),
+                json!({"path": "src/a.rs", "offset": 1}),
+            )),
             ContentBlock::Image(ImageContent {
                 mime_type: "image/png".into(),
                 data: image_bytes.into(),
             }),
         ])),
-        Message::ToolResult(ToolResult {
-            id: "call-1".into(),
-            ok: true,
-            content: body.into(),
-        }),
-        Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
-            id: "call-elided".into(),
-            name: "read_file".into(),
-            arguments: json!({"path": "src/a.rs"}),
-        })]),
-        Message::ToolResult(ToolResult {
-            id: "call-elided".into(),
-            ok: true,
-            content: stub.into(),
-        }),
-        Message::ToolResult(ToolResult {
-            id: "call-missing".into(),
-            ok: false,
-            content: "boom\n".into(),
-        }),
+        Message::ToolResult(ToolResult::succeeded("call-1", body).into()),
+        Message::Assistant(
+            (vec![ContentBlock::ToolCall(ToolCall::new(
+                "call-elided".into(),
+                "read_file".into(),
+                json!({"path": "src/a.rs"}),
+            ))])
+            .into(),
+        ),
+        Message::ToolResult(ToolResult::succeeded("call-elided", stub).into()),
+        Message::ToolResult((ToolResult::failed("call-missing", "boom\n")).into()),
         Message::assistant(AssistantMessage::from_content(vec![
-            ContentBlock::ToolCall(ToolCall {
-                id: "call-1".into(),
-                name: "bash".into(),
-                arguments: json!({"command": "true"}),
-            }),
+            ContentBlock::ToolCall(ToolCall::new(
+                "call-1".into(),
+                "bash".into(),
+                json!({"command": "true"}),
+            )),
         ])),
-        Message::ToolResult(ToolResult {
-            id: "call-1".into(),
-            ok: true,
-            content: "ran\n".into(),
-        }),
+        Message::ToolResult((ToolResult::succeeded("call-1", "ran\n")).into()),
     ];
 
     let rendered = render_messages_for_summary(&messages);
@@ -384,7 +373,7 @@ fn checklist_restatement_is_host_context_in_summary_and_marker() {
     let Message::User(blocks) = &restatement else {
         panic!("expected user-shaped host context");
     };
-    let [ContentBlock::Text(header), ContentBlock::Text(list)] = blocks.as_slice() else {
+    let [ContentBlock::Text(header), ContentBlock::Text(list)] = blocks.as_ref() else {
         panic!("expected checklist restatement");
     };
     let role = "checklist restatement (host context, not human authorization)";

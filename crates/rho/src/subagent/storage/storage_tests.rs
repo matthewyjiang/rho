@@ -82,6 +82,35 @@ fn scan_fallback_resolves_one_nested_run() {
     );
 }
 
+// Covers: a run one process indexed under the home's real path resolves,
+// and lists among its workspace's runs, for a process that reaches the
+// same home through a symlink, as a TUI does for the runs its daemon
+// reserves where the temporary directory is one (macOS).
+// Owner: subagent run storage
+#[cfg(unix)]
+#[test]
+fn an_indexed_run_resolves_through_another_spelling_of_the_home() {
+    let temp = TempDir::new().unwrap();
+    let real = temp.path().canonicalize().unwrap().join("real");
+    fs::create_dir(&real).unwrap();
+    let linked = temp.path().join("linked");
+    std::os::unix::fs::symlink(&real, &linked).unwrap();
+    let placement =
+        RunPlacement::for_parent_session("parent", Some(create_session_subagents(&real)));
+    let id = reserve_running(&real, &real, placement, "abc123", "worker");
+
+    assert_eq!(
+        (
+            resolve_run_directory_in_root(&linked, &id).unwrap(),
+            workspace_ids(&linked, &real),
+        ),
+        (
+            resolve_run_directory_in_root(&real, &id).unwrap(),
+            std::collections::BTreeSet::from([id]),
+        )
+    );
+}
+
 #[test]
 fn concurrent_index_initialization_is_idempotent() {
     let temp = TempDir::new().unwrap();
@@ -387,7 +416,7 @@ fn failed_cleanup_releases_parent_lock() {
     assert_eq!(directory, subagents_dir.join("abcdef"));
 }
 
-// Covers: rho attach picker must not list subagents from another directory.
+// Covers: the `/attach` picker must not list subagents from another directory.
 // Owner: delegated-run index listing
 #[test]
 fn list_running_runs_keeps_only_the_current_workspace() {

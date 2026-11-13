@@ -2,11 +2,11 @@
 
 use std::{collections::HashMap, path::PathBuf};
 
-use agent_client_protocol::schema::v1::{
+use agent_client_protocol::v1::schema::{
     ContentBlock, Cost, Plan, PlanEntryStatus, SessionUpdate, StopReason, ToolCallId, UsageUpdate,
 };
+use rho_protocol::display::{ToolCard, ToolCardStatus, ToolFamily, ToolHeader};
 use rho_sdk::model::ContextUsage;
-use rho_tools::tool_card::{ToolCard, ToolFamily, ToolHeader, ToolStatus};
 
 use crate::{
     cli_runtime::{
@@ -130,19 +130,23 @@ impl EventRenderer {
                 let mut effects = notices.into_iter().flat_map(notice).collect::<Vec<_>>();
                 effects.push(StreamEffect::Attachment(AttachmentEvent::ToolStarted {
                     key: Some(key.to_string()),
-                    card: tool.card.clone().into(),
+                    card: tool.card.clone(),
                 }));
                 // Terminal initial snapshots still render as ToolStarted, but
                 // need no retained state unless an update follows.
                 match tool.card.status {
-                    ToolStatus::Running => {
+                    ToolCardStatus::Running => {
                         if self.active_tools.contains_key(&key)
                             || self.has_tool_capacity(&mut effects)
                         {
                             self.active_tools.insert(key, tool);
                         }
                     }
-                    ToolStatus::Ok | ToolStatus::Error | ToolStatus::Interrupted => {
+                    ToolCardStatus::Ok | ToolCardStatus::Error | ToolCardStatus::Interrupted => {
+                        self.active_tools.remove(&key);
+                    }
+                    // `Unknown`, which no ACP status maps to: never retained.
+                    _ => {
                         self.active_tools.remove(&key);
                     }
                 }
@@ -158,8 +162,10 @@ impl EventRenderer {
                 let (card, notices) = finished_card(&mut tool, &update, &self.cwd);
                 let mut effects = notices.into_iter().flat_map(notice).collect::<Vec<_>>();
                 let finished = match card.status {
-                    ToolStatus::Ok | ToolStatus::Error => true,
-                    ToolStatus::Running | ToolStatus::Interrupted => false,
+                    ToolCardStatus::Ok | ToolCardStatus::Error => true,
+                    ToolCardStatus::Running | ToolCardStatus::Interrupted => false,
+                    // `Unknown`, which no ACP status maps to: never retained.
+                    _ => true,
                 };
                 let event = if finished {
                     AttachmentEvent::ToolFinished {
@@ -172,7 +178,7 @@ impl EventRenderer {
                     }
                     AttachmentEvent::ToolUpdated {
                         key: Some(key.to_string()),
-                        card: card.into(),
+                        card,
                     }
                 };
                 effects.push(StreamEffect::Attachment(event));
@@ -207,23 +213,17 @@ impl EventRenderer {
             lines.push(format!("{marker} {}", entry.content));
         }
         let mut card = ToolCard::new(
-            ToolStatus::Running,
+            ToolCardStatus::Running,
             ToolFamily::Form,
             ToolHeader::call("Plan", /*primary*/ None),
         );
         set_lines_body(&mut card, &lines.join("\n"));
         let key = Some("acp-plan".into());
         let event = if self.plan_started {
-            AttachmentEvent::ToolUpdated {
-                key,
-                card: card.into(),
-            }
+            AttachmentEvent::ToolUpdated { key, card }
         } else {
             self.plan_started = true;
-            AttachmentEvent::ToolStarted {
-                key,
-                card: card.into(),
-            }
+            AttachmentEvent::ToolStarted { key, card }
         };
         effects.push(StreamEffect::Attachment(event));
         self.with_step_started(effects)

@@ -1,5 +1,3 @@
-use std::collections::VecDeque;
-
 use crate::tui::DefaultTerminal;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -8,11 +6,9 @@ use super::{
     command_palette::{slash_command_args, CommandPaletteKeyOutcome},
     commands,
     composer_buffer::ComposerEditKey,
-    config_row::ConfigCommitCtx,
-    goal_command,
-    send_confirm::{SendAuthorization, SendPayload, SendSubmission},
-    skill_actions, ActivityPhase, App, ChatMedia, ComposerMode, GoalState, InputSubmissionMode,
-    InteractiveRuntime, PasteSegment, PendingLoginFinish, QueuedPrompt, TurnOutcome, TurnPrompt,
+    send_confirm::SendSubmission,
+    ActivityPhase, App, ChatMedia, ComposerMode, InputSubmissionMode, PasteSegment,
+    PendingLoginFinish, QueuedPrompt, TurnPrompt,
 };
 
 /// A turn held until MCP servers and OpenAPI sources finish loading.
@@ -21,6 +17,25 @@ pub(super) struct HeldTurn {
     pub(super) media: Vec<ChatMedia>,
     /// Kept so `esc` can hand the prompt back exactly as it was typed.
     pub(super) paste_segments: Vec<PasteSegment>,
+    pub(super) origin: HeldOrigin,
+}
+
+/// Where a held turn came from, which decides how it is sent once its wait
+/// is over and what `esc` does with it meanwhile.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum HeldOrigin {
+    /// The composer: `esc` hands the prompt back to it.
+    Composer,
+    /// The composer, for a prompt to a daemon session the person confirmed
+    /// for this model before it was held (`send_confirm::daemon`): released,
+    /// it is asked about again only if the session's model changed since.
+    Confirmed(rho_sdk::model::ModelIdentity),
+    /// A command of a daemon session that is no send to confirm, as
+    /// `/compact`: `esc` hands it back to the composer.
+    Command,
+    /// The workflow hub of a daemon session, whose launch is a prompt the
+    /// person never typed: `esc` cancels it.
+    WorkflowHub,
 }
 
 impl App {
@@ -44,43 +59,39 @@ impl App {
         &'a mut self,
         key: KeyEvent,
         terminal: &'a mut DefaultTerminal,
-        agent: &'a mut InteractiveRuntime,
     ) -> impl std::future::Future<Output = anyhow::Result<bool>> + 'a {
         // Keep modal futures out of every idle key's poll frame, including
         // ordinary Enter and /exit. Allocate in a synchronous frame so debug
         // construction temporaries are gone before polling the handler.
-        Box::pin(self.handle_composer_mode_key_inner(key, terminal, agent))
+        Box::pin(self.handle_composer_mode_key_inner(key, terminal))
     }
 
     async fn handle_composer_mode_key_inner(
         &mut self,
         key: crossterm::event::KeyEvent,
         terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<bool> {
         match self.input_ui.composer() {
             ComposerMode::Input => Ok(false),
             ComposerMode::InteractivePending(pending)
-                if pending.finish == PendingLoginFinish::UserConfirms
+                if matches!(pending.finish, PendingLoginFinish::UserConfirms(_))
                     && key.code == KeyCode::Enter
                     && key.modifiers.is_empty() =>
             {
-                self.confirm_pending_login(terminal, agent).await?;
+                self.record_daemon_login(terminal).await?;
                 Ok(true)
             }
             ComposerMode::InteractivePending(_) => self.handle_interactive_pending_key(key),
-            ComposerMode::InlineChoice(_) => {
-                self.handle_inline_choice_key(key, terminal, agent).await
-            }
+            ComposerMode::InlineChoice(_) => self.handle_inline_choice_key(key, terminal).await,
             ComposerMode::Questionnaire(_) => self.handle_questionnaire_key(key),
-            ComposerMode::SecretInput(_) => self.handle_secret_key(key, terminal, agent).await,
-            ComposerMode::ConfigNumberInput(_) => self.handle_config_number_key(key, terminal),
-            ComposerMode::TextInput(_) => {
-                self.handle_text_input_key(key, ConfigCommitCtx::Idle { agent, terminal })
-                    .await
+            ComposerMode::SecretInput(_) => self.handle_secret_key(key, terminal).await,
+            ComposerMode::TextInput(_) => self.handle_text_input_key(key),
+            ComposerMode::Picker(_) => self.handle_picker_key(key, terminal).await,
+            ComposerMode::Panel(_) => {
+                let handled = self.handle_panel_overlay_key(key, terminal);
+                self.attach_from_jobs_view(terminal).await;
+                Ok(handled)
             }
-            ComposerMode::Picker(_) => self.handle_picker_key(key, terminal, agent).await,
-            ComposerMode::Panel(_) => Ok(self.handle_panel_overlay_key(key, terminal)),
             ComposerMode::Side => Ok(self.handle_side_chat_key(key, terminal)),
             ComposerMode::TranscriptSearch(_) => Ok(self.handle_transcript_search_key(key)),
             // Approvals are handled on the during-turn path, not idle input.
@@ -92,7 +103,6 @@ impl App {
         &mut self,
         key: KeyEvent,
         terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         if self.handle_paste_burst_key(key) {
             return Ok(());
@@ -117,15 +127,15 @@ impl App {
 
         // Overlay / modal composers own keys first. Dispatch by mode so the
         // shared free-text path below only runs for ComposerMode::Input.
-        if self.handle_composer_mode_key(key, terminal, agent).await? {
+        if self.handle_composer_mode_key(key, terminal).await? {
             return Ok(());
         }
 
-        if self.handle_reasoning_cycle_key(key, agent).await? {
+        if self.handle_reasoning_cycle_key(key)? {
             return Ok(());
         }
 
-        if self.handle_favorite_cycle_key(key, agent).await? {
+        if self.handle_favorite_cycle_key(key)? {
             return Ok(());
         }
 
@@ -139,7 +149,7 @@ impl App {
             CommandPaletteKeyOutcome::Submit => {
                 self.input_ui.clear_paste_burst();
                 self.ctrl_c_streak = 0;
-                self.submit(terminal, agent).await?;
+                self.submit(terminal).await?;
                 return Ok(());
             }
         }
@@ -152,10 +162,7 @@ impl App {
             return Ok(());
         }
 
-        if self
-            .handle_configurable_composer_key(key, terminal, agent)
-            .await?
-        {
+        if self.handle_configurable_composer_key(key, terminal).await? {
             return Ok(());
         }
 
@@ -179,8 +186,7 @@ impl App {
                 }
             }
             (_, KeyCode::Esc) => {
-                let cancelled_compact = self.cancel_compact(agent).await?;
-                if cancelled_compact || (!self.cancel_inline_shells() && !self.exit_shell_mode()) {
+                if !self.cancel_inline_shells() && !self.exit_shell_mode() {
                     self.take_back_held_turn();
                 }
                 self.ctrl_c_streak = 0;
@@ -189,7 +195,7 @@ impl App {
                 // Reset first: submit runs the whole turn, and a Ctrl-C streak
                 // armed during it (leaving attach or peek) must survive.
                 self.ctrl_c_streak = 0;
-                self.submit(terminal, agent).await?;
+                self.submit(terminal).await?;
             }
             _ => {
                 self.input_ui.clear_paste_burst();
@@ -204,18 +210,13 @@ impl App {
     pub(super) fn submit<'a>(
         &'a mut self,
         terminal: &'a mut DefaultTerminal,
-        agent: &'a mut InteractiveRuntime,
     ) -> impl std::future::Future<Output = anyhow::Result<()>> + 'a {
         // Submission can poll an entire turn or command. Its construction
         // frame must not stay on the Windows main stack for that whole call.
-        Box::pin(self.submit_inner(terminal, agent))
+        Box::pin(self.submit_inner(terminal))
     }
 
-    async fn submit_inner(
-        &mut self,
-        terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<()> {
+    async fn submit_inner(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
         if self.input_ui.has_pending_attachments() {
             self.notify_status("wait for document extraction to finish before submitting");
             return Ok(());
@@ -236,110 +237,88 @@ impl App {
                 return self.block_pasted_inline_shell();
             }
             self.clear_submitted_input();
-            self.ensure_session(agent)?;
             self.start_inline_shell(mode, command)?;
             return Ok(());
         }
 
         match self.parse_input_command() {
             Ok(Some(invocation)) => {
+                // A command the daemon runs as a prompt needs credentials
+                // as any prompt does: held for `/login` the same way.
+                if super::daemon_gate::command_route(invocation.id)
+                    == super::daemon_gate::CommandRoute::Prompt
+                    && self.daemon_offers_built_in(invocation.id)
+                    && self.daemon_prompt_needs_login()
+                {
+                    return self.offer_login_instead_of_turn(turn);
+                }
                 let submission = self.take_command_submission(invocation, turn);
-                self.execute_command(submission, terminal, agent).await?;
+                self.execute_command(submission, terminal).await?;
                 return Ok(());
             }
             Ok(None) => {}
             Err(commands::CommandParseError::Unknown(name)) => {
-                let trailing_prompt = slash_command_args(&turn.model).trim().to_string();
-                self.clear_submitted_input();
-                if let Some(resolved) = crate::app::workflow_cli::discover::resolve_start_command(
-                    &self.info.runtime.cwd,
-                    &name,
-                    &trailing_prompt,
-                ) {
-                    return self.start_workflow_command(&name, resolved, agent).await;
-                }
-                if let Some(prompt) = self.resolve_prompt_template(&name, &trailing_prompt) {
-                    turn = TurnPrompt::standard(prompt.clone(), prompt);
-                } else if let Some(expanded) = self
-                    .expand_mcp_prompt(&name, &trailing_prompt, &turn.display, agent)
-                    .await?
-                {
-                    turn = expanded;
-                } else {
-                    match self.skill_command_action(
-                        &name,
-                        turn.model,
-                        turn.display,
-                        agent.has_tool(crate::skills::mention::SKILL_TOOL),
-                    )? {
-                        skill_actions::SkillCommandAction::Prompt(prompt) => turn = *prompt,
-                        skill_actions::SkillCommandAction::Rejected => return Ok(()),
-                        skill_actions::SkillCommandAction::NotSkill => {
-                            self.report_unknown_command(&name);
-                            return Ok(());
-                        }
+                // `/skill:<name>` goes as the daemon's `/$<name>`, which
+                // loads the skill or says why the session cannot.
+                if let Some(skill) = name.strip_prefix("skill:") {
+                    if !self.daemon_may_load_skill(skill) {
+                        self.clear_submitted_input();
+                        self.report_unknown_command(&name);
+                        return Ok(());
                     }
+                    turn =
+                        TurnPrompt::command(turn.model, turn.display).with_skill(skill.to_owned());
+                } else if !self.daemon_prompt_command_available(&name) {
+                    self.clear_submitted_input();
+                    self.daemon_command_unavailable(&name);
+                    return Ok(());
+                }
+                if self.daemon_prompt_needs_login() {
+                    // The held text is what Enter sends after login, so a
+                    // template is held expanded. The daemon expands one it
+                    // is sent as typed.
+                    let trailing = slash_command_args(&turn.model).trim().to_string();
+                    if let Some(prompt) = self.resolve_prompt_template(&name, &trailing) {
+                        turn = TurnPrompt::standard(prompt.clone(), prompt);
+                    }
+                    return self.offer_login_instead_of_turn(turn);
                 }
             }
         }
 
-        self.load_mentioned_skills(&mut turn, agent);
-
-        if !self.setup_state().signed_in {
+        // The daemon session runs the turn: it loads the skills the prompt
+        // mentions and owns tools and compaction. A prompt it could only
+        // refuse for want of credentials offers `/login` first.
+        if self.daemon_prompt_needs_login() {
             return self.offer_login_instead_of_turn(turn);
         }
-
         let media = self
             .input_ui
             .take_ready_media()
             .expect("pending attachments block submission");
         let paste_segments = self.input_ui.paste_segments().to_vec();
         self.clear_submitted_input();
-
-        // MCP connect and OpenAPI loading run after the first frame, so a
-        // prompt can land before their tools exist. Hold the turn and start it
-        // once loading settles; the alternative is a person watching a status
-        // line and pressing enter again for up to the full connect budget.
-        if agent.tool_sources_pending() {
-            // Queue rather than replace: someone who submits twice while the
-            // tools are still loading must not lose the first prompt.
-            self.hold_turn(turn, media, paste_segments);
-            return Ok(());
-        }
-
-        self.run_turn_sequence_held(turn, media, paste_segments, terminal, agent)
+        self.submit_daemon_turn(turn, media, paste_segments, terminal)
             .await
     }
 
-    /// Submit a skill or command-backed model turn through the same tool-loading hold,
-    /// compaction, goal, and follow-up path as a regular composer prompt.
-    pub(super) async fn submit_interactive_turn(
-        &mut self,
-        turn: TurnPrompt,
-        media: Vec<ChatMedia>,
-        paste_segments: Vec<PasteSegment>,
-        terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<()> {
-        if agent.tool_sources_pending() {
-            self.hold_turn(turn, media, paste_segments);
-            return Ok(());
-        }
-        self.run_turn_sequence_held(turn, media, paste_segments, terminal, agent)
-            .await
-    }
-
-    fn hold_turn(
+    pub(super) fn hold_turn(
         &mut self,
         turn: TurnPrompt,
         media: Vec<ChatMedia>,
         paste_segments: Vec<PasteSegment>,
     ) {
-        self.held_turns.push_back(HeldTurn {
+        self.hold(HeldTurn {
             turn,
             media,
             paste_segments,
+            origin: HeldOrigin::Composer,
         });
+    }
+
+    /// Holds `held` until the session's tool sources loaded.
+    pub(super) fn hold(&mut self, held: HeldTurn) {
+        self.held_turns.push_back(held);
         self.turn
             .set_activity_phase(ActivityPhase::LoadingToolSources);
         self.turn.start_loading_if_needed();
@@ -349,30 +328,48 @@ impl App {
     /// Hand the most recently held turn back to the composer, so `esc` unwinds
     /// prompts newest first instead of leaving them to run. Does nothing unless
     /// the composer is empty, so it cannot overwrite something the person has
-    /// started typing since.
+    /// started typing since. A workflow the hub started is cancelled instead,
+    /// whatever the composer holds: the composer never held its command.
     fn take_back_held_turn(&mut self) {
-        if !self.input_ui.text().is_empty() || !self.input_ui.attachments().is_empty() {
-            return;
+        let composer_in_use =
+            !self.input_ui.text().is_empty() || !self.input_ui.attachments().is_empty();
+        match self.held_turns.back().map(|held| &held.origin) {
+            Some(HeldOrigin::Composer | HeldOrigin::Confirmed(_) | HeldOrigin::Command)
+                if composer_in_use =>
+            {
+                return
+            }
+            Some(
+                HeldOrigin::Composer
+                | HeldOrigin::Confirmed(_)
+                | HeldOrigin::Command
+                | HeldOrigin::WorkflowHub,
+            )
+            | None => {}
         }
         let Some(HeldTurn {
             turn,
             media,
             paste_segments,
-            ..
+            origin,
         }) = self.held_turns.pop_back()
         else {
             return;
         };
-        self.restore_pending_prompt(QueuedPrompt {
-            prompt: turn.model,
-            display_prompt: turn.display,
-            paste_segments,
-            media,
-        });
+        match origin {
+            HeldOrigin::Composer | HeldOrigin::Confirmed(_) | HeldOrigin::Command => self
+                .restore_pending_prompt(QueuedPrompt {
+                    prompt: turn.model,
+                    display_prompt: turn.display,
+                    paste_segments,
+                    media,
+                }),
+            HeldOrigin::WorkflowHub => {}
+        }
         if !self.held_turns.is_empty() {
             // Older holds are still waiting. Leave their status alone: writing
             // any status here would hand `status_source` back to `Other`, and
-            // `poll_startup_hydrates` would never retire the indicator.
+            // `show_daemon_tool_sources_loaded` would never retire the indicator.
             return;
         }
         self.clear_tool_sources_loading_activity();
@@ -391,20 +388,13 @@ impl App {
         }
     }
 
-    pub(super) fn restore_tool_sources_hold_activity_if_needed(
-        &mut self,
-        tool_sources_pending: bool,
-    ) {
-        if self.held_turns.is_empty() || !tool_sources_pending || self.turn.is_busy() {
+    pub(super) fn restore_tool_sources_hold_activity_if_needed(&mut self) {
+        if self.held_turns.is_empty() || !self.tool_sources_pending() || self.turn.is_busy() {
             return;
         }
         self.turn
             .set_activity_phase(ActivityPhase::LoadingToolSources);
         self.turn.start_loading_if_needed();
-    }
-
-    fn first_held_turn_is_releasable(&self, tool_sources_pending: bool, compacting: bool) -> bool {
-        !self.held_turns.is_empty() && !tool_sources_pending && !compacting
     }
 
     /// Start the next held turn whose wait is over. One per call, so several
@@ -413,12 +403,12 @@ impl App {
     pub(super) async fn release_pending_held_turn(
         &mut self,
         terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<bool> {
-        if self.input_ui.composer().blocks_held_turn_start() {
-            return Ok(false);
-        }
-        if !self.first_held_turn_is_releasable(agent.tool_sources_pending(), agent.is_compacting())
+        // The session may be running a turn another client or a background
+        // result started; the held one waits for it to end.
+        if self.input_ui.composer().blocks_held_turn_start()
+            || self.is_ui_busy()
+            || self.tool_sources_pending()
         {
             return Ok(false);
         }
@@ -426,6 +416,7 @@ impl App {
             turn,
             media,
             paste_segments,
+            origin,
         }) = self.held_turns.pop_front()
         else {
             return Ok(false);
@@ -434,213 +425,23 @@ impl App {
         if self.held_turns.is_empty() {
             self.clear_tool_sources_loading_activity();
         }
-        self.run_turn_sequence_held(turn, media, paste_segments, terminal, agent)
-            .await?;
-        Ok(true)
-    }
-
-    /// Start the next queued follow-up once armed and the composer is free.
-    /// Compact arms this with auto-compact off; model-switch handoff arms it on.
-    pub(super) async fn start_next_follow_up(
-        &mut self,
-        terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<bool> {
-        if self.start_follow_ups.is_none() {
-            return Ok(false);
-        }
-        if agent.is_compacting() || agent.tool_sources_pending() {
-            return Ok(false);
-        }
-        if self.input_ui.composer().blocks_held_turn_start() {
-            return Ok(false);
-        }
-        if self.is_ui_busy() {
-            if !super::compact_work::keep_armed_follow_up_while_busy(
-                self.start_follow_ups.as_ref().expect("checked above"),
-            ) {
-                self.start_follow_ups = None;
-            }
-            return Ok(false);
-        }
-        let ready = self.start_follow_ups.take().expect("checked above");
-        match ready {
-            super::compact_work::ReadyFollowUp::Send(submission) => {
-                self.start_approved_submission(*submission, terminal, agent)
+        match origin {
+            HeldOrigin::WorkflowHub => self.send_daemon_workflow(turn, terminal).await?,
+            HeldOrigin::Command => {
+                self.send_daemon_command(turn, media, paste_segments, terminal)
                     .await?;
             }
-            super::compact_work::ReadyFollowUp::Queued { allow_auto_compact } => {
-                let Some(prompt) = self.pending.pop_follow_up() else {
-                    return Ok(false);
-                };
-                self.pending_input_changed();
-                self.select_pending_recall_target();
-                let submission = self.queued_turn_submission(prompt, agent);
-                let Some(submission) = self.gate_send(submission, agent) else {
-                    return Ok(true);
-                };
-                let (payload, authorization, _allow_auto_compact) = submission.into_authorized();
-                let SendPayload::Turn {
-                    turn,
-                    media,
-                    paste_segments,
-                    ..
-                } = payload
-                else {
-                    unreachable!("queued prompts are turn submissions");
-                };
-                if allow_auto_compact {
-                    self.run_turn_sequence_after_send_gate(
-                        turn,
-                        media,
-                        paste_segments,
-                        authorization,
-                        terminal,
-                        agent,
-                    )
+            HeldOrigin::Confirmed(model) => {
+                let submission =
+                    SendSubmission::turn(turn, media, paste_segments).approve_for(model);
+                self.submit_daemon_submission(submission, terminal).await?;
+            }
+            HeldOrigin::Composer => {
+                self.submit_daemon_turn(turn, media, paste_segments, terminal)
                     .await?;
-                } else {
-                    self.run_turn_sequence_without_auto_compact(
-                        turn,
-                        media,
-                        authorization,
-                        terminal,
-                        agent,
-                    )
-                    .await?;
-                }
             }
         }
         Ok(true)
-    }
-
-    pub(super) async fn run_turn_sequence_held(
-        &mut self,
-        turn: TurnPrompt,
-        media: Vec<ChatMedia>,
-        paste_segments: Vec<PasteSegment>,
-        terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<()> {
-        let Some(submission) =
-            self.gate_send(SendSubmission::turn(turn, media, paste_segments), agent)
-        else {
-            return Ok(());
-        };
-        let (payload, authorization, _allow_auto_compact) = submission.into_authorized();
-        let SendPayload::Turn {
-            turn,
-            media,
-            paste_segments,
-            ..
-        } = payload
-        else {
-            unreachable!("turn sequence received a turn submission");
-        };
-        self.run_turn_sequence_after_send_gate(
-            turn,
-            media,
-            paste_segments,
-            authorization,
-            terminal,
-            agent,
-        )
-        .await
-    }
-
-    pub(super) async fn run_turn_sequence_after_send_gate(
-        &mut self,
-        turn: TurnPrompt,
-        media: Vec<ChatMedia>,
-        paste_segments: Vec<PasteSegment>,
-        authorization: SendAuthorization,
-        terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<()> {
-        if agent.is_compacting() {
-            return self.queue_prompt(turn.model, turn.display, paste_segments, media);
-        }
-        self.apply_pending_compaction_config(agent)?;
-        if agent.should_auto_compact() {
-            self.start_compact(
-                agent,
-                super::compact_work::CompactFollowUp::None,
-                /*instructions*/ None,
-            )?;
-            return self.queue_prompt(turn.model, turn.display, paste_segments, media);
-        }
-        self.run_turn_sequence_without_auto_compact(turn, media, authorization, terminal, agent)
-            .await
-    }
-
-    pub(super) async fn run_turn_sequence_without_auto_compact(
-        &mut self,
-        turn: TurnPrompt,
-        media: Vec<ChatMedia>,
-        authorization: SendAuthorization,
-        terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<()> {
-        let turn = self.prepare_goal_resumption_turn(turn);
-        let mut outcome = self
-            .run_prompt_turn(turn, media, authorization, terminal, agent)
-            .await?;
-        self.finish_goal_resumption_turn(outcome.kind());
-        let mut pending_goal_retries = VecDeque::new();
-        let final_outcome = loop {
-            let outcome_kind = outcome.kind();
-            let resume_goal = goal_command::should_resume_goal_after_turn(
-                outcome_kind,
-                self.goal.as_ref().map(GoalState::loop_state),
-                self.should_quit,
-            );
-            if let TurnOutcome::Failed(failed_turn) = outcome {
-                if resume_goal {
-                    pending_goal_retries.push_back(*failed_turn);
-                }
-            }
-
-            // Successful completion already drained follow-ups in the shared
-            // turn continuation. Only failed goal turns need driver-owned retry
-            // bookkeeping before delivering their remaining queued prompts.
-            let should_drain_queue = matches!(outcome_kind, super::TurnOutcomeKind::Failed)
-                && goal_command::should_drain_queued_prompts(outcome_kind, resume_goal);
-            if self.should_quit
-                || !should_drain_queue
-                || self.input_ui.composer().blocks_auto_continue()
-            {
-                break outcome_kind;
-            }
-            let Some(prompt) = self.pending.pop_follow_up() else {
-                break outcome_kind;
-            };
-            self.pending_input_changed();
-            self.select_pending_recall_target();
-            let submission = self.queued_turn_submission(prompt, agent);
-            let Some(submission) = self.gate_send(submission, agent) else {
-                // Ownership moved from the queue to the modal. Re-inserting a
-                // copy here would send the same follow-up twice after approval.
-                break outcome_kind;
-            };
-            let (payload, authorization, _allow_auto_compact) = submission.into_authorized();
-            let SendPayload::Turn { turn, media, .. } = payload else {
-                unreachable!("queued prompts are turn submissions");
-            };
-            outcome = self
-                .run_prompt_turn(turn, media, authorization, terminal, agent)
-                .await?;
-        };
-        if !self.input_ui.composer().blocks_auto_continue()
-            && goal_command::should_resume_goal_after_turn(
-                final_outcome,
-                self.goal.as_ref().map(GoalState::loop_state),
-                self.should_quit,
-            )
-        {
-            self.continue_goal(terminal, agent, pending_goal_retries)
-                .await?;
-        }
-        Ok(())
     }
 }
 

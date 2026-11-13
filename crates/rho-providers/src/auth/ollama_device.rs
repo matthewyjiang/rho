@@ -4,6 +4,12 @@
 //! signs each request as `Authorization: <pubkey_b64>:<sig_b64>` with a `ts`
 //! query parameter. Browser sign-in registers that public key at
 //! `https://ollama.com/connect`.
+//!
+//! The key's directory belongs to whoever the credentials belong to:
+//! `OLLAMA_DEVICE_KEY_DIR` is read through their [`CredentialStore`], as
+//! every credential variable is, so a daemon session and a sign-in made for
+//! a client use that client's directory. Unset, it is `~/.ollama` of this
+//! process's home.
 
 use std::{
     fs,
@@ -14,6 +20,11 @@ use std::{
 use base64::{engine::general_purpose, Engine as _};
 use signature::Signer;
 use ssh_key::{rand_core::OsRng, Algorithm, LineEnding, PrivateKey};
+
+use crate::credentials::CredentialStore;
+
+/// Names the directory the device key is kept in, in place of `~/.ollama`.
+const KEY_DIR_ENV: &str = "OLLAMA_DEVICE_KEY_DIR";
 
 const DEFAULT_PRIVATE_KEY_NAME: &str = "id_ed25519";
 const DEFAULT_PUBLIC_KEY_NAME: &str = "id_ed25519.pub";
@@ -39,14 +50,16 @@ impl std::fmt::Debug for OllamaDeviceKey {
 }
 
 impl OllamaDeviceKey {
-    /// Loads the device key from the default Ollama path, generating one if missing.
-    pub fn load_or_create_default() -> Result<Self, OllamaDeviceError> {
-        Self::load_or_create(&default_key_dir()?)
+    /// Loads the device key of the party `store` belongs to from their key
+    /// directory, generating one if missing.
+    pub fn load_or_create_default(store: &dyn CredentialStore) -> Result<Self, OllamaDeviceError> {
+        Self::load_or_create(&default_key_dir(store)?)
     }
 
-    /// Loads an existing device key from the default Ollama path.
-    pub fn load_default() -> Result<Self, OllamaDeviceError> {
-        Self::load_from_dir(&default_key_dir()?)
+    /// Loads the existing device key of the party `store` belongs to from
+    /// their key directory.
+    pub fn load_default(store: &dyn CredentialStore) -> Result<Self, OllamaDeviceError> {
+        Self::load_from_dir(&default_key_dir(store)?)
     }
 
     pub fn load_or_create(dir: &Path) -> Result<Self, OllamaDeviceError> {
@@ -167,11 +180,6 @@ pub enum OllamaDeviceError {
     Setup(String),
     #[error("Ollama device key already exists")]
     AlreadyExists,
-    /// # Next major
-    ///
-    /// NEXT_MAJOR(rho-providers): remove OllamaDeviceError::Browser; browser launch lives in the login dispatch layer
-    #[error("could not open a browser for Ollama device login")]
-    Browser,
 }
 
 #[derive(Clone, Debug)]
@@ -179,29 +187,24 @@ pub struct OllamaDeviceLogin {
     pub connect_url: String,
 }
 
-/// Starts sign-in for the local Ollama device key.
+/// Starts sign-in for the Ollama device key of the party `store` belongs
+/// to, creating the key in their directory when they have none.
 ///
-/// # Next major
-///
-/// NEXT_MAJOR(rho-providers): remove the `open_browser` argument; the dispatch layer owns browser launch
-///
-/// When `open_browser` is true, opens the Ollama connect page. Callers in
-/// headless environments can pass false and show [`OllamaDeviceLogin::connect_url`]
-/// instead. Ollama does not send a completion callback to the client.
+/// Returns the Ollama connect page for the caller to present; the login
+/// dispatch layer owns browser launch. Ollama does not send a completion
+/// callback to the client.
 pub async fn start_ollama_device_login(
-    open_browser: bool,
+    store: &dyn CredentialStore,
 ) -> Result<OllamaDeviceLogin, OllamaDeviceError> {
-    let key = OllamaDeviceKey::load_or_create_default()?;
+    let key = OllamaDeviceKey::load_or_create_default(store)?;
     let connect_url = key.connect_url()?;
-    if open_browser {
-        webbrowser::open(&connect_url).map_err(|_| OllamaDeviceError::Browser)?;
-    }
     Ok(OllamaDeviceLogin { connect_url })
 }
 
-/// True when a usable local Ollama device key exists on disk.
-pub fn ollama_device_credentials_available() -> bool {
-    OllamaDeviceKey::load_default().is_ok()
+/// True when a usable Ollama device key exists in the key directory of the
+/// party `store` belongs to.
+pub fn ollama_device_credentials_available(store: &dyn CredentialStore) -> bool {
+    OllamaDeviceKey::load_default(store).is_ok()
 }
 
 fn parse_openssh_private_key(pem: &str) -> Result<PrivateKey, OllamaDeviceError> {
@@ -222,34 +225,10 @@ fn parse_openssh_private_key(pem: &str) -> Result<PrivateKey, OllamaDeviceError>
     PrivateKey::from_bytes(&bytes).map_err(|error| OllamaDeviceError::InvalidKey(error.to_string()))
 }
 
-thread_local! {
-    static TEST_KEY_DIR: std::cell::RefCell<Option<PathBuf>> =
-        const { std::cell::RefCell::new(None) };
-}
-
-/// Runs `f` with the device key directory overridden, so tests do not read the
-/// developer's real `~/.ollama` key.
-#[doc(hidden)]
-pub fn with_ollama_device_key_dir_for_tests<T>(path: PathBuf, f: impl FnOnce() -> T) -> T {
-    TEST_KEY_DIR.with(|key_dir| {
-        let previous = key_dir.replace(Some(path));
-        // Restore the prior value even when `f` unwinds.
-        struct Restore<'a>(&'a std::cell::RefCell<Option<PathBuf>>, Option<PathBuf>);
-        impl Drop for Restore<'_> {
-            fn drop(&mut self) {
-                self.0.replace(self.1.take());
-            }
-        }
-        let _guard = Restore(key_dir, previous);
-        f()
-    })
-}
-
-fn default_key_dir() -> Result<PathBuf, OllamaDeviceError> {
-    if let Some(path) = TEST_KEY_DIR.with(|key_dir| key_dir.borrow().clone()) {
-        return Ok(path);
-    }
-    if let Ok(path) = std::env::var("OLLAMA_DEVICE_KEY_DIR") {
+/// The key directory of the party `store` belongs to: the one their
+/// `OLLAMA_DEVICE_KEY_DIR` names, else `~/.ollama` of this process's home.
+fn default_key_dir(store: &dyn CredentialStore) -> Result<PathBuf, OllamaDeviceError> {
+    if let Some(path) = store.environment_variable(KEY_DIR_ENV) {
         let path = path.trim();
         if !path.is_empty() {
             return Ok(PathBuf::from(path));

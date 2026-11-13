@@ -1,6 +1,6 @@
 //! In-app `/workflow` hub: start workflows and check runs from the chat TUI.
 
-use std::{cmp::Reverse, collections::BTreeMap, str::FromStr};
+use std::{cmp::Reverse, str::FromStr};
 
 use crate::tui::DefaultTerminal;
 
@@ -10,14 +10,10 @@ use super::{
     PickerLayout, UiPicker,
 };
 use crate::{
-    agent::AgentCapabilities,
-    app::{
-        workflow_cli::{self, discover, WorkflowOps},
-        workflow_runtime::RecoveryDecision,
-    },
+    app::workflow_cli::{self, discover, WorkflowOps},
     workflow::{
-        PlanId, PlanInventoryItem, RecordAccess, RunId, RunInventoryItem, RunLifecycle, StoredRun,
-        WorkflowOutcome,
+        PlanId, PlanInventory, RunId, RunInventory, RunInventoryItem, RunLifecycle, StoredRun,
+        UnsupportedRecord, WorkflowError, WorkflowOutcome,
     },
 };
 
@@ -25,8 +21,8 @@ const SOURCE_PREFIX: &str = "source:";
 const PLAN_PREFIX: &str = "plan:";
 const RUN_PREFIX: &str = "run:";
 const RETRY_RUN_PREFIX: &str = "retry-run:";
-const READ_ONLY_PLAN_PREFIX: &str = "read-only-plan:";
-const READ_ONLY_RUN_PREFIX: &str = "read-only-run:";
+const UNSUPPORTED_PLAN_PREFIX: &str = "unsupported-plan:";
+const UNSUPPORTED_RUN_PREFIX: &str = "unsupported-run:";
 
 #[path = "workflow_plans.rs"]
 mod plans;
@@ -95,53 +91,52 @@ fn run_progress(done: usize, total: usize) -> String {
     format!("{done}/{total} steps done")
 }
 
-fn legacy_run_item(run: &RunInventoryItem) -> PickerItem {
-    let id = run.run_id.to_string();
+/// A run saved before scoped workflow programs: listed so it can be deleted,
+/// but this release cannot open it.
+fn unsupported_run_item(record: &UnsupportedRecord<RunId>) -> PickerItem {
+    let id = record.id.to_string();
     let short = short_id(&id);
     item(
         Some("RUNS"),
-        format!("Status  legacy  ·  {short}"),
-        format!("{}\n{} · {} · {}\nRead-only legacy run. Enter shows status. Press d to delete.\nRun id {short}",
-            run.name, lifecycle_label(run.lifecycle), outcome_label(run.outcome), run_progress(run.done_steps, run.total_steps)),
-        format!("{READ_ONLY_RUN_PREFIX}{id}"),
-        Some(("read-only".into(), PickerBadgeTone::Internal)),
-        Some("status"),
+        format!("Unsupported  ·  {short}"),
+        format!(
+            "{}\nSaved by Rho before 2.15. Inspect it with Rho 2.x. Press d to delete.\nRun id {short}",
+            record.name
+        ),
+        format!("{UNSUPPORTED_RUN_PREFIX}{id}"),
+        Some(("unsupported".into(), PickerBadgeTone::Warning)),
+        Some("close"),
     )
 }
 
 fn run_item(run: &RunInventoryItem) -> PickerItem {
-    match run.access {
-        RecordAccess::ReadOnly => legacy_run_item(run),
-        RecordAccess::Executable => {
-            let id = run.run_id.to_string();
-            let short = short_id(&id);
-            let (label, tone) = match run.lifecycle {
-                RunLifecycle::Completed => (outcome_label(run.outcome), outcome_tone(run.outcome)),
-                RunLifecycle::Planned
-                | RunLifecycle::Running
-                | RunLifecycle::Cancelling
-                | RunLifecycle::NeedsRecovery => (
-                    lifecycle_label(run.lifecycle).into(),
-                    lifecycle_tone(run.lifecycle),
-                ),
-            };
-            item(
-                Some("RUNS"),
-                format!("Watch  {label}  ·  {short}"),
-                format!("{}\n{label} · {}\nEnter opens the DAG watch screen. Press d to delete.\nRun id {short}", run.name, run_progress(run.done_steps, run.total_steps)),
-                format!("{RUN_PREFIX}{id}"),
-                Some((label, tone)),
-                Some("watch"),
-            )
-        }
-    }
+    let id = run.run_id.to_string();
+    let short = short_id(&id);
+    let (label, tone) = match run.lifecycle {
+        RunLifecycle::Completed => (outcome_label(run.outcome), outcome_tone(run.outcome)),
+        RunLifecycle::Planned
+        | RunLifecycle::Running
+        | RunLifecycle::Cancelling
+        | RunLifecycle::NeedsRecovery => (
+            lifecycle_label(run.lifecycle).into(),
+            lifecycle_tone(run.lifecycle),
+        ),
+    };
+    item(
+        Some("RUNS"),
+        format!("Watch  {label}  ·  {short}"),
+        format!("{}\n{label} · {}\nEnter opens the DAG watch screen. Press d to delete.\nRun id {short}", run.name, run_progress(run.done_steps, run.total_steps)),
+        format!("{RUN_PREFIX}{id}"),
+        Some((label, tone)),
+        Some("watch"),
+    )
 }
 
 /// Root list: start workflows, open runs, or reuse a saved plan.
 pub(super) fn hub_picker(
     sources: &[discover::DiscoveredWorkflow],
-    plans: &[PlanInventoryItem],
-    runs: &[RunInventoryItem],
+    plans: &PlanInventory,
+    runs: &RunInventory,
 ) -> UiPicker {
     let mut items = Vec::new();
 
@@ -171,19 +166,21 @@ pub(super) fn hub_picker(
     }
 
     let mut active = runs
+        .items
         .iter()
         .filter(|run| run.lifecycle != RunLifecycle::Completed)
         .collect::<Vec<_>>();
     active.sort_by_key(|run| Reverse((run.created_at_unix_nanos, run.run_id)));
 
     let mut finished = runs
+        .items
         .iter()
         .filter(|run| run.lifecycle == RunLifecycle::Completed)
         .collect::<Vec<_>>();
     finished.sort_by_key(|run| Reverse((run.created_at_unix_nanos, run.run_id)));
     finished.truncate(MAX_FINISHED_RUNS);
 
-    if active.is_empty() && finished.is_empty() {
+    if active.is_empty() && finished.is_empty() && runs.unsupported.is_empty() {
         items.push(item(
             Some("RUNS"),
             "No runs yet",
@@ -195,7 +192,7 @@ pub(super) fn hub_picker(
     } else {
         for run in active.into_iter().chain(finished) {
             items.push(run_item(run));
-            if run.access == RecordAccess::Executable && run.lifecycle == RunLifecycle::Planned {
+            if run.lifecycle == RunLifecycle::Planned {
                 let id = run.run_id.to_string();
                 let short = short_id(&id);
                 items.push(item(
@@ -208,12 +205,14 @@ pub(super) fn hub_picker(
                 ));
             }
         }
+        items.extend(runs.unsupported.iter().map(unsupported_run_item));
     }
 
-    if !plans.is_empty() {
+    let plan_count = plans.items.len() + plans.unsupported.len();
+    if plan_count > 0 {
         items.push(item(
             Some("PLANS"),
-            format!("Saved plans · {}", plans.len()),
+            format!("Saved plans · {plan_count}"),
             "Browse frozen plans to reuse or delete. Starting from source uses the current workflow instead.",
             "browse:plans",
             None,
@@ -284,7 +283,7 @@ impl App {
         };
         if let Some(plan_id) = value
             .strip_prefix(PLAN_PREFIX)
-            .or_else(|| value.strip_prefix(READ_ONLY_PLAN_PREFIX))
+            .or_else(|| value.strip_prefix(UNSUPPORTED_PLAN_PREFIX))
         {
             let short = short_id(plan_id);
             let choice = InlineChoice::new(
@@ -320,7 +319,7 @@ impl App {
         if let Some(run_id) = value
             .strip_prefix(RUN_PREFIX)
             .or_else(|| value.strip_prefix(RETRY_RUN_PREFIX))
-            .or_else(|| value.strip_prefix(READ_ONLY_RUN_PREFIX))
+            .or_else(|| value.strip_prefix(UNSUPPORTED_RUN_PREFIX))
         {
             let short = short_id(run_id);
             let choice = InlineChoice::new(
@@ -416,7 +415,6 @@ impl App {
         &mut self,
         value: &str,
         terminal: &mut DefaultTerminal,
-        agent: &mut super::InteractiveRuntime,
     ) -> anyhow::Result<()> {
         if value.starts_with("noop:") {
             return Ok(());
@@ -424,38 +422,18 @@ impl App {
         match value {
             "browse:plans" => self.open_workflow_plans(),
             "browse:workflows" => self.open_workflow_hub(),
-            value if value.starts_with(READ_ONLY_PLAN_PREFIX) => {
+            value if value.starts_with(UNSUPPORTED_PLAN_PREFIX) => {
                 let id = value
-                    .strip_prefix(READ_ONLY_PLAN_PREFIX)
+                    .strip_prefix(UNSUPPORTED_PLAN_PREFIX)
                     .expect("prefix checked above");
-                self.input_ui.set_composer(ComposerMode::Input);
-                self.insert_entry(&Entry::Notice(format!(
-                    "legacy plan {} is read-only; create a new plan from source to run it",
-                    short_id(id),
-                )));
-                self.set_status("legacy plan");
+                self.report_unsupported_record("plan", id);
                 Ok(())
             }
-            value if value.starts_with(READ_ONLY_RUN_PREFIX) => {
-                let id: RunId = value
-                    .strip_prefix(READ_ONLY_RUN_PREFIX)
-                    .expect("prefix checked above")
-                    .parse()?;
-                let run = match self.workflow_ops()?.read_run_inventory(id) {
-                    Ok(run) => run,
-                    Err(error) => {
-                        self.insert_entry(&Entry::Error(format!("could not load run: {error:#}")));
-                        self.set_status("open failed");
-                        return Ok(());
-                    }
-                };
-                self.input_ui.set_composer(ComposerMode::Input);
-                self.insert_entry(&Entry::Notice(format!(
-                    "legacy run {} · {}\n{} · {}\nread-only: use `rho workflow status {id} --output json` for the stored snapshot",
-                    short_id(&id.to_string()), run.name,
-                    lifecycle_label(run.lifecycle), outcome_label(run.outcome),
-                )));
-                self.set_status("legacy run status");
+            value if value.starts_with(UNSUPPORTED_RUN_PREFIX) => {
+                let id = value
+                    .strip_prefix(UNSUPPORTED_RUN_PREFIX)
+                    .expect("prefix checked above");
+                self.report_unsupported_record("run", id);
                 Ok(())
             }
             // Enter on a workflow starts it. No extra menu.
@@ -463,15 +441,14 @@ impl App {
                 let path = value
                     .strip_prefix(SOURCE_PREFIX)
                     .expect("prefix checked above");
-                self.start_workflow_source(path, BTreeMap::new(), agent)
-                    .await
+                self.start_daemon_workflow_source(path, terminal).await
             }
             // Enter on a saved plan runs it.
             value if value.starts_with(PLAN_PREFIX) => {
                 let id = value
                     .strip_prefix(PLAN_PREFIX)
                     .expect("prefix checked above");
-                self.run_workflow_plan(id, terminal, agent).await
+                self.run_workflow_plan(id, terminal).await
             }
             // Retry is explicit; watching a ready run must never start a driver.
             value if value.starts_with(RETRY_RUN_PREFIX) => {
@@ -482,13 +459,12 @@ impl App {
                     return Ok(());
                 };
                 // Inventory can be stale if another process started the run.
-                // Normal resume retains the tracker and durable driver guards.
                 if run.state.state.lifecycle != RunLifecycle::Planned {
                     self.open_workflow_hub()?;
                     self.set_status("run is no longer ready; refreshed workflows");
                     return Ok(());
                 }
-                self.resume_workflow_run(id, /*recover_uncertain*/ false, terminal, agent)
+                self.resume_workflow_run(id, /*recover_uncertain*/ false, terminal)
                     .await
             }
             // Enter on a run opens the live screen or finished status.
@@ -496,7 +472,7 @@ impl App {
                 let id = value
                     .strip_prefix(RUN_PREFIX)
                     .expect("prefix checked above");
-                self.open_workflow_run_primary(id, terminal, agent).await
+                self.open_workflow_run_primary(id, terminal).await
             }
             other => {
                 self.insert_entry(&Entry::Error(format!(
@@ -508,30 +484,31 @@ impl App {
         }
     }
 
-    fn workflow_ops(&self) -> anyhow::Result<WorkflowOps> {
+    pub(super) fn workflow_ops(&self) -> anyhow::Result<WorkflowOps> {
         let path = self.info.services.config_repository.configured_path().ok();
-        WorkflowOps::open(self.info.runtime.cwd.clone(), path)
+        // The TUI's sessions run in this process's environment (#1659).
+        WorkflowOps::open(
+            self.info.runtime.cwd.clone(),
+            path,
+            &crate::session_environment::SessionEnvironment::default(),
+        )
     }
 
     async fn open_workflow_run_primary(
         &mut self,
         run_id: &str,
         terminal: &mut DefaultTerminal,
-        agent: &mut super::InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let parsed = RunId::from_str(run_id)?;
         let Some(run) = self.load_run_for_watch(parsed)? else {
             return Ok(());
         };
         match run.state.state.lifecycle {
+            // The daemon recovers the run once its prompt is through; the
+            // rail and the hub open it from there.
             RunLifecycle::NeedsRecovery => {
-                // Recover in the background, then open the watch screen.
-                self.resume_workflow_run(run_id, /*recover_uncertain*/ true, terminal, agent)
-                    .await?;
-                let Some(run) = self.load_run_for_watch(parsed)? else {
-                    return Ok(());
-                };
-                self.open_workflow_watch(run, terminal).await
+                self.resume_workflow_run(run_id, /*recover_uncertain*/ true, terminal)
+                    .await
             }
             RunLifecycle::Planned
             | RunLifecycle::Running
@@ -540,21 +517,28 @@ impl App {
         }
     }
 
-    /// Loads an executable watch target by exact ID, reporting unreadable or
-    /// replaced records in the transcript instead of leaving the TUI.
+    /// Explains in the transcript why a record saved before scoped workflow
+    /// programs cannot open here.
+    fn report_unsupported_record(&mut self, kind: &'static str, id: &str) {
+        self.input_ui.set_composer(ComposerMode::Input);
+        self.insert_entry(&Entry::Error(
+            WorkflowError::UnsupportedRecord {
+                kind,
+                id: id.to_owned(),
+            }
+            .to_string(),
+        ));
+        self.set_status("unsupported workflow record");
+    }
+
+    /// Loads a watch target by exact ID, reporting unreadable or replaced
+    /// records in the transcript instead of leaving the TUI.
     pub(super) fn load_run_for_watch(
         &mut self,
         run_id: RunId,
     ) -> anyhow::Result<Option<StoredRun>> {
-        match self.workflow_ops()?.load_run_record_id(run_id) {
-            Ok(crate::workflow::RunRecord::Current(run)) => Ok(Some(*run)),
-            Ok(crate::workflow::RunRecord::Legacy(_)) => {
-                self.insert_entry(&Entry::Error(
-                    "could not watch run: record is read-only".into(),
-                ));
-                self.set_status("open failed");
-                Ok(None)
-            }
+        match self.workflow_ops()?.load_run_id(run_id) {
+            Ok(run) => Ok(Some(run)),
             Err(error) => {
                 self.insert_entry(&Entry::Error(format!("could not load run: {error:#}")));
                 self.set_status("open failed");
@@ -618,208 +602,24 @@ impl App {
         Ok(())
     }
 
-    /// Plans `relative_path` with `inputs` (declared defaults fill the rest)
-    /// and starts the run in the background. Shared by the hub's START rows
-    /// and `/workflow:<name>`.
-    pub(super) async fn start_workflow_source(
-        &mut self,
-        relative_path: &str,
-        inputs: BTreeMap<String, serde_json::Value>,
-        agent: &mut super::InteractiveRuntime,
-    ) -> anyhow::Result<()> {
-        let absolute = self.info.runtime.cwd.join(relative_path);
-        self.set_status(format!("starting {relative_path}"));
-        let ops = self.workflow_ops()?;
-        let available_tools = agent.workflow_host_capabilities();
-        let inputs_note = if inputs.is_empty() {
-            " Default inputs."
-        } else {
-            ""
-        };
-        let prepared = match self
-            .prepare_source(&absolute, inputs, &available_tools)
-            .await
-        {
-            Ok(prepared) => prepared,
-            Err(error) => {
-                self.insert_entry(&Entry::Error(format!(
-                    "could not start {relative_path}: {error:#}"
-                )));
-                self.set_status("start failed");
-                return Ok(());
-            }
-        };
-        let run = match ops.create_launch_run(&prepared) {
-            Ok(run) => run,
-            Err(error) => {
-                self.insert_entry(&Entry::Error(format!("{error:#}")));
-                self.set_status("start failed");
-                return Ok(());
-            }
-        };
-        let run_id = run.manifest.run_id;
-        self.input_ui.set_composer(ComposerMode::Input);
-        self.insert_entry(&Entry::Notice(format!(
-            "Starting '{}' in the background (run {}).{inputs_note} Completion is delivered automatically.",
-            run.graph.program.name,
-            short_id(&run_id.to_string())
-        )));
-        self.launch_workflow_execution(run, RecoveryDecision::NormalResume, agent)
-            .await
-    }
-
-    /// `/workflow:<name> [inputs JSON]`: start one workspace workflow
-    /// without opening the hub, or report why it cannot start.
-    pub(super) async fn start_workflow_command(
-        &mut self,
-        name: &str,
-        resolved: Result<discover::StartCommand, String>,
-        agent: &mut super::InteractiveRuntime,
-    ) -> anyhow::Result<()> {
-        match resolved {
-            Ok(start) => {
-                self.start_workflow_source(&start.workflow.relative_path, start.inputs, agent)
-                    .await
-            }
-            Err(detail) => {
-                self.insert_entry(&Entry::Error(format!("could not run /{name}: {detail}")));
-                self.set_status("start failed");
-                Ok(())
-            }
-        }
-    }
-
-    async fn prepare_source(
-        &self,
-        absolute: &std::path::Path,
-        inputs: BTreeMap<String, serde_json::Value>,
-        available_tools: &AgentCapabilities,
-    ) -> anyhow::Result<workflow_cli::PreparedPlan> {
-        let ops = self.workflow_ops()?;
-        let config = self.info.services.config_repository.load()?;
-        ops.prepare_local_json(absolute, inputs, &config, available_tools)
-            .await
-    }
-
     async fn run_workflow_plan(
         &mut self,
         plan_id: &str,
-        _terminal: &mut DefaultTerminal,
-        agent: &mut super::InteractiveRuntime,
+        terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
-        let plan_id = PlanId::from_str(plan_id)?;
-        let ops = self.workflow_ops()?;
-        let plan = match ops.prepare_run_id(plan_id) {
-            Ok(plan) => plan,
-            Err(error) => {
-                self.insert_entry(&Entry::Error(format!("could not prepare plan: {error:#}")));
-                self.set_status("run failed");
-                return Ok(());
-            }
-        };
-        let run = match ops.create_confirmed_run(&plan) {
-            Ok(run) => run,
-            Err(error) => {
-                self.insert_entry(&Entry::Error(format!("could not create run: {error:#}")));
-                self.set_status("run failed");
-                return Ok(());
-            }
-        };
-        let run_id = run.manifest.run_id;
-        self.input_ui.set_composer(ComposerMode::Input);
-        self.insert_entry(&Entry::Notice(format!(
-            "Starting plan {} in the background (run {}). Completion is delivered automatically.",
-            short_id(&plan_id.to_string()),
-            short_id(&run_id.to_string())
-        )));
-        self.launch_workflow_execution(run, RecoveryDecision::NormalResume, agent)
-            .await
+        let command = discover::WorkflowLaunch::plan_command(PlanId::from_str(plan_id)?);
+        self.launch_daemon_workflow(command, terminal).await
     }
 
     async fn resume_workflow_run(
         &mut self,
         run_id: &str,
         recover_uncertain: bool,
-        _terminal: &mut DefaultTerminal,
-        agent: &mut super::InteractiveRuntime,
+        terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
         let run_id = RunId::from_str(run_id)?;
-        let ops = self.workflow_ops()?;
-        let run = match ops.load_run_id(run_id) {
-            Ok(run) => run,
-            Err(error) => {
-                self.insert_entry(&Entry::Error(format!("could not load run: {error:#}")));
-                self.set_status("open failed");
-                return Ok(());
-            }
-        };
-        let recovery = match ops.prepare_resume(&run, recover_uncertain) {
-            Ok(recovery) => recovery,
-            Err(error) => {
-                self.insert_entry(&Entry::Error(format!("could not open run: {error:#}")));
-                self.set_status("open failed");
-                return Ok(());
-            }
-        };
-        self.input_ui.set_composer(ComposerMode::Input);
-        self.insert_entry(&Entry::Notice(format!(
-            "Resuming run {} in the background. Completion is delivered automatically.",
-            short_id(&run_id.to_string())
-        )));
-        self.launch_workflow_execution(run, recovery, agent).await
-    }
-
-    async fn launch_workflow_execution(
-        &mut self,
-        run: StoredRun,
-        recovery: RecoveryDecision,
-        agent: &mut super::InteractiveRuntime,
-    ) -> anyhow::Result<()> {
-        let run_id = run.manifest.run_id;
-        let workflow_name = run.graph.program.name.as_str().to_owned();
-        let program_digest = run.manifest.program_digest.0.clone();
-        let config_path = self.info.services.config_repository.configured_path().ok();
-        // Background runs keep the chat TUI, so workflow approvals are headless.
-        let tracker = agent.workflow_tracker().clone();
-        if !tracker.register_start(
-            run_id.to_string(),
-            workflow_name.clone(),
-            program_digest.clone(),
-            Some(agent.session_id().to_string()),
-        ) {
-            self.insert_entry(&Entry::Error(
-                "could not start workflow: already running".into(),
-            ));
-            self.set_status("workflow already running");
-            return Ok(());
-        }
-        match workflow_cli::spawn_background_run(run, recovery, config_path, Some(tracker)).await {
-            Ok(_) => {
-                let (model, display) = crate::tools::workflow_tracker::start_context_prompts(
-                    &run_id.to_string(),
-                    &workflow_name,
-                    &program_digest,
-                );
-                if let Err(error) = agent.append_user_context_with_display(model, display.clone()) {
-                    self.insert_entry(&Entry::Error(format!(
-                        "workflow started, but could not add run id to context: {error:#}"
-                    )));
-                } else {
-                    self.insert_entry(&Entry::Notice(display));
-                }
-                self.set_status(format!(
-                    "workflow run {} is running in the background",
-                    short_id(&run_id.to_string())
-                ));
-            }
-            Err(error) => {
-                self.insert_entry(&Entry::Error(format!(
-                    "could not start workflow in the background: {error:#}"
-                )));
-                self.set_status("workflow failed");
-            }
-        }
-        Ok(())
+        let command = discover::WorkflowLaunch::resume_command(run_id, recover_uncertain);
+        self.launch_daemon_workflow(command, terminal).await
     }
 }
 
@@ -831,7 +631,6 @@ mod tests;
 fn test_source(label: &str, relative: &str) -> discover::DiscoveredWorkflow {
     discover::DiscoveredWorkflow {
         relative_path: relative.into(),
-        absolute_path: std::path::PathBuf::from(relative),
         label: label.into(),
     }
 }

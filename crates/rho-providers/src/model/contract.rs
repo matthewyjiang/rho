@@ -3,8 +3,8 @@ use std::time::Duration;
 pub use rho_sdk::model::AbortedAssistant;
 pub use rho_sdk::model::{
     AssistantMessage, ContentBlock, ImageContent, Message, ModelEvent, ModelIdentity, ModelRequest,
-    ModelResponse, ModelUsage, PartialToolCall, ProviderContextBlock, ToolCall, ToolResult,
-    ToolSpec,
+    ModelResponse, ModelUsage, PartialToolCall, ProviderContextBlock, ReasoningShift, ReplayScope,
+    ToolCall, ToolResult, ToolResultStatus, ToolSpec, WireMessage,
 };
 use thiserror::Error;
 

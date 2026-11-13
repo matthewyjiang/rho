@@ -1,4 +1,4 @@
-use rho_providers::model::{image_summary, ContentBlock, ImageContent};
+use rho_providers::model::{image_summary, ImageContent};
 
 /// Ready media queued with the next user turn.
 #[derive(Clone, Debug, PartialEq)]
@@ -58,17 +58,16 @@ impl ChatMedia {
         }
     }
 
-    pub(super) fn display_block(&self) -> ContentBlock {
+    /// The block a daemon prompt carries for this media.
+    pub(super) fn wire_block(self) -> rho_protocol::ContentBlock {
         match self {
-            Self::Image(image) => ContentBlock::Image(image.clone()),
-            Self::TextDocument(document) => ContentBlock::Text(document.label()),
-        }
-    }
-
-    pub(super) fn model_block(self) -> ContentBlock {
-        match self {
-            Self::Image(image) => ContentBlock::Image(image),
-            Self::TextDocument(document) => ContentBlock::Text(document.model_text()),
+            Self::Image(image) => rho_protocol::ContentBlock::Image {
+                mime_type: image.mime_type,
+                data: image.data,
+            },
+            Self::TextDocument(document) => rho_protocol::ContentBlock::Text {
+                text: document.model_text(),
+            },
         }
     }
 }

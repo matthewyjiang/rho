@@ -175,13 +175,13 @@ fn classify_search_line(line: &str) -> SearchLine<'_> {
             return SearchLine::Content { prefix, source };
         }
     }
-    if let Some(path) = path_from_hashline_header(trimmed) {
+    if let Some(path) = path_from_tagged_header(trimmed) {
         return SearchLine::Path {
             path,
             display: trimmed,
         };
     }
-    // Plain path header (content mode without hashline tags).
+    // Plain path header (content mode).
     if looks_like_path_header(trimmed) {
         return SearchLine::Path {
             path: trimmed,
@@ -191,7 +191,9 @@ fn classify_search_line(line: &str) -> SearchLine<'_> {
     SearchLine::Plain
 }
 
-fn path_from_hashline_header(line: &str) -> Option<&str> {
+/// Grep results saved before Rho 3.0 removed the hashline edit format carry
+/// `[path#TAG]` headers; resumed transcripts still style them as paths.
+fn path_from_tagged_header(line: &str) -> Option<&str> {
     let inner = line.strip_prefix('[')?.strip_suffix(']')?;
     let (path, tag) = inner.rsplit_once('#')?;
     if path.is_empty() || tag.is_empty() {

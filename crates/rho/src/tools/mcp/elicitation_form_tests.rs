@@ -37,7 +37,7 @@ fn shape(form: &ElicitationForm, id: &'static str) -> QuestionShape {
     QuestionShape {
         id,
         prompt: question.prompt().to_owned(),
-        help: question.help_text().map(str::to_owned),
+        help: question.help().map(str::to_owned),
         choices: question
             .choices()
             .iter()
@@ -46,7 +46,7 @@ fn shape(form: &ElicitationForm, id: &'static str) -> QuestionShape {
         many: question.selection() == SelectionMode::Many,
         free_text: question.permits_other(),
         required: question.is_required(),
-        default: question.default_value_ref().cloned(),
+        default: question.default_value().cloned(),
     }
 }
 

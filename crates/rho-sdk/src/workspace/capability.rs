@@ -1,6 +1,9 @@
+use crate::SessionId;
 use std::{
+    collections::BTreeMap,
     fmt,
     path::{Path, PathBuf},
+    sync::Arc,
     time::Duration,
 };
 
@@ -14,6 +17,9 @@ pub enum CapabilityKind {
     Network,
     Skill,
     InstructionDiscovery,
+    /// Acting on another agent session: starting, prompting, steering, or
+    /// cancelling it. Watching one needs no capability of this kind.
+    SessionControl,
 }
 
 impl CapabilityKind {
@@ -26,6 +32,7 @@ impl CapabilityKind {
             Self::Network => "network",
             Self::Skill => "skill",
             Self::InstructionDiscovery => "instruction discovery",
+            Self::SessionControl => "session control",
         }
     }
 }
@@ -192,6 +199,56 @@ pub enum ProcessEnvironment {
     InheritExcept {
         variable_names: Vec<String>,
     },
+    /// Exactly these variables, none of the ambient environment, such as a
+    /// daemon client's (#1659).
+    Explicit {
+        variables: EnvironmentVariables,
+    },
+}
+
+/// Environment variables a process runs with in place of the ambient
+/// environment. Values are secrets, so `Debug` shows only how many there
+/// are. Clones share one map.
+#[derive(Clone, PartialEq, Eq)]
+pub struct EnvironmentVariables(Arc<BTreeMap<String, String>>);
+
+impl EnvironmentVariables {
+    /// The value of `name`, if set.
+    pub fn get(&self, name: &str) -> Option<&str> {
+        self.0.get(name).map(String::as_str)
+    }
+
+    /// Every variable, by name.
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.0
+            .iter()
+            .map(|(name, value)| (name.as_str(), value.as_str()))
+    }
+
+    /// How many variables there are.
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Whether there are none.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl FromIterator<(String, String)> for EnvironmentVariables {
+    fn from_iter<I: IntoIterator<Item = (String, String)>>(variables: I) -> Self {
+        Self(Arc::new(variables.into_iter().collect()))
+    }
+}
+
+impl fmt::Debug for EnvironmentVariables {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("EnvironmentVariables")
+            .field("len", &self.len())
+            .finish_non_exhaustive()
+    }
 }
 
 impl ProcessEnvironment {
@@ -232,13 +289,28 @@ impl ProcessOutputLimits {
 }
 
 /// Complete, structured process facts presented to policy and approval handlers.
-#[derive(Clone, PartialEq, Eq)]
+///
+/// Equality ignores [`Self::requested_command`]: approval identity, including
+/// "Allow for session", is the process that runs, not the text that led to it.
+#[derive(Clone)]
 pub struct ProcessExecution {
     working_directory: PathBuf,
     invocation: ProcessInvocation,
     environment: ProcessEnvironment,
     output_limits: ProcessOutputLimits,
+    requested_command: Option<String>,
 }
+
+impl PartialEq for ProcessExecution {
+    fn eq(&self, other: &Self) -> bool {
+        self.working_directory == other.working_directory
+            && self.invocation == other.invocation
+            && self.environment == other.environment
+            && self.output_limits == other.output_limits
+    }
+}
+
+impl Eq for ProcessExecution {}
 
 impl ProcessExecution {
     pub fn new(
@@ -252,7 +324,16 @@ impl ProcessExecution {
             invocation,
             environment,
             output_limits,
+            requested_command: None,
         }
+    }
+
+    /// Records the command the model asked for when the host rewrote it into
+    /// the invocation that runs, such as `git status` run as `rtk git status`.
+    /// Leave it unset when nothing was rewritten.
+    pub fn with_requested_command(mut self, command: impl Into<String>) -> Self {
+        self.requested_command = Some(command.into());
+        self
     }
 
     pub fn working_directory(&self) -> &Path {
@@ -270,6 +351,12 @@ impl ProcessExecution {
     pub fn output_limits(&self) -> ProcessOutputLimits {
         self.output_limits
     }
+
+    /// The command the model asked for, present only when the host rewrote it.
+    /// Informational: policy and approval act on [`Self::invocation`].
+    pub fn requested_command(&self) -> Option<&str> {
+        self.requested_command.as_deref()
+    }
 }
 
 impl fmt::Debug for ProcessExecution {
@@ -280,6 +367,7 @@ impl fmt::Debug for ProcessExecution {
             .field("invocation", &self.invocation)
             .field("environment", &self.environment)
             .field("output_limits", &self.output_limits)
+            .field("requested_command", &self.requested_command)
             .finish()
     }
 }
@@ -326,6 +414,84 @@ pub enum CapabilityOperation {
     NetworkAccess(NetworkTarget),
     LoadSkill { name: String, path: Option<PathBuf> },
     DiscoverInstructions { path: PathBuf, scope: PathScope },
+    ControlSession(SessionControlTarget),
+}
+
+/// What a session-control operation does to an agent session.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum SessionControlAction {
+    /// Start a session with a first prompt.
+    New,
+    /// Start a session's next turn.
+    Prompt,
+    /// Give a running turn input for its next model request.
+    Steer,
+    /// Cancel the turn in progress.
+    Cancel,
+}
+
+impl SessionControlAction {
+    /// Stable lowercase label for diagnostics and host UI.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::New => "new",
+            Self::Prompt => "prompt",
+            Self::Steer => "steer",
+            Self::Cancel => "cancel",
+        }
+    }
+}
+
+/// The agent session an operation acts on: one it starts, prompts, steers,
+/// or cancels. Every field is part of the request, so an approval
+/// remembered for the session covers only an identical request: the same
+/// text sent to the same session.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct SessionControlTarget {
+    pub action: SessionControlAction,
+    /// The session; `None` for one the operation starts.
+    pub session: Option<SessionId>,
+    /// The session's workspace.
+    pub workspace: PathBuf,
+    /// The text the operation sends: a new session's first prompt, or a
+    /// prompt's or steer's text. `None` for a cancel.
+    pub text: Option<String>,
+}
+
+impl SessionControlTarget {
+    /// Starting a session in `workspace` with the first prompt `text`.
+    pub fn start(workspace: impl Into<PathBuf>, text: impl Into<String>) -> Self {
+        Self {
+            action: SessionControlAction::New,
+            session: None,
+            workspace: workspace.into(),
+            text: Some(text.into()),
+        }
+    }
+
+    /// Acting on `session`, in `workspace`, with `action`.
+    pub fn on(
+        action: SessionControlAction,
+        session: SessionId,
+        workspace: impl Into<PathBuf>,
+    ) -> Self {
+        Self {
+            action,
+            session: Some(session),
+            workspace: workspace.into(),
+            text: None,
+        }
+    }
+
+    /// This operation, sending `text`.
+    pub fn with_text(self, text: impl Into<String>) -> Self {
+        Self {
+            text: Some(text.into()),
+            ..self
+        }
+    }
 }
 
 /// Security-sensitive authority requested by a tool or prompt adapter.
@@ -396,6 +562,10 @@ impl CapabilityRequest {
         )
     }
 
+    pub fn session_control(target: SessionControlTarget, source: CapabilitySource) -> Self {
+        Self::new(CapabilityOperation::ControlSession(target), source)
+    }
+
     pub fn operation(&self) -> &CapabilityOperation {
         &self.operation
     }
@@ -414,6 +584,7 @@ impl CapabilityRequest {
             CapabilityOperation::DiscoverInstructions { .. } => {
                 CapabilityKind::InstructionDiscovery
             }
+            CapabilityOperation::ControlSession(_) => CapabilityKind::SessionControl,
         }
     }
 
@@ -424,7 +595,10 @@ impl CapabilityRequest {
             | CapabilityOperation::DiscoverInstructions { scope, .. } => scope,
             CapabilityOperation::ExecuteProcess(_)
             | CapabilityOperation::NetworkAccess(_)
-            | CapabilityOperation::LoadSkill { .. } => return false,
+            | CapabilityOperation::LoadSkill { .. }
+            // The target's workspace names the session, not a path the
+            // operation reads or writes.
+            | CapabilityOperation::ControlSession(_) => return false,
         };
         match scope {
             PathScope::PrimaryWorkspace => false,

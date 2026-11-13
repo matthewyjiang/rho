@@ -63,7 +63,7 @@ pub(super) async fn fetch(
     store: &dyn CredentialStore,
 ) -> Result<Vec<ProviderModelRecord>, ModelError> {
     let muse_env_key = match auth.auth_kind {
-        ProviderAuthKind::MetaOAuth { env_var, .. } => env_api_key(env_var),
+        ProviderAuthKind::MetaOAuth { env_var, .. } => env_api_key(store, env_var),
         _ => None,
     };
     fetch_with_mint(

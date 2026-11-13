@@ -68,28 +68,13 @@ pub(super) fn compactor(
         },
         context_window,
         usage_recording: ProviderRequestUsageRecording::new(usage),
-        diagnostics: seeded_diagnostics(),
+        diagnostics: crate::diagnostics::test_diagnostics("test", "test"),
         recall: None,
         todo: None,
         code_mode: None,
+        credentials: Arc::new(crate::credential_store::AppCredentialStore),
     })
     .0
-}
-
-/// Diagnostics that report compaction, as a live runtime's do after its
-/// first context refresh.
-fn seeded_diagnostics() -> crate::diagnostics::RuntimeDiagnostics {
-    let diagnostics = crate::diagnostics::test_diagnostics("test", "test");
-    diagnostics.record_compaction_context(
-        crate::diagnostics::CompactionContext::new(
-            rho_sdk::ContextEstimate::from_estimated_tokens(0),
-            None,
-            &CompactionConfig::default(),
-        ),
-        None,
-        Default::default(),
-    );
-    diagnostics
 }
 
 // Covers: native compaction returns the replacement, records successful usage,
@@ -176,10 +161,7 @@ async fn native_compaction_failure_falls_back_to_summary_path() {
     assert!(output.messages().iter().any(|message| {
         matches!(
             message,
-            Message::User(blocks) if blocks.iter().any(|block| matches!(
-                block,
-                ContentBlock::Text(text) if text.contains("summary text")
-            ))
+            Message::CompactionSummary(summary) if summary.text.contains("summary text")
         )
     }));
     let events = usage.events();
@@ -235,10 +217,7 @@ async fn instructions_skip_native_compaction_and_reach_the_summarizer() {
         .unwrap();
 
     let summarized = output.messages().iter().any(|message| {
-        matches!(message, Message::User(blocks) if blocks.iter().any(|block| matches!(
-            block,
-            ContentBlock::Text(text) if text.contains("summary text")
-        )))
+        matches!(message, Message::CompactionSummary(summary) if summary.text.contains("summary text"))
     });
     assert!(summarized, "{:?}", output.messages());
     let requests = provider.recorded_requests();
@@ -246,7 +225,7 @@ async fn instructions_skip_native_compaction_and_reach_the_summarizer() {
     let Some(Message::User(blocks)) = requests[0].messages.last() else {
         panic!("expected a trailing user instruction");
     };
-    let [ContentBlock::Text(instruction)] = blocks.as_slice() else {
+    let [ContentBlock::Text(instruction)] = blocks.as_ref() else {
         panic!("expected one text block, got {blocks:?}");
     };
     assert!(
@@ -295,10 +274,7 @@ async fn native_compaction_auth_retry_keeps_monotonic_attempt_indexes() {
     assert!(output.messages().iter().any(|message| {
         matches!(
             message,
-            Message::User(blocks) if blocks.iter().any(|block| matches!(
-                block,
-                ContentBlock::Text(text) if text.contains("summary text")
-            ))
+            Message::CompactionSummary(summary) if summary.text.contains("summary text")
         )
     }));
 
@@ -340,10 +316,7 @@ async fn manual_trigger_summarizes_below_automatic_target() {
         messages.iter().any(|message| {
             matches!(
                 message,
-                Message::User(blocks) if blocks.iter().any(|block| matches!(
-                    block,
-                    ContentBlock::Text(text) if text.contains("summary text")
-                ))
+                Message::CompactionSummary(summary) if summary.text.contains("summary text")
             )
         })
     };
@@ -403,20 +376,19 @@ async fn native_compaction_cancellation_is_explicit() {
 }
 
 fn elision_history() -> (rho_sdk::model::ToolResult, Vec<Message>) {
-    let old = rho_sdk::model::ToolResult {
-        id: "old".into(),
-        ok: true,
-        content: "x".repeat(40_000),
-    };
+    let old = rho_sdk::model::ToolResult::succeeded("old", "x".repeat(40_000));
     let history = vec![
         Message::System("system".into()),
         Message::user_text("read it"),
-        Message::Assistant(vec![ContentBlock::ToolCall(rho_sdk::model::ToolCall {
-            id: "old".into(),
-            name: "read_file".into(),
-            arguments: serde_json::json!({"path": "big.rs"}),
-        })]),
-        Message::ToolResult(old.clone()),
+        Message::Assistant(
+            (vec![ContentBlock::ToolCall(rho_sdk::model::ToolCall::new(
+                "old".into(),
+                "read_file".into(),
+                serde_json::json!({"path": "big.rs"}),
+            ))])
+            .into(),
+        ),
+        Message::ToolResult(old.clone().into()),
         Message::user_text("recent"),
         Message::assistant_text("ok"),
     ];
@@ -428,7 +400,7 @@ fn tiered_compactor(
     usage: RecordingUsage,
     recall: Option<crate::session::recall::RecallStore>,
 ) -> (ModelCompactor, crate::diagnostics::RuntimeDiagnostics) {
-    let diagnostics = seeded_diagnostics();
+    let diagnostics = crate::diagnostics::test_diagnostics("test", "test");
     let compactor = build_compaction(CompactionSetup {
         provider: Arc::new(provider) as Arc<dyn ModelProvider>,
         tool_specs: Vec::new(),
@@ -440,16 +412,14 @@ fn tiered_compactor(
         recall,
         todo: None,
         code_mode: None,
+        credentials: Arc::new(crate::credential_store::AppCredentialStore),
     })
     .0;
     (compactor, diagnostics)
 }
 
 fn last_tier(diagnostics: &crate::diagnostics::RuntimeDiagnostics) -> Option<CompactionTier> {
-    diagnostics
-        .compaction()
-        .and_then(|compaction| compaction.last_compaction)
-        .and_then(|record| record.tier)
+    diagnostics.last_compaction().and_then(|record| record.tier)
 }
 
 fn summary_provider() -> ScriptedProvider {
@@ -473,16 +443,21 @@ async fn compaction_sizes_partition_and_elision_against_advertised_tools() {
     history.splice(
         4..4,
         [
-            Message::Assistant(vec![ContentBlock::ToolCall(rho_sdk::model::ToolCall {
-                id: "recent-tool".into(),
-                name: "read_file".into(),
-                arguments: serde_json::json!({"path": "recent.rs"}),
-            })]),
-            Message::ToolResult(rho_sdk::model::ToolResult {
-                id: "recent-tool".into(),
-                ok: true,
-                content: old.content[..old.content.len() / 10].to_owned(),
-            }),
+            Message::Assistant(
+                (vec![ContentBlock::ToolCall(rho_sdk::model::ToolCall::new(
+                    "recent-tool".into(),
+                    "read_file".into(),
+                    serde_json::json!({"path": "recent.rs"}),
+                ))])
+                .into(),
+            ),
+            Message::ToolResult(
+                (rho_sdk::model::ToolResult::succeeded(
+                    "recent-tool",
+                    old.content[..old.content.len() / 10].to_owned(),
+                ))
+                .into(),
+            ),
         ],
     );
     let mut registry = vec![read_spec(), read_spec()];
@@ -522,14 +497,14 @@ async fn compaction_sizes_partition_and_elision_against_advertised_tools() {
         let mut actual = output.messages().to_vec();
         let mut expected = history.clone();
         let tier = if can_recall {
-            actual[3] = Message::ToolResult(old.clone());
+            actual[3] = Message::ToolResult(old.clone().into());
             CompactionTier::Elision
         } else {
             expected.splice(2..4, [Message::compaction_summary(trigger, "summary text")]);
             CompactionTier::TextSummary
         };
         assert_eq!(actual, expected, "{case}");
-        let record = diagnostics.compaction().unwrap().last_compaction.unwrap();
+        let record = diagnostics.last_compaction().unwrap();
         assert_eq!(
             (
                 record.tier,
@@ -633,7 +608,8 @@ async fn escalation_elides_only_the_transcript_summary() {
             tiered_compactor(session.clone(), RecordingUsage::default(), Some(recall));
         if configured {
             compactor.summarizer = Some(super::Summarizer::with_provider(
-                crate::compaction::SummarizerModel {
+                crate::agent::ResolvedRhoModel {
+                    providers: Default::default(),
                     provider: "opencode-go".into(),
                     model: "muse-mini".into(),
                     auth: "api-key".into(),
@@ -648,10 +624,7 @@ async fn escalation_elides_only_the_transcript_summary() {
             .await
             .unwrap();
 
-        let record = diagnostics
-            .compaction()
-            .and_then(|compaction| compaction.last_compaction)
-            .unwrap();
+        let record = diagnostics.last_compaction().unwrap();
         assert_eq!(
             (record.tier, record.elided_tool_results),
             (Some(CompactionTier::TextSummary), elided),

@@ -110,6 +110,25 @@ fn model_diagnostics_redact_workflow_error_paths() {
     );
 }
 
+// Covers: a workflow the target cannot launch tells the model why, not only
+// that the operation failed, so it can drop its command nodes (#1736).
+// Owner: workflow CLI diagnostic adapter.
+#[test]
+fn model_diagnostics_name_the_platform_launch_limit() {
+    let error = anyhow::Error::from(
+        crate::workflow::HandleLaunch::Unsupported
+            .ensure()
+            .unwrap_err(),
+    );
+    let expected = crate::workflow::Diagnostic {
+        code: "unsupported_platform".to_owned(),
+        message: error.to_string(),
+        span: None,
+    };
+
+    assert_eq!(diagnostic_for_model_error(&error), expected);
+}
+
 // Covers: anyhow context must not bypass model path redaction when the owned
 // WorkflowError is lower in the error chain.
 // Owner: workflow CLI diagnostic adapter.
@@ -261,6 +280,7 @@ async fn resume_preflight_is_self_contained_after_plan_deletion() {
     WorkflowOps::open(
         std::env::current_dir().unwrap(),
         Some(config.configured_path().unwrap()),
+        &crate::session_environment::SessionEnvironment::default(),
     )
     .unwrap()
     .recheck_run(&run)

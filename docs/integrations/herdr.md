@@ -12,7 +12,6 @@ Herdr support is Unix-only. On other platforms Rho ignores Herdr environment var
 | --- | --- |
 | Agent state | Rho reports `idle`, `working`, and `blocked` so Herdr can show pane status. Rho's own terminal [notifications](/configuration) stay off so you are not notified twice. |
 | Session restore | After a Herdr server restart, the pane reopens the same Rho session |
-| Subagent attach | Click a subagent row in the activity rail to open the in-place attach view. `rho attach <id>` remains available for another terminal. |
 | Image paste | A single-line paste of an image path becomes an attachment instead of plain text |
 | Image previews | Standard Kitty graphics, rendered natively by Herdr 0.9.2 or later |
 
@@ -37,20 +36,20 @@ Rho keeps Herdr in sync with the session:
 
 | State | When |
 | --- | --- |
-| `working` | A model turn or tool run is in progress, or an attached subagent is still running |
-| `blocked` | Rho waits on you (approval, questionnaire), auth is missing, a goal is blocked, or an attached run failed |
+| `working` | A model turn or tool run is in progress |
+| `blocked` | Rho waits on you (approval, questionnaire) or auth is missing |
 | `idle` | The session is resting and not waiting on user input |
 
 On exit, Rho releases the agent marker for the pane.
 
-Interactive sessions and `rho run` both report state when they detect Herdr. `rho attach <id>` reports state for the watched run and releases on detach.
+Interactive sessions and `rho run` both report state when they detect Herdr.
 
 ## Session restore
 
 Rho reports a resume command for each saved session, so Herdr can reopen that session in the same pane and directory after its server restarts:
 
 ```text
-rho [--config <path>] [--agent <id>] [--no-system-prompt] [--no-tools] [--no-subagents] \
+rho [--agent <id>] [--no-system-prompt] [--no-tools] [--no-subagents] \
   [--model <provider/model>] [--auth <profile>] [--reasoning <level>] \
   [--permission-mode <mode>] --resume <session-id>
 ```
@@ -59,13 +58,7 @@ Launch flags are repeated as given. Model, auth, reasoning, and permission mode 
 
 A session that is not saved yet (before the first prompt, after `/new`, or with `--no-save`) has no resume command. Resume needs Herdr 0.9.2 or later. To turn it off, set `[session] resume_agents_on_restore = false` in Herdr's config.
 
-`rho attach`, `rho run`, and `rho acp` report state but no resume command. `rho run` and `rho acp` report under their own source, so one started from a tool inside an interactive pane cannot clear that session's resume command.
-
-## Watch a subagent
-
-Activating a subagent row, or choosing one from `/attach`, opens a read-only attach view in the same terminal. The parent session keeps streaming. Press `q` or Escape to return. Detaching does not stop the delegated run.
-
-`rho attach <id>` still starts the same viewer as its own process when you want another terminal. See [attachment and artifacts](/subagents/attachment-and-artifacts).
+`rho run` and `rho acp` report state but no resume command. They report under their own source, so one started from a tool inside an interactive pane cannot clear that session's resume command.
 
 ## Images and graphics
 
@@ -89,7 +82,7 @@ In the interactive TUI, run `/doctor`. The **Herdr** row reports:
 ## Related
 
 - [Integrations](/integrations) - other built-in integrations
-- [Interactive TUI](/interactive-tui) - session UI, `/doctor`, and `rho attach`
+- [Interactive TUI](/interactive-tui) - session UI, `/doctor`, and `/attach`
 - [Subagent attachment](/subagents/attachment-and-artifacts) - run artifacts and detach behavior
 - [Attachments](/interactive-tui/attachments) - image and document paste
 - [Documents and images](/tools-workspace/documents-and-images) - thumbnail paint paths

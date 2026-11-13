@@ -144,10 +144,14 @@ impl SessionOptions {
         self
     }
 
+    /// Continues a saved session. History saved by rho-sdk 5.x is converted:
+    /// its tool-image user messages move onto their tool results.
     pub fn from_snapshot(snapshot: SessionSnapshot) -> Self {
+        let mut history = snapshot.history().to_vec();
+        crate::model::attach_legacy_tool_images(&mut history, |message| message);
         Self {
             id: snapshot.session_id().clone(),
-            history: snapshot.history().to_vec(),
+            history,
             revision: snapshot.revision(),
             compaction: snapshot.compaction().clone(),
             metadata: snapshot.metadata().clone(),
@@ -393,6 +397,7 @@ impl RhoBuilder {
     pub fn build(self) -> Result<Rho, Error> {
         let provider = self.provider.ok_or_else(|| Error::InvalidConfiguration {
             message: "a model provider is required".into(),
+            source: None,
         })?;
         let tool_reads_live_history = self.tools.iter().any(|tool| tool.reads_live_history());
         let mut tools = ToolRegistry::new();
@@ -401,17 +406,20 @@ impl RhoBuilder {
                 .register_shared(tool)
                 .map_err(|error| Error::InvalidConfiguration {
                     message: error.to_string(),
+                    source: Some(Box::new(error)),
                 })?;
         }
         if self.compaction_policy.is_some() && self.compactor.is_none() {
             return Err(Error::InvalidConfiguration {
                 message: "automatic compaction policy requires a compactor".into(),
+                source: None,
             });
         }
         let usage_purpose = self.usage_purpose.unwrap_or_else(|| "agent".into());
         if usage_purpose.trim().is_empty() {
             return Err(Error::InvalidConfiguration {
                 message: "usage purpose must not be empty".into(),
+                source: None,
             });
         }
         let (approval_handler, approvals, approval_audit) = match self.approval_session {

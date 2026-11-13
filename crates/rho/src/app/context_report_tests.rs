@@ -28,11 +28,11 @@ async fn calibrated_session(reported: u64) -> rho_sdk::Session {
         ModelIdentity::new("test", "test", "test"),
         [
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                ToolCall {
-                    id: "read-1".into(),
-                    name: "read_file".into(),
-                    arguments: serde_json::json!({"path": "src/main.rs"}),
-                },
+                ToolCall::new(
+                    "read-1".into(),
+                    "read_file".into(),
+                    serde_json::json!({"path": "src/main.rs"}),
+                ),
             )])),
             ScriptedTurn::streaming(
                 vec![ModelEvent::Usage(ModelUsage {
@@ -98,7 +98,7 @@ async fn report_groups_sources_and_scales_rows_to_calibrated_total() {
                 .iter()
                 .map(|row| (row.label.as_str(), row.detail.as_deref()))
                 .collect();
-            (group.label, rows)
+            (group.label.as_str(), rows)
         })
         .collect();
     assert_eq!(

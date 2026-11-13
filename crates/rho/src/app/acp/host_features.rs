@@ -8,17 +8,15 @@
 //! `clientCapabilities.elicitation.form`, and in URL mode only to clients that
 //! advertise `.url`. Other hosts keep the baseline: `/compact` replies with an
 //! agent message, automatic compaction shows only in `usage_update`, notices
-//! are agent messages, on/off options are two-value selects, Rho offers no
-//! questionnaire tool and declines MCP elicitation, and sign-in runs in a
-//! terminal (as it does on hosts without forms until a credential store is
-//! chosen). A host advertising both `clientCapabilities.fs.readTextFile`
-//! and `.writeTextFile` serves file text through `fs/*` requests, and one
-//! advertising `clientCapabilities.terminal` runs shell commands through
-//! `terminal/*`; others keep Rho on disk and local processes.
+//! are agent messages, on/off options are two-value selects, the sessions
+//! they open offer no questionnaire tool and decline MCP elicitation (a
+//! question in a session another client opened is left to that client),
+//! and sign-in runs in a terminal. Rho asks no host for `fs/*` or `terminal/*`: the daemon runs
+//! the session's tools on its own disk and processes.
 
 use std::sync::{Arc, OnceLock};
 
-use agent_client_protocol::schema::v1::InitializeRequest;
+use agent_client_protocol::v1::schema::InitializeRequest;
 
 use super::AcpClientPort;
 
@@ -33,14 +31,25 @@ pub(in crate::app) struct HostFeatures {
     pub(super) toggles: Toggles,
     /// Form-mode `elicitation/create`: questions put to the user.
     pub(super) forms: Forms,
-    /// URL-mode `elicitation/create`: links the user opens, such as an OAuth
-    /// sign-in page or Rho's API-key page.
+    /// URL-mode `elicitation/create`: links the user opens, such as a
+    /// provider's sign-in page.
     pub(super) urls: bool,
-    /// `fs/read_text_file` and `fs/write_text_file`. Rho needs both: writing
-    /// without reading would overwrite unsaved edits it never saw.
-    pub(super) files: bool,
-    /// `terminal/*`: the host runs shell commands in terminals it shows.
-    pub(super) terminals: bool,
+    /// Terminal auth methods (`clientCapabilities.auth.terminal`): the host
+    /// runs `rho acp --login <auth>` in a terminal.
+    pub(super) terminal: bool,
+    /// Which turns the host can be told of, by its protocol version.
+    pub(super) turns: Turns,
+}
+
+/// Which of a session's turns a host can be told of.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(in crate::app) enum Turns {
+    /// Only its own prompts' (ACP v1): its prompt's response is the turn.
+    #[default]
+    Prompted,
+    /// Any, by `state_update` (ACP v2), so the daemon may start a turn of
+    /// its own when background work finishes.
+    Any,
 }
 
 /// The shape of an on/off session config option, such as `fast_mode`.
@@ -75,7 +84,7 @@ pub(super) enum FormDialect {
 }
 
 impl HostFeatures {
-    pub(super) fn from_initialize(request: &InitializeRequest) -> Self {
+    pub(super) fn from_initialize(request: &InitializeRequest, turns: Turns) -> Self {
         let capabilities = &request.client_capabilities;
         let session = capabilities.session.as_ref();
         let toggles = match session
@@ -99,14 +108,14 @@ impl HostFeatures {
             toggles,
             forms,
             urls: elicitation.is_some_and(|elicitation| elicitation.url.is_some()),
-            files: capabilities.fs.read_text_file && capabilities.fs.write_text_file,
-            terminals: capabilities.terminal,
+            terminal: capabilities.auth.terminal,
+            turns,
         }
     }
 }
 
-/// The host's choice and connection, recorded by `initialize` and read when
-/// the first session starts. Every connection begins with `initialize`: the
+/// The host's choices and connection, recorded by `initialize` and read by
+/// every session. Every connection begins with `initialize`: the
 /// protocol router that picks the version rejects anything else first.
 #[derive(Default)]
 pub(super) struct NegotiatedFeatures(OnceLock<(HostFeatures, Arc<dyn AcpClientPort>)>);
@@ -114,8 +123,15 @@ pub(super) struct NegotiatedFeatures(OnceLock<(HostFeatures, Arc<dyn AcpClientPo
 impl NegotiatedFeatures {
     /// Keeps the first `initialize`; ACP negotiates capabilities once per
     /// connection.
-    pub(super) fn record(&self, request: &InitializeRequest, client: Arc<dyn AcpClientPort>) {
-        let _ = self.0.set((HostFeatures::from_initialize(request), client));
+    pub(super) fn record(
+        &self,
+        request: &InitializeRequest,
+        client: Arc<dyn AcpClientPort>,
+        turns: Turns,
+    ) {
+        let _ = self
+            .0
+            .set((HostFeatures::from_initialize(request, turns), client));
     }
 
     pub(super) fn get(&self) -> HostFeatures {

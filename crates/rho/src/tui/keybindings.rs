@@ -3,7 +3,7 @@ use ratatui::{backend::Backend, Terminal};
 
 use crate::tui::DefaultTerminal;
 
-use super::{App, InteractiveRuntime};
+use super::App;
 
 pub(super) enum UndoDirection {
     Undo,
@@ -39,7 +39,7 @@ impl App {
             .keybindings
             .cycle_permission_mode_matches(key)
         {
-            self.queue_permission_mode_cycle();
+            self.cycle_daemon_permission()?;
         } else if self.info.runtime.keybindings.paste_image.matches(key)
             || matches!(
                 (key.modifiers, key.code),
@@ -101,21 +101,16 @@ impl App {
         &mut self,
         key: KeyEvent,
         terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<bool> {
         if self.info.runtime.keybindings.queue_prompt_matches(key) {
-            if agent.is_compacting() {
-                self.queue_prompt_after_turn()?;
-            } else {
-                self.insert_input_char('\n');
-            }
+            self.insert_input_char('\n');
         } else if self
             .info
             .runtime
             .keybindings
             .cycle_permission_mode_matches(key)
         {
-            self.cycle_permission_mode(agent).await?;
+            self.cycle_daemon_permission()?;
         } else if self.info.runtime.keybindings.paste_image.matches(key)
             || matches!(
                 (key.modifiers, key.code),
@@ -145,7 +140,7 @@ impl App {
             .keybindings
             .reset_conversation_matches(key)
         {
-            self.execute_new_command(terminal, agent).await?;
+            self.execute_new_command(terminal).await?;
         } else if self
             .info
             .runtime

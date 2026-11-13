@@ -85,6 +85,22 @@ If Cargo's bin directory is not on your `PATH`, add it before running the [inter
 export PATH="$HOME/.cargo/bin:$PATH"
 ```
 
+## The daemon and services
+
+Rho runs your sessions in a per-user [daemon](/daemon) that the first `rho` command starts. No install method adds a service or login item for it. The one optional service, a [systemd unit or LaunchAgent](/daemon#running-as-a-service) for `rho mcp serve --http`, is one you save yourself.
+
+What an update does to a running daemon depends on how you installed Rho:
+
+| Install method | After `rho update` |
+| --- | --- |
+| `install.sh`, a release archive on macOS or Linux, `cargo install`, or the Arch `PKGBUILD` | The daemon [restarts on the new binary](/daemon#upgrading-in-place) once no work would be cut short. `rho update` reports the restart or what the daemon waits for. |
+| mise | `rho update` stops an idle daemon, and the next `rho` command starts the new one. If work is in progress, run `rho daemon restart` when it finishes. |
+| Scoop, `install.ps1`, or a release archive on Windows | `rho update` stops an idle daemon and prints the update command to run. If work is in progress, run `rho daemon stop` when it finishes, then the command. |
+
+An idle daemon has no queued, running, or waiting job, no login under way, and no session with its own background process, subagent, or workflow. The table applies too when you update with a package manager or the install script.
+
+`rho uninstall` stops the daemon, which interrupts running turns, and deletes the saved `rho mcp serve --http` service (`rho-mcp.service` or `~/Library/LaunchAgents/dev.rho.mcp.plist`). `--dry-run` lists what it would remove. Remove a service saved under another name, or installed system-wide, yourself. See [`rho uninstall`](/automation-cli#rho-uninstall).
+
 ## Claude Code binary (optional)
 
 Agent definitions with `runtime: claude-cli`, and a Claude Code advisor, need [`claude-agent-acp`](https://github.com/agentclientprotocol/claude-agent-acp) on `PATH`. It is the Agent Client Protocol adapter for Claude Code and bundles its own Claude Code CLI, so a separate `claude` install is not needed. Rho does not ship or install it. It needs Node.js or Bun:

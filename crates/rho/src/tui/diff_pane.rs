@@ -5,7 +5,7 @@
 //! tool cards, without the card's tree indent.
 
 use ratatui::text::{Line, Span};
-use rho_tools::tool_card::{DiffRow, DiffRowKind};
+use rho_protocol::display::{DiffRow, DiffRowKind};
 
 use super::{
     render::{truncate_keep_end, wrap_line_hard},
@@ -112,6 +112,8 @@ pub(super) fn diff_pane_lines(
                 Theme::accent()
             }
             DiffRowKind::Meta | DiffRowKind::File => Theme::dim(),
+            // `Unknown`, or a kind a newer protocol adds.
+            _ => Theme::dim(),
         };
         lines.extend(
             wrap_line_hard(&row.text, width)
@@ -131,6 +133,8 @@ pub(super) fn row_stats(rows: &[DiffRow]) -> (u64, u64) {
             DiffRowKind::Context | DiffRowKind::File | DiffRowKind::Skip | DiffRowKind::Meta => {
                 (added, removed)
             }
+            // `Unknown`, or a kind a newer protocol adds: neither count.
+            _ => (added, removed),
         })
 }
 

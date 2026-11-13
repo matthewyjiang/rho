@@ -11,7 +11,7 @@ flowchart LR
     parent[Rho parent session] --> agentTool[agent tool]
     agentTool --> cursor[cursor-agent child]
     cursor --> sub[Cursor credential]
-    cursor --> attach[rho attach / completion]
+    cursor --> attach["/attach view / completion"]
 ```
 
 ## When this is useful
@@ -83,11 +83,7 @@ flowchart TD
 
 5. **Delegate from a Rho root session** through the `agent` tool. The call returns a run ID immediately, followed by an automatic completion notification.
 
-6. **Watch and cancel**:
-
-   ```bash
-   rho attach <run-id>
-   ```
+6. **Watch and cancel**: open the run with `/attach` in the TUI, or click its row in the activity rail.
 
    `agents` action `message` queues plain text for a running Cursor child. Rho sends it as the next `session/prompt` once the current turn ends; the transcript shows it as a queued parent message. Messages sent after the run finishes fail.
 
@@ -137,11 +133,11 @@ Frozen workflow relaunches that narrow a Bypass agent under an Auto or Allow-edi
 | Permission mode | Plan or Bypass only |
 | Launch | Rho parent `agent` tool, delegated only |
 | Messaging | `agents` action `message`; delivered as the next turn |
-| Inspect | `rho attach <id>` |
+| Inspect | `/attach` |
 
 ## Execution details
 
-A `runtime: cursor` agent runs as `cursor-agent acp` over stdio JSON-RPC. Rho owns the parent tree node; Cursor owns the child loop and credential. Rho's `initialize` identifies it as `rho` in `clientInfo` and advertises no client filesystem or terminal capabilities. Each ACP handshake step (`initialize`, `session/new`, `session/set_mode`) has a 10 s budget; measured `session/new` took 2.4–3.4 s. Rho never calls ACP `authenticate` (it fails under API-key auth and would open a browser otherwise).
+A `runtime: cursor` agent runs as `cursor-agent acp` over stdio JSON-RPC. Rho owns the parent tree node; Cursor owns the child loop and credential. Rho's `initialize` identifies it as `rho` in `clientInfo` and advertises no client filesystem or terminal capabilities. Each ACP handshake step (`initialize`, `session/new`, `session/set_mode`) has a 10 s budget; measured `session/new` took 2.4–3.4 s. Rho never calls ACP `authenticate` (it fails under API-key auth and would open a browser otherwise). In a [daemon](/daemon#environment) session, Rho finds `cursor-agent` on the `PATH` of the client you prompted from and runs it with that client's whole environment, so `CURSOR_API_KEY` and `CURSOR_CONFIG_DIR` come from your terminal, not the daemon's.
 
 If the binary is missing, the run fails immediately with `cursor: binary not found on PATH`. If the user is signed out, `session/new` fails with Cursor's `Authentication required` error. Rho does not preflight `cursor-agent status`: it can disagree with what the agent accepts (for example, it reports signed out when only `CURSOR_API_KEY` is set).
 

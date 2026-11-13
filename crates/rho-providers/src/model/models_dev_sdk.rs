@@ -1,12 +1,8 @@
 /// HTTP adapter implied by a models.dev AI SDK package name.
 ///
-/// # Next major
-///
-/// NEXT_MAJOR(rho-providers): mark CatalogSdkAdapter `#[non_exhaustive]` so new adapters are minor-compatible.
-///
-/// Adapters land in minor releases, as `GeminiGenerateContent` did; an
-/// exhaustive match outside this crate breaks on each one until then.
+/// Non-exhaustive: new adapters land in minor releases.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum CatalogSdkAdapter {
     OpenAiCompatible,
     OpenAiResponses,

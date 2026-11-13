@@ -9,7 +9,10 @@ mod unix {
     };
 
     use pretty_assertions::assert_eq;
-    use rho_sdk::hooks::{testing::RecordingObserver, HookEventKind, HookPayload, HookToolStatus};
+    use rho_sdk::hooks::{
+        testing::RecordingObserver, HookDecision, HookEventKind, HookGateFuture, HookPayload,
+        HookToolStatus, PreToolUseGate, PreToolUseRequest,
+    };
     use rho_sdk::{
         model::{ContentBlock, ModelIdentity, ModelResponse, ToolCall},
         provider::{ScriptedProvider, ScriptedTurn},
@@ -48,11 +51,11 @@ mod unix {
             ModelIdentity::new("scripted", "test", "model"),
             [
                 ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                    ToolCall {
-                        id: "shell-1".into(),
-                        name: "bash".into(),
-                        arguments: json!({"command": command, "timeout_seconds": 9}),
-                    },
+                    ToolCall::new(
+                        "shell-1".into(),
+                        "bash".into(),
+                        json!({"command": command, "timeout_seconds": 9}),
+                    ),
                 )])),
                 ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
                     "done".into(),
@@ -91,7 +94,7 @@ mod unix {
         }
         run.outcome().await.unwrap();
 
-        assert!(matches!(completion, Some(ToolCompletion::Success(_))));
+        assert!(matches!(completion, Some(ToolCompletion::Completed(_))));
         assert_eq!(
             std::fs::read_to_string(root.path().join("exact-output.txt")).unwrap(),
             "$TOKEN; && | $(touch must-not-exist)"
@@ -138,9 +141,14 @@ mod unix {
     }
 
     // Covers: with RTK on, the shell must rewrite before authorization, so the
-    // approved process is the rewritten one that runs and the run is recorded
-    // for `rtk discover`; with RTK unavailable, nothing is rewritten or
-    // recorded. RTK was silently off for months when this broke.
+    // approved process is the rewritten one that runs, `before_tool_use` hooks
+    // see both it and the command the model asked for (absent when nothing
+    // was rewritten, #1647), and the run is recorded
+    // for `rtk discover`, under the `CLAUDE_CONFIG_DIR` of the environment
+    // the command runs in; with RTK unavailable, or `RTK_DISABLED=1` in that
+    // environment, nothing is rewritten or recorded. RTK was silently off
+    // for months when this broke, and a daemon session's environment is its
+    // client's, not the process's (#1779).
     // Owner: shell tool adapter
     #[tokio::test]
     async fn rtk_rewrites_the_command_before_it_is_approved() {
@@ -152,21 +160,30 @@ mod unix {
              printf 'printf rewritten > out.txt'; exit 3 ;;\n\
              esac\n";
         let unavailable = "exit 127\n";
-        for (script, expected_command, expected_output, expected_records) in [
-            (available, rewritten, "rewritten", 1),
-            (unavailable, original, "original", 0),
+        for (script, disabled, expected_command, expected_output, expected_records) in [
+            (available, None, rewritten, "rewritten", 1),
+            (unavailable, None, original, "original", 0),
+            (available, Some("1"), original, "original", 0),
+            // Only `1` turns it off, as for `rtk` itself.
+            (available, Some("0"), rewritten, "rewritten", 1),
         ] {
-            let outcome = run_with_fake_rtk(script, original).await;
+            let outcome = run_with_fake_rtk(script, original, disabled).await;
+            let hook_commands = if expected_command == original {
+                json!({ "shell_command": original })
+            } else {
+                json!({ "shell_command": expected_command, "requested_command": original })
+            };
             assert_eq!(
                 outcome,
                 FakeRtkOutcome {
                     // The card shows what the model asked for.
                     started_command: Some(original.to_owned()),
                     approved_command: Some(expected_command.to_owned()),
+                    hook_commands,
                     output: expected_output.to_owned(),
                     recorded_commands: vec![expected_command.to_owned(); expected_records],
                 },
-                "{script}"
+                "{script}, RTK_DISABLED={disabled:?}"
             );
         }
     }
@@ -175,11 +192,20 @@ mod unix {
     struct FakeRtkOutcome {
         started_command: Option<String>,
         approved_command: Option<String>,
+        /// The command fields of the `before_tool_use` capability, as hooks read them.
+        hook_commands: serde_json::Value,
         output: String,
         recorded_commands: Vec<String>,
     }
 
-    async fn run_with_fake_rtk(script: &str, command: &str) -> FakeRtkOutcome {
+    /// Runs `command` through the bash tool with a fake `rtk` of `script`,
+    /// in an environment of the process's `PATH`, a `CLAUDE_CONFIG_DIR` of
+    /// its own, and `RTK_DISABLED` as `disabled` gives it.
+    async fn run_with_fake_rtk(
+        script: &str,
+        command: &str,
+        disabled: Option<&str>,
+    ) -> FakeRtkOutcome {
         let root = tempfile::tempdir().unwrap();
         let rtk_dir = tempfile::tempdir().unwrap();
         let fake_rtk = rtk_dir.path().join("rtk.sh");
@@ -187,20 +213,29 @@ mod unix {
         // fail with ETXTBSY while concurrent tests fork.
         std::fs::write(&fake_rtk, script).unwrap();
         let projects_dir = rtk_dir.path().join("projects");
-        let rtk = crate::rtk::Rtk::new(
-            "sh".into(),
-            vec![fake_rtk.into()],
-            Some(projects_dir.clone()),
-        );
+        let rtk = crate::rtk::Rtk::new("sh".into(), vec![fake_rtk.into()]);
+        let environment = rho_sdk::ProcessEnvironment::Explicit {
+            variables: [
+                ("PATH", std::env::var("PATH").unwrap()),
+                (
+                    "CLAUDE_CONFIG_DIR",
+                    rtk_dir.path().to_str().unwrap().to_owned(),
+                ),
+            ]
+            .into_iter()
+            .chain(disabled.map(|value| ("RTK_DISABLED", value.to_owned())))
+            .map(|(name, value)| (name.to_owned(), value))
+            .collect(),
+        };
         let provider = ScriptedProvider::new(
             ModelIdentity::new("scripted", "test", "model"),
             [
                 ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                    ToolCall {
-                        id: "shell-1".into(),
-                        name: "bash".into(),
-                        arguments: json!({ "command": command }),
-                    },
+                    ToolCall::new(
+                        "shell-1".into(),
+                        "bash".into(),
+                        json!({ "command": command }),
+                    ),
                 )])),
                 ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
                     "done".into(),
@@ -210,6 +245,7 @@ mod unix {
         let approvals = Arc::new(ApproveAndRecord {
             requests: Mutex::new(Vec::new()),
         });
+        let gate = Arc::new(RecordingGate::default());
         let runtime = Rho::builder()
             .provider(provider)
             .workspace(Workspace::new(root.path()).unwrap())
@@ -219,7 +255,12 @@ mod unix {
                     .require_process_approval(),
             )
             .approval_handler_shared(approvals.clone())
-            .tool(SdkShellTool::bash(ShellToolOptions::new().rtk_with(rtk)))
+            .pre_tool_gate_shared(gate.clone())
+            .tool(SdkShellTool::bash(
+                ShellToolOptions::new()
+                    .environment(environment)
+                    .rtk_with(rtk),
+            ))
             .build()
             .unwrap();
         let session = runtime.session(SessionOptions::default()).await.unwrap();
@@ -260,11 +301,40 @@ mod unix {
                     .collect::<Vec<_>>()
             })
             .collect();
+        let hook_commands = {
+            let envelopes = gate
+                .envelopes
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let capability = &envelopes[0]["payload"]["capability"];
+            ["shell_command", "requested_command"]
+                .into_iter()
+                .filter_map(|field| Some((field.to_owned(), capability.get(field)?.clone())))
+                .collect::<serde_json::Map<_, _>>()
+                .into()
+        };
         FakeRtkOutcome {
             started_command,
             approved_command,
+            hook_commands,
             output: std::fs::read_to_string(root.path().join("out.txt")).unwrap(),
             recorded_commands,
+        }
+    }
+
+    /// Lets every call continue, keeping each `before_tool_use` envelope as JSON.
+    #[derive(Default)]
+    struct RecordingGate {
+        envelopes: Mutex<Vec<serde_json::Value>>,
+    }
+
+    impl PreToolUseGate for RecordingGate {
+        fn evaluate(&self, request: PreToolUseRequest) -> HookGateFuture<'_> {
+            self.envelopes
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(serde_json::to_value(request.envelope()).unwrap());
+            Box::pin(std::future::ready(HookDecision::Continue))
         }
     }
 
@@ -393,11 +463,11 @@ mod unix {
                 ModelIdentity::new("scripted", "test", "model"),
                 [
                     ScriptedTurn::completed(ModelResponse::Assistant(vec![
-                        ContentBlock::ToolCall(ToolCall {
-                            id: "shell-1".into(),
-                            name: "bash".into(),
-                            arguments: json!({ "command": &command }),
-                        }),
+                        ContentBlock::ToolCall(ToolCall::new(
+                            "shell-1".into(),
+                            "bash".into(),
+                            json!({ "command": &command }),
+                        )),
                     ])),
                     ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
                         "done".into(),
@@ -424,8 +494,9 @@ mod unix {
             let HookPayload::AfterToolUse(payload) = after.payload() else {
                 panic!("an after_tool_use event carries its payload");
             };
-            let process = after
-                .after_tool_use_process()
+            let process = payload
+                .process
+                .as_ref()
                 .expect("a finished command reports its process");
             assert_eq!(
                 (

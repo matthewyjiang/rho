@@ -13,6 +13,7 @@ use thiserror::Error;
 
 use crate::cli_runtime::status_sink::RuntimeLabel;
 use crate::cli_runtime::{run_bounded_probe, BoundedOutput, ProbeError};
+use crate::session_environment::Ambient;
 
 use super::{auth, executable};
 
@@ -149,7 +150,8 @@ pub(crate) fn parse_models_output(output: &str) -> Result<Vec<CursorModel>, Curs
 }
 
 pub(crate) async fn fetch() -> Result<Vec<CursorModel>, CursorModelsError> {
-    let executable = executable::resolve().map_err(|_| CursorModelsError::BinaryMissing)?;
+    let executable =
+        executable::resolve(&Ambient::ThisProcess).map_err(|_| CursorModelsError::BinaryMissing)?;
     let output = run_bounded_probe(&executable, &["models"], PROBE_TIMEOUT).await?;
     parse_models_probe_output(&executable.display(), &output)
 }

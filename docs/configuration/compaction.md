@@ -2,7 +2,7 @@
 
 Parent: [Configuration](/configuration).
 
-`auto_compact` summarizes older conversation history when the estimated context approaches the model's effective window. It is on by default. Change it under `/config` → **Context & limits**, or in `[compaction]`. To opt out, set:
+`auto_compact` summarizes older conversation history when the estimated context approaches the model's effective window. It is on by default. Change it under `/config` → **Context**, or in `[compaction]`. To opt out, set:
 
 ```toml
 [compaction]
@@ -11,13 +11,13 @@ auto_compact = false
 
 Models without a known context window get no automatic compaction or overflow recovery, whatever this setting says. Use `/compact` for them.
 
-`compact_threshold_percent` is the trigger. `compact_target_percent` is the post-compaction target as a percent of the effective window. The target must stay below the threshold. A value at or above the threshold is clamped to one below it on load or save. Rho keeps the recent verbatim tail by token budget and safe tool-call boundaries, not by message count.
+`compact_threshold_percent` is the trigger. `compact_target_percent` is the post-compaction target as a percent of the effective window. The target must stay below the threshold. A value at or above it is a load error, and `/config` refuses to save one. Rho keeps the recent verbatim tail by token budget and safe tool-call boundaries, not by message count.
 
 If the provider rejects a request as larger than the model's context window, Rho compacts and retries that request once. This only happens when `auto_compact` is on. Recovery uses the same half-current retention cap as `/compact`, so it still shrinks history when the configured window is larger than the provider's real limit. If compaction does not shrink the context, or the retry overflows again, the turn fails with the provider error.
 
 While background tool jobs run, automatic compaction and overflow recovery summarize only the history before the earliest running tool call. That call and everything after it stay as they are, so the job's result still lines up with its call when it arrives. Compaction is skipped when nothing new sits before that call: the job started in the conversation's first reply, or that history was already compacted while the same jobs ran.
 
-`/config` changes apply when the session is idle, before the next automatic check or model turn. Edits during a model turn or compaction wait for that operation to finish. Applying settings keeps the current provider-calibrated context estimate. External file edits require a restart.
+Changes saved through the daemon, from `/config` or a hand edit of `config.toml`, reach every loaded session before its next model turn. Edits during a model turn or compaction wait for that operation to finish. Applying settings keeps the current provider-calibrated context estimate.
 
 ## What the status line counts
 
@@ -35,9 +35,9 @@ The `Last run`, `Run cost`, and `After run` rows (`last_compaction` in structure
 
 - **Last run**: trigger (`automatic`, `manual`, or `context_overflow`; idle auto-compaction before a prompt reports `manual`), outcome (`completed`, `failed`, or `cancelled`), tier (`elision`, `native`, `text_summary`, or `unchanged`), the text-summary request path (`session_history`, `transcript`, or `summarizer`, the last one tried), and how many tool results were elided.
 - **Run cost**: wall-clock latency, the `provider/model` that served the last request, and provider-reported prompt, output, and cache-read tokens and cost, summed over every request the compaction sent, including failed attempts.
-- **After run**: the first provider-reported prompt size after the commit, and a re-read count. For the next 24 tool calls, Rho counts calls that repeat a `read_file` path or shell command whose result the compaction removed, either summarized away or elided. 24 is the p75 gap between a call and its repeat across 135 local sessions. The count is a trend signal for comparing tiers, not a pass/fail gate: some repeats are legitimate, for example after the file changed. Only the interactive TUI collects these follow-up numbers. Headless and ACP runs record the rest.
+- **After run**: the first provider-reported prompt size after the commit, and a re-read count. For the next 24 tool calls, Rho counts calls that repeat a `read_file` path or shell command whose result the compaction removed, either summarized away or elided. 24 is the p75 gap between a call and its repeat across 135 local sessions. The count is a trend signal for comparing tiers, not a pass/fail gate: some repeats are legitimate, for example after the file changed. Every session collects these follow-up numbers. A session that closes, moves to another node, or switches models before the window ends records the partial count.
 
-Each compactor call is also saved as a row in the usage ledger's `compaction_events` table, so numbers can be compared across sessions. See [usage ledger](/usage-ledger). To measure what a compaction loses rather than what it costs, see the [compaction replay eval](/development#compaction-replay-eval).
+Each compactor call is also saved as a row in the usage ledger's `compaction_events` table, so numbers can be compared across sessions. See [usage ledger](/usage-ledger).
 
 A check that requests compaction is not proof that it finished. `Completed` counts committed compactions, including unchanged results. `Last completed` shows the last before and after local token counts and whether they decreased, stayed the same, or increased. This survives resume and appears under `completed` in structured output. Failed or cancelled attempts do not replace the last committed result. Their `compact` card shows the error or cancellation. These diagnostics contain token counts and configuration, not conversation text.
 
@@ -73,7 +73,7 @@ A later compaction updates the earlier summary instead of summarizing it again. 
 Two user messages stay verbatim outside the summary, each only if its estimate is at most 2,048 tokens:
 
 - The first user turn, kept ahead of the summary. A larger first turn is only summarized.
-- The latest user message, restated after the summary when it would otherwise fall outside the recent tail. This keeps the instruction for the current turn, such as a `/goal` prompt, when compaction runs in the middle of a long turn.
+- The latest user message, restated after the summary when it would otherwise fall outside the recent tail. This keeps the instruction for the current turn, when compaction runs in the middle of a long turn.
 
 If those messages are the only history left to remove, they are summarized too.
 

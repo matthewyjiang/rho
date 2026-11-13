@@ -9,7 +9,7 @@
 use rho_sdk::model::Message;
 use serde::{Deserialize, Serialize};
 
-use crate::presentation::NotificationCard;
+use rho_protocol::display::NotificationCard;
 
 const PREFIX: &str = "[rho boundary transcript v1]";
 const FAMILY: &str = "[rho boundary transcript ";

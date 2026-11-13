@@ -1,0 +1,2208 @@
+//! Sessions the daemon hosts, through the real binary and its socket: a
+//! turn outlives the client that started it, every way a turn can end early
+//! is recorded on its job, and clients that attach, leave, and come back see
+//! the same events.
+
+use std::{
+    path::{Path, PathBuf},
+    process::{Child, Command, Stdio},
+    time::{Duration, Instant},
+};
+
+use pretty_assertions::assert_eq;
+use rho_protocol::{
+    methods::{
+        JobList, SessionAnswer, SessionAttach, SessionCancel, SessionDetach, SessionHold,
+        SessionNew, SessionPrompt,
+    },
+    AnswerStop, ApprovalAsk, ApprovalSource, Ask, Client, ClientEnvironment, ClientError,
+    ClientHello, ClientInfo, CompactionStatus, ContentBlock, Cursor, DaemonNotification,
+    DetachReason, ErrorCode, IdempotencyKey, InputAnswer, InputRequest, InputRequestId, JobId,
+    JobKind, JobListParams, JobState, JobSummary, Notifications, Operation, PathScope, Replay,
+    Resolution, RpcError, Seq, SessionAnswerParams, SessionAttachParams, SessionAttachResponse,
+    SessionCancelParams, SessionDetachParams, SessionDetachedParams, SessionEvent,
+    SessionHoldParams, SessionId, SessionNewParams, SessionPromptParams, SessionSetup, StreamId,
+    ToolCallId, ToolContent, ToolStatus, TurnError, TurnErrorKind, TurnId, TurnOutcome,
+};
+use rho_tui_pty::IsolatedHome;
+use tokio::io::{AsyncBufReadExt, BufReader};
+
+/// Failure bound for each wait on the daemon. Every turn here answers from
+/// the fixture provider without network; this only stops a hung test.
+pub(super) const DEADLINE: Duration = Duration::from_secs(60);
+
+/// How often a wait polls the daemon's socket, process, or job list. The
+/// daemon pushes nothing to clients yet (#1657), so polling is the only way
+/// to see it change.
+const POLL_INTERVAL: Duration = Duration::from_millis(20);
+
+/// The reply the fixture provider gives, which the test finds in the
+/// session file.
+pub(super) const REPLY: &str = "reply saved by the daemon session";
+
+const CONFIG: &str = r#"[model]
+provider = "xai"
+model = "grok-fixture"
+auth = "xai-oauth"
+
+[web_search]
+mode = "off"
+"#;
+
+/// A one-node workflow whose agent replies from the fixture provider.
+const WORKFLOW: &str = r#"def build(inputs):
+    return workflow(name = "daemon-run", nodes = [
+        agent(
+            name = "inspect",
+            agent = "fixture",
+            prompt = "inspect the workspace",
+            access = "mutating",
+            timeout_seconds = 600,
+            max_output_bytes = 100000,
+        ),
+    ])
+
+WORKFLOW = define(inputs = {}, build = build)
+"#;
+
+/// An agent a session is saved as, other than the default.
+pub(super) const ARCHIVIST_AGENT: &str = "---
+description: Fixture agent a session is saved as
+---
+
+Archive.
+";
+
+const WORKFLOW_AGENT: &str = "---
+description: Fixture agent for a daemon workflow run
+---
+
+Do the task.
+";
+
+/// An [`IsolatedHome`] with the fixture provider's config, whose daemon a
+/// test starts itself or a client in it starts. Dropping it stops that
+/// daemon, also while a test panics. Its clients should share one fixture
+/// mode (see [`IsolatedHome`]).
+pub(super) struct Sandbox {
+    /// The sandbox's home, log, and socket: tests reach them only here.
+    pub(super) isolated: IsolatedHome,
+    /// The session's workspace, canonicalized as the daemon records it:
+    /// on Windows, without the verbatim prefix.
+    pub(super) workspace: PathBuf,
+}
+
+impl Sandbox {
+    pub(super) fn new() -> Self {
+        let isolated = IsolatedHome::new().unwrap();
+        std::fs::write(&isolated.config_path, CONFIG).unwrap();
+        let workspace = plain_canonical(&isolated.workspace);
+        Self {
+            isolated,
+            workspace,
+        }
+    }
+
+    /// `config.toml` as the daemon names it in errors: under its canonical
+    /// home, on Windows without the verbatim prefix.
+    pub(super) fn shown_config_path(&self) -> PathBuf {
+        plain_canonical(&self.isolated.config_path)
+    }
+
+    /// The workspace as a session's tools name it: resolved by the file
+    /// system, which on Windows puts the verbatim prefix on it, in a daemon
+    /// and out of one.
+    pub(super) fn resolved_workspace(&self) -> PathBuf {
+        self.workspace.canonicalize().unwrap()
+    }
+
+    /// `rho` in the workspace, in the sandbox, with the fixture provider in
+    /// `mode`.
+    pub(super) fn rho(&self, mode: &str) -> Command {
+        self.rho_at(Path::new(env!("CARGO_BIN_EXE_rho")), mode)
+    }
+
+    /// [`Self::rho`], run from the executable at `program`.
+    pub(super) fn rho_at(&self, program: &Path, mode: &str) -> Command {
+        let mut command = self.isolated.command(program);
+        command
+            .current_dir(&self.workspace)
+            .env("RHO_AUTOMATION_TEST_MODE", mode)
+            .env("RHO_AUTOMATION_TEST_RESPONSE", REPLY)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        command
+    }
+
+    /// Starts `rho daemon run` with the fixture in `mode` and connects to
+    /// it once it answers. The sandbox stops the daemon when it drops.
+    pub(super) async fn start_daemon(&self, mode: &str) -> Client {
+        self.start_daemon_with(mode, &[]).await
+    }
+
+    /// Starts `rho daemon run` with `args` and the fixture in `mode`, and
+    /// connects to it once it answers.
+    pub(super) async fn start_daemon_with(&self, mode: &str, args: &[&str]) -> Client {
+        self.spawn_daemon(self.rho(mode), args).await.1
+    }
+
+    /// [`Self::start_daemon`], with the TUI fixture answering the title
+    /// agent, whose one-shot provider skips the automation fixture: it
+    /// names a session "Fixture session title".
+    async fn start_titling_daemon(&self, mode: &str) -> Client {
+        let mut command = self.rho(mode);
+        command.env("RHO_TUI_TEST_MODE", "matrix");
+        self.spawn_daemon(command, &[]).await.1
+    }
+
+    /// Runs `command daemon run args`, and connects once the daemon answers.
+    ///
+    /// The returned process is for a test that waits for the daemon's exit
+    /// or kills it, and must then wait for it. Dropping it does neither:
+    /// the sandbox stops the daemon when it drops, and reaps it.
+    pub(super) async fn spawn_daemon(
+        &self,
+        mut command: Command,
+        args: &[&str],
+    ) -> (Child, Client) {
+        // Outside every session's workspace, as a service manager starts it,
+        // so nothing a session runs can lean on the daemon's own directory.
+        let daemon = command
+            .current_dir(self.isolated.rho_home())
+            .args(["daemon", "run"])
+            .args(args)
+            .spawn()
+            .unwrap();
+        // A daemon killed earlier left its socket file behind, so wait for
+        // one that answers rather than one that exists.
+        let client = self
+            .poll_until("the daemon to answer", async || self.try_connect().await)
+            .await
+            .0;
+        (daemon, client)
+    }
+
+    pub(super) async fn connect(&self) -> Client {
+        self.connect_following().await.0
+    }
+
+    /// A connection and the session events the daemon sends on it.
+    pub(super) async fn connect_following(&self) -> (Client, Notifications) {
+        self.try_connect().await.expect("the daemon answers")
+    }
+
+    async fn try_connect(&self) -> Option<(Client, Notifications)> {
+        self.try_connect_as(ClientHello::frontend(test_client()))
+            .await
+    }
+
+    /// A connection that declares an agent's session control, as
+    /// `rho mcp serve` and the `sessions` tool do.
+    pub(super) async fn connect_as_agent(&self) -> Client {
+        self.try_connect_as(ClientHello::agent(test_client()))
+            .await
+            .expect("the daemon answers")
+            .0
+    }
+
+    /// A raw connection to the sandbox's daemon, before any hello; `None`
+    /// while none listens.
+    #[cfg(unix)]
+    pub(super) async fn stream(&self) -> Option<tokio::net::UnixStream> {
+        tokio::net::UnixStream::connect(self.isolated.daemon_socket()?)
+            .await
+            .ok()
+    }
+
+    /// A raw connection to the sandbox's daemon, before any hello; `None`
+    /// while none listens. A pipe whose every instance is taken for a
+    /// moment is tried again, as rho's own client does.
+    #[cfg(windows)]
+    pub(super) async fn stream(
+        &self,
+    ) -> Option<rho_protocol::CloseOnShutdown<tokio::net::windows::named_pipe::NamedPipeClient>>
+    {
+        // ERROR_PIPE_BUSY.
+        const BUSY: i32 = 231;
+        let socket = self.isolated.daemon_socket()?;
+        let started = Instant::now();
+        loop {
+            match tokio::net::windows::named_pipe::ClientOptions::new().open(&socket) {
+                // A pipe cannot close one direction alone, so a client that
+                // is dropped must stop reading for the daemon to see it go.
+                Ok(stream) => return Some(rho_protocol::CloseOnShutdown::new(stream)),
+                Err(error)
+                    if error.raw_os_error() == Some(BUSY) && started.elapsed() < DEADLINE =>
+                {
+                    tokio::time::sleep(POLL_INTERVAL).await;
+                }
+                Err(_) => return None,
+            }
+        }
+    }
+
+    async fn try_connect_as(&self, hello: ClientHello) -> Option<(Client, Notifications)> {
+        let stream = self.stream().await?;
+        Client::handshake(stream, hello)
+            .await
+            .ok()
+            .map(|(client, notifications, _)| (client, notifications))
+    }
+
+    /// Writes the fixture config with `permission_mode = "<mode>"`, which a
+    /// daemon started after reads.
+    pub(super) fn set_permission_mode(&self, mode: &str) {
+        self.set_config(mode, "");
+    }
+
+    /// Writes the fixture config with `behavior.permission_mode = "<mode>"`
+    /// and the TOML `tables` after it, which a daemon started after reads.
+    /// Keys `tables` sets before any table header are `behavior` keys.
+    pub(super) fn set_config(&self, mode: &str, tables: &str) {
+        std::fs::write(
+            &self.isolated.config_path,
+            format!("{CONFIG}\n[behavior]\npermission_mode = \"{mode}\"\n\n{tables}"),
+        )
+        .unwrap();
+    }
+
+    /// Calls `attempt` every [`POLL_INTERVAL`] until it returns `Some`, and
+    /// fails with the daemon log once [`DEADLINE`] passes.
+    pub(super) async fn poll_until<T>(
+        &self,
+        what: &str,
+        mut attempt: impl AsyncFnMut() -> Option<T>,
+    ) -> T {
+        let started = Instant::now();
+        loop {
+            if let Some(value) = attempt().await {
+                return value;
+            }
+            assert!(
+                started.elapsed() < DEADLINE,
+                "timed out after {DEADLINE:?} waiting for {what}; daemon log:\n{}",
+                self.isolated.daemon_log()
+            );
+            tokio::time::sleep(POLL_INTERVAL).await;
+        }
+    }
+
+    /// Waits until the daemon's log records it unloading idle `session` for
+    /// the `times`th time since it started.
+    pub(super) async fn wait_unloaded(&self, session: &SessionId, times: usize) {
+        self.poll_until("the daemon to unload the idle session", async || {
+            let unloads = self
+                .isolated
+                .daemon_log()
+                .lines()
+                .filter(|line| {
+                    line.contains("unloaded idle session") && line.contains(session.as_str())
+                })
+                .count();
+            (unloads >= times).then_some(())
+        })
+        .await;
+    }
+
+    /// Opens a new session in the workspace.
+    pub(super) async fn new_session(&self, client: &Client) -> SessionId {
+        self.new_session_with_environment(client, self.client_environment())
+            .await
+    }
+
+    /// Opens a new session in the workspace for a client with `environment`.
+    pub(super) async fn new_session_with_environment(
+        &self,
+        client: &Client,
+        environment: ClientEnvironment,
+    ) -> SessionId {
+        self.try_new_session(client, environment).await.unwrap()
+    }
+
+    /// [`Self::new_session_with_environment`]; the error that refused it.
+    pub(super) async fn try_new_session(
+        &self,
+        client: &Client,
+        environment: ClientEnvironment,
+    ) -> Result<SessionId, RpcError> {
+        client
+            .request::<SessionNew>(&SessionNewParams {
+                cwd: self.workspace.clone(),
+                environment,
+                agent: None,
+                setup: SessionSetup::default(),
+                parent: None,
+                grant: None,
+                worktree: false,
+            })
+            .await
+            .map(|opened| opened.session)
+            .map_err(|error| match error {
+                ClientError::Rpc { error, .. } => error,
+                error => panic!("the open failed outside the protocol: {error}"),
+            })
+    }
+
+    /// Prompts `session` with "hello"; the error code of a refused prompt.
+    pub(super) async fn prompt(
+        &self,
+        client: &Client,
+        session: &SessionId,
+    ) -> Result<(), Option<ErrorCode>> {
+        self.prompt_text(client, session, "hello").await
+    }
+
+    /// Prompts `session` with `text`; the error code of a refused prompt.
+    pub(super) async fn prompt_text(
+        &self,
+        client: &Client,
+        session: &SessionId,
+        text: &str,
+    ) -> Result<(), Option<ErrorCode>> {
+        self.prompt_keyed(client, session, text, None)
+            .await
+            .map(|_| ())
+    }
+
+    /// Prompts `session` with `text`, naming `key`; the turn the daemon
+    /// answers with, or the error code of a refused prompt.
+    pub(super) async fn prompt_keyed(
+        &self,
+        client: &Client,
+        session: &SessionId,
+        text: &str,
+        key: Option<&str>,
+    ) -> Result<TurnId, Option<ErrorCode>> {
+        client
+            .request::<SessionPrompt>(&SessionPromptParams {
+                author: rho_protocol::PromptAuthor::Person,
+                session: session.clone(),
+                content: vec![ContentBlock::Text { text: text.into() }],
+                timeout_ms: None,
+                environment: self.client_environment(),
+                idempotency_key: key.map(IdempotencyKey::new),
+                grant: None,
+            })
+            .await
+            .map(|prompted| prompted.turn)
+            .map_err(|error| match error {
+                ClientError::Rpc { error, .. } => error.error_code(),
+                error => panic!("prompt failed outside the protocol: {error}"),
+            })
+    }
+
+    /// Prompts `session` with the tool call `call`, which the `tool-call`
+    /// fixture makes; returns once the turn saved the prompt.
+    pub(super) async fn prompt_tool_call(
+        &self,
+        client: &Client,
+        session: &SessionId,
+        call: &serde_json::Value,
+    ) {
+        let environment = self.client_environment();
+        self.prompt_tool_call_with_environment(client, session, call, environment)
+            .await;
+    }
+
+    /// [`Self::prompt_tool_call`] from a client whose environment is
+    /// `environment`.
+    pub(super) async fn prompt_tool_call_with_environment(
+        &self,
+        client: &Client,
+        session: &SessionId,
+        call: &serde_json::Value,
+        environment: ClientEnvironment,
+    ) {
+        client
+            .request::<SessionPrompt>(&SessionPromptParams {
+                author: rho_protocol::PromptAuthor::Person,
+                session: session.clone(),
+                content: vec![ContentBlock::Text {
+                    text: call.to_string(),
+                }],
+                timeout_ms: None,
+                environment,
+                idempotency_key: None,
+                grant: None,
+            })
+            .await
+            .unwrap();
+    }
+
+    /// The environment a client in the sandbox sends, which its sessions'
+    /// processes run with (#1659): [`IsolatedHome::command_env`], the whole
+    /// environment a child of the sandbox gets, so nothing a session runs
+    /// reaches the developer's rho home or daemon. It has no fixture mode;
+    /// only the daemon does.
+    pub(super) fn client_environment(&self) -> ClientEnvironment {
+        // Collected in order, so a later pair wins, as it does in a child's
+        // environment.
+        self.isolated.command_env().into_iter().collect()
+    }
+
+    /// The directory `session` is saved in, once it is: each session is a
+    /// directory named for its id, below its workspace's.
+    pub(super) fn session_dir(&self, session: &SessionId) -> Option<PathBuf> {
+        let suffix = format!("_{session}");
+        std::fs::read_dir(self.isolated.rho_home().join("sessions"))
+            .ok()?
+            .flatten()
+            .filter_map(|workspace| std::fs::read_dir(workspace.path()).ok())
+            .flatten()
+            .flatten()
+            .find(|entry| entry.file_name().to_string_lossy().ends_with(&suffix))
+            .map(|entry| entry.path())
+    }
+
+    /// Whether `session`'s file has saved a user message yet. A record still
+    /// being written is skipped.
+    fn saved_a_user_message(&self, session: &SessionId) -> bool {
+        self.session_dir(session)
+            .and_then(|dir| std::fs::read_to_string(dir.join("session.jsonl")).ok())
+            .is_some_and(|file| {
+                file.lines()
+                    .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+                    .flat_map(|record| {
+                        record["transition"]["delta"]["appended_history"]
+                            .as_array()
+                            .cloned()
+                            .unwrap_or_default()
+                    })
+                    .any(|message| message.get("User").is_some())
+            })
+    }
+
+    /// The records saved in `session`'s file.
+    pub(super) fn session_records(&self, session: &SessionId) -> Vec<serde_json::Value> {
+        let session = self
+            .session_dir(session)
+            .unwrap_or_else(|| panic!("no session directory for {session}"));
+        std::fs::read_to_string(session.join("session.jsonl"))
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect()
+    }
+}
+
+/// Polls `rho/job/list` until the job of `session`'s turns is in a state
+/// other than running or waiting for input, and returns the job then.
+pub(super) async fn settled_job(
+    sandbox: &Sandbox,
+    client: &Client,
+    session: &SessionId,
+) -> JobSummary {
+    settled(sandbox, client, |job| job.session.as_ref() == Some(session)).await
+}
+
+/// Polls `rho/job/list` until the job `pick` picks is in a state other than
+/// queued, running, or waiting for input, and returns the job then.
+async fn settled(
+    sandbox: &Sandbox,
+    client: &Client,
+    pick: impl Fn(&JobSummary) -> bool,
+) -> JobSummary {
+    sandbox
+        .poll_until("the job to end", async || {
+            let jobs = client.request::<JobList>(&JobListParams {}).await.unwrap();
+            let job = jobs
+                .jobs
+                .into_iter()
+                .find(&pick)
+                .expect("the daemon lists the job");
+            match job.state {
+                JobState::Queued | JobState::Running | JobState::WaitingForInput => None,
+                JobState::Idle
+                | JobState::Completed
+                | JobState::Failed
+                | JobState::Cancelled
+                | JobState::TimedOut
+                | JobState::Interrupted => Some(job),
+                state => panic!("the daemon sent a job state this test does not know: {state:?}"),
+            }
+        })
+        .await
+}
+
+// Covers: a prompt returns once its turn saved the prompt, the turn runs on in the
+// daemon after the client that sent it disconnects, a new client sees its
+// job completed with the session's workspace and id, and the session file
+// holds the model's reply. A session id no session has is not found.
+// Owner: daemon session hosting.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_turn_outlives_the_client_that_prompted_it() {
+    let sandbox = Sandbox::new();
+    let client = sandbox.start_daemon("fixed").await;
+    let session = sandbox.new_session(&client).await;
+    assert_eq!(sandbox.prompt(&client, &session).await, Ok(()));
+    drop(client);
+
+    let client = sandbox.connect().await;
+    let job = settled_job(&sandbox, &client, &session).await;
+    let unknown = sandbox
+        .prompt(&client, &SessionId::new("no-such-session"))
+        .await;
+
+    assert_eq!(
+        (
+            job.state,
+            job.kind,
+            job.workspace,
+            job.parent,
+            job.session,
+            job.error,
+            unknown
+        ),
+        (
+            JobState::Completed,
+            JobKind::Session,
+            sandbox.workspace.clone(),
+            None,
+            Some(session.clone()),
+            None,
+            Err(Some(ErrorCode::SessionNotFound))
+        ),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+    let records = sandbox.session_records(&session);
+    assert!(
+        records
+            .iter()
+            .any(|record| record.to_string().contains(REPLY)),
+        "the session saved the reply: {records:#?}"
+    );
+}
+
+// Covers: a turn's end reaches attached clients as how it ended, before
+// the job state that records it: the model's answer whole, or why it
+// failed, with an authentication failure naming only the provider, auth,
+// and how to log in, never the provider's text, here and in the job list
+// (#1669).
+// Owner: daemon session event feed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_turn_tells_clients_how_it_ended() {
+    let cases = [
+        (
+            "fixed",
+            TurnOutcome::Answered {
+                text: REPLY.into(),
+                stop: AnswerStop::EndTurn,
+            },
+            JobState::Completed,
+        ),
+        (
+            "fail",
+            TurnOutcome::Failed {
+                error: TurnError {
+                    kind: TurnErrorKind::Provider,
+                    message: "xai: provider failed: deterministic provider failure".into(),
+                },
+            },
+            JobState::Failed,
+        ),
+        (
+            "auth-failure",
+            TurnOutcome::Failed {
+                error: TurnError {
+                    kind: TurnErrorKind::Authentication,
+                    message: "authentication failed for xai (auth: xai-oauth); run /login xai or pass --auth xai-api-key".into(),
+                },
+            },
+            JobState::Failed,
+        ),
+    ];
+    for (mode, outcome, state) in cases {
+        let sandbox = Sandbox::new();
+        let client = sandbox.start_daemon(mode).await;
+        let session = sandbox.new_session(&client).await;
+        let (mut watcher, _) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
+        // A turn that fails before it saves the prompt answers the prompt
+        // with the failure; the clients learn it all the same.
+        let _ = sandbox.prompt(&client, &session).await;
+        watcher.read_until(is_state(state)).await;
+
+        let ending: Vec<SessionEvent> = watcher.events[watcher.events.len() - 2..]
+            .iter()
+            .map(|(_, event)| event.clone())
+            .collect();
+        // The turn's start named it, and its end and the state that
+        // records the end carry the same id.
+        let turn = watcher
+            .events
+            .iter()
+            .find_map(|(_, event)| match event {
+                SessionEvent::State {
+                    state: JobState::Running,
+                    turn,
+                } => turn.clone(),
+                _ => None,
+            })
+            .expect("the turn started");
+        let listed = match &outcome {
+            TurnOutcome::Failed { error } => Some(error.message.clone()),
+            _ => None,
+        };
+        assert_eq!(
+            ending,
+            vec![
+                SessionEvent::TurnEnded {
+                    turn: turn.clone(),
+                    outcome
+                },
+                SessionEvent::State {
+                    state,
+                    turn: Some(turn)
+                }
+            ],
+            "{mode}: log:\n{}",
+            sandbox.isolated.daemon_log()
+        );
+        let job = settled_job(&sandbox, &client, &session).await;
+        assert_eq!((job.state, job.error), (state, listed), "{mode}: job list");
+    }
+}
+
+// Covers: the provider diagnostic an authentication failure keeps from
+// clients, since it may echo credentials, is written to the daemon's log
+// as a warning, so the person running the daemon can read it.
+// Owner: daemon turn failure reporting.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_authentication_failures_diagnostic_goes_to_the_daemon_log_only() {
+    // The `auth-failure` fixture provider's diagnostic.
+    const DIAGNOSTIC: &str = "Authorization: Bearer fixture-secret";
+    let sandbox = Sandbox::new();
+    let client = sandbox.start_daemon("auth-failure").await;
+    let session = sandbox.new_session(&client).await;
+    let (mut watcher, _) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
+    let _ = sandbox.prompt(&client, &session).await;
+    watcher.read_until(is_state(JobState::Failed)).await;
+
+    let log = sandbox.isolated.daemon_log();
+    let logged: Vec<&str> = log
+        .lines()
+        .filter(|line| line.contains(DIAGNOSTIC))
+        .collect();
+    assert!(
+        matches!(logged[..], [line] if line.contains(" WARN ")),
+        "one warning carries the diagnostic; log:\n{log}"
+    );
+    let told = serde_json::to_string(&watcher.events).unwrap();
+    assert!(
+        !told.contains("fixture-secret"),
+        "clients were told the diagnostic: {told}"
+    );
+}
+
+// Covers: `/compact` runs in a daemon session with no model turn: clients
+// see the command, one compaction that starts and completes under one id,
+// its usage, then what the compaction did as an agent message, which the
+// turn answers with too (#1670).
+// Owner: daemon session commands.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn compact_reports_its_compaction_and_answers_with_the_result() {
+    let sandbox = Sandbox::new();
+    let client = sandbox.start_daemon("fixed").await;
+    let session = sandbox.new_session(&client).await;
+    let (mut watcher, _) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
+    assert_eq!(sandbox.prompt(&client, &session).await, Ok(()));
+    watcher.read_until(is_state(JobState::Completed)).await;
+    let answered = watcher.events.len();
+    assert_eq!(
+        sandbox.prompt_text(&client, &session, "/compact").await,
+        Ok(())
+    );
+    watcher.read_until(is_state(JobState::Completed)).await;
+
+    let compact_turn = &watcher.events[answered..];
+    // What the turn showed, in order: the kinds of its conversation's events
+    // and the compaction's usage.
+    let shown: Vec<_> = compact_turn
+        .iter()
+        .filter_map(|(_, event)| match event {
+            SessionEvent::UserMessage { .. } => Some("user_message"),
+            SessionEvent::Compaction {
+                status: CompactionStatus::Started { .. },
+                ..
+            } => Some("compaction_started"),
+            SessionEvent::Compaction {
+                status: CompactionStatus::Completed { .. },
+                ..
+            } => Some("compaction_completed"),
+            SessionEvent::Compaction { .. } => Some("compaction_unfinished"),
+            SessionEvent::Usage { .. } => Some("usage"),
+            SessionEvent::AgentMessageChunk { .. } => Some("agent_message_chunk"),
+            SessionEvent::TurnEnded { .. } => Some("turn_ended"),
+            _ => None,
+        })
+        .collect();
+    let compaction_ids: Vec<_> = compact_turn
+        .iter()
+        .filter_map(|(_, event)| match event {
+            SessionEvent::Compaction { id, .. } => Some(id.clone()),
+            _ => None,
+        })
+        .collect();
+    let reply = compact_turn.iter().find_map(|(_, event)| match event {
+        SessionEvent::AgentMessageChunk { text, .. } => Some(text.clone()),
+        _ => None,
+    });
+    let answer = compact_turn.iter().find_map(|(_, event)| match event {
+        SessionEvent::TurnEnded {
+            outcome: TurnOutcome::Answered { text, stop },
+            ..
+        } => Some((text.clone(), *stop)),
+        _ => None,
+    });
+    // Both compaction events update one card.
+    let one_id = matches!(compaction_ids.as_slice(), [first, second] if first == second);
+    assert_eq!(
+        (shown, one_id, answer),
+        (
+            vec![
+                "user_message",
+                "compaction_started",
+                "compaction_completed",
+                "usage",
+                "agent_message_chunk",
+                "turn_ended",
+            ],
+            true,
+            reply.map(|text| (text, AnswerStop::EndTurn)),
+        ),
+        "{compact_turn:#?}\nlog:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
+// Covers: a prompt's image and resource blocks reach the model, the image
+// as an image and the resource as its text fenced under its URI, and the
+// prompt's user message shows clients what was saved; a prompt with no
+// blocks, or an image that is not what it declares, is refused as invalid
+// params before a turn starts (#1670).
+// Owner: daemon session prompt content.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_prompts_image_and_resource_reach_the_model() {
+    // A 1x1 PNG.
+    const PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+    let sandbox = Sandbox::new();
+    // The fixture answers with the request it got.
+    let client = sandbox.start_daemon("inspect").await;
+    let session = sandbox.new_session(&client).await;
+    let (mut watcher, _) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
+    let refused = [
+        Vec::new(),
+        vec![ContentBlock::Image {
+            mime_type: "image/jpeg".into(),
+            data: PNG.into(),
+        }],
+    ];
+    for content in refused {
+        let refusal = client
+            .request::<SessionPrompt>(&SessionPromptParams {
+                author: rho_protocol::PromptAuthor::Person,
+                session: session.clone(),
+                content: content.clone(),
+                timeout_ms: None,
+                environment: sandbox.client_environment(),
+                idempotency_key: None,
+                grant: None,
+            })
+            .await
+            .map(|_| ())
+            .map_err(|error| match error {
+                ClientError::Rpc { error, .. } => error.error_code(),
+                error => panic!("prompt failed outside the protocol: {error}"),
+            });
+        assert_eq!(refusal, Err(Some(ErrorCode::InvalidParams)), "{content:?}");
+    }
+    client
+        .request::<SessionPrompt>(&SessionPromptParams {
+            author: rho_protocol::PromptAuthor::Person,
+            session: session.clone(),
+            content: vec![
+                ContentBlock::Text {
+                    text: "describe these".into(),
+                },
+                ContentBlock::Image {
+                    mime_type: "image/png".into(),
+                    data: PNG.into(),
+                },
+                ContentBlock::Resource {
+                    uri: "file:///notes.md".into(),
+                    text: "remember the milk".into(),
+                },
+            ],
+            timeout_ms: None,
+            environment: sandbox.client_environment(),
+            idempotency_key: None,
+            grant: None,
+        })
+        .await
+        .unwrap();
+    watcher.read_until(is_state(JobState::Completed)).await;
+
+    let fenced = "```resource file:///notes.md\nremember the milk\n```";
+    let shown = watcher.events.iter().find_map(|(_, event)| match event {
+        SessionEvent::UserMessage { content, .. } => Some(content.clone()),
+        _ => None,
+    });
+    assert_eq!(
+        shown,
+        Some(vec![
+            ContentBlock::Text {
+                text: "describe these".into(),
+            },
+            ContentBlock::Image {
+                mime_type: "image/png".into(),
+                data: PNG.into(),
+            },
+            ContentBlock::Text {
+                text: fenced.into(),
+            },
+        ]),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+    let answer = watcher.events.iter().find_map(|(_, event)| match event {
+        SessionEvent::TurnEnded {
+            outcome: TurnOutcome::Answered { text, .. },
+            ..
+        } => Some(text.clone()),
+        _ => None,
+    });
+    let request: serde_json::Value =
+        serde_json::from_str(&answer.expect("the turn answered")).unwrap();
+    let prompt = request["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .rev()
+        .find(|message| message.get("User").is_some())
+        .cloned();
+    assert_eq!(
+        prompt,
+        Some(serde_json::json!({"User": [
+            {"Text": "describe these"},
+            {"Image": {"data": PNG, "mime_type": "image/png"}},
+            {"Text": fenced},
+        ]}))
+    );
+}
+
+// Covers: after a session's first answered turn, the daemon titles it in
+// the background, saves the title where session lists read it, and tells
+// attached clients with `title_changed`; a client that attaches later,
+// whose replay need not hold that event, gets it in the attach response
+// (#1670).
+// Owner: daemon session titles.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_answered_session_is_titled_for_its_clients() {
+    let sandbox = Sandbox::new();
+    let client = sandbox.start_titling_daemon("fixed").await;
+    let session = sandbox.new_session(&client).await;
+    let (mut watcher, before) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
+    assert_eq!(sandbox.prompt(&client, &session).await, Ok(()));
+    watcher
+        .read_until(|event| matches!(event, SessionEvent::TitleChanged { .. }))
+        .await;
+    let (_, after) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
+
+    let listed = sandbox
+        .rho("fixed")
+        .args(["sessions", "list", "--json"])
+        .stdout(Stdio::piped())
+        .output()
+        .unwrap();
+    let listing: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
+    let saved = listing["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|listed| listed["id"] == session.to_string())
+        .map(|listed| listed["title"].clone());
+    let title = "Fixture session title";
+    assert_eq!(
+        (
+            before.title,
+            watcher.events.last().map(|(_, event)| event.clone()),
+            after.title,
+            saved,
+        ),
+        (
+            None,
+            Some(SessionEvent::TitleChanged {
+                title: title.into()
+            }),
+            Some(title.into()),
+            Some(serde_json::Value::from(title)),
+        ),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
+/// How a test ends a turn the fixture holds open.
+#[derive(Clone, Copy, Debug)]
+enum Ending {
+    /// `rho/session/cancel`.
+    Cancel,
+    /// `rho daemon stop`, then a new daemon.
+    Stop,
+    /// The daemon is killed, then a new daemon starts.
+    Kill,
+}
+
+// Covers: a subagent a daemon session starts runs in the daemon and is
+// listed as a child job of the session's job, in the session's workspace,
+// completed once it finished, with the session it saved its reply in, which
+// a client cannot reopen: only its parent continues it (#1661).
+// Owner: daemon subagent jobs.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_subagent_is_a_child_job_of_its_session() {
+    let sandbox = Sandbox::new();
+    // The fixture makes the call the prompt spells out as JSON.
+    let client = sandbox.start_daemon("tool-call").await;
+    let session = sandbox.new_session(&client).await;
+    let call = serde_json::json!({
+        "id": "delegate",
+        "name": "agent",
+        "arguments": {"agent_id": "explorer", "prompt": "Look around."},
+    });
+    sandbox.prompt_tool_call(&client, &session, &call).await;
+
+    let parent = settled_job(&sandbox, &client, &session).await;
+    let child = settled(&sandbox, &client, |job| {
+        job.parent.as_ref() == Some(&parent.id)
+    })
+    .await;
+    assert_eq!(
+        (
+            parent.state,
+            child.kind,
+            child.state,
+            child.workspace,
+            child.error,
+            child.queue,
+        ),
+        (
+            JobState::Completed,
+            JobKind::Subagent,
+            JobState::Completed,
+            sandbox.workspace.clone(),
+            None,
+            None,
+        ),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+    let child_session = child.session.expect("a Rho subagent writes a session");
+    let records = sandbox.session_records(&child_session);
+    assert!(
+        records
+            .iter()
+            .any(|record| record.to_string().contains(REPLY)),
+        "the subagent saved its reply: {records:#?}"
+    );
+    assert_eq!(
+        sandbox.prompt(&client, &child_session).await,
+        Err(Some(ErrorCode::SessionOpenFailed))
+    );
+}
+
+// Covers: a workflow run a daemon session starts is driven in the daemon in
+// the session's workspace, not the daemon's directory, and is listed as a
+// child job of the session's job, completed once the run succeeded; each of
+// its agent nodes is a subagent job whose parent is the workflow job.
+// Owner: daemon workflow jobs.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_workflow_run_is_a_child_job_of_its_session() {
+    let sandbox = Sandbox::new();
+    let workflows = sandbox.workspace.join("wf");
+    std::fs::create_dir_all(workflows.join("agents")).unwrap();
+    std::fs::write(workflows.join("main.star"), WORKFLOW).unwrap();
+    std::fs::write(workflows.join("agents/fixture.md"), WORKFLOW_AGENT).unwrap();
+    let client = sandbox.start_daemon("tool-call").await;
+    let session = sandbox.new_session(&client).await;
+    let call = serde_json::json!({
+        "id": "start",
+        "name": "workflow",
+        "arguments": {"action": "start", "file": "wf/main.star"},
+    });
+    sandbox.prompt_tool_call(&client, &session, &call).await;
+
+    let parent = settled_job(&sandbox, &client, &session).await;
+    let workflow = settled(&sandbox, &client, |job| {
+        job.parent.as_ref() == Some(&parent.id)
+    })
+    .await;
+    let node = settled(&sandbox, &client, |job| {
+        job.parent.as_ref() == Some(&workflow.id)
+    })
+    .await;
+    let log = sandbox.isolated.daemon_log();
+    assert_eq!(
+        (
+            (parent.state, workflow.kind, workflow.state, workflow.error),
+            (node.kind, node.state, node.error),
+            (workflow.workspace, node.workspace),
+        ),
+        (
+            (
+                JobState::Completed,
+                JobKind::Workflow,
+                JobState::Completed,
+                None
+            ),
+            (JobKind::Subagent, JobState::Completed, None),
+            (sandbox.workspace.clone(), sandbox.workspace.clone()),
+        ),
+        "log:\n{log}"
+    );
+    // The run the tool started is the only one under the daemon's home.
+    let runs: Vec<String> = std::fs::read_dir(sandbox.isolated.rho_home().join("workflows/runs"))
+        .unwrap()
+        .map(|run| run.unwrap().file_name().into_string().unwrap())
+        .collect();
+    assert_eq!(workflow.workflow_run.map(|run| vec![run]), Some(runs));
+}
+
+// Covers: `/workflow:<name>` in a daemon session starts the workspace
+// workflow as a child job, with no model turn: clients see the prompt and
+// the start notice as the messages a later client replays from the saved
+// session, under the same ids, and the turn answers with the notice, which
+// names the run (#1670).
+// Owner: daemon session commands.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_workflow_command_starts_its_run_without_a_model_turn() {
+    let sandbox = Sandbox::new();
+    let workflow = sandbox.workspace.join(".rho/workflows/daemon-run");
+    std::fs::create_dir_all(workflow.join("agents")).unwrap();
+    std::fs::write(workflow.join("workflow.star"), WORKFLOW).unwrap();
+    std::fs::write(workflow.join("agents/fixture.md"), WORKFLOW_AGENT).unwrap();
+    let client = sandbox.start_daemon("fixed").await;
+    let session = sandbox.new_session(&client).await;
+    let (mut watcher, _) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
+    let started = sandbox
+        .prompt_text(&client, &session, "/workflow:daemon-run")
+        .await;
+    watcher.read_until(is_state(JobState::Completed)).await;
+    let parent = settled_job(&sandbox, &client, &session).await;
+    let run = settled(&sandbox, &client, |job| {
+        job.parent.as_ref() == Some(&parent.id)
+    })
+    .await;
+    let (mut latecomer, _) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
+    latecomer.read_until(is_state(JobState::Completed)).await;
+
+    let shown = conversation(&watcher.events);
+    let (notice, answer) = match shown.as_slice() {
+        [SessionEvent::UserMessage { .. }, SessionEvent::AgentMessageChunk { text, .. }, SessionEvent::TurnEnded {
+            outcome: TurnOutcome::Answered { text: answer, .. },
+            ..
+        }] => (text.clone(), answer.clone()),
+        _ => panic!(
+            "the prompt, then the notice, then an answer: {shown:#?}\nlog:\n{}",
+            sandbox.isolated.daemon_log()
+        ),
+    };
+    let run_id = run.workflow_run.clone().expect("the job names its run");
+    assert!(
+        notice.contains(&run_id),
+        "the notice names run {run_id}: {notice}"
+    );
+    assert_eq!(
+        (started, answer, run.state),
+        (Ok(()), notice.clone(), JobState::Completed),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+    assert_eq!(conversation(&latecomer.events), shown);
+}
+
+// Covers: the prompts the TUI's workflow hub sends start their runs in the
+// daemon too: `/workflow:plan/<plan id>` runs a saved plan as a child job,
+// and `/workflow:run/<run id>` drives that same run again under a second
+// job rather than starting another.
+// Owner: daemon session commands.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_saved_plan_and_a_run_start_from_their_prompts() {
+    let sandbox = Sandbox::new();
+    let workflow = sandbox.workspace.join(".rho/workflows/daemon-run");
+    std::fs::create_dir_all(workflow.join("agents")).unwrap();
+    std::fs::write(workflow.join("workflow.star"), WORKFLOW).unwrap();
+    std::fs::write(workflow.join("agents/fixture.md"), WORKFLOW_AGENT).unwrap();
+    let planned = sandbox
+        .rho("fixed")
+        .args([
+            "workflow",
+            "plan",
+            ".rho/workflows/daemon-run/workflow.star",
+            "--output",
+            "json",
+        ])
+        .stdout(Stdio::piped())
+        .output()
+        .unwrap();
+    let planned: serde_json::Value = serde_json::from_slice(&planned.stdout)
+        .unwrap_or_else(|error| panic!("{error}: {planned:?}"));
+    let plan = planned["manifest"]["plan_id"].as_str().unwrap();
+    let client = sandbox.start_daemon("fixed").await;
+    let session = sandbox.new_session(&client).await;
+    let workflow_runs = async || -> Vec<(Option<String>, JobState)> {
+        let jobs = client.request::<JobList>(&JobListParams {}).await.unwrap();
+        jobs.jobs
+            .into_iter()
+            .filter(|job| job.kind == JobKind::Workflow)
+            .map(|job| (job.workflow_run, job.state))
+            .collect()
+    };
+
+    let from_plan = sandbox
+        .prompt_text(&client, &session, &format!("/workflow:plan/{plan}"))
+        .await;
+    let first = settled(&sandbox, &client, |job| job.kind == JobKind::Workflow).await;
+    let run = first.workflow_run.clone().expect("the job names its run");
+    settled_job(&sandbox, &client, &session).await;
+    let again = sandbox
+        .prompt_text(&client, &session, &format!("/workflow:run/{run}"))
+        .await;
+    sandbox
+        .poll_until("both drives to end", async || {
+            let runs = workflow_runs().await;
+            (runs.len() == 2 && runs.iter().all(|(_, state)| *state == JobState::Completed))
+                .then_some(())
+        })
+        .await;
+
+    assert_eq!(
+        (from_plan, again, workflow_runs().await),
+        (
+            Ok(()),
+            Ok(()),
+            vec![
+                (Some(run.clone()), JobState::Completed),
+                (Some(run), JobState::Completed)
+            ]
+        ),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
+// Covers: a turn cancelled through `rho/session/cancel` is recorded
+// cancelled; a turn the daemon's stop interrupts is recorded interrupted,
+// within `rho daemon stop`'s wait; a turn whose daemon died (`kill -9`) is
+// recorded interrupted by the next daemon. Either way the session comes back
+// (#1661): an attach reopens it, in its workspace, replaying its saved
+// conversation and its job's state, of the turn the prompt was answered
+// with, and the next prompt continues it on the same job. The ended turn's
+// prompt, sent again with its idempotency key, as a client does that never
+// heard the answer, starts no second turn and answers with the same turn,
+// by the next daemon too (#1777).
+// Owner: daemon session hosting and job records.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_turn_ended_early_is_recorded_and_its_session_continues() {
+    let cases = [
+        (Ending::Cancel, JobState::Cancelled),
+        (Ending::Stop, JobState::Interrupted),
+        (Ending::Kill, JobState::Interrupted),
+    ];
+    for (ending, expected_state) in cases {
+        let sandbox = Sandbox::new();
+        // The fixture holds each turn until it is cancelled.
+        let (mut daemon, client) = sandbox.spawn_daemon(sandbox.rho("delay"), &[]).await;
+        let session = sandbox.new_session(&client).await;
+        let turn = sandbox
+            .prompt_keyed(&client, &session, "hello", Some("k1"))
+            .await
+            .unwrap_or_else(|error| panic!("{ending:?}: the prompt was refused: {error:?}"));
+        let jobs_of_session = async |client: &Client| -> Vec<JobId> {
+            let jobs = client.request::<JobList>(&JobListParams {}).await.unwrap();
+            jobs.jobs
+                .into_iter()
+                .filter(|job| job.session.as_ref() == Some(&session))
+                .map(|job| job.id)
+                .collect()
+        };
+        let job = jobs_of_session(&client).await;
+
+        let client = match ending {
+            Ending::Cancel => {
+                client
+                    .request::<SessionCancel>(&SessionCancelParams {
+                        session: session.clone(),
+                    })
+                    .await
+                    .unwrap();
+                client
+            }
+            Ending::Stop => {
+                drop(client);
+                let stop = sandbox
+                    .rho("delay")
+                    .args(["daemon", "stop"])
+                    .status()
+                    .unwrap();
+                assert!(
+                    stop.success(),
+                    "{ending:?}: log:\n{}",
+                    sandbox.isolated.daemon_log()
+                );
+                daemon.wait().unwrap();
+                sandbox.start_daemon("delay").await
+            }
+            Ending::Kill => {
+                drop(client);
+                // The kernel releases its lock when it exits, which the
+                // wait guarantees happened, so the next daemon can take it.
+                daemon.kill().unwrap();
+                daemon.wait().unwrap();
+                sandbox.start_daemon("delay").await
+            }
+        };
+        let state = settled_job(&sandbox, &client, &session).await.state;
+        let sent_again = sandbox
+            .prompt_keyed(&client, &session, "hello", Some("k1"))
+            .await;
+        // A second turn would run until cancelled, as the fixture holds it.
+        let state_once_sent_again = client
+            .request::<JobList>(&JobListParams {})
+            .await
+            .unwrap()
+            .jobs
+            .into_iter()
+            .find(|job| job.session.as_ref() == Some(&session))
+            .map(|job| job.state);
+        let (mut follower, attached) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
+        follower
+            .read_until(|event| matches!(event, SessionEvent::UserMessage { .. }))
+            .await;
+        let next_prompt = sandbox.prompt(&client, &session).await;
+
+        assert_eq!(
+            (
+                state,
+                (sent_again, state_once_sent_again),
+                attached.replay,
+                attached.workspace,
+                (attached.state, attached.turn),
+                next_prompt,
+                jobs_of_session(&client).await,
+            ),
+            (
+                expected_state,
+                (Ok(turn.clone()), Some(expected_state)),
+                Replay::Reset,
+                sandbox.workspace.clone(),
+                (expected_state, Some(turn)),
+                Ok(()),
+                job,
+            ),
+            "{ending:?}: log:\n{}",
+            sandbox.isolated.daemon_log()
+        );
+    }
+}
+
+// Covers: a session no daemon ran, saved by a foreground `rho run`, is
+// refused as in use while that run has it open; once the run is gone, an
+// attach reopens it (#1661) in its own workspace, on a new session job that
+// has run no turn yet, replaying its saved conversation, and it takes the
+// next prompt.
+// Owner: daemon session reopening.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_session_another_process_saved_reopens_once_it_lets_go() {
+    let sandbox = Sandbox::new();
+    let client = sandbox.start_daemon("delay").await;
+    // The fixture's model call waits, so the run holds its session open.
+    let mut run = tokio::process::Command::from(sandbox.rho("delay"));
+    run.args(["run", "--output", "jsonl", "hello"])
+        .stdout(Stdio::piped())
+        .kill_on_drop(true);
+    let mut run = run.spawn().unwrap();
+    let mut lines = BufReader::new(run.stdout.take().unwrap()).lines();
+    let started = tokio::time::timeout(DEADLINE, lines.next_line())
+        .await
+        .expect("the run starts")
+        .unwrap()
+        .expect("the run writes run_started");
+    let started: serde_json::Value = serde_json::from_str(&started).unwrap();
+    let session = SessionId::new(started["session"].as_str().unwrap());
+    sandbox
+        .poll_until("the run to save its prompt", async || {
+            sandbox.saved_a_user_message(&session).then_some(())
+        })
+        .await;
+    let attach = async |client: &Client| {
+        client
+            .request::<SessionAttach>(&SessionAttachParams {
+                session: session.clone(),
+                after: None,
+                environment: sandbox.client_environment(),
+                setup: SessionSetup::default(),
+            })
+            .await
+            .map(|_| ())
+            .map_err(|error| error.error_code())
+    };
+    let in_use = attach(&client).await;
+
+    run.kill().await.unwrap();
+    let (mut follower, attached) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
+    follower
+        .read_until(|event| matches!(event, SessionEvent::UserMessage { .. }))
+        .await;
+    let jobs: Vec<_> = client
+        .request::<JobList>(&JobListParams {})
+        .await
+        .unwrap()
+        .jobs
+        .into_iter()
+        .filter(|job| job.session.as_ref() == Some(&session))
+        .map(|job| (job.kind, job.state))
+        .collect();
+    let next_prompt = sandbox.prompt(&client, &session).await;
+
+    assert_eq!(
+        (
+            in_use,
+            attached.workspace,
+            attached.state,
+            jobs,
+            next_prompt
+        ),
+        (
+            Err(Some(ErrorCode::SessionInUse)),
+            sandbox.workspace.clone(),
+            JobState::Idle,
+            vec![(JobKind::Session, JobState::Idle)],
+            Ok(())
+        ),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
+// Covers: a session saved as an agent other than the default reopens as
+// that agent while its definition is unchanged, and is refused once the
+// definition changed, rather than reopened as the default agent (#1661).
+// Owner: daemon session reopening.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_session_reopens_only_as_the_agent_it_was_saved_as() {
+    let sandbox = Sandbox::new();
+    let archivist = sandbox.isolated.home.join(".agents/agents/archivist.md");
+    std::fs::create_dir_all(archivist.parent().unwrap()).unwrap();
+    std::fs::write(&archivist, ARCHIVIST_AGENT).unwrap();
+    let saved_as_archivist = || {
+        let run = sandbox
+            .rho("fixed")
+            .args(["run", "--agent", "archivist", "--output", "jsonl", "hello"])
+            .stdout(Stdio::piped())
+            .output()
+            .unwrap();
+        assert!(run.status.success(), "{run:?}");
+        let started = String::from_utf8(run.stdout).unwrap();
+        let started: serde_json::Value =
+            serde_json::from_str(started.lines().next().unwrap()).unwrap();
+        SessionId::new(started["session"].as_str().unwrap())
+    };
+    let (kept, edited) = (saved_as_archivist(), saved_as_archivist());
+    let client = sandbox.start_daemon("fixed").await;
+
+    let while_unchanged = sandbox.prompt(&client, &kept).await;
+    std::fs::write(
+        &archivist,
+        ARCHIVIST_AGENT.replace("Archive.", "Archive everything."),
+    )
+    .unwrap();
+    let once_changed = sandbox.prompt(&client, &edited).await;
+
+    assert_eq!(
+        (while_unchanged, once_changed),
+        (Ok(()), Err(Some(ErrorCode::SessionOpenFailed))),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
+// Covers: a session that sits idle, with no turn under way and no client
+// attached, past `--unload-idle-after` is unloaded, letting go of its file
+// so another process can take it, here `rho sessions rm`; one a client
+// follows, idle as long, stays loaded and held (#1661).
+// Owner: daemon idle session unload.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_idle_session_is_unloaded_and_its_file_let_go() {
+    let sandbox = Sandbox::new();
+    let client = sandbox
+        .start_daemon_with("fixed", &["--unload-idle-after", "200ms"])
+        .await;
+    // Saved, so another process finds it.
+    let saved_session = async || {
+        let session = sandbox.new_session(&client).await;
+        sandbox.prompt(&client, &session).await.unwrap();
+        settled_job(&sandbox, &client, &session).await;
+        session
+    };
+    // First, so without its follower it would unload no later than the other.
+    let followed = saved_session().await;
+    let (_follower, _) = Follower::attach(&sandbox, &followed, Vec::new(), None).await;
+    let idle = saved_session().await;
+    let delete = |session: &SessionId| {
+        sandbox
+            .rho("fixed")
+            .args(["sessions", "rm", "--yes", session.as_str()])
+            .status()
+            .unwrap()
+            .success()
+    };
+
+    sandbox
+        .poll_until("the daemon to let the idle session go", async || {
+            delete(&idle).then_some(())
+        })
+        .await;
+    let followed_deleted = delete(&followed);
+
+    assert!(!followed_deleted, "log:\n{}", sandbox.isolated.daemon_log());
+}
+
+/// A client following one session's events on its own connection, as a
+/// frontend does: it keeps the events it has, by seq, and skips any it
+/// already has, so a resumed stream continues its view without repeats.
+pub(super) struct Follower {
+    client: Client,
+    notifications: Notifications,
+    session: SessionId,
+    stream: StreamId,
+    pub(super) events: Vec<(Seq, SessionEvent)>,
+}
+
+impl Follower {
+    /// Connects and attaches to `session`, resuming after `after` when
+    /// given; returns the follower and how the daemon answered the attach.
+    pub(super) async fn attach(
+        sandbox: &Sandbox,
+        session: &SessionId,
+        events: Vec<(Seq, SessionEvent)>,
+        after: Option<Cursor>,
+    ) -> (Self, SessionAttachResponse) {
+        let (client, notifications) = sandbox.connect_following().await;
+        let attached = client
+            .request::<SessionAttach>(&SessionAttachParams {
+                session: session.clone(),
+                after,
+                environment: sandbox.client_environment(),
+                setup: SessionSetup::default(),
+            })
+            .await
+            .unwrap();
+        let follower = Self {
+            client,
+            notifications,
+            session: session.clone(),
+            stream: attached.stream.clone(),
+            events,
+        };
+        (follower, attached)
+    }
+
+    /// Where the follower is: the last event it has.
+    fn cursor(&self) -> Cursor {
+        let (seq, _) = self.events.last().expect("the follower has an event");
+        Cursor {
+            stream: self.stream.clone(),
+            seq: *seq,
+        }
+    }
+
+    /// The next notification, or `None` once the daemon closed the
+    /// connection.
+    async fn next_notification(&mut self) -> Option<DaemonNotification> {
+        tokio::time::timeout(DEADLINE, self.notifications.recv())
+            .await
+            .expect("the daemon sends a notification or closes")
+    }
+
+    /// Reads events until one satisfies `done`.
+    pub(super) async fn read_until(&mut self, done: impl Fn(&SessionEvent) -> bool) {
+        loop {
+            let notification = tokio::time::timeout(DEADLINE, self.notifications.recv())
+                .await
+                .expect("the daemon sends the session's next event")
+                .expect("the connection stays open");
+            let DaemonNotification::SessionEvent(params) = notification else {
+                panic!("expected a session event, got {notification:?}");
+            };
+            assert_eq!(params.session, self.session);
+            let seen = self.events.last().map(|(seq, _)| *seq);
+            // A reset's transcript is at seq 0 but its last event, so a cold
+            // follower takes equal seqs as they come.
+            if seen.is_some_and(|seen| params.seq < seen) {
+                continue;
+            }
+            let finished = done(&params.event);
+            self.events.push((params.seq, params.event));
+            if finished {
+                return;
+            }
+        }
+    }
+
+    /// Detaches from the session, then leaves, as a closing frontend does.
+    async fn leave(self) -> Vec<(Seq, SessionEvent)> {
+        self.client
+            .request::<SessionDetach>(&SessionDetachParams {
+                session: self.session.clone(),
+            })
+            .await
+            .unwrap();
+        self.events
+    }
+}
+
+pub(super) fn is_state(state: JobState) -> impl Fn(&SessionEvent) -> bool {
+    move |event| matches!(event, SessionEvent::State { state: got, .. } if *got == state)
+}
+
+/// What a conversation shows: its events without job states, model
+/// requests, context usage, titles, and options, which describe the session
+/// as it was when they were sent.
+fn conversation(events: &[(Seq, SessionEvent)]) -> Vec<SessionEvent> {
+    events
+        .iter()
+        .map(|(_, event)| event.clone())
+        .filter(|event| {
+            !matches!(
+                event,
+                SessionEvent::State { .. }
+                    | SessionEvent::ProviderRequest
+                    | SessionEvent::Usage { .. }
+                    | SessionEvent::TitleChanged { .. }
+                    | SessionEvent::OptionsChanged { .. }
+                    | SessionEvent::Background { .. }
+            )
+        })
+        .collect()
+}
+
+// Covers: two clients follow one turn; one detaches and leaves mid-turn,
+// the turn goes on, and it comes back with its cursor to the events it
+// missed and no repeats, so both hold the same events under the same seqs.
+// A client that first attaches after the turn saved resets to the same
+// conversation, replayed from the saved session, under the same message
+// ids. When the daemon stops, an attached client is told why it was
+// detached (#1657).
+// Owner: daemon session event feed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn clients_that_leave_and_come_back_see_the_same_turn() {
+    let sandbox = Sandbox::new();
+    // The fixture holds the turn until it is cancelled.
+    let (mut daemon, client) = sandbox.spawn_daemon(sandbox.rho("delay"), &[]).await;
+    let session = sandbox.new_session(&client).await;
+    let (mut watcher, watched) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
+    let (mut leaver, ..) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
+
+    assert_eq!(sandbox.prompt(&client, &session).await, Ok(()));
+    let saved_prompt = |event: &SessionEvent| matches!(event, SessionEvent::UserMessage { .. });
+    leaver.read_until(saved_prompt).await;
+    let cursor = leaver.cursor();
+    let kept = leaver.leave().await;
+    client
+        .request::<SessionCancel>(&SessionCancelParams {
+            session: session.clone(),
+        })
+        .await
+        .unwrap();
+    watcher.read_until(is_state(JobState::Cancelled)).await;
+
+    let (mut leaver, resumed) = Follower::attach(&sandbox, &session, kept, Some(cursor)).await;
+    leaver.read_until(is_state(JobState::Cancelled)).await;
+    let (mut latecomer, late) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
+    latecomer.read_until(is_state(JobState::Cancelled)).await;
+
+    let seqs: Vec<u64> = watcher.events.iter().map(|(seq, _)| seq.0).collect();
+    assert_eq!(
+        seqs,
+        (1..=seqs.len() as u64).collect::<Vec<_>>(),
+        "the stream numbers every event once, in order"
+    );
+    assert_eq!(
+        (
+            (watched.replay, watched.state),
+            (resumed.replay, resumed.state),
+            late.replay
+        ),
+        (
+            (Replay::Reset, JobState::Idle),
+            (Replay::Tail, JobState::Cancelled),
+            Replay::Reset
+        )
+    );
+    assert_eq!(
+        leaver.events,
+        watcher.events,
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+    assert_eq!(
+        conversation(&latecomer.events),
+        conversation(&watcher.events)
+    );
+    assert!(
+        conversation(&watcher.events)
+            .iter()
+            .any(|event| matches!(event, SessionEvent::UserMessage { .. })),
+        "the turn showed its prompt: {:#?}",
+        watcher.events
+    );
+    assert!(
+        matches!(
+            conversation(&watcher.events).last(),
+            Some(SessionEvent::TurnEnded {
+                outcome: TurnOutcome::Cancelled,
+                ..
+            })
+        ),
+        "the turn ended cancelled"
+    );
+
+    let stop = sandbox
+        .rho("delay")
+        .args(["daemon", "stop"])
+        .status()
+        .unwrap();
+    assert!(stop.success(), "log:\n{}", sandbox.isolated.daemon_log());
+    assert_eq!(
+        watcher.next_notification().await,
+        Some(DaemonNotification::SessionDetached(SessionDetachedParams {
+            session: session.clone(),
+            reason: DetachReason::DaemonStopping,
+        })),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+    daemon.wait().unwrap();
+}
+
+fn test_client() -> ClientInfo {
+    ClientInfo {
+        name: "daemon-sessions-test".into(),
+        version: "0".into(),
+    }
+}
+
+/// Answers `request` of `session` with `answer` on `client`.
+pub(super) async fn answer(
+    client: &Client,
+    session: &SessionId,
+    request: InputRequestId,
+    answer: InputAnswer,
+) -> Result<(), Option<ErrorCode>> {
+    client
+        .request::<SessionAnswer>(&SessionAnswerParams {
+            session: session.clone(),
+            request,
+            answer,
+        })
+        .await
+        .map(|_| ())
+        .map_err(|error| match error {
+            ClientError::Rpc { error, .. } => error.error_code(),
+            error => panic!("answer failed outside the protocol: {error}"),
+        })
+}
+
+/// Starts a supervised daemon and prompts a new session's turn to `write`
+/// `note.txt`, which waits for approval with nobody attached.
+pub(super) async fn prompt_a_supervised_write(sandbox: &Sandbox) -> (Client, SessionId) {
+    sandbox.set_permission_mode("supervised");
+    // The fixture makes the call the prompt spells out as JSON.
+    let client = sandbox.start_daemon("tool-call").await;
+    let session = sandbox.new_session(&client).await;
+    let call = serde_json::json!({
+        "id": "edit",
+        "name": "write",
+        "arguments": {"path": "note.txt", "content": "approved"},
+    });
+    sandbox.prompt_tool_call(&client, &session, &call).await;
+    (client, session)
+}
+
+// Covers: `rho/job/list` tells what the daemon follows of a loaded
+// session's job without an attach: the model it runs on, the turn's time
+// under way, and the request it waits on, the same one an attach reports,
+// which a client that never attached answers by it (#1668).
+// Owner: daemon job list.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_job_list_tells_what_a_waiting_job_asks() {
+    let sandbox = Sandbox::new();
+    let (client, session) = prompt_a_supervised_write(&sandbox).await;
+    let waiting = sandbox
+        .poll_until("the turn to ask", async || {
+            let jobs = client.request::<JobList>(&JobListParams {}).await.unwrap();
+            jobs.jobs.into_iter().find(|job| {
+                job.session.as_ref() == Some(&session) && job.state == JobState::WaitingForInput
+            })
+        })
+        .await;
+    let live = waiting.live.expect("the daemon follows a loaded session");
+    let (_follower, attached) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
+
+    assert_eq!(
+        (
+            live.model,
+            live.inputs.clone(),
+            live.turn_elapsed_ms.is_some(),
+        ),
+        (attached.options.model.current, attached.inputs, true),
+    );
+    let request = live.inputs.first().expect("the request is open").id;
+    assert_eq!(
+        answer(&client, &session, request, InputAnswer::AllowOnce).await,
+        Ok(())
+    );
+    let job = settled_job(&sandbox, &client, &session).await;
+    assert_eq!(
+        (job.state, job.live.map(|live| live.inputs)),
+        (JobState::Completed, Some(Vec::new())),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
+// Covers: a session a later daemon reopens lists the context its saved
+// conversation fills, with no cost, before it runs another turn; until it
+// is reopened the daemon follows nothing of its job.
+// Owner: daemon job list.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_reopened_session_lists_its_context() {
+    let sandbox = Sandbox::new();
+    let (mut daemon, client) = sandbox.spawn_daemon(sandbox.rho("fixed"), &[]).await;
+    let session = sandbox.new_session(&client).await;
+    assert_eq!(sandbox.prompt(&client, &session).await, Ok(()));
+    settled_job(&sandbox, &client, &session).await;
+    drop(client);
+    let stop = sandbox
+        .rho("fixed")
+        .args(["daemon", "stop"])
+        .status()
+        .unwrap();
+    assert!(stop.success(), "log:\n{}", sandbox.isolated.daemon_log());
+    daemon.wait().unwrap();
+
+    let client = sandbox.start_daemon("fixed").await;
+    let unloaded = settled_job(&sandbox, &client, &session).await.live;
+    let (_follower, _) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
+    let usage = settled_job(&sandbox, &client, &session)
+        .await
+        .live
+        .and_then(|live| live.usage);
+
+    assert_eq!(
+        (
+            unloaded,
+            usage.map(|usage| (usage.used_tokens > 0, usage.cost_usd_micros)),
+        ),
+        (None, Some((true, None))),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
+// Covers: a supervised turn's approval, asked while no client is attached,
+// waits in the daemon with the job waiting for input; a client that
+// attaches later is told the open request in its attach response and
+// answers it, every attached client learns it was answered, a second answer
+// finds it no longer open, and the turn goes on with the answer (#1660).
+// Owner: daemon input requests.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_approval_waits_for_any_client_to_answer() {
+    let sandbox = Sandbox::new();
+    let (client, session) = prompt_a_supervised_write(&sandbox).await;
+    // Nobody is attached while the turn asks.
+    sandbox
+        .poll_until("the turn to ask", async || {
+            let jobs = client.request::<JobList>(&JobListParams {}).await.unwrap();
+            jobs.jobs.into_iter().find(|job| {
+                job.session.as_ref() == Some(&session) && job.state == JobState::WaitingForInput
+            })
+        })
+        .await;
+
+    let (mut answerer, attached) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
+    let request = attached
+        .inputs
+        .first()
+        .expect("the request is open")
+        .clone();
+    let first = answer(
+        &answerer.client,
+        &session,
+        request.id,
+        InputAnswer::AllowOnce,
+    )
+    .await;
+    answerer
+        .read_until(|event| matches!(event, SessionEvent::InputResolved { .. }))
+        .await;
+    let second = answer(
+        &client,
+        &session,
+        request.id,
+        InputAnswer::Deny { reason: None },
+    )
+    .await;
+    let job = settled_job(&sandbox, &client, &session).await;
+
+    // The policy words its reason; the rest is what the call asked for.
+    let reason = match &request.ask {
+        Ask::Approval(approval) => approval.reason.clone(),
+        ask => panic!("a write asks for approval: {ask:?}"),
+    };
+    assert_eq!(
+        (
+            attached.inputs.clone(),
+            attached.state,
+            first,
+            answerer.events.last().map(|(_, event)| event.clone()),
+            second,
+            job.state,
+            std::fs::read_to_string(sandbox.workspace.join("note.txt")).ok(),
+        ),
+        (
+            vec![InputRequest {
+                id: request.id,
+                ask: Ask::Approval(ApprovalAsk {
+                    source: ApprovalSource::BuiltInTool {
+                        name: "write".into(),
+                    },
+                    operation: Operation::WritePath {
+                        path: sandbox.resolved_workspace().join("note.txt"),
+                        scope: PathScope::Workspace,
+                    },
+                    reason,
+                }),
+                tool_call: Some(ToolCallId::new("edit")),
+                timeout: None,
+                asker: rho_protocol::InputAsker::Turn,
+            }],
+            JobState::WaitingForInput,
+            Ok(()),
+            Some(SessionEvent::InputResolved {
+                id: request.id,
+                resolution: Resolution::Answered,
+            }),
+            Err(Some(ErrorCode::InputNotOpen)),
+            JobState::Completed,
+            Some("approved".to_owned()),
+        ),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
+// Covers: the daemon refuses an answer and a hold from a connection that
+// declared an agent's session control, as `rho mcp serve` and the
+// `sessions` tool do, as `CapabilityRequired`; the request
+// stays open and nothing is written, and a frontend then answers it (#1780).
+// Owner: daemon connection capabilities.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_agents_connection_can_neither_answer_nor_hold_an_approval() {
+    let sandbox = Sandbox::new();
+    let (client, session) = prompt_a_supervised_write(&sandbox).await;
+    let waiting = async || {
+        let jobs = client.request::<JobList>(&JobListParams {}).await.unwrap();
+        jobs.jobs.into_iter().find(|job| {
+            job.session.as_ref() == Some(&session) && job.state == JobState::WaitingForInput
+        })
+    };
+    sandbox.poll_until("the turn to ask", waiting).await;
+    let (_follower, attached) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
+    let request = attached.inputs.first().expect("the request is open").id;
+    let agent = sandbox.connect_as_agent().await;
+    let refusal = |refused: ClientError| match refused {
+        ClientError::Rpc { error, .. } => error.error_code(),
+        error => panic!("refused outside the protocol: {error}"),
+    };
+
+    let answered = agent
+        .request::<SessionAnswer>(&SessionAnswerParams {
+            session: session.clone(),
+            request,
+            answer: InputAnswer::AllowOnce,
+        })
+        .await
+        .map(drop)
+        .map_err(refusal);
+    let held = agent
+        .request::<SessionHold>(&SessionHoldParams {
+            session: session.clone(),
+            request,
+        })
+        .await
+        .map(drop)
+        .map_err(refusal);
+    let after_the_agent = (
+        waiting().await.map(|job| job.state),
+        sandbox.workspace.join("note.txt").exists(),
+    );
+    let by_a_frontend = answer(&client, &session, request, InputAnswer::AllowOnce).await;
+    let job = settled_job(&sandbox, &client, &session).await;
+
+    assert_eq!(
+        (answered, held, after_the_agent, by_a_frontend, job.state),
+        (
+            Err(Some(ErrorCode::CapabilityRequired)),
+            Err(Some(ErrorCode::CapabilityRequired)),
+            (Some(JobState::WaitingForInput), false),
+            Ok(()),
+            JobState::Completed,
+        ),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
+// Covers: a daemon session's turn that waits for a person with nobody
+// attached runs the user's `input_requested` hooks, which name the session
+// and what it asks, so a user away from every client can be told (#1660).
+// Owner: daemon input requests.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_turn_that_asks_tells_the_hooks() {
+    let sandbox = Sandbox::new();
+    let home = sandbox.isolated.rho_home();
+    let events = home.join("asked.jsonl");
+    let hook = home.join("on-input-requested");
+    std::fs::write(&hook, format!("#!/bin/sh\ncat >> '{}'\n", events.display())).unwrap();
+    std::fs::set_permissions(&hook, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    std::fs::write(
+        home.join("hooks.toml"),
+        format!(
+            "version = 1\n\n[[hook]]\nid = \"notify\"\non = \"input_requested\"\ncommand = [\"{}\"]\ntimeout = \"5s\"\n",
+            hook.display()
+        ),
+    )
+    .unwrap();
+    let (_client, session) = prompt_a_supervised_write(&sandbox).await;
+
+    let event: serde_json::Value = sandbox
+        .poll_until("the hook to run", async || {
+            let written = std::fs::read_to_string(&events).ok()?;
+            serde_json::from_str(written.lines().next()?).ok()
+        })
+        .await;
+
+    assert_eq!(
+        (
+            &event["event"],
+            &event["identity"]["session_id"],
+            &event["payload"]["kind"],
+            event["payload"]["summary"]
+                .as_str()
+                .is_some_and(|summary| !summary.is_empty()),
+        ),
+        (
+            &serde_json::json!("input_requested"),
+            &serde_json::json!(session.as_str()),
+            &serde_json::json!("approval"),
+            true,
+        ),
+        "event: {event:#}\nlog:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
+/// A sandbox whose config sets `[questionnaire] timeout_seconds`.
+fn sandbox_with_question_timeout(seconds: u64) -> Sandbox {
+    let sandbox = Sandbox::new();
+    std::fs::write(
+        &sandbox.isolated.config_path,
+        format!("{CONFIG}\n[questionnaire]\ntimeout_seconds = {seconds}\n"),
+    )
+    .unwrap();
+    sandbox
+}
+
+/// Prompts `session` to ask which color, with `Blue` as the fallback
+/// answers, through the `tool-call` fixture.
+async fn ask_color_with_fallback(sandbox: &Sandbox, client: &Client, session: &SessionId) {
+    let call = serde_json::json!({
+        "id": "ask",
+        "name": "questionnaire",
+        "arguments": {
+            "questions": [{
+                "id": "color",
+                "question": "Which color?",
+                "choices": ["Red", "Blue"],
+            }],
+            "on_timeout": {"answers": {"color": "Blue"}, "reason": "either works"},
+        },
+    });
+    sandbox.prompt_tool_call(client, session, &call).await;
+}
+
+pub(super) fn blue() -> InputAnswer {
+    InputAnswer::Answers {
+        answers: [("color".to_owned(), vec!["Blue".to_owned()])].into(),
+    }
+}
+
+/// Reads until the color question's tool call completes, and returns its
+/// result as JSON.
+async fn color_result(follower: &mut Follower) -> serde_json::Value {
+    let ask = ToolCallId::new("ask");
+    follower
+        .read_until(|event| {
+            matches!(event, SessionEvent::ToolCall(update)
+                if update.id == ask && update.status == Some(ToolStatus::Completed))
+        })
+        .await;
+    let text: String = follower
+        .events
+        .iter()
+        .filter_map(|(_, event)| match event {
+            SessionEvent::ToolCall(update) if update.id == ask => update.content.clone(),
+            _ => None,
+        })
+        .flatten()
+        .filter_map(|content| match content {
+            ToolContent::Text { text } => Some(text),
+            _ => None,
+        })
+        .collect();
+    serde_json::from_str(&text).unwrap_or_else(|error| panic!("{error}: {text}"))
+}
+
+/// The first input request `events` open.
+pub(super) fn first_request(events: &[(Seq, SessionEvent)]) -> InputRequest {
+    events
+        .iter()
+        .find_map(|(_, event)| match event {
+            SessionEvent::InputRequested { request } => Some((**request).clone()),
+            _ => None,
+        })
+        .expect("a request opened")
+}
+
+fn resolutions(events: &[(Seq, SessionEvent)]) -> Vec<Resolution> {
+    events
+        .iter()
+        .filter_map(|(_, event)| match event {
+            SessionEvent::InputResolved { resolution, .. } => Some(*resolution),
+            _ => None,
+        })
+        .collect()
+}
+
+// Covers: with `[questionnaire] timeout_seconds` set, a question whose
+// agent offered fallback answers tells clients with what and why it will
+// be answered, and, with nobody answering, the daemon answers it with the
+// fallback when the timeout passes: clients see it time out and the tool
+// gets the fallback answers, marked as the fallback (#1660).
+// Owner: daemon input requests.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_question_nobody_answers_times_out_with_its_fallback() {
+    // The shortest timeout the config takes.
+    let sandbox = sandbox_with_question_timeout(1);
+    let client = sandbox.start_daemon("tool-call").await;
+    let session = sandbox.new_session(&client).await;
+    let (mut watcher, _) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
+    ask_color_with_fallback(&sandbox, &client, &session).await;
+
+    let result = color_result(&mut watcher).await;
+    let job = settled(&sandbox, &client, |job| {
+        job.session.as_ref() == Some(&session)
+    })
+    .await;
+    let timeout = first_request(&watcher.events)
+        .timeout
+        .map(|timeout| (timeout.answer, timeout.reason));
+
+    assert_eq!(
+        (timeout, resolutions(&watcher.events), result, job.state),
+        (
+            Some((blue(), "either works".to_owned())),
+            vec![Resolution::TimedOut],
+            serde_json::json!({
+                "answers": [{"id": "color", "answer": "Blue"}],
+                "source": "timeout_fallback",
+            }),
+            JobState::Completed,
+        ),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
+// Covers: `rho/session/hold` stops a question's timeout: attached clients
+// see `input_held`, a client that attaches later finds the request without
+// a timeout, and the user's answer then reaches the tool as their own
+// (#1660).
+// Owner: daemon input requests.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_held_question_waits_for_the_users_answer() {
+    // Far longer than the test, so the hold always comes first.
+    let sandbox = sandbox_with_question_timeout(3600);
+    let client = sandbox.start_daemon("tool-call").await;
+    let session = sandbox.new_session(&client).await;
+    let (mut watcher, _) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
+    ask_color_with_fallback(&sandbox, &client, &session).await;
+    watcher
+        .read_until(|event| matches!(event, SessionEvent::InputRequested { .. }))
+        .await;
+    let request = first_request(&watcher.events).id;
+
+    client
+        .request::<SessionHold>(&SessionHoldParams {
+            session: session.clone(),
+            request,
+        })
+        .await
+        .unwrap();
+    watcher
+        .read_until(|event| matches!(event, SessionEvent::InputHeld { .. }))
+        .await;
+    let (_late, attached) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
+    let answered = answer(&client, &session, request, blue()).await;
+    let result = color_result(&mut watcher).await;
+
+    assert_eq!(
+        (
+            attached
+                .inputs
+                .iter()
+                .map(|request| (request.id, request.timeout.clone()))
+                .collect::<Vec<_>>(),
+            answered,
+            resolutions(&watcher.events),
+            result,
+        ),
+        (
+            vec![(request, None)],
+            Ok(()),
+            vec![Resolution::Answered],
+            serde_json::json!({
+                "answers": [{"id": "color", "answer": "Blue"}],
+                "source": "user",
+            }),
+        ),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
+/// `path` canonicalized, on Windows without the verbatim prefix, as the
+/// daemon shows the paths it resolved.
+fn plain_canonical(path: &Path) -> PathBuf {
+    let path = path.canonicalize().unwrap();
+    #[cfg(windows)]
+    let path = PathBuf::from(
+        path.to_str()
+            .and_then(|path| path.strip_prefix(r"\\?\"))
+            .expect("a canonical path on a drive"),
+    );
+    path
+}

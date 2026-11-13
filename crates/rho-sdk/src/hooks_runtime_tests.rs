@@ -127,11 +127,7 @@ fn tool_then_text() -> ScriptedProvider {
         identity(),
         [
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                ToolCall {
-                    id: "call-1".into(),
-                    name: "read_file".into(),
-                    arguments: json!({}),
-                },
+                ToolCall::new("call-1".into(), "read_file".into(), json!({})),
             )])),
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
                 "done".into(),
@@ -182,7 +178,7 @@ async fn tool_result_content(harness: &Harness) -> String {
         .history()
         .into_iter()
         .find_map(|message| match message {
-            crate::model::Message::ToolResult(result) => Some(result.content),
+            crate::model::Message::ToolResult(result) => Some(result.content.clone()),
             _ => None,
         })
         .expect("the run recorded a tool result")
@@ -363,12 +359,6 @@ async fn after_tool_use_reports_the_call_that_a_hook_denied() {
     assert_eq!(payload["status"], json!("failed"));
     assert_eq!(payload["capability"]["operation"], json!("read_path"));
     assert_eq!(payload["capability"]["path"], json!("/work/notes.txt"));
-    assert_eq!(
-        after
-            .after_tool_use_capability()
-            .map(|capability| { serde_json::to_value(capability).unwrap()["operation"].clone() }),
-        Some(json!("read_path"))
-    );
 }
 
 struct SilentTool;
@@ -395,11 +385,7 @@ async fn completed_failure_reports_failed_hook_without_capability() {
             identity(),
             [
                 ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                    ToolCall {
-                        id: "call-1".into(),
-                        name: "silent".into(),
-                        arguments: json!({}),
-                    },
+                    ToolCall::new("call-1".into(), "silent".into(), json!({})),
                 )])),
                 ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
                     "done".into(),
@@ -422,7 +408,6 @@ async fn completed_failure_reports_failed_hook_without_capability() {
     let payload = serde_json::to_value(after).unwrap()["payload"].clone();
     assert_eq!(payload["status"], json!("failed"));
     assert!(payload["capability"].is_null());
-    assert_eq!(after.after_tool_use_capability(), None);
 }
 
 #[tokio::test]
@@ -557,16 +542,16 @@ async fn parallel_tool_calls_keep_per_call_hook_identity() {
         identity(),
         [
             ScriptedTurn::completed(ModelResponse::Assistant(vec![
-                ContentBlock::ToolCall(ToolCall {
-                    id: "call-a".into(),
-                    name: "read_file".into(),
-                    arguments: json!({}),
-                }),
-                ContentBlock::ToolCall(ToolCall {
-                    id: "call-b".into(),
-                    name: "read_file".into(),
-                    arguments: json!({}),
-                }),
+                ContentBlock::ToolCall(ToolCall::new(
+                    "call-a".into(),
+                    "read_file".into(),
+                    json!({}),
+                )),
+                ContentBlock::ToolCall(ToolCall::new(
+                    "call-b".into(),
+                    "read_file".into(),
+                    json!({}),
+                )),
             ])),
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
                 "done".into(),

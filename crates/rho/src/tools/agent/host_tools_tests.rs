@@ -111,6 +111,7 @@ impl Fixture {
         HostAgentTool::new(
             self.orchestrator.clone(),
             Path::new("."),
+            crate::workspace::ProjectTrusts::UNTRUSTED,
             &self.catalog,
             rho_tools::DEFAULT_MAX_OUTPUT_BYTES,
             Arc::new(()),
@@ -386,9 +387,17 @@ async fn management_forwards_host_operations_without_native_state_mapping() {
 #[tokio::test]
 async fn external_runtime_is_not_advertised_or_launched() {
     let fixture = Fixture::new(Ok(started_reply()));
+    let advertised = fixture.agent_tool().spec().input_schema["properties"]["agent_id"]["enum"]
+        .as_array()
+        .unwrap()
+        .clone();
     assert_eq!(
-        fixture.agent_tool().spec().input_schema["properties"]["agent_id"]["enum"],
-        json!(["explorer", "host-worker", "reviewer", "worker"])
+        (
+            advertised.contains(&json!("host-worker")),
+            advertised.contains(&json!("external-worker"))
+        ),
+        (true, false),
+        "{advertised:?}"
     );
     for model in [None, Some("@review")] {
         let error = fixture

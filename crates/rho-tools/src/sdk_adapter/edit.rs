@@ -22,10 +22,6 @@ use crate::{
     apply_patch::{
         apply_hunks, parse_patch, patch_paths_lenient, reject_symlink_entry, ApplyPatch, Hunk,
     },
-    hashline::{
-        apply_prepared_sections, claim_unique_path, parse_hashline, proposed_sections, Edit,
-        PreparedSection,
-    },
     sdk_support::{
         check_preparation_cancelled, map_invalid_app_error, map_path_error, parse_args,
         path_request, preparation_workspace, PathCapability,
@@ -35,12 +31,6 @@ use crate::{
 };
 
 use super::{mutation_output, path_start_metadata, run_observed_mutation, write_accesses};
-
-struct HashlineEditTool {
-    max_output_bytes: usize,
-    mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
-    host_files: Option<Arc<dyn crate::HostTextFiles>>,
-}
 
 struct ApplyPatchTool {
     max_output_bytes: usize,
@@ -61,11 +51,6 @@ pub(super) fn build_sdk_tool(
     host_files: Option<Arc<dyn crate::HostTextFiles>>,
 ) -> Arc<dyn Tool> {
     match format {
-        crate::EditFormat::Hashline => Arc::new(HashlineEditTool {
-            max_output_bytes,
-            mutation_observer,
-            host_files,
-        }),
         crate::EditFormat::ApplyPatch => Arc::new(ApplyPatchTool {
             max_output_bytes,
             mutation_observer,
@@ -81,79 +66,8 @@ pub(super) fn build_sdk_tool(
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct EditArgs {
-    input: String,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct ApplyPatchArgs {
     input: String,
-}
-
-impl Tool for HashlineEditTool {
-    fn spec(&self) -> rho_sdk::model::ToolSpec {
-        Edit.spec()
-    }
-
-    fn security(&self) -> ToolSecurity {
-        ToolSecurity::built_in([CapabilityKind::Write, CapabilityKind::Read])
-    }
-
-    fn start_metadata(&self, arguments: &Value) -> ToolMetadata {
-        edit_start_metadata(arguments)
-    }
-
-    fn prepare<'a>(
-        &'a self,
-        invocation: ToolInvocation,
-        context: ToolPreparationContext,
-    ) -> ToolPrepareFuture<'a> {
-        Box::pin(async move {
-            check_preparation_cancelled(&context)?;
-            let metadata = edit_start_metadata(invocation.arguments());
-            let args: EditArgs = parse_args(invocation.into_arguments())?;
-            let sections = parse_hashline(&args.input).map_err(|error| {
-                ToolError::new(ToolErrorKind::InvalidArguments, error.to_string())
-            })?;
-            let workspace = preparation_workspace(&context)?.clone();
-            // Resolve while collecting so the executor inherits the authorized
-            // target for each section instead of re-parsing the document.
-            let mut targets = EditTargetSet::default();
-            let mut prepared = Vec::with_capacity(sections.len());
-            for section in sections {
-                let path = targets.push_existing(&workspace, &section.path)?;
-                prepared.push(PreparedSection {
-                    display_path: compact_display_path(workspace.root(), &section.path),
-                    section,
-                    path,
-                });
-            }
-            let EditTargetSet {
-                resolved,
-                accesses,
-                capabilities,
-                claimed_as: _,
-            } = targets;
-
-            Ok(PreparedToolInvocation::resource_aware(
-                accesses,
-                capabilities,
-                metadata,
-                move |context| {
-                    execute_prepared_edit(
-                        self.max_output_bytes,
-                        self.mutation_observer.clone(),
-                        self.host_files.clone(),
-                        workspace,
-                        resolved,
-                        prepared,
-                        context,
-                    )
-                },
-            ))
-        })
-    }
 }
 
 impl Tool for StrReplaceTool {
@@ -359,81 +273,6 @@ impl PatchPathSet {
     }
 }
 
-/// Existing edit targets collected during prepare. Edit never creates paths, so
-/// this set has no missing-write / rename seam.
-///
-/// Duplicate paths use [`claim_unique_path`] (same predicate as execute) and map
-/// to `InvalidArguments` so authorization never starts for a multi-claim doc.
-#[derive(Default)]
-struct EditTargetSet {
-    resolved: BTreeMap<PathBuf, ResolvedWorkspacePath>,
-    /// Document claim string per canonical path - shared uniqueness owner.
-    claimed_as: BTreeMap<PathBuf, String>,
-    accesses: Vec<ToolResourceAccess>,
-    capabilities: Vec<CapabilityRequest>,
-}
-
-impl EditTargetSet {
-    fn push_existing(
-        &mut self,
-        workspace: &Workspace,
-        requested_path: &str,
-    ) -> Result<PathBuf, ToolError> {
-        // Existing edit targets are rewritten in place; resolve for write so path
-        // policy matches mutation rather than a read-only open.
-        let resolved = workspace
-            .resolve_for_write(requested_path)
-            .map_err(map_path_error)?;
-        let canonical = resolved.path().to_path_buf();
-        claim_unique_path(&mut self.claimed_as, canonical.clone(), requested_path)
-            .map_err(|message| ToolError::new(ToolErrorKind::InvalidArguments, message))?;
-        self.accesses
-            .push(ToolResourceAccess::exclusive(ToolResource::workspace_path(
-                resolved.path(),
-            )));
-        self.capabilities
-            .push(path_request(&resolved, PathCapability::Write, "edit"));
-        self.capabilities
-            .push(path_request(&resolved, PathCapability::Read, "edit"));
-        self.resolved.insert(canonical.clone(), resolved);
-        Ok(canonical)
-    }
-}
-
-fn execute_prepared_edit(
-    max_output_bytes: usize,
-    mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
-    host_files: Option<Arc<dyn crate::HostTextFiles>>,
-    workspace: Workspace,
-    resolved: BTreeMap<PathBuf, ResolvedWorkspacePath>,
-    sections: Vec<PreparedSection>,
-    context: AuthorizedToolContext,
-) -> ToolFuture<'static> {
-    Box::pin(async move {
-        let _ = context
-            .progress()
-            .send(
-                ToolProgress::message(format!("applying edit ({} path(s))", resolved.len()))
-                    .metadata(ToolMetadata::new().operation(OperationKind::Write)),
-            )
-            .await;
-        let mutation_paths = resolved
-            .values()
-            .map(ResolvedWorkspacePath::path)
-            .collect::<Vec<_>>();
-        for prepared in resolved.values() {
-            workspace.revalidate(prepared).map_err(map_path_error)?;
-        }
-        let outcome = run_observed_mutation(
-            mutation_observer.as_ref(),
-            &mutation_paths,
-            apply_prepared_sections(sections, max_output_bytes, host_files.as_ref()),
-        )
-        .await?;
-        Ok(mutation_output(outcome))
-    })
-}
-
 fn execute_prepared_string_edit(
     max_output_bytes: usize,
     mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
@@ -448,8 +287,8 @@ fn execute_prepared_string_edit(
         let _ = context
             .progress()
             .send(
-                ToolProgress::message(format!("editing {display}"))
-                    .metadata(ToolMetadata::new().operation(OperationKind::Write)),
+                ToolProgress::new(format!("editing {display}"))
+                    .with_metadata(ToolMetadata::new().operation(OperationKind::Write)),
             )
             .await;
         workspace.revalidate(&resolved).map_err(map_path_error)?;
@@ -488,8 +327,8 @@ fn execute_prepared_patch(
         let _ = context
             .progress()
             .send(
-                ToolProgress::message(format!("applying patch ({total} file op(s))"))
-                    .metadata(ToolMetadata::new().operation(OperationKind::Write)),
+                ToolProgress::new(format!("applying patch ({total} file op(s))"))
+                    .with_metadata(ToolMetadata::new().operation(OperationKind::Write)),
             )
             .await;
         let mutation_paths = resolved
@@ -530,23 +369,13 @@ fn execute_prepared_patch(
         let _ = context
             .progress()
             .send(
-                ToolProgress::message(format!("updated {} file(s)", outcome.display_paths.len()))
+                ToolProgress::new(format!("updated {} file(s)", outcome.display_paths.len()))
                     .units(total.max(1), total.max(1))
-                    .metadata(ToolMetadata::new().operation(OperationKind::Write)),
+                    .with_metadata(ToolMetadata::new().operation(OperationKind::Write)),
             )
             .await;
         Ok(mutation_output(outcome))
     })
-}
-
-fn edit_start_metadata(arguments: &Value) -> ToolMetadata {
-    let mut metadata = ToolMetadata::new().operation(OperationKind::Write);
-    if let Some(input) = arguments.get("input").and_then(Value::as_str) {
-        for section in proposed_sections(input) {
-            metadata = metadata.affected_path(section.path);
-        }
-    }
-    metadata
 }
 
 fn patch_start_metadata(arguments: &Value) -> ToolMetadata {

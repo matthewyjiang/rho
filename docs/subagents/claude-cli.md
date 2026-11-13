@@ -11,7 +11,7 @@ flowchart LR
     parent[Rho parent session] --> agentTool[agent tool]
     agentTool --> claude[claude-agent-acp child]
     claude --> sub[Claude subscription credential]
-    claude --> attach[rho attach / completion]
+    claude --> attach["/attach view / completion"]
 ```
 
 ## Subscription workaround
@@ -98,15 +98,11 @@ flowchart TD
 
    Ask the parent to call the `agent` tool with `agent_id: claude-planner` and a clear prompt. The call returns a run ID immediately, followed by an automatic completion notification.
 
-6. **Watch, cancel, and resume**:
-
-   ```bash
-   rho attach <run-id>
-   ```
+6. **Watch, cancel, and resume**: open the run with `/attach` in the TUI, or click its row in the activity rail.
 
    Attach paints Claude tools with Rho's generic ACP tool cards: the tool kind and title the adapter reports, plus paths and diffs when it sends them.
 
-   `agents` action `message` steers plain text into the running turn; see [Parent messages](#parent-messages). Cancel through the `agents` tool or parent shutdown. When the run finishes, attach and the completion entry may show `claude_session_id`. Reopen the Claude-side transcript with:
+   `agents` action `message` steers plain text into the running turn; see [Parent messages](#parent-messages). Cancel through the `agents` tool or parent shutdown. When the run finishes, attach and the completion entry may show `runtime_session_id`. Reopen the Claude-side transcript with:
 
    ```bash
    claude-agent-acp --cli --resume <session-id>
@@ -123,7 +119,7 @@ flowchart TD
 | Define | `runtime: claude-cli` + Claude `tools:` / `model:` |
 | Permission mode | Plan or Bypass. Auto / Allow edits only with proven no-prompt `tools:` for that Rho class and `inherit_claude_config: false`. Unknown names fail closed |
 | Launch | Rho parent `agent` tool, delegated only |
-| Inspect | `rho attach <id>`, `/agents`, `/limits` |
+| Inspect | `/attach`, `/agents`, `/limits` |
 | Messaging | `agents` action `message`; steered into the running turn |
 | Full Claude transcript | `claude-agent-acp --cli --resume <session-id>` |
 
@@ -142,7 +138,7 @@ Auto and Allow edits reproduce Claude's `dontAsk`: read-only tools and `allowedT
 
 ## Execution details
 
-Rho runs `claude-agent-acp` with no arguments in the project directory. Rho owns the parent tree node; Claude owns the child loop and credential. Each ACP setup step (`initialize`, `session/new`, `session/set_mode`) has a 10 s budget.
+Rho runs `claude-agent-acp` with no arguments in the project directory. Rho owns the parent tree node; Claude owns the child loop and credential. Each ACP setup step (`initialize`, `session/new`, `session/set_mode`) has a 10 s budget. In a [daemon](/daemon#environment) session, Rho finds `claude-agent-acp` on the `PATH` of the client you prompted from and runs it with that client's whole environment, credentials included.
 
 Everything Claude-specific travels in `session/new` `_meta`:
 
@@ -174,7 +170,7 @@ Each delegated run is one adapter process (Node.js or Bun) driving the bundled C
 
 ## Usage, limits, and resume
 
-Per-run turns and cost (from ACP `usage_update.cost`) are stored on `result.json`, along with `claude_model`, the concrete model the adapter reported. The adapter does not report token counts, so Claude runs have none.
+Per-run turns and cost (from ACP `usage_update.cost`) are stored on `result.json`, along with `runtime_model`, the concrete model the adapter reported. The adapter does not report token counts, so Claude runs have none.
 
 During a run, Rho records the rate-limit windows the adapter reports into the `/limits` cache. `/limits` also probes the signed-in Claude TUI `/usage` panel (`claude-agent-acp --cli`) over a PTY and shows remaining percentages when the panel includes them. Rho never reads Claude's credential files. If the probe fails, `/limits` keeps last-observed windows from a prior claude-cli run.
 
@@ -182,13 +178,13 @@ The probe forces classic rendering in its child environment so inherited fullscr
 
 Percentages shown while Claude is still refreshing are not treated as live usage. The probe waits for refresh completion and reads the completed panel. A refresh timeout, load error, or last-known/partial-data fallback leaves the previous observations unchanged rather than stamping cached percentages as newly fetched. The probe does not retry a failed refresh automatically.
 
-When a run finishes, `result.json` may include `claude_session_id`; the ACP session id is the Claude session id. Attach and the parent completion entry show it so you can reopen the full Claude transcript with:
+When a run finishes, `result.json` may include `runtime_session_id`; for `runtime: claude-cli` the ACP session id is the Claude session id. Attach and the parent completion entry show it so you can reopen the full Claude transcript with:
 
 ```bash
 claude-agent-acp --cli --resume <session-id>
 ```
 
-Default concurrency is one global pool of 10 delegated runs (`behavior.agent_concurrency` in config). `RHO_AGENT_CONCURRENCY` is no longer read. `/config` → **Agent behavior** → **Concurrent agents** changes the live cap immediately. Claude-cli runs also take a nested Claude permit capped at 2 by default (`RHO_CLAUDE_AGENT_CONCURRENCY` overrides that nested cap). The Claude pool is always `min(total, claude_cap)`, so the nested env cannot open a 2N fan-out window and Claude never exceeds the global total. The named max is 64.
+Default concurrency is one global pool of 10 delegated runs (`behavior.agent_concurrency` in config). `RHO_AGENT_CONCURRENCY` is no longer read. `/config` → **Agent** → **Concurrent agents** changes the live cap immediately. Claude-cli runs also take a nested Claude permit capped at 2 by default (`RHO_CLAUDE_AGENT_CONCURRENCY` overrides that nested cap). The Claude pool is always `min(total, claude_cap)`, so the nested env cannot open a 2N fan-out window and Claude never exceeds the global total. The named max is 64.
 
 ## Auth ownership
 

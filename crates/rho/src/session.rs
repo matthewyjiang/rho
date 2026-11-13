@@ -1,7 +1,6 @@
 #[cfg(test)]
 use std::{fs, io::Write};
 use std::{
-    fs::{File, OpenOptions},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
@@ -11,19 +10,22 @@ use uuid::Uuid;
 
 #[cfg(test)]
 use rho_providers::model::ContentBlock;
-use rho_providers::model::{Message, ModelIdentity};
+use rho_providers::model::Message;
 use rho_sdk::SessionSnapshot;
 #[cfg(test)]
 use rho_sdk::{CompactionState, Revision, SessionId};
 
 mod agent_identity;
+mod append_cursor;
+pub(crate) mod catalog;
 mod delete;
 mod display_rows;
+mod id_match;
 mod index;
 mod layout;
+mod lease;
 mod persistence;
 pub(crate) mod recall;
-pub(crate) mod replay_points;
 pub(crate) mod search;
 mod search_evidence;
 mod search_index;
@@ -37,6 +39,7 @@ mod summary_tests;
 #[cfg(test)]
 #[path = "session_tests.rs"]
 mod tests;
+mod title;
 pub(crate) mod tree;
 #[cfg(test)]
 #[path = "session_tree_tests.rs"]
@@ -47,18 +50,25 @@ mod version_tests;
 pub(crate) mod workspace_checkpoint;
 mod workspace_scope;
 
+use append_cursor::AppendCursor;
 #[cfg(test)]
 use layout::encode_cwd;
-use persistence::{
-    parse_timestamp, session_dir_in_root, session_root, session_web_dir, unix_timestamp_secs,
-    AppendCursor, SessionStore,
-};
+use persistence::{parse_timestamp, session_root, unix_timestamp_secs, SessionStore};
 #[cfg(test)]
-use persistence::{read_entries, summarize_session_file, SessionEntry, SESSION_VERSION};
+use persistence::{
+    read_entries, session_dir_in_root, summarize_session_file, SessionEntry, SESSION_VERSION,
+};
 
+pub(crate) use agent_identity::SavedAgent;
 pub use delete::{is_cross_project, DeleteOptions, DeleteOutcome};
-pub(crate) use delete::{CleanupOutcome, WorkspaceDeleteOutcome};
+pub(crate) use delete::{
+    is_in_use, CleanupFailure, CleanupOutcome, ExactDelete, RunNotFinished, WorkspaceDeleteOutcome,
+};
+pub(crate) use id_match::SavedInManyWorkspaces;
+pub(crate) use lease::SessionInUse;
+use lease::{LeasePurpose, SessionLease};
 pub(crate) use persistence::NoSessionFound;
+pub(crate) use title::TitleRejected;
 pub(crate) use workspace_scope::Workspace;
 
 #[derive(Clone, Debug)]
@@ -69,13 +79,7 @@ pub struct Session {
     cwd: PathBuf,
     workspace_key: String,
     write_lock: Arc<Mutex<AppendCursor>>,
-    _active_lease: Arc<SessionLease>,
-}
-
-#[derive(Clone, Debug)]
-pub struct SessionHistories {
-    pub model: Vec<Message>,
-    pub display: Vec<Message>,
+    _active_lease: SessionLease,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -91,10 +95,118 @@ pub struct SessionSummary {
     pub last_user_message: Option<String>,
     /// Added directories as last saved, some possibly gone since.
     pub added_dirs: Vec<PathBuf>,
+    /// The host that created the session; `None` for a file written before
+    /// origins were recorded.
+    pub origin: Option<SessionOrigin>,
 }
 
-/// Exact identity for a session within its owning workspace.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+/// Which host created a session, recorded on its header when its file is
+/// created so listings can tell the sessions a person had from the ones a
+/// program ran.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SessionOrigin {
+    /// The interactive TUI.
+    Interactive,
+    /// An ACP client, such as Zed or T3 Code, before `rho acp` became a
+    /// daemon client (#1670); its sessions now record [`Self::Daemon`].
+    Acp,
+    /// A session a daemon client started. Whether frontends pass their own
+    /// origin once the TUI (#1667) and ACP (#1670) run through the daemon is
+    /// decided there.
+    Daemon,
+    /// `rho run`.
+    Run,
+    /// A Rho subagent a parent session started.
+    Subagent,
+    /// An agent node of a workflow run.
+    WorkflowNode,
+    /// A host a later Rho records that this one does not know. Reading it
+    /// leniently keeps such sessions listable and resumable; this binary
+    /// never creates it.
+    #[serde(other)]
+    Unknown,
+}
+
+impl SessionSummary {
+    /// Whether person-facing listings show this session: its origin is
+    /// person-facing, or the file predates origins.
+    pub(crate) fn is_person_facing(&self) -> bool {
+        self.origin.is_none_or(SessionOrigin::is_person_facing)
+    }
+}
+
+impl SessionOrigin {
+    /// Whether a person had the session, so person-facing listings show
+    /// it. A script's `rho run` and a parent's subagents and workflow nodes
+    /// are left out: whoever ran one already holds what it returned, and
+    /// opening it by id still works. An origin this Rho does not know stays
+    /// listed, like a file written before origins were recorded.
+    pub(crate) fn is_person_facing(self) -> bool {
+        match self {
+            Self::Interactive | Self::Acp | Self::Daemon | Self::Unknown => true,
+            Self::Run | Self::Subagent | Self::WorkflowNode => false,
+        }
+    }
+}
+
+/// Where a new session came from, as its header records it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SessionProvenance {
+    /// The host that created it.
+    pub(crate) origin: SessionOrigin,
+    /// The saved session that started it, such as a subagent's parent, by
+    /// its id and workspace: the same id can be saved in two workspaces.
+    /// Deleting that session deletes this one with it.
+    pub(crate) parent: Option<SessionTarget>,
+}
+
+impl From<SessionOrigin> for SessionProvenance {
+    /// A session no other session started.
+    fn from(origin: SessionOrigin) -> Self {
+        Self {
+            origin,
+            parent: None,
+        }
+    }
+}
+
+/// Whether a new session is ever written to the session root.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SessionPersistence {
+    /// Written from its first save on, so it can be listed and reopened.
+    Saved,
+    /// Never written: no session file and no index row, so nothing is left
+    /// to reopen. `rho run --no-save` runs this way, and so do the Rho
+    /// subagents such a run starts, since their parent is nowhere on disk;
+    /// its Claude subagents discard their Claude sessions.
+    Ephemeral,
+}
+
+/// Which saved sessions a listing returns.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SessionListing {
+    /// The sessions a person picks from: pickers, `rho sessions`,
+    /// `--continue` and ACP lists. Only person-facing origins (see
+    /// [`SessionOrigin::is_person_facing`]) and files older than origins.
+    PersonFacing,
+    /// Every saved session: exact-id lookups and bulk deletes that must not
+    /// strand a hidden session's files.
+    Everything,
+}
+
+impl SessionListing {
+    fn retain(self, sessions: &mut Vec<SessionSummary>) {
+        match self {
+            Self::PersonFacing => sessions.retain(SessionSummary::is_person_facing),
+            Self::Everything => {}
+        }
+    }
+}
+
+/// Exact identity for a session within its owning workspace. A child
+/// session's header records its parent's as `{"id": …, "cwd": …}`.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct SessionTarget {
     pub id: String,
     pub cwd: PathBuf,
@@ -162,128 +274,57 @@ pub(super) struct SessionIndexRecord {
     pub(super) branch_count: u64,
     pub(super) active_leaf_id: Option<String>,
     pub(super) effective_format_version: u32,
-}
-/// A held session lease. Dropping it unlocks explicitly before closing: a
-/// child process spawned elsewhere in Rho shares the lock until it execs, so
-/// closing the handle alone can keep the session looking active.
-#[derive(Debug)]
-pub(crate) struct SessionLease {
-    file: File,
-}
-
-impl SessionLease {
-    /// A duplicate of the leased handle, standing in for one a child process
-    /// inherits between fork and exec.
-    #[cfg(test)]
-    pub(crate) fn inherited_handle_for_tests(&self) -> File {
-        self.file.try_clone().unwrap()
-    }
-}
-
-impl Drop for SessionLease {
-    fn drop(&mut self) {
-        let _ = fs2::FileExt::unlock(&self.file);
-    }
-}
-
-#[derive(Clone, Copy)]
-enum LeaseMode {
-    Active,
-    Delete,
-}
-
-fn acquire_session_lease(
-    session_root: &Path,
-    cwd: &Path,
-    id: &str,
-    mode: LeaseMode,
-) -> anyhow::Result<SessionLease> {
-    let dir = session_dir_in_root(session_root, cwd);
-    std::fs::create_dir_all(&dir)?;
-    let path = dir.join(format!(".{id}.active.lock"));
-    let file = OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .open(&path)?;
-    layout::set_private_file_permissions(&file)?;
-    let lock = match mode {
-        LeaseMode::Active => fs2::FileExt::try_lock_shared(&file),
-        LeaseMode::Delete => fs2::FileExt::try_lock_exclusive(&file),
-    };
-    match lock {
-        Ok(()) => Ok(SessionLease { file }),
-        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => match mode {
-            LeaseMode::Active => anyhow::bail!(
-                "session '{}' is being deleted by another Rho process; refresh the session list",
-                delete::short_id(id)
-            ),
-            LeaseMode::Delete => anyhow::bail!(
-                "refusing to delete active session '{}'; close it in the other Rho process first",
-                delete::short_id(id)
-            ),
-        },
-        Err(error) => Err(error.into()),
-    }
-}
-
-fn acquire_delete_session_lease(
-    session_root: &Path,
-    cwd: &Path,
-    id: &str,
-) -> anyhow::Result<SessionLease> {
-    acquire_session_lease(session_root, cwd, id, LeaseMode::Delete)
+    /// The session that started this one, from its header; `None` for a
+    /// file written before parents were recorded.
+    pub(super) parent_session: Option<SessionTarget>,
 }
 
 impl Session {
-    pub fn open_by_id_with_histories(
-        cwd: &Path,
-        id_prefix: &str,
-    ) -> anyhow::Result<(Self, SessionHistories)> {
-        Self::open_by_id_with_histories_in_root(&session_root()?, cwd, id_prefix)
+    /// Resolves a resume prefix, with the workspace the session belongs to,
+    /// which is another project's when the prefix matched none here,
+    /// without opening the session or taking its writer lease. Daemon
+    /// clients leave opening to the daemon.
+    pub(crate) fn resolve_target(cwd: &Path, id_prefix: &str) -> anyhow::Result<SessionTarget> {
+        let root = session_root()?;
+        let resolved = SessionStore::new(&root, cwd).resolve(id_prefix)?;
+        Ok(SessionTarget::new(resolved.id, resolved.cwd))
     }
 
-    /// Opens one exact workspace-scoped session without falling back to another workspace.
-    pub fn open_target_with_histories(
-        target: &SessionTarget,
-    ) -> anyhow::Result<(Self, SessionHistories)> {
-        Self::open_target_with_histories_in_root(&session_root()?, target)
+    /// The workspace the session saved under exactly `id` belongs to, from
+    /// any workspace, or `None` when nothing is saved under it. Opening it
+    /// there is [`Self::open_exact_in_workspace`].
+    pub(crate) fn workspace_of(id: &str) -> anyhow::Result<Option<PathBuf>> {
+        SessionStore::workspace_of(&session_root()?, id)
+    }
+
+    /// Opens the session saved under exactly `id` in `cwd`'s workspace, with
+    /// its model history, or `None` when nothing is. `id` is never read as a
+    /// prefix and no other workspace is searched.
+    pub(crate) fn open_exact_in_workspace(
+        cwd: &Path,
+        id: &str,
+    ) -> anyhow::Result<Option<(Self, Vec<Message>)>> {
+        let session_root = session_root()?;
+        let Some(resolved) = SessionStore::new(&session_root, cwd).resolve_exact_local(id)? else {
+            return Ok(None);
+        };
+        Self::open_resolved_with_history(&session_root, resolved).map(Some)
     }
 
     #[cfg(test)]
-    fn open_by_id_in_root(
+    pub(crate) fn open_by_id_in_root(
         session_root: &Path,
         cwd: &Path,
         id_prefix: &str,
     ) -> anyhow::Result<(Self, Vec<Message>)> {
-        let (session, histories) =
-            Self::open_by_id_with_histories_in_root(session_root, cwd, id_prefix)?;
-        Ok((session, histories.model))
-    }
-
-    pub(crate) fn open_by_id_with_histories_in_root(
-        session_root: &Path,
-        cwd: &Path,
-        id_prefix: &str,
-    ) -> anyhow::Result<(Self, SessionHistories)> {
         let resolved = SessionStore::new(session_root, cwd).resolve(id_prefix)?;
-        Self::open_resolved_with_histories(session_root, resolved)
+        Self::open_resolved_with_history(session_root, resolved)
     }
 
-    pub(crate) fn open_target_with_histories_in_root(
-        session_root: &Path,
-        target: &SessionTarget,
-    ) -> anyhow::Result<(Self, SessionHistories)> {
-        let resolved =
-            SessionStore::new(session_root, &target.cwd).resolve_in_workspace(&target.id)?;
-        Self::open_resolved_with_histories(session_root, resolved)
-    }
-
-    fn open_resolved_with_histories(
+    fn open_resolved_with_history(
         session_root: &Path,
         resolved: persistence::ResolvedSession,
-    ) -> anyhow::Result<(Self, SessionHistories)> {
+    ) -> anyhow::Result<(Self, Vec<Message>)> {
         anyhow::ensure!(
             resolved.cwd.is_dir(),
             "session '{}' belongs to workspace {}, which is no longer an accessible directory. \
@@ -292,10 +333,14 @@ impl Session {
             resolved.id,
             resolved.cwd.display(),
         );
-        let active_lease =
-            acquire_session_lease(session_root, &resolved.cwd, &resolved.id, LeaseMode::Active)?;
+        let active_lease = lease::acquire(
+            session_root,
+            &resolved.cwd,
+            &resolved.id,
+            LeasePurpose::Open,
+        )?;
         let tree = tree::SessionTree::load(&resolved.path)?;
-        let histories = persistence::histories_from_tree(&tree)?;
+        let history = persistence::history_from_tree(&tree)?;
         let session = Self::from_parts_with_lease(
             session_root,
             resolved.cwd,
@@ -304,7 +349,7 @@ impl Session {
             active_lease,
         );
         session.cache_loaded_tree(tree);
-        Ok((session, histories))
+        Ok((session, history))
     }
 
     pub(crate) fn tree_facts_by_id(
@@ -314,6 +359,47 @@ impl Session {
         let store = SessionStore::new(&session_root()?, cwd);
         let resolved = store.resolve(id_prefix)?;
         Ok(resolved.tree()?.facts())
+    }
+
+    /// Session `id_prefix`'s tree as `/tree` lists it, read without opening
+    /// the session, which another process may hold.
+    pub(crate) fn tree_turn_items_by_id(
+        cwd: &Path,
+        id_prefix: &str,
+    ) -> anyhow::Result<Vec<tree::SessionTreeItem>> {
+        let store = SessionStore::new(&session_root()?, cwd);
+        store.resolve(id_prefix)?.tree()?.turn_items()
+    }
+
+    /// The prompt of each of `turns`, nodes of session `id_prefix`'s tree
+    /// (see [`tree::SessionTree::turn_prompt`]), read without opening the
+    /// session, which another process may hold.
+    pub(crate) fn turn_prompts_by_id(
+        cwd: &Path,
+        id_prefix: &str,
+        turns: impl IntoIterator<Item = tree::NodeId>,
+    ) -> anyhow::Result<std::collections::HashMap<tree::NodeId, String>> {
+        let tree = SessionStore::new(&session_root()?, cwd)
+            .resolve(id_prefix)?
+            .tree()?;
+        Ok(turns
+            .into_iter()
+            .filter_map(|turn| tree.turn_prompt(&turn).map(|prompt| (turn, prompt)))
+            .collect())
+    }
+
+    /// Session `id_prefix`'s workspace checkpoints, reached without opening
+    /// the session, which another process may hold.
+    pub(crate) fn workspace_checkpoint_store_by_id(
+        cwd: &Path,
+        id_prefix: &str,
+    ) -> anyhow::Result<Option<workspace_checkpoint::WorkspaceCheckpointStore>> {
+        let resolved = SessionStore::new(&session_root()?, cwd).resolve(id_prefix)?;
+        workspace_checkpoint::WorkspaceCheckpointStore::at(
+            &resolved.path,
+            &resolved.id,
+            workspace_checkpoint::CheckpointLimits::default(),
+        )
     }
 
     pub fn export_by_id(cwd: &Path, id_prefix: &str) -> anyhow::Result<SessionExport> {
@@ -328,14 +414,10 @@ impl Session {
         let store = SessionStore::new(session_root, cwd);
         let resolved = store.resolve(id_prefix)?;
         let (record, tree) = resolved.summary_with_tree(cwd)?;
-        let title = Self::list_in_root(session_root, cwd)
+        let title = SessionStore::new(session_root, &resolved.cwd)
+            .title(&resolved.id)
             .ok()
-            .and_then(|summaries| {
-                summaries
-                    .into_iter()
-                    .find(|summary| summary.id == resolved.id)
-                    .and_then(|summary| summary.title)
-            });
+            .flatten();
 
         let messages = match tree.active_leaf_id() {
             Some(active_leaf_id) => persistence::insert_interrupted_display_placeholders(
@@ -363,6 +445,14 @@ impl Session {
         agent_identity::read_agent_identity(&self.path)
     }
 
+    /// The root agent the session reopens under: its own agent, or the
+    /// root `/agent:` rebound it from. `None` for a delegated session
+    /// written before launch identities were saved; an error for a root
+    /// session whose header names no agent.
+    pub(crate) fn root_agent(&self) -> anyhow::Result<Option<SavedAgent>> {
+        agent_identity::read_root_agent(&self.path)
+    }
+
     /// Rebinds the session to a delegated child agent, only before any
     /// history has been persisted. An initial snapshot is committed atomically
     /// with the identity so reload cannot observe half of the child binding.
@@ -375,17 +465,15 @@ impl Session {
         self.rewrite_fresh_delegated_identity(agent_id, fingerprint, initial_snapshot)
     }
 
+    /// The host that created the session, or `None` for a file written
+    /// before origins were recorded.
+    pub(crate) fn origin(&self) -> anyhow::Result<Option<SessionOrigin>> {
+        agent_identity::read_origin(&self.path)
+    }
+
     /// The child agent id when the session was rebound as a delegated agent.
     pub(crate) fn delegated_agent_id(&self) -> anyhow::Result<Option<String>> {
         agent_identity::read_delegated_agent_id(&self.path)
-    }
-
-    /// Provider/API/model identity stored on the session snapshot, when present.
-    pub(crate) fn stored_provider_identity(&self) -> anyhow::Result<Option<ModelIdentity>> {
-        Ok(persistence::read_session_state(&self.path)?
-            .snapshot
-            .as_ref()
-            .map(|snapshot| snapshot.provider().clone()))
     }
 
     /// Resume check that accepts the current fingerprint or an exact legacy
@@ -395,41 +483,29 @@ impl Session {
         &self,
         definition: &crate::agent::AgentDefinition,
     ) -> anyhow::Result<()> {
-        self.validate_agent_identity_with(definition.id.as_str(), |stored| {
-            definition.accepts_stored_fingerprint(stored)
-        })
+        agent_identity::validate(&self.path, definition)
     }
 
-    fn validate_agent_identity_with(
-        &self,
-        selected_id: &str,
-        accepts_fingerprint: impl FnOnce(&str) -> bool,
+    /// [`Self::validate_agent_definition_identity`] for session `target`,
+    /// read without opening the session, which another process may hold.
+    pub(crate) fn validate_agent_definition_identity_of(
+        target: &SessionTarget,
+        definition: &crate::agent::AgentDefinition,
     ) -> anyhow::Result<()> {
-        let Some((stored_id, stored_fingerprint)) = self.stored_agent_identity()? else {
-            anyhow::bail!(
-                "cannot resume this session as agent '{selected_id}': the session has no stored agent definition identity"
-            );
-        };
-        if stored_id != selected_id {
-            anyhow::bail!(
-                "cannot resume session created by agent '{stored_id}' as selected agent '{selected_id}'"
-            );
-        }
-        if !accepts_fingerprint(&stored_fingerprint) {
-            anyhow::bail!(
-                "cannot resume agent '{selected_id}': its definition changed since the session was created"
-            );
-        }
-        Ok(())
+        let resolved =
+            SessionStore::new(&session_root()?, &target.cwd).resolve_in_workspace(&target.id)?;
+        agent_identity::validate(&resolved.path, definition)
     }
 
-    pub fn list(cwd: &Path) -> anyhow::Result<Vec<SessionSummary>> {
-        Self::list_in_root(&session_root()?, cwd)
+    /// Lists `listing`'s sessions in workspace `cwd`, newest first.
+    pub(crate) fn list(cwd: &Path, listing: SessionListing) -> anyhow::Result<Vec<SessionSummary>> {
+        Self::list_in_root(&session_root()?, cwd, listing)
     }
 
-    /// Lists sessions across every workspace under the session root.
-    pub fn list_all() -> anyhow::Result<Vec<SessionSummary>> {
-        Self::list_all_in_root(&session_root()?)
+    /// Lists `listing`'s sessions across every workspace under the session
+    /// root, newest first.
+    pub(crate) fn list_all(listing: SessionListing) -> anyhow::Result<Vec<SessionSummary>> {
+        Self::list_all_in_root(&session_root()?, listing)
     }
 
     /// Lists sessions whose recorded workspace path is no longer a directory.
@@ -464,7 +540,9 @@ impl Session {
         Self::find_by_id_prefix_in_root(&session_root()?, cwd, id_prefix)
     }
 
-    /// Sets a session title after local-then-global id resolution.
+    /// Sets a session title after local-then-global id resolution. A title
+    /// that is empty once trimmed, holds a control character, or runs over
+    /// its budget is refused as [`TitleRejected`].
     ///
     /// Returns the resolved session identity and the stored title so callers
     /// (CLI rename, notices) do not need a second lookup.
@@ -525,10 +603,7 @@ impl Session {
         id_prefix: &str,
         title: &str,
     ) -> anyhow::Result<TitleUpdate> {
-        let title = title.trim();
-        if title.is_empty() {
-            anyhow::bail!("title must not be empty");
-        }
+        let title = title::checked(title)?;
         // Resolve local-first, then any workspace, so CLI rename matches rm/resume.
         let resolved = SessionStore::new(session_root, cwd).resolve(id_prefix)?;
         SessionStore::new(session_root, &resolved.cwd).set_title(&resolved.id, title)?;
@@ -578,16 +653,23 @@ impl Session {
         SessionStore::new(session_root, &resolved.cwd).title(&resolved.id)
     }
 
-    fn list_in_root(session_root: &Path, cwd: &Path) -> anyhow::Result<Vec<SessionSummary>> {
-        SessionStore::new(session_root, cwd).list()
+    fn list_in_root(
+        session_root: &Path,
+        cwd: &Path,
+        listing: SessionListing,
+    ) -> anyhow::Result<Vec<SessionSummary>> {
+        let mut sessions = SessionStore::new(session_root, cwd).list()?;
+        listing.retain(&mut sessions);
+        Ok(sessions)
     }
 
     #[cfg(test)]
     pub(crate) fn list_in_root_for_test(
         session_root: &Path,
         cwd: &Path,
+        listing: SessionListing,
     ) -> anyhow::Result<Vec<SessionSummary>> {
-        Self::list_in_root(session_root, cwd)
+        Self::list_in_root(session_root, cwd, listing)
     }
 
     #[cfg(test)]
@@ -610,8 +692,13 @@ impl Session {
         Self::set_generated_title_in_root(session_root, cwd, id_prefix, title)
     }
 
-    pub(crate) fn list_all_in_root(session_root: &Path) -> anyhow::Result<Vec<SessionSummary>> {
-        index::list_all_sessions(session_root)
+    pub(crate) fn list_all_in_root(
+        session_root: &Path,
+        listing: SessionListing,
+    ) -> anyhow::Result<Vec<SessionSummary>> {
+        let mut sessions = index::list_all_sessions(session_root)?;
+        listing.retain(&mut sessions);
+        Ok(sessions)
     }
 
     #[cfg(test)]
@@ -640,6 +727,7 @@ impl Session {
             .into_iter()
             .filter(|session| session.id.starts_with(id_prefix))
             .collect::<Vec<_>>();
+        let local = id_match::prefer_exact(local, id_prefix, |session| Some(session.id.clone()));
         if !local.is_empty() {
             return Ok(local);
         }
@@ -658,23 +746,33 @@ impl Session {
         delete::delete_in_roots(session_root, subagents_root, cwd, id_prefix, &options)
     }
 
+    /// Creates the file of session `id`, which came from `provenance` as
+    /// the agent `agent_id` with `agent_fingerprint`.
     pub(crate) fn create_with_id(
         cwd: &Path,
         id: &str,
         agent_id: &str,
         agent_fingerprint: &str,
+        provenance: SessionProvenance,
     ) -> anyhow::Result<Self> {
         Self::create_with_id_in_root(
             &session_root()?,
             cwd,
             id,
             Some((agent_id, agent_fingerprint)),
+            provenance,
         )
     }
 
     #[cfg(test)]
     pub(crate) fn create_in_root(session_root: &Path, cwd: &Path) -> anyhow::Result<Self> {
-        Self::create_with_id_in_root(session_root, cwd, &Uuid::new_v4().to_string(), None)
+        Self::create_with_id_in_root(
+            session_root,
+            cwd,
+            &Uuid::new_v4().to_string(),
+            None,
+            SessionOrigin::Interactive.into(),
+        )
     }
 
     #[cfg(test)]
@@ -683,7 +781,13 @@ impl Session {
         cwd: &Path,
         id: &str,
     ) -> anyhow::Result<Self> {
-        Self::create_with_id_in_root(session_root, cwd, id, None)
+        Self::create_with_id_in_root(
+            session_root,
+            cwd,
+            id,
+            None,
+            SessionOrigin::Interactive.into(),
+        )
     }
 
     #[cfg(test)]
@@ -698,6 +802,7 @@ impl Session {
             cwd,
             &Uuid::new_v4().to_string(),
             Some((agent_id, agent_fingerprint)),
+            SessionOrigin::Interactive.into(),
         )
     }
 
@@ -706,13 +811,14 @@ impl Session {
         cwd: &Path,
         id: &str,
         agent: Option<(&str, &str)>,
+        provenance: SessionProvenance,
     ) -> anyhow::Result<Self> {
         let store = SessionStore::new(session_root, cwd);
         let id = id.to_string();
         let created_at = unix_timestamp_secs();
         let path = store.create_path(&id, created_at)?;
         let session = Self::from_parts(session_root, cwd, id.clone(), path)?;
-        session.append_session_metadata(id, created_at, agent)?;
+        session.append_session_metadata(id, created_at, agent, provenance)?;
         Ok(session)
     }
 
@@ -741,7 +847,7 @@ impl Session {
         id: String,
         path: PathBuf,
     ) -> anyhow::Result<Self> {
-        let active_lease = acquire_session_lease(session_root, cwd, &id, LeaseMode::Active)?;
+        let active_lease = lease::acquire(session_root, cwd, &id, LeasePurpose::Open)?;
         Ok(Self::from_parts_with_lease(
             session_root,
             cwd.to_path_buf(),
@@ -765,7 +871,7 @@ impl Session {
             session_root: session_root.to_path_buf(),
             cwd,
             write_lock: Arc::new(Mutex::new(AppendCursor::default())),
-            _active_lease: Arc::new(active_lease),
+            _active_lease: active_lease,
         }
     }
 
@@ -777,11 +883,6 @@ impl Session {
     #[cfg(test)]
     pub(crate) fn path(&self) -> &Path {
         &self.path
-    }
-
-    /// Web-access sidecar directory for this session, when the on-disk layout supports one.
-    pub(crate) fn web_dir(&self) -> Option<PathBuf> {
-        session_web_dir(&self.path)
     }
 
     /// Delegated run artifact directory owned by this folder-layout session.

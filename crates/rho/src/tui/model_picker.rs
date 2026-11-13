@@ -83,17 +83,10 @@ pub(super) fn conversation_model_catalog(
     available_auths: &[String],
     scope: ModelPickerScope,
 ) -> ModelCatalogPicker {
-    model_catalog(
-        "select model",
-        CurrentModel {
-            provider: &info.provider,
-            model: &info.model,
-            badge: "selected",
-        },
-        &info.favorite_models,
-        available_auths,
+    idle_catalog(
+        info,
+        catalog::available_models_for_auths(available_auths),
         scope,
-        &info.keybindings,
     )
 }
 
@@ -103,16 +96,103 @@ pub(super) fn model_picker_during_run(
     available_auths: &[String],
     scope: ModelPickerScope,
 ) -> UiPicker {
-    let (provider, model, badge) = pending
-        .map(|selection| {
-            (
-                selection.provider.as_str(),
-                selection.model.as_str(),
-                "pending",
-            )
+    during_run_catalog(
+        info,
+        pending.map(|selection| (selection.provider.as_str(), selection.model.as_str())),
+        catalog::available_models_for_auths(available_auths),
+        scope,
+    )
+    .into_models()
+}
+
+/// The models a daemon session offers, as rows the pickers here lay out.
+/// The daemon already chose them by auth, so they carry no auth modes.
+pub(super) fn offered_models(
+    options: &rho_protocol::ModelOptions,
+) -> Vec<catalog::ModelCatalogEntry> {
+    options
+        .available
+        .iter()
+        .map(|choice| catalog::ModelCatalogEntry {
+            provider: choice.model.provider.clone(),
+            model: choice.model.model.clone(),
+            display_name: choice.label.clone(),
+            auth_modes: Vec::new(),
         })
+        .collect()
+}
+
+/// [`effective_model_picker_scope`] for a daemon session, whose usable pins
+/// are those among the models it `offered`.
+pub(super) fn offered_model_picker_scope(
+    scope: ModelPickerScope,
+    favorite_models: &[String],
+    offered: &[catalog::ModelCatalogEntry],
+) -> ModelPickerScope {
+    resolve_scope(
+        scope,
+        &favorites::normalized_favorite_models(favorite_models),
+        offered,
+    )
+}
+
+/// [`model_picker`] over the models a daemon session `offered`.
+pub(super) fn offered_model_picker(
+    info: &RuntimeModelView,
+    offered: Vec<catalog::ModelCatalogEntry>,
+    scope: ModelPickerScope,
+) -> UiPicker {
+    idle_catalog(info, offered, scope).into_models()
+}
+
+/// [`model_picker_during_run`] over the models a daemon session `offered`,
+/// where `pending` is the model the daemon was asked for after the turn.
+pub(super) fn offered_model_picker_during_run(
+    info: &RuntimeModelView,
+    pending: Option<&rho_protocol::ModelRef>,
+    offered: Vec<catalog::ModelCatalogEntry>,
+    scope: ModelPickerScope,
+) -> UiPicker {
+    during_run_catalog(
+        info,
+        pending.map(|model| (model.provider.as_str(), model.model.as_str())),
+        offered,
+        scope,
+    )
+    .into_models()
+}
+
+fn idle_catalog(
+    info: &RuntimeModelView,
+    available: Vec<catalog::ModelCatalogEntry>,
+    scope: ModelPickerScope,
+) -> ModelCatalogPicker {
+    catalog_picker(
+        "select model",
+        CurrentModel {
+            provider: &info.provider,
+            model: &info.model,
+            badge: "selected",
+        },
+        &info.favorite_models,
+        available,
+        scope,
+        &info.keybindings,
+    )
+}
+
+/// The picker a running turn opens: `pending` is the provider and model
+/// already asked for once the turn ends.
+fn during_run_catalog(
+    info: &RuntimeModelView,
+    pending: Option<(&str, &str)>,
+    available: Vec<catalog::ModelCatalogEntry>,
+    scope: ModelPickerScope,
+) -> ModelCatalogPicker {
+    let (provider, model, badge) = pending
+        .map(|(provider, model)| (provider, model, "pending"))
         .unwrap_or((&info.provider, &info.model, "selected"));
-    model_catalog(
+    catalog_picker(
         "select model for next turn",
         CurrentModel {
             provider,
@@ -120,11 +200,10 @@ pub(super) fn model_picker_during_run(
             badge,
         },
         &info.favorite_models,
-        available_auths,
+        available,
         scope,
         &info.keybindings,
     )
-    .into_models()
 }
 
 /// Label of the conversation-model row.
@@ -574,6 +653,25 @@ fn model_catalog(
     scope: ModelPickerScope,
     keybindings: &Keybindings,
 ) -> ModelCatalogPicker {
+    catalog_picker(
+        title,
+        current,
+        favorite_models,
+        catalog::available_models_for_auths(available_auths),
+        scope,
+        keybindings,
+    )
+}
+
+/// Lays `available` out as a model picker: pins first, badged, in `scope`.
+fn catalog_picker(
+    title: &str,
+    current: CurrentModel<'_>,
+    favorite_models: &[String],
+    mut available: Vec<catalog::ModelCatalogEntry>,
+    scope: ModelPickerScope,
+    keybindings: &Keybindings,
+) -> ModelCatalogPicker {
     let CurrentModel {
         provider: current_provider,
         model: current_model,
@@ -585,7 +683,6 @@ fn model_catalog(
     let current_model = listed_current.as_str();
     let current = rho_providers::provider::model_reference(current_provider, current_model);
     let favorites = favorites::normalized_favorite_models(favorite_models);
-    let mut available = catalog::available_models_for_auths(available_auths);
     let effective_scope = resolve_scope(scope, &favorites, &available);
     if effective_scope == ModelPickerScope::Pinned {
         available.retain(|entry| favorites::is_favorite(&favorites, &entry.provider, &entry.model));

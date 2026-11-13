@@ -7,11 +7,7 @@ use serde_json::json;
 use super::*;
 
 fn call(id: &str, name: &str, arguments: serde_json::Value) -> ToolCall {
-    ToolCall {
-        id: id.into(),
-        name: name.into(),
-        arguments,
-    }
+    ToolCall::new(id.into(), name.into(), arguments)
 }
 
 fn read(id: &str, path: &str) -> ToolCall {
@@ -21,12 +17,8 @@ fn read(id: &str, path: &str) -> ToolCall {
 fn turn(call: ToolCall, content: &str) -> [Message; 2] {
     let id = call.id.clone();
     [
-        Message::Assistant(vec![ContentBlock::ToolCall(call)]),
-        Message::ToolResult(ToolResult {
-            id,
-            ok: true,
-            content: content.into(),
-        }),
+        Message::Assistant(vec![ContentBlock::ToolCall(call)].into()),
+        Message::ToolResult(ToolResult::succeeded(id, content).into()),
     ]
 }
 

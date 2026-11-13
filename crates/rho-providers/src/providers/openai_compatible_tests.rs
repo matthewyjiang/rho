@@ -734,6 +734,7 @@ async fn poolside_streamed_reasoning_reports_full_output_total() {
                 kind: "openai_chat_reasoning_content".into(),
                 position: Some(0),
                 data: json!("thinking"),
+                replay: crate::model::ReplayScope::ExactModel,
             },
         ]
     );

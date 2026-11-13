@@ -20,12 +20,12 @@ use crate::{
     config::{
         Config, InternalAgentModelConfig, InternalAgentTarget, ModelKind, RhoInternalAgentModel,
     },
-    credential_store::build_provider_on,
+    credential_store::build_provider,
 };
 
 use super::{
-    review_verdict, screen_allow_probability, screen_verdict, transcript::render_with_pending_call,
-    ClassifierVerdict, ScreenVerdict, TranscriptBudget, TranscriptOverBudget, CLASSIFIER_POLICY,
+    review_verdict, screen_verdict, transcript::render_with_pending_call, ClassifierVerdict,
+    ScreenVerdict, TranscriptBudget, TranscriptOverBudget, CLASSIFIER_POLICY,
     DEFAULT_SCREEN_ALLOW_PERCENT, REVIEW_QUESTION, SCREEN_ALLOW_PERCENT_RANGE, SCREEN_QUESTION,
 };
 use crate::decision::{self, EntryModel, TextModel};
@@ -55,7 +55,7 @@ pub(crate) struct ClassifyRequest<'a> {
 }
 
 impl ClassifyRequest<'_> {
-    pub(super) fn scope(&self) -> CallScope<'_> {
+    fn scope(&self) -> CallScope<'_> {
         CallScope {
             cancellation: &self.cancellation,
             session_id: self.session_id,
@@ -65,9 +65,8 @@ impl ClassifyRequest<'_> {
     }
 }
 
-/// How a classifier model call is cancelled and where it records usage. Every
-/// request of a batch shares one.
-pub(super) struct CallScope<'a> {
+/// How a classifier model call is cancelled and where it records usage.
+struct CallScope<'a> {
     pub cancellation: &'a CancellationToken,
     pub session_id: &'a SessionId,
     pub workspace_path: &'a Path,
@@ -76,10 +75,11 @@ pub(super) struct CallScope<'a> {
 
 pub(crate) async fn classify_capability_request(
     config: &Config,
+    credentials: Arc<dyn rho_providers::credentials::CredentialStore>,
     request: ClassifyRequest<'_>,
 ) -> ClassifierVerdict {
-    let result = match ClassifierModel::resolve(config).await {
-        Ok(model) => model.classify(request).await.result,
+    let result = match ClassifierModel::resolve(config, credentials).await {
+        Ok(model) => model.classify(request).await,
         Err(error) => Err(error),
     };
     result.unwrap_or_else(classifier_unavailable)
@@ -113,10 +113,13 @@ pub(super) enum Screen {
 
 /// Fails when [`DECISION_SCREEN_ID`] is configured but unusable, so a
 /// headless run can refuse to start instead of denying every request.
-pub(crate) fn check_screen_config(config: &Config) -> anyhow::Result<()> {
+pub(crate) fn check_screen_config(
+    config: &Config,
+    credentials: &dyn rho_providers::credentials::CredentialStore,
+) -> anyhow::Result<()> {
     // A text model is built at classification, so only its kind and provider
     // are checked here.
-    match decision::resolve(config, DECISION_SCREEN_ID)? {
+    match decision::resolve(config, DECISION_SCREEN_ID, credentials)? {
         Some(EntryModel::Decision(_)) => {
             decision_allow_percent(config)?;
         }
@@ -155,9 +158,13 @@ pub(crate) fn screen_allow_percent(
 }
 
 impl ClassifierModel {
-    /// Builds the `[internal_agents.permission-classifier]` model.
-    pub(crate) async fn resolve(config: &Config) -> anyhow::Result<Self> {
-        let screen = resolve_screen(config).await?;
+    /// Builds the `[internal_agents.permission-classifier]` model, signed
+    /// in with `credentials`.
+    pub(crate) async fn resolve(
+        config: &Config,
+        credentials: Arc<dyn rho_providers::credentials::CredentialStore>,
+    ) -> anyhow::Result<Self> {
+        let screen = resolve_screen(config, &credentials).await?;
         let model = config
             .internal_agent_model(PERMISSION_CLASSIFIER_AGENT_ID)
             .ok_or_else(|| anyhow!("{PERMISSION_CLASSIFIER_AGENT_ID} model is not configured"))?;
@@ -165,12 +172,13 @@ impl ClassifierModel {
         let InternalAgentTarget::Rho(selection) = &model.target else {
             bail!("{PERMISSION_CLASSIFIER_AGENT_ID} cannot run on Claude Code runtime");
         };
-        let provider = build_provider_on(
-        config,
+        let provider = build_provider(
+            &config.providers,
             &selection.provider,
             &selection.model,
             reasoning,
             &selection.auth,
+            credentials,
         )
         .await
         .map_err(|_| {
@@ -192,17 +200,10 @@ impl ClassifierModel {
         })
     }
 
-    pub(crate) fn provider(&self) -> &dyn ModelProvider {
-        self.provider.as_ref()
-    }
-
-    /// Review-stage reasoning; a text-model screen always runs at
-    /// [`ReasoningLevel::Low`].
-    pub(crate) fn reasoning(&self) -> ReasoningLevel {
-        self.reasoning
-    }
-
-    pub(crate) async fn classify(&self, request: ClassifyRequest<'_>) -> ClassifierTrace {
+    pub(crate) async fn classify(
+        &self,
+        request: ClassifyRequest<'_>,
+    ) -> anyhow::Result<ClassifierVerdict> {
         let pending_call_id = request.pending.tool_call_id().map(|id| id.as_str());
         run_pipeline(
             self.provider.as_ref(),
@@ -214,30 +215,15 @@ impl ClassifierModel {
         )
         .await
     }
-
-    /// [`Self::classify`] for a request the SDK did not build, such as a
-    /// replayed call, whose tool call ID cannot be attached to it.
-    pub(crate) async fn classify_with_pending_call(
-        &self,
-        request: ClassifyRequest<'_>,
-        pending_call_id: &str,
-    ) -> ClassifierTrace {
-        run_pipeline(
-            self.provider.as_ref(),
-            &self.screen,
-            self.reasoning,
-            self.budget,
-            Some(pending_call_id),
-            &request,
-        )
-        .await
-    }
 }
 
 /// Builds the screen [`DECISION_SCREEN_ID`] names. A text model's build
 /// failure names the entry, since its credentials may be what is missing.
-async fn resolve_screen(config: &Config) -> anyhow::Result<Screen> {
-    let selection = match decision::resolve(config, DECISION_SCREEN_ID)? {
+async fn resolve_screen(
+    config: &Config,
+    credentials: &Arc<dyn rho_providers::credentials::CredentialStore>,
+) -> anyhow::Result<Screen> {
+    let selection = match decision::resolve(config, DECISION_SCREEN_ID, credentials.as_ref())? {
         None => return Ok(Screen::Classifier),
         Some(EntryModel::Decision(model)) => {
             return Ok(Screen::Decision {
@@ -247,12 +233,13 @@ async fn resolve_screen(config: &Config) -> anyhow::Result<Screen> {
         }
         Some(EntryModel::Text(selection)) => selection,
     };
-    let provider = build_provider_on(
-        config,
+    let provider = build_provider(
+        &config.providers,
         &selection.provider,
         &selection.model,
         ReasoningLevel::Low,
         &selection.auth,
+        Arc::clone(credentials),
     )
     .await
     .map_err(|_| decision::ConfigError::TextModelUnavailable {
@@ -312,28 +299,6 @@ pub(super) fn text_screen_budget(
     }
 }
 
-/// What one classification did at each stage. Production acts only on
-/// `result`; the classifier eval also reports the screen outcome.
-pub(crate) struct ClassifierTrace {
-    pub screen: ScreenOutcome,
-    /// A decision-model screen's P(allow), when it answered.
-    pub screen_allow_probability: Option<f64>,
-    /// `Err` fails closed in production, as "classifier unavailable" or as
-    /// the over-budget reason.
-    pub result: anyhow::Result<ClassifierVerdict>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum ScreenOutcome {
-    /// The transcript could not be rendered, so no stage ran.
-    Skipped,
-    Allowed,
-    Escalated,
-    /// The screen call or its parse failed with this error; the review
-    /// decided.
-    Failed(String),
-}
-
 #[cfg(test)]
 pub(super) async fn classify_capability_request_with_provider(
     provider: &dyn ModelProvider,
@@ -352,7 +317,6 @@ pub(super) async fn classify_capability_request_with_provider(
         &request,
     )
     .await
-    .result
     .unwrap_or_else(classifier_unavailable)
 }
 
@@ -399,90 +363,23 @@ async fn run_pipeline(
     budget: TranscriptBudget,
     pending_call_id: Option<&str>,
     request: &ClassifyRequest<'_>,
-) -> ClassifierTrace {
-    match screen_step(provider, screen, budget, pending_call_id, request).await {
-        ScreenStep::Done(trace) => trace,
-        ScreenStep::Review {
-            screen,
-            screen_allow_probability,
-            transcript,
-        } => ClassifierTrace {
-            screen,
-            screen_allow_probability,
-            result: review(provider, reasoning, &request.scope(), &transcript).await,
-        },
-    }
-}
-
-/// Where one request stands after stage 1.
-pub(crate) enum ScreenStep {
-    /// No review is needed: the screen allowed the request, or its
-    /// transcript could not be rendered.
-    Done(ClassifierTrace),
-    /// The screen escalated or failed, so the review decides, reading
-    /// `transcript`.
-    Review {
-        screen: ScreenOutcome,
-        screen_allow_probability: Option<f64>,
-        transcript: String,
-    },
-}
-
-/// Stage 1 of [`run_pipeline`] for one request.
-pub(super) async fn screen_step(
-    provider: &dyn ModelProvider,
-    screen: &Screen,
-    budget: TranscriptBudget,
-    pending_call_id: Option<&str>,
-    request: &ClassifyRequest<'_>,
-) -> ScreenStep {
+) -> anyhow::Result<ClassifierVerdict> {
     let transcript =
-        match render_with_pending_call(request.history, request.pending, pending_call_id, budget) {
-            Ok(transcript) => transcript,
-            Err(error) => {
-                return ScreenStep::Done(ClassifierTrace {
-                    screen: ScreenOutcome::Skipped,
-                    screen_allow_probability: None,
-                    result: Err(error),
-                })
-            }
-        };
-
-    let (screen, screen_allow_probability) = match run_screen(
-        provider,
-        screen,
-        request,
-        pending_call_id,
-        &transcript,
-    )
-    .await
-    {
-        Ok((ScreenVerdict::Allow, allow_probability)) => {
-            return ScreenStep::Done(ClassifierTrace {
-                screen: ScreenOutcome::Allowed,
-                screen_allow_probability: allow_probability,
-                result: Ok(ClassifierVerdict::Allow),
-            })
-        }
-        Ok((ScreenVerdict::Escalate, allow_probability)) => {
-            (ScreenOutcome::Escalated, allow_probability)
-        }
+        render_with_pending_call(request.history, request.pending, pending_call_id, budget)?;
+    match run_screen(provider, screen, request, pending_call_id, &transcript).await {
+        Ok(ScreenVerdict::Allow) => return Ok(ClassifierVerdict::Allow),
+        Ok(ScreenVerdict::Escalate) => {}
         Err(error) => {
             // A broken screen must not decide anything; stage 2 still runs
             // and fails closed on its own if it also breaks.
             tracing::warn!(error = %error, "permission classifier screen failed; running review");
-            (ScreenOutcome::Failed(format!("{error:#}")), None)
         }
-    };
-    ScreenStep::Review {
-        screen,
-        screen_allow_probability,
-        transcript,
     }
+    review(provider, reasoning, &request.scope(), &transcript).await
 }
 
 /// Stage 2 for one request: the reasoned review of `transcript`.
-pub(super) async fn review(
+async fn review(
     provider: &dyn ModelProvider,
     reasoning: ReasoningLevel,
     scope: &CallScope<'_>,
@@ -499,8 +396,7 @@ pub(super) async fn review(
     review_verdict(&ask(&model, scope.cancellation, decision).await?)
 }
 
-/// Stage 1: the screen's verdict, with the model's P(allow) when it reports
-/// probabilities.
+/// Stage 1: the screen's verdict.
 ///
 /// The classifier's own model reads the review's `transcript`. Another
 /// model with a known window, or a decision model with a state budget, gets
@@ -513,7 +409,7 @@ async fn run_screen(
     request: &ClassifyRequest<'_>,
     pending_call_id: Option<&str>,
     transcript: &str,
-) -> anyhow::Result<(ScreenVerdict, Option<f64>)> {
+) -> anyhow::Result<ScreenVerdict> {
     let text_screen;
     // A text model reports no probabilities, so its allow percent is moot.
     let (model, budget, allow_percent): (&dyn DecisionModel, _, _) = match screen {
@@ -572,14 +468,11 @@ async fn run_screen(
     };
     let decision = DecisionRequest::new(CLASSIFIER_POLICY, state, SCREEN_STAGE.questions);
     let answers = ask(model, &request.cancellation, decision).await?;
-    Ok((
-        screen_verdict(&answers, allow_percent),
-        screen_allow_probability(&answers),
-    ))
+    Ok(screen_verdict(&answers, allow_percent))
 }
 
 /// One classifier stage: the questions it asks and how the model answers.
-pub(super) struct Stage {
+struct Stage {
     pub usage_purpose: &'static str,
     pub questions: &'static [Question<'static>],
     pub style: AnswerStyle,
@@ -591,14 +484,14 @@ const SCREEN_STAGE: Stage = Stage {
     style: AnswerStyle::Direct,
 };
 
-pub(super) const REVIEW_STAGE: Stage = Stage {
+const REVIEW_STAGE: Stage = Stage {
     usage_purpose: "permission-classifier-review",
     questions: std::slice::from_ref(&REVIEW_QUESTION),
     style: AnswerStyle::Reasoned,
 };
 
 /// The classifier's text model, recording usage under `usage_purpose`.
-pub(super) fn text_model<'a>(
+fn text_model<'a>(
     provider: &'a dyn ModelProvider,
     scope: &CallScope<'a>,
     usage_purpose: &'static str,
@@ -618,7 +511,7 @@ pub(super) fn text_model<'a>(
 }
 
 /// Asks `decision` and checks the answers fit its questions.
-pub(super) async fn ask(
+async fn ask(
     model: &dyn DecisionModel,
     cancellation: &CancellationToken,
     decision: DecisionRequest<'_>,

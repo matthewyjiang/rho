@@ -82,7 +82,9 @@ fn config_value_parsing_trims_and_rejects_unknown_values() {
 }
 
 // Covers: the per-mode capability table: bypass allows everything, plan
-// denies and supervised/allow-edits/auto ask only for write and process.
+// denies and supervised/allow-edits/auto ask only for write, process, and
+// session control, so watching another session is free and acting on one
+// is gated (#1714).
 // Owner: application permission policy
 #[test]
 fn decision_for_follows_the_mode_table() {
@@ -90,11 +92,18 @@ fn decision_for_follows_the_mode_table() {
         // Boilerplate reasons stay empty; the approval surface is the signal.
         reason: String::new(),
     };
-    let plan_deny = PolicyDecision::Deny {
-        reason: "capability is not allowed in plan mode".into(),
-    };
     for kind in all_capability_kinds() {
-        let gated = matches!(kind, CapabilityKind::Write | CapabilityKind::Process);
+        let plan_deny = PolicyDecision::Deny {
+            reason: match kind {
+                CapabilityKind::SessionControl => "session control is not allowed in plan mode",
+                _ => "capability is not allowed in plan mode",
+            }
+            .into(),
+        };
+        let gated = matches!(
+            kind,
+            CapabilityKind::Write | CapabilityKind::Process | CapabilityKind::SessionControl
+        );
         let gate = |decision: &PolicyDecision| {
             if gated {
                 decision.clone()
@@ -137,7 +146,7 @@ fn workspace_policy_agrees_with_decision_for_when_writes_are_not_tracked() {
         PermissionMode::Supervised,
     ] {
         let policy = mode
-            .workspace_policy(SessionWriteLog::default())
+            .workspace_policy(SessionWriteLog::default(), std::env::var_os("PATH"))
             .expect("policy exists for checked modes");
         for request in [
             &read_request,
@@ -158,7 +167,7 @@ fn workspace_policy_agrees_with_decision_for_when_writes_are_not_tracked() {
     }
 
     assert!(PermissionMode::Bypass
-        .workspace_policy(SessionWriteLog::default())
+        .workspace_policy(SessionWriteLog::default(), std::env::var_os("PATH"))
         .is_none());
 }
 
@@ -210,7 +219,7 @@ fn checked_modes_gate_unrestricted_filesystem_reads() {
                 PermissionMode::Supervised,
             ] {
                 let policy = mode
-                    .workspace_policy(SessionWriteLog::default())
+                    .workspace_policy(SessionWriteLog::default(), std::env::var_os("PATH"))
                     .expect("checked mode has a policy");
                 assert_eq!(
                     policy.evaluate(&request),
@@ -220,7 +229,7 @@ fn checked_modes_gate_unrestricted_filesystem_reads() {
                 );
             }
             let plan_policy = PermissionMode::Plan
-                .workspace_policy(SessionWriteLog::default())
+                .workspace_policy(SessionWriteLog::default(), std::env::var_os("PATH"))
                 .expect("plan has a policy");
             assert_eq!(
                 plan_policy.evaluate(&request),
@@ -464,7 +473,7 @@ fn allow_edits_and_auto_allow_tracked_workspace_writes_only() {
 
     for mode in [PermissionMode::AllowEdits, PermissionMode::Auto] {
         let policy = mode
-            .workspace_policy(SessionWriteLog::default())
+            .workspace_policy(SessionWriteLog::default(), std::env::var_os("PATH"))
             .expect("checked mode has a policy");
         assert_eq!(policy.evaluate(&tracked_write), PolicyDecision::Allow);
         assert_eq!(policy.evaluate(&added_dir_write), PolicyDecision::Allow);
@@ -489,7 +498,7 @@ fn allow_edits_and_auto_allow_tracked_workspace_writes_only() {
     }
 
     let supervised = PermissionMode::Supervised
-        .workspace_policy(SessionWriteLog::default())
+        .workspace_policy(SessionWriteLog::default(), std::env::var_os("PATH"))
         .expect("supervised has a policy");
     assert_eq!(
         supervised.evaluate(&tracked_write),
@@ -521,7 +530,7 @@ fn allow_edits_and_auto_allow_later_writes_to_approved_workspace_files() {
 
     for mode in [PermissionMode::AllowEdits, PermissionMode::Auto] {
         let policy = mode
-            .workspace_policy(SessionWriteLog::default())
+            .workspace_policy(SessionWriteLog::default(), std::env::var_os("PATH"))
             .expect("checked mode has a policy");
         assert_eq!(
             policy.evaluate(&created_write),
@@ -580,7 +589,7 @@ fn allow_edits_and_auto_gate_symlinked_workspace_writes() {
 
     for mode in [PermissionMode::AllowEdits, PermissionMode::Auto] {
         let policy = mode
-            .workspace_policy(SessionWriteLog::default())
+            .workspace_policy(SessionWriteLog::default(), std::env::var_os("PATH"))
             .expect("checked mode has a policy");
         assert_eq!(
             policy.evaluate(&tracked_link_write),
@@ -632,10 +641,10 @@ async fn remembered_writes_are_bound_to_their_grantor() {
         .await;
 
     let auto = PermissionMode::Auto
-        .workspace_policy(writes.clone())
+        .workspace_policy(writes.clone(), std::env::var_os("PATH"))
         .expect("auto has a policy");
     let allow_edits = PermissionMode::AllowEdits
-        .workspace_policy(writes)
+        .workspace_policy(writes, std::env::var_os("PATH"))
         .expect("allow edits has a policy");
     assert_eq!(auto.evaluate(&created_write), PolicyDecision::Allow);
     assert_eq!(
@@ -660,7 +669,7 @@ fn carried_across_keeps_writes_only_for_the_same_grantor() {
         .clone()
         .carried_across(PermissionMode::Auto, PermissionMode::AllowEdits);
     let allow_edits = PermissionMode::AllowEdits
-        .workspace_policy(carried)
+        .workspace_policy(carried, std::env::var_os("PATH"))
         .expect("allow edits has a policy");
     assert_eq!(
         allow_edits.evaluate(&created_write),
@@ -671,7 +680,7 @@ fn carried_across_keeps_writes_only_for_the_same_grantor() {
 
     let same_session = writes.carried_across(PermissionMode::Auto, PermissionMode::Auto);
     let auto = PermissionMode::Auto
-        .workspace_policy(same_session)
+        .workspace_policy(same_session, std::env::var_os("PATH"))
         .expect("auto has a policy");
     assert_eq!(auto.evaluate(&created_write), PolicyDecision::Allow);
 }
@@ -694,7 +703,7 @@ fn human_grants_are_stronger_than_classifier_grants() {
     writes.remember(&created_write, WriteAuthority::Classifier);
     for mode in [PermissionMode::Auto, PermissionMode::AllowEdits] {
         let policy = mode
-            .workspace_policy(writes.clone())
+            .workspace_policy(writes.clone(), std::env::var_os("PATH"))
             .expect("edit-allowing mode has a policy");
         assert_eq!(
             policy.evaluate(&created_write),
@@ -704,7 +713,7 @@ fn human_grants_are_stronger_than_classifier_grants() {
     }
 }
 
-fn all_capability_kinds() -> [CapabilityKind; 6] {
+fn all_capability_kinds() -> [CapabilityKind; 7] {
     [
         CapabilityKind::Read,
         CapabilityKind::Write,
@@ -712,5 +721,6 @@ fn all_capability_kinds() -> [CapabilityKind; 6] {
         CapabilityKind::Network,
         CapabilityKind::Skill,
         CapabilityKind::InstructionDiscovery,
+        CapabilityKind::SessionControl,
     ]
 }

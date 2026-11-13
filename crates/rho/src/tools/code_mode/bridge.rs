@@ -216,7 +216,7 @@ impl ToolHostBridge {
         let _ = self
             .parent
             .progress()
-            .send(ToolProgress::message(rendered))
+            .send(ToolProgress::new(rendered))
             .await;
     }
 
@@ -231,7 +231,7 @@ impl ToolHostBridge {
                 }
                 event = run.next_event() => match event {
                     Some(ToolHostEvent::Progress(progress)) => {
-                        self.report(index, |record| record.set_progress(progress.text())).await;
+                        self.report(index, |record| record.set_progress(progress.message())).await;
                     }
                     Some(ToolHostEvent::HostInputRequested(mut pending)) => {
                         if let Ok(response) = self.parent.request_host_input(pending.request().clone()).await {

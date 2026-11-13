@@ -4,38 +4,25 @@ use pretty_assertions::assert_eq;
 use serde_json::json;
 
 use super::CompactionLimit;
-use crate::model::{ContentBlock, ImageContent, Message, ToolCall, ToolResult};
+use crate::model::{ContentBlock, Message, ToolCall, ToolResult};
 
 fn call(id: &str) -> Message {
-    Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
-        id: id.into(),
-        name: "tool".into(),
-        arguments: json!({}),
-    })])
+    Message::Assistant(
+        (vec![ContentBlock::ToolCall(ToolCall::new(
+            id.into(),
+            "tool".into(),
+            json!({}),
+        ))])
+        .into(),
+    )
 }
 
 fn result(id: &str) -> Message {
-    Message::ToolResult(ToolResult {
-        id: id.into(),
-        ok: true,
-        content: "done".into(),
-    })
-}
-
-fn image(id: &str) -> Message {
-    Message::tool_image_supplement(
-        "tool",
-        id,
-        vec![ImageContent {
-            mime_type: "image/png".into(),
-            data: "AA==".into(),
-        }],
-    )
-    .unwrap()
+    Message::ToolResult(ToolResult::succeeded(id, "done").into())
 }
 
 // Covers: compacting while async jobs run must keep every running call, any
-// result or image after the cut, and fresh completion input verbatim; must not
+// result after the cut, and fresh completion input verbatim; must not
 // compact a prefix with no model reply; and must not recompact a prefix already
 // compacted while the same jobs run.
 // Owner: sdk orchestration compaction.
@@ -105,27 +92,11 @@ fn step_limit_cuts_before_running_calls_without_splitting_pairs() {
                 call("finished"),
                 call("running"),
                 result("finished"),
-                image("finished"),
             ],
             vec!["running"],
             None,
             None,
             BeforePendingCalls(3),
-        ),
-        (
-            "late image alone moves the cut to its call",
-            vec![
-                Message::user_text("go"),
-                Message::assistant_text("hi"),
-                call("finished"),
-                result("finished"),
-                call("running"),
-                image("finished"),
-            ],
-            vec!["running"],
-            None,
-            None,
-            BeforePendingCalls(2),
         ),
         (
             "running call in the first reply",

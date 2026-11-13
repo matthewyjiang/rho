@@ -1,20 +1,11 @@
 use pretty_assertions::assert_eq;
 
-use super::{client_info, McpClientServices, McpElicitationService, McpRoots, McpSamplingService};
-use crate::tools::mcp::{
-    config::McpSamplingPolicy, elicitation::McpElicitationSupport, inflight::McpInFlightCalls,
-    sampling::McpSamplingBridge,
-};
+use super::{client_info, McpClientServices, McpElicitationService, McpRoots};
+use crate::tools::mcp::{elicitation::McpElicitationSupport, inflight::McpInFlightCalls};
 
-fn services(
-    elicitation: McpElicitationSupport,
-    sampling: Option<McpSamplingPolicy>,
-) -> McpClientServices {
-    let calls = McpInFlightCalls::new();
+fn services(elicitation: McpElicitationSupport) -> McpClientServices {
     McpClientServices {
-        elicit: McpElicitationService::new("live", calls.clone(), elicitation),
-        sample: sampling
-            .map(|policy| McpSamplingService::new("live", policy, McpSamplingBridge::new(), calls)),
+        elicit: McpElicitationService::new("live", McpInFlightCalls::new(), elicitation),
     }
 }
 
@@ -27,7 +18,7 @@ fn client_info_identifies_rho_and_declares_roots_when_present() {
     let directory = tempfile::tempdir().unwrap();
     let with_roots = client_info(
         &McpRoots::for_workspace(directory.path()),
-        &services(McpElicitationSupport::Unavailable, None),
+        &services(McpElicitationSupport::Unavailable),
     );
 
     assert_eq!(
@@ -47,30 +38,27 @@ fn client_info_identifies_rho_and_declares_roots_when_present() {
 
     let without_roots = client_info(
         &McpRoots::default(),
-        &services(McpElicitationSupport::Unavailable, None),
+        &services(McpElicitationSupport::Unavailable),
     );
     assert!(without_roots.capabilities.roots.is_none());
 }
 
-// Covers: Rho must declare elicitation and sampling only where it can serve
-// them, because a server reads the capability set as a promise and a declared
-// capability Rho always refuses is worse than one it never offered.
+// Covers: Rho must declare elicitation only where it can serve it, and never
+// sampling, because a server reads the capability set as a promise and a
+// declared capability Rho always refuses is worse than one it never offered.
 // Owner: MCP client capability declaration.
 #[test]
 fn optional_capabilities_are_declared_only_when_serviceable() {
     let none = client_info(
         &McpRoots::default(),
-        &services(McpElicitationSupport::Unavailable, None),
+        &services(McpElicitationSupport::Unavailable),
     );
     assert!(none.capabilities.elicitation.is_none());
     assert!(none.capabilities.sampling.is_none());
 
     let both = client_info(
         &McpRoots::default(),
-        &services(
-            McpElicitationSupport::Available,
-            Some(McpSamplingPolicy::Ask),
-        ),
+        &services(McpElicitationSupport::Available),
     );
     // Form mode only, and schema validation is declared off because Rho types
     // answers to the schema without enforcing its constraints.
@@ -83,5 +71,5 @@ fn optional_capabilities_are_declared_only_when_serviceable() {
         Some(false)
     );
     assert!(elicitation.url.is_none());
-    assert!(both.capabilities.sampling.is_some());
+    assert!(both.capabilities.sampling.is_none());
 }

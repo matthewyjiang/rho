@@ -8,13 +8,12 @@ use serde_json::json;
 
 use super::{AcpServer, Workspace, REPLY_TIMEOUT};
 
-// Covers: a cold-cache provider whose model discovery requires credentials
-// must still advertise login, its session startup must answer auth_required
-// so hosts show sign-in, and that failure must not kill ACP or block history
-// deletion, which needs no model or credentials.
-// Owner: ACP process startup; no model/credential fixtures mask discovery here.
+// Covers: login must be advertised from the daemon's auth list without any
+// credentials or models, as the terminal command a host runs, and history
+// deletion and listing need no model or credentials.
+// Owner: ACP initialize and session catalog through the daemon.
 #[test]
-fn unauthenticated_cold_start_can_discover_login() {
+fn login_is_discoverable_and_history_deletes_without_credentials() {
     let workspace = Workspace::new();
     let saved_ids = {
         let mut fixture = workspace.server();
@@ -38,20 +37,12 @@ fn unauthenticated_cold_start_can_discover_login() {
         }
         ids
     };
-    let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_rho"));
-    command
-        .env_clear()
-        .env("HOME", workspace.home.path())
-        .env("RHO_HOME", workspace.home.path().join(".rho"))
-        .env("RHO_CREDENTIAL_STORE", "file")
-        .current_dir(&workspace.project)
-        .arg("--config")
-        .arg(workspace.home.path().join("config.toml"))
-        .args(["--provider", "github-copilot", "acp", "--t3code"]);
+    let mut command = workspace.home.command(env!("CARGO_BIN_EXE_rho"));
+    command.args(["acp", "--t3code"]);
     let mut server = AcpServer::from_command(&mut command);
     let initialize =
         json!({"protocolVersion": 1, "clientCapabilities": {"auth": {"terminal": true}}});
-    let (initialized, _) = server.request("initialize", initialize.clone());
+    let (initialized, _) = server.request("initialize", initialize);
     let initialized = initialized.unwrap();
     let copilot = initialized["authMethods"]
         .as_array()
@@ -65,18 +56,6 @@ fn unauthenticated_cold_start_can_discover_login() {
     );
     let (deleted, _) = server.request("session/delete", json!({"sessionId": saved_ids[0]}));
     assert_eq!(deleted.unwrap(), json!({}));
-    let (session, _) = server.request(
-        "session/new",
-        json!({"cwd": workspace.project, "mcpServers": []}),
-    );
-    let failure = session.expect_err("credentials are still required for a session");
-    assert_eq!(
-        (failure["code"].clone(), failure.get("data")),
-        (json!(-32000), None),
-        "missing credentials ask the host to sign in: {failure}"
-    );
-    let (after_failure, _) = server.request("initialize", initialize);
-    assert_eq!(after_failure.unwrap(), initialized);
     let (deleted, _) = server.request("session/delete", json!({"sessionId": saved_ids[1]}));
     assert_eq!(deleted.unwrap(), json!({}));
     let (listed, _) = server.request("session/list", json!({}));
@@ -126,7 +105,7 @@ fn advertised_terminal_login_saves_or_cancels_without_echoing_keys() {
         ),
     ] {
         let home = IsolatedHome::new().unwrap();
-        let store = FileCredentialStore::with_rho_home(home.home.join(".rho")).unwrap();
+        let store = FileCredentialStore::with_rho_home(home.rho_home()).unwrap();
         store
             .set_secret(OPENAI_API_KEY_ACCOUNT, "original-key")
             .unwrap();

@@ -7,10 +7,7 @@ use std::{
 
 use pretty_assertions::assert_eq;
 use rho_sdk::{
-    model::{
-        ContentBlock, Message, ModelEvent, ModelResponse, ProviderContextBlock, ToolCall,
-        ToolResult, ToolSpec,
-    },
+    model::{ContentBlock, Message, ModelEvent, ModelResponse, ToolCall, ToolResult, ToolSpec},
     provider::{ScriptedProvider, ScriptedTurn},
     tool::{
         PreparedToolInvocation, Tool, ToolContext, ToolExecutionMode, ToolFuture, ToolInvocation,
@@ -77,11 +74,7 @@ fn runtime(
 }
 
 fn call(id: &str, name: &str) -> ContentBlock {
-    ContentBlock::ToolCall(ToolCall {
-        id: id.into(),
-        name: name.into(),
-        arguments: json!({}),
-    })
+    ContentBlock::ToolCall(ToolCall::new(id.into(), name.into(), json!({})))
 }
 
 // Covers: a run that dies after a model reply leaves a checkpoint naming the
@@ -140,16 +133,10 @@ async fn continuation_reruns_read_only_calls_and_interrupts_the_rest() {
     assert_eq!(rerun, ["read"]);
     let mut expected = saved.history().to_vec();
     expected.extend([
-        Message::ToolResult(ToolResult {
-            id: "write-1".into(),
-            ok: false,
-            content: "tool call interrupted before completion".into(),
-        }),
-        Message::ToolResult(ToolResult {
-            id: "read-1".into(),
-            ok: true,
-            content: "read again".into(),
-        }),
+        Message::ToolResult(
+            ToolResult::failed("write-1", "tool call interrupted before completion").into(),
+        ),
+        Message::ToolResult(ToolResult::succeeded("read-1", "read again").into()),
     ]);
     assert_eq!(provider.recorded_requests()[0].messages, expected);
 }
@@ -168,11 +155,8 @@ async fn host_batch_is_checkpointed_before_its_calls_start() {
     );
     let session = crashed.session(SessionOptions::default()).await.unwrap();
     session.set_checkpoint_store(Some(store.clone())).unwrap();
-    let calls = ["read", "write"].map(|name| ToolCall {
-        id: format!("host-{name}"),
-        name: name.into(),
-        arguments: json!({}),
-    });
+    let calls =
+        ["read", "write"].map(|name| ToolCall::new(format!("host-{name}"), name.into(), json!({})));
     let run = session
         .start_with_tool_calls(UserInput::text("load both"), calls.to_vec())
         .await
@@ -188,7 +172,7 @@ async fn host_batch_is_checkpointed_before_its_calls_start() {
         saved.history(),
         [
             Message::user_text("load both"),
-            Message::Assistant(calls.map(ContentBlock::ToolCall).to_vec()),
+            Message::Assistant(calls.map(ContentBlock::ToolCall).into()),
         ]
     );
 }
@@ -338,15 +322,13 @@ impl Tool for GatedAsyncTool {
 // Owner: SDK checkpoints.
 #[tokio::test]
 async fn unchanged_history_is_not_saved_again() {
-    let marker = ProviderContextBlock::async_tool_call(identity(), "call-a");
     let provider = ScriptedProvider::new(
         identity(),
         [
             ScriptedTurn::streaming(
-                vec![ModelEvent::ProviderContext {
-                    kind: marker.kind,
-                    position: marker.position,
-                    data: marker.data,
+                vec![ModelEvent::ToolCallAccepted {
+                    id: "call-a".into(),
+                    execution: rho_sdk::tool::ToolExecutionMode::Async,
                 }],
                 ModelResponse::Assistant(vec![call("call-a", "slow")]),
             ),
@@ -398,7 +380,7 @@ async fn unchanged_history_is_not_saved_again() {
 async fn first_checkpoint_saves_an_unchanged_restored_history() {
     let restored = vec![
         Message::user_text("inspect"),
-        Message::Assistant(vec![ContentBlock::Text("looked".into())]),
+        Message::Assistant(vec![ContentBlock::Text("looked".into())].into()),
     ];
     let provider =
         ScriptedProvider::new(identity(), [ScriptedTurn::completed(text_response("done"))]);

@@ -1,5 +1,5 @@
 use super::*;
-use agent_client_protocol::schema::v1::UsageUpdate;
+use agent_client_protocol::v1::schema::UsageUpdate;
 use pretty_assertions::assert_eq;
 
 fn shape(system_prompt: PromptPolicy, persistence: SessionPersistence) -> ClaudeSessionShape {
@@ -133,7 +133,7 @@ fn usage_meta_yields_rate_limit_and_resolved_model() {
                 is_using_overage: Some(false),
             }),
             StreamEffect::Status(StatusPatch {
-                claude_model: Some("claude-opus-5-5".into()),
+                runtime_model: Some("claude-opus-5-5".into()),
                 ..StatusPatch::default()
             }),
         ]

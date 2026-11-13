@@ -1,11 +1,13 @@
-use rho_tools::tool_card::{ToolBody, ToolCard, ToolFact, ToolHeader, ToolStatus};
+use rho_protocol::display::{ToolBody, ToolCard, ToolCardStatus, ToolFact, ToolHeader};
+
+use crate::subagent::RunState;
 
 use super::{format::draft_card, ToolView};
 
 pub(super) fn agent_start_card(arguments: &serde_json::Value) -> ToolCard {
     agent_card(
         arguments,
-        ToolStatus::Running,
+        ToolCardStatus::Running,
         agent_identity(arguments)
             .filter(|id| !id.is_empty())
             .unwrap_or("agent"),
@@ -13,27 +15,14 @@ pub(super) fn agent_start_card(arguments: &serde_json::Value) -> ToolCard {
     )
 }
 
-pub(super) fn agent_interrupted_card(arguments: &serde_json::Value) -> ToolCard {
-    agent_card(
-        arguments,
-        ToolStatus::Interrupted,
-        agent_identity(arguments).unwrap_or("agent"),
-        "interrupted",
-    )
-}
-
-pub(super) fn agents_interrupted_card(arguments: &serde_json::Value) -> ToolCard {
-    let action = string_value(arguments, "action").unwrap_or("request");
-    bare_agent_card(
-        ToolStatus::Interrupted,
-        string_value(arguments, "id").unwrap_or("delegated agents"),
-        format!("{action} interrupted"),
-    )
-}
-
 pub(super) fn agent_progress_card(view: &ToolView, content: &str) -> ToolCard {
     let agent_id = agent_identity(&view.arguments).unwrap_or("agent");
-    let mut card = agent_card(&view.arguments, ToolStatus::Running, agent_id, "running");
+    let mut card = agent_card(
+        &view.arguments,
+        ToolCardStatus::Running,
+        agent_id,
+        "running",
+    );
     if let Some(run_id) = run_id_from_agent_line(content.lines().next().unwrap_or_default()) {
         prepend_result_body(&mut card, vec![run_id.to_string()]);
     }
@@ -44,7 +33,7 @@ pub(super) fn agent_finished_card(view: &ToolView, content: &str, ok: bool) -> T
     if let (true, Some(receipt)) = (ok, parse_background_receipt(content)) {
         let mut card = agent_card(
             &view.arguments,
-            ToolStatus::Running,
+            ToolCardStatus::Running,
             receipt.agent_id,
             "running in background",
         );
@@ -56,11 +45,11 @@ pub(super) fn agent_finished_card(view: &ToolView, content: &str, ok: bool) -> T
             view,
             snapshot,
             SnapshotDisplay::Completion,
-            ToolStatus::from_finished(ok),
+            ToolCardStatus::from_finished(ok),
         );
     }
 
-    let status = ToolStatus::from_finished(ok);
+    let status = ToolCardStatus::from_finished(ok);
     let mut card = agent_card(
         &view.arguments,
         status,
@@ -85,13 +74,13 @@ pub(super) fn agents_start_card(arguments: &serde_json::Value) -> ToolCard {
         Some(action) => ("agents", action),
         None => ("agents", "ready"),
     };
-    bare_agent_card(ToolStatus::Running, identity, detail)
+    bare_agent_card(ToolCardStatus::Running, identity, detail)
 }
 
 pub(super) fn agents_finished_card(view: &ToolView, content: &str, ok: bool) -> ToolCard {
     if !ok {
         let action = string_argument(view, "action").unwrap_or("request");
-        let mut card = bare_agent_card(ToolStatus::Error, "agents", format!("{action} failed"));
+        let mut card = bare_agent_card(ToolCardStatus::Error, "agents", format!("{action} failed"));
         prepend_result_body(&mut card, content.lines().map(str::to_string).collect());
         return card;
     }
@@ -99,7 +88,7 @@ pub(super) fn agents_finished_card(view: &ToolView, content: &str, ok: bool) -> 
     match string_argument(view, "action") {
         Some("list") => {
             let mut lines = agent_list_lines(content).into_iter();
-            let mut card = bare_agent_card(ToolStatus::Ok, "delegated agents", "");
+            let mut card = bare_agent_card(ToolCardStatus::Ok, "delegated agents", "");
             lines.next();
             for text in lines {
                 card.push_fact(ToolFact::Text {
@@ -115,11 +104,11 @@ pub(super) fn agents_finished_card(view: &ToolView, content: &str, ok: bool) -> 
                 } else {
                     SnapshotDisplay::Completion
                 };
-                snapshot_card(view, snapshot, display, ToolStatus::Ok)
+                snapshot_card(view, snapshot, display, ToolCardStatus::Ok)
             })
             .unwrap_or_else(|| agents_result_fallback_card(view, content)),
         _ => {
-            let mut card = bare_agent_card(ToolStatus::Ok, "agents", "result");
+            let mut card = bare_agent_card(ToolCardStatus::Ok, "agents", "result");
             prepend_result_body(&mut card, content.lines().map(str::to_string).collect());
             card
         }
@@ -128,7 +117,7 @@ pub(super) fn agents_finished_card(view: &ToolView, content: &str, ok: bool) -> 
 
 fn agent_card(
     arguments: &serde_json::Value,
-    status: ToolStatus,
+    status: ToolCardStatus,
     identity: impl Into<String>,
     detail: impl Into<String>,
 ) -> ToolCard {
@@ -144,19 +133,19 @@ fn agent_card(
 }
 
 fn bare_agent_card(
-    status: ToolStatus,
+    status: ToolCardStatus,
     identity: impl Into<String>,
     detail: impl Into<String>,
 ) -> ToolCard {
     draft_card(
         status,
-        rho_tools::tool_card::ToolFamily::Agent,
+        rho_protocol::display::ToolFamily::Agent,
         ToolHeader::status_first(identity, detail),
     )
 }
 
 fn push_agent_fact(card: &mut ToolCard, text: String) {
-    if card.status == ToolStatus::Error
+    if card.status == ToolCardStatus::Error
         || text.starts_with("error:")
         || text.starts_with("attachment error:")
     {
@@ -177,7 +166,7 @@ fn starting_detail(background: bool) -> &'static str {
 fn agents_result_fallback_card(view: &ToolView, content: &str) -> ToolCard {
     let action = string_argument(view, "action").unwrap_or("request");
     let mut card = bare_agent_card(
-        ToolStatus::Ok,
+        ToolCardStatus::Ok,
         string_argument(view, "id").unwrap_or("agents"),
         format!("{action} result"),
     );
@@ -245,7 +234,7 @@ impl Snapshot<'_> {
     fn has_status_metrics(&self) -> bool {
         self.remaining
             .iter()
-            .any(|line| line.starts_with("elapsed: ") || line.starts_with("attach: "))
+            .any(|line| line.starts_with("elapsed: "))
     }
 }
 
@@ -273,7 +262,7 @@ fn snapshot_card(
     view: &ToolView,
     snapshot: Snapshot<'_>,
     display: SnapshotDisplay,
-    fallback_status: ToolStatus,
+    fallback_status: ToolCardStatus,
 ) -> ToolCard {
     let metrics_index = snapshot
         .remaining
@@ -311,13 +300,19 @@ fn snapshot_card(
     card
 }
 
-fn snapshot_status(state: &str, fallback: ToolStatus) -> ToolStatus {
-    match state {
-        "starting" | "running" => ToolStatus::Running,
-        "ok" => ToolStatus::Ok,
-        "error" => ToolStatus::Error,
-        "stopped" => ToolStatus::Interrupted,
-        _ => fallback,
+/// The run state the `agents` tool printed as `state`, read as `result.json`
+/// writes it, so a new state cannot drift from these renderings.
+fn run_state(state: &str) -> Option<RunState> {
+    serde_json::from_value(serde_json::Value::String(state.to_owned())).ok()
+}
+
+fn snapshot_status(state: &str, fallback: ToolCardStatus) -> ToolCardStatus {
+    match run_state(state) {
+        Some(RunState::Queued | RunState::Starting | RunState::Running) => ToolCardStatus::Running,
+        Some(RunState::Ok) => ToolCardStatus::Ok,
+        Some(RunState::Error) => ToolCardStatus::Error,
+        Some(RunState::Stopped) => ToolCardStatus::Interrupted,
+        None => fallback,
     }
 }
 
@@ -332,6 +327,8 @@ fn snapshot_sections(
     let mut status_continuation = false;
 
     for (index, line) in remaining.iter().copied().enumerate() {
+        // Status output saved before 3.0 carries an `attach: rho attach <id>`
+        // line naming a command that no longer exists.
         if Some(index) == metrics_index || line.starts_with("attach: ") {
             status_continuation = false;
             continue;
@@ -395,12 +392,12 @@ fn tokens_from_metrics(metrics: &str) -> Option<&str> {
 }
 
 fn state_glyph(state: &str) -> &'static str {
-    match state {
-        "starting" | "running" => "●",
-        "ok" => "✓",
-        "error" => "✗",
-        "stopped" => "■",
-        _ => "○",
+    match run_state(state) {
+        Some(RunState::Queued | RunState::Starting | RunState::Running) => "●",
+        Some(RunState::Ok) => "✓",
+        Some(RunState::Error) => "✗",
+        Some(RunState::Stopped) => "■",
+        None => "○",
     }
 }
 

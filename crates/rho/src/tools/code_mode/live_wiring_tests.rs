@@ -76,10 +76,7 @@ impl Tool for StubTool {
                     .map_err(|error| ToolError::policy_denied(&error))?;
             }
             if self.progress {
-                context
-                    .progress()
-                    .send(ToolProgress::message("halfway"))
-                    .await;
+                context.progress().send(ToolProgress::new("halfway")).await;
             }
             if self.ask {
                 let question = rho_sdk::HostQuestion::new(
@@ -662,11 +659,11 @@ async fn nested_events_reach_parent_and_finish() {
         ModelIdentity::new("test", "test", "test"),
         [
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                ToolCall {
-                    id: "script".into(),
-                    name: CODEMODE_TOOL_NAME.into(),
-                    arguments: json!({"script": "for _ in range(12):\n    answer = call_tool(\"probe\")\nresult = answer"}),
-                },
+                ToolCall::new(
+                    "script".into(),
+                    CODEMODE_TOOL_NAME.into(),
+                    json!({"script": "for _ in range(12):\n    answer = call_tool(\"probe\")\nresult = answer"}),
+                ),
             )])),
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
                 "done".into(),
@@ -693,7 +690,9 @@ async fn nested_events_reach_parent_and_finish() {
     tokio::time::timeout(std::time::Duration::from_secs(30), async {
         while let Some(event) = run.next_event().await {
             match event {
-                RunEvent::ToolUpdated { progress, .. } => last = Some(progress.text().to_owned()),
+                RunEvent::ToolUpdated { progress, .. } => {
+                    last = Some(progress.message().to_owned())
+                }
                 RunEvent::ToolHostInputRequested { call_id, request } => {
                     assert_eq!(call_id.to_string(), "script");
                     questions += 1;
@@ -734,7 +733,7 @@ async fn nested_events_reach_parent_and_finish() {
         .unwrap();
     assert_eq!(
         (
-            result.ok,
+            !result.is_failure(),
             serde_json::from_str::<Value>(&result.content).unwrap()
         ),
         (

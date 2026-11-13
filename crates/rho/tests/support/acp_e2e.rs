@@ -238,19 +238,17 @@ pub fn wait_for_single_run_dir(home: &Path, timeout: Duration) -> PathBuf {
         .expect("run dir present after wait")
 }
 
-/// Wait until `result.json` reaches a terminal state.
+/// Wait until `result.json` reaches a terminal state. Names the terminal
+/// states, so a new live state (such as `queued`) never counts as settled.
 pub fn wait_for_terminal_result(run_dir: &Path, timeout: Duration) -> Value {
     let path = run_dir.join("result.json");
     wait_until(timeout, "terminal result.json", || {
-        read_json(&path)
-            .ok()
-            .and_then(|value| {
-                value
-                    .get("state")?
-                    .as_str()
-                    .map(|state| state != "starting" && state != "running")
-            })
-            .unwrap_or(false)
+        read_json(&path).ok().is_some_and(|value| {
+            matches!(
+                value.get("state").and_then(Value::as_str),
+                Some("ok" | "error" | "stopped")
+            )
+        })
     });
     read_json(&path).expect("result.json")
 }

@@ -15,6 +15,11 @@
       "path": "crates/rho-providers/src/credentials",
       "modules": ["model"],
       "reason": "keep credentials independent from model runtime metadata"
+    },
+    {
+      "path": "crates/rho/src/daemon",
+      "modules": ["app", "session", "tui"],
+      "reason": "the daemon is generic transport; what it answers comes from the Service its caller passes in (app::daemon_host)"
     }
   ],
   "forbidden_package_dependencies": [
@@ -32,6 +37,11 @@
       "manifest": "crates/rho-tools/Cargo.toml",
       "packages": ["rho-coding-agent", "rho-providers"],
       "reason": "tools remain below providers and independent from the application"
+    },
+    {
+      "manifest": "crates/rho-protocol/Cargo.toml",
+      "packages": ["rho-sdk", "rho-coding-agent", "rho-providers", "rho-agent-tools"],
+      "reason": "frontends depend on the protocol, so an SDK or app major must never break their build"
     }
   ],
   "forbidden_source_patterns": [
@@ -51,6 +61,16 @@
       "reason": "reqwest rustls-no-provider panics unless ring is installed; use reqwest_client / reqwest_client_builder"
     },
     {
+      "roots": ["crates/rho/src/daemon"],
+      "sequences": [
+        ["super", "::", "super"],
+        ["super", "::", "app"],
+        ["super", "::", "session"],
+        ["super", "::", "tui"]
+      ],
+      "reason": "the daemon is generic transport; reaching the crate root through super would bypass the forbidden-module rule above"
+    },
+    {
       "roots": ["crates/rho/src"],
       "sequences": [
         ["ratatui", "::", "init"],
@@ -64,6 +84,22 @@
       "sequences": [["stdin", "is_terminal"]],
       "allow": ["crates/rho/src/stdio.rs"],
       "reason": "on Windows a stdin probe waits behind the ACP transport's pending stdin read and hangs session startup; use crate::stdio::stdin_is_terminal"
+    },
+    {
+      "roots": ["crates/rho/src/app/daemon_client"],
+      "sequences": [
+        ["agent_client_protocol"],
+        ["app", "::", "acp"],
+        ["app", "::", "attach"],
+        ["super", "::", "acp"],
+        ["super", "::", "attach"]
+      ],
+      "reason": "the daemon client is shared by every frontend; ACP and rho attach build on it, never the reverse"
+    },
+    {
+      "roots": ["crates/rho/src/app/session_runtime"],
+      "sequences": [["agent_client_protocol"], ["app", "::", "acp"]],
+      "reason": "the session runtime is UI- and protocol-free; ACP adapts it from app::acp, never the reverse"
     }
   ]
 }

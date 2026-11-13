@@ -1,7 +1,7 @@
 use crate::{
     model::{
-        models_dev::{current_reasoning_metadata, ReasoningControl},
-        ModelMetadata, ReasoningCapabilities, ReasoningLevelSet, ReasoningRequestSource,
+        models_dev::ReasoningControl, ModelMetadata, ReasoningCapabilities, ReasoningLevelSet,
+        ReasoningRequestSource,
     },
     protocol::openai_chat::{
         ChatTemplateKwargs, HiddenReasoningRisk, OpenAiReasoning, OpenAiThinking,
@@ -64,13 +64,11 @@ impl DialectReasoning {
             | OpenAiCompatibleDialect::Custom
             | OpenAiCompatibleDialect::QwenTokenPlan
             | OpenAiCompatibleDialect::Mistral => {
-                let (metadata, control) = current_reasoning_metadata(provider, model);
-                Self::Standard(standard_effort_profile(provider, metadata).with_control(control))
+                Self::Standard(standard_effort_profile(provider, metadata()))
             }
             OpenAiCompatibleDialect::Poolside => Self::Poolside,
             OpenAiCompatibleDialect::OpenRouter => {
-                let (metadata, control) = current_reasoning_metadata(provider, model);
-                Self::OpenRouter(EffortProfile::send_when_unknown(metadata).with_control(control))
+                Self::OpenRouter(EffortProfile::send_when_unknown(metadata()))
             }
             OpenAiCompatibleDialect::Moonshot => {
                 Self::Moonshot(MoonshotReasoningProfile::from_metadata(model, metadata()))
@@ -202,11 +200,6 @@ impl ResolvedEffort {
 }
 
 impl EffortProfile {
-    fn with_control(mut self, control: ReasoningControl) -> Self {
-        self.control = control;
-        self
-    }
-
     pub(super) fn omit_when_unknown(metadata: Option<ModelMetadata>) -> Self {
         Self::from_metadata(metadata, UnknownCapabilities::Omit)
     }
@@ -227,11 +220,15 @@ impl EffortProfile {
 
     fn from_metadata(metadata: Option<ModelMetadata>, when_unknown: UnknownCapabilities) -> Self {
         Self {
+            control: metadata
+                .as_ref()
+                .map_or(ReasoningControl::Effort, |metadata| {
+                    metadata.reasoning_control
+                }),
             capabilities: metadata
                 .map(|metadata| metadata.reasoning_capabilities())
                 .unwrap_or_default(),
             when_unknown,
-            control: ReasoningControl::Effort,
         }
     }
 

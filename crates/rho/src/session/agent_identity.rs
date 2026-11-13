@@ -1,5 +1,6 @@
-//! Agent identity on the session header line: which agent definition a
-//! session belongs to, and whether ACP rebound it as a delegated child.
+//! Identity on the session header line: which agent definition a session
+//! belongs to, whether `/agent:` rebound it as a delegated child of which
+//! root, and the host that created it.
 
 use std::{
     fs,
@@ -15,13 +16,13 @@ use super::{
     layout::{set_private_file_permissions, timestamp},
     persistence::{SessionEntry, SESSION_VERSION},
     tree::{NodeId, SessionNode, SessionNodeKind, StoredStateTransition},
-    Session,
+    Session, SessionOrigin,
 };
 
 /// How the session's agent was bound. Absent from the header means `Root`:
-/// the process launch agent. `Delegated` marks an ACP session rebound with
-/// `/agent:<name>`, whose reload must restore the child's tool boundary even
-/// when the child shares the launch agent's id.
+/// the process launch agent. `Delegated` marks a session rebound with
+/// `/agent:<name>`, by ACP or the daemon, whose reload must restore the
+/// child's tool boundary even when the child shares the launch agent's id.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum SessionAgentRole {
@@ -34,6 +35,50 @@ impl SessionAgentRole {
     pub(super) fn is_root(&self) -> bool {
         matches!(self, Self::Root)
     }
+}
+
+/// An agent definition a session header names: its id and the fingerprint
+/// of the definition the session was created or rebound under.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct SavedAgent {
+    pub(crate) id: String,
+    pub(crate) fingerprint: String,
+}
+
+impl SavedAgent {
+    /// Refuses to resume as `definition` unless it is this agent with a
+    /// fingerprint it accepts: the current one or an exact legacy v1 one.
+    pub(crate) fn validate(
+        &self,
+        definition: &crate::agent::AgentDefinition,
+    ) -> anyhow::Result<()> {
+        let selected_id = definition.id.as_str();
+        anyhow::ensure!(
+            self.id == selected_id,
+            "cannot resume session created by agent '{}' as selected agent '{selected_id}'",
+            self.id
+        );
+        anyhow::ensure!(
+            definition.accepts_stored_fingerprint(&self.fingerprint),
+            "cannot resume agent '{selected_id}': its definition changed since the session was created"
+        );
+        Ok(())
+    }
+}
+
+/// Whether `definition` is the agent the session file at `path` was saved
+/// as.
+pub(super) fn validate(
+    path: &Path,
+    definition: &crate::agent::AgentDefinition,
+) -> anyhow::Result<()> {
+    let selected_id = definition.id.as_str();
+    let Some((id, fingerprint)) = read_agent_identity(path)? else {
+        anyhow::bail!(
+            "cannot resume this session as agent '{selected_id}': the session has no stored agent definition identity"
+        );
+    };
+    SavedAgent { id, fingerprint }.validate(definition)
 }
 
 fn read_header(path: &Path) -> anyhow::Result<SessionEntry> {
@@ -54,6 +99,39 @@ pub(super) fn read_agent_identity(path: &Path) -> anyhow::Result<Option<(String,
             ..
         } => Ok(Some((id, fingerprint))),
         SessionEntry::Session { .. } => Ok(None),
+        _ => anyhow::bail!("session file does not start with session metadata"),
+    }
+}
+
+/// The root agent the session reopens under: its own agent, or the root a
+/// session `/agent:` rebound was rebound from. `None` for a delegated
+/// session written before launch identities were saved; an error for a root
+/// session whose header names no agent.
+pub(super) fn read_root_agent(path: &Path) -> anyhow::Result<Option<SavedAgent>> {
+    match read_header(path)? {
+        SessionEntry::Session {
+            agent_role: SessionAgentRole::Delegated,
+            launch_agent,
+            ..
+        } => Ok(launch_agent),
+        SessionEntry::Session {
+            agent_role: SessionAgentRole::Root,
+            agent_id: Some(id),
+            agent_fingerprint: Some(fingerprint),
+            ..
+        } => Ok(Some(SavedAgent { id, fingerprint })),
+        SessionEntry::Session { .. } => {
+            anyhow::bail!("the session has no saved agent to reopen it as")
+        }
+        _ => anyhow::bail!("session file does not start with session metadata"),
+    }
+}
+
+/// The host that created the session, or `None` for a file written before
+/// origins were recorded.
+pub(super) fn read_origin(path: &Path) -> anyhow::Result<Option<SessionOrigin>> {
+    match read_header(path)? {
+        SessionEntry::Session { origin, .. } => Ok(origin),
         _ => anyhow::bail!("session file does not start with session metadata"),
     }
 }
@@ -113,17 +191,27 @@ impl Session {
             agent_id: stored_id,
             agent_fingerprint,
             agent_role,
+            launch_agent,
             ..
         } = &mut entry
         else {
             anyhow::bail!("session file does not start with session metadata");
         };
+        // The root's identity moves aside, so a reload can bind the root
+        // again and cap the child at its tools. A header already delegated
+        // keeps the launch identity it has.
+        if agent_role.is_root() {
+            *launch_agent = stored_id
+                .take()
+                .zip(agent_fingerprint.take())
+                .map(|(id, fingerprint)| SavedAgent { id, fingerprint });
+        }
         *stored_id = Some(agent_id.to_owned());
         *agent_fingerprint = Some(fingerprint.to_owned());
         *agent_role = SessionAgentRole::Delegated;
         if initial_snapshot.is_some() {
-            // A header-only legacy file has no history to migrate. Its new
-            // root snapshot uses the current explicit-tree representation.
+            // A header-only file has no history to migrate, so its new root
+            // snapshot can use the current format.
             *version = SESSION_VERSION;
         }
 

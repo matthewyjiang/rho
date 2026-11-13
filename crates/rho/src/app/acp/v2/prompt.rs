@@ -4,12 +4,17 @@
 //! reason. In v2 it only acknowledges that the user message was inserted, and
 //! the turn reports itself through `state_update`s:
 //!
-//! 1. The session inserts the user message (a model turn saves it first, so
-//!    replay reuses its ID; see `prompt_acceptance`): Rho sends the
+//! 1. The daemon saves the user message, under the ID its replay reuses
+//!    (the prompt's accept callback, `sessions::Accept`): Rho sends the
 //!    `user_message`, reports `running`, and answers with the message's ID.
 //! 2. The turn streams its updates as in v1.
 //! 3. The turn ends: `idle` with the stop reason, or with `error` when it
-//!    failed after acceptance.
+//!    failed after acceptance. The session's pump sends it as it reads the
+//!    end (`V2Port::turn_ended`), so no later update it sends, a delivery
+//!    turn's `running` or a background change, can come first.
+//!
+//! Both state updates list the session's background work as the host was
+//! last told it, holding it while they send ([`super::background`]).
 //!
 //! A prompt that stops before its message is inserted (busy or unknown
 //! session, a rejected command, a cancel or close first) gets an error
@@ -17,65 +22,58 @@
 
 use std::sync::{Arc, Mutex, PoisonError};
 
-use agent_client_protocol::schema::{v1, v2};
-use agent_client_protocol::{Client, Error as AcpError, Responder, V2ConnectionTo};
+use agent_client_protocol::{v1::schema as v1, v2::schema as v2};
+use agent_client_protocol::{
+    v2::{ConnectionTo as V2ConnectionTo, Responder},
+    Client, Error as AcpError,
+};
 
-use super::{port::V2Port, requests};
-use crate::app::acp::{prompt_acceptance::PromptAcceptance, startup::LazyAgent, AcpClientPort};
+use super::{background, port::V2Port, requests};
+use crate::app::acp::{sessions::Accept, Adapter, Foreground};
 
 pub(super) fn spawn(
-    agent: Arc<LazyAgent>,
+    adapter: Arc<Adapter>,
     request: v2::PromptRequest,
     responder: Responder<v2::PromptResponse>,
     cx: V2ConnectionTo<Client>,
 ) -> Result<(), AcpError> {
     let port = Arc::new(V2Port::new(cx.clone()));
     cx.spawn(async move {
-        let started = async {
-            let v1_request = requests::prompt_request(&request)?;
-            Ok::<_, AcpError>((agent.ready().await?, v1_request))
-        };
-        let (agent, v1_request) = match started.await {
-            Ok(started) => started,
+        let v1_request = match requests::prompt_request(&request) {
+            Ok(v1_request) => v1_request,
             Err(error) => return responder.respond_with_error(error),
         };
         let session_id = request.session_id.clone();
         let unanswered = Arc::new(Mutex::new(Some(responder)));
-        let acceptance = PromptAcceptance::Report(Box::new({
+        let accept: Accept = Box::new({
             let port = Arc::clone(&port);
             let unanswered = Arc::clone(&unanswered);
             let session_id = session_id.clone();
             let prompt = request.prompt.clone();
-            move |message_id| acknowledge(&port, &session_id, prompt, message_id, &unanswered)
-        }));
-        let result = agent
-            .prompt(
-                v1_request,
-                Arc::clone(&port) as Arc<dyn AcpClientPort>,
-                acceptance,
-            )
+            let adapter = Arc::clone(&adapter);
+            let v1_session_id = v1_request.session_id.clone();
+            move |message_id| {
+                adapter.with_background(&v1_session_id, |work| {
+                    let running = background::state(Foreground::Running, work);
+                    acknowledge(&port, &session_id, prompt, message_id, running, &unanswered);
+                });
+            }
+        });
+        let result = adapter
+            .prompt(&v1_request.session_id, &v1_request.prompt, Some(accept))
             .await;
-        if let Some(responder) = take(&unanswered) {
-            let error = match result {
-                Err(error) => error,
-                // The prompt stopped before its message was inserted: a
-                // cancel during command expansion, or a closing session.
-                Ok(_) => {
-                    AcpError::request_cancelled().data("the prompt was cancelled before it started")
-                }
-            };
-            return responder.respond_with_error(error);
-        }
-        let stop_reason = match &result {
-            Ok(response) => requests::stop_reason(response.stop_reason),
-            Err(error) => requests::failed(error),
+        let Some(responder) = take(&unanswered) else {
+            return Ok(());
         };
-        port.send_update(
-            &session_id,
-            v2::SessionUpdate::StateUpdate(v2::StateUpdate::Idle(
-                v2::IdleStateUpdate::new().stop_reason(stop_reason),
-            )),
-        )
+        let error = match result {
+            Err(error) => error,
+            // The turn ended before the daemon saved the prompt, as a
+            // cancel that beat it does.
+            Ok(_) => {
+                AcpError::request_cancelled().data("the prompt was cancelled before it started")
+            }
+        };
+        responder.respond_with_error(error)
     })
 }
 
@@ -85,13 +83,12 @@ fn acknowledge(
     session_id: &v2::SessionId,
     prompt: Vec<v2::ContentBlock>,
     message_id: v1::MessageId,
+    running: v2::SessionUpdate,
     unanswered: &Mutex<Option<Responder<v2::PromptResponse>>>,
 ) {
     let message_id = v2::MessageId::new(message_id.0);
     let user_message =
         v2::SessionUpdate::UserMessage(v2::UserMessage::new(message_id.clone()).content(prompt));
-    let running =
-        v2::SessionUpdate::StateUpdate(v2::StateUpdate::Running(v2::RunningStateUpdate::new()));
     let sent = port
         .send_update(session_id, user_message)
         .and_then(|()| port.send_update(session_id, running));

@@ -14,19 +14,15 @@ use std::future::Future;
 
 use rmcp::{
     model::{
-        ClientCapabilities, ClientInfo, CreateMessageRequestParams, CreateMessageResult,
-        ElicitRequestParams, ElicitResult, ElicitationCapability, FormElicitationCapability,
-        Implementation, ListRootsResult, LoggingLevel, LoggingMessageNotificationParam,
-        ProgressNotificationParam, RootsCapabilities, SamplingCapability,
+        ClientCapabilities, ClientInfo, ElicitRequestParams, ElicitResult, ElicitationCapability,
+        FormElicitationCapability, Implementation, ListRootsResult, LoggingLevel,
+        LoggingMessageNotificationParam, ProgressNotificationParam, RootsCapabilities,
     },
     service::{NotificationContext, RequestContext, RoleClient},
     ClientHandler, ErrorData as McpError,
 };
 
-use super::{
-    elicitation::McpElicitationService, progress::McpProgressRouter, roots::McpRoots,
-    sampling::McpSamplingService,
-};
+use super::{elicitation::McpElicitationService, progress::McpProgressRouter, roots::McpRoots};
 
 /// A server-initiated change that the owning session must act on.
 ///
@@ -55,9 +51,6 @@ pub(crate) type McpEventReceiver = tokio::sync::mpsc::UnboundedReceiver<McpServe
 /// than one it never offered.
 pub(crate) struct McpClientServices {
     pub(crate) elicit: McpElicitationService,
-    /// `Some` only when this server opted into sampling and this run can serve
-    /// it.
-    pub(crate) sample: Option<McpSamplingService>,
 }
 
 /// Client handler for one MCP server session.
@@ -113,11 +106,6 @@ fn client_info(roots: &McpRoots, services: &McpClientServices) -> ClientInfo {
                 .with_form(FormElicitationCapability::new().with_schema_validation(false)),
         );
     }
-    if services.sample.is_some() {
-        // No sub-capabilities: Rho forwards neither tools nor server context
-        // into a sampling request.
-        capabilities.sampling = Some(SamplingCapability::default());
-    }
     ClientInfo::new(
         capabilities,
         Implementation::new("rho", env!("CARGO_PKG_VERSION"))
@@ -148,14 +136,6 @@ impl ClientHandler for McpClientHandler {
         _context: RequestContext<RoleClient>,
     ) -> impl Future<Output = Result<ElicitResult, McpError>> + Send + '_ {
         self.services.elicit.elicit(request)
-    }
-
-    fn create_message(
-        &self,
-        params: CreateMessageRequestParams,
-        _context: RequestContext<RoleClient>,
-    ) -> impl Future<Output = Result<CreateMessageResult, McpError>> + Send + '_ {
-        self.sample(params)
     }
 
     fn on_progress(
@@ -198,21 +178,6 @@ impl ClientHandler for McpClientHandler {
 }
 
 impl McpClientHandler {
-    /// A server that did not opt into sampling gets the same answer as one
-    /// talking to a client that never declared the capability, because as far
-    /// as that server is concerned Rho does not implement the method.
-    async fn sample(
-        &self,
-        params: CreateMessageRequestParams,
-    ) -> Result<CreateMessageResult, McpError> {
-        let Some(sampling) = self.services.sample.as_ref() else {
-            return Err(McpError::method_not_found::<
-                rmcp::model::CreateMessageRequestMethod,
-            >());
-        };
-        sampling.create_message(params).await
-    }
-
     /// Hand a server-announced change to the session's maintenance task. A
     /// closed receiver means the session is shutting down, so the change has no
     /// one left to apply it.

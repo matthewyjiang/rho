@@ -1,10 +1,11 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use crate::{
     model::{
         AbortedAssistant, ContentBlock, ModelEvent, ModelStopReason, ModelUsage, PartialToolCall,
-        ProviderContextBlock, ToolCall, STOP_REASON_CONTEXT_KIND,
+        ProviderContextBlock, ToolCall,
     },
+    tool::ToolExecutionMode,
     ProviderErrorKind, RunEvent,
 };
 
@@ -23,6 +24,8 @@ pub(super) struct StreamCapture {
     usage: ModelUsage,
     failed_attempts: Vec<(ProviderErrorKind, ModelUsage)>,
     stop_reason: Option<ModelStopReason>,
+    /// How the provider accepted each tool call, by call id.
+    accepted_executions: BTreeMap<String, ToolExecutionMode>,
 }
 
 impl StreamCapture {
@@ -51,12 +54,15 @@ impl StreamCapture {
         self.failed_attempts.push((kind, attempt_usage));
     }
 
-    pub(super) fn async_call_ids(&self) -> BTreeSet<String> {
-        self.provider_context
-            .iter()
-            .filter_map(ProviderContextBlock::async_tool_call_id)
-            .map(str::to_owned)
-            .collect()
+    /// Records provider-reported execution modes on the response's tool calls.
+    pub(super) fn apply_accepted_executions(&self, content: &mut [ContentBlock]) {
+        for block in content {
+            if let ContentBlock::ToolCall(call) = block {
+                if let Some(execution) = self.accepted_executions.get(&call.id) {
+                    call.execution = *execution;
+                }
+            }
+        }
     }
 
     pub(super) fn take_assistant_context(&mut self) -> (Option<String>, Vec<ProviderContextBlock>) {
@@ -192,11 +198,7 @@ fn upsert_captured_tool_call(capture: &mut StreamCapture, index: usize) {
     let Some(arguments) = captured.parsed_arguments.take() else {
         return;
     };
-    let call = ContentBlock::ToolCall(ToolCall {
-        id,
-        name,
-        arguments,
-    });
+    let call = ContentBlock::ToolCall(ToolCall::new(id, name, arguments));
     let content_index = capture.content.len();
     capture.tool_call_content_index.insert(index, content_index);
     capture.content.push(call);
@@ -208,16 +210,16 @@ pub(super) fn capture_provider_event(
     accumulated_usage: &ModelUsage,
     capture: &mut StreamCapture,
 ) -> Option<RunEvent> {
-    // NEXT_MAJOR(rho-sdk): match a typed `ModelEvent::Stopped` variant instead.
-    // SDK metadata, not provider-native context: never persisted or announced.
-    if matches!(&event, ModelEvent::ProviderContext { kind, .. } if kind == STOP_REASON_CONTEXT_KIND)
-    {
-        if let Some(reason) = event.as_stop_reason() {
-            capture.stop_reason = Some(reason);
-        }
-        return None;
-    }
     match event {
+        // Turn metadata, not provider-native context: never persisted or announced.
+        ModelEvent::Stopped(reason) => {
+            capture.stop_reason = Some(reason);
+            None
+        }
+        ModelEvent::ToolCallAccepted { id, execution } => {
+            capture.accepted_executions.insert(id, execution);
+            None
+        }
         ModelEvent::OutputDelta(text) => {
             if capture.merge_output_text {
                 let Some(ContentBlock::Text(existing)) = capture.content.last_mut() else {
@@ -293,6 +295,7 @@ pub(super) fn capture_provider_event(
             kind,
             position,
             data,
+            replay,
         } => {
             // Positioned provider context marks a content-part boundary (for example a
             // Gemini thought signature). Turn-scoped metadata must not split text.
@@ -305,6 +308,7 @@ pub(super) fn capture_provider_event(
                 kind: kind.clone(),
                 position,
                 data,
+                replay,
             });
             Some(RunEvent::ProviderContextUpdated { kind })
         }

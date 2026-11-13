@@ -5,17 +5,33 @@ use super::*;
 // "Send anyway" starts the turn. With multiple follow-ups, rejection or a
 // failed confirmed turn must park the remainder rather than arm idle delivery.
 // "Send for this session" stops the modal for the unchanged omitted blocks.
-// Owner: interactive TUI
-pub(super) const SEND_CONFIRM_HANDOFF_ID: &str = "send_confirm_handoff";
+// "Compact, then continue" compacts on the source model and continues on the
+// runtime model, after which a send no longer asks. A compaction that leaves
+// the conversation as it was still sends the prompt "Compact, then send"
+// held, and "Compact, then continue" then stays on the source model. A
+// "Compact, then send" the daemon cannot start, while the session's MCP
+// servers connect, returns the prompt to the composer with nothing queued.
+// Owner: interactive TUI as a daemon client
+pub(super) const SCENARIO: crate::scenario::Scenario = crate::scenario::Scenario::new(
+    "daemon_send_confirm_handoff",
+    "Confirm a daemon session's send whose conversation holds unreplayable native context",
+    SIZE,
+    &[],
+    /*smoke*/ false,
+);
 
-pub(crate) fn is_send_confirm_scenario(name: &str) -> bool {
-    name == SEND_CONFIRM_HANDOFF_ID
-}
+const SIZE: crate::pty::PtySize = crate::pty::PtySize {
+    rows: 24,
+    cols: 100,
+};
 
 const SEED_PROMPT: &str = "hello there";
 const SEND_PROMPT: &str = "confirmed prompt";
 const SESSION_PROMPT: &str = "acknowledged prompt";
 const UNGATED_PROMPT: &str = "ungated prompt";
+const REFUSED_COMPACT_PROMPT: &str = "refused compact prompt";
+const COMPACTED_PROMPT: &str = "compacted prompt";
+const AFTER_UNCHANGED_COMPACT_PROMPT: &str = "prompt after an unchanged compact";
 
 #[derive(Clone, Copy)]
 enum QueuedStop {
@@ -80,6 +96,210 @@ fn assert_queued_stop(
     Ok(())
 }
 
+/// A later resume of the scenario's session.
+#[derive(Clone, Copy)]
+enum ResumePhase {
+    /// "Compact, then send" while the session's MCP servers connect again
+    /// after the daemon restarted in place: the daemon session cannot
+    /// compact, so the prompt goes back to the composer and nothing is
+    /// queued.
+    SendRefused,
+    /// "Compact, then send" whose compaction leaves the conversation as it
+    /// was still sends the prompt.
+    SendUnchanged,
+    /// "Compact, then continue" whose compaction leaves the conversation as
+    /// it was keeps the session on the source model, and says so.
+    ContinueUnchanged,
+    /// "Compact, then continue" on the loaded-session handoff: the session
+    /// compacts on the native blocks' model, then sends on the runtime model
+    /// without asking, since the blocks were summarized away.
+    ContinueCompacted,
+}
+
+impl ResumePhase {
+    /// Resumes `session_id`, runs this phase, and quits. Config
+    /// the phase writes lasts for this resume alone.
+    fn run(
+        self,
+        runner: &crate::scenario::ScenarioRunner,
+        home: &crate::env::IsolatedHome,
+        (session_id, session_path): (&str, &std::path::Path),
+    ) -> anyhow::Result<()> {
+        use crate::{artifacts::ArtifactWriter, env::RhoLaunchPlan, harness::PtyHarness};
+
+        // The daemon that hosted the last run holds the session and config
+        // it loaded.
+        home.stop_daemon();
+        let config = std::fs::read_to_string(&home.config_path)?;
+        let result = (|| {
+            // A sandbox has no model cache, so the provider's default is the
+            // Anthropic model the session may switch to.
+            let session = std::fs::read_to_string(session_path)?;
+            std::fs::write(
+                session_path,
+                session.replace("\"claude-fable-5\"", "\"claude-sonnet-4-5\""),
+            )?;
+            let mut plan = RhoLaunchPlan::matrix(&runner.binary, home, SIZE)
+                .with_env("OPENAI_API_KEY", "sk-test-matrix")
+                .with_arg("--resume")
+                .with_arg(session_id);
+            if matches!(self, Self::ContinueUnchanged | Self::ContinueCompacted) {
+                // The native blocks' model, so the handoff can compact on it.
+                plan = plan.with_env("ANTHROPIC_API_KEY", "sk-test-matrix");
+            }
+            let mut harness = PtyHarness::spawn_named(&plan, SCENARIO.id)?;
+            harness.enable_timing(runner.record_timing);
+            if let Some(root) = &runner.artifact_root {
+                harness.set_artifact_writer(ArtifactWriter::new(root));
+            }
+            let result = self.drive(runner, home, &mut harness).and_then(|()| {
+                let code = harness.quit_with_exit_command()?;
+                anyhow::ensure!(code == 0, "session exited with code {code}");
+                Ok(())
+            });
+            if harness.is_running() {
+                let _ = harness.kill();
+            }
+            result
+        })();
+        home.stop_daemon();
+        std::fs::write(&home.config_path, config)?;
+        result
+    }
+
+    fn drive(
+        self,
+        runner: &crate::scenario::ScenarioRunner,
+        home: &crate::env::IsolatedHome,
+        harness: &mut crate::harness::PtyHarness,
+    ) -> anyhow::Result<()> {
+        match self {
+            Self::SendRefused => {
+                harness.set_phase("compact_send_refused");
+                harness.wait_for_text("How should Rho continue", STARTUP)?;
+                harness.inject_key(&Key::Enter)?;
+                harness.wait_for_text("Type a message", SETTLE)?;
+                harness.submit_text(REFUSED_COMPACT_PROMPT)?;
+                harness.wait_for_text("Send to openai/gpt-5.5?", SETTLE)?;
+                harness.wait_for_text("Compact, then send", SETTLE)?;
+                // A server that never connects holds the restarted daemon's
+                // session in loading for the rest of the phase.
+                let config = std::fs::read_to_string(&home.config_path)?;
+                std::fs::write(
+                    &home.config_path,
+                    format!(
+                        r#"{config}
+
+[mcp.servers.slow-stdio]
+transport = "stdio"
+command = "sleep"
+args = ["120"]
+"#
+                    ),
+                )?;
+                let restart = home
+                    .command(&runner.binary)
+                    .args(["daemon", "restart"])
+                    .output()?;
+                anyhow::ensure!(
+                    restart.status.success(),
+                    "rho daemon restart failed: {}",
+                    String::from_utf8_lossy(&restart.stderr)
+                );
+                harness.wait_for_text("reconnected to rho daemon", STREAM)?;
+                harness.inject_key(&Key::Char('2'))?;
+                harness.wait_for_text("could not compact before send", SETTLE)?;
+                harness.assert_screen_contains(REFUSED_COMPACT_PROMPT)?;
+                anyhow::ensure!(
+                    !harness.screen().contains_text("follow-up"),
+                    "a compaction that never started queued the prompt"
+                );
+                harness.inject_key(&Key::Ctrl('c'))?;
+            }
+            Self::SendUnchanged => {
+                harness.set_phase("compact_send_unchanged");
+                harness.wait_for_text("How should Rho continue", STARTUP)?;
+                harness.inject_key(&Key::Enter)?;
+                harness.wait_for_text("Type a message", SETTLE)?;
+                harness.submit_text(AFTER_UNCHANGED_COMPACT_PROMPT)?;
+                harness.wait_for_text("Send to openai/gpt-5.5?", SETTLE)?;
+                harness.wait_for_text("Compact, then send", SETTLE)?;
+                harness.inject_key(&Key::Char('2'))?;
+                harness.wait_for_text("did not reduce context", STREAM)?;
+                harness.wait_for_text(
+                    &format!("fixture response: {AFTER_UNCHANGED_COMPACT_PROMPT}"),
+                    STREAM,
+                )?;
+            }
+            Self::ContinueUnchanged => {
+                harness.set_phase("compact_continue_unchanged");
+                harness.wait_for_text("How should Rho continue", STARTUP)?;
+                harness.wait_for_text("Compact, then continue", SETTLE)?;
+                harness.inject_key(&Key::Char('2'))?;
+                harness.wait_for_text("did not reduce context", STREAM)?;
+                harness.wait_for_text(
+                    "kept the session model because context was not compacted",
+                    STREAM,
+                )?;
+                harness.wait_for_text("Anthropic ·", SETTLE)?;
+            }
+            Self::ContinueCompacted => {
+                harness.set_phase("compact_then_continue");
+                harness.wait_for_text("How should Rho continue", STARTUP)?;
+                harness.wait_for_text("Compact, then continue", SETTLE)?;
+                harness.inject_key(&Key::Char('2'))?;
+                harness.wait_for_text("context compacted", STREAM)?;
+                harness.submit_text(COMPACTED_PROMPT)?;
+                harness.wait_for_text(&format!("fixture response: {COMPACTED_PROMPT}"), STREAM)?;
+                // Back on the runtime model once the compaction ended.
+                harness.assert_screen_contains("OpenAI · gpt-5.5")?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Starts a session that sends `prompt`, then rewrites its saved
+/// answer to hold Anthropic-native context its OpenAI model cannot replay.
+/// Returns the session's id and file.
+fn seed_session(
+    runner: &crate::scenario::ScenarioRunner,
+    home: &crate::env::IsolatedHome,
+    prompt: &str,
+) -> anyhow::Result<(String, std::path::PathBuf)> {
+    use crate::{artifacts::ArtifactWriter, env::RhoLaunchPlan, harness::PtyHarness};
+
+    let plan = RhoLaunchPlan::matrix(&runner.binary, home, SIZE)
+        .with_env("OPENAI_API_KEY", "sk-test-matrix");
+    let mut seed = PtyHarness::spawn_named(&plan, "send_confirm_seed")?;
+    seed.enable_timing(runner.record_timing);
+    if let Some(root) = &runner.artifact_root {
+        seed.set_artifact_writer(ArtifactWriter::new(root));
+    }
+    let result = (|| -> anyhow::Result<()> {
+        seed.wait_for_text("gpt-5.5", STARTUP)?;
+        seed.submit_text(prompt)?;
+        seed.wait_for_text(&format!("fixture response: {prompt}"), STREAM)?;
+        let code = seed.quit_with_exit_command()?;
+        anyhow::ensure!(code == 0, "seed session exited with code {code}");
+        Ok(())
+    })();
+    if seed.is_running() {
+        let _ = seed.kill();
+    }
+    result?;
+    let (session_id, session_path) = config::find_latest_session(home)?;
+    // The daemon that hosted the seed still holds the session it saved.
+    home.stop_daemon();
+    // Keep stored provider openai so resume stays on gpt-5.5 while assistant
+    // history carries anthropic-native blocks the runtime cannot replay.
+    config::inject_non_replayable_provider_context(
+        &session_path,
+        config::StoredProviderRewrite::Keep,
+    )?;
+    Ok((session_id, session_path))
+}
+
 pub(super) fn run_send_confirm_handoff(
     runner: &crate::scenario::ScenarioRunner,
 ) -> anyhow::Result<crate::scenario::ScenarioOutcome> {
@@ -87,59 +307,28 @@ pub(super) fn run_send_confirm_handoff(
         artifacts::ArtifactWriter,
         env::{IsolatedHome, RhoLaunchPlan},
         harness::PtyHarness,
-        pty::PtySize,
         scenario::ScenarioOutcome,
     };
 
-    const SIZE: PtySize = PtySize {
-        rows: 24,
-        cols: 100,
-    };
-
     let home = IsolatedHome::new()?;
-    let seed_plan = RhoLaunchPlan::matrix(&runner.binary, &home, SIZE)
-        .with_env("OPENAI_API_KEY", "sk-test-matrix");
-    let mut seed = PtyHarness::spawn_named(&seed_plan, "send_confirm_seed")?;
-    seed.enable_timing(runner.record_timing);
-    if let Some(root) = &runner.artifact_root {
-        seed.set_artifact_writer(ArtifactWriter::new(root));
-    }
-    let seed_result = (|| -> anyhow::Result<()> {
-        seed.wait_for_text("gpt-5.5", STARTUP)?;
-        seed.submit_text(SEED_PROMPT)?;
-        seed.wait_for_text(&format!("fixture response: {SEED_PROMPT}"), STREAM)?;
-        let code = seed.quit_with_exit_command()?;
-        if code != 0 {
-            anyhow::bail!("seed session exited with code {code}");
+    let (session_id, session_path) = match seed_session(runner, &home, SEED_PROMPT) {
+        Ok(session) => session,
+        Err(error) => {
+            return Ok(ScenarioOutcome {
+                id: SCENARIO.id.into(),
+                passed: false,
+                message: format!("seed phase failed: {error:#}"),
+                timing: Default::default(),
+                artifact_dir: runner.artifact_root.clone(),
+            })
         }
-        Ok(())
-    })();
-    if let Err(error) = seed_result {
-        if seed.is_running() {
-            let _ = seed.kill();
-        }
-        return Ok(ScenarioOutcome {
-            id: SEND_CONFIRM_HANDOFF_ID.into(),
-            passed: false,
-            message: format!("seed phase failed: {error:#}"),
-            timing: seed.timing().clone(),
-            artifact_dir: runner.artifact_root.clone(),
-        });
-    }
-
-    let (session_id, session_path) = config::find_latest_session(&home)?;
-    // Keep stored provider openai so resume stays on gpt-5.5 while assistant
-    // history carries anthropic-native blocks the runtime cannot replay.
-    config::inject_non_replayable_provider_context(
-        &session_path,
-        config::StoredProviderRewrite::Keep,
-    )?;
+    };
 
     let resume_plan = RhoLaunchPlan::matrix(&runner.binary, &home, SIZE)
         .with_env("OPENAI_API_KEY", "sk-test-matrix")
         .with_arg("--resume")
         .with_arg(&session_id);
-    let mut harness = PtyHarness::spawn_named(&resume_plan, SEND_CONFIRM_HANDOFF_ID)?;
+    let mut harness = PtyHarness::spawn_named(&resume_plan, SCENARIO.id)?;
     harness.enable_timing(runner.record_timing);
     if let Some(root) = &runner.artifact_root {
         harness.set_artifact_writer(ArtifactWriter::new(root));
@@ -192,12 +381,21 @@ pub(super) fn run_send_confirm_handoff(
         if code != 0 {
             anyhow::bail!("session exited with code {code}");
         }
+        ResumePhase::SendRefused.run(runner, &home, (&session_id, &session_path))?;
+        // The compaction summarizes the native blocks away.
+        ResumePhase::ContinueCompacted.run(runner, &home, (&session_id, &session_path))?;
+        // Each on a fresh session of one turn, too short for a compaction to
+        // reduce.
+        for phase in [ResumePhase::SendUnchanged, ResumePhase::ContinueUnchanged] {
+            let (session_id, session_path) = seed_session(runner, &home, SEED_PROMPT)?;
+            phase.run(runner, &home, (&session_id, &session_path))?;
+        }
         Ok(())
     })();
 
     Ok(match result {
         Ok(()) => ScenarioOutcome {
-            id: SEND_CONFIRM_HANDOFF_ID.into(),
+            id: SCENARIO.id.into(),
             passed: true,
             message: "ok".into(),
             timing: harness.timing().clone(),
@@ -208,7 +406,7 @@ pub(super) fn run_send_confirm_handoff(
                 let _ = harness.kill();
             }
             ScenarioOutcome {
-                id: SEND_CONFIRM_HANDOFF_ID.into(),
+                id: SCENARIO.id.into(),
                 passed: false,
                 message: format!("{error:#}"),
                 timing: harness.timing().clone(),

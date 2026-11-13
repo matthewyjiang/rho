@@ -1,97 +1,95 @@
-//! Terminal classification and messages for a finished `rho run`.
+//! How a `rho run` or `rho attach` ends: what a failed run's JSONL stream's
+//! `turn_ended` says, and the reason, exit code, and message of a turn's
+//! end.
 
-use super::{AutomationExit, AutomationInterrupted, TerminalReason};
+use std::time::Duration;
 
-/// Human-readable terminal messages for one run's classified errors.
-pub(super) struct TerminalMessages {
-    authentication: String,
-}
+use rho_protocol::{TurnError, TurnErrorKind, TurnOutcome};
 
-impl TerminalMessages {
-    /// Precomputes the authentication message for the run's provider and auth.
-    ///
-    /// It names only those config identifiers and how to fix them, never the
-    /// provider's error text, which may echo credentials.
-    pub(super) fn for_selection(provider: &str, auth: &str) -> Self {
-        let alternatives = rho_providers::provider::provider_descriptor(provider)
-            .into_iter()
-            .flat_map(|descriptor| descriptor.auth_modes())
-            .filter(|mode| {
-                mode.id != auth
-                    && !matches!(
-                        mode.auth_kind,
-                        rho_providers::provider::ProviderAuthKind::None
-                    )
-            })
-            .map(|mode| format!("--auth {}", mode.id))
-            .collect::<Vec<_>>();
-        let mut authentication =
-            format!("authentication failed for {provider} (auth: {auth}); run /login {provider}");
-        if !alternatives.is_empty() {
-            authentication.push_str(" or pass ");
-            authentication.push_str(&alternatives.join(" or "));
-        }
-        Self { authentication }
-    }
+use super::{AutomationExit, TerminalReason};
+use crate::{app::session_events::outcome, config::Config};
 
-    /// Builds the terminal message for a classified automation error.
-    ///
-    /// Reason codes stay stable machine labels. The message carries actionable
-    /// detail; for authentication failures that is only the precomputed
-    /// provider and auth hint, so credentials and token material never leave
-    /// the process through stdout, stderr, or JSONL.
-    pub(super) fn for_error(&self, reason: TerminalReason, error: &anyhow::Error) -> String {
-        match reason {
-            TerminalReason::Authentication => self.authentication.clone(),
-            TerminalReason::ProviderError
-            | TerminalReason::ToolHostError
-            | TerminalReason::ConfigurationError
-            | TerminalReason::OutputError
-            | TerminalReason::OtherError
-            | TerminalReason::Interrupted
-            | TerminalReason::MaxSteps
-            | TerminalReason::Timeout
-            | TerminalReason::Completed => error.to_string(),
-        }
+/// How a turn that failed with `error` failed, in a session whose model
+/// runs as `model` selects: as the daemon tells its clients, unless
+/// `rho run` itself ended the prompt with an [`AutomationExit`], whose
+/// reason and message say it.
+pub(super) fn turn_error(error: &anyhow::Error, model: &Config) -> TurnError {
+    let Some(exit) = error.downcast_ref::<AutomationExit>() else {
+        return outcome::turn_error(error, model);
+    };
+    let kind = match exit.end.reason {
+        TerminalReason::Authentication => TurnErrorKind::Authentication,
+        TerminalReason::ProviderError => TurnErrorKind::Provider,
+        TerminalReason::ToolHostError => TurnErrorKind::ToolHost,
+        TerminalReason::ConfigurationError => TurnErrorKind::Configuration,
+        TerminalReason::Completed
+        | TerminalReason::MaxSteps
+        | TerminalReason::Timeout
+        | TerminalReason::Interrupted
+        | TerminalReason::Cancelled
+        | TerminalReason::Detached
+        | TerminalReason::OutputError
+        | TerminalReason::OtherError => TurnErrorKind::Other,
+    };
+    TurnError {
+        kind,
+        message: exit.to_string(),
     }
 }
 
-pub(super) fn classify_error(error: &anyhow::Error) -> (TerminalReason, u8) {
-    if let Some(interrupted) = error.downcast_ref::<AutomationInterrupted>() {
-        return (TerminalReason::Interrupted, interrupted.exit_code());
-    }
+/// The exit of a run that failed with `error`, told as `turn`: an
+/// [`AutomationExit`] in the chain decides it, else the failure's kind,
+/// with its message.
+pub(super) fn failure(error: &anyhow::Error, turn: TurnError) -> AutomationExit {
     if let Some(exit) = error.downcast_ref::<AutomationExit>() {
-        return (exit.reason(), exit.exit_code());
+        return exit.clone();
     }
-    for cause in error.chain() {
-        if let Some(error) = cause.downcast_ref::<rho_sdk::Error>() {
-            return match error {
-                rho_sdk::Error::Authentication { .. } => (TerminalReason::Authentication, 1),
-                rho_sdk::Error::Provider(provider)
-                    if provider.kind() == rho_sdk::ProviderErrorKind::Authentication =>
-                {
-                    (TerminalReason::Authentication, 1)
-                }
-                rho_sdk::Error::Provider(_) => (TerminalReason::ProviderError, 1),
-                rho_sdk::Error::Tool(_) => (TerminalReason::ToolHostError, 1),
-                rho_sdk::Error::InvalidConfiguration { .. } => {
-                    (TerminalReason::ConfigurationError, 2)
-                }
-                _ => (TerminalReason::OtherError, 1),
-            };
-        }
-        if let Some(error) = cause.downcast_ref::<rho_providers::model::ModelError>() {
-            use rho_providers::model::ModelError;
-            return match error {
-                ModelError::MissingCredentials(_) | ModelError::Credentials(_) => {
-                    (TerminalReason::Authentication, 1)
-                }
-                ModelError::UnsupportedReasoning { .. } | ModelError::UnsupportedProvider(_) => {
-                    (TerminalReason::ConfigurationError, 2)
-                }
-                _ => (TerminalReason::ProviderError, 1),
-            };
-        }
+    failed(turn)
+}
+
+/// The exit of a turn that ended as `outcome`: none for an answer.
+pub(in crate::app) fn outcome_exit(outcome: &TurnOutcome) -> Result<(), AutomationExit> {
+    match outcome {
+        TurnOutcome::Answered { .. } => Ok(()),
+        TurnOutcome::MaxSteps { .. } => Err(AutomationExit::new(
+            124,
+            TerminalReason::MaxSteps,
+            "the turn reached its model-step limit",
+        )),
+        TurnOutcome::Cancelled => Err(AutomationExit::new(
+            1,
+            TerminalReason::Cancelled,
+            "the turn was cancelled",
+        )),
+        TurnOutcome::TimedOut { timeout_ms } => Err(AutomationExit::new(
+            124,
+            TerminalReason::Timeout,
+            format!(
+                "the turn timed out at its limit of {}",
+                humantime::format_duration(Duration::from_millis(*timeout_ms))
+            ),
+        )),
+        TurnOutcome::Failed { error } => Err(failed(error.clone())),
+        // `TurnOutcome` is non-exhaustive; an end a newer daemon sends is
+        // another error.
+        _ => Err(AutomationExit::new(
+            1,
+            TerminalReason::OtherError,
+            "the turn ended in a way this rho does not know",
+        )),
     }
-    (TerminalReason::OtherError, 1)
+}
+
+/// The exit of a turn that failed as `turn` says.
+fn failed(turn: TurnError) -> AutomationExit {
+    let TurnError { kind, message } = turn;
+    match kind {
+        TurnErrorKind::Authentication => AutomationExit::authentication(message),
+        TurnErrorKind::Provider => AutomationExit::new(1, TerminalReason::ProviderError, message),
+        TurnErrorKind::ToolHost => AutomationExit::new(1, TerminalReason::ToolHostError, message),
+        TurnErrorKind::Configuration => AutomationExit::configuration(message),
+        // `TurnErrorKind` is non-exhaustive; a kind a newer protocol adds is
+        // another error.
+        _ => AutomationExit::other(message),
+    }
 }

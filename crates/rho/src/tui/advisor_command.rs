@@ -1,336 +1,178 @@
-use std::future::Future;
+//! `/advisor [on|off|model]`, which changes the daemon's advisor settings
+//! (#1720).
 
-use crate::{agent::ADVISOR_AGENT_ID, config::InternalAgentModelConfig};
+use rho_protocol::{ModelSelection, SettingChange, SettingKey, SettingValue};
 
 use super::{
-    advisor_status::AdvisorStatus, agent_picker::InternalAgentModelPickerOrigin, App,
-    CommandInvocation, ComposerMode, Entry, InteractiveRuntime,
+    advisor_status::AdvisorStatus,
+    config_row::ConfigRow,
+    daemon_settings::{DaemonSettings, SettingsNamespace},
+    settings_screen::ConfigPage,
+    App, ComposerMode, Entry, UiPicker,
 };
 
-const SELECT_ADVISOR_MODEL_STATUS: &str = "select an advisor model to turn advisor mode on";
-const SELECT_ADVISOR_MODEL_EDIT_STATUS: &str = "select an advisor model";
-const ADVISOR_USAGE: &str = "usage: /advisor [on|off|model]";
+const ADVISOR_MODE_KEY: &str = "behavior.advisor_mode";
+const ADVISOR_MODEL_KEY: &str = "internal_agents.advisor";
 
-/// The runtime side of advisor mode.
-///
-/// Advisor mode changes the tool list, so the runtime has to act on it rather
-/// than only save it. Implementors apply the change to the next turn, keep the
-/// system prompt fixed, append a context notice when the tool list changes, and
-/// leave the current session ID alone.
-pub(super) trait AdvisorRuntime {
-    /// Points the advisor at `model`, or turns the advisor off with `None`.
-    ///
-    /// Returns display text for a transcript notice when the advertised tool
-    /// list changed.
-    fn set_advisor(
-        &mut self,
-        model: Option<InternalAgentModelConfig>,
-    ) -> impl Future<Output = anyhow::Result<Option<String>>> + Send;
-
-    /// Live tool specs after an advisor change, for diagnostics mirrors.
-    fn tool_specs(&self) -> Vec<rho_sdk::model::ToolSpec>;
-}
-
-impl AdvisorRuntime for InteractiveRuntime {
-    fn set_advisor(
-        &mut self,
-        model: Option<InternalAgentModelConfig>,
-    ) -> impl Future<Output = anyhow::Result<Option<String>>> + Send {
-        InteractiveRuntime::set_advisor(self, model)
-    }
-
-    fn tool_specs(&self) -> Vec<rho_sdk::model::ToolSpec> {
-        InteractiveRuntime::tool_specs(self)
-    }
-}
+pub(super) const ADVISOR_USAGE: &str = "usage: /advisor [on|off|model]";
 
 impl App {
-    pub(super) async fn execute_advisor_command(
-        &mut self,
-        invocation: CommandInvocation,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<()> {
-        self.execute_advisor_command_with_runtime(invocation, agent)
-            .await
+    /// The advisor as every surface shows it: the daemon's saved settings
+    /// once read, which `/advisor` and `/config` change, and the startup
+    /// config's until then.
+    pub(super) fn advisor_status(&self) -> AdvisorStatus {
+        let Some(settings) = &self.daemon_settings else {
+            return AdvisorStatus::from_runtime(&self.info.runtime, self.model_names());
+        };
+        let model = match settings.value(
+            SettingsNamespace::Agent,
+            &SettingKey::new(ADVISOR_MODEL_KEY),
+        ) {
+            Some(SettingValue::Model(ModelSelection::Rho { provider, model })) => {
+                Some(self.model_names().reference(provider, model))
+            }
+            Some(SettingValue::Model(ModelSelection::ClaudeCli { model })) => {
+                Some(rho_providers::provider::model_reference(
+                    crate::claude_runtime::models::CLAUDE_CODE_SOURCE_LABEL,
+                    model
+                        .as_deref()
+                        .unwrap_or(crate::claude_runtime::models::CLAUDE_DEFAULT_MODEL_BADGE),
+                ))
+            }
+            _ => None,
+        };
+        AdvisorStatus::of(advisor_on(settings), model)
     }
 
-    async fn execute_advisor_command_with_runtime(
-        &mut self,
-        invocation: CommandInvocation,
-        agent: &mut impl AdvisorRuntime,
-    ) -> anyhow::Result<()> {
-        let requested = match invocation.args.trim().to_ascii_lowercase().as_str() {
-            "" => !self.info.runtime.advisor_mode,
+    /// `/advisor [on|off|model]` in a daemon session.
+    pub(super) fn execute_daemon_advisor_command(&mut self, args: &str) {
+        let Some(settings) = &self.daemon_settings else {
+            self.insert_entry(&Entry::Error(
+                "could not change the advisor: the rho settings are not loaded".into(),
+            ));
+            return;
+        };
+        let advisor_on = advisor_on(settings);
+        let has_model = settings
+            .value(
+                SettingsNamespace::Agent,
+                &SettingKey::new(ADVISOR_MODEL_KEY),
+            )
+            .is_some();
+        let requested = match args.trim().to_ascii_lowercase().as_str() {
+            "" => !advisor_on,
             "on" => true,
             "off" => false,
             "model" => {
-                self.open_advisor_model_prompt(InternalAgentModelPickerOrigin::AdvisorModelCommand);
-                return Ok(());
+                self.open_advisor_model_page(/*enable*/ false);
+                return;
             }
             _ => {
                 self.insert_entry(&Entry::Error(ADVISOR_USAGE.into()));
                 self.set_status("invalid advisor mode");
-                return Ok(());
+                return;
             }
         };
-
-        // Advisor mode on with no model does nothing, so `/advisor on` asks for
-        // one instead of reporting a mode that cannot run.
-        if requested && !self.advisor_model_configured() {
-            self.open_advisor_model_prompt(InternalAgentModelPickerOrigin::AdvisorCommand);
-            return Ok(());
-        }
-        self.set_advisor_mode(requested, agent).await
-    }
-
-    pub(super) fn advisor_model_configured(&self) -> bool {
-        self.info
-            .runtime
-            .internal_agents
-            .contains_key(ADVISOR_AGENT_ID)
-    }
-
-    /// Opens the advisor model picker. The origin places it: alone in the
-    /// composer for `/advisor on` and `/advisor model`, under the config picker
-    /// for its row, so escaping returns where the user came from.
-    pub(super) fn open_advisor_model_prompt(&mut self, origin: InternalAgentModelPickerOrigin) {
-        if self.open_internal_agent_model_picker(ADVISOR_AGENT_ID, origin) {
-            let status = match origin {
-                InternalAgentModelPickerOrigin::AdvisorModelConfigRow
-                | InternalAgentModelPickerOrigin::AdvisorModelCommand => {
-                    SELECT_ADVISOR_MODEL_EDIT_STATUS
-                }
-                InternalAgentModelPickerOrigin::AdvisorCommand
-                | InternalAgentModelPickerOrigin::AdvisorConfigRow => SELECT_ADVISOR_MODEL_STATUS,
-                // Only advisor origins open this prompt.
-                InternalAgentModelPickerOrigin::AgentsPicker
-                | InternalAgentModelPickerOrigin::PermissionModeConfigRow
-                | InternalAgentModelPickerOrigin::PermissionModeCommand
-                | InternalAgentModelPickerOrigin::PermissionClassifierModelConfigRow
-                | InternalAgentModelPickerOrigin::PermissionModeStartup
-                | InternalAgentModelPickerOrigin::PermissionScreenModelConfigRow
-                | InternalAgentModelPickerOrigin::PermissionScreenSetupConfigRow
-                | InternalAgentModelPickerOrigin::PermissionScreenSetupCommand => {
-                    SELECT_ADVISOR_MODEL_STATUS
-                }
-            };
-            self.set_status(status);
-        }
-    }
-
-    /// Turns advisor mode on once the advisor model picker has stored a model.
-    pub(super) async fn finish_advisor_model_selection(
-        &mut self,
-        selected: bool,
-        agent: &mut impl AdvisorRuntime,
-    ) -> anyhow::Result<()> {
-        if !selected {
-            return Ok(());
-        }
-        self.set_advisor_mode(true, agent).await
-    }
-
-    /// After `/advisor model` stores a model: applies it when the mode is on,
-    /// then asks for reasoning when the model offers a choice. The picker
-    /// title names the step, so the save status stays visible, including a
-    /// config save failure.
-    pub(super) async fn finish_advisor_model_command_selection(
-        &mut self,
-        selected: bool,
-        agent: &mut impl AdvisorRuntime,
-    ) {
-        if !selected {
+        // Advisor mode on with no model does nothing, so it asks for one.
+        if requested && !has_model {
+            self.open_advisor_model_page(/*enable*/ true);
             return;
         }
-        if self.info.runtime.advisor_mode {
-            self.sync_advisor_runtime(agent).await;
-        }
-        self.open_advisor_reasoning_picker();
-    }
-
-    /// Drops a pending standalone advisor model prompt from `/advisor on` or
-    /// `/advisor model`. Reports whether one was open so the caller can leave
-    /// its own dismissal status alone.
-    pub(super) fn cancel_advisor_model_prompt(&mut self) -> bool {
-        let status = match self.internal_agent_model_target.as_ref() {
-            Some(target) => match target.origin {
-                InternalAgentModelPickerOrigin::AdvisorCommand => {
-                    "advisor mode stays off: no advisor model selected"
-                }
-                InternalAgentModelPickerOrigin::AdvisorModelCommand => "advisor model unchanged",
-                InternalAgentModelPickerOrigin::AgentsPicker
-                | InternalAgentModelPickerOrigin::AdvisorConfigRow
-                | InternalAgentModelPickerOrigin::AdvisorModelConfigRow
-                | InternalAgentModelPickerOrigin::PermissionModeConfigRow
-                | InternalAgentModelPickerOrigin::PermissionModeCommand
-                | InternalAgentModelPickerOrigin::PermissionClassifierModelConfigRow
-                | InternalAgentModelPickerOrigin::PermissionModeStartup
-                | InternalAgentModelPickerOrigin::PermissionScreenModelConfigRow
-                | InternalAgentModelPickerOrigin::PermissionScreenSetupConfigRow
-                | InternalAgentModelPickerOrigin::PermissionScreenSetupCommand => return false,
+        self.write_setting(
+            SettingsNamespace::Agent,
+            SettingChange::Set {
+                key: SettingKey::new(ADVISOR_MODE_KEY),
+                value: SettingValue::Bool(requested),
             },
-            None => return false,
-        };
-        self.internal_agent_model_target = None;
-        self.input_ui.set_composer(ComposerMode::Input);
-        self.set_status(status);
-        true
+        );
     }
 
-    pub(super) async fn set_advisor_mode(
-        &mut self,
-        enabled: bool,
-        agent: &mut impl AdvisorRuntime,
-    ) -> anyhow::Result<()> {
-        let previous_mode = self.info.runtime.advisor_mode;
-        let previous_model = self
-            .info
-            .runtime
-            .internal_agents
-            .get(ADVISOR_AGENT_ID)
-            .cloned();
-
-        // Apply the runtime transition against the *desired* mode before
-        // touching config or in-memory mode, so a failure leaves both alone.
-        let desired_model = enabled.then(|| previous_model.clone()).flatten();
-        let notice = match agent.set_advisor(desired_model).await {
-            Ok(notice) => notice,
-            Err(error) => {
-                self.insert_entry(&Entry::Error(format!(
-                    "advisor mode could not be applied to this session: {error}"
-                )));
-                self.set_status("advisor mode change failed");
-                // Surface the runtime error to callers (active run, etc.).
-                return Err(error);
+    /// Opens the advisor model page alone. With `enable`, choosing a model
+    /// also turns the advisor on, in the same write.
+    fn open_advisor_model_page(&mut self, enable: bool) {
+        let page = if enable {
+            ConfigPage::AdvisorOn
+        } else {
+            ConfigPage::Setting {
+                namespace: SettingsNamespace::Agent,
+                key: SettingKey::new(ADVISOR_MODEL_KEY),
             }
         };
-
-        if previous_mode != enabled {
-            if let Err(error) = self
-                .info
-                .services
-                .config_repository
-                .update(|config| config.advisor_mode = enabled)
-            {
-                // Runtime already moved; best-effort restore so mode and tool
-                // list stay aligned with the failed save.
-                let rollback_model = previous_mode.then_some(previous_model).flatten();
-                if let Err(rollback_error) = agent.set_advisor(rollback_model).await {
-                    self.insert_entry(&Entry::Error(format!(
-                        "could not save advisor mode: {error}; runtime rollback failed: {rollback_error}"
-                    )));
-                } else {
-                    self.insert_entry(&Entry::Error(format!(
-                        "could not save advisor mode: {error}"
-                    )));
-                }
-                self.set_status("config save failed");
-                return Ok(());
-            }
-            self.info.runtime.advisor_mode = enabled;
-        }
-
-        self.info
-            .services
-            .diagnostics
-            .update_advisor_mode(self.info.runtime.advisor_mode);
-        if let Some(display) = notice {
-            self.insert_entry(&Entry::Notice(display));
-            self.info
-                .services
-                .diagnostics
-                .update_tools(&agent.tool_specs());
-        }
-        // Mode and model both feed the statusline; refresh before the toast so
-        // the bottom row and the status message describe the same state.
-        self.statusline.update_model(&self.info.runtime);
-        let status = self.advisor_mode_status();
-        self.set_status(status);
-        Ok(())
-    }
-
-    /// Persists an advisor reasoning override on the current advisor model.
-    pub(super) fn set_advisor_reasoning(
-        &mut self,
-        reasoning: rho_providers::reasoning::ReasoningLevel,
-    ) -> anyhow::Result<()> {
-        let Some(mut selection) = self
-            .info
-            .runtime
-            .internal_agents
-            .get(ADVISOR_AGENT_ID)
-            .cloned()
-        else {
-            self.set_status("select an advisor model first");
-            return Ok(());
+        let Some(picker) = self.config_page_picker(&page) else {
+            return;
         };
-        selection.reasoning = Some(reasoning);
-        self.info
-            .runtime
-            .internal_agents
-            .insert(ADVISOR_AGENT_ID.into(), selection.clone());
-        match self.info.services.config_repository.update(|config| {
-            config.set_internal_agent_model_config(ADVISOR_AGENT_ID, selection);
-        }) {
-            Ok(()) => self.set_status(format!("advisor reasoning: {reasoning}")),
-            Err(err) => {
-                self.insert_entry(&Entry::Error(format!(
-                    "advisor reasoning set to {reasoning} for this session, but saving config failed: {err}"
-                )));
-                self.set_status("config save failed");
-            }
-        }
-        Ok(())
+        self.set_status("select the advisor model");
+        self.input_ui.set_composer(ComposerMode::Picker(picker));
     }
 
-    /// Applies the saved advisor state to the live runtime.
-    ///
-    /// The advisor model and the mode reach the runtime as one value, because
-    /// advisor mode without a model offers the executor nothing. Callers that
-    /// must keep config and memory aligned with a failed transition should
-    /// prefer [`Self::set_advisor_mode`], which applies the runtime first.
-    pub(super) async fn sync_advisor_runtime(&mut self, agent: &mut impl AdvisorRuntime) {
-        let model = self.info.runtime.advisor_mode.then(|| {
-            self.info
-                .runtime
-                .internal_agents
-                .get(ADVISOR_AGENT_ID)
-                .cloned()
+    /// The advisor model page, each model row turning the advisor on with
+    /// it. No reset row: that would turn the advisor on without a model.
+    pub(super) fn advisor_on_picker(&self) -> Option<UiPicker> {
+        let settings = self.daemon_settings.as_ref()?;
+        let key = SettingKey::new(ADVISOR_MODEL_KEY);
+        let label = settings.spec(SettingsNamespace::Agent, &key)?.label.clone();
+        let mut items =
+            settings.value_rows(SettingsNamespace::Agent, &key, self.daemon_models())?;
+        items.retain_mut(|item| {
+            let Some(ConfigRow::Set { value, .. }) = ConfigRow::parse(&item.value) else {
+                return false;
+            };
+            item.value = ConfigRow::EnableAdvisor { model: value }.encode();
+            true
         });
-        self.info
-            .services
-            .diagnostics
-            .update_advisor_mode(self.info.runtime.advisor_mode);
-        match agent.set_advisor(model.flatten()).await {
-            Ok(Some(display)) => {
-                self.insert_entry(&Entry::Notice(display));
-                self.info
-                    .services
-                    .diagnostics
-                    .update_tools(&agent.tool_specs());
-            }
-            Ok(None) => {}
-            Err(error) => {
-                self.insert_entry(&Entry::Error(format!(
-                    "advisor mode could not be applied to this session: {error}"
-                )));
-            }
+        Some(UiPicker::config(label, items))
+    }
+
+    /// Whether `change` resets the advisor's model while the advisor is on,
+    /// which would leave it on with nothing to consult.
+    pub(super) fn resets_the_advisor_model(
+        &self,
+        namespace: SettingsNamespace,
+        change: &SettingChange,
+    ) -> bool {
+        self.daemon_settings.as_ref().is_some_and(advisor_on)
+            && namespace == SettingsNamespace::Agent
+            && matches!(change, SettingChange::Reset { key } if key.as_str() == ADVISOR_MODEL_KEY)
+    }
+
+    /// Resets the advisor's model and turns the advisor off, in one write.
+    pub(super) fn reset_advisor_model(&mut self) {
+        let changes = vec![
+            SettingChange::Reset {
+                key: SettingKey::new(ADVISOR_MODEL_KEY),
+            },
+            SettingChange::Set {
+                key: SettingKey::new(ADVISOR_MODE_KEY),
+                value: SettingValue::Bool(false),
+            },
+        ];
+        if self.send_settings(SettingsNamespace::Agent, changes, "advisor") {
+            self.set_status("advisor: off, model reset; applies next turn");
         }
     }
 
-    pub(super) fn advisor_mode_status(&self) -> String {
-        match AdvisorStatus::from_runtime(&self.info.runtime) {
-            AdvisorStatus::Off => "advisor mode is off".into(),
-            AdvisorStatus::Reviewing { model } => {
-                format!("advisor mode is on: {model} reviews the session")
-            }
-            AdvisorStatus::MissingModel => {
-                "advisor mode is on, but no advisor model is selected".into()
-            }
+    /// Turns the advisor on with `model`, in one write.
+    pub(super) fn enable_advisor(&mut self, model: SettingValue) {
+        let changes = vec![
+            SettingChange::Set {
+                key: SettingKey::new(ADVISOR_MODEL_KEY),
+                value: model,
+            },
+            SettingChange::Set {
+                key: SettingKey::new(ADVISOR_MODE_KEY),
+                value: SettingValue::Bool(true),
+            },
+        ];
+        if self.send_settings(SettingsNamespace::Agent, changes, "advisor") {
+            self.set_status("advisor: on; applies next turn");
         }
     }
 }
 
-#[cfg(test)]
-#[path = "advisor_command_tests.rs"]
-mod tests;
+/// Whether the saved settings turn advisor mode on.
+fn advisor_on(settings: &DaemonSettings) -> bool {
+    matches!(
+        settings.value(SettingsNamespace::Agent, &SettingKey::new(ADVISOR_MODE_KEY)),
+        Some(SettingValue::Bool(true))
+    )
+}

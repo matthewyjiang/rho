@@ -5,35 +5,53 @@ use pretty_assertions::assert_eq;
 use super::{format_snapshot, SnapshotFormat};
 use crate::{
     agent::AgentRuntime,
+    session::SessionPersistence,
     subagent::{RunState, RunStatus},
     tools::agent::SubagentSnapshot,
 };
 
-// Covers: a Cursor ACP session id is reported without a resume command; it is
-// not a `cursor-agent --resume` id, so a hint would send the model astray.
+// Covers: a session line offers a resume command only for a session that can
+// be resumed: a Cursor ACP id is not a `cursor-agent --resume` id, and a
+// Claude session a `--no-save` run discarded is gone, so a hint would send
+// the model astray.
 // Owner: agent output
 #[test]
-fn cursor_session_line_has_no_resume_command() {
-    let snapshot = SubagentSnapshot {
-        prior_notices: Vec::new(),
-        id: "abc123".into(),
-        agent_id: "cursor-test".into(),
-        title: None,
-        elapsed: Duration::from_secs(1),
-        status: RunStatus {
-            state: RunState::Ok,
-            runtime: Some(AgentRuntime::Cursor),
-            claude_session_id: Some("sess-cursor".into()),
-            ..RunStatus::default()
-        },
-        done: true,
+fn session_line_offers_resume_only_for_a_resumable_session() {
+    let session_line = |runtime: AgentRuntime, persistence: SessionPersistence| {
+        let snapshot = SubagentSnapshot {
+            prior_notices: Vec::new(),
+            persistence,
+            id: "abc123".into(),
+            agent_id: "test".into(),
+            title: None,
+            elapsed: Duration::from_secs(1),
+            status: RunStatus {
+                state: RunState::Ok,
+                runtime: Some(runtime),
+                runtime_session_id: Some("sess-1".into()),
+                ..RunStatus::default()
+            },
+            done: true,
+        };
+        format_snapshot(&snapshot, SnapshotFormat::Completion)
+            .lines()
+            .find(|line| line.contains(" session: "))
+            .map(str::to_owned)
     };
-    let text = format_snapshot(&snapshot, SnapshotFormat::Completion);
     assert_eq!(
-        text.lines()
-            .find(|line| line.starts_with("cursor session:") || line.starts_with("claude session:"))
-            .unwrap(),
-        "cursor session: sess-cursor"
+        [
+            session_line(AgentRuntime::Cursor, SessionPersistence::Saved),
+            session_line(AgentRuntime::ClaudeCli, SessionPersistence::Saved),
+            session_line(AgentRuntime::ClaudeCli, SessionPersistence::Ephemeral),
+        ],
+        [
+            Some("cursor session: sess-1".to_owned()),
+            Some(
+                "claude session: sess-1 (resume with `claude-agent-acp --cli --resume sess-1`)"
+                    .to_owned()
+            ),
+            Some("claude session: sess-1".to_owned()),
+        ]
     );
 }
 
@@ -44,6 +62,7 @@ fn cursor_session_line_has_no_resume_command() {
 fn structured_run_exposes_result_only_when_done() {
     let snapshot = |state: RunState, done: bool| SubagentSnapshot {
         prior_notices: Vec::new(),
+        persistence: SessionPersistence::Saved,
         id: "run1".into(),
         agent_id: "explorer".into(),
         title: None,

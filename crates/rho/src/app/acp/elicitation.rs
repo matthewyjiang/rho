@@ -1,4 +1,5 @@
-//! Rho host input requests as ACP form elicitation (`elicitation/create`).
+//! A daemon question (`wire::QuestionAsk`) as ACP form elicitation
+//! (`elicitation/create`).
 //!
 //! Each question becomes one property keyed by its ID. On hosts that draw
 //! the standard schema, a choice question that also accepts other answers
@@ -6,20 +7,20 @@
 //! and multiple selects are string arrays. T3 Code reads only a top-level
 //! `enum` and lets every question take free text, so it gets one string
 //! property per question instead (see [`FormDialect::T3Code`]). The
-//! response's `accept`, `decline`, and `cancel` become answers,
-//! [`HostInputRefusal::Declined`], and [`HostInputRefusal::Dismissed`].
+//! response's `accept`, `decline`, and `cancel` become
+//! [`InputAnswer::Answers`], [`InputAnswer::Decline`], and
+//! [`InputAnswer::Dismiss`]. The daemon checks the answers against the
+//! questions.
 
 use std::collections::BTreeMap;
 
-use agent_client_protocol::schema::v1::{
+use agent_client_protocol::v1::schema::{
     BooleanPropertySchema, CreateElicitationRequest, CreateElicitationResponse, ElicitationAction,
-    ElicitationContentValue, ElicitationFormMode, ElicitationSchema, ElicitationScope,
-    ElicitationSessionScope, EnumOption, MultiSelectPropertySchema, SessionId,
-    StringPropertySchema, ToolCallId,
+    ElicitationContentValue, ElicitationFormMode, ElicitationSchema, ElicitationSessionScope,
+    EnumOption, MultiSelectPropertySchema, SessionId, StringPropertySchema, ToolCallId,
 };
-use rho_sdk::{
-    DefaultSelection, HostChoice, HostInputRefusal, HostInputRequest, HostInputResponse,
-    HostQuestion, SelectionMode,
+use rho_protocol::{
+    self as wire, Choice, DefaultStyle, InputAnswer, Question, QuestionAsk, Selection,
 };
 
 use super::host_features::FormDialect;
@@ -36,66 +37,56 @@ enum Field {
     Text,
     /// A yes/no single select, drawn as a checkbox.
     Confirm,
-    Select(SelectionMode),
+    Select(Selection),
     /// A select plus a free-text answer of the user's own.
-    SelectOrOther(SelectionMode),
+    SelectOrOther(Selection),
 }
 
-fn field(question: &HostQuestion) -> Field {
-    let selection = question.selection();
-    match question.choices() {
-        [only] if question.permits_other() && only.value() == "other" => Field::Text,
+fn field(question: &Question) -> Field {
+    let selection = question.selection;
+    match question.choices.as_slice() {
+        [only] if question.allow_other && only.value == "other" => Field::Text,
         [yes, no]
-            if selection == SelectionMode::One
-                && !question.permits_other()
-                && yes.value().eq_ignore_ascii_case("yes")
-                && no.value().eq_ignore_ascii_case("no") =>
+            if selection == Selection::One
+                && !question.allow_other
+                && yes.value.eq_ignore_ascii_case("yes")
+                && no.value.eq_ignore_ascii_case("no") =>
         {
             Field::Confirm
         }
-        _ if question.permits_other() => Field::SelectOrOther(selection),
+        _ if question.allow_other => Field::SelectOrOther(selection),
         _ => Field::Select(selection),
     }
 }
 
 /// The key of `question`'s free-text companion, unique among the request's
 /// question IDs (MCP property names may contain `.`).
-fn other_key(request: &HostInputRequest, question: &HostQuestion) -> String {
-    let mut key = format!("{}{OTHER_SUFFIX}", question.id());
-    while request.questions().iter().any(|other| other.id() == key) {
+fn other_key(ask: &QuestionAsk, question: &Question) -> String {
+    let mut key = format!("{}{OTHER_SUFFIX}", question.id);
+    while ask.questions.iter().any(|other| other.id == key) {
         key.push('_');
     }
     key
 }
 
-/// The form for `request`. `call_id` ties it to the tool call that asked,
-/// so the host can draw it on that call's card.
+/// The form for `ask`. `call_id` ties it to the tool call that asked, so
+/// the host can draw it on that call's card.
 pub(super) fn elicitation_request(
-    request: &HostInputRequest,
+    ask: &QuestionAsk,
     session_id: &SessionId,
-    call_id: Option<&rho_sdk::ToolCallId>,
+    call_id: Option<&wire::ToolCallId>,
     dialect: FormDialect,
 ) -> CreateElicitationRequest {
     let scope = ElicitationSessionScope::new(session_id.clone())
         .tool_call_id(call_id.map(|id| ToolCallId::new(id.as_str())));
-    form(request, scope, dialect)
-}
-
-/// The form for `request`, tied to `scope`, such as the `authenticate`
-/// request that asks where to store credentials.
-pub(super) fn form(
-    request: &HostInputRequest,
-    scope: impl Into<ElicitationScope>,
-    dialect: FormDialect,
-) -> CreateElicitationRequest {
     let mut schema = ElicitationSchema::new();
-    for question in request.questions() {
+    for question in &ask.questions {
         schema = match dialect {
-            FormDialect::Standard => add_question(schema, request, question),
+            FormDialect::Standard => add_question(schema, ask, question),
             FormDialect::T3Code => add_t3_question(schema, question),
         };
     }
-    let message = match request.title() {
+    let message = match ask.title.as_str() {
         "" => "Rho needs your input",
         title => title,
     };
@@ -105,29 +96,26 @@ pub(super) fn form(
 /// A property's title and description. T3 Code shows the title as the
 /// question's label and the description as its text, so the full prompt
 /// goes in the description when a short header takes the title.
-fn title_and_description(question: &HostQuestion) -> (String, Option<String>) {
-    match question.header_text() {
+fn title_and_description(question: &Question) -> (String, Option<String>) {
+    match &question.header {
         Some(header) => (
-            header.to_owned(),
-            Some(match question.help_text() {
-                Some(help) => format!("{}\n\n{help}", question.prompt()),
-                None => question.prompt().to_owned(),
+            header.clone(),
+            Some(match &question.help {
+                Some(help) => format!("{}\n\n{help}", question.prompt),
+                None => question.prompt.clone(),
             }),
         ),
-        None => (
-            question.prompt().to_owned(),
-            question.help_text().map(str::to_owned),
-        ),
+        None => (question.prompt.clone(), question.help.clone()),
     }
 }
 
 fn checkbox(
-    question: &HostQuestion,
+    question: &Question,
     title: String,
     description: Option<String>,
     defaults: &[String],
 ) -> BooleanPropertySchema {
-    let yes = question.choices()[0].value();
+    let yes = question.choices[0].value.as_str();
     let checked = defaults
         .first()
         .map(|value| value.eq_ignore_ascii_case(yes) || value == "true");
@@ -139,13 +127,13 @@ fn checkbox(
 
 fn add_question(
     schema: ElicitationSchema,
-    request: &HostInputRequest,
-    question: &HostQuestion,
+    ask: &QuestionAsk,
+    question: &Question,
 ) -> ElicitationSchema {
-    let id = question.id();
+    let id = question.id.as_str();
     let (title, description) = title_and_description(question);
     let defaults = selected_defaults(question);
-    let required = question.is_required();
+    let required = question.required;
     match field(question) {
         Field::Text => {
             let text = StringPropertySchema::new()
@@ -169,7 +157,7 @@ fn add_question(
         Field::SelectOrOther(selection) => {
             let (known, other): (Vec<_>, Vec<_>) = defaults
                 .into_iter()
-                .partition(|value| question.choices().iter().any(|c| c.value() == value));
+                .partition(|value| question.choices.iter().any(|c| &c.value == value));
             let other = StringPropertySchema::new()
                 .title(format!("{title} (other)"))
                 .description("Your own answer instead of a listed choice")
@@ -180,7 +168,7 @@ fn add_question(
                     select(question, selection, title, description, known),
                     false,
                 )
-                .property(other_key(request, question), other, false)
+                .property(other_key(ask, question), other, false)
         }
     }
 }
@@ -188,10 +176,10 @@ fn add_question(
 /// T3 Code's shape: one string property per question whose `enum` lists
 /// the choice labels it shows. Its free text replaces the `.other`
 /// companion, and a multiple choice is typed as a comma-separated list.
-fn add_t3_question(schema: ElicitationSchema, question: &HostQuestion) -> ElicitationSchema {
-    let id = question.id();
+fn add_t3_question(schema: ElicitationSchema, question: &Question) -> ElicitationSchema {
+    let id = question.id.as_str();
     let (title, description) = title_and_description(question);
-    let required = question.is_required();
+    let required = question.required;
     let selection = match field(question) {
         Field::Text => {
             let text = StringPropertySchema::new()
@@ -205,11 +193,11 @@ fn add_t3_question(schema: ElicitationSchema, question: &HostQuestion) -> Elicit
         Field::Select(selection) | Field::SelectOrOther(selection) => selection,
     };
     let hint = match (selection, Separator::for_question(question)) {
-        (SelectionMode::Many, Some(separator)) => Some(format!(
+        (Selection::Many, Some(separator)) => Some(format!(
             "Pick one or more; separate several with {}.",
             separator.name()
         )),
-        (SelectionMode::Many, None) => Some("Pick one.".to_owned()),
+        (Selection::Many, None) => Some("Pick one.".to_owned()),
         _ => None,
     };
     let description = match (description, hint) {
@@ -217,9 +205,9 @@ fn add_t3_question(schema: ElicitationSchema, question: &HostQuestion) -> Elicit
         (text, hint) => text.or(hint),
     };
     let labels = question
-        .choices()
+        .choices
         .iter()
-        .map(|choice| choice.label().to_owned())
+        .map(|choice| choice.label.clone())
         .collect::<Vec<_>>();
     let select = StringPropertySchema::new()
         .title(title)
@@ -229,14 +217,14 @@ fn add_t3_question(schema: ElicitationSchema, question: &HostQuestion) -> Elicit
 }
 
 fn select(
-    question: &HostQuestion,
-    selection: SelectionMode,
+    question: &Question,
+    selection: Selection,
     title: String,
     description: Option<String>,
     defaults: Vec<String>,
-) -> agent_client_protocol::schema::v1::ElicitationPropertySchema {
-    let options = question.choices().iter().map(option).collect::<Vec<_>>();
-    if selection == SelectionMode::Many {
+) -> agent_client_protocol::v1::schema::ElicitationPropertySchema {
+    let options = question.choices.iter().map(option).collect::<Vec<_>>();
+    if selection == Selection::Many {
         return MultiSelectPropertySchema::titled(options)
             .title(title)
             .description(description)
@@ -244,9 +232,9 @@ fn select(
             .into();
     }
     let values = question
-        .choices()
+        .choices
         .iter()
-        .map(|choice| choice.value().to_owned())
+        .map(|choice| choice.value.clone())
         .collect::<Vec<_>>();
     StringPropertySchema::new()
         .title(title)
@@ -257,90 +245,79 @@ fn select(
         .into()
 }
 
-fn option(choice: &HostChoice) -> EnumOption {
-    EnumOption::new(choice.value(), choice.label())
-        .description(choice.description_text().map(str::to_owned))
+fn option(choice: &Choice) -> EnumOption {
+    EnumOption::new(choice.value.as_str(), choice.label.as_str())
+        .description(choice.description.clone())
 }
 
 /// Defaults the question pre-selects. A focused default only highlights a
 /// choice, which a form cannot express, so it is left unset.
-fn selected_defaults(question: &HostQuestion) -> Vec<String> {
-    if question.default_selection_mode() != DefaultSelection::Selected {
+fn selected_defaults(question: &Question) -> Vec<String> {
+    let Some(default) = &question.default else {
         return Vec::new();
-    }
-    let values = match question.default_value_ref() {
-        Some(serde_json::Value::Array(values)) => values.iter().collect(),
-        Some(value) => vec![value],
-        None => Vec::new(),
     };
-    values
-        .into_iter()
-        .filter_map(|value| match value {
-            serde_json::Value::String(value) if !value.is_empty() => Some(value.clone()),
-            serde_json::Value::Bool(value) => Some(value.to_string()),
-            serde_json::Value::Number(value) => Some(value.to_string()),
-            _ => None,
-        })
+    match default.style {
+        DefaultStyle::Selected => {}
+        // Focused, or a style a newer daemon added: nothing to pre-select.
+        _ => return Vec::new(),
+    }
+    default
+        .values
+        .iter()
+        .filter(|value| !value.is_empty())
         // A default names a choice by value; one that names it by label
         // still means that choice.
         .map(|value| {
-            let choices = question.choices();
-            choices
+            question
+                .choices
                 .iter()
-                .find(|choice| choice.value() == value)
-                .or_else(|| find_choice(question, &value))
-                .map_or(value, |choice| choice.value().to_owned())
+                .find(|choice| &choice.value == value)
+                .or_else(|| find_choice(question, value))
+                .map_or_else(|| value.clone(), |choice| choice.value.clone())
         })
         .collect()
 }
 
-/// The run's answer to `request` from the host's response. Content that does
-/// not answer the request counts as declined: the user submitted something,
-/// but not an answer Rho can use.
+/// The answer to `ask` from the host's response.
 pub(super) fn host_answer(
-    request: &HostInputRequest,
+    ask: &QuestionAsk,
     response: CreateElicitationResponse,
     dialect: FormDialect,
-) -> Result<HostInputResponse, HostInputRefusal> {
+) -> InputAnswer {
     let content = match response.action {
         ElicitationAction::Accept(accept) => accept.content.unwrap_or_default(),
-        ElicitationAction::Cancel => return Err(HostInputRefusal::Dismissed),
-        ElicitationAction::Decline => return Err(HostInputRefusal::Declined),
+        ElicitationAction::Cancel => return InputAnswer::Dismiss,
+        ElicitationAction::Decline => return InputAnswer::Decline,
         // Unknown actions are not answers; treat them like a decline.
-        _ => return Err(HostInputRefusal::Declined),
+        _ => return InputAnswer::Decline,
     };
-    let answers = answers(request, &content, dialect);
-    match request.validate(&answers) {
-        Ok(()) => Ok(answers),
-        Err(error) => {
-            tracing::warn!(%error, "ACP host accepted a form without a valid answer");
-            Err(HostInputRefusal::Declined)
-        }
+    InputAnswer::Answers {
+        answers: answers(ask, &content, dialect),
     }
 }
 
 fn answers(
-    request: &HostInputRequest,
+    ask: &QuestionAsk,
     content: &BTreeMap<String, ElicitationContentValue>,
     dialect: FormDialect,
-) -> HostInputResponse {
-    let mut response = HostInputResponse::new();
-    for question in request.questions() {
-        let id = question.id();
+) -> BTreeMap<String, Vec<String>> {
+    let mut answers = BTreeMap::new();
+    for question in &ask.questions {
+        let id = question.id.as_str();
         let values = content.get(id).map(strings).unwrap_or_default();
         let values = match (dialect, field(question)) {
             (_, Field::Text) => values,
             // A checkbox answers with a boolean, or with its text when the
             // host draws it as a true/false choice (T3 Code).
             (_, Field::Confirm) => {
-                let [yes, no] = question.choices() else {
+                let [yes, no] = question.choices.as_slice() else {
                     unreachable!("a confirm question has exactly two choices")
                 };
                 values
                     .into_iter()
                     .map(|value| match value.to_ascii_lowercase().as_str() {
-                        "true" => yes.value().to_owned(),
-                        "false" => no.value().to_owned(),
+                        "true" => yes.value.clone(),
+                        "false" => no.value.clone(),
                         _ => choice_value(question, value),
                     })
                     .collect()
@@ -350,11 +327,11 @@ fn answers(
             // host could not clear, and joins a multiple choice.
             (FormDialect::Standard, Field::SelectOrOther(selection)) => {
                 let other = content
-                    .get(&other_key(request, question))
+                    .get(&other_key(ask, question))
                     .map(strings)
                     .unwrap_or_default();
                 match selection {
-                    SelectionMode::Many => dedup(values.into_iter().chain(other)),
+                    Selection::Many => dedup(values.into_iter().chain(other)),
                     _ if !other.is_empty() => other,
                     _ => values,
                 }
@@ -364,10 +341,10 @@ fn answers(
             }
         };
         if !values.is_empty() {
-            response = response.answer(id, values);
+            answers.insert(id.to_owned(), values);
         }
     }
-    response
+    answers
 }
 
 /// What a T3 Code multiple choice is typed with: a character no choice
@@ -379,8 +356,8 @@ fn answers(
 struct Separator(char);
 
 impl Separator {
-    fn for_question(question: &HostQuestion) -> Option<Self> {
-        let labels = question.choices().iter().map(HostChoice::label);
+    fn for_question(question: &Question) -> Option<Self> {
+        let labels = question.choices.iter().map(|choice| choice.label.as_str());
         let free = |c: &char| labels.clone().all(|label| !label.contains(*c));
         [',', ';', '|', '/', '+', '•']
             .into_iter()
@@ -401,16 +378,12 @@ impl Separator {
 
 /// T3 Code answers with a chosen label or typed text; a multiple choice
 /// types several, split by the question's [`Separator`] when it has one.
-fn t3_choices(
-    question: &HostQuestion,
-    selection: SelectionMode,
-    values: Vec<String>,
-) -> Vec<String> {
+fn t3_choices(question: &Question, selection: Selection, values: Vec<String>) -> Vec<String> {
     let separator = Separator::for_question(question);
     let pieces = values
         .into_iter()
         .flat_map(|value| match (selection, separator) {
-            (SelectionMode::Many, Some(Separator(separator))) => value
+            (Selection::Many, Some(Separator(separator))) => value
                 .split(separator)
                 .map(|piece| piece.trim().to_owned())
                 .filter(|piece| !piece.is_empty())
@@ -422,23 +395,23 @@ fn t3_choices(
 
 /// The choice `text` names: its exact displayed label first, since T3 Code
 /// answers with labels, then its value, then its label in any case.
-fn find_choice<'a>(question: &'a HostQuestion, text: &str) -> Option<&'a HostChoice> {
-    let choices = question.choices();
+fn find_choice<'a>(question: &'a Question, text: &str) -> Option<&'a Choice> {
+    let choices = &question.choices;
     choices
         .iter()
-        .find(|choice| choice.label() == text)
-        .or_else(|| choices.iter().find(|choice| choice.value() == text))
+        .find(|choice| choice.label == text)
+        .or_else(|| choices.iter().find(|choice| choice.value == text))
         .or_else(|| {
             choices
                 .iter()
-                .find(|choice| choice.label().eq_ignore_ascii_case(text))
+                .find(|choice| choice.label.eq_ignore_ascii_case(text))
         })
 }
 
 /// The value of the choice `text` names by value or label, or `text` itself
 /// as the user's own answer.
-fn choice_value(question: &HostQuestion, text: String) -> String {
-    find_choice(question, &text).map_or(text, |choice| choice.value().to_owned())
+fn choice_value(question: &Question, text: String) -> String {
+    find_choice(question, &text).map_or(text, |choice| choice.value.clone())
 }
 
 fn dedup(values: impl IntoIterator<Item = String>) -> Vec<String> {

@@ -11,7 +11,8 @@ use std::{collections::HashMap, time::Duration};
 use rho_sdk::{
     decision::{
         Answer, ChoiceAnswer, ChoiceOption, DecisionError, DecisionFuture, DecisionModel,
-        DecisionRequest, NoulAnswer, NoulCriteria, Question, QuestionKind, ScoreAnswer,
+        DecisionRequest, InvalidRequest, NoulAnswer, NoulCriteria, Question, QuestionKind,
+        ScoreAnswer,
     },
     model::context::estimate_text_tokens,
     CancellationToken, SecretString,
@@ -186,7 +187,7 @@ fn request_body(
     let body = serde_json::to_vec(&RequestBody {
         model,
         state: request.state,
-        questions: Questions(request),
+        questions: Questions(question_bodies(request)?),
     })
     .map_err(|error| DecisionError::Model(Box::new(error)))?;
     match max_bytes {
@@ -246,9 +247,7 @@ fn answers(
                     })
                     .and_then(ScoreAnswer::from_probabilities)
                     .map(Answer::Score),
-                (QuestionKind::Noul(_) | QuestionKind::Choice(_) | QuestionKind::Score(_), _) => {
-                    None
-                }
+                _ => None,
             }
             .ok_or_else(unusable)
         })
@@ -280,14 +279,15 @@ struct RequestBody<'a> {
     questions: Questions<'a>,
 }
 
-/// The request's questions as the API's `{id: question}` map, in order.
-struct Questions<'a>(DecisionRequest<'a>);
-
-impl Serialize for Questions<'_> {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut map = serializer.serialize_map(Some(self.0.questions.len()))?;
-        for question in self.0.questions {
-            let instructions = format!("{}\n\n{}", self.0.instructions, question.instructions);
+/// Each question's ID and API body, in request order.
+fn question_bodies(
+    request: DecisionRequest<'_>,
+) -> Result<Vec<(&str, QuestionBody<'_>)>, DecisionError> {
+    request
+        .questions
+        .iter()
+        .map(|question| {
+            let instructions = format!("{}\n\n{}", request.instructions, question.instructions);
             let body = match question.kind {
                 QuestionKind::Noul(criteria) => QuestionBody::Noul {
                     instructions,
@@ -301,8 +301,25 @@ impl Serialize for Questions<'_> {
                     instructions,
                     criteria: levels,
                 },
+                _ => {
+                    return Err(DecisionError::InvalidRequest(
+                        InvalidRequest::UnsupportedQuestionKind,
+                    ))
+                }
             };
-            map.serialize_entry(question.id, &body)?;
+            Ok((question.id, body))
+        })
+        .collect()
+}
+
+/// The request's questions as the API's `{id: question}` map, in order.
+struct Questions<'a>(Vec<(&'a str, QuestionBody<'a>)>);
+
+impl Serialize for Questions<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut map = serializer.serialize_map(Some(self.0.len()))?;
+        for (id, body) in &self.0 {
+            map.serialize_entry(id, body)?;
         }
         map.end()
     }

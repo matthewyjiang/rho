@@ -5,6 +5,7 @@ use ratatui::{
 
 use super::*;
 use crate::tui::{
+    idle_input::HeldOrigin,
     render::{display_width, truncate_one_line},
     theme::Theme,
 };
@@ -82,7 +83,12 @@ impl App {
                     width,
                     "  ",
                     "HOLD",
-                    "esc edit",
+                    match held.origin {
+                        HeldOrigin::Composer | HeldOrigin::Confirmed(_) | HeldOrigin::Command => {
+                            "esc edit"
+                        }
+                        HeldOrigin::WorkflowHub => "esc cancel",
+                    },
                     &held.turn.display,
                     Theme::warning(),
                     /*selected*/ false,
@@ -101,9 +107,7 @@ impl App {
         let (label, context, prompt, label_style) = match item {
             PendingInputRef::AcceptedSteering(index) => {
                 let entry = &self.pending.accepted_steering()[index];
-                let context = if self.pending.retracting_steering() == Some(&entry.id) {
-                    "retracting"
-                } else if entry.delivered {
+                let context = if entry.delivered {
                     "delivered"
                 } else {
                     "current run"
@@ -123,11 +127,7 @@ impl App {
             ),
             PendingInputRef::FollowUp(index) => (
                 "NEXT",
-                if self.turn.is_compacting() {
-                    "after compact"
-                } else {
-                    "after turn"
-                },
+                "after turn",
                 &self.pending.queued_prompts()[index].display_prompt,
                 Theme::accent(),
             ),

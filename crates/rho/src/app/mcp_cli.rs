@@ -1,9 +1,12 @@
-//! CLI handlers for `rho mcp list` and `rho mcp show`.
+//! CLI handlers for `rho mcp`: `list` and `show` inspect the MCP servers
+//! rho connects to; `serve` and `token` run rho's sessions as one
+//! (`app::mcp_server`).
 
 use serde::Serialize;
 
 use crate::{
     cli::{Cli, McpCommand},
+    session_environment::{Ambient, SessionEnvironment},
     tools::mcp::{
         McpAuthorizationMode, McpCatalog, McpConnectOutcome, McpLoadMode, McpRoots,
         McpServerReport, McpServerStatus, McpSessionOptions, McpSessionPlan, McpSessionReport,
@@ -13,18 +16,43 @@ use crate::{
 
 use super::config_repository::ConfigRepository;
 
+#[path = "mcp_cli_serve.rs"]
+mod serve;
+
 pub(super) async fn run(command: &McpCommand, cli: &Cli) -> anyhow::Result<()> {
+    match command {
+        McpCommand::List { json, connect } => {
+            inventory(Inventory::List { json: *json }, *connect, cli).await
+        }
+        McpCommand::Show { id, json, connect } => {
+            inventory(Inventory::Show { id, json: *json }, *connect, cli).await
+        }
+        McpCommand::Serve(args) => serve::serve(args, cli).await,
+        McpCommand::Token { command } => serve::token(command, cli),
+    }
+}
+
+/// What `rho mcp list` and `rho mcp show` print.
+enum Inventory<'a> {
+    List { json: bool },
+    Show { id: &'a str, json: bool },
+}
+
+/// `rho mcp list` and `rho mcp show`; `connect` starts the servers to report
+/// whether they connect.
+async fn inventory(view: Inventory<'_>, connect: bool, cli: &Cli) -> anyhow::Result<()> {
     let config_repository = ConfigRepository::new(cli.config.clone());
     let config = config_repository.load()?;
     // Include plugin-provided servers so the inventory matches a session.
     let cwd = std::env::current_dir()?;
-    let plugin_discovery = crate::plugins::discover_mcp(&cwd, crate::paths::home_dir().as_deref());
+    let plugin_discovery = crate::plugins::discover_mcp(
+        &cwd,
+        crate::paths::home_dir().as_deref(),
+        crate::workspace::ProjectTrusts::of_this_process(),
+    );
     crate::plugins::log(&plugin_discovery.report);
     let mut mcp_config = config.mcp.clone();
     mcp_config.merge(plugin_discovery.mcp);
-    let connect = match command {
-        McpCommand::List { connect, .. } | McpCommand::Show { connect, .. } => *connect,
-    };
     let plan = if connect {
         McpSessionPlan::Connect
     } else {
@@ -40,14 +68,14 @@ pub(super) async fn run(command: &McpCommand, cli: &Cli) -> anyhow::Result<()> {
             config.max_output_bytes,
             McpRoots::for_workspace(&cwd),
             McpAuthorizationMode::NonInteractive,
+            // The command runs in the shell that started it (#1659).
+            SessionEnvironment::new(Ambient::ThisProcess),
         ),
     )
     .await;
-    let result = match command {
-        McpCommand::List { json, .. } => print_list(&outcome.report, *json),
-        McpCommand::Show { id, json, .. } => {
-            print_show(&outcome.report, &outcome.catalog, id, *json)
-        }
+    let result = match view {
+        Inventory::List { json } => print_list(&outcome.report, json),
+        Inventory::Show { id, json } => print_show(&outcome.report, &outcome.catalog, id, json),
     };
     if let Some(bundle) = outcome.bundle {
         bundle.close().await;

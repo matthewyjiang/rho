@@ -71,7 +71,8 @@ fn public_tokens_match_the_serialized_form() {
     }
 }
 
-// Covers: same-named tasks in distinct scopes cannot collide in JSON maps or paths.
+// Covers: same-named tasks in distinct scopes cannot collide in JSON maps or
+// paths, and journals that name root tasks bare still parse.
 #[test]
 fn qualified_identity_roundtrips_map_keys_and_rejects_noncanonical_paths() {
     let definition = crate::workflow::NodeId::new("task-with-dashes").unwrap();
@@ -87,13 +88,19 @@ fn qualified_identity_roundtrips_map_keys_and_rejects_noncanonical_paths() {
         serde_json::from_str::<std::collections::BTreeMap<TaskInstanceId, i32>>(&encoded).unwrap(),
         tasks
     );
-    assert_eq!(tasks.keys().next().unwrap().to_string(), "task-with-dashes");
+    assert_eq!(
+        tasks.keys().next().unwrap().to_string(),
+        "s0.task-with-dashes"
+    );
     assert_eq!(
         tasks.keys().nth(1).unwrap().to_string(),
         "s18446744073709551615.task-with-dashes"
     );
+    assert_eq!(
+        "task-with-dashes".parse::<TaskInstanceId>().unwrap(),
+        *tasks.keys().next().unwrap()
+    );
     for invalid in [
-        "s0.task",
         "s00.task",
         "s+1.task",
         "s01.task",

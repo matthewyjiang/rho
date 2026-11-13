@@ -8,7 +8,7 @@
 //! next-turn queue, so a message is never silently lost.
 
 use agent_client_protocol::{
-    schema::v1::{Meta, SessionId},
+    v1::schema::{Meta, SessionId},
     Error, UntypedMessage,
 };
 use serde_json::{json, Value};

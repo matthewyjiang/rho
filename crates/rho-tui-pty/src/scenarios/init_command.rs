@@ -94,23 +94,26 @@ pub(super) const INIT_PLAN_SCENARIO: Scenario = Scenario::new(
     "init_plan",
     "Refuse /init in Plan permission mode without creating instructions",
     DEFAULT_SIZE,
-    &[
-        Step::WaitText {
-            text: "gpt-5.5",
-            timeout: STARTUP,
-        },
-        Step::SubmitText("/init"),
-        Step::WaitText {
-            text: "file writes are denied in plan permission mode",
-            timeout: SETTLE,
-        },
-        Step::Custom(assert_no_instructions),
-        Step::ExitCommand,
-    ],
+    INIT_PLAN_STEPS,
     /*smoke*/ false,
 )
 .with_setup(setup_nested_repository)
 .with_args(&["--permission-mode", "plan"]);
+
+const INIT_PLAN_STEPS: &[Step] = &[
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::SubmitText("/init"),
+    Step::WaitText {
+        text: "file writes are denied in plan permission mode",
+        timeout: SETTLE,
+    },
+    Step::Custom(assert_no_instructions),
+    Step::Custom(assert_refused_once),
+    Step::ExitCommand,
+];
 
 fn setup_nested_repository(home: &IsolatedHome) -> Result<()> {
     // The harness launches in workspace/, beneath this distinct git root.
@@ -184,4 +187,13 @@ fn assert_no_instructions(harness: &mut PtyHarness) -> Result<()> {
         "Plan onboarding wrote root instructions"
     );
     assert_nested_instructions_absent(cwd)
+}
+
+/// The refusal is the only error: the prompt was not also reported unsent.
+fn assert_refused_once(harness: &mut PtyHarness) -> Result<()> {
+    ensure!(
+        !harness.screen().contains_text("could not send the prompt"),
+        "the refused /init was also reported as a prompt that could not be sent"
+    );
+    Ok(())
 }

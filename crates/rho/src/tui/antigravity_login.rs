@@ -4,6 +4,7 @@
 //! accepts a pasted code so it also works over SSH. Rho's credential store
 //! is never touched; agy keeps the token, shared with the agy CLI.
 
+use crate::session_environment::Ambient;
 use crate::tui::DefaultTerminal;
 
 use crate::antigravity_runtime::{
@@ -45,7 +46,7 @@ impl App {
 fn antigravity_login_spec() -> ExternalLoginSpec<AntigravityStatus, AntigravityProbeError> {
     ExternalLoginSpec {
         command_label: "agy acp --login",
-        resolve: || executable::resolve().map_err(AntigravityProbeError::from),
+        resolve: || executable::resolve(&Ambient::ThisProcess).map_err(AntigravityProbeError::from),
         login_args: executable::LOGIN_ARGS,
         query: || Box::pin(auth::query()),
         is_signed_in: |status| status.signed_in,

@@ -2,31 +2,50 @@ use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
 
 use crate::{
     app::{
+        agent_concurrency::QueuePlace,
         agent_executor::{AgentExecutor, FrozenAgentLaunchRequest},
-        automation::SessionCheckpoint,
+        headless_host::ChildSession,
+        subagent_pool::{child_events, ChildObserver, StartedSubagent},
     },
     subagent::RunState,
-    workflow::{
-        AgentRuntime, ArtifactObservation, AttemptCheckpoint, NodeTerminalState,
-        ValidatedOutputRef, WorkflowValue,
-    },
+    workflow::{ArtifactObservation, NodeTerminalState, ValidatedOutputRef, WorkflowValue},
 };
 
 use super::{
     artifacts::{write_artifact, write_artifact_with_observation},
     cancellation::AGENT_CANCELLATION_CLEANUP_MILLIS,
-    prepared::AgentInvocation,
+    prepared::{AgentInvocation, AgentSession},
     CleanupCause, NodeExecutionRequest, NodeExecutionResult, NodeProgressUpdate, RuntimeError,
     WorkflowExecutionFuture, WorkflowNodeExecutor,
 };
 
 pub(crate) struct WorkflowAgentExecutor {
     executor: Arc<AgentExecutor>,
+    /// Hears of each node's run, when the host shares its pool.
+    observer: Option<Arc<dyn ChildObserver>>,
 }
 
 impl WorkflowAgentExecutor {
-    pub(crate) fn new(executor: Arc<AgentExecutor>) -> Self {
-        Self { executor }
+    pub(crate) fn new(
+        executor: Arc<AgentExecutor>,
+        observer: Option<Arc<dyn ChildObserver>>,
+    ) -> Self {
+        Self { executor, observer }
+    }
+}
+
+/// What a node that never left the line was waiting on, for its error.
+fn waiting_on(place: Option<QueuePlace>) -> String {
+    match place {
+        Some(QueuePlace {
+            budget,
+            limit,
+            position,
+        }) => format!(
+            "{} (limit {limit}) at position {position}",
+            budget.setting()
+        ),
+        None => "agent capacity".into(),
     }
 }
 
@@ -45,7 +64,11 @@ impl WorkflowAgentExecutor {
         request: NodeExecutionRequest<AgentInvocation>,
     ) -> Result<NodeExecutionResult, RuntimeError> {
         let prepared = &request.invocation;
-        let AgentInvocation { agent, prompt } = &prepared.execution;
+        let AgentInvocation {
+            agent,
+            prompt,
+            session,
+        } = &prepared.execution;
         let agent_directory = request.attempt_directory.join("agent");
         let run_directory = &request.run_directory;
         crate::workflow::ensure_directory_beneath(
@@ -55,38 +78,43 @@ impl WorkflowAgentExecutor {
                 .map_err(|_| RuntimeError::UnsafeArtifact(agent_directory.clone()))?,
         )?;
         let output_file = agent_directory.join(crate::subagent::RESULT_FILE_NAME);
-        let checkpoint = match agent.runtime {
-            AgentRuntime::Rho => Some(SessionCheckpoint {
-                store: Arc::new(AttemptCheckpoint::new(
-                    run_directory,
-                    &request.node,
-                    request.attempt,
-                )),
-                resume: request.resume.clone(),
-            }),
-            AgentRuntime::ClaudeCli | AgentRuntime::Cursor | AgentRuntime::Antigravity => None,
-        };
+        let run_id = format!(
+            "workflow:{}:{}:{}",
+            request.run_id, request.node, request.attempt
+        );
+        let (events, followed) = child_events(self.observer.as_ref());
         let mut handle = self
             .executor
             .spawn_frozen(FrozenAgentLaunchRequest {
                 agent: agent.as_ref().clone(),
                 prompt: prompt.clone(),
-                run_id: format!(
-                    "workflow:{}:{}:{}",
-                    request.run_id, request.node, request.attempt
-                ),
+                run_id: run_id.clone(),
                 output_file: output_file.clone(),
                 hook_host_labels: rho_sdk::hooks::HookHostLabels::new()
                     .label("workflow_run_id", request.run_id.to_string())
                     .label("plan_digest", request.plan_digest.0.clone())
                     .label("node_id", request.node.to_string())
                     .label("attempt", request.attempt.to_string()),
-                checkpoint,
+                session: session.clone().map(|session| match session {
+                    AgentSession::New(id) => ChildSession::New(id),
+                    AgentSession::Reopen(id) => ChildSession::Reopen(id),
+                }),
+                events,
             })
             .map_err(|error| RuntimeError::Executor(error.to_string()))?;
+        if let Some(observer) = &self.observer {
+            observer.subagent_started(StartedSubagent::of(
+                run_id,
+                self.executor.cwd().to_path_buf(),
+                &handle,
+                followed,
+            ));
+        }
         if let Some(progress) = &request.progress {
             progress.message(format!("starting agent {}", agent.agent_id));
         }
+        // One timeout from spawn, so the checkout lock the node already holds
+        // is given back within it even while the node waits for capacity.
         let deadline = tokio::time::sleep(Duration::from_secs(prepared.timeout_seconds));
         tokio::pin!(deadline);
         let mut status_rx = handle.clone_status_watch();
@@ -102,11 +130,22 @@ impl WorkflowAgentExecutor {
                     ).await;
                 }
                 () = &mut deadline => {
-                    return stop_agent(
+                    let queued = handle.status().state == RunState::Queued;
+                    let place = handle.queue().place();
+                    let stopped = stop_agent(
                         &mut handle,
                         AgentStopReason::Timeout,
                         agent_cleanup_limit(),
-                    ).await;
+                    ).await?;
+                    // A node that never got capacity says which budget it
+                    // waited on, not just that it timed out.
+                    if queued {
+                        return Err(RuntimeError::AgentBudgetTimeout {
+                            timeout_seconds: prepared.timeout_seconds,
+                            waiting_on: waiting_on(place),
+                        });
+                    }
+                    return Ok(stopped);
                 }
                 status = handle.wait() => break status,
                 changed = status_rx.changed() => {
@@ -123,7 +162,9 @@ impl WorkflowAgentExecutor {
         let outcome = match status.state {
             RunState::Ok => NodeTerminalState::Success,
             RunState::Stopped => NodeTerminalState::Cancellation,
-            RunState::Error | RunState::Starting | RunState::Running => NodeTerminalState::Failure,
+            RunState::Error | RunState::Queued | RunState::Starting | RunState::Running => {
+                NodeTerminalState::Failure
+            }
         };
         let mut result = NodeExecutionResult::terminal(outcome);
         let Some(answer) = status.result else {

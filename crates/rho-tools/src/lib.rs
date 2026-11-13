@@ -14,7 +14,6 @@
 pub mod cancellation;
 pub mod document;
 mod edit_format;
-mod file_view;
 mod host;
 mod host_files;
 mod host_terminals;
@@ -23,6 +22,7 @@ mod image_preview;
 mod path_glob;
 mod paths;
 mod process_env;
+pub use process_env::SharedProcessEnvironment;
 #[cfg(unix)]
 #[doc(hidden)]
 pub mod process_session;
@@ -37,7 +37,6 @@ pub use shell_process::{
 };
 mod file_mutation;
 pub mod tool;
-pub mod tool_card;
 pub mod workspace_mutation;
 pub mod workspace_walk;
 
@@ -48,13 +47,12 @@ pub mod diff;
 mod glob;
 mod grep;
 mod grep_format;
-pub mod hashline;
 pub mod list_dir;
 #[cfg(windows)]
 pub mod powershell;
 pub mod read_file;
 mod rendered;
-pub mod rtk;
+mod rtk;
 pub use rendered::{json_len, output_schema, Rendered};
 pub mod sdk_adapter;
 mod sdk_search;
@@ -67,7 +65,6 @@ pub mod write_file;
 
 pub use cancellation::RunCancellation;
 pub use edit_format::EditFormat;
-pub use file_view::{FileViewPolicy, FileViewStyle};
 pub use host::{HostError, HostFuture};
 pub use host_files::HostTextFiles;
 pub use host_terminals::{

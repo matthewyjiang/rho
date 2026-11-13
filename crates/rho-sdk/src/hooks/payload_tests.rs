@@ -1,9 +1,13 @@
 use pretty_assertions::assert_eq;
 use serde_json::json;
 
-use crate::workspace::{
-    CapabilityOperation, CapabilityRequest, CapabilitySource, NetworkTarget, PathScope,
-    ProcessEnvironment, ProcessExecution, ProcessInvocation, ProcessOutputLimits,
+use crate::{
+    workspace::{
+        CapabilityOperation, CapabilityRequest, CapabilitySource, NetworkTarget, PathScope,
+        ProcessEnvironment, ProcessExecution, ProcessInvocation, ProcessOutputLimits,
+        SessionControlAction, SessionControlTarget,
+    },
+    SessionId,
 };
 
 use super::*;
@@ -238,6 +242,22 @@ fn externally_supplied_capability_fields_are_bounded() {
             ),
             vec!["payload.capability.name", "payload.capability.path"],
         ),
+        (
+            CapabilityRequest::session_control(
+                SessionControlTarget::on(
+                    SessionControlAction::Prompt,
+                    SessionId::from_string(long.clone()).unwrap(),
+                    &long,
+                )
+                .with_text(long.clone()),
+                CapabilitySource::built_in_tool("sessions"),
+            ),
+            vec![
+                "payload.capability.session",
+                "payload.capability.text",
+                "payload.capability.workspace",
+            ],
+        ),
     ];
 
     for (request, expected_fields) in cases {
@@ -254,6 +274,8 @@ fn externally_supplied_capability_fields_are_bounded() {
 fn matchers_read_tool_name_and_status_from_the_payload() {
     let after = HookPayload::AfterToolUse(AfterToolUsePayload {
         tool: tool("bash", Some("c1")),
+        capability: None,
+        process: None,
         status: HookToolStatus::Failed,
         failure: None,
         duration_ms: Some(12),

@@ -6,12 +6,12 @@
 
 use std::sync::Arc;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::{activity::HookActivity, catalog::HookCatalog, dispatch::HookEngine, HookPipeline};
 
 /// What a hook will execute, ready to show before trust is granted.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HookContractView {
     pub active: bool,
     pub id: String,
@@ -21,20 +21,20 @@ pub struct HookContractView {
     pub working_directory: String,
     pub timeout: String,
     pub environment: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub warning: Option<String>,
 }
 
 /// One recorded hook invocation.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HookActivityView {
     pub hook: String,
     pub event: String,
     pub outcome: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<u64>,
     pub truncated: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
 }
 
@@ -54,13 +54,13 @@ impl From<&HookActivity> for HookActivityView {
 }
 
 /// Everything `rho(action="hooks")` reports.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HookReport {
     pub enabled: bool,
     pub files: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skipped_untrusted: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skipped_untrusted_error: Option<String>,
     pub hooks: Vec<HookContractView>,
     pub recent_activity: Vec<HookActivityView>,

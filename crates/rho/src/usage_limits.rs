@@ -339,13 +339,13 @@ impl UsageProvider for CodexUsage {
     fn configured_tokens(
         store: &dyn CredentialStore,
     ) -> ConfiguredTokens<CodexTokens, CodexAuthSource> {
-        if let Ok(access_token) = std::env::var("CODEX_ACCESS_TOKEN") {
+        if let Some(access_token) = store.environment_variable("CODEX_ACCESS_TOKEN") {
             return Ok(Some((
                 CodexTokens {
                     access_token,
                     refresh_token: None,
                     id_token: None,
-                    account_id: std::env::var("CODEX_ACCOUNT_ID").ok(),
+                    account_id: store.environment_variable("CODEX_ACCOUNT_ID"),
                 },
                 CodexAuthSource::Env,
             )));
@@ -427,7 +427,7 @@ impl UsageProvider for KimiUsage {
     fn configured_tokens(
         store: &dyn CredentialStore,
     ) -> ConfiguredTokens<KimiTokens, TokenAuthSource> {
-        Self::configured_tokens_from(store, std::env::var("KIMI_ACCESS_TOKEN").ok())
+        Self::configured_tokens_from(store, store.environment_variable("KIMI_ACCESS_TOKEN"))
     }
 
     fn authorize(request: reqwest::RequestBuilder, tokens: &KimiTokens) -> reqwest::RequestBuilder {
@@ -502,7 +502,7 @@ impl UsageProvider for XaiUsage {
     fn configured_tokens(
         store: &dyn CredentialStore,
     ) -> ConfiguredTokens<XaiTokens, TokenAuthSource> {
-        Self::configured_tokens_from(store, std::env::var("XAI_ACCESS_TOKEN").ok())
+        Self::configured_tokens_from(store, store.environment_variable("XAI_ACCESS_TOKEN"))
     }
 
     fn authorize(request: reqwest::RequestBuilder, tokens: &XaiTokens) -> reqwest::RequestBuilder {
@@ -586,7 +586,7 @@ impl UsageProvider for OpenCodeGoUsage {
     fn configured_tokens(
         store: &dyn CredentialStore,
     ) -> ConfiguredTokens<OpenCodeGoKey, TokenAuthSource> {
-        Self::configured_tokens_from(store, std::env::var("OPENCODE_API_KEY").ok())
+        Self::configured_tokens_from(store, store.environment_variable("OPENCODE_API_KEY"))
     }
 
     fn authorize(

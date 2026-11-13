@@ -1,4 +1,4 @@
-use agent_client_protocol::schema::v1::{Terminal, ToolCallUpdateFields};
+use agent_client_protocol::v1::schema::{Terminal, ToolCallUpdateFields};
 use pretty_assertions::assert_eq;
 
 use super::*;
@@ -15,7 +15,7 @@ fn partial_updates_preserve_and_replace_card_fields() {
         .content(vec!["before".into()]);
     let (mut tool, notices) = started_card(&call, cwd);
     let initial = ToolCard::new(
-        ToolStatus::Running,
+        ToolCardStatus::Running,
         ToolFamily::FileCommand,
         ToolHeader::call("Read", Some("src/config.rs".into())),
     )
@@ -29,7 +29,7 @@ fn partial_updates_preserve_and_replace_card_fields() {
         }])
         .with_body(ToolBody::Lines(vec!["after".into()]));
     let empty = ToolCard::new(
-        ToolStatus::Running,
+        ToolCardStatus::Running,
         ToolFamily::FileCommand,
         ToolHeader::call("Read", Some("src/config.rs".into())),
     );
@@ -51,7 +51,7 @@ fn partial_updates_preserve_and_replace_card_fields() {
                 .locations(vec![])
                 .status(ToolCallStatus::Completed),
             ToolCard::new(
-                ToolStatus::Ok,
+                ToolCardStatus::Ok,
                 ToolFamily::FileCommand,
                 ToolHeader::call("Read", Some("Inspect config".into())),
             ),
@@ -76,7 +76,7 @@ fn diffs_preserve_change_counts_and_bound_the_body() {
         expected: ToolCard,
     }
     let base = ToolCard::new(
-        ToolStatus::Ok,
+        ToolCardStatus::Ok,
         ToolFamily::FileDiff,
         ToolHeader::call("Edit", Some("Edit config".into())),
     );
@@ -154,7 +154,7 @@ fn wide_error_payload_is_bounded_without_splitting_unicode() {
         .content(vec!["界".repeat(MAX_TOOL_PAYLOAD_CHARS + 1).into()]);
     let (tool, notices) = started_card(&call, Path::new("/workspace"));
     let expected = ToolCard::new(
-        ToolStatus::Error,
+        ToolCardStatus::Error,
         ToolFamily::Default,
         ToolHeader::call("Inspect", /*primary*/ None),
     )

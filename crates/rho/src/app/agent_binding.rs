@@ -20,6 +20,10 @@ use acp::{
 #[path = "agent_binding_model_override.rs"]
 mod model_override;
 pub(crate) use model_override::ModelOverride;
+#[path = "agent_binding_cli_sessions.rs"]
+mod cli_sessions;
+pub(crate) use cli_sessions::CliRunInputs;
+pub(in crate::app) use cli_sessions::Launch;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum AgentRole {
@@ -33,6 +37,59 @@ pub(crate) enum AgentRole {
 pub(crate) struct AgentInvocation {
     pub(crate) role: AgentRole,
     pub(crate) available_tools: AgentCapabilities,
+}
+
+/// Which of a root session's built-in tools its launch keeps.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LaunchTools {
+    /// Every tool, the subagent tools when the config enables them.
+    All,
+    /// Every tool but the subagent tools: `--no-subagents`.
+    NoSubagents,
+    /// None: `--no-tools`.
+    None,
+}
+
+impl LaunchTools {
+    /// What a launch keeps when it leaves out every tool (`no_tools`) or
+    /// the subagent tools (`no_subagents`); leaving out every tool wins.
+    pub(crate) fn from_flags(no_tools: bool, no_subagents: bool) -> Self {
+        match (no_tools, no_subagents) {
+            (true, _) => Self::None,
+            (false, true) => Self::NoSubagents,
+            (false, false) => Self::All,
+        }
+    }
+}
+
+/// The built-in tools a root session on this platform starts from, before
+/// its host's own policy: those its launch keeps, but the other platform's
+/// shell, and no subagent tools when `config` disables them.
+pub(crate) fn root_host_tools(config: &Config, launch: LaunchTools) -> AgentCapabilities {
+    let subagents = match launch {
+        LaunchTools::None => return AgentCapabilities::default(),
+        LaunchTools::All => config.enable_subagents,
+        LaunchTools::NoSubagents => false,
+    };
+    let mut tools = AgentCapabilities::all_host_tools();
+    // web_search is gated after bind against the resolved provider/model.
+    #[cfg(windows)]
+    tools.remove(&ToolCapability::Bash);
+    #[cfg(not(windows))]
+    tools.remove(&ToolCapability::Powershell);
+    if !subagents {
+        tools.remove(&ToolCapability::Agent);
+        tools.remove(&ToolCapability::Agents);
+    }
+    // The fixture matrix's progress tool, for every host that runs a root
+    // session: in process and in the daemon alike.
+    #[cfg(debug_assertions)]
+    if std::env::var_os("RHO_TUI_TEST_MODE").as_deref() == Some(std::ffi::OsStr::new("matrix")) {
+        tools.insert(ToolCapability::Extension(
+            crate::tools::tui_fixture::NAME.into(),
+        ));
+    }
+    tools
 }
 
 /// Capacity class for nested concurrency pools.
@@ -239,123 +296,6 @@ impl BoundAgent {
             },
         }
     }
-
-    /// Build the Claude session request for a bound Claude runtime.
-    pub(crate) fn into_claude_session(
-        self,
-        prompt: String,
-        output_file: std::path::PathBuf,
-        cwd: std::path::PathBuf,
-        cancellation: rho_tools::cancellation::RunCancellation,
-        status_tx: Option<tokio::sync::watch::Sender<crate::subagent::RunStatus>>,
-        started_status: Option<crate::subagent::RunStatus>,
-    ) -> Option<crate::claude_runtime::session::ClaudeSessionRequest> {
-        let identity = self.artifact_identity();
-        let BoundRuntime::ClaudeCli {
-            tools,
-            inherit_claude_config,
-            permission_mode,
-            max_turns,
-            ..
-        } = self.runtime
-        else {
-            return None;
-        };
-        Some(crate::claude_runtime::session::ClaudeSessionRequest {
-            system_prompt: self.definition.prompt.clone(),
-            identity,
-            tools,
-            inherit_claude_config,
-            permission_mode,
-            max_turns,
-            prompt,
-            output_file,
-            cwd,
-            cancellation,
-            status_tx,
-            started_status,
-            parent_messages: None,
-            rate_limit_state_path: None,
-            overrides: Default::default(),
-        })
-    }
-
-    /// Build the Cursor session request for a bound Cursor runtime.
-    pub(crate) fn into_cursor_session(
-        self,
-        prompt: String,
-        output_file: std::path::PathBuf,
-        cwd: std::path::PathBuf,
-        cancellation: rho_tools::cancellation::RunCancellation,
-        status_tx: Option<tokio::sync::watch::Sender<crate::subagent::RunStatus>>,
-        started_status: Option<crate::subagent::RunStatus>,
-    ) -> Option<crate::cursor_runtime::session::CursorSessionRequest> {
-        let identity = self.artifact_identity();
-        let BoundRuntime::Cursor {
-            tools,
-            permission_mode,
-            ..
-        } = self.runtime
-        else {
-            return None;
-        };
-        Some(crate::cursor_runtime::session::CursorSessionRequest {
-            system_prompt: self.definition.prompt.clone(),
-            identity,
-            tools,
-            prompt,
-            output_file,
-            cwd,
-            permission_mode,
-            cancellation,
-            status_tx,
-            started_status,
-            parent_messages: None,
-            // No home dir leaves only `CURSOR_CONFIG_DIR` / XDG to find the
-            // user's config; a missing file derives the managed config from `{}`.
-            config_paths: crate::cursor_runtime::acp_config::CursorConfigPaths::from_env(
-                crate::paths::home_dir().unwrap_or_default(),
-            ),
-            overrides: Default::default(),
-        })
-    }
-
-    /// Build the Antigravity session request for a bound Antigravity runtime.
-    pub(crate) fn into_antigravity_session(
-        self,
-        prompt: String,
-        output_file: std::path::PathBuf,
-        cwd: std::path::PathBuf,
-        cancellation: rho_tools::cancellation::RunCancellation,
-        status_tx: Option<tokio::sync::watch::Sender<crate::subagent::RunStatus>>,
-        started_status: Option<crate::subagent::RunStatus>,
-    ) -> Option<crate::antigravity_runtime::session::AntigravitySessionRequest> {
-        let identity = self.artifact_identity();
-        let BoundRuntime::Antigravity {
-            tools,
-            permission_mode,
-            ..
-        } = self.runtime
-        else {
-            return None;
-        };
-        Some(
-            crate::antigravity_runtime::session::AntigravitySessionRequest {
-                system_prompt: self.definition.prompt.clone(),
-                identity,
-                tools,
-                prompt,
-                output_file,
-                cwd,
-                permission_mode,
-                cancellation,
-                status_tx,
-                started_status,
-                parent_messages: None,
-                overrides: Default::default(),
-            },
-        )
-    }
 }
 
 pub(crate) struct AgentBinder;
@@ -375,7 +315,10 @@ impl AgentBinder {
     }
 
     /// Per-call selection changes only the launch model, never the definition
-    /// identity, prompt, capabilities, or host permission ceiling.
+    /// identity, prompt, capabilities, or host permission ceiling. The model
+    /// is chosen among those this process's own credentials can use: right
+    /// for a command that acts for its terminal, never for a session, which
+    /// binds with [`Self::bind_with_credentials`].
     pub(crate) fn bind_with_model_override(
         definition: Arc<AgentDefinition>,
         invocation: AgentInvocation,
@@ -391,7 +334,10 @@ impl AgentBinder {
         )
     }
 
-    fn bind_with_credentials(
+    /// [`Self::bind_with_model_override`] choosing the model among those
+    /// `store` can use: the credentials of the session the agent runs in
+    /// (see [`crate::session_environment::SessionEnvironment::credentials`]).
+    pub(crate) fn bind_with_credentials(
         definition: Arc<AgentDefinition>,
         invocation: AgentInvocation,
         host_config: &Config,
@@ -607,6 +553,10 @@ fn bind_rho_capabilities(
         // before bind when no parent bridge can answer.
         capabilities.remove(&ToolCapability::Agent);
         capabilities.remove(&ToolCapability::Agents);
+        // A workflow run's agent nodes are agents too, which would take
+        // capacity outside the budget and job tree of the session that
+        // started this child (#1658).
+        capabilities.remove(&ToolCapability::Workflow);
         // The advisor reviews the root session. A child run has its own
         // session and nothing to review.
         capabilities.remove(&ToolCapability::Advisor);
@@ -676,10 +626,11 @@ fn bind_rho_capabilities(
 fn may_omit_unavailable_tool(tool: &ToolCapability, role: AgentRole) -> bool {
     match tool {
         ToolCapability::Questionnaire => true,
-        ToolCapability::Agent | ToolCapability::Agents | ToolCapability::Advisor => {
-            matches!(role, AgentRole::Delegated | AgentRole::Workflow)
-        }
-        ToolCapability::Rho | ToolCapability::Workflow => matches!(role, AgentRole::Workflow),
+        ToolCapability::Agent
+        | ToolCapability::Agents
+        | ToolCapability::Advisor
+        | ToolCapability::Workflow => matches!(role, AgentRole::Delegated | AgentRole::Workflow),
+        ToolCapability::Rho => matches!(role, AgentRole::Workflow),
         _ => false,
     }
 }

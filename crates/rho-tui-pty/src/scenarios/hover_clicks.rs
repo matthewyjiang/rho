@@ -5,6 +5,8 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 use unicode_width::UnicodeWidthStr;
 
+#[cfg(unix)]
+use super::daemon_resume::write_daemon_config;
 use super::{DEFAULT_SIZE, SETTLE, STARTUP};
 use crate::{
     harness::WaitTimeout,
@@ -93,8 +95,9 @@ fn picker_row(line: &str, label: &str) -> bool {
 // Covers: an inline (non-overlay) list picker lifts the hovered row, a click
 // selects a row without submitting, and a double click submits it like Enter.
 // Owner: interactive UX (PTY).
+#[cfg(unix)]
 fn hover_click_then_double_click_inline_picker_row(harness: &mut PtyHarness) -> Result<()> {
-    // `/config` opens on Models; Tools is a plain row.
+    // `/config` opens on the session's Model row; Tools is a plain row.
     let tools = cell_of(harness, "Tools", &|line| picker_row(line, "Tools"))?;
     let len = "Tools".len() as u16;
     wait_for_span_bold(harness, tools, len, false, "Tools starts unlifted")?;
@@ -110,9 +113,7 @@ fn hover_click_then_double_click_inline_picker_row(harness: &mut PtyHarness) -> 
     click(harness, tools)?;
     harness.wait_for_text("→ Tools", CLICK)?;
     let screen = harness.screen();
-    if screen.contains_text("Config / Tools")
-        || !screen.contains_text("Config · saves automatically")
-    {
+    if !screen.contains_text("Config · saves automatically") {
         anyhow::bail!(
             "a single click submitted the picker:\n{}",
             screen.debug_dump()
@@ -120,13 +121,16 @@ fn hover_click_then_double_click_inline_picker_row(harness: &mut PtyHarness) -> 
     }
 
     double_click(harness, tools)?;
-    harness.wait_for_text("Config / Tools", CLICK)
+    // The Tools page replaces the root, whose title leaves the footer.
+    harness.wait_for_text("Inline shell", CLICK)?;
+    harness.wait_for_text_gone("Config · saves automatically", CLICK)
 }
 
+#[cfg(unix)]
 const INLINE_PICKER_CLICK_STEPS: &[Step] = &[
     Step::Phase("startup"),
     Step::WaitText {
-        text: "gpt-5.5",
+        text: "Bypass ·",
         timeout: STARTUP,
     },
     Step::Phase("open_config"),
@@ -136,7 +140,7 @@ const INLINE_PICKER_CLICK_STEPS: &[Step] = &[
         timeout: SETTLE,
     },
     Step::WaitText {
-        text: "Providers",
+        text: "Tools",
         timeout: SETTLE,
     },
     Step::Phase("click_rows"),
@@ -146,13 +150,16 @@ const INLINE_PICKER_CLICK_STEPS: &[Step] = &[
     Step::ExitCommand,
 ];
 
+#[cfg(unix)]
 pub(super) const INLINE_PICKER_CLICK_SCENARIO: Scenario = Scenario::new(
     "inline_picker_click",
     "Hover, select with a click, and submit with a double click in an inline list picker",
     DEFAULT_SIZE,
     INLINE_PICKER_CLICK_STEPS,
     /*smoke*/ false,
-);
+)
+.with_setup(write_daemon_config)
+.with_env(&[("OPENAI_API_KEY", "sk-test-matrix")]);
 
 // Covers: a click on an overlay picker nav row selects it without closing the
 // overlay, and a double click submits it like Enter.

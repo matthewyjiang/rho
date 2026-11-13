@@ -89,11 +89,7 @@ pub(crate) fn finalize_chat_tool_calls(
             ChatToolCallPolicy::Lenient => unique_call_id(&mut seen_ids, id),
         };
         let arguments = parse_chat_tool_arguments(&name, &call.arguments, policy)?;
-        finalized.push(ToolCall {
-            id,
-            name,
-            arguments,
-        });
+        finalized.push(ToolCall::new(id, name, arguments));
     }
     Ok(finalized)
 }

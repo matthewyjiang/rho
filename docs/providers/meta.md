@@ -77,7 +77,7 @@ Do not put the key in `config.toml` or commit it to source control.
 
 ## Models and reasoning
 
-Use `/config` and choose **Refresh model lists** to fetch the current models for your account. When the cache is empty, or when the cache includes it, Rho defaults to `muse-spark-1.2`. If only older Muse Spark builds are present, the first cached model is used instead.
+Run `/refresh-models` to fetch the current models for your account. When the cache is empty, or when the cache includes it, Rho defaults to `muse-spark-1.2`. If only older Muse Spark builds are present, the first cached model is used instead.
 
 Rho reads Muse Spark reasoning efforts from models.dev under the `meta` catalog (`minimal`, `low`, `medium`, `high`, `xhigh`). The models do not advertise a full off control. For persisted config and defaults, Rho maps an out-of-set level to the nearest advertised effort and sends Chat Completions `reasoning_effort`. An explicit unsupported choice is rejected instead of silently rewritten. When catalog metadata is still unknown, Rho omits the wire field and the API uses its default depth.
 

@@ -121,11 +121,7 @@ async fn assembles_messages_extracts_text_and_records_usage_purpose() {
             })],
             ModelResponse::Assistant(vec![
                 ContentBlock::Text("first".into()),
-                ContentBlock::ToolCall(ToolCall {
-                    id: "call".into(),
-                    name: "ignored".into(),
-                    arguments: json!({}),
-                }),
+                ContentBlock::ToolCall(ToolCall::new("call".into(), "ignored".into(), json!({}))),
                 ContentBlock::Text("second".into()),
                 ContentBlock::Image(rho_sdk::model::ImageContent {
                     data: "/9j/4AAQ".into(),

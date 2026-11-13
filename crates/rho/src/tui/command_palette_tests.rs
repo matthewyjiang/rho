@@ -3,148 +3,47 @@ use crate::tui::composer_buffer::ComposerEditKey;
 use pretty_assertions::assert_eq;
 
 #[test]
-fn goal_lifecycle_action_completion_replaces_placeholder() {
+fn argument_choice_completion_replaces_placeholder() {
     let mut app = test_app();
-    app.input_ui.set_text("/goal ".to_string());
+    app.input_ui.set_text("/codemode ".to_string());
     app.input_ui.set_cursor(app.input_ui.text().chars().count());
     app.clamp_command_selection();
     app.input_ui.move_command_selection(1);
 
-    let clear = app.selected_command().unwrap();
-    app.complete_command_choice(&clear);
+    let on = app.selected_command().unwrap();
+    app.complete_command_choice(&on);
 
-    assert_eq!(app.input_ui.text(), "/goal clear");
-    assert_eq!(app.input_ui.cursor(), "/goal clear".chars().count());
+    assert_eq!(app.input_ui.text(), "/codemode on");
+    assert_eq!(app.input_ui.cursor(), "/codemode on".chars().count());
     assert_eq!(
         app.input_ui.submission_mode(),
         InputSubmissionMode::ParseCommands
     );
 }
 
+// Covers: a held prompt resolves a template file as it is on disk now, so
+// edits made during a session apply with no restart.
+// Owner: prompt template resolution on submit
 #[test]
-fn exact_template_match_precedes_builtin_prefix_match() {
-    let mut app = test_app();
-    app.info
-        .runtime
-        .config_prompt_templates
-        .insert("mod".into(), "custom template".into());
-    app.input_ui.set_text("/mod argument".to_string());
-    app.input_ui.set_cursor(4);
-
-    let matches = app.command_matches();
-
-    assert_eq!(matches[0].name, "prompt:mod");
-    assert_eq!(matches[1].name, "model");
-}
-
-#[test]
-fn template_completion_expands_pasted_arguments_and_clears_segments() {
-    let mut app = test_app();
-    app.info
-        .runtime
-        .config_prompt_templates
-        .insert("review".into(), "Review this:".into());
-    app.insert_input_text("/review ");
-    app.insert_pasted_input_text("alpha\nbeta");
-    let choice = app.selected_command().unwrap();
-
-    app.complete_command_choice(&choice);
-
-    assert_eq!(app.input_ui.text(), "Review this: alpha\nbeta ");
-    assert_eq!(app.expanded_input(), "Review this: alpha\nbeta ");
-    assert!(app.input_ui.paste_segments().is_empty());
-}
-
-#[test]
-fn template_completion_marks_slash_prefixed_contents_as_prompt() {
-    let mut app = test_app();
-    app.info
-        .runtime
-        .config_prompt_templates
-        .insert("review".into(), "/diff literally".into());
-    app.input_ui.set_text("/review".to_string());
-    app.input_ui.set_cursor(app.input_char_len());
-    let choice = app.selected_command().unwrap();
-
-    app.complete_command_choice(&choice);
-
-    assert_eq!(app.input_ui.text(), "/diff literally ");
-    assert_eq!(app.input_ui.submission_mode(), InputSubmissionMode::Prompt);
-}
-
-// Covers: Tab on a placeholder template with nothing typed yet must keep the
-// command so arguments can fill it, not expand empty placeholders.
-// Owner: command palette template completion
-#[test]
-fn template_with_placeholders_completes_command_until_arguments_are_typed() {
-    let mut app = test_app();
-    app.info
-        .runtime
-        .config_prompt_templates
-        .insert("review".into(), "Review $1 for $2.".into());
-    app.input_ui.set_text("/rev".to_string());
-    app.input_ui.set_cursor(app.input_char_len());
-    let choice = app.selected_command().unwrap();
-
-    app.complete_command_choice(&choice);
-
-    assert_eq!(app.input_ui.text(), "/prompt:review ");
-    assert_eq!(
-        app.input_ui.submission_mode(),
-        InputSubmissionMode::ParseCommands
-    );
-
-    app.insert_input_text("src/lib.rs \"error handling\"");
-    app.input_ui.set_cursor("/prompt:review".chars().count());
-    let choice = app.selected_command().unwrap();
-    app.complete_command_choice(&choice);
-
-    assert_eq!(
-        app.input_ui.text(),
-        "Review src/lib.rs for error handling. "
-    );
-}
-
-// Covers: template files edited during a session reach the palette once the
-// discovery cache goes stale, with no restart; submit must also refresh a
-// still-fresh cache and share that refreshed snapshot with the palette.
-// Owner: command palette template discovery cache
-#[test]
-fn edited_template_files_reload_without_restart() {
+fn prompt_template_resolves_edits_without_restart() {
     let project = tempfile::tempdir().unwrap();
     let prompts = project.path().join(".rho/prompts");
     std::fs::create_dir_all(project.path().join(".git")).unwrap();
     std::fs::create_dir_all(&prompts).unwrap();
     let mut app = test_app();
     app.info.runtime.cwd = project.path().to_path_buf();
-    let descriptions = |app: &mut crate::tui::App| {
-        app.command_matches()
-            .into_iter()
-            .filter(|choice| choice.name == "prompt:zz-reload")
-            .map(|choice| choice.description)
-            .collect::<Vec<_>>()
-    };
-    app.input_ui.set_text("/prompt:zz".to_string());
-    app.input_ui.set_cursor(app.input_char_len());
-    assert_eq!(descriptions(&mut app), Vec::<String>::new());
 
     std::fs::write(prompts.join("zz-reload.md"), "first draft").unwrap();
-    app.palette_caches.expire_prompt_templates();
-    assert_eq!(descriptions(&mut app), vec!["first draft".to_string()]);
-
+    assert_eq!(
+        app.resolve_prompt_template("prompt:zz-reload", ""),
+        Some("first draft".to_string())
+    );
     std::fs::write(prompts.join("zz-reload.md"), "second draft").unwrap();
     assert_eq!(
         app.resolve_prompt_template("PrOmPt:ZZ-RELOAD", "details"),
         Some("second draft details".to_string())
     );
-    assert_eq!(descriptions(&mut app), vec!["second draft".to_string()]);
     assert_eq!(app.resolve_prompt_template("prompt:missing", ""), None);
-
-    // Tab expands the file as it is now, not the row the palette listed.
-    let listed = app.selected_command().unwrap();
-    std::fs::write(prompts.join("zz-reload.md"), "third draft").unwrap();
-    app.complete_command_choice(&listed);
-    assert_eq!(app.input_ui.text(), "third draft ");
 }
 
 // Covers: recalling a slash command must not steal Up/Down for palette
@@ -206,7 +105,7 @@ fn dismiss_on_esc_clears_only_a_bare_slash() {
 #[test]
 fn enter_keeps_bare_command_until_an_argument_row_is_picked() {
     let mut app = test_app();
-    app.input_ui.set_text("/goal ".to_string());
+    app.input_ui.set_text("/codemode ".to_string());
     app.input_ui.set_cursor(app.input_ui.text().chars().count());
     app.clamp_command_selection();
     let matches = app.command_matches();
@@ -218,7 +117,7 @@ fn enter_keeps_bare_command_until_an_argument_row_is_picked() {
 
     // Moving the cursor back into the command token changes the palette
     // question, so the pick does not survive it.
-    app.input_ui.set_text("/goal".to_string());
+    app.input_ui.set_text("/codemode".to_string());
     app.input_ui.set_cursor(app.input_ui.text().chars().count());
     app.input_changed();
     assert!(!app.input_ui.command_selection_explicit());
@@ -230,7 +129,7 @@ fn enter_keeps_bare_command_until_an_argument_row_is_picked() {
 #[test]
 fn clamping_below_a_pick_drops_the_explicit_flag() {
     let mut app = test_app();
-    app.input_ui.set_text("/goal ".to_string());
+    app.input_ui.set_text("/codemode ".to_string());
     app.input_ui.set_cursor(app.input_ui.text().chars().count());
     app.clamp_command_selection();
     app.input_ui.move_command_selection(1);
@@ -246,9 +145,7 @@ fn clamping_below_a_pick_drops_the_explicit_flag() {
 }
 
 // Covers: MCP argument rows obey the same pick rule; without an arrow-key
-// pick (or a typed value narrowing the server's suggestions) Enter submits
-// the command as typed. A non-empty typed value is the exception that lets
-// Enter complete without a pick.
+// pick Enter submits the command as typed.
 // Owner: command palette Enter policy
 #[test]
 fn enter_on_mcp_argument_rows_follows_the_pick_rule() {
@@ -264,46 +161,4 @@ fn enter_on_mcp_argument_rows_follows_the_pick_rule() {
 
     app.input_ui.move_command_selection(1);
     assert!(app.enter_completes_choice(&choice));
-
-    // Typed non-empty value under the cursor enables Enter without a pick.
-    // Removing the typed-value side of enter_completes_choice must fail this.
-    let mut app = test_app();
-    app.mcp_catalog.insert_offline_prompt(
-        crate::tools::mcp::catalog::McpPrompt {
-            server: "tickets".into(),
-            name: "triage".into(),
-            title: None,
-            description: None,
-            arguments: vec![
-                crate::tools::mcp::catalog::McpPromptArgument {
-                    name: "severity".into(),
-                    description: None,
-                    required: false,
-                },
-                crate::tools::mcp::catalog::McpPromptArgument {
-                    name: "owner".into(),
-                    description: None,
-                    required: false,
-                },
-            ],
-        },
-        true,
-    );
-    let typed = "/mcp:tickets:triage owner=al";
-    app.input_ui.set_text(typed.to_string());
-    app.input_ui.set_cursor(typed.chars().count());
-    assert!(!app.input_ui.command_selection_explicit());
-    assert!(app
-        .mcp_argument_cursor()
-        .is_some_and(|cursor| cursor.key.typed == "al"));
-    assert!(app.enter_completes_choice(&choice));
-
-    // An empty value still needs an explicit pick.
-    let empty = "/mcp:tickets:triage owner=";
-    app.input_ui.set_text(empty.to_string());
-    app.input_ui.set_cursor(empty.chars().count());
-    assert!(app
-        .mcp_argument_cursor()
-        .is_some_and(|cursor| cursor.key.typed.is_empty()));
-    assert!(!app.enter_completes_choice(&choice));
 }

@@ -82,7 +82,11 @@ pub(super) fn settle_unanswered_calls(
             | Message::User(_)
             | Message::Assistant(_)
             | Message::EnrichedAssistant(_)
-            | Message::AbortedAssistant(_) => None,
+            | Message::AbortedAssistant(_)
+            | Message::CompactionSummary(_)
+            | Message::ModelContext(_)
+            | Message::BoundaryInput(_)
+            | Message::ReasoningShift(_) => None,
         })
         .collect::<BTreeSet<_>>();
     let unanswered = history
@@ -106,7 +110,7 @@ pub(super) fn settle_unanswered_calls(
                     Some(tool),
                 ));
             }
-            Some(_) | None => history.push(Message::ToolResult(interrupted_result(&call))),
+            Some(_) | None => history.push(Message::ToolResult(interrupted_result(&call).into())),
         }
     }
     (!rerun.is_empty()).then(|| StagedToolTurn::model_requested(rerun))

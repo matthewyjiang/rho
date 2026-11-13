@@ -6,7 +6,13 @@ use std::time::Duration;
 async fn exited_undelivered(manager: &ProcessManager, id: &str) {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
     loop {
-        if terminal(manager.host_view(id).unwrap().snapshot.state) {
+        if terminal(
+            manager
+                .host_view_from(id, /*cursor*/ 0)
+                .unwrap()
+                .snapshot
+                .state,
+        ) {
             return;
         }
         assert!(
@@ -36,7 +42,9 @@ async fn host_view_does_not_mark_terminal_observed() {
         .unwrap();
     exited_undelivered(&manager, &started.process_id).await;
     assert!(manager.has_pending_notification());
-    let view = manager.host_view(&started.process_id).unwrap();
+    let view = manager
+        .host_view_from(&started.process_id, /*cursor*/ 0)
+        .unwrap();
     pretty_assertions::assert_eq!(view.snapshot.state, State::Exited);
     pretty_assertions::assert_eq!(view.snapshot.exit_code, Some(0));
     pretty_assertions::assert_eq!(view.quiet_seconds, None);

@@ -10,8 +10,8 @@ use super::*;
 use crate::{
     model::{ContentBlock, ModelEvent, ModelIdentity, ModelRequest, ModelResponse, ModelUsage},
     provider::{
-        ModelProvider, ProviderEventSender, ProviderFuture, ProviderRequestEvent,
-        ProviderStreamEvent, ScriptedProvider, ScriptedTurn,
+        ModelProvider, ProviderFuture, ProviderRequestEvent, ProviderStreamEvent,
+        ProviderTurnContext, ScriptedProvider, ScriptedTurn,
     },
     ProviderError, Retryability, Rho, RunEvent, SessionId, SessionOptions, UserInput, Workspace,
 };
@@ -66,8 +66,9 @@ impl ModelProvider for QueuedUsageBeforeCancellationProvider {
     fn send_turn_stream<'a>(
         &'a self,
         request: ModelRequest<'a>,
-        events: ProviderEventSender,
+        context: ProviderTurnContext,
     ) -> ProviderFuture<'a> {
+        let events = context.events;
         let usage = self.usage.clone();
         let queue_observed = self
             .queue_observed
@@ -172,8 +173,9 @@ impl ModelProvider for UsageThenWaitProvider {
     fn send_turn_stream<'a>(
         &'a self,
         request: ModelRequest<'a>,
-        events: ProviderEventSender,
+        context: ProviderTurnContext,
     ) -> ProviderFuture<'a> {
+        let events = context.events;
         Box::pin(async move {
             events.send(ModelEvent::Usage(self.usage.clone())).await?;
             request.cancellation.cancelled().await;

@@ -1,13 +1,15 @@
-//! The [`AcpClientPort`] of an ACP v2 connection: Rho's session hosts speak
-//! v1, and this port rewrites what they send into v2.
+//! The [`AcpClientPort`] of an ACP v2 connection: Rho's adapter speaks v1,
+//! and this port rewrites what it sends into v2.
 
 use std::{collections::HashSet, future::Future, pin::Pin, sync::Mutex};
 
-use agent_client_protocol::schema::{v1, v2};
-use agent_client_protocol::{Client, Error as AcpError, V2ConnectionTo};
+use agent_client_protocol::{v1::schema as v1, v2::schema as v2};
+use agent_client_protocol::{v2::ConnectionTo as V2ConnectionTo, Client, Error as AcpError};
 
-use super::{bridge, requests, updates};
-use crate::app::acp::AcpClientPort;
+use rho_protocol::BackgroundWork;
+
+use super::{background, bridge, requests, updates};
+use crate::app::acp::{AcpClientPort, BackgroundChanged, Foreground, TurnEnd};
 
 pub(super) struct V2Port {
     cx: V2ConnectionTo<Client>,
@@ -112,6 +114,54 @@ impl AcpClientPort for V2Port {
         })
     }
 
-    // `fs/*` and `terminal/*` keep the port's defaults: v2 removed them, and
-    // `requests::initialize_request` never negotiates them.
+    /// Closes the `running` the host was told with `idle`.
+    fn turn_ended(&self, session_id: &v1::SessionId, end: TurnEnd, background: &[BackgroundWork]) {
+        let sent = bridge::<_, v2::SessionId>(session_id)
+            .and_then(|session_id| self.send_update(&session_id, requests::idle(&end, background)));
+        if let Err(error) = sent {
+            tracing::warn!(%error, "could not report the end of an attached turn over ACP v2");
+        }
+    }
+
+    /// Reports `requires_action` while the turn waits for a person, and
+    /// `running` once it goes on.
+    fn foreground_changed(
+        &self,
+        session_id: &v1::SessionId,
+        foreground: Foreground,
+        background: &[BackgroundWork],
+    ) {
+        let sent = bridge::<_, v2::SessionId>(session_id).and_then(|session_id| {
+            self.send_update(&session_id, background::state(foreground, background))
+        });
+        if let Err(error) = sent {
+            tracing::warn!(%error, "could not report a turn's state over ACP v2");
+        }
+    }
+
+    /// Announces the work that started and finalizes the work that
+    /// stopped, then repeats the session's state with the new background
+    /// list, unless a prompt's acknowledgement is due to. The list changes
+    /// exactly when work starts or stops, so with neither the host hears
+    /// nothing.
+    fn background_changed(&self, session_id: &v1::SessionId, change: BackgroundChanged<'_>) {
+        let updates = background::changes(change.previous, change.current);
+        if updates.is_empty() {
+            return;
+        }
+        let sent = bridge::<_, v2::SessionId>(session_id).and_then(|session_id| {
+            for update in updates {
+                self.send_update(&session_id, update)?;
+            }
+            match change.foreground {
+                Some(foreground) => {
+                    self.send_update(&session_id, background::state(foreground, change.current))
+                }
+                None => Ok(()),
+            }
+        });
+        if let Err(error) = sent {
+            tracing::warn!(%error, "could not report background work over ACP v2");
+        }
+    }
 }

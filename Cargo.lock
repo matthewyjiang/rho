@@ -42,12 +42,13 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol"
-version = "3.5.0"
+version = "5.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9bbe69c878aef64a3d92041e256e75acdb1bf2ea8e55ef3313e69dbb2f5bd75a"
+checksum = "80ce60ce096020c2d0aa10445bc27b8856109e288abaf564ab517031ae819d69"
 dependencies = [
  "agent-client-protocol-derive",
  "agent-client-protocol-schema",
+ "anyhow",
  "blocking",
  "futures",
  "futures-concurrency",
@@ -60,9 +61,9 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol-derive"
-version = "3.6.0"
+version = "5.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5d2d255cb5d3afa4760084fbcaf87c7d214d316328546cd777d8736a8af6e368"
+checksum = "a12951a4e9a163a9384dec4e5681bd774c0fdb3871c5ed1deb7b44bc630df17a"
 dependencies = [
  "quote",
  "syn 3.0.3",
@@ -70,9 +71,9 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol-schema"
-version = "1.12.0"
+version = "1.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "430e900fdb40a811c1a3e0d85b1134e485d96699f8b90889a15c1da6a0b26c3f"
+checksum = "1b2316d2cd561917bc2c16e3c64771c77e24363b56d40b58fdad091d02059992"
 dependencies = [
  "anyhow",
  "derive_more 2.1.1",
@@ -2418,6 +2419,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6dbf3de79e51f3d586ab4cb9d5c3e2c14aa28ed23d180cf89b4df0454a69cc87"
 
 [[package]]
+name = "httpdate"
+version = "1.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
+
+[[package]]
 name = "humantime"
 version = "2.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2446,6 +2453,7 @@ dependencies = [
  "http",
  "http-body",
  "httparse",
+ "httpdate",
  "itoa",
  "pin-project-lite",
  "smallvec",
@@ -3917,6 +3925,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 
 [[package]]
+name = "pastey"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2ee67f1008b1ba2321834326597b8e186293b049a023cdef258527550b9935b4"
+
+[[package]]
 name = "pdf-inspector"
 version = "1.25.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4834,6 +4848,7 @@ dependencies = [
  "pretty_assertions",
  "quick-xml 0.42.0",
  "regex",
+ "rho-protocol",
  "rho-sdk",
  "same-file",
  "schemars 1.2.3",
@@ -4850,13 +4865,14 @@ dependencies = [
 
 [[package]]
 name = "rho-coding-agent"
-version = "2.34.0"
+version = "3.0.0-alpha.dev"
 dependencies = [
  "agent-client-protocol",
  "anyhow",
  "arboard",
  "async-trait",
  "base64 0.23.1",
+ "bytes",
  "chrono",
  "clap",
  "crossterm",
@@ -4865,7 +4881,10 @@ dependencies = [
  "futures-util",
  "hex",
  "http",
+ "http-body-util",
  "humantime",
+ "hyper",
+ "hyper-util",
  "image",
  "jsonschema",
  "katex-rs",
@@ -4882,6 +4901,7 @@ dependencies = [
  "regex",
  "reqwest",
  "rho-agent-tools",
+ "rho-protocol",
  "rho-providers",
  "rho-sdk",
  "rho-tui-pty",
@@ -4906,6 +4926,7 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "toml",
+ "toml_edit",
  "tracing",
  "tracing-subscriber",
  "two-face",
@@ -4915,8 +4936,23 @@ dependencies = [
  "url",
  "uuid",
  "vt100",
+ "which",
  "windows-sys 0.61.2",
  "winresource",
+]
+
+[[package]]
+name = "rho-protocol"
+version = "0.1.0"
+dependencies = [
+ "pretty_assertions",
+ "schemars 1.2.3",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
 ]
 
 [[package]]
@@ -4958,8 +4994,9 @@ dependencies = [
 
 [[package]]
 name = "rho-sdk"
-version = "5.15.2"
+version = "6.0.0"
 dependencies = [
+ "chrono",
  "pretty_assertions",
  "proptest",
  "serde",
@@ -4978,6 +5015,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "fs2",
  "libc",
  "portable-pty",
  "pretty_assertions",
@@ -4986,6 +5024,7 @@ dependencies = [
  "tempfile",
  "unicode-width 0.2.2",
  "vt100",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5014,12 +5053,17 @@ dependencies = [
  "chrono",
  "futures",
  "http",
+ "http-body",
+ "http-body-util",
  "indexmap 2.14.0",
  "libc",
  "oauth2",
+ "pastey",
  "pin-project-lite",
  "process-wrap",
+ "rand 0.10.3",
  "reqwest",
+ "schemars 1.2.3",
  "serde",
  "serde_json",
  "sse-stream",
@@ -5027,9 +5071,10 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tokio-util",
+ "tower-service",
  "tracing",
  "url",
- "which",
+ "uuid",
 ]
 
 [[package]]
@@ -5331,6 +5376,7 @@ version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ab508826f74a77ca9d5aba6ff19b522583ee3eaf28a19384ff3d0e5835fadf6e"
 dependencies = [
+ "chrono",
  "dyn-clone",
  "ref-cast",
  "schemars_derive",
@@ -6448,8 +6494,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2153edc6955a6c354fad8f5efd38b6a8769bdccf9fe50f8e1329f81b0baa5d7"
 dependencies = [
  "indexmap 2.14.0",
+ "serde_core",
+ "serde_spanned",
  "toml_datetime",
  "toml_parser",
+ "toml_writer",
  "winnow",
 ]
 

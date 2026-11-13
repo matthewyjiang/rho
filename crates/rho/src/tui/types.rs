@@ -6,7 +6,6 @@ use super::{
     approval::ApprovalComposer,
     chat_media::ChatMedia,
     commands::{self, CommandSpec},
-    config_editor::ConfigNumberInput,
     doctor_overlay,
     feed_image::FeedImage,
     inline_choice::InlineChoiceModal,
@@ -15,7 +14,6 @@ use super::{
     login::SecretInput,
     markdown::{CodeFenceState, StreamLineStart},
     picker::UiPicker,
-    prompt_turn::FailedTurn,
     questionnaire::QuestionnaireComposer,
     stream::AppendOnlyStream,
     stream_pace::StreamPacer,
@@ -27,7 +25,7 @@ use ratatui::{
     text::Line,
 };
 use rho_providers::{
-    auth::login_prompt::LoginPrompt,
+    auth::{login_dispatch::UnconfirmedAuthentication, login_prompt::LoginPrompt},
     model::{
         catalog::{LoginTarget, ModelSelection},
         ContextUsage, ModelUsage,
@@ -42,12 +40,13 @@ pub(super) struct PendingLoginComposer {
 }
 
 /// How a pending interactive login reaches success.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum PendingLoginFinish {
     /// A background task waits for the provider's callback.
     ProviderCallback,
-    /// The provider sends no callback, so Enter means the user approved.
-    UserConfirms,
+    /// The provider sends no callback, so Enter means the user approved and
+    /// accepts this handle.
+    UserConfirms(UnconfirmedAuthentication),
 }
 
 #[cfg(test)]
@@ -90,14 +89,15 @@ pub(super) struct SessionHeaderCache {
 pub(super) struct InteractiveModelSelection {
     pub(in crate::tui) selection: ModelSelection,
     pub(in crate::tui) alias: Option<String>,
-    pub(in crate::tui) reasoning_policy:
-        crate::app::conversation_switch::ModelSwitchReasoningPolicy,
 }
 
 /// Live assistant/reasoning stream UI state owned by [`super::App`].
 #[derive(Default)]
 pub(super) struct StreamUi {
     pub(in crate::tui) mode: super::streaming_mode::StreamingMode,
+    /// The cycle shortcut chose `mode`, which is not saved: reading the
+    /// saved settings again keeps it until a saved change replaces it.
+    pub(in crate::tui) mode_from_shortcut: bool,
     pub(in crate::tui) paragraph_boundary: super::streaming_mode::ParagraphBoundary,
     pub(in crate::tui) assistant_stream: AppendOnlyStream,
     pub(in crate::tui) assistant_stream_code_fence: CodeFenceState,
@@ -171,7 +171,14 @@ pub(super) struct UsageUi {
     /// Non-main spend, claimed once per completed subagent/advisor/ping.
     pub(in crate::tui) extra: ExtraCosts,
     /// Keep-warm ping scheduler, independent of billing and the prefix clock.
-    pub(in crate::tui) cache_warm: super::cache_warm::CacheWarmer,
+    pub(in crate::tui) cache_warm: crate::cache_warm::CacheWarmer,
+    /// The counter the followed daemon session's host last reported, which
+    /// stands in for `cache_warm`'s own there.
+    pub(in crate::tui) daemon_cache_warm: Option<crate::cache_warm::WarmProgress>,
+    /// The followed daemon session's whole spend as its host last reported
+    /// it, pings included: `None` before any report, `Some(None)` while
+    /// nothing had a price. The main cost is this less `extra.cache_warm`.
+    pub(in crate::tui) daemon_spend: Option<Option<u64>>,
 }
 
 impl UsageUi {
@@ -213,7 +220,6 @@ pub(super) enum StatusSource {
 pub(super) enum InputSubmissionMode {
     #[default]
     ParseCommands,
-    Prompt,
 }
 
 #[derive(Debug, Default)]
@@ -222,7 +228,6 @@ pub(super) enum ComposerMode {
     Input,
     Picker(UiPicker),
     SecretInput(SecretInput),
-    ConfigNumberInput(ConfigNumberInput),
     TextInput(super::text_input::TextInput),
     InteractivePending(PendingLoginComposer),
     InlineChoice(InlineChoiceModal),
@@ -241,13 +246,13 @@ pub(super) enum ComposerMode {
 pub(super) enum PanelOverlay {
     Limits(limits_command::LimitsOverlay),
     Doctor(doctor_overlay::DoctorOverlay),
-    Computer(super::computer_overlay::ComputerOverlay),
     Hooks(super::hooks_overlay::HooksOverlay),
     TextView(Box<super::text_view_overlay::TextViewOverlay>),
     Info(Box<super::info_overlay::InfoOverlay>),
     Context(Box<super::context_overlay::ContextOverlay>),
     Spend(Box<super::spend_overlay::SpendOverlay>),
     Todo(super::todo_overlay::TodoOverlay),
+    Jobs(Box<super::jobs_view::JobsView>),
 }
 
 impl ComposerMode {
@@ -260,7 +265,6 @@ impl ComposerMode {
             Self::Input => false,
             Self::Picker(_)
             | Self::SecretInput(_)
-            | Self::ConfigNumberInput(_)
             | Self::TextInput(_)
             | Self::InteractivePending(_)
             | Self::InlineChoice(_)
@@ -272,20 +276,12 @@ impl ComposerMode {
         }
     }
 
-    pub(super) fn blocks_auto_continue(&self) -> bool {
-        match self {
-            Self::InlineChoice(modal) => modal.blocks_auto_continue(),
-            _ => false,
-        }
-    }
-
     /// Esc on the setup picker (or the empty setup composer) leaves setup.
     /// Esc on a login overlay restores that step's picker instead.
     pub(super) fn setup_escape_leaves_setup(&self) -> bool {
         match self {
             Self::Input | Self::Picker(_) => true,
             Self::SecretInput(_)
-            | Self::ConfigNumberInput(_)
             | Self::TextInput(_)
             | Self::InteractivePending(_)
             | Self::InlineChoice(_)
@@ -346,46 +342,12 @@ impl PasteSegment {
     }
 }
 
-#[derive(Debug)]
-pub(super) struct SessionTitleResult {
-    pub(in crate::tui) session_id: String,
-    pub(in crate::tui) title: anyhow::Result<String>,
-}
-
 #[derive(Clone, Debug)]
 pub(super) struct CommandChoice {
     pub(in crate::tui) name: String,
     pub(in crate::tui) usage: String,
     pub(in crate::tui) description: String,
     pub(in crate::tui) kind: CommandChoiceKind,
-}
-
-#[derive(Debug, PartialEq)]
-pub(super) enum TurnOutcome {
-    Completed,
-    Interrupted,
-    /// User cancelled interactive work such as a questionnaire.
-    Cancelled,
-    Failed(Box<FailedTurn>),
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum TurnOutcomeKind {
-    Completed,
-    Interrupted,
-    Cancelled,
-    Failed,
-}
-
-impl TurnOutcome {
-    pub(super) fn kind(&self) -> TurnOutcomeKind {
-        match self {
-            Self::Completed => TurnOutcomeKind::Completed,
-            Self::Interrupted => TurnOutcomeKind::Interrupted,
-            Self::Cancelled => TurnOutcomeKind::Cancelled,
-            Self::Failed(_) => TurnOutcomeKind::Failed,
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -401,13 +363,8 @@ pub(super) enum HistoryScroll {
 pub(super) enum CommandChoiceKind {
     Builtin(&'static CommandSpec),
     BuiltinArgument(&'static commands::CommandArgumentChoice),
-    PromptTemplate(String),
-    Skill,
-    /// `/workflow:<name>`: starts a workspace workflow on submit.
-    Workflow,
-    /// A prompt offered by a connected MCP server. Expanded on submit, because
-    /// `prompts/get` is a round-trip the palette cannot make.
-    McpPrompt,
+    /// A daemon-advertised command, completed verbatim and resolved by its host.
+    SessionCommand,
     /// One value a server suggested for the prompt argument under the cursor.
     /// Carries the char range it fills so picking it settles that argument
     /// alone, leaving the command and any other arguments as typed.
@@ -425,11 +382,11 @@ pub(super) enum CommandChoiceKind {
 /// started when a card is first seen running, absent otherwise.
 pub(super) fn live_started_at(
     previous: Option<&ToolEntry>,
-    status: rho_tools::tool_card::ToolStatus,
+    status: rho_protocol::display::ToolCardStatus,
 ) -> Option<Instant> {
-    previous
-        .and_then(|entry| entry.started_at)
-        .or_else(|| matches!(status, rho_tools::tool_card::ToolStatus::Running).then(Instant::now))
+    previous.and_then(|entry| entry.started_at).or_else(|| {
+        matches!(status, rho_protocol::display::ToolCardStatus::Running).then(Instant::now)
+    })
 }
 
 /// Keyed paint of one live tool card.
@@ -474,7 +431,7 @@ pub(super) struct ToolEntry {
     /// The single host-owned presentation for this row.
     /// In-place body edits must clear [`Self::render_cache`]; replacement
     /// through [`Self::new`] drops it automatically.
-    pub(in crate::tui) presentation: crate::presentation::Presentation,
+    pub(in crate::tui) presentation: rho_protocol::display::Presentation,
     pub(in crate::tui) expanded: bool,
     pub(in crate::tui) image: Option<FeedImage>,
     /// Wall clock for live shell elapsed (`timeout … · 1.2s`) while a shell
@@ -501,13 +458,13 @@ impl ToolEntry {
     pub(in crate::tui) fn visible_in_zen(&self) -> bool {
         matches!(
             &self.presentation,
-            crate::presentation::Presentation::Notification(message)
-                if matches!(message.visibility, crate::presentation::NotificationVisibility::Conversation)
+            rho_protocol::display::Presentation::Notification(message)
+                if matches!(message.visibility, rho_protocol::display::NotificationVisibility::Conversation)
         )
     }
 
     pub(in crate::tui) fn new(
-        presentation: impl Into<crate::presentation::Presentation>,
+        presentation: impl Into<rho_protocol::display::Presentation>,
         expanded: bool,
         image: Option<FeedImage>,
         started_at: Option<Instant>,

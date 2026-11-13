@@ -1,10 +1,10 @@
 use rho_providers::model::{Message, ModelIdentity};
 use rho_sdk::{SessionId, SessionSnapshot};
 
+use super::append_cursor::AppendCursor;
 use super::display_rows::StoredDisplayRow;
 use super::persistence::{
-    insert_interrupted_tool_placeholders, timestamp, AppendCursor, PersistedSessionState,
-    SessionEntry,
+    insert_interrupted_tool_placeholders, timestamp, PersistedSessionState, SessionEntry,
 };
 use super::snapshot_delta::StoredSnapshotDelta;
 #[cfg(test)]
@@ -122,10 +122,8 @@ impl Session {
                 cost_usd_micros: None,
             })
         });
-        // Force a full snapshot if compaction changed or if upgrading a legacy (< v4)
-        // session. Legacy sessions and compacted baselines do not share delta continuity
-        // with their predecessor.
-        let transition = if compaction_changed || tree.needs_upgrade_marker() {
+        // A compacted baseline shares no delta continuity with its predecessor.
+        let transition = if compaction_changed {
             StoredStateTransition::Snapshot {
                 snapshot: Box::new(snapshot.clone()),
             }
@@ -243,23 +241,10 @@ impl Session {
         self.with_session_tree(|tree| Ok(tree.facts()))
     }
 
-    pub(crate) fn tree_items(&self) -> anyhow::Result<Vec<super::tree::SessionTreeItem>> {
-        self.with_session_tree(SessionTree::items)
-    }
-
-    pub(crate) fn histories_for_node(
-        &self,
-        target_id: &NodeId,
-    ) -> anyhow::Result<super::SessionHistories> {
+    pub(crate) fn history_for_node(&self, target_id: &NodeId) -> anyhow::Result<Vec<Message>> {
         self.with_session_tree(|tree| {
             let state = tree.state_for(target_id)?;
-            let display = tree.projected_display(target_id)?;
-            Ok(super::SessionHistories {
-                model: insert_interrupted_tool_placeholders(state.model),
-                display: insert_interrupted_tool_placeholders(
-                    display.into_iter().map(|entry| entry.message).collect(),
-                ),
-            })
+            Ok(insert_interrupted_tool_placeholders(state.model))
         })
     }
 
@@ -457,6 +442,7 @@ impl rho_sdk::SessionStore for Session {
 fn persistence_error(error: impl std::fmt::Display) -> rho_sdk::Error {
     rho_sdk::Error::Persistence {
         message: error.to_string(),
+        source: None,
     }
 }
 

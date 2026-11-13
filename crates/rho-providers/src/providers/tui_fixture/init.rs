@@ -31,11 +31,11 @@ pub(super) fn intercept(
         .lines()
         .find_map(|line| line.strip_prefix("Target path: "))?;
     let skill = tool_result_for_name(request, "skill")?;
-    if !skill.ok || skill.content.lines().next() != Some("Loaded skill: rho-init") {
+    if skill.is_failure() || skill.content.lines().next() != Some("Loaded skill: rho-init") {
         return None;
     }
     if let Some(result) = tool_result(request, WRITE_CALL_ID) {
-        return Some(completed(if result.ok {
+        return Some(completed(if !result.is_failure() {
             "fixture init wrote AGENTS.md".to_string()
         } else {
             format!("fixture init write failed: {}", result.content)
@@ -63,32 +63,13 @@ pub(super) fn intercept(
             serde_json::json!({"path": target}),
         ));
     };
-    if !read.ok {
+    if read.is_failure() {
         return Some(completed(format!(
             "fixture init read failed: {}",
             read.content
         )));
     }
-    // Use the active editor, never write over existing guidance. The hashline
-    // editor gets its live snapshot header from the actual read tool result.
-    if request.tools.iter().any(|tool| tool.name == "edit") {
-        let Some(header) = read
-            .content
-            .lines()
-            .find(|line| line.starts_with('[') && line.ends_with(']') && line.contains('#'))
-        else {
-            return Some(completed("fixture init read missing snapshot header"));
-        };
-        let body = INSTRUCTIONS
-            .lines()
-            .map(|line| format!("+{line}\n"))
-            .collect::<String>();
-        return Some(completed_tool_call(
-            WRITE_CALL_ID,
-            "edit",
-            serde_json::json!({"input": format!("{header}\nPUT >$:\n+\n{body}")}),
-        ));
-    }
+    // Use the active editor, never write over existing guidance.
     let contents = match std::fs::read_to_string(&target) {
         Ok(contents) => contents,
         Err(error) => return Some(completed(format!("fixture init read failed: {error}"))),

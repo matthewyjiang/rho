@@ -29,8 +29,9 @@ use crate::{
         run_one_shot_with_provider, OneShotAgentRequest, OneShotPhase, OneShotUpdate,
         ADVISOR_AGENT_ID,
     },
-    config::{Config, InternalAgentModelConfig, InternalAgentTarget},
+    config::{Config, InternalAgentModelConfig, InternalAgentTarget, ProviderConfigs},
     credential_store::build_provider,
+    session_environment::{Ambient, SessionEnvironment},
 };
 
 pub(crate) use transcript::{render_transcript, TranscriptBudget, DEFAULT_TRANSCRIPT_BUDGET};
@@ -42,7 +43,7 @@ const USAGE_PURPOSE: &str = "advisor";
 const TOOL_DESCRIPTION: &str = "Consult a stronger reviewer model about this session. Takes NO parameters: your whole conversation history, including the task, every tool call you made, and every result you saw, is forwarded automatically. Returns strategic guidance on what to do next.\n\nDo not call advisor as your first action. Explore first - read the relevant files, reproduce the issue, understand the shape of the task - then consult before committing to an approach.\n\nAlso call advisor:\n- When stuck: errors recurring, approach not converging, results that do not fit.\n- When considering a change of approach.\n- When you believe the task is complete. BEFORE this call, make your deliverable durable: write the file, save the result, commit the change.\n\nOn short reactive tasks where the next action follows from tool output you just read, skip advisor. Do not call it just because it exists.\n\nGive the advice serious weight. If you follow a step and it fails in practice, or you have primary-source evidence that contradicts a specific claim, adapt. If you have already retrieved data pointing one way and the advisor points another, do not switch silently: surface the conflict in one more advisor call.";
 
 const NO_MODEL_MESSAGE: &str =
-    "advisor mode has no advisor model. Choose one with /advisor, then call advisor again.";
+    "advisor mode has no advisor model. Choose one with /agents or /advisor, then call advisor again.";
 
 const NO_SESSION_MESSAGE: &str = "the advisor is not attached to a live session";
 
@@ -78,13 +79,21 @@ pub(crate) fn advisor_available(config: &Config) -> bool {
     config.advisor_mode && advisor_model(config).is_some()
 }
 
-/// Builds the `advisor` tool.
+/// Builds the `advisor` tool, whose Claude Code advisor runs in the session's
+/// `environment`.
 ///
 /// It owns no resources beyond the store and needs no shutdown, so the tool set
 /// registers it directly instead of through a bundle. That also lets advisor
 /// mode register and remove it mid-session without rebuilding the tool set.
-pub(super) fn advisor_tool(store: AdvisorSessionStore) -> Arc<dyn SdkTool> {
-    Arc::new(AdvisorTool::new(store, DEFAULT_TRANSCRIPT_BUDGET))
+pub(super) fn advisor_tool(
+    store: AdvisorSessionStore,
+    environment: SessionEnvironment,
+) -> Arc<dyn SdkTool> {
+    Arc::new(AdvisorTool::new(
+        store,
+        DEFAULT_TRANSCRIPT_BUDGET,
+        environment,
+    ))
 }
 
 /// Live session state the `advisor` tool reads when the executor calls it.
@@ -103,6 +112,11 @@ struct AdvisorSessionState {
     session: Option<Session>,
     system_prompt: Option<String>,
     model: Option<InternalAgentModelConfig>,
+    /// The session's configured providers, which a Rho advisor model is
+    /// looked up on. The session refreshes them when its config's change
+    /// (see `SessionRuntime::begin_prompt`), between turns, so a call reads
+    /// those of the turn it runs in.
+    providers: ProviderConfigs,
     /// Provider-reported advisor spend not yet folded into the parent TUI total.
     unclaimed_cost_usd_micros: u64,
 }
@@ -146,6 +160,12 @@ impl AdvisorSessionStore {
         self.lock().model.clone()
     }
 
+    /// Replaces the configured providers a Rho advisor model is looked up
+    /// on, for the next call.
+    pub(crate) fn set_providers(&self, providers: ProviderConfigs) {
+        self.lock().providers = providers;
+    }
+
     /// Fold provider-reported cost from a finished advisor call into the
     /// unclaimed total.
     ///
@@ -158,17 +178,6 @@ impl AdvisorSessionStore {
         };
         let mut state = self.lock();
         state.unclaimed_cost_usd_micros = state.unclaimed_cost_usd_micros.saturating_add(cost);
-    }
-
-    /// Takes advisor costs that have not yet been added to the parent session
-    /// total. Safe to call from any TUI poll path; returns 0 when nothing is
-    /// new. Costs claimed only through this poll can be lost if the TUI exits
-    /// before the next refresh - same as subagent terminal-cost claims.
-    pub fn claim_cost_usd_micros(&self) -> u64 {
-        let mut state = self.lock();
-        let claimed = state.unclaimed_cost_usd_micros;
-        state.unclaimed_cost_usd_micros = 0;
-        claimed
     }
 
     #[cfg(test)]
@@ -202,6 +211,7 @@ impl AdvisorSessionStore {
         let messages = session.live_history();
         Ok(AdvisorRequest {
             model,
+            providers: state.providers.clone(),
             session_id: session.id().clone(),
             transcript: transcript::render_transcript(
                 state.system_prompt.as_deref(),
@@ -215,6 +225,7 @@ impl AdvisorSessionStore {
 #[derive(Debug)]
 struct AdvisorRequest {
     model: InternalAgentModelConfig,
+    providers: ProviderConfigs,
     session_id: SessionId,
     transcript: String,
 }
@@ -222,11 +233,22 @@ struct AdvisorRequest {
 pub(crate) struct AdvisorTool {
     store: AdvisorSessionStore,
     budget: TranscriptBudget,
+    /// The session's environment, which a Claude Code advisor runs in as it
+    /// is when called (#1659).
+    environment: SessionEnvironment,
 }
 
 impl AdvisorTool {
-    pub(crate) fn new(store: AdvisorSessionStore, budget: TranscriptBudget) -> Self {
-        Self { store, budget }
+    pub(crate) fn new(
+        store: AdvisorSessionStore,
+        budget: TranscriptBudget,
+        environment: SessionEnvironment,
+    ) -> Self {
+        Self {
+            store,
+            budget,
+            environment,
+        }
     }
 }
 
@@ -267,6 +289,7 @@ impl SdkTool for AdvisorTool {
             let (advice, usage) = consult_advisor(
                 request,
                 workspace_path,
+                &self.environment,
                 context.cancellation().clone(),
                 context.progress().clone(),
             )
@@ -292,11 +315,13 @@ impl SdkTool for AdvisorTool {
 async fn consult_advisor(
     request: AdvisorRequest,
     workspace_path: PathBuf,
+    environment: &SessionEnvironment,
     cancellation: CancellationToken,
     progress: ToolProgressSender,
 ) -> Result<(String, ModelUsage), ToolError> {
     let AdvisorRequest {
         model,
+        providers,
         session_id,
         transcript,
     } = request;
@@ -305,15 +330,17 @@ async fn consult_advisor(
         InternalAgentTarget::Rho(selection) => {
             let reference = model.display_reference();
             let provider = build_provider(
+                &providers,
                 &selection.provider,
                 &selection.model,
                 reasoning,
                 &selection.auth,
+                environment.credentials(),
             )
             .await
             .map_err(|error| {
                 execution_error(format!(
-                    "advisor model {reference} could not start: {error}. Choose another advisor model with /advisor."
+                    "advisor model {reference} could not start: {error}. Choose another advisor model with /agents or /advisor."
                 ))
             })?;
             consult_advisor_with_provider(
@@ -332,6 +359,7 @@ async fn consult_advisor(
                 model.clone(),
                 reasoning,
                 &workspace_path,
+                environment.current(),
                 transcript,
                 cancellation,
                 progress,
@@ -350,6 +378,7 @@ async fn consult_advisor_with_claude_cli(
     model: Option<String>,
     reasoning: rho_providers::reasoning::ReasoningLevel,
     workspace_path: &Path,
+    environment: Ambient,
     transcript: String,
     cancellation: CancellationToken,
     progress: ToolProgressSender,
@@ -363,6 +392,7 @@ async fn consult_advisor_with_claude_cli(
             model,
             reasoning: Some(reasoning),
             cwd: workspace_path.to_path_buf(),
+            environment,
             cancellation,
         },
         Some(updates_tx),
@@ -439,8 +469,8 @@ async fn send_advisor_progress(progress: &ToolProgressSender, update: &OneShotUp
 }
 
 fn advisor_progress_message(update: &OneShotUpdate) -> ToolProgress {
-    ToolProgress::message(update.text.to_string())
-        .metadata(ToolMetadata::new().command_summary(update.phase.label()))
+    ToolProgress::new(update.text.to_string())
+        .with_metadata(ToolMetadata::new().command_summary(update.phase.label()))
 }
 
 fn execution_error(message: impl Into<String>) -> ToolError {

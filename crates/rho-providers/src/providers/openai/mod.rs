@@ -277,22 +277,6 @@ impl OpenAiProvider {
     }
 
     /// Streams one turn through a `Send` callback for the public SDK adapter.
-    pub(crate) async fn stream_turn(
-        &self,
-        request: ModelRequest<'_>,
-        on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
-        on_request_event: &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
-                  + Send),
-    ) -> Result<ModelResponse, ModelError> {
-        self.stream_turn_with_options(
-            request,
-            ModelRequestOptions::default(),
-            on_event,
-            on_request_event,
-        )
-        .await
-    }
-
     pub(crate) async fn stream_turn_with_options(
         &self,
         request: ModelRequest<'_>,
@@ -317,6 +301,7 @@ impl OpenAiProvider {
         reasoning_effort_emitted: &mut bool,
         on_event: &mut Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
     ) -> Result<(), ModelError> {
+        let event = self.scope_output_item_replay(event);
         if configuration_update::preserves_prefix_for(self.profile.model()) {
             configuration_update::forward_with_reasoning_effort(
                 event,
@@ -331,11 +316,36 @@ impl OpenAiProvider {
         }
     }
 
+    /// Sets the replay scope this provider grants a streamed Responses output
+    /// item; the shared stream parser cannot know the producing provider.
+    fn scope_output_item_replay(&self, event: ModelEvent) -> ModelEvent {
+        match event {
+            ModelEvent::ProviderContext {
+                kind,
+                position,
+                data,
+                replay: _,
+            } if kind == crate::protocol::openai_responses::COMPACTION_OUTPUT_ITEM_KIND => {
+                let replay = crate::protocol::openai_responses::output_item_replay_scope(
+                    self.profile.provider(),
+                    &data,
+                );
+                ModelEvent::ProviderContext {
+                    kind,
+                    position,
+                    data,
+                    replay,
+                }
+            }
+            event => event,
+        }
+    }
+
     pub(crate) async fn stream_turn_steerable(
         &self,
         request: ModelRequest<'_>,
         options: ModelRequestOptions,
-        steering: ProviderSteeringReceiver,
+        steering: Option<ProviderSteeringReceiver>,
         on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
         on_request_event: &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
                   + Send),
@@ -348,7 +358,7 @@ impl OpenAiProvider {
                 options,
                 Some(on_event),
                 on_request_event,
-                Some(steering),
+                steering,
             )
             .await
         } else {

@@ -1,4 +1,5 @@
 use std::{
+    ffi::OsStr,
     fs::{File, Metadata},
     io::{Read, Seek, SeekFrom, Write},
     path::{Component, Path, PathBuf},
@@ -6,6 +7,9 @@ use std::{
 
 use sha2::{Digest as _, Sha256};
 
+use super::secure_fs_shebang::{
+    interpreter_request, raw_shebang, shebang_interpreter, ExecutableInterpreterRequest,
+};
 use super::{
     Digest, ExecutableIdentity, FrozenPathIdentity, FrozenPathKind, WorkflowError, WorkflowResult,
 };
@@ -104,44 +108,11 @@ pub(crate) fn open_executable_candidate(path: &Path) -> WorkflowResult<Option<Op
 }
 
 fn opened_executable(executable: VerifiedPath) -> WorkflowResult<OpenedExecutable> {
-    let Some(spec) = raw_shebang(&executable.file)? else {
-        return Ok(OpenedExecutable {
-            executable,
-            interpreter_request: None,
-            interpreter_arguments: Vec::new(),
-        });
-    };
-    let (interpreter_request, interpreter_arguments) =
-        if spec.path.file_name().is_some_and(|name| name == "env") {
-            let target = spec.arguments.first().ok_or_else(|| {
-                identity_drift(Path::new("<script>"), "env shebang has no interpreter")
-            })?;
-            if target.starts_with('-') {
-                return Err(identity_drift(
-                    &spec.path,
-                    "env shebang options are not supported for frozen execution",
-                ));
-            }
-            (
-                ExecutableInterpreterRequest::Search(target.clone()),
-                spec.arguments[1..].to_vec(),
-            )
-        } else {
-            if !spec.path.is_absolute() {
-                return Err(identity_drift(
-                    &spec.path,
-                    "shebang must name an absolute interpreter",
-                ));
-            }
-            (
-                ExecutableInterpreterRequest::Absolute(spec.path),
-                spec.arguments,
-            )
-        };
+    let (request, arguments) = interpreter_request(&executable.file)?.unzip();
     Ok(OpenedExecutable {
         executable,
-        interpreter_request: Some(interpreter_request),
-        interpreter_arguments,
+        interpreter_request: request,
+        interpreter_arguments: arguments.unwrap_or_default(),
     })
 }
 
@@ -408,15 +379,21 @@ pub(crate) fn read_source_beneath(
     String::from_utf8(bytes).map_err(|error| WorkflowError::Starlark(error.to_string()))
 }
 
-pub(crate) fn freeze_executable_identity(path: &Path) -> WorkflowResult<ExecutableIdentity> {
+/// Freezes the executable at `path` and its script interpreter, if any. An
+/// `#!/usr/bin/env` interpreter is found on `search_path`, the `PATH` of the
+/// environment the executable will run in (#1659).
+pub(crate) fn freeze_executable_identity(
+    path: &Path,
+    search_path: Option<&OsStr>,
+) -> WorkflowResult<ExecutableIdentity> {
     let executable = inspect_absolute(path, FrozenPathKind::File, ContentHash::Compute)?;
-    let interpreter = shebang_interpreter(&executable.file)?;
+    let interpreter = shebang_interpreter(&executable.file, search_path)?;
     let interpreter_identity = interpreter
         .as_ref()
         .map(|spec| {
             let verified =
                 inspect_absolute(&spec.path, FrozenPathKind::File, ContentHash::Compute)?;
-            if shebang_interpreter(&verified.file)?.is_some() {
+            if shebang_interpreter(&verified.file, search_path)?.is_some() {
                 return Err(WorkflowError::Corrupt {
                     path: spec.path.clone(),
                     reason: "nested script interpreters are not supported for frozen execution"
@@ -433,17 +410,15 @@ pub(crate) fn freeze_executable_identity(path: &Path) -> WorkflowResult<Executab
     })
 }
 
-/// One interpreter path fact needed before a script identity can be frozen.
-pub(crate) enum ExecutableInterpreterRequest {
-    Absolute(std::path::PathBuf),
-    Search(String),
-}
-
+/// Checks that the executable and interpreter `expected` froze are still the
+/// ones that would run, finding an `#!/usr/bin/env` interpreter on
+/// `search_path` as [`freeze_executable_identity`] does.
 pub(crate) fn verify_executable_identity(
     expected: &ExecutableIdentity,
+    search_path: Option<&OsStr>,
 ) -> WorkflowResult<VerifiedExecutable> {
     let executable = verify_path_identity(&expected.file)?;
-    let measured_interpreter = shebang_interpreter(&executable.file)?;
+    let measured_interpreter = shebang_interpreter(&executable.file, search_path)?;
     let interpreter = match (&expected.interpreter, measured_interpreter) {
         (None, None) => None,
         (Some(expected_interpreter), Some(spec))
@@ -897,88 +872,9 @@ fn platform_id(_file: &File, _metadata: &Metadata) -> Option<String> {
     None
 }
 
-struct Shebang {
-    path: std::path::PathBuf,
-    arguments: Vec<String>,
-}
-
-fn shebang_interpreter(file: &File) -> WorkflowResult<Option<Shebang>> {
-    let Some(mut spec) = raw_shebang(file)? else {
-        return Ok(None);
-    };
-    if spec.path.file_name().is_some_and(|name| name == "env") {
-        let target = spec.arguments.first().ok_or_else(|| {
-            identity_drift(Path::new("<script>"), "env shebang has no interpreter")
-        })?;
-        if target.starts_with('-') {
-            return Err(identity_drift(
-                &spec.path,
-                "env shebang options are not supported for frozen execution",
-            ));
-        }
-        spec.path = crate::executable::find_on_path(target).ok_or_else(|| {
-            identity_drift(
-                Path::new(target),
-                "env shebang interpreter was not found on PATH",
-            )
-        })?;
-        spec.arguments.remove(0);
-    }
-    if !spec.path.is_absolute() {
-        return Err(identity_drift(
-            &spec.path,
-            "shebang must name an absolute interpreter",
-        ));
-    }
-    Ok(Some(spec))
-}
-
-fn raw_shebang(file: &File) -> WorkflowResult<Option<Shebang>> {
-    let mut file = file.try_clone()?;
-    let original_position = file.stream_position()?;
-    file.seek(SeekFrom::Start(0))?;
-    let result = (|| {
-        // Receipt: Linux BINPRM_BUF_SIZE is 256 bytes; longer shebangs are not portable.
-        let mut bytes = [0_u8; 256];
-        let read = file.read(&mut bytes)?;
-        if !bytes[..read].starts_with(b"#!") {
-            return Ok(None);
-        }
-        let line = bytes[2..read]
-            .split(|byte| *byte == b'\n')
-            .next()
-            .unwrap_or_default();
-        let line = std::str::from_utf8(line)
-            .map_err(|_| identity_drift(Path::new("<script>"), "shebang is not UTF-8"))?;
-        let mut words = line.split_ascii_whitespace();
-        let interpreter = words
-            .next()
-            .ok_or_else(|| identity_drift(Path::new("<script>"), "shebang has no interpreter"))?;
-        Ok(Some(Shebang {
-            path: Path::new(interpreter).to_owned(),
-            arguments: words.map(str::to_owned).collect(),
-        }))
-    })();
-    let restore_result = file.seek(SeekFrom::Start(original_position));
-    match result {
-        Ok(shebang) => {
-            restore_result?;
-            Ok(shebang)
-        }
-        Err(error) => {
-            let _ = restore_result;
-            Err(error)
-        }
-    }
-}
-
 pub(super) fn identity_drift(path: &Path, reason: &str) -> WorkflowError {
     WorkflowError::Corrupt {
         path: path.to_owned(),
         reason: format!("frozen filesystem identity drift: {reason}"),
     }
 }
-
-#[cfg(test)]
-#[path = "secure_fs_tests.rs"]
-mod tests;

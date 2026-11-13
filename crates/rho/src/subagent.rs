@@ -38,6 +38,9 @@ fn status_write_lock() -> &'static Mutex<()> {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum RunState {
+    /// Waiting for a slot in the delegated-agent budget.
+    Queued,
+    /// Has its slot and is launching.
     #[default]
     Starting,
     Running,
@@ -52,11 +55,12 @@ impl RunState {
     }
 
     pub fn is_live(self) -> bool {
-        matches!(self, Self::Starting | Self::Running)
+        matches!(self, Self::Queued | Self::Starting | Self::Running)
     }
 
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::Queued => "queued",
             Self::Starting => "starting",
             Self::Running => "running",
             Self::Ok => "ok",
@@ -117,26 +121,32 @@ pub struct RunStatus {
     pub error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attachment_error: Option<String>,
-    /// Claude Code session id from a `runtime: claude-cli` run. Resume with
-    /// `claude-agent-acp --cli --resume <id>`. Absent for Rho runtime runs.
+    /// Session id the external runtime reported (the ACP session id). What it
+    /// means depends on [`Self::runtime`]: a `claude-cli` id resumes with
+    /// `claude-agent-acp --cli --resume <id>`, unless the run discarded its
+    /// session, which this status does not record (see the live
+    /// `SubagentSnapshot::persistence`); Cursor and Antigravity
+    /// ids are protocol metadata only. Absent for Rho runtime runs.
     ///
-    /// # Next major
-    ///
-    /// NEXT_MAJOR(result.json): rename claude_session_id/claude_model to runtime_session_id/runtime_model; readers branch on runtime.
-    ///
-    /// Cursor reuses these Claude-named fields so the status contract stays
-    /// minor-compatible.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub claude_session_id: Option<String>,
-    /// Model a `runtime: claude-cli` run reported binding. Rho passes the model
+    /// The alias reads `result.json` files written by rho 2.x; writes only
+    /// use the new name.
+    #[serde(
+        default,
+        alias = "claude_session_id",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub runtime_session_id: Option<String>,
+    /// Model an external runtime reported binding. Rho passes the model
     /// through untouched, so this is what an alias such as `opus` resolved to.
     /// Absent for Rho runtime runs and until the run reports its model.
     ///
-    /// # Next major
-    ///
-    /// NEXT_MAJOR(result.json): rename claude_session_id/claude_model to runtime_session_id/runtime_model; readers branch on runtime.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub claude_model: Option<String>,
+    /// The alias reads `result.json` files written by rho 2.x.
+    #[serde(
+        default,
+        alias = "claude_model",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub runtime_model: Option<String>,
     /// Terminal `total_cost_usd` from Claude's result message when present.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub total_cost_usd: Option<f64>,
@@ -154,6 +164,13 @@ impl RunStatus {
         let started = self.started_at?;
         let end = self.finished_at.unwrap_or(now_unix_secs).max(started);
         Some(Duration::from_secs(end - started))
+    }
+
+    /// Moves a queued run to Starting: it has capacity and is launching.
+    /// [`Self::started_at`] stays the spawn, so elapsed time keeps counting.
+    pub fn start_now(&mut self) {
+        self.state = RunState::Starting;
+        self.last_activity = Some("starting".into());
     }
 
     /// Stamp [`Self::finished_at`] once when entering a terminal state.
@@ -293,7 +310,7 @@ fn write_status_locked(path: &Path, status: &RunStatus, force: bool) -> std::io:
     // only poll the newest one, so they do not earn an `fsync`: paying one per
     // update caps the status writer at a few hundred writes per second and
     // starves the attachment journal behind it. Run boundaries and terminal
-    // states are the states a later `rho attach` must still find after a crash.
+    // states are the states a later attach view must still find after a crash.
     let durability = if force || status.state.is_terminal() {
         crate::config_writer::WriteDurability::Durable
     } else {
@@ -310,7 +327,7 @@ pub fn read_status(path: &Path) -> Option<RunStatus> {
 /// Validate a 6-char hex run id and return its canonical lowercase form.
 ///
 /// Creation always uses lowercase paths. Accepting mixed case and normalizing
-/// keeps `rho attach` portable across case-insensitive (macOS default) and
+/// keeps run-id lookup portable across case-insensitive (macOS default) and
 /// case-sensitive (typical Linux) filesystems.
 pub fn normalize_id(id: &str) -> anyhow::Result<String> {
     if id.len() != 6 || !id.bytes().all(|byte| byte.is_ascii_hexdigit()) {

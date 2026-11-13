@@ -8,6 +8,7 @@ mod assert_helpers;
 mod attach_picker;
 mod attach_view;
 mod background_agents;
+mod basic_steps;
 mod boundary_notifications;
 mod calibrated_context;
 mod changelog;
@@ -17,39 +18,70 @@ mod command_palette;
 mod compact;
 mod composer_unicode;
 mod composer_vim;
-#[cfg(unix)]
-mod computer;
-#[cfg(unix)]
-mod computer_preference;
-#[cfg(unix)]
-mod computer_setup;
-#[cfg(unix)]
-mod computer_update;
 mod config;
+mod config_2x_upgrade;
 mod context_overlay;
 mod continue_latest;
 mod conversation_tree;
 mod copy_output;
+mod daemon_approval;
+mod daemon_build_skew;
+mod daemon_config;
+mod daemon_context;
+mod daemon_detach;
+mod daemon_doctor;
+#[cfg(unix)]
+mod daemon_jobs_view;
+#[cfg(unix)]
+mod daemon_lazy_session;
+mod daemon_login;
+mod daemon_mcp;
+mod daemon_mcp_owner;
+mod daemon_new_session_config;
+mod daemon_openapi_startup;
+mod daemon_options;
+mod daemon_prompt;
+mod daemon_reports;
+mod daemon_restart;
+// Unix: it gates its MCP server on a FIFO.
+#[cfg(unix)]
+mod daemon_restart_mcp;
+mod daemon_resume;
+mod daemon_rewind;
+mod daemon_switch;
+mod daemon_tree;
+#[cfg(unix)]
+mod pre_tree_session;
+// Starts a real command workflow, as `workflow_background` does.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+mod daemon_workflow;
+// Starts a real command workflow too.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+mod daemon_workflow_hold;
 mod diff_viewer;
 mod dispatch;
 mod doctor;
 mod document_attachment;
 mod edit_diff;
 mod fast_discovery;
+#[cfg(unix)]
+mod fifo;
 mod file_palette;
 mod first_run;
-mod goal;
+#[cfg(unix)]
 mod header_hints;
 mod hooks;
 mod hover_clicks;
 mod init_command;
 mod inline_choice_click;
 mod inline_shell;
+mod keep_warm;
 mod limits;
 mod line_editor;
 mod login;
 mod markdown_stream;
 mod mcp;
+mod mcp_composer;
 mod mermaid;
 mod model_cycle_reasoning;
 mod model_prompts;
@@ -68,11 +100,14 @@ mod questionnaire;
 mod questionnaire_timeout;
 #[cfg(unix)]
 mod quiet_subagent;
+#[cfg(unix)]
 mod reasoning_output;
 mod remember;
 mod resume_delete;
 mod resume_scrollback;
+mod run_events;
 mod runtime_info;
+#[cfg(unix)]
 mod send_confirm;
 mod sessions_hub;
 mod sessions_tool;
@@ -95,47 +130,39 @@ mod tool_card_hover;
 mod transcript_search;
 mod turn_notifications;
 mod type_during_stream;
-mod web_search;
 mod workflow;
 // Real command workflows require the verified-handle process adapter, not just a PTY.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 mod workflow_background;
-mod workflow_hub_legacy;
+mod workflow_hub_unsupported;
+#[cfg(any(target_os = "linux", target_os = "android"))]
+mod workflow_result_rail;
 mod workspace_rewind;
 mod write_stream;
 mod zen_tool_run;
 
 use activity_anchor::{SPINNER_ACTIVITY_ANCHOR_SCENARIO, SPINNER_ACTIVITY_JUMP_RAIL_SCENARIO};
-use advisor::{
-    setup_advisor_ready, setup_advisor_without_model, ADVISOR_COMMAND_STEPS,
-    ADVISOR_MISSING_MODEL_STEPS, ADVISOR_MODEL_COMMAND_STEPS, ADVISOR_REVIEW_STEPS,
-    XAI_AND_POOLSIDE_KEY_ENV, XAI_KEY_ENV,
-};
+use advisor::{ADVISOR_MISSING_MODEL_SCENARIO, ADVISOR_REVIEW_SCENARIO};
 use agent_prompt::AGENT_PROMPT_SCENARIO;
-use attach_picker::{ATTACH_CLI_EMPTY_SCENARIO, ATTACH_PICKER_SCENARIO};
+use attach_picker::ATTACH_PICKER_SCENARIO;
 use attach_view::{
     ATTACH_PARENT_MESSAGE_SCENARIO, ATTACH_VIEW_CYCLE_SCENARIO, ATTACH_VIEW_FROM_COMMAND_SCENARIO,
     ATTACH_VIEW_PARENT_APPROVAL_SCENARIO, ATTACH_VIEW_QUIT_RESTORES_SCENARIO,
 };
 use background_agents::{
-    BACKGROUND_AGENT_AUTO_DELIVERY_STEPS, BACKGROUND_AGENT_QUESTIONNAIRE_STEPS,
+    BACKGROUND_AGENT_AUTO_DELIVERY_SCENARIO, BACKGROUND_AGENT_QUESTIONNAIRE_SCENARIO,
+    CANCEL_BACKGROUND_AGENT_QUESTIONNAIRE_SCENARIO, LATE_BACKGROUND_AGENT_QUESTIONNAIRE_SCENARIO,
 };
-use changelog::CHANGELOG_STEPS;
+use changelog::CHANGELOG_SCENARIO;
 use command_palette::{
     CREATE_AGENT_COMMAND_SCENARIO, CREATE_AGENT_MISSING_TOOLS_SCENARIO,
     PROMPT_TEMPLATE_DURING_TURN_SCENARIO, PROMPT_TEMPLATE_HOT_RELOAD_SCENARIO,
     TAB_COMPLETE_ENTER_BARE_COMMAND_SCENARIO,
 };
 use compact::{SUBMIT_DURING_COMPACT_STEPS, TYPE_DURING_COMPACT_STEPS};
-#[cfg(unix)]
-use computer::{COMPUTER_FAILURE_SCENARIO, COMPUTER_PLAN_SCENARIO, COMPUTER_USE_SCENARIO};
-use config::{
-    setup_auto_without_classifier, AUTO_PERMISSION_MODE_CONFIG_STEPS,
-    AUTO_PERMISSION_MODE_STARTUP_STEPS, OPEN_CONFIG_PICKER_SCENARIO,
-    SCREEN_ALLOW_THRESHOLD_SCENARIO,
-};
+use config::{setup_auto_without_classifier, AUTO_PERMISSION_MODE_STARTUP_STEPS};
 use conversation_tree::CONVERSATION_TREE_STEPS;
-use doctor::DOCTOR_OVERLAY_SCENARIO;
+use doctor::{DOCTOR_MCP_SCENARIO, DOCTOR_OVERLAY_SCENARIO};
 use document_attachment::DOCUMENT_ATTACHMENT_SCENARIO;
 use edit_diff::EDIT_DIFF_SCENARIO;
 use file_palette::FILE_PATH_AUTOCOMPLETE_SCENARIO;
@@ -143,10 +170,7 @@ use first_run::{
     setup_prompt_template, FIRST_RUN_DECISION_HOST_STEPS, FIRST_RUN_ENV, FIRST_RUN_SETUP_STEPS,
     FIRST_RUN_SIGNIN_ENV, FIRST_RUN_SKIP_STEPS, SIGNED_OUT_SETUP_STEPS,
 };
-use goal::{
-    GOAL_BLOCKED_AND_RESUMED_STEPS, GOAL_QUESTIONNAIRE_STEPS,
-    GOAL_WAITS_FOR_SUBAGENTS_DURING_RETRY_STEPS, GOAL_WAITS_FOR_SUBAGENTS_STEPS,
-};
+#[cfg(unix)]
 use header_hints::HEADER_HINTS_SCENARIO;
 use hooks::HOOKS_CONTRACT_SCENARIO;
 use init_command::{INIT_COMMAND_SCENARIO, INIT_EXISTING_SCENARIO, INIT_PLAN_SCENARIO};
@@ -161,7 +185,7 @@ use mcp::{
     MCP_CONNECTING_SCENARIO, MCP_CONNECT_RELEASE_SCENARIO, MCP_HOLD_TAKE_BACK_SCENARIO,
     MCP_INVENTORY_SCENARIO,
 };
-use mermaid::MERMAID_FLOWCHART_RESIZE_STEPS;
+use mermaid::MERMAID_FLOWCHART_RESIZE_SCENARIO;
 use no_save::NO_SAVE_SESSION_SCENARIO;
 use paste::PASTE_MULTILINE_SCENARIO;
 use pickers::{
@@ -176,6 +200,7 @@ use process_rail::{
 };
 use program_status::PROGRAM_STATUS_SCENARIO;
 use prompt_history_search::PROMPT_HISTORY_SEARCH_SCENARIO;
+#[cfg(unix)]
 use reasoning_output::REASONING_OUTPUT_RETROACTIVE_SCENARIO;
 use resume_delete::RESUME_PICKER_DELETE_STEPS;
 use resume_scrollback::RESUME_SCROLLBACK_ID;
@@ -189,8 +214,7 @@ use side_chat::{
 use startup::{
     STARTUP_FIRST_FRAME_SCENARIO, STARTUP_PROMPT_STREAM_EXIT_SCENARIO, STARTUP_STREAM_EXIT_SCENARIO,
 };
-use statusline::STATUSLINE_HIERARCHY_STEPS;
-use std::time::Duration;
+use statusline::STATUSLINE_HIERARCHY_SCENARIO;
 use steering::{
     QUEUE_FOLLOW_UP_DURING_TURN_SCENARIO, RETRACT_STEERING_DURING_TOOL_SCENARIO,
     STEER_APPEARS_IN_TRANSCRIPT_SCENARIO, STEER_DELIVERED_MARKER_SCENARIO,
@@ -204,8 +228,9 @@ use transcript_search::{TRANSCRIPT_SEARCH_HOLDS_HIT_SCENARIO, TRANSCRIPT_SEARCH_
 use turn_notifications::TURN_NOTIFICATIONS_SCENARIO;
 use type_during_stream::TYPE_DURING_STREAM_STEPS;
 use workflow::{WORKFLOW_CANCEL_RESUME_ID, WORKFLOW_RUN_ID};
-use workflow_hub_legacy::{
-    setup_workflow_hub_legacy_run, WORKFLOW_HUB_LEGACY_RUN_ID, WORKFLOW_HUB_LEGACY_RUN_STEPS,
+use workflow_hub_unsupported::{
+    setup_workflow_hub_unsupported_records, WORKFLOW_HUB_UNSUPPORTED_ID,
+    WORKFLOW_HUB_UNSUPPORTED_STEPS,
 };
 use workspace_rewind::{WORKSPACE_REWIND_OFF_SCENARIO, WORKSPACE_REWIND_SCENARIO};
 use zen_tool_run::ZEN_TOOL_RUN_SUMMARY_SCENARIO;
@@ -225,161 +250,10 @@ const DEFAULT_SIZE: PtySize = PtySize {
 pub(super) const STARTUP: WaitTimeout = WaitTimeout::secs(20, "startup");
 pub(super) const STREAM: WaitTimeout = WaitTimeout::secs(20, "stream response");
 pub(super) const SETTLE: WaitTimeout = WaitTimeout::secs(10, "ui settle");
-
-const CANCEL_AND_RESUBMIT_STEPS: &[Step] = &[
-    Step::Phase("startup"),
-    Step::WaitText {
-        text: "gpt-5.5",
-        timeout: STARTUP,
-    },
-    Step::Phase("start_delay"),
-    Step::SubmitText("fixture delay"),
-    Step::WaitText {
-        text: "partial assistant before cancellation",
-        timeout: STREAM,
-    },
-    Step::Phase("cancel"),
-    Step::Key(Key::Esc),
-    Step::WaitText {
-        text: "model interrupted",
-        timeout: STREAM,
-    },
-    Step::WaitQuiet {
-        quiet_for: Duration::from_millis(250),
-        timeout: SETTLE,
-    },
-    Step::Phase("resubmit"),
-    Step::SubmitText("hello after cancel"),
-    Step::WaitText {
-        text: "fixture response: hello after cancel",
-        timeout: STREAM,
-    },
-    Step::ExitCommand,
-];
-
-const RESIZE_DURING_STREAM_STEPS: &[Step] = &[
-    Step::Phase("startup"),
-    Step::WaitText {
-        text: "gpt-5.5",
-        timeout: STARTUP,
-    },
-    Step::Phase("stream"),
-    Step::SubmitText("fixture stream"),
-    Step::WaitText {
-        text: "assistant stream part one",
-        timeout: STREAM,
-    },
-    Step::Phase("resize"),
-    Step::Resize { rows: 20, cols: 70 },
-    Step::Resize {
-        rows: 32,
-        cols: 120,
-    },
-    Step::Resize {
-        rows: 28,
-        cols: 100,
-    },
-    Step::WaitText {
-        text: "part two",
-        timeout: STREAM,
-    },
-    Step::WaitQuiet {
-        quiet_for: Duration::from_millis(200),
-        timeout: SETTLE,
-    },
-    Step::ExitCommand,
-];
-
-const SCROLL_DURING_STREAM_STEPS: &[Step] = &[
-    Step::Phase("startup"),
-    Step::WaitText {
-        text: "gpt-5.5",
-        timeout: STARTUP,
-    },
-    Step::Phase("continuous_stream"),
-    Step::SubmitText("fixture scroll checkpoint"),
-    Step::WaitText {
-        text: "scroll checkpoint event 100",
-        timeout: STREAM,
-    },
-    Step::Phase("scroll_up"),
-    Step::Key(Key::PageUp),
-    Step::Key(Key::PageUp),
-    Step::WaitText {
-        text: "scroll checkpoint event 050",
-        timeout: WaitTimeout::millis(500, "scroll during stream"),
-    },
-    Step::Phase("return_bottom"),
-    Step::Key(Key::CtrlEnd),
-    Step::Key(Key::Esc),
-    Step::WaitText {
-        text: "model interrupted",
-        timeout: STREAM,
-    },
-    Step::WaitQuiet {
-        quiet_for: Duration::from_millis(250),
-        timeout: SETTLE,
-    },
-    Step::ExitCommand,
-];
-
-const TERMINAL_RESTORATION_STEPS: &[Step] = &[
-    Step::Phase("startup"),
-    Step::WaitText {
-        text: "gpt-5.5",
-        timeout: STARTUP,
-    },
-    // Entering the TUI enables alternate screen / mouse / paste modes.
-    Step::AssertRawContains("\u{1b}[?1049h"),
-    Step::ExitCommand,
-    Step::Phase("assert_restore"),
-    Step::Custom(assert_terminal_restored),
-];
-
-const PROGRESS_TOOL_STEPS: &[Step] = &[
-    Step::Phase("startup"),
-    Step::WaitText {
-        text: "gpt-5.5",
-        timeout: STARTUP,
-    },
-    Step::SubmitText("fixture progress tool"),
-    Step::WaitText {
-        text: "deterministic fixture tool result",
-        timeout: STREAM,
-    },
-    Step::WaitText {
-        text: "progress tool lifecycle complete",
-        timeout: STREAM,
-    },
-    Step::ExitCommand,
-];
-
-const CONCURRENT_PROGRESS_STEPS: &[Step] = &[
-    Step::Phase("startup"),
-    Step::WaitText {
-        text: "gpt-5.5",
-        timeout: STARTUP,
-    },
-    Step::SubmitText("fixture concurrent progress"),
-    Step::WaitText {
-        text: "slow fixture progress one",
-        timeout: STREAM,
-    },
-    Step::WaitText {
-        text: "fast fixture result",
-        timeout: STREAM,
-    },
-    Step::AssertText("slow fixture progress one"),
-    Step::WaitText {
-        text: "slow fixture result",
-        timeout: STREAM,
-    },
-    Step::WaitText {
-        text: "concurrent progress complete in model order",
-        timeout: STREAM,
-    },
-    Step::ExitCommand,
-];
+use basic_steps::{
+    CANCEL_AND_RESUBMIT_STEPS, CONCURRENT_PROGRESS_STEPS, PROGRESS_TOOL_STEPS,
+    RESIZE_DURING_STREAM_STEPS, SCROLL_DURING_STREAM_STEPS, TERMINAL_RESTORATION_STEPS,
+};
 
 /// All registered scenarios.
 const ALL_SCENARIOS: &[Scenario] = &[
@@ -391,8 +265,10 @@ const ALL_SCENARIOS: &[Scenario] = &[
     STARTUP_PROMPT_STREAM_EXIT_SCENARIO,
     NO_SAVE_SESSION_SCENARIO,
     remember::REMEMBER_SCENARIO,
+    #[cfg(unix)]
     REASONING_OUTPUT_RETROACTIVE_SCENARIO,
     ZEN_TOOL_RUN_SUMMARY_SCENARIO,
+    #[cfg(unix)]
     HEADER_HINTS_SCENARIO,
     TURN_NOTIFICATIONS_SCENARIO,
     PROGRAM_STATUS_SCENARIO,
@@ -400,6 +276,9 @@ const ALL_SCENARIOS: &[Scenario] = &[
     TRANSCRIPT_SEARCH_SCENARIO,
     TRANSCRIPT_SEARCH_HOLDS_HIT_SCENARIO,
     STREAMING_CONTROLS_SCENARIO,
+    run_events::PROVIDER_RETRY_SCENARIO,
+    run_events::WEB_SEARCH_ACTIVITY_SCENARIO,
+    run_events::PROVIDER_DIAGNOSTIC_SCENARIO,
     AGENT_PROMPT_SCENARIO,
     Scenario::new(
         "cancel_and_resubmit",
@@ -469,6 +348,8 @@ const ALL_SCENARIOS: &[Scenario] = &[
     workflow_background::WORKFLOW_BACKGROUND_SCENARIO,
     #[cfg(any(target_os = "linux", target_os = "android"))]
     workflow_background::WORKFLOW_HUB_PLANNED_RETRY_SCENARIO,
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    workflow_result_rail::SCENARIO,
     PASTE_MULTILINE_SCENARIO,
     composer_unicode::COMPOSER_UNICODE_SCENARIO,
     composer_vim::COMPOSER_VIM_SCENARIO,
@@ -481,11 +362,13 @@ const ALL_SCENARIOS: &[Scenario] = &[
     inline_choice_click::INLINE_CHOICE_CLICK_SCENARIO,
     palette_click::SLASH_PALETTE_CLICK_SCENARIO,
     palette_click::FILE_PALETTE_CLICK_SCENARIO,
+    #[cfg(unix)]
     hover_clicks::INLINE_PICKER_CLICK_SCENARIO,
     hover_clicks::OVERLAY_PICKER_DOUBLE_CLICK_SCENARIO,
     panel_pointer::PANEL_POINTER_SCENARIO,
     panel_pointer::SIDE_POINTER_SCENARIO,
     status_clicks::STATUSLINE_MODEL_CLICK_SCENARIO,
+    status_clicks::STATUSLINE_NO_REASONING_CLICK_SCENARIO,
     status_clicks::ATTACHMENT_CLICK_REMOVE_SCENARIO,
     Scenario::new(
         "supervised_approval",
@@ -499,22 +382,10 @@ const ALL_SCENARIOS: &[Scenario] = &[
     ),
     config::PERMISSIONS_COMMAND_SCENARIO,
     plan_exit::APPROVE_SCENARIO,
-    plan_exit::GOAL_SCENARIO,
     plan_exit::IDLE_COMPLETION_SCENARIO,
     plan_exit::KEEP_SCENARIO,
     plan_exit::FAILED_SCENARIO,
     plan_exit::QUEUED_CYCLE_SCENARIO,
-    Scenario::new(
-        "auto_permission_mode_config",
-        "Gate Auto behind a classifier model picker, cancel safely, then enable it",
-        PtySize {
-            rows: 14,
-            cols: 100,
-        },
-        AUTO_PERMISSION_MODE_CONFIG_STEPS,
-        /*smoke*/ false,
-    )
-    .with_env(OPENAI_AND_XAI_KEY_ENV),
     Scenario::new(
         "auto_permission_mode_startup",
         "Start in Auto without a classifier and force a model pick before tools run",
@@ -528,27 +399,11 @@ const ALL_SCENARIOS: &[Scenario] = &[
     .with_setup(setup_auto_without_classifier)
     .with_env(OPENAI_KEY_ENV),
     // Custom multi-process scenario: see config::run_auto_recovered_handoff.
-    Scenario::new(
-        config::AUTO_PERMISSION_MODE_RECOVERED_HANDOFF_ID,
-        "Resume a session under Auto without a classifier and force the model pick",
-        PtySize {
-            rows: 16,
-            cols: 100,
-        },
-        &[],
-        /*smoke*/ false,
-    ),
+    #[cfg(unix)]
+    config::AUTO_RECOVERED_HANDOFF_SCENARIO,
     // Custom multi-process scenario: see send_confirm::run_send_confirm_handoff.
-    Scenario::new(
-        send_confirm::SEND_CONFIRM_HANDOFF_ID,
-        "Confirm a send whose conversation holds unreplayable native context",
-        PtySize {
-            rows: 16,
-            cols: 100,
-        },
-        &[],
-        /*smoke*/ false,
-    ),
+    #[cfg(unix)]
+    send_confirm::SCENARIO,
     codemode_stream::CODEMODE_CARD_SCENARIO,
     codemode_stream::CODEMODE_LARGE_SCRIPT_SCENARIO,
     Scenario::new(
@@ -580,6 +435,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
     SPINNER_ACTIVITY_JUMP_RAIL_SCENARIO,
     LIMITS_OVERLAY_SCENARIO,
     DOCTOR_OVERLAY_SCENARIO,
+    DOCTOR_MCP_SCENARIO,
     spend::SPEND_OVERLAY_SCENARIO,
     context_overlay::CONTEXT_OVERLAY_SCENARIO,
     SIDE_OVERLAY_SCENARIO,
@@ -588,6 +444,8 @@ const ALL_SCENARIOS: &[Scenario] = &[
     SIDE_DURING_TURN_SCENARIO,
     SIDE_COMPOSER_SCENARIO,
     fast_discovery::FAST_DISCOVERY_SCENARIO,
+    #[cfg(unix)]
+    fast_discovery::DAEMON_FAST_OFF_SCENARIO,
     CREATE_AGENT_COMMAND_SCENARIO,
     CREATE_AGENT_MISSING_TOOLS_SCENARIO,
     TAB_COMPLETE_ENTER_BARE_COMMAND_SCENARIO,
@@ -595,13 +453,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
     PROMPT_TEMPLATE_DURING_TURN_SCENARIO,
     FILE_PATH_AUTOCOMPLETE_SCENARIO,
     SHELL_TAB_COMPLETION_SCENARIO,
-    Scenario::new(
-        "mermaid_flowchart_resize",
-        "Render a long-labelled flowchart, then explain the fallback in a narrow pane",
-        DEFAULT_SIZE,
-        MERMAID_FLOWCHART_RESIZE_STEPS,
-        false,
-    ),
+    MERMAID_FLOWCHART_RESIZE_SCENARIO,
     Scenario::new(
         "runtime_info",
         "Open runtime details immediately, copy the report, and keep fields readable after a narrow resize",
@@ -614,20 +466,8 @@ const ALL_SCENARIOS: &[Scenario] = &[
         false,
     )
     .with_env(&[("SSH_TTY", "rho-pty-clipboard")]),
-    Scenario::new(
-        "statusline_hierarchy",
-        "Keep ranked statusline identity fields as the terminal narrows",
-        DEFAULT_SIZE,
-        STATUSLINE_HIERARCHY_STEPS,
-        false,
-    ),
-    Scenario::new(
-        "changelog",
-        "Show bundled release notes for the installed version in chat",
-        DEFAULT_SIZE,
-        CHANGELOG_STEPS,
-        false,
-    ),
+    STATUSLINE_HIERARCHY_SCENARIO,
+    CHANGELOG_SCENARIO,
     Scenario::new(
         "conversation_tree",
         "Restore an earlier turn and continue on a new branch",
@@ -640,23 +480,8 @@ const ALL_SCENARIOS: &[Scenario] = &[
     diff_viewer::DIFF_VIEWER_SCENARIO,
     copy_output::COPY_OUTPUT_SCENARIO,
     HOOKS_CONTRACT_SCENARIO,
-    #[cfg(unix)]
-    COMPUTER_USE_SCENARIO,
-    #[cfg(unix)]
-    computer_preference::COMPUTER_PREFERENCE_SCENARIO,
-    #[cfg(unix)]
-    computer_setup::COMPUTER_SETUP_SCENARIO,
-    #[cfg(unix)]
-    computer_setup::COMPUTER_SETUP_CANCEL_SCENARIO,
-    #[cfg(unix)]
-    computer_update::COMPUTER_UPDATE_SCENARIO,
-    #[cfg(unix)]
-    computer_update::COMPUTER_UPDATE_PLAN_SCENARIO,
-    #[cfg(unix)]
-    COMPUTER_FAILURE_SCENARIO,
-    #[cfg(unix)]
-    COMPUTER_PLAN_SCENARIO,
     MCP_INVENTORY_SCENARIO,
+    mcp_composer::MCP_COMPOSER_SCENARIO,
     MCP_CONNECTING_SCENARIO,
     MCP_CONNECT_RELEASE_SCENARIO,
     MCP_HOLD_TAKE_BACK_SCENARIO,
@@ -681,6 +506,69 @@ const ALL_SCENARIOS: &[Scenario] = &[
         &[],
         /*smoke*/ false,
     ),
+    #[cfg(unix)]
+    daemon_resume::SCENARIO,
+    #[cfg(unix)]
+    pre_tree_session::SCENARIO,
+    daemon_detach::SCENARIO,
+    #[cfg(unix)]
+    daemon_context::SCENARIO,
+    #[cfg(unix)]
+    daemon_login::SCENARIO,
+    #[cfg(unix)]
+    daemon_reports::SCENARIO,
+    #[cfg(unix)]
+    daemon_tree::SCENARIO,
+    #[cfg(unix)]
+    daemon_rewind::SCENARIO,
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    daemon_workflow::SCENARIO,
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    daemon_workflow_hold::SCENARIO,
+    #[cfg(unix)]
+    daemon_switch::SCENARIO,
+    #[cfg(unix)]
+    daemon_lazy_session::SCENARIO,
+    daemon_new_session_config::SCENARIO,
+    #[cfg(unix)]
+    daemon_restart::SCENARIO,
+    #[cfg(unix)]
+    daemon_restart_mcp::SCENARIO,
+    #[cfg(unix)]
+    daemon_build_skew::SCENARIO,
+    #[cfg(unix)]
+    daemon_jobs_view::SCENARIO,
+    #[cfg(unix)]
+    daemon_jobs_view::ACTIONS_SCENARIO,
+    #[cfg(unix)]
+    daemon_jobs_view::WORKTREE_SCENARIO,
+    #[cfg(unix)]
+    daemon_mcp::SCENARIO,
+    #[cfg(unix)]
+    daemon_mcp_owner::SCENARIO,
+    #[cfg(unix)]
+    daemon_doctor::SCENARIO,
+    #[cfg(unix)]
+    daemon_prompt::DAEMON_PROMPT_SCENARIO,
+    #[cfg(unix)]
+    daemon_prompt::DAEMON_CANCEL_SCENARIO,
+    #[cfg(unix)]
+    daemon_prompt::DAEMON_STREAM_COST_SCENARIO,
+    #[cfg(unix)]
+    daemon_approval::DAEMON_APPROVAL_SCENARIO,
+    #[cfg(unix)]
+    daemon_approval::DAEMON_APPROVAL_DENY_SCENARIO,
+    #[cfg(unix)]
+    daemon_options::PERMISSION_MODE,
+    compact::COMPACT_COMPLETES,
+    #[cfg(unix)]
+    daemon_openapi_startup::HOLD_TAKE_BACK,
+    #[cfg(unix)]
+    daemon_openapi_startup::LOAD_RELEASE,
+    #[cfg(unix)]
+    daemon_config::DAEMON_CONFIG,
+    #[cfg(unix)]
+    daemon_config::DAEMON_ADVISOR,
     Scenario::new(
         "sessions_hub",
         "Inspect a foreign session safely, then browse, resume, and delete locally",
@@ -708,12 +596,13 @@ const ALL_SCENARIOS: &[Scenario] = &[
     .with_setup(setup_pinned_models)
     .with_env(OPENAI_AND_XAI_KEY_ENV),
     model_prompts::MODEL_PROMPTS_SCENARIO,
+    model_prompts::BEFORE_FIRST_PROMPT_SCENARIO,
     model_cycle_reasoning::IDLE,
     model_cycle_reasoning::QUEUED,
+    config_2x_upgrade::SCENARIO,
     permission_cycle::IDLE,
     permission_cycle::REMAPPED,
     permission_cycle::QUEUED,
-    web_search::WEB_SEARCH_CONFIG_SCENARIO,
     Scenario::new(
         "open_workflow_hub_empty",
         "Open the workflows hub when the workspace has no workflows yet",
@@ -722,15 +611,13 @@ const ALL_SCENARIOS: &[Scenario] = &[
         false,
     ),
     Scenario::new(
-        WORKFLOW_HUB_LEGACY_RUN_ID,
-        "Report a read-only run from an older release in the workflows hub without exiting",
+        WORKFLOW_HUB_UNSUPPORTED_ID,
+        "List records saved before Rho 2.15 in the workflows hub and explain them without exiting",
         DEFAULT_SIZE,
-        WORKFLOW_HUB_LEGACY_RUN_STEPS,
+        WORKFLOW_HUB_UNSUPPORTED_STEPS,
         false,
     )
-    .with_setup(setup_workflow_hub_legacy_run),
-    OPEN_CONFIG_PICKER_SCENARIO,
-    SCREEN_ALLOW_THRESHOLD_SCENARIO,
+    .with_setup(setup_workflow_hub_unsupported_records),
     Scenario::new(
         "open_agents_picker",
         "Browse agent metadata in a navigable popup and scroll hidden detail into view",
@@ -814,6 +701,8 @@ const ALL_SCENARIOS: &[Scenario] = &[
         /*smoke*/ false,
     )
     .with_setup(setup_prompt_template),
+    #[cfg(unix)]
+    first_run::DAEMON_SIGNED_OUT_SCENARIO,
     Scenario::new(
         "login_provider_groups",
         "Group login providers and open readable authentication methods",
@@ -838,46 +727,10 @@ const ALL_SCENARIOS: &[Scenario] = &[
         LOGIN_OLLAMA_STEPS,
         false,
     ),
-    Scenario::new(
-        "goal_blocked_and_resumed",
-        "Pause a goal for user action, inspect it, then resume it",
-        DEFAULT_SIZE,
-        GOAL_BLOCKED_AND_RESUMED_STEPS,
-        false,
-    ),
-    Scenario::new(
-        "goal_waits_for_subagents",
-        "Wait for delegated runs before prompting an active goal to continue",
-        DEFAULT_SIZE,
-        GOAL_WAITS_FOR_SUBAGENTS_STEPS,
-        false,
-    ),
-    Scenario::new(
-        "goal_questionnaire",
-        "Answer a background child questionnaire while an active goal waits",
-        DEFAULT_SIZE,
-        GOAL_QUESTIONNAIRE_STEPS,
-        false,
-    ),
-    Scenario::new(
-        "goal_waits_for_subagents_during_retry",
-        "Wait for delegated runs before retrying a failed goal turn",
-        DEFAULT_SIZE,
-        GOAL_WAITS_FOR_SUBAGENTS_DURING_RETRY_STEPS,
-        false,
-    ),
-    Scenario::new(
-        "background_agent_auto_delivery",
-        "Spawn a background agent, end the turn, and receive its completion automatically",
-        DEFAULT_SIZE,
-        BACKGROUND_AGENT_AUTO_DELIVERY_STEPS,
-        false,
-    ),
+    BACKGROUND_AGENT_AUTO_DELIVERY_SCENARIO,
     SUBAGENT_RAIL_MOUSE_SCENARIO,
     #[cfg(unix)]
     quiet_subagent::QUIET_SUBAGENT_SCENARIO,
-    #[cfg(unix)]
-    quiet_subagent::GOAL_ACTION_RETRY_SCENARIO,
     #[cfg(unix)]
     quiet_subagent::RUNNING_NOTICES_SCENARIO,
     #[cfg(unix)]
@@ -891,12 +744,13 @@ const ALL_SCENARIOS: &[Scenario] = &[
     boundary_notifications::SCENARIO,
     calibrated_context::SCENARIO,
     ATTACH_PICKER_SCENARIO,
-    ATTACH_CLI_EMPTY_SCENARIO,
     ATTACH_PARENT_MESSAGE_SCENARIO,
     ATTACH_VIEW_FROM_COMMAND_SCENARIO,
     ATTACH_VIEW_CYCLE_SCENARIO,
     ATTACH_VIEW_PARENT_APPROVAL_SCENARIO,
     ATTACH_VIEW_QUIT_RESTORES_SCENARIO,
+    keep_warm::KEEP_WARM_PINGS_SCENARIO,
+    keep_warm::KEEP_WARM_OFF_SCENARIO,
     PROCESS_RAIL_SCENARIO,
     PROCESS_RAIL_PEEK_SCENARIO,
     PENDING_INPUT_BELOW_ACTIVITY_SCENARIO,
@@ -923,51 +777,11 @@ const ALL_SCENARIOS: &[Scenario] = &[
         SCREEN_TEXT_SELECTION_STEPS,
         false,
     ),
-    Scenario::new(
-        "advisor_command",
-        "Choose an advisor model, turn the mode off from config, and turn it on again",
-        DEFAULT_SIZE,
-        ADVISOR_COMMAND_STEPS,
-        /*smoke*/ false,
-    )
-    .with_env(XAI_KEY_ENV),
-    Scenario {
-        id: "advisor_model_command",
-        description: "Swap the advisor model and pick only supported reasoning levels",
-        size: DEFAULT_SIZE,
-        setup: Some(setup_advisor_ready),
-        env: XAI_AND_POOLSIDE_KEY_ENV,
-        args: &[],
-        steps: ADVISOR_MODEL_COMMAND_STEPS,
-        smoke: false,
-    },
-    Scenario {
-        id: "advisor_missing_model",
-        description: "Warn about advisor mode saved without a model and route to a model picker",
-        size: DEFAULT_SIZE,
-        setup: Some(setup_advisor_without_model),
-        env: XAI_KEY_ENV,
-        args: &[],
-        steps: ADVISOR_MISSING_MODEL_STEPS,
-        smoke: false,
-    },
-    Scenario {
-        id: "advisor_review",
-        description: "Consult the advisor during a turn, then survive an advisor failure",
-        size: DEFAULT_SIZE,
-        setup: Some(setup_advisor_ready),
-        env: XAI_KEY_ENV,
-        args: &[],
-        steps: ADVISOR_REVIEW_STEPS,
-        smoke: false,
-    },
-    Scenario::new(
-        "background_agent_questionnaire",
-        "Answer a questionnaire raised by a background agent and deliver its completion",
-        DEFAULT_SIZE,
-        BACKGROUND_AGENT_QUESTIONNAIRE_STEPS,
-        false,
-    ),
+    ADVISOR_MISSING_MODEL_SCENARIO,
+    ADVISOR_REVIEW_SCENARIO,
+    LATE_BACKGROUND_AGENT_QUESTIONNAIRE_SCENARIO,
+    BACKGROUND_AGENT_QUESTIONNAIRE_SCENARIO,
+    CANCEL_BACKGROUND_AGENT_QUESTIONNAIRE_SCENARIO,
 ];
 
 pub fn all_scenarios() -> &'static [Scenario] {
@@ -986,5 +800,3 @@ mod fixture_release;
 use fixture_release::release_fixture;
 
 pub use dispatch::run_named;
-
-use assert_helpers::assert_terminal_restored;

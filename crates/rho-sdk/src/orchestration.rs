@@ -11,7 +11,7 @@ use crate::{
     },
     provider::{
         provider_event_channel, provider_steering_channel, ModelRequestOptions,
-        ProviderCancellationMode,
+        ProviderCancellationMode, ProviderTurnContext,
     },
     run::RunCommand,
     session::{RunStart, SessionCore, SessionState},
@@ -121,7 +121,7 @@ async fn execute_turn_loop(
     let revision = committed.revision();
     let mut checkpoints = checkpoint::Checkpoints::new(committed);
     if let RunStart::User(input) | RunStart::WithToolCalls { input, .. } = &start {
-        history.push(Message::User(input.blocks().to_vec()));
+        history.push(Message::User(input.blocks().into()));
     }
     match emit(
         &events,
@@ -300,13 +300,12 @@ async fn execute_turn_loop(
         // the end of the OpenAI-compatible stream).
         let context_estimate =
             compaction_estimate.unwrap_or_else(|| core.advance_context(&history, &tool_specs));
-        let estimated_context_tokens = context_estimate.estimated_tokens();
         match emit(
             &events,
             &cancellation,
             RunEvent::StepStarted {
                 step,
-                estimated_context_tokens,
+                context_estimate,
             },
         )
         .await
@@ -409,7 +408,8 @@ async fn execute_turn_loop(
             );
         }
 
-        let ModelResponse::Assistant(content) = response;
+        let ModelResponse::Assistant(mut content) = response;
+        capture.apply_accepted_executions(&mut content);
         let tool_calls = content
             .iter()
             .filter_map(|block| match block {
@@ -417,7 +417,6 @@ async fn execute_turn_loop(
                 ContentBlock::Text(_) | ContentBlock::Image(_) => None,
             })
             .collect::<Vec<_>>();
-        let async_ids = capture.async_call_ids();
         let model_stop_reason = capture.stop_reason();
         let (reasoning_summary, provider_context) = capture.take_assistant_context();
         let assistant = AssistantMessage {
@@ -430,16 +429,15 @@ async fn execute_turn_loop(
         core.append_context_estimate(history.last().expect("assistant was appended"));
         if let Err(error) = checkpoints.save(&core, &runtime, &history).await {
             history.extend(
-                tool_calls
-                    .iter()
-                    .map(|call| Message::ToolResult(tool_settlement::interrupted_result(call))),
+                tool_calls.iter().map(|call| {
+                    Message::ToolResult(tool_settlement::interrupted_result(call).into())
+                }),
             );
             return control.terminate(core, history, error).await;
         }
         drain_commands(control.commands, control.steering);
         let was_steered = control.steering.has_staged();
-        let (async_calls, sync_calls) =
-            split_tool_calls(tool_calls, &async_ids, &runtime, &tool_specs);
+        let (async_calls, sync_calls) = split_tool_calls(tool_calls, &runtime, &tool_specs);
         let spawned_async = !async_calls.is_empty();
         core.publish_in_flight_history(&history);
         if let Err(error) = async {
@@ -675,8 +673,12 @@ async fn provider_turn(
     let (offer_tx, steering_rx) = provider_steering_channel();
     let mut offer_tx = Some(offer_tx);
     let (outcomes_tx, mut outcomes_rx) = tokio::sync::mpsc::unbounded_channel();
-    let mut future =
-        provider.send_turn_stream_steerable(request, request_options, provider_events, steering_rx);
+    let mut future = provider.send_turn_stream(
+        request,
+        ProviderTurnContext::new(provider_events)
+            .with_options(request_options)
+            .with_steering(steering_rx),
+    );
     control.steering.offer_into(&mut offer_tx, &outcomes_tx);
     let mut capture = StreamCapture::default();
     let mut timer = ModelCallTimer::start(Instant::now());
@@ -913,6 +915,7 @@ pub(super) async fn emit(
         biased;
         result = events.send(event) => result.map_err(|_| Error::Interrupted {
             message: "run event consumer was dropped".into(),
+            source: None,
         }),
         () = cancellation.cancelled() => Err(Error::Cancelled),
     }

@@ -6,7 +6,7 @@ use super::*;
 async fn returns_after_shell_exits_with_background_pipe_holder() {
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(15),
-        Bash::new(false).call(
+        Bash::new().call(
             json!({"command": "sleep 60 & printf done"}),
             ToolContext {
                 cwd: std::env::temp_dir(),

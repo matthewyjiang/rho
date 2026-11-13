@@ -30,14 +30,14 @@ fn attachment_stream_round_trips_view_events() {
         .unwrap();
     // Message metadata must survive view projection and the on-disk journal,
     // not just the in-memory tool card.
-    let message = Box::new(crate::presentation::NotificationCard {
+    let message = Box::new(rho_protocol::display::NotificationCard {
         title: "Inspect routing".into(),
         sender: "parent".into(),
         recipient: "reviewer".into(),
-        delivery: crate::presentation::NotificationDelivery::Queued,
-        tone: crate::presentation::NotificationTone::Neutral,
-        preview: crate::presentation::NotificationPreview::Truncated,
-        visibility: crate::presentation::NotificationVisibility::Activity,
+        delivery: rho_protocol::display::NotificationDelivery::Queued,
+        tone: rho_protocol::display::NotificationTone::Neutral,
+        preview: rho_protocol::display::NotificationPreview::Truncated,
+        visibility: rho_protocol::display::NotificationVisibility::Activity,
         reference: None,
         subtitle: None,
         body: "Check the queued route.\nKeep the full body.".into(),
@@ -48,7 +48,7 @@ fn attachment_stream_round_trips_view_events() {
         &mut writer.adapter,
         ViewModelEvent::ToolFinished {
             call_id: rho_sdk::ToolCallId::from_string("message-call").unwrap(),
-            presentation: crate::presentation::Presentation::Notification(message.clone()),
+            presentation: rho_protocol::display::Presentation::Notification(message.clone()),
             image_asset: None,
         },
     )
@@ -66,7 +66,7 @@ fn attachment_stream_round_trips_view_events() {
             AttachmentEvent::AssistantTextDelta("found it".into()),
             AttachmentEvent::ToolFinished {
                 key: Some("message-call".into()),
-                presentation: crate::presentation::Presentation::Notification(message),
+                presentation: rho_protocol::display::Presentation::Notification(message),
             },
         ]
     );
@@ -90,7 +90,7 @@ fn compaction_run_events_project_to_tool_attachment_blocks() {
         started,
         vec![AttachmentEvent::ToolStarted {
             key: key.clone(),
-            card: running.into()
+            card: running,
         }]
     );
 
@@ -159,16 +159,16 @@ fn open_compaction_failure_emits_tool_finish_then_failed() {
 
 #[test]
 fn call_id_less_preview_and_later_update_reuse_the_same_key() {
-    use rho_tools::tool_card::{ToolCard, ToolFamily, ToolHeader, ToolStatus};
+    use rho_protocol::display::{ToolCard, ToolCardStatus, ToolFamily, ToolHeader};
 
     let mut adapter = SdkEventAdapter::default();
     let preview = ToolCard::new(
-        ToolStatus::Running,
+        ToolCardStatus::Running,
         ToolFamily::Default,
         ToolHeader::call("read_file", /*primary*/ None),
     );
     let with_id = ToolCard::new(
-        ToolStatus::Running,
+        ToolCardStatus::Running,
         ToolFamily::Default,
         ToolHeader::call("read_file", /*primary*/ Some("src/main.rs".into())),
     );
@@ -179,7 +179,7 @@ fn call_id_less_preview_and_later_update_reuse_the_same_key() {
         ViewModelEvent::ToolCallUpdated {
             index: 0,
             call_id: None,
-            card: Some(preview.clone().into()),
+            card: Some(preview.clone()),
         },
     );
     let second = attachment_update(
@@ -187,7 +187,7 @@ fn call_id_less_preview_and_later_update_reuse_the_same_key() {
         ViewModelEvent::ToolCallUpdated {
             index: 0,
             call_id: Some(call_id.clone()),
-            card: Some(with_id.clone().into()),
+            card: Some(with_id.clone()),
         },
     );
     let finished = attachment_update(
@@ -203,14 +203,14 @@ fn call_id_less_preview_and_later_update_reuse_the_same_key() {
         first,
         Some(AttachmentEvent::ToolPreview {
             key: "preview:0".into(),
-            card: preview.into(),
+            card: preview,
         })
     );
     assert_eq!(
         second,
         Some(AttachmentEvent::ToolPreview {
             key: "preview:0".into(),
-            card: with_id.clone().into(),
+            card: with_id.clone(),
         })
     );
     assert_eq!(

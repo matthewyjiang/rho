@@ -1,6 +1,7 @@
 use std::{path::Path, sync::Arc};
 
 use anyhow::bail;
+use rho_providers::credentials::CredentialStore;
 use rho_sdk::{
     model::{ContentBlock, Message, ModelEvent, ModelRequest, ModelResponse, ModelUsage},
     provider::{ModelProvider, ProviderRequestEvent, ProviderStreamEvent},
@@ -8,7 +9,7 @@ use rho_sdk::{
 };
 use tokio::sync::watch;
 
-use crate::credential_store::build_provider;
+use crate::{config::ProviderConfigs, credential_store::build_provider};
 
 use super::{AgentDefinition, AgentRuntimeSpec, ModelPolicy, PromptPolicy, ToolPolicy};
 
@@ -72,16 +73,27 @@ pub(crate) struct OneShotAgentResult {
     pub usage: ModelUsage,
 }
 
-/// Builds the provider (awaiting catalog hydrate when needed) then runs the request.
+/// Builds the provider on the configured `providers` (awaiting catalog
+/// hydrate when needed), signed in with `credentials`, then runs the request.
 pub(crate) async fn run_one_shot_agent(
     request: OneShotAgentRequest<'_>,
+    providers: &ProviderConfigs,
     provider_name: &str,
     model: &str,
     auth: &str,
+    credentials: Arc<dyn CredentialStore>,
     usage_recording: ProviderRequestUsageRecording,
 ) -> anyhow::Result<OneShotAgentResult> {
     let reasoning = resolve_reasoning(request.definition, request.reasoning)?;
-    let provider = build_provider(provider_name, model, reasoning, auth).await?;
+    let provider = build_provider(
+        providers,
+        provider_name,
+        model,
+        reasoning,
+        auth,
+        credentials,
+    )
+    .await?;
     run_one_shot_with_provider(
         provider.as_ref(),
         request,
@@ -104,7 +116,7 @@ pub(crate) async fn run_one_shot_with_provider(
     };
     let messages = vec![
         Message::System(prompt.clone()),
-        Message::User(request.input),
+        Message::User(request.input.into()),
     ];
     let usage_context =
         ProviderRequestUsageContext::for_purpose(provider.identity(), request.usage_purpose)
@@ -202,6 +214,8 @@ impl OneShotStream {
                 | ModelEvent::ProviderContext { .. }
                 | ModelEvent::GenerationOutputTokens(_)
                 | ModelEvent::HostedToolActivity { .. }
+                | ModelEvent::ToolCallAccepted { .. }
+                | ModelEvent::Stopped(_)
                 | ModelEvent::ServiceTierFallback { .. },
             ) => {}
         }

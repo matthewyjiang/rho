@@ -1,0 +1,540 @@
+//! Session events: what an attached client sees of a session (#1657).
+//!
+//! The daemon sends each one in a [`super::SESSION_EVENT`] notification. They
+//! mirror ACP's `session/update`, so an adapter maps them field for field.
+//! Enums that a protocol minor may grow read unknown values as `Unknown`.
+
+use std::{fmt, path::PathBuf};
+
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+use super::{InputRequest, InputRequestId, JobState, Resolution};
+
+/// Declares a transparent string id with `new`, `as_str`, and `Display`,
+/// like [`super::SessionId`].
+macro_rules! string_id {
+    ($(#[$meta:meta])* $name:ident) => {
+        $(#[$meta])*
+        #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema)]
+        #[serde(transparent)]
+        pub struct $name(String);
+
+        impl $name {
+            pub fn new(id: impl Into<String>) -> Self {
+                Self(id.into())
+            }
+
+            pub fn as_str(&self) -> &str {
+                &self.0
+            }
+        }
+
+        impl fmt::Display for $name {
+            fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str(&self.0)
+            }
+        }
+    };
+}
+
+string_id! {
+    /// Identifies one message in a session's event stream: chunks with the
+    /// same id extend one message.
+    MessageId
+}
+
+string_id! {
+    /// Identifies one tool call; every [`ToolCallUpdate`] with the same id
+    /// updates that call.
+    ToolCallId
+}
+
+string_id! {
+    /// Identifies one context compaction; every [`SessionEvent::Compaction`]
+    /// with the same id reports on it.
+    CompactionId
+}
+
+string_id! {
+    /// Identifies one accepted steer ([`super::SESSION_STEER`]): the
+    /// [`SessionEvent::UserMessage`] it applies as and its
+    /// [`SessionEvent::SteeringDelivered`] carry it, and
+    /// [`super::SESSION_UNSTEER`] withdraws the steer by it.
+    SteerId
+}
+
+string_id! {
+    /// Identifies one turn of a session: what a prompt starts, from the
+    /// job leaving rest until it rests again. [`super::SESSION_PROMPT`]
+    /// answers with it, and [`SessionEvent::State`],
+    /// [`SessionEvent::TurnEnded`], and
+    /// [`super::SessionAttachResponse::turn`] carry it, so a client tells
+    /// its own turn from another client's by id. The daemon keeps a
+    /// session's last turn's id with the session's job, so it names the
+    /// same turn after a restart.
+    TurnId
+}
+
+string_id! {
+    /// A client's own name for one prompt, which makes sending it again
+    /// safe ([`super::SessionPromptParams::idempotency_key`]). Any
+    /// non-empty string the client will not reuse for another prompt of
+    /// the session, such as a UUID.
+    IdempotencyKey
+}
+
+string_id! {
+    /// One loaded session's event stream. A new daemon, or a reload, starts
+    /// a new stream.
+    StreamId
+}
+
+/// Position in a stream: the number of live events sent before and
+/// including this one, from 1. `Seq(0)` is not a position: a reset's
+/// transcript events carry it (see [`super::SessionEventParams::seq`]), and
+/// a cursor at 0 always resets.
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(transparent)]
+pub struct Seq(pub u64);
+
+/// Where a client is in a session's stream; send it back to resume.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Cursor {
+    pub stream: StreamId,
+    pub seq: Seq,
+}
+
+/// How far a keep-warm has come since the session's last model request.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct CacheWarmProgress {
+    /// Pings sent since that request.
+    pub pings: u32,
+    /// The most the daemon sends before it lets the cache expire.
+    pub max_pings: u32,
+}
+
+/// One thing that happened in a session.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum SessionEvent {
+    /// The session's job changed state: a turn started (`running`), waits
+    /// for input, or ended. An ended turn's [`Self::TurnEnded`] comes first.
+    State {
+        state: JobState,
+        /// The turn the state is of: the one under way, or the one that
+        /// ended. Absent only while the session has run no turn.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        turn: Option<TurnId>,
+    },
+    /// A user message, whole.
+    UserMessage {
+        message: MessageId,
+        content: Vec<ContentBlock>,
+        /// Present when the message is a steer that just applied: it crossed
+        /// into the conversation for the turn's next model request, under
+        /// the id [`super::SESSION_STEER`] answered with. Replayed history
+        /// carries none.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        steer: Option<SteerId>,
+    },
+    /// More of the agent's reply.
+    AgentMessageChunk { message: MessageId, text: String },
+    /// More of the agent's reasoning.
+    ThoughtChunk { message: MessageId, text: String },
+    /// Opens or updates a tool call; absent fields are unchanged. Boxed:
+    /// it is the largest event by far.
+    ToolCall(Box<ToolCallUpdate>),
+    /// The agent's plan, replacing any earlier one.
+    Plan { entries: Vec<PlanEntry> },
+    /// How full the model's context is, and what the session has cost.
+    Usage {
+        used_tokens: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        window_tokens: Option<u64>,
+        /// The session's whole spend so far in millionths of a US dollar,
+        /// so it stays exact, turns before a daemon restart included.
+        /// Absent while no request has a price, as when every request ran
+        /// on a local model (#1670).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cost_usd_micros: Option<u64>,
+    },
+    /// The session has a new title, as when the daemon named it after its
+    /// first turn (#1670) or a client renamed it
+    /// ([`super::SESSION_RENAME`]).
+    TitleChanged { title: String },
+    /// A context compaction began or ended. Each one starts
+    /// [`CompactionStatus::Started`] and ends with exactly one other
+    /// status, under the same `id` (#1670).
+    Compaction {
+        id: CompactionId,
+        status: CompactionStatus,
+    },
+    /// The turn sent the provider a model request and waits for its
+    /// response. Says what the turn is doing until its next event.
+    ProviderRequest,
+    /// The provider discarded the response it was streaming, and the run
+    /// asks for it again. What was sent of it cannot be taken back; the
+    /// retried response starts new messages (#1670). A
+    /// [`Self::ProviderRetry`] saying why follows.
+    ResponseDiscarded,
+    /// The turn asks the provider again, and why. Says what the turn is
+    /// doing until its next event; a stream reset that discarded streamed
+    /// output sends [`Self::ResponseDiscarded`] first.
+    ProviderRetry {
+        reason: RetryReason,
+        /// How long the provider said to wait before the next request.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        retry_after_ms: Option<u64>,
+    },
+    /// A titled card the session shows outside the conversation, such as a
+    /// background result.
+    Card {
+        title: String,
+        /// The body, for clients that render markdown.
+        markdown: String,
+        /// The same body as plain text, for clients that show text as is.
+        plain: String,
+        tone: CardTone,
+        /// The card as Rho's TUI draws it, when it is a notification: its
+        /// sender and recipient, preview, and what expanding it shows.
+        /// Clients that draw their own cards ignore it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        display: Option<Box<crate::display::NotificationCard>>,
+    },
+    /// Something to tell the user that is not part of the conversation.
+    Notice { text: String },
+    /// The turn waits for a person to answer `request` with
+    /// [`super::SESSION_ANSWER`] (#1660).
+    InputRequested { request: Box<InputRequest> },
+    /// Input request `id` closed: a client answered it, the turn withdrew
+    /// it, or it timed out. Clients that show it stop.
+    InputResolved {
+        id: InputRequestId,
+        resolution: Resolution,
+    },
+    /// Input request `id`'s timeout stopped: a client held it with
+    /// [`super::SESSION_HOLD`], so it waits for an answer.
+    InputHeld { id: InputRequestId },
+    /// Turn `turn` ended, and how (#1669).
+    TurnEnded {
+        turn: TurnId,
+        outcome: super::TurnOutcome,
+    },
+    /// The session's options changed, as after [`super::SESSION_CONFIGURE`]
+    /// or a plan approval's mode switch: all of them, replacing the last.
+    OptionsChanged {
+        // Boxed so the largest event stays small on every queue.
+        options: Box<super::SessionOptions>,
+    },
+    /// The provider already took steer `id` mid-request: it can no longer
+    /// be withdrawn ([`super::SESSION_UNSTEER`]), and still applies, as a
+    /// [`Self::UserMessage`] carrying `id`, at the turn's next model request.
+    SteeringDelivered { id: SteerId },
+    /// The daemon's keep-warm of the session's provider prompt cache
+    /// changed: it started or stopped warming, sent a ping, or a ping
+    /// cost something. Sent only for a session whose `process` tool offers
+    /// `keep_warm`. Why warming stopped early is a [`Self::Notice`].
+    CacheWarm {
+        /// The pings sent, while the daemon warms the cache: a process
+        /// holds it and no turn runs. Absent otherwise.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        warming: Option<CacheWarmProgress>,
+        /// What the session's pings have cost since the daemon loaded it
+        /// or its conversation last moved, in millionths of a US dollar.
+        /// [`Self::Usage`]'s cost counts the pings too: a client that shows
+        /// them apart takes this out of the latest usage cost. Absent while
+        /// no ping had a price.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cost_usd_micros: Option<u64>,
+    },
+    /// The session's background work changed: its processes, workflow
+    /// runs, and subagents still running, and those that ended whose result
+    /// its model has not been given. The whole set, replacing the last one
+    /// this stream or the attach response
+    /// ([`super::SessionAttachResponse::background`]) gave. Sent as work
+    /// starts and ends, and before a turn begins or ends, so a client hears
+    /// how the work a turn takes up ended, and what a turn left running,
+    /// before it hears of the turn.
+    Background { work: Vec<super::BackgroundWork> },
+    /// A value a newer daemon sends that this crate does not know; daemons
+    /// never send it.
+    #[serde(other)]
+    #[schemars(extend("x-rho-other" = true))]
+    Unknown,
+}
+
+impl SessionEvent {
+    /// A [`Self::ToolCall`] carrying `update`.
+    pub fn tool_call(update: ToolCallUpdate) -> Self {
+        Self::ToolCall(Box::new(update))
+    }
+}
+
+/// Opens a tool call, or updates the one with the same `id`. Absent fields
+/// are unchanged.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ToolCallUpdate {
+    pub id: ToolCallId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<ToolKind>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<ToolStatus>,
+    /// The tool's input, as the model wrote it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw_input: Option<serde_json::Value>,
+    /// Replaces the call's content when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<Vec<ToolContent>>,
+    /// Files the call touches.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub locations: Option<Vec<Location>>,
+    /// The call's card as Rho's TUI draws it; replaces the call's display
+    /// when present. While the call runs it is a
+    /// [`Presentation::Card`](crate::display::Presentation::Card) that each
+    /// start and progress update replaces; a finished call's is its final
+    /// presentation, which may be a summary card or a notification. A call
+    /// that closes `failed` without one was cut off: clients show its last
+    /// card as interrupted. Images the call produced stay in `content`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display: Option<crate::display::Presentation>,
+}
+
+/// What a tool does, so a client can pick an icon or a layout.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ToolKind {
+    Read,
+    Edit,
+    Delete,
+    Move,
+    Search,
+    Execute,
+    Think,
+    Fetch,
+    SwitchMode,
+    Other,
+    /// A value a newer daemon sends that this crate does not know; daemons
+    /// never send it.
+    #[serde(other)]
+    #[schemars(extend("x-rho-other" = true))]
+    Unknown,
+}
+
+/// Where a tool call is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ToolStatus {
+    Pending,
+    InProgress,
+    Completed,
+    Failed,
+    /// A value a newer daemon sends that this crate does not know; daemons
+    /// never send it.
+    #[serde(other)]
+    #[schemars(extend("x-rho-other" = true))]
+    Unknown,
+}
+
+/// One piece of what a tool call shows.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ToolContent {
+    Text {
+        text: String,
+    },
+    Image {
+        mime_type: String,
+        /// Base64.
+        data: String,
+    },
+    /// A file change; `old_text` is absent for a new file. A deleted file
+    /// has `deleted` set and an empty `new_text`, which an emptied file
+    /// also has.
+    Diff {
+        path: PathBuf,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        old_text: Option<String>,
+        new_text: String,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        deleted: bool,
+    },
+    /// A value a newer daemon sends that this crate does not know; daemons
+    /// never send it.
+    #[serde(other)]
+    #[schemars(extend("x-rho-other" = true))]
+    Unknown,
+}
+
+/// One piece of a prompt or a user message.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ContentBlock {
+    Text {
+        text: String,
+    },
+    Image {
+        mime_type: String,
+        /// Base64.
+        data: String,
+    },
+    /// A text resource embedded whole, such as a file the user attached.
+    Resource {
+        uri: String,
+        text: String,
+    },
+    /// A resource the user points at without its contents.
+    ResourceLink {
+        uri: String,
+        name: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        description: Option<String>,
+    },
+    /// A block a newer peer sends that this crate does not know; nothing
+    /// sends it.
+    #[serde(other)]
+    #[schemars(extend("x-rho-other" = true))]
+    Unknown,
+}
+
+/// Where a compaction is. Every status but `started` ends it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum CompactionStatus {
+    Started {
+        /// What started it. Absent from a daemon that does not say.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        trigger: Option<CompactionTrigger>,
+    },
+    Completed {
+        /// The context before and after.
+        counts: CompactionCounts,
+    },
+    /// The turn was cancelled before the compaction finished.
+    Cancelled,
+    /// It failed, or the run ended before it reported a result.
+    Failed { error: String },
+    /// A value a newer daemon sends that this crate does not know; daemons
+    /// never send it.
+    #[serde(other)]
+    #[schemars(extend("x-rho-other" = true))]
+    Unknown,
+}
+
+/// What started a compaction.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum CompactionTrigger {
+    /// A `/compact` prompt: the turn runs the compaction and no model
+    /// request, and its reply says again what the compaction did.
+    Command,
+    /// The session, within a model turn: the context reached its threshold,
+    /// or a request overflowed the model's window.
+    Automatic,
+    /// A value a newer daemon sends that this crate does not know; daemons
+    /// never send it.
+    #[serde(other)]
+    #[schemars(extend("x-rho-other" = true))]
+    Unknown,
+}
+
+/// A completed compaction's context before and after it, as rho counts
+/// them: messages, and locally estimated tokens. A compaction that removed
+/// nothing reports the same counts on both sides.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct CompactionCounts {
+    pub previous_messages: u64,
+    pub current_messages: u64,
+    pub previous_tokens: u64,
+    pub current_tokens: u64,
+    /// What the compaction itself cost, when the session prices it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_usd_micros: Option<u64>,
+}
+
+/// Why a turn asks the provider again ([`SessionEvent::ProviderRetry`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum RetryReason {
+    /// The provider limited the rate of requests.
+    RateLimit,
+    /// Another failure that may pass, such as a server error.
+    ProviderError,
+    /// The provider's response was malformed.
+    InvalidResponse,
+    /// The request overflowed the model's context; the turn compacts it
+    /// first.
+    ContextOverflow,
+    /// One request failed and the provider sends it again; no response was
+    /// discarded.
+    RequestFailed,
+    /// A value a newer daemon sends that this crate does not know; daemons
+    /// never send it.
+    #[serde(other)]
+    #[schemars(extend("x-rho-other" = true))]
+    Unknown,
+}
+
+/// How a [`SessionEvent::Card`] reads, so a client can color it or show a
+/// card that reports an error as failed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum CardTone {
+    Neutral,
+    Accent,
+    Success,
+    Warning,
+    Error,
+    /// A value a newer daemon sends that this crate does not know; daemons
+    /// never send it.
+    #[serde(other)]
+    #[schemars(extend("x-rho-other" = true))]
+    Unknown,
+}
+
+/// A file a tool call touches, and the line when one applies.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Location {
+    pub path: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<u32>,
+}
+
+/// One step of the agent's plan.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PlanEntry {
+    pub content: String,
+    pub status: PlanStatus,
+}
+
+/// Where a plan step is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum PlanStatus {
+    Pending,
+    InProgress,
+    Completed,
+    /// A value a newer daemon sends that this crate does not know; daemons
+    /// never send it.
+    #[serde(other)]
+    #[schemars(extend("x-rho-other" = true))]
+    Unknown,
+}
+
+#[cfg(test)]
+#[path = "event_tests.rs"]
+mod tests;

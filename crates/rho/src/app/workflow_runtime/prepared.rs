@@ -1,11 +1,11 @@
 //! Binds one selected leaf before handing it to an executor.
 use std::{collections::BTreeMap, path::Path};
 
-use rho_sdk::ProcessInvocation;
+use rho_sdk::{ProcessInvocation, SessionId};
 
 use crate::workflow::{
-    CommandNode, FrozenRuntimeLimits, FrozenWorkflow, Leaf, LeafExecution, NodeId, OutputSchema,
-    ResolvedAgent, ResolvedCommand, TaskInstanceId, WorkflowState, WorkflowValue,
+    AgentRuntime, CommandNode, FrozenRuntimeLimits, FrozenWorkflow, Leaf, LeafExecution, NodeId,
+    OutputSchema, ResolvedAgent, ResolvedCommand, TaskInstanceId, WorkflowState, WorkflowValue,
 };
 
 use super::{
@@ -32,6 +32,20 @@ pub(crate) enum PreparedExecution {
 pub(crate) struct AgentInvocation {
     pub(crate) agent: Box<ResolvedAgent>,
     pub(crate) prompt: String,
+    /// The session a Rho agent runs in; agents on other runtimes have none.
+    pub(crate) session: Option<AgentSession>,
+}
+
+/// The saved session a Rho agent node's attempt runs in. Its `status.json`
+/// records the id before the attempt is dispatched, so a later process can
+/// reopen it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum AgentSession {
+    /// The attempt's first run, in a new session under this id.
+    New(SessionId),
+    /// An attempt an earlier process left running, continuing in the session
+    /// it saved under this id.
+    Reopen(SessionId),
 }
 
 #[derive(Clone)]
@@ -53,10 +67,12 @@ impl<I> PreparedInvocation<I> {
 
 impl PreparedInvocation {
     /// Bind using frozen authority. No discovery or permission decisions happen here.
+    /// A Rho agent's attempt runs in `session`; other nodes drop it.
     pub(crate) fn prepare(
         workflow: &FrozenWorkflow,
         node_id: &TaskInstanceId,
         state: &WorkflowState,
+        session: AgentSession,
     ) -> Result<Self, RuntimeError> {
         let (scope, _) = state
             .local(node_id)
@@ -68,7 +84,7 @@ impl PreparedInvocation {
             .ok_or_else(|| RuntimeError::LaunchMetadata {
                 node: node_id.clone(),
             })?;
-        Self::prepare_node(leaf, &workflow.runtime_limits, &scope.outputs)
+        Self::prepare_node(leaf, &workflow.runtime_limits, &scope.outputs, session)
     }
 
     /// Prepare a leaf already selected from a scope by the driver.
@@ -76,6 +92,7 @@ impl PreparedInvocation {
         leaf: Leaf<'_>,
         limits: &FrozenRuntimeLimits,
         outputs: &BTreeMap<NodeId, WorkflowValue>,
+        session: AgentSession,
     ) -> Result<Self, RuntimeError> {
         let execution = match leaf.execution {
             LeafExecution::Agent {
@@ -92,9 +109,17 @@ impl PreparedInvocation {
                     limits.prompt_expansion_bytes,
                     prompt.len() as u64,
                 )?;
+                // Only a Rho agent runs in a Rho session.
+                let session = match agent.runtime {
+                    AgentRuntime::Rho => Some(session),
+                    AgentRuntime::ClaudeCli | AgentRuntime::Cursor | AgentRuntime::Antigravity => {
+                        None
+                    }
+                };
                 PreparedExecution::Agent(AgentInvocation {
                     agent: Box::new(agent.clone()),
                     prompt,
+                    session,
                 })
             }
             LeafExecution::Command {
@@ -115,6 +140,19 @@ impl PreparedInvocation {
             timeout_seconds: leaf.node.timeout_seconds,
             max_output_bytes: leaf.node.max_output_bytes,
         })
+    }
+
+    /// The id of the session a Rho agent node's attempt runs in, which its
+    /// `status.json` records. Other nodes run none.
+    pub(super) fn agent_session_id(&self) -> Option<&SessionId> {
+        match &self.execution {
+            PreparedExecution::Agent(AgentInvocation {
+                session: Some(AgentSession::New(id) | AgentSession::Reopen(id)),
+                ..
+            }) => Some(id),
+            PreparedExecution::Agent(AgentInvocation { session: None, .. })
+            | PreparedExecution::Command(_) => None,
+        }
     }
 }
 

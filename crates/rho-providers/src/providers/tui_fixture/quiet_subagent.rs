@@ -1,17 +1,16 @@
 //! Real child tools with PTY-controlled barriers for parent wake policy.
 
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use rho_sdk::{
-    model::{ModelRequest, ModelResponse},
-    ProviderError, ProviderErrorKind, Retryability,
+    model::{ContentBlock, Message, ModelRequest, ModelResponse},
+    ProviderError,
 };
 
 use super::{completed, completed_tool_call, tool_result};
 
 const SPAWN: &str = "quiet-parent-spawn";
 const CHILD: &str = "fixture quiet notice child";
-const GOAL_CHILD: &str = "fixture quiet goal child";
 const RUNNING_CHILD: &str = "fixture quiet running child";
 const STREAMING_CHILD: &str = "fixture streaming notice child";
 const FIRST: &str = "quiet-cache-inspected";
@@ -20,7 +19,6 @@ const ACTION: &str = "quiet-decision-required";
 const COMPLETION_CHILD: &str = "fixture quiet completion child";
 const COMPLETION: &str = "quiet-child-final-result";
 static PARENT_REQUESTS: AtomicUsize = AtomicUsize::new(0);
-static GOAL_RETRY: AtomicBool = AtomicBool::new(false);
 
 pub(super) async fn intercept(
     prompt: &str,
@@ -61,11 +59,7 @@ pub(super) async fn intercept(
             prompt.matches(COMPLETION).count(),
         )));
     }
-    if prompt == CHILD
-        || prompt == GOAL_CHILD
-        || prompt == RUNNING_CHILD
-        || prompt == STREAMING_CHILD
-    {
+    if prompt == CHILD || prompt == RUNNING_CHILD || prompt == STREAMING_CHILD {
         for (stage, tool, message) in [
             ("first", "message_parent", FIRST),
             ("second", "message_parent", SECOND),
@@ -79,9 +73,6 @@ pub(super) async fn intercept(
                 }
                 request.cancellation.cancelled().await;
                 return Some(Err(ProviderError::interrupted("quiet child stopped")));
-            }
-            if prompt == GOAL_CHILD && tool == "message_parent" {
-                continue;
             }
             if tool_result(request, message).is_none() {
                 if let Err(error) = barrier(stage, request).await {
@@ -102,19 +93,17 @@ pub(super) async fn intercept(
         request.cancellation.cancelled().await;
         return Some(Err(ProviderError::interrupted("quiet child stopped")));
     }
-    let goal_retry = prompt.contains("Goal:\nfixture quiet action retry\n");
     let running = prompt == "fixture quiet running subagent";
     let streaming = prompt == "fixture streaming notice";
-    if prompt == "fixture quiet subagent" || goal_retry || running || streaming {
+    if prompt == "fixture quiet subagent" || running || streaming {
         if tool_result(request, SPAWN).is_none() {
             PARENT_REQUESTS.store(0, Ordering::SeqCst);
-            GOAL_RETRY.store(goal_retry, Ordering::SeqCst);
             return Some(completed_tool_call(
                 SPAWN,
                 "agent",
                 serde_json::json!({
                     "agent_id": "worker",
-                    "prompt": if goal_retry { GOAL_CHILD } else if streaming { STREAMING_CHILD } else if running { RUNNING_CHILD } else { CHILD },
+                    "prompt": if streaming { STREAMING_CHILD } else if running { RUNNING_CHILD } else { CHILD },
                 }),
             ));
         }
@@ -146,22 +135,17 @@ pub(super) async fn intercept(
         }
         return Some(completed("quiet child dispatched"));
     }
-    if prompt.ends_with("fixture quiet request count") {
+    if let Some(opening) =
+        opening_input(request).filter(|input| input.contains("fixture quiet request count"))
+    {
         return Some(completed(format!(
             "quiet extra requests={} carried notices={}",
             PARENT_REQUESTS.load(Ordering::SeqCst),
-            prompt.matches(FIRST).count(),
+            opening.matches(FIRST).count(),
         )));
     }
     if prompt.contains(FIRST) || prompt.contains(SECOND) || prompt.contains(ACTION) {
         let requests = PARENT_REQUESTS.fetch_add(1, Ordering::SeqCst) + 1;
-        if GOAL_RETRY.load(Ordering::SeqCst) && requests == 1 {
-            return Some(Err(ProviderError::new(
-                ProviderErrorKind::Unavailable,
-                "deterministic parent-action failure",
-                Retryability::Permanent,
-            )));
-        }
         let notices = [FIRST, SECOND, ACTION]
             .into_iter()
             .map(|token| prompt.matches(token).count())
@@ -173,12 +157,51 @@ pub(super) async fn intercept(
     None
 }
 
+/// What opens the turn this request starts: the human prompt and whatever
+/// was delivered with it. A session delivers queued notices as a boundary
+/// input after the prompt.
+/// `None` once the turn has replied or called a tool.
+fn opening_input(request: &ModelRequest<'_>) -> Option<String> {
+    let prompt = request
+        .messages
+        .iter()
+        .rposition(|message| matches!(message, Message::User(_)))?;
+    let mut input = String::new();
+    for message in &request.messages[prompt..] {
+        match message {
+            Message::User(content) | Message::BoundaryInput(content) => {
+                for block in content.iter() {
+                    if let ContentBlock::Text(text) = block {
+                        input.push_str(text);
+                        input.push('\n');
+                    }
+                }
+            }
+            Message::Assistant(_)
+            | Message::EnrichedAssistant(_)
+            | Message::AbortedAssistant(_)
+            | Message::ToolResult(_) => return None,
+            Message::System(_)
+            | Message::CompactionSummary(_)
+            | Message::ModelContext(_)
+            | Message::ReasoningShift(_) => {}
+        }
+    }
+    Some(input)
+}
+
 #[cfg(unix)]
 async fn barrier(stage: &str, request: &ModelRequest<'_>) -> Result<(), ProviderError> {
-    let socket = tokio::net::UnixDatagram::bind(format!(".quiet-child-{stage}.sock"))
-        .map_err(|error| ProviderError::interrupted(format!("quiet barrier bind: {error}")))?;
+    // In the scenario's workspace, which is not where a daemon runs.
+    let socket = tokio::net::UnixDatagram::bind(super::release::workspace_path(&format!(
+        ".quiet-child-{stage}.sock"
+    )))
+    .map_err(|error| ProviderError::interrupted(format!("quiet barrier bind: {error}")))?;
     socket
-        .send_to(stage.as_bytes(), ".quiet-parent-pty.sock")
+        .send_to(
+            stage.as_bytes(),
+            super::release::workspace_path(".quiet-parent-pty.sock"),
+        )
         .await
         .map_err(|error| ProviderError::interrupted(format!("quiet barrier ready: {error}")))?;
     let mut command = [0_u8; 1];

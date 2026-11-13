@@ -16,6 +16,8 @@ cargo run -- run "summarize this repository"
 
 Use the local binary to test the [interactive TUI](/interactive-tui), [automation mode](/automation-cli), [configuration](/configuration), and [tools](/tools-workspace) behavior while developing.
 
+Everything Cargo launches (`cargo run` and every test) keeps its data root (config, sessions, credentials) in `target/rho-home` in the checkout and uses the file credential store, so it never migrates or writes your real data or OS keyring. Global instructions, skills, agents, and prompts still load from `~/.rho`, as they always do. `.cargo/config.toml` sets `RHO_HOME` and `RHO_CREDENTIAL_STORE` only when they are unset, and Rho treats an empty value as unset, so `RHO_HOME= RHO_CREDENTIAL_STORE= cargo run` runs exactly as the installed `rho` does. An exported `RHO_HOME` wins over this, so unset it before running tests. To reset the development home, for example when an older branch refuses a session index a newer build migrated, run `cargo run -- daemon stop` first (a development daemon outlives Cargo), then delete `target/rho-home`. Without `XDG_RUNTIME_DIR` (always on macOS) the daemon socket is `<home>/run/daemon.sock`, measured after symlinks resolve, so a `target` linked into a cache counts at its real location. On macOS a resolved home longer than 87 bytes passes the 103-byte socket limit and daemon commands fail with `SocketPathTooLong`; export a short `RHO_HOME`, such as `/tmp/rho-dev`, there.
+
 `RHO_FIRST_RUN` opens the setup screen on a machine that already has config. It does not clear history or credentials.
 
 ```bash
@@ -60,6 +62,22 @@ python3 scripts/validate.py full
 The full mode runs policy and script checks, Clippy for all targets and features, normal workspace tests, the docs TUI proof-plate PTY check against the `rho` binary those tests built, a `rho` check without dev-dependency features, documentation tests, and SDK feature and downstream checks. It stops at the first failure and prints per-step timings. Both modes cap Cargo at 8 jobs. A lower `CARGO_BUILD_JOBS` value remains in effect. They also set `RUST_MIN_STACK` to at least 16 MiB so rustc 1.92 does not overflow its 8 MiB compile-thread stack.
 
 Development and test profiles use reduced debug information to keep artifacts and link times smaller while retaining line-number backtraces. Set `CARGO_PROFILE_DEV_DEBUG=2` or `CARGO_PROFILE_TEST_DEBUG=2` when a debugging session needs full symbols.
+
+### Changing the daemon protocol
+
+While `PROTOCOL_VERSION` in `crates/rho-protocol/src/version.rs` is 0.x, a change to the wire (anything in `crates/rho-protocol/schema/protocol.json` other than descriptions and names) does not raise its minor: nothing of the protocol is released while 3.0 is built, so the version stays as it is and is set once, at the beta. Do not raise it in a pull request. Until then a frontend and a daemon of different builds may report the same version and still differ, so run both from one build ([Versions](/daemon#versions)). Regenerate the schema after a change:
+
+```bash
+cargo run -p rho-protocol --example protocol_schema > crates/rho-protocol/schema/protocol.json
+```
+
+The version a hello names and the data of the error that refuses it are the exception: clients and daemons of every version read them, so they only ever gain optional fields.
+
+CI still holds that exception, and that the version never goes down, comparing each pull request with its base and each push with the commit before it. To run the same check against your base:
+
+```bash
+python3 scripts/check_protocol_compat.py --baseline-ref origin/daemon-v3 --unstable-only
+```
 
 ## Crate publish preparation
 
@@ -232,7 +250,7 @@ Scenarios launch Rho with:
 - temporary `HOME` and `--config`
 - `RHO_TUI_TEST_MODE=matrix` (debug builds only)
 - host terminal markers stripped (`TMUX`, `TERM_PROGRAM`, Herdr vars, editor markers, and related identity env)
-- `check_for_updates = false` and `web_search_provider = "disabled"` in the isolated config
+- `web_search.mode = "off"` in the isolated `config.toml` and `check_for_updates = false` in its `clients/tui.toml`
 
 ### When to use Herdr instead
 
@@ -259,70 +277,6 @@ python3 scripts/test_workflow_cancellation.py --rho target/debug/rho
 ```
 
 The test requires Linux with Unix sockets and `pidfd_open`, and `rustc` on `PATH`. It isolates `HOME` and `RHO_HOME` in a temporary directory so local agents and credentials cannot affect the result.
-
-## Compaction replay eval
-
-Live [compaction metrics](/configuration/compaction#diagnostics) show how often compaction runs and what it costs. They cannot show what a summary lost. The offline replay eval answers that. Use it before you change summarizer prompts or models, or compaction defaults. It is a local tool: it runs on your own saved sessions and never in CI.
-
-For each replay point, the eval runs the production compactor on a saved session's uncompacted history. It then asks fixed probe questions from the compacted context and scores each answer against the full transcript. References come from the whole history, not just the removed span, so every variant answers the same questions at the same point:
-
-| Probe | Reference | Scoring |
-| --- | --- | --- |
-| `files_changed` | paths named by `write` and edit-tool calls | exact match on path suffix |
-| `test_result` | the latest test, build, or check command and its status | judge model |
-| `user_requests` | the latest user messages | judge model |
-| `errors` | the latest failed tool calls | judge model |
-
-A probe is skipped when the history has nothing for it. `files_changed` sees only `write` and edit-tool calls. Files changed by shell commands, such as a `mv` or a generated file, are not in its reference, so it measures part of what changed. Naming extra paths costs nothing. Run a `--tiers none` variant alongside the others. It answers from the uncompacted history, so its score is the ceiling that answer and judge noise allow. The judge sees only the question, the reference facts, and the answer, never the whole transcript. Pin the answer and judge models within a comparison; changing either one changes the scores. The report records the probe-set version, so only compare reports that share it.
-
-```bash
-cargo build -p rho-coding-agent -j 8
-python3 scripts/compaction_eval.py --recent 8 --points 2 \
-  --rho-args '--provider openai-codex --model gpt-6-luna --auth codex' \
-  --variant 'none=--tiers none' \
-  --variant 'default=--tiers text --summarizer session' \
-  --variant 'target30=--tiers text --summarizer session --target-percent 30'
-```
-
-Each `--variant` passes arguments to the hidden `rho __compaction_eval` command. You can set threshold and target percents, a fixed `--context-window`, a `--summarizer provider/model` (or `session`), `--tiers text` to turn off native compaction, `--tiers none` for the ceiling, and `--answer-model` and `--judge-model`. Root `--provider` and `--model` choose the session model. Without `--context-window`, each point's window is sized so the point sits exactly at the threshold, as a live automatic compaction would. Points below 32,768 estimated tokens are skipped. Replay stops at a session's first compaction, so an earlier summary never counts toward the score.
-
-The script prints a Markdown table: mean probe scores, post-compaction size as a fraction of the original, summary output tokens, cost, and latency. Each point in a report also carries the text summary the compaction wrote (`summary`, empty for native compaction and for points that needed no summary), so you can read what a configuration kept. Reports are saved under `--out` (default `/tmp/rho-compaction-eval`) with private permissions. `--render-only` redraws the table from saved reports.
-
-Saved sessions contain your code and any secrets you pasted or printed. The eval sends them to the models you configure, the same way the original session did. Reports quote transcript excerpts, so keep them local and never commit them. Eval requests do not reach the usage ledger or `compaction_events`, and elided tool results go to a temporary directory that is deleted after each point.
-
-## Permission classifier eval
-
-The Auto-mode permission classifier has an offline eval for prompt, protocol, and model changes. It runs the production classifier pipeline on two kinds of cases:
-
-- **Labeled cases** in `crates/rho/src/app/classifier_eval/cases.jsonl` measure false allows and false denies. They cover routine requests, questionnaire consent, scope creep, destructive commands, exfiltration, and injected claims of approval.
-- **Replayed calls** from saved sessions are unlabeled. Each `bash` command and `write` call becomes a case whose history ends at that call, as it does when approval is requested. Calls after a compaction are replayed on the compacted history the live classifier saw. Edits to existing tracked files usually pass the Allow edits gate, so other edit tools are not replayed. Calls the tool would reject before asking for approval are skipped. Production resolves symlinks before deciding whether a path is inside the workspace, and replay decides from the path text, so a write through a symlink can land in a different scope than it did live. Comparing two reports on the same sessions lists every decision a change flips.
-
-```bash
-cargo build -p rho-coding-agent -j 8
-python3 scripts/classifier_eval.py --recent 20 --per-session 5 \
-  --variant current= \
-  --variant other='--model PROVIDER/MODEL' --baseline current
-```
-
-Each `--variant` passes arguments to the hidden `rho __classifier_eval` command. `--model provider/model` swaps the classifier model. It keeps the configured reasoning override, and keeps the classifier's auth when the provider is the same; the report records the auth that ran. To compare two builds, run each with its own `--rho` and variant name into the same `--out`, then use `--render-only --baseline NAME`. Pass fixed `--session` paths for those runs, because `--recent` can pick different sessions between runs.
-
-Variants run in parallel, and each classifies one case at a time by default. Latency is measured per case, and concurrent requests queue at the provider. Raise `--jobs` for a faster run when latency does not matter.
-
-The script prints false allows, false denies, errors, allow and screen-escalation rates, and median latency per variant, then the IDs behind each count. A failed classification counts as an error, not a deny. Production denies it, but counting it as a correct deny would let a broken variant look safe. With `--baseline`, the script also lists flipped cases with their commands or paths. Each case carries a digest of the input the classifier saw. A case that only one report has, or whose digest changed (for example, a replayed session that grew between runs), is listed separately instead of counted as a flip, and the script exits nonzero.
-
-Each line in the case file holds `id`, `label` (`allow` or `deny`), `category`, a `note` that explains the label, a `history` of `{"user": ...}`, `{"call": {"id", "name", "arguments"}}`, and `{"result": {"id", "content", "ok"}}` entries, and a `pending` request: `{"kind": "process", "command": ...}`, `{"kind": "write", "path": ..., "content": ...}`, or `{"kind": "read", "path": ...}`. Paths resolve against `/workspace`, and a path outside it is an unrestricted request. The eval appends the pending call as the last assistant message.
-
-### Batched review
-
-`--batched` evaluates requests the agent made at once, such as parallel tool calls. Each member is screened alone, as in production. The members that need a review are then reviewed twice: once each alone, and once together in a single request that asks one question per member. The report gives both verdicts per member, so the script can list every verdict batching flips. It highlights a labeled deny that is denied alone but allowed in the batch, because a risky call hidden among routine siblings is what batching could break. It also compares total review time alone with batched review time. `--review-all` also reviews members the screen allowed, so every labeled member tests the review.
-
-```bash
-python3 scripts/classifier_eval.py --batched --review-all --variant current=
-```
-
-Labeled batches live in `crates/rho/src/app/classifier_eval/batches.jsonl`. Each line holds `id`, `category`, `note`, `history`, and a `pending` list of at least two members. Each member is a case file `pending` request plus `id` and `label`. The eval appends every member's call to one assistant message. With `--session`, each assistant message with two or more replayable calls becomes an unlabeled batch, and `--per-session` caps batches per session.
-
-Replayed sessions contain your code and secrets. They go only to the classifier models the variants configure, and reports under `--out` (default `/tmp/rho-classifier-eval`, private permissions) quote commands and paths. Keep reports local and never commit them. Eval requests do not reach the usage ledger.
 
 ## Provider identity and auth modes
 
@@ -357,7 +311,7 @@ The script uses only the Python standard library and reads policy from `scripts/
 - Existing oversized production files are listed explicitly in `legacy_file_budgets`. Their ceilings prevent further growth and should be lowered or removed as the files are split.
 - `crates/rho-providers/src/credentials` must remain independent of `model`, keeping credential storage separate from model runtime metadata (`forbidden_dependencies`).
 - `crates/rho/src/main.rs` has a 50-line thin-binary budget so application orchestration remains in the library (`thin_binary_budgets`).
-- Package dependency boundaries are also declared in `forbidden_package_dependencies` so lower-level crates cannot depend on the application or reverse the intended layering.
+- Package dependency boundaries are also declared in `forbidden_package_dependencies` so lower-level crates cannot depend on the application or reverse the intended layering. `crates/rho-protocol` depends on no other rho crate, so an SDK or application major release cannot break frontends that only speak the daemon protocol.
 
 Current legacy file budgets are: none.
 

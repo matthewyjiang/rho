@@ -1,12 +1,12 @@
 //! Sessions owns the evidence-to-card projection; renderers only know receipts.
 
-use rho_tools::tool_card::{ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus};
+use rho_protocol::display::{ToolBody, ToolCard, ToolCardStatus, ToolFact, ToolFamily, ToolHeader};
 use serde::Deserialize;
 use serde_json::Value;
 
 use super::format::string_arg;
 
-pub(super) fn preview_card(arguments: &Value, status: ToolStatus) -> ToolCard {
+pub(super) fn preview_card(arguments: &Value, status: ToolCardStatus) -> ToolCard {
     let (verb, primary) = match arguments.get("action").and_then(Value::as_str) {
         Some("search") => (
             "sessions.search",
@@ -29,7 +29,7 @@ pub(super) fn finished_card(arguments: &Value, content: &str, ok: bool) -> Optio
     if !ok {
         return None;
     }
-    let mut card = preview_card(arguments, ToolStatus::Ok);
+    let mut card = preview_card(arguments, ToolCardStatus::Ok);
     let mut lines = Vec::new();
     let (summary, index) = match arguments.get("action")?.as_str()? {
         "search" => search_receipt(serde_json::from_str(content).ok()?, &mut lines),

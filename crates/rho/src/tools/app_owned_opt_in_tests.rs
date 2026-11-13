@@ -172,6 +172,7 @@ async fn web_search_prepares_tool_managed_network() {
         web::access_tools_with_store(
             &crate::config::Config::default(),
             web::WebAccessStore::new(),
+            std::sync::Arc::new(crate::credential_store::AppCredentialStore),
         ),
         12_000,
     );

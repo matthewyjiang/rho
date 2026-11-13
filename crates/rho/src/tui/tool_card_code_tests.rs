@@ -1,6 +1,7 @@
 use pretty_assertions::assert_eq;
 
-use super::{render_code_body, ToolBodyWindow};
+use super::render_code_body;
+use rho_protocol::display::CodeWindow;
 
 // Covers: a tail window clips the wrong end of a wrapped source row, including
 // UTF-8, or consumes more than the existing terminal-row budget.
@@ -8,12 +9,12 @@ use super::{render_code_body, ToolBodyWindow};
 #[test]
 fn code_window_uses_terminal_rows_and_preserves_full_height() {
     for (source, window, budget, expected) in [
-        ("abcdef", ToolBodyWindow::Head, 1, vec!["    abcd"]),
-        ("abcdef", ToolBodyWindow::Tail, 1, vec!["    ef  "]),
-        ("αβγδεζ", ToolBodyWindow::Tail, 1, vec!["    εζ  "]),
+        ("abcdef", CodeWindow::Head, 1, vec!["    abcd"]),
+        ("abcdef", CodeWindow::Tail, 1, vec!["    ef  "]),
+        ("αβγδεζ", CodeWindow::Tail, 1, vec!["    εζ  "]),
         (
             "abcdef",
-            ToolBodyWindow::Tail,
+            CodeWindow::Tail,
             usize::MAX,
             vec!["    abcd", "    ef  "],
         ),

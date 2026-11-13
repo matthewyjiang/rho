@@ -18,7 +18,7 @@ use crate::{
     plugins::{PluginOrigin, PluginReportEntry, PluginScope, PluginStatus},
     tools::mcp::{
         report::{ConnectedServerReport, McpLiveServerState},
-        McpServerReport, McpTransportSummary,
+        McpServerReport, McpSessionReport, McpTransportSummary,
     },
 };
 
@@ -348,7 +348,7 @@ fn antigravity_row_reports_install_and_sign_in() {
 // Owner: pure unit
 #[test]
 fn mcp_row_follows_session_summary() {
-    let unconfigured = mcp_check(&McpSessionReport::default());
+    let unconfigured = mcp_check(&DoctorMcp::Summary(McpSessionReport::default().summary()));
     assert_eq!(
         (unconfigured.status, unconfigured.summary.as_str()),
         (DoctorStatus::Info, "not configured")
@@ -368,7 +368,7 @@ fn mcp_row_follows_session_summary() {
             collision_skipped_count: 0,
         })],
     };
-    let check = mcp_check(&connected);
+    let check = mcp_check(&DoctorMcp::Summary(connected.summary()));
     assert_eq!(
         (check.status, check.summary.as_str(), check.hint.as_deref()),
         (
@@ -388,7 +388,7 @@ fn mcp_row_follows_session_summary() {
             "connection refused",
         )],
     };
-    let check = mcp_check(&degraded);
+    let check = mcp_check(&DoctorMcp::Summary(degraded.summary()));
     assert_eq!(
         (check.status, check.summary.as_str(), check.hint.as_deref()),
         (

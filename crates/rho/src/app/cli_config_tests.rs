@@ -16,10 +16,17 @@ use {
     },
 };
 
-use super::{
-    apply_overrides, normalize_reasoning, normalize_reasoning_for_cli, refresh_model_cache,
-    validate,
-};
+use super::{apply_overrides, normalize_reasoning, refresh_model_cache, validate};
+
+/// Normalizes `config`'s persisted or default reasoning, as a launch
+/// without `--reasoning` does.
+fn normalize_persisted_reasoning(config: &mut Config) -> bool {
+    normalize_reasoning(
+        config,
+        rho_providers::model::ReasoningRequestSource::PersistedOrDefault,
+    )
+    .expect("a persisted reasoning level is never refused")
+}
 
 pub(super) fn unique_cache_dir(name: &str) -> std::path::PathBuf {
     let nanos = SystemTime::now()
@@ -108,6 +115,9 @@ fn validate_cli_rejects_session_flags_with_non_interactive_commands() {
                 output: crate::cli::OutputFormat::Text,
                 max_steps: None,
                 timeout: None,
+                no_save: false,
+                detach: false,
+                worktree: false,
                 prompt: Vec::new(),
             },
             Command::Update,
@@ -135,6 +145,9 @@ fn validate_cli_rejects_prompt_outside_interactive_session() {
             output: crate::cli::OutputFormat::Text,
             max_steps: None,
             timeout: None,
+            no_save: false,
+            detach: false,
+            worktree: false,
             prompt: Vec::new(),
         }),
         ..test_cli()
@@ -158,7 +171,6 @@ fn validate_cli_rejects_no_save_with_subcommands() {
         vec!["run", "ship it"],
         vec!["doctor"],
         vec!["acp"],
-        vec!["attach", "abc123"],
         vec!["sessions", "list"],
         vec!["update"],
     ] {
@@ -459,7 +471,7 @@ fn decision_model_host_is_refused_as_the_chat_provider() {
     }
 
     let error = Config::parse_settings(
-        "provider = \"typesafe\"\nmodel = \"jev-latest\"\nauth = \"typesafe-api-key\"\n",
+        "[model]\nprovider = \"typesafe\"\nmodel = \"jev-latest\"\nauth = \"typesafe-api-key\"\n",
     )
     .unwrap_err();
     assert_eq!(format!("{error:#}"), refused, "config");
@@ -495,11 +507,11 @@ fn authenticated_kimi_capabilities_normalize_stored_reasoning_without_disabling_
             ..Config::default()
         };
 
-        assert!(normalize_reasoning(&mut config));
+        assert!(normalize_persisted_reasoning(&mut config));
         assert_eq!(config.reasoning, rho_sdk::ReasoningLevel::High);
 
         config.reasoning = rho_sdk::ReasoningLevel::Off;
-        assert!(!normalize_reasoning(&mut config));
+        assert!(!normalize_persisted_reasoning(&mut config));
         assert_eq!(config.reasoning, rho_sdk::ReasoningLevel::Off);
     });
     let _ = std::fs::remove_dir_all(cache_dir);
@@ -528,7 +540,7 @@ fn explicit_kimi_reasoning_is_preserved_without_authenticated_capabilities() {
             ..Config::default()
         };
 
-        assert!(!normalize_reasoning_for_cli(
+        assert!(!normalize_reasoning(
             &mut config,
             rho_providers::model::ReasoningRequestSource::Explicit,
         )
@@ -568,7 +580,7 @@ fn explicit_known_unsupported_reasoning_is_rejected() {
             ..Config::default()
         };
 
-        let error = normalize_reasoning_for_cli(
+        let error = normalize_reasoning(
             &mut config,
             rho_providers::model::ReasoningRequestSource::Explicit,
         )
@@ -605,9 +617,9 @@ fn not_configurable_models_retain_persisted_preference_and_reject_explicit_contr
             ..Config::default()
         };
 
-        assert!(!normalize_reasoning(&mut config));
+        assert!(!normalize_persisted_reasoning(&mut config));
         assert_eq!(config.reasoning, rho_sdk::ReasoningLevel::High);
-        let error = normalize_reasoning_for_cli(
+        let error = normalize_reasoning(
             &mut config,
             rho_providers::model::ReasoningRequestSource::Explicit,
         )
@@ -856,4 +868,104 @@ async fn cli_custom_host_refresh_uses_stored_key_for_configured_keyless_host() {
 
     refresh.unwrap();
     assert!(sent_key, "model-list refresh must send the stored key");
+}
+
+// Covers: `rho run --detach` refuses, by name, every flag that would change
+// the config its session opens with, which the daemon cannot take; it takes
+// `rho run`'s own options and the flags it passes to the daemon (`--agent`,
+// `--add-dir`, `--no-*`), and a plain run takes them all.
+// Owner: cli config validation
+#[test]
+fn validate_cli_refuses_session_flags_with_a_detached_run() {
+    let refused = |args: &[&str]| {
+        let cli = Cli::try_parse_from(args).unwrap();
+        validate(&cli).err().map(|error| error.to_string())
+    };
+    let cases: [(&[&str], Option<&str>); 4] = [
+        (
+            &["rho", "run", "--detach", "--timeout", "5m", "--stdin", "go"],
+            None,
+        ),
+        (&["rho", "--model", "m", "run", "go"], None),
+        (
+            &[
+                "rho",
+                "--model",
+                "m",
+                "--agent",
+                "a",
+                "--add-dir",
+                "/x",
+                "--no-tools",
+                "--no-system-prompt",
+                "--no-subagents",
+                "run",
+                "--detach",
+                "go",
+            ],
+            Some("--model"),
+        ),
+        (
+            &[
+                "rho",
+                "--provider",
+                "p",
+                "--config",
+                "c.toml",
+                "--auth",
+                "api-key",
+                "--reasoning",
+                "high",
+                "--permission-mode",
+                "plan",
+                "--save",
+                "run",
+                "--detach",
+                "go",
+            ],
+            Some("--provider, --config, --auth, --reasoning, --permission-mode, --save"),
+        ),
+    ];
+    let found: Vec<_> = cases.iter().map(|(args, _)| refused(args)).collect();
+    let expected: Vec<_> = cases
+        .iter()
+        .map(|(_, flags)| {
+            flags.map(|flags| {
+                format!(
+                    "rho run --detach does not take {flags}: the daemon opens the session with the workspace's config"
+                )
+            })
+        })
+        .collect();
+    assert_eq!(found, expected);
+}
+
+// Covers: `rho login --config` and `rho acp --login --config` are
+// refused, since the daemon saves under its own config and would ignore the
+// file; plain `rho login` still runs.
+// Owner: cli config validation
+#[test]
+fn validate_cli_refuses_config_with_a_daemon_login() {
+    let refused = |args: &[&str]| {
+        let cli = Cli::try_parse_from(args).unwrap();
+        validate(&cli).err().map(|error| error.to_string())
+    };
+    pretty_assertions::assert_eq!(
+        [
+            refused(&["rho", "--config", "c.toml", "login", "openai-codex"]),
+            refused(&["rho", "login", "openai-codex"]),
+            refused(&["rho", "--config", "c.toml", "acp", "--login", "openai-codex"]),
+        ],
+        [
+            Some(
+                "rho login does not take --config: the rho daemon saves the credential under its own config"
+                    .to_owned()
+            ),
+            None,
+            Some(
+                "rho acp does not take --config: its sessions run in the rho daemon, under its own config; choose the model and mode in the ACP host"
+                    .to_owned()
+            ),
+        ]
+    );
 }

@@ -3,8 +3,8 @@ use crate::process_tree::{ProcessTree, SupervisedTree};
 
 use std::{path::Path, process::Stdio};
 
+use rho_protocol::display::{ToolBody, ToolCard, ToolCardStatus, ToolFact, ToolFamily, ToolHeader};
 use rho_sdk::TRUNCATION_MARKER;
-use rho_tools::tool_card::{ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus};
 use tokio::{
     io::{AsyncRead, AsyncReadExt},
     process::Command,
@@ -114,11 +114,6 @@ struct ShellStreamUpdate {
     text: String,
 }
 
-pub(super) struct DeferredShellContext {
-    context: String,
-    persisted_display: String,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct ShellOutput {
     pub(super) shell: String,
@@ -127,23 +122,6 @@ pub(super) struct ShellOutput {
     pub(super) stderr: String,
     pub(super) exit_code: String,
     pub(super) ok: bool,
-}
-
-pub(super) fn available_shells(selected: &str) -> Vec<String> {
-    let candidates: &[&str] = if cfg!(windows) {
-        &["powershell", "pwsh", "cmd"]
-    } else {
-        &["bash", "zsh", "fish", "sh"]
-    };
-    let mut shells = candidates
-        .iter()
-        .filter(|shell| crate::executable::find_on_path(shell).is_some())
-        .map(|shell| (*shell).to_string())
-        .collect::<Vec<_>>();
-    if !selected.is_empty() && !shells.iter().any(|shell| shell == selected) {
-        shells.push(selected.to_string());
-    }
-    shells
 }
 
 #[cfg(test)]
@@ -415,13 +393,13 @@ impl<'a> ShellCardParts<'a> {
             _ => "$",
         };
         let status = if self.exit_code == "running" {
-            ToolStatus::Running
+            ToolCardStatus::Running
         } else if self.ok {
-            ToolStatus::Ok
+            ToolCardStatus::Ok
         } else if self.exit_code == "cancelled" {
-            ToolStatus::Interrupted
+            ToolCardStatus::Interrupted
         } else {
-            ToolStatus::Error
+            ToolCardStatus::Error
         };
         let mut card = ToolCard::new(
             status,
@@ -602,14 +580,6 @@ impl super::App {
         Ok(changed)
     }
 
-    pub(super) async fn finish_all_inline_shells(&mut self) -> anyhow::Result<()> {
-        while !self.pending_inline_shells.is_empty() {
-            let task = self.pending_inline_shells.remove(0);
-            self.finish_inline_shell_task(task).await?;
-        }
-        Ok(())
-    }
-
     async fn finish_inline_shell_task(&mut self, task: PendingShellTask) -> anyhow::Result<()> {
         let output = match task.handle.await? {
             Ok(output) => output,
@@ -622,21 +592,19 @@ impl super::App {
             }
         };
         if task.mode.included_in_context() {
-            self.deferred_inline_shell_context
-                .push(DeferredShellContext {
-                    context: rho_tools::tool::truncate(
-                        context_text(&output),
-                        task.max_output_bytes,
+            // The daemon queues it behind the turn under way. A `!!` card is
+            // never sent: it stays on this screen only.
+            self.configure_daemon(rho_protocol::SessionChange::Context {
+                text: rho_tools::tool::truncate(context_text(&output), task.max_output_bytes),
+                display: rho_tools::tool::truncate(
+                    format!(
+                        "!{}\n\n{}",
+                        output.command,
+                        display_text(&output, /*included_in_context*/ true)
                     ),
-                    persisted_display: rho_tools::tool::truncate(
-                        format!(
-                            "!{}\n\n{}",
-                            output.command,
-                            display_text(&output, /*included_in_context*/ true)
-                        ),
-                        task.max_output_bytes,
-                    ),
-                });
+                    task.max_output_bytes,
+                ),
+            })?;
         }
         self.finish_streams();
         self.insert_entry(&super::Entry::Tool(super::ToolEntry::new(
@@ -648,27 +616,14 @@ impl super::App {
         self.refresh_git_after_command(Some(output.command.as_str()));
         self.set_status(if output.ok {
             if task.mode.included_in_context() {
-                "shell output pending context insertion".to_string()
+                // Sent already; the daemon adds it between turns.
+                "shell output included in context".to_string()
             } else {
                 "shell output excluded from context".to_string()
             }
         } else {
             format!("shell exited with {}", output.exit_code)
         });
-        Ok(())
-    }
-
-    pub(super) fn insert_deferred_inline_shell_context(
-        &mut self,
-        agent: &mut super::InteractiveRuntime,
-    ) -> anyhow::Result<()> {
-        let inserted = !self.deferred_inline_shell_context.is_empty();
-        for deferred in std::mem::take(&mut self.deferred_inline_shell_context) {
-            agent.append_user_context_with_display(deferred.context, deferred.persisted_display)?;
-        }
-        if inserted && !self.is_ui_busy() {
-            self.set_status("shell output included in context");
-        }
         Ok(())
     }
 

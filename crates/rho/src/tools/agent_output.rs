@@ -12,10 +12,7 @@ const RESULT_EXCERPT_BYTES: usize = 16 * 1024;
 pub(crate) const MODEL_NOTIFICATION_BYTES: usize = 16 * 1024;
 
 const NOTIFICATION_HEADER: &str = "[agent notification]\n\nRun status:\n";
-const NOTIFICATION_FOOTER: &str = "\n\nAny omitted or truncated result details remain available through `agents list`, `agents status`, or `rho attach <run-id>`.\n\nThis is an automated notification, not a user message. Fold the results into your ongoing work; use the agents tool for details.";
-const NEWER_NOTIFICATIONS_SEPARATOR: &str = "\n\n--- newer agent completions ---\n\n";
-const EARLIER_NOTIFICATIONS_TRUNCATED: &str =
-    "\n[earlier agent notification context truncated; use `agents list` or `agents status`]";
+const NOTIFICATION_FOOTER: &str = "\n\nAny omitted or truncated result details remain available through `agents list` or `agents status`.\n\nThis is an automated notification, not a user message. Fold the results into your ongoing work; use the agents tool for details.";
 
 #[derive(Clone, Copy)]
 pub(super) enum SnapshotFormat {
@@ -24,7 +21,7 @@ pub(super) enum SnapshotFormat {
 }
 
 pub(super) fn format_background_start(id: &str, agent_id: &str) -> String {
-    format!("agent {id} ({agent_id}) started in background\nattach: rho attach {id}")
+    format!("agent {id} ({agent_id}) started in background")
 }
 
 /// Script view of a run. Running output stays private; final answers share
@@ -74,6 +71,8 @@ impl AgentRunView {
         }
     }
 
+    /// A receipt for run `id` of agent `agent_id` whose model only the child
+    /// knows, such as a host thread's.
     pub(super) fn started(id: String, agent_id: String) -> Self {
         Self {
             id,
@@ -131,9 +130,6 @@ pub(super) fn format_snapshot(snapshot: &SubagentSnapshot, format: SnapshotForma
         if let Some(error) = &snapshot.status.attachment_error {
             lines.push(format!("attachment error: {error}"));
         }
-    }
-    if matches!(format, SnapshotFormat::Status) {
-        lines.push(format!("attach: rho attach {}", snapshot.id));
     }
     if snapshot.done && matches!(format, SnapshotFormat::Completion) {
         if let Some(result) = snapshot
@@ -211,30 +207,6 @@ pub(crate) fn notification_prompt(notifications: &[SubagentNotification]) -> Str
     format_notification(&snapshots)
 }
 
-pub(crate) fn merge_notification_context(existing: Option<&str>, newer: &str) -> String {
-    // The retention budget applies to earlier context. A boundary can combine
-    // multiple bounded sources; never truncate or reject its accepted findings.
-    let Some(existing) = existing else {
-        return newer.to_string();
-    };
-    if existing.len() + NEWER_NOTIFICATIONS_SEPARATOR.len() + newer.len()
-        <= MODEL_NOTIFICATION_BYTES
-    {
-        return format!("{existing}{NEWER_NOTIFICATIONS_SEPARATOR}{newer}");
-    }
-
-    let reserved =
-        NEWER_NOTIFICATIONS_SEPARATOR.len() + EARLIER_NOTIFICATIONS_TRUNCATED.len() + newer.len();
-    let Some(prefix_bytes) = MODEL_NOTIFICATION_BYTES.checked_sub(reserved) else {
-        return newer.to_string();
-    };
-    let boundary = floor_char_boundary(existing, prefix_bytes);
-    format!(
-        "{}{EARLIER_NOTIFICATIONS_TRUNCATED}{NEWER_NOTIFICATIONS_SEPARATOR}{newer}",
-        &existing[..boundary]
-    )
-}
-
 fn completion_summary(snapshot: &SubagentSnapshot) -> Vec<String> {
     let mut lines = vec![format!(
         "agent {} ({}): {}",
@@ -284,6 +256,7 @@ fn push_cli_metadata(lines: &mut Vec<String>, snapshot: &SubagentSnapshot) {
     use crate::{
         agent::AgentRuntime, antigravity_runtime::ANTIGRAVITY_LABEL,
         claude_runtime::session::CLAUDE_LABEL, cursor_runtime::models::CURSOR_LABEL,
+        session::SessionPersistence,
     };
 
     let label = match snapshot.status.runtime {
@@ -291,9 +264,14 @@ fn push_cli_metadata(lines: &mut Vec<String>, snapshot: &SubagentSnapshot) {
         Some(AgentRuntime::Antigravity) => ANTIGRAVITY_LABEL,
         Some(AgentRuntime::ClaudeCli) | Some(AgentRuntime::Rho) | None => CLAUDE_LABEL,
     };
-    if let Some(session_id) = &snapshot.status.claude_session_id {
+    // A run that saved nothing (`rho run --no-save`) discarded its session.
+    let resume_command = match snapshot.persistence {
+        SessionPersistence::Saved => label.resume_command,
+        SessionPersistence::Ephemeral => None,
+    };
+    if let Some(session_id) = &snapshot.status.runtime_session_id {
         let session_label = label.session_label;
-        lines.push(match label.resume_command {
+        lines.push(match resume_command {
             Some(command) => format!(
                 "{session_label}: {session_id} (resume with `{command} --resume {session_id}`)"
             ),

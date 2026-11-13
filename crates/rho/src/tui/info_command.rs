@@ -16,7 +16,9 @@ use super::{
     App,
 };
 use crate::agent::AgentRuntime;
+use crate::app::compaction_report::CompactionReport;
 use crate::claude_runtime::auth;
+use crate::presentation::number::grouped as format_number;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum BillingInfo {
@@ -45,9 +47,6 @@ impl BillingInfo {
     }
 }
 
-#[path = "info_compaction.rs"]
-mod compaction;
-
 #[derive(Clone, Debug)]
 pub(super) struct RuntimeInfo {
     version: String,
@@ -73,7 +72,9 @@ pub(super) struct RuntimeInfo {
     cache_rebilled: super::cache_stats::CacheRebilled,
     model_performance: ModelPerformanceSummary,
     context_usage: Option<ContextUsage>,
-    compaction: Option<crate::diagnostics::CompactionDiagnostics>,
+    /// The Compaction section, read from the daemon after the overlay
+    /// opens.
+    compaction: CompactionSection,
     model_metadata: Option<ModelMetadata>,
     tree: Option<crate::session::tree::SessionTreeFacts>,
     tree_error: Option<String>,
@@ -86,7 +87,26 @@ pub(super) struct RuntimeInfo {
     extra: super::types::ExtraCosts,
 }
 
+/// What `/info` knows of the session's compaction.
+#[derive(Clone, Debug, Default)]
+enum CompactionSection {
+    /// Nothing to show, or not read yet.
+    #[default]
+    Absent,
+    Report(CompactionReport),
+    /// Why the daemon could not report it.
+    Unavailable(String),
+}
+
 impl RuntimeInfo {
+    /// Fills the Compaction section with what the daemon answered.
+    pub(super) fn set_compaction(&mut self, report: Result<CompactionReport, String>) {
+        self.compaction = match report {
+            Ok(report) => CompactionSection::Report(report),
+            Err(error) => CompactionSection::Unavailable(error),
+        };
+    }
+
     pub(super) fn tree_loading(&self) -> bool {
         self.tree_loading
     }
@@ -123,7 +143,7 @@ impl App {
     pub(super) fn execute_info_command(&mut self) -> anyhow::Result<()> {
         let identity = self.info.services.diagnostics.identity();
         // A live turn may still be writing the tree. Read it only when idle.
-        let (tree_error, tree_loading) = match self.info.session.session_id.as_deref() {
+        let (tree_error, tree_loading) = match self.current_session_id().as_deref() {
             Some(_) if self.is_ui_busy() => (
                 Some("tree facts are available after the current model turn".into()),
                 false,
@@ -137,11 +157,15 @@ impl App {
         let info = RuntimeInfo {
             version: identity.rho_version.to_string(),
             provider: identity.provider.to_string(),
-            model: identity.model.to_string(),
+            // `/info` keeps the id beside the name: it is where a person
+            // looks the id up.
+            model: match self.model_names().name(&identity.provider, &identity.model) {
+                Some(name) => format!("{name} ({})", identity.model),
+                None => identity.model.to_string(),
+            },
             reasoning: identity.reasoning.to_string(),
             permission_mode: self.info.runtime.permission_mode.as_str().into(),
-            advisor: super::advisor_status::AdvisorStatus::from_runtime(&self.info.runtime)
-                .detail(),
+            advisor: self.advisor_status().detail(),
             billing: BillingInfo::from_provider_auth(
                 &self.info.runtime.provider,
                 &self.info.runtime.auth,
@@ -171,7 +195,8 @@ impl App {
                 .model_performance
                 .summary(&self.info.runtime.model_call_profile()),
             context_usage: self.usage.current_context.clone(),
-            compaction: self.info.services.diagnostics.compaction(),
+            // The daemon reports it once asked, below.
+            compaction: CompactionSection::Absent,
             model_metadata: self.model_metadata.clone(),
             tree: None,
             tree_error,
@@ -181,6 +206,7 @@ impl App {
         };
         self.show_info_overlay(info);
         self.start_info_refresh();
+        self.open_daemon_info_compaction();
         Ok(())
     }
 }
@@ -256,8 +282,18 @@ pub(super) fn runtime_info_lines(info: &RuntimeInfo, width: usize) -> Vec<Line<'
     block.push_section("Session usage");
     push_usage_fields(&mut block, info);
 
-    if let Some(diagnostics) = &info.compaction {
-        compaction::push_fields(&mut block, diagnostics);
+    match &info.compaction {
+        CompactionSection::Report(report) if !report.rows.is_empty() => {
+            block.push_section("Compaction");
+            for row in &report.rows {
+                block.push_field(&row.label, &row.value);
+            }
+        }
+        CompactionSection::Unavailable(error) => {
+            block.push_section("Compaction");
+            block.push_note(&format!("Compaction unavailable: {error}"));
+        }
+        CompactionSection::Report(_) | CompactionSection::Absent => {}
     }
 
     if let Some(metrics) = info.model_performance.latest_call {
@@ -518,18 +554,6 @@ fn format_duration(duration: Duration) -> String {
     }
 }
 
-fn format_number(value: u64) -> String {
-    let digits = value.to_string();
-    let mut formatted = String::with_capacity(digits.len() + digits.len() / 3);
-    for (index, ch) in digits.chars().enumerate() {
-        if index > 0 && (digits.len() - index).is_multiple_of(3) {
-            formatted.push(',');
-        }
-        formatted.push(ch);
-    }
-    formatted
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -662,10 +686,8 @@ mod tests {
     // Owner: /info context row
     #[test]
     fn context_row_formats_usage_and_limit_combinations() {
-        let metadata = ModelMetadata {
-            advertised_context_window: Some(200_000),
-            ..ModelMetadata::default()
-        };
+        let mut metadata = ModelMetadata::default();
+        metadata.advertised_context_window = Some(200_000);
         for (case, usage, metadata, expected) in [
             (
                 "tokens without a reported limit",

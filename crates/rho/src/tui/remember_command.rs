@@ -1,6 +1,6 @@
 //! `/remember [global] <text>` writes a standing instruction without a model turn.
 
-use super::{statusline::path::compact_cwd, App, CommandInvocation, Entry, InteractiveRuntime};
+use super::{statusline::path::compact_cwd, App, CommandInvocation, Entry};
 
 const USAGE: &str = "usage: /remember [global] <text>";
 
@@ -8,7 +8,6 @@ impl App {
     pub(super) fn execute_remember_command(
         &mut self,
         invocation: &CommandInvocation,
-        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let args = invocation.args.trim();
         let mut parts = args.splitn(2, char::is_whitespace);
@@ -57,15 +56,12 @@ impl App {
             crate::paths::prompt_data(&path),
         );
         self.insert_entry(&Entry::Notice(display.clone()));
-        if let Err(error) = agent.append_user_context_with_display(context, display) {
-            // The file is already durable. Do not report a write failure or
-            // silently imply that the instruction reached the live session.
-            self.insert_entry(&Entry::Error(format!(
-                "could not apply remembered instruction to this session: {error}"
-            )));
-            self.set_status("instruction saved; session update failed");
-            return Ok(());
-        }
+        // The daemon adds it to the session between turns and reports a
+        // refusal itself.
+        self.configure_daemon(rho_protocol::SessionChange::Context {
+            text: context,
+            display,
+        })?;
         self.set_status("instruction remembered");
         Ok(())
     }

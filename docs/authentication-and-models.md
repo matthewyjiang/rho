@@ -41,7 +41,7 @@ Rho's implemented providers are:
 
 User-defined OpenAI-compatible hosts use `[providers.custom.<name>]` with `auth = "none"` or `{name}-api-key`. They speak Chat Completions by default, or Responses when `api = "responses"`. Create one from `/login` by choosing **Custom · Chat Completions** or **Custom · Responses**, or add the table in config. See [Custom OpenAI-compatible hosts](/providers/openai-compatible).
 
-Most providers expose a refreshable API model list after authentication. `/login ollama` stores the local API base and an optional key, then refreshes the model list. Until that login, Rho neither refreshes nor lists Ollama. Custom hosts can run without a key. OpenAI Codex OAuth and SpaceXAI OAuth use static allowlists maintained by Rho, so **Refresh model lists** does not fetch them.
+Most providers expose a refreshable API model list after authentication. `/login ollama` stores the local API base and an optional key, then refreshes the model list. Until that login, Rho neither refreshes nor lists Ollama. Custom hosts can run without a key. OpenAI Codex OAuth and SpaceXAI OAuth use static allowlists maintained by Rho, so `/refresh-models` does not fetch them.
 
 ## First run
 
@@ -104,7 +104,9 @@ Successful login normally stores credentials only. It does not switch the active
 
 `/logout` opens a provider picker containing providers with stored credentials that can be deleted, plus Ollama whenever `[providers.ollama]` records its login, with or without a key. If an environment override is still present, the provider remains available after deleting the stored credential. When Claude Code is signed in, `/logout` also offers `claude-code` as a separate runtime target.
 
-`rho login <provider-or-auth-profile>` also accepts API-key providers. It asks for the key in an interactive terminal without echoing it; Enter saves, while Esc or Ctrl+C cancels. Login stores credentials without changing the configured model. ACP hosts can run this same flow in a terminal, or, when they can open links, take the key on a one-time local page Rho serves; see [Sign in](/integrations/acp#sign-in).
+`rho login <provider-or-auth-profile>` also accepts API-key providers. It asks for the key in an interactive terminal without echoing it; Enter saves, while Esc or Ctrl+C cancels. Login stores credentials without changing the configured model.
+
+`rho login` signs in through the [daemon](/daemon#credentials), starting it when none runs, as `rho run --detach` does ([#1662](https://github.com/matthewyjiang/rho/issues/1662)). The daemon checks an API key with the provider before saving it, refusing one the provider rejects and saving unchecked one it cannot ask about, such as a key that may not list models, and runs an interactive login itself, while `rho login` opens the browser and prints the URL and code. The credential lands in the store the daemon's config selects, and the daemon's running sessions use it from their next prompt, with no restart. Interrupting `rho login` cancels an interactive login the provider has not approved yet; an API key the daemon already received is saved. A daemon `rho login` starts inherits that shell's environment, where a credential variable such as `OPENAI_API_KEY` overrides any saved credential, so `rho login` refuses while its shell sets the auth profile's variable: unset it first. When the running daemon is too old to sign in, `rho login` says to stop it with `rho daemon stop`. Since the daemon saves under its own config, `rho login` does not take `--config`. ACP hosts run this same daemon login in a terminal as `rho acp --login <auth-profile>`, or, when they can open links, run an OAuth login in the daemon from their own sign-in UI; API keys are entered only in a terminal. See [Sign in](/integrations/acp#sign-in).
 
 ### Claude Code runtime sign-in
 
@@ -154,7 +156,7 @@ Use `/model provider/model` to switch explicitly, including to another provider:
 
 A bare model id works when it uniquely matches the catalog for the active selection rules. Uncataloged bare model ids stay on the current provider as an escape hatch for newly released models.
 
-Refresh a provider list with `/refresh-models` or `/config` → **Providers** → **Refresh model lists** before selecting a newly released model. Codex OAuth and SpaceXAI OAuth stay on static allowlists.
+Refresh a provider list with `/refresh-models` before selecting a newly released model. Codex OAuth and SpaceXAI OAuth stay on static allowlists.
 
 ## Where credentials live
 
@@ -168,6 +170,8 @@ flowchart TD
 ```
 
 Rho recommends the native OS credential store. When the credential backend is still unset, the first interactive login for a **normal Rho provider** probes available backends and opens a picker before any secret is saved. Bare `/login` opens the provider group picker first; the store chooser appears only after you pick a normal provider (or run `/login <provider>`). CLI `rho login` asks the same store question on a TTY. If the OS probe fails, you can choose local file storage instead.
+
+`rho login` signs in through the [rho daemon](/daemon#credentials), which writes the credential, so the question offers the stores the daemon can reach rather than the ones your shell can. A daemon started from an SSH login has no session D-Bus, so it cannot reach the Secret Service: the question marks the OS store unavailable and Enter takes the file store. Rho never moves credentials to the file store on its own; until you choose it, sign-ins through that daemon fail with `CredentialStoreUnavailable`. `rho daemon status` and `rho doctor` show which store the daemon uses, what chose it, and why it cannot be reached.
 
 Interactive startup, including `rho --resume`, prints a notice before its first OS-keyring access. If startup pauses there, check your desktop for a keyring unlock prompt. The notice does not mean the keyring is locked; it identifies a step that can wait for desktop approval. File-backed credentials and non-interactive runs do not show it.
 

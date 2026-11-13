@@ -31,6 +31,8 @@ macro_rules! define_tool_capabilities {
                     $($name => Self::$variant,)+
                     // Alternate edit tool names share one capability; the global
                     // edit preference chooses the model-facing implementation.
+                    // `hashline` names the removed format; old agent files keep
+                    // their edit capability.
                     "apply_patch" | "hashline" | "str_replace" => Self::Edit,
                     _ => Self::Extension(name),
                 }
@@ -59,7 +61,7 @@ define_tool_capabilities! {
     Agent => "agent" : "Delegate work to a subagent.",
     Agents => "agents" : "Inspect and message running subagents.",
     Bash => "bash" : "Run bash commands.",
-    Edit => "edit" : "Edit existing files (str_replace, hashline, or apply_patch).",
+    Edit => "edit" : "Edit existing files (str_replace or apply_patch).",
     FetchContent => "fetch_content" : "Fetch URLs, repos, PDFs, and local files.",
     GetSearchContent => "get_search_content" : "Read stored web search or fetch results.",
     Glob => "glob" : "Find files by glob pattern.",

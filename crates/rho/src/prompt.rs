@@ -11,7 +11,7 @@ mod model_prompt_template;
 pub(crate) mod model_prompts;
 mod project_instructions;
 pub(crate) use mcp_context::tool_sources_context;
-pub(crate) use model_prompt_template::{ModelPromptTemplate, PromptSession};
+pub(crate) use model_prompt_template::ModelPromptTemplate;
 pub(crate) use project_instructions::added_dir_context;
 
 pub const BASE_SYSTEM_PROMPT: &str = r#"You are a coding agent in the rho coding-agent harness, working with the user in a shared workspace. Use available tools to inspect files, run commands, and edit or create files.
@@ -48,9 +48,10 @@ pub struct SystemPrompt {
 
 /// How plugin skills are supplied to system prompt assembly.
 pub(crate) enum PluginSkills {
-    /// Discover loose and plugin skills from the filesystem.
+    /// Discover loose and plugin skills from the filesystem, project
+    /// plugins' under this trust.
     #[allow(dead_code)] // retained so callers can opt into filesystem discovery
-    Discover,
+    Discover(crate::workspace::ProjectTrusts),
     /// Use the already-discovered plugin skill list (including empty).
     Provided(Vec<skills::Skill>),
 }
@@ -105,7 +106,7 @@ pub(crate) fn system_prompt_template_with_home_and_models(
         cwd,
         home,
         models.advisor,
-        PluginSkills::Discover,
+        PluginSkills::Discover(crate::workspace::ProjectTrusts::UNTRUSTED),
     )
 }
 
@@ -176,7 +177,7 @@ Prefer the `grep` tool over shell `rg` or `grep` for workspace content search. U
         );
     }
     // Format-agnostic: mid-session edit-tool switches keep this system prompt
-    // fixed, so do not name a concrete edit surface or embed hashline policy.
+    // fixed, so do not name a concrete edit surface or embed its policy.
     // Concrete contracts live on the live tool description/schema.
     if tools
         .iter()
@@ -229,7 +230,7 @@ Compaction summarizes older turns, so earlier details can drop out of context. W
 
     let skills = if tools.iter().any(|tool| tool.name == "skill") {
         match plugin_skills {
-            PluginSkills::Discover => skills::discover_with_home(cwd, home),
+            PluginSkills::Discover(trust) => skills::discover_with_home(cwd, home, trust),
             PluginSkills::Provided(plugin_skills) => {
                 skills::discover_with_plugin_skills(cwd, home, plugin_skills)
             }
@@ -350,35 +351,7 @@ exactly like direct tool calls. Follow the live tool list.\n"
     (model, format!("codemode {label}"))
 }
 
-/// Model and display text for a mid-session edit-tool switch.
-///
-/// The system prompt stays format-agnostic. This notice carries the new tool
-/// contract so the model stops using the previous surface.
-pub fn edit_tool_switch_context(
-    previous: rho_tools::EditFormat,
-    current: rho_tools::EditFormat,
-    spec: &ToolSpec,
-) -> (String, String) {
-    let previous_name = previous.tool_name();
-    let current_name = current.tool_name();
-    let model = format!(
-        "[edit tool switched]\n\n\
-The file edit tool changed mid-session. Do not call `{previous_name}` anymore.\n\
-Use `{current_name}` for edits to existing UTF-8 files from now on.\n\
-Prefer `write` only to create or fully rewrite a file.\n\
-Follow the live tool list.\n\n\
-Previous tool: `{previous_name}` ({previous_label})\n\
-Current tool: `{current_name}` ({current_label})\n\n\
-{schema}\n",
-        previous_label = previous.as_str(),
-        current_label = current.as_str(),
-        schema = tool_schema_block(spec),
-    );
-    let display = format!("edit tool switched to {}", current.as_str());
-    (model, display)
-}
-
-pub(crate) fn tool_schema_block(spec: &ToolSpec) -> String {
+fn tool_schema_block(spec: &ToolSpec) -> String {
     let schema = serde_json::to_string_pretty(&spec.input_schema).unwrap_or_else(|_| "{}".into());
     format!(
         "Tool schema for `{name}`:\n\
@@ -726,7 +699,6 @@ mod tests {
         for (tools, expected) in [
             (&[][..], &[][..]),
             (&["grep"][..], &["grep"][..]),
-            (&["edit"][..], &["edit"][..]),
             (&["apply_patch"][..], &["edit"][..]),
             (&["str_replace"][..], &["edit"][..]),
             (&["agent"][..], &["agent"][..]),

@@ -208,6 +208,7 @@ async fn run_compaction(
         .await
         .map_err(|_| Error::Interrupted {
             message: "run event consumer was dropped".into(),
+            source: None,
         })?;
     Ok(outcome)
 }

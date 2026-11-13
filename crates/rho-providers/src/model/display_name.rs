@@ -12,7 +12,7 @@ use std::{
     sync::{OnceLock, RwLock},
 };
 
-use crate::model::{models_dev, provider_models};
+use crate::model::{catalog, models_dev, provider_models};
 
 /// Names resolved this process, including the models that have none.
 ///
@@ -27,6 +27,8 @@ use crate::model::{models_dev, provider_models};
 #[derive(Default)]
 struct NameCache {
     names: HashMap<NameKey, Option<String>>,
+    /// [`unambiguous_model_display_name`] answers, dropped with `names`.
+    unambiguous: HashMap<NameKey, Option<String>>,
     /// Bumped by every catalog write. A lookup reads it before touching sqlite
     /// and caches its answer only if it still holds, so a write that lands
     /// while a lookup is in flight cannot be overwritten by the older answer.
@@ -57,6 +59,58 @@ fn cache() -> &'static RwLock<NameCache> {
 ///
 /// Resolved once per process; see [`NameCache`].
 pub fn model_display_name(provider: &str, model: &str) -> Option<String> {
+    memoized(Answers::Names, provider, model, read_model_display_name)
+}
+
+/// [`model_display_name`], or `None` when another locally known model from
+/// the same provider carries the same name.
+///
+/// For text that names one model on its own, such as a status line: two
+/// models with one name (`gpt-5.6-sol` and `gpt-5.6-sol-pro`, both
+/// `GPT-5.6 Sol`) would read alike there, so each keeps its id instead.
+/// Resolved once per process like names; see [`NameCache`].
+pub fn unambiguous_model_display_name(provider: &str, model: &str) -> Option<String> {
+    memoized(Answers::Unambiguous, provider, model, |provider, model| {
+        let name = model_display_name(provider, model)?;
+        let shared = catalog::locally_known_models()
+            .iter()
+            .filter(|entry| entry.provider == provider && entry.model != model)
+            .any(|entry| model_display_name(&entry.provider, &entry.model).as_ref() == Some(&name));
+        (!shared).then_some(name)
+    })
+}
+
+/// Which memoized lookup a [`NameCache`] map holds.
+#[derive(Clone, Copy)]
+enum Answers {
+    Names,
+    Unambiguous,
+}
+
+impl NameCache {
+    fn answers(&self, answers: Answers) -> &HashMap<NameKey, Option<String>> {
+        match answers {
+            Answers::Names => &self.names,
+            Answers::Unambiguous => &self.unambiguous,
+        }
+    }
+
+    fn answers_mut(&mut self, answers: Answers) -> &mut HashMap<NameKey, Option<String>> {
+        match answers {
+            Answers::Names => &mut self.names,
+            Answers::Unambiguous => &mut self.unambiguous,
+        }
+    }
+}
+
+/// Looks `provider/model` up among `answers`, computing and storing the
+/// answer with `read` on a miss.
+fn memoized(
+    answers: Answers,
+    provider: &str,
+    model: &str,
+    read: impl FnOnce(&str, &str) -> Option<String>,
+) -> Option<String> {
     let key = NameKey {
         provider: provider.to_string(),
         model: model.to_string(),
@@ -65,15 +119,16 @@ pub fn model_display_name(provider: &str, model: &str) -> Option<String> {
     };
     let generation = {
         let cache = cache().read().expect("model name cache");
-        if let Some(name) = cache.names.get(&key) {
+        if let Some(name) = cache.answers(answers).get(&key) {
             return name.clone();
         }
         cache.generation
     };
-    let name = read_model_display_name(provider, model);
+    // `read` may look other names up, so the lock is not held across it.
+    let name = read(provider, model);
     let mut cache = cache().write().expect("model name cache");
     if cache.generation == generation {
-        cache.names.insert(key, name.clone());
+        cache.answers_mut(answers).insert(key, name.clone());
     }
     name
 }
@@ -98,15 +153,24 @@ fn read_model_display_name(provider: &str, model: &str) -> Option<String> {
 pub(crate) fn forget_provider_display_names(provider: &str) {
     let mut cache = cache().write().expect("model name cache");
     cache.names.retain(|key, _| key.provider != provider);
+    cache.unambiguous.retain(|key, _| key.provider != provider);
+    cache.generation += 1;
+}
+
+/// Drops every resolved name, misses included, so the next lookup reads
+/// the catalogs again. For a process that learns another process rewrote
+/// them, as a daemon does when a client refreshed the model lists.
+pub fn forget_model_display_names() {
+    let mut cache = cache().write().expect("model name cache");
+    cache.names.clear();
+    cache.unambiguous.clear();
     cache.generation += 1;
 }
 
 /// Drops resolved names so a test can write a catalog row and read it back.
 #[doc(hidden)]
 pub fn clear_model_display_name_cache_for_tests() {
-    let mut cache = cache().write().expect("model name cache");
-    cache.names.clear();
-    cache.generation += 1;
+    forget_model_display_names();
 }
 
 /// Clears the process-global display-name cache on enter and drop.

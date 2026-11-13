@@ -7,6 +7,7 @@ use std::path::Path;
 
 use rusqlite::params;
 
+use super::super::id_match::prefer_exact;
 use super::{open_index, reconcile_all_workspaces, summary_from_row, SessionSummary};
 
 /// Lists sessions across every workspace under `session_root`.
@@ -24,10 +25,10 @@ pub(in crate::session) fn list_all_sessions(
         .expect("session index connection poisoned");
     let mut statement = connection.prepare(
         "select id, path, cwd, created_at, updated_at, message_count,
-                title, first_user_message, last_user_message, added_dirs
+                title, first_user_message, last_user_message, added_dirs, origin
          from (
              select id, path, cwd, created_at, updated_at, message_count,
-                    title, first_user_message, last_user_message, added_dirs,
+                    title, first_user_message, last_user_message, added_dirs, origin,
                     row_number() over (
                         partition by path
                         order by updated_at desc, cwd asc
@@ -59,10 +60,10 @@ pub(in crate::session) fn summaries_matching_id_prefix(
         .expect("session index connection poisoned");
     let mut statement = connection.prepare(
         "select id, path, cwd, created_at, updated_at, message_count,
-                title, first_user_message, last_user_message, added_dirs
+                title, first_user_message, last_user_message, added_dirs, origin
          from (
              select id, path, cwd, created_at, updated_at, message_count,
-                    title, first_user_message, last_user_message, added_dirs,
+                    title, first_user_message, last_user_message, added_dirs, origin,
                     row_number() over (
                         partition by path
                         order by updated_at desc, cwd asc
@@ -74,9 +75,12 @@ pub(in crate::session) fn summaries_matching_id_prefix(
          order by updated_at desc, created_at desc, id asc",
     )?;
     let rows = statement.query_map(params![id_prefix], summary_from_row)?;
-    Ok(rows
+    let summaries = rows
         .collect::<rusqlite::Result<Vec<_>>>()?
         .into_iter()
         .filter(|summary| summary.path.exists())
-        .collect())
+        .collect();
+    Ok(prefer_exact(summaries, id_prefix, |summary| {
+        Some(summary.id.clone())
+    }))
 }

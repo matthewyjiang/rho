@@ -1,15 +1,14 @@
 use crate::tui::DefaultTerminal;
 
 use super::sessions_hub_tasks::SessionsDelete;
-use super::{app_state::PointerAction, composer_pointer::ChoiceClick};
-use super::{App, ComposerMode, InlineChoiceKeyOutcome, InlineChoicePending, InteractiveRuntime};
+use super::{app_state::PointerAction, composer_pointer::ChoiceClick, config_row::ConfigRow};
+use super::{App, ComposerMode, InlineChoiceKeyOutcome, InlineChoicePending};
 
 impl App {
     pub(super) async fn handle_inline_choice_key(
         &mut self,
         key: crossterm::event::KeyEvent,
         terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<bool> {
         let outcome = match self.input_ui.composer_mut() {
             ComposerMode::InlineChoice(modal) => modal.choice.handle_key(key),
@@ -18,7 +17,7 @@ impl App {
 
         match outcome {
             InlineChoiceKeyOutcome::Selected(value) => {
-                if !self.resolve_inline_choice(value, terminal, agent).await? {
+                if !self.resolve_inline_choice(value, terminal).await? {
                     return Ok(true);
                 }
             }
@@ -27,15 +26,6 @@ impl App {
                     unreachable!("inline choice checked above");
                 };
                 match modal.pending {
-                    InlineChoicePending::ComputerInstall => {
-                        self.confirm_computer_installation("cancel", agent)
-                    }
-                    InlineChoicePending::ComputerUpdate { from, to } => {
-                        self.confirm_computer_update("cancel", &from, &to, agent)
-                    }
-                    InlineChoicePending::ComputerAccess => {
-                        self.confirm_computer_access("cancel", agent)
-                    }
                     InlineChoicePending::CredentialStore { .. } => {
                         if let Some(parent) = modal.parent_picker {
                             self.set_status_quiet(parent.title.clone());
@@ -50,12 +40,11 @@ impl App {
                         self.set_status(self.busy_status_label());
                     }
                     InlineChoicePending::ContextHandoff(pending) => {
-                        self.resolve_context_handoff(None, *pending, terminal, agent)
+                        self.resolve_context_handoff(None, *pending, terminal)
                             .await?;
                     }
                     InlineChoicePending::ConfirmSend(pending) => {
-                        self.resolve_send_confirm(None, *pending, terminal, agent)
-                            .await?;
+                        self.resolve_send_confirm(None, *pending, terminal).await?;
                     }
                     InlineChoicePending::DeleteSession { .. }
                     | InlineChoicePending::DeleteDirectorySessions { .. }
@@ -69,18 +58,11 @@ impl App {
                     | InlineChoicePending::DeleteWorkflowRun { .. } => {
                         self.open_workflow_hub_or_report();
                     }
-                    InlineChoicePending::PromptHistoryLimit { .. } => {
-                        self.open_main_config_picker_selected(
-                            super::config_picker::PROMPT_HISTORY_LIMIT_VALUE,
-                        )?;
-                    }
                     InlineChoicePending::ClearPromptHistory => {
-                        self.open_main_config_picker_selected(
-                            super::config_picker::CLEAR_PROMPT_HISTORY_VALUE,
-                        )?;
+                        self.reopen_config_root(&ConfigRow::ClearPromptHistory.encode());
                     }
-                    InlineChoicePending::TestWebSearch => {
-                        self.submit_web_search_test_choice("cancel", modal.parent_picker)?;
+                    InlineChoicePending::LowerPromptHistoryLimit { .. } => {
+                        self.restore_choice_parent_picker(modal.parent_picker);
                     }
                 }
             }
@@ -93,7 +75,7 @@ impl App {
 
     /// A click focuses an available option. A double click also asks the idle
     /// loop to confirm it like Enter, since [`Self::resolve_inline_choice`]
-    /// needs the terminal and runtime the pointer handler does not have.
+    /// needs the terminal the pointer handler does not have.
     pub(super) fn click_inline_choice(&mut self, index: usize, click: ChoiceClick) {
         let ComposerMode::InlineChoice(modal) = self.input_ui.composer_mut() else {
             return;
@@ -118,7 +100,6 @@ impl App {
         &mut self,
         value: String,
         terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<bool> {
         let requires_full_visibility = match self.input_ui.composer() {
             ComposerMode::InlineChoice(modal) => modal.choice.selected_requires_full_visibility(),
@@ -131,28 +112,21 @@ impl App {
             unreachable!("inline choice checked above");
         };
         match modal.pending {
-            InlineChoicePending::ComputerInstall => {
-                self.confirm_computer_installation(&value, agent)
-            }
-            InlineChoicePending::ComputerUpdate { from, to } => {
-                self.confirm_computer_update(&value, &from, &to, agent)
-            }
-            InlineChoicePending::ComputerAccess => self.confirm_computer_access(&value, agent),
             InlineChoicePending::CredentialStore { next } => {
                 // Resume login with its navigation context, so a subsequent
                 // flow picker can attach to the original provider picker.
                 if let Some(parent) = modal.parent_picker {
                     self.input_ui.set_composer(ComposerMode::Picker(*parent));
                 }
-                self.submit_credential_store_choice(modal.choice, next, terminal, agent)
+                self.submit_credential_store_choice(modal.choice, next, terminal)
                     .await?;
             }
             InlineChoicePending::ContextHandoff(pending) => {
-                self.resolve_context_handoff(Some(&value), *pending, terminal, agent)
+                self.resolve_context_handoff(Some(&value), *pending, terminal)
                     .await?;
             }
             InlineChoicePending::ConfirmSend(pending) => {
-                self.resolve_send_confirm(Some(&value), *pending, terminal, agent)
+                self.resolve_send_confirm(Some(&value), *pending, terminal)
                     .await?;
             }
             InlineChoicePending::ClaudeCodeLogin => {
@@ -188,7 +162,7 @@ impl App {
                 );
             }
             InlineChoicePending::DeleteAgent(target) => {
-                self.submit_delete_agent_choice(&value, target, modal.parent_picker, agent);
+                self.submit_delete_agent_choice(&value, target, modal.parent_picker);
             }
             InlineChoicePending::DeleteWorkflowPlan { plan_id } => {
                 self.submit_delete_workflow_plan_choice(&value, &plan_id)?;
@@ -196,14 +170,11 @@ impl App {
             InlineChoicePending::DeleteWorkflowRun { run_id } => {
                 self.submit_delete_workflow_run_choice(&value, &run_id)?;
             }
-            InlineChoicePending::PromptHistoryLimit { new_limit } => {
-                self.submit_prompt_history_limit_choice(&value, new_limit)?;
-            }
             InlineChoicePending::ClearPromptHistory => {
                 self.submit_clear_prompt_history_choice(&value)?;
             }
-            InlineChoicePending::TestWebSearch => {
-                self.submit_web_search_test_choice(&value, modal.parent_picker)?;
+            InlineChoicePending::LowerPromptHistoryLimit { change } => {
+                self.submit_lower_prompt_history_limit(&value, change, modal.parent_picker);
             }
         }
         Ok(true)

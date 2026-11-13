@@ -10,8 +10,8 @@ use crate::{
         AtomicCreateFaultInjector, AtomicInstallMethod, RewriteAttempt, RewriteFaultInjector,
     },
     tool::{ToolContext, ToolError},
-    tool_card::{DiffRow, DiffRowKind},
 };
+use rho_protocol::display::{DiffRow, DiffRowKind};
 
 fn test_context() -> (TempDir, ToolContext) {
     let dir = tempfile::tempdir().unwrap();
@@ -445,8 +445,6 @@ async fn applies_mixed_operations_with_numbered_snapshots() {
     );
     assert!(outcome.content.contains("nested/new.txt"));
     assert!(outcome.content.contains("modify.txt"));
-    assert!(!outcome.content.contains("[nested/new.txt#"));
-    assert!(!outcome.content.contains("[modify.txt#"));
     assert!(!outcome.content.contains("@@"));
     assert!(outcome.diff.contains("--- a/modify.txt"));
 }

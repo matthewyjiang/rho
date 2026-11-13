@@ -1,6 +1,7 @@
 //! In-place attach view from `/attach` and the activity rail.
 
 use super::assert_helpers::assert_terminal_restored;
+use super::subagent_rail::{wait_for_explorer_row, wait_for_worker_row};
 use super::{DEFAULT_SIZE, SETTLE, STARTUP, STREAM};
 use crate::{
     env::IsolatedHome,
@@ -35,14 +36,15 @@ fn release_parent_approval(harness: &mut PtyHarness) -> anyhow::Result<()> {
 fn setup_supervised(home: &IsolatedHome) -> anyhow::Result<()> {
     std::fs::write(
         &home.config_path,
-        r#"provider = "openai"
+        r#"web_search.mode = "off"
+
+[model]
+provider = "openai"
 model = "gpt-5.5"
 auth = "api-key"
-check_for_updates = false
-web_search.mode = "off"
-permission_mode = "supervised"
 
 [behavior]
+permission_mode = "supervised"
 credential_store = "file"
 "#,
     )?;
@@ -54,6 +56,7 @@ credential_store = "file"
 fn parent_message_card(harness: &mut PtyHarness) -> anyhow::Result<()> {
     harness.submit_text("fixture parent message attach")?;
     harness.wait_for_text("parent message queued", STREAM)?;
+    wait_for_worker_row(harness)?;
     harness.submit_text("/attach")?;
     harness.wait_for_text("attach subagent", STREAM)?;
     harness.inject_key(&Key::Enter)?;
@@ -121,10 +124,7 @@ const ATTACH_VIEW_FROM_COMMAND_STEPS: &[Step] = &[
         text: "subagent rail fixture dispatched",
         timeout: STREAM,
     },
-    Step::WaitText {
-        text: "worker",
-        timeout: SETTLE,
-    },
+    Step::Custom(wait_for_worker_row),
     Step::Phase("enter_attach_view"),
     Step::SubmitText("/attach"),
     Step::WaitText {
@@ -169,14 +169,8 @@ const ATTACH_VIEW_CYCLE_STEPS: &[Step] = &[
         text: "two subagents dispatched",
         timeout: STREAM,
     },
-    Step::WaitText {
-        text: "worker",
-        timeout: SETTLE,
-    },
-    Step::WaitText {
-        text: "explorer",
-        timeout: SETTLE,
-    },
+    Step::Custom(wait_for_worker_row),
+    Step::Custom(wait_for_explorer_row),
     Step::Phase("attach_and_cycle"),
     Step::SubmitText("/attach"),
     Step::WaitText {
@@ -260,6 +254,7 @@ const ATTACH_VIEW_QUIT_RESTORES_STEPS: &[Step] = &[
         text: "running in background",
         timeout: STREAM,
     },
+    Step::Custom(wait_for_worker_row),
     Step::SubmitText("/attach"),
     Step::WaitText {
         text: "attach subagent",

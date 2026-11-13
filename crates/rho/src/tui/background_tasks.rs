@@ -8,19 +8,15 @@
 //!
 //! Adding a task: add a [`TaskId`] variant, a [`UiOutput`] or
 //! [`SessionOutput`] variant, and its arm in the matching `apply_*` below.
-//! `Ui` outputs apply in every loop (idle, running turn, goal waits);
-//! `Session` outputs may change the session or runtime and apply only in the
-//! idle loop.
+//! `Ui` outputs apply in every loop (idle, running turn);
+//! `Session` outputs may change the session and apply only in the idle loop.
 
 use futures_util::{future::BoxFuture, FutureExt};
-use rho_providers::model::{ModelMetadata, ReasoningRequestSource};
-use rho_sdk::ReasoningLevel;
 use tokio::task::{AbortHandle, JoinError, JoinHandle};
 
 use super::{
     changelog_command::ChangelogFetchResult, github_pr::GithubPrLookup,
     limits_command::LimitsFetchResult, limits_command::LimitsSectionId, App, DefaultTerminal,
-    InteractiveRuntime,
 };
 use crate::doctor::{DoctorProbeId, DoctorProbeOutcome};
 
@@ -31,7 +27,7 @@ mod tests;
 /// Identity of a registered task, used to dedupe starts and cancel by feature.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum TaskId {
-    ModelMetadata,
+    CatalogHydrate,
     UpdateNotice,
     CustomModels,
     CursorModels,
@@ -46,9 +42,6 @@ pub(super) enum TaskId {
     /// Patch load for the selected `/diff` file.
     DiffPatch,
     Changelog,
-    WebSearchTest,
-    /// One keep-warm ping; see `cache_warm`.
-    CacheWarm,
 }
 
 /// A finished task's result, routed to its feature by the dispatch point.
@@ -65,30 +58,18 @@ pub(super) enum UiOutput {
     InfoRuntimes(Result<Vec<String>, JoinError>),
     InfoTree(Result<anyhow::Result<crate::session::tree::SessionTreeFacts>, JoinError>),
     SpendLoad(super::spend_overlay::LoadResult),
-    DiffPatch(usize, anyhow::Result<Vec<rho_tools::tool_card::DiffRow>>),
+    DiffPatch(usize, anyhow::Result<Vec<rho_protocol::display::DiffRow>>),
     Changelog(Result<ChangelogFetchResult, JoinError>),
-    WebSearchTest(Result<Result<usize, rho_tools::tool::ToolError>, JoinError>),
-    CacheWarm {
-        /// Warmer generation when the ping started; see `cache_warm`.
-        generation: u64,
-        sent_at: std::time::Instant,
-        result: Result<crate::app::interactive_runtime::CacheWarmOutcome, JoinError>,
-    },
 }
 
-/// Results that may change the session or runtime; applied only when idle.
+/// Results that may change the session; applied only when idle.
 pub(super) enum SessionOutput {
-    ModelMetadata {
-        /// Reasoning selection when the fetch started, so a user change made
-        /// while it ran is not overwritten.
-        reasoning_at_start: (ReasoningLevel, ReasoningRequestSource),
-        metadata: Result<Option<ModelMetadata>, JoinError>,
-    },
+    CatalogHydrate,
     UpdateNotice(Result<Option<String>, JoinError>),
     CustomModels,
     CursorModels(Result<crate::cursor_runtime::models::RefreshResult, JoinError>),
     SyntaxWarmup,
-    InteractiveLogin(super::login_pending::FinishedInteractiveLogin),
+    InteractiveLogin(Box<super::login_pending::FinishedInteractiveLogin>),
 }
 
 impl From<UiOutput> for TaskOutput {
@@ -129,8 +110,8 @@ struct RunningTask {
 #[derive(Default)]
 pub(super) struct BackgroundTasks {
     running: Vec<RunningTask>,
-    /// Finished outputs not yet applied, for example model metadata held
-    /// while the session is busy.
+    /// Finished outputs not yet applied, for example `Session` outputs held
+    /// while a turn runs.
     ready: Vec<(TaskId, TaskOutput)>,
 }
 
@@ -278,15 +259,6 @@ impl BackgroundTasks {
     }
 }
 
-impl SessionOutput {
-    /// Applying metadata can rebuild compaction and reasoning. Keep it queued
-    /// while a provider turn or compact owns the session instead of dropping
-    /// it after a SessionBusy error.
-    fn waits_for_idle_session(&self) -> bool {
-        matches!(self, Self::ModelMetadata { .. })
-    }
-}
-
 impl App {
     /// Apply finished `Ui` outputs. Every loop calls this through
     /// `update_activity_panels`.
@@ -309,30 +281,15 @@ impl App {
     pub(super) async fn apply_finished_tasks(
         &mut self,
         terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<bool> {
         let mut changed = false;
-        while let Some(output) = self.take_next_finished_task(agent) {
+        while let Some(output) = self.tasks.take_next_finished(|_| true) {
             changed |= match output {
                 TaskOutput::Ui(output) => self.apply_ui_output(output),
-                TaskOutput::Session(output) => {
-                    self.apply_session_output(output, terminal, agent).await?
-                }
+                TaskOutput::Session(output) => self.apply_session_output(output, terminal).await?,
             };
         }
         Ok(changed)
-    }
-
-    /// Next finished output the session can apply now; the rest stay queued.
-    pub(super) fn take_next_finished_task(
-        &mut self,
-        agent: &InteractiveRuntime,
-    ) -> Option<TaskOutput> {
-        let session_busy = agent.is_session_busy();
-        self.tasks.take_next_finished(|output| match output {
-            TaskOutput::Session(output) => !(session_busy && output.waits_for_idle_session()),
-            TaskOutput::Ui(_) => true,
-        })
     }
 
     /// Returns whether the screen changed.
@@ -346,12 +303,6 @@ impl App {
             UiOutput::SpendLoad(result) => self.apply_spend_load(result),
             UiOutput::DiffPatch(index, result) => self.apply_diff_patch(index, result),
             UiOutput::Changelog(result) => self.apply_changelog_fetch(result),
-            UiOutput::WebSearchTest(result) => self.apply_web_search_test(result),
-            UiOutput::CacheWarm {
-                generation,
-                sent_at,
-                result,
-            } => self.apply_cache_warm(generation, sent_at, result),
         }
     }
 
@@ -360,16 +311,11 @@ impl App {
         &mut self,
         output: SessionOutput,
         terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<bool> {
         match output {
-            SessionOutput::ModelMetadata {
-                reasoning_at_start,
-                metadata,
-            } => {
-                self.apply_model_metadata(agent, reasoning_at_start, metadata)
-                    .await;
-                Ok(false)
+            SessionOutput::CatalogHydrate => {
+                self.refresh_catalog_chrome();
+                Ok(true)
             }
             SessionOutput::UpdateNotice(result) => {
                 if let Ok(Some(notice)) = result {
@@ -389,8 +335,7 @@ impl App {
                 Ok(true)
             }
             SessionOutput::InteractiveLogin(finished) => {
-                self.apply_interactive_login(finished, terminal, agent)
-                    .await?;
+                self.apply_interactive_login(*finished, terminal).await?;
                 Ok(false)
             }
         }

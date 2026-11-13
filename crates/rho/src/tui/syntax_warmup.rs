@@ -35,7 +35,9 @@ impl SyntaxWarmupPlan {
         let mut seen_paths = HashSet::new();
         for message in messages {
             match message {
-                Message::User(blocks) | Message::Assistant(blocks) => {
+                Message::User(blocks)
+                | Message::BoundaryInput(blocks)
+                | Message::Assistant(blocks) => {
                     plan.collect_blocks(blocks, &mut seen_tokens, &mut seen_paths);
                 }
                 Message::EnrichedAssistant(message) => {
@@ -49,7 +51,11 @@ impl SyntaxWarmupPlan {
                         }
                     }
                 }
-                Message::ToolResult(_) | Message::System(_) => {}
+                Message::ToolResult(_)
+                | Message::System(_)
+                | Message::CompactionSummary(_)
+                | Message::ModelContext(_)
+                | Message::ReasoningShift(_) => {}
             }
         }
         plan

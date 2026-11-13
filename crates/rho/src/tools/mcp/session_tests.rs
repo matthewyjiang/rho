@@ -11,7 +11,7 @@ use super::{
 };
 use crate::tools::mcp::{
     catalog::McpCatalog, config::McpToolFilter, inflight::McpInFlightCalls,
-    progress::McpProgressRouter, report::McpLiveServerState, tool::McpTool, McpImageDelivery,
+    progress::McpProgressRouter, report::McpLiveServerState, tool::McpTool,
 };
 
 fn remote(schema: Value) -> RemoteTool {
@@ -221,7 +221,7 @@ async fn refreshed_output_schema_replaces_validator_atomically() {
         calls: McpInFlightCalls::new(),
         transport,
         max_output_bytes: rho_tools::DEFAULT_MAX_OUTPUT_BYTES,
-        image_delivery: McpImageDelivery::PresentationOnly,
+        environment: crate::session_environment::SessionEnvironment::default(),
     };
     let host = ToolHost::builder()
         .tool_shared(Arc::new(tool))
@@ -274,4 +274,95 @@ async fn refreshed_output_schema_replaces_validator_atomically() {
 
     client.close().await.unwrap();
     server_task.await.unwrap();
+}
+
+// Covers: a server takes what it reads from the environment from its
+// session's, such as a daemon client's (#1659): a stdio server's base set,
+// where the session's daemon is, caller context (#1672, #1765), and
+// `env_from_env` on top of its config `env`, nothing else of it, and a
+// remote server's `headers_from_env`.
+// Owner: MCP server environment
+#[cfg(unix)]
+#[test]
+fn a_server_reads_its_sessions_environment() {
+    use std::{
+        collections::{BTreeMap, HashMap},
+        ffi::OsString,
+    };
+
+    use http::{HeaderName, HeaderValue};
+
+    use crate::session_environment::Ambient;
+
+    fn strings(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+            .collect()
+    }
+    let session = Ambient::client(&[
+        ("PATH", "/client/bin"),
+        ("HOME", "/home/client"),
+        ("GITHUB_TOKEN", "token"),
+        ("API_TOKEN", "Bearer client"),
+        ("UNRELATED", "value"),
+        // As the client spelled it, relative to its own directory.
+        ("RHO_HOME", "rho-dev"),
+        ("XDG_RUNTIME_DIR", "/run/user/client"),
+        ("RHO_SESSION_DEPTH", "2"),
+        (
+            "RHO_SESSION_SCOPE",
+            r#"{"access":"write","workspaces":{"only":["/work"]}}"#,
+        ),
+    ]);
+
+    let mut command = tokio::process::Command::new("server");
+    super::apply_stdio_environment(
+        &mut command,
+        &strings(&[("MODE", "fast")]),
+        &strings(&[("GITHUB_PERSONAL_ACCESS_TOKEN", "GITHUB_TOKEN")]),
+        &session,
+        Some(std::path::Path::new("/srv/rho")),
+    )
+    .unwrap();
+    let headers = super::resolve_headers(
+        &strings(&[("x-mode", "fast")]),
+        &strings(&[("authorization", "API_TOKEN")]),
+        &session,
+    )
+    .unwrap();
+
+    let environment = command
+        .as_std()
+        .get_envs()
+        .map(|(name, value)| (name.to_owned(), value.map(ToOwned::to_owned)))
+        .collect::<BTreeMap<_, _>>();
+    let expected_environment = [
+        ("PATH", "/client/bin"),
+        ("HOME", "/home/client"),
+        ("RHO_HOME", "/srv/rho"),
+        ("XDG_RUNTIME_DIR", "/run/user/client"),
+        ("RHO_SESSION_DEPTH", "2"),
+        (
+            "RHO_SESSION_SCOPE",
+            r#"{"access":"write","workspaces":{"only":["/work"]}}"#,
+        ),
+        ("MODE", "fast"),
+        ("GITHUB_PERSONAL_ACCESS_TOKEN", "token"),
+    ]
+    .map(|(name, value)| (OsString::from(name), Some(OsString::from(value))));
+    let expected_headers = HashMap::from([
+        (
+            HeaderName::from_static("x-mode"),
+            HeaderValue::from_static("fast"),
+        ),
+        (
+            HeaderName::from_static("authorization"),
+            HeaderValue::from_static("Bearer client"),
+        ),
+    ]);
+    assert_eq!(
+        (environment, headers),
+        (BTreeMap::from(expected_environment), expected_headers)
+    );
 }

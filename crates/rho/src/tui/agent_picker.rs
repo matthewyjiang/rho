@@ -4,7 +4,6 @@ use crate::{
         internal_agent_requires_model, AgentCatalog, AgentCatalogEntry, AgentOrigin,
         AgentRuntimeSpec, ModelPolicy, ModelSelection, PromptPolicy,
     },
-    app::interactive_runtime::InteractiveRuntime,
     config::{InternalAgentModelConfig, InternalAgentTarget},
 };
 
@@ -21,53 +20,19 @@ use super::{
 pub(super) enum InternalAgentModelPickerOrigin {
     /// Opened from the agents picker; reopen it after a selection.
     AgentsPicker,
-    /// Opened by `/advisor on`; a selection also turns advisor mode on.
-    AdvisorCommand,
-    /// Opened by `/advisor model`; a selection keeps the mode as it is and
-    /// follows up with a reasoning picker when the model supports one.
-    AdvisorModelCommand,
-    /// Opened from the config picker's advisor mode row when enabling without a
-    /// model; a selection also turns advisor mode on and returns to config.
-    AdvisorConfigRow,
-    /// Opened from the config picker's advisor model row; returns to config
-    /// without forcing advisor mode on.
-    AdvisorModelConfigRow,
-    /// Opened from the config picker's permission mode row when enabling Auto
-    /// without a classifier model; selection also applies Auto and returns to
-    /// config.
-    PermissionModeConfigRow,
-    /// Opened by `/permissions auto`; selection applies Auto and returns to input.
-    PermissionModeCommand,
-    /// Opened from the config picker's classifier model row; returns to config
-    /// without forcing Auto on.
-    PermissionClassifierModelConfigRow,
     /// Opened at interactive startup when permission mode is already Auto with
     /// no classifier model. Selection keeps Auto; cancel falls back to
     /// Supervised. Opens alone in the composer (no parent picker).
     PermissionModeStartup,
-    /// The permission screen's picker, opened from its config row; returns to
-    /// config.
-    PermissionScreenModelConfigRow,
-    /// The permission screen's picker, opened by Auto setup from the config
-    /// picker's permission mode row once a classifier model is picked. Esc
-    /// keeps the classifier model; either way returns to config.
-    PermissionScreenSetupConfigRow,
-    /// The permission screen's picker, opened by `/permissions auto` once a
-    /// classifier model is picked. Opens alone in the composer.
-    PermissionScreenSetupCommand,
 }
 
 impl InternalAgentModelPickerOrigin {
     /// True when the picker replaces the composer alone (no parent to return to).
     pub(super) fn opens_standalone(self) -> bool {
-        matches!(
-            self,
-            Self::AdvisorCommand
-                | Self::AdvisorModelCommand
-                | Self::PermissionModeStartup
-                | Self::PermissionModeCommand
-                | Self::PermissionScreenSetupCommand
-        )
+        match self {
+            Self::AgentsPicker => false,
+            Self::PermissionModeStartup => true,
+        }
     }
 }
 
@@ -468,7 +433,10 @@ pub(super) fn prompt_policy_parts(prompt: &PromptPolicy) -> (&'static str, &str)
 /// move the failure to the first advisor call.
 fn claude_code_rows_for(id: &str) -> ClaudeCodeRows {
     if internal_agent_accepts_claude_runtime(id)
-        && crate::claude_runtime::executable::resolve().is_ok()
+        && crate::claude_runtime::executable::resolve(
+            &crate::session_environment::Ambient::ThisProcess,
+        )
+        .is_ok()
     {
         ClaudeCodeRows::Offered
     } else {
@@ -662,7 +630,10 @@ impl super::App {
     /// and failures in the transcript. The composer is left for the caller to
     /// settle.
     pub(super) fn load_agents_or_report(&mut self) -> Option<AgentCatalog> {
-        match AgentCatalog::discover(&self.info.runtime.cwd) {
+        match AgentCatalog::discover(
+            &self.info.runtime.cwd,
+            crate::workspace::ProjectTrusts::of_this_process(),
+        ) {
             Ok(catalog) => {
                 for error in catalog.skipped() {
                     self.insert_entry(&super::Entry::Error(format!(
@@ -689,25 +660,22 @@ impl super::App {
         picker
     }
 
-    /// After `/agents` wrote or removed a definition: append any advertised
-    /// catalog correction and rebuild the picker for the caller to position
-    /// and open. `None` (composer on input) when the reload failed. A failed
-    /// correction is reported but never undoes the disk change, which
-    /// subsequent launches already use.
-    pub(super) fn agents_picker_after_change(
-        &mut self,
-        agent: &mut InteractiveRuntime,
-    ) -> Option<UiPicker> {
+    /// After `/agents` wrote or removed a definition: tell the session and
+    /// rebuild the picker for the caller to position and open. `None`
+    /// (composer on input) when the reload failed. A failed notice is
+    /// reported but never undoes the disk change, which subsequent launches
+    /// already use.
+    pub(super) fn agents_picker_after_change(&mut self) -> Option<UiPicker> {
         let Some(catalog) = self.load_agents_or_report() else {
             self.input_ui.set_composer(ComposerMode::Input);
             return None;
         };
-        match agent.sync_agent_catalog(&catalog) {
-            Ok(Some(display)) => self.insert_entry(&super::Entry::Notice(display.into())),
-            Ok(None) => {}
-            Err(error) => self.insert_entry(&super::Entry::Error(format!(
+        // The daemon reads the definitions itself and tells the model; its
+        // notice says when it had to.
+        if let Err(error) = self.configure_daemon(rho_protocol::SessionChange::AgentCatalog) {
+            self.insert_entry(&super::Entry::Error(format!(
                 "could not tell the model about the agent change: {error}"
-            ))),
+            )));
         }
         Some(self.agents_picker(catalog))
     }

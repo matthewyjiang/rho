@@ -38,13 +38,6 @@ pub(crate) struct RuntimeBuildOptions<'a, P> {
     pub(crate) recall: Option<RecallStore>,
 }
 
-pub(crate) fn build_runtime<P>(options: RuntimeBuildOptions<'_, P>) -> Result<Rho, Error>
-where
-    P: WorkspacePolicy + 'static,
-{
-    build_runtime_with_max_steps(options, None)
-}
-
 /// Builds a runtime with an optional per-run model-step override.
 ///
 /// `None` keeps the configured SDK step limit. Automation uses `Some` for the
@@ -86,6 +79,7 @@ where
         recall,
         todo: Some(tools.todo_state()),
         code_mode: Some(tools.code_mode().clone()),
+        credentials: tools.credentials(),
     });
     let mut builder = Rho::builder()
         .provider_shared(provider)
@@ -147,6 +141,9 @@ pub(crate) struct CompactionSetup {
     pub(crate) todo: Option<crate::tools::todo::TodoState>,
     /// Branch-local direct tool loadout, retained at compaction boundaries.
     pub(crate) code_mode: Option<Arc<crate::tools::code_mode::CodeModeSurface>>,
+    /// The session's credentials, which a configured summarizer model signs
+    /// in with.
+    pub(crate) credentials: Arc<dyn rho_providers::credentials::CredentialStore>,
 }
 
 pub(crate) fn build_compaction(
@@ -163,6 +160,7 @@ pub(crate) fn build_compaction(
         recall,
         todo,
         code_mode,
+        credentials,
     } = setup;
     let policy = automatic_compaction_policy(&compaction, context_window);
     let compactor = ModelCompactor {
@@ -170,7 +168,10 @@ pub(crate) fn build_compaction(
         usage_recording,
         tool_specs,
         reasoning,
-        summarizer: compaction.summarizer.clone().map(Summarizer::new),
+        summarizer: compaction
+            .summarizer
+            .clone()
+            .map(|model| Summarizer::new(model, credentials)),
         config: compaction,
         context_window,
         diagnostics,

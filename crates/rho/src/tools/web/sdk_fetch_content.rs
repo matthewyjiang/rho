@@ -28,8 +28,11 @@ pub(in crate::tools) struct SdkFetchContent {
     /// pinned to SSRF-vetted addresses, so they never borrow this one.
     github_client: reqwest::Client,
     max_output_bytes: usize,
-    process_environment: rho_sdk::ProcessEnvironment,
+    process_environment: rho_tools::SharedProcessEnvironment,
     store: WebAccessStore,
+    /// The session's credentials, whose environment holds the GitHub token
+    /// private repositories are read with.
+    credentials: std::sync::Arc<dyn rho_providers::credentials::CredentialStore>,
     /// Test-only override installed around the tool future so the fetch choke
     /// point can allow loopback without threading policy through plan types.
     #[cfg(test)]
@@ -39,14 +42,16 @@ pub(in crate::tools) struct SdkFetchContent {
 impl SdkFetchContent {
     pub(in crate::tools) fn new(
         max_output_bytes: usize,
-        process_environment: rho_sdk::ProcessEnvironment,
+        process_environment: rho_tools::SharedProcessEnvironment,
         store: WebAccessStore,
+        credentials: std::sync::Arc<dyn rho_providers::credentials::CredentialStore>,
     ) -> Self {
         Self {
             github_client: util::http_client(),
             max_output_bytes,
             process_environment,
             store,
+            credentials,
             #[cfg(test)]
             allow_ranges_override: None,
         }
@@ -60,8 +65,9 @@ impl SdkFetchContent {
         Self {
             github_client: util::http_client(),
             max_output_bytes,
-            process_environment: rho_sdk::ProcessEnvironment::InheritAll,
+            process_environment: rho_sdk::ProcessEnvironment::InheritAll.into(),
             store: WebAccessStore::new(),
+            credentials: std::sync::Arc::new(crate::credential_store::AppCredentialStore),
             allow_ranges_override: Some(allow_ranges),
         }
     }
@@ -197,13 +203,14 @@ impl FetchPlan {
     async fn execute(
         self,
         github_client: &reqwest::Client,
+        github_token: Option<&str>,
         context: &ToolContext,
         max_output_bytes: usize,
     ) -> Result<ToolOutput, ToolError> {
         let mut items = Vec::with_capacity(self.targets.len());
         for target in self.targets {
             let requested = target.requested().to_owned();
-            let fetched = target.execute(github_client, context).await?;
+            let fetched = target.execute(github_client, github_token, context).await?;
             items.push(StoredItem {
                 url: Some(requested),
                 query: self.prompt.clone(),
@@ -340,6 +347,7 @@ impl TargetPlan {
     async fn execute(
         self,
         github_client: &reqwest::Client,
+        github_token: Option<&str>,
         context: &ToolContext,
     ) -> Result<FetchedTarget, ToolError> {
         match self {
@@ -373,10 +381,12 @@ impl TargetPlan {
                     plan.frames,
                 ),
             }),
-            Self::GitHubApi(plan) => github::fetch_via_api(github_client, &plan.target)
-                .await
-                .map_err(map_app_tool_error),
-            Self::GitHubClone(plan) => plan.execute().await,
+            Self::GitHubApi(plan) => {
+                github::fetch_via_api(github_client, &plan.target, github_token)
+                    .await
+                    .map_err(map_app_tool_error)
+            }
+            Self::GitHubClone(plan) => plan.execute(github_token).await,
         }
     }
 }
@@ -418,11 +428,17 @@ impl Tool for SdkFetchContent {
                 invocation.into_arguments(),
                 &context,
                 self.max_output_bytes,
-                self.process_environment.clone(),
+                self.process_environment.current(),
                 self.store.clone(),
             )?;
             plan.authorize(&context).await?;
-            let execute = plan.execute(&self.github_client, &context, self.max_output_bytes);
+            let github_token = github::token(self.credentials.as_ref());
+            let execute = plan.execute(
+                &self.github_client,
+                github_token.as_deref(),
+                &context,
+                self.max_output_bytes,
+            );
             #[cfg(test)]
             if let Some(ranges) = self.allow_ranges_override.clone() {
                 return super::ssrf::with_allow_ranges(ranges, execute).await;

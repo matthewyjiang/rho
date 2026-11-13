@@ -1,10 +1,14 @@
-//! Delegated agent tools backed by native SDK runtimes or an ACP host.
+//! Delegated agent tools backed by native SDK runtimes or the session's
+//! host.
 
 mod host_orchestrator;
 mod host_target;
 mod host_tools;
 pub(crate) mod message_receipt;
 
+// Only the daemon's T3 wake watchers use the contract outside the
+// host-backed `agent` tools.
+pub(crate) use host_orchestrator::HostContract;
 pub(crate) use host_tools::install_host_delegation;
 
 use std::{
@@ -20,6 +24,7 @@ use serde_json::{json, Value};
 use {
     crate::agent::{AdvertisedAgents, AgentCatalog},
     crate::app::subagent_manager::ValidatedMessage,
+    crate::workspace::ProjectTrusts,
     rho_sdk::tool::{
         OperationKind, PreparedToolInvocation, Tool, ToolError, ToolErrorKind, ToolInvocation,
         ToolMetadata, ToolOutput, ToolPreparationContext, ToolPrepareFuture, ToolResource,
@@ -37,16 +42,15 @@ const AGENTS_TOOL: &str = "agents";
 
 pub use crate::app::subagent_manager::{SubagentManager, SubagentNotification, SubagentSnapshot};
 
-pub(crate) use super::agent_output::merge_notification_context;
 pub(crate) use super::agent_output::notification_prompt;
-#[cfg(test)]
-pub(crate) use super::agent_output::MODEL_NOTIFICATION_BYTES as NOTIFICATION_CONTEXT_BYTES;
 
 pub struct AgentTool {
     manager: SubagentManager,
     max_output_bytes: usize,
     /// Directory definitions are rediscovered from at each launch.
     cwd: PathBuf,
+    /// The session's project trust, which each rediscovery reads under.
+    project_trust: ProjectTrusts,
     /// Fixed at construction so the spec never rewrites what the caller was
     /// told; later corrections are appended to the conversation instead.
     advertised: AdvertisedAgents,
@@ -58,13 +62,18 @@ impl AgentTool {
         manager: SubagentManager,
         cwd: &Path,
         catalog: Option<Arc<AgentCatalog>>,
+        project_trust: ProjectTrusts,
     ) -> Self {
         let catalog = catalog.unwrap_or_else(|| {
-            Arc::new(AgentCatalog::discover(cwd).expect("agent catalog was validated at startup"))
+            Arc::new(
+                AgentCatalog::discover(cwd, project_trust)
+                    .expect("agent catalog was validated at startup"),
+            )
         });
         Self {
             manager,
             cwd: cwd.to_path_buf(),
+            project_trust,
             advertised: AdvertisedAgents::from_catalog(&catalog),
             mutation_observer: Arc::new(()),
             max_output_bytes: rho_tools::DEFAULT_MAX_OUTPUT_BYTES,
@@ -92,7 +101,7 @@ impl AgentTool {
         // Resolve from disk, not the startup snapshot: the user may have
         // deleted or edited the definition (for example in `/agents`) since
         // the session began. The spec's agent list stays stable on purpose.
-        let catalog = AgentCatalog::discover(&self.cwd).map_err(|error| {
+        let catalog = AgentCatalog::discover(&self.cwd, self.project_trust).map_err(|error| {
             ToolError::new(
                 ToolErrorKind::Execution,
                 format!("could not reload agent definitions: {error}"),
@@ -502,8 +511,10 @@ pub(super) struct DelegationBundleOptions {
     pub config_path: PathBuf,
     /// Catalog already discovered for `cwd`; rediscovered when absent.
     pub catalog: Option<Arc<AgentCatalog>>,
-    /// The parent's host I/O, which delegated Rho agents share.
-    pub host_io: crate::tools::host_io::HostIo,
+    /// The parent's environment, which delegated Rho agents share.
+    pub environment: crate::session_environment::SessionEnvironment,
+    /// Where the agents take capacity, and who else hears of them.
+    pub pool: crate::app::subagent_pool::SubagentPool,
 }
 
 pub(super) struct SdkDelegationBundle {
@@ -538,14 +549,24 @@ pub(super) fn sdk_bundle(
     options: DelegationBundleOptions,
     mutation_observer: Arc<dyn rho_tools::WorkspaceMutationObserver>,
 ) -> SdkDelegationBundle {
-    let manager = SubagentManager::new(config.clone(), options.config_path, options.cwd.clone())
-        .with_host_io(options.host_io);
+    let manager = SubagentManager::new(
+        config.clone(),
+        options.config_path,
+        options.cwd.clone(),
+        options.pool,
+    )
+    .with_environment(options.environment.clone());
     let mut tools = Vec::<Arc<dyn rho_sdk::tool::Tool>>::new();
     let mut advertised = None;
     if options.tools.launches() {
-        let tool = AgentTool::new(manager.clone(), &options.cwd, options.catalog)
-            .with_max_output_bytes(config.max_output_bytes)
-            .with_mutation_observer(mutation_observer);
+        let tool = AgentTool::new(
+            manager.clone(),
+            &options.cwd,
+            options.catalog,
+            options.environment.project_trust(),
+        )
+        .with_max_output_bytes(config.max_output_bytes)
+        .with_mutation_observer(mutation_observer);
         advertised = Some(tool.advertised.clone());
         tools.push(Arc::new(tool));
     }

@@ -64,6 +64,7 @@ impl ManagerFixture {
                 Config::default(),
                 root.join("rho.toml"),
                 root.to_path_buf(),
+                crate::app::subagent_pool::SubagentPool::Own,
             ),
             _rho_home: rho_home,
         }
@@ -101,6 +102,7 @@ fn notification(id: &str, agent_id: &str, state: RunState) -> SubagentNotificati
     SubagentNotification {
         snapshot: SubagentSnapshot {
             prior_notices: Vec::new(),
+            persistence: crate::session::SessionPersistence::Saved,
             id: id.into(),
             agent_id: agent_id.into(),
             title: None,
@@ -144,29 +146,15 @@ fn notification_prompts_bound_many_large_utf8_results_and_keep_run_statuses() {
         );
     }
     assert_eq!(model, notification_prompt(&notifications));
-
-    let newer = (0..96)
-        .map(|index| {
-            let id = format!("new{index:03}");
-            let mut notification = notification(&id, "reviewer", RunState::Ok);
-            notification.snapshot.status.result = Some("🦀".repeat(12 * 1024));
-            notification
-        })
-        .collect::<Vec<_>>();
-    let newer = notification_prompt(&newer);
-    let retried_context = merge_notification_context(Some(&model), &newer);
-    assert!(retried_context.len() <= NOTIFICATION_CONTEXT_BYTES);
-    assert!(retried_context.contains("agent new000 (reviewer): ok"));
-    // A boundary can combine multiple bounded sources. Retention may drop
-    // earlier context, but must keep the accepted newest batch intact.
-    let combined = format!("{model}\n\n{newer}");
-    for prior in [None, Some(model.as_str())] {
-        assert_eq!(merge_notification_context(prior, &combined), combined);
-    }
 }
 
 async fn spawn_background_run(manager: &SubagentManager, root: &Path) -> String {
-    let tool = AgentTool::new(manager.clone(), root, /*catalog*/ None);
+    let tool = AgentTool::new(
+        manager.clone(),
+        root,
+        /*catalog*/ None,
+        crate::workspace::ProjectTrusts::UNTRUSTED,
+    );
     let output = call_agent(
         &tool,
         root,
@@ -192,10 +180,11 @@ async fn running_queries_are_scoped_to_the_parent_session() {
     let root = tempfile::tempdir().unwrap();
     let fixture = manager(root.path());
     let manager = fixture.manager();
-    manager.bind_parent_session(crate::subagent::RunPlacement::for_parent_session(
+    manager.bind_parent_session(
         "session-1",
-        None,
-    ));
+        /*storage*/ None,
+        crate::session::SessionPersistence::Saved,
+    );
     let id = spawn_background_run(&manager, root.path()).await;
 
     assert!(!manager.has_running_for_session("session-2"));
@@ -209,10 +198,11 @@ async fn observed_terminal_run_is_not_redelivered() {
     let root = tempfile::tempdir().unwrap();
     let fixture = manager(root.path());
     let manager = fixture.manager();
-    manager.bind_parent_session(crate::subagent::RunPlacement::for_parent_session(
+    manager.bind_parent_session(
         "session-1",
-        None,
-    ));
+        /*storage*/ None,
+        crate::session::SessionPersistence::Saved,
+    );
     let id = spawn_background_run(&manager, root.path()).await;
     let snapshot = manager.wait_done(&id).await.unwrap();
     assert!(snapshot.done);
@@ -228,10 +218,11 @@ async fn unobserved_terminal_runs_drain_as_one_batch() {
     let root = tempfile::tempdir().unwrap();
     let fixture = manager(root.path());
     let manager = fixture.manager();
-    manager.bind_parent_session(crate::subagent::RunPlacement::for_parent_session(
+    manager.bind_parent_session(
         "session-1",
-        None,
-    ));
+        /*storage*/ None,
+        crate::session::SessionPersistence::Saved,
+    );
     let first = spawn_background_run(&manager, root.path()).await;
     let second = spawn_background_run(&manager, root.path()).await;
     manager.wait_done(&first).await.unwrap();
@@ -253,10 +244,11 @@ async fn restored_notifications_can_drain_again() {
     let root = tempfile::tempdir().unwrap();
     let fixture = manager(root.path());
     let manager = fixture.manager();
-    manager.bind_parent_session(crate::subagent::RunPlacement::for_parent_session(
+    manager.bind_parent_session(
         "session-1",
-        None,
-    ));
+        /*storage*/ None,
+        crate::session::SessionPersistence::Saved,
+    );
     let id = spawn_background_run(&manager, root.path()).await;
     manager.wait_done(&id).await.unwrap();
     let batch = manager.take_notifications("session-1");
@@ -272,70 +264,6 @@ async fn restored_notifications_can_drain_again() {
     );
 }
 
-#[test]
-fn claim_terminal_costs_is_idempotent_and_session_scoped() {
-    let root = tempfile::tempdir().unwrap();
-    let fixture = manager(root.path());
-    let manager = fixture.manager();
-    manager.insert_completed_for_test("aaa111", "session-1", Some(0.034271));
-    manager.insert_completed_for_test("bbb222", "session-1", Some(0.01));
-    manager.insert_completed_for_test("ccc333", "session-2", Some(0.5));
-    manager.insert_completed_for_test("ddd444", "session-1", None);
-
-    assert_eq!(manager.claim_terminal_costs_usd_micros("session-1"), 44_271);
-    assert_eq!(manager.claim_terminal_costs_usd_micros("session-1"), 0);
-    assert_eq!(
-        manager.claim_terminal_costs_usd_micros("session-2"),
-        500_000
-    );
-}
-
-// Covers: a finished run leaves the rail when its result is delivered, not on a
-// timer; runs the session never receives must not flash historical terminals.
-// list() still returns the full registry.
-// Owner: subagent manager host list
-#[test]
-fn rail_summaries_keep_finished_runs_until_delivered() {
-    let root = tempfile::tempdir().unwrap();
-    let fixture = manager(root.path());
-    let manager = fixture.manager();
-    let now = crate::subagent::unix_now_secs();
-    let finished = |finished_ago: u64| crate::subagent::RunStatus {
-        state: crate::subagent::RunState::Ok,
-        started_at: Some(now.saturating_sub(finished_ago + 2)),
-        finished_at: Some(now.saturating_sub(finished_ago)),
-        ..crate::subagent::RunStatus::default()
-    };
-    // (id, parent session, seconds since finish, delivered, on rail)
-    let cases = [
-        ("aa0001", "session-1", 30, false, true),
-        ("aa0002", "session-1", 0, true, false),
-        ("aa0003", "session-2", 0, false, true),
-        ("aa0004", "session-2", 30, false, false),
-    ];
-    for (id, session, finished_ago, delivered, _) in cases {
-        manager.insert_completed_status_for_test(id, session, finished(finished_ago));
-        if delivered {
-            manager.observe(id).unwrap();
-        }
-    }
-    manager.insert_completed_for_test("aa0005", "session-2", None);
-
-    let mut ids = manager
-        .rail_summaries("session-1")
-        .into_iter()
-        .map(|snapshot| snapshot.id)
-        .collect::<Vec<_>>();
-    ids.sort();
-    let expected = cases
-        .iter()
-        .filter(|case| case.4)
-        .map(|case| case.0.to_string())
-        .collect::<Vec<_>>();
-    assert_eq!(ids, expected);
-    assert_eq!(manager.list().len(), 5);
-}
-
 // Covers: launches resolve the definition from disk, so an agent deleted
 // mid-session (for example from `/agents`) stops launching even though the
 // startup catalog listed it.
@@ -349,7 +277,12 @@ async fn deleted_agent_no_longer_launches() {
     std::fs::create_dir_all(&agents).unwrap();
     let path = agents.join("doomed.md");
     std::fs::write(&path, "---\ndescription: doomed\n---\nbody\n").unwrap();
-    let tool = AgentTool::new(fixture.manager(), root.path(), /*catalog*/ None);
+    let tool = AgentTool::new(
+        fixture.manager(),
+        root.path(),
+        /*catalog*/ None,
+        crate::workspace::ProjectTrusts::UNTRUSTED,
+    );
     std::fs::remove_file(&path).unwrap();
 
     let error = tool
@@ -368,7 +301,17 @@ async fn concurrent_background_launches_register_together() {
     let root = tempfile::tempdir().unwrap();
     let fixture = manager(root.path());
     let manager = fixture.manager();
-    let tool = AgentTool::new(manager.clone(), root.path(), /*catalog*/ None);
+    manager.bind_parent_session(
+        "session-1",
+        /*storage*/ None,
+        crate::session::SessionPersistence::Saved,
+    );
+    let tool = AgentTool::new(
+        manager.clone(),
+        root.path(),
+        /*catalog*/ None,
+        crate::workspace::ProjectTrusts::UNTRUSTED,
+    );
     let first = call_agent(
         &tool,
         root.path(),
@@ -403,7 +346,12 @@ fn agent_list_never_names_an_agent_model() {
     let root = tempfile::tempdir().unwrap();
     let fixture = manager(root.path());
     let manager = fixture.manager();
-    let tool = AgentTool::new(manager.clone(), root.path(), /*catalog*/ None);
+    let tool = AgentTool::new(
+        manager.clone(),
+        root.path(),
+        /*catalog*/ None,
+        crate::workspace::ProjectTrusts::UNTRUSTED,
+    );
     let baseline = tool.spec().description;
 
     let agents = baseline

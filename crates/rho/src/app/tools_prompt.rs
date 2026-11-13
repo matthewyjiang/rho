@@ -18,10 +18,6 @@ use super::agent_binding::BoundAgent;
 
 pub(crate) struct ToolsAndPromptOptions<'a> {
     pub(crate) config: &'a Config,
-    /// Bootstrap's discovered agent catalog. `None` when assembly may run from
-    /// a different cwd (subagents, automation); the delegation tool set then
-    /// rediscovers on its own.
-    pub(crate) catalog: Option<&'a crate::agent::DiscoveredAgentCatalog>,
     pub(crate) config_path: PathBuf,
     pub(crate) cwd: &'a Path,
     pub(crate) no_system_prompt: bool,
@@ -31,8 +27,6 @@ pub(crate) struct ToolsAndPromptOptions<'a> {
     /// Whether this run can put an MCP server's question in front of a person.
     /// Only a host that answers questionnaires may declare `elicitation`.
     pub(crate) mcp_elicitation: crate::tools::mcp::McpElicitationSupport,
-    /// Whether this run will bind a model that opted-in MCP servers may sample.
-    pub(crate) mcp_sampling: McpSamplingSupport,
     /// Whether this run starts MCP servers from user config and Agent Plugins
     /// and loads OpenAPI sources.
     pub(crate) tool_source_attach: ToolSourceAttach,
@@ -53,21 +47,13 @@ pub(crate) struct ToolsAndPromptOptions<'a> {
     /// Added workspace directories: their AGENTS.md files join instruction
     /// discovery, and delegated agents inherit them.
     pub(crate) added_dirs: &'a crate::added_dirs::AddedDirs,
-    /// Whether `process start` advertises `keep_warm`. Only the interactive
-    /// host runs the cache warmer that honors it.
+    /// Whether `process start` advertises `keep_warm`. Only a host that runs
+    /// the cache warmer that honors it offers it.
     pub(crate) process_keep_warm: crate::tools::process::KeepWarmOffer,
-    /// What the host does in place of local disk, such as serving files.
-    pub(crate) host_io: crate::tools::host_io::HostIo,
-}
-
-/// Whether this run offers MCP sampling at all.
-///
-/// A run that never binds a model must not declare the `sampling` capability,
-/// so the decision is made by the host rather than inferred later.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum McpSamplingSupport {
-    Available,
-    Unavailable,
+    /// The environment the session's children see.
+    pub(crate) environment: crate::session_environment::SessionEnvironment,
+    /// Where delegated agents take capacity, and who else hears of them.
+    pub(crate) subagent_pool: crate::app::subagent_pool::SubagentPool,
 }
 
 /// Whether this session loads external tool sources: MCP servers from user
@@ -79,6 +65,16 @@ pub(crate) enum ToolSourceAttach {
     Connect,
     /// Ignore user and plugin MCP and every OpenAPI source. No transports start.
     None,
+}
+
+/// When a session that attaches tool sources loads them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ToolSourceLoad {
+    /// Before the session opens.
+    Inline,
+    /// After it opens, so a slow server cannot hold the opening up. The
+    /// session's prompts wait for them (see [`DeferredToolSources`]).
+    Deferred,
 }
 
 /// External tools loaded at session start, together so one deferred job
@@ -104,9 +100,74 @@ impl ToolSourcesOutcome {
         Self { mcp, openapi }
     }
 }
-pub(crate) struct StartupInventory {
-    pub(crate) mcp: crate::tools::mcp::McpSessionReport,
-    pub(crate) plugins: crate::plugins::PluginLoadReport,
+
+/// Tool sources a session loads after it opens, as the daemon's sessions
+/// do. [`Self::loaded`] says when they finished without a borrow of the
+/// session, so its host can wait for them while a turn holds the session.
+/// Dropping it stops the load.
+pub(crate) struct DeferredToolSources {
+    relay: tokio::task::JoinHandle<Result<ToolSourcesOutcome, tokio::task::JoinError>>,
+    load: tokio::task::AbortHandle,
+    loaded: tokio::sync::watch::Receiver<bool>,
+}
+
+impl DeferredToolSources {
+    pub(crate) fn follow(load: tokio::task::JoinHandle<ToolSourcesOutcome>) -> Self {
+        let (finished, loaded) = tokio::sync::watch::channel(false);
+        let abort = load.abort_handle();
+        let relay = tokio::spawn(async move {
+            let outcome = load.await;
+            finished.send_replace(true);
+            outcome
+        });
+        Self {
+            relay,
+            load: abort,
+            loaded,
+        }
+    }
+
+    /// Resolves once the load finished, or was stopped.
+    pub(crate) fn loaded(&self) -> impl std::future::Future<Output = ()> + Send + 'static {
+        let mut loaded = self.loaded.clone();
+        async move {
+            // An error means the relay is gone, so the load is over too.
+            let _ = loaded.wait_for(|loaded| *loaded).await;
+        }
+    }
+
+    pub(crate) fn is_loaded(&self) -> bool {
+        *self.loaded.borrow()
+    }
+
+    /// Reads `true` once the load finished, without a borrow of the session.
+    pub(crate) fn progress(&self) -> tokio::sync::watch::Receiver<bool> {
+        self.loaded.clone()
+    }
+
+    /// What the load produced. Call once [`Self::is_loaded`].
+    pub(crate) async fn outcome(mut self) -> Result<ToolSourcesOutcome, tokio::task::JoinError> {
+        match (&mut self.relay).await {
+            Ok(outcome) => outcome,
+            Err(error) => Err(error),
+        }
+    }
+}
+
+impl Drop for DeferredToolSources {
+    fn drop(&mut self) {
+        self.load.abort();
+        self.relay.abort();
+    }
+}
+
+/// A session's deferred tool sources, until its runtime runs with them.
+pub(crate) enum PendingToolSources {
+    /// Still loading, or loaded and not yet attached.
+    Loading(DeferredToolSources),
+    /// Attached to the session's tool set, but the runtime still runs on
+    /// the list it had, since rebuilding it failed. The next attach retries.
+    Unbound,
 }
 
 pub(crate) struct ToolsAndPrompt {
@@ -114,15 +175,10 @@ pub(crate) struct ToolsAndPrompt {
     /// Stable across tool-list changes, rebuilt when the conversation model changes.
     pub(super) prompt: super::active_prompt::ActivePrompt,
     pub(crate) prompt_template: Option<prompt::ModelPromptTemplate>,
-    pub(crate) inventory: StartupInventory,
     /// In-flight MCP connect and OpenAPI loading when the interactive host
     /// deferred them off the first frame. `None` when they were awaited or
     /// skipped.
     pub(crate) pending_tool_sources: Option<tokio::task::JoinHandle<ToolSourcesOutcome>>,
-    /// Late-bound model handle for MCP sampling. Bound once the runtime exists,
-    /// and rebound whenever the user changes models. Left unbound, every
-    /// sampling request fails closed.
-    pub(crate) mcp_sampling: crate::tools::mcp::McpSamplingBridge,
 }
 
 /// Capability resolution plus system prompt assembly for root interactive and
@@ -155,14 +211,18 @@ pub(crate) async fn assemble_tools_and_prompt(
     // Agent Plugins contribute skills through ordinary skill discovery, MCP
     // servers through the generic native MCP configuration, and agents
     // through the agent catalog's own discovery.
-    let plugin_discovery =
-        crate::plugins::discover(options.cwd, crate::paths::home_dir().as_deref());
+    let project_trust = options.environment.project_trust();
+    let plugin_discovery = crate::plugins::discover(
+        options.cwd,
+        crate::paths::home_dir().as_deref(),
+        project_trust,
+    );
     crate::plugins::log(&plugin_discovery.report);
     let crate::plugins::PluginDiscovery {
         skills: plugin_skills,
         mcp: plugin_mcp,
         agents: _,
-        report: plugins_report,
+        report: _,
     } = plugin_discovery;
     let mcp_config = mcp_config_for_attach(options.config, plugin_mcp, options.tool_source_attach);
     // One decision for every external tool source, so MCP and OpenAPI attach
@@ -179,27 +239,25 @@ pub(crate) async fn assemble_tools_and_prompt(
     } else {
         crate::tools::mcp::McpSessionPlan::Inventory(crate::tools::mcp::McpLoadMode::ToolsDisabled)
     };
-    let mcp_sampling_bridge = crate::tools::mcp::McpSamplingBridge::new();
-    let mut mcp_options = crate::tools::mcp::McpSessionOptions::new(
+    // MCP servers and OpenAPI sources take the session's environment as it is
+    // when they load (#1659); MCP tool calls send the caller context current
+    // when they run (#1765).
+    let ambient = options.environment.current();
+    let mcp_options = crate::tools::mcp::McpSessionOptions::new(
         options.config.max_output_bytes,
         crate::tools::mcp::McpRoots::for_workspace(options.cwd),
         options.mcp_authorization,
+        options.environment.clone(),
     )
     .with_elicitation(options.mcp_elicitation);
-    match options.mcp_sampling {
-        McpSamplingSupport::Available => {
-            mcp_options = mcp_options.with_sampling(mcp_sampling_bridge.clone());
-        }
-        McpSamplingSupport::Unavailable => {}
-    }
     let openapi_plans = if attach_tool_sources {
         crate::tools::openapi::config::OpenApiSources::discover(
             &options.config.openapi,
             &options.config_path,
             options.cwd,
-            crate::workspace::ProjectTrust::from_openapi_env(),
+            project_trust.openapi,
         )
-        .plan(&|name| std::env::var(name).ok())
+        .plan(&|name| ambient.read(name))
     } else {
         crate::tools::openapi::config::SourcePlans::default()
     };
@@ -261,11 +319,11 @@ pub(crate) async fn assemble_tools_and_prompt(
     };
     let ToolSourcesOutcome { mcp, openapi } = sources;
     let mut tools = if options.no_tools {
-        AppToolSet::disabled().with_mcp(mcp)
+        AppToolSet::disabled_for(options.environment.credentials()).with_mcp(mcp)
     } else {
         let mut tool_options = ToolSetOptions::new(capabilities)
             .process_keep_warm(options.process_keep_warm)
-            .host_io(options.host_io.clone());
+            .environment(options.environment.clone());
         let workflow_tracker = crate::tools::workflow_tracker::WorkflowRunTracker::new();
         tool_options = tool_options.workflow_tracker(workflow_tracker.clone());
         if advisor_capable {
@@ -275,9 +333,8 @@ pub(crate) async fn assemble_tools_and_prompt(
             tool_options = tool_options.delegation(DelegationConfig::new(
                 options.cwd.to_path_buf(),
                 options.config_path.clone(),
-                options
-                    .catalog
-                    .and_then(|discovered| discovered.for_cwd(options.cwd)),
+                /*catalog*/ None,
+                options.subagent_pool.clone(),
             ));
         }
         if options
@@ -289,6 +346,8 @@ pub(crate) async fn assemble_tools_and_prompt(
                 options.cwd.to_path_buf(),
                 Some(options.config_path.clone()),
                 workflow_tracker,
+                options.subagent_pool.clone(),
+                options.environment.clone(),
             ));
         }
         AppToolSet::new(options.config, options.diagnostics.clone(), tool_options).with_mcp(mcp)
@@ -368,12 +427,7 @@ pub(crate) async fn assemble_tools_and_prompt(
         tools,
         prompt,
         prompt_template,
-        inventory: StartupInventory {
-            mcp: mcp_report,
-            plugins: plugins_report,
-        },
         pending_tool_sources,
-        mcp_sampling: mcp_sampling_bridge,
     })
 }
 

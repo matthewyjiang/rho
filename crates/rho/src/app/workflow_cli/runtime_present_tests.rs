@@ -50,7 +50,7 @@ fn runtime_event_json_matches_wire_shape() {
         ),
         json!({
             "type": "node_started",
-            "node": "build",
+            "node": "s0.build",
             "attempt": 2,
             "version": WORKFLOW_WIRE_VERSION,
             "sequence": 2,
@@ -68,7 +68,7 @@ fn runtime_event_json_matches_wire_shape() {
         ),
         json!({
             "type": "node_finished",
-            "node": "build",
+            "node": "s0.build",
             "outcome": "success",
             "version": WORKFLOW_WIRE_VERSION,
             "sequence": 3,
@@ -85,7 +85,7 @@ fn runtime_event_json_matches_wire_shape() {
         ),
         json!({
             "type": "needs_recovery",
-            "nodes": ["build"],
+            "nodes": ["s0.build"],
             "version": WORKFLOW_WIRE_VERSION,
             "sequence": 4,
             "run_id": run_id.to_string(),
@@ -115,7 +115,7 @@ fn runtime_event_json_matches_wire_shape() {
         ),
         json!({
             "type": "node_progress",
-            "node": "build",
+            "node": "s0.build",
             "attempt": 2,
             "message": "tool: Bash",
             "detail": "git status",

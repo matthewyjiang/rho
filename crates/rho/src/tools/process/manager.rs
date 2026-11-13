@@ -4,7 +4,7 @@ use super::{
     types::{terminal, ProcessLimits},
     Chunk, Snapshot, State,
 };
-use rho_sdk::{ProcessEnvironment, ProcessExecution, ProcessInvocation, ProcessOutputLimits};
+use rho_sdk::{ProcessExecution, ProcessInvocation, ProcessOutputLimits};
 use std::{
     collections::{HashMap, VecDeque},
     path::Path,
@@ -74,8 +74,10 @@ struct Inner {
 #[derive(Clone)]
 pub struct ProcessManager {
     inner: Arc<Mutex<Inner>>,
-    environment: ProcessEnvironment,
+    environment: rho_tools::SharedProcessEnvironment,
     exited: Arc<Notify>,
+    /// Fires as a process is registered, before it starts.
+    started: Arc<Notify>,
 }
 
 impl ProcessManager {
@@ -85,18 +87,22 @@ impl ProcessManager {
     /// stricter child-process policy.
     #[cfg(test)]
     pub fn new(limits: ProcessLimits) -> Self {
-        Self::with_environment(limits, ProcessEnvironment::InheritAll)
+        Self::with_environment(limits, rho_sdk::ProcessEnvironment::InheritAll)
     }
 
-    pub fn with_environment(limits: ProcessLimits, environment: ProcessEnvironment) -> Self {
+    pub fn with_environment(
+        limits: ProcessLimits,
+        environment: impl Into<rho_tools::SharedProcessEnvironment>,
+    ) -> Self {
         let exited = Arc::new(Notify::new());
         Self {
             inner: Arc::new(Mutex::new(Inner {
                 records: HashMap::new(),
                 limits,
             })),
-            environment,
+            environment: environment.into(),
             exited,
+            started: Arc::new(Notify::new()),
         }
     }
 
@@ -127,7 +133,7 @@ impl ProcessManager {
         let execution = ProcessExecution::new(
             cwd,
             rho_tools::shell_invocation(command),
-            self.environment.clone(),
+            self.environment.current(),
             ProcessOutputLimits::new(1, timeout),
         );
         // Keep the user-facing command, not the platform wrapper PowerShell
@@ -171,6 +177,11 @@ impl ProcessManager {
             .kill_on_drop(true);
         super::prepare_child_command(&mut cmd);
         rho_tools::apply_process_environment(&mut cmd, execution.environment())?;
+        if is_login_bash(&execution) {
+            if let Some(path) = rho_tools::parent_path_for(execution.environment()) {
+                cmd.env(rho_tools::PARENT_PATH_VAR, path);
+            }
+        }
         let timeout = execution.output_limits().timeout();
 
         let id = Uuid::new_v4().to_string();
@@ -206,6 +217,7 @@ impl ProcessManager {
             }
             inner.records.insert(id.clone(), rec.clone());
         }
+        self.started.notify_waiters();
         match cmd.spawn() {
             Ok(mut child) => {
                 let tree = match ProcessTree::attach(&child) {
@@ -317,6 +329,12 @@ impl ProcessManager {
         self.exited.clone().notified_owned()
     }
 
+    /// Fires when a process is registered to start. Subscribe before
+    /// reading the processes so one registered in between is not missed.
+    pub(crate) fn started_owned(&self) -> impl std::future::Future<Output = ()> + Send + 'static {
+        self.started.clone().notified_owned()
+    }
+
     /// True when a finished process is waiting to be delivered to the model.
     /// Running jobs are excluded: the idle loop sleeps on [`Self::notified_owned`].
     pub fn has_pending_notification(&self) -> bool {
@@ -326,6 +344,16 @@ impl ProcessManager {
             .records
             .values()
             .any(|record| record.lock().unwrap().result_pending())
+    }
+
+    /// True while any process is still running.
+    pub(crate) fn has_live(&self) -> bool {
+        self.inner
+            .lock()
+            .unwrap()
+            .records
+            .values()
+            .any(|record| record.lock().unwrap().state.is_live())
     }
 
     /// True while a process started at or after `since` is still running.
@@ -472,13 +500,18 @@ impl ProcessManager {
         live.into_iter().map(|(_, _, summary)| summary).collect()
     }
 
-    /// Full retained output for the host peek view.
+    /// Retained output from chunk `cursor` on for the host peek view; a host
+    /// that keeps the earlier chunks itself passes where it left off.
     ///
     /// Host UI only. Unlike [`Self::poll_bounded`], this does not wait, mark a
     /// terminal process observed, or consume an agent-visible cursor.
-    pub(crate) fn host_view(&self, id: &str) -> Result<super::HostProcessView, String> {
+    pub(crate) fn host_view_from(
+        &self,
+        id: &str,
+        cursor: u64,
+    ) -> Result<super::HostProcessView, String> {
         let rec = self.get(id)?;
-        let snapshot = snapshot(&rec, 0);
+        let snapshot = snapshot(&rec, cursor);
         let record = rec.lock().unwrap();
         let (elapsed_seconds, quiet_seconds) = record.host_timing();
         Ok(super::HostProcessView {
@@ -544,6 +577,15 @@ fn record_command(invocation: &ProcessInvocation) -> Result<String, String> {
     }
 }
 
+/// Whether `execution` runs a login `bash -lc`, whose init may reset `PATH`.
+fn is_login_bash(execution: &ProcessExecution) -> bool {
+    matches!(
+        execution.invocation(),
+        ProcessInvocation::Shell { executable, arguments, .. }
+            if executable == "bash" && arguments.iter().any(|argument| argument == "-lc")
+    )
+}
+
 fn command_from_execution(execution: &ProcessExecution) -> Result<tokio::process::Command, String> {
     match execution.invocation() {
         ProcessInvocation::Shell {
@@ -553,7 +595,14 @@ fn command_from_execution(execution: &ProcessExecution) -> Result<tokio::process
             ..
         } => {
             let mut cmd = tokio::process::Command::new(executable);
-            cmd.args(arguments).arg(command);
+            // As the shell tool runs it: login init may reset `PATH`, so the
+            // parent's, or a daemon client's (#1659), is re-prepended.
+            let script = if is_login_bash(execution) {
+                rho_tools::login_shell_script(command)
+            } else {
+                command.clone()
+            };
+            cmd.args(arguments).arg(script);
             Ok(cmd)
         }
         ProcessInvocation::Executable {

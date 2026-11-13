@@ -44,16 +44,18 @@ pub(super) const CODEMODE_LARGE_SCRIPT_SCENARIO: Scenario = Scenario::new(
         rows: 40,
         cols: 100,
     },
-    &[
-        Step::WaitText {
-            text: "gpt-5.5",
-            timeout: STARTUP,
-        },
-        Step::Custom(exercise_large_stream),
-        Step::ExitCommand,
-    ],
+    LARGE_SCRIPT_STEPS,
     /*smoke*/ true,
 );
+
+const LARGE_SCRIPT_STEPS: &[Step] = &[
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::Custom(exercise_large_stream),
+    Step::ExitCommand,
+];
 
 fn exercise_collapsed_stream(harness: &mut PtyHarness) -> Result<()> {
     harness.set_phase("first_open_script_fragment");

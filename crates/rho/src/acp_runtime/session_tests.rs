@@ -12,7 +12,7 @@ use crate::{
     subagent::RunState,
 };
 use agent_client_protocol::{
-    schema::v1::{
+    v1::schema::{
         ContentChunk, CurrentModeUpdate, PermissionOption, PermissionOptionKind,
         SessionConfigOption, SessionConfigSelectOption, SessionUpdate, StopReason, ToolCall,
         ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields, ToolKind,
@@ -20,7 +20,7 @@ use agent_client_protocol::{
     Channel, Error,
 };
 use pretty_assertions::assert_eq;
-use rho_tools::tool_card::{ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus};
+use rho_protocol::display::{ToolBody, ToolCard, ToolCardStatus, ToolFact, ToolFamily, ToolHeader};
 use serde_json::json;
 use std::sync::{Arc, Mutex};
 
@@ -101,7 +101,7 @@ async fn successful_turn_has_one_terminal_write() {
     assert_eq!(
         (
             status.state,
-            status.claude_session_id,
+            status.runtime_session_id,
             status.result,
             status.turns,
             terminal_events(&events)
@@ -241,7 +241,7 @@ async fn rejected_permission_replies_and_fails_the_completed_card() {
     );
     let (run, events) = read_artifacts(dir.path());
     let mut card = ToolCard::new(
-        ToolStatus::Error,
+        ToolCardStatus::Error,
         ToolFamily::FileCommand,
         ToolHeader::call("Execute", Some("run".into())),
     );
@@ -366,7 +366,7 @@ async fn queued_parent_message_becomes_next_prompt_and_port_seals() {
         vec![AttachmentEvent::Message(Box::new(
             crate::presentation::parent_message_card(
                 "course correction".into(),
-                crate::presentation::NotificationDelivery::Queued,
+                rho_protocol::display::NotificationDelivery::Queued,
                 "sent as the next agent turn".into()
             )
         ))]
@@ -464,7 +464,7 @@ async fn steering_agent_takes_parent_message_into_running_turn() {
             vec![AttachmentEvent::Message(Box::new(
                 crate::presentation::parent_message_card(
                     "course correction".into(),
-                    crate::presentation::NotificationDelivery::Received,
+                    rho_protocol::display::NotificationDelivery::Received,
                     "steered into the running turn".into()
                 )
             ))]
@@ -488,7 +488,7 @@ async fn message_waiting_at_prompt_time_is_steered_once_the_turn_runs() {
         ..script(vec![vec![
             Step::BeforeQueued {
                 update: Box::new(SessionUpdate::Plan(
-                    agent_client_protocol::schema::v1::Plan::new(Vec::new()),
+                    agent_client_protocol::v1::schema::Plan::new(Vec::new()),
                 )),
             },
             text("working"),
@@ -572,7 +572,7 @@ async fn declined_or_failed_steer_becomes_next_turn() {
                 vec![AttachmentEvent::Message(Box::new(
                     crate::presentation::parent_message_card(
                         "course correction".into(),
-                        crate::presentation::NotificationDelivery::Queued,
+                        rho_protocol::display::NotificationDelivery::Queued,
                         "sent as the next agent turn".into()
                     )
                 ))]
@@ -679,7 +679,7 @@ async fn cancellation_is_a_protocol_notification_and_stopped_terminal() {
             (
                 status.state,
                 status.result,
-                status.claude_session_id,
+                status.runtime_session_id,
                 terminal_events(&events)
             ),
             (

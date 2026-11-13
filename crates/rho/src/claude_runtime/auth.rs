@@ -13,6 +13,7 @@ use serde::Deserialize;
 use thiserror::Error;
 
 use crate::cli_runtime::{run_bounded_probe, BoundedOutput, CliExecutable, ProbeError};
+use crate::session_environment::Ambient;
 
 #[cfg(all(test, unix))]
 pub(crate) use crate::cli_runtime::{run_bounded_command_with_timeout, PROBE_OUTPUT_CAP_BYTES};
@@ -182,7 +183,7 @@ impl ClaudeProbeSnapshot {
 
 /// Run `claude auth status` (bundled CLI) and parse its JSON.
 pub(crate) async fn query() -> Result<ClaudeAuthStatus, ClaudeAuthError> {
-    let executable = executable::resolve()?;
+    let executable = executable::resolve(&Ambient::ThisProcess)?;
     query_executable(&executable).await
 }
 
@@ -198,7 +199,7 @@ pub(crate) async fn query_executable(
 /// Callers must treat a follow-up [`query`] as the source of truth for
 /// signed-out state. A non-zero exit here is extra detail only.
 pub(crate) async fn logout() -> Result<(), ClaudeAuthError> {
-    let executable = executable::resolve()?;
+    let executable = executable::resolve(&Ambient::ThisProcess)?;
     logout_executable(&executable).await
 }
 
@@ -217,7 +218,7 @@ pub(crate) async fn logout_executable(executable: &CliExecutable) -> Result<(), 
 
 /// Probe the bundled CLI's `--version` for doctor diagnostics.
 pub(crate) async fn version() -> Result<String, ClaudeAuthError> {
-    let executable = executable::resolve()?;
+    let executable = executable::resolve(&Ambient::ThisProcess)?;
     version_executable(&executable).await
 }
 

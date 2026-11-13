@@ -17,15 +17,10 @@ fn with_named_models<T>(names: &[(&str, &str, &str)], f: impl FnOnce() -> T) -> 
         with_provider_models_cache_dir_for_tests(provider.path().to_path_buf(), || {
             rho_providers::model::display_name::clear_model_display_name_cache_for_tests();
             for (provider_name, model, display_name) in names {
-                write_cached_model_metadata_for_tests(
-                    provider_name,
-                    model,
-                    &ModelMetadata {
-                        display_name: Some((*display_name).into()),
-                        reasoning_metadata_complete: true,
-                        ..ModelMetadata::default()
-                    },
-                );
+                let mut metadata = ModelMetadata::default();
+                metadata.display_name = Some((*display_name).into());
+                metadata.reasoning_metadata_complete = true;
+                write_cached_model_metadata_for_tests(provider_name, model, &metadata);
             }
             f()
         })
@@ -188,7 +183,7 @@ fn from_run_status_reconstructs_rho_and_claude_labels() {
             runtime: Some(AgentRuntime::ClaudeCli),
             provider: Some("claude-code".into()),
             model: Some("opus".into()),
-            claude_model: Some("claude-opus-4-6".into()),
+            runtime_model: Some("claude-opus-4-6".into()),
             ..RunStatus::default()
         }),
         Some(PromptModel::ExternalCli {
@@ -203,7 +198,7 @@ fn from_run_status_reconstructs_rho_and_claude_labels() {
         runtime: Some(AgentRuntime::ClaudeCli),
         provider: Some("claude-code".into()),
         model: None,
-        claude_model: None,
+        runtime_model: None,
         ..RunStatus::default()
     };
     assert_eq!(

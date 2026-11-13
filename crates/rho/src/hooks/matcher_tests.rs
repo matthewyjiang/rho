@@ -103,9 +103,9 @@ fn the_description_lists_patterns_as_written() {
 #[test]
 fn partial_edit_tool_lists_report_missing_edit_tools() {
     let cases: [(&[&str], &[&str]); 5] = [
-        (&["edit", "write"], &["str_replace", "apply_patch"]),
-        (&["str_replace"], &["apply_patch", "edit"]),
-        (&["edit", "apply_patch", "str_replace"], &[]),
+        (&["str_replace", "write"], &["apply_patch"]),
+        (&["apply_patch"], &["str_replace"]),
+        (&["apply_patch", "str_replace"], &[]),
         (&["bash", "write"], &[]),
         (&["*"], &[]),
     ];

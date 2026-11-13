@@ -24,9 +24,9 @@ When RTK is available and enabled:
 2. If rewrite returns a different non-empty command, that rewritten form is what the [permission mode](/configuration/permissions) checks and what runs. An approval prompt shows `rtk git status`, not `git status`.
 3. After the command finishes, Rho writes RTK-compatible analytics records so `rtk gain` and `rtk discover` can account for Rho shell use.
 
-The tool card and the transcript keep the command the agent wrote. [Hooks](/hooks/protocol) and the Auto classifier see the rewritten command, so a deny hook that anchors on `^git push` misses `rtk git push`. Match the command anywhere in `shell_command`, or strip a leading `rtk ` first.
+The tool card and the transcript keep the command the agent wrote. [Hooks](/hooks/protocol) get both: `shell_command` is the rewritten command that runs, and `requested_command` is the one the agent wrote, present only when RTK rewrote it. A deny hook that anchors on `^git push` should check `requested_command` when it is set, so it still blocks `rtk git push`. The [Auto](/configuration/permissions#auto) classifier also sees both, judges the agent's intent by the command it wrote, and denies a rewrite that does more than run that command with compacted output. Approval, including **Allow for session**, still applies to the rewritten command that runs.
 
-Commands that already start with `rtk ` are left unchanged. Empty commands are not rewritten. Rewrite is skipped when the process environment sets `RTK_DISABLED=1`.
+Commands that already start with `rtk ` are left unchanged. Empty commands are not rewritten. Rewrite is skipped when the environment the command runs in sets `RTK_DISABLED=1`: your shell's, or for a [daemon](/daemon#environment) session the environment of the client that last prompted it.
 
 Rho does not rewrite:
 
@@ -62,7 +62,7 @@ The agent still requested `git status`. The rewrite is an execution detail.
 rtk = true
 ```
 
-Set `rtk = false` to leave shell commands unchanged even when the binary is installed. This toggle is not in the `/config` browser yet; edit `config.toml` or set `RTK_DISABLED=1`. See [configuration](/configuration#rtk).
+Set `rtk = false` to leave shell commands unchanged even when the binary is installed. Toggle it under `/config` → **Tools** → **RTK**, edit `config.toml`, or set `RTK_DISABLED=1`. See [configuration](/configuration#rtk).
 
 For a one-off disable without editing config, set `RTK_DISABLED=1` in the environment.
 

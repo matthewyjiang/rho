@@ -5,13 +5,11 @@
 
 use std::path::Path;
 
-use rho_tools::{
-    tool::compact_display_path,
-    tool_card::{ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus},
-};
+use rho_protocol::display::{ToolBody, ToolCard, ToolCardStatus, ToolFact, ToolFamily, ToolHeader};
+use rho_tools::tool::compact_display_path;
 use serde_json::Value;
 
-pub(crate) fn preview_card(arguments: &Value, cwd: &Path, status: ToolStatus) -> ToolCard {
+pub(crate) fn preview_card(arguments: &Value, cwd: &Path, status: ToolCardStatus) -> ToolCard {
     let action = argument(arguments, "action");
     let verb = action.map_or_else(|| "workflow".into(), |action| format!("workflow.{action}"));
     let primary = match action {
@@ -44,7 +42,7 @@ pub(crate) fn preview_card(arguments: &Value, cwd: &Path, status: ToolStatus) ->
 /// Facts form the scannable receipt. Full diagnostics, node attempts, artifact
 /// pointers, exports and identity fields stay in the expandable body.
 pub(crate) fn finished_card(arguments: &Value, content: &str, ok: bool, cwd: &Path) -> ToolCard {
-    let mut card = preview_card(arguments, cwd, ToolStatus::from_finished(ok));
+    let mut card = preview_card(arguments, cwd, ToolCardStatus::from_finished(ok));
     let lines: Vec<_> = content.lines().collect();
     let Some(summary) = ok
         .then(|| parse_summary(&lines, argument(arguments, "action")))
@@ -78,7 +76,7 @@ pub(crate) fn finished_card(arguments: &Value, content: &str, ok: bool, cwd: &Pa
     match summary.headline {
         Headline::Validation { valid } => {
             if !valid {
-                card.status = ToolStatus::Error;
+                card.status = ToolCardStatus::Error;
             }
             card.push_fact(if valid {
                 ToolFact::Text {

@@ -53,8 +53,7 @@ fn chat_stream_emits_reasoning_content_provider_context() {
         ModelEvent::ProviderContext {
             kind,
             position: Some(0),
-            data,
-        } if kind == "openai_chat_reasoning_content"
+            data, .. } if kind == "openai_chat_reasoning_content"
             && data.as_str() == Some("plan next")
     )));
 }
@@ -81,11 +80,11 @@ fn accumulates_streamed_tool_call_deltas() {
     let response = chat_stream.finish(&mut |_| Ok(())).unwrap();
     assert_eq!(
         response,
-        ModelResponse::Assistant(vec![ContentBlock::ToolCall(ToolCall {
-            id: "call-1".into(),
-            name: "bash".into(),
-            arguments: json!({"command": "pwd"}),
-        })])
+        ModelResponse::Assistant(vec![ContentBlock::ToolCall(ToolCall::new(
+            "call-1".into(),
+            "bash".into(),
+            json!({"command": "pwd"})
+        ))])
     );
 }
 
@@ -187,16 +186,16 @@ fn streamed_tool_calls_tolerate_qwen_style_quirks() {
     assert_eq!(
         response,
         ModelResponse::Assistant(vec![
-            ContentBlock::ToolCall(ToolCall {
-                id: "dup".into(),
-                name: "bash".into(),
-                arguments: json!({"command": "pwd"}),
-            }),
-            ContentBlock::ToolCall(ToolCall {
-                id: "dup_2".into(),
-                name: "read_file".into(),
-                arguments: json!({"path": "a.rs"}),
-            }),
+            ContentBlock::ToolCall(ToolCall::new(
+                "dup".into(),
+                "bash".into(),
+                json!({"command": "pwd"})
+            )),
+            ContentBlock::ToolCall(ToolCall::new(
+                "dup_2".into(),
+                "read_file".into(),
+                json!({"path": "a.rs"})
+            )),
         ])
     );
 }
@@ -268,7 +267,9 @@ fn chat_finish_reason_reports_early_stops() {
         let mut chat_stream = ChatStreamAccumulator::default();
         let mut stops = Vec::new();
         let mut on_event = |event: ModelEvent| {
-            stops.extend(event.as_stop_reason());
+            if let ModelEvent::Stopped(reason) = event {
+                stops.push(reason);
+            }
             Ok(())
         };
         chat_stream

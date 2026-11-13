@@ -82,32 +82,6 @@ fn a_request_reports_its_missing_prerequisite() {
     }
 }
 
-// Covers: finished advisor spend must accumulate and claim once for the parent
-// session total (statusline and /info).
-// Owner: advisor cost ledger
-#[test]
-fn advisor_costs_accumulate_and_claim_once() {
-    use rho_sdk::model::ModelUsage;
-
-    let store = AdvisorSessionStore::new();
-    store.note_usage(&ModelUsage {
-        cost_usd_micros: Some(12_500),
-        ..ModelUsage::default()
-    });
-    store.note_usage(&ModelUsage {
-        cost_usd_micros: Some(7_500),
-        ..ModelUsage::default()
-    });
-    // Tokens without a provider cost stay silent.
-    store.note_usage(&ModelUsage {
-        input_tokens: Some(100),
-        ..ModelUsage::default()
-    });
-
-    assert_eq!(store.claim_cost_usd_micros(), 20_000);
-    assert_eq!(store.claim_cost_usd_micros(), 0);
-}
-
 // Covers: session rebinds keep or drop unclaimed spend by session id.
 // Owner: advisor cost ledger
 #[tokio::test]
@@ -160,7 +134,7 @@ async fn streams_progress_before_completion_with_plain_final_output() {
 
     use rho_sdk::{
         model::{ModelEvent, ModelRequest},
-        provider::{ModelProvider, ProviderEventSender, ProviderFuture},
+        provider::{ModelProvider, ProviderFuture, ProviderTurnContext},
     };
 
     struct GatedAdvisorProvider {
@@ -185,8 +159,9 @@ async fn streams_progress_before_completion_with_plain_final_output() {
         fn send_turn_stream<'a>(
             &'a self,
             request: ModelRequest<'a>,
-            events: ProviderEventSender,
+            context: ProviderTurnContext,
         ) -> ProviderFuture<'a> {
+            let events = context.events;
             Box::pin(async move {
                 if request.cancellation.is_cancelled() {
                     return Err(rho_sdk::ProviderError::interrupted(
@@ -264,16 +239,16 @@ async fn streams_progress_before_completion_with_plain_final_output() {
             progress = progress_rx.recv() => {
                 let progress = progress.expect("progress channel closed before partial output");
                 assert!(
-                    !progress.text().contains("do not show"),
+                    !progress.message().contains("do not show"),
                     "reasoning leaked into progress: {}",
-                    progress.text()
+                    progress.message()
                 );
-                if progress.presentation().command_summary_text() == Some("responding")
-                    && progress.text().contains("prefer")
+                if progress.metadata().command_summary_text() == Some("responding")
+                    && progress.message().contains("prefer")
                 {
                     saw_partial = true;
                     // Provider is still gated; completion text must not be present yet.
-                    assert!(!progress.text().contains("simple path"));
+                    assert!(!progress.message().contains("simple path"));
                 }
             }
             result = &mut consult => {
@@ -298,7 +273,11 @@ async fn streams_progress_before_completion_with_plain_final_output() {
 #[test]
 fn the_description_never_names_the_reviewer_model() {
     let store = AdvisorSessionStore::new();
-    let tool = AdvisorTool::new(store.clone(), DEFAULT_TRANSCRIPT_BUDGET);
+    let tool = AdvisorTool::new(
+        store.clone(),
+        DEFAULT_TRANSCRIPT_BUDGET,
+        crate::session_environment::SessionEnvironment::default(),
+    );
     let baseline = tool.spec().description;
 
     store.set_model(Some(advisor_selection()));

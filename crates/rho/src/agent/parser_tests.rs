@@ -358,24 +358,6 @@ fn closed_tool_runtime_frontmatter_rules() {
     }
 }
 
-// Covers: antigravity definitions written for agy_acp_server keep loading:
-// its renamed built-ins parse as their agy acp names.
-// Owner: agent parser
-#[test]
-fn antigravity_accepts_agy_acp_server_tool_names() {
-    let definition = parse(
-        "---\ndescription: demo\nruntime: antigravity\ntools: [view_file, create_file]\n---\n",
-    )
-    .unwrap();
-    assert_eq!(
-        definition.runtime,
-        AgentRuntimeSpec::Antigravity(AntigravityAgentConfig {
-            tools: vec![AntigravityTool::ReadFile, AntigravityTool::WriteFile],
-            model: None,
-        })
-    );
-}
-
 // Covers: `fast` is Rho-only, needs a pinned model, and round-trips through
 // the serializer so the editor can save it.
 // Owner: agent parser

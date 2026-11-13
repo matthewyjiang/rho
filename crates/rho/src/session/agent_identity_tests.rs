@@ -3,21 +3,21 @@ use std::fs;
 use pretty_assertions::assert_eq;
 use rho_providers::model::{Message, ModelIdentity};
 
-use super::super::{tree::SessionTree, Session, SESSION_VERSION};
+use super::super::{persistence::MIN_SESSION_VERSION, tree::SessionTree, Session, SESSION_VERSION};
 
-// Covers: fresh delegated rebinding commits its identity and initial state
-// together for current/legacy headers, survives resume and later appends, and
-// cannot rewrite history.
+// Covers: fresh delegated rebinding commits its identity, the root's it
+// replaces, and initial state together for every supported header, survives
+// resume and later appends, and cannot rewrite history.
 // Owner: session agent identity.
 #[test]
 fn fresh_agent_identity_rewrite_preserves_append_and_resume() {
-    for version in 1..=SESSION_VERSION {
+    for version in MIN_SESSION_VERSION..=SESSION_VERSION {
         let root = tempfile::tempdir().unwrap();
         let cwd = tempfile::tempdir().unwrap();
         let session =
             Session::create_in_root_with_agent(root.path(), cwd.path(), "root", "old").unwrap();
-        // A legacy session with no conversation can still receive its first
-        // delegated binding. Its new snapshot must use a readable tree format.
+        // An older-format session with no conversation can still receive its
+        // first delegated binding. Its new snapshot must use a readable format.
         let mut header = super::read_header(&session.path).unwrap();
         let super::SessionEntry::Session {
             version: stored_version,
@@ -46,7 +46,13 @@ fn fresh_agent_identity_rewrite_preserves_append_and_resume() {
             .rebind_fresh_delegated_agent("restricted-child", "new-fingerprint", Some(&snapshot))
             .unwrap();
         let expected_identity = Some(("restricted-child".into(), "new-fingerprint".into()));
+        // The root moves aside, so a reload can cap the child at its tools.
+        let expected_root = Some(super::SavedAgent {
+            id: "root".into(),
+            fingerprint: "old".into(),
+        });
         assert_eq!(session.stored_agent_identity().unwrap(), expected_identity);
+        assert_eq!(session.root_agent().unwrap(), expected_root);
         assert_eq!(
             session.delegated_agent_id().unwrap(),
             Some("restricted-child".into())
@@ -57,9 +63,9 @@ fn fresh_agent_identity_rewrite_preserves_append_and_resume() {
         );
         // A restart before any turn checkpoint must see both binding halves.
         let (reopened, _) =
-            Session::open_by_id_with_histories_in_root(root.path(), cwd.path(), session.id())
-                .unwrap();
+            Session::open_by_id_in_root(root.path(), cwd.path(), session.id()).unwrap();
         assert_eq!(reopened.stored_agent_identity().unwrap(), expected_identity);
+        assert_eq!(reopened.root_agent().unwrap(), expected_root);
         assert_eq!(
             reopened.session_metadata("test-selection").unwrap(),
             Some("selected".into())
@@ -80,17 +86,19 @@ fn fresh_agent_identity_rewrite_preserves_append_and_resume() {
             .rebind_fresh_delegated_agent("root", "old", /*initial_snapshot*/ None)
             .is_err());
         assert_eq!(fs::read(&session.path).unwrap(), before);
-        let (reopened, histories) =
-            Session::open_by_id_with_histories_in_root(root.path(), cwd.path(), session.id())
-                .unwrap();
+        let (reopened, history) =
+            Session::open_by_id_in_root(root.path(), cwd.path(), session.id()).unwrap();
         assert_eq!(reopened.stored_agent_identity().unwrap(), expected_identity);
         assert_eq!(
             reopened.delegated_agent_id().unwrap(),
             Some("restricted-child".into())
         );
-        assert_eq!(
-            (histories.model, histories.display),
-            (vec![message.clone()], vec![message])
-        );
+        let display: Vec<_> = reopened
+            .active_display_history()
+            .unwrap()
+            .into_iter()
+            .map(|row| row.message)
+            .collect();
+        assert_eq!((history, display), (vec![message.clone()], vec![message]));
     }
 }

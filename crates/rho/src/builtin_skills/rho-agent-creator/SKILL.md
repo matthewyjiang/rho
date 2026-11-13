@@ -126,5 +126,5 @@ After a clean check:
 
 1. Report the final path.
 2. Ask the user to run `/agents`, which reloads definitions from disk. Do not claim an already initialized delegation tool schema changed; a new session is guaranteed to load the agent.
-3. For external runtimes, remind them to install the binary, sign in (`/login claude-code`, `/login cursor`, or `/login antigravity`), check with `/doctor`, launch from a Rho parent in Plan or Bypass, and inspect runs with `rho attach <run-id>`.
+3. For external runtimes, remind them to install the binary, sign in (`/login claude-code`, `/login cursor`, or `/login antigravity`), check with `/doctor`, launch from a Rho parent in Plan or Bypass, and inspect runs with `/attach` in the TUI.
 4. For project agents, mention `RHO_TRUST_PROJECT_AGENTS=1`.

@@ -63,11 +63,15 @@ async fn preparation_failure_is_durable_and_never_dispatches() {
     graph.runtime_limits.prompt_expansion_bytes = "review".len() as u64;
     graph.program_digest = program_digest(&graph).unwrap();
     let run = create_run_with_workflow(home.path(), workspace.path(), graph);
-    let expected =
-        prepared::PreparedInvocation::prepare(&run.graph, &task_id("inspect"), &run.state.state)
-            .err()
-            .unwrap()
-            .to_string();
+    let expected = prepared::PreparedInvocation::prepare(
+        &run.graph,
+        &task_id("inspect"),
+        &run.state.state,
+        prepared::AgentSession::New(rho_sdk::SessionId::new()),
+    )
+    .err()
+    .unwrap()
+    .to_string();
     let executor = Arc::new(CountingExecutor(AtomicUsize::new(0)));
     let (sender, mut events) = tokio::sync::mpsc::unbounded_channel();
     let completed = runner(home.path(), workspace.path(), executor.clone())
@@ -425,7 +429,7 @@ async fn uncertain_agent_cleanup_is_durable_recoverable_and_keeps_locks() {
     .unwrap();
     assert!(matches!(
         attempt.state,
-        AttemptState::InterruptedUncertain { .. }
+        AttemptState::InterruptedUncertain(_)
     ));
     assert!(!cancellation_request_acknowledged(home.path(), run_id, &receipt).unwrap());
     assert!(matches!(
@@ -510,7 +514,7 @@ async fn real_command_cancellation_loads_and_resumes_with_complete_result() {
     );
     let command_executor: Arc<dyn WorkflowNodeExecutor<CommandInvocation>> =
         Arc::new(WorkflowCommandExecutor::new(
-            rho_sdk::ProcessEnvironment::Empty,
+            rho_sdk::ProcessEnvironment::Empty.into(),
             Arc::new(AllowCommandHosts),
         ));
     let active_runner = Arc::new(WorkflowRunner::new(

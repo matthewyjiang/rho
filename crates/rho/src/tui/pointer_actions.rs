@@ -3,13 +3,13 @@
 //! Pointer handling is sync and backend-generic, so a click that must submit,
 //! confirm, or run a command records a [`PointerAction`] instead. The idle and
 //! running loops take it right after the mouse event and run it here with the
-//! terminal and runtime, through the same paths the equivalent keys use.
+//! terminal, through the same paths the equivalent keys use.
 
 use crate::tui::DefaultTerminal;
 
 use super::{
     app_state::PointerAction, command_actions::CommandSubmission, commands, App, ComposerMode,
-    InteractiveRuntime, TurnPrompt,
+    TurnPrompt,
 };
 
 impl App {
@@ -18,18 +18,17 @@ impl App {
         &mut self,
         action: PointerAction,
         terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         match action {
             PointerAction::ConfirmInlineChoice => {
                 if let ComposerMode::InlineChoice(modal) = self.input_ui.composer() {
                     let value = modal.choice.selected_value().to_owned();
-                    self.resolve_inline_choice(value, terminal, agent).await?;
+                    self.resolve_inline_choice(value, terminal).await?;
                 }
             }
             PointerAction::SubmitPicker => {
                 if matches!(self.input_ui.composer(), ComposerMode::Picker(_)) {
-                    self.submit_picker_selection(terminal, agent).await?;
+                    self.submit_picker_selection(terminal).await?;
                 }
             }
             PointerAction::RunCommand(text) => {
@@ -42,9 +41,10 @@ impl App {
                         Vec::new(),
                         Vec::new(),
                     );
-                    self.execute_command(submission, terminal, agent).await?;
+                    self.execute_command(submission, terminal).await?;
                 }
             }
+            PointerAction::CycleReasoning => self.cycle_daemon_reasoning()?,
         }
         Ok(())
     }
@@ -70,6 +70,8 @@ impl App {
                         .await?;
                 }
             }
+            // The daemon queues the change behind the turn.
+            PointerAction::CycleReasoning => self.cycle_daemon_reasoning()?,
         }
         Ok(())
     }

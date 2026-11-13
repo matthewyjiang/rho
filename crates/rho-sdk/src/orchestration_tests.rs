@@ -189,11 +189,7 @@ fn validate_tool_result_pairs(messages: &[Message]) -> Result<(), ProviderError>
 }
 
 fn tool_call(id: &str, name: &str) -> ToolCall {
-    ToolCall {
-        id: id.into(),
-        name: name.into(),
-        arguments: json!({}),
-    }
+    ToolCall::new(id.into(), name.into(), json!({}))
 }
 
 fn tool_spec(name: &str) -> ToolSpec {
@@ -281,11 +277,7 @@ impl Tool for CompletingProgressTool {
 
     fn call<'a>(&'a self, _invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a> {
         Box::pin(async move {
-            if !context
-                .progress()
-                .send(ToolProgress::message("progress"))
-                .await
-            {
+            if !context.progress().send(ToolProgress::new("progress")).await {
                 return Err(ToolError::cancelled());
             }
             self.progress_sent.store(true, Ordering::Release);
@@ -350,11 +342,7 @@ async fn wait_for_flag(flag: &AtomicBool) {
 }
 
 fn interrupted_result(id: &str) -> ToolResult {
-    ToolResult {
-        id: id.into(),
-        ok: false,
-        content: INTERRUPTED_TOOL_RESULT_CONTENT.into(),
-    }
+    ToolResult::failed(id, INTERRUPTED_TOOL_RESULT_CONTENT)
 }
 
 fn session_tool_results(session: &Session) -> Vec<ToolResult> {
@@ -362,7 +350,7 @@ fn session_tool_results(session: &Session) -> Vec<ToolResult> {
         .history()
         .into_iter()
         .filter_map(|message| match message {
-            Message::ToolResult(result) => Some(result),
+            Message::ToolResult(result) => Some(Arc::unwrap_or_clone(result)),
             _ => None,
         })
         .collect()
@@ -390,7 +378,7 @@ async fn cancelled_applied_event_keeps_steering_out_of_history() {
     events
         .send(RunEvent::StepStarted {
             step: 1,
-            estimated_context_tokens: 0,
+            context_estimate: crate::ContextEstimate::from_estimated_tokens(0),
         })
         .await
         .unwrap();
@@ -430,7 +418,7 @@ async fn cancellation_before_the_first_tool_interrupts_every_unresolved_call() {
     ));
     assert!(matches!(
         next_event(&mut run).await,
-        RunEvent::StepStarted { estimated_context_tokens, .. } if estimated_context_tokens > 0
+        RunEvent::StepStarted { context_estimate, .. } if context_estimate.estimated_tokens() > 0
     ));
     assert!(matches!(
         next_event(&mut run).await,
@@ -509,11 +497,7 @@ async fn cancellation_between_tools_preserves_completed_results() {
         &session,
         &mut run,
         vec![
-            ToolResult {
-                id: "completed".into(),
-                ok: true,
-                content: "completed".into(),
-            },
+            ToolResult::succeeded("completed", "completed"),
             interrupted_result("unresolved"),
         ],
     )
@@ -563,11 +547,7 @@ async fn cancellation_during_progress_preserves_a_completed_tool_and_interrupts_
         &session,
         &mut run,
         vec![
-            ToolResult {
-                id: "progress".into(),
-                ok: true,
-                content: "progress-complete".into(),
-            },
+            ToolResult::succeeded("progress", "progress-complete"),
             interrupted_result("later"),
         ],
     )
@@ -943,7 +923,8 @@ async fn event_delivery_failure_does_not_commit_interrupted_tool_results() {
     ));
     assert!(matches!(
         event_receiver.recv().await,
-        Some(RunEvent::StepStarted { estimated_context_tokens, .. }) if estimated_context_tokens > 0
+        Some(RunEvent::StepStarted { context_estimate, .. })
+            if context_estimate.estimated_tokens() > 0
     ));
     assert!(matches!(
         event_receiver.recv().await,

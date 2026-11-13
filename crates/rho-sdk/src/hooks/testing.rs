@@ -6,11 +6,11 @@
 //! these instead of widening the production constructors. [`RecordingObserver`]
 //! captures what a runtime delivers.
 
-use std::sync::{Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use super::{
     bounds::HookPayloadBounds,
-    dispatch::HookObserver,
+    dispatch::{HookDelegation, HookDispatcher, HookObserver, HookWiring},
     envelope::{HookEnvelope, HookEnvelopeBuilder, HookIdentity},
     event::HookEventKind,
     gate::PreToolUseRequest,
@@ -139,4 +139,20 @@ impl HookObserver for RecordingObserver {
     fn observe(&self, envelope: HookEnvelope) {
         self.lock().push(envelope);
     }
+}
+
+/// A dispatcher whose observational events land in the returned recorder,
+/// for hosts that report events through [`HookDispatcher`] themselves.
+pub fn recording_dispatcher() -> (HookDispatcher, Arc<RecordingObserver>) {
+    let recorder = Arc::new(RecordingObserver::new());
+    let wiring = HookWiring::new(
+        Some(Arc::clone(&recorder) as Arc<dyn HookObserver>),
+        /*gate*/ None,
+        HookPayloadBounds::default(),
+        HookDelegation::default(),
+    );
+    (
+        HookDispatcher::new(wiring, /*workspace_root*/ None),
+        recorder,
+    )
 }

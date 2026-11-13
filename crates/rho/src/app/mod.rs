@@ -5,29 +5,33 @@ mod active_prompt;
 mod agent_binding;
 pub(crate) mod agent_concurrency;
 pub(crate) mod agent_executor;
+mod attach;
 mod automation;
 pub(crate) mod automation_protocol;
 mod bootstrap;
 pub(crate) mod boundary_results;
-mod classifier_eval;
 mod cli_config;
-mod compaction_eval;
-mod computer_cli;
+pub(crate) mod compaction_report;
 pub(crate) mod config_repository;
 pub(crate) mod context_report;
 pub(crate) mod conversation_switch;
+mod credential_writes;
+mod daemon_cli;
+// The TUI follows daemon sessions through it too (`tui::daemon_session`,
+// #1667).
+pub(crate) mod daemon_client;
+mod daemon_host;
+pub(crate) mod daemon_install;
+mod detach;
 mod doctor_cli;
 pub(crate) mod endpoint_login;
-mod headless_delegation;
-pub(crate) mod headless_run;
+mod headless_host;
+mod host_mcp;
 mod interactive;
 pub(crate) mod interactive_presenter;
-mod interactive_run_controller;
-pub(crate) mod interactive_runtime;
-mod interactive_session_controller;
-mod interactive_state;
 mod login;
 mod mcp_cli;
+mod mcp_server;
 mod model_compactor;
 mod model_prompt_cli;
 mod model_prompt_metadata;
@@ -36,21 +40,39 @@ mod parent_bridge;
 mod parent_steering;
 mod plugins_cli;
 mod policy;
-mod provider_controller;
+mod prompt_content;
+pub(crate) mod provider_context_report;
+#[cfg(debug_assertions)]
+pub(crate) mod quiet_notice_signal;
 mod runtime_builder;
 pub(crate) mod sdk_config;
 mod session_assembly;
+mod session_commands;
+pub(crate) mod workspace_rewind;
+// Session control through the rho daemon.
+pub(crate) mod session_control;
+mod session_events;
+pub(crate) mod session_mcp;
+mod session_options;
+mod session_runtime;
 mod sessions_cli;
 mod shutdown_signal;
 pub(crate) mod side_chat;
 pub(crate) mod subagent_host_input;
 pub(crate) mod subagent_manager;
 pub(crate) mod subagent_messaging;
+pub(crate) mod subagent_pool;
 mod tools_prompt;
 pub(crate) mod workflow_cli;
 pub(crate) mod workflow_runtime;
+mod worktrees_cli;
 
 pub(crate) use agent_binding::relaunch_config;
 pub use automation::{AutomationExit, AutomationInterrupted};
 pub use bootstrap::run;
-pub(crate) use subagent_manager::SubagentManager;
+pub(crate) use login::confirms_sign_in;
+pub(crate) use session_options::{
+    available_auths, config_for_new_session, read_config_file, reasoning_from_wire, DraftOptions,
+    LaunchFlag, SettingOrigin, SettingOrigins,
+};
+pub(crate) use session_runtime::SettingChangeError;

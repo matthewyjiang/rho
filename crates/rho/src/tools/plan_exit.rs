@@ -1,9 +1,6 @@
 //! Interactive plan approval records intent; the host installs policy after the turn.
 
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc, Mutex,
-};
+use std::sync::{Arc, Mutex};
 
 use rho_sdk::{
     tool::{
@@ -19,8 +16,34 @@ use crate::permission::PermissionMode;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PlanExitDecision {
+    /// The mode to carry the plan out in; [`PermissionMode::Plan`] keeps
+    /// planning.
     pub(crate) target: PermissionMode,
+    /// What the user wrote for the model to read with the decision.
     pub(crate) feedback: Option<String>,
+}
+
+impl PlanExitDecision {
+    pub(crate) fn approve(mode: PermissionMode) -> Self {
+        Self {
+            target: mode,
+            feedback: None,
+        }
+    }
+
+    pub(crate) fn keep_planning() -> Self {
+        Self::approve(PermissionMode::Plan)
+    }
+
+    pub(crate) fn with_feedback(mut self, feedback: Option<String>) -> Self {
+        self.feedback = feedback;
+        self
+    }
+
+    /// The mode it approves the plan into, if it does.
+    pub(crate) fn approved(&self) -> Option<PermissionMode> {
+        (self.target != PermissionMode::Plan).then_some(self.target)
+    }
 }
 
 /// How the turn that proposed a plan ended.
@@ -76,25 +99,6 @@ impl PlanExitSlot {
     }
 }
 
-/// The approval prompt an interactive host draws, chosen when it installs
-/// the tool; the tool set builds the matching [`PlanExitPrompt`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum PlanExitHost {
-    Questionnaire,
-    Permission,
-}
-
-/// How the tool puts the approval question to the user.
-pub(crate) enum PlanExitPrompt {
-    /// A decision and optional-feedback questionnaire through the run's host
-    /// input, which the TUI draws.
-    Questionnaire,
-    /// One permission prompt whose options are the approvable modes. ACP
-    /// hosts answer it with `session/request_permission`, which every host
-    /// implements, so the handoff does not depend on form elicitation.
-    Permission(PlanPermissionSender),
-}
-
 /// One plan approval waiting on a permission-prompt host.
 pub(crate) struct PlanPermissionRequest {
     /// The `exit_plan_mode` call, so the host shows the prompt on its card.
@@ -103,13 +107,7 @@ pub(crate) struct PlanPermissionRequest {
     /// The modes the user may approve into, in offer order.
     pub(crate) targets: Vec<PermissionMode>,
     /// Dropping it unanswered reports the call as cancelled.
-    pub(crate) reply: oneshot::Sender<PlanPermissionAnswer>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum PlanPermissionAnswer {
-    Approve(PermissionMode),
-    KeepPlanning,
+    pub(crate) reply: oneshot::Sender<PlanExitDecision>,
 }
 
 pub(crate) type PlanPermissionSender = mpsc::UnboundedSender<PlanPermissionRequest>;
@@ -117,8 +115,12 @@ pub(crate) type PlanPermissionReceiver = mpsc::UnboundedReceiver<PlanPermissionR
 
 pub(crate) struct PlanExitTool {
     pub(crate) slot: Option<PlanExitSlot>,
-    pub(crate) prompt: PlanExitPrompt,
-    pub(crate) classifier_configured: Arc<AtomicBool>,
+    /// Where the tool puts its one permission prompt, whose options are the
+    /// approvable modes. ACP hosts answer it with `session/request_permission`,
+    /// which every host implements, so the handoff does not depend on form
+    /// elicitation.
+    pub(crate) permission_requests: PlanPermissionSender,
+    pub(crate) classifier_configured: bool,
 }
 
 /// The modes a plan may be approved into. Auto needs the classifier model,
@@ -150,10 +152,16 @@ fn decision(answer: &str, feedback: Option<&str>, targets: &[PermissionMode]) ->
         .unwrap_or(PermissionMode::Plan);
     PlanExitDecision {
         target,
-        feedback: feedback
-            .filter(|text| !text.trim().is_empty() && *text != "no_feedback")
-            .map(str::to_owned),
+        feedback: given_feedback(feedback),
     }
+}
+
+/// `feedback` when the user wrote any: not blank, and not the feedback
+/// question's "No feedback" choice.
+fn given_feedback(feedback: Option<&str>) -> Option<String> {
+    feedback
+        .filter(|text| !text.trim().is_empty() && *text != NO_FEEDBACK)
+        .map(str::to_owned)
 }
 
 fn decision_output(decision: &PlanExitDecision) -> ToolOutput {
@@ -174,66 +182,71 @@ fn decision_output(decision: &PlanExitDecision) -> ToolOutput {
     }
 }
 
-fn host_error(error: rho_sdk::Error) -> ToolError {
-    match error {
-        rho_sdk::Error::Cancelled => ToolError::cancelled(),
-        error => ToolError::new(ToolErrorKind::Execution, error.to_string()),
-    }
+/// The id of the plan approval's decision question, whose answer is the
+/// name of the mode to approve into, or anything else to keep planning.
+pub(crate) const DECISION_QUESTION_ID: &str = "decision";
+
+/// The id of the plan approval's feedback question, and the value of its
+/// choice that gives none.
+pub(crate) const FEEDBACK_QUESTION_ID: &str = "feedback";
+const NO_FEEDBACK: &str = "no_feedback";
+
+/// The plan approval both TUIs ask: the decision, then feedback for the
+/// model, which may be skipped. `help` goes under the decision.
+pub(crate) fn questionnaire(
+    targets: &[PermissionMode],
+    help: &str,
+) -> Result<HostInputRequest, rho_sdk::Error> {
+    let question = decision_question(targets)?.with_help(help);
+    // Feedback can contain arbitrary text, including reserved decision values.
+    // Only the closed decision question authorizes a permission change.
+    let feedback = HostQuestion::new(
+        FEEDBACK_QUESTION_ID,
+        "Optional feedback for the plan",
+        vec![HostChoice::new(NO_FEEDBACK, "No feedback")],
+        SelectionMode::One,
+    )?
+    .with_header("Feedback")
+    .allow_other()
+    .optional();
+    HostInputRequest::questionnaire("Plan approval", vec![question, feedback])
 }
 
-/// Asks the TUI's decision and feedback questionnaire.
-async fn ask_questionnaire(
-    context: &ToolContext,
+/// What a [`questionnaire`]'s `response` decides, with the feedback it
+/// gave; `None` when it does not answer the decision.
+pub(crate) fn questionnaire_decision(
+    response: &rho_sdk::HostInputResponse,
     targets: &[PermissionMode],
-) -> Result<PlanExitDecision, ToolError> {
+) -> Option<PlanExitDecision> {
+    let first = |id| {
+        response
+            .answers()
+            .get(id)
+            .and_then(|answers| answers.first())
+    };
+    let answer = first(DECISION_QUESTION_ID)?;
+    let feedback = first(FEEDBACK_QUESTION_ID);
+    Some(decision(answer, feedback.map(String::as_str), targets))
+}
+
+/// The plan approval's decision question: approve into one of `targets`,
+/// or keep planning.
+fn decision_question(targets: &[PermissionMode]) -> Result<HostQuestion, rho_sdk::Error> {
     let mut choices = targets
         .iter()
         .map(|&mode| HostChoice::new(mode.as_str(), approval_label(mode)))
         .collect::<Vec<_>>();
     choices.push(HostChoice::new("keep_planning", "Keep planning"));
-    let question = HostQuestion::new(
-        "decision",
+    Ok(HostQuestion::new(
+        DECISION_QUESTION_ID,
         "Plan ready. How should Rho continue?",
         choices,
         SelectionMode::One,
-    )
-    .map_err(host_error)?
-    .header("Decision")
-    .help("Review the plan in the tool card above. Approval lasts until Rho exits; it is not saved, and the next launch starts in your saved mode.");
-    // Feedback can contain arbitrary text, including reserved decision values.
-    // Only the closed decision question authorizes a permission change.
-    let feedback = HostQuestion::new(
-        "feedback",
-        "Optional feedback for the plan",
-        vec![HostChoice::new("no_feedback", "No feedback")],
-        SelectionMode::One,
-    )
-    .map_err(host_error)?
-    .header("Feedback")
-    .allow_other()
-    .optional();
-    let request = HostInputRequest::questionnaire("Plan approval", vec![question, feedback])
-        .map_err(host_error)?;
-    let response = context
-        .request_host_input(request)
-        .await
-        .map_err(host_error)?;
-    let answer = response
-        .answers()
-        .get("decision")
-        .and_then(|answers| answers.first())
-        .ok_or_else(|| {
-            ToolError::new(ToolErrorKind::Execution, "plan approval answer is missing")
-        })?;
-    let feedback = response
-        .answers()
-        .get("feedback")
-        .and_then(|answers| answers.first());
-    Ok(decision(answer, feedback.map(String::as_str), targets))
+    )?
+    .with_header("Decision"))
 }
 
-/// Asks a permission-prompt host, which offers no feedback field: the user
-/// replies in their next message instead.
+/// Asks a permission-prompt host, which may answer with feedback.
 async fn ask_permission(
     sender: &PlanPermissionSender,
     call_id: ToolCallId,
@@ -260,16 +273,14 @@ async fn ask_permission(
         () = context.cancellation().cancelled() => return Err(ToolError::cancelled()),
         answer = answer => answer.map_err(|_| ToolError::cancelled())?,
     };
-    // The one check that an answer names an offered mode.
-    let target = match answer {
-        PlanPermissionAnswer::Approve(mode) if targets.contains(&mode) => mode,
-        PlanPermissionAnswer::Approve(_) | PlanPermissionAnswer::KeepPlanning => {
-            PermissionMode::Plan
-        }
-    };
+    // The one check that an answer names an offered mode. Its feedback is
+    // the host's to clean up; only blank text is none.
     Ok(PlanExitDecision {
-        target,
-        feedback: None,
+        target: answer
+            .approved()
+            .filter(|mode| targets.contains(mode))
+            .unwrap_or(PermissionMode::Plan),
+        feedback: answer.feedback.filter(|text| !text.trim().is_empty()),
     })
 }
 
@@ -310,13 +321,9 @@ impl Tool for PlanExitTool {
             };
             // A revision supersedes earlier intent, even if its new question is cancelled.
             slot.take();
-            let targets = approval_targets(self.classifier_configured.load(Ordering::Relaxed));
-            let decision = match &self.prompt {
-                PlanExitPrompt::Questionnaire => ask_questionnaire(&context, &targets).await?,
-                PlanExitPrompt::Permission(sender) => {
-                    ask_permission(sender, call_id, plan, targets, &context).await?
-                }
-            };
+            let targets = approval_targets(self.classifier_configured);
+            let decision =
+                ask_permission(&self.permission_requests, call_id, plan, targets, &context).await?;
             let output = decision_output(&decision);
             slot.set(decision);
             Ok(output)

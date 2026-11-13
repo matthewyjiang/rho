@@ -62,8 +62,8 @@ The example assumes `review` declares an output schema with a string field
 `summary`. Each export is a typed, required reference to a task output. Planning
 checks its node and schema path. Closing the root resolves the exports and saves
 them with the scope outcome. An unavailable required export cannot produce a
-successful root result. Task definitions keep local source names, and root
-task instances use the same names at runtime.
+successful root result. Task definitions keep local source names. At runtime,
+root task instances are qualified by the root scope, such as `s0.review`.
 Use `output("review", [])` to export the entire typed value.
 
 Planning bounds the serialized export map using each referenced task's declared
@@ -157,7 +157,7 @@ All node constructors accept these common fields:
 | `needs` | Nodes that must reach terminal state first |
 | `when` | Optional typed condition |
 | `allow_failure` | Let this failure avoid failing the whole workflow |
-| `timeout_seconds` | Required positive frozen process or agent timeout |
+| `timeout_seconds` | Required positive frozen process or agent timeout; an agent's includes any wait for a slot in the agent budget |
 | `max_output_bytes` | Required positive frozen retained-output limit |
 | `output` | Optional typed output schema |
 

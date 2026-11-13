@@ -5,8 +5,8 @@ use rho_providers::model::{models_dev::ModelCost, ModelMetadata, ModelUsage};
 use rho_sdk::{ModelCallMetrics, ModelCallProfile, ReasoningLevel};
 
 use super::{
-    CacheMissCause, CacheRebilled, CacheStatsTracker, CACHE_MISS_NOISE_FLOOR_TOKENS,
-    DEFAULT_PROMPT_CACHE_TTL, SIGNIFICANT_MISS_TOKENS,
+    CacheRebilled, CacheStatsTracker, CACHE_MISS_NOISE_FLOOR_TOKENS, DEFAULT_PROMPT_CACHE_TTL,
+    SIGNIFICANT_MISS_TOKENS,
 };
 
 /// One completed model call, as the tracker observes it.
@@ -96,29 +96,27 @@ fn play(
 }
 
 fn priced_metadata() -> ModelMetadata {
-    ModelMetadata {
-        cost_default: Some(ModelCost {
-            input_micros_per_m: Some(1_000_000),
-            output_micros_per_m: Some(2_000_000),
-            cache_read_micros_per_m: Some(100_000),
-            cache_write_micros_per_m: Some(1_250_000),
-        }),
-        ..ModelMetadata::default()
-    }
+    let mut metadata = ModelMetadata::default();
+    metadata.cost_default = Some(ModelCost {
+        input_micros_per_m: Some(1_000_000),
+        output_micros_per_m: Some(2_000_000),
+        cache_read_micros_per_m: Some(100_000),
+        cache_write_micros_per_m: Some(1_250_000),
+    });
+    metadata
 }
 
 /// High input/cache-read spread so a miss below the token tripwire can still
 /// cross the $0.10 notice floor.
 fn expensive_metadata() -> ModelMetadata {
-    ModelMetadata {
-        cost_default: Some(ModelCost {
-            input_micros_per_m: Some(20_000_000),
-            output_micros_per_m: None,
-            cache_read_micros_per_m: Some(0),
-            cache_write_micros_per_m: None,
-        }),
-        ..ModelMetadata::default()
-    }
+    let mut metadata = ModelMetadata::default();
+    metadata.cost_default = Some(ModelCost {
+        input_micros_per_m: Some(20_000_000),
+        output_micros_per_m: None,
+        cache_read_micros_per_m: Some(0),
+        cache_write_micros_per_m: None,
+    });
+    metadata
 }
 
 struct Case {
@@ -126,8 +124,6 @@ struct Case {
     requests: Vec<Request>,
     metadata: Option<fn() -> ModelMetadata>,
     rebilled: CacheRebilled,
-    notices: usize,
-    last_cause: Option<CacheMissCause>,
 }
 
 const NONE: CacheRebilled = CacheRebilled {
@@ -138,8 +134,8 @@ const NONE: CacheRebilled = CacheRebilled {
 };
 
 // Covers: first request, full hits, the noise floor on both sides, providers
-// that never report cache, model switch, idle TTL, shrunken prompts, and both
-// notice tripwires.
+// that never report cache, model switch, idle TTL, shrunken prompts, and
+// misses on either side of the notice tripwires.
 // Owner: tui cache-miss policy
 #[test]
 fn tracker_counts_only_real_misses() {
@@ -149,16 +145,12 @@ fn tracker_counts_only_real_misses() {
             requests: vec![Request::next(0, 50_000, 0)],
             metadata: None,
             rebilled: NONE,
-            notices: 0,
-            last_cause: None,
         },
         Case {
             name: "full cache hit is not a miss",
             requests: vec![Request::warm(0, 40_000), Request::next(2, 200, 40_000)],
             metadata: None,
             rebilled: NONE,
-            notices: 0,
-            last_cause: None,
         },
         Case {
             name: "miss at the noise floor is ignored",
@@ -172,8 +164,6 @@ fn tracker_counts_only_real_misses() {
             ],
             metadata: None,
             rebilled: NONE,
-            notices: 0,
-            last_cause: None,
         },
         Case {
             name: "one token over the noise floor counts",
@@ -192,8 +182,6 @@ fn tracker_counts_only_real_misses() {
                 extra_cost_usd_micros: 0,
                 unpriced_miss_count: 1,
             },
-            notices: 0,
-            last_cause: None,
         },
         Case {
             name: "providers that never report cache are never billed a miss",
@@ -203,8 +191,6 @@ fn tracker_counts_only_real_misses() {
             ],
             metadata: None,
             rebilled: NONE,
-            notices: 0,
-            last_cause: None,
         },
         Case {
             // Regression: a session-scoped "saw cache" latch used to bill every
@@ -222,11 +208,9 @@ fn tracker_counts_only_real_misses() {
             ],
             metadata: None,
             rebilled: NONE,
-            notices: 0,
-            last_cause: None,
         },
         Case {
-            name: "model switch is named as the cause",
+            name: "a miss after a model switch is counted",
             requests: vec![
                 Request::warm(0, SIGNIFICANT_MISS_TOKENS),
                 Request::next(2, SIGNIFICANT_MISS_TOKENS, 0).on_model("sonnet"),
@@ -238,11 +222,9 @@ fn tracker_counts_only_real_misses() {
                 extra_cost_usd_micros: 0,
                 unpriced_miss_count: 1,
             },
-            notices: 1,
-            last_cause: Some(CacheMissCause::ModelSwitch),
         },
         Case {
-            name: "idle past the TTL is named as the cause",
+            name: "a miss after idling past the TTL is counted",
             requests: vec![
                 Request::warm(0, SIGNIFICANT_MISS_TOKENS),
                 Request::next(
@@ -258,11 +240,6 @@ fn tracker_counts_only_real_misses() {
                 extra_cost_usd_micros: 0,
                 unpriced_miss_count: 1,
             },
-            notices: 1,
-            last_cause: Some(CacheMissCause::Idle {
-                gap: Duration::from_secs(DEFAULT_PROMPT_CACHE_TTL.as_secs() + 61),
-                ttl: DEFAULT_PROMPT_CACHE_TTL,
-            }),
         },
         Case {
             name: "a shrunken prompt only re-bills what it actually sent",
@@ -274,11 +251,9 @@ fn tracker_counts_only_real_misses() {
                 extra_cost_usd_micros: 0,
                 unpriced_miss_count: 1,
             },
-            notices: 0,
-            last_cause: None,
         },
         Case {
-            name: "token tripwire emits a notice",
+            name: "a miss at the token tripwire is counted",
             requests: vec![
                 Request::warm(0, SIGNIFICANT_MISS_TOKENS),
                 Request::next(2, SIGNIFICANT_MISS_TOKENS, 0),
@@ -290,11 +265,9 @@ fn tracker_counts_only_real_misses() {
                 extra_cost_usd_micros: 0,
                 unpriced_miss_count: 1,
             },
-            notices: 1,
-            last_cause: Some(CacheMissCause::Unattributed),
         },
         Case {
-            name: "cost tripwire emits a notice below the token floor",
+            name: "a priced miss below the token tripwire is counted",
             requests: vec![Request::warm(0, 10_000), Request::next(2, 5_001, 4_999)],
             metadata: Some(expensive_metadata),
             rebilled: CacheRebilled {
@@ -303,11 +276,9 @@ fn tracker_counts_only_real_misses() {
                 extra_cost_usd_micros: 100_020,
                 unpriced_miss_count: 0,
             },
-            notices: 1,
-            last_cause: Some(CacheMissCause::Unattributed),
         },
         Case {
-            name: "a priced miss below both tripwires is counted without a notice",
+            name: "a small priced miss is counted",
             requests: vec![Request::warm(0, 10_000), Request::next(2, 2_000, 8_000)],
             metadata: Some(priced_metadata),
             rebilled: CacheRebilled {
@@ -316,8 +287,6 @@ fn tracker_counts_only_real_misses() {
                 extra_cost_usd_micros: 1_800,
                 unpriced_miss_count: 0,
             },
-            notices: 0,
-            last_cause: None,
         },
         Case {
             name: "a missed prefix written back to cache uses the write rate",
@@ -339,8 +308,6 @@ fn tracker_counts_only_real_misses() {
                 extra_cost_usd_micros: 2_300,
                 unpriced_miss_count: 0,
             },
-            notices: 0,
-            last_cause: None,
         },
     ];
 
@@ -351,45 +318,7 @@ fn tracker_counts_only_real_misses() {
         play(&mut tracker, t0, &case.requests, metadata.as_ref());
 
         assert_eq!(tracker.rebilled(), &case.rebilled, "{}", case.name);
-        let notices = tracker.take_turn_notices();
-        assert_eq!(notices.len(), case.notices, "{}", case.name);
-        assert_eq!(
-            notices.last().map(|notice| notice.cause),
-            case.last_cause,
-            "{}",
-            case.name
-        );
-        assert!(tracker.take_turn_notices().is_empty(), "{}", case.name);
     }
-}
-
-// Covers: a mid-session tool-list change is named as the miss cause.
-// Owner: tui cache-miss policy
-#[test]
-fn tool_list_change_is_named_as_the_cause() {
-    let t0 = Instant::now();
-    let mut tracker = CacheStatsTracker::default();
-    play(
-        &mut tracker,
-        t0,
-        &[Request::warm(0, SIGNIFICANT_MISS_TOKENS)],
-        None,
-    );
-    tracker.note_tool_list_changed();
-    play(
-        &mut tracker,
-        t0,
-        &[Request::next(2, SIGNIFICANT_MISS_TOKENS, 0)],
-        None,
-    );
-
-    assert_eq!(
-        tracker
-            .take_turn_notices()
-            .last()
-            .map(|notice| notice.cause),
-        Some(CacheMissCause::ToolListChanged)
-    );
 }
 
 // Covers: compaction rewrites the prefix, so the next request cannot be a miss,
@@ -418,8 +347,8 @@ fn compaction_clears_the_prefix_but_keeps_session_totals() {
     assert_eq!(tracker.rebilled(), &after_miss);
 }
 
-// Covers: a request that never reported usage is not sampled, a stale delta
-// is not reused by the next call, and the prefix clock still moves.
+// Covers: a request that never reported usage is not sampled, and a stale
+// delta is not reused by the next call.
 // Owner: tui cache-miss policy
 #[test]
 fn a_request_without_reported_usage_is_not_sampled() {
@@ -454,74 +383,4 @@ fn a_request_without_reported_usage_is_not_sampled() {
     );
 
     assert_eq!(tracker.rebilled(), &NONE);
-    // The call still read the prefix, so the keep-warm clock moves.
-    assert_eq!(
-        tracker.last_prefix_read(),
-        Some(t0 + Duration::from_secs(1))
-    );
-}
-
-// Covers: miss attribution must not depend on the warmer's poll, and a ping
-// refresh must be visible to both scheduling and idle-miss attribution.
-// Owner: cache-prefix clock and miss policy, with explicit instants and TTLs.
-#[test]
-fn idle_miss_uses_the_supplied_ttl_and_latest_ping_read() {
-    let t0 = Instant::now();
-    for (ttl, ping_at, expected) in [
-        (
-            DEFAULT_PROMPT_CACHE_TTL,
-            None,
-            CacheMissCause::Idle {
-                gap: Duration::from_secs(600),
-                ttl: DEFAULT_PROMPT_CACHE_TTL,
-            },
-        ),
-        (
-            Duration::from_secs(3600),
-            None,
-            CacheMissCause::Unattributed,
-        ),
-        (
-            DEFAULT_PROMPT_CACHE_TTL,
-            Some(t0 + Duration::from_secs(570)),
-            CacheMissCause::Unattributed,
-        ),
-    ] {
-        let mut tracker = CacheStatsTracker::default();
-        play(&mut tracker, t0, &[Request::warm(1, 40_000)], None);
-        if let Some(at) = ping_at {
-            tracker.record_prefix_read(at);
-        }
-        tracker.usage_updated(&ModelUsage {
-            input_tokens: Some(40_000),
-            cache_read_tokens: Some(0),
-            ..ModelUsage::default()
-        });
-        tracker.record_request(
-            &ModelCallProfile {
-                provider: "anthropic".into(),
-                model: "claude".into(),
-                reasoning: ReasoningLevel::Off,
-                service_tier: None,
-            },
-            ModelCallMetrics {
-                output_tokens: None,
-                time_to_first_token: None,
-                generation_time: None,
-                total_latency: Duration::ZERO,
-                generation_output_tokens: None,
-            },
-            None,
-            t0 + Duration::from_secs(600),
-            ttl,
-        );
-        assert_eq!(
-            tracker
-                .take_turn_notices()
-                .into_iter()
-                .map(|notice| notice.cause)
-                .collect::<Vec<_>>(),
-            vec![expected]
-        );
-    }
 }

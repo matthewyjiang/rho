@@ -375,9 +375,10 @@ pub async fn refresh_provider_models_with_store(
 /// rejects before saving it. Nothing is cached or saved. A provider whose
 /// model list needs no key accepts any key here.
 ///
-/// The provider's environment variable still wins over `key`, as it does for
-/// every request, so check `ProviderAuthentication::has_environment_override`
-/// first. A provider whose models Rho does not list fails with
+/// Only `key` is asked about: no environment variable stands in for it. A
+/// saved key still loses to the provider's environment variable on every
+/// request, so check for an override in the environment of whoever will use
+/// the key before saving it. A provider whose models Rho does not list fails with
 /// [`ModelError::UnsupportedProvider`].
 pub async fn check_api_key(
     auth: &str,
@@ -407,6 +408,11 @@ impl CredentialStore for CandidateKey<'_> {
             matches!(mode.auth_kind, ProviderAuthKind::ApiKey { account: own, .. } if own == account)
         });
         Ok(ours.then(|| self.key.to_owned()))
+    }
+
+    /// No environment: the candidate is what is checked.
+    fn environment_variable(&self, _name: &str) -> Option<String> {
+        None
     }
 
     fn set_secret(&self, _account: &str, _secret: &str) -> CredentialResult<()> {
@@ -738,7 +744,7 @@ fn load_api_key_auth(provider: &str, store: &dyn CredentialStore) -> Result<Stri
     else {
         return Err(ModelError::UnsupportedProvider(provider.to_string()));
     };
-    if let Ok(key) = std::env::var(env_var) {
+    if let Some(key) = store.environment_variable(env_var) {
         if !key.trim().is_empty() {
             return Ok(key);
         }

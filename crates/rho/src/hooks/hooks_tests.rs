@@ -13,7 +13,8 @@ use rho_sdk::{
 };
 use tempfile::TempDir;
 
-use super::*;
+use super::{catalog::ProjectTrust, *};
+use crate::session_environment::{Ambient, SessionEnvironment};
 
 /// Fixture workspace whose trusted project hook denies `bash` and whose post
 /// hook records every successful edit.
@@ -48,7 +49,7 @@ timeout = "10s"
 [[hook]]
 id = "record-edit"
 on = "after_tool_use"
-tools = ["edit"]
+tools = ["str_replace"]
 command = ["/bin/sh", "./.rho/hooks/record-edit"]
 timeout = "10s"
 "#,
@@ -117,11 +118,7 @@ async fn run_tool(fixture: &Fixture, trust: ProjectTrust, tool: &'static str) ->
         ModelIdentity::new("scripted", "test", "model"),
         [
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                rho_sdk::model::ToolCall {
-                    id: "call-1".into(),
-                    name: tool.into(),
-                    arguments: serde_json::json!({}),
-                },
+                rho_sdk::model::ToolCall::new("call-1".into(), tool.into(), serde_json::json!({})),
             )])),
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
                 "done".into(),
@@ -133,7 +130,11 @@ async fn run_tool(fixture: &Fixture, trust: ProjectTrust, tool: &'static str) ->
         .tool(CapabilityTool { name: tool })
         .workspace(Workspace::new(fixture.project.path()).unwrap())
         .workspace_policy(ScopedWorkspacePolicy::new().allow_read_paths());
-    let runtime = HookPipeline::start(fixture.catalog(trust), CancellationToken::new());
+    let runtime = HookPipeline::start(
+        fixture.catalog(trust),
+        SessionEnvironment::default(),
+        CancellationToken::new(),
+    );
     let builder = match runtime.as_ref() {
         Some(hooks) => hooks.attach(builder),
         None => builder,
@@ -145,7 +146,7 @@ async fn run_tool(fixture: &Fixture, trust: ProjectTrust, tool: &'static str) ->
         .history()
         .into_iter()
         .find_map(|message| match message {
-            rho_sdk::model::Message::ToolResult(result) => Some(result.content),
+            rho_sdk::model::Message::ToolResult(result) => Some(result.content.clone()),
             _ => None,
         })
         .expect("a tool result was recorded");
@@ -192,11 +193,36 @@ async fn an_untrusted_project_hook_does_not_run() {
     assert_eq!(activity, "");
 }
 
+// Covers: the recursion guard reads the session's environment, not this
+// process's: a session whose client is a hook program's, such as a daemon
+// session a hook's `rho` opened, starts no hooks, while one whose client is
+// not keeps them (#1659).
+// Owner: hook pipeline start (recursion guard)
+#[tokio::test]
+async fn a_session_opened_from_a_hook_starts_no_hooks() {
+    let fixture = Fixture::new();
+    for (case, client, starts_hooks) in [
+        ("hook client", Ambient::client(&[(IN_HOOK_ENV, "1")]), false),
+        ("other client", Ambient::client(&[]), true),
+    ] {
+        let hooks = HookPipeline::start(
+            fixture.catalog(ProjectTrust::Trusted),
+            SessionEnvironment::new(client),
+            CancellationToken::new(),
+        );
+
+        assert_eq!(hooks.is_some(), starts_hooks, "{case}");
+        if let Some(hooks) = hooks {
+            hooks.shutdown(Duration::from_secs(10)).await;
+        }
+    }
+}
+
 #[tokio::test]
 async fn a_post_hook_records_a_successful_edit() {
     let fixture = Fixture::new();
 
-    let (content, activity) = run_tool(&fixture, ProjectTrust::Trusted, "edit").await;
+    let (content, activity) = run_tool(&fixture, ProjectTrust::Trusted, "str_replace").await;
 
     assert_eq!(content, "ok");
     assert!(activity.contains("project:record-edit after_tool_use observed"));
@@ -205,7 +231,7 @@ async fn a_post_hook_records_a_successful_edit() {
         recorded.contains("\"event\":\"after_tool_use\""),
         "the hook received the event envelope: {recorded}"
     );
-    assert!(recorded.contains("\"name\":\"edit\""));
+    assert!(recorded.contains("\"name\":\"str_replace\""));
     assert!(recorded.contains("\"status\":\"succeeded\""));
 }
 
@@ -229,6 +255,7 @@ timeout = "10s"
     let parent = rho_sdk::SessionId::from_string("parent-session").unwrap();
     let hooks = HookPipeline::start(
         fixture.catalog(ProjectTrust::Trusted),
+        SessionEnvironment::default(),
         CancellationToken::new(),
     )
     .expect("the fixture configures hooks");
@@ -282,6 +309,7 @@ timeout = "10s"
     .unwrap();
     let hooks = HookPipeline::start(
         fixture.catalog(ProjectTrust::Trusted),
+        SessionEnvironment::default(),
         CancellationToken::new(),
     )
     .expect("the fixture configures hooks");

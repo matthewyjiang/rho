@@ -147,3 +147,28 @@ fn vt_events_preserve_key_and_mouse_semantics() {
         }
     }
 }
+
+// Covers: a device attributes reply that reaches the input after the startup
+// probe gave up must not type into the composer, however console batches
+// split it (#1915). Owner: terminal input decoding.
+#[test]
+fn late_device_attributes_reply_is_not_input() {
+    let input = b"a\x1b[?61;6;7;21;22;23;24;28;32;42c/";
+    let expected = vec![
+        Event::Key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE)),
+        Event::Key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE)),
+    ];
+    assert_eq!(
+        Parser::default().parse(input, /*more*/ false),
+        expected.clone()
+    );
+    // A split right after ESC is ambiguous at an empty console queue, as for
+    // every CSI; any later split must still drop the whole reply.
+    let reply_start = 1;
+    for split in (reply_start + 2)..input.len() {
+        let mut parser = Parser::default();
+        let mut events = parser.parse(&input[..split], /*more*/ false);
+        events.extend(parser.parse(&input[split..], /*more*/ false));
+        assert_eq!(events, expected, "split {split}");
+    }
+}

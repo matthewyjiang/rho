@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use super::{
     agent_picker::AgentAccess, App, ComposerMode, Entry, InlineChoice, InlineChoiceOption,
-    InlineChoicePending, InteractiveRuntime, UiPicker,
+    InlineChoicePending, UiPicker,
 };
 use crate::agent::{AgentCatalog, AgentOrigin};
 
@@ -82,7 +82,6 @@ impl App {
         value: &str,
         target: AgentDeleteTarget,
         parent: Option<Box<UiPicker>>,
-        agent: &mut InteractiveRuntime,
     ) {
         if value != "delete" {
             self.restore_agent_delete_parent(parent);
@@ -113,8 +112,8 @@ impl App {
             crate::paths::display(&target.path)
         )));
         // Deleting an override may reveal another definition, so the picker
-        // and the catalog correction both come from the effective catalog.
-        let Some(mut picker) = self.agents_picker_after_change(agent) else {
+        // comes from the effective catalog.
+        let Some(mut picker) = self.agents_picker_after_change() else {
             return;
         };
         if let Some(cursor) = cursor {

@@ -251,7 +251,7 @@ pub(crate) fn handle_anthropic_stream_line(
                 .and_then(|reason| reason.as_str())
                 .and_then(anthropic_stop_reason)
             {
-                on_event(ModelEvent::stop_reason(reason))?;
+                on_event(ModelEvent::Stopped(reason))?;
             }
         }
         Some("error") => {
@@ -295,6 +295,7 @@ pub(crate) fn handle_anthropic_stream_line(
                             "could not retain Anthropic thinking block: {err}"
                         ))
                     })?,
+                    replay: crate::model::ReplayScope::ExactModel,
                 })?;
             }
         }
@@ -475,6 +476,8 @@ mod tests {
                     | ModelEvent::ToolCallDelta { .. }
                     | ModelEvent::GenerationOutputTokens(_)
                     | ModelEvent::HostedToolActivity { .. }
+                    | ModelEvent::ToolCallAccepted { .. }
+                    | ModelEvent::Stopped(_)
                     | ModelEvent::ServiceTierFallback { .. } => None,
                 })
                 .collect::<Vec<_>>(),
@@ -493,6 +496,8 @@ mod tests {
                     | ModelEvent::ToolCallDelta { .. }
                     | ModelEvent::GenerationOutputTokens(_)
                     | ModelEvent::HostedToolActivity { .. }
+                    | ModelEvent::ToolCallAccepted { .. }
+                    | ModelEvent::Stopped(_)
                     | ModelEvent::ServiceTierFallback { .. } => None,
                 })
                 .collect::<String>(),
@@ -525,7 +530,7 @@ mod tests {
 
         assert!(events.iter().any(|event| matches!(
             event,
-            ModelEvent::ProviderContext { kind, position: Some(0), data }
+            ModelEvent::ProviderContext { kind, position: Some(0), data, .. }
                 if kind == "anthropic_content_block"
                     && data["thinking"] == "private"
                     && data["signature"] == "signed"

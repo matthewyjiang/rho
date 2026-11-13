@@ -64,11 +64,9 @@ fn continuation_retains_tool_result_after_server_function_call() {
         json!({"type":"function_call","call_id":"call_1","name":"read","arguments":"{}"}),
         json!({"type":"function_call_output","call_id":"call_1","output":"contents"}),
     ]);
-    let response = ModelResponse::Assistant(vec![ContentBlock::ToolCall(crate::model::ToolCall {
-        id: "call_1".into(),
-        name: "read".into(),
-        arguments: json!({}),
-    })]);
+    let response = ModelResponse::Assistant(vec![ContentBlock::ToolCall(
+        crate::model::ToolCall::new("call_1".into(), "read".into(), json!({})),
+    )]);
     let mut state = CodexContinuationState::default();
     state.record_success(
         first,
@@ -100,11 +98,12 @@ fn continuation_accepts_semantically_equivalent_function_call_arguments() {
         json!({"type":"function_call","call_id":"call_1","name":"read","arguments":"{\"line_end\":10,\"path\":\"README.md\"}"}),
         json!({"type":"function_call_output","call_id":"call_1","output":"contents"}),
     ]);
-    let response = ModelResponse::Assistant(vec![ContentBlock::ToolCall(crate::model::ToolCall {
-        id: "call_1".into(),
-        name: "read".into(),
-        arguments: json!({"line_end": 10, "path": "README.md"}),
-    })]);
+    let response =
+        ModelResponse::Assistant(vec![ContentBlock::ToolCall(crate::model::ToolCall::new(
+            "call_1".into(),
+            "read".into(),
+            json!({"line_end": 10, "path": "README.md"}),
+        ))]);
     let mut state = CodexContinuationState::default();
     state.record_success(
         first,
@@ -222,7 +221,7 @@ fn gpt6_reasoning_change_keeps_request_properties_and_deltas_update_item() {
     use super::super::codex_request::{
         build_responses_create_body, codex_test_auth, ResponsesProfile,
     };
-    use super::super::configuration_update::reasoning_effort_kind;
+    use super::super::configuration_update::REASONING_EFFORT_NOTE;
     use super::super::reasoning::OpenAiReasoningProfile;
 
     let profile = ResponsesProfile::from_auth(&codex_test_auth(), "gpt-6-astra");
@@ -252,9 +251,10 @@ fn gpt6_reasoning_change_keeps_request_properties_and_deltas_update_item() {
             reasoning_summary: None,
             provider_context: vec![ProviderContextBlock {
                 identity,
-                kind: reasoning_effort_kind(),
+                kind: REASONING_EFFORT_NOTE.into(),
                 position: None,
                 data: json!("low"),
+                replay: crate::model::ReplayScope::Never,
             }],
         }),
         Message::user_text("three"),
@@ -322,11 +322,9 @@ fn continuation_matches_function_call_when_server_item_is_async() {
         json!({"type":"function_call","call_id":"call_1","name":"one_agent","arguments":"{}","async":true}),
         json!({"type":"function_call_output","call_id":"call_1","output":"done"}),
     ]);
-    let response = ModelResponse::Assistant(vec![ContentBlock::ToolCall(crate::model::ToolCall {
-        id: "call_1".into(),
-        name: "one_agent".into(),
-        arguments: json!({}),
-    })]);
+    let response = ModelResponse::Assistant(vec![ContentBlock::ToolCall(
+        crate::model::ToolCall::new("call_1".into(), "one_agent".into(), json!({})),
+    )]);
     let mut state = CodexContinuationState::default();
     state.record_success(
         first,
@@ -425,4 +423,40 @@ fn continuation_with_context_fails_closed_on_history_rewrites() {
             "{name}"
         );
     }
+}
+
+// Covers: user stamps are the only times in the request, so the next request
+// still replays the server's output byte for byte and chains on
+// `previous_response_id`; only the new stamped user message is sent.
+// Owner: Codex continuation matching.
+#[test]
+fn continuation_chains_across_stamped_user_messages() {
+    use rho_sdk::model::{AssistantMessage, MessageTime};
+
+    let sent = MessageTime::from_parts(1_794_461_940, -5 * 3600).unwrap();
+    let user = |text: &str| Message::user_text(format!("{sent}\n{text}"));
+    let items = |messages: &[Message]| codex_input_items(messages, &mut Vec::new()).unwrap();
+    let first = user("one");
+    let answer = Message::assistant(AssistantMessage::from_content(vec![ContentBlock::Text(
+        "two".into(),
+    )]));
+    let next = user("three");
+    let mut state = CodexContinuationState::default();
+    state.record_success(
+        candidate(items(std::slice::from_ref(&first))),
+        CodexContinuationResponse::from_response(
+            &text_response("two"),
+            Some("resp_1".into()),
+            vec![json!({"id":"msg_1","type":"message","role":"assistant","content":[{"type":"output_text","text":"two"}]})],
+        ),
+    );
+
+    let plan = state
+        .continuation_delta(&candidate(items(&[first, answer, next.clone()])))
+        .expect("the reply replays as the server holds it");
+
+    assert_eq!(
+        (&plan["previous_response_id"], &plan["input"]),
+        (&json!("resp_1"), &Value::Array(items(&[next])))
+    );
 }

@@ -239,7 +239,7 @@ impl Tool for ProgressFloodTool {
             let _guard = DropGuard::new(&self.probe);
             self.probe.started.store(true, Ordering::Release);
             loop {
-                if !context.progress().send(ToolProgress::message("tick")).await {
+                if !context.progress().send(ToolProgress::new("tick")).await {
                     return Err(rho_sdk::tool::ToolError::cancelled());
                 }
                 self.probe.produced.fetch_add(1, Ordering::AcqRel);

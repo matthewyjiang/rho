@@ -83,11 +83,10 @@ async fn step_context_estimate_tracks_compaction_and_staged_steering() {
             let mut estimates = Vec::new();
             while let Some(event) = event_receiver.recv().await {
                 if let RunEvent::StepStarted {
-                    estimated_context_tokens,
-                    ..
+                    context_estimate, ..
                 } = event
                 {
-                    estimates.push(estimated_context_tokens);
+                    estimates.push(context_estimate.estimated_tokens());
                 }
             }
             estimates

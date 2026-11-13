@@ -9,8 +9,7 @@ use super::herdr_resume::HerdrSyncStep;
 use super::program_status::{BlockedKind, ProgramStatus, ProgramStatusReporter};
 use super::{
     media_attach, mouse_capture, ActivityPhase, ActivityStatus, App, BackgroundCounts,
-    ComposerMode, ExitReceipt, HerdrState, InteractiveRuntime, PanelOverlay, UserWait,
-    ViewModelEvent,
+    ComposerMode, ExitReceipt, HerdrState, PanelOverlay, UserWait,
 };
 
 /// What blocks the session on the user, while resting or during a turn.
@@ -19,34 +18,28 @@ enum UserBlock<'a> {
     Prompt(UserWait),
     /// No provider is usable until the user signs in.
     Auth(&'a str),
-    /// The goal stopped with this reason.
-    Goal(&'a str),
 }
 
 impl<'a> UserBlock<'a> {
     fn message(&self) -> &'a str {
         match self {
             Self::Prompt(wait) => wait.message(),
-            Self::Auth(message) | Self::Goal(message) => message,
+            Self::Auth(message) => message,
         }
     }
 
     fn program_status(&self) -> ProgramStatus {
         match self {
             Self::Prompt(wait) => ProgramStatus::Blocked {
-                kind: Some(match wait {
+                kind: match wait {
                     UserWait::Approval => BlockedKind::Permission,
                     UserWait::Questionnaire => BlockedKind::Question,
-                }),
+                },
                 message: wait.message().to_string(),
             },
             Self::Auth(message) => ProgramStatus::Blocked {
-                kind: Some(BlockedKind::Auth),
+                kind: BlockedKind::Auth,
                 message: (*message).to_string(),
-            },
-            Self::Goal(reason) => ProgramStatus::Blocked {
-                kind: None,
-                message: (*reason).to_string(),
             },
         }
     }
@@ -63,35 +56,16 @@ impl App {
         Ok(self.poll_side_chat())
     }
 
-    pub(super) fn insert_recovered_history(&mut self) -> std::io::Result<bool> {
-        let messages = std::mem::take(&mut self.info.session.recovered_messages);
-        let had_recovered_messages = !messages.is_empty();
-        let entries = self.transcript_entries(&messages);
-        if entries.is_empty() {
-            return Ok(had_recovered_messages);
-        }
-
-        let rendered = entries.len();
-        self.set_history_entries(entries);
-        if self.mcp_report.summary().connecting > 0 {
-            self.provisional_history = Some(super::message_history::ProvisionalHistory::new(
-                messages, rendered,
-            ));
-        }
-        Ok(had_recovered_messages)
-    }
-
     pub(super) fn run<'a>(
         mut self,
         terminal: &'a mut DefaultTerminal,
-        agent: &'a mut InteractiveRuntime,
     ) -> impl std::future::Future<
         Output = (anyhow::Result<Option<ExitReceipt>>, ProgramStatusReporter),
     > + 'a {
         // Keep the event-loop future and its construction temporary off the
         // enclosing startup poll frames, which must fit Windows' main stack.
         Box::pin(async move {
-            let result = self.run_inner(terminal, agent).await;
+            let result = self.run_inner(terminal).await;
             // Return the reporter on both success and error for startup's
             // canonical teardown, without retaining App on its stack frame.
             (result, self.program_status)
@@ -101,23 +75,27 @@ impl App {
     async fn run_inner(
         &mut self,
         terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<Option<ExitReceipt>> {
-        self.start_model_metadata_fetch(agent);
+        self.show_taken_daemon_views(terminal).await?;
+        // After the replay the attach already delivered, so the note follows
+        // a resumed conversation rather than opening it.
+        if let Some(note) = self.info.services.config_upgrade_note.take() {
+            self.insert_entry(&super::Entry::Notice(note));
+        }
+        self.start_catalog_hydrate();
         self.start_github_pr_fetch();
-        let had_recovered_messages = self.insert_recovered_history()?;
-        self.maybe_offer_loaded_session_context_handoff(agent, had_recovered_messages)?;
+        self.maybe_offer_loaded_session_context_handoff();
         let open_resume_after_draw = self.info.session.open_resume_picker;
         self.info.session.open_resume_picker = false;
         // A first launch opens the full-screen setup instead of a session.
         // Afterwards the header and statusline carry setup state, so a
         // signed-out session needs no history entry that would scroll away.
         self.start_setup_screen(terminal);
-        self.reconcile_auto_classifier_gate(agent).await?;
-        if agent.tool_sources_pending() {
+        self.reconcile_auto_classifier_gate()?;
+        if self.tool_sources_pending() {
             self.set_status_quiet("loading external tools");
-            // Claim the status so the hydrate poll clears it when loading
-            // lands before the first prompt.
+            // Claim the status so `show_daemon_tool_sources_loaded` clears
+            // it when loading lands before the first prompt.
             self.status_source = super::StatusSource::ToolSourcesLoading;
         }
         let mut needs_redraw = true;
@@ -142,21 +120,13 @@ impl App {
                 }
                 needs_redraw = true;
             }
-            let background_ready = self.tasks.has_finished()
-                || self.prompt_history.load_finished()
-                || agent.startup_hydrate_ready();
-            needs_redraw |= self.poll_background(terminal, agent, first_frame).await?;
+            let background_ready = self.tasks.has_finished() || self.prompt_history.load_finished();
+            needs_redraw |= self.poll_background(terminal, first_frame).await?;
             self.sync_herdr_session().await;
             needs_redraw |= background_ready;
-            needs_redraw |= self.update_activity_panels(agent)?;
-            needs_redraw |= self
-                .poll_subagent_questionnaires(agent.session_id())
-                .await?;
-            // Subscribe before draining so an exit between drain and wait is not lost.
-            let process_exit = agent
-                .processes()
-                .map(crate::tools::process::ProcessManager::notified_owned);
-            needs_redraw |= self.poll_subagent_completions(terminal, agent).await?;
+            needs_redraw |= self.update_activity_panels()?;
+            // A subagent may ask while no turn runs.
+            needs_redraw |= self.answer_idle_daemon_input(terminal).await?;
             if needs_redraw {
                 terminal.draw(|frame| self.draw(frame))?;
                 needs_redraw = false;
@@ -174,31 +144,26 @@ impl App {
                     }
                 }
             }
-            let subagents_active = agent.subagents().is_some_and(|manager| {
-                manager.has_active_or_pending_notification(agent.session_id().as_str())
-            }) || agent
-                .workflow_tracker()
-                .has_active_or_pending_notification(agent.session_id().as_str())
-                || agent
-                    .processes()
-                    .is_some_and(crate::tools::process::ProcessManager::has_pending_notification)
-                || self.pending_subagent_questionnaire.is_some()
-                || self.subagent_inbox.has_queued_questionnaires()
-                || self.subagent_inbox.has_parent_action_requests();
+            // The session's turn takes the terminal until the session rests.
+            if self.daemon_turn_runs() {
+                self.follow_daemon_turn(terminal).await?;
+                needs_redraw = true;
+                continue;
+            }
             let idle_timeout = if self.tasks.has_pending()
-                || self.computer_lifecycle_pending()
                 || self.prompt_history.load_pending()
-                || self.pending_session_title.is_some()
                 || self.mcp_argument_completions.is_pending()
+                || self.daemon_mcp_offers.is_pending()
                 || self.exclusive.wants_fast_ticks()
                 || !self.pending_inline_shells.is_empty()
                 || self.history.images().has_pending()
-                || agent.startup_hydrate_pending()
                 || self.loading_active()
                 || self.side_chat_busy()
             {
                 Duration::from_millis(100)
-            } else if subagents_active
+            } else if self.daemon_rail.shows_runs()
+                // Lists every session's jobs, which change with no turn here.
+                || self.jobs_view_open()
                 || self.process_panel.is_active()
                 || self.questionnaire_timeout_running()
             {
@@ -230,19 +195,12 @@ impl App {
             tokio::select! {
                 biased;
                 event = self.terminal_session.as_mut().expect("terminal session initialized").next_event() => {
-                    self.handle_terminal_event(event?, terminal, agent).await?;
+                    self.handle_terminal_event(event?, terminal).await?;
                     needs_redraw = true;
                     needs_redraw |= self.flush_due_paste_burst();
                 }
-                () = self.subagent_inbox.recv() => {
-                    needs_redraw = true;
-                }
-                () = async {
-                    match process_exit {
-                        Some(notified) => notified.await,
-                        None => std::future::pending().await,
-                    }
-                } => {
+                views = self.info.session.daemon.next_views() => {
+                    self.show_daemon_views(views, terminal).await?;
                     needs_redraw = true;
                 }
                 outcome = media_attach::next_media_attach_completion(&mut self.media_attach_tasks), if media_attach_pending => {
@@ -262,48 +220,34 @@ impl App {
             }
         }
         self.prompt_history.flush();
-        self.abort_compact(agent).await;
         self.tasks.cancel_all().await;
-        agent.cancel_startup_hydrates();
         self.mcp_argument_completions.cancel();
-        if let Some(mut pending) = self.pending_session_title.take() {
-            pending.cancel();
-            let _ = (&mut pending).await;
-        }
         Ok(self.exit_receipt())
     }
 
     fn poll_background<'a>(
         &'a mut self,
         terminal: &'a mut DefaultTerminal,
-        agent: &'a mut InteractiveRuntime,
         first_frame: bool,
     ) -> impl std::future::Future<Output = anyhow::Result<bool>> + 'a {
         // Background work and input dispatch are separate phases. Do not keep
         // background future temporaries on the stack while handling input.
         Box::pin(async move {
-            let mut needs_redraw = self.apply_finished_tasks(terminal, agent).await?;
-            needs_redraw |= self.apply_pending_compaction_config(agent)?;
-            self.apply_pending_classifier_config(agent);
-            needs_redraw |= self.poll_startup_hydrates(agent).await?;
-            needs_redraw |= self.poll_computer_connection(agent).await;
-            needs_redraw |= self.poll_compact(agent).await?;
-            needs_redraw |= self.apply_pending_permission_mode(agent).await?;
-            needs_redraw |= self.release_pending_held_turn(terminal, agent).await?;
-            needs_redraw |= self.start_next_follow_up(terminal, agent).await?;
-            needs_redraw |= self.poll_cache_warm(agent);
+            let mut needs_redraw = self.apply_finished_tasks(terminal).await?;
+            needs_redraw |= self.release_pending_held_turn(terminal).await?;
+            needs_redraw |= self.start_next_follow_up(terminal).await?;
+            needs_redraw |= self.poll_cache_warm();
             if !first_frame {
-                needs_redraw |= self.start_startup_prompt(terminal, agent).await?;
+                needs_redraw |= self.start_startup_prompt(terminal).await?;
             }
             needs_redraw |= self.poll_prompt_history();
-            needs_redraw |= self.poll_pending_session_title()?;
             needs_redraw |= self.reconcile_overlays().await?;
             // The composer decides what to ask about and changes on key events.
+            needs_redraw |= self.poll_daemon_mcp_offers().await;
             needs_redraw |= self.poll_mcp_argument_completion().await;
             needs_redraw |= self.poll_markdown_images();
             let shell_changed = self.finish_completed_inline_shells().await?;
             if !self.is_ui_busy() {
-                self.insert_deferred_inline_shell_context(agent)?;
                 needs_redraw |= self.start_deferred_info_tree();
             }
             needs_redraw |= shell_changed;
@@ -315,7 +259,6 @@ impl App {
         &mut self,
         event: Event,
         terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         self.observe_questionnaire_input(&event);
         self.notifier.observe_focus(&event);
@@ -332,7 +275,7 @@ impl App {
                     self.subagent_panel.clear_pointer_state();
                     self.process_panel.clear_pointer_state();
                     self.workflow_panel.clear_pointer_state();
-                    self.handle_key(key, terminal, agent).await?;
+                    self.handle_key(key, terminal).await?;
                 }
                 Event::Paste(text) => {
                     self.input_ui.cancel_pointer_click_sequence();
@@ -350,7 +293,7 @@ impl App {
                     if let Some(action) = self.input_ui.take_pointer_action() {
                         // Boxed like idle modal keys, so resolver futures stay
                         // out of this event's poll frame.
-                        Box::pin(self.run_idle_pointer_action(action, terminal, agent)).await?;
+                        Box::pin(self.run_idle_pointer_action(action, terminal)).await?;
                     }
                 }
                 Event::FocusGained => self.on_focus_gained(),
@@ -552,8 +495,8 @@ impl App {
     }
 
     /// Reports the resting state to Herdr. The terminal's program status
-    /// follows once the event loop waits for input, so a goal run or queued
-    /// follow-ups do not flash `done` between turns.
+    /// follows once the event loop waits for input, so queued follow-ups do
+    /// not flash `done` between turns.
     pub(super) async fn report_resting_herdr_state(&mut self) {
         let (state, message) = self.resting_herdr_state();
         let message = message.map(str::to_string);
@@ -585,7 +528,6 @@ impl App {
             | ComposerMode::Panel(_)
             | ComposerMode::Side
             | ComposerMode::SecretInput(_)
-            | ComposerMode::ConfigNumberInput(_)
             | ComposerMode::TextInput(_)
             | ComposerMode::TranscriptSearch(_)
             | ComposerMode::InteractivePending(_)
@@ -594,14 +536,11 @@ impl App {
         if let Some(prompt) = prompt {
             return Some(UserBlock::Prompt(prompt));
         }
-        if let Some(message) = self.info.services.auth_unavailable.as_deref() {
-            return Some(UserBlock::Auth(message));
-        }
-        self.goal
-            .as_ref()
-            .filter(|goal| goal.is_blocked())
-            .and_then(|goal| goal.last_reason.as_deref())
-            .map(UserBlock::Goal)
+        self.info
+            .services
+            .auth_unavailable
+            .as_deref()
+            .map(UserBlock::Auth)
     }
 
     /// Writes a program status report the terminal has not heard yet.
@@ -654,54 +593,19 @@ impl App {
         self.clamp_history_scroll_for_terminal(terminal)
     }
 
-    pub(super) fn update_activity_panels(
-        &mut self,
-        agent: &InteractiveRuntime,
-    ) -> anyhow::Result<bool> {
-        // Tick the occupant first so a journal read error cannot leave panel
-        // costs half-applied.
+    pub(super) fn update_activity_panels(&mut self) -> anyhow::Result<bool> {
+        // Tick the occupant first so a journal read error cannot leave the
+        // panels half-applied.
         let mut changed = self.refresh_exclusive_screen()?;
-        let panel_changed = self
-            .subagent_panel
-            .update(agent.subagents(), agent.session_id().as_str());
-        if panel_changed {
-            self.refresh_attach_picker();
-        }
-        changed |= panel_changed;
-        changed |= self.process_panel.update(agent.processes());
-        changed |= self
-            .workflow_panel
-            .update(agent.workflow_tracker(), agent.session_id().as_str());
-        changed |= self.refresh_todo_list(agent);
-        // Fold terminal subagent/advisor costs on every panel refresh path (idle
-        // poll, in-turn wait, goal wait). Claiming is idempotent per run/call.
-        changed |= self.claim_non_main_costs(agent);
+        // The daemon's jobs and processes feed the rails as they arrive
+        // (`daemon_jobs`).
+        self.refresh_daemon_rail();
         changed |= self.apply_finished_ui_tasks();
-        self.restore_tool_sources_hold_activity_if_needed(agent.tool_sources_pending());
+        self.restore_tool_sources_hold_activity_if_needed();
         if self.activity_status().is_some() {
             self.turn.start_loading_if_needed();
         }
         Ok(changed)
-    }
-
-    /// Pull finished non-main costs into the parent session total.
-    fn claim_non_main_costs(&mut self, agent: &InteractiveRuntime) -> bool {
-        let mut changed = false;
-        if let Some(manager) = agent.subagents() {
-            let claimed = manager.claim_terminal_costs_usd_micros(agent.session_id().as_str());
-            if claimed > 0 {
-                self.usage.extra.subagent = self.usage.extra.subagent.saturating_add(claimed);
-                changed = true;
-            }
-        }
-        if let Some(advisor) = agent.advisor() {
-            let claimed = advisor.claim_cost_usd_micros();
-            if claimed > 0 {
-                self.usage.extra.advisor = self.usage.extra.advisor.saturating_add(claimed);
-                changed = true;
-            }
-        }
-        changed
     }
 
     pub(super) fn loading_active(&self) -> bool {
@@ -713,20 +617,13 @@ impl App {
             )
     }
 
-    pub(super) fn handle_queued_agent_event(
-        &mut self,
-        event: ViewModelEvent,
-        terminal: &mut DefaultTerminal,
-    ) -> Result<bool, rho_providers::model::ModelError> {
-        Ok(self.handle_agent_event(event, terminal)?)
-    }
-
     pub(super) fn reset_usage(&mut self) {
         self.usage.cumulative_usage = None;
         self.usage.usage_cost_tracker.reset();
         self.usage.usage_before_current_run = None;
         self.usage.run_usage.clear();
         self.usage.extra = Default::default();
+        self.usage.daemon_spend = None;
         self.usage.latest_usage = None;
         self.usage.model_performance.clear();
         self.usage.cache_stats.reset();
@@ -734,9 +631,9 @@ impl App {
     }
 
     fn exit_receipt(&self) -> Option<ExitReceipt> {
-        self.info.session.session_id.as_ref().map(|session_id| {
+        self.current_session_id().map(|session_id| {
             ExitReceipt::capture(
-                session_id.clone(),
+                session_id,
                 self.session_title(),
                 self.usage.cumulative_usage.as_ref(),
                 self.model_metadata.as_ref(),

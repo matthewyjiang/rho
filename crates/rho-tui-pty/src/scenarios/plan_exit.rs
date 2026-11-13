@@ -118,8 +118,31 @@ fn submit_bypass_feedback(harness: &mut PtyHarness) -> Result<()> {
     submit_typed_feedback(harness, "bypass")
 }
 
+/// Runs bare `/permissions` and checks it opens the mode picker on plan,
+/// which Esc closes without a change.
+fn probe_plan_mode(harness: &mut PtyHarness) -> Result<()> {
+    harness.submit_text("/permissions")?;
+    const PICKER: &str = "Permission mode · Type to search";
+    harness.wait_for_text(PICKER, STREAM)?;
+    let rows = harness.screen().rows_text();
+    let selected = rows
+        .iter()
+        .find(|row| row.contains("selected"))
+        .context("permission picker marks no mode selected")?;
+    ensure!(
+        selected.contains("Plan"),
+        "permission picker opened on another mode: {selected}"
+    );
+    harness.inject_key(&Key::Esc)?;
+    harness.wait_for_text_gone(PICKER, SETTLE)
+}
+
 fn wait_for_dispatch_turn(harness: &mut PtyHarness) -> Result<()> {
     wait_for_turn_completion_after(harness, "fixture plan background dispatched")
+}
+
+fn wait_for_implementation_turn(harness: &mut PtyHarness) -> Result<()> {
+    wait_for_turn_completion_after(harness, "fixture plan implementation reached")
 }
 
 fn release_plan_child(harness: &mut PtyHarness) -> Result<()> {
@@ -137,92 +160,70 @@ pub(super) const QUEUED_CYCLE_SCENARIO: Scenario = Scenario::new(
     "plan_exit_queued_cycle",
     "Apply an approved plan's mode over an Alt+M change queued during the proposal turn",
     DEFAULT_SIZE,
-    &[
-        Step::WaitText {
-            text: "gpt-5.5",
-            timeout: STARTUP,
-        },
-        Step::SubmitText("fixture plan exit held"),
-        Step::WaitText {
-            text: "Plan ready. How should Rho continue?",
-            timeout: STREAM,
-        },
-        Step::Key(Key::Enter),
-        Step::WaitText {
-            text: "Optional feedback for the plan",
-            timeout: STREAM,
-        },
-        Step::Key(Key::Enter),
-        // The questionnaire owns keys until the tool completes; queue Alt+M
-        // only once the proposal turn is waiting on the held reply.
-        Step::WaitText {
-            text: "✓ exit_plan_mode",
-            timeout: STREAM,
-        },
-        // The next step's start writes a routine status that clears any toast.
-        // Wait for its durable activity label (the held reply keeps it up) so
-        // a late step start cannot wipe the queued-mode toast before it paints.
-        Step::WaitText {
-            text: "waiting for provider",
-            timeout: STREAM,
-        },
-        Step::Key(Key::Alt('m')),
-        Step::WaitText {
-            text: "permission mode supervised queued for next turn",
-            timeout: SETTLE,
-        },
-        Step::Custom(release_held_proposal),
-        Step::WaitText {
-            text: "fixture plan implementation reached",
-            timeout: STREAM,
-        },
-        Step::Custom(assert_allow_edits),
-        Step::ExitCommand,
-        Step::Custom(assert_config_unchanged),
-    ],
+    QUEUED_CYCLE_STEPS,
     /*smoke*/ false,
 )
 .with_setup(setup)
 .with_args(&["--permission-mode", "plan"]);
 
-// Covers: every turn driver must deliver the implementation handoff before
-// evaluating the goal or returning to idle background delivery.
+/// Approves a held plan, queues Alt+M once the proposal turn runs again,
+/// then checks the approved mode outlasts the queued one.
+const QUEUED_CYCLE_STEPS: &[Step] = &[
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::SubmitText("fixture plan exit held"),
+    Step::WaitText {
+        text: "Plan ready. How should Rho continue?",
+        timeout: STREAM,
+    },
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "Optional feedback for the plan",
+        timeout: STREAM,
+    },
+    Step::Key(Key::Enter),
+    // The questionnaire owns keys until the tool completes; queue Alt+M
+    // only once the proposal turn is waiting on the held reply.
+    Step::WaitText {
+        text: "✓ exit_plan_mode",
+        timeout: STREAM,
+    },
+    // The next step's start writes a routine status that clears any toast,
+    // so the wait outlasts the brief `starting` label: a late step start
+    // then cannot wipe the queued-mode toast before it paints.
+    Step::WaitText {
+        text: "waiting for provider",
+        timeout: STREAM,
+    },
+    Step::Key(Key::Alt('m')),
+    Step::WaitText {
+        text: "permission mode supervised queued for next turn",
+        timeout: SETTLE,
+    },
+    Step::Custom(release_held_proposal),
+    Step::WaitText {
+        text: "fixture plan implementation reached",
+        timeout: STREAM,
+    },
+    // A queued change applies once the running work rests, which may
+    // be after the implementation turn. The next turn runs after it, so
+    // the mode this turn shows is final.
+    Step::Custom(wait_for_implementation_turn),
+    Step::SubmitText("fixture plan mode check"),
+    Step::WaitText {
+        text: "fixture plan received unrelated continuation",
+        timeout: STREAM,
+    },
+    Step::Custom(assert_allow_edits),
+    Step::ExitCommand,
+    Step::Custom(assert_config_unchanged),
+];
+
+// Covers: an idle delegated-completion turn must deliver the implementation
+// handoff before returning to idle background delivery.
 // Owner: interactive turn orchestration (PTY).
-pub(super) const GOAL_SCENARIO: Scenario = Scenario::new(
-    "plan_exit_goal",
-    "Deliver plan approval from /goal before goal evaluation",
-    DEFAULT_SIZE,
-    &[
-        Step::WaitText {
-            text: "gpt-5.5",
-            timeout: STARTUP,
-        },
-        Step::SubmitText("/goal fixture plan exit"),
-        Step::WaitText {
-            text: "Plan ready. How should Rho continue?",
-            timeout: STREAM,
-        },
-        Step::Key(Key::Enter),
-        Step::WaitText {
-            text: "Optional feedback for the plan",
-            timeout: STREAM,
-        },
-        Step::Key(Key::Enter),
-        Step::WaitText {
-            text: "goal achieved",
-            timeout: STREAM,
-        },
-        // The fixture evaluator returns Met only after the implementation
-        // receipt is in model history; early evaluation deterministically blocks.
-        Step::Custom(assert_allow_edits),
-        Step::ExitCommand,
-        Step::Custom(assert_config_unchanged),
-    ],
-    /*smoke*/ false,
-)
-.with_setup(setup)
-.with_args(&["--permission-mode", "plan"]);
-
 pub(super) const IDLE_COMPLETION_SCENARIO: Scenario = Scenario::new(
     "plan_exit_idle_completion",
     "Deliver plan approval from an idle delegated-completion turn",
@@ -243,11 +244,7 @@ pub(super) const IDLE_COMPLETION_SCENARIO: Scenario = Scenario::new(
         Step::Custom(wait_for_dispatch_turn),
         // Confirm the idle command path before releasing the child. During-
         // turn /permissions is unavailable, so an in-turn delivery cannot pass.
-        Step::SubmitText("/permissions"),
-        Step::WaitText {
-            text: "permission mode: plan. usage:",
-            timeout: STREAM,
-        },
+        Step::Custom(probe_plan_mode),
         Step::Custom(release_plan_child),
         Step::WaitText {
             text: "Plan ready. How should Rho continue?",
@@ -278,42 +275,44 @@ pub(super) const APPROVE_SCENARIO: Scenario = Scenario::new(
     "plan_exit_approve",
     "Expand a long plan while approving, then implement without saving config",
     DEFAULT_SIZE,
-    &[
-        Step::WaitText {
-            text: "gpt-5.5",
-            timeout: STARTUP,
-        },
-        Step::SubmitText("fixture plan exit long"),
-        Step::WaitText {
-            text: "Plan ready. How should Rho continue?",
-            timeout: STREAM,
-        },
-        Step::Custom(assert_plan_collapsed),
-        Step::Key(Key::Ctrl('o')),
-        Step::WaitText {
-            text: "Verify the final safety step.",
-            timeout: STREAM,
-        },
-        Step::Key(Key::Enter),
-        Step::WaitText {
-            text: "Optional feedback for the plan",
-            timeout: STREAM,
-        },
-        Step::TypeText("include migration steps"),
-        Step::Custom(submit_migration_feedback),
-        Step::WaitText {
-            text: "fixture plan implementation reached",
-            timeout: STREAM,
-        },
-        Step::Custom(assert_approval_feedback),
-        Step::Custom(assert_allow_edits),
-        Step::ExitCommand,
-        Step::Custom(assert_config_unchanged),
-    ],
+    APPROVE_STEPS,
     /*smoke*/ false,
 )
 .with_setup(setup)
 .with_args(&["--permission-mode", "plan"]);
+
+const APPROVE_STEPS: &[Step] = &[
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::SubmitText("fixture plan exit long"),
+    Step::WaitText {
+        text: "Plan ready. How should Rho continue?",
+        timeout: STREAM,
+    },
+    Step::Custom(assert_plan_collapsed),
+    Step::Key(Key::Ctrl('o')),
+    Step::WaitText {
+        text: "Verify the final safety step.",
+        timeout: STREAM,
+    },
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "Optional feedback for the plan",
+        timeout: STREAM,
+    },
+    Step::TypeText("include migration steps"),
+    Step::Custom(submit_migration_feedback),
+    Step::WaitText {
+        text: "fixture plan implementation reached",
+        timeout: STREAM,
+    },
+    Step::Custom(assert_approval_feedback),
+    Step::Custom(assert_allow_edits),
+    Step::ExitCommand,
+    Step::Custom(assert_config_unchanged),
+];
 
 // Covers: reserved decision values typed as feedback must never grant permission.
 // Owner: questionnaire authorization separation (PTY).
@@ -350,11 +349,7 @@ pub(super) const KEEP_SCENARIO: Scenario = Scenario::new(
             timeout: STREAM,
         },
         // The boundary receipt guarantees the proposal turn is idle.
-        Step::SubmitText("/permissions"),
-        Step::WaitText {
-            text: "permission mode: plan. usage:",
-            timeout: STREAM,
-        },
+        Step::Custom(probe_plan_mode),
         Step::Custom(assert_still_planning),
         Step::ExitCommand,
         Step::Custom(assert_no_implementation),

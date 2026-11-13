@@ -27,8 +27,8 @@ use super::{
 };
 use super::{
     history_cache::{HistoryLineSlice, HistoryRenderSettings},
-    App, CodeBlockCopyTarget, ComposerMode, Entry, GoalStatus, LineFill, ReasoningChrome,
-    SessionHeaderCache, StreamKind, Theme,
+    App, CodeBlockCopyTarget, ComposerMode, Entry, LineFill, ReasoningChrome, SessionHeaderCache,
+    StreamKind, Theme,
 };
 #[cfg(test)]
 use super::{ActiveFrame, DEFAULT_TUI_HEIGHT};
@@ -902,23 +902,26 @@ impl App {
             .visible_start(history_len, height)
     }
 
-    fn goal_status(&self) -> Option<GoalStatus> {
-        self.goal.as_ref().map(|goal| GoalStatus {
-            turns: goal.turns,
-            elapsed: goal.elapsed(),
-            blocked: goal.is_blocked(),
-        })
-    }
-
     fn refresh_statusline_state(&mut self) {
         self.statusline
             .update_signed_in(self.setup_state().signed_in);
-        self.statusline.update_model(&self.info.runtime);
-        self.statusline.update_computer(
-            self.computer_use
-                .as_ref()
-                .map(|control| control.status())
-                .unwrap_or(crate::tools::computer_use::ComputerUseStatus::Off),
+        if let Some(options) = &self.daemon_options {
+            self.statusline.update_model_controls(
+                &self.info.runtime,
+                super::statusline::ModelControls {
+                    fast_mode_active: options.fast_mode.as_ref().is_some_and(|fast| fast.enabled),
+                    reasoning_configurable: options
+                        .reasoning
+                        .as_ref()
+                        .is_some_and(|reasoning| reasoning.available.len() > 1),
+                },
+            );
+        } else {
+            self.statusline.update_model(&self.info.runtime);
+        }
+        self.statusline.update_model_name(
+            self.model_names()
+                .name(&self.info.runtime.provider, &self.info.runtime.model),
         );
         let display_usage = super::usage_cost::display_usage_with_live(
             self.usage.cumulative_usage.as_ref(),
@@ -941,8 +944,7 @@ impl App {
     }
 
     pub(super) fn statusline_lines(&mut self, width: usize) -> &[Line<'static>] {
-        let goal = self.goal_status();
         self.refresh_statusline_state();
-        self.statusline.lines(width, goal)
+        self.statusline.lines(width)
     }
 }

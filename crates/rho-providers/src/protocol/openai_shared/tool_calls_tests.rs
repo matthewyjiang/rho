@@ -56,21 +56,9 @@ fn lenient_policy_normalizes_qwen_style_quirks() {
     assert_eq!(
         calls,
         vec![
-            ToolCall {
-                id: "call_1".into(),
-                name: "bash".into(),
-                arguments: json!({}),
-            },
-            ToolCall {
-                id: "dup".into(),
-                name: "read_file".into(),
-                arguments: json!({"path": "a.rs"}),
-            },
-            ToolCall {
-                id: "dup_2".into(),
-                name: "bash".into(),
-                arguments: json!({"command": "pwd"}),
-            },
+            ToolCall::new("call_1".into(), "bash".into(), json!({})),
+            ToolCall::new("dup".into(), "read_file".into(), json!({"path": "a.rs"})),
+            ToolCall::new("dup_2".into(), "bash".into(), json!({"command": "pwd"})),
         ]
     );
 }

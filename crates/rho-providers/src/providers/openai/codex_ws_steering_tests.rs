@@ -74,7 +74,7 @@ fn steer_receiver(
     text: &str,
 ) -> (
     Option<rho_sdk::provider::ProviderSteeringReceiver>,
-    tokio::sync::mpsc::UnboundedSender<rho_sdk::provider::ProviderSteeringRequest>,
+    rho_sdk::provider::ProviderSteeringSender,
 ) {
     let (tx, rx) = rho_sdk::provider::provider_steering_channel();
     let _ = text;
@@ -151,7 +151,7 @@ async fn steer_reuses_auto_continuation_when_completion_precedes_ack() {
     let continuation = immediate(transport.send_responses_turn_steerable(
         request_body(&[
             ModelMessage::user_text("one"),
-            ModelMessage::Assistant(vec![ContentBlock::Text("partial".into())]),
+            ModelMessage::Assistant(vec![ContentBlock::Text("partial".into())].into()),
             ModelMessage::user_text("S1"),
             ModelMessage::model_context("checklist"),
         ]),

@@ -1,5 +1,5 @@
 use pretty_assertions::assert_eq;
-use rho_tools::tool_card::{DiffRow, DiffRowKind, ToolBody, ToolFact, ToolStatus};
+use rho_protocol::display::{DiffRow, DiffRowKind, ToolBody, ToolCardStatus, ToolFact};
 
 use super::str_replace_card;
 
@@ -151,7 +151,7 @@ fn proposed_str_replace_card_projects_old_and_new_strings() {
         let card = str_replace_card(
             &arguments,
             std::path::Path::new("/workspace"),
-            ToolStatus::Running,
+            ToolCardStatus::Running,
             live_file,
         );
         assert_eq!(card.body, expected, "{name}");
@@ -199,7 +199,7 @@ fn replace_all_card_reports_every_occurrence() {
         let card = str_replace_card(
             &arguments,
             std::path::Path::new("/workspace"),
-            ToolStatus::Running,
+            ToolCardStatus::Running,
             live_file,
         );
         assert_eq!(card.facts, expected, "{name}");
@@ -222,7 +222,7 @@ fn oversized_replace_all_result_falls_back_to_projection() {
     let card = str_replace_card(
         &arguments,
         std::path::Path::new("/workspace"),
-        ToolStatus::Running,
+        ToolCardStatus::Running,
         Some(&file),
     );
 

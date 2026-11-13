@@ -3,23 +3,13 @@ use std::sync::Arc;
 use super::*;
 use crate::app::subagent_host_input::SubagentHostInputBridge;
 
-// Covers: questionnaire routes to any parent-bridged delegated run, not only background.
-// Owner: delegated agent executor.
-#[test]
-fn delegated_questionnaire_requires_parent_bridge_not_background() {
-    let parent = rho_sdk::SessionId::new();
-    assert!(delegated_questionnaire_available(Some(&parent), true));
-    assert!(!delegated_questionnaire_available(Some(&parent), false));
-    assert!(!delegated_questionnaire_available(None, true));
-    assert!(!delegated_questionnaire_available(None, false));
-}
-
 #[test]
 fn parent_selection_updates_are_shared_with_executor_clones() {
     let executor = AgentExecutor::new(
         Config::default(),
         PathBuf::new(),
         PathBuf::new(),
+        crate::app::agent_concurrency::AgentConcurrency::from_config(1),
         SubagentHostInputBridge::new(),
         crate::app::subagent_messaging::SubagentNoticeBridge::new(),
     );
@@ -32,17 +22,7 @@ fn parent_selection_updates_are_shared_with_executor_clones() {
         "codex",
     );
 
-    let previous = cloned.config.read().expect("delegated config lock").clone();
-    let settings = crate::config::WebSearchSettings {
-        mode: crate::config::WebSearchMode::Off,
-        backend: crate::config::SearchBackend::Firecrawl,
-        ..crate::config::WebSearchSettings::default()
-    };
-    executor.update_web_search(&settings);
-
     let config = cloned.config.read().expect("delegated config lock");
-    assert_eq!(config.web_search, settings);
-    assert_eq!(previous.web_search.mode, crate::config::WebSearchMode::Auto);
     assert_eq!(config.provider, "openai-codex");
     assert_eq!(config.model, "gpt-5.6-luna");
     assert_eq!(config.auth, "codex");
@@ -75,6 +55,7 @@ fn update_selection_does_not_alter_bound_claude_runtime() {
         },
         PathBuf::new(),
         PathBuf::new(),
+        crate::app::agent_concurrency::AgentConcurrency::from_config(1),
         SubagentHostInputBridge::new(),
         crate::app::subagent_messaging::SubagentNoticeBridge::new(),
     );

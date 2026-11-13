@@ -2,29 +2,26 @@ use pretty_assertions::assert_eq;
 
 use super::*;
 use crate::model::ModelEvent;
-use rho_sdk::model::ASYNC_TOOL_CALL_CONTEXT_KIND;
+use rho_sdk::tool::ToolExecutionMode;
 
-fn async_markers(events: &[ModelEvent]) -> Vec<String> {
+fn async_acceptances(events: &[ModelEvent]) -> Vec<String> {
     events
         .iter()
         .filter_map(|event| match event {
-            ModelEvent::ProviderContext {
-                kind,
-                position,
-                data,
-            } if kind == ASYNC_TOOL_CALL_CONTEXT_KIND && position.is_none() => {
-                data.as_str().map(str::to_owned)
-            }
+            ModelEvent::ToolCallAccepted {
+                id,
+                execution: ToolExecutionMode::Async,
+            } => Some(id.clone()),
             _ => None,
         })
         .collect()
 }
 
-// Covers: async function_call items emit the SDK marker once even when
+// Covers: async function_call items emit one async ToolCallAccepted even when
 // response.completed restates the same output item.
 // Owner: openai Responses SSE parse
 #[test]
-fn async_function_call_emits_marker_once() {
+fn async_function_call_is_accepted_once() {
     struct Case {
         name: &'static str,
         lines: Vec<&'static str>,
@@ -40,7 +37,7 @@ fn async_function_call_emits_marker_once() {
             expected: vec!["call_1"],
         },
         Case {
-            name: "sync function_call never marks",
+            name: "sync function_call is never accepted as async",
             lines: vec![
                 r#"data: {"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","call_id":"call_1","name":"bash","arguments":"{}"}}"#,
                 r#"data: {"type":"response.completed","response":{"id":"resp_1","output":[{"type":"function_call","call_id":"call_1","name":"bash","arguments":"{}"}]}}"#,
@@ -48,7 +45,7 @@ fn async_function_call_emits_marker_once() {
             expected: vec![],
         },
         Case {
-            name: "completed-only async item still marks",
+            name: "completed-only async item is still accepted",
             lines: vec![
                 r#"data: {"type":"response.completed","response":{"id":"resp_1","output":[{"type":"function_call","call_id":"call_9","name":"one_agent","arguments":"{}","async":true}]}}"#,
             ],
@@ -70,6 +67,6 @@ fn async_function_call_emits_marker_once() {
             )
             .unwrap();
         }
-        assert_eq!(async_markers(&events), case.expected, "{}", case.name);
+        assert_eq!(async_acceptances(&events), case.expected, "{}", case.name);
     }
 }

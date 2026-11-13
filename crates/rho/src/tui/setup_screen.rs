@@ -108,7 +108,7 @@ impl App {
         let step = match entry {
             SetupEntry::SignIn => SetupStep::SignIn,
             SetupEntry::ChooseModel => SetupStep::ChooseModel,
-            SetupEntry::Auto if self.setup_model_picker().is_some() => SetupStep::ChooseModel,
+            SetupEntry::Auto if self.daemon_setup_can_choose_model() => SetupStep::ChooseModel,
             SetupEntry::Auto => SetupStep::SignIn,
         };
         self.enter_setup(step);
@@ -191,7 +191,7 @@ impl App {
         let _ = terminal.draw(|frame| self.draw(frame));
     }
 
-    fn show_setup_model_picker(&mut self) {
+    pub(super) fn show_setup_model_picker(&mut self) {
         let Some(picker) = self.setup_model_picker() else {
             // Nothing to choose between: keep the configured model rather than
             // showing an empty step. Setup is gone, so the composer must
@@ -221,10 +221,9 @@ impl App {
         let body = self.setup_body_frame(width, origin.height);
         self.retain_composer_window(&body);
         let cursor = match self.input_ui.composer() {
-            ComposerMode::Picker(_)
-            | ComposerMode::SecretInput(_)
-            | ComposerMode::ConfigNumberInput(_)
-            | ComposerMode::TextInput(_) => Some(body.cursor),
+            ComposerMode::Picker(_) | ComposerMode::SecretInput(_) | ComposerMode::TextInput(_) => {
+                Some(body.cursor)
+            }
             ComposerMode::Input
             | ComposerMode::InteractivePending(_)
             | ComposerMode::InlineChoice(_)

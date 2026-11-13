@@ -1,7 +1,6 @@
 use pretty_assertions::assert_eq;
 use rho_sdk::{
-    CancellationToken, HostChoice, HostInputRequest, HostInputResponse, HostQuestion,
-    SelectionMode, SessionId,
+    CancellationToken, HostChoice, HostInputRequest, HostInputResponse, HostQuestion, SelectionMode,
 };
 use tokio::time::{timeout, Duration};
 
@@ -28,7 +27,6 @@ async fn unbound_bridge_rejects_child_requests() {
         .request(
             "abc123",
             "worker",
-            SessionId::new(),
             sample_request(),
             &CancellationToken::new(),
         )
@@ -47,13 +45,7 @@ async fn child_cancellation_ends_a_waiting_request() {
         let cancellation = cancellation.clone();
         async move {
             bridge
-                .request(
-                    "abc123",
-                    "worker",
-                    SessionId::new(),
-                    sample_request(),
-                    &cancellation,
-                )
+                .request("abc123", "worker", sample_request(), &cancellation)
                 .await
         }
     });
@@ -69,46 +61,40 @@ async fn child_cancellation_ends_a_waiting_request() {
 }
 
 #[tokio::test]
-async fn responder_adapter_reports_parent_send_failure() {
-    use crate::app::{
-        headless_run::HostInputResponder,
-        subagent_host_input::{SubagentHostInputBridge, SubagentHostInputResponder},
-    };
-
+async fn reports_a_parent_that_stopped_accepting_requests() {
     let bridge = SubagentHostInputBridge::new();
     let receiver = bridge.bind_parent();
     drop(receiver);
-    let responder = SubagentHostInputResponder::new("run-1", "worker", SessionId::new(), bridge);
     let cancellation = CancellationToken::new();
 
     let error = timeout(
         Duration::from_secs(1),
-        responder.respond(sample_request(), &cancellation),
+        bridge.request("run-1", "worker", sample_request(), &cancellation),
     )
     .await
-    .expect("responder timeout")
+    .expect("request timeout")
     .unwrap_err();
 
     assert!(matches!(
         error,
-        rho_sdk::Error::Interrupted { message }
+        rho_sdk::Error::Interrupted { message, .. }
             if message.contains("stopped accepting delegated questionnaires")
     ));
 }
 
 #[tokio::test]
-async fn responder_adapter_reports_dropped_queued_request() {
-    use crate::app::{
-        headless_run::HostInputResponder,
-        subagent_host_input::{SubagentHostInputBridge, SubagentHostInputResponder},
-    };
-
+async fn reports_a_queued_request_the_parent_dropped() {
     let bridge = SubagentHostInputBridge::new();
     let receiver = bridge.bind_parent();
-    let responder = SubagentHostInputResponder::new("run-1", "worker", SessionId::new(), bridge);
     let cancellation = CancellationToken::new();
-    let child =
-        tokio::spawn(async move { responder.respond(sample_request(), &cancellation).await });
+    let child = tokio::spawn({
+        let bridge = bridge.clone();
+        async move {
+            bridge
+                .request("run-1", "worker", sample_request(), &cancellation)
+                .await
+        }
+    });
 
     timeout(Duration::from_secs(1), async {
         while receiver.is_empty() {
@@ -121,45 +107,45 @@ async fn responder_adapter_reports_dropped_queued_request() {
 
     let error = timeout(Duration::from_secs(1), child)
         .await
-        .expect("responder timeout")
-        .expect("responder task")
+        .expect("request timeout")
+        .expect("request task")
         .unwrap_err();
     assert!(matches!(
         error,
-        rho_sdk::Error::Interrupted { message }
+        rho_sdk::Error::Interrupted { message, .. }
             if message.contains("dropped without a response")
     ));
 }
 
 #[tokio::test]
-async fn responder_adapter_forwards_identity_to_parent_bridge() {
-    use crate::app::{
-        headless_run::HostInputResponder,
-        subagent_host_input::{SubagentHostInputBridge, SubagentHostInputResponder},
-    };
-
+async fn forwards_the_child_identity_to_the_parent() {
     let bridge = SubagentHostInputBridge::new();
     let mut receiver = bridge.bind_parent();
-    let parent_session_id = rho_sdk::SessionId::new();
-    let responder =
-        SubagentHostInputResponder::new("run-1", "worker", parent_session_id.clone(), bridge);
     let request = sample_request();
     let request_id = request.id().clone();
     let cancellation = CancellationToken::new();
 
     let child = tokio::spawn({
-        let cancellation = cancellation.clone();
-        async move { responder.respond(request, &cancellation).await }
+        let bridge = bridge.clone();
+        async move {
+            bridge
+                .request("run-1", "worker", request, &cancellation)
+                .await
+        }
     });
 
     let pending = timeout(Duration::from_secs(1), receiver.recv())
         .await
         .expect("bridge delivery")
         .expect("pending request");
-    assert_eq!(pending.run_id, "run-1");
-    assert_eq!(pending.agent_id, "worker");
-    assert_eq!(pending.parent_session_id, parent_session_id);
-    assert_eq!(pending.request.id(), &request_id);
+    assert_eq!(
+        (
+            pending.run_id.as_str(),
+            pending.agent_id.as_str(),
+            pending.request.id(),
+        ),
+        ("run-1", "worker", &request_id)
+    );
     pending
         .response
         .send(Ok(HostInputResponse::new().answer("color", ["blue"])))

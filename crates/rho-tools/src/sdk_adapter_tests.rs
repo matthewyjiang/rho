@@ -11,8 +11,8 @@ use rho_sdk::{
         OperationKind, ToolErrorKind, ToolExecutionPolicy, ToolInvocation, ToolPreparationContext,
         ToolResource, ToolResourceAccess,
     },
-    CancellationToken, CapabilityOperation, Rho, RunEvent, ScopedWorkspacePolicy, SessionOptions,
-    ToolCallId, ToolCompletion, UserInput, Workspace,
+    CancellationToken, Rho, RunEvent, ScopedWorkspacePolicy, SessionOptions, ToolCallId,
+    ToolCompletion, UserInput, Workspace,
 };
 
 use super::*;
@@ -50,7 +50,6 @@ async fn prepared_policy(
 #[test]
 fn edit_preferences_select_one_model_facing_surface() {
     for (edit_tool, expected_name, expected_required) in [
-        (crate::EditFormat::Hashline, "edit", &["input"][..]),
         (crate::EditFormat::ApplyPatch, "apply_patch", &["input"][..]),
         (
             crate::EditFormat::StrReplace,
@@ -208,11 +207,11 @@ async fn allowed_policy_reads_and_reports_metadata() {
             ModelIdentity::new("scripted", "test", "model"),
             [
                 ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                    ToolCall {
-                        id: "call-1".into(),
-                        name: "read_file".into(),
-                        arguments: json!({"path": "note.txt", "offset": 1, "limit": 1}),
-                    },
+                    ToolCall::new(
+                        "call-1".into(),
+                        "read_file".into(),
+                        json!({"path": "note.txt", "offset": 1, "limit": 1}),
+                    ),
                 )])),
                 ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
                     "done".into(),
@@ -233,10 +232,10 @@ async fn allowed_policy_reads_and_reports_metadata() {
     while let Some(event) = run.next_event().await {
         match event {
             RunEvent::ToolFinished { result, .. } => match result {
-                ToolCompletion::Success(output) => {
+                ToolCompletion::Completed(output) => {
                     let text = "hello\nworld\n";
                     let expected =
-                        crate::hashline::format_hashline_view("note.txt", text, Some(1), Some(1))
+                        crate::text_view::format_numbered_view("note.txt", text, Some(1), Some(1))
                             .unwrap();
                     assert_eq!(output.content(), expected);
                     assert_eq!(
@@ -274,11 +273,11 @@ async fn read_file_image_reaches_the_next_model_request() {
         ModelIdentity::new("scripted", "test", "model"),
         [
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                ToolCall {
-                    id: "call-1".into(),
-                    name: "read_file".into(),
-                    arguments: json!({"path": "red.png"}),
-                },
+                ToolCall::new(
+                    "call-1".into(),
+                    "read_file".into(),
+                    json!({"path": "red.png"}),
+                ),
             )])),
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
                 "red".into(),
@@ -303,8 +302,11 @@ async fn read_file_image_reaches_the_next_model_request() {
     let images = requests[1]
         .messages
         .iter()
-        .filter_map(rho_sdk::model::Message::as_tool_image_supplement)
-        .flat_map(|supplement| supplement.images().cloned().collect::<Vec<_>>())
+        .filter_map(|message| match message {
+            rho_sdk::model::Message::ToolResult(result) => Some(result.images.clone()),
+            _ => None,
+        })
+        .flatten()
         .collect::<Vec<_>>();
     assert_eq!(images.len(), 1);
     assert_eq!(images[0].mime_type, "image/png");
@@ -326,11 +328,11 @@ async fn allowed_policy_writes_with_diff_metadata_and_progress() {
             ModelIdentity::new("scripted", "test", "model"),
             [
                 ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                    ToolCall {
-                        id: "call-1".into(),
-                        name: "write".into(),
-                        arguments: json!({"path": "nested/out.txt", "content": "created"}),
-                    },
+                    ToolCall::new(
+                        "call-1".into(),
+                        "write".into(),
+                        json!({"path": "nested/out.txt", "content": "created"}),
+                    ),
                 )])),
                 ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
                     "wrote".into(),
@@ -355,17 +357,17 @@ async fn allowed_policy_writes_with_diff_metadata_and_progress() {
         match event {
             RunEvent::ToolUpdated { progress, .. } => {
                 saw_progress = true;
-                assert!(progress.text().contains("writing"));
+                assert!(progress.message().contains("writing"));
                 assert_eq!(
-                    progress.presentation().operation_kind(),
+                    progress.metadata().operation_kind(),
                     Some(&OperationKind::Write)
                 );
             }
             RunEvent::ToolFinished { result, .. } => match result {
-                ToolCompletion::Success(output) => {
+                ToolCompletion::Completed(output) => {
                     write_metadata = Some(output.presentation().clone());
                     assert!(output.content().contains("created"));
-                    assert!(output.content().contains("[nested/out.txt#"));
+                    assert!(output.content().contains("nested/out.txt\n1:created"));
                     assert!(!output.content().contains("+created"));
                 }
                 other => panic!("unexpected tool result: {other:?}"),
@@ -398,11 +400,11 @@ async fn write_only_policy_cannot_diff_existing_file_contents() {
             ModelIdentity::new("scripted", "test", "model"),
             [
                 ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                    ToolCall {
-                        id: "call-1".into(),
-                        name: "write".into(),
-                        arguments: json!({"path": "secret.txt", "content": "new secret"}),
-                    },
+                    ToolCall::new(
+                        "call-1".into(),
+                        "write".into(),
+                        json!({"path": "secret.txt", "content": "new secret"}),
+                    ),
                 )])),
                 ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
                     "blocked".into(),
@@ -488,166 +490,6 @@ fn build_runtime_with_coding_tools(
     builder.build().unwrap()
 }
 
-// Covers: edit prepare must lock every existing section target for read+write
-// Owner: SDK contract
-#[tokio::test]
-async fn edit_prepare_reserves_existing_targets() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("a.txt"), "a\n").unwrap();
-    std::fs::write(dir.path().join("b.txt"), "b\n").unwrap();
-    let workspace = workspace(&dir);
-    let tool = coding_tool(CodingToolKind::Edit, CodingToolOptions::default());
-    let input = "\
-[a.txt#AAAA]
-PUT 1.=1:
-+A
-[b.txt#BBBB]
-PUT 1.=1:
-+B
-";
-
-    let prepared = tool
-        .prepare(
-            invocation(json!({ "input": input })),
-            ToolPreparationContext::new(Some(workspace.clone()), CancellationToken::new()),
-        )
-        .await
-        .unwrap();
-
-    let ToolExecutionPolicy::ResourceAware { accesses } = prepared.execution_policy().clone()
-    else {
-        panic!("edit must opt in to resource-aware execution");
-    };
-    for path in [
-        workspace.root().join("a.txt"),
-        workspace.root().join("b.txt"),
-    ] {
-        assert!(
-            accesses.contains(&ToolResourceAccess::exclusive(
-                ToolResource::workspace_path(path.clone())
-            )),
-            "missing exclusive access for {}",
-            path.display()
-        );
-        let mut ops = prepared
-            .capabilities()
-            .iter()
-            .filter_map(|cap| match cap.operation() {
-                CapabilityOperation::ReadPath { path: p, .. } if p == &path => Some("read"),
-                CapabilityOperation::WritePath { path: p, .. } if p == &path => Some("write"),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        ops.sort_unstable();
-        assert_eq!(ops, ["read", "write"], "path {}", path.display());
-    }
-}
-
-// Covers: edit prepare must reject invalid documents and duplicate section
-// targets before path I/O
-// Owner: SDK contract
-#[tokio::test]
-async fn edit_prepare_rejects_invalid_documents() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("a.txt"), "a\n").unwrap();
-    let tool = coding_tool(CodingToolKind::Edit, CodingToolOptions::default());
-    for (case, input) in [
-        ("not a document", "not an edit document"),
-        (
-            "duplicate path",
-            "[a.txt#AAAA]\nPUT 1.=1:\n+A\n[a.txt#BBBB]\nPUT 1.=1:\n+B\n",
-        ),
-    ] {
-        let error = match tool
-            .prepare(
-                invocation(json!({ "input": input })),
-                ToolPreparationContext::new(Some(workspace(&dir)), CancellationToken::new()),
-            )
-            .await
-        {
-            Ok(_) => panic!("{case}: invalid edit document must fail prepare"),
-            Err(error) => error,
-        };
-        assert_eq!(error.kind(), ToolErrorKind::InvalidArguments, "{case}");
-    }
-}
-
-// Covers: edit success path emits diff metadata and progress
-// Owner: SDK contract
-#[tokio::test]
-async fn allowed_policy_edits_with_diff_metadata_and_progress() {
-    let dir = tempfile::tempdir().unwrap();
-    let original = "alpha\nbeta\ngamma\n";
-    std::fs::write(dir.path().join("sample.txt"), original).unwrap();
-    let tag = crate::hashline::compute_file_hash(original);
-    let input = format!("[sample.txt#{tag}]\nPUT 2.=2:\n+delta\n");
-    let runtime = build_runtime_with_coding_tools(
-        ScriptedProvider::new(
-            ModelIdentity::new("scripted", "test", "model"),
-            [
-                ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                    ToolCall {
-                        id: "call-1".into(),
-                        name: "edit".into(),
-                        arguments: json!({ "input": input }),
-                    },
-                )])),
-                ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
-                    "edited".into(),
-                )])),
-            ],
-        ),
-        workspace(&dir),
-        ScopedWorkspacePolicy::new()
-            .allow_read_paths()
-            .allow_write_paths(),
-        CodingToolOptions::default(),
-    );
-    let session = runtime.session(SessionOptions::default()).await.unwrap();
-    let mut run = session
-        .start(UserInput::text("edit the sample"))
-        .await
-        .unwrap();
-
-    let mut saw_progress = false;
-    let mut edit_metadata = None;
-    while let Some(event) = run.next_event().await {
-        match event {
-            RunEvent::ToolUpdated { progress, .. } => {
-                saw_progress = true;
-                assert!(progress.text().contains("applying edit"));
-                assert_eq!(
-                    progress.presentation().operation_kind(),
-                    Some(&OperationKind::Write)
-                );
-            }
-            RunEvent::ToolFinished { result, .. } => match result {
-                ToolCompletion::Success(output) => {
-                    edit_metadata = Some(output.presentation().clone());
-                    assert!(output.content().contains("sample.txt"));
-                    assert!(output.content().contains("2:delta"));
-                }
-                other => panic!("unexpected tool result: {other:?}"),
-            },
-            RunEvent::Completed { .. } => break,
-            _ => {}
-        }
-    }
-
-    assert!(saw_progress);
-    let metadata = edit_metadata.expect("edit metadata");
-    assert_eq!(metadata.operation_kind(), Some(&OperationKind::Write));
-    assert_eq!(
-        metadata.affected_paths(),
-        [std::path::PathBuf::from("sample.txt")]
-    );
-    assert!(metadata.unified_diff().unwrap().contains("+delta"));
-    assert_eq!(
-        std::fs::read_to_string(dir.path().join("sample.txt")).unwrap(),
-        "alpha\ndelta\ngamma\n"
-    );
-}
-
 // Covers: alternate edit adapters execute through SDK authorization, not only app-tool calls
 // Owner: SDK contract
 #[tokio::test]
@@ -677,11 +519,11 @@ async fn allowed_policy_executes_selected_alternate_edit_tools() {
                 ModelIdentity::new("scripted", "test", "model"),
                 [
                     ScriptedTurn::completed(ModelResponse::Assistant(vec![
-                        ContentBlock::ToolCall(ToolCall {
-                            id: "call-1".into(),
-                            name: name.into(),
+                        ContentBlock::ToolCall(ToolCall::new(
+                            "call-1".into(),
+                            name.into(),
                             arguments,
-                        }),
+                        )),
                     ])),
                     ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
                         "done".into(),
@@ -703,7 +545,7 @@ async fn allowed_policy_executes_selected_alternate_edit_tools() {
         while let Some(event) = run.next_event().await {
             match event {
                 RunEvent::ToolFinished {
-                    result: ToolCompletion::Success(_),
+                    result: ToolCompletion::Completed(_),
                     ..
                 } => succeeded = true,
                 RunEvent::ToolFinished { result, .. } => {
@@ -740,13 +582,13 @@ async fn apply_patch_upgrades_cached_path_validation_for_symlink_delete() {
             ModelIdentity::new("scripted", "test", "model"),
             [
                 ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                    ToolCall {
-                        id: "call-1".into(),
-                        name: "apply_patch".into(),
-                        arguments: json!({
+                    ToolCall::new(
+                        "call-1".into(),
+                        "apply_patch".into(),
+                        json!({
                             "input": "*** Begin Patch\n*** Update File: alias.txt\n@@\n-keep\n+changed\n*** Delete File: alias.txt\n*** End Patch"
                         }),
-                    },
+                    ),
                 )])),
                 ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
                     "done".into(),

@@ -14,15 +14,15 @@ use tokio::sync::Notify;
 
 use crate::{
     model::{
-        ContentBlock, Message, ModelEvent, ModelIdentity, ModelRequest, ModelResponse,
-        ProviderContextBlock, ToolCall, ToolResult, ToolSpec,
+        ContentBlock, Message, ModelEvent, ModelIdentity, ModelRequest, ModelResponse, ToolCall,
+        ToolResult, ToolSpec,
     },
     provider::{ModelProvider, ProviderFuture, ScriptedProvider, ScriptedTurn},
     tool::{
         PreparedToolInvocation, Tool, ToolContext, ToolError, ToolExecutionMode, ToolFuture,
         ToolInvocation, ToolOutput, ToolPreparationContext, ToolPrepareFuture,
     },
-    Error, Rho, Run, RunEvent, SessionOptions, StopReason, UserInput,
+    Error, Rho, Run, RunEvent, SessionOptions, StopReason, ToolExecution, UserInput,
 };
 
 use super::tool_settlement::INTERRUPTED_TOOL_RESULT_CONTENT;
@@ -30,10 +30,14 @@ use super::tool_settlement::INTERRUPTED_TOOL_RESULT_CONTENT;
 const TEST_TIMEOUT: Duration = Duration::from_secs(2);
 
 fn tool_call(id: &str, name: &str) -> ToolCall {
+    ToolCall::new(id.into(), name.into(), json!({}))
+}
+
+/// A call as history stores it after the provider accepted it as async.
+fn accepted_async_call(id: &str, name: &str) -> ToolCall {
     ToolCall {
-        id: id.into(),
-        name: name.into(),
-        arguments: json!({}),
+        execution: ToolExecutionMode::Async,
+        ..tool_call(id, name)
     }
 }
 
@@ -45,15 +49,10 @@ fn tool_spec(name: &str) -> ToolSpec {
     }
 }
 
-fn async_marker(call_id: &str) -> ModelEvent {
-    let block = ProviderContextBlock::async_tool_call(
-        ModelIdentity::new("scripted", "test", "async"),
-        call_id,
-    );
-    ModelEvent::ProviderContext {
-        kind: block.kind,
-        position: block.position,
-        data: block.data,
+fn async_accepted(call_id: &str) -> ModelEvent {
+    ModelEvent::ToolCallAccepted {
+        id: call_id.into(),
+        execution: ToolExecutionMode::Async,
     }
 }
 
@@ -148,7 +147,7 @@ impl Tool for ProgressBurstAsyncTool {
                             assert!(
                                 context
                                     .progress()
-                                    .send(crate::tool::ToolProgress::message(format!(
+                                    .send(crate::tool::ToolProgress::new(format!(
                                         "progress {index}"
                                     )))
                                     .await
@@ -227,7 +226,7 @@ fn tool_results_in(messages: &[Message]) -> Vec<ToolResult> {
     messages
         .iter()
         .filter_map(|message| match message {
-            Message::ToolResult(result) => Some(result.clone()),
+            Message::ToolResult(result) => Some((**result).clone()),
             _ => None,
         })
         .collect()
@@ -241,7 +240,7 @@ fn text_turn(text: &str) -> ScriptedTurn {
 
 fn async_call_turn(id: &str, name: &str) -> ScriptedTurn {
     ScriptedTurn::streaming(
-        vec![async_marker(id)],
+        vec![async_accepted(id)],
         ModelResponse::Assistant(vec![ContentBlock::ToolCall(tool_call(id, name))]),
     )
 }
@@ -271,8 +270,9 @@ impl ModelProvider for GatedSecondTurnProvider {
     fn send_turn_stream<'a>(
         &'a self,
         request: ModelRequest<'a>,
-        events: crate::provider::ProviderEventSender,
+        context: crate::provider::ProviderTurnContext,
     ) -> ProviderFuture<'a> {
+        let events = context.events;
         Box::pin(async move {
             self.requests
                 .lock()
@@ -280,7 +280,7 @@ impl ModelProvider for GatedSecondTurnProvider {
                 .push(request.messages.to_vec());
             match self.calls.fetch_add(1, Ordering::AcqRel) {
                 0 => {
-                    events.send(async_marker("call-a")).await?;
+                    events.send(async_accepted("call-a")).await?;
                     Ok(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
                         tool_call("call-a", "slow"),
                     )]))
@@ -326,7 +326,6 @@ async fn pending_job_then_end_turn_continues_with_result() {
     session.set_boundary_inputs(Some(source)).unwrap();
     let mut run = session.start(UserInput::text("start")).await.unwrap();
 
-    let mut saw_started = false;
     let mut saw_detached = false;
     let mut saw_step_2 = false;
     let mut saw_finished_after_step_2 = false;
@@ -344,11 +343,10 @@ async fn pending_job_then_end_turn_continues_with_result() {
             event = next_event(&mut run) => event,
         };
         match event {
-            RunEvent::ToolStarted { .. } => saw_started = true,
-            RunEvent::ToolDetached { .. } => {
-                assert!(saw_started);
-                saw_detached = true;
-            }
+            RunEvent::ToolStarted {
+                execution: ToolExecution::Detached,
+                ..
+            } => saw_detached = true,
             RunEvent::StepStarted { step: 2, .. } => {
                 assert!(saw_detached);
                 saw_step_2 = true;
@@ -384,11 +382,9 @@ async fn pending_job_then_end_turn_continues_with_result() {
     assert_eq!(requests.len(), 3);
     assert_eq!(
         requests[2].last(),
-        Some(&Message::ToolResult(ToolResult {
-            id: "call-a".into(),
-            ok: true,
-            content: "slow done".into(),
-        }))
+        Some(&Message::ToolResult(
+            ToolResult::succeeded("call-a", "slow done").into()
+        ))
     );
 }
 
@@ -403,7 +399,7 @@ async fn results_deliver_in_completion_order_before_next_request() {
         identity(),
         [
             ScriptedTurn::streaming(
-                vec![async_marker("call-a"), async_marker("call-b")],
+                vec![async_accepted("call-a"), async_accepted("call-b")],
                 ModelResponse::Assistant(vec![
                     ContentBlock::ToolCall(tool_call("call-a", "alpha")),
                     ContentBlock::ToolCall(tool_call("call-b", "beta")),
@@ -450,16 +446,8 @@ async fn results_deliver_in_completion_order_before_next_request() {
     assert_eq!(
         tool_results_in(&requests[2].messages),
         vec![
-            ToolResult {
-                id: "call-b".into(),
-                ok: true,
-                content: "beta done".into(),
-            },
-            ToolResult {
-                id: "call-a".into(),
-                ok: true,
-                content: "alpha done".into(),
-            },
+            ToolResult::succeeded("call-b", "beta done"),
+            ToolResult::succeeded("call-a", "alpha done"),
         ]
     );
 }
@@ -474,7 +462,7 @@ async fn detached_jobs_respect_max_parallel_tools() {
         identity(),
         [
             ScriptedTurn::streaming(
-                vec![async_marker("call-a"), async_marker("call-b")],
+                vec![async_accepted("call-a"), async_accepted("call-b")],
                 ModelResponse::Assistant(vec![
                     ContentBlock::ToolCall(tool_call("call-a", "alpha")),
                     ContentBlock::ToolCall(tool_call("call-b", "beta")),
@@ -507,7 +495,7 @@ async fn detached_jobs_respect_max_parallel_tools() {
     loop {
         if matches!(
             next_event(&mut run).await,
-            RunEvent::ToolDetached { ref call_id } if call_id.as_str() == "call-a"
+            RunEvent::ToolStarted { ref call_id, execution: ToolExecution::Detached, .. } if call_id.as_str() == "call-a"
         ) {
             break;
         }
@@ -523,7 +511,7 @@ async fn detached_jobs_respect_max_parallel_tools() {
     loop {
         if matches!(
             next_event(&mut run).await,
-            RunEvent::ToolDetached { ref call_id } if call_id.as_str() == "call-b"
+            RunEvent::ToolStarted { ref call_id, execution: ToolExecution::Detached, .. } if call_id.as_str() == "call-b"
         ) {
             break;
         }
@@ -545,7 +533,7 @@ async fn queued_async_start_drains_running_job_progress() {
         identity(),
         [
             ScriptedTurn::streaming(
-                vec![async_marker("call-a"), async_marker("call-b")],
+                vec![async_accepted("call-a"), async_accepted("call-b")],
                 ModelResponse::Assistant(vec![
                     ContentBlock::ToolCall(tool_call("call-a", "progress")),
                     ContentBlock::ToolCall(tool_call("call-b", "immediate")),
@@ -585,7 +573,7 @@ async fn sync_batch_waits_for_detached_jobs() {
         identity(),
         [
             ScriptedTurn::streaming(
-                vec![async_marker("call-async")],
+                vec![async_accepted("call-async")],
                 ModelResponse::Assistant(vec![
                     ContentBlock::ToolCall(tool_call("call-async", "async_tool")),
                     ContentBlock::ToolCall(tool_call("call-sync", "sync_tool")),
@@ -612,7 +600,7 @@ async fn sync_batch_waits_for_detached_jobs() {
     loop {
         if matches!(
             next_event(&mut run).await,
-            RunEvent::ToolDetached { ref call_id } if call_id.as_str() == "call-async"
+            RunEvent::ToolStarted { ref call_id, execution: ToolExecution::Detached, .. } if call_id.as_str() == "call-async"
         ) {
             break;
         }
@@ -694,15 +682,14 @@ async fn cancel_while_awaiting_interrupts_jobs() {
             .history()
             .into_iter()
             .filter_map(|message| match message {
-                Message::ToolResult(result) => Some(result),
+                Message::ToolResult(result) => Some(Arc::unwrap_or_clone(result)),
                 _ => None,
             })
             .collect::<Vec<_>>(),
-        vec![ToolResult {
-            id: "call-a".into(),
-            ok: false,
-            content: INTERRUPTED_TOOL_RESULT_CONTENT.into(),
-        }]
+        vec![ToolResult::failed(
+            "call-a",
+            INTERRUPTED_TOOL_RESULT_CONTENT
+        )]
     );
 }
 
@@ -752,7 +739,7 @@ async fn cancel_while_async_tool_awaits_approval_pairs_the_batch() {
         [ScriptedTurn::streaming(
             calls[..3]
                 .iter()
-                .map(|call| async_marker(&call.id))
+                .map(|call| async_accepted(&call.id))
                 .collect(),
             ModelResponse::Assistant(calls.iter().cloned().map(ContentBlock::ToolCall).collect()),
         )],
@@ -774,7 +761,11 @@ async fn cancel_while_async_tool_awaits_approval_pairs_the_batch() {
     let mut run = session.start(UserInput::text("start")).await.unwrap();
     loop {
         match next_event(&mut run).await {
-            RunEvent::ToolDetached { ref call_id } if call_id.as_str() == "call-a" => break,
+            RunEvent::ToolStarted {
+                ref call_id,
+                execution: ToolExecution::Detached,
+                ..
+            } if call_id.as_str() == "call-a" => break,
             RunEvent::Failed { message, .. } => panic!("run failed: {message}"),
             _ => {}
         }
@@ -788,7 +779,7 @@ async fn cancel_while_async_tool_awaits_approval_pairs_the_batch() {
         .history()
         .into_iter()
         .filter_map(|message| match message {
-            Message::ToolResult(result) => Some(result),
+            Message::ToolResult(result) => Some(Arc::unwrap_or_clone(result)),
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -797,11 +788,7 @@ async fn cancel_while_async_tool_awaits_approval_pairs_the_batch() {
         results,
         calls
             .iter()
-            .map(|call| ToolResult {
-                id: call.id.clone(),
-                ok: false,
-                content: INTERRUPTED_TOOL_RESULT_CONTENT.into(),
-            })
+            .map(|call| ToolResult::failed(call.id.clone(), INTERRUPTED_TOOL_RESULT_CONTENT))
             .collect::<Vec<_>>()
     );
 }
@@ -816,7 +803,7 @@ async fn cancel_before_sync_batch_pairs_calls_for_next_prompt() {
         let sync_call = tool_call("call-sync", "sync_tool");
         let mut turns = if same_response {
             vec![ScriptedTurn::streaming(
-                vec![async_marker(&async_call.id)],
+                vec![async_accepted(&async_call.id)],
                 ModelResponse::Assistant(vec![
                     ContentBlock::ToolCall(async_call.clone()),
                     ContentBlock::ToolCall(sync_call.clone()),
@@ -850,7 +837,10 @@ async fn cancel_before_sync_batch_pairs_calls_for_next_prompt() {
         loop {
             match next_event(&mut run).await {
                 RunEvent::StepStarted { step: current, .. } => step = current,
-                RunEvent::ToolDetached { .. } if same_response => break,
+                RunEvent::ToolStarted {
+                    execution: ToolExecution::Detached,
+                    ..
+                } if same_response => break,
                 RunEvent::ModelCallCompleted { .. } if !same_response && step == 2 => break,
                 RunEvent::Failed { message, .. } => panic!("run failed: {message}"),
                 _ => {}
@@ -862,11 +852,8 @@ async fn cancel_before_sync_batch_pairs_calls_for_next_prompt() {
             .expect("cancelled run timed out");
         assert!(matches!(outcome, Err(Error::Cancelled)), "{outcome:?}");
 
-        let expected = [async_call, sync_call].map(|call| ToolResult {
-            id: call.id,
-            ok: false,
-            content: INTERRUPTED_TOOL_RESULT_CONTENT.into(),
-        });
+        let expected = [async_call, sync_call]
+            .map(|call| ToolResult::failed(call.id, INTERRUPTED_TOOL_RESULT_CONTENT));
         let mut results = tool_results_in(&session.history());
         results.sort_by(|left, right| left.id.cmp(&right.id));
         assert_eq!(results, expected, "same_response={same_response}");
@@ -930,15 +917,14 @@ async fn max_steps_with_pending_job_interrupts_before_commit() {
             .history()
             .into_iter()
             .filter_map(|message| match message {
-                Message::ToolResult(result) => Some(result),
+                Message::ToolResult(result) => Some(Arc::unwrap_or_clone(result)),
                 _ => None,
             })
             .collect::<Vec<_>>(),
-        vec![ToolResult {
-            id: "call-a".into(),
-            ok: false,
-            content: INTERRUPTED_TOOL_RESULT_CONTENT.into(),
-        }]
+        vec![ToolResult::failed(
+            "call-a",
+            INTERRUPTED_TOOL_RESULT_CONTENT
+        )]
     );
 }
 
@@ -957,7 +943,7 @@ async fn provider_mark_without_async_declaration_runs_sync() {
             [
                 if marked {
                     ScriptedTurn::streaming(
-                        vec![async_marker("call-1")],
+                        vec![async_accepted("call-1")],
                         ModelResponse::Assistant(vec![ContentBlock::ToolCall(tool_call(
                             "call-1", tool_name,
                         ))]),
@@ -988,7 +974,10 @@ async fn provider_mark_without_async_declaration_runs_sync() {
         let mut finished = false;
         loop {
             match next_event(&mut run).await {
-                RunEvent::ToolDetached { .. } => detached = true,
+                RunEvent::ToolStarted {
+                    execution: ToolExecution::Detached,
+                    ..
+                } => detached = true,
                 RunEvent::ToolFinished { .. } => {
                     finished = true;
                     finished_before_step_2 = true;
@@ -1050,7 +1039,7 @@ async fn async_tool_with_exclusive_plan_fails_that_call() {
     match requests[1].messages.last() {
         Some(Message::ToolResult(result)) => {
             assert_eq!(result.id, "call-a");
-            assert!(!result.ok);
+            assert!(result.is_failure());
         }
         other => panic!("expected failed tool result, got {other:?}"),
     }
@@ -1104,7 +1093,7 @@ async fn steer_during_await_jobs_applies_at_boundary() {
     assert!(
         last.iter().any(|message| matches!(
             message,
-            Message::User(content) if content == &vec![ContentBlock::Text("nudge".into())]
+            Message::User(content) if **content == [ContentBlock::Text("nudge".into())]
         )),
         "steering missing from last request: {last:?}"
     );
@@ -1220,7 +1209,11 @@ async fn pending_jobs_compact_prefix_once_and_keep_calls_paired() {
         .into_iter()
         .find(|message| {
             message.completed_assistant_content()
-                == Some(&[ContentBlock::ToolCall(tool_call("call-a", "slow_a"))][..])
+                == Some(
+                    &[ContentBlock::ToolCall(accepted_async_call(
+                        "call-a", "slow_a",
+                    ))][..],
+                )
         })
         .unwrap();
     assert_eq!(
@@ -1314,15 +1307,15 @@ async fn overflow_with_pending_job_compacts_prefix_and_retries() {
     );
     assert_eq!(
         history[1].completed_assistant_content(),
-        Some(&[ContentBlock::ToolCall(tool_call("call-a", "slow"))][..])
+        Some(
+            &[ContentBlock::ToolCall(accepted_async_call(
+                "call-a", "slow"
+            ))][..]
+        )
     );
     assert_eq!(requests[4].messages[1..], history[1..4]);
     assert_eq!(
         history[3],
-        Message::ToolResult(ToolResult {
-            id: "call-a".into(),
-            ok: true,
-            content: "slow done".into(),
-        })
+        Message::ToolResult(ToolResult::succeeded("call-a", "slow done").into())
     );
 }

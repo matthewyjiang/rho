@@ -556,10 +556,7 @@ impl QuestionnaireFieldState {
 }
 
 fn default_choice_selection(question: &HostQuestion) -> (FieldSelection, usize, String) {
-    let Some(default) = question
-        .default_value_ref()
-        .map(questionnaire_default_string)
-    else {
+    let Some(default) = question.default_value().map(questionnaire_default_string) else {
         return (FieldSelection::None, 0, String::new());
     };
     if let Some(index) = question
@@ -567,16 +564,16 @@ fn default_choice_selection(question: &HostQuestion) -> (FieldSelection, usize, 
         .iter()
         .position(|choice| choice_matches_default(choice, &default))
     {
-        let selection = match question.default_selection_mode() {
+        let selection = match question.default_selection() {
             DefaultSelection::Selected => FieldSelection::Single(index),
-            DefaultSelection::Focused => FieldSelection::None,
+            _ => FieldSelection::None,
         };
         return (selection, index, String::new());
     }
     if question.permits_other() {
-        let selection = match question.default_selection_mode() {
+        let selection = match question.default_selection() {
             DefaultSelection::Selected => FieldSelection::Other,
-            DefaultSelection::Focused => FieldSelection::None,
+            _ => FieldSelection::None,
         };
         return (selection, question.choices().len(), default);
     }
@@ -587,7 +584,7 @@ fn default_multi_selection(question: &HostQuestion) -> (FieldSelection, usize, S
     let mut selected = Vec::new();
     let mut other_values = Vec::new();
     for value in question
-        .default_value_ref()
+        .default_value()
         .map(questionnaire_default_strings)
         .unwrap_or_default()
     {
@@ -604,10 +601,7 @@ fn default_multi_selection(question: &HostQuestion) -> (FieldSelection, usize, S
     selected.sort_unstable();
     selected.dedup();
     let other = !other_values.is_empty();
-    let preselect = matches!(
-        question.default_selection_mode(),
-        DefaultSelection::Selected
-    );
+    let preselect = matches!(question.default_selection(), DefaultSelection::Selected);
     let choice_cursor = selected
         .first()
         .copied()
@@ -627,7 +621,7 @@ fn default_multi_selection(question: &HostQuestion) -> (FieldSelection, usize, S
 
 fn default_confirm_selection(question: &HostQuestion) -> (FieldSelection, usize, String) {
     let default = question
-        .default_value_ref()
+        .default_value()
         .map(questionnaire_default_string)
         .unwrap_or_default()
         .to_ascii_lowercase();
@@ -636,9 +630,9 @@ fn default_confirm_selection(question: &HostQuestion) -> (FieldSelection, usize,
         "no" | "n" | "false" => 1,
         _ => return (FieldSelection::None, 0, String::new()),
     };
-    let selection = match question.default_selection_mode() {
+    let selection = match question.default_selection() {
         DefaultSelection::Selected => FieldSelection::Single(index),
-        DefaultSelection::Focused => FieldSelection::None,
+        _ => FieldSelection::None,
     };
     (selection, index, String::new())
 }
@@ -672,12 +666,12 @@ fn questionnaire_default_string(default: &serde_json::Value) -> String {
 }
 
 pub(super) fn choice_is_focused_default(question: &HostQuestion, choice_index: usize) -> bool {
-    if !matches!(question.default_selection_mode(), DefaultSelection::Focused) {
+    if !matches!(question.default_selection(), DefaultSelection::Focused) {
         return false;
     }
     if is_confirm(question) {
         return match question
-            .default_value_ref()
+            .default_value()
             .map(questionnaire_default_string)
             .unwrap_or_default()
             .to_ascii_lowercase()
@@ -689,7 +683,7 @@ pub(super) fn choice_is_focused_default(question: &HostQuestion, choice_index: u
         };
     }
     let defaults = question
-        .default_value_ref()
+        .default_value()
         .map(questionnaire_default_strings)
         .unwrap_or_default();
     let is_other = question.permits_other() && choice_index == question.choices().len();

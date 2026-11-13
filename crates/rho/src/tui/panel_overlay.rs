@@ -16,8 +16,8 @@ use crate::tui::DefaultTerminal;
 
 use super::{
     overlay_panel::{
-        classify_panel_key, is_copy_key, panel_frame, scroll_panel, terminal_area,
-        OverlayPanelFrame, PanelBody, PanelKey, PanelKeyOutcome, PanelScrollTarget,
+        classify_panel_key, is_copy_key, panel_frame, reveal_panel_cursor, scroll_panel,
+        terminal_area, OverlayPanelFrame, PanelBody, PanelKey, PanelKeyOutcome, PanelScrollTarget,
     },
     panel_pointer::{PanelPointer, PanelPointerEffect, PanelPointerEvent},
     App, ComposerMode, PanelOverlay,
@@ -28,13 +28,13 @@ impl PanelOverlay {
         match self {
             Self::Limits(overlay) => overlay,
             Self::Doctor(overlay) => overlay,
-            Self::Computer(overlay) => overlay,
             Self::Hooks(overlay) => overlay,
             Self::TextView(overlay) => overlay.as_ref(),
             Self::Info(overlay) => overlay.as_ref(),
             Self::Context(overlay) => overlay.as_ref(),
             Self::Spend(overlay) => overlay.as_ref(),
             Self::Todo(overlay) => overlay,
+            Self::Jobs(overlay) => overlay.as_ref(),
         }
     }
 
@@ -42,13 +42,13 @@ impl PanelOverlay {
         match self {
             Self::Limits(overlay) => overlay,
             Self::Doctor(overlay) => overlay,
-            Self::Computer(overlay) => overlay,
             Self::Hooks(overlay) => overlay,
             Self::TextView(overlay) => overlay.as_mut(),
             Self::Info(overlay) => overlay.as_mut(),
             Self::Context(overlay) => overlay.as_mut(),
             Self::Spend(overlay) => overlay.as_mut(),
             Self::Todo(overlay) => overlay,
+            Self::Jobs(overlay) => overlay.as_mut(),
         }
     }
 
@@ -57,13 +57,13 @@ impl PanelOverlay {
         match self {
             Self::Limits(overlay) => Box::new(overlay),
             Self::Doctor(overlay) => Box::new(overlay),
-            Self::Computer(overlay) => Box::new(overlay),
             Self::Hooks(overlay) => Box::new(overlay),
             Self::TextView(overlay) => overlay,
             Self::Info(overlay) => overlay,
             Self::Context(overlay) => overlay,
             Self::Spend(overlay) => overlay,
             Self::Todo(overlay) => Box::new(overlay),
+            Self::Jobs(overlay) => overlay,
         }
     }
 
@@ -100,9 +100,10 @@ impl App {
             return false;
         };
         match panel.body_mut().handle_key(key) {
-            PanelKeyOutcome::Handled => return true,
-            PanelKeyOutcome::Run(action) => {
-                action(self);
+            PanelKeyOutcome::Handled => {
+                if let Some(area) = terminal_area(terminal) {
+                    reveal_panel_cursor(panel.body_mut(), area);
+                }
                 return true;
             }
             PanelKeyOutcome::Unhandled => {}
@@ -147,11 +148,9 @@ impl App {
 
     /// Re-clamps the open panel's scroll after a resize.
     pub(super) fn clamp_panel_overlay_scroll(&mut self, terminal: &DefaultTerminal) {
-        let (Some(panel), Some(area)) = (self.panel_overlay(), terminal_area(terminal)) else {
-            return;
-        };
-        let offset = panel.body().state().scroll.offset();
-        self.scroll_panel_overlay(area, PanelScrollTarget::Absolute(offset));
+        if let Some(area) = terminal_area(terminal) {
+            self.scroll_panel_overlay(area, PanelScrollTarget::Delta(0));
+        }
     }
 
     /// The open panel's frame at `area`, or `None` when no panel is open.

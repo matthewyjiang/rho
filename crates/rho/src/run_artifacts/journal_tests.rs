@@ -7,11 +7,11 @@ use super::*;
 // only their real presentation. Owner: attachment journal wire contract.
 #[test]
 fn finished_presentations_preserve_journal_shape() {
-    use crate::presentation::{NotificationCard, NotificationDelivery, Presentation};
-    use rho_tools::tool_card::{ToolCard, ToolFamily, ToolHeader, ToolStatus};
+    use rho_protocol::display::{NotificationCard, NotificationDelivery, Presentation};
+    use rho_protocol::display::{ToolCard, ToolCardStatus, ToolFamily, ToolHeader};
 
     let card = ToolCard::new(
-        ToolStatus::Ok,
+        ToolCardStatus::Ok,
         ToolFamily::Default,
         ToolHeader::call("read_file", None),
     );
@@ -20,9 +20,9 @@ fn finished_presentations_preserve_journal_shape() {
         sender: "parent".into(),
         recipient: "reviewer".into(),
         delivery: NotificationDelivery::Queued,
-        tone: crate::presentation::NotificationTone::Neutral,
-        preview: crate::presentation::NotificationPreview::Truncated,
-        visibility: crate::presentation::NotificationVisibility::Activity,
+        tone: rho_protocol::display::NotificationTone::Neutral,
+        preview: rho_protocol::display::NotificationPreview::Truncated,
+        visibility: rho_protocol::display::NotificationVisibility::Activity,
         reference: None,
         subtitle: None,
         body: "Check the queued route.".into(),
@@ -31,7 +31,7 @@ fn finished_presentations_preserve_journal_shape() {
     });
     for (presentation, data) in [
         (
-            Presentation::Card(card.clone().into()),
+            Presentation::Card(card.clone()),
             serde_json::json!({"card": card}),
         ),
         (

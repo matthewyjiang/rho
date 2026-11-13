@@ -7,14 +7,12 @@
 //! `new_string` without line numbers. With `replace_all`, the card also says
 //! how many occurrences it applies to.
 
-use rho_tools::tool_card::{
-    parse_unified_diff, DiffCardChange, DiffCardFile, DiffRow, DiffRowKind, ToolCard, ToolFact,
-    ToolStatus,
-};
+use crate::presentation::diff::{parse_unified_diff, DiffCardChange, DiffCardFile};
+use rho_protocol::display::{DiffRow, DiffRowKind, ToolCard, ToolCardStatus, ToolFact};
 
 use super::{diff_card, display_path, EmptyDiffState};
 
-/// Same cap as the hashline and apply_patch proposed diffs.
+/// Same cap as the apply_patch proposed diffs.
 const MAX_PROPOSED_DIFF_ROWS: usize = 1_000;
 /// Same cap as the result diff `str_replace` itself records (old plus new
 /// bytes), so the exact preview never costs more than the finished card.
@@ -28,7 +26,7 @@ const CONTEXT_LINES: usize = 3;
 pub(super) fn str_replace_card(
     arguments: &serde_json::Value,
     cwd: &std::path::Path,
-    status: ToolStatus,
+    status: ToolCardStatus,
     live_file: Option<&str>,
 ) -> ToolCard {
     let path = display_path(arguments, cwd);

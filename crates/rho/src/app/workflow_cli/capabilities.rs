@@ -1,10 +1,8 @@
-use std::{collections::BTreeSet, path::Path};
+use std::{collections::BTreeSet, ffi::OsStr, path::Path};
 
 use rho_sdk::{tool::ToolContext, CapabilityRequest, CapabilitySource, PathScope};
 
-use super::{
-    executable_candidates, path_scope, project_agent_catalogs_trusted, AppWorkflowToolService,
-};
+use super::{path_scope, AppWorkflowToolService};
 
 impl AppWorkflowToolService {
     pub(super) async fn authorized_config(
@@ -57,7 +55,9 @@ impl AppWorkflowToolService {
         let resolved = workspace
             .resolve_for_read(path)
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        if !resolved.path().starts_with(&self.cwd) {
+        // The workspace resolves to the canonical name of the file, which
+        // Windows writes with a prefix the session's directory lacks.
+        if !crate::paths::is_within(resolved.path(), &self.cwd) {
             anyhow::bail!("workflow source is outside the workspace");
         }
         context
@@ -68,7 +68,7 @@ impl AppWorkflowToolService {
             ))
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        if resolved.path() != lexical {
+        if !crate::paths::same(resolved.path(), &lexical) {
             return Err(crate::workflow::WorkflowError::SourceSymlink { path: lexical }.into());
         }
         let opened = crate::workflow::VerifiedPath::open(
@@ -77,7 +77,7 @@ impl AppWorkflowToolService {
         )?;
         self.authorize_opened_identity(context, &opened.identity)
             .await?;
-        if Path::new(&opened.identity.canonical_path) != resolved.path() {
+        if !crate::paths::same(Path::new(&opened.identity.canonical_path), resolved.path()) {
             return Err(crate::workflow::WorkflowError::SourceSymlink {
                 path: resolved.path().to_path_buf(),
             }
@@ -86,16 +86,19 @@ impl AppWorkflowToolService {
         Ok(opened)
     }
 
+    /// The agents a plan of `workflow_entry` may name, read through the
+    /// permission policy, project ones only under `trust`.
     pub(super) async fn authorized_agent_catalog(
         &self,
         context: &ToolContext,
         workflow_entry: &Path,
+        trust: crate::workspace::ProjectTrusts,
     ) -> anyhow::Result<crate::agent::AgentCatalog> {
         let home = crate::paths::home_dir();
         let mut sources = crate::agent::AgentCatalogSources::default();
         // Plugin agent files skip the permission gate; see
         // `PluginAgentFiles::read_sources`.
-        let plugins = crate::plugins::agent_tiers(&self.cwd, home.as_deref());
+        let plugins = crate::plugins::agent_tiers(&self.cwd, home.as_deref(), trust);
         let read = |tier: &[crate::plugins::PluginAgentFiles]| {
             tier.iter()
                 .flat_map(crate::plugins::PluginAgentFiles::read_sources)
@@ -108,7 +111,7 @@ impl AppWorkflowToolService {
             sources.agents_home = self.authorized_agent_sources(context, &agents_home).await?;
             sources.rho_home = self.authorized_agent_sources(context, &rho_home).await?;
         }
-        if project_agent_catalogs_trusted() {
+        if trust.agents.is_trusted() {
             for root in crate::workspace::project_ancestor_dirs(&self.cwd)
                 .into_iter()
                 .map(|path| path.join(".agents/agents"))
@@ -175,16 +178,21 @@ impl AppWorkflowToolService {
         Ok(sources)
     }
 
+    /// Authorizes reading and freezes every executable `program`'s nodes
+    /// run, finding bare names and `#!/usr/bin/env` interpreters on
+    /// `search_path`, the `PATH` of the environment the run starts in
+    /// (#1659).
     pub(super) async fn authorize_node_resolution_reads(
         &self,
-        program: &crate::workflow::WorkflowProgram,
+        program: crate::app::workflow_cli::plan_host::LaunchableProgram<'_>,
         catalog: &crate::agent::AgentCatalog,
+        search_path: Option<&OsStr>,
         context: &ToolContext,
     ) -> anyhow::Result<std::collections::BTreeMap<String, crate::workflow::ExecutableIdentity>>
     {
         let mut executables = BTreeSet::new();
         let mut directories = BTreeSet::new();
-        for node in program.root.nodes.values() {
+        for node in program.program().root.nodes.values() {
             match &node.execution {
                 crate::workflow::NodeExecution::Command(command) => {
                     let (executable, cwd) = match command {
@@ -227,14 +235,14 @@ impl AppWorkflowToolService {
         let mut identities = std::collections::BTreeMap::new();
         for executable in executables {
             let opened = self
-                .authorize_opened_executable_resolution(context, &executable)
+                .authorize_opened_executable_resolution(context, &executable, search_path)
                 .await?;
             let interpreter = match opened.interpreter_request.as_ref() {
                 Some(crate::workflow::ExecutableInterpreterRequest::Absolute(path)) => {
                     Some(self.authorize_opened_executable_path(context, path).await?)
                 }
                 Some(crate::workflow::ExecutableInterpreterRequest::Search(program)) => Some(
-                    self.authorize_opened_executable_resolution(context, program)
+                    self.authorize_opened_executable_resolution(context, program, search_path)
                         .await?,
                 ),
                 None => None,
@@ -250,14 +258,18 @@ impl AppWorkflowToolService {
         Ok(identities)
     }
 
+    /// Opens `executable`, a bare name found on `search_path` or a path
+    /// under the workspace, authorizing each read.
     async fn authorize_opened_executable_resolution(
         &self,
         context: &ToolContext,
         executable: &str,
+        search_path: Option<&OsStr>,
     ) -> anyhow::Result<crate::workflow::OpenedExecutable> {
         let path = Path::new(executable);
         if path.components().count() == 1 {
-            let candidates = executable_candidates(executable);
+            let candidates: Vec<_> =
+                crate::executable::candidates_on(executable, search_path).collect();
             for candidate in &candidates {
                 self.authorize_read(context, candidate, path_scope(&self.cwd, candidate))
                     .await?;

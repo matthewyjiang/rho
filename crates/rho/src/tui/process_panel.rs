@@ -10,7 +10,7 @@ use super::{
 };
 use crate::{
     subagent,
-    tools::process::{LiveProcessSummary, ProcessManager, State},
+    tools::process::{LiveProcessSummary, State},
 };
 
 /// Short hover hint shown on the right edge of a process row.
@@ -32,44 +32,23 @@ pub(super) struct ProcessPeekTarget {
 #[derive(Clone)]
 pub(super) struct ProcessPanel {
     rail: StackedRail<LiveProcessSummary>,
-    manager: Option<ProcessManager>,
 }
 
 impl Default for ProcessPanel {
     fn default() -> Self {
         Self {
             rail: StackedRail::new(RailPointerPolicy::LiveOrFinished),
-            manager: None,
         }
     }
 }
 
 impl ProcessPanel {
-    /// Refresh from the manager. Finished rows stay until their result is
-    /// delivered, then leave with the result card.
-    pub(super) fn update(&mut self, manager: Option<&ProcessManager>) -> bool {
-        self.manager = manager.cloned();
-        let processes = manager
-            .map(ProcessManager::live_summaries)
-            .unwrap_or_default();
-        self.ingest(processes)
-    }
-
-    pub(super) fn manager(&self) -> Option<&ProcessManager> {
-        self.manager.as_ref()
-    }
-
-    pub(super) fn host_view(
-        &self,
-        process_id: &str,
-    ) -> anyhow::Result<crate::tools::process::HostProcessView> {
-        let manager = self
-            .manager
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("process manager unavailable"))?;
-        manager
-            .host_view(process_id)
-            .map_err(|error| anyhow::anyhow!("{error}"))
+    /// The row of `process_id`, when the rail has one.
+    pub(super) fn process(&self, process_id: &str) -> Option<&LiveProcessSummary> {
+        self.rail
+            .items()
+            .iter()
+            .find(|process| process.process_id == process_id)
     }
 
     pub(super) fn ingest(&mut self, processes: Vec<LiveProcessSummary>) -> bool {

@@ -49,14 +49,10 @@ fn passes_custom_request_compression_to_provider_build_options() {
     let path = dir.path().join("config.toml");
     std::fs::write(
         &path,
-        "provider = \"cliproxyapi\"\nmodel = \"local-model\"\n[providers.custom.cliproxyapi]\nbase_url = \"http://node0:8317/v1\"\napi = \"responses\"\nrequest_compression = \"zstd\"\n",
+        "[model]\nprovider = \"cliproxyapi\"\nmodel = \"local-model\"\n[providers.custom.cliproxyapi]\nbase_url = \"http://node0:8317/v1\"\napi = \"responses\"\nrequest_compression = \"zstd\"\n",
     )
     .unwrap();
-    let mut config = Config::load_with_store(
-        path,
-        &rho_providers::credentials::MemoryCredentialStore::default(),
-    )
-    .unwrap();
+    let mut config = Config::load(Some(path)).unwrap();
 
     let actual = SdkBootstrapOptions::from_config(&config, Path::new("workspace")).unwrap();
     let compression = config

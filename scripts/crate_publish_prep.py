@@ -37,6 +37,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CRATES_IO_UA = "rho-crate-publish-prep/1.0 (https://github.com/matthewyjiang/rho)"
 PUBLISH_CRATES = (
     "rho-sdk",
+    "rho-protocol",
     "rho-agent-tools",
     "rho-providers",
     "rho-coding-agent",

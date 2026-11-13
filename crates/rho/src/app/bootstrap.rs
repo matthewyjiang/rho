@@ -5,6 +5,7 @@ use std::{
     time::Duration,
 };
 
+use anyhow::Context as _;
 use tracing::Instrument;
 
 use {
@@ -12,23 +13,27 @@ use {
     crate::credential_store::AppCredentialStore,
     crate::diagnostics::RuntimeDiagnostics,
     crate::herdr::HerdrReporter,
+    crate::session::SessionPersistence,
     crate::tui::SetupEntry,
     crate::update,
     rho_providers::model::ModelError,
 };
 
+use super::acp;
 use super::{
-    acp,
-    agent_binding::{AgentBinder, AgentInvocation, AgentRole},
-    automation, automation_protocol, classifier_eval, cli_config, compaction_eval, computer_cli,
+    agent_binding::{root_host_tools, AgentBinder, AgentInvocation, AgentRole, LaunchTools},
+    automation, cli_config,
     config_repository::ConfigRepository,
-    doctor_cli, interactive, login, mcp_cli, plugins_cli,
+    daemon_cli, doctor_cli, interactive, login, mcp_cli, plugins_cli,
     sdk_config::SdkBootstrapOptions,
-    sessions_cli, workflow_cli,
+    session_runtime::LeftOut,
+    sessions_cli, workflow_cli, worktrees_cli,
 };
 
 pub async fn run(cli: Cli) -> anyhow::Result<()> {
-    crate::logging::install_from_env();
+    if !daemon_cli::runs_daemon(cli.command.as_ref()) {
+        crate::logging::install_from_env();
+    }
     if workflow_cli::planner_worker_requested(&cli) {
         return workflow_cli::run_planner_worker().await;
     }
@@ -49,23 +54,12 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
     {
         return Err(error);
     }
-    if run_output == Some(OutputFormat::Jsonl) {
-        let message = error.to_string();
-        automation::emit_startup_failure(message.clone())?;
-        return Err(automation::AutomationExit::new(
-            2,
-            automation_protocol::TerminalReason::ConfigurationError,
-            message,
-        )
-        .into());
-    }
-    if run_output.is_some() {
-        return Err(automation::AutomationExit::new(
-            2,
-            automation_protocol::TerminalReason::ConfigurationError,
-            error.to_string(),
-        )
-        .into());
+    if let Some(output) = run_output {
+        let exit = automation::AutomationExit::configuration(error.to_string());
+        if output == OutputFormat::Jsonl {
+            return Err(automation::emit_startup_failure(exit).into());
+        }
+        return Err(exit.into());
     }
     Err(error)
 }
@@ -76,12 +70,30 @@ fn run_inner(cli: Cli) -> impl std::future::Future<Output = anyhow::Result<()>> 
     Box::pin(run_startup(cli))
 }
 
+/// Rewrites a `config.toml` rho 2.x wrote to the 3.0 files and says what
+/// moved. Runs before anything loads the config, which refuses 2.x keys.
+fn upgrade_2x_config(cli: &Cli) -> anyhow::Result<()> {
+    let config_path = ConfigRepository::new(cli.config.clone()).configured_path()?;
+    let upgraded = crate::config::upgrade_2x(
+        &config_path,
+        &crate::paths::rho_dir()?,
+        crate::credential_store::save_migrated_web_search_keys,
+    )
+    .with_context(|| format!("could not update 2.x config {}", config_path.display()))?;
+    for line in upgraded.iter().flat_map(|done| done.notice(&config_path)) {
+        eprintln!("{line}");
+    }
+    Ok(())
+}
+
 async fn run_startup(cli: Cli) -> anyhow::Result<()> {
     cli_config::validate(&cli)?;
+    upgrade_2x_config(&cli)?;
     if let EarlyDispatch::Handled(result) = dispatch_early_command(&cli).await? {
         return result;
     }
     if matches!(cli.command, Some(Command::Acp(_))) {
+        // `rho acp` is a client of the rho daemon, which runs its sessions.
         return acp::run(cli).await;
     }
 
@@ -90,8 +102,7 @@ async fn run_startup(cli: Cli) -> anyhow::Result<()> {
     );
     let PreparedStartup {
         cli,
-        catalog,
-        mut config,
+        config,
         config_repository,
         first_run,
         cwd,
@@ -103,13 +114,21 @@ async fn run_startup(cli: Cli) -> anyhow::Result<()> {
         bound_agent,
         bound_reasoning_source,
         provider_refresh,
-        store,
         added_dirs,
     } = prepare_startup(cli).await?;
 
     validate_terminal_mode(&cli)?;
-    cli_config::prepare_model_metadata(&config, &store, &provider_refresh).await;
-    cli_config::normalize_reasoning_for_cli(&mut config, bound_reasoning_source)?;
+    let cli_config::SettledConfig {
+        config,
+        diagnostics,
+    } = cli_config::settle_bound_config(
+        config,
+        &bound_agent,
+        &crate::credential_store::AppCredentialStore,
+        &provider_refresh,
+        bound_reasoning_source,
+    )
+    .await?;
     let herdr = HerdrReporter::from_env();
     let headless_herdr = || {
         herdr
@@ -124,6 +143,7 @@ async fn run_startup(cli: Cli) -> anyhow::Result<()> {
             cwd,
             cli: &cli,
             bound_agent,
+            diagnostics,
             output_file,
             output,
             max_steps,
@@ -136,13 +156,13 @@ async fn run_startup(cli: Cli) -> anyhow::Result<()> {
     run_interactive_startup(InteractiveStartup {
         keyring_notice,
         cli: &cli,
-        catalog,
         config,
         config_repository,
         first_run,
         cwd,
         bound_agent,
         bound_reasoning_source,
+        diagnostics,
         herdr,
         added_dirs,
     })
@@ -161,9 +181,9 @@ async fn dispatch_early_command(cli: &Cli) -> anyhow::Result<EarlyDispatch> {
         ));
     }
     if let Some(Command::Uninstall { purge, dry_run }) = &cli.command {
-        return Ok(EarlyDispatch::Handled(crate::uninstall::run(
-            *purge, *dry_run,
-        )));
+        return Ok(EarlyDispatch::Handled(
+            crate::uninstall::run(*purge, *dry_run).await,
+        ));
     }
     if let Some(Command::Workflow { command }) = &cli.command {
         return Ok(EarlyDispatch::Handled(
@@ -182,24 +202,19 @@ async fn dispatch_early_command(cli: &Cli) -> anyhow::Result<EarlyDispatch> {
     if let Some(Command::Mcp { command }) = &cli.command {
         return Ok(EarlyDispatch::Handled(mcp_cli::run(command, cli).await));
     }
-    if let Some(Command::Computer { command }) = &cli.command {
-        return Ok(EarlyDispatch::Handled(computer_cli::run(command)));
-    }
     if let Some(Command::Plugins { command }) = &cli.command {
         return Ok(EarlyDispatch::Handled(plugins_cli::run(command, cli)));
     }
+    if let Some(Command::Daemon { command }) = &cli.command {
+        return Ok(EarlyDispatch::Handled(
+            daemon_cli::run(command.clone()).await,
+        ));
+    }
+    if let Some(Command::Worktrees { command }) = &cli.command {
+        return Ok(EarlyDispatch::Handled(worktrees_cli::run(command).await));
+    }
     if let Some(Command::Doctor { json }) = &cli.command {
         return Ok(EarlyDispatch::Handled(doctor_cli::run(*json, cli).await));
-    }
-    if let Some(Command::CompactionEval(args)) = &cli.command {
-        return Ok(EarlyDispatch::Handled(
-            compaction_eval::run(args, cli).await,
-        ));
-    }
-    if let Some(Command::ClassifierEval(args)) = &cli.command {
-        return Ok(EarlyDispatch::Handled(
-            classifier_eval::run(args, cli).await,
-        ));
     }
     #[cfg(debug_assertions)]
     if let Some(Command::AcpFixtureAgent(args)) = &cli.command {
@@ -207,20 +222,21 @@ async fn dispatch_early_command(cli: &Cli) -> anyhow::Result<EarlyDispatch> {
             super::acp_fixture_agent::run(args).await,
         ));
     }
-    if let Some(Command::Attach { id }) = &cli.command {
-        // Attach is early-dispatched, so load display settings here the way the
-        // interactive TUI gets them through RuntimeModelView. Propagate load
-        // failures instead of failing open to full reasoning / work chrome.
-        let config = ConfigRepository::new(cli.config.clone()).load()?;
-        let display = crate::tui::AttachmentDisplaySettings::from_config(&config);
+    if let Some(Command::Attach { id, output, input }) = &cli.command {
         return Ok(EarlyDispatch::Handled(
-            crate::tui::run_attachment(
-                id.as_deref(),
-                display,
-                &config.theme,
-                HerdrReporter::from_env(),
-            )
-            .await,
+            super::attach::run(id, *output, *input).await,
+        ));
+    }
+    if let Some(Command::Run {
+        detach: true,
+        prompt,
+        stdin,
+        timeout,
+        ..
+    }) = &cli.command
+    {
+        return Ok(EarlyDispatch::Handled(
+            super::detach::run(cli, prompt.clone(), *stdin, *timeout).await,
         ));
     }
     if matches!(cli.command, Some(Command::Update)) {
@@ -228,49 +244,49 @@ async fn dispatch_early_command(cli: &Cli) -> anyhow::Result<EarlyDispatch> {
             update::run_update(env!("CARGO_PKG_VERSION")).await,
         ));
     }
-    if let Some((provider, device_auth)) = login::command(&cli.command) {
+    if let Some(command) = login::command(&cli.command) {
         // agy owns its sign-in; Rho config and the credential store are not
         // involved.
-        if provider.eq_ignore_ascii_case(crate::antigravity_runtime::ANTIGRAVITY_LABEL_NAME) {
-            if device_auth {
-                anyhow::bail!(
-                    "antigravity login has no device flow; paste the code agy asks for instead"
-                );
+        let antigravity = |provider: &str| {
+            provider.eq_ignore_ascii_case(crate::antigravity_runtime::ANTIGRAVITY_LABEL_NAME)
+        };
+        match command {
+            login::LoginCommand::Cli {
+                provider,
+                device_auth: true,
+            } if antigravity(provider) => anyhow::bail!(
+                "antigravity login has no device flow; paste the code agy asks for instead"
+            ),
+            login::LoginCommand::Cli {
+                provider,
+                device_auth: false,
             }
-            return Ok(EarlyDispatch::Handled(
-                crate::antigravity_runtime::auth::login().await,
-            ));
+            | login::LoginCommand::AcpTerminal { auth: provider }
+                if antigravity(provider) =>
+            {
+                return Ok(EarlyDispatch::Handled(
+                    crate::antigravity_runtime::auth::login().await,
+                ));
+            }
+            login::LoginCommand::Cli { .. } | login::LoginCommand::AcpTerminal { .. } => {}
         }
+        // Custom providers must be registered for `login` to find them. A
+        // daemon login saves under the daemon's config, and asks the daemon
+        // which credential store to use (#1662).
         let config_repository = ConfigRepository::new(cli.config.clone());
-        let mut config = config_repository.load()?;
+        let config = config_repository.load()?;
         config.providers.activate()?;
-        let config_path = absolute_config_path(&config_repository)?;
-        ensure_cli_credential_store_choice(&mut config, Some(config_path.clone()))?;
-        crate::credential_store::initialize_from_config(&mut config, &config_path)?;
-        return Ok(EarlyDispatch::Handled(
-            login::run(provider, device_auth)
-                .await
-                .and_then(|completion| {
-                    if let Some(descriptor) =
-                        rho_providers::model::catalog::login_target_for_provider(provider).and_then(
-                            |target| rho_providers::provider::provider_descriptor(&target.provider),
-                        )
-                    {
-                        super::endpoint_login::record(&config_repository, *descriptor)?;
-                    }
-                    completion.finish(
-                        /*require_confirmation*/
-                        matches!(cli.command, Some(Command::Acp(_))),
-                    )
-                }),
-        ));
+        let signed_in = login::run(command).await;
+        return Ok(EarlyDispatch::Handled(signed_in));
     }
     Ok(EarlyDispatch::Continue)
 }
 
 struct PreparedStartup {
     cli: Cli,
-    catalog: crate::agent::DiscoveredAgentCatalog,
+    /// The config to settle (see [`cli_config::settle_bound_config`]): the
+    /// bound agent's own when it runs on rho, else the launch config with
+    /// CLI overrides.
     config: crate::config::Config,
     config_repository: ConfigRepository,
     first_run: Option<SetupEntry>,
@@ -283,7 +299,6 @@ struct PreparedStartup {
     bound_agent: super::agent_binding::BoundAgent,
     bound_reasoning_source: rho_providers::model::ReasoningRequestSource,
     provider_refresh: cli_config::ProviderRefreshStatus,
-    store: AppCredentialStore,
     added_dirs: crate::added_dirs::AddedDirs,
 }
 
@@ -298,30 +313,59 @@ async fn prepare_startup(cli: Cli) -> anyhow::Result<PreparedStartup> {
     let absolute_config = absolute_config_path(&config_repository)?;
     crate::credential_store::initialize_from_config(&mut config, &absolute_config)?;
     let cwd = std::env::current_dir()?;
-    let added_dirs = launch_added_dirs(&cli, &cwd)?;
+    let added_dirs = crate::added_dirs::launch_added_dirs(&cli.add_dirs, &cwd)?;
     let automation_prompt = automation::prompt_for_command(&cli.command)?;
-    let (output_file, output, max_steps, timeout) = match &cli.command {
+    let (output_file, output, max_steps, timeout, worktree) = match &cli.command {
         Some(Command::Run {
             output_file,
             output,
             max_steps,
             timeout,
+            worktree,
             ..
-        }) => (output_file.clone(), *output, *max_steps, *timeout),
-        _ => (None, OutputFormat::Text, None, None),
+        }) => (
+            output_file.clone(),
+            *output,
+            *max_steps,
+            *timeout,
+            *worktree,
+        ),
+        _ => (None, OutputFormat::Text, None, None, false),
     };
-    let catalog = Arc::new(crate::agent::AgentCatalog::discover(&cwd)?);
+    // A run in a worktree works there as one started there would, its MCP
+    // servers included, so the process moves into it. The paths the person
+    // typed still resolve against the directory they typed them in.
+    let (cwd, output_file, config_repository) = if worktree {
+        let workspace = crate::paths::canonicalize(&cwd)?;
+        let output_file = output_file.map(|path| workspace.join(path));
+        let config_repository = match &config_path {
+            Some(path) if path.is_relative() => ConfigRepository::new(Some(absolute_config)),
+            Some(_) | None => config_repository,
+        };
+        let root = crate::worktree::root(&crate::paths::rho_dir()?);
+        let added = crate::worktree::add(&root, &workspace).await?;
+        eprintln!(
+            "rho: {}",
+            crate::worktree::hint(&added.worktree, crate::worktree::Removal::Manual)
+        );
+        std::env::set_current_dir(&added.cwd)?;
+        (added.cwd, output_file, config_repository)
+    } else {
+        (cwd, output_file, config_repository)
+    };
+    let catalog = crate::agent::AgentCatalog::discover(
+        &cwd,
+        crate::workspace::ProjectTrusts::of_this_process(),
+    )?;
     let selected_agent = cli
         .agent
         .as_deref()
         .unwrap_or(crate::agent::DEFAULT_AGENT_ID);
     let definition = Arc::new(catalog.find(selected_agent)?.definition.clone());
-    // The walk is reused for the delegation tool set so startup discovers once.
-    let catalog = crate::agent::DiscoveredAgentCatalog::new(cwd.clone(), catalog);
 
-    // Only automation, ACP, and interactive sessions reach here; every other
-    // command dispatches early.
-    let role = if automation_prompt.is_some() || matches!(cli.command, Some(Command::Acp(_))) {
+    // Only automation and interactive sessions reach here; every other
+    // command dispatches early, and `rho acp` runs in the daemon.
+    let role = if automation_prompt.is_some() {
         AgentRole::AutomationRoot
     } else {
         AgentRole::InteractiveRoot
@@ -346,7 +390,7 @@ async fn prepare_startup(cli: Cli) -> anyhow::Result<PreparedStartup> {
     // labels. Interactive sessions stay cache-only on the first frame, then
     // rewrite the startup prompt once if hydrate lands before the first request.
     tokio::spawn(rho_providers::model::models_dev::ensure_models_dev_catalog());
-    cli_config::normalize_reasoning_for_cli(
+    cli_config::normalize_reasoning(
         &mut config,
         if cli.reasoning.is_some() {
             rho_providers::model::ReasoningRequestSource::Explicit
@@ -364,7 +408,6 @@ async fn prepare_startup(cli: Cli) -> anyhow::Result<PreparedStartup> {
         config_repository.save(&config)?;
         config.permission_mode = session_permission_mode;
     }
-    let reasoning_before_binding = config.reasoning;
     let bound_agent = AgentBinder::bind(
         definition,
         AgentInvocation {
@@ -373,17 +416,21 @@ async fn prepare_startup(cli: Cli) -> anyhow::Result<PreparedStartup> {
         },
         &config,
     )?;
-    config = bound_agent.rho_config().cloned().unwrap_or(config);
-    let bound_reasoning_source =
-        if cli.reasoning.is_some() && config.reasoning == reasoning_before_binding {
-            rho_providers::model::ReasoningRequestSource::Explicit
-        } else {
-            rho_providers::model::ReasoningRequestSource::PersistedOrDefault
-        };
+    // An explicit --reasoning stays explicit unless the agent pins its own.
+    let bound_reasoning = bound_agent
+        .rho_config()
+        .map_or(config.reasoning, |bound| bound.reasoning);
+    let bound_reasoning_source = if cli.reasoning.is_some() && bound_reasoning == config.reasoning {
+        rho_providers::model::ReasoningRequestSource::Explicit
+    } else {
+        rho_providers::model::ReasoningRequestSource::PersistedOrDefault
+    };
+    // The bound agent's own config, which may pin a model and reasoning,
+    // replaces the launch config; an agent on another runtime keeps it.
+    let config = bound_agent.rho_config().cloned().unwrap_or(config);
 
     Ok(PreparedStartup {
         cli,
-        catalog,
         config,
         config_repository,
         first_run,
@@ -396,26 +443,8 @@ async fn prepare_startup(cli: Cli) -> anyhow::Result<PreparedStartup> {
         bound_agent,
         bound_reasoning_source,
         provider_refresh,
-        store,
         added_dirs,
     })
-}
-
-/// Resolves `--add-dir` values against the launch directory. A bad path fails
-/// startup instead of silently narrowing the scope the user asked for.
-fn launch_added_dirs(
-    cli: &Cli,
-    cwd: &std::path::Path,
-) -> anyhow::Result<crate::added_dirs::AddedDirs> {
-    let workspace_root = std::fs::canonicalize(cwd)?;
-    let home = crate::paths::home_dir();
-    let mut added = crate::added_dirs::AddedDirs::default();
-    for raw in &cli.add_dirs {
-        let dir = crate::added_dirs::resolve(raw, cwd, home.as_deref())
-            .map_err(|error| anyhow::anyhow!("invalid --add-dir: {error}"))?;
-        added.insert(&workspace_root, dir);
-    }
-    Ok(added)
 }
 
 struct AutomationStartup<'a> {
@@ -425,6 +454,7 @@ struct AutomationStartup<'a> {
     cwd: std::path::PathBuf,
     cli: &'a Cli,
     bound_agent: super::agent_binding::BoundAgent,
+    diagnostics: RuntimeDiagnostics,
     output_file: Option<std::path::PathBuf>,
     output: OutputFormat,
     max_steps: Option<NonZeroUsize>,
@@ -434,103 +464,55 @@ struct AutomationStartup<'a> {
 }
 
 async fn run_automation_startup(startup: AutomationStartup<'_>) -> anyhow::Result<()> {
-    let diagnostics = bind_agent_diagnostics(startup.config, &startup.bound_agent);
+    let persistence = match &startup.cli.command {
+        Some(Command::Run { no_save: true, .. }) => SessionPersistence::Ephemeral,
+        _ => SessionPersistence::Saved,
+    };
     automation::run(
         startup.prompt,
         automation::Startup {
             config: startup.config,
             config_path: absolute_config_path(startup.config_repository)?,
             cwd: startup.cwd,
-            no_system_prompt: startup.cli.no_system_prompt,
-            system_prompt_suffix: None,
-            no_tools: startup.cli.no_tools,
-            no_subagents: startup.cli.no_subagents,
-            usage_purpose: "agent",
-            parent_session_id: None,
+            left_out: launch_left_out(startup.cli),
             agent: startup.bound_agent,
             output_file: startup.output_file,
             output: startup.output,
             max_steps: startup.max_steps,
             timeout: startup.timeout,
-            diagnostics,
+            persistence,
+            diagnostics: startup.diagnostics,
             herdr: startup.herdr,
-            host_input: None,
-            notice_poster: None,
-            steering_slot: None,
-            approval_session: None,
-            approval_classifier: None,
-            hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
-            checkpoint: None,
             added_dirs: startup.added_dirs,
-            host_io: Default::default(),
         },
     )
     .await
 }
 
-/// Model discovery and agent binding are deferred until the host needs a session,
-/// so an unauthenticated provider cannot block initialize's login advertisement.
-/// `host_features` are the optional features the host advertised, and
-/// `client` the connection that `initialize` arrived on.
-pub(super) async fn prepare_acp(
-    cli: Cli,
-    host_features: acp::HostFeatures,
-    client: Option<std::sync::Arc<dyn acp::AcpClientPort>>,
-) -> anyhow::Result<acp::AcpStartup> {
-    let Some(Command::Acp(args)) = &cli.command else {
-        anyhow::bail!("ACP startup requires the acp command");
-    };
-    let host = acp::AcpHost::from_args(args);
-    let mut startup = prepare_startup(cli).await?;
-    validate_terminal_mode(&startup.cli)?;
-    cli_config::prepare_model_metadata(&startup.config, &startup.store, &startup.provider_refresh)
-        .await;
-    cli_config::normalize_reasoning_for_cli(&mut startup.config, startup.bound_reasoning_source)?;
-    let diagnostics = bind_agent_diagnostics(&startup.config, &startup.bound_agent);
-    Ok(acp::AcpStartup {
-        host,
-        config: startup.config,
-        config_path: absolute_config_path(&startup.config_repository)?,
-        cwd: startup.cwd,
-        no_system_prompt: startup.cli.no_system_prompt,
-        no_tools: startup.cli.no_tools,
-        no_subagents: startup.cli.no_subagents,
-        agent: startup.bound_agent,
-        diagnostics,
-        herdr: HerdrReporter::from_env().with_source(crate::herdr::HerdrSource::Headless),
-        added_dirs: startup.added_dirs,
-        host_features,
-        logouts: Default::default(),
-        client,
-    })
-}
-
 struct InteractiveStartup<'a> {
     keyring_notice: crate::credential_store::StartupKeyringNotice,
     cli: &'a Cli,
-    catalog: crate::agent::DiscoveredAgentCatalog,
     config: crate::config::Config,
     config_repository: ConfigRepository,
     first_run: Option<SetupEntry>,
     cwd: std::path::PathBuf,
     bound_agent: super::agent_binding::BoundAgent,
     bound_reasoning_source: rho_providers::model::ReasoningRequestSource,
+    diagnostics: RuntimeDiagnostics,
     herdr: HerdrReporter,
     added_dirs: crate::added_dirs::AddedDirs,
 }
 
 async fn run_interactive_startup(startup: InteractiveStartup<'_>) -> anyhow::Result<()> {
-    let diagnostics = bind_agent_diagnostics(&startup.config, &startup.bound_agent);
-
-    let pending_update_notice = startup
-        .config
+    let settings = crate::tui::TuiSettings::load(&crate::paths::rho_dir()?)?;
+    let pending_update_notice = settings
         .check_for_updates
         .then(|| tokio::spawn(update::update_notice(env!("CARGO_PKG_VERSION"))));
     let pending_custom_models = cli_config::spawn_custom_provider_models_refresh(
         startup.config.providers.clone(),
         Arc::new(AppCredentialStore),
     );
-    let prompt_history_limit = startup.config.prompt_history_limit;
+    let prompt_history_limit = settings.prompt_history_limit;
     let pending_prompt_history = (prompt_history_limit > 0 && !startup.cli.no_save).then(|| {
         tokio::spawn(
             async move {
@@ -576,124 +558,30 @@ async fn run_interactive_startup(startup: InteractiveStartup<'_>) -> anyhow::Res
                 &credentials,
             )
         });
-    let (missing_auth_error, missing_auth_model_error) = match provider_result {
-        Ok(_) => (None, None),
-        Err(error) if is_interactive_startup_unavailable_error(&error) => {
-            (Some(error.to_string()), Some(error))
-        }
+    let missing_auth_error = match provider_result {
+        Ok(_) => None,
+        Err(error) if is_interactive_startup_unavailable_error(&error) => Some(error.to_string()),
         Err(error) => return Err(error.into()),
     };
     interactive::run(interactive::Startup {
         keyring_notice: startup.keyring_notice,
         cli: startup.cli,
-        catalog: startup.catalog,
         config: startup.config,
-        config_path: absolute_config_path(&startup.config_repository)?,
+        settings,
         config_repository: startup.config_repository,
         cwd: startup.cwd,
         first_run: startup.first_run,
         missing_auth_error,
-        missing_auth_model_error,
         pending_update_notice,
         pending_custom_models,
         pending_prompt_history,
-        diagnostics,
+        diagnostics: startup.diagnostics,
         herdr: startup.herdr,
         agent: startup.bound_agent,
         reasoning_source: startup.bound_reasoning_source,
         added_dirs: startup.added_dirs,
     })
     .await
-}
-
-fn bind_agent_diagnostics(
-    config: &crate::config::Config,
-    agent: &super::agent_binding::BoundAgent,
-) -> RuntimeDiagnostics {
-    let diagnostics = RuntimeDiagnostics::new(config);
-    diagnostics.update_agent(agent.id().as_str(), &agent.fingerprint().to_string());
-    diagnostics
-}
-
-fn ensure_cli_credential_store_choice(
-    config: &mut crate::config::Config,
-    config_path: Option<std::path::PathBuf>,
-) -> anyhow::Result<()> {
-    use rho_providers::credentials::CredentialStoreBackend;
-    use std::io::{self, IsTerminal, Write};
-
-    let Some(request) = crate::credential_store::choice_request(config) else {
-        return Ok(());
-    };
-
-    if !crate::stdio::stdin_is_terminal() || !io::stderr().is_terminal() {
-        anyhow::bail!(
-            "credential store is unset; set it before non-interactive login with \
-`rho credential-store set os|file`, behavior.credential_store in config.toml, \
-or RHO_CREDENTIAL_STORE=os|file"
-        );
-    }
-
-    let backends = request.available_backends();
-    if backends.is_empty() {
-        anyhow::bail!(
-            "no credential store backend is available (os: {}; file: {})",
-            request.os.detail,
-            request.file.detail
-        );
-    }
-
-    eprintln!("Choose where Rho stores provider credentials:");
-    eprintln!("This is saved to config and used for future logins on this machine.");
-    if request.os.available {
-        eprintln!("  [1] OS credential store (recommended)");
-    } else {
-        eprintln!(
-            "  [1] OS credential store (unavailable: {})",
-            request.os.detail
-        );
-    }
-    if request.file.available {
-        eprintln!("  [2] Local file under ~/.rho/credentials (not encrypted at rest)");
-    } else {
-        eprintln!("  [2] Local file (unavailable: {})", request.file.detail);
-    }
-    let default_backend = request
-        .default_backend()
-        .unwrap_or(CredentialStoreBackend::Os);
-    let default_hint = match default_backend {
-        CredentialStoreBackend::Os => "1",
-        CredentialStoreBackend::File => "2",
-    };
-    eprint!("Choice [1/2 or os/file] (default {default_hint}): ");
-    io::stderr().flush()?;
-
-    let mut answer = String::new();
-    io::stdin().read_line(&mut answer)?;
-    let backend = match answer.trim() {
-        "" => default_backend,
-        "1" | "os" | "OS" => CredentialStoreBackend::Os,
-        "2" | "file" | "FILE" => CredentialStoreBackend::File,
-        other => {
-            anyhow::bail!("unrecognized credential store choice '{other}'; expected 1/os or 2/file")
-        }
-    };
-    if !backends.contains(&backend) {
-        let detail = request.detail_for(backend);
-        anyhow::bail!(
-            "{} credential store is unavailable: {detail}",
-            backend.as_str()
-        );
-    }
-
-    let path = crate::credential_store::set_backend(backend, config_path)?;
-    config.credential_store = Some(backend);
-    eprintln!(
-        "credential store set to {} in {}",
-        backend.as_str(),
-        path.display()
-    );
-    Ok(())
 }
 
 fn run_credential_store_command(
@@ -730,6 +618,15 @@ fn run_credential_store_command(
     }
 }
 
+/// The parts a `rho run` or `rho acp` launch leaves out of its sessions.
+fn launch_left_out(cli: &Cli) -> LeftOut {
+    LeftOut {
+        system_prompt: cli.no_system_prompt,
+        tools: cli.no_tools,
+        subagents: cli.no_subagents,
+    }
+}
+
 pub(super) fn host_capabilities(
     cli: &Cli,
     config: &crate::config::Config,
@@ -737,30 +634,13 @@ pub(super) fn host_capabilities(
 ) -> crate::agent::AgentCapabilities {
     use crate::agent::ToolCapability;
 
-    if cli.no_tools {
+    let launch = LaunchTools::from_flags(cli.no_tools, cli.no_subagents);
+    if launch == LaunchTools::None {
         return crate::agent::AgentCapabilities::default();
     }
-    let mut tools = crate::agent::AgentCapabilities::all_host_tools();
-    // web_search is gated after bind against the resolved provider/model.
-    #[cfg(windows)]
-    tools.remove(&ToolCapability::Bash);
-    #[cfg(not(windows))]
-    tools.remove(&ToolCapability::Powershell);
-    if cli.no_subagents || !config.enable_subagents {
-        tools.remove(&ToolCapability::Agent);
-        tools.remove(&ToolCapability::Agents);
-    }
-    // ACP sessions decide per host: they offer it only when the host draws
-    // forms (`elicitation.form`).
-    let acp = matches!(cli.command, Some(Command::Acp(_)));
-    if role != AgentRole::InteractiveRoot && !acp {
+    let mut tools = root_host_tools(config, launch);
+    if role != AgentRole::InteractiveRoot {
         tools.remove(&ToolCapability::Questionnaire);
-    }
-    #[cfg(debug_assertions)]
-    if std::env::var_os("RHO_TUI_TEST_MODE").as_deref() == Some(std::ffi::OsStr::new("matrix")) {
-        tools.insert(ToolCapability::Extension(
-            crate::tools::tui_fixture::NAME.into(),
-        ));
     }
     tools
 }

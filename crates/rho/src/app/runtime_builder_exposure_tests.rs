@@ -11,7 +11,7 @@ use rho_sdk::{
 };
 use serde_json::json;
 
-use super::{build_runtime, RuntimeBuildOptions};
+use super::{build_runtime_with_max_steps, RuntimeBuildOptions};
 use crate::{
     app::policy::AppPolicy,
     compaction::CompactionConfig,
@@ -43,25 +43,32 @@ fn runtime_for(
     provider: &ScriptedProvider,
     workspace: Workspace,
 ) -> rho_sdk::Rho {
-    build_runtime(RuntimeBuildOptions {
-        provider: Arc::new(provider.clone()),
-        tools,
-        workspace,
-        workspace_policy: AppPolicy::for_mode(PermissionMode::Bypass, Default::default()),
-        approval_session: None,
-        system_prompt: SystemPrompt::None,
-        reasoning: rho_sdk::ReasoningLevel::Off,
-        service_tier: None,
-        compaction: CompactionConfig::from(config),
-        context_window: None,
-        usage_purpose: "agent",
-        usage_parent_session_id: None,
-        usage_recording: Default::default(),
-        hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
-        hooks: None,
-        diagnostics: crate::diagnostics::test_diagnostics("test", "test"),
-        recall: None,
-    })
+    build_runtime_with_max_steps(
+        RuntimeBuildOptions {
+            provider: Arc::new(provider.clone()),
+            tools,
+            workspace,
+            workspace_policy: AppPolicy::for_mode(
+                PermissionMode::Bypass,
+                Default::default(),
+                /*search_path*/ None,
+            ),
+            approval_session: None,
+            system_prompt: SystemPrompt::None,
+            reasoning: rho_sdk::ReasoningLevel::Off,
+            service_tier: None,
+            compaction: CompactionConfig::from(config),
+            context_window: None,
+            usage_purpose: "agent",
+            usage_parent_session_id: None,
+            usage_recording: Default::default(),
+            hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
+            hooks: None,
+            diagnostics: crate::diagnostics::test_diagnostics("test", "test"),
+            recall: None,
+        },
+        /*max_steps*/ None,
+    )
     .unwrap()
 }
 
@@ -73,11 +80,7 @@ fn text_turn() -> ScriptedTurn {
 
 fn tool_call(id: &str, name: &str, arguments: serde_json::Value) -> ScriptedTurn {
     ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-        ToolCall {
-            id: id.into(),
-            name: name.into(),
-            arguments,
-        },
+        ToolCall::new(id.into(), name.into(), arguments),
     )]))
 }
 
@@ -273,11 +276,11 @@ result = call_tool(hit["name"], {"threadId": "thread"})"#}),
                     [("after_search", &found), ("unsearched", &deferred)]
                         .into_iter()
                         .map(|(id, name)| {
-                            ContentBlock::ToolCall(ToolCall {
-                                id: id.into(),
-                                name: name.clone(),
-                                arguments: json!({"threadId": "thread"}),
-                            })
+                            ContentBlock::ToolCall(ToolCall::new(
+                                id.into(),
+                                name.clone(),
+                                json!({"threadId": "thread"}),
+                            ))
                         })
                         .collect(),
                 )),
@@ -298,7 +301,7 @@ result = call_tool(hit["name"], {"threadId": "thread"})"#}),
                 .history()
                 .into_iter()
                 .filter_map(|message| match message {
-                    Message::ToolResult(result) => Some((result.id, result.ok)),
+                    Message::ToolResult(result) => Some((result.id.clone(), !result.is_failure())),
                     _ => None,
                 })
                 .collect::<Vec<_>>(),

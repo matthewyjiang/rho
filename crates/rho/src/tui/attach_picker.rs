@@ -66,7 +66,7 @@ impl From<RunningRun> for AttachCandidate {
     }
 }
 
-pub(super) fn is_running_filter_toggle(key: KeyEvent) -> bool {
+fn is_running_filter_toggle(key: KeyEvent) -> bool {
     key.modifiers.contains(KeyModifiers::CONTROL)
         && !key.modifiers.contains(KeyModifiers::ALT)
         && matches!(key.code, KeyCode::Char('r') | KeyCode::Char('R'))
@@ -84,7 +84,7 @@ pub(super) fn visible_candidates(
         .collect()
 }
 
-pub(super) fn workspace_candidates(cwd: &Path) -> anyhow::Result<Vec<AttachCandidate>> {
+fn workspace_candidates(cwd: &Path) -> anyhow::Result<Vec<AttachCandidate>> {
     Ok(subagent::list_workspace_runs(cwd)?
         .into_iter()
         .map(AttachCandidate::from)
@@ -161,7 +161,7 @@ pub(super) fn candidate_agent_id<'a>(
         .filter(|agent_id| !agent_id.is_empty())
 }
 
-pub(super) fn picker(candidates: &[AttachCandidate], filter: WorkspaceRunFilter) -> UiPicker {
+fn picker(candidates: &[AttachCandidate], filter: WorkspaceRunFilter) -> UiPicker {
     let items = visible_candidates(candidates, filter)
         .into_iter()
         .map(candidate_item)
@@ -218,14 +218,17 @@ fn nav_badge(candidate: &AttachCandidate) -> PickerBadge {
             text: activity_label(candidate.status.last_activity.as_deref()).to_owned(),
             tone: PickerBadgeTone::Internal,
         },
-        RunState::Starting | RunState::Ok | RunState::Error | RunState::Stopped => {
-            state_badge(candidate.state())
-        }
+        RunState::Queued
+        | RunState::Starting
+        | RunState::Ok
+        | RunState::Error
+        | RunState::Stopped => state_badge(candidate.state()),
     }
 }
 
 fn state_badge(state: RunState) -> PickerBadge {
     let (text, tone) = match state {
+        RunState::Queued => ("queued", PickerBadgeTone::Muted),
         RunState::Starting => ("starting", PickerBadgeTone::Muted),
         RunState::Running => ("● running", PickerBadgeTone::Internal),
         RunState::Ok => ("✓ done", PickerBadgeTone::Healthy),
@@ -286,7 +289,7 @@ fn candidate_detail(candidate: &AttachCandidate, now: u64) -> DetailSheet {
 /// the runtime as a note.
 fn model_field(status: &RunStatus) -> DetailField {
     let model = status
-        .claude_model
+        .runtime_model
         .as_deref()
         .or(status.model.as_deref())
         .filter(|model| !model.is_empty());
@@ -352,7 +355,7 @@ fn output_blocks(status: &RunStatus) -> Vec<DetailBlock> {
             .map(str::to_owned)
     };
     match status.state {
-        RunState::Starting | RunState::Running => vec![
+        RunState::Queued | RunState::Starting | RunState::Running => vec![
             heading("LATEST"),
             match text_of(&status.last_text) {
                 Some(text) => DetailBlock::Excerpt {

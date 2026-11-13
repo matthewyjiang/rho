@@ -1,7 +1,4 @@
-use std::{
-    num::NonZeroUsize,
-    sync::{atomic::AtomicBool, Arc},
-};
+use std::num::NonZeroUsize;
 
 use pretty_assertions::assert_eq;
 use rho_sdk::{
@@ -91,10 +88,11 @@ fn decisions_apply_only_after_a_completed_turn_in_plan_mode() {
 // Owner: plan-exit host availability contract.
 #[tokio::test]
 async fn unavailable_host_reports_plan_without_requesting_input() {
+    let (permission_requests, _requests) = tokio::sync::mpsc::unbounded_channel();
     let tool = PlanExitTool {
         slot: None,
-        prompt: PlanExitPrompt::Questionnaire,
-        classifier_configured: Arc::new(AtomicBool::new(false)),
+        permission_requests,
+        classifier_configured: false,
     };
     let (progress, _receiver) = tool_progress_channel(NonZeroUsize::MIN);
     let output = tool

@@ -27,7 +27,7 @@ use super::{
 #[derive(Clone)]
 pub struct ShellToolOptions {
     max_output_bytes: usize,
-    environment: ProcessEnvironment,
+    environment: crate::SharedProcessEnvironment,
     mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
     host_terminals: Option<Arc<dyn crate::HostTerminals>>,
     rtk: Option<Rtk>,
@@ -37,7 +37,7 @@ impl Default for ShellToolOptions {
     fn default() -> Self {
         Self {
             max_output_bytes: DEFAULT_MAX_OUTPUT_BYTES,
-            environment: ProcessEnvironment::InheritAll,
+            environment: ProcessEnvironment::InheritAll.into(),
             mutation_observer: None,
             host_terminals: None,
             rtk: None,
@@ -55,8 +55,11 @@ impl ShellToolOptions {
         self
     }
 
-    pub fn environment(mut self, environment: ProcessEnvironment) -> Self {
-        self.environment = environment;
+    /// The environment commands start with: a fixed [`ProcessEnvironment`],
+    /// or a [`crate::SharedProcessEnvironment`] the host replaces between
+    /// turns.
+    pub fn environment(mut self, environment: impl Into<crate::SharedProcessEnvironment>) -> Self {
+        self.environment = environment.into();
         self
     }
 
@@ -76,8 +79,8 @@ impl ShellToolOptions {
     }
 
     /// Rewrite commands through [RTK](https://github.com/rtk-ai/rtk) when an
-    /// `rtk` 0.23+ binary is on `PATH`. Off by default, and off when the
-    /// process has `RTK_DISABLED=1`.
+    /// `rtk` 0.23+ binary is on `PATH`. Off by default, and off for a
+    /// command whose environment has `RTK_DISABLED=1`.
     ///
     /// The rewrite happens before authorization, so approval and hooks see the
     /// command that runs (`rtk git status`), while start metadata keeps the
@@ -85,7 +88,7 @@ impl ShellToolOptions {
     /// is unavailable. Each run is also recorded under the Claude Code projects
     /// directory (`$CLAUDE_CONFIG_DIR` or `~/.claude`) for `rtk discover`.
     pub fn rtk(mut self, enabled: bool) -> Self {
-        self.rtk = enabled.then(Rtk::system).flatten();
+        self.rtk = enabled.then(Rtk::system);
         self
     }
 
@@ -107,7 +110,7 @@ enum ShellKind {
 struct SdkShellTool {
     kind: ShellKind,
     max_output_bytes: usize,
-    environment: ProcessEnvironment,
+    environment: crate::SharedProcessEnvironment,
     mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
     host_terminals: Option<Arc<dyn crate::HostTerminals>>,
     rtk: Option<Rtk>,
@@ -169,19 +172,27 @@ impl ShellPlan {
         let resolved_cwd = workspace
             .resolve_for_read(workspace.root())
             .map_err(|error| ToolError::new(ToolErrorKind::PolicyDenied, error.to_string()))?;
+        let requested = arguments.command;
         let Prepared { command, record } = match rtk {
             Some(rtk) => {
-                rtk.prepare(arguments.command, resolved_cwd.path(), &environment)
+                rtk.prepare(requested.clone(), resolved_cwd.path(), &environment)
                     .await
             }
-            None => Prepared::unchanged(arguments.command),
+            None => Prepared::unchanged(requested.clone()),
         };
+        let rewritten = command != requested;
         let execution = ProcessExecution::new(
             resolved_cwd.path(),
             kind.invocation(command),
             environment,
             ProcessOutputLimits::new(max_output_bytes, timeout),
         );
+        // Hooks see what the model asked for next to what runs.
+        let execution = if rewritten {
+            execution.with_requested_command(requested)
+        } else {
+            execution
+        };
         Ok(Self {
             execution,
             resolved_cwd,
@@ -313,11 +324,9 @@ impl Tool for SdkShellTool {
     fn spec(&self) -> rho_sdk::model::ToolSpec {
         match self.kind {
             #[cfg(any(target_os = "linux", target_os = "macos"))]
-            ShellKind::Bash => super::bash::Bash::new(/*rtk_enabled*/ false).spec(),
+            ShellKind::Bash => super::bash::Bash::new().spec(),
             #[cfg(windows)]
-            ShellKind::PowerShell => {
-                super::powershell::PowerShell::new(/*rtk_enabled*/ false).spec()
-            }
+            ShellKind::PowerShell => super::powershell::PowerShell::new().spec(),
         }
     }
 
@@ -357,7 +366,7 @@ impl Tool for SdkShellTool {
                 invocation.into_arguments(),
                 context.workspace(),
                 self.max_output_bytes,
-                self.environment.clone(),
+                self.environment.current(),
                 self.rtk.as_ref(),
             )
             .await?;
@@ -401,7 +410,7 @@ async fn execute_with_progress(
                     Some(lines) => {
                         let _ = context
                             .progress()
-                            .send(ToolProgress::message(lines.join("\n")))
+                            .send(ToolProgress::new(lines.join("\n")))
                             .await;
                     }
                     None => updates_open = false,
@@ -412,7 +421,7 @@ async fn execute_with_progress(
     while let Ok(lines) = updates.try_recv() {
         let _ = context
             .progress()
-            .send(ToolProgress::message(lines.join("\n")))
+            .send(ToolProgress::new(lines.join("\n")))
             .await;
     }
     result.map_err(map_app_error)

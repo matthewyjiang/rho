@@ -1,4 +1,4 @@
-use std::str::FromStr;
+use std::{str::FromStr, sync::Arc};
 
 use pretty_assertions::assert_eq;
 use serde_json::json;
@@ -14,9 +14,10 @@ use super::{
 
 const SNAPSHOT_V1: &str = include_str!("fixtures/session-snapshot-v1.json");
 const SNAPSHOT_V2: &str = include_str!("fixtures/session-snapshot-v2.json");
+const SNAPSHOT_V3: &str = include_str!("fixtures/session-snapshot-v3.json");
 
 fn aborted_history(identity: &ModelIdentity) -> Vec<Message> {
-    vec![Message::AbortedAssistant(Box::new(AbortedAssistant {
+    vec![Message::AbortedAssistant(Arc::new(AbortedAssistant {
         content: vec![ContentBlock::Text("partial".into())],
         reasoning: "raw reasoning must not persist".into(),
         provider_context: vec![ProviderContextBlock {
@@ -24,6 +25,7 @@ fn aborted_history(identity: &ModelIdentity) -> Vec<Message> {
             kind: "encrypted_reasoning".into(),
             position: Some(0),
             data: json!({"encrypted": "opaque"}),
+            replay: crate::model::ReplayScope::ExactModel,
         }],
         ..AbortedAssistant::default()
     }))]
@@ -68,10 +70,11 @@ fn snapshot_json_round_trip_preserves_replay_context_but_omits_raw_reasoning() {
 fn every_supported_snapshot_fixture_migrates_to_the_current_schema() {
     for (version, fixture, expected_cache_key) in [
         (MIN_SESSION_SNAPSHOT_SCHEMA_VERSION, SNAPSHOT_V1, None),
+        (2, SNAPSHOT_V2, Some("rho:fixture-cache")),
         (
             SESSION_SNAPSHOT_SCHEMA_VERSION,
-            SNAPSHOT_V2,
-            Some("rho:fixture-cache"),
+            SNAPSHOT_V3,
+            Some("rho:fixture-cache-v3"),
         ),
     ] {
         let original: serde_json::Value = serde_json::from_str(fixture).unwrap();
@@ -106,4 +109,13 @@ fn in_memory_store_replaces_complete_snapshots_atomically() {
     assert_eq!(store.load(&id), Some(second.clone()));
     assert_eq!(store.remove(&id), Some(second));
     assert!(store.is_empty());
+}
+
+// Covers: a malformed snapshot keeps the serde error as a downcastable source.
+// Owner: SDK persistence error contract
+#[test]
+fn malformed_snapshot_error_exposes_serde_source() {
+    let error = SessionSnapshot::from_json("{").unwrap_err();
+    let source = std::error::Error::source(&error).expect("persistence error has a source");
+    assert!(source.downcast_ref::<serde_json::Error>().is_some());
 }

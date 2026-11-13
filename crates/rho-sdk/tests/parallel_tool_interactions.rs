@@ -63,11 +63,11 @@ async fn next_started(receiver: &mut mpsc::UnboundedReceiver<String>) -> String 
 }
 
 fn call(id: &str, name: &str, key: &str, resource: &str) -> ContentBlock {
-    ContentBlock::ToolCall(ToolCall {
-        id: id.into(),
-        name: name.into(),
-        arguments: json!({"key": key, "resource": resource}),
-    })
+    ContentBlock::ToolCall(ToolCall::new(
+        id.into(),
+        name.into(),
+        json!({"key": key, "resource": resource}),
+    ))
 }
 
 fn provider(calls: Vec<ContentBlock>) -> ScriptedProvider {
@@ -245,7 +245,7 @@ impl Tool for FinalProgressTool {
             assert!(
                 context
                     .progress()
-                    .send(ToolProgress::message("final update"))
+                    .send(ToolProgress::new("final update"))
                     .await
             );
             Ok(ToolOutput::text("complete"))
@@ -307,7 +307,7 @@ impl Tool for BackpressureInteractionTool {
                                 }
                                 permit = self.progress_gate.acquire() => {
                                     permit.unwrap().forget();
-                                    if !context.progress().send(ToolProgress::message("tick")).await {
+                                    if !context.progress().send(ToolProgress::new("tick")).await {
                                         return Err(ToolError::cancelled());
                                     }
                                     self.progress_sent.send(()).unwrap();
@@ -549,7 +549,7 @@ async fn final_progress_sent_immediately_before_return_precedes_tool_finished() 
     while let Some(event) = run.next_event().await {
         match event {
             RunEvent::ToolUpdated { call_id, progress } if call_id.as_str() == "progress-call" => {
-                assert_eq!(progress.text(), "final update");
+                assert_eq!(progress.message(), "final update");
                 progress_index = Some(index);
             }
             RunEvent::ToolFinished { call_id, .. } if call_id.as_str() == "progress-call" => {
@@ -757,7 +757,7 @@ async fn steering_during_parallel_batch_applies_after_all_results_close() {
             matches!(
                 message,
                 Message::User(content)
-                    if matches!(content.as_slice(), [ContentBlock::Text(text)] if text == "steered")
+                    if matches!(content.as_ref(), [ContentBlock::Text(text)] if text == "steered")
             )
         })
         .unwrap();
@@ -819,7 +819,7 @@ async fn concurrent_pending_preparations_cancel_into_every_result_slot() {
             .collect::<Vec<_>>(),
         ["preparing", "not-prepared-one", "not-prepared-two"]
     );
-    assert!(results.iter().all(|result| !result.ok));
+    assert!(results.iter().all(|result| result.is_failure()));
     assert!(results
         .iter()
         .all(|result| result.content == "tool call interrupted before completion"));

@@ -4,6 +4,7 @@ use std::collections::VecDeque;
 
 use crate::tui::{
     pending_input::{AcceptedSteering, PendingInputAction, PendingInputPanel},
+    send_confirm::SendOmissions,
     QueuedPrompt,
 };
 
@@ -16,6 +17,11 @@ pub(in crate::tui) struct PendingWorkUi {
     input_panel: PendingInputPanel,
     input_action: Option<PendingInputAction>,
     queued_prompts: VecDeque<QueuedPrompt>,
+    /// The follow-up a daemon session compacts before, and the consent to
+    /// omit provider-native context given for it (`send_confirm::daemon`).
+    /// The consent goes with that prompt alone: taking the prompt off the
+    /// queue hands it over or drops it.
+    compact_send: Option<(QueuedPrompt, SendOmissions)>,
 }
 
 impl PendingWorkUi {
@@ -69,34 +75,58 @@ impl PendingWorkUi {
         self.queued_prompts.push_front(prompt);
     }
 
-    pub(in crate::tui) fn pop_follow_up(&mut self) -> Option<QueuedPrompt> {
-        self.queued_prompts.pop_front()
+    /// The next follow-up, with the consent given for it when it is the
+    /// prompt [`Self::park_compact_send`] queued, unedited.
+    pub(in crate::tui) fn pop_follow_up_with_consent(
+        &mut self,
+    ) -> Option<(QueuedPrompt, Option<SendOmissions>)> {
+        let prompt = self.queued_prompts.pop_front()?;
+        let consent = self
+            .compact_send
+            .take_if(|(parked, _)| *parked == prompt)
+            .map(|(_, consent)| consent);
+        self.drop_consent_of_a_prompt_no_longer_queued();
+        Some((prompt, consent))
+    }
+
+    /// Queues `prompt` first, to send under `consent` once the compaction
+    /// the person asked for before it is over.
+    pub(in crate::tui) fn park_compact_send(
+        &mut self,
+        prompt: QueuedPrompt,
+        consent: SendOmissions,
+    ) {
+        self.queued_prompts.push_front(prompt.clone());
+        self.compact_send = Some((prompt, consent));
     }
 
     pub(in crate::tui) fn remove_follow_up(&mut self, index: usize) -> Option<QueuedPrompt> {
-        if index < self.queued_prompts.len() {
+        let removed = if index < self.queued_prompts.len() {
             self.queued_prompts.remove(index)
         } else {
             None
+        };
+        self.drop_consent_of_a_prompt_no_longer_queued();
+        removed
+    }
+
+    fn drop_consent_of_a_prompt_no_longer_queued(&mut self) {
+        if let Some((parked, _)) = &self.compact_send {
+            if !self.queued_prompts.contains(parked) {
+                self.compact_send = None;
+            }
         }
     }
 
     pub(in crate::tui) fn clear_follow_ups(&mut self) {
         self.queued_prompts.clear();
+        self.compact_send = None;
     }
 
     pub(in crate::tui) fn clear_steering(&mut self) {
         self.steering_prompts.clear();
         self.accepted_steering.clear();
         self.retracting_steering = None;
-    }
-
-    pub(in crate::tui) fn retracting_steering(&self) -> Option<&rho_sdk::SteeringId> {
-        self.retracting_steering.as_ref()
-    }
-
-    pub(in crate::tui) fn set_retracting_steering(&mut self, id: Option<rho_sdk::SteeringId>) {
-        self.retracting_steering = id;
     }
 
     pub(in crate::tui) fn input_panel(&self) -> &PendingInputPanel {
@@ -140,6 +170,7 @@ impl PendingWorkUi {
     pub(in crate::tui) fn drain_queued_prompt_texts(
         &mut self,
     ) -> impl Iterator<Item = String> + '_ {
+        self.compact_send = None;
         self.queued_prompts.drain(..).map(|prompt| prompt.prompt)
     }
 }

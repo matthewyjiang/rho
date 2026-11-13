@@ -12,6 +12,7 @@ use serde::Deserialize;
 use thiserror::Error;
 
 use crate::cli_runtime::{run_bounded_probe, BoundedOutput, CliExecutable, ProbeError};
+use crate::session_environment::Ambient;
 
 use super::{
     executable,
@@ -108,7 +109,7 @@ pub(crate) struct CursorProbeSnapshot {
 
 /// Run `cursor-agent status --format json` and parse its JSON.
 pub(crate) async fn query() -> Result<CursorAuthStatus, CursorAuthError> {
-    let executable = executable::resolve()?;
+    let executable = executable::resolve(&Ambient::ThisProcess)?;
     query_executable(&executable).await
 }
 
@@ -133,7 +134,7 @@ pub(crate) async fn probe_snapshot() -> CursorProbeSnapshot {
 
 /// Probe `cursor-agent --version` for doctor diagnostics.
 pub(crate) async fn version() -> Result<String, CursorAuthError> {
-    let executable = executable::resolve()?;
+    let executable = executable::resolve(&Ambient::ThisProcess)?;
     let output = run_bounded_probe(&executable, &["--version"], PROBE_TIMEOUT).await?;
     if !output.status.success() {
         return Err(CursorAuthError::ExitStatus {

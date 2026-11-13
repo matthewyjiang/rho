@@ -9,7 +9,7 @@ use rusqlite::{params, Connection};
 use tempfile::TempDir;
 
 use super::super::persistence::{
-    session_dir_in_root, session_file_stats, workspace_key, SessionEntry,
+    session_dir_in_root, session_file_stats, workspace_key, SessionStore,
 };
 use super::super::{SessionIndexRecord, SessionSummary};
 use super::{
@@ -461,6 +461,36 @@ fn list_all_sessions_discovers_unindexed_workspaces() {
     assert_eq!(all.len(), 2);
 }
 
+// Covers: an exact session id finds its workspace from any workspace: a
+// prefix of a saved id finds none, and a session the index has not seen yet
+// is found once the miss reconciles (#1661).
+// Owner: session index lookup by exact id.
+#[test]
+fn an_exact_id_finds_its_workspace_even_before_it_is_indexed() {
+    let root = TempDir::new().unwrap();
+    let cwd_a = TempDir::new().unwrap();
+    let cwd_b = TempDir::new().unwrap();
+    write_test_session(root.path(), cwd_a.path(), "indexed-session", 10, "from a");
+    list_all_sessions(root.path()).unwrap();
+    write_test_session(root.path(), cwd_b.path(), "unindexed-session", 20, "from b");
+
+    let lookup = |id| SessionStore::workspace_of(root.path(), id).unwrap();
+    assert_eq!(
+        [
+            lookup("indexed-session"),
+            lookup("unindexed-session"),
+            lookup("indexed"),
+            lookup("missing"),
+        ],
+        [
+            Some(cwd_a.path().to_path_buf()),
+            Some(cwd_b.path().to_path_buf()),
+            None,
+            None,
+        ]
+    );
+}
+
 // Covers: global listing must return one canonical summary when two index rows
 // point at one physical session and reconcile cannot repair the stale row.
 // Owner: session index
@@ -577,25 +607,7 @@ fn write_test_session(
 }
 
 fn session_transcript_contents(cwd: &Path, id: &str, created_at: u64, prompt: &str) -> String {
-    let header = SessionEntry::Session {
-        version: 3,
-        id: id.into(),
-        timestamp: created_at.to_string(),
-        cwd: cwd.to_path_buf(),
-        agent_id: None,
-        agent_fingerprint: None,
-        agent_role: crate::session::agent_identity::SessionAgentRole::Root,
-    };
-    let message = SessionEntry::Message {
-        timestamp: created_at.to_string(),
-        message: Message::user_text(prompt),
-        display_message: None,
-    };
-    format!(
-        "{}\n{}\n",
-        serde_json::to_string(&header).unwrap(),
-        serde_json::to_string(&message).unwrap()
-    )
+    super::super::persistence::test_transcript(cwd, id, created_at, &[prompt])
 }
 
 fn test_index_record(id: &str, path: &str, first_user: &str) -> SessionIndexRecord {
@@ -611,6 +623,7 @@ fn test_index_record(id: &str, path: &str, first_user: &str) -> SessionIndexReco
             first_user_message: Some(first_user.into()),
             last_user_message: Some(first_user.into()),
             added_dirs: Vec::new(),
+            origin: None,
         },
         file_size: Some(10),
         file_mtime: Some(10),
@@ -618,5 +631,6 @@ fn test_index_record(id: &str, path: &str, first_user: &str) -> SessionIndexReco
         branch_count: 0,
         active_leaf_id: None,
         effective_format_version: 3,
+        parent_session: None,
     }
 }

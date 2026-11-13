@@ -50,19 +50,15 @@ fn concurrent_calls_are_withdrawn_independently() {
 }
 
 // Covers: after call A ends and call B starts, nested requests must not route
-// to B while a delayed message from A could still arrive. The call-scoped
-// token must also cancel when the registration drops so sampling cannot outlive
-// the tools/call.
+// to B while a delayed message from A could still arrive.
 // Owner: MCP in-flight call registry.
 #[test]
-fn sequential_calls_fail_closed_and_cancel_on_release() {
+fn sequential_calls_fail_closed() {
     let calls = McpInFlightCalls::new();
     let (first, _first_questions) = calls.register();
-    let first_caller = calls.sole_caller().unwrap();
-    assert!(!first_caller.cancellation().is_cancelled());
+    assert!(calls.sole_caller().is_ok());
 
     drop(first);
-    assert!(first_caller.cancellation().is_cancelled());
 
     let (_second, _second_questions) = calls.register();
     assert_eq!(

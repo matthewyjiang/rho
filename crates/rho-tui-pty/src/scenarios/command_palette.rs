@@ -89,12 +89,12 @@ const TAB_COMPLETE_ENTER_BARE_COMMAND_STEPS: &[Step] = &[
     // The agents catalog opens only for the bare command; `/agents create`
     // would start the guided creator turn instead.
     Step::WaitText {
-        text: "goal-judge",
+        text: "session-title",
         timeout: SETTLE,
     },
     Step::Key(Key::Esc),
     Step::WaitTextGone {
-        text: "goal-judge",
+        text: "session-title",
         timeout: SETTLE,
     },
     Step::ExitCommand,

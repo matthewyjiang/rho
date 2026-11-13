@@ -8,6 +8,7 @@ use std::{fs, path::PathBuf, time::Duration};
 
 use super::{
     acp_e2e::{self, FakeAcpPaths},
+    attach_view,
     claude_e2e::FAKE_CLAUDE,
 };
 
@@ -58,7 +59,7 @@ fn methods(requests: &[Value]) -> Vec<&str> {
 /// Full fake-Claude runtime path: matrix parent -> agent tool -> binder/executor
 /// -> `claude-agent-acp` spawn -> scripted ACP agent (`rho __acp-fixture-agent`)
 /// -> mode, session options, prompt -> artifacts -> parent completion ->
-/// `rho attach` replay. Never touches a real Claude install or the network.
+/// `/attach` replay. Never touches a real Claude install or the network.
 #[test]
 fn fake_claude_runtime_end_to_end_success() {
     let home = IsolatedHome::new().unwrap();
@@ -89,8 +90,8 @@ fn fake_claude_runtime_end_to_end_success() {
             "provider": status["provider"],
             "model": status["model"],
             "result": status["result"],
-            "claude_session_id": status["claude_session_id"],
-            "claude_model": status["claude_model"],
+            "runtime_session_id": status["runtime_session_id"],
+            "runtime_model": status["runtime_model"],
             "cost_micros": status["total_cost_usd"]
                 .as_f64()
                 .map(|cost| (cost * 1_000_000.0).round() as u64),
@@ -101,8 +102,8 @@ fn fake_claude_runtime_end_to_end_success() {
             "provider": "claude-code",
             "model": "claude-opus-demo",
             "result": "rho-claude-e2e-ok",
-            "claude_session_id": "scripted-session",
-            "claude_model": "claude-sonnet-5",
+            "runtime_session_id": "scripted-session",
+            "runtime_model": "claude-sonnet-5",
             "cost_micros": 34_271,
         })
     );
@@ -175,22 +176,8 @@ fn fake_claude_runtime_end_to_end_success() {
         )
     );
 
-    assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
-
-    // Replay the real on-disk artifacts through `rho attach`.
-    let mut plan = RhoLaunchPlan::matrix(
-        PathBuf::from(env!("CARGO_BIN_EXE_rho")),
-        &home,
-        PtySize {
-            rows: 28,
-            cols: 120,
-        },
-    )
-    .with_arg("attach")
-    .with_arg(&run_id);
-    plan.cwd = home.path().join("attach-workspace");
-    fs::create_dir_all(&plan.cwd).unwrap();
-    let mut attach = PtyHarness::spawn_named(&plan, "fake_claude_runtime_e2e_attach").unwrap();
+    // Replay the real on-disk artifacts in the in-place attach view.
+    attach_view::open(&mut harness, WaitTimeout::secs(10, "attach view"));
     for (text, label) in [
         (format!("attach {run_id}"), "attach startup"),
         ("Say hello in one short sentence.".into(), "attach prompt"),
@@ -198,17 +185,12 @@ fn fake_claude_runtime_end_to_end_success() {
         ("ran as claude-sonnet-5".into(), "attach resolved model"),
         ("claude-planner".into(), "attach agent id"),
     ] {
-        attach
+        harness
             .wait_for_text(&text, WaitTimeout::secs(10, label))
             .unwrap();
     }
-    attach.inject_key(&Key::Char('q')).unwrap();
-    assert_eq!(
-        attach
-            .wait_for_exit(WaitTimeout::secs(5, "detach"))
-            .unwrap(),
-        0
-    );
+    attach_view::leave(&mut harness, WaitTimeout::secs(5, "leave attach view"));
+    assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
 }
 
 /// Background Claude completion path: the reported session cost must fold
@@ -292,34 +274,48 @@ fn fake_claude_runtime_end_to_end_error() {
     assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
 }
 
-/// Full Claude Code advisor path: picker selection -> config -> advisor tool
-/// call -> `claude-agent-acp` one-shot with no tools -> advice in the card.
-/// Never touches a real Claude install or the network.
+/// Full Claude Code advisor path: `/advisor on` picker selection -> the
+/// daemon's settings -> advisor tool call -> `claude-agent-acp` one-shot with
+/// no tools -> advice in the card. Never touches a real Claude install or the
+/// network.
 #[test]
 fn fake_claude_advisor_reviews_the_session() {
     let home = IsolatedHome::new().unwrap();
     fs::write(
         &home.config_path,
-        r#"provider = "openai"
+        r#"web_search.mode = "off"
+
+[model]
+provider = "openai"
 model = "gpt-5.5"
 auth = "api-key"
-check_for_updates = false
-web_search.mode = "off"
 
 [behavior]
 credential_store = "file"
-advisor_mode = true
 "#,
     )
     .unwrap();
     let (fake, path) = install_fake(&home, "success.json");
-    let mut harness = launch(&home, path, 32, "fake_claude_advisor");
+    let plan = RhoLaunchPlan::matrix(
+        PathBuf::from(env!("CARGO_BIN_EXE_rho")),
+        &home,
+        PtySize {
+            rows: 32,
+            cols: 120,
+        },
+    )
+    .with_env("PATH", path)
+    .with_env("OPENAI_API_KEY", "sk-test-matrix");
+    let mut harness = PtyHarness::spawn_named(&plan, "fake_claude_advisor").unwrap();
+    harness
+        .wait_for_text("Bypass ·", WaitTimeout::secs(20, "startup"))
+        .unwrap();
 
     // Picking a Claude Code row is the only step: it selects the runtime too.
     harness.submit_text("/advisor on").unwrap();
     harness
         .wait_for_text(
-            "select model for advisor",
+            "Advisor model · Type to search",
             WaitTimeout::secs(10, "advisor model picker"),
         )
         .unwrap();
@@ -330,7 +326,7 @@ advisor_mode = true
     harness.inject_key(&Key::Enter).unwrap();
     harness
         .wait_for_text(
-            "advisor mode is on: claude-code/opus reviews the session",
+            "advisor: on; applies next turn",
             WaitTimeout::secs(10, "advisor turned on"),
         )
         .unwrap();

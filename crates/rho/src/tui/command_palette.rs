@@ -1,9 +1,9 @@
 use std::sync::Arc;
-use std::time::Duration;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::{
+    daemon_gate::{command_route, CommandRoute},
     palette::{ActivePalette, DiscoveryCache, PALETTE_CACHE_TTL},
     App, CommandChoice, CommandChoiceKind,
 };
@@ -22,13 +22,14 @@ pub(super) enum CommandPaletteKeyOutcome {
 }
 
 impl App {
-    fn command_context(&self) -> commands::CommandContext {
+    /// What decides which commands and arguments are on offer. The session
+    /// says itself whether its model has a fast mode.
+    pub(super) fn command_context(&self) -> commands::CommandContext {
         commands::CommandContext {
-            fast_mode_supported: rho_providers::providers::fast_mode::supports_fast_mode(
-                &self.info.runtime.provider,
-                &self.info.runtime.model,
-                &self.info.runtime.auth,
-            ),
+            fast_mode_supported: self
+                .daemon_options
+                .as_ref()
+                .is_some_and(|options| options.fast_mode.is_some()),
         }
     }
 
@@ -54,6 +55,11 @@ impl App {
         .then_some(matches)
     }
 
+    /// The palette's matches: a settled command's argument values alone,
+    /// else the matching commands in the built-in order with an exact
+    /// match's arguments after them, then the session's own commands. A
+    /// built-in the daemon runs as a prompt is listed only while the session
+    /// offers it.
     pub(super) fn command_matches(&mut self) -> Vec<CommandChoice> {
         // A `$` mention can sit anywhere in a prompt, command arguments
         // included, and asks only for skills.
@@ -61,125 +67,73 @@ impl App {
             return self.skill_mention_choices(&cursor);
         }
         let context = self.command_context();
-        let argument_choices =
+        let arguments =
             commands::argument_choices(self.input_ui.text(), self.input_ui.cursor(), &context);
-        if !argument_choices.is_empty() {
-            return argument_choices
-                .iter()
-                .map(argument_command_choice)
-                .collect();
+        if !arguments.is_empty() {
+            return arguments.iter().map(argument_command_choice).collect();
         }
-
         // Argument values belong to a command the user has already settled, so
         // they are offered where command matching has nothing left to say
         // rather than mixed into the command list.
-        let mcp_argument_choices = self.mcp_argument_choices();
-        if !mcp_argument_choices.is_empty() {
-            return mcp_argument_choices;
+        let mcp_arguments = self.mcp_argument_choices();
+        if !mcp_arguments.is_empty() {
+            return mcp_arguments;
         }
-
         let Some(prefix) = commands::command_prefix(self.input_ui.text()) else {
             return Vec::new();
         };
-        let prefix = prefix
-            .strip_prefix('/')
-            .unwrap_or(prefix)
-            .to_ascii_lowercase();
-        let mut builtin_matches = commands::matching_commands(&prefix);
-        builtin_matches.retain(|command| context.is_discoverable(command.id));
-        let exact_builtin = builtin_matches
+        let prefix = prefix.trim_start_matches('/').to_ascii_lowercase();
+        let offered: Vec<_> = self
+            .daemon_options
+            .iter()
+            .flat_map(|options| &options.commands)
+            .filter(|command| command.kind == rho_protocol::CommandKind::Slash)
+            .collect();
+        let session_choice = |command: &rho_protocol::SessionCommand| CommandChoice {
+            name: command.name.clone(),
+            usage: match &command.input_hint {
+                Some(hint) => format!("/{} {hint}", command.name),
+                None => format!("/{}", command.name),
+            },
+            description: command.description.clone(),
+            kind: CommandChoiceKind::SessionCommand,
+        };
+        let mut builtins = commands::matching_commands(&prefix);
+        builtins.retain(|command| context.is_discoverable(command.id));
+        let exact = builtins
             .iter()
             .find(|command| command.name.eq_ignore_ascii_case(&prefix))
             .copied();
-        let mut matches = builtin_matches
+        let mut choices: Vec<_> = builtins
             .into_iter()
-            .map(|command| CommandChoice {
-                name: command.name.to_string(),
-                usage: command.usage.to_string(),
-                description: command.description.to_string(),
-                kind: CommandChoiceKind::Builtin(command),
-            })
-            .collect::<Vec<_>>();
-        if let Some(command) = exact_builtin {
-            matches.extend(command.argument_choices.iter().map(argument_command_choice));
-        }
-        let templates = self.prompt_templates();
-        let mut template_matches = templates
-            .iter()
-            .filter(|(name, _)| crate::prompt_templates::matches_search(name, &prefix))
-            .map(|(name, template)| {
-                let command_name = format!("prompt:{name}");
-                CommandChoice {
-                    usage: crate::prompt_templates::usage(&command_name, template),
-                    name: command_name,
-                    description: crate::prompt_templates::description(template),
-                    kind: CommandChoiceKind::PromptTemplate(template.clone()),
-                }
-            })
-            .collect::<Vec<_>>();
-        // Templates are a BTreeMap, so iteration is already name-ordered.
-        if let Some(index) = template_matches.iter().position(|choice| {
-            choice
-                .name
-                .strip_prefix("prompt:")
-                .is_some_and(|name| name.eq_ignore_ascii_case(&prefix))
-        }) {
-            let exact = template_matches.remove(index);
-            matches.insert(0, exact);
-        }
-        matches.extend(template_matches);
-        // The catalog is listed once at connect, so palette matching stays a
-        // local lookup. Prompts are already ordered by server then name.
-        matches.extend(
-            self.mcp_catalog
-                .prompts()
-                .into_iter()
-                .filter(|prompt| prompt.command_name().starts_with(&prefix))
-                .map(|prompt| CommandChoice {
-                    usage: prompt.usage(),
-                    // A server that wrote no description still named the prompt,
-                    // so fall back to that rather than to the same sentence for
-                    // every prompt on the server.
-                    description: prompt.description.clone().unwrap_or_else(|| {
-                        format!("{} · from MCP server `{}`", prompt.label(), prompt.server)
-                    }),
-                    name: prompt.command_name(),
-                    kind: CommandChoiceKind::McpPrompt,
+            .filter_map(|command| match command_route(command.id) {
+                CommandRoute::Prompt => offered
+                    .iter()
+                    .find(|offered| offered.name == command.name)
+                    .map(|offered| session_choice(offered)),
+                CommandRoute::Ui | CommandRoute::Options => Some(CommandChoice {
+                    name: command.name.into(),
+                    usage: command.usage.into(),
+                    description: command.description.into(),
+                    kind: CommandChoiceKind::Builtin(command),
                 }),
-        );
-        // Command workflows are sorted by name; filtering preserves that order.
-        matches.extend(self.command_workflows().iter().filter_map(|workflow| {
-            let name = workflow.command_name()?;
-            // `prefix` is lowercased; labels keep their file-name case.
-            if !name.to_ascii_lowercase().starts_with(&prefix) {
-                return None;
-            }
-            Some(CommandChoice {
-                usage: workflow.command_usage()?,
-                description: workflow.command_description(),
-                name,
-                kind: CommandChoiceKind::Workflow,
             })
-        }));
-        // discovered skills are sorted by name; filtering preserves that order.
-        matches.extend(
-            self.discovered_skills()
+            .collect();
+        if let Some(command) = exact {
+            choices.extend(command.argument_choices.iter().map(argument_command_choice));
+        }
+        choices.extend(
+            offered
                 .iter()
-                .filter(|skill| {
-                    skill.name.starts_with(&prefix)
-                        || format!("skill:{}", skill.name).starts_with(&prefix)
+                .filter(|command| command.name.to_ascii_lowercase().starts_with(&prefix))
+                .filter(|command| {
+                    !commands::COMMANDS
+                        .iter()
+                        .any(|builtin| builtin.name == command.name)
                 })
-                .map(|skill| {
-                    let command_name = format!("skill:{}", skill.name);
-                    CommandChoice {
-                        usage: format!("/{command_name}"),
-                        name: command_name,
-                        description: skill.description.clone(),
-                        kind: CommandChoiceKind::Skill,
-                    }
-                }),
+                .map(|command| session_choice(command)),
         );
-        matches
+        choices
     }
 
     /// Skills for palette matching, served from the timed cache when fresh.
@@ -188,57 +142,24 @@ impl App {
     /// frame — walks skill directories once and shares the result.
     pub(super) fn discovered_skills(&mut self) -> Arc<Vec<crate::skills::Skill>> {
         DiscoveryCache::get_or_refresh(&mut self.palette_caches.skills, PALETTE_CACHE_TTL, || {
-            crate::skills::discover(&self.info.runtime.cwd)
-        })
-    }
-
-    /// Workspace workflows for palette matching, from the timed cache when fresh.
-    fn command_workflows(
-        &mut self,
-    ) -> Arc<Vec<crate::app::workflow_cli::discover::DiscoveredWorkflow>> {
-        DiscoveryCache::get_or_refresh(
-            &mut self.palette_caches.workflows,
-            PALETTE_CACHE_TTL,
-            || crate::app::workflow_cli::discover::command_workflows(&self.info.runtime.cwd),
-        )
-    }
-
-    /// Prompt templates for palette matching, served from the
-    /// timed cache when fresh.
-    ///
-    /// Template files are re-read once the cache goes stale, so adding or
-    /// editing one applies without a restart. Inline config templates win
-    /// over files with the same name.
-    pub(super) fn prompt_templates(&mut self) -> Arc<crate::prompt_templates::PromptTemplates> {
-        self.prompt_templates_with_ttl(PALETTE_CACHE_TTL)
-    }
-
-    fn prompt_templates_with_ttl(
-        &mut self,
-        ttl: Duration,
-    ) -> Arc<crate::prompt_templates::PromptTemplates> {
-        DiscoveryCache::get_or_refresh(&mut self.palette_caches.prompt_templates, ttl, || {
-            crate::prompt_templates::load(
+            crate::skills::discover(
                 &self.info.runtime.cwd,
-                self.info.runtime.prompt_template_home.as_deref(),
-                self.info.runtime.config_prompt_templates.clone(),
+                crate::workspace::ProjectTrusts::of_this_process(),
             )
         })
     }
 
-    /// Resolve a template on submit in either composer, refreshing the shared
-    /// cache so edits made since the last palette query are included.
-    pub(super) fn resolve_prompt_template(&mut self, name: &str, trailing: &str) -> Option<String> {
-        self.current_prompt_template(name)
-            .map(|template| crate::prompt_templates::expand(&template, trailing))
-    }
-
-    /// The template behind a `prompt:<name>` command as it is on disk now,
-    /// not as the palette last read it.
-    fn current_prompt_template(&mut self, name: &str) -> Option<String> {
+    /// The prompt template behind a `prompt:<name>` command, read from disk
+    /// now and expanded with `trailing`.
+    pub(super) fn resolve_prompt_template(&self, name: &str, trailing: &str) -> Option<String> {
         let template_name = crate::prompt_templates::command_template_name(name)?;
-        let templates = self.prompt_templates_with_ttl(/*ttl*/ Duration::ZERO);
-        crate::prompt_templates::find(&templates, template_name).map(str::to_owned)
+        let templates = crate::prompt_templates::load(
+            &self.info.runtime.cwd,
+            self.info.runtime.prompt_template_home.as_deref(),
+            self.info.runtime.config_prompt_templates.clone(),
+        );
+        crate::prompt_templates::find(&templates, template_name)
+            .map(|template| crate::prompt_templates::expand(template, trailing))
     }
 
     #[cfg(test)]
@@ -321,11 +242,7 @@ impl App {
     /// blind Enter must not spend that offer on the first row.
     pub(super) fn enter_completes_choice(&self, choice: &CommandChoice) -> bool {
         match choice.kind {
-            CommandChoiceKind::Builtin(_)
-            | CommandChoiceKind::PromptTemplate(_)
-            | CommandChoiceKind::Skill
-            | CommandChoiceKind::Workflow
-            | CommandChoiceKind::McpPrompt => true,
+            CommandChoiceKind::Builtin(_) | CommandChoiceKind::SessionCommand => true,
             CommandChoiceKind::BuiltinArgument(_) => self.input_ui.command_selection_explicit(),
             CommandChoiceKind::McpPromptArgument { .. } => {
                 self.input_ui.command_selection_explicit()
@@ -356,44 +273,9 @@ impl App {
                     .set_submission_mode(super::InputSubmissionMode::ParseCommands);
                 commands::complete_argument_choice(choice)
             }
-            CommandChoiceKind::PromptTemplate(listed) => {
-                // The palette row may predate an edit; fall back to it only
-                // when the file vanished since.
-                let template = self
-                    .current_prompt_template(&choice.name)
-                    .unwrap_or_else(|| listed.clone());
-                let expanded_input = self.expanded_input();
-                let args = slash_command_args(&expanded_input);
-                if args.is_empty() && crate::prompt_templates::takes_arguments(&template) {
-                    // Placeholders need arguments first; share slash-token
-                    // completion with the other commands whose expansion
-                    // belongs to submit.
-                    self.input_ui
-                        .set_submission_mode(super::InputSubmissionMode::ParseCommands);
-                    let (mut input, cursor) = complete_slash_command(
-                        self.input_ui.text(),
-                        self.input_ui.cursor(),
-                        &choice.name,
-                    );
-                    input.push(' ');
-                    (input, cursor + 1)
-                } else {
-                    let mut input = crate::prompt_templates::expand(&template, args);
-                    input.push(' ');
-                    let cursor = input.chars().count();
-                    self.input_ui.clear_paste_segments();
-                    self.input_ui
-                        .set_submission_mode(super::InputSubmissionMode::Prompt);
-                    (input, cursor)
-                }
-            }
-            // These complete to a slash token and act on submit: a skill
-            // needs a tool call, an MCP prompt needs a `prompts/get`
-            // round-trip, and a workflow plans and starts a run, none of
-            // which can happen in this sync path.
-            CommandChoiceKind::Skill
-            | CommandChoiceKind::McpPrompt
-            | CommandChoiceKind::Workflow => {
+            // A session command completes to its slash token, which the
+            // daemon resolves on submit.
+            CommandChoiceKind::SessionCommand => {
                 self.input_ui
                     .set_submission_mode(super::InputSubmissionMode::ParseCommands);
                 complete_slash_command(self.input_ui.text(), self.input_ui.cursor(), &choice.name)

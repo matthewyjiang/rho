@@ -145,9 +145,11 @@ async fn send_authorized_progress(
     if !context
         .progress()
         .send(
-            ToolProgress::message(message).units(completed, 2).metadata(
-                ToolMetadata::new().operation(OperationKind::Other("tui_fixture".into())),
-            ),
+            ToolProgress::new(message)
+                .units(completed, 2)
+                .with_metadata(
+                    ToolMetadata::new().operation(OperationKind::Other("tui_fixture".into())),
+                ),
         )
         .await
     {

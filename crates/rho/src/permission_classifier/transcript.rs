@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use crate::history_message::HistoryMessage;
 use rho_providers::model::{ContentBlock, Message, ToolCall, ToolResult};
 use rho_sdk::{
-    ApprovalRequest, CapabilityOperation, CapabilityRequest, CapabilitySource, NetworkTarget,
-    PathScope,
+    model::SemanticMessage, ApprovalRequest, CapabilityOperation, CapabilityRequest,
+    CapabilitySource, NetworkTarget, PathScope,
 };
 
 use super::budget::{
@@ -56,7 +56,7 @@ pub(crate) fn render_classifier_transcript(
 /// surface as a [`super::TranscriptOverBudget`] inside the returned error.
 ///
 /// The ID is a parameter because only the SDK can attach one to an
-/// [`ApprovalRequest`]; the classifier eval supplies replayed call IDs.
+/// [`ApprovalRequest`].
 pub(super) fn render_with_pending_call(
     history: &[Message],
     pending: &ApprovalRequest,
@@ -66,37 +66,6 @@ pub(super) fn render_with_pending_call(
     let mut tail = vec!["pending_capability:".to_owned()];
     tail.extend(format_pending_capability(pending)?);
     render(history, pending_call_id.as_slice(), tail, budget)
-}
-
-/// One request of a batch the agent made at once, under the ID its question
-/// asks about, which is not a tool-call ID.
-pub(super) struct LabeledPending<'a> {
-    pub label: &'a str,
-    pub pending: &'a ApprovalRequest,
-    pub call_id: Option<&'a str>,
-}
-
-/// [`render_with_pending_call`] for several pending requests. Each section is
-/// headed by its label and names the tool call that made it, when known, so
-/// requests with identical capabilities stay bound to their own calls.
-pub(super) fn render_with_pending_calls(
-    history: &[Message],
-    pendings: &[LabeledPending<'_>],
-    budget: TranscriptBudget,
-) -> anyhow::Result<String> {
-    let mut tail = Vec::new();
-    for pending in pendings {
-        tail.push(format!("pending_capability {}:", pending.label));
-        if let Some(call_id) = pending.call_id {
-            tail.push(field("call_id", json_str(call_id)));
-        }
-        tail.extend(format_pending_capability(pending.pending)?);
-    }
-    let call_ids: Vec<&str> = pendings
-        .iter()
-        .filter_map(|pending| pending.call_id)
-        .collect();
-    render(history, &call_ids, tail, budget)
 }
 
 /// The history lines followed by `tail`, fitted into `budget`. Answered calls
@@ -112,14 +81,21 @@ fn render(
     let mut latest_executable: HashMap<&str, usize> = HashMap::new();
 
     for message in history {
-        match HistoryMessage::of(message) {
-            // Tool images, model-written summaries, and host-restated model
-            // checklists cannot supply evidence of human authorization.
-            HistoryMessage::System(_)
-            | HistoryMessage::ToolImageSupplement(_)
-            | HistoryMessage::ChecklistRestatement(_)
-            | HistoryMessage::CompactionSummary(_) => {}
-            HistoryMessage::User(blocks) => {
+        let semantic = match HistoryMessage::of(message) {
+            // Host-restated model checklists cannot supply evidence of human
+            // authorization.
+            HistoryMessage::ChecklistRestatement(_) => continue,
+            HistoryMessage::Semantic(semantic) => semantic,
+        };
+        match semantic {
+            // Model-written summaries, host context, and runtime notices
+            // cannot supply evidence of human authorization either.
+            SemanticMessage::System(_)
+            | SemanticMessage::CompactionSummary(_)
+            | SemanticMessage::ModelContext(_)
+            | SemanticMessage::BoundaryInput(_)
+            | SemanticMessage::ReasoningShift(_) => {}
+            SemanticMessage::User(blocks) => {
                 for block in blocks {
                     let text = match block {
                         ContentBlock::Text(text) => text.as_str(),
@@ -132,7 +108,7 @@ fn render(
                     )?)));
                 }
             }
-            HistoryMessage::Assistant(blocks) => {
+            SemanticMessage::Assistant(blocks) => {
                 let lifecycle = CallLifecycle::Unanswered;
                 push_calls(
                     &mut entries,
@@ -142,7 +118,7 @@ fn render(
                     lifecycle,
                 );
             }
-            HistoryMessage::EnrichedAssistant(assistant) => {
+            SemanticMessage::EnrichedAssistant(assistant) => {
                 let lifecycle = CallLifecycle::Unanswered;
                 let blocks = &assistant.content;
                 push_calls(
@@ -153,7 +129,7 @@ fn render(
                     lifecycle,
                 );
             }
-            HistoryMessage::AbortedAssistant(aborted) => {
+            SemanticMessage::AbortedAssistant(aborted) => {
                 let lifecycle = CallLifecycle::Aborted;
                 let blocks = &aborted.content;
                 push_calls(
@@ -164,7 +140,7 @@ fn render(
                     lifecycle,
                 );
             }
-            HistoryMessage::ToolResult(result) => {
+            SemanticMessage::ToolResult(result) => {
                 let Some(&index) = latest_executable.get(result.id.as_str()) else {
                     continue;
                 };
@@ -262,7 +238,7 @@ fn append_questionnaire_answers(
     call: &ToolCall,
     result: &ToolResult,
 ) -> anyhow::Result<()> {
-    if call.name != crate::questionnaire::TOOL_NAME || !result.ok {
+    if call.name != crate::questionnaire::TOOL_NAME || result.is_failure() {
         return Ok(());
     }
     let Ok(request) = crate::questionnaire::parse_request(call.arguments.clone()) else {
@@ -329,6 +305,9 @@ fn format_capability_operation(request: &CapabilityRequest) -> anyhow::Result<Ve
             )];
             if let Some(command) = invocation.shell_command() {
                 lines.push(field("command", json_str(command)));
+                if let Some(requested) = execution.requested_command() {
+                    lines.push(field("requested_command", json_str(requested)));
+                }
             } else {
                 lines.push(field(
                     "executable",
@@ -353,6 +332,20 @@ fn format_capability_operation(request: &CapabilityRequest) -> anyhow::Result<Ve
             let mut lines = vec![field("skill", json_str(name))];
             if let Some(path) = path {
                 lines.push(field("path", json_str(&path.to_string_lossy())));
+            }
+            Ok(lines)
+        }
+        CapabilityOperation::ControlSession(target) => {
+            let mut lines = vec![field("action", json_str(target.action.label()))];
+            if let Some(session) = &target.session {
+                lines.push(field("session", json_str(session.as_str())));
+            }
+            lines.push(field(
+                "workspace",
+                json_str(&target.workspace.to_string_lossy()),
+            ));
+            if let Some(text) = &target.text {
+                lines.push(field("text", json_str(text)));
             }
             Ok(lines)
         }

@@ -60,17 +60,6 @@ impl TodoState {
         decorate(snapshot, self.list())
     }
 
-    /// Headless SDK checkpointing also crosses this host-owned state seam.
-    pub(crate) fn checkpoint_store(
-        &self,
-        inner: Arc<dyn rho_sdk::SessionStore>,
-    ) -> Arc<dyn rho_sdk::SessionStore> {
-        Arc::new(TodoCheckpointStore {
-            inner,
-            todo: self.clone(),
-        })
-    }
-
     /// Capture once before compaction awaits a provider. The SDK commits this
     /// state with its replacement, even if a later tool update races with it.
     pub(crate) fn checkpoint(&self) -> TodoCheckpoint {
@@ -161,17 +150,20 @@ pub(crate) fn is_restatement(message: &Message) -> bool {
     matches!(
         message,
         Message::User(blocks)
-            if matches!(blocks.as_slice(), [ContentBlock::Text(header), ContentBlock::Text(_)] if header == RESTATEMENT_HEADER)
+            if matches!(blocks.as_ref(), [ContentBlock::Text(header), ContentBlock::Text(_)] if header == RESTATEMENT_HEADER)
     )
 }
 
 /// History message restating `list`; `None` for a cleared list.
 fn restatement(list: &TodoList) -> Option<Message> {
     (!list.todos.is_empty()).then(|| {
-        Message::User(vec![
-            ContentBlock::Text(RESTATEMENT_HEADER.into()),
-            ContentBlock::Text(serde_json::to_string(list).expect("todo lists serialize")),
-        ])
+        Message::User(
+            vec![
+                ContentBlock::Text(RESTATEMENT_HEADER.into()),
+                ContentBlock::Text(serde_json::to_string(list).expect("todo lists serialize")),
+            ]
+            .into(),
+        )
     })
 }
 
@@ -202,7 +194,7 @@ fn successful_native_list(history: &[Message]) -> Option<TodoList> {
         if let Message::ToolResult(result) = message {
             let list = calls
                 .remove(&result.id)
-                .filter(|_| result.ok)
+                .filter(|_| !result.is_failure())
                 .and_then(|arguments| TodoList::parse(arguments).ok());
             if let Some(list) = list {
                 latest = Some(list);
@@ -210,24 +202,6 @@ fn successful_native_list(history: &[Message]) -> Option<TodoList> {
         }
     }
     latest
-}
-
-struct TodoCheckpointStore {
-    inner: Arc<dyn rho_sdk::SessionStore>,
-    todo: TodoState,
-}
-
-impl rho_sdk::SessionStore for TodoCheckpointStore {
-    fn load<'a>(
-        &'a self,
-        id: &'a rho_sdk::SessionId,
-    ) -> rho_sdk::SessionStoreFuture<'a, Option<SessionSnapshot>> {
-        self.inner.load(id)
-    }
-
-    fn save<'a>(&'a self, snapshot: SessionSnapshot) -> rho_sdk::SessionStoreFuture<'a, ()> {
-        self.inner.save(self.todo.decorate(snapshot))
-    }
 }
 
 #[cfg(test)]

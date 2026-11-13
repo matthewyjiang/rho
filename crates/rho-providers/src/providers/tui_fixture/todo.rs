@@ -24,10 +24,10 @@ pub(super) async fn intercept(
         return None;
     }
     if let Some(result) = tool_result(request, CALL_ID) {
-        return Some(completed(if result.ok {
-            "todo checklist complete"
-        } else {
+        return Some(completed(if result.is_failure() {
             "todo checklist failed"
+        } else {
+            "todo checklist complete"
         }));
     }
     // Twelve items exceed the generic collapsed card row budget. Keep completed and
@@ -65,10 +65,10 @@ async fn update(
     events: &ProviderEventSender,
 ) -> Result<ModelResponse, ProviderError> {
     if let Some(result) = tool_result(request, UPDATE_ID) {
-        return completed(if result.ok {
-            "todo update complete"
-        } else {
+        return completed(if result.is_failure() {
             "todo update failed"
+        } else {
+            "todo update complete"
         });
     }
     release::consume_release(UPDATE_RELEASE)?;

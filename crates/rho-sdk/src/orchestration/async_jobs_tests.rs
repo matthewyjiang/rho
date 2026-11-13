@@ -28,11 +28,7 @@ async fn complete_policy_timeout_aborts_worker() {
     });
     started_rx.await.expect("worker started");
 
-    let call = ToolCall {
-        id: "call-a".into(),
-        name: "slow".into(),
-        arguments: serde_json::json!({}),
-    };
+    let call = ToolCall::new("call-a".into(), "slow".into(), serde_json::json!({}));
     let (_progress, progress) = tool_progress_channel(NonZeroUsize::MIN);
     let result = settle_job(AsyncJob {
         call: call.clone(),
@@ -68,28 +64,22 @@ async fn settled_jobs_preserve_completion_metadata() {
         Err(ToolError::new(ToolErrorKind::Execution, "failed")),
     ] {
         let expected = match &outcome {
-            Ok(output) if output.is_failure() => ToolCompletion::CompletedFailure(output.clone()),
-            Ok(output) => ToolCompletion::Success(output.clone()),
+            Ok(output) => ToolCompletion::Completed(output.clone()),
             Err(error) => {
                 ToolCompletion::Failure(ToolFailure::new(error.kind(), error.message().to_owned()))
             }
         };
-        let expected_result = ToolResult {
-            id: "capture-1".into(),
-            ok: outcome.as_ref().is_ok_and(|output| !output.is_failure()),
-            content: match &outcome {
-                Ok(output) => output.content().to_owned(),
-                Err(error) => error.message().to_owned(),
-            },
+        let expected_result = match &outcome {
+            Ok(output) if !output.is_failure() => {
+                ToolResult::succeeded("capture-1", output.content())
+            }
+            Ok(output) => ToolResult::failed("capture-1", output.content()),
+            Err(error) => ToolResult::failed("capture-1", error.message()),
         };
         let worker = tokio::spawn(async move { outcome });
         let (_progress, progress) = tool_progress_channel(NonZeroUsize::MIN);
         let (result, completion) = settle_job(AsyncJob {
-            call: ToolCall {
-                id: "capture-1".into(),
-                name: "capture".into(),
-                arguments: serde_json::json!({}),
-            },
+            call: ToolCall::new("capture-1".into(), "capture".into(), serde_json::json!({})),
             name: "capture".into(),
             cancellation: CancellationToken::new(),
             cancellation_policy: ToolCancellationPolicy::Complete {
@@ -121,11 +111,7 @@ async fn cancelled_harvest_preserves_all_ready_tool_results() {
     let mut jobs = AsyncJobSet::new(NonZeroUsize::MIN);
     let mut expected = Vec::new();
     for id in ["call-a", "call-b"] {
-        let call = ToolCall {
-            id: id.into(),
-            name: "ready".into(),
-            arguments: serde_json::json!({}),
-        };
+        let call = ToolCall::new(id.into(), "ready".into(), serde_json::json!({}));
         let output = ToolOutput::text(id);
         let result = Ok(output.clone());
         let worker = tokio::spawn(async move { Ok(output) });
@@ -151,11 +137,7 @@ async fn cancelled_harvest_preserves_all_ready_tool_results() {
         jobs.completions_tx
             .send(JobCompletion { call_id, result })
             .unwrap();
-        expected.push(Message::ToolResult(ToolResult {
-            id: id.into(),
-            ok: true,
-            content: id.into(),
-        }));
+        expected.push(Message::ToolResult(ToolResult::succeeded(id, id).into()));
     }
     // One terminal event per ready call, with enough capacity for cleanup too.
     let (events, _receiver) = mpsc::channel(expected.len());

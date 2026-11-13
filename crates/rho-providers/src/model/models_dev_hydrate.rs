@@ -20,7 +20,7 @@ use super::{
     document::{self, ModelsDevCanonicalCatalog, ModelsDevCatalog},
     fetch_models_dev_api, fetch_models_dev_canonical, model_metadata_needs_refresh,
     upstream_row_from_api, with_models_dev_cache, write_cached_upstream_model_metadata_batch,
-    CachedRow, MODEL_ID_CATALOG_CACHE_PROVIDER, MODEL_METADATA_CACHE_VERSION,
+    ModelMetadata, MODEL_ID_CATALOG_CACHE_PROVIDER, MODEL_METADATA_CACHE_VERSION,
 };
 
 /// How long a successful full-catalog snapshot stays current across launches.
@@ -219,7 +219,7 @@ pub(super) fn hydrate_catalog_from_api(
                 let tree_id = format!("{slug}/{model_id}");
                 api_ids.insert(tree_id.clone());
                 let Some(row) = document::cached_row_from_catalog(api, slug, model_id, policy)
-                    .filter(|row| row.metadata.reasoning_metadata_complete)
+                    .filter(|row| row.reasoning_metadata_complete)
                 else {
                     continue;
                 };
@@ -362,12 +362,11 @@ fn extract_complete_upstream_row(
     api: &ModelsDevCatalog,
     descriptor: &ProviderDescriptor,
     model: &str,
-) -> Option<CachedRow> {
+) -> Option<ModelMetadata> {
     let keep_sdk_only_rows =
         descriptor.runtime.catalog_construction() == CatalogConstruction::PreferModelsDevNpm;
     upstream_row_from_api(api, descriptor.name, model).filter(|row| {
-        row.metadata.reasoning_metadata_complete
-            || (keep_sdk_only_rows && row.metadata.sdk_package.is_some())
+        row.reasoning_metadata_complete || (keep_sdk_only_rows && row.sdk_package.is_some())
     })
 }
 

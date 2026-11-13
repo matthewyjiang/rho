@@ -866,7 +866,7 @@ fn lists_plan_and_run_inventory_skipping_unreadable_entries() {
     let second = plan(&store);
     let run = run(&store, &first);
 
-    let plans = store.list_plan_inventory().unwrap();
+    let plans = store.list_plan_inventory().unwrap().items;
     assert_eq!(plans.len(), 2);
     assert!(plans
         .iter()
@@ -875,16 +875,16 @@ fn lists_plan_and_run_inventory_skipping_unreadable_entries() {
         .iter()
         .any(|plan| plan.plan_id == second.manifest.plan_id));
 
-    let runs = store.list_run_inventory().unwrap();
+    let runs = store.list_run_inventory().unwrap().items;
     assert_eq!(runs.len(), 1);
     assert_eq!(runs[0].run_id, run.manifest.run_id);
 
     // Corrupt one plan directory name so list skips it.
     std::fs::create_dir_all(store.layout.plans().join("not-a-uuid")).unwrap();
-    assert_eq!(store.list_plan_inventory().unwrap().len(), 2);
+    assert_eq!(store.list_plan_inventory().unwrap().items.len(), 2);
 }
 
-// Covers: inventory uses durable creation order and an ID tie-break for legacy zero times.
+// Covers: inventory uses durable creation order and an ID tie-break for zero times.
 // Owner: workflow durable store inventory.
 #[test]
 fn inventory_orders_plans_and_runs_by_persisted_creation_time() {
@@ -921,6 +921,7 @@ fn inventory_orders_plans_and_runs_by_persisted_creation_time() {
         store
             .list_plan_inventory()
             .unwrap()
+            .items
             .into_iter()
             .map(|plan| (plan.plan_id, plan.created_at_unix_nanos))
             .collect::<Vec<_>>(),
@@ -933,6 +934,7 @@ fn inventory_orders_plans_and_runs_by_persisted_creation_time() {
         store
             .list_run_inventory()
             .unwrap()
+            .items
             .into_iter()
             .map(|run| (run.run_id, run.created_at_unix_nanos))
             .collect::<Vec<_>>(),
@@ -957,6 +959,7 @@ fn inventory_orders_plans_and_runs_by_persisted_creation_time() {
         store
             .list_plan_inventory()
             .unwrap()
+            .items
             .into_iter()
             .map(|plan| plan.plan_id)
             .collect::<Vec<_>>(),
@@ -966,6 +969,7 @@ fn inventory_orders_plans_and_runs_by_persisted_creation_time() {
         store
             .list_run_inventory()
             .unwrap()
+            .items
             .into_iter()
             .map(|run| run.run_id)
             .collect::<Vec<_>>(),

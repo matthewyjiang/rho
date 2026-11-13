@@ -20,7 +20,9 @@ const RELEASE_MARKER: &str = ".rho-fixture-release-compact";
 
 fn history_contains_user_text(request: &ModelRequest<'_>, needle: &str) -> bool {
     request.messages.iter().any(|message| {
-        let SemanticMessage::User(content) = message.semantic() else {
+        let (SemanticMessage::User(content) | SemanticMessage::BoundaryInput(content)) =
+            message.semantic()
+        else {
             return false;
         };
         content.iter().any(|block| match block {

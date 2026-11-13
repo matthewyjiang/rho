@@ -4,7 +4,6 @@
 //! running picker/config overlays, and terminal event routing for the live
 //! turn loop.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use crate::tui::DefaultTerminal;
@@ -15,8 +14,8 @@ use super::{
     command_palette::CommandPaletteKeyOutcome,
     commands::{self, CommandId, CommandInvocation},
     composer_buffer::ComposerEditKey,
-    App, ApprovalKeyOutcome, ComposerMode, Entry, InputSubmissionMode, InteractiveModelSelection,
-    InteractiveRuntime, PasteSegment, QueuedPrompt, StreamControl,
+    App, ApprovalKeyOutcome, ComposerMode, InputSubmissionMode, PasteSegment, QueuedPrompt,
+    StreamControl,
 };
 
 /// What Esc does in the live TUI.
@@ -40,15 +39,6 @@ pub(super) enum RunningEscapeAction {
 pub(super) enum RunningTerminalError {
     Recoverable(rho_providers::model::ModelError),
     Terminal(anyhow::Error),
-}
-
-impl RunningTerminalError {
-    pub(super) fn into_anyhow(self) -> anyhow::Error {
-        match self {
-            Self::Recoverable(error) => error.into(),
-            Self::Terminal(error) => error,
-        }
-    }
 }
 
 impl From<std::io::Error> for RunningTerminalError {
@@ -96,16 +86,14 @@ impl App {
         if self.handle_questionnaire_key(key)? {
             return Ok(());
         }
-        if self.handle_running_config_number_key(key, terminal)? {
-            return Ok(());
-        }
-        if self.handle_running_text_input_key(key).await? {
+        if self.handle_text_input_key(key)? {
             return Ok(());
         }
         if self.handle_running_picker_key(key, terminal).await? {
             return Ok(());
         }
         if self.handle_panel_overlay_key(key, terminal) {
+            self.refuse_jobs_view_attach();
             return Ok(());
         }
         if self.handle_side_chat_key(key, terminal) {
@@ -128,7 +116,13 @@ impl App {
         // Same order as the idle composer: pin cycle wins when a user binds
         // `cycle_pinned_model` onto a key that `handle_configurable_*` also
         // owns (for example Ctrl-P rebound to `toggle_tool_output`).
-        if self.handle_running_favorite_cycle_key(key)? {
+        if crate::keybindings::ReservedComposerKey::from_key(key)
+            == Some(crate::keybindings::ReservedComposerKey::ReasoningCycle)
+        {
+            self.cycle_daemon_reasoning()?;
+            return Ok(());
+        }
+        if self.handle_favorite_cycle_key(key)? {
             return Ok(());
         }
         if self.handle_configurable_running_key(key, terminal)? {
@@ -191,6 +185,14 @@ impl App {
         match self.parse_input_command() {
             Ok(Some(invocation)) => {
                 self.clear_submitted_input();
+                // A command the daemon runs is queued as typed, with the
+                // pasted body its parsed arguments only mark.
+                if super::daemon_gate::command_route(invocation.id)
+                    == super::daemon_gate::CommandRoute::Prompt
+                    && self.daemon_offers_built_in(invocation.id)
+                {
+                    return self.queue_prompt(prompt, display_prompt, paste_segments, Vec::new());
+                }
                 self.execute_command_during_turn(invocation, terminal)
                     .await?;
             }
@@ -198,18 +200,11 @@ impl App {
                 self.queue_steering_prompt(prompt, display_prompt, paste_segments)?;
             }
             Err(commands::CommandParseError::Unknown(name)) => {
-                if let Some(expanded) = self.resolve_prompt_template(
-                    &name,
-                    super::command_palette::slash_command_args(&prompt),
-                ) {
-                    self.queue_steering_prompt(expanded.clone(), expanded, Vec::new())?;
-                } else {
-                    self.clear_submitted_input();
-                    self.insert_entry(&Entry::Error(format!(
-                        "unknown or unavailable command '/{name}' while a model turn is running"
-                    )));
-                    self.set_status("command unavailable while running");
+                self.clear_submitted_input();
+                if self.daemon_prompt_command_available(&name) {
+                    return self.queue_prompt(prompt, display_prompt, paste_segments, Vec::new());
                 }
+                self.daemon_command_unavailable(&name);
             }
         }
         Ok(())
@@ -265,73 +260,11 @@ impl App {
         });
         self.select_pending_recall_target();
         self.pending_input_changed();
-        let when = if self.turn.is_compacting() {
-            "after compact"
-        } else {
-            "after the current turn"
-        };
         self.set_status(format!(
-            "queued message {} for {when}",
+            "queued message {} for after the current turn",
             self.pending.queued_prompts().len()
         ));
         Ok(())
-    }
-
-    pub(super) fn execute_model_command_during_turn(
-        &mut self,
-        invocation: CommandInvocation,
-    ) -> anyhow::Result<()> {
-        let model = invocation.args.trim();
-        if model.is_empty() {
-            self.refresh_available_auths();
-            let picker = self.conversation_model_picker_during_run();
-            if picker.items.is_empty() {
-                self.report_missing_cached_provider_models();
-            } else {
-                self.input_ui.set_composer(ComposerMode::Picker(picker));
-                self.set_status("select model for next turn");
-            }
-            return Ok(());
-        }
-
-        self.refresh_available_auths();
-        match self.resolve_model_selection(
-            model,
-            &self.info.runtime.provider,
-            &self.info.runtime.auth,
-        ) {
-            Ok(selection) => self.queue_model_selection(selection),
-            Err(err) => {
-                self.insert_entry(&Entry::Error(err.to_string()));
-                self.set_status("model switch failed");
-                Ok(())
-            }
-        }
-    }
-
-    pub(super) fn queue_model_selection(
-        &mut self,
-        selection: InteractiveModelSelection,
-    ) -> anyhow::Result<()> {
-        let provider_model = format!(
-            "{}/{}",
-            selection.selection.provider, selection.selection.model
-        );
-        self.pending_model_selection = Some(selection);
-        self.set_status(format!(
-            "model change to {provider_model} queued for after this run"
-        ));
-        Ok(())
-    }
-
-    pub(super) async fn apply_pending_model_selection(
-        &mut self,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<()> {
-        let Some(pending) = self.pending_model_selection.take() else {
-            return Ok(());
-        };
-        self.select_model_with_omission_notice(pending, agent).await
     }
 
     pub(super) async fn execute_command_during_turn(
@@ -339,10 +272,28 @@ impl App {
         invocation: CommandInvocation,
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
+        match super::daemon_gate::command_route(invocation.id) {
+            super::daemon_gate::CommandRoute::Options => {
+                return self.execute_daemon_option_command(&invocation)
+            }
+            super::daemon_gate::CommandRoute::Prompt => {
+                if !self.daemon_offers_built_in(invocation.id) {
+                    self.daemon_command_unavailable(&invocation.name);
+                    return Ok(());
+                }
+                // Raw arguments keep `/agents create`'s sub-action.
+                let prompt = format!("/{} {}", invocation.name, invocation.raw_args.trim());
+                return self.queue_prompt(prompt.clone(), prompt, Vec::new(), Vec::new());
+            }
+            super::daemon_gate::CommandRoute::Ui => {}
+        }
         match invocation.id {
             CommandId::Exit => self.execute_exit_command(),
             CommandId::Theme => self.open_theme_picker(),
-            CommandId::Config => self.execute_config_command(terminal),
+            CommandId::Config => {
+                self.open_daemon_config();
+                Ok(())
+            }
             CommandId::Info => self.execute_info_command(),
             CommandId::Help => self.execute_help_command(),
             CommandId::Skills => self.execute_skills_command(),
@@ -351,13 +302,11 @@ impl App {
             CommandId::Changelog => self.execute_changelog_command(&invocation, terminal),
             CommandId::Diff => self.execute_diff_command(),
             CommandId::Doctor => self.start_doctor_command(),
+            CommandId::Jobs => self.execute_jobs_command(),
             CommandId::Copy => self.execute_copy_command(),
             CommandId::Export => self.execute_export_command(&invocation),
             CommandId::Mcp => self.execute_mcp_command(),
-            CommandId::Computer => self.execute_computer_command_during_turn(invocation).await,
             CommandId::Title => self.execute_title_command(&invocation),
-            CommandId::Goal => self.execute_goal_command_during_turn(invocation),
-            CommandId::Model => self.execute_model_command_during_turn(invocation),
             CommandId::Limits => {
                 self.start_limits_command();
                 Ok(())
@@ -365,12 +314,11 @@ impl App {
             CommandId::Spend => self.execute_spend_command(),
             CommandId::Todo => self.execute_todo_command(terminal),
             CommandId::Side => self.execute_side_command(invocation).await,
-            CommandId::CreateAgent => {
-                self.set_status("agent creation is unavailable while a model turn is running");
-                Ok(())
-            }
-            CommandId::AddDir
+            // Option and prompt commands returned above.
+            CommandId::Model
             | CommandId::Advisor
+            | CommandId::CreateAgent
+            | CommandId::AddDir
             | CommandId::Codemode
             | CommandId::Context
             | CommandId::Permissions
@@ -395,28 +343,6 @@ impl App {
                 Ok(())
             }
         }
-    }
-
-    pub(super) fn handle_running_config_number_key(
-        &mut self,
-        key: KeyEvent,
-        terminal: &mut DefaultTerminal,
-    ) -> anyhow::Result<bool> {
-        if !matches!(self.input_ui.composer(), ComposerMode::ConfigNumberInput(_)) {
-            return Ok(false);
-        }
-        self.handle_config_number_key(key, terminal)
-    }
-
-    pub(super) async fn handle_running_text_input_key(
-        &mut self,
-        key: KeyEvent,
-    ) -> anyhow::Result<bool> {
-        if !matches!(self.input_ui.composer(), ComposerMode::TextInput(_)) {
-            return Ok(false);
-        }
-        self.handle_text_input_key(key, super::config_row::ConfigCommitCtx::DuringTurn)
-            .await
     }
 
     pub(super) fn next_running_frame_deadline(
@@ -450,8 +376,6 @@ impl App {
         &mut self,
         first_event: Event,
         terminal: &mut DefaultTerminal,
-        interrupt_requested: &AtomicBool,
-        tool_call_active: &AtomicBool,
     ) -> Result<StreamControl, RunningTerminalError> {
         self.observe_questionnaire_input(&first_event);
         self.notifier.observe_focus(&first_event);
@@ -468,9 +392,7 @@ impl App {
                         control = StreamControl::Resize;
                     }
                     if self.should_quit {
-                        return Ok(
-                            self.request_running_interrupt(interrupt_requested, tool_call_active)
-                        );
+                        return Ok(self.request_running_interrupt());
                     }
                     break 'event;
                 }
@@ -489,10 +411,7 @@ impl App {
                                         )
                                     })?;
                                     self.cancel_inline_shells();
-                                    return Ok(self.request_running_interrupt(
-                                        interrupt_requested,
-                                        tool_call_active,
-                                    ));
+                                    return Ok(self.request_running_interrupt());
                                 }
                                 Some(RunningEscapeAction::CancelInlineShells) => {
                                     let _ = self.cancel_inline_shells();
@@ -503,10 +422,7 @@ impl App {
                                     break 'event;
                                 }
                                 Some(RunningEscapeAction::AbortTurn) => {
-                                    return Ok(self.request_running_interrupt(
-                                        interrupt_requested,
-                                        tool_call_active,
-                                    ));
+                                    return Ok(self.request_running_interrupt());
                                 }
                                 Some(RunningEscapeAction::FocusedComposer) | None => {}
                             }
@@ -534,8 +450,7 @@ impl App {
                             break 'event;
                         }
                         if self.should_quit {
-                            return Ok(self
-                                .request_running_interrupt(interrupt_requested, tool_call_active));
+                            return Ok(self.request_running_interrupt());
                         }
                     }
                     Event::Paste(text) => {
@@ -615,13 +530,8 @@ impl App {
             && self.turn.session_ui().esc_aborts_operation()
     }
 
-    pub(super) fn request_running_interrupt(
-        &mut self,
-        interrupt_requested: &AtomicBool,
-        tool_call_active: &AtomicBool,
-    ) -> StreamControl {
-        interrupt_requested.store(true, Ordering::SeqCst);
-        if tool_call_active.load(Ordering::SeqCst) {
+    pub(super) fn request_running_interrupt(&mut self) -> StreamControl {
+        if self.turn.tool_calls().is_running() {
             self.set_status("interrupting tool");
         }
         StreamControl::Interrupt

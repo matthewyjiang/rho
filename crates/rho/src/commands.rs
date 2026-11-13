@@ -1,6 +1,7 @@
 use thiserror::Error;
 
 mod availability;
+pub(crate) mod create_agent_turn;
 pub(crate) mod init_turn;
 pub(crate) use availability::CommandContext;
 
@@ -25,9 +26,7 @@ pub enum CommandId {
     Init,
     Help,
     Compact,
-    Computer,
     Copy,
-    Goal,
     Skills,
     Theme,
     Hooks,
@@ -38,6 +37,7 @@ pub enum CommandId {
     Codemode,
     Diff,
     Doctor,
+    Jobs,
     Limits,
     Export,
     Mcp,
@@ -119,19 +119,6 @@ pub enum CommandParseError {
     #[error("unknown command '/{0}'")]
     Unknown(String),
 }
-
-const GOAL_ARGUMENT_CHOICES: &[CommandArgumentChoice] = &[
-    CommandArgumentChoice {
-        completion: "/goal resume",
-        usage: "/goal resume",
-        description: "verify and continue a blocked goal",
-    },
-    CommandArgumentChoice {
-        completion: "/goal clear",
-        usage: "/goal clear",
-        description: "stop and clear the current goal",
-    },
-];
 
 const REMEMBER_ARGUMENT_CHOICES: &[CommandArgumentChoice] = &[CommandArgumentChoice {
     completion: "/remember global",
@@ -222,39 +209,30 @@ const CODEMODE_ARGUMENT_CHOICES: &[CommandArgumentChoice] = &[
     },
 ];
 
-const COMPUTER_ARGUMENT_CHOICES: &[CommandArgumentChoice] = &[
-    CommandArgumentChoice {
-        completion: "/computer status",
-        usage: "/computer status",
-        description: "show computer use and Cua Driver detection without connecting",
-    },
-    CommandArgumentChoice {
-        completion: "/computer setup",
-        usage: "/computer setup",
-        description: "install, configure and verify Cua Driver with separate consent",
-    },
-    CommandArgumentChoice {
-        completion: "/computer update",
-        usage: "/computer update",
-        description: "check for a newer Cua Driver and install it with separate consent",
-    },
-    CommandArgumentChoice {
-        completion: "/computer on",
-        usage: "/computer on",
-        description: "grant this session access to the local desktop through Cua Driver",
-    },
-    CommandArgumentChoice {
-        completion: "/computer off",
-        usage: "/computer off",
-        description: "revoke computer use and disconnect this session",
-    },
-];
-
 const CHANGELOG_ARGUMENT_CHOICES: &[CommandArgumentChoice] = &[CommandArgumentChoice {
     completion: "/changelog latest",
     usage: "/changelog latest",
     description: "fetch notes for the latest published release",
 }];
+
+/// Commands Rho 3 removed, by name, with the notice typing one shows.
+const REMOVED_COMMANDS: &[(&str, &str)] = &[
+    (
+        "computer",
+        "/computer was removed in Rho 3 along with computer use",
+    ),
+    (
+        "goal",
+        "/goal was removed in Rho 3: state the outcome you want in the prompt instead",
+    ),
+];
+
+/// The notice for `/name` when it is a command Rho 3 removed.
+pub(crate) fn removed_command_notice(name: &str) -> Option<&'static str> {
+    REMOVED_COMMANDS
+        .iter()
+        .find_map(|(removed, notice)| (*removed == name).then_some(*notice))
+}
 
 // Keep alphabetical by `name` so the slash palette stays sorted as commands are added.
 pub static COMMANDS: &[CommandSpec] = &[
@@ -308,13 +286,6 @@ pub static COMMANDS: &[CommandSpec] = &[
         usage: "/compact [instructions]",
         description: "compact older conversation context, optionally saying what to keep",
         argument_choices: &[],
-    },
-    CommandSpec {
-        id: CommandId::Computer,
-        name: "computer",
-        usage: "/computer [status|setup|update|on|off]",
-        description: "computer use powered by Cua Driver, off until explicitly enabled",
-        argument_choices: COMPUTER_ARGUMENT_CHOICES,
     },
     CommandSpec {
         id: CommandId::Config,
@@ -379,13 +350,6 @@ pub static COMMANDS: &[CommandSpec] = &[
         argument_choices: FAST_ARGUMENT_CHOICES,
     },
     CommandSpec {
-        id: CommandId::Goal,
-        name: "goal",
-        usage: "/goal [condition|resume|clear]",
-        description: "show status or work until a condition is met",
-        argument_choices: GOAL_ARGUMENT_CHOICES,
-    },
-    CommandSpec {
         id: CommandId::Help,
         name: "help",
         usage: "/help",
@@ -411,6 +375,13 @@ pub static COMMANDS: &[CommandSpec] = &[
         name: "init",
         usage: "/init",
         description: "survey the repository and write AGENTS.md",
+        argument_choices: &[],
+    },
+    CommandSpec {
+        id: CommandId::Jobs,
+        name: "jobs",
+        usage: "/jobs",
+        description: "watch and control every job the daemon runs, across projects",
         argument_choices: &[],
     },
     CommandSpec {

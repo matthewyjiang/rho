@@ -9,10 +9,10 @@
 mod acp_e2e;
 #[path = "support/tui_pty_antigravity_runtime.rs"]
 mod antigravity_runtime;
-#[path = "support/tui_pty_attach.rs"]
-mod attach;
 #[path = "support/tui_pty_attach_previews.rs"]
 mod attach_previews;
+#[path = "support/tui_pty_attach_view.rs"]
+mod attach_view;
 #[path = "support/claude_e2e.rs"]
 mod claude_e2e;
 #[path = "support/tui_pty_claude_runtime.rs"]
@@ -21,6 +21,8 @@ mod claude_runtime;
 mod composer_unicode;
 #[path = "support/tui_pty_cursor_runtime.rs"]
 mod cursor_runtime;
+#[path = "support/key_checking_provider.rs"]
+mod key_checking_provider;
 #[path = "support/tui_pty_login.rs"]
 mod login;
 
@@ -60,7 +62,15 @@ fn assert_pass(name: &str) {
 // Owner: interactive turn orchestration (PTY).
 #[test]
 fn send_confirm_handoff() {
-    assert_pass("send_confirm_handoff");
+    assert_pass("daemon_send_confirm_handoff");
+}
+
+// Covers: resuming a session that needs a context handoff under Auto with no
+// classifier model opens the handoff, then the classifier gate.
+// Owner: interactive TUI (PTY).
+#[test]
+fn auto_permission_mode_recovered_handoff() {
+    assert_pass("daemon_auto_permission_mode_recovered_handoff");
 }
 
 // Covers: review a long plan and preserve approval feedback in model history.
@@ -77,13 +87,11 @@ fn plan_exit_keep_planning() {
     assert_pass("plan_exit_keep_planning");
 }
 
-// Covers: handoff from both goal and idle completion drivers must run before returning.
+// Covers: handoff from the idle completion driver must run before returning.
 // Owner: interactive turn orchestration (PTY).
 #[test]
-fn plan_exit_non_composer_drivers() {
-    for scenario in ["plan_exit_goal", "plan_exit_idle_completion"] {
-        assert_pass(scenario);
-    }
+fn plan_exit_idle_completion_driver() {
+    assert_pass("plan_exit_idle_completion");
 }
 
 // Covers: a proposal turn failing after approval must discard intent, not execute.
@@ -178,6 +186,69 @@ fn permission_cycle_is_session_only() {
     }
 }
 
+// Covers: a home whose config.toml rho 2.x wrote starts, with its display
+// and keybinding settings still applied and the original kept as a backup.
+// Owner: interactive startup through PTY
+#[test]
+fn a_2x_config_starts_and_keeps_its_tui_settings() {
+    assert_pass("config_2x_upgrade");
+}
+
+// Covers: the stderr notice of a 2.x config upgrade scrolls away under the
+// TUI, so the first TUI after it shows the upgrade in its transcript, also
+// when another rho process (here a non-TUI command, as the daemon would be)
+// did the upgrade, and no later TUI shows it again.
+// Owner: interactive startup through PTY
+#[test]
+fn a_2x_config_upgrade_shows_once_in_the_next_tui() {
+    const NOTE: &str = "what changed in rho 3";
+    let home = IsolatedHome::new().unwrap();
+    fs::write(
+        &home.config_path,
+        "[model]\nprovider = \"openai\"\nmodel = \"gpt-5.5\"\nauth = \"api-key\"\n\n[display]\ntheme = \"nord\"\n\n[web_search]\nmode = \"off\"\n\n[behavior]\ncredential_store = \"file\"\n",
+    )
+    .unwrap();
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_rho"));
+    // Upgrades the file, as every rho process does first; exits 1 since no
+    // daemon runs.
+    let status = home
+        .command(&binary)
+        .args(["daemon", "status"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&status.stderr);
+    assert!(
+        stderr.contains("config.toml.2x.bak"),
+        "the non-TUI process did not upgrade the config: {stderr}"
+    );
+    let plan = RhoLaunchPlan::matrix(
+        &binary,
+        &home,
+        PtySize {
+            rows: 30,
+            cols: 120,
+        },
+    )
+    .with_env("OPENAI_API_KEY", "fixture-openai-key");
+
+    let mut first = PtyHarness::spawn_named(&plan, "config_2x_note_first").unwrap();
+    first
+        .wait_for_text(NOTE, WaitTimeout::secs(20, "the upgrade note"))
+        .unwrap();
+    assert_eq!(first.quit_with_exit_command().unwrap(), 0);
+
+    let mut second = PtyHarness::spawn_named(&plan, "config_2x_note_second").unwrap();
+    // The note is in the transcript before the first frame, which draws the
+    // header with it.
+    second
+        .wait_for_text("rho  v", WaitTimeout::secs(20, "startup"))
+        .unwrap();
+    second
+        .wait_for_text_gone(NOTE, WaitTimeout::secs(1, "no second note"))
+        .unwrap();
+    assert_eq!(second.quit_with_exit_command().unwrap(), 0);
+}
+
 // Covers: repeated presses queue from the pending mode, not the active mode,
 // and cancellation applies the last queued policy before the next idle press.
 // Owner: interactive queued permission shortcut through PTY
@@ -226,7 +297,9 @@ fn remember_appends_instructions_without_model_turn() {
 // interrupt the interactive session. Owner: interactive TUI lifecycle.
 #[test]
 fn model_prompt_switch_and_invalid_file_recovery() {
-    assert_pass("model_prompt_switch");
+    for scenario in ["model_prompt_switch", "model_prompt_before_first_prompt"] {
+        assert_pass(scenario);
+    }
 }
 
 // Covers: /init must target the root, /new must reload it without changing the
@@ -243,6 +316,14 @@ fn init_writes_project_instructions_and_new_reloads_them() {
 #[test]
 fn init_preserves_existing_root_instructions_and_new_reloads_additions() {
     assert_pass("init_existing");
+}
+
+// Covers: a session signed out of its provider says so and routes a prompt
+// to the login picker, holding it.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_signed_out_session_routes_a_prompt_to_login() {
+    assert_pass("daemon_signed_out_setup_state");
 }
 
 // Covers: Plan must reject /init before writing project instructions.
@@ -339,37 +420,6 @@ fn mcp_connecting_keeps_the_session_inspectable() {
     assert_pass("mcp_connecting");
 }
 
-// Covers: desktop grants are explicit and can be revoked while a turn runs;
-// plan mode cannot grant desktop input authority.
-// Owner: interactive TUI
-#[test]
-fn computer_use_authorization_and_revocation() {
-    assert_pass("computer_use");
-}
-
-#[test]
-fn computer_setup_grants_access() {
-    assert_pass("computer_setup");
-}
-
-#[test]
-fn computer_setup_cancel_grants_nothing() {
-    assert_pass("computer_setup_cancel");
-}
-
-#[test]
-fn computer_plan_mode_is_denied() {
-    assert_pass("computer_plan_denied");
-}
-
-// Covers: real restarts restore consent, restricted startup cannot use it, and
-// during-turn off persists revocation for the next process.
-// Owner: interactive TUI and machine-local preference lifecycle.
-#[test]
-fn computer_preference_survives_restart_and_respects_revocation() {
-    assert_pass("computer_preference");
-}
-
 // Covers: a turn held during MCP connect must start on its own once the
 // servers settle, without a second Enter.
 // Owner: interactive TUI
@@ -383,6 +433,32 @@ fn mcp_connect_release_starts_the_held_turn() {
 #[test]
 fn mcp_hold_take_back_returns_the_prompt() {
     assert_pass("mcp_hold_take_back");
+}
+
+// Covers: a resource picked from `@` reaches the model as an attachment,
+// and an MCP prompt command's argument completes from its server. Both come
+// from the daemon session's servers: a TUI that reads only servers of its
+// own offers neither.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn mcp_resources_and_prompt_arguments_reach_the_composer() {
+    assert_pass("mcp_composer");
+}
+
+// Covers: a daemon session whose only tool sources are OpenAPI sources
+// lists no connecting MCP server, so a TUI that reads loading from the
+// servers alone sends a prompt during the load and waits on the daemon with
+// the keyboard dead. The turn must be held, come back on Esc, and start
+// once the load ends.
+// Owner: interactive TUI as a daemon client
+#[test]
+fn daemon_openapi_load_holds_a_turn_as_mcp_connect_does() {
+    for scenario in [
+        "daemon_openapi_hold_take_back",
+        "daemon_openapi_load_release",
+    ] {
+        assert_pass(scenario);
+    }
 }
 
 #[test]
@@ -421,6 +497,14 @@ fn type_during_compact() {
 #[test]
 fn submit_during_compact() {
     assert_pass("submit_during_compact");
+}
+
+// Covers: a completed /compact shows its card with the token reduction and
+// nothing else, and says the context compacted.
+// Owner: interactive TUI
+#[test]
+fn compact_completes() {
+    assert_pass("compact_completes");
 }
 
 // Covers: idle usage calibration must survive into the next prompt's visible
@@ -498,11 +582,12 @@ fn fast_mode_appears_beside_the_active_model() {
     let home = IsolatedHome::new().unwrap();
     fs::write(
         &home.config_path,
-        r#"provider = "openai-codex"
+        r#"web_search.mode = "off"
+
+[model]
+provider = "openai-codex"
 model = "gpt-5.5"
 auth = "codex"
-check_for_updates = false
-web_search.mode = "off"
 
 [behavior]
 credential_store = "file"
@@ -586,6 +671,16 @@ fn doctor_overlay_opens_and_dismisses() {
     assert_pass("doctor_overlay");
 }
 
+// Covers: the /doctor MCP row reports the session's servers, and the daemon
+// session's servers rather than those of a client whose config differs.
+// Owner: interactive TUI (#1685)
+#[test]
+fn doctor_reports_the_session_mcp_servers() {
+    assert_pass("doctor_mcp");
+    #[cfg(unix)]
+    assert_pass("daemon_doctor_mcp");
+}
+
 // Covers: /hooks must open a single-pane overlay with the spawn contract, and
 // Esc must dismiss it instead of leaving a transcript notice.
 // Owner: interactive TUI
@@ -647,20 +742,16 @@ fn tab_completion_keeps_enter_on_the_bare_command() {
     assert_pass("tab_complete_enter_bare_command");
 }
 
-// Covers: advisor mode must ask for a model before it claims to be on, keep the
-// chosen model across off and on, warn when a saved mode has no model, and bring
-// the advisor's answer back to the executor without ending the turn on failure.
+// Covers: a saved advisor mode with no model warns instead of claiming to run.
 // Owner: interactive TUI
-#[test]
-fn advisor_command() {
-    assert_pass("advisor_command");
-}
-
 #[test]
 fn advisor_missing_model() {
     assert_pass("advisor_missing_model");
 }
 
+// Covers: the advisor's answer comes back to the executor without ending the
+// turn on failure.
+// Owner: interactive TUI
 #[test]
 fn advisor_review() {
     assert_pass("advisor_review");
@@ -672,7 +763,9 @@ fn mermaid_flowchart_survives_narrow_and_restored_panes() {
 }
 
 // Covers: a bare /skill command loads the skill before the model responds, and
-// the loaded SKILL.md stays behind a collapsed card until Ctrl+O expands it.
+// the loaded SKILL.md stays behind a collapsed card until Ctrl+O expands it;
+// an unknown skill is reported as an unknown command, and a command Rho 3
+// removed says so.
 // Owner: interactive TUI
 #[test]
 fn bare_skill_command_starts_a_model_turn() {
@@ -701,6 +794,20 @@ fn bare_skill_command_starts_a_model_turn() {
 
     harness
         .wait_for_text("gpt-5.5", WaitTimeout::secs(20, "startup"))
+        .unwrap();
+    harness.submit_text("/skill:missing-skill").unwrap();
+    harness
+        .wait_for_text(
+            "unknown command '/skill:missing-skill'",
+            WaitTimeout::secs(10, "unknown skill"),
+        )
+        .unwrap();
+    harness.submit_text("/goal ship it").unwrap();
+    harness
+        .wait_for_text(
+            "/goal was removed in Rho 3",
+            WaitTimeout::secs(10, "removed command"),
+        )
         .unwrap();
     harness.submit_text("/skill:test-skill").unwrap();
     harness
@@ -792,6 +899,8 @@ fn skill_mentions_complete_and_load_in_one_batch() {
     assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
 }
 
+// Covers: /skill says why it cannot run for an agent without the skill tool.
+// Owner: interactive TUI
 #[test]
 fn skill_command_reports_when_skill_tool_is_disabled() {
     let home = IsolatedHome::new().unwrap();
@@ -828,21 +937,6 @@ fn skill_command_reports_when_skill_tool_is_disabled() {
     assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
 }
 
-#[test]
-fn goal_waits_for_subagents_before_evaluation() {
-    assert_pass("goal_waits_for_subagents");
-}
-
-#[test]
-fn goal_answers_background_agent_questionnaire_while_waiting() {
-    assert_pass("goal_questionnaire");
-}
-
-#[test]
-fn goal_waits_for_subagents_before_retrying() {
-    assert_pass("goal_waits_for_subagents_during_retry");
-}
-
 // Covers: full prompt expansion survives streaming and launch while collapsed
 // receipts and finished errors remain visible above the retained prompt.
 // Owner: interactive UX; the scenario holds each intermediate phase explicitly.
@@ -866,14 +960,6 @@ fn subagent_rail_mouse_activation_uses_release_and_survives_refresh() {
 #[test]
 fn attach_opens_a_picker_of_running_subagents() {
     assert_pass("attach_picker");
-}
-
-// Covers: `rho attach` with no id must open the picker even when the directory
-// has no running subagents.
-// Owner: interactive TUI
-#[test]
-fn cli_attach_opens_an_empty_picker_when_nothing_is_running() {
-    assert_pass("attach_cli_empty");
 }
 
 // Covers: /attach must swap the main TUI into a live in-place attach view
@@ -937,7 +1023,8 @@ fn approval_double_click_allows_and_resumes_turn() {
 }
 
 // Covers: a click focuses an inline choice option without resolving it, and a
-// double click confirms it like Enter.
+// double click confirms it like Enter, deleting a session the TUI just left,
+// which the daemon still holds open.
 // Owner: interactive TUI
 #[test]
 fn inline_choice_click_focuses_and_double_click_confirms() {
@@ -996,11 +1083,14 @@ fn side_chat_selection_copy_and_scrollbar_drag() {
     assert_pass("side_chat_pointer");
 }
 
-// Covers: hovering the statusline model field marks it, and clicking opens the model picker.
+// Covers: provider and model hover and click as one target that opens the
+// model picker; a reasoning click cycles the effort; a model without
+// reasoning paints no reasoning target.
 // Owner: interactive TUI
 #[test]
-fn statusline_model_hover_and_click_opens_picker() {
+fn statusline_model_and_reasoning_clicks() {
     assert_pass("statusline_model_click");
+    assert_pass("statusline_no_reasoning_click");
 }
 
 // Covers: hovering a composer attachment offers removal, and clicking removes it.
@@ -1030,9 +1120,25 @@ fn screen_text_selection_copies_composer_text() {
     assert_pass("screen_text_selection");
 }
 
+// Covers: Esc at a subagent's questionnaire while its parent's turn runs
+// dismisses only the questionnaire.
+// Owner: interactive delegated-questionnaire routing (PTY)
+#[test]
+fn background_agent_questionnaire_cancel_leaves_the_parent_turn_running() {
+    assert_pass("cancel_background_agent_questionnaire");
+}
+
 #[test]
 fn background_agent_questionnaire_is_answered_in_parent_tui() {
     assert_pass("background_agent_questionnaire");
+}
+
+// Covers: a subagent that asks after its parent's turn ended still reaches
+// the person, and its answer the subagent, with no parent turn in between.
+// Owner: interactive delegated-questionnaire routing (PTY)
+#[test]
+fn late_background_agent_questionnaire_is_answered_while_idle() {
+    assert_pass("late_background_agent_questionnaire");
 }
 
 // Covers: completed reasoning can be revealed and hidden retroactively, in zen
@@ -1084,10 +1190,17 @@ fn steering_can_be_retracted_during_a_tool() {
     assert_pass("retract_steering_during_tool");
 }
 
-// Covers: /fast suggestions follow model switches. Owner: interactive TUI
+// Covers: /fast suggestions follow model switches, and fast mode turned off
+// on a model that has none stays off once the session returns to a model
+// that has it. Owner: interactive TUI
 #[test]
 fn fast_command_suggestions_follow_model_switches() {
-    assert_pass("fast_command_discovery");
+    for scenario in [
+        "fast_command_discovery",
+        "daemon_fast_off_without_fast_mode",
+    ] {
+        assert_pass(scenario);
+    }
 }
 
 // Covers: Tab completes one nested path component at a time in the inline
@@ -1113,13 +1226,6 @@ fn pinned_model_cycles_normalize_reasoning() {
     }
 }
 
-// Covers: web search routing and self-hosted endpoints can be configured,
-// reset, and a connection test cancelled. Owner: interactive config UX
-#[test]
-fn web_search_settings_configure_and_reset() {
-    assert_pass("web_search_config");
-}
-
 // Covers: dual-grant OAuth offers browser or device-code even with a browser.
 // Owner: interactive login UX
 #[test]
@@ -1137,13 +1243,6 @@ fn quiet_subagent_notices_coalesce_without_extra_requests() {
     }
 }
 
-// Covers: a failed parent action under /goal retries without waiting for the
-// blocked child. Owner: interactive turn orchestration (PTY)
-#[test]
-fn goal_retries_a_failed_action_without_waiting_for_children() {
-    assert_pass("goal_subagent_action_retry");
-}
-
 // Covers: boundary notices keep a streaming message intact, and a pending
 // background failure is folded in before the parent turn completes.
 // Owner: interactive turn orchestration (PTY)
@@ -1159,4 +1258,321 @@ fn boundary_notices_arrive_without_breaking_the_turn() {
 #[test]
 fn pending_input_stays_below_the_activity_rail() {
     assert_pass("pending_input_below_activity");
+}
+
+// Covers: `behavior.keep_cache_warm`: a `keep_warm` process holds the
+// session's cache, pings follow the cache's schedule, stop on a miss, and
+// are totalled, and with the setting off `process start` offers no
+// `keep_warm`.
+// Owner: interactive UX (PTY)
+#[test]
+fn keep_warm_pings_the_prompt_cache_while_a_process_holds_it() {
+    for scenario in ["keep_warm_pings", "keep_warm_off"] {
+        assert_pass(scenario);
+    }
+}
+
+// Covers: resuming a saved session follows it in the daemon and shows its
+// prompt, tool card, and answer.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_resume_shows_the_saved_conversation() {
+    assert_pass("daemon_resume");
+}
+
+// Covers: a pre-1.11 session file is refused naming rho 2.x when resumed, and
+// leaves the resume picker working.
+// Owner: session persistence, through the TUI
+#[test]
+fn pre_tree_session_is_refused_naming_the_release_that_opens_it() {
+    assert_pass("pre_tree_session");
+}
+
+// Covers: quit during a daemon turn leaves it running and prints a usable
+// resume hint for a new saved session, but not an untouched session.
+// Owner: interactive daemon session lifecycle
+#[test]
+fn daemon_detach_preserves_the_turn_and_resume_hint() {
+    assert_pass("daemon_detach");
+}
+
+// Covers: the daemon-hosted TUI reconnects across a daemon restarting in
+// place, keeps its conversation without an error, and its next prompt runs
+// in the restarted daemon (#1713).
+// Owner: interactive daemon session lifecycle
+#[test]
+fn daemon_restart_keeps_the_tui_following_its_session() {
+    assert_pass("daemon_restart");
+}
+
+// Covers: a TUI whose daemon is another build of its protocol version says
+// so at launch, with what `rho daemon restart` would interrupt (#1776).
+// Owner: interactive TUI as a daemon client
+#[test]
+fn daemon_build_skew_shows_at_launch() {
+    assert_pass("daemon_build_skew");
+}
+
+// Covers: `/jobs` lists jobs running in two projects, and a permission
+// prompt the other project's job waits on is answered from the view (#1668).
+// Owner: interactive TUI as a daemon client
+#[test]
+fn daemon_jobs_view_lists_projects_and_answers_a_prompt() {
+    assert_pass("daemon_jobs_view");
+}
+
+// Covers: `/jobs` starts a session, cancels its turn, messages it, filters
+// the list, and attaches to it (#1668).
+// Owner: interactive TUI as a daemon client
+#[test]
+fn daemon_jobs_view_starts_cancels_messages_and_attaches() {
+    assert_pass("daemon_jobs_view_actions");
+}
+
+// Covers: `/jobs` starts a session in its own git worktree, and its row
+// shows the worktree's branch (#1673).
+// Owner: interactive TUI as a daemon client
+#[test]
+fn daemon_jobs_view_starts_a_session_in_a_worktree() {
+    assert_pass("daemon_jobs_view_worktree");
+}
+
+// Covers: a prompt sent while a restarted daemon connects the session's MCP
+// servers again is held, as at startup, and runs once they have.
+// Owner: interactive TUI as a daemon client
+#[test]
+fn daemon_restart_holds_a_prompt_while_mcp_connects_again() {
+    assert_pass("daemon_restart_mcp");
+}
+
+// Covers: a prompt sent from the TUI runs in the daemon: its user row shows
+// once, its tool card and reply stream in, and the composer is idle once the
+// session rests.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_prompt_streams_the_turn_and_returns_to_idle() {
+    assert_pass("daemon_prompt");
+}
+
+// Covers: Esc cancels the daemon's running turn, the transcript says the
+// model was interrupted, and the next prompt runs.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_cancel_interrupts_the_turn_and_returns_to_idle() {
+    assert_pass("daemon_cancel");
+}
+
+// Covers: the statusline's cost follows a response while the daemon streams
+// it, and the finished turn counts it once.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_stream_cost_follows_the_response() {
+    assert_pass("daemon_stream_cost");
+}
+
+// Covers: a rate-limited provider request shows the retry's status while
+// the retried request runs, then its reply.
+// Owner: interactive TUI
+#[test]
+fn provider_retry_shows_its_status_then_the_reply() {
+    assert_pass("provider_retry");
+}
+
+// Covers: the provider's own web search shows as a finished card with its
+// query.
+// Owner: interactive TUI
+#[test]
+fn web_search_activity_shows_a_finished_card() {
+    assert_pass("web_search_activity");
+}
+
+// Covers: a turn the provider failed with a diagnostic shows the
+// diagnostic.
+// Owner: interactive TUI
+#[test]
+fn provider_diagnostic_shows_on_a_failed_turn() {
+    assert_pass("provider_diagnostic");
+}
+
+// Covers: `/agents create` loads the creator skill, and an agent without the
+// creator's tools is told which it lacks; the daemon runs the creator.
+// Owner: interactive TUI agent creator
+#[test]
+fn agent_creator_starts_or_names_missing_tools() {
+    for scenario in ["create_agent_command", "create_agent_missing_tools"] {
+        assert_pass(scenario);
+    }
+}
+
+// Covers: the model picker opens and dismisses, the pin cycle moves through
+// pinned models, and `/model` toggles its pinned and all views.
+// Owner: interactive TUI model picker
+#[test]
+fn model_picker_opens_and_cycles_pinned_models() {
+    for scenario in ["open_model_picker", "cycle_and_pinned_model_picker"] {
+        assert_pass(scenario);
+    }
+}
+
+// Covers: in supervised mode, a daemon turn's write opens the TUI's approval
+// prompt, Allow once answers the daemon, and the turn completes with the
+// write done.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_approval_allows_the_turns_write() {
+    assert_pass("daemon_approval");
+}
+
+// Covers: Enter on the approval prompt's default denies the daemon turn's
+// write, and the turn completes with it refused.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_approval_denies_the_turns_write() {
+    assert_pass("daemon_approval_deny");
+}
+
+// Covers: daemon permission changes affect tools and mid-turn configure does
+// not block cancellation. Owner: interactive TUI daemon settings.
+#[test]
+fn daemon_permission_changes_do_not_block_the_turn() {
+    assert_pass("daemon_permission_mode");
+}
+
+// Covers: `/config` saves through the daemon: a client setting takes effect
+// live, vim mode turns on and back off from the default row, an agent setting
+// shows its saved value once confirmed and a refused one says why, and
+// lowering the prompt history limit asks first.
+// Owner: interactive TUI settings screen as a daemon client.
+#[test]
+fn daemon_config_changes_settings_through_the_daemon() {
+    assert_pass("daemon_config");
+}
+
+// Covers: `/advisor on` without a model asks for one, Space filters its page,
+// the session's next turn takes the advisor, and `/advisor off` turns it off.
+// Owner: interactive TUI `/advisor` as a daemon client.
+#[test]
+fn daemon_advisor_reaches_the_next_turn() {
+    assert_pass("daemon_advisor");
+}
+
+// Covers: hidden header hints come back live from the daemon `/config`.
+// Owner: interactive TUI header as a daemon client.
+#[test]
+fn header_hints_toggle_live() {
+    assert_pass("header_hints_toggle");
+}
+
+// Covers: `/remember`, `/title`, and `!` output land in the daemon's
+// session: a TUI reopening it replays the added rows.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_session_takes_context_added_without_a_turn() {
+    assert_pass("daemon_session_context");
+}
+
+// Covers: `/add-dir` widens the daemon's session, which a reopening TUI
+// still lists, and `/context` and `/hooks` show the daemon's reports.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_session_adds_a_directory_and_reports_on_itself() {
+    assert_pass("daemon_session_reports");
+}
+
+// Covers: `/login` has the daemon check and save an API key, and `/logout`
+// has it delete the credential.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_saves_and_deletes_a_key_for_the_tui() {
+    assert_pass("daemon_login");
+}
+
+// Covers: the workflow hub starts its run in the daemon, where it keeps
+// going after the TUI quits and shows on the rail of the next one, and
+// `/codemode` saves the mode through the daemon.
+// Owner: interactive TUI as a daemon client (#1667)
+// Requires the verified-handle workflow command adapter; other platforms fail closed.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+#[test]
+fn daemon_runs_the_workflow_the_hub_starts() {
+    assert_pass("daemon_workflow");
+}
+
+// Covers: a workflow the hub starts during MCP connect is held, Esc cancels
+// it, and one still held starts once the servers connected.
+// Owner: interactive TUI as a daemon client
+// Requires the verified-handle workflow command adapter; other platforms fail closed.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+#[test]
+fn daemon_holds_a_hub_workflow_start_during_mcp_connect() {
+    assert_pass("daemon_workflow_hold");
+}
+
+// Covers: a finished workflow row stays on the rail while a busy turn holds
+// back its result, and leaves with the result.
+// Owner: interactive workflow rail
+// Requires the verified-handle workflow command adapter; other platforms fail closed.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+#[test]
+fn workflow_row_waits_for_its_result() {
+    assert_pass("workflow_result_rail");
+}
+
+// Covers: a daemon session's turn is checkpointed, and `/rewind` has the
+// daemon put its file and the conversation back.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_rewinds_a_turns_file_and_conversation() {
+    assert_pass("daemon_rewind");
+}
+
+// Covers: `/tree` in a daemon session restores an earlier turn, the daemon
+// continues from it, and a reopened session shows that branch.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_restores_an_earlier_turn_from_the_tree() {
+    assert_pass("daemon_tree");
+}
+
+// Covers: `/new`, `/resume`, and the `--resume` picker switch the daemon
+// session the TUI follows; a launch flag's setting carries into `/new`.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_tui_switches_the_session_it_follows() {
+    assert_pass("daemon_switch");
+}
+
+// Covers: the TUI opens its daemon session with the first prompt, so an
+// unprompted launch or `/new` leaves no job, and settings chosen before
+// that prompt are the ones the session runs on.
+// Owner: interactive TUI as a daemon client
+#[test]
+fn daemon_tui_opens_its_session_with_the_first_prompt() {
+    assert_pass("daemon_lazy_session");
+}
+
+// Covers: `/new` opens its session on config.toml as it is then, under the
+// launch's flags and the picks config.toml left alone, and a config.toml
+// that no longer loads fails that session's first prompt with the daemon's
+// error.
+// Owner: interactive TUI as a daemon client
+#[test]
+fn daemon_tui_new_session_reads_the_current_config() {
+    assert_pass("daemon_new_session_config");
+}
+
+// Covers: MCP inventory belongs to the daemon session even when the new client's
+// config differs, and remains inspectable behind a queued mid-turn configure.
+// Owner: interactive TUI as a daemon client.
+#[test]
+fn daemon_mcp_inventory_uses_the_session_without_waiting_for_the_turn() {
+    assert_pass("daemon_mcp_inventory");
+}
+
+// Covers: a configured MCP server's command runs once, in the daemon, and the
+// TUI starts no second copy of it.
+// Owner: interactive TUI as a daemon client.
+#[test]
+fn daemon_mcp_servers_start_only_in_the_daemon() {
+    assert_pass("daemon_mcp_owner");
 }

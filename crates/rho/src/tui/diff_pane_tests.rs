@@ -1,5 +1,5 @@
 use pretty_assertions::assert_eq;
-use rho_tools::tool_card::{DiffRow, DiffRowKind};
+use rho_protocol::display::{DiffRow, DiffRowKind};
 
 use super::patch_rows;
 

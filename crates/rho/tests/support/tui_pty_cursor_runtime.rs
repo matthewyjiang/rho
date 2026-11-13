@@ -1,11 +1,14 @@
 //! Fake Cursor ACP runtime delegation, fence, permission answers, and attach.
 
 use pretty_assertions::assert_eq;
-use rho_tui_pty::{IsolatedHome, Key, PtyHarness, PtySize, RhoLaunchPlan, WaitTimeout};
+use rho_tui_pty::{IsolatedHome, PtyHarness, PtySize, RhoLaunchPlan, WaitTimeout};
 use serde_json::{json, Value};
-use std::{fs, path::PathBuf, time::Duration};
+use std::{path::PathBuf, time::Duration};
 
-use super::acp_e2e::{self, FakeAcpAgent};
+use super::{
+    acp_e2e::{self, FakeAcpAgent},
+    attach_view,
+};
 
 const FAKE_CURSOR: FakeAcpAgent = FakeAcpAgent {
     program: "cursor-agent",
@@ -18,7 +21,7 @@ const FAKE_CURSOR: FakeAcpAgent = FakeAcpAgent {
 /// Full fake-Cursor ACP path: matrix parent -> agent tool -> binder/executor
 /// -> `cursor-agent acp` spawn with a managed `CURSOR_CONFIG_DIR` -> scripted
 /// ACP agent (`rho __acp-fixture-agent`) -> permission answers -> artifacts ->
-/// parent completion -> `rho attach` replay. Offline; no real Cursor binary.
+/// parent completion -> `/attach` replay. Offline; no real Cursor binary.
 #[test]
 fn fake_cursor_acp_runtime_end_to_end() {
     let home = IsolatedHome::new().unwrap();
@@ -33,7 +36,7 @@ fn fake_cursor_acp_runtime_end_to_end() {
     );
 
     let plan = RhoLaunchPlan::matrix(
-        binary.clone(),
+        binary,
         &home,
         PtySize {
             rows: 32,
@@ -66,7 +69,7 @@ fn fake_cursor_acp_runtime_end_to_end() {
         "provider": status["provider"],
         "runtime": status["runtime"],
         "result": status["result"],
-        "session_id": status["claude_session_id"],
+        "session_id": status["runtime_session_id"],
     });
     assert_eq!(
         observed,
@@ -88,8 +91,13 @@ fn fake_cursor_acp_runtime_end_to_end() {
         spawn.cwd.canonicalize().unwrap(),
         home.workspace.canonicalize().unwrap()
     );
+    // A daemon names the run by its home's real path, which on macOS is not
+    // the temp dir's spelling.
     let config_dir = PathBuf::from(&spawn.env);
-    assert_eq!(config_dir, run_dir.join("cursor-config"));
+    assert_eq!(
+        config_dir.canonicalize().unwrap(),
+        run_dir.join("cursor-config").canonicalize().unwrap()
+    );
     assert_eq!(
         acp_e2e::read_json(&config_dir.join("cli-config.json")).unwrap(),
         json!({
@@ -129,36 +137,25 @@ fn fake_cursor_acp_runtime_end_to_end() {
     };
     let expected = [selected("allow-once"), selected("reject-once")];
     assert_eq!(replies, expected.iter().collect::<Vec<_>>());
-    assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
 
-    // Replay the on-disk artifacts: the shell card and final text survive.
-    let mut plan = RhoLaunchPlan::matrix(
-        binary,
-        &home,
-        PtySize {
-            rows: 28,
-            cols: 120,
-        },
-    )
-    .with_arg("attach")
-    .with_arg(&run_id);
-    plan.cwd = home.path().join("attach-workspace");
-    fs::create_dir_all(&plan.cwd).unwrap();
-    let mut attach = PtyHarness::spawn_named(&plan, "fake_cursor_acp_runtime_e2e_attach").unwrap();
-    attach
+    // Replay the on-disk artifacts in the in-place attach view: the shell card
+    // and final text survive.
+    attach_view::open(&mut harness, WaitTimeout::secs(10, "attach view"));
+    harness
+        .wait_for_text(
+            &format!("attach {run_id}"),
+            WaitTimeout::secs(10, "attach startup"),
+        )
+        .unwrap();
+    harness
         .wait_for_text("cargo test", WaitTimeout::secs(10, "attach shell card"))
         .unwrap();
-    attach
+    harness
         .wait_for_text(
             "rho-cursor-acp-e2e-ok",
             WaitTimeout::secs(5, "attach final text"),
         )
         .unwrap();
-    attach.inject_key(&Key::Char('q')).unwrap();
-    assert_eq!(
-        attach
-            .wait_for_exit(WaitTimeout::secs(5, "detach"))
-            .unwrap(),
-        0
-    );
+    attach_view::leave(&mut harness, WaitTimeout::secs(5, "leave attach view"));
+    assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
 }

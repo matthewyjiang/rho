@@ -1,6 +1,9 @@
 //! Exact-match streaming prompt table for matrix mode.
 
-use std::time::Duration;
+use std::{
+    sync::atomic::{AtomicUsize, Ordering},
+    time::Duration,
+};
 
 use rho_sdk::{
     model::{ContentBlock, ModelEvent, ModelRequest, ModelResponse, ToolCall},
@@ -12,9 +15,9 @@ use super::{
     completed, completed_tool_call, fixture_sleep, tool_result, AGENTS_LIST_CALL_ID,
     ANTIGRAVITY_AGENT_CALL_ID, BACKGROUND_AGENT_CALL_ID, BACKGROUND_CLAUDE_AGENT_CALL_ID,
     BACKGROUND_QUESTIONNAIRE_AGENT_CALL_ID, CLAUDE_AGENT_CALL_ID, CLAUDE_AGENT_ERROR_CALL_ID,
-    COMPUTER_CALL_ID, CONCURRENT_FAST_CALL_ID, CONCURRENT_SLOW_CALL_ID, CURSOR_AGENT_CALL_ID,
-    HOVER_TOOL_CALL_ID, LONG_APPROVAL_CALL_ID, PROCESS_RAIL_CALL_ID, PROGRESS_CALL_ID,
-    QUESTIONNAIRE_CALL_ID, SUBAGENT_RAIL_AGENT_CALL_ID, TOOL_CALL_ID,
+    CONCURRENT_FAST_CALL_ID, CONCURRENT_SLOW_CALL_ID, CURSOR_AGENT_CALL_ID, HOVER_TOOL_CALL_ID,
+    LONG_APPROVAL_CALL_ID, PROCESS_RAIL_CALL_ID, PROGRESS_CALL_ID, QUESTIONNAIRE_CALL_ID,
+    SUBAGENT_RAIL_AGENT_CALL_ID, TOOL_CALL_ID,
 };
 
 pub(super) async fn intercept(
@@ -81,18 +84,6 @@ pub(super) async fn intercept(
                 serde_json::json!({
                     "action": "start",
                     "command": "sleep 60",
-                }),
-            ))
-        }
-        // Desktop observation through the fake Cua driver; the card must name it.
-        "fixture computer observe" if tool_result(request, COMPUTER_CALL_ID).is_none() => {
-            Some(completed_tool_call(
-                COMPUTER_CALL_ID,
-                "computer",
-                serde_json::json!({
-                    "action": "call",
-                    "tool": "get_window_state",
-                    "arguments": {"pid": 7},
                 }),
             ))
         }
@@ -192,7 +183,22 @@ pub(super) async fn intercept(
                 }),
             ))
         }
-        "fixture child questionnaire" | "fixture delayed child questionnaire"
+        // The parent's turn ends at once; the child asks only once released.
+        "fixture late background questionnaire"
+            if tool_result(request, BACKGROUND_QUESTIONNAIRE_AGENT_CALL_ID).is_none() =>
+        {
+            Some(completed_tool_call(
+                BACKGROUND_QUESTIONNAIRE_AGENT_CALL_ID,
+                "agent",
+                serde_json::json!({
+                    "agent_id": "worker",
+                    "prompt": "fixture gated child questionnaire",
+                }),
+            ))
+        }
+        "fixture child questionnaire"
+        | "fixture delayed child questionnaire"
+        | "fixture gated child questionnaire"
             if tool_result(request, QUESTIONNAIRE_CALL_ID).is_none() =>
         {
             Some(child_questionnaire(prompt, request).await)
@@ -213,6 +219,14 @@ pub(super) async fn intercept(
         }
         "fixture scroll checkpoint" => Some(stream_scroll_checkpoint(request, events).await),
         "fixture stream failure" => Some(stream_failure(request, events).await),
+        "fixture web search" => Some(stream_web_search(events).await),
+        "fixture provider diagnostic" => Some(Err(ProviderError::new(
+            ProviderErrorKind::Other,
+            "deterministic provider failure with a diagnostic",
+            Retryability::Permanent,
+        )
+        .with_diagnostic("fixture diagnostic detail"))),
+        "fixture provider retry" => Some(provider_retry(request, events).await),
         "fixture bulk one" | "fixture bulk two" => Some(stream_bulk(prompt, events).await),
         _ => None,
     }
@@ -424,16 +438,16 @@ fn questionnaire_call() -> Result<ModelResponse, ProviderError> {
 
 fn concurrent_progress() -> Result<ModelResponse, ProviderError> {
     Ok(ModelResponse::Assistant(vec![
-        ContentBlock::ToolCall(ToolCall {
-            id: CONCURRENT_SLOW_CALL_ID.into(),
-            name: "tui_fixture_progress".into(),
-            arguments: serde_json::json!({"label": "slow fixture", "delay_ms": 2500}),
-        }),
-        ContentBlock::ToolCall(ToolCall {
-            id: CONCURRENT_FAST_CALL_ID.into(),
-            name: "tui_fixture_progress".into(),
-            arguments: serde_json::json!({"label": "fast fixture", "delay_ms": 200}),
-        }),
+        ContentBlock::ToolCall(ToolCall::new(
+            CONCURRENT_SLOW_CALL_ID.into(),
+            "tui_fixture_progress".into(),
+            serde_json::json!({"label": "slow fixture", "delay_ms": 2500}),
+        )),
+        ContentBlock::ToolCall(ToolCall::new(
+            CONCURRENT_FAST_CALL_ID.into(),
+            "tui_fixture_progress".into(),
+            serde_json::json!({"label": "fast fixture", "delay_ms": 200}),
+        )),
     ]))
 }
 
@@ -494,6 +508,13 @@ async fn child_questionnaire(
 ) -> Result<ModelResponse, ProviderError> {
     if prompt == "fixture delayed child questionnaire" {
         fixture_sleep(&request.cancellation, Duration::from_secs(1)).await?;
+    }
+    if prompt == "fixture gated child questionnaire" {
+        super::release::wait_for_release_or_cancel(
+            ".rho-fixture-release-child-questionnaire",
+            &request.cancellation,
+        )
+        .await?;
     }
     completed_tool_call(
         QUESTIONNAIRE_CALL_ID,
@@ -643,6 +664,47 @@ async fn stream_failure(
         "deterministic forced stream termination",
         Retryability::Permanent,
     ))
+}
+
+async fn stream_web_search(events: &ProviderEventSender) -> Result<ModelResponse, ProviderError> {
+    events
+        .send(ModelEvent::WebSearch("fixture search query".into()))
+        .await?;
+    let reply = "web search reply";
+    events.send(ModelEvent::OutputDelta(reply.into())).await?;
+    completed(reply)
+}
+
+/// Requests of `fixture provider retry`: each even one is a turn's first,
+/// each odd one its retry. Per process, which in a daemon is the daemon's.
+static PROVIDER_RETRY_REQUESTS: AtomicUsize = AtomicUsize::new(0);
+
+/// Fails a turn's first request as rate limited, so the run retries it, and
+/// holds the retry until the scenario releases it, so the retry's status
+/// stays on screen until then.
+async fn provider_retry(
+    request: &ModelRequest<'_>,
+    events: &ProviderEventSender,
+) -> Result<ModelResponse, ProviderError> {
+    // Released by rho-tui-pty/src/scenarios/run_events.rs once the retry
+    // shows.
+    const RELEASE_MARKER: &str = ".rho-fixture-release-provider-retry";
+    if PROVIDER_RETRY_REQUESTS
+        .fetch_add(1, Ordering::SeqCst)
+        .is_multiple_of(2)
+    {
+        super::release::consume_release(RELEASE_MARKER)?;
+        // No retry-after, so the status says it retries without a countdown.
+        return Err(ProviderError::new(
+            ProviderErrorKind::RateLimit,
+            "deterministic rate limit",
+            Retryability::Retryable,
+        ));
+    }
+    super::release::wait_for_release_or_cancel(RELEASE_MARKER, &request.cancellation).await?;
+    let reply = "reply after provider retry";
+    events.send(ModelEvent::OutputDelta(reply.into())).await?;
+    completed(reply)
 }
 
 async fn stream_bulk(

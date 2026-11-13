@@ -23,8 +23,9 @@ use super::{
     App, ComposerMode, PanelOverlay,
 };
 use crate::doctor::{
-    build_report, plan_probes, probe_checks, run_probe, DoctorCheck, DoctorInputs, DoctorProbeGate,
-    DoctorProbeId, DoctorProbeOutcome, DoctorReport, DoctorSection, DoctorStatus, HerdrProbe,
+    build_report, mcp_check, plan_probes, probe_checks, run_probe, DoctorCheck, DoctorInputs,
+    DoctorMcp, DoctorProbeGate, DoctorProbeId, DoctorProbeOutcome, DoctorReport, DoctorSection,
+    DoctorStatus, HerdrProbe,
 };
 
 const TITLE: &str = "Doctor";
@@ -109,6 +110,28 @@ impl App {
         let clipboard = crate::clipboard::doctor_report();
         self.abort_doctor_probes();
         let probes = plan_probes(&config, &self.info.runtime.provider, probe_gate());
+        // The session's servers run in the daemon; its answer lands in
+        // `apply_doctor_mcp`.
+        let mcp = if self.info.session.daemon.is_draft() {
+            // Not worth opening a session for: the rest reads disk and
+            // config.
+            DoctorMcp::Unreadable("the session's MCP servers start with its first prompt".into())
+        } else {
+            match self.info.session.daemon.request_mcp() {
+                Ok(()) => DoctorMcp::Reading,
+                // Worded as the read's own error, which `/mcp` shows too.
+                Err(error) => {
+                    DoctorMcp::Unreadable(format!("could not read session MCP inventory: {error}"))
+                }
+            }
+        };
+        // Read as `rho doctor` reads it: what a session in this workspace
+        // would load now.
+        let plugins = crate::plugins::discover(
+            &self.info.runtime.cwd,
+            crate::paths::home_dir().as_deref(),
+            crate::workspace::ProjectTrusts::of_this_process(),
+        );
         let report = build_report(DoctorInputs {
             provider: &self.info.runtime.provider,
             model: &self.info.runtime.model,
@@ -119,8 +142,8 @@ impl App {
             session_root: &session_root,
             herdr: HerdrProbe::from_reporter(&self.info.services.herdr),
             clipboard: &clipboard,
-            mcp_report: &self.mcp_report,
-            plugins_report: &self.plugins_report,
+            mcp,
+            plugins_report: &plugins.report,
             permission_screen: config
                 .internal_agent_model(crate::permission_classifier::DECISION_SCREEN_ID),
             rtk_enabled: config.rtk,
@@ -185,6 +208,22 @@ impl App {
             .report
             .replace_checks(probe_checks(outcome, &active_provider));
         // Rows may have moved under a selection anchored by line.
+        overlay.panel.pointer.clear_selection();
+        true
+    }
+
+    /// Fills the MCP row of an open overlay with the daemon session's
+    /// servers. Returns whether an overlay took them.
+    pub(super) fn apply_doctor_mcp(
+        &mut self,
+        inventory: Result<&rho_protocol::SessionMcpInventory, &str>,
+    ) -> bool {
+        let Some(overlay) = self.doctor_overlay_mut() else {
+            return false;
+        };
+        overlay
+            .report
+            .replace_checks(vec![mcp_check(&DoctorMcp::of_inventory(inventory))]);
         overlay.panel.pointer.clear_selection();
         true
     }

@@ -12,7 +12,10 @@ use rho_sdk::{
     model::{
         ContentBlock, Message, ModelEvent, ModelIdentity, ModelRequest, ModelResponse, ModelUsage,
     },
-    provider::{provider_event_channel, ModelProvider as SdkModelProvider},
+    provider::{
+        provider_event_channel, ModelProvider as SdkModelProvider, ModelRequestOptions,
+        ProviderTurnContext,
+    },
     CancellationToken, ProviderErrorKind, ReasoningLevel,
 };
 
@@ -314,7 +317,7 @@ async fn callback_events_accepted_before_cancellation_are_forwarded() {
     let (sender, mut receiver) = provider_event_channel(NonZeroUsize::new(1).unwrap());
     let mut provider_future = provider.send_turn_stream(
         request(&messages, cancellation, ReasoningLevel::Off),
-        sender,
+        ProviderTurnContext::new(sender),
     );
 
     let (result, event) = tokio::join!(&mut provider_future, receiver.recv());
@@ -362,7 +365,7 @@ async fn cancels_a_streaming_turn_that_never_completes() {
     let (sender, _receiver) = provider_event_channel(NonZeroUsize::new(1).unwrap());
     let turn = provider.send_turn_stream(
         request(&messages, cancellation.clone(), ReasoningLevel::Off),
-        sender,
+        ProviderTurnContext::new(sender),
     );
 
     let (result, ()) = tokio::join!(turn, async move { cancellation.cancel() });
@@ -520,14 +523,15 @@ fn http_error_messages_include_status_without_bodies() {
 }
 
 // Covers: transport request failures keep a public message and never copy
-// reqwest URL or source text. Timeouts, connect failures, and builder errors
-// get a specific message; other transport failures stay generic.
+// the reqwest URL. Timeouts, connect failures, and builder errors get a
+// specific message, a connect failure with the OS's reason; other transport
+// failures stay generic.
 // Owner: provider SDK error mapping
 #[tokio::test]
 async fn transport_request_errors_keep_sanitized_public_messages() {
     const SECRET: &str = "secret-token-should-not-leak";
 
-    let connection = connection_refused_error(SECRET).await;
+    let (connection, refused) = connection_refused_error(SECRET).await;
     let timeout = request_timeout_error(SECRET).await;
     let builder = builder_error();
 
@@ -536,24 +540,24 @@ async fn transport_request_errors_keep_sanitized_public_messages() {
             connection,
             ProviderErrorKind::Unavailable,
             true,
-            "provider request failed to connect",
+            format!("provider request failed to connect: {refused}"),
         ),
         (
             timeout,
             ProviderErrorKind::Timeout,
             true,
-            "provider request timed out",
+            "provider request timed out".into(),
         ),
         (
             builder,
             ProviderErrorKind::Other,
             false,
-            "provider client configuration failed",
+            "provider client configuration failed".into(),
         ),
     ];
 
     for (error, kind, retryable, message) in cases {
-        assert_sanitized_transport_request(error, kind, retryable, message, SECRET);
+        assert_sanitized_transport_request(error, kind, retryable, &message, SECRET);
     }
 }
 
@@ -561,7 +565,7 @@ fn assert_sanitized_transport_request(
     error: reqwest::Error,
     kind: ProviderErrorKind,
     retryable: bool,
-    message: &'static str,
+    message: &str,
     secret: &str,
 ) {
     let converted = provider_error_from_model_error(ModelError::from(error));
@@ -600,14 +604,22 @@ async fn bind_local() -> (tokio::net::TcpListener, std::net::SocketAddr) {
     (listener, address)
 }
 
-async fn connection_refused_error(secret: &str) -> reqwest::Error {
-    let (listener, address) = bind_local().await;
-    drop(listener);
-    crate::reqwest_client()
+/// A request to a port nothing listens on, and the OS's own words for the
+/// refusal. The port is loopback's TCP discard port, as elsewhere in these
+/// suites: no test's server gets it, since each binds an ephemeral port. A
+/// port that was bound and then closed is free for a test running beside
+/// this one to bind, and its server would then answer.
+async fn connection_refused_error(secret: &str) -> (reqwest::Error, String) {
+    let address = std::net::SocketAddr::from(([127, 0, 0, 1], 9));
+    let refused = std::net::TcpStream::connect(address)
+        .expect_err("the discard port should refuse the connection")
+        .to_string();
+    let error = crate::reqwest_client()
         .get(secret_url(address, secret))
         .send()
         .await
-        .expect_err("closed listener should refuse the connection")
+        .expect_err("the discard port should refuse the connection");
+    (error, refused)
 }
 
 async fn request_timeout_error(secret: &str) -> reqwest::Error {
@@ -690,7 +702,7 @@ async fn callback_stream_bridge_forwards_events_in_order() {
                 CancellationToken::new(),
                 ReasoningLevel::default()
             ),
-            events
+            ProviderTurnContext::new(events)
         ),
         async {
             let mut received = Vec::new();
@@ -734,7 +746,7 @@ async fn callback_stream_bridge_handles_bursts_larger_than_host_capacity() {
                 CancellationToken::new(),
                 ReasoningLevel::default()
             ),
-            events
+            ProviderTurnContext::new(events)
         ),
         async {
             let mut received = Vec::new();
@@ -779,7 +791,7 @@ async fn callback_stream_bridge_applies_host_backpressure_across_awaits() {
                         CancellationToken::new(),
                         ReasoningLevel::default(),
                     ),
-                    events,
+                    ProviderTurnContext::new(events),
                 )
                 .await
         }
@@ -830,7 +842,7 @@ async fn callback_stream_bridge_observes_cancellation_between_events() {
 
     let turn = provider.send_turn_stream(
         request(&messages, cancellation.clone(), ReasoningLevel::default()),
-        events,
+        ProviderTurnContext::new(events),
     );
     let consumer = async {
         let first = receiver.recv().await;
@@ -870,11 +882,14 @@ async fn fake_native_compact_provider_returns_compaction_output_through_sdk() {
     let sdk: Arc<dyn SdkModelProvider> = Arc::new(provider);
     let messages = [Message::user_text("compact me")];
     let response = sdk
-        .native_compact(request(
-            &messages,
-            CancellationToken::new(),
-            ReasoningLevel::default(),
-        ))
+        .native_compact(
+            request(
+                &messages,
+                CancellationToken::new(),
+                ReasoningLevel::default(),
+            ),
+            ModelRequestOptions::default(),
+        )
         .expect("native compact advertised")
         .await;
     let (result, failed_attempts) = response.into_parts();

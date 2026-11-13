@@ -1,4 +1,4 @@
-use rho_tools::tool_card::{ToolCard, ToolFamily, ToolHeader, ToolStatus};
+use rho_protocol::display::{ToolCard, ToolCardStatus, ToolFamily, ToolHeader};
 
 use super::*;
 
@@ -6,22 +6,23 @@ fn call_id(value: &str) -> ToolCallId {
     ToolCallId::from_string(value).unwrap()
 }
 
-fn card(label: &str) -> PresentedToolCard {
+fn card(label: &str) -> ToolCard {
     ToolCard::new(
-        ToolStatus::Running,
+        ToolCardStatus::Running,
         ToolFamily::Default,
         ToolHeader::call(label, None),
     )
-    .into()
 }
 
 fn live_labels(batch: &ToolCallBatch) -> Vec<String> {
     batch
         .live_entries()
         .map(|entry| match &entry.presentation {
-            crate::presentation::Presentation::Card(card)
-            | crate::presentation::Presentation::SummaryCard(card) => card.header_text(),
-            crate::presentation::Presentation::Notification(_) => panic!("expected live tool card"),
+            rho_protocol::display::Presentation::Card(card)
+            | rho_protocol::display::Presentation::SummaryCard(card) => card.header_text(),
+            rho_protocol::display::Presentation::Notification(_) => {
+                panic!("expected live tool card")
+            }
         })
         .collect()
 }
@@ -159,7 +160,7 @@ fn interrupted_entries_drop_the_live_clock() {
     assert!(interrupted
         .iter()
         .all(|entry| matches!(&entry.presentation,
-            crate::presentation::Presentation::Card(card) if card.status == ToolStatus::Interrupted)));
+            rho_protocol::display::Presentation::Card(card) if card.status == ToolCardStatus::Interrupted)));
 }
 
 // Covers: detached cards survive clear and leave only when finished.

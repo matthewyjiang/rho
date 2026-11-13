@@ -222,6 +222,8 @@ struct NoticeBinding {
 pub(crate) struct SubagentNoticeBridge {
     binding: Arc<Mutex<Option<NoticeBinding>>>,
     pending: Arc<Mutex<Vec<SubagentNotice>>>,
+    /// Notified each time a notice is accepted.
+    posted: Arc<tokio::sync::Notify>,
     capacity: usize,
 }
 
@@ -237,10 +239,6 @@ pub(crate) struct NoticeRebind {
     pub(crate) permits: NoticePermits,
     /// Notices drained from the retired receiver under the binding lock.
     pub(crate) retained: Vec<SubagentNotice>,
-    /// Permit generation that accepted [`Self::retained`] and any notices the
-    /// inbox already held from the prior binding. `None` when there was no
-    /// previous binding.
-    pub(crate) retired_permits: Option<NoticePermits>,
 }
 
 impl SubagentNoticeBridge {
@@ -248,8 +246,29 @@ impl SubagentNoticeBridge {
         Self {
             binding: Arc::new(Mutex::new(None)),
             pending: Arc::new(Mutex::new(Vec::new())),
+            posted: Arc::new(tokio::sync::Notify::new()),
             capacity: NOTICE_QUEUE_CAPACITY,
         }
+    }
+
+    /// Resolves once a notice is accepted from now on.
+    // Only the daemon wakes an idle parent.
+    pub(crate) fn posted(&self) -> impl std::future::Future<Output = ()> + Send + 'static {
+        Arc::clone(&self.posted).notified_owned()
+    }
+
+    /// The accepted notices for parent session `session_id` that no turn
+    /// delivered and no status read showed.
+    pub(crate) fn undelivered(&self, session_id: &str) -> Vec<SubagentNotice> {
+        self.pending
+            .lock()
+            .expect("pending notice receipts")
+            .iter()
+            .filter(|notice| {
+                notice.parent_session_id.as_str() == session_id && !notice.is_acknowledged()
+            })
+            .cloned()
+            .collect()
     }
 
     /// Installs the parent receiver and a fresh permit generation.
@@ -267,14 +286,12 @@ impl SubagentNoticeBridge {
     ///
     /// Holds the binding lock for the whole swap so a concurrent [`Self::post`]
     /// cannot return `Ok` for a notice that this replacement would discard.
-    /// Callers must keep [`NoticeRebind::retained`] deliverable against
-    /// [`NoticeRebind::retired_permits`].
+    /// Callers must keep [`NoticeRebind::retained`] deliverable.
     pub(crate) fn rebind_parent(
         &self,
         mut old_receiver: Option<mpsc::Receiver<SubagentNotice>>,
     ) -> NoticeRebind {
         let mut guard = self.binding_slot();
-        let retired_permits = guard.as_ref().map(|binding| binding.permits.clone());
 
         let mut retained = Vec::new();
         if let Some(receiver) = old_receiver.as_mut() {
@@ -297,7 +314,6 @@ impl SubagentNoticeBridge {
             receiver,
             permits,
             retained,
-            retired_permits,
         }
     }
 
@@ -359,6 +375,7 @@ impl SubagentNoticeBridge {
                 mpsc::error::TrySendError::Closed(_) => NoticePostError::Unbound,
             }
         })?;
+        self.posted.notify_waiters();
         Ok(())
     }
 

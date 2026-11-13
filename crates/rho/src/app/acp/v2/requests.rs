@@ -4,15 +4,17 @@
 //! Like [`super::updates`], shapes v2 only widened cross through
 //! [`super::bridge`]; redesigned ones are mapped here.
 
-use agent_client_protocol::schema::{v1, v2, ProtocolVersion};
 use agent_client_protocol::Error as AcpError;
+use agent_client_protocol::{schema::ProtocolVersion, v1::schema as v1, v2::schema as v2};
 
-use super::bridge;
+use rho_protocol::{BackgroundWork, SessionOptions};
+
+use super::{background, bridge};
+use crate::app::acp::{host_features::Toggles, options as acp_options, TurnEnd};
 
 /// `initialize` as v1 would have negotiated it. v2 made notices, compaction
 /// cards, and boolean config options baseline, so the v1 markers for them are
-/// set; v2 has no client `fs` or `terminal`, so Rho keeps file access and
-/// shell commands local.
+/// set.
 pub(super) fn initialize_request(
     request: &v2::InitializeRequest,
 ) -> Result<v1::InitializeRequest, AcpError> {
@@ -217,25 +219,23 @@ pub(super) fn resume_session_request(
 }
 
 /// The config options and commands a v2 session setup response carries. v1
-/// sent the commands as a notification after the response; v2 puts them in it.
+/// sends the commands as a notification after the response; v2 puts them in
+/// it.
 pub(super) struct Setup {
     pub(super) config_options: Vec<v2::SessionConfigOption>,
     pub(super) available_commands: Vec<v2::AvailableCommand>,
 }
 
-pub(super) fn setup(
-    config_options: Option<Vec<v1::SessionConfigOption>>,
-    commands: v1::SessionNotification,
-) -> Result<Setup, AcpError> {
-    let available_commands = match commands.update {
-        v1::SessionUpdate::AvailableCommandsUpdate(update) => {
-            super::updates::available_commands(update.available_commands)?
-        }
-        _ => Vec::new(),
-    };
+/// The setup of a session with `options`, with on/off options drawn as
+/// `toggles`.
+pub(super) fn setup(options: &SessionOptions, toggles: Toggles) -> Result<Setup, AcpError> {
     Ok(Setup {
-        config_options: super::updates::config_options(config_options.unwrap_or_default())?,
-        available_commands,
+        config_options: super::updates::config_options(acp_options::config_options(
+            options, toggles,
+        ))?,
+        available_commands: super::updates::available_commands(acp_options::available_commands(
+            &options.commands,
+        ))?,
     })
 }
 
@@ -312,25 +312,26 @@ pub(super) fn permission_response(
     v1::RequestPermissionResponse::new(outcome).meta(response.meta)
 }
 
-/// Why foreground work stopped, for the closing `idle` update. A reason v2
-/// cannot name leaves the `idle` without one.
-pub(super) fn stop_reason(reason: v1::StopReason) -> Option<v2::StopReason> {
-    Some(match reason {
-        v1::StopReason::EndTurn => v2::StopReason::EndTurn,
-        v1::StopReason::MaxTokens => v2::StopReason::MaxTokens,
-        v1::StopReason::MaxTurnRequests => v2::StopReason::MaxTurnRequests,
-        v1::StopReason::Refusal => v2::StopReason::Refusal,
-        v1::StopReason::Cancelled => v2::StopReason::Cancelled,
-        _ => return None,
-    })
-}
-
-/// A failure after the prompt was accepted, for the closing `idle` update.
-pub(super) fn failed(error: &AcpError) -> Option<v2::StopReason> {
-    let error = bridge::<_, v2::Error>(error).ok();
-    Some(v2::StopReason::Error(
-        v2::ErrorStopReason::new().error(error),
-    ))
+/// The `idle` that closes a turn that ended as `end`: with why it stopped,
+/// `error` with the failure of one that failed after it started, and no
+/// reason for one whose end went unseen or that v2 cannot name. It lists the
+/// `background` work the turn left running.
+pub(super) fn idle(end: &TurnEnd, background: &[BackgroundWork]) -> v2::SessionUpdate {
+    let stop_reason = match end {
+        TurnEnd::Ended(Ok(reason)) => match reason {
+            v1::StopReason::EndTurn => Some(v2::StopReason::EndTurn),
+            v1::StopReason::MaxTokens => Some(v2::StopReason::MaxTokens),
+            v1::StopReason::MaxTurnRequests => Some(v2::StopReason::MaxTurnRequests),
+            v1::StopReason::Refusal => Some(v2::StopReason::Refusal),
+            v1::StopReason::Cancelled => Some(v2::StopReason::Cancelled),
+            _ => None,
+        },
+        TurnEnd::Ended(Err(error)) => Some(v2::StopReason::Error(
+            v2::ErrorStopReason::new().error(bridge::<_, v2::Error>(error).ok()),
+        )),
+        TurnEnd::Unseen => None,
+    };
+    background::idle_state(stop_reason, background)
 }
 
 #[cfg(test)]

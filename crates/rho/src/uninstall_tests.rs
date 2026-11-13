@@ -317,6 +317,23 @@ fn failed_purge_keeps_binary_and_uses_preview_order() {
     assert!(data.exists());
 }
 
+/// An uninstall with no daemon running and no service saved.
+fn run_with_io(
+    paths: &Paths,
+    purge: bool,
+    dry_run: bool,
+    input: &mut impl BufRead,
+    output: &mut impl Write,
+) -> Result<()> {
+    match review(paths, &Found::default(), purge, dry_run, input, output)? {
+        Some(plan) => execute(plan, output, |path, kind| match kind {
+            TargetKind::DataDirectory => fs::remove_dir_all(path),
+            TargetKind::Executable => fs::remove_file(path),
+        }),
+        None => Ok(()),
+    }
+}
+
 fn no_mise(_: &Path) -> anyhow::Result<String> {
     anyhow::bail!("mise is not consulted in uninstall tests")
 }

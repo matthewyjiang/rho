@@ -6,17 +6,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    model::ReasoningCapabilities,
+    model::{provider_models, ReasoningCapabilities},
     provider::{CatalogLookupMode, CatalogReasoningPolicy},
     reasoning::ReasoningLevel,
 };
 
-#[path = "models_dev_controls.rs"]
-mod controls;
 #[path = "models_dev_document.rs"]
 mod document;
-use controls::CachedRow;
-pub(crate) use controls::{current_reasoning_metadata, ReasoningControl};
 #[path = "models_dev_hydrate.rs"]
 mod hydrate;
 #[path = "models_dev_overrides.rs"]
@@ -34,7 +30,15 @@ pub fn catalog_hydrate_lock_for_tests() -> &'static tokio::sync::Mutex<()> {
 }
 pub use sdk::CatalogSdkAdapter;
 
+/// Catalog facts for one model, resolved from the models.dev cache row plus
+/// built-in and `models.toml` overrides.
+///
+/// Non-exhaustive: the catalog gains fields in minor releases. Outside this
+/// crate, start from [`ModelMetadata::default`] and set the public fields.
+///
+/// Serialized as the models.dev cache row, so field names are on-disk keys.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[non_exhaustive]
 pub struct ModelMetadata {
     /// Catalog name for people, such as `GPT-5.6 Sol`. Absent when the catalog
     /// has no name for the model; callers then show the model id alone rather
@@ -64,21 +68,21 @@ pub struct ModelMetadata {
     /// Resolved models.dev AI SDK package (`npm` or `provider.npm`).
     #[serde(default)]
     pub sdk_package: Option<String>,
+    /// Image input support, from models.dev `modalities.input` or a
+    /// `models.toml` `image_input` value.
+    #[serde(default)]
+    pub image_input: ImageInput,
+    /// Whether [`Self::supported_reasoning_levels`] are named efforts or a
+    /// binary on/off toggle.
+    #[serde(default)]
+    pub reasoning_control: ReasoningControl,
 }
 
-/// Image input support for one model, read with [`image_input`].
+/// Image input support for one model, read from [`ModelMetadata::image_input`].
 ///
 /// `Unknown` means no catalog row or override said either way. Request
 /// shaping treats it like `Supported` so uncatalogued hosts keep today's
 /// behavior; only an explicit `Unsupported` strips images.
-///
-/// # Next major
-///
-/// NEXT_MAJOR(rho-providers): add `image_input: ImageInput` to ModelMetadata and remove the separate models_dev::image_input lookup and its sidecar cache key.
-///
-/// `ModelMetadata` has only public fields, so any new field breaks callers
-/// that build it with a struct literal. Until the major, the value lives
-/// beside the metadata in the same cache row.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ImageInput {
@@ -86,6 +90,20 @@ pub enum ImageInput {
     Unknown,
     Supported,
     Unsupported,
+}
+
+/// Whether catalog reasoning levels represent named effort or a binary toggle.
+///
+/// `Toggle` rows advertise only on/off, so wire encoders send the toggle
+/// rather than serializing the picker's `Max` as an effort value.
+/// Non-exhaustive: new controls land in minor releases.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ReasoningControl {
+    #[default]
+    Effort,
+    Toggle,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -405,34 +423,34 @@ fn scale_cost(cost: ModelCost, scale: u64) -> ModelCost {
     }
 }
 
+/// Resolved cache row for the selected model, with overrides applied.
 fn load_model_metadata(
     provider: &str,
     model: &str,
     freshness: CacheFreshness,
 ) -> Option<ModelMetadata> {
-    load_cached_row(provider, model, freshness).map(|row| row.metadata)
-}
-
-/// Resolved cache row for the selected model: the single key-resolution path
-/// behind both [`load_model_metadata`] and [`image_input`].
-fn load_cached_row(provider: &str, model: &str, freshness: CacheFreshness) -> Option<CachedRow> {
     let local = overrides::local_override_table(provider, model);
     if let Some((source_model, scale)) = priced_catalog_alias(provider, model) {
-        let mut row = row_from_catalog_source(provider, source_model, None, freshness)?;
-        row.metadata = scale_model_cost(row.metadata, scale);
+        let mut metadata = scale_model_cost(
+            row_from_catalog_source(provider, source_model, None, freshness)?,
+            scale,
+        );
         // The source name belongs to grok-4.7. Keep the fast id unlabeled
         // until this id's own local table sets one.
-        row.metadata.display_name = None;
-        return Some(row.with_toml_overrides(local.as_ref()));
+        metadata.display_name = None;
+        return Some(overrides::merge_optional_toml_override(
+            metadata,
+            local.as_ref(),
+        ));
     }
     row_from_catalog_source(provider, model, local.as_ref(), freshness).or_else(|| {
         // An alias discovery recorded (`zai-glm-latest`) borrows the listed
         // model's row. Its own user overrides still apply on top.
         let listed = super::provider_models::canonical_model_for_alias(provider, model)?;
-        Some(
-            row_from_catalog_source(provider, &listed, None, freshness)?
-                .with_toml_overrides(local.as_ref()),
-        )
+        Some(overrides::merge_optional_toml_override(
+            row_from_catalog_source(provider, &listed, None, freshness)?,
+            local.as_ref(),
+        ))
     })
 }
 
@@ -450,26 +468,24 @@ fn row_from_catalog_source(
     model: &str,
     local: Option<&toml::map::Map<String, toml::Value>>,
     freshness: CacheFreshness,
-) -> Option<CachedRow> {
+) -> Option<ModelMetadata> {
     let (cache_provider, cache_model) = catalog_source_for(provider, model, local);
-    let mut row = cached_upstream_row(&cache_provider, &cache_model, freshness)?;
+    let metadata = cached_upstream_row(&cache_provider, &cache_model, freshness)?;
     let (override_provider, override_model) =
         builtin_override_identity(&cache_provider, &cache_model);
-    row = row.with_toml_overrides(overrides::builtin_override_table(
-        &override_provider,
-        &override_model,
-    ));
-    Some(
-        row.with_provider_capabilities(provider, model)
-            .with_toml_overrides(local),
-    )
+    let metadata = overrides::merge_optional_toml_override(
+        metadata,
+        overrides::builtin_override_table(&override_provider, &override_model),
+    );
+    let metadata = apply_provider_capabilities(provider, model, metadata);
+    Some(overrides::merge_optional_toml_override(metadata, local))
 }
 
 fn upstream_row_from_api(
     api: &document::ModelsDevCatalog,
     provider: &str,
     model: &str,
-) -> Option<CachedRow> {
+) -> Option<ModelMetadata> {
     let descriptor = crate::provider::provider_descriptor(provider)?;
     document::cached_row_from_catalog(
         api,
@@ -485,17 +501,44 @@ fn apply_overrides(provider: &str, model: &str, metadata: ModelMetadata) -> Mode
     overrides::apply_local_overrides(provider, model, metadata)
 }
 
+/// Provider-advertised context and reasoning levels take precedence over the
+/// catalog, including its toggle semantics.
 fn apply_provider_capabilities(
     provider: &str,
     model: &str,
-    metadata: ModelMetadata,
+    mut metadata: ModelMetadata,
 ) -> ModelMetadata {
-    CachedRow {
-        metadata,
-        ..CachedRow::default()
+    let provider_model = provider_models::cached_provider_model(provider, model);
+    let context_window = provider_model
+        .as_ref()
+        .and_then(|model| model.context_window)
+        .or_else(|| {
+            crate::provider::provider_descriptor(provider)
+                .and_then(|descriptor| descriptor.effective_context_fallback(model))
+        });
+    if let Some(context_window) = context_window {
+        metadata.effective_context_window = Some(context_window);
     }
-    .with_provider_capabilities(provider, model)
-    .metadata
+    if let Some(provider_model) = provider_model
+        .filter(|_| !provider_models::provider_model_capabilities_need_refresh(provider, model))
+    {
+        match provider_model.reasoning_capabilities {
+            ReasoningCapabilities::Unknown => {}
+            ReasoningCapabilities::NotConfigurable => {
+                metadata.supported_reasoning_levels = None;
+                metadata.reasoning_capabilities_known = true;
+                metadata.reasoning_metadata_complete = true;
+                metadata.reasoning_control = ReasoningControl::Effort;
+            }
+            ReasoningCapabilities::Levels(levels) => {
+                metadata.supported_reasoning_levels = Some(levels.into_levels());
+                metadata.reasoning_capabilities_known = true;
+                metadata.reasoning_metadata_complete = true;
+                metadata.reasoning_control = ReasoningControl::Effort;
+            }
+        }
+    }
+    metadata
 }
 
 fn override_metadata(provider: &str, model: &str) -> Option<ModelMetadata> {
@@ -516,22 +559,8 @@ fn metadata_has_values(metadata: &ModelMetadata) -> bool {
         || metadata.reasoning_capabilities_known
         || metadata.reasoning_metadata_complete
         || metadata.reasoning_off_behavior != ReasoningOffBehavior::Omit
-}
-
-/// Image input support for the selected model.
-///
-/// Resolves the same cache row as [`cached_model_metadata`], stale or not:
-/// modalities rarely change, and an offline session should still avoid
-/// sending images to a text-only model. A `models.toml` `image_input` value
-/// wins, including for models with no catalog row.
-pub fn image_input(provider: &str, model: &str) -> ImageInput {
-    if let Some(row) = load_cached_row(provider, model, CacheFreshness::AllowStale) {
-        return row.image_input;
-    }
-    overrides::local_override_table(provider, model)
-        .as_ref()
-        .and_then(overrides::local_image_input)
-        .unwrap_or_default()
+        || metadata.image_input != ImageInput::Unknown
+        || metadata.reasoning_control != ReasoningControl::Effort
 }
 
 pub(crate) async fn fetch_deprecated_provider_models(provider: &str) -> Option<HashSet<String>> {
@@ -592,16 +621,20 @@ async fn fetch_models_dev_document<T: serde::de::DeserializeOwned>(url: &str) ->
 /// `models.dev/tree`. Older snapshots hold slug-keyed rows at the wrong keys
 /// and parse policy, so they must refetch.
 ///
-/// v11: rows gained a sidecar `image_input` key from models.dev
-/// `modalities.input`. Older rows would read `Unknown` forever without a
-/// refetch.
+/// v11: rows gained an `image_input` key from models.dev `modalities.input`.
+/// Older rows would read `Unknown` forever without a refetch.
 ///
 /// v12: the `rho` binary parses numbers with serde_json `arbitrary_precision`,
 /// which the price parser rejected, so older rows dropped fractional prices
 /// (`glm-5` output `3.2`, every `gpt-5.6-luna` rate). Refetch to restore them.
 ///
-/// v13: retain toggle-only reasoning provenance so Chat Completions does not
-/// serialize the binary UI's Max level as an unadvertised effort value.
+/// v13: rows gained a `reasoning_control` key that retains toggle-only
+/// reasoning provenance, so Chat Completions does not serialize the binary
+/// UI's Max level as an unadvertised effort value.
+///
+/// 3.0 moved `image_input` and `reasoning_control` from cache-row sidecars
+/// onto [`ModelMetadata`] without a bump: the serialized keys and their
+/// defaults are unchanged, so v11+ rows load as before.
 ///
 /// v14: the new `opencode` (Zen) provider reads `sdk_package` and prices from
 /// its rows to pick adapters and hide free models. A current older snapshot
@@ -626,7 +659,7 @@ fn cached_upstream_row(
     provider: &str,
     model: &str,
     freshness: CacheFreshness,
-) -> Option<CachedRow> {
+) -> Option<ModelMetadata> {
     let cache_provider = provider;
     let cache_model = model;
     let (contents, cache_version): (String, i64) = with_models_dev_cache(|connection| {
@@ -639,8 +672,8 @@ fn cached_upstream_row(
     })
     .ok()?
     .ok()?;
-    let cached: CachedRow = serde_json::from_str(&contents).ok()?;
-    if !should_rehydrate_cached_metadata(cache_version, &cached.metadata) {
+    let cached: ModelMetadata = serde_json::from_str(&contents).ok()?;
+    if !should_rehydrate_cached_metadata(cache_version, &cached) {
         return Some(cached);
     }
 
@@ -656,7 +689,7 @@ fn should_rehydrate_cached_metadata(cache_version: i64, cached: &ModelMetadata) 
 /// Writes a batch of model metadata rows in a single SQLite transaction with a prepared statement.
 fn write_cached_upstream_model_metadata_batch<'a, I>(entries: I) -> usize
 where
-    I: IntoIterator<Item = (&'a str, &'a str, &'a CachedRow)>,
+    I: IntoIterator<Item = (&'a str, &'a str, &'a ModelMetadata)>,
 {
     with_models_dev_cache(|connection| {
         let Ok(tx) = connection.transaction() else {
@@ -792,30 +825,15 @@ impl Drop for ModelsDevCacheDirGuard {
     }
 }
 
-/// Writes a cache row with `ImageInput::Unknown` and forgets the provider's
-/// cached display names.
+/// Writes a cache row and forgets the provider's cached display names.
 #[doc(hidden)]
 pub fn write_cached_model_metadata_for_tests(
     provider: &str,
     model: &str,
     metadata: &ModelMetadata,
 ) {
-    let row = CachedRow {
-        metadata: metadata.clone(),
-        ..CachedRow::default()
-    };
-    write_cached_upstream_model_metadata_batch([(provider, model, &row)]);
+    write_cached_upstream_model_metadata_batch([(provider, model, metadata)]);
     super::display_name::forget_provider_display_names(provider);
-}
-
-/// Writes a cache row carrying only `image_input` for tests of request shaping.
-#[doc(hidden)]
-pub fn write_cached_image_input_for_tests(provider: &str, model: &str, image_input: ImageInput) {
-    let row = CachedRow {
-        image_input,
-        ..CachedRow::default()
-    };
-    write_cached_upstream_model_metadata_batch([(provider, model, &row)]);
 }
 
 /// Marks the on-disk catalog snapshot current for tests that pre-seed rows.
@@ -856,7 +874,6 @@ fn model_metadata_from_api(api: &Value, provider: &str, model: &str) -> Option<M
         model,
         policy,
     )
-    .map(|row| row.metadata)
 }
 
 #[cfg(test)]

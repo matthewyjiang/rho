@@ -5,7 +5,10 @@ use serde_json::json;
 use tokio::sync::Notify;
 
 use crate::{
-    model::{ContentBlock, Message, ModelIdentity, ModelResponse, ToolCall, ToolResult, ToolSpec},
+    model::{
+        ContentBlock, Message, ModelIdentity, ModelResponse, ToolCall, ToolResult,
+        ToolResultStatus, ToolSpec,
+    },
     provider::{ScriptedProvider, ScriptedTurn},
     tool::{
         PreparedToolInvocation, ScriptedTool, ScriptedToolOutcome, Tool, ToolInvocation,
@@ -29,11 +32,7 @@ fn spec(name: &str) -> ToolSpec {
 }
 
 fn call(id: &str, name: &str, arguments: serde_json::Value) -> ToolCall {
-    ToolCall {
-        id: id.into(),
-        name: name.into(),
-        arguments,
-    }
+    ToolCall::new(id.into(), name.into(), arguments)
 }
 
 fn done_provider() -> ScriptedProvider {
@@ -128,16 +127,8 @@ async fn host_batch_results_reach_the_first_model_request_in_call_order() {
         vec![
             Message::user_text("run both"),
             Message::Assistant(calls.into_iter().map(ContentBlock::ToolCall).collect()),
-            Message::ToolResult(ToolResult {
-                id: "host-1".into(),
-                ok: true,
-                content: "first via Host".into(),
-            }),
-            Message::ToolResult(ToolResult {
-                id: "host-2".into(),
-                ok: true,
-                content: "second via Host".into(),
-            }),
+            Message::ToolResult(ToolResult::succeeded("host-1", "first via Host").into()),
+            Message::ToolResult(ToolResult::succeeded("host-2", "second via Host").into()),
         ]
     );
 }
@@ -174,12 +165,8 @@ async fn host_requested_completed_failure_reaches_the_first_model_request() {
         requests[0].messages,
         vec![
             Message::user_text("use the selected tool"),
-            Message::Assistant(vec![ContentBlock::ToolCall(call)]),
-            Message::ToolResult(ToolResult {
-                id: "host-call-1".into(),
-                ok: false,
-                content: "tool output".into(),
-            }),
+            Message::Assistant(vec![ContentBlock::ToolCall(call)].into()),
+            Message::ToolResult(ToolResult::failed("host-call-1", "tool output").into()),
         ]
     );
 }
@@ -239,17 +226,14 @@ async fn cancel_mid_host_batch_pairs_every_call_with_a_result() {
         [
             Message::user_text("run both"),
             Message::Assistant(calls.into_iter().map(ContentBlock::ToolCall).collect()),
-            Message::ToolResult(ToolResult {
-                id: "host-fast".into(),
-                ok: true,
-                content: "fast output".into(),
-            }),
+            Message::ToolResult(ToolResult::succeeded("host-fast", "fast output").into()),
         ]
     );
     assert!(
         matches!(
             &history[3..],
-            [Message::ToolResult(ToolResult { id, ok: false, .. })] if id == "host-slow"
+            [Message::ToolResult(result)]
+                if result.id == "host-slow" && result.status == ToolResultStatus::Failed
         ),
         "{history:?}"
     );

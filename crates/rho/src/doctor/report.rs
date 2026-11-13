@@ -50,6 +50,7 @@ pub(crate) enum DoctorSectionId {
     Runtimes,
     Workspace,
     Extensions,
+    Daemon,
 }
 
 impl DoctorSectionId {
@@ -60,6 +61,7 @@ impl DoctorSectionId {
             Self::Runtimes => "Runtimes",
             Self::Workspace => "Workspace",
             Self::Extensions => "Extensions",
+            Self::Daemon => "Daemon",
         }
     }
 }
@@ -69,6 +71,7 @@ impl DoctorSectionId {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum DoctorCheckId {
     ProviderAuth { auth_mode: String },
+    DaemonCredentialStore,
     ModelCache { provider: String },
     ProviderEndpoint { provider: String },
     SelectedModel,
@@ -85,12 +88,18 @@ pub(crate) enum DoctorCheckId {
     ClipboardImage,
     Mcp,
     Plugins,
+    DaemonProcess,
+    DaemonSocket,
+    DaemonService,
+    DaemonEnvironment,
 }
 
 impl DoctorCheckId {
     pub(crate) const fn section(&self) -> DoctorSectionId {
         match self {
-            Self::ProviderAuth { .. } => DoctorSectionId::Authentication,
+            Self::ProviderAuth { .. } | Self::DaemonCredentialStore => {
+                DoctorSectionId::Authentication
+            }
             Self::ModelCache { .. }
             | Self::ProviderEndpoint { .. }
             | Self::SelectedModel
@@ -105,6 +114,10 @@ impl DoctorCheckId {
                 DoctorSectionId::Workspace
             }
             Self::Mcp | Self::Plugins => DoctorSectionId::Extensions,
+            Self::DaemonProcess
+            | Self::DaemonSocket
+            | Self::DaemonService
+            | Self::DaemonEnvironment => DoctorSectionId::Daemon,
         }
     }
 }

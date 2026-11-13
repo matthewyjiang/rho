@@ -180,11 +180,12 @@ pub use context_breakdown::{ContextBreakdown, ContextItem, ContextPart};
 pub use context_estimate::ContextEstimate;
 pub use diagnostics::{DiagnosticsSnapshot, PromptSource, PromptSourceKind, ToolDiagnostic};
 pub use error::{
-    format_retry_after, Error, ProviderDiagnostic, ProviderError, ProviderErrorKind, Retryability,
+    format_retry_after, Error, ErrorSource, ProviderDiagnostic, ProviderError, ProviderErrorKind,
+    Retryability,
 };
 pub use event::{
     ModelCallMetrics, ModelCallProfile, ProviderStreamResetReason, RunEvent, RunOutcome,
-    StopReason, ToolCompletion, ToolFailure,
+    StopReason, ToolCompletion, ToolExecution, ToolFailure,
 };
 pub use host_input::{
     DefaultSelection, HostChoice, HostInputRefusal, HostInputRequest, HostInputResponse,
@@ -221,9 +222,10 @@ pub use workspace::{
     ApprovalContext, ApprovalDecision, ApprovalFuture, ApprovalHandler, ApprovalRequest,
     ApprovalRequestReceiver, ApprovalSession, AuthorizationDenialKind, AuthorizationError,
     AuthorizationOutcome, CapabilityKind, CapabilityOperation, CapabilityRequest, CapabilitySource,
-    ChannelApprovalHandler, DenyAllPolicy, DenyApprovals, ExecutableSelection, NetworkTarget,
-    PathScope, PendingApproval, PolicyDecision, ProcessEnvironment, ProcessExecution,
-    ProcessInvocation, ProcessOutputLimits, ResolvedWorkspacePath, ScopedWorkspacePolicy,
+    ChannelApprovalHandler, DenyAllPolicy, DenyApprovals, EnvironmentVariables,
+    ExecutableSelection, NetworkTarget, PathScope, PendingApproval, PolicyDecision,
+    ProcessEnvironment, ProcessExecution, ProcessInvocation, ProcessOutputLimits,
+    ResolvedWorkspacePath, ScopedWorkspacePolicy, SessionControlAction, SessionControlTarget,
     Workspace, WorkspacePathError, WorkspacePathErrorKind, WorkspacePathState, WorkspacePolicy,
 };
 

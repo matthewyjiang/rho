@@ -725,10 +725,10 @@ fn entry_appended_under_open_tail_restores_previous_tail_blank() {
     let _ = cache.line_count(&entries, settings(60), &no_images);
 
     entries.push(Entry::Tool(ToolEntry::new(
-        rho_tools::tool_card::ToolCard::new(
-            rho_tools::tool_card::ToolStatus::Ok,
-            rho_tools::tool_card::ToolFamily::Default,
-            rho_tools::tool_card::ToolHeader::call("read_file(a.rs)", None),
+        rho_protocol::display::ToolCard::new(
+            rho_protocol::display::ToolCardStatus::Ok,
+            rho_protocol::display::ToolFamily::Default,
+            rho_protocol::display::ToolHeader::call("read_file(a.rs)", None),
         ),
         false,
         None,
@@ -764,10 +764,10 @@ fn entry_appended_under_open_tail_restores_previous_tail_blank() {
 
 fn zen_test_tool() -> Entry {
     Entry::Tool(crate::tui::ToolEntry::new(
-        rho_tools::tool_card::ToolCard::new(
-            rho_tools::tool_card::ToolStatus::Running,
-            rho_tools::tool_card::ToolFamily::Default,
-            rho_tools::tool_card::ToolHeader::call("read_file(a.rs)", None),
+        rho_protocol::display::ToolCard::new(
+            rho_protocol::display::ToolCardStatus::Running,
+            rho_protocol::display::ToolFamily::Default,
+            rho_protocol::display::ToolHeader::call("read_file(a.rs)", None),
         ),
         false,
         None,
@@ -847,8 +847,8 @@ fn resplice_tool_expand_preserves_later_assistant_lines() {
     // Rendered lines are compared across separate render passes; hold the lock
     // so theme-switching tests cannot restyle the second pass mid-test.
     use crate::tui::ToolEntry;
-    use rho_tools::tool_card::{
-        DiffRow, DiffRowKind, ToolBody, ToolCard, ToolFamily, ToolHeader, ToolStatus,
+    use rho_protocol::display::{
+        DiffRow, DiffRowKind, ToolBody, ToolCard, ToolCardStatus, ToolFamily, ToolHeader,
     };
 
     // Long body so collapsed vs expanded heights differ under max_tool_output_lines=2.
@@ -856,7 +856,7 @@ fn resplice_tool_expand_preserves_later_assistant_lines() {
         .map(|i| DiffRow::new(DiffRowKind::Added, Some(i + 1), format!("line_{i}")))
         .collect();
     let card = ToolCard::new(
-        ToolStatus::Ok,
+        ToolCardStatus::Ok,
         ToolFamily::FileDiff,
         ToolHeader::call("str_replace", Some("f.rs".into())),
     )
@@ -982,10 +982,10 @@ fn image_height_only_change_uses_cached_dependency_flags() {
         .unwrap()
     };
     let tool = Entry::Tool(crate::tui::ToolEntry::new(
-        rho_tools::tool_card::ToolCard::new(
-            rho_tools::tool_card::ToolStatus::Ok,
-            rho_tools::tool_card::ToolFamily::Default,
-            rho_tools::tool_card::ToolHeader::call("read_file photo.png", None),
+        rho_protocol::display::ToolCard::new(
+            rho_protocol::display::ToolCardStatus::Ok,
+            rho_protocol::display::ToolFamily::Default,
+            rho_protocol::display::ToolHeader::call("read_file photo.png", None),
         ),
         false,
         Some(image),

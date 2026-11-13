@@ -104,6 +104,16 @@ impl RunOutcome {
     }
 }
 
+/// Whether the run waits for a started tool call before its next model step.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ToolExecution {
+    /// The run waits for `ToolFinished` before the next model step.
+    Attached,
+    /// The loop continues; `ToolFinished` for this call arrives after later
+    /// `StepStarted` events. Hosts keep the call's card alive until then.
+    Detached,
+}
+
 /// Structured tool failure included in a completed tool event.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ToolFailure {
@@ -127,74 +137,54 @@ impl ToolFailure {
 
 /// Result included in [`RunEvent::ToolFinished`].
 ///
-/// Prefer [`Self::from_output`], [`Self::output`], and [`Self::is_failure`] over
-/// matching the legacy output-bearing variants. For completed calls, the
-/// output failure flag is authoritative even if a manually constructed variant
-/// disagrees with it.
-///
-/// # Next major
-///
-/// NEXT_MAJOR(rho-sdk): collapse Success and CompletedFailure into Completed(ToolOutput).
-/// The split preserves minor compatibility with hosts matching `Success`;
-/// until the next major, use the helpers to construct and interpret completions.
+/// A completed call carries its output even when that output reports failure;
+/// use [`Self::is_failure`] for status rather than the variant.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ToolCompletion {
-    /// A completed call, normally with successful output.
-    /// Use [`Self::is_failure`] for status rather than the variant name.
-    Success(ToolOutput),
-    /// A completed call, normally with failed output, retaining its metadata.
-    /// Use [`Self::from_output`] to keep this variant aligned with the output flag.
-    CompletedFailure(ToolOutput),
+    /// The call produced output, successful or failed (see [`ToolOutput::is_failure`]).
+    Completed(ToolOutput),
     /// The call could not complete.
     Failure(ToolFailure),
     Unavailable,
 }
 
 impl ToolCompletion {
-    /// Preferred construction surface for completed calls until the next major.
-    pub fn from_output(output: ToolOutput) -> Self {
-        if output.is_failure() {
-            Self::CompletedFailure(output)
-        } else {
-            Self::Success(output)
-        }
-    }
-
-    /// Retained output from either completed variant; execution errors and
-    /// unavailable calls have no completed output. Prefer this over matching.
+    /// Output of a completed call; execution errors and unavailable calls have none.
     pub fn output(&self) -> Option<&ToolOutput> {
         match self {
-            Self::Success(output) | Self::CompletedFailure(output) => Some(output),
+            Self::Completed(output) => Some(output),
             Self::Failure(_) | Self::Unavailable => None,
         }
     }
 
-    /// Canonical result status. Completed calls use only the output failure
-    /// flag, not the legacy variant name. Errors and unavailable calls fail.
+    /// Canonical result status: completed calls use the output failure flag;
+    /// errors and unavailable calls fail.
     pub fn is_failure(&self) -> bool {
         match self {
-            Self::Success(output) | Self::CompletedFailure(output) => output.is_failure(),
+            Self::Completed(output) => output.is_failure(),
             Self::Failure(_) | Self::Unavailable => true,
         }
     }
 
+    /// The text-only model result. Delivery attaches successful output images.
     pub(crate) fn model_result(&self, name: &str, id: &str) -> crate::model::ToolResult {
         let content = match self {
-            Self::Success(output) | Self::CompletedFailure(output) => output.content().to_owned(),
+            Self::Completed(output) => output.content().to_owned(),
             Self::Failure(failure) => failure.message().to_owned(),
             Self::Unavailable => format!("tool '{name}' is unavailable"),
         };
-        crate::model::ToolResult {
-            id: id.to_owned(),
-            ok: !self.is_failure(),
-            content,
-        }
+        let status = if self.is_failure() {
+            crate::model::ToolResultStatus::Failed
+        } else {
+            crate::model::ToolResultStatus::Succeeded
+        };
+        crate::model::ToolResult::new(id, status, content)
     }
 
     pub(crate) fn from_result(result: Result<ToolOutput, crate::tool::ToolError>) -> Self {
         match result {
-            Ok(output) => Self::from_output(output),
+            Ok(output) => Self::Completed(output),
             Err(error) => Self::Failure(ToolFailure::new(error.kind(), error.message().to_owned())),
         }
     }
@@ -293,17 +283,11 @@ pub enum RunEvent {
     },
     StepStarted {
         step: usize,
-        /// Provider-neutral estimate of request history and tool schemas.
-        /// This remains raw; [`crate::Session::context_estimate`] supplies the
-        /// calibrated count at the latest published history boundary.
-        ///
-        /// # Next major
-        ///
-        /// NEXT_MAJOR(rho-sdk): carry ContextEstimate on StepStarted instead of estimated_context_tokens.
-        /// Changing this existing variant's field would break minor-compatible
-        /// hosts. A session query currently exposes the richer latest snapshot;
-        /// an event-owned value would associate it with this exact step.
-        estimated_context_tokens: u64,
+        /// Context accounting for this step's request: history, request-only
+        /// context, and tool schemas. [`crate::ContextEstimate::tokens`] is
+        /// calibrated against the latest applicable provider report;
+        /// [`crate::ContextEstimate::estimated_tokens`] stays provider-neutral.
+        context_estimate: crate::ContextEstimate,
     },
     AssistantTextDelta {
         text: String,
@@ -327,6 +311,7 @@ pub enum RunEvent {
         call_id: ToolCallId,
         name: String,
         metadata: ToolMetadata,
+        execution: ToolExecution,
     },
     ToolUpdated {
         call_id: ToolCallId,
@@ -416,19 +401,6 @@ pub enum RunEvent {
     /// conversation history at the turn boundary.
     SteeringDelivered {
         id: SteeringId,
-    },
-    /// The call runs detached: the loop continues and `ToolFinished` for this id
-    /// arrives after later `StepStarted` events. Hosts keep the card alive.
-    ///
-    /// # Next major
-    ///
-    /// NEXT_MAJOR(rho-sdk): fold ToolDetached into ToolStarted as an execution field.
-    ///
-    /// This minor cannot add fields to [`RunEvent::ToolStarted`], so detached
-    /// execution is a sibling event. Prefer matching through host helpers until
-    /// major.
-    ToolDetached {
-        call_id: ToolCallId,
     },
     /// Internal host input accepted at a runtime checkpoint, not human steering.
     BoundaryInputApplied {

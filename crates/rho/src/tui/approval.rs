@@ -1,14 +1,15 @@
 use crossterm::event::{KeyCode, KeyEvent};
-use rho_sdk::{ApprovalDecision, PendingApproval};
+use rho_sdk::ApprovalDecision;
+use tokio::sync::oneshot;
 
 use super::{composer_pointer::ChoiceClick, App, ComposerMode, UserWait};
 
+mod daemon_ask;
 mod render;
 
-pub(in crate::tui) use render::approval_frame;
 use render::{approval_detail_line_count, approval_detail_page_lines};
+pub(in crate::tui) use render::{approval_frame, ApprovalPrompt};
 
-const DENIED_BY_USER_REASON: &str = "denied by user";
 const CANCELLED_BY_USER_REASON: &str = "cancelled by user";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -42,7 +43,7 @@ impl ApprovalChoice {
             Self::AllowOnce => ApprovalDecision::AllowOnce,
             Self::AllowForSession => ApprovalDecision::AllowForSession,
             Self::Deny => ApprovalDecision::Deny {
-                reason: DENIED_BY_USER_REASON.into(),
+                reason: crate::permission::DENIED_BY_USER.into(),
             },
         }
     }
@@ -66,7 +67,10 @@ impl ApprovalChoice {
 
 #[derive(Debug)]
 pub(super) struct ApprovalComposer {
-    pending: PendingApproval,
+    prompt: ApprovalPrompt,
+    /// Where the decision goes. Dropped unanswered, it says nothing was
+    /// decided.
+    reply: Option<oneshot::Sender<ApprovalDecision>>,
     active: ApprovalChoice,
     /// First visible detail line, measured from the start of the request.
     detail_offset: usize,
@@ -75,17 +79,22 @@ pub(super) struct ApprovalComposer {
 }
 
 impl ApprovalComposer {
-    fn new(pending: PendingApproval, restore_side: bool) -> Self {
+    fn new(
+        prompt: ApprovalPrompt,
+        reply: oneshot::Sender<ApprovalDecision>,
+        restore_side: bool,
+    ) -> Self {
         Self {
-            pending,
+            prompt,
+            reply: Some(reply),
             active: ApprovalChoice::Deny,
             detail_offset: 0,
             restore_side,
         }
     }
 
-    pub(super) fn request(&self) -> &rho_sdk::ApprovalRequest {
-        self.pending.request()
+    pub(super) fn prompt(&self) -> &ApprovalPrompt {
+        &self.prompt
     }
 
     pub(super) fn active(&self) -> ApprovalChoice {
@@ -98,7 +107,7 @@ impl ApprovalComposer {
 
     fn scroll_details_by(&mut self, delta_pages: isize, width: usize, viewport_height: usize) {
         let page_lines = approval_detail_page_lines(viewport_height).max(1);
-        let detail_len = approval_detail_line_count(self.request(), width);
+        let detail_len = approval_detail_line_count(&self.prompt, width);
         let max_offset = detail_len.saturating_sub(page_lines);
         let current = self.detail_offset.min(max_offset);
         let delta_lines = delta_pages.saturating_mul(page_lines as isize);
@@ -122,20 +131,42 @@ impl ApprovalComposer {
     }
 
     fn respond(&mut self, decision: ApprovalDecision) {
-        let _ = self.pending.respond(decision);
+        if let Some(reply) = self.reply.take() {
+            let _ = reply.send(decision);
+        }
     }
 }
 
 impl App {
-    pub(super) async fn open_approval(&mut self, pending: PendingApproval) {
+    /// Opens the approval prompt for `prompt`, whose decision goes to
+    /// `reply`.
+    pub(super) async fn open_replying_approval(
+        &mut self,
+        prompt: ApprovalPrompt,
+        reply: oneshot::Sender<ApprovalDecision>,
+    ) {
         let restore_side = self.side_overlay_open();
         self.input_ui
             .set_composer(ComposerMode::Approval(ApprovalComposer::new(
-                pending,
+                prompt,
+                reply,
                 restore_side,
             )));
         self.set_status("approval requested");
         self.wait_for_user(UserWait::Approval).await;
+    }
+
+    /// Closes the approval prompt undecided, as when its request closed
+    /// elsewhere; `/side` comes back if the prompt replaced it.
+    pub(super) fn withdraw_approval(&mut self) {
+        match self.input_ui.take_composer() {
+            ComposerMode::Approval(approval) => {
+                if approval.restore_side && self.side_chat.is_some() {
+                    self.input_ui.set_composer(ComposerMode::Side);
+                }
+            }
+            composer => self.input_ui.set_composer(composer),
+        }
     }
 
     pub(super) fn handle_approval_key(
@@ -198,14 +229,6 @@ impl App {
         approval.set_active(choice);
         if click == ChoiceClick::Double {
             self.finish_approval(None);
-        }
-    }
-
-    pub(super) fn cancel_approval(&mut self) {
-        if matches!(self.input_ui.composer(), ComposerMode::Approval(_)) {
-            self.finish_approval(Some(ApprovalDecision::Deny {
-                reason: DENIED_BY_USER_REASON.into(),
-            }));
         }
     }
 

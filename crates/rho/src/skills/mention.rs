@@ -15,6 +15,11 @@ use super::Skill;
 /// Tool that loads a skill. Without it, mentions stay prose.
 pub(crate) const SKILL_TOOL: &str = "skill";
 
+/// Why a skill command (`/skill:<name>`, `/$<name>`) is refused in a session
+/// without [`SKILL_TOOL`]; the TUI and the daemon say it alike.
+pub(crate) const NO_SKILL_TOOL: &str =
+    "skill commands are unavailable because the active agent has no skill tool";
+
 /// One whitespace-delimited mention: any currency sigil, then a name. This is
 /// T3's `SKILL_MENTION_PATTERN` (`packages/shared/src/composerInlineTokens.ts`)
 /// with its `(^|\s)` / `(?=\s|$)` delimiters handled by splitting on
@@ -61,11 +66,11 @@ fn mentions<'a>(texts: &[&'a str], discover: impl FnOnce() -> Vec<Skill>) -> Vec
 
 /// Host-requested call that loads skill `name`.
 pub(crate) fn load_call(name: &str) -> ToolCall {
-    ToolCall {
-        id: rho_sdk::ToolCallId::new().into_string(),
-        name: SKILL_TOOL.into(),
-        arguments: serde_json::json!({ "name": name }),
-    }
+    ToolCall::new(
+        rho_sdk::ToolCallId::new().into_string(),
+        SKILL_TOOL.into(),
+        serde_json::json!({ "name": name }),
+    )
 }
 
 /// T3 keeps `$20`, `$20k`, `$1e6`, and other amounts as prose, so a name

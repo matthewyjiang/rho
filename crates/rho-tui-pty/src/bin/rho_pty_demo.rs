@@ -41,11 +41,12 @@ const STARTUP: WaitTimeout = WaitTimeout::secs(20, "startup");
 const STREAM: WaitTimeout = WaitTimeout::secs(30, "stream response");
 const SETTLE: WaitTimeout = WaitTimeout::secs(10, "ui settle");
 
-const DEMO_CONFIG: &str = r#"provider = "openai"
+const DEMO_CONFIG: &str = r#"web_search.mode = "off"
+
+[model]
+provider = "openai"
 model = "gpt-5.6-sol"
 auth = "api-key"
-check_for_updates = false
-web_search.mode = "off"
 
 [behavior]
 # Keep matrix runs on the isolated file store so /login never prompts and
@@ -192,6 +193,8 @@ fn capture_demo(binary: &Path) -> Result<DemoCapture> {
         .with_context(|| format!("failed to write demo models {}", models_path.display()))?;
 
     let mut plan = RhoLaunchPlan::matrix(binary, &home, DEMO_SIZE);
+    // The fixture seeds its files where the session's tools then read them.
+    plan = plan.with_env("RHO_TUI_FIXTURE_WORKSPACE", workspace.display().to_string());
     plan.cwd = workspace;
     // Pin the header version at the capture input so release bumps do not force
     // proof-plate regen and the plate does not show a placeholder 0.0.0.

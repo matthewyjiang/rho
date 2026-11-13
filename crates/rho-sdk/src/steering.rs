@@ -10,17 +10,13 @@ use crate::{
 };
 
 /// Outcome of asking an active run to retract accepted steering input.
-///
-/// # Next major
-///
-/// NEXT_MAJOR(rho-sdk): add SteeringRetraction::Delivered for steering already forwarded to the provider mid-turn.
-///
-/// This minor keeps claimed or delivered input on [`SteeringRetraction::AlreadyApplied`]
-/// so hosts matching the current enum remain source-compatible.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SteeringRetraction {
     /// The input was still staged and was removed before reaching history.
     Retracted,
+    /// The provider already claimed or received the input mid-turn; it still
+    /// reaches history at the next boundary.
+    Delivered,
     /// The input was already appended to the run's conversation history.
     AlreadyApplied,
     /// The identifier was not accepted by this run.
@@ -56,7 +52,7 @@ impl SteeringQueue {
         let id = SteeringId::new();
         self.staged.push(StagedSteering {
             id: id.clone(),
-            message: Message::User(input.into_blocks()),
+            message: Message::User(input.into_blocks().into()),
             delivery: Delivery::Staged,
         });
         id
@@ -80,10 +76,10 @@ impl SteeringQueue {
                     self.staged.remove(index);
                     SteeringRetraction::Retracted
                 } else {
-                    SteeringRetraction::AlreadyApplied
+                    SteeringRetraction::Delivered
                 }
             }
-            Delivery::Delivered => SteeringRetraction::AlreadyApplied,
+            Delivery::Delivered => SteeringRetraction::Delivered,
         }
     }
 
@@ -198,12 +194,16 @@ fn should_apply(entry: &StagedSteering, delivered_only: bool) -> bool {
 
 fn user_blocks(message: &Message) -> Vec<ContentBlock> {
     match message {
-        Message::User(blocks) => blocks.clone(),
+        Message::User(blocks) => blocks.to_vec(),
         Message::System(_)
         | Message::Assistant(_)
         | Message::EnrichedAssistant(_)
         | Message::AbortedAssistant(_)
-        | Message::ToolResult(_) => Vec::new(),
+        | Message::ToolResult(_)
+        | Message::CompactionSummary(_)
+        | Message::ModelContext(_)
+        | Message::BoundaryInput(_)
+        | Message::ReasoningShift(_) => Vec::new(),
     }
 }
 

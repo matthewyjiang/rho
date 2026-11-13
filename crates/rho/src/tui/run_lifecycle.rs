@@ -1,13 +1,11 @@
-use super::{
-    activity::ActivityPhase, App, Entry, HistoryScroll, InputSubmissionMode, InteractiveRuntime,
-};
+use super::{App, HistoryScroll, InputSubmissionMode};
 
 impl App {
     pub(super) fn is_ui_busy(&self) -> bool {
         self.turn.is_busy()
     }
 
-    /// True only during an active provider turn, not compaction UI.
+    /// True during an active provider turn.
     pub(super) fn is_provider_turn_ui(&self) -> bool {
         self.turn.is_provider_turn()
     }
@@ -16,25 +14,9 @@ impl App {
         self.turn.session_ui().busy_status_label()
     }
 
-    pub(super) fn allows_idle_subagent_delivery(&self) -> bool {
-        self.turn.session_ui().allows_idle_subagent_delivery()
-    }
-
     pub(super) fn begin_provider_turn_ui(&mut self) {
         self.turn_finished_attention = false;
         self.turn.enter_provider_turn();
-    }
-
-    pub(super) fn begin_compact_ui(&mut self) {
-        self.turn.enter_compact();
-    }
-
-    /// Busy UI for an interruptible wait that is not a provider run.
-    /// Enters a cancellable wait between turns, labeled by `phase` so the
-    /// spinner never shows the previous turn's stale activity.
-    pub(super) fn begin_cancellable_wait_ui(&mut self, phase: ActivityPhase) {
-        self.turn.set_activity_phase(phase);
-        self.turn.enter_cancellable_wait();
     }
 
     pub(super) fn end_busy_ui(&mut self) {
@@ -53,19 +35,6 @@ impl App {
         if !matches!(self.history.scroll(), HistoryScroll::Bottom) {
             self.turn_finished_attention = true;
         }
-    }
-
-    /// After a successful provider start or terminal finish, provider-turn UI
-    /// must match the run controller. Compaction uses [`Self::begin_compact_ui`]
-    /// and must not call this.
-    pub(super) fn debug_assert_provider_turn_sync(&self, agent: &InteractiveRuntime) {
-        debug_assert_eq!(
-            self.turn.is_provider_turn(),
-            agent.is_run_active(),
-            "session_ui={:?} but InteractiveRuntime.is_run_active()={}",
-            self.turn.session_ui(),
-            agent.is_run_active()
-        );
     }
 
     pub(super) fn preserve_unapplied_steering_as_follow_ups(&mut self) {
@@ -102,12 +71,6 @@ impl App {
     pub(super) fn clear_transient_key_state(&mut self) {
         self.input_ui.clear_transient_edit_state();
         self.ctrl_c_streak = 0;
-    }
-
-    pub(super) fn insert_runtime_notices(&mut self, agent: &mut InteractiveRuntime) {
-        for notice in agent.take_notices() {
-            self.insert_entry(&Entry::Notice(notice));
-        }
     }
 }
 

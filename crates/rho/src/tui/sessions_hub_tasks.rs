@@ -15,9 +15,15 @@ use tokio::task::{JoinError, JoinHandle};
 use super::sessions_hub_groups::{hub_groups, HubGroup, Placement};
 use super::{session_picker, statusline::path::compact_cwd, App, ComposerMode, Entry, Session};
 use crate::session::{
-    CleanupOutcome, DeleteOptions, DeleteOutcome, SessionSummary, SessionTarget, Workspace,
-    WorkspaceDeleteOutcome,
+    is_in_use, CleanupFailure, CleanupOutcome, DeleteOptions, DeleteOutcome, SessionListing,
+    SessionSummary, SessionTarget, Workspace, WorkspaceDeleteOutcome,
 };
+
+/// Deletes sessions the store refused because something holds them open,
+/// through the daemon, which holds every session it has loaded and lets go
+/// of one no client is attached to: one answer per id, in order, a refusal
+/// in the daemon's words. Blocking.
+pub(super) type DeleteHeld = Box<dyn FnOnce(Vec<String>) -> Vec<Result<(), String>> + Send>;
 
 /// Sessions a confirmed delete removes.
 #[derive(Clone, Debug)]
@@ -39,20 +45,111 @@ impl SessionsDelete {
         }
     }
 
-    fn run(self, options: DeleteOptions) -> DeleteReport {
+    /// Deletes from the session store, in one batch, then through `held`
+    /// what the store refused as open elsewhere.
+    fn run(self, options: DeleteOptions, held: DeleteHeld) -> DeleteReport {
         match self {
-            Self::One(target) => DeleteReport::One {
-                result: Session::delete_target(&target, options),
-                target,
-            },
+            Self::One(target) => {
+                let result = match Session::delete_target(&target, options) {
+                    Ok(outcome) => Ok(Deleted::from(&outcome)),
+                    Err(error) if is_in_use(&error) => {
+                        match held(vec![target.id.clone()]).pop() {
+                            // The daemon does not count what went with it.
+                            Some(Ok(())) => Ok(Deleted::default()),
+                            Some(Err(refusal)) => Err(anyhow::anyhow!(refusal)),
+                            None => Err(error),
+                        }
+                    }
+                    Err(error) => Err(error),
+                };
+                DeleteReport::One { target, result }
+            }
             Self::Directory { cwd, targets } => DeleteReport::Directory {
-                result: Session::delete_targets(&targets, options),
+                result: Session::delete_targets(&targets, options)
+                    .map(|outcome| BatchDeleted::from(outcome).retry_held(held)),
                 cwd,
             },
-            Self::CleanupMissing(targets) => {
-                DeleteReport::CleanupMissing(Session::cleanup_missing_targets(&targets, options))
+            Self::CleanupMissing(targets) => DeleteReport::CleanupMissing(
+                Session::cleanup_missing_targets(&targets, options)
+                    .map(|outcome| BatchDeleted::from(outcome).retry_held(held)),
+            ),
+        }
+    }
+}
+
+/// What went with one deleted session, as its notice counts it.
+#[derive(Debug, Default)]
+pub(super) struct Deleted {
+    child_sessions: usize,
+    runs: usize,
+}
+
+impl From<&DeleteOutcome> for Deleted {
+    fn from(outcome: &DeleteOutcome) -> Self {
+        Self {
+            child_sessions: outcome.deleted_child_session_count,
+            runs: outcome.deleted_run_count,
+        }
+    }
+}
+
+/// What a delete of many sessions did, as its notice counts it.
+#[derive(Debug, Default)]
+pub(super) struct BatchDeleted {
+    deleted: usize,
+    failures: Vec<CleanupFailure>,
+    kept_current: bool,
+    /// Sessions skipped because their workspace directory came back.
+    restored_workspaces: usize,
+}
+
+impl From<WorkspaceDeleteOutcome> for BatchDeleted {
+    fn from(outcome: WorkspaceDeleteOutcome) -> Self {
+        Self {
+            deleted: outcome.deleted.len(),
+            failures: outcome.failures,
+            kept_current: !outcome.kept_protected.is_empty(),
+            restored_workspaces: 0,
+        }
+    }
+}
+
+impl From<CleanupOutcome> for BatchDeleted {
+    fn from(outcome: CleanupOutcome) -> Self {
+        Self {
+            deleted: outcome.deleted.len(),
+            failures: outcome.failures,
+            kept_current: false,
+            restored_workspaces: outcome.restored_workspaces,
+        }
+    }
+}
+
+impl BatchDeleted {
+    /// Asks `held` for the sessions the store refused as open elsewhere:
+    /// each it deletes counts as deleted, and each it refuses keeps the
+    /// failure, in its words.
+    fn retry_held(mut self, held: DeleteHeld) -> Self {
+        let (in_use, mut failures): (Vec<_>, Vec<_>) = std::mem::take(&mut self.failures)
+            .into_iter()
+            .partition(|failure| failure.in_use);
+        if !in_use.is_empty() {
+            let mut answers =
+                held(in_use.iter().map(|failure| failure.id.clone()).collect()).into_iter();
+            for mut failure in in_use {
+                match answers.next() {
+                    Some(Ok(())) => self.deleted += 1,
+                    Some(Err(refusal)) => {
+                        failure.error = refusal;
+                        failures.push(failure);
+                    }
+                    // Unanswered: the store's refusal stands.
+                    None => failures.push(failure),
+                }
             }
         }
+        self.failures = failures;
+        self
     }
 }
 
@@ -69,13 +166,13 @@ pub(super) enum DeleteOrigin {
 pub(super) enum DeleteReport {
     One {
         target: SessionTarget,
-        result: anyhow::Result<DeleteOutcome>,
+        result: anyhow::Result<Deleted>,
     },
     Directory {
         cwd: PathBuf,
-        result: anyhow::Result<WorkspaceDeleteOutcome>,
+        result: anyhow::Result<BatchDeleted>,
     },
-    CleanupMissing(anyhow::Result<CleanupOutcome>),
+    CleanupMissing(anyhow::Result<BatchDeleted>),
 }
 
 /// Listing reloaded after a delete, for the picker that started it.
@@ -121,10 +218,11 @@ pub(super) async fn next_sessions_task(
     output
 }
 
-/// Lists and groups every saved session. Blocking: reconciles the session
-/// index and stats every workspace directory.
+/// Lists and groups every saved session (see [`hub_groups`] for which it
+/// shows). Blocking: reconciles the session index and stats every
+/// workspace directory.
 fn load_hub_groups(current_cwd: &Path) -> anyhow::Result<Vec<HubGroup>> {
-    let sessions = Session::list_all()?;
+    let sessions = Session::list_all(SessionListing::Everything)?;
     let mut missing_directories = HashSet::new();
     for cwd in sessions.iter().map(|session| &session.cwd) {
         if !missing_directories.contains(cwd) && Session::workspace_directory_is_missing(cwd)? {
@@ -191,12 +289,17 @@ impl App {
         };
         let current_cwd = self.info.runtime.cwd.clone();
         let status = format!("deleting {}", plural(request.session_count(), "session"));
+        // The daemon holds every session it has loaded, such as the ones
+        // this TUI left: only it can delete those.
+        let held = self.info.session.daemon.deleter();
         self.pending_sessions_task = Some(PendingSessionsTask {
             handle: tokio::task::spawn_blocking(move || {
-                let report = request.run(options);
+                let report = request.run(options, held);
                 let relisted = match origin {
                     DeleteOrigin::Hub => Relisted::Hub(load_hub_groups(&current_cwd)),
-                    DeleteOrigin::Resume => Relisted::Resume(Session::list(&current_cwd)),
+                    DeleteOrigin::Resume => {
+                        Relisted::Resume(Session::list(&current_cwd, SessionListing::PersonFacing))
+                    }
                 };
                 TaskOutput::Delete { report, relisted }
             }),
@@ -280,14 +383,21 @@ impl App {
             DeleteReport::One { target, result } => {
                 let short = session_picker::short_session_id(&target.id);
                 match result {
-                    Ok(outcome) if outcome.deleted_run_count > 0 => format!(
-                        "deleted session {short} and {}",
-                        plural(outcome.deleted_run_count, "related run")
-                    ),
-                    Ok(_) => format!("deleted session {short}"),
+                    Ok(outcome) => {
+                        let mut notice = format!("deleted session {short}");
+                        for (count, noun) in [
+                            (outcome.child_sessions, "child session"),
+                            (outcome.runs, "related run"),
+                        ] {
+                            if count > 0 {
+                                notice.push_str(&format!(" and {}", plural(count, noun)));
+                            }
+                        }
+                        notice
+                    }
                     Err(error) => {
                         self.insert_entry(&Entry::Error(format!(
-                            "could not delete session: {error}"
+                            "could not delete session: {error:#}"
                         )));
                         "delete failed".into()
                     }
@@ -312,10 +422,10 @@ impl App {
                 }
                 let mut notice = format!(
                     "deleted {} in {}",
-                    plural(outcome.deleted.len(), "session"),
+                    plural(outcome.deleted, "session"),
                     compact_cwd(&cwd)
                 );
-                if !outcome.kept_protected.is_empty() {
+                if outcome.kept_current {
                     notice.push_str(", kept the current session");
                 }
                 if !outcome.failures.is_empty() {
@@ -341,7 +451,7 @@ impl App {
                         failure.error
                     )));
                 }
-                let mut notice = format!("cleaned up {}", plural(outcome.deleted.len(), "session"));
+                let mut notice = format!("cleaned up {}", plural(outcome.deleted, "session"));
                 if !outcome.failures.is_empty() {
                     notice.push_str(&format!(", {} failed", outcome.failures.len()));
                 }
@@ -356,3 +466,7 @@ impl App {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "sessions_hub_tasks_tests.rs"]
+mod tests;

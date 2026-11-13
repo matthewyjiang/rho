@@ -1,44 +1,21 @@
 use std::sync::Arc;
 
-use super::host_io::HostIo;
 use crate::agent::{AgentCapabilities, ToolCapability};
-use rho_sdk::{tool::Tool, ProcessEnvironment};
-
-/// Build the mid-session/startup edit tool with one shared options policy.
-pub(super) fn edit_tool(
-    edit_format: rho_tools::EditFormat,
-    max_output_bytes: usize,
-    mutation_observer: Arc<dyn rho_tools::WorkspaceMutationObserver>,
-    host_io: &HostIo,
-) -> Arc<dyn Tool> {
-    rho_tools::coding_tool(
-        rho_tools::CodingToolKind::Edit,
-        host_io.coding_options(
-            rho_tools::CodingToolOptions::new()
-                .max_output_bytes(max_output_bytes)
-                .edit_tool(edit_format)
-                .mutation_observer(mutation_observer),
-        ),
-    )
-}
 
 pub(super) fn sdk_bundle(
     capabilities: &AgentCapabilities,
     max_output_bytes: usize,
-    process_environment: ProcessEnvironment,
+    process_environment: rho_tools::SharedProcessEnvironment,
     mutation_observer: Arc<dyn rho_tools::WorkspaceMutationObserver>,
-    file_view: rho_tools::FileViewPolicy,
+    edit_format: rho_tools::EditFormat,
     rtk_enabled: bool,
-    host_io: &HostIo,
 ) -> super::sdk_registry::StaticToolBundle {
     use rho_tools::CodingToolKind;
 
-    let options = host_io.coding_options(
-        rho_tools::CodingToolOptions::new()
-            .max_output_bytes(max_output_bytes)
-            .file_view(file_view)
-            .mutation_observer(Arc::clone(&mutation_observer)),
-    );
+    let options = rho_tools::CodingToolOptions::new()
+        .max_output_bytes(max_output_bytes)
+        .edit_tool(edit_format)
+        .mutation_observer(Arc::clone(&mutation_observer));
     let mut tools = Vec::new();
     for (capability, kind) in [
         (ToolCapability::ListDir, CodingToolKind::ListDir),
@@ -61,13 +38,11 @@ pub(super) fn sdk_bundle(
     let shell_enabled = false;
     if shell_enabled {
         tools.push(rho_tools::shell_tool(
-            host_io.shell_options(
-                rho_tools::ShellToolOptions::new()
-                    .max_output_bytes(max_output_bytes)
-                    .environment(process_environment)
-                    .mutation_observer(mutation_observer)
-                    .rtk(rtk_enabled),
-            ),
+            rho_tools::ShellToolOptions::new()
+                .max_output_bytes(max_output_bytes)
+                .environment(process_environment)
+                .mutation_observer(mutation_observer)
+                .rtk(rtk_enabled),
         ));
     }
     super::sdk_registry::StaticToolBundle::new(tools)

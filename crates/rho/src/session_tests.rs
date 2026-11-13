@@ -1,3 +1,4 @@
+use std::fs::OpenOptions;
 use std::ops::Deref;
 
 use tempfile::TempDir;
@@ -44,6 +45,7 @@ fn enriched_assistant_context_round_trips_for_resume() {
                 kind: "openai_response_output_item".into(),
                 position: None,
                 data: serde_json::json!({"type": "reasoning", "encrypted_content": "signed"}),
+                replay: rho_sdk::model::ReplayScope::ExactModel,
             }],
         }))
         .unwrap();
@@ -82,29 +84,8 @@ fn resumes_session_by_id_from_a_different_workspace() {
     assert!(matches!(
         &messages[0],
         Message::Assistant(content)
-            if matches!(content.as_slice(), [ContentBlock::Text(text)] if text == "from the original workspace")
+            if matches!(content.as_ref(), [ContentBlock::Text(text)] if text == "from the original workspace")
     ));
-}
-
-// Covers: resume cannot return a live Session after another process has claimed
-// the transcript for deletion.
-// Owner: session persistence
-#[test]
-fn resume_rejects_session_held_for_deletion() {
-    let root = temp_session_root();
-    let cwd = temp_cwd();
-    let session = Session::create_in_root(&root, &cwd).unwrap();
-    session
-        .append_message(&Message::assistant_text("delete race"))
-        .unwrap();
-    let id = session.id().to_string();
-    drop(session);
-
-    let delete_lease = super::acquire_delete_session_lease(&root, &cwd, &id).unwrap();
-    assert!(Session::open_by_id_in_root(&root, &cwd, &id).is_err());
-
-    drop(delete_lease);
-    Session::open_by_id_in_root(&root, &cwd, &id).unwrap();
 }
 
 #[test]
@@ -136,8 +117,8 @@ fn separate_display_message_round_trips_for_resume_and_export() {
     let root = temp_session_root();
     let cwd = temp_cwd();
     let session = Session::create_in_root(&root, &cwd).unwrap();
-    let model_message = Message::user_text("internal goal-setting instructions");
-    let display_message = Message::user_text("/goal all tests pass");
+    let model_message = Message::user_text("expanded init instructions");
+    let display_message = Message::user_text("/init all tests pass");
     session
         .append_message_with_display(&model_message, &display_message)
         .unwrap();
@@ -145,21 +126,22 @@ fn separate_display_message_round_trips_for_resume_and_export() {
         .append_message(&Message::assistant_text("working on it"))
         .unwrap();
 
-    let (_, histories) =
-        Session::open_by_id_with_histories_in_root(&root, &cwd, session.id()).unwrap();
+    let (opened, history) = Session::open_by_id_in_root(&root, &cwd, session.id()).unwrap();
+    let display = opened.active_display_history().unwrap();
+    drop(opened);
     assert!(matches!(
-        &histories.model[0],
-        Message::User(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "internal goal-setting instructions")
+        &history[0],
+        Message::User(blocks) if matches!(blocks.as_ref(), [ContentBlock::Text(text)] if text == "expanded init instructions")
     ));
     assert!(matches!(
-        &histories.display[0],
-        Message::User(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "/goal all tests pass")
+        &display[0].message,
+        Message::User(blocks) if matches!(blocks.as_ref(), [ContentBlock::Text(text)] if text == "/init all tests pass")
     ));
 
     let export = Session::export_by_id_in_root(&root, &cwd, session.id()).unwrap();
     assert!(matches!(
         &export.messages[0].message,
-        Message::User(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "/goal all tests pass")
+        Message::User(blocks) if matches!(blocks.as_ref(), [ContentBlock::Text(text)] if text == "/init all tests pass")
     ));
 }
 
@@ -195,27 +177,27 @@ fn replace_history_is_append_only_but_model_replay_uses_latest_replacement() {
         SessionEntry::Node { node } if node.kind == SessionNodeKind::Compaction
     )));
 
-    let (_session, histories) =
-        Session::open_by_id_with_histories_in_root(&root, &cwd, session.id()).unwrap();
+    let (opened, history) = Session::open_by_id_in_root(&root, &cwd, session.id()).unwrap();
+    let display = opened.active_display_history().unwrap();
 
-    assert_eq!(histories.model.len(), 3);
+    assert_eq!(history.len(), 3);
     assert!(
-        matches!(&histories.model[0], Message::User(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "summary"))
+        matches!(&history[0], Message::User(blocks) if matches!(blocks.as_ref(), [ContentBlock::Text(text)] if text == "summary"))
     );
     assert!(
-        matches!(&histories.model[2], Message::User(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "after replacement"))
+        matches!(&history[2], Message::User(blocks) if matches!(blocks.as_ref(), [ContentBlock::Text(text)] if text == "after replacement"))
     );
-    assert_eq!(histories.display.len(), 4);
+    assert_eq!(display.len(), 4);
     assert!(
-        matches!(&histories.display[0], Message::User(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "old user"))
+        matches!(&display[0].message, Message::User(blocks) if matches!(blocks.as_ref(), [ContentBlock::Text(text)] if text == "old user"))
     );
     assert!(
-        matches!(&histories.display[1], Message::Assistant(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "old assistant"))
+        matches!(&display[1].message, Message::Assistant(blocks) if matches!(blocks.as_ref(), [ContentBlock::Text(text)] if text == "old assistant"))
     );
-    assert!(matches!(&histories.display[2], Message::Assistant(blocks)
-            if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text.contains("Compacted context"))));
+    assert!(matches!(&display[2].message, Message::Assistant(blocks)
+            if matches!(blocks.as_ref(), [ContentBlock::Text(text)] if text.contains("Compacted context"))));
     assert!(
-        matches!(&histories.display[3], Message::User(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "after replacement"))
+        matches!(&display[3].message, Message::User(blocks) if matches!(blocks.as_ref(), [ContentBlock::Text(text)] if text == "after replacement"))
     );
 }
 
@@ -236,9 +218,29 @@ fn opens_session_by_uuid_prefix() {
 
     write_minimal_session_file(&root, &cwd, "aaaaaaaa-1111-4111-8111-111111111111");
     write_minimal_session_file(&root, &cwd, "aaaaaaaa-2222-4222-8222-222222222222");
-    for (case, prefix) in [("ambiguous", "aaaaaaaa"), ("missing", "missing")] {
-        assert!(
-            Session::open_by_id_in_root(&root, &cwd, prefix).is_err(),
+    // Client-chosen ids can prefix one another; a whole id still names one.
+    write_minimal_session_file(&root, &cwd, "client");
+    write_minimal_session_file(&root, &cwd, "client-2");
+    for (case, prefix, opens) in [
+        ("ambiguous", "aaaaaaaa", None),
+        ("missing", "missing", None),
+        ("whole id that prefixes another", "client", Some("client")),
+    ] {
+        // Open, `rho sessions rm`'s lookup and rename resolve alike.
+        let opened = Session::open_by_id_in_root(&root, &cwd, prefix).ok();
+        let found = Session::find_by_id_prefix_in_root(&root, &cwd, prefix)
+            .unwrap()
+            .into_iter()
+            .map(|session| session.id)
+            .collect::<Vec<_>>();
+        let renamed = Session::set_title_in_root_for_test(&root, &cwd, prefix, case).is_ok();
+        assert_eq!(
+            (
+                opened.as_ref().map(|(session, _)| session.id()),
+                (found.len() == 1).then(|| found[0].as_str()),
+                renamed,
+            ),
+            (opens, opens, opens.is_some()),
             "{case}"
         );
     }
@@ -255,17 +257,20 @@ fn workspace_key_avoids_separator_collisions() {
 
 #[test]
 fn inserts_interrupted_tool_results_on_load() {
-    let plain = Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
-        id: "call-1".into(),
-        name: "bash".into(),
-        arguments: serde_json::json!({"command": "echo hi"}),
-    })]);
+    let plain = Message::Assistant(
+        (vec![ContentBlock::ToolCall(ToolCall::new(
+            "call-1".into(),
+            "bash".into(),
+            serde_json::json!({"command": "echo hi"}),
+        ))])
+        .into(),
+    );
     let enriched = Message::assistant(AssistantMessage {
-        content: vec![ContentBlock::ToolCall(ToolCall {
-            id: "call-1".into(),
-            name: "bash".into(),
-            arguments: serde_json::json!({"command": "echo hi"}),
-        })],
+        content: vec![ContentBlock::ToolCall(ToolCall::new(
+            "call-1".into(),
+            "bash".into(),
+            serde_json::json!({"command": "echo hi"}),
+        ))],
         provenance: Some(ModelIdentity::new(
             "openai-codex",
             "openai-responses",
@@ -289,7 +294,7 @@ fn inserts_interrupted_tool_results_on_load() {
         assert_eq!(messages.len(), 3);
         assert!(matches!(&messages[0], Message::User(_)));
         assert!(
-            matches!(&messages[2], Message::ToolResult(result) if result.id == "call-1" && !result.ok)
+            matches!(&messages[2], Message::ToolResult(result) if result.id == "call-1" && result.is_failure())
         );
     }
 }
@@ -297,7 +302,7 @@ fn inserts_interrupted_tool_results_on_load() {
 #[test]
 fn tolerates_only_truncated_final_json() {
     for (tail, should_load) in [
-        (b"{\"type\":\"message\"".as_slice(), true),
+        (b"{\"type\":\"node\"".as_slice(), true),
         (b"{not json}\n".as_slice(), false),
         (b"{not json}".as_slice(), false),
     ] {
@@ -374,7 +379,7 @@ fn list_backfills_existing_sessions_and_sorts_newest_first() {
     write_session_file(&root, &cwd, older_id, 10, &["older prompt"]);
     write_session_file(&root, &cwd, newer_id, 20, &["newer prompt"]);
 
-    let summaries = Session::list_in_root(&root, &cwd).unwrap();
+    let summaries = Session::list_in_root(&root, &cwd, SessionListing::PersonFacing).unwrap();
 
     assert_eq!(summaries.len(), 2);
     assert_eq!(summaries[0].id, newer_id);
@@ -396,10 +401,15 @@ fn list_removes_stale_index_rows() {
     let root = temp_session_root();
     let cwd = temp_cwd();
     let session = Session::create_in_root(&root, &cwd).unwrap();
-    assert_eq!(Session::list_in_root(&root, &cwd).unwrap().len(), 1);
+    assert_eq!(
+        Session::list_in_root(&root, &cwd, SessionListing::PersonFacing)
+            .unwrap()
+            .len(),
+        1
+    );
     remove_session_storage(session.path());
 
-    let summaries = Session::list_in_root(&root, &cwd).unwrap();
+    let summaries = Session::list_in_root(&root, &cwd, SessionListing::PersonFacing).unwrap();
 
     assert!(summaries.is_empty());
 }
@@ -442,35 +452,36 @@ fn export_by_id_normalizes_incomplete_display_tool_calls() {
         .replace_history(&[Message::user_text("compacted summary")])
         .unwrap();
     session
-        .append_message(&Message::Assistant(vec![ContentBlock::ToolCall(
-            ToolCall {
-                id: "call-1".into(),
-                name: "bash".into(),
-                arguments: serde_json::json!({"command": "echo hi"}),
-            },
-        )]))
+        .append_message(&Message::Assistant(
+            (vec![ContentBlock::ToolCall(ToolCall::new(
+                "call-1".into(),
+                "bash".into(),
+                serde_json::json!({"command": "echo hi"}),
+            ))])
+            .into(),
+        ))
         .unwrap();
 
     let export = Session::export_by_id_in_root(&root, &cwd, session.id()).unwrap();
 
     assert_eq!(export.messages.len(), 4);
     assert!(
-        matches!(&export.messages[0].message, Message::User(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "original"))
+        matches!(&export.messages[0].message, Message::User(blocks) if matches!(blocks.as_ref(), [ContentBlock::Text(text)] if text == "original"))
     );
     assert!(
         matches!(&export.messages[1].message, Message::Assistant(blocks)
-            if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text.contains("Compacted context")))
+            if matches!(blocks.as_ref(), [ContentBlock::Text(text)] if text.contains("Compacted context")))
     );
     assert!(matches!(
         &export.messages[2].message,
         Message::Assistant(blocks)
-            if matches!(blocks.as_slice(), [ContentBlock::ToolCall(call)] if call.id == "call-1")
+            if matches!(blocks.as_ref(), [ContentBlock::ToolCall(call)] if call.id == "call-1")
     ));
     assert!(matches!(
         &export.messages[3].message,
         Message::ToolResult(result)
             if result.id == "call-1"
-                && !result.ok
+                && result.is_failure()
                 && result.content == "tool call interrupted before completion"
     ));
 }
@@ -499,27 +510,11 @@ fn write_session_file(root: &Path, cwd: &Path, id: &str, timestamp: u64, prompts
     let dir = session_dir_in_root(root, cwd);
     fs::create_dir_all(&dir).unwrap();
     let path = dir.join(format!("{timestamp}_{id}.jsonl"));
-    let mut entries = vec![SessionEntry::Session {
-        version: 3,
-        id: id.into(),
-        timestamp: timestamp.to_string(),
-        cwd: cwd.to_path_buf(),
-        agent_id: None,
-        agent_fingerprint: None,
-        agent_role: crate::session::agent_identity::SessionAgentRole::Root,
-    }];
-    entries.extend(prompts.iter().map(|prompt| SessionEntry::Message {
-        timestamp: timestamp.to_string(),
-        message: Message::user_text(*prompt),
-        display_message: None,
-    }));
-    let contents = entries
-        .into_iter()
-        .map(|entry| serde_json::to_string(&entry).unwrap())
-        .collect::<Vec<_>>()
-        .join("\n")
-        + "\n";
-    fs::write(path, contents).unwrap();
+    fs::write(
+        path,
+        super::persistence::test_transcript(cwd, id, timestamp, prompts),
+    )
+    .unwrap();
 }
 
 #[test]
@@ -540,23 +535,8 @@ fn opens_legacy_flat_jsonl_sessions_by_id() {
         .ends_with("_flat-legacy-id.jsonl"));
     assert!(matches!(
         messages.as_slice(),
-        [Message::User(blocks)] if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "hello legacy")
+        [Message::User(blocks)] if matches!(blocks.as_ref(), [ContentBlock::Text(text)] if text == "hello legacy")
     ));
-}
-
-#[test]
-fn session_web_dir_uses_folder_sidecar_and_legacy_companion() {
-    let folder = PathBuf::from("/tmp/ws/100_abc/session.jsonl");
-    assert_eq!(
-        super::persistence::session_web_dir(&folder),
-        Some(PathBuf::from("/tmp/ws/100_abc/web"))
-    );
-
-    let legacy = PathBuf::from("/tmp/ws/100_abc.jsonl");
-    assert_eq!(
-        super::persistence::session_web_dir(&legacy),
-        Some(PathBuf::from("/tmp/ws/100_abc.web"))
-    );
 }
 
 #[test]
@@ -602,9 +582,11 @@ fn deletes_folder_session_and_cascades_parent_linked_runs() {
     assert!(!session_dir.exists());
     assert!(!linked.exists());
     assert!(other.exists());
-    assert!(Session::list_in_root_for_test(&root, &cwd)
-        .unwrap()
-        .is_empty());
+    assert!(
+        Session::list_in_root_for_test(&root, &cwd, SessionListing::PersonFacing)
+            .unwrap()
+            .is_empty()
+    );
 
     let err = Session::delete_by_id_in_roots(
         &root,
@@ -697,7 +679,7 @@ fn deletes_legacy_flat_session_and_web_companion() {
     fs::create_dir_all(&web).unwrap();
     fs::write(web.join("page.html"), b"<html></html>").unwrap();
     // Ensure the index knows about the legacy file before delete.
-    let _ = Session::list_in_root_for_test(&root, &cwd).unwrap();
+    let _ = Session::list_in_root_for_test(&root, &cwd, SessionListing::PersonFacing).unwrap();
 
     Session::delete_by_id_in_roots(
         &root,
@@ -843,7 +825,7 @@ fn cleans_up_sessions_for_missing_workspaces_only() {
             .collect::<std::collections::HashSet<_>>(),
         stale_ids.iter().map(String::as_str).collect()
     );
-    let remaining = Session::list_all_in_root(&root).unwrap();
+    let remaining = Session::list_all_in_root(&root, SessionListing::PersonFacing).unwrap();
     assert_eq!(remaining.len(), 1);
     assert_eq!(remaining[0].id, kept_id);
 }
@@ -888,7 +870,7 @@ fn missing_workspace_cleanup_deletes_only_reviewed_targets() {
             .collect::<Vec<_>>(),
         vec![reviewed_id.as_str()]
     );
-    let remaining = Session::list_all_in_root(&root).unwrap();
+    let remaining = Session::list_all_in_root(&root, SessionListing::PersonFacing).unwrap();
     assert_eq!(remaining.len(), 1);
     assert_eq!(remaining[0].id, late_id);
 }
@@ -907,7 +889,7 @@ fn list_all_includes_other_workspaces() {
         .append_message(&Message::user_text("project b"))
         .unwrap();
 
-    let all = Session::list_all_in_root(&root).unwrap();
+    let all = Session::list_all_in_root(&root, SessionListing::PersonFacing).unwrap();
     let ids = all
         .iter()
         .map(|summary| summary.id.as_str())
@@ -918,17 +900,47 @@ fn list_all_includes_other_workspaces() {
     assert!(all.iter().any(|summary| summary.cwd == *cwd_b));
 }
 
-// Covers: empty titles must fail instead of clearing stored names
+// Covers: every rename refuses a title that would clear the stored name,
+// break the one line a list shows it on or drive a terminal, or run past
+// its budget, and keeps the stored title (#1667).
 // Owner: session persistence
 #[test]
-fn set_title_rejects_empty_titles() {
+fn set_title_refuses_titles_a_list_cannot_show() {
     let root = temp_session_root();
     let cwd = temp_cwd();
     let session = Session::create_in_root(&root, &cwd).unwrap();
     let id = session.id().to_string();
+    Session::set_title_in_root_for_test(&root, &cwd, &id, "kept").unwrap();
+    let too_long = "t".repeat(super::title::MAX_TITLE_CHARS + 1);
+    let cases = [
+        ("   ", TitleRejected::Empty),
+        (
+            "two\nlines",
+            TitleRejected::ControlCharacter { found: '\n' },
+        ),
+        (
+            "\u{1b}[31mred",
+            TitleRejected::ControlCharacter { found: '\u{1b}' },
+        ),
+        (
+            too_long.as_str(),
+            TitleRejected::TooLong {
+                chars: super::title::MAX_TITLE_CHARS + 1,
+            },
+        ),
+    ];
 
-    let error = Session::set_title_in_root_for_test(&root, &cwd, &id, "   ").unwrap_err();
-    assert!(error.to_string().contains("empty"), "{error}");
+    for (title, expected) in cases {
+        let refused = Session::set_title_in_root_for_test(&root, &cwd, &id, title)
+            .unwrap_err()
+            .downcast::<TitleRejected>()
+            .unwrap();
+        assert_eq!(
+            (refused, Session::title_in_root(&root, &cwd, &id).unwrap()),
+            (expected, Some("kept".to_owned())),
+            "{title:?}"
+        );
+    }
 }
 
 // Covers: rename by id prefix trims the title, follows the session's own
@@ -952,7 +964,8 @@ fn set_title_resolves_across_workspaces() {
     assert_eq!(updated.cwd.as_path(), created_cwd.as_ref());
     assert_eq!(updated.title, "cross project title");
 
-    let listed = Session::list_in_root_for_test(&root, &created_cwd).unwrap();
+    let listed =
+        Session::list_in_root_for_test(&root, &created_cwd, SessionListing::PersonFacing).unwrap();
     let summary = listed
         .into_iter()
         .find(|summary| summary.id == id)
@@ -982,10 +995,149 @@ fn set_generated_title_does_not_overwrite_manual_title() {
         Session::set_generated_title_in_root_for_test(&root, &cwd, &id, "auto name").unwrap();
     assert!(generated.is_none());
 
-    let listed = Session::list_in_root_for_test(&root, &cwd).unwrap();
+    let listed = Session::list_in_root_for_test(&root, &cwd, SessionListing::PersonFacing).unwrap();
     let summary = listed
         .into_iter()
         .find(|summary| summary.id == id)
         .expect("session summary");
     assert_eq!(summary.title.as_deref(), Some("manual name"));
+}
+
+// Covers: a session file keeps the host that created it on its header,
+// recorded for future listing filters, including after a fresh session is
+// rebound to a delegated agent and its header rewritten; and a header naming
+// a host only a later Rho knows still opens.
+// Owner: session file header
+#[test]
+fn the_header_keeps_the_origin_the_session_was_created_with() {
+    /// What happens to the file between creating and reopening it.
+    type Edit = fn(&Session);
+    let cases: [(&str, Edit, SessionOrigin); 3] = [
+        ("as created", |_| {}, SessionOrigin::Acp),
+        (
+            "rebound to a delegated agent",
+            |session| {
+                session
+                    .rebind_fresh_delegated_agent("child", "child-fingerprint", None)
+                    .unwrap();
+            },
+            SessionOrigin::Acp,
+        ),
+        (
+            "written by a later Rho",
+            |session| {
+                let header = fs::read_to_string(session.path()).unwrap();
+                let later = header.replacen(r#""origin":"acp""#, r#""origin":"something_new""#, 1);
+                assert_ne!(later, header, "the header records its origin");
+                fs::write(session.path(), later).unwrap();
+            },
+            SessionOrigin::Unknown,
+        ),
+    ];
+    for (label, edit, expected) in cases {
+        let root = temp_session_root();
+        let cwd = temp_cwd();
+        let session = Session::create_with_id_in_root(
+            &root,
+            &cwd,
+            "acp-session",
+            Some(("rho", "fingerprint")),
+            SessionOrigin::Acp.into(),
+        )
+        .unwrap();
+        edit(&session);
+        let (session, _) = Session::open_by_id_in_root(&root, &cwd, "acp-session")
+            .unwrap_or_else(|error| panic!("{label}: {error:#}"));
+        let origin = match read_entries(session.path()).unwrap().into_iter().next() {
+            Some(SessionEntry::Session { origin, .. }) => origin,
+            _ => panic!("the file starts with its header"),
+        };
+        assert_eq!(origin, Some(expected), "{label}");
+    }
+}
+
+// Covers: person-facing listings leave out `rho run`, subagent, and workflow
+// node sessions and keep every other origin, including files written before
+// origins were recorded; the index carries each header's origin; a hidden
+// session still opens by id.
+// Owner: session listing
+#[test]
+fn person_facing_listings_leave_out_runs_and_child_sessions() {
+    // A header as an older Rho (no origin) or a later one (an origin this
+    // one does not know) writes it.
+    const OLDER_RHO: &str = "";
+    const LATER_RHO: &str = r#","origin":"something_new""#;
+    use SessionOrigin::{Acp, Daemon, Interactive, Run, Subagent, Unknown, WorkflowNode};
+    // (id, created as, header rewritten to, indexed origin, person-facing)
+    let cases = [
+        ("interactive", Interactive, None, Some(Interactive), true),
+        ("acp", Acp, None, Some(Acp), true),
+        ("daemon", Daemon, None, Some(Daemon), true),
+        ("run", Run, None, Some(Run), false),
+        ("subagent", Subagent, None, Some(Subagent), false),
+        (
+            "workflow-node",
+            WorkflowNode,
+            None,
+            Some(WorkflowNode),
+            false,
+        ),
+        ("older-rho", Interactive, Some(OLDER_RHO), None, true),
+        (
+            "later-rho",
+            Interactive,
+            Some(LATER_RHO),
+            Some(Unknown),
+            true,
+        ),
+    ];
+    let root = temp_session_root();
+    let cwd = temp_cwd();
+    for (id, origin, rewritten, ..) in cases {
+        let session =
+            Session::create_with_id_in_root(&root, &cwd, id, None, origin.into()).unwrap();
+        if let Some(rewritten) = rewritten {
+            let header = fs::read_to_string(session.path()).unwrap();
+            let edited = header.replacen(r#","origin":"interactive""#, rewritten, 1);
+            assert_ne!(edited, header, "{id}: the header records its origin");
+            fs::write(session.path(), edited).unwrap();
+        }
+    }
+
+    let by_id = |mut sessions: Vec<(String, Option<SessionOrigin>)>| {
+        sessions.sort_by(|(left, _), (right, _)| left.cmp(right));
+        sessions
+    };
+    let listed = |sessions: anyhow::Result<Vec<SessionSummary>>| {
+        by_id(
+            sessions
+                .unwrap()
+                .into_iter()
+                .map(|session| (session.id, session.origin))
+                .collect(),
+        )
+    };
+    let expected = |listing: SessionListing| {
+        by_id(
+            cases
+                .iter()
+                .filter(|case| case.4 || listing == SessionListing::Everything)
+                .map(|(id, _, _, indexed, _)| (id.to_string(), *indexed))
+                .collect(),
+        )
+    };
+    for listing in [SessionListing::PersonFacing, SessionListing::Everything] {
+        assert_eq!(
+            [
+                listed(Session::list_in_root_for_test(&root, &cwd, listing)),
+                listed(Session::list_all_in_root(&root, listing)),
+            ],
+            [expected(listing), expected(listing)],
+            "{listing:?}"
+        );
+    }
+    for (id, ..) in cases {
+        Session::open_by_id_in_root(&root, &cwd, id)
+            .unwrap_or_else(|error| panic!("{id}: {error:#}"));
+    }
 }

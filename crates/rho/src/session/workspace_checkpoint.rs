@@ -274,14 +274,26 @@ pub(crate) struct WorkspaceCheckpointStore {
 
 impl WorkspaceCheckpointStore {
     fn for_session(session: &Session, limits: CheckpointLimits) -> anyhow::Result<Option<Self>> {
-        let unit = SessionUnit::from_path(&session.path)
+        Self::at(&session.path, &session.id, limits)
+    }
+
+    /// The store of the session `id` saved at `path`, or `None` for a
+    /// session whose file has no folder to keep checkpoints in. Opens
+    /// nothing, so a reader may use it while another process writes the
+    /// session.
+    pub(super) fn at(
+        path: &Path,
+        id: &str,
+        limits: CheckpointLimits,
+    ) -> anyhow::Result<Option<Self>> {
+        let unit = SessionUnit::from_path(path)
             .context("session path does not identify a durable session unit")?;
         let SessionUnit::Folder { dir } = unit else {
             return Ok(None);
         };
         let checkpoint_dir = dir.join(CHECKPOINT_DIR_NAME);
         Ok(Some(Self {
-            session_id: SessionId::from_string(session.id.clone())?,
+            session_id: SessionId::from_string(id.to_owned())?,
             journal_path: checkpoint_dir.join(CHECKPOINT_JOURNAL_NAME),
             checkpoint_dir,
             limits,

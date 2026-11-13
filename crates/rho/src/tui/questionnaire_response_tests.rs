@@ -64,8 +64,8 @@ fn focused_default_requires_selection_and_returns_its_value() {
         SelectionMode::One,
     )
     .unwrap()
-    .default_value(serde_json::json!("extend"))
-    .default_selection(DefaultSelection::Focused);
+    .with_default_value(serde_json::json!("extend"))
+    .with_default_selection(DefaultSelection::Focused);
     let request = HostInputRequest::questionnaire("Prompt", vec![question]).unwrap();
     let (host, display) = submit(request.clone(), |composer| {
         assert!(composer.submit().is_err());

@@ -13,10 +13,12 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::{
     cli::{Cli, WorkflowCommand, WorkflowDocumentFormat, WorkflowRunFormat},
+    session_environment::SessionEnvironment,
     workflow::{
-        CollectedSources, Diagnostic, InputName, PlanInventoryItem, PlanningLimitValues,
-        PlanningLimits, RunInventoryItem, SourceManifest, StarlarkPlanner, WorkflowError,
-        WorkflowResult, WorkflowService, WorkflowStore, WorkflowValue,
+        CollectedSources, Diagnostic, InputName, PlanInventory, PlanInventoryItem,
+        PlanningLimitValues, PlanningLimits, RunInventory, RunInventoryItem, SourceManifest,
+        StarlarkPlanner, WorkflowError, WorkflowResult, WorkflowService, WorkflowStore,
+        WorkflowValue,
     },
 };
 
@@ -24,8 +26,7 @@ use crate::{
 use crate::workflow::PlanConsent;
 
 use super::{
-    automation, automation_protocol::TerminalReason, bootstrap::host_capabilities, cli_config,
-    config_repository::ConfigRepository,
+    automation, bootstrap::host_capabilities, cli_config, config_repository::ConfigRepository,
 };
 
 #[cfg(test)]
@@ -59,7 +60,7 @@ use documents::{run_status, write_plan};
 pub(crate) use ops::{freeze_planned_workflow, PreparedPlan, WorkflowOps};
 #[cfg(test)]
 pub(super) use plan_host::{resolve_nodes_with_host, AuthorizedPlanHost};
-pub(crate) use runtime::spawn_background_run;
+pub(crate) use runtime::{spawn_background_run, BackgroundRun};
 pub(crate) use runtime_tui::watch_run;
 pub(super) use tool_service::workflow_tool_service;
 
@@ -73,7 +74,7 @@ const PLANNER_STDERR_BYTES: usize = 64 * 1024;
 // ProcessMemoryLimit). Product memory policy is the planning budgets, not this backstop.
 #[cfg(any(all(unix, not(target_os = "macos")), windows))]
 const PLANNER_ADDRESS_SPACE_BYTES: u64 = 4 * 1024 * 1024 * 1024;
-const WORKFLOW_WIRE_VERSION: u32 = 1;
+const WORKFLOW_WIRE_VERSION: u32 = 2;
 // The workflow freeze-policy test keeps this identity aligned with Cargo.toml.
 const STARLARK_VERSION: &str = "0.14.2";
 
@@ -145,19 +146,44 @@ fn run_list(
     limit: Option<NonZeroUsize>,
     json: bool,
 ) -> anyhow::Result<()> {
-    let ops = WorkflowOps::open(std::env::current_dir()?, None)?;
+    let ops = WorkflowOps::open(
+        std::env::current_dir()?,
+        /*config_path*/ None,
+        &SessionEnvironment::default(),
+    )?;
     let include_plans = plans_only || !runs_only;
     let include_runs = runs_only || !plans_only;
-    let mut plans = if include_plans {
+    let plan_inventory = if include_plans {
         ops.list_workspace_plans()?
     } else {
-        Vec::new()
+        PlanInventory::default()
     };
-    let mut runs = if include_runs {
+    let run_inventory = if include_runs {
         ops.list_workspace_runs()?
     } else {
-        Vec::new()
+        RunInventory::default()
     };
+    // Listed on stderr so the JSON document keeps one shape; the hub can delete them.
+    for record in &plan_inventory.unsupported {
+        eprintln!(
+            "warning: {}",
+            WorkflowError::UnsupportedRecord {
+                kind: "plan",
+                id: record.id.to_string(),
+            }
+        );
+    }
+    for record in &run_inventory.unsupported {
+        eprintln!(
+            "warning: {}",
+            WorkflowError::UnsupportedRecord {
+                kind: "run",
+                id: record.id.to_string(),
+            }
+        );
+    }
+    let mut plans = plan_inventory.items;
+    let mut runs = run_inventory.items;
     if let Some(limit) = limit {
         plans.truncate(limit.get());
         runs.truncate(limit.get());
@@ -310,7 +336,11 @@ async fn run_plan(
     cli: &Cli,
 ) -> anyhow::Result<()> {
     let prepared = prepare_plan(file, inputs, cli).await?;
-    let ops = WorkflowOps::open(std::env::current_dir()?, cli.config.clone())?;
+    let ops = WorkflowOps::open(
+        std::env::current_dir()?,
+        cli.config.clone(),
+        &SessionEnvironment::default(),
+    )?;
     let stored = ops.store_plan(&prepared)?;
     write_plan(&stored, output)
 }
@@ -334,7 +364,7 @@ async fn prepare_plan(
         cli,
         &crate::credential_store::AppCredentialStore,
     )?;
-    cli_config::normalize_reasoning_for_cli(
+    cli_config::normalize_reasoning(
         &mut config,
         if cli.reasoning.is_some() {
             rho_providers::model::ReasoningRequestSource::Explicit
@@ -345,7 +375,13 @@ async fn prepare_plan(
     let available_tools =
         host_capabilities(cli, &config, super::agent_binding::AgentRole::Workflow);
     let limits = planning_limits()?;
-    let ops = WorkflowOps::open(workspace, cli.config.clone())?;
+    // `rho workflow` plans, and later runs, in the terminal's environment,
+    // this process's (#1659).
+    let ops = WorkflowOps::open(
+        workspace,
+        cli.config.clone(),
+        &SessionEnvironment::default(),
+    )?;
     ops.prepare_local(file, supplied_inputs, &config, &available_tools, &limits)
         .await
 }
@@ -386,7 +422,11 @@ async fn run_frozen_plan(
     if run_matrix_tui(crate::tui::workflow::MatrixWorkflowStart::Run, output).await? {
         return Ok(());
     }
-    let ops = WorkflowOps::open(std::env::current_dir()?, config_path.clone())?;
+    let ops = WorkflowOps::open(
+        std::env::current_dir()?,
+        config_path.clone(),
+        &SessionEnvironment::default(),
+    )?;
     let plan = ops.prepare_run(prefix)?;
     confirm_exact_plan(
         yes,
@@ -454,7 +494,11 @@ async fn run_resume(
     if run_matrix_tui(crate::tui::workflow::MatrixWorkflowStart::Resume, output).await? {
         return Ok(());
     }
-    let ops = WorkflowOps::open(std::env::current_dir()?, config_path.clone())?;
+    let ops = WorkflowOps::open(
+        std::env::current_dir()?,
+        config_path.clone(),
+        &SessionEnvironment::default(),
+    )?;
     let run = ops.load_run_prefix(prefix)?;
     let recovery = ops.prepare_resume(&run, recover_uncertain)?;
     confirm_exact_plan(
@@ -472,7 +516,11 @@ fn print_recovery_preview(
     output: Option<WorkflowRunFormat>,
     config_path: Option<PathBuf>,
 ) -> anyhow::Result<()> {
-    let ops = WorkflowOps::open(std::env::current_dir()?, config_path)?;
+    let ops = WorkflowOps::open(
+        std::env::current_dir()?,
+        config_path,
+        &SessionEnvironment::default(),
+    )?;
     let run_id = ops.load_run_prefix(prefix)?.manifest.run_id;
     let preview =
         crate::app::workflow_runtime::preview_recovery(&crate::paths::rho_dir()?, run_id)?;
@@ -485,16 +533,16 @@ fn print_recovery_preview(
             }
             for attempt in &preview.attempts {
                 let action = match &attempt.recovery {
-                    AttemptRecovery::Continue { .. } => "continue from its last checkpoint",
+                    AttemptRecovery::Continue { session } => {
+                        format!("continue its saved session {session}")
+                    }
                     AttemptRecovery::Reset { reason } => match reason {
                         ResetReason::CancellationRequested => "restart: cancellation was requested",
                         ResetReason::CommandNode => "restart: command node",
-                        ResetReason::ForeignAgent => {
-                            "restart: Claude and Cursor agents do not checkpoint"
-                        }
-                        ResetReason::NoCheckpoint => "restart: no checkpoint was saved",
-                        ResetReason::UnreadableCheckpoint => "restart: checkpoint is unreadable",
-                    },
+                        ResetReason::ForeignAgent => "restart: only Rho agents can continue",
+                        ResetReason::NoSessionRecorded => "restart: no session was recorded",
+                    }
+                    .to_owned(),
                 };
                 println!("{} attempt {}: {action}", attempt.node, attempt.attempt);
             }
@@ -569,10 +617,11 @@ fn diagnostic_for_error_for(error: &anyhow::Error, audience: DiagnosticAudience)
             WorkflowError::InvalidInput { .. } => "invalid_input",
             WorkflowError::Corrupt { .. } => "corrupt",
             WorkflowError::UnsupportedVersion { .. } => "unsupported_version",
-            WorkflowError::LegacyRecord { .. } => "legacy_record",
+            WorkflowError::UnsupportedRecord { .. } => "unsupported_record",
             WorkflowError::LiveRun { .. } => "live_run",
             WorkflowError::AmbiguousId { .. } => "ambiguous_id",
             WorkflowError::UnknownId(_) => "unknown_id",
+            WorkflowError::UnsupportedPlatform => "unsupported_platform",
             WorkflowError::UntrustedDirectory(_) => "untrusted_directory",
             WorkflowError::Io(_) => "io",
             WorkflowError::Json(_) => "json",
@@ -637,7 +686,8 @@ fn workflow_error_message(error: &WorkflowError, audience: DiagnosticAudience) -
             | WorkflowError::MissingWorkflow
             | WorkflowError::UnsupportedVersion { .. }
             | WorkflowError::LiveRun { .. }
-            | WorkflowError::LegacyRecord { .. } => error.to_string(),
+            | WorkflowError::UnsupportedRecord { .. }
+            | WorkflowError::UnsupportedPlatform => error.to_string(),
             WorkflowError::Starlark(_) => "workflow evaluation failed".to_owned(),
             // Keep these cases opaque. Their strings can contain source text,
             // lower-level diagnostics, or local paths.
@@ -663,8 +713,7 @@ fn workflow_error_message(error: &WorkflowError, audience: DiagnosticAudience) -
 }
 
 fn workflow_exit(message: &str) -> anyhow::Error {
-    automation::AutomationExit::new(2, TerminalReason::ConfigurationError, message.to_owned())
-        .into()
+    automation::AutomationExit::configuration(message).into()
 }
 
 #[cfg(test)]

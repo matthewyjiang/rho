@@ -3,11 +3,11 @@ use rho_sdk::model::{ContentBlock, Message};
 use super::frozen_parent_snapshot;
 
 fn user(text: &str) -> Message {
-    Message::User(vec![ContentBlock::Text(text.into())])
+    Message::User(vec![ContentBlock::Text(text.into())].into())
 }
 
 fn assistant(text: &str) -> Message {
-    Message::Assistant(vec![ContentBlock::Text(text.into())])
+    Message::Assistant(vec![ContentBlock::Text(text.into())].into())
 }
 
 // Covers: the aside must see the parent transcript that existed at freeze

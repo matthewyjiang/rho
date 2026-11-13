@@ -19,6 +19,7 @@ on:
           - rho-sdk
           - rho-agent-tools
           - rho-providers
+          - rho-protocol
           - rho-coding-agent
       candidate-sha:
         description: Exact full commit SHA to publish
@@ -99,6 +100,7 @@ jobs:
             rho-sdk) args+=(--sdk) ;;
             rho-agent-tools) args+=(--tools) ;;
             rho-providers) args+=(--providers) ;;
+            rho-protocol) args+=(--protocol) ;;
             rho-coding-agent) args+=(--app) ;;
             *) echo "Unsupported package: $PACKAGE" >&2; exit 1 ;;
           esac

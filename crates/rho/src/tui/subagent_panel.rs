@@ -9,7 +9,6 @@ use super::{
     theme::Theme,
 };
 use crate::{
-    app::subagent_manager::SubagentManager,
     subagent::{self, RunState},
     title::activity_label,
 };
@@ -67,15 +66,6 @@ impl Default for SubagentPanel {
 }
 
 impl SubagentPanel {
-    /// Refresh from the manager for the parent `session_id`, whose deliveries
-    /// retire finished rows.
-    pub(super) fn update(&mut self, manager: Option<&SubagentManager>, session_id: &str) -> bool {
-        let snapshots = manager
-            .map(|manager| manager.rail_summaries(session_id))
-            .unwrap_or_default();
-        self.ingest(snapshots)
-    }
-
     pub(super) fn ingest(&mut self, snapshots: Vec<crate::tools::agent::SubagentSnapshot>) -> bool {
         let agents = snapshots
             .into_iter()
@@ -297,6 +287,7 @@ fn rail_identity(agent: &RunningSubagent, row_style: ratatui::style::Style) -> V
 
 fn agent_activity(agent: &RunningSubagent) -> (String, ratatui::style::Style) {
     match agent.state {
+        RunState::Queued => ("queued".into(), Theme::text()),
         RunState::Starting => ("starting".into(), Theme::text()),
         RunState::Running => (
             activity_label(agent.last_activity.as_deref()).to_owned(),

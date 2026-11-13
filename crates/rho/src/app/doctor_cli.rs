@@ -3,7 +3,8 @@
 //! Runs the same checks as the interactive `/doctor` overlay without a TUI.
 //! Root `--provider`/`--model`/`--auth`/`--reasoning` apply in memory so the
 //! report matches `rho --provider X run`. Probes run concurrently under one
-//! deadline so a hung endpoint cannot stall the report.
+//! deadline so a hung endpoint cannot stall the report. The daemon probe asks
+//! the running daemon, never one this starts.
 
 use std::{sync::Arc, time::Duration};
 
@@ -15,12 +16,12 @@ use crate::{
     cli::Cli,
     credential_store::AppCredentialStore,
     doctor::{
-        build_report, plan_probes, probe_checks, run_probe, text_report, DoctorInputs,
+        build_report, plan_probes, probe_checks, run_probe, text_report, DoctorInputs, DoctorMcp,
         DoctorProbeGate, DoctorProbeId, DoctorProbeOutcome, DoctorReport, DoctorSection,
         DoctorSummary, HerdrProbe,
     },
     herdr::HerdrReporter,
-    plugins::{self, ProjectTrust},
+    plugins,
     tools::mcp::{McpLoadMode, McpSessionReport},
 };
 
@@ -57,7 +58,7 @@ pub(super) async fn run(json: bool, cli: &Cli) -> anyhow::Result<()> {
         &cwd,
         home.as_deref(),
         Some(&rho_home),
-        ProjectTrust::from_plugins_env(),
+        crate::workspace::ProjectTrusts::of_this_process().plugins,
     );
     plugins::log(&discovery.report);
     let mut mcp_config = config.mcp.clone();
@@ -77,7 +78,7 @@ pub(super) async fn run(json: bool, cli: &Cli) -> anyhow::Result<()> {
         session_root: &rho_home.join("sessions"),
         herdr: HerdrProbe::from_reporter(&HerdrReporter::from_env()),
         clipboard: &clipboard,
-        mcp_report: &mcp_report,
+        mcp: DoctorMcp::Summary(mcp_report.summary()),
         plugins_report: &discovery.report,
         permission_screen: config
             .internal_agent_model(crate::permission_classifier::DECISION_SCREEN_ID),
@@ -119,7 +120,7 @@ fn apply_doctor_overrides(
     store: &dyn CredentialStore,
 ) -> anyhow::Result<()> {
     super::cli_config::apply_overrides_allowing_empty_cache(config, cli, store)?;
-    super::cli_config::normalize_reasoning_for_cli(
+    super::cli_config::normalize_reasoning(
         config,
         if cli.reasoning.is_some() {
             rho_providers::model::ReasoningRequestSource::Explicit

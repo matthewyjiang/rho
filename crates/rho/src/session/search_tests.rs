@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 use tempfile::TempDir;
 
 use super::*;
-use crate::session::{search_evidence, Session};
+use crate::session::{search_evidence, Session, SessionOrigin};
 
 fn run(root: &Path, cwd: &Path, current: &str, args: Value) -> Value {
     serde_json::from_str(
@@ -205,7 +205,7 @@ fn indexed_evidence_tracks_source_changes_without_mutating_transcripts() {
     );
 
     let tail = serde_json::to_string(
-        &json!({"type":"message","message":{"User":[{"Text":"tailneedle"}]}}),
+        &json!({"type":"node","display_messages":[{"message":{"User":[{"Text":"tailneedle"}]}}]}),
     )
     .unwrap();
     let mut file = fs::OpenOptions::new()
@@ -391,7 +391,9 @@ fn refresh_preserves_scope_for_deleted_workspaces() {
 }
 
 // Covers: default repo isolation, explicit expansion, same-worktree ordering and
-// current-session exclusion must also apply to focused reads.
+// current-session exclusion must also apply to focused reads; a session that
+// is not person-facing, such as a `rho run`'s, stays out of every scope but
+// its own current one.
 #[test]
 fn scope_and_current_exclusion_apply_to_search_and_read() {
     let root = TempDir::new().unwrap();
@@ -418,6 +420,24 @@ fn scope_and_current_exclusion_apply_to_search_and_read() {
     current
         .append_message(&Message::user_text("scopeword"))
         .unwrap();
+    let hidden = Session::create_with_id_in_root(
+        root.path(),
+        project.path(),
+        "scripted-run",
+        None,
+        SessionOrigin::Run.into(),
+    )
+    .unwrap();
+    hidden
+        .append_message(&Message::user_text("scopeword"))
+        .unwrap();
+    let own = run(
+        root.path(),
+        project.path(),
+        hidden.id(),
+        json!({"action":"search","query":"scopeword","scope":"current"}),
+    );
+    assert_eq!(own["total_matches"], json!(1));
     for (scope, expected) in [
         ("repo", vec![sessions[0].id(), sessions[1].id()]),
         ("worktree", vec![sessions[0].id()]),
@@ -603,18 +623,16 @@ fn focused_read_preserves_errors_and_expands_unicode_match_windows() {
 // replacements, hidden reasoning or provider state. One table owns extraction.
 #[test]
 fn display_record_formats_preserve_roles_and_visible_omissions() {
-    for kind in ["node", "snapshot", "snapshot_delta"] {
-        let record = json!({"type":kind,"display_messages":[{"message":{"EnrichedAssistant":{
-            "content":[{"Text":"answer"},{"Thinking":"secret"}],"provider_context":["secret"]}}}]});
-        assert_eq!(
-            search_evidence::Extractor::default()
-                .extract(&record, 16)
-                .into_iter()
-                .map(|evidence| (evidence.role, evidence.text, evidence.omitted_blocks))
-                .collect::<Vec<_>>(),
-            vec![("assistant".into(), "answer".into(), 1)]
-        );
-    }
+    let record = json!({"type":"node","display_messages":[{"message":{"EnrichedAssistant":{
+        "content":[{"Text":"answer"},{"Thinking":"secret"}],"provider_context":["secret"]}}}]});
+    assert_eq!(
+        search_evidence::Extractor::default()
+            .extract(&record, 16)
+            .into_iter()
+            .map(|evidence| (evidence.role, evidence.text, evidence.omitted_blocks))
+            .collect::<Vec<_>>(),
+        vec![("assistant".into(), "answer".into(), 1)]
+    );
     // The sessions tool's own calls and results (here split across records)
     // would make every later search find its predecessors.
     let call = |id: &str, name: &str| json!({"ToolCall":{"id":id,"name":name,"arguments":{}}});
@@ -637,7 +655,7 @@ fn display_record_formats_preserve_roles_and_visible_omissions() {
             ("tool_result".into(), "out".into())
         ]
     );
-    for kind in ["session", "replace_history", "set_leaf", "upgrade"] {
+    for kind in ["session", "set_leaf"] {
         assert_eq!(
             search_evidence::Extractor::default().extract(
                 &json!({"type":kind,"messages":[{"User":[{"Text":"secret"}]}]}),

@@ -2,17 +2,15 @@
 
 use std::path::Path;
 
-use agent_client_protocol::schema::v1::{
+use crate::presentation::diff::compact_diff_rows;
+use agent_client_protocol::v1::schema::{
     ContentBlock, Diff, EmbeddedResourceResource, ToolCall, ToolCallContent, ToolCallLocation,
     ToolCallStatus, ToolCallUpdate, ToolKind,
 };
-use rho_tools::{
-    tool::compact_display_path,
-    tool_card::{
-        compact_diff_rows, DiffRow, DiffRowKind, ToolBody, ToolCard, ToolFact, ToolFamily,
-        ToolHeader, ToolStatus,
-    },
+use rho_protocol::display::{
+    DiffRow, DiffRowKind, ToolBody, ToolCard, ToolCardStatus, ToolFact, ToolFamily, ToolHeader,
 };
+use rho_tools::tool::compact_display_path;
 use similar::{ChangeTag, TextDiff};
 
 use crate::cli_runtime::{
@@ -44,7 +42,7 @@ impl StartedTool {
             kind: ToolKind::Other,
             primary: None,
             card: ToolCard::new(
-                ToolStatus::Running,
+                ToolCardStatus::Running,
                 ToolFamily::Default,
                 ToolHeader::call("Tool", /*primary*/ None),
             ),
@@ -130,14 +128,14 @@ pub(super) fn finished_card(
     (tool.card.clone(), notices)
 }
 
-fn card_status(status: ToolCallStatus, notices: &mut Vec<String>) -> ToolStatus {
+fn card_status(status: ToolCallStatus, notices: &mut Vec<String>) -> ToolCardStatus {
     match status {
-        ToolCallStatus::Pending | ToolCallStatus::InProgress => ToolStatus::Running,
-        ToolCallStatus::Completed => ToolStatus::Ok,
-        ToolCallStatus::Failed => ToolStatus::Error,
+        ToolCallStatus::Pending | ToolCallStatus::InProgress => ToolCardStatus::Running,
+        ToolCallStatus::Completed => ToolCardStatus::Ok,
+        ToolCallStatus::Failed => ToolCardStatus::Error,
         _ => {
             notices.push("acp: unhandled tool status".into());
-            ToolStatus::Running
+            ToolCardStatus::Running
         }
     }
 }
@@ -303,11 +301,13 @@ fn bound_diff_rows(rows: Vec<DiffRow>) -> Vec<DiffRow> {
 }
 
 fn add_error_summary(card: &mut ToolCard) {
-    if card.status != ToolStatus::Error {
+    if card.status != ToolCardStatus::Error {
         return;
     }
     let summary = match &card.body {
-        ToolBody::Lines(lines) => lines.first().map(String::as_str),
+        ToolBody::Lines(lines) | ToolBody::Code { lines, .. } | ToolBody::Search { lines, .. } => {
+            lines.first().map(String::as_str)
+        }
         ToolBody::Diff(_) | ToolBody::None => None,
     }
     .unwrap_or("tool failed");

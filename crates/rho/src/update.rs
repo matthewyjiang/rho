@@ -6,6 +6,7 @@ use std::{
     time::Duration,
 };
 
+use crate::app::daemon_install::{self, Installed};
 use crate::installation::{
     self, cargo_install_root_contains_crate, cargo_update_root_for_exe, InstallHint,
     ManagedInstallation, ScoopInstallScope,
@@ -87,6 +88,15 @@ impl InstallMethod {
             Self::Scoop => "Scoop",
             Self::ScoopGlobal => "Scoop (global)",
             Self::Script => "install script",
+        }
+    }
+
+    /// Where this method's update puts the new rho, which decides whether
+    /// a running daemon can re-execute it in place.
+    fn installs(self) -> Installed {
+        match self {
+            Self::Cargo | Self::Pacman | Self::Script => Installed::OverTheExecutable,
+            Self::Mise | Self::Scoop | Self::ScoopGlobal => Installed::AtAnotherPath,
         }
     }
 
@@ -194,7 +204,26 @@ pub async fn run_update(current_version: &str) -> anyhow::Result<()> {
         | InstallMethod::Script => {}
     }
 
-    run_update_command(method, &git_ref).await
+    let mut output = std::io::stdout();
+    // The daemon is a courtesy to the update, never a reason to fail it: one
+    // that could not be asked is reported and the update goes on.
+    let watched = daemon_install::before_update(&mut output)
+        .await
+        .inspect_err(|error| {
+            eprintln!(
+                "warning: could not check the running rho daemon: {error:#}; run `rho daemon stop` if the installer cannot replace rho"
+            );
+        })
+        .ok();
+    run_update_command(method, &git_ref).await?;
+    if let Some(watched) = watched {
+        if let Err(error) = watched.follow(method.installs(), &mut output).await {
+            eprintln!(
+                "warning: could not follow the running rho daemon: {error:#}; `rho daemon restart` moves it to the updated rho"
+            );
+        }
+    }
+    Ok(())
 }
 
 async fn run_update_command(method: InstallMethod, git_ref: &str) -> anyhow::Result<()> {
@@ -460,7 +489,11 @@ pub(crate) fn release_tag_to_version(tag: &str) -> Option<String> {
         .then(|| version.to_string())
 }
 
-fn version_is_newer(candidate: &str, current: &str) -> bool {
+/// Whether `candidate` is a later version than `current`, by semantic
+/// version precedence: a pre-release such as `3.0.0-alpha.dev` is older
+/// than `3.0.0-beta.1` and `3.0.0`, and newer than every `2.x`. Build metadata is ignored, and a
+/// version that does not parse is never newer or older.
+pub(crate) fn version_is_newer(candidate: &str, current: &str) -> bool {
     let Some(candidate) = parse_version(candidate) else {
         return false;
     };
@@ -470,18 +503,62 @@ fn version_is_newer(candidate: &str, current: &str) -> bool {
     candidate > current
 }
 
-fn parse_version(version: &str) -> Option<Vec<u64>> {
-    let core = version
-        .trim()
-        .trim_start_matches('v')
-        .split(['-', '+'])
-        .next()?;
-    let parts = core
+/// Whether `version` carries a pre-release tag, such as `3.0.0-alpha.dev`.
+pub(crate) fn is_prerelease(version: &str) -> bool {
+    parse_version(version).is_some_and(|version| matches!(version.stage, Stage::PreRelease(_)))
+}
+
+/// A parsed version. The derived order is semantic version precedence: the
+/// numeric core first, then the stage.
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct Version {
+    core: Vec<u64>,
+    stage: Stage,
+}
+
+/// Variant order is precedence: every pre-release of a core precedes its
+/// release.
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Stage {
+    PreRelease(Vec<PreReleaseIdentifier>),
+    Release,
+}
+
+/// One dot-separated part of a pre-release tag. Variant order is precedence:
+/// numeric identifiers compare as numbers and precede text ones.
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum PreReleaseIdentifier {
+    Numeric(u64),
+    Text(String),
+}
+
+fn parse_version(version: &str) -> Option<Version> {
+    let version = version.trim().trim_start_matches('v');
+    let version = version
+        .split_once('+')
+        .map_or(version, |(version, _)| version);
+    let (core, pre_release) = match version.split_once('-') {
+        Some((core, pre_release)) => (core, Some(pre_release)),
+        None => (version, None),
+    };
+    let core = core
         .split('.')
         .map(str::parse::<u64>)
         .collect::<Result<Vec<_>, _>>()
         .ok()?;
-    (!parts.is_empty()).then_some(parts)
+    let stage = match pre_release {
+        Some(pre_release) => Stage::PreRelease(
+            pre_release
+                .split('.')
+                .map(|identifier| match identifier.parse() {
+                    Ok(number) => PreReleaseIdentifier::Numeric(number),
+                    Err(_) => PreReleaseIdentifier::Text(identifier.to_owned()),
+                })
+                .collect(),
+        ),
+        None => Stage::Release,
+    };
+    Some(Version { core, stage })
 }
 
 #[cfg(test)]
@@ -542,12 +619,40 @@ mod tests {
         assert_eq!(release_tag_to_version("rho-providers-v3.0.0"), None);
     }
 
+    // Covers: a development build such as 3.0.0-alpha.dev is not offered
+    // the last 2.x release as an update, is offered the 3.0.0 betas and
+    // 3.0.0 once they ship, and is not newer or older than another build of
+    // the same version.
+    // Owner: pure unit
     #[test]
-    fn compares_dotted_versions() {
-        assert!(version_is_newer("0.12.3", "0.12.1"));
-        assert!(version_is_newer("0.13.0", "0.12.9"));
-        assert!(!version_is_newer("0.12.1", "0.12.1"));
-        assert!(!version_is_newer("0.12.0", "0.12.1"));
+    fn orders_versions_by_semantic_precedence() {
+        let cases = [
+            ("0.12.3", "0.12.1", true),
+            ("0.13.0", "0.12.9", true),
+            ("0.12.1", "0.12.1", false),
+            ("0.12.0", "0.12.1", false),
+            ("2.33.1", "3.0.0-alpha.dev", false),
+            ("3.0.0-alpha.dev", "2.33.1", true),
+            ("3.0.0-alpha.dev", "3.0.0-alpha.dev", false),
+            ("3.0.0-beta", "3.0.0-alpha.dev", true),
+            ("3.0.0-beta.1", "3.0.0-alpha.dev", true),
+            ("3.0.0-alpha.dev", "3.0.0-beta.1", false),
+            ("3.0.0", "3.0.0-alpha.dev", true),
+            ("3.0.0-alpha.dev", "3.0.0", false),
+            ("3.0.0-beta.10", "3.0.0-beta.2", true),
+            ("3.0.0-beta.1", "3.0.0-beta", true),
+            ("3.0.0-beta.1", "3.0.0-1", true),
+            ("3.0.0-beta+build.2", "3.0.0-beta+build.1", false),
+            ("not-a-version", "3.0.0-alpha.dev", false),
+            ("3.0.0-alpha.dev", "not-a-version", false),
+        ];
+        for (candidate, current, newer) in cases {
+            assert_eq!(
+                version_is_newer(candidate, current),
+                newer,
+                "{candidate} newer than {current}"
+            );
+        }
     }
 
     #[test]

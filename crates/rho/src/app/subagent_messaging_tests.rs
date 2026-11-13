@@ -113,17 +113,14 @@ fn notice_rebind_retains_in_flight_channel_notices_on_retired_generation() {
             .collect::<Vec<_>>(),
         vec!["queued-a", "queued-b"]
     );
-    let retired = rebind
-        .retired_permits
-        .expect("prior binding exposes retired permits");
-    assert_eq!(retired.outstanding(), 2);
+    assert_eq!(old_permits.outstanding(), 2);
     assert_eq!(rebind.permits.outstanding(), 0);
     bridge
         .post(sample_notice("new-gen"))
         .expect("replacement generation accepts posts");
     assert_eq!(rebind.permits.outstanding(), 1);
     // Freeing retained notices only touches the retired generation.
-    retired.release(2);
+    old_permits.release(2);
     assert_eq!(old_permits.outstanding(), 0);
     assert_eq!(rebind.permits.outstanding(), 1);
 }
@@ -217,16 +214,20 @@ fn notice_post_holds_binding_lock_from_reserve_through_enqueue() {
     assert_eq!(new_permits.outstanding(), 0);
 }
 
-// Covers: the steering slot is closed before publish and after clear, so a
-// parent message outside the live window cannot silently vanish.
+// Covers: the steering slot is closed before publish, while the published
+// child session runs no model turn, and after clear, so a parent message
+// outside the live window cannot silently vanish.
 // Owner: app messaging policy
 #[tokio::test]
 async fn steering_slot_is_closed_outside_the_live_window() {
     let slot = super::SteeringSlot::new();
     let message = super::ValidatedMessage::parse("course correction").unwrap();
-    assert!(slot.send(&message).await.is_err());
+    let unpublished = slot.send(&message).await.is_err();
+    slot.publish(crate::app::session_runtime::SessionHandle::detached_for_tests());
+    let idle = slot.send(&message).await.is_err();
     slot.clear();
-    assert!(slot.send(&message).await.is_err());
+    let cleared = slot.send(&message).await.is_err();
+    assert_eq!((unpublished, idle, cleared), (true, true, true));
 }
 
 fn sample_notice(run_id: &str) -> SubagentNotice {

@@ -26,19 +26,18 @@ fn message(message: Message) -> ExportedMessage {
 }
 
 fn tool_call(id: &str, name: &str, arguments: serde_json::Value) -> Message {
-    Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
-        id: id.into(),
-        name: name.into(),
-        arguments,
-    })])
+    Message::Assistant(
+        vec![ContentBlock::ToolCall(ToolCall::new(
+            id.into(),
+            name.into(),
+            arguments,
+        ))]
+        .into(),
+    )
 }
 
-fn tool_result(id: &str, ok: bool, content: &str) -> Message {
-    Message::ToolResult(ToolResult {
-        id: id.into(),
-        ok,
-        content: content.into(),
-    })
+fn tool_result(id: &str, content: &str) -> Message {
+    Message::ToolResult(ToolResult::succeeded(id, content).into())
 }
 
 #[test]
@@ -52,7 +51,7 @@ fn escapes_html_in_assistant_latex_and_tool_output() {
             "bash",
             serde_json::json!({"command": "cat page.html"}),
         )),
-        message(tool_result("call-1", true, "<script>alert('x')</script>")),
+        message(tool_result("call-1", "<script>alert('x')</script>")),
     ]);
 
     let html = render_html(&export);
@@ -84,8 +83,8 @@ fn pairs_tool_results_and_renders_orphans_standalone() {
             "bash",
             serde_json::json!({"command": "ls"}),
         )),
-        message(tool_result("call-1", true, "Cargo.toml\nsrc")),
-        message(tool_result("call-9", true, "dangling")),
+        message(tool_result("call-1", "Cargo.toml\nsrc")),
+        message(tool_result("call-9", "dangling")),
     ]);
 
     let html = render_html(&export);
@@ -223,7 +222,7 @@ fn markdown_and_json_export_and_overwrite_guard() {
             "bash",
             serde_json::json!({"command": "ls"}),
         )),
-        message(tool_result("call-1", true, "Cargo.toml")),
+        message(tool_result("call-1", "Cargo.toml")),
     ]);
 
     let markdown = render_export(&export, ExportFormat::Markdown).unwrap();

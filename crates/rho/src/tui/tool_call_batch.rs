@@ -3,9 +3,7 @@ use std::time::Instant;
 
 use rho_sdk::ToolCallId;
 
-use rho_tools::tool_card::ToolStatus;
-
-use crate::app::interactive_presenter::PresentedToolCard;
+use rho_protocol::display::{ToolCard, ToolCardStatus};
 
 use super::{live_started_at, ToolEntry};
 
@@ -92,10 +90,11 @@ impl ToolCallBatch {
         self.live_entries()
             .cloned()
             .map(|mut entry| {
-                if let crate::presentation::Presentation::Card(card)
-                | crate::presentation::Presentation::SummaryCard(card) = &mut entry.presentation
+                if let rho_protocol::display::Presentation::Card(card)
+                | rho_protocol::display::Presentation::SummaryCard(card) =
+                    &mut entry.presentation
                 {
-                    card.card.status = ToolStatus::Interrupted;
+                    card.status = ToolCardStatus::Interrupted;
                 }
                 // The clock stops with the call; interrupted rows are retained
                 // in the feed and must not keep counting on every repaint.
@@ -122,7 +121,7 @@ impl ToolCallBatch {
         }
     }
 
-    pub(super) fn started(&mut self, call_id: ToolCallId, card: PresentedToolCard) {
+    pub(super) fn started(&mut self, call_id: ToolCallId, card: ToolCard) {
         let mut expanded = self
             .running
             .get(&call_id)
@@ -140,7 +139,7 @@ impl ToolCallBatch {
         } else if !self.running.contains_key(&call_id) {
             self.unindexed_running_order.push(call_id.clone());
         }
-        let started_at = live_started_at(self.running.get(&call_id), ToolStatus::Running);
+        let started_at = live_started_at(self.running.get(&call_id), ToolCardStatus::Running);
         self.running
             .insert(call_id, running_entry(card, expanded, started_at));
     }
@@ -159,7 +158,7 @@ impl ToolCallBatch {
         self.detached.insert(call_id, entry);
     }
 
-    pub(super) fn updated(&mut self, call_id: ToolCallId, card: PresentedToolCard) {
+    pub(super) fn updated(&mut self, call_id: ToolCallId, card: ToolCard) {
         if let Some(previous) = self.detached.get(&call_id) {
             let expanded = previous.expanded;
             let started_at = previous.started_at;
@@ -169,7 +168,7 @@ impl ToolCallBatch {
         }
         let previous = self.running.get(&call_id);
         let expanded = previous.is_some_and(|entry| entry.expanded);
-        let started_at = live_started_at(previous, ToolStatus::Running);
+        let started_at = live_started_at(previous, ToolCardStatus::Running);
         if !self.running.contains_key(&call_id) {
             self.unindexed_running_order.push(call_id.clone());
         }
@@ -185,7 +184,7 @@ impl ToolCallBatch {
         &mut self,
         index: usize,
         call_id: Option<ToolCallId>,
-        card: Option<PresentedToolCard>,
+        card: Option<ToolCard>,
     ) {
         if call_id
             .as_ref()
@@ -215,7 +214,7 @@ impl ToolCallBatch {
     ///
     /// Reuses the stream slot when the id already appeared; otherwise appends a
     /// new slot. Does not invent a dense index in the provider namespace.
-    pub(super) fn preview_call(&mut self, call_id: ToolCallId, card: PresentedToolCard) {
+    pub(super) fn preview_call(&mut self, call_id: ToolCallId, card: ToolCard) {
         if self.running.contains_key(&call_id) {
             return;
         }
@@ -260,7 +259,7 @@ impl ToolCallBatch {
             .retain(|id, existing| *id == call_id || *existing != slot);
     }
 
-    fn write_preview(&mut self, slot: usize, card: PresentedToolCard) {
+    fn write_preview(&mut self, slot: usize, card: ToolCard) {
         let expanded = self.previews.get(&slot).is_some_and(|entry| entry.expanded);
         // Previews are argument streaming only; the elapsed clock starts on
         // [`Self::started`].
@@ -279,11 +278,7 @@ impl ToolCallBatch {
     }
 }
 
-fn running_entry(
-    card: PresentedToolCard,
-    expanded: bool,
-    started_at: Option<Instant>,
-) -> ToolEntry {
+fn running_entry(card: ToolCard, expanded: bool, started_at: Option<Instant>) -> ToolEntry {
     ToolEntry::new(card, expanded, None, started_at)
 }
 

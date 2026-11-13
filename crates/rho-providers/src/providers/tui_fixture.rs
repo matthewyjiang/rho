@@ -11,8 +11,8 @@ mod codemode_stream;
 mod compact;
 mod docs_demo;
 mod edit;
-mod goal;
 mod init;
+mod keep_warm;
 mod plan_exit;
 mod quiet_subagent;
 mod release;
@@ -37,7 +37,7 @@ use rho_sdk::{
     },
     provider::{
         ModelProvider, ModelRequestOptions, NativeCompactionFuture, ProviderEventSender,
-        ProviderFuture, ProviderSteeringReceiver,
+        ProviderFuture, ProviderSteeringReceiver, ProviderTurnContext,
     },
     CancellationToken, ProviderError,
 };
@@ -55,14 +55,12 @@ const CONCURRENT_FAST_CALL_ID: &str = "tui-fixture-concurrent-fast";
 const BACKGROUND_AGENT_CALL_ID: &str = "tui-fixture-background-agent";
 const SUBAGENT_RAIL_AGENT_CALL_ID: &str = "tui-fixture-subagent-rail-agent";
 const PROCESS_RAIL_CALL_ID: &str = "tui-fixture-process-rail";
-const COMPUTER_CALL_ID: &str = "tui-fixture-computer";
 const BACKGROUND_QUESTIONNAIRE_AGENT_CALL_ID: &str = "tui-fixture-background-questionnaire-agent";
 const CLAUDE_AGENT_CALL_ID: &str = "tui-fixture-claude-agent";
 const CLAUDE_AGENT_ERROR_CALL_ID: &str = "tui-fixture-claude-agent-error";
 const BACKGROUND_CLAUDE_AGENT_CALL_ID: &str = "tui-fixture-background-claude-agent";
 const CURSOR_AGENT_CALL_ID: &str = "tui-fixture-cursor-agent";
 const ANTIGRAVITY_AGENT_CALL_ID: &str = "tui-fixture-antigravity-agent";
-const GOAL_RETRY_AGENT_CALL_ID: &str = "tui-fixture-goal-retry-agent";
 const AGENTS_LIST_CALL_ID: &str = "tui-fixture-agents-list";
 const BACKGROUND_QUESTIONNAIRE_COMPLETION: &str =
     "background agent questionnaire completed with color blue";
@@ -94,31 +92,43 @@ impl ModelProvider for TuiFixtureProvider {
         self.identity.clone()
     }
 
+    /// So keep-warm scenarios can ping; the fixture's replies are short anyway.
+    fn honors_max_output_tokens(&self) -> bool {
+        true
+    }
+
     fn send_turn<'a>(&'a self, request: ModelRequest<'a>) -> ProviderFuture<'a> {
-        Box::pin(async move { fixture_response(&request) })
+        Box::pin(async move {
+            let messages = super::fixture_message_times::without_times(request.messages);
+            fixture_response(&ModelRequest {
+                messages: &messages,
+                ..request
+            })
+        })
     }
 
     fn send_turn_stream<'a>(
         &'a self,
         request: ModelRequest<'a>,
-        events: ProviderEventSender,
+        context: ProviderTurnContext,
     ) -> ProviderFuture<'a> {
-        Box::pin(async move { fixture_stream(request, events).await })
-    }
-
-    fn send_turn_stream_steerable<'a>(
-        &'a self,
-        request: ModelRequest<'a>,
-        _options: ModelRequestOptions,
-        events: ProviderEventSender,
-        mut steering: ProviderSteeringReceiver,
-    ) -> ProviderFuture<'a> {
+        let ProviderTurnContext {
+            events, steering, ..
+        } = context;
         Box::pin(async move {
+            let messages = super::fixture_message_times::without_times(request.messages);
+            let request = ModelRequest {
+                messages: &messages,
+                ..request
+            };
             let prompt = last_user_text(&request).unwrap_or_default();
             if prompt == "fixture mid-turn steer" {
-                return stream_mid_turn_steer(request, events, &mut steering).await;
+                if let Some(mut steering) = steering {
+                    return stream_mid_turn_steer(request, events, &mut steering).await;
+                }
+            } else {
+                drop(steering);
             }
-            drop(steering);
             fixture_stream(request, events).await
         })
     }
@@ -126,6 +136,7 @@ impl ModelProvider for TuiFixtureProvider {
     fn native_compact<'a>(
         &'a self,
         request: ModelRequest<'a>,
+        _options: ModelRequestOptions,
     ) -> Option<NativeCompactionFuture<'a>> {
         compact::native_compact(request)
     }
@@ -136,6 +147,9 @@ async fn fixture_stream(
     events: ProviderEventSender,
 ) -> Result<ModelResponse, ProviderError> {
     let prompt = last_user_text(&request).unwrap_or_default();
+    if let Some(response) = keep_warm::intercept(&prompt, &request, &events).await {
+        return response;
+    }
     if let Some(response) = agent_config::intercept(&prompt, &request) {
         return response;
     }
@@ -181,9 +195,6 @@ async fn fixture_stream(
     if let Some(response) = plan_exit::intercept_held(&prompt, &request).await {
         return response;
     }
-    if let Some(response) = goal::intercept(&prompt, &request, &events).await {
-        return response;
-    }
     if prompt == "fixture streaming controls" {
         return streaming_controls::stream(&request, &events).await;
     }
@@ -217,6 +228,18 @@ async fn fixture_stream(
         )
         .await?;
     }
+    let refused = tool_result(&request, QUESTIONNAIRE_CALL_ID)
+        .is_some_and(|result| result.status == rho_sdk::model::ToolResultStatus::Failed);
+    if prompt == "fixture child questionnaire" && refused {
+        // A child whose question was cancelled finishes only once released,
+        // so its result cannot reach the parent's turn before the PTY checks
+        // how that turn went on.
+        release::wait_for_release_or_cancel(
+            ".rho-fixture-release-refused-child",
+            &request.cancellation,
+        )
+        .await?;
+    }
     let response = fixture_response(&request)?;
     let ModelResponse::Assistant(blocks) = &response;
     for block in blocks {
@@ -235,9 +258,6 @@ fn fixture_response(request: &ModelRequest<'_>) -> Result<ModelResponse, Provide
         return review;
     }
     if let Some(response) = response_scenarios::compaction(request) {
-        return response;
-    }
-    if let Some(response) = goal::intercept_response(request) {
         return response;
     }
     if let Some(response) = init::intercept(request) {
@@ -276,10 +296,7 @@ fn title_response(request: &ModelRequest<'_>) -> Option<Result<ModelResponse, Pr
 
 fn last_user_text(request: &ModelRequest<'_>) -> Option<String> {
     request.messages.iter().rev().find_map(|message| {
-        if message.as_model_context().is_some() {
-            return None;
-        }
-        let SemanticMessage::User(content) = message.semantic() else {
+        let (Message::User(content) | Message::BoundaryInput(content)) = message else {
             return None;
         };
         let text = content
@@ -293,6 +310,14 @@ fn last_user_text(request: &ModelRequest<'_>) -> Option<String> {
     })
 }
 
+/// Entries that end the current fixture turn when walking history backwards.
+fn starts_turn(message: &Message) -> bool {
+    matches!(
+        message,
+        Message::User(_) | Message::BoundaryInput(_) | Message::CompactionSummary(_)
+    )
+}
+
 fn tool_result_for_name<'a>(
     request: &'a ModelRequest<'_>,
     name: &str,
@@ -301,10 +326,7 @@ fn tool_result_for_name<'a>(
         .messages
         .iter()
         .rev()
-        .take_while(|message| {
-            message.as_model_context().is_some()
-                || !matches!(message.semantic(), SemanticMessage::User(_))
-        })
+        .take_while(|message| !starts_turn(message))
         .collect::<Vec<_>>();
     let call_id = current_turn.iter().find_map(|message| {
         message
@@ -316,7 +338,7 @@ fn tool_result_for_name<'a>(
             })
     })?;
     current_turn.iter().find_map(|message| match message {
-        Message::ToolResult(result) if result.id == call_id => Some(result),
+        Message::ToolResult(result) if result.id == call_id => Some(&**result),
         _ => None,
     })
 }
@@ -328,12 +350,9 @@ fn current_turn_tool_results<'a>(
         .messages
         .iter()
         .rev()
-        .take_while(|message| {
-            message.as_model_context().is_some()
-                || !matches!(message.semantic(), SemanticMessage::User(_))
-        })
+        .take_while(|message| !starts_turn(message))
         .filter_map(|message| match message {
-            Message::ToolResult(result) => Some(result),
+            Message::ToolResult(result) => Some(&**result),
             _ => None,
         })
 }
@@ -357,11 +376,7 @@ fn completed_tool_call(
     arguments: serde_json::Value,
 ) -> Result<ModelResponse, ProviderError> {
     Ok(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-        ToolCall {
-            id: id.into(),
-            name: name.into(),
-            arguments,
-        },
+        ToolCall::new(id.into(), name.into(), arguments),
     )]))
 }
 
@@ -438,17 +453,14 @@ mod tests {
     fn questionnaire_count_is_scoped_to_the_current_user_turn() {
         let messages = vec![
             Message::user_text("fixture questionnaire"),
-            Message::ToolResult(rho_sdk::model::ToolResult {
-                id: QUESTIONNAIRE_CALL_ID.into(),
-                ok: true,
-                content: "old answer".into(),
-            }),
+            Message::ToolResult(
+                rho_sdk::model::ToolResult::succeeded(QUESTIONNAIRE_CALL_ID, "old answer").into(),
+            ),
             Message::user_text("fixture questionnaire"),
-            Message::ToolResult(rho_sdk::model::ToolResult {
-                id: QUESTIONNAIRE_CALL_ID.into(),
-                ok: true,
-                content: "current answer".into(),
-            }),
+            Message::ToolResult(
+                rho_sdk::model::ToolResult::succeeded(QUESTIONNAIRE_CALL_ID, "current answer")
+                    .into(),
+            ),
         ];
         let request = ModelRequest {
             messages: &messages,

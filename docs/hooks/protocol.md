@@ -10,7 +10,7 @@ One bounded JSON document on stdin:
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "event": "before_tool_use",
   "event_id": "0d1f…",
   "timestamp_unix_ms": 1730000000000,
@@ -36,6 +36,12 @@ One bounded JSON document on stdin:
   }
 }
 ```
+
+Other operations are `read_path`, `write_path`, `discover_instructions`,
+`network_access`, `load_skill`, and `control_session`, which names the
+`action` a tool takes on another agent session (`new`, `prompt`, `steer`, or
+`cancel`), the `session`, `null` for one it starts, its `workspace`, and the
+`text` it sends, `null` for a cancel.
 
 `after_tool_use` uses the same capability summary for the first request that
 call passed to authorize. Multi-capability calls still emit one
@@ -76,6 +82,21 @@ the hook field bound, each stream then keeps its **last** bytes and is named in
 `bounds.fields`. `status` is the tool outcome, not the process outcome: they
 usually agree, but read `exit_code` when you need the process's answer.
 
+`input_requested` names what the run waits for, as `approval`,
+`plan_approval`, or `question`, and summarizes it in one line: an approval's
+operation and policy reason, a plan's first line, or a questionnaire's title
+(its first question when untitled). Like other payloads, the summary carries
+path and command text unredacted, so a hook that forwards it to a push service
+sends that text too. `identity.run_id` is `null`. Answer the
+request from a client; a hook cannot.
+
+```json
+{
+  "kind": "approval",
+  "summary": "run git push --force"
+}
+```
+
 `parent_session_id` is filled in for delegated Rho subagents. A
 `runtime: claude-cli` child does not run Rho's tool loop, so it produces
 session-boundary events only.
@@ -83,6 +104,7 @@ session-boundary events only.
 `host_labels` contains bounded, non-secret labels from the embedding host. It
 is empty for standard session events. Tool events from workflow command and
 agent nodes include `workflow_run_id`, `plan_digest`, `node_id`, and `attempt`.
+`node_id` is the task instance ID, such as `s0.review` for a root task.
 SDK hosts can supply other labels, so handlers must allow unknown keys. A label
 that exceeds a bound is shortened and named in `bounds.fields`.
 
@@ -104,9 +126,37 @@ output from it cannot change scheduler state, a condition, or a template.
 Read `bounds` before trusting payload text. A shortened field is named there,
 for example `payload.capability.shell_command`.
 
-`shell_command` is the command that runs. With [RTK](/integrations/rtk) on,
-that is the rewritten form, such as `rtk git push --force`, so match the command
-anywhere in the string instead of anchoring at its start.
+`shell_command` is the command that runs. When the host rewrote the command the
+model asked for, as [RTK](/integrations/rtk) turns `git push --force` into
+`rtk git push --force`, `shell_command` holds the rewritten form and
+`requested_command` holds what the model asked for:
+
+```json
+"capability": {
+  "operation": "execute_process",
+  "working_directory": "/home/you/project",
+  "executable": "bash",
+  "arguments": ["-lc"],
+  "shell_command": "rtk git push --force",
+  "requested_command": "git push --force",
+  "environment": "inherit_except"
+}
+```
+
+`requested_command` is absent when nothing was rewritten. A rule about intent,
+such as "never push", should read `requested_command` and fall back to
+`shell_command`, so the rule does not depend on which rewrites exist:
+
+```sh
+command=$(jq -r '.payload.capability | .requested_command // .shell_command // ""')
+case $command in
+  "git push"*) echo '{"version": 1, "decision": "deny", "reason": "no pushes"}' ;;
+  *) echo '{"version": 1, "decision": "continue"}' ;;
+esac
+```
+
+A rule about exactly what runs should read `shell_command`. Approvals, including
+"Allow for session", always match the command that runs.
 
 ### What is never in a payload
 
@@ -224,14 +274,25 @@ The child environment is not inherited. It contains:
 - a fixed base set: `PATH`, `HOME`, `LANG`, `LC_ALL`, `LC_CTYPE`, `TZ` on Unix;
   `PATH`, `SystemRoot`, `SystemDrive`, `ComSpec`, `PATHEXT`, `TEMP`, `TMP`,
   `USERPROFILE` on Windows;
+- `RHO_HOME`, set to the rho home of the process running the session, and the
+  session's `XDG_RUNTIME_DIR`, which together locate the session's
+  [daemon](../daemon.md), so a `rho` the hook runs reaches it;
 - `RHO_IN_HOOK=1`;
-- whatever names you listed in `env`, when they are set in the parent.
+- whatever names you listed in `env`, when they are set in the parent. A name
+  listed here replaces the value above, except `RHO_IN_HOOK`.
 
-A variable that is unset in the parent is simply absent from the child.
+A variable that is unset in the parent is simply absent from the child. In a
+[daemon](../daemon.md) session, the parent's environment is the session's: the
+base set and `env` names are read from the environment of the client that last
+opened or prompted it.
 
 `RHO_IN_HOOK` is how recursion is prevented. A hook may legitimately run `rho`;
 that nested Rho sees the marker and runs with hooks disabled, so a hook cannot
-trigger itself.
+trigger itself. In a daemon session, the marker that counts is the one in the
+environment of the client that opens (or reopens) the session, not the
+daemon's: a session a hook's `rho` opens runs without hooks, and a daemon a hook
+started automatically does not take the marker, so its other sessions keep
+their hooks.
 
 The working directory is the project root for project hooks and the hooks file's
 directory for user hooks.

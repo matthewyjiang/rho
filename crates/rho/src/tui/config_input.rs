@@ -1,14 +1,9 @@
-//! Config, OAuth, secret, and reasoning-cycle key handlers for the interactive TUI.
+//! Login, secret, line-editor, and reasoning-cycle key handlers for the interactive TUI.
 
 use crate::{keybindings::ReservedComposerKey, tui::DefaultTerminal};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use super::{
-    config_editor::{ConfigNumberInput, ConfigNumberSave},
-    config_picker,
-    config_row::ConfigCommitCtx,
-    App, ComposerMode, Entry, InteractiveRuntime,
-};
+use super::{text_input::TextInputTarget, App, ComposerMode};
 
 impl App {
     pub(super) fn handle_interactive_pending_key(&mut self, key: KeyEvent) -> anyhow::Result<bool> {
@@ -48,7 +43,6 @@ impl App {
         &mut self,
         key: KeyEvent,
         terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<bool> {
         match self.apply_secret_key(key) {
             SecretKeyResult::NotSecret => Ok(false),
@@ -58,8 +52,7 @@ impl App {
             }
             SecretKeyResult::Submit(submission) => {
                 self.clear_transient_key_state();
-                self.submit_api_key_login(submission, terminal, agent)
-                    .await?;
+                self.submit_api_key_login(submission, terminal).await?;
                 Ok(true)
             }
         }
@@ -121,149 +114,15 @@ impl App {
         }
     }
 
-    pub(super) fn handle_config_number_key(
-        &mut self,
-        key: KeyEvent,
-        terminal: &mut DefaultTerminal,
-    ) -> anyhow::Result<bool> {
-        if !matches!(self.input_ui.composer(), ComposerMode::ConfigNumberInput(_)) {
-            return Ok(false);
-        }
-
-        match (key.modifiers, key.code) {
-            (KeyModifiers::NONE, KeyCode::Enter) => {
-                let ComposerMode::ConfigNumberInput(input) = self.input_ui.composer() else {
-                    return Ok(true);
-                };
-                if input.key.proposes_confirm() {
-                    match input.parsed_value() {
-                        Ok(value) => self.propose_prompt_history_limit(value)?,
-                        Err(err) => {
-                            self.insert_entry(&Entry::Error(err.to_string()));
-                            self.set_status("config save failed");
-                        }
-                    }
-                    return Ok(true);
-                }
-                let saved = match input.save(&self.info.services.config_repository) {
-                    Ok(saved) => saved,
-                    Err(err) => {
-                        self.insert_entry(&Entry::Error(err.to_string()));
-                        self.set_status("config save failed");
-                        return Ok(true);
-                    }
-                };
-                match saved {
-                    ConfigNumberSave::QuestionnaireTimeout(_) => {
-                        self.open_main_config_picker_selected(
-                            config_picker::QUESTIONNAIRE_TIMEOUT_VALUE,
-                        )?;
-                        self.set_status("questionnaire timeout saved; applies to the next form");
-                    }
-                    ConfigNumberSave::MaxOutputBytes(value) => {
-                        self.open_main_config_picker_selected(
-                            config_picker::MAX_OUTPUT_BYTES_VALUE,
-                        )?;
-                        self.set_status(format!(
-                            "max output bytes set to {value}; applies next session"
-                        ));
-                    }
-                    ConfigNumberSave::MaxToolOutputLines(value) => {
-                        self.info.runtime.max_tool_output_lines = value;
-                        self.info
-                            .services
-                            .diagnostics
-                            .update_max_tool_output_lines(value);
-                        self.open_main_config_picker_selected(
-                            config_picker::MAX_TOOL_OUTPUT_LINES_VALUE,
-                        )?;
-                        self.clamp_history_scroll_for_terminal(terminal)?;
-                        self.set_status(format!("max tool output lines set to {value}"));
-                    }
-                    ConfigNumberSave::CompactThresholdPercent(value) => {
-                        self.compaction_reload_pending = true;
-                        self.open_main_config_picker_selected(
-                            config_picker::COMPACT_THRESHOLD_PERCENT_VALUE,
-                        )?;
-                        self.set_status(format!(
-                            "compact threshold saved: {value}%; applies when idle"
-                        ));
-                    }
-                    ConfigNumberSave::CompactTargetPercent(value) => {
-                        self.compaction_reload_pending = true;
-                        self.open_main_config_picker_selected(
-                            config_picker::COMPACT_TARGET_PERCENT_VALUE,
-                        )?;
-                        self.set_status(format!(
-                            "compact target saved: {value}%; applies when idle"
-                        ));
-                    }
-                    ConfigNumberSave::ScreenAllowThresholdPercent(value) => {
-                        self.store_allow_threshold(value);
-                        self.open_main_config_picker_selected(
-                            config_picker::SCREEN_ALLOW_THRESHOLD_VALUE,
-                        )?;
-                    }
-                    ConfigNumberSave::AgentConcurrency(value) => {
-                        self.apply_live_agent_concurrency(value);
-                        self.open_main_config_picker_selected(
-                            config_picker::AGENT_CONCURRENCY_VALUE,
-                        )?;
-                        self.set_status(format!("concurrent agents set to {value}"));
-                    }
-                }
-                Ok(true)
-            }
-            (KeyModifiers::NONE, KeyCode::Backspace) => {
-                self.with_config_number_mut(|input| input.editor.backspace());
-                Ok(true)
-            }
-            (KeyModifiers::NONE | KeyModifiers::SHIFT, KeyCode::Char(ch)) => {
-                self.with_config_number_mut(|input| input.insert_char(ch));
-                Ok(true)
-            }
-            (_, KeyCode::Left) => {
-                self.with_config_number_mut(|input| input.editor.move_cursor_left());
-                Ok(true)
-            }
-            (_, KeyCode::Right) => {
-                self.with_config_number_mut(|input| input.editor.move_cursor_right());
-                Ok(true)
-            }
-            (_, KeyCode::Home) => {
-                self.with_config_number_mut(|input| input.editor.move_cursor_home());
-                Ok(true)
-            }
-            (_, KeyCode::End) => {
-                self.with_config_number_mut(|input| input.editor.move_cursor_end());
-                Ok(true)
-            }
-            (_, KeyCode::Esc) => {
-                let ComposerMode::ConfigNumberInput(input) = self.input_ui.composer() else {
-                    return Ok(true);
-                };
-                let selected_value = input.key.picker_value();
-                let config = self.info.services.config_repository.load()?;
-                self.info.runtime.show_reasoning_output = config.show_reasoning_output;
-                self.info.runtime.zen_mode = config.zen_mode;
-                self.open_main_config_picker_selected(selected_value)?;
-                Ok(true)
-            }
-            _ => Ok(true),
-        }
-    }
-
-    pub(super) async fn handle_text_input_key(
-        &mut self,
-        key: KeyEvent,
-        ctx: ConfigCommitCtx<'_>,
-    ) -> anyhow::Result<bool> {
+    /// Keys for the line editor of a setting, agent field, or login step.
+    /// Runs the same whether or not a turn is under way.
+    pub(super) fn handle_text_input_key(&mut self, key: KeyEvent) -> anyhow::Result<bool> {
         if !matches!(self.input_ui.composer(), ComposerMode::TextInput(_)) {
             return Ok(false);
         }
 
         match (key.modifiers, key.code) {
-            (KeyModifiers::NONE, KeyCode::Enter) => self.commit_text_input(ctx).await,
+            (KeyModifiers::NONE, KeyCode::Enter) => self.commit_text_input(),
             (KeyModifiers::NONE, KeyCode::Backspace) => {
                 self.with_text_input_mut(|input| input.editor.backspace());
                 Ok(true)
@@ -297,44 +156,18 @@ impl App {
         }
     }
 
-    async fn commit_text_input(&mut self, ctx: ConfigCommitCtx<'_>) -> anyhow::Result<bool> {
+    fn commit_text_input(&mut self) -> anyhow::Result<bool> {
         let ComposerMode::TextInput(input) = self.input_ui.composer() else {
             return Ok(true);
         };
         let target = input.target.clone();
         let value = input.editor.value.clone();
         match target {
-            super::text_input::TextInputTarget::ConfigApiKey(credential) => {
-                let save_result =
-                    save_config_api_key(self.credential_store.as_ref(), credential, &value);
-                match save_result {
-                    Ok(()) => {
-                        self.persist_web_search(
-                            ctx,
-                            super::web_search_config::web_search_key_value(credential),
-                            Some(crate::config::SearchBackend::from_credential(credential)),
-                            format!("{} saved", credential.label()),
-                        )
-                        .await?;
-                    }
-                    Err(err) => {
-                        self.insert_entry(&Entry::Error(format!(
-                            "could not save {}: {err}",
-                            credential.label()
-                        )));
-                        self.set_status("config save failed");
-                    }
-                }
+            TextInputTarget::Setting { namespace, key, .. } => {
+                self.commit_setting_input(namespace, key, &value);
             }
-            super::text_input::TextInputTarget::ConfigUrl(field) => {
-                self.save_web_search_url(field, &value, ctx).await?;
-            }
-            super::text_input::TextInputTarget::AgentField(field) => {
-                self.commit_agent_text_input(field, value)?;
-            }
-            super::text_input::TextInputTarget::CustomHost(step) => {
-                self.submit_custom_host_step(step, value)?;
-            }
+            TextInputTarget::AgentField(field) => self.commit_agent_text_input(field, value)?,
+            TextInputTarget::CustomHost(step) => self.submit_custom_host_step(step, value)?,
         }
         Ok(true)
     }
@@ -343,66 +176,22 @@ impl App {
         let ComposerMode::TextInput(input) = self.input_ui.composer() else {
             return Ok(true);
         };
-        let target = input.target.clone();
-        match target {
-            super::text_input::TextInputTarget::ConfigApiKey(credential) => {
-                self.refresh_web_search_config_picker(
-                    super::web_search_config::web_search_key_value(credential),
-                )?;
-                self.set_status("web search config");
-            }
-            super::text_input::TextInputTarget::ConfigUrl(field) => {
-                self.refresh_web_search_config_picker(field.value())?;
-                self.set_status("web search config");
-            }
-            super::text_input::TextInputTarget::AgentField(field) => {
-                self.reopen_agent_field_picker(field.value());
-            }
-            super::text_input::TextInputTarget::CustomHost(_) => self.cancel_custom_host_step(),
+        match input.target.clone() {
+            TextInputTarget::Setting { .. } => self.close_setting_input(),
+            TextInputTarget::AgentField(field) => self.reopen_agent_field_picker(field.value()),
+            TextInputTarget::CustomHost(_) => self.cancel_custom_host_step(),
         }
         Ok(true)
     }
 
-    pub(super) async fn handle_reasoning_cycle_key(
-        &mut self,
-        key: KeyEvent,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<bool> {
+    pub(super) fn handle_reasoning_cycle_key(&mut self, key: KeyEvent) -> anyhow::Result<bool> {
         if ReservedComposerKey::from_key(key) != Some(ReservedComposerKey::ReasoningCycle) {
             return Ok(false);
         }
 
-        self.cycle_reasoning(agent).await?;
+        self.cycle_daemon_reasoning()?;
         self.clear_transient_key_state();
         Ok(true)
-    }
-
-    pub(super) fn execute_config_command(
-        &mut self,
-        terminal: &mut DefaultTerminal,
-    ) -> anyhow::Result<()> {
-        let config = self.info.services.config_repository.load()?;
-        self.info.runtime.max_tool_output_lines = config.max_tool_output_lines.max(1);
-        self.info
-            .services
-            .diagnostics
-            .update_max_tool_output_lines(self.info.runtime.max_tool_output_lines);
-        self.info.runtime.show_reasoning_output = config.show_reasoning_output;
-        self.info.runtime.zen_mode = config.zen_mode;
-        self.input_ui
-            .set_composer(ComposerMode::Picker(config_picker::config_picker(
-                &self.info.runtime,
-                &config,
-            )));
-        self.set_status("config");
-        terminal.draw(|frame| self.draw(frame))?;
-        Ok(())
-    }
-
-    fn with_config_number_mut(&mut self, f: impl FnOnce(&mut ConfigNumberInput)) {
-        if let ComposerMode::ConfigNumberInput(input) = self.input_ui.composer_mut() {
-            f(input);
-        }
     }
 
     fn with_text_input_mut(&mut self, f: impl FnOnce(&mut super::text_input::TextInput)) {
@@ -416,20 +205,6 @@ enum SecretKeyResult {
     NotSecret,
     Handled,
     Submit(super::login::ApiKeySubmission),
-}
-
-fn save_config_api_key(
-    credential_store: &dyn rho_providers::credentials::CredentialStore,
-    credential: rho_providers::credentials::WebSearchCredential,
-    value: &str,
-) -> rho_providers::credentials::CredentialResult<()> {
-    use rho_providers::credentials::{delete_web_search_api_key, save_web_search_api_key};
-    let value = value.trim();
-    if value.is_empty() {
-        delete_web_search_api_key(credential_store, credential).map(|_| ())
-    } else {
-        save_web_search_api_key(credential_store, credential, value)
-    }
 }
 
 #[cfg(test)]

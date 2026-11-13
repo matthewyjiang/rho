@@ -20,8 +20,15 @@ impl ModelProvider for ClearingProvider {
 
     fn send_turn<'a>(&'a self, _request: ModelRequest<'a>) -> ProviderFuture<'a> {
         Box::pin(async move {
-            // Simulate live state changing after the compaction boundary.
-            self.0.clear_loaded();
+            // Simulate live state changing after the compaction boundary:
+            // restoring a snapshot with no saved loadout unloads every tool.
+            self.0.restore(&rho_sdk::SessionSnapshot::new(
+                rho_sdk::SessionId::new(),
+                rho_sdk::Revision::from_u64(1),
+                Vec::new(),
+                self.identity(),
+                rho_sdk::CompactionState::default(),
+            ));
             Ok(ModelResponse::Assistant(vec![
                 rho_sdk::model::ContentBlock::Text("short summary".into()),
             ]))

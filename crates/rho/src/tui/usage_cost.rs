@@ -1,7 +1,7 @@
 use rho_providers::model::{ContextUsage, ModelMetadata, ModelUsage};
 use rho_sdk::model::context::estimate_text_tokens;
 
-use crate::usage::pricing::catalog_cost_usd_micros;
+use crate::usage::pricing::{catalog_cost_usd_micros, usage_difference};
 
 /// Attempt-aware provider usage snapshots for a single run.
 ///
@@ -72,7 +72,7 @@ impl AttemptAwareRunUsage {
 /// chunk. This estimate meters streamed output so statusline cost can advance
 /// during the attempt, then yields as soon as any provider `Usage` arrives.
 /// It must never enter the durable usage ledger, and it must not restate the
-/// prompt as new uncached input: `StepStarted.estimated_context_tokens` is the full window, so
+/// prompt as new uncached input: `StepStarted.context_estimate` is the full window, so
 /// billing it on submit double-counts history and ignores cache.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct LiveStreamUsageEstimate {
@@ -315,26 +315,6 @@ pub(super) fn usage_with_estimated_cost(
         usage.cost_usd_micros = estimated_cost_usd_micros(&usage, metadata);
     }
     usage
-}
-
-pub(super) fn usage_difference(usage: &ModelUsage, baseline: Option<&ModelUsage>) -> ModelUsage {
-    let baseline = baseline.cloned().unwrap_or_default();
-    ModelUsage {
-        input_tokens: subtract_optional(usage.input_tokens, baseline.input_tokens),
-        output_tokens: subtract_optional(usage.output_tokens, baseline.output_tokens),
-        cache_read_tokens: subtract_optional(usage.cache_read_tokens, baseline.cache_read_tokens),
-        cache_write_tokens: subtract_optional(
-            usage.cache_write_tokens,
-            baseline.cache_write_tokens,
-        ),
-        total_tokens: subtract_optional(usage.total_tokens, baseline.total_tokens),
-        context_window: usage.context_window,
-        cost_usd_micros: subtract_optional(usage.cost_usd_micros, baseline.cost_usd_micros),
-    }
-}
-
-pub(super) fn subtract_optional(value: Option<u64>, baseline: Option<u64>) -> Option<u64> {
-    value.map(|value| value.saturating_sub(baseline.unwrap_or_default()))
 }
 
 pub(super) fn merge_usage(total: &mut Option<ModelUsage>, mut usage: ModelUsage) {

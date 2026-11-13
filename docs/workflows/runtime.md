@@ -123,10 +123,13 @@ working directory with no-follow checks and compares its content and file
 identity with the confirmed program. Linux and Android launch the executable,
 script interpreter, and working directory through those verified handles, so a
 path replacement after the check cannot select another object. Frozen workflow
-command execution fails closed on other targets. Those targets do not use the
-verified original path because their current process adapter cannot keep the
-same handle-based guarantee. Workflows with only in-process Rho agent nodes
-remain available there.
+command execution fails closed on other targets, such as macOS and Windows.
+Those targets do not use the verified original path because their current
+process adapter cannot keep the same handle-based guarantee. There,
+`workflow validate`, `plan`, and `start` reject a workflow with a command node
+or an external CLI agent node (Claude CLI, Cursor, or Antigravity) before you
+approve it, with the same error a launch would give. Workflows with only
+in-process Rho agent nodes remain available there.
 
 ## Permissions, approval, and trust
 
@@ -207,14 +210,19 @@ After an unclean exit, an attempt with uncertain process ownership becomes
 `needs_recovery`. Rho does not infer success and does not start an automatic
 retry. Inspect the process and artifacts, then pass `--recover-uncertain`.
 
-A Rho agent attempt atomically replaces `agent/session.json` in its attempt
-directory before each model request and before each batch of tool calls. On
-confirmed recovery, an attempt with a readable checkpoint continues under the
-same attempt number. Other uncertain attempts reset and start a new attempt.
-The checkpoint is removed when the attempt finishes or resets. A continued
-attempt's timeout starts again from zero.
-`resume --dry-run` reports the decision for each attempt without changing the
-run.
+A Rho agent attempt runs in a saved session that session lists leave out,
+whose id its `status.json` records before the agent starts. The session saves
+before each model request and before each batch of tool calls. On confirmed
+recovery, an attempt with a recorded session reopens it and continues under the
+same attempt number; if its prompt was not saved yet, it sends the prompt. A
+session that already holds the agent's final reply finishes the attempt with
+that reply without another model request. The session must be in the run's
+workspace and belong to the agent the plan froze; a session that cannot be
+reopened, or that belongs to another agent, fails the attempt. Other uncertain
+attempts reset and start a new attempt in a new session. A continued attempt's
+timeout starts again from zero.
+`resume --dry-run` reports the decision for each attempt, including the session
+a continued attempt reopens, without changing the run.
 
 ## Artifacts and storage
 
@@ -240,25 +248,26 @@ Workflow data lives below the Rho data directory:
 symlink store entries, writes state atomically, and appends journal records with
 monotonic sequence numbers.
 
-The `graph.json` filename is retained, but its frozen document now contains
-`program` and `program_digest`. Plan and status JSON also still include
-`graph_digest`, the flat `graph` view of the root scope, and the root scope's
-flat `nodes`, `outputs`, `command_exits`, `completions`, and `outcome` in run
-state. Prefer the program and scope fields in new consumers.
+The `graph.json` filename is retained, but its frozen document contains
+`program` and `program_digest`. Plan and status JSON serialize these stored
+records directly. Task states, outputs, command exits, and completions live in
+each scope under `state.scopes`, not in flat root maps.
 
-Plans and runs saved by earlier releases use version 1 manifests. They stay in
-`plans/` and `runs/`, appear in `list` and the workflow hub, and print through
-`status` in their original shape. They are read-only: run, resume, and cancel
-fail and ask you to create a new plan from source. Delete still removes them,
-including a run an older release left `running`, once no process holds that
+Plans and runs saved by Rho before 2.15 use version 1 manifests. This release
+does not read them. `list` reports them as warnings, and the workflow hub lists
+them as unsupported rows read from the manifest alone. Status, run, resume, and
+cancel fail with an error that names the record and points at Rho 2.x, which can
+still inspect them. Delete in the hub removes them once no process holds the
 run's writer lock. Rho does not migrate them.
 
 Source node names are definition IDs. Runtime events, status rows, selection,
-progress, and artifact paths use task instance IDs. A root-scope task instance
-ID is its definition name, such as `review`, so CLI JSONL output keeps wire
-version `1`. Attempts remain local to that task instance. State stores task
-states, outputs, command exits, completions, and durable attempt records inside
-their owning scope, not in global node maps.
+progress, hooks, and artifact paths use task instance IDs of the form
+`s<scope>.<definition>`, including the root scope (`s0.review`). CLI JSONL
+output is wire version `2`. Run journals written before root tasks were
+qualified name them by bare definition; Rho still reads those as root tasks.
+Attempts remain local to that task instance. State stores task states, outputs,
+command exits, completions, and durable attempt records inside their owning
+scope, not in global node maps.
 
 Scope closure is journaled separately from task completion. A closed root stores
 its outcome and resolved named exports in `scopes.s0.result`; a run completes
@@ -287,6 +296,8 @@ An agent with the `workflow` capability uses the same service and store as the C
 ```
 
 `start` plans a file and runs it in one call. It removes its launch-only plan once the run owns the frozen graph; `/workflow:<name>` uses it. `run`, `start`, and `resume` start in the background and return a run id. Completions arrive at the next turn boundary. Use `status` after delivery, and `cancel` to stop. Do not poll.
+
+A run the tool starts or resumes in a [daemon](/daemon#environment) session takes that session's environment as it is when the run starts or resumes, and keeps it: hooks, command nodes, and agent nodes all run in it, and later prompts do not change it. Planning freezes command executables, their `#!/usr/bin/env` interpreters, and CLI agent binaries as found on that environment's `PATH`, and each node verifies them on the same `PATH` before it starts. `rho workflow` runs use the terminal's environment. Rho never saves the environment with a run, so a run resumed elsewhere takes the resuming session's or terminal's; if its `PATH` finds a different interpreter for a frozen script, the run fails closed with a `frozen filesystem identity drift` error.
 
 Validate and plan authorize the config path, agent catalog, source and loaded modules, planner process facts, command working directories, executable paths, and script interpreters. Paths found during discovery use normal dynamic authorization before Rho reads them. Run and resume use normal tool permissions, without a separate plan-confirmation questionnaire. Node capabilities are authorized separately; removing the extra form does not bypass policy, hooks, or required approvals. Background execution still fails closed when a required approval has no responder. Plan and run tool summaries report `program_digest`.
 

@@ -16,15 +16,7 @@ use std::time::{Duration, Instant};
 use rho_providers::model::{ModelMetadata, ModelUsage};
 use rho_sdk::{ModelCallMetrics, ModelCallProfile};
 
-use super::usage_cost::{format_token_count, format_usd};
-use crate::usage::pricing::cost_component;
-
-/// Misses at or below this are cache-breakpoint granularity, not a real miss.
-///
-/// Receipt: Pi `packages/coding-agent/src/core/cache-stats.ts` uses 1024
-/// because Anthropic cache breakpoints sit on ~1K-token alignment. Smaller
-/// gaps are noise.
-pub(super) const CACHE_MISS_NOISE_FLOOR_TOKENS: u64 = 1024;
+use crate::{cache_warm::CACHE_MISS_NOISE_FLOOR_TOKENS, usage::pricing::cost_component};
 
 /// Token tripwire for a transcript notice after a counted miss.
 ///
@@ -130,22 +122,12 @@ impl CacheStatsTracker {
         self.reported_usage = Some(step_delta.clone());
     }
 
-    pub(super) fn last_prefix_read(&self) -> Option<Instant> {
-        self.last_prefix_read
-    }
-
     /// The provider reads the prefix when a real request or ping is sent.
     pub(super) fn record_prefix_read(&mut self, sent_at: Instant) {
         self.last_prefix_read = Some(
             self.last_prefix_read
                 .map_or(sent_at, |read| read.max(sent_at)),
         );
-    }
-
-    /// The bound provider changed, so the old route's cached prefix says
-    /// nothing about the new one. Miss attribution keeps `previous`.
-    pub(super) fn forget_prefix_read(&mut self) {
-        self.last_prefix_read = None;
     }
 
     /// Sample one completed model call against the previous one. The call
@@ -202,18 +184,9 @@ impl CacheStatsTracker {
         self.last_prefix_read = None;
     }
 
-    /// The advertised tool list changed since the last sampled request.
-    pub(super) fn note_tool_list_changed(&mut self) {
-        self.tool_list_changed = true;
-    }
-
     /// Clear everything. Matches `/clear`, tree checkout, and new session.
     pub(super) fn reset(&mut self) {
         *self = Self::default();
-    }
-
-    pub(super) fn take_turn_notices(&mut self) -> Vec<CacheMissNotice> {
-        std::mem::take(&mut self.turn_notices)
     }
 
     pub(super) fn rebilled(&self) -> &CacheRebilled {
@@ -319,33 +292,6 @@ fn extra_cost_usd_micros(
 fn is_significant_miss(missed: u64, extra_cost: Option<u64>) -> bool {
     missed >= SIGNIFICANT_MISS_TOKENS
         || extra_cost.is_some_and(|cost| cost >= SIGNIFICANT_MISS_EXTRA_COST_USD_MICROS)
-}
-
-/// Transcript line for one significant miss. Used by the completed-turn path.
-pub(super) fn notice_text(notice: &CacheMissNotice) -> String {
-    let mut text = match notice.cause {
-        CacheMissCause::ModelSwitch => "cache miss after model switch".to_string(),
-        CacheMissCause::ToolListChanged => "cache miss after tool list change".to_string(),
-        CacheMissCause::Idle { gap, ttl } => format!(
-            "cache miss after {}m idle (cache TTL is about {}m)",
-            whole_minutes(gap),
-            whole_minutes(ttl),
-        ),
-        CacheMissCause::Unattributed => "cache miss".to_string(),
-    };
-    text.push_str(": ");
-    text.push_str(&format_token_count(notice.missed_tokens));
-    text.push_str(" tokens re-billed");
-    if let Some(cost) = notice.extra_cost_usd_micros {
-        text.push_str(" (~");
-        text.push_str(&format_usd(cost));
-        text.push(')');
-    }
-    text
-}
-
-fn whole_minutes(gap: Duration) -> u64 {
-    (gap.as_secs().saturating_add(30) / 60).max(1)
 }
 
 #[cfg(test)]

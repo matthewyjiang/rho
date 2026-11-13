@@ -32,6 +32,8 @@ TEST_LOG=$(mktemp /tmp/rho-pty-suite.XXXXXX.log)
 cargo nextest run -p rho-coding-agent --test tui_pty >"$TEST_LOG" 2>&1
 ```
 
+Every launch runs as `rho` does for a user: the TUI starts a daemon in the isolated home when none runs, and follows its session. Rho has no other TUI, so a scenario needs no host setting.
+
 CI runs exactly the `assert_pass` tests in `crates/rho/tests/tui_pty.rs`. Key scenarios:
 
 - core lifecycle: `startup_stream_exit`, `cancel_and_resubmit`, `type_during_stream`, `resize_during_stream`, `scroll_during_stream`, `terminal_restoration`

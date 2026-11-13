@@ -47,11 +47,12 @@ fn login_shows_provider_picker_before_credential_store_choice() {
     // provider login must choose a store after the group picker.
     std::fs::write(
         &home.config_path,
-        r#"provider = "openai"
+        r#"web_search.mode = "off"
+
+[model]
+provider = "openai"
 model = "gpt-5.5"
 auth = "api-key"
-check_for_updates = false
-web_search.mode = "off"
 "#,
     )
     .unwrap();
@@ -185,11 +186,12 @@ fn login_claude_code_skips_credential_store_when_unset() {
     // Leave credential_store unset. Claude login must never ask for it.
     std::fs::write(
         &home.config_path,
-        r#"provider = "openai"
+        r#"web_search.mode = "off"
+
+[model]
+provider = "openai"
 model = "gpt-5.5"
 auth = "api-key"
-check_for_updates = false
-web_search.mode = "off"
 "#,
     )
     .unwrap();
@@ -241,11 +243,12 @@ fn login_claude_code_cancel_stays_in_rho() {
     let home = IsolatedHome::new().unwrap();
     std::fs::write(
         &home.config_path,
-        r#"provider = "openai"
+        r#"web_search.mode = "off"
+
+[model]
+provider = "openai"
 model = "gpt-5.5"
 auth = "api-key"
-check_for_updates = false
-web_search.mode = "off"
 
 [behavior]
 credential_store = "file"
@@ -291,23 +294,27 @@ credential_store = "file"
     assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
 }
 
+/// A 32x140 matrix launch in `home`.
+fn ollama_plan(home: &IsolatedHome) -> RhoLaunchPlan {
+    RhoLaunchPlan::matrix(
+        PathBuf::from(env!("CARGO_BIN_EXE_rho")),
+        home,
+        PtySize {
+            rows: 32,
+            cols: 140,
+        },
+    )
+}
+
 // Covers: an Ollama device login counts only after Enter, logout signs Rho
 // out, and Esc on the prompt records nothing.
 // Owner: interactive login lifecycle.
 #[test]
 fn ollama_device_login_needs_enter_and_logout_signs_out() {
     let home = IsolatedHome::new().unwrap();
-    let binary = PathBuf::from(env!("CARGO_BIN_EXE_rho"));
-    let plan = RhoLaunchPlan::matrix(
-        binary,
-        &home,
-        PtySize {
-            rows: 32,
-            cols: 140,
-        },
-    )
-    // Headless on every platform, so no real browser opens.
-    .with_env("SSH_CONNECTION", "127.0.0.1 1 127.0.0.1 2");
+    let plan = ollama_plan(&home)
+        // Headless on every platform, so no real browser opens.
+        .with_env("SSH_CONNECTION", "127.0.0.1 1 127.0.0.1 2");
     let mut harness = PtyHarness::spawn_named(&plan, "ollama_device_login").unwrap();
     harness
         .wait_for_text("gpt-5.5", WaitTimeout::secs(20, "startup"))
@@ -324,6 +331,12 @@ fn ollama_device_login_needs_enter_and_logout_signs_out() {
             WaitTimeout::secs(10, "device login finished"),
         )
         .unwrap();
+    // The daemon shares this process's home, so it signs with the key shown.
+    let screen = harness.screen().contents();
+    assert!(
+        !screen.contains(DIFFERENT_DEVICE_KEY),
+        "one device key must not be reported as two:\n{screen}"
+    );
 
     harness.submit_text("/logout ollama-cloud-device").unwrap();
     harness
@@ -346,6 +359,57 @@ fn ollama_device_login_needs_enter_and_logout_signs_out() {
         .wait_for_text(
             "no stored credentials for ollama-cloud were present",
             WaitTimeout::secs(10, "cancelled login recorded nothing"),
+        )
+        .unwrap();
+    assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
+}
+
+/// The start of the error a daemon session's device login shows when the
+/// daemon signs with another key than the one this TUI showed.
+const DIFFERENT_DEVICE_KEY: &str = "the rho daemon signs in with a different device key";
+
+// Covers: a daemon that keeps its Ollama device key in another home than the
+// TUI's records a key the user was not shown, so the TUI names the key the
+// daemon will sign with, and the login still finishes.
+// Owner: interactive TUI as a daemon client (#1667)
+#[cfg(unix)]
+#[test]
+fn daemon_device_login_names_a_daemon_key_that_differs_from_the_one_shown() {
+    let home = IsolatedHome::new().unwrap();
+    let daemon_home = home.path().join("daemon-home");
+    std::fs::create_dir_all(&daemon_home).unwrap();
+    // Started before the TUI, which then uses it rather than start one with
+    // its own home. Same fixture mode as the TUI's matrix launch.
+    let started = home
+        .command(env!("CARGO_BIN_EXE_rho"))
+        .args(["daemon", "start"])
+        .env("HOME", &daemon_home)
+        .env("RHO_TUI_TEST_MODE", "matrix")
+        .env("RHO_TUI_FIXTURE_WORKSPACE", &home.workspace)
+        .status()
+        .unwrap();
+    assert!(started.success(), "rho daemon start: {started}");
+    let plan = ollama_plan(&home).with_env("SSH_CONNECTION", "127.0.0.1 1 127.0.0.1 2");
+    let mut harness = PtyHarness::spawn_named(&plan, "ollama_device_key_mismatch").unwrap();
+    harness
+        .wait_for_text("gpt-5.5", WaitTimeout::secs(20, "startup"))
+        .unwrap();
+
+    harness.submit_text("/login ollama-cloud-device").unwrap();
+    harness
+        .wait_for_text("Enter done", WaitTimeout::secs(10, "device prompt"))
+        .unwrap();
+    harness.inject_key(&Key::Enter).unwrap();
+    harness
+        .wait_for_text(
+            DIFFERENT_DEVICE_KEY,
+            WaitTimeout::secs(10, "daemon key reported"),
+        )
+        .unwrap();
+    harness
+        .wait_for_text(
+            "stored credentials for ollama-cloud",
+            WaitTimeout::secs(10, "device login finished"),
         )
         .unwrap();
     assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
@@ -395,14 +459,7 @@ fn ollama_is_refreshed_and_listed_only_after_login() {
     let home = IsolatedHome::new().unwrap();
     let original_config = std::fs::read_to_string(&home.config_path).unwrap();
     let (ollama_base, ollama_requests) = spawn_fake_ollama();
-    let plan = RhoLaunchPlan::matrix(
-        PathBuf::from(env!("CARGO_BIN_EXE_rho")),
-        &home,
-        PtySize {
-            rows: 32,
-            cols: 140,
-        },
-    );
+    let plan = ollama_plan(&home);
     let mut harness = PtyHarness::spawn_named(&plan, "ollama_login_only").unwrap();
     harness
         .wait_for_text("gpt-5.5", WaitTimeout::secs(20, "startup"))
@@ -432,13 +489,7 @@ fn ollama_is_refreshed_and_listed_only_after_login() {
     harness
         .wait_for_text("gpt-5.5", WaitTimeout::secs(20, "restart"))
         .unwrap();
-    harness.submit_text("/model").unwrap();
-    harness
-        .wait_for_text(
-            "no cached provider models",
-            WaitTimeout::secs(10, "ollama list dropped"),
-        )
-        .unwrap();
+    expect_no_ollama_model_listed(&mut harness, "ollama list dropped");
 
     // A keyless login is still a login, so /logout ollama signs it out.
     keyless_ollama_login_lists_its_model(&mut harness, &ollama_base);
@@ -450,17 +501,11 @@ fn ollama_is_refreshed_and_listed_only_after_login() {
     harness.submit_text("/new").unwrap();
     harness
         .wait_for_text_gone(
-            "no cached provider models",
+            "logged out of ollama",
             WaitTimeout::secs(10, "fresh transcript"),
         )
         .unwrap();
-    harness.submit_text("/model").unwrap();
-    harness
-        .wait_for_text(
-            "no cached provider models",
-            WaitTimeout::secs(10, "logout drops the ollama list"),
-        )
-        .unwrap();
+    expect_no_ollama_model_listed(&mut harness, "logout drops the ollama list");
     assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
     let config = std::fs::read_to_string(&home.config_path).unwrap();
     assert!(
@@ -473,8 +518,8 @@ fn ollama_is_refreshed_and_listed_only_after_login() {
     std::fs::write(
         &home.config_path,
         original_config.replacen(
-            "provider = \"openai\"\nmodel = \"gpt-5.5\"\nauth = \"api-key\"",
-            "provider = \"ollama\"\nmodel = \"llama-pty:latest\"\nauth = \"none\"",
+            "[model]\nprovider = \"openai\"\nmodel = \"gpt-5.5\"\nauth = \"api-key\"\n",
+            "[model]\nprovider = \"ollama\"\nmodel = \"llama-pty:latest\"\nauth = \"none\"\n",
             1,
         ),
     )
@@ -493,6 +538,21 @@ fn ollama_is_refreshed_and_listed_only_after_login() {
         served_before,
         "startup must not probe an Ollama that is not logged in"
     );
+}
+
+/// Opens `/model` and checks it lists no model of the fake Ollama server. The
+/// picker always opens, since it offers the session's own model.
+fn expect_no_ollama_model_listed(harness: &mut PtyHarness, what: &'static str) {
+    harness.submit_text("/model").unwrap();
+    harness
+        .wait_for_text("select model", WaitTimeout::secs(10, what))
+        .unwrap();
+    let screen = harness.screen().contents();
+    assert!(!screen.contains("llama-pty"), "{what}:\n{screen}");
+    harness.inject_key(&Key::Esc).unwrap();
+    harness
+        .wait_for_text_gone("select model", WaitTimeout::secs(5, "picker closed"))
+        .unwrap();
 }
 
 /// Runs `/login ollama` against `base` with no key, then checks the login
@@ -531,4 +591,121 @@ fn keyless_ollama_login_lists_its_model(harness: &mut PtyHarness, base: &str) {
     harness
         .wait_for_text_gone("llama-pty:latest", WaitTimeout::secs(5, "picker closed"))
         .unwrap();
+}
+
+// Covers: `rho login` to a custom provider on a machine whose session has
+// no D-Bus, as an SSH login's: the daemon it starts cannot reach the OS
+// store, so the store prompt marks it unavailable and Enter takes the file
+// store; the daemon saves that choice and keeps the key there (#1662).
+// Owner: rho login CLI against the daemon it starts (PTY, real terminal).
+#[cfg(target_os = "linux")]
+#[test]
+fn rho_login_without_a_session_bus_falls_back_to_the_file_store_it_offers() {
+    let home = IsolatedHome::new().unwrap();
+    // Nothing chooses the store; the sandbox's empty XDG_RUNTIME_DIR is the
+    // missing session bus, for `rho login` and the daemon it starts.
+    // The key check reaches the discard port, so the key saves unchecked.
+    std::fs::write(
+        &home.config_path,
+        "[model]\nprovider = \"mock\"\nmodel = \"mock-model\"\nauth = \"mock-api-key\"\n\n[providers.custom.mock]\nbase_url = \"http://127.0.0.1:9/v1\"\n",
+    )
+    .unwrap();
+    let plan = RhoLaunchPlan::matrix(
+        PathBuf::from(env!("CARGO_BIN_EXE_rho")),
+        &home,
+        PtySize {
+            rows: 28,
+            cols: 200,
+        },
+    )
+    .with_arg("login")
+    .with_arg("mock");
+    let mut harness = PtyHarness::spawn_named(&plan, "rho_login_headless_store").unwrap();
+
+    harness
+        .wait_for_text("input hidden", WaitTimeout::secs(20, "key prompt"))
+        .unwrap();
+    harness.type_text("sk-test-headless").unwrap();
+    harness.inject_key(&Key::Enter).unwrap();
+    harness
+        .wait_for_text("(default 2)", WaitTimeout::secs(20, "store prompt"))
+        .unwrap();
+    harness
+        .assert_screen_contains("OS credential store (unavailable:")
+        .unwrap();
+    harness.inject_key(&Key::Enter).unwrap();
+    assert_eq!(
+        harness
+            .wait_for_exit(WaitTimeout::secs(30, "rho login exits"))
+            .unwrap(),
+        0,
+        "{}",
+        harness.screen().contents()
+    );
+
+    let config = std::fs::read_to_string(&home.config_path).unwrap();
+    let store =
+        rho_providers::credentials::FileCredentialStore::with_rho_home(home.rho_home()).unwrap();
+    use rho_providers::credentials::CredentialStore;
+    assert_eq!(
+        (
+            config.contains("credential_store = \"file\""),
+            store.get_secret("provider:mock:api-key").unwrap()
+        ),
+        (true, Some("sk-test-headless".to_owned())),
+        "{config}"
+    );
+}
+
+// Covers: a session that started signed out takes a login another process
+// saved since, such as `rho login` in another terminal, at its first prompt,
+// which the provider then answers.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_signed_out_session_answers_after_an_outside_login() {
+    const KEY: &str = "test-outside-key";
+    let home = IsolatedHome::new().unwrap();
+    let address = super::key_checking_provider::spawn_provider(std::sync::Arc::new(
+        std::sync::Mutex::new(KEY.to_owned()),
+    ));
+    std::fs::write(
+        &home.config_path,
+        format!(
+            r#"web_search.mode = "off"
+
+[model]
+provider = "mock"
+model = "mock-model"
+auth = "mock-api-key"
+
+[providers.custom.mock]
+base_url = "http://{address}/v1"
+
+[behavior]
+credential_store = "file"
+"#
+        ),
+    )
+    .unwrap();
+    let mut plan = ollama_plan(&home);
+    // The turn must reach the provider, not the matrix fixture.
+    plan.env.retain(|(key, _)| key != "RHO_TUI_TEST_MODE");
+    let mut harness = PtyHarness::spawn_named(&plan, "daemon_outside_login").unwrap();
+    harness
+        .wait_for_text("Not signed in", WaitTimeout::secs(20, "starts signed out"))
+        .unwrap();
+
+    // What `rho login mock` saves to the file store; it needs a terminal.
+    rho_providers::credentials::CredentialStore::set_secret(
+        &rho_providers::credentials::FileCredentialStore::with_rho_home(home.rho_home()).unwrap(),
+        "provider:mock:api-key",
+        KEY,
+    )
+    .unwrap();
+
+    harness.submit_text("hello").unwrap();
+    harness
+        .wait_for_text("answered", WaitTimeout::secs(20, "first prompt answered"))
+        .unwrap();
+    assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
 }

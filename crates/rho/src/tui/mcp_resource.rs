@@ -11,9 +11,10 @@
 
 use rho_providers::model::ImageContent;
 
-use crate::tools::mcp::{McpCatalog, McpCatalogError, McpResource, McpResourceContent};
+use crate::tools::mcp::{McpResource, McpResourceContent};
 
 use super::{
+    daemon_session::DaemonMcp,
     media_attach::{MediaAttachOutcome, MediaAttachTask},
     App, ChatMedia, ChatTextDocument, ComposerMode, MediaAttachId, PendingAttachmentSource,
 };
@@ -50,12 +51,12 @@ impl App {
         self.clear_active_file_mention();
 
         let id = MediaAttachId::new();
-        let catalog = self.mcp_catalog.clone();
+        let source = self.mcp_source();
         let server = resource.server.clone();
         let uri = resource.uri.clone();
         let name = resource.uri.clone();
         let task = tokio::spawn(async move {
-            read_resource_attachment(catalog, server, uri, max_output_bytes).await
+            read_resource_attachment(source, server, uri, max_output_bytes).await
         });
         self.media_attach_tasks.push(MediaAttachTask { id, task });
         self.input_ui.push_pending_attachment(
@@ -70,12 +71,15 @@ impl App {
 
 /// Read one resource and turn its bodies into a single attachment.
 async fn read_resource_attachment(
-    catalog: McpCatalog,
+    source: DaemonMcp,
     server: String,
     uri: String,
     max_output_bytes: usize,
 ) -> MediaAttachOutcome {
-    match catalog.read_resource(&server, &uri).await {
+    match source
+        .read_resource(server, uri.clone(), max_output_bytes)
+        .await
+    {
         Ok(contents) => {
             let outcome = resource_attachment(&uri, &contents, max_output_bytes);
             match outcome {
@@ -93,14 +97,10 @@ async fn read_resource_attachment(
                 other => other,
             }
         }
-        Err(error) => resource_failure(error),
-    }
-}
-
-fn resource_failure(error: McpCatalogError) -> MediaAttachOutcome {
-    MediaAttachOutcome::Failed {
-        kind: "resource read",
-        message: error.to_string(),
+        Err(message) => MediaAttachOutcome::Failed {
+            kind: "resource read",
+            message,
+        },
     }
 }
 

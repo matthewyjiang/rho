@@ -2,6 +2,7 @@
 
 use std::sync::{Arc, Mutex};
 
+use rho_protocol::{SessionMcpInventory, SessionMcpMode, SessionMcpStatus};
 use serde::Serialize;
 
 use super::{
@@ -98,13 +99,6 @@ impl McpServerStatus {
             Self::TimedOut => "timeout",
             Self::NotLoaded => "not loaded",
         }
-    }
-
-    pub(crate) const fn is_healthy(self) -> bool {
-        matches!(
-            self,
-            Self::Connected | Self::Connecting | Self::Disabled | Self::NotLoaded
-        )
     }
 }
 
@@ -543,6 +537,8 @@ fn live_lines(live: &LiveServerFacts) -> Vec<String> {
     lines
 }
 
+/// Server counts of one session, from its own report or, for a daemon
+/// session, the inventory the daemon sends.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct McpSessionSummary {
     pub(crate) mode: McpLoadMode,
@@ -552,6 +548,65 @@ pub(crate) struct McpSessionSummary {
     pub(crate) problems: usize,
     pub(crate) enabled: usize,
     pub(crate) exported_tools: usize,
+}
+
+impl McpSessionSummary {
+    fn empty(mode: McpLoadMode) -> Self {
+        Self {
+            mode,
+            configured: false,
+            connected: 0,
+            connecting: 0,
+            problems: 0,
+            enabled: 0,
+            exported_tools: 0,
+        }
+    }
+
+    fn count(&mut self, enabled: bool, tool_count: usize, status: McpServerStatus) {
+        self.configured = true;
+        self.enabled += usize::from(enabled);
+        self.exported_tools += tool_count;
+        match status {
+            McpServerStatus::Connected => self.connected += 1,
+            McpServerStatus::Connecting => self.connecting += 1,
+            McpServerStatus::InvalidConfig
+            | McpServerStatus::Failed
+            | McpServerStatus::TimedOut => {
+                self.problems += 1;
+            }
+            McpServerStatus::Disabled | McpServerStatus::NotLoaded => {}
+        }
+    }
+
+    /// Summarizes a daemon session's inventory. `None` when the daemon
+    /// sends a mode this client does not know.
+    pub(crate) fn of_inventory(inventory: &SessionMcpInventory) -> Option<Self> {
+        let mode = match inventory.mode {
+            SessionMcpMode::Native => McpLoadMode::Native,
+            SessionMcpMode::UnsupportedAgent => McpLoadMode::UnsupportedAgent,
+            SessionMcpMode::ToolsDisabled => McpLoadMode::ToolsDisabled,
+            _ => return None,
+        };
+        let mut summary = Self::empty(mode);
+        for server in &inventory.servers {
+            let status = match server.status {
+                SessionMcpStatus::Connected => McpServerStatus::Connected,
+                SessionMcpStatus::Connecting => McpServerStatus::Connecting,
+                SessionMcpStatus::Disabled => McpServerStatus::Disabled,
+                SessionMcpStatus::InvalidConfig => McpServerStatus::InvalidConfig,
+                SessionMcpStatus::Failed => McpServerStatus::Failed,
+                SessionMcpStatus::TimedOut => McpServerStatus::TimedOut,
+                SessionMcpStatus::NotLoaded => McpServerStatus::NotLoaded,
+                // A status a newer daemon sends counts as a problem, as in
+                // `/mcp`, so the row points there.
+                _ => McpServerStatus::Failed,
+            };
+            let tool_count = usize::try_from(server.tool_count).unwrap_or(usize::MAX);
+            summary.count(server.enabled, tool_count, status);
+        }
+        Some(summary)
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
@@ -633,26 +688,9 @@ impl McpSessionReport {
     }
 
     pub(crate) fn summary(&self) -> McpSessionSummary {
-        let mut summary = McpSessionSummary {
-            mode: self.mode,
-            configured: !self.servers.is_empty(),
-            connected: 0,
-            connecting: 0,
-            problems: 0,
-            enabled: 0,
-            exported_tools: 0,
-        };
+        let mut summary = McpSessionSummary::empty(self.mode);
         for server in &self.servers {
-            summary.enabled += usize::from(server.enabled());
-            summary.exported_tools += server.tool_count();
-            match server.status() {
-                McpServerStatus::Connected => summary.connected += 1,
-                McpServerStatus::Connecting => summary.connecting += 1,
-                McpServerStatus::InvalidConfig
-                | McpServerStatus::Failed
-                | McpServerStatus::TimedOut => summary.problems += 1,
-                McpServerStatus::Disabled | McpServerStatus::NotLoaded => {}
-            }
+            summary.count(server.enabled(), server.tool_count(), server.status());
         }
         summary
     }

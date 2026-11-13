@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 
 use ratatui::{backend::Backend, Terminal};
 
-use crate::tui::DefaultTerminal;
+use crate::{tui::DefaultTerminal, usage::pricing::usage_difference};
 
 use super::{
     activity::ActivityPhase,
@@ -23,13 +23,10 @@ use super::{
     markdown_image::markdown_image_suffix_may_have_changed,
     render::padded_content_width,
     stream::StreamFragment,
-    usage_cost::{
-        add_optional, merge_usage, usage_difference, usage_with_estimated_cost, CostSource,
-    },
+    usage_cost::{add_optional, merge_usage, usage_with_estimated_cost, CostSource},
     App, AssistantEntry, Entry, FinalAnswerDelta, LiveStreamPreview, ReasoningEntry, StreamKind,
     ToolEntry,
 };
-use rho_providers::model::ContentBlock;
 
 pub(super) fn final_answer_delta<'a>(emitted_text: &str, answer: &'a str) -> FinalAnswerDelta<'a> {
     match answer.strip_prefix(emitted_text) {
@@ -366,15 +363,19 @@ impl App {
                 image_asset,
             } => {
                 let command = match &presentation {
-                    crate::presentation::Presentation::Card(card)
-                    | crate::presentation::Presentation::SummaryCard(card) => match &card.header {
-                        rho_tools::tool_card::ToolHeader::Shell { command, .. } => {
-                            command.as_deref()
+                    rho_protocol::display::Presentation::Card(card)
+                    | rho_protocol::display::Presentation::SummaryCard(card) => {
+                        match &card.header {
+                            rho_protocol::display::ToolHeader::Shell { command, .. } => {
+                                command.as_deref()
+                            }
+                            rho_protocol::display::ToolHeader::Call { .. }
+                            | rho_protocol::display::ToolHeader::StatusFirst { .. } => None,
+                            // `Unknown`, or a dialect a newer protocol adds.
+                            _ => None,
                         }
-                        rho_tools::tool_card::ToolHeader::Call { .. }
-                        | rho_tools::tool_card::ToolHeader::StatusFirst { .. } => None,
-                    },
-                    crate::presentation::Presentation::Notification(_) => None,
+                    }
+                    rho_protocol::display::Presentation::Notification(_) => None,
                 };
                 self.refresh_git_after_command(command);
                 let expanded = self.turn.tool_finished(&call_id);
@@ -390,11 +391,11 @@ impl App {
                         .and_then(|asset| match self.load_feed_image(asset) {
                             Ok(image) => image,
                             Err(error) => {
-                                if let crate::presentation::Presentation::Card(card)
-                                | crate::presentation::Presentation::SummaryCard(card) =
+                                if let rho_protocol::display::Presentation::Card(card)
+                                | rho_protocol::display::Presentation::SummaryCard(card) =
                                     &mut presentation
                                 {
-                                    card.card.push_fact(rho_tools::tool_card::ToolFact::Error {
+                                    card.push_fact(rho_protocol::display::ToolFact::Error {
                                         text: format!("image preview unavailable: {error}"),
                                     });
                                 }
@@ -555,34 +556,6 @@ impl App {
         }
     }
 
-    pub(super) fn insert_assistant_images(&mut self, content: &[ContentBlock]) {
-        for block in content {
-            let ContentBlock::Image(image) = block else {
-                continue;
-            };
-            let preview =
-                super::feed_image::preview_generated_image(image, self.image_picker.as_ref());
-            self.insert_entry(&super::message_history::generated_image_entry(
-                preview, image,
-            ));
-        }
-    }
-
-    pub(super) fn insert_final_answer_suffix(&mut self, answer: &str) {
-        match final_answer_delta(self.streams.assistant_stream.emitted_text(), answer) {
-            FinalAnswerDelta::None => {}
-            FinalAnswerDelta::Append(suffix) => {
-                self.streams.assistant_stream.push_delta(suffix);
-                if let Some(fragment) = self.streams.assistant_stream.finish() {
-                    self.insert_stream_fragment(fragment, StreamKind::Assistant);
-                }
-            }
-            FinalAnswerDelta::Mismatch => {
-                self.replace_current_turn_assistant_transcript(answer);
-            }
-        }
-    }
-
     pub(super) fn insert_stream_fragment(&mut self, fragment: StreamFragment, kind: StreamKind) {
         let render_text = fragment.render_text();
         if !render_text.is_empty() {
@@ -590,32 +563,6 @@ impl App {
         }
         let text = fragment.into_text();
         self.push_transcript_entry(kind.entry(text));
-    }
-
-    pub(super) fn replace_current_turn_assistant_transcript(&mut self, answer: &str) {
-        let start = self.turn.current_turn_start().unwrap_or(0);
-        let assistant_indices = self
-            .history
-            .entries()
-            .iter()
-            .enumerate()
-            .skip(start)
-            .filter_map(|(index, entry)| matches!(entry, Entry::Assistant(_)).then_some(index))
-            .collect::<Vec<_>>();
-
-        let Some((first, stale)) = assistant_indices.split_first() else {
-            self.push_transcript_entry(Entry::Assistant(answer.to_string().into()));
-            return;
-        };
-
-        if let Entry::Assistant(assistant) = &mut self.history.entries_mut()[*first] {
-            assistant.text = answer.to_string();
-        }
-        self.history.images_mut().clear();
-        self.history.invalidate_from(*first);
-        for index in stale.iter().rev() {
-            self.history.entries_mut().remove(*index);
-        }
     }
 
     pub(super) fn insert_entry(&mut self, entry: &Entry) {

@@ -16,8 +16,8 @@ use {
 
 /// Step budget for one application run.
 ///
-/// The agent loop historically had no step limit; long goal-mode turns rely on
-/// that. This keeps the SDK's small default from truncating turns while still
+/// The agent loop historically had no step limit; long turns rely on that.
+/// This keeps the SDK's small default from truncating turns while still
 /// bounding a runaway loop.
 pub(crate) fn run_step_limit() -> std::num::NonZeroUsize {
     std::num::NonZeroUsize::new(10_000).expect("step limit is nonzero")
@@ -72,7 +72,6 @@ impl SdkBootstrapOptions {
             },
             tools: ToolOptions {
                 max_output_bytes: config.max_output_bytes,
-                max_output_lines: config.max_tool_output_lines,
                 inline_shell: config.inline_shell.clone(),
             },
         })
@@ -151,7 +150,6 @@ impl WorkspaceOptions {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ToolOptions {
     pub(crate) max_output_bytes: usize,
-    pub(crate) max_output_lines: usize,
     pub(crate) inline_shell: String,
 }
 

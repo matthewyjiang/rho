@@ -12,11 +12,7 @@ use super::*;
 fn recalls_saved_original_by_id() {
     let root = TempDir::new().unwrap();
     let dir = root.path().join("recall");
-    let result = ToolResult {
-        id: "call_0".into(),
-        ok: false,
-        content: "héllo world".into(),
-    };
+    let result = ToolResult::failed("call_0", "héllo world");
     save(&dir, std::slice::from_ref(&result)).unwrap();
     let id = crate::compaction::recall_id(&result);
     let recall = |recall_id: &str, start: usize, chars: usize, budget: usize| {
@@ -55,4 +51,26 @@ fn recalls_saved_original_by_id() {
     assert!(recall(&id, 0, 10, 16)
         .unwrap_err()
         .starts_with("sessions output byte budget: limit 16"));
+}
+
+// Covers: originals that differ only in images get their own recall ids, so
+// saving the second never skips it as already stored.
+// Owner: recall storage.
+#[test]
+fn image_only_differences_save_separate_originals() {
+    let root = TempDir::new().unwrap();
+    let dir = root.path().join("recall");
+    let image = |data: &str| rho_sdk::model::ImageContent {
+        mime_type: "image/png".into(),
+        data: data.into(),
+    };
+    let first = ToolResult::succeeded("call_0", "shot").with_images(vec![image("a")]);
+    let second = ToolResult::succeeded("call_0", "shot").with_images(vec![image("b")]);
+    save(&dir, &[first.clone(), second.clone()]).unwrap();
+
+    for original in [first, second] {
+        let path = dir.join(format!("{}.json", crate::compaction::recall_id(&original)));
+        let stored: ToolResult = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        assert_eq!(stored, original);
+    }
 }

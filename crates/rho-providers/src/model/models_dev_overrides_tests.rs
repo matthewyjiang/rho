@@ -71,3 +71,51 @@ fn atomic_override_replacement_invalidates_with_matching_length_and_mtime() {
     fs::rename(replacement, &path).unwrap();
     assert_eq!(lookup(), Some(ImageInput::Unsupported));
 }
+
+// Covers: explicit user effort levels replace a catalog toggle, even when the
+// resulting level list is identical; unrelated and malformed overrides do not.
+// Owner: models.dev override merge
+#[test]
+fn explicit_level_overrides_replace_toggle_provenance() {
+    for (contents, control, levels) in [
+        (
+            "supported_reasoning_levels = ['off', 'max']",
+            ReasoningControl::Effort,
+            vec![ReasoningLevel::Off, ReasoningLevel::Max],
+        ),
+        (
+            "supported_reasoning_levels = ['max']",
+            ReasoningControl::Effort,
+            vec![ReasoningLevel::Max],
+        ),
+        (
+            "display_name = 'local name'",
+            ReasoningControl::Toggle,
+            vec![ReasoningLevel::Off, ReasoningLevel::Max],
+        ),
+        (
+            "supported_reasoning_levels = 'max'",
+            ReasoningControl::Toggle,
+            vec![ReasoningLevel::Off, ReasoningLevel::Max],
+        ),
+    ] {
+        let table = contents.parse::<toml::Table>().unwrap();
+        let metadata = merge_toml_override(
+            ModelMetadata {
+                supported_reasoning_levels: Some(vec![ReasoningLevel::Off, ReasoningLevel::Max]),
+                reasoning_capabilities_known: true,
+                reasoning_control: ReasoningControl::Toggle,
+                ..ModelMetadata::default()
+            },
+            &table,
+        );
+        assert_eq!(
+            (
+                metadata.reasoning_control,
+                metadata.supported_reasoning_levels
+            ),
+            (control, Some(levels)),
+            "{contents}"
+        );
+    }
+}

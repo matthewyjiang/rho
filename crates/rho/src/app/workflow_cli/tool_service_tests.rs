@@ -8,8 +8,7 @@ use sha2::Digest as _;
 use crate::workflow::{PlanId, RunId};
 
 use super::{
-    agent_catalog_roots_for, executable_candidates_in, model_workflow_tool_error,
-    AppWorkflowToolService, WorkflowToolRequest,
+    agent_catalog_roots_for, model_workflow_tool_error, AppWorkflowToolService, WorkflowToolRequest,
 };
 
 fn service() -> AppWorkflowToolService {
@@ -17,6 +16,8 @@ fn service() -> AppWorkflowToolService {
         cwd: "/workspace".into(),
         config_path: None,
         tracker: crate::tools::workflow_tracker::WorkflowRunTracker::new(),
+        pool: crate::app::subagent_pool::SubagentPool::Own,
+        environment: crate::session_environment::SessionEnvironment::default(),
     }
 }
 
@@ -298,6 +299,8 @@ fn workspace_config_declares_primary_workspace_scope() {
         cwd: "/workspace".into(),
         config_path: Some("rho.toml".into()),
         tracker: crate::tools::workflow_tracker::WorkflowRunTracker::new(),
+        pool: crate::app::subagent_pool::SubagentPool::Own,
+        environment: Default::default(),
     }
     .capabilities_for_paths(
         &WorkflowToolRequest::Validate {
@@ -318,8 +321,9 @@ fn workspace_config_declares_primary_workspace_scope() {
     ));
 }
 
-// Covers: catalog and PATH discovery must turn each possible read into an
-// exact path before model-tool planning resolves an agent or executable.
+// Covers: catalog discovery must turn each possible read into an exact path
+// before model-tool planning resolves an agent. `PATH` candidates are
+// covered by `crate::executable`'s tests.
 // Owner: workflow application tool capability preparation.
 #[test]
 fn discovery_capability_paths_are_exact() {
@@ -334,26 +338,6 @@ fn discovery_capability_paths_are_exact() {
             Path::new("/home/test/.rho/agents").to_path_buf(),
             Path::new("/workspace/project/.agents/agents").to_path_buf(),
         ]
-    );
-    assert_eq!(
-        executable_candidates_in(
-            "cargo",
-            [
-                Path::new("/usr/bin").to_path_buf(),
-                Path::new("/bin").to_path_buf()
-            ],
-        ),
-        if cfg!(windows) {
-            vec![
-                Path::new("/usr/bin/cargo.exe").to_path_buf(),
-                Path::new("/bin/cargo.exe").to_path_buf(),
-            ]
-        } else {
-            vec![
-                Path::new("/usr/bin/cargo").to_path_buf(),
-                Path::new("/bin/cargo").to_path_buf(),
-            ]
-        }
     );
 }
 
@@ -527,8 +511,15 @@ fn node_resolution_reuses_the_authorized_executable_identity() {
         &catalog,
         &available_tools,
         &executables,
+        &crate::credential_store::AppCredentialStore,
     );
-    let resolved = super::super::resolve_nodes_with_host(&program, &host).unwrap();
+    let launchable = super::super::plan_host::ensure_program_launchable(
+        &program,
+        &catalog,
+        crate::workflow::HandleLaunch::Supported,
+    )
+    .unwrap();
+    let resolved = super::super::resolve_nodes_with_host(launchable, &host).unwrap();
 
     let crate::workflow::ResolvedNode::Command(command) = &resolved[&node_id] else {
         panic!("command node resolved as an agent");

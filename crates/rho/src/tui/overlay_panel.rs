@@ -223,6 +223,8 @@ pub(super) enum PanelScrollTarget {
     Delta(isize),
     Page(isize),
     Absolute(usize),
+    /// The last row, kept there as the body grows.
+    End,
 }
 
 /// Per-panel state every single-pane overlay embeds: body scroll plus
@@ -251,6 +253,18 @@ pub(super) trait PanelBody {
     fn copy_text(&self) -> Option<String> {
         None
     }
+    /// Rows kept under the scrolled body whatever its scroll, at `width`,
+    /// such as a field the panel takes typing in. Empty for most panels.
+    fn pinned_lines(&self, _width: usize) -> Vec<Line<'static>> {
+        Vec::new()
+    }
+    /// The body rows a panel with a cursor of its own is on, at `width`:
+    /// the cursor's row and what the panel shows with it. The dispatcher
+    /// keeps them in view after each key the panel handles, the first row
+    /// when they do not all fit. `None` for a panel without a cursor.
+    fn cursor_rows(&self, _width: usize) -> Option<std::ops::Range<usize>> {
+        None
+    }
     /// Feature keys, checked before the shared keys.
     fn handle_key(&mut self, _key: crossterm::event::KeyEvent) -> PanelKeyOutcome {
         PanelKeyOutcome::Unhandled
@@ -264,9 +278,6 @@ pub(super) trait PanelBody {
 pub(super) enum PanelKeyOutcome {
     /// Consumed by the panel.
     Handled,
-    /// Consumed; run this app-level action next (the panel cannot reach
-    /// app state through `&mut self`).
-    Run(fn(&mut super::App)),
     /// Fall through to the shared copy, scroll, and close keys.
     Unhandled,
 }
@@ -277,12 +288,12 @@ pub(super) fn panel_frame(
     area: Rect,
     now: std::time::Instant,
 ) -> OverlayPanelFrame {
-    let lines = panel.body_lines(overlay_panel_body_width(area), now);
+    let width = overlay_panel_body_width(area);
     render_overlay_panel(
         panel.title(),
         panel.footer(),
-        lines,
-        Vec::new(),
+        panel.body_lines(width, now),
+        panel.pinned_lines(width),
         panel.state().scroll.offset(),
         area,
     )
@@ -290,38 +301,90 @@ pub(super) fn panel_frame(
 
 /// Moves the panel's scroll toward `target`, clamped to its body at `area`.
 pub(super) fn scroll_panel(panel: &mut dyn PanelBody, area: Rect, target: PanelScrollTarget) {
-    let body_len = panel
-        .body_lines(overlay_panel_body_width(area), std::time::Instant::now())
-        .len();
-    let body_rows = overlay_panel_layout(area, body_len).body_rows;
+    let (body_len, body_rows) = panel_scroll_extent(panel, area);
     panel.state_mut().scroll.apply(target, body_len, body_rows);
+}
+
+/// How many rows the panel's body has at `area`, and how many of them show
+/// at once above its pinned rows, as [`render_overlay_panel`] lays them out.
+fn panel_scroll_extent(panel: &dyn PanelBody, area: Rect) -> (usize, usize) {
+    let width = overlay_panel_body_width(area);
+    let body_len = panel.body_lines(width, std::time::Instant::now()).len();
+    let pinned = panel.pinned_lines(width).len();
+    let rows = overlay_panel_layout(area, body_len + pinned).body_rows;
+    (body_len, rows - pinned.min(rows))
+}
+
+/// Scrolls the panel just far enough that its cursor rows show at `area`.
+pub(super) fn reveal_panel_cursor(panel: &mut dyn PanelBody, area: Rect) {
+    let width = overlay_panel_body_width(area);
+    let Some(rows) = panel.cursor_rows(width) else {
+        return;
+    };
+    let (body_len, body_rows) = panel_scroll_extent(panel, area);
+    let offset = clamp_panel_scroll(panel.state().scroll.offset(), body_len, body_rows);
+    let target = if rows.start < offset {
+        rows.start
+    } else if rows.end > offset + body_rows {
+        // The first row stays in view when the rows outgrow the body.
+        rows.end.saturating_sub(body_rows).min(rows.start)
+    } else {
+        return;
+    };
+    panel
+        .state_mut()
+        .scroll
+        .apply(PanelScrollTarget::Absolute(target), body_len, body_rows);
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) struct PanelScroll {
     offset: usize,
+    /// Set by [`PanelScrollTarget::End`] until a target scrolls up or names
+    /// a row: rows a panel gains after it opened, such as a report it
+    /// waited for, then keep the view on the last row.
+    at_end: bool,
 }
 
 impl PanelScroll {
+    /// The first body row to draw. Past the body while pinned to the end,
+    /// which the frame clamps to the body it draws.
     pub(super) fn offset(self) -> usize {
-        self.offset
+        if self.at_end {
+            usize::MAX
+        } else {
+            self.offset
+        }
     }
 
     pub(super) fn apply(&mut self, target: PanelScrollTarget, body_len: usize, body_rows: usize) {
+        let current = if self.at_end {
+            clamp_panel_scroll(usize::MAX, body_len, body_rows)
+        } else {
+            self.offset
+        };
         let next = match target {
             PanelScrollTarget::Delta(delta) if delta < 0 => {
-                self.offset.saturating_sub(delta.unsigned_abs())
+                current.saturating_sub(delta.unsigned_abs())
             }
-            PanelScrollTarget::Delta(delta) => self.offset.saturating_add(delta as usize),
+            PanelScrollTarget::Delta(delta) => current.saturating_add(delta as usize),
             PanelScrollTarget::Page(direction) => {
                 let delta = direction.saturating_mul(body_rows.max(1) as isize);
                 if delta < 0 {
-                    self.offset.saturating_sub(delta.unsigned_abs())
+                    current.saturating_sub(delta.unsigned_abs())
                 } else {
-                    self.offset.saturating_add(delta as usize)
+                    current.saturating_add(delta as usize)
                 }
             }
             PanelScrollTarget::Absolute(scroll) => scroll,
+            PanelScrollTarget::End => usize::MAX,
+        };
+        self.at_end = match target {
+            PanelScrollTarget::End => true,
+            PanelScrollTarget::Delta(delta) | PanelScrollTarget::Page(delta) => {
+                self.at_end && delta >= 0
+            }
+            PanelScrollTarget::Absolute(_) => false,
         };
         self.offset = clamp_panel_scroll(next, body_len, body_rows);
     }
@@ -353,7 +416,7 @@ pub(super) fn classify_panel_key(key: crossterm::event::KeyEvent) -> PanelKey {
         (_, KeyCode::PageUp) => PanelKey::Scroll(PanelScrollTarget::Page(-1)),
         (_, KeyCode::PageDown) => PanelKey::Scroll(PanelScrollTarget::Page(1)),
         (_, KeyCode::Home) => PanelKey::Scroll(PanelScrollTarget::Absolute(0)),
-        (_, KeyCode::End) => PanelKey::Scroll(PanelScrollTarget::Absolute(usize::MAX)),
+        (_, KeyCode::End) => PanelKey::Scroll(PanelScrollTarget::End),
         (KeyModifiers::CONTROL, KeyCode::Char('c')) => PanelKey::Passthrough,
         _ => PanelKey::Swallow,
     }

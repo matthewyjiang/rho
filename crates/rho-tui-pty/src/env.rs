@@ -2,7 +2,9 @@
 
 use std::{
     collections::BTreeMap,
-    env, fs,
+    env,
+    ffi::OsStr,
+    fs,
     path::{Path, PathBuf},
     process::Command,
 };
@@ -56,12 +58,52 @@ pub struct HostProfile {
     pub vars: BTreeMap<String, String>,
 }
 
-/// Temporary HOME and config root that keep PTY runs off the developer's state.
+/// Temporary HOME, rho home, and runtime directory that keep a test's rho
+/// processes, its daemon included, off the developer's state. Safe to use
+/// from parallel tests: nothing is shared between two sandboxes.
+///
+/// Under the temporary root: `home/` (`HOME`), `home/.rho/` (`RHO_HOME`,
+/// holding `config.toml`, `tui.toml` and `clients/tui.toml`), `workspace/`,
+/// `tmp/` (`TMPDIR`), and `run/`
+/// (`XDG_RUNTIME_DIR`, mode 0700 on Unix). [`Self::env`] points a process
+/// at them; [`Self::command`] and [`RhoLaunchPlan::matrix`] build on it.
+///
+/// # One sandbox, one daemon, one fixture mode
+///
+/// Every rho process in the sandbox reaches the same daemon, at
+/// [`Self::daemon_socket`]. A client that finds none running starts one,
+/// which keeps the allowed part of that client's environment, fixture
+/// variables included (`RHO_AUTOMATION_TEST_*`, `RHO_TUI_TEST_MODE`), and
+/// runs until it is stopped. So a sandbox runs one fixture mode, which every client in
+/// it must set: a client in another mode would be served by a daemon frozen
+/// in the first one's.
+///
+/// The socket path is the root's plus 37 bytes (`/run/rho/<16 hex>/daemon.sock`);
+/// rho refuses one over the Unix limit (107 bytes on Linux, 103 on macOS)
+/// with `SocketPathTooLong`, so a `TMPDIR` whose temporary directories are
+/// longer than 66 bytes (70 on Linux) fails loud rather than escaping the
+/// sandbox.
+///
+/// # Teardown and drop order
+///
+/// Dropping the sandbox stops its daemon (SIGTERM, then SIGKILL; see
+/// `daemon.rs`) before it deletes the directory, also while a test panics.
+/// So a process that may start a daemon, such as a TUI or `rho acp`, must
+/// be dropped or killed before the sandbox: one that outlives the teardown
+/// can start a new daemon in a home that is about to be deleted. Declare
+/// such a process before the sandbox in a struct (fields drop in order),
+/// or after it in a function (locals drop in reverse).
 pub struct IsolatedHome {
-    _temp: TempDir,
     pub home: PathBuf,
     pub workspace: PathBuf,
     pub config_path: PathBuf,
+    /// TUI client settings (`clients/tui.toml`); starts with update checks off.
+    pub client_settings_path: PathBuf,
+    /// TUI theme and keybindings (`tui.toml`); not written until a test does.
+    pub tui_path: PathBuf,
+    /// Deleted once [`Drop`] stopped the daemon running from it: a struct's
+    /// fields drop after its `drop` returns.
+    temp: TempDir,
 }
 
 impl IsolatedHome {
@@ -73,21 +115,21 @@ impl IsolatedHome {
         fs::create_dir_all(&rho_dir)?;
         fs::create_dir_all(&workspace)?;
         fs::create_dir_all(temp.path().join("tmp"))?;
-        #[cfg(target_os = "linux")]
-        {
-            use std::os::unix::fs::DirBuilderExt;
-            fs::DirBuilder::new()
-                .mode(0o700)
-                .create(temp.path().join("run"))?;
-        }
+        // Private, as a real XDG_RUNTIME_DIR is.
+        let run = temp.path().join("run");
+        #[cfg(unix)]
+        std::os::unix::fs::DirBuilderExt::mode(&mut fs::DirBuilder::new(), 0o700).create(&run)?;
+        #[cfg(not(unix))]
+        fs::create_dir(&run)?;
         let config_path = rho_dir.join("config.toml");
         fs::write(
             &config_path,
-            r#"provider = "openai"
+            r#"web_search.mode = "off"
+
+[model]
+provider = "openai"
 model = "gpt-5.5"
 auth = "api-key"
-check_for_updates = false
-web_search.mode = "off"
 
 [behavior]
 # Keep matrix runs on the isolated file store so /login never prompts and
@@ -96,16 +138,111 @@ credential_store = "file"
 "#,
         )
         .context("failed to write isolated config.toml")?;
+        let client_settings_path = rho_dir.join("clients").join("tui.toml");
+        fs::create_dir_all(rho_dir.join("clients"))?;
+        fs::write(&client_settings_path, "check_for_updates = false\n")
+            .context("failed to write isolated clients/tui.toml")?;
         Ok(Self {
-            _temp: temp,
             home,
             workspace,
             config_path,
+            client_settings_path,
+            tui_path: rho_dir.join("tui.toml"),
+            temp,
         })
     }
 
     pub fn path(&self) -> &Path {
-        self._temp.path()
+        self.temp.path()
+    }
+
+    /// `RHO_HOME`: `home/.rho`, where rho looks without it too.
+    pub fn rho_home(&self) -> PathBuf {
+        self.home.join(".rho")
+    }
+
+    /// The variables that put a process in this sandbox, layered over
+    /// [`default_clean_env`] (later pairs win).
+    pub fn env(&self) -> Vec<(String, String)> {
+        let text = |path: PathBuf| path.display().to_string();
+        let mut env = vec![
+            ("HOME".into(), text(self.home.clone())),
+            ("RHO_HOME".into(), text(self.rho_home())),
+            // Child temp files (installer logs, recovery drafts) die with the
+            // sandbox.
+            ("TMPDIR".into(), text(self.path().join("tmp"))),
+            // On every OS, so the daemon's socket lands in the sandbox (see
+            // the type's docs). On Linux it also isolates the session bus,
+            // which HOME alone does not: credential-store probes could reach
+            // the developer's keyring and block. Removing it instead would
+            // let D-Bus clients fall back to the user's default bus.
+            ("XDG_RUNTIME_DIR".into(), text(self.path().join("run"))),
+        ];
+        // Windows home/config discovery must not fall back to the real profile.
+        #[cfg(windows)]
+        for (key, dir) in [
+            ("USERPROFILE", self.home.clone()),
+            ("APPDATA", self.home.join("AppData/Roaming")),
+            ("LOCALAPPDATA", self.home.join("AppData/Local")),
+        ] {
+            env.push((key.into(), text(dir)));
+        }
+        // Keep the child off the internet. Without this every launch downloads
+        // and parses the models.dev catalog in the background: CPU that
+        // dominates debug PTY runs, and a hydrate whose arrival time can
+        // rewrite the first system prompt. The discard port refuses at once;
+        // loopback stays direct for mock servers. A test that needs a
+        // different proxy layers it on top (later pairs win).
+        for key in ["HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY"] {
+            env.push((key.into(), OFFLINE_PROXY.into()));
+        }
+        env.push(("NO_PROXY".into(), "localhost,127.0.0.1,::1".into()));
+        env
+    }
+
+    /// The whole environment of a rho process outside a PTY, the daemon
+    /// and its clients: [`default_clean_env`], then [`Self::env`], then the
+    /// file credential store and backtraces (later pairs win).
+    ///
+    /// `RHO_CREDENTIAL_STORE` is set here rather than in [`Self::env`]:
+    /// PTY launches leave the store to `config.toml`, so a first-run
+    /// scenario can remove it there and reach the store prompt.
+    pub fn command_env(&self) -> Vec<(String, String)> {
+        let mut env = default_clean_env();
+        env.extend(self.env());
+        // Fixture sessions must not query the developer's OS keyring.
+        env.push(("RHO_CREDENTIAL_STORE".into(), "file".into()));
+        // A daemon's panic then logs where it happened.
+        env.push(("RUST_BACKTRACE".into(), "1".into()));
+        env
+    }
+
+    /// `binary` in the workspace with exactly [`Self::command_env`]. rho
+    /// finds the sandbox's `config.toml` through `RHO_HOME`, so it needs
+    /// no `--config`, which `rho login` and `rho run --detach` refuse.
+    pub fn command(&self, binary: impl AsRef<OsStr>) -> Command {
+        let mut command = Command::new(binary);
+        command
+            .env_clear()
+            .envs(self.command_env())
+            .current_dir(&self.workspace);
+        command
+    }
+}
+
+impl IsolatedHome {
+    /// Stops the sandbox's daemon, if one runs. A daemon keeps the sessions
+    /// it loaded and the config it started with, so a scenario that rewrites
+    /// either on disk calls this first; the next rho process then starts a
+    /// daemon that reads them again.
+    pub(crate) fn stop_daemon(&self) {
+        crate::daemon::stop(self);
+    }
+}
+
+impl Drop for IsolatedHome {
+    fn drop(&mut self) {
+        self.stop_daemon();
     }
 }
 
@@ -120,49 +257,24 @@ pub struct RhoLaunchPlan {
 }
 
 impl RhoLaunchPlan {
-    /// Build a matrix-mode launch plan with isolated HOME and config.
+    /// Build a matrix-mode launch plan in `home`'s sandbox. rho reads the
+    /// sandbox's `config.toml` through `RHO_HOME`, so the plan passes no
+    /// `--config`.
     pub fn matrix(binary: impl Into<PathBuf>, home: &IsolatedHome, size: PtySize) -> Self {
         let mut env = default_clean_env();
-        env.push(("HOME".into(), home.home.display().to_string()));
-        // Child temp files (installer logs, recovery drafts) die with the isolated home.
-        // Later pairs win, overriding the host TMPDIR kept by default_clean_env.
-        env.push((
-            "TMPDIR".into(),
-            home.path().join("tmp").display().to_string(),
-        ));
-        // HOME alone does not isolate the Linux session bus. Without this,
-        // credential-store probes can reach the developer's keyring and block.
-        #[cfg(target_os = "linux")]
-        env.push((
-            "XDG_RUNTIME_DIR".into(),
-            home.path().join("run").display().to_string(),
-        ));
-        // Windows home/config discovery must not fall back to the real profile.
-        #[cfg(windows)]
-        for (key, path) in [
-            ("USERPROFILE", home.home.clone()),
-            ("APPDATA", home.home.join("AppData/Roaming")),
-            ("LOCALAPPDATA", home.home.join("AppData/Local")),
-        ] {
-            env.push((key.into(), path.display().to_string()));
-        }
+        env.extend(home.env());
         env.push(("RHO_TUI_TEST_MODE".into(), "matrix".into()));
-        // Keep the child off the internet. Without this every launch downloads
-        // and parses the models.dev catalog in the background: CPU that
-        // dominates debug PTY runs, and a hydrate whose arrival time can
-        // rewrite the first system prompt. The discard port refuses at once;
-        // loopback stays direct for scenario mock servers. A scenario that
-        // needs a different proxy layers it with `with_env` (later pairs win).
-        for key in ["HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY"] {
-            env.push((key.into(), OFFLINE_PROXY.into()));
-        }
-        env.push(("NO_PROXY".into(), "localhost,127.0.0.1,::1".into()));
-        // Keep keyring/credential side effects out of the developer account.
+        // Where fixture release markers are, for a fixture the daemon hosts.
+        env.push((
+            "RHO_TUI_FIXTURE_WORKSPACE".into(),
+            home.workspace.display().to_string(),
+        ));
+        // A crash then says where.
         env.push(("RUST_BACKTRACE".into(), "1".into()));
         Self {
             binary: binary.into(),
             size,
-            args: vec!["--config".into(), home.config_path.display().to_string()],
+            args: Vec::new(),
             env,
             cwd: home.workspace.clone(),
         }
@@ -210,7 +322,8 @@ pub fn default_clean_env() -> Vec<(String, String)> {
         "SHELL",
         "XDG_RUNTIME_DIR",
         // Windows loader, system tools, and executable lookup essentials. Do
-        // not inherit USERPROFILE or APPDATA: matrix() supplies isolated paths.
+        // not inherit USERPROFILE or APPDATA: IsolatedHome::env supplies
+        // isolated paths.
         "SystemRoot",
         "WINDIR",
         "COMSPEC",

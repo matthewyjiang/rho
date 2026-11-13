@@ -67,10 +67,10 @@ pub(crate) enum WorkflowError {
         supported: u32,
     },
     #[error(
-        "workflow {kind} {id} was saved by an older Rho release and is read-only; \
-         create a new plan from source to run it"
+        "could not open workflow {kind} {id}: it was saved by Rho before 2.15; \
+         inspect it with Rho 2.x or delete it from the /workflow hub"
     )]
-    LegacyRecord { kind: &'static str, id: String },
+    UnsupportedRecord { kind: &'static str, id: String },
     #[error("run {id} is still {}, stop it before deleting", lifecycle.as_str())]
     LiveRun {
         id: super::RunId,
@@ -82,6 +82,10 @@ pub(crate) enum WorkflowError {
     UnknownId(String),
     #[error("workflow store boundary is not a trusted directory: {0}")]
     UntrustedDirectory(PathBuf),
+    /// This target cannot launch a frozen workflow process from verified
+    /// handles; see [`super::HandleLaunch`].
+    #[error("frozen workflow process execution is unavailable on this platform because the OS adapter cannot launch the executable, interpreter, and working directory from verified handles")]
+    UnsupportedPlatform,
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]

@@ -1,6 +1,12 @@
 //! `rho acp` driven over stdio the way an editor host drives it. The
 //! automation fixture provider stands in for the model, so each prompt
 //! deterministically calls one tool and replies with its result.
+//!
+//! `rho acp` is a client of the rho daemon, which it starts in the
+//! sandbox; the daemon keeps the fixture mode of the first client's
+//! environment, and the sandbox stops it when it drops, after the server.
+//! Unix: the tools its prompts call are shell commands.
+#![cfg(unix)]
 
 use std::{
     io::{BufRead, BufReader, Read, Write},
@@ -14,8 +20,8 @@ use std::{
 };
 
 use pretty_assertions::assert_eq;
+use rho_tui_pty::IsolatedHome;
 use serde_json::{json, Value};
-use tempfile::TempDir;
 
 #[path = "support/acp_advertisements_tests.rs"]
 mod advertisements;
@@ -26,16 +32,8 @@ mod agent_model_override;
 #[path = "support/acp_auth_required.rs"]
 mod auth_required;
 
-// The session cwd is a symlink.
-#[cfg(unix)]
-#[path = "support/acp_client_files_tests.rs"]
-mod client_files;
-
-// Only `bash` runs in host terminals; Windows has `powershell`, which runs
-// locally.
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-#[path = "support/acp_client_terminals_tests.rs"]
-mod client_terminals;
+#[path = "support/key_checking_provider.rs"]
+mod key_checking_provider;
 
 #[path = "support/acp_compaction_cards_tests.rs"]
 mod compaction_cards;
@@ -88,37 +86,25 @@ struct AcpServer {
 }
 
 impl AcpServer {
-    /// Starts `rho acp` in `cwd` with the fixture provider in `mode`;
-    /// `path` is the file the fixture's tool call targets.
-    fn spawn(home: &Path, cwd: &Path, mode: &str, path: &Path) -> Self {
-        Self::from_command(&mut Self::command(home, cwd, mode, path))
+    /// Starts `rho acp` in `home`'s sandbox and workspace, with the fixture
+    /// provider in `mode`; `path` is the file the fixture's tool call
+    /// targets.
+    fn spawn(home: &IsolatedHome, mode: &str, path: &Path) -> Self {
+        Self::from_command(&mut Self::command(home, mode, path))
     }
 
     /// The command [`Self::spawn`] runs, for tests that add to it.
-    fn command(home: &Path, cwd: &Path, mode: &str, path: &Path) -> Command {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_rho"));
+    fn command(home: &IsolatedHome, mode: &str, path: &Path) -> Command {
+        let mut command = home.command(env!("CARGO_BIN_EXE_rho"));
         command
-            .current_dir(cwd)
-            .env("HOME", home)
-            .env("RHO_HOME", home.join(".rho"))
-            // Fixture sessions must not query the developer's OS keyring.
-            .env("RHO_CREDENTIAL_STORE", "file")
             .env("RHO_AUTOMATION_TEST_MODE", mode)
             .env("RHO_AUTOMATION_TEST_PATH", path)
-            .env_remove("RHO_AUTOMATION_TEST_RESPONSE")
-            .env_remove("HERDR_ENV")
-            .env_remove("HERDR_SOCKET_PATH")
-            .env_remove("HERDR_PANE_ID")
-            .arg("--config")
-            .arg(home.join("config.toml"))
             .arg("acp");
         command
     }
 
     fn from_command(command: &mut Command) -> Self {
         let mut child = command
-            // A crash then says where in the agent's stderr.
-            .env("RUST_BACKTRACE", "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -253,20 +239,22 @@ impl Drop for AcpServer {
     }
 }
 
-/// A home with a plan-mode config, a project, and a directory outside it
-/// holding `notes.txt`.
+/// A sandbox with a plan-mode config, its workspace as the project, and a
+/// directory outside the project holding `notes.txt`.
 struct Workspace {
-    home: TempDir,
+    home: IsolatedHome,
+    /// The sandbox's workspace, canonicalized as rho reports it.
     project: PathBuf,
     extra: PathBuf,
 }
 
 impl Workspace {
     fn new() -> Self {
-        let home = TempDir::new().unwrap();
+        let home = IsolatedHome::new().unwrap();
         std::fs::write(
-            home.path().join("config.toml"),
-            r#"provider = "xai"
+            &home.config_path,
+            r#"[model]
+provider = "xai"
 model = "grok-fixture"
 auth = "xai-oauth"
 
@@ -274,15 +262,12 @@ auth = "xai-oauth"
 permission_mode = "plan"
 
 [web_search]
-hosted = false
-provider = "disabled"
+mode = "off"
 "#,
         )
         .unwrap();
-        let root = home.path().canonicalize().unwrap();
-        let project = root.join("project");
-        let extra = root.join("shared-lib");
-        std::fs::create_dir_all(&project).unwrap();
+        let project = home.workspace.canonicalize().unwrap();
+        let extra = home.home.canonicalize().unwrap().join("shared-lib");
         std::fs::create_dir_all(&extra).unwrap();
         std::fs::write(extra.join("notes.txt"), "extra root content").unwrap();
         Self {
@@ -293,13 +278,20 @@ provider = "disabled"
     }
 
     fn server(&self) -> AcpServer {
-        AcpServer::spawn(
-            self.home.path(),
-            &self.project,
-            "read-path",
-            &self.extra.join("notes.txt"),
-        )
+        AcpServer::spawn(&self.home, "read-path", &self.extra.join("notes.txt"))
     }
+}
+
+/// Stops `home`'s daemon, so the next `rho acp` starts a fresh one that
+/// reopens sessions from their files, as after a restart.
+fn stop_daemon(home: &IsolatedHome) {
+    let status = home
+        .command(env!("CARGO_BIN_EXE_rho"))
+        .args(["daemon", "stop"])
+        .stdin(Stdio::null())
+        .status()
+        .expect("run rho daemon stop");
+    assert!(status.success(), "rho daemon stop: {status}");
 }
 
 /// Whether the fixture's read of `notes.txt` returned the file.
@@ -307,11 +299,11 @@ fn read_the_extra_file(reply: &str) -> bool {
     reply.lines().last() == Some("1:extra root content")
 }
 
-// Covers: additionalDirectories on session/new and session/load must put
-// those roots in the session's workspace scope (plan mode denies reads
-// outside it), each request must set the active roots without reviving
-// stored ones, and initialize must advertise the capability so hosts such
-// as Zed send them at all.
+// Covers: additionalDirectories on session/new must put those roots in the
+// session's workspace scope (plan mode denies reads outside it), the
+// session keeps them when a later load names none, even once a daemon
+// restart reopens it from its file (#1661), and initialize must advertise
+// the capability so hosts such as Zed send them at all.
 // Owner: ACP session lifecycle, over the real stdio server
 #[test]
 fn additional_directories_scope_new_and_loaded_sessions() {
@@ -339,23 +331,25 @@ fn additional_directories_scope_new_and_loaded_sessions() {
     let reply = server.prompt(&session_id, "read the shared notes");
     assert!(read_the_extra_file(&reply), "{reply}");
 
-    for (label, additional, readable) in [
-        ("load without roots", json!([]), false),
-        ("load with roots", json!([extra]), true),
-    ] {
-        let (loaded, _) = server.request(
-            "session/load",
-            json!({
-                "sessionId": session_id,
-                "cwd": workspace.project,
-                "mcpServers": [],
-                "additionalDirectories": additional,
-            }),
-        );
-        loaded.unwrap_or_else(|error| panic!("{label}: {error}"));
-        let reply = server.prompt(&session_id, "read the shared notes");
-        assert_eq!(read_the_extra_file(&reply), readable, "{label}: {reply}");
-    }
+    drop(server);
+    stop_daemon(&workspace.home);
+    let mut server = workspace.server();
+    server
+        .request("initialize", json!({"protocolVersion": 1}))
+        .0
+        .unwrap();
+    let (loaded, _) = server.request(
+        "session/load",
+        json!({
+            "sessionId": session_id,
+            "cwd": workspace.project,
+            "mcpServers": [],
+            "additionalDirectories": [],
+        }),
+    );
+    loaded.unwrap();
+    let reply = server.prompt(&session_id, "read the shared notes");
+    assert!(read_the_extra_file(&reply), "{reply}");
 }
 
 // Covers: an additionalDirectories entry the session cannot grant must fail
@@ -390,9 +384,10 @@ fn additional_directories_reject_entries_they_cannot_grant() {
     }
 }
 
-// Covers: loading saved history after a server restart must restore paired
-// tool cards, arguments, result status and output before session/load replies,
-// even when successive provider turns reuse the same tool-call ID.
+// Covers: loading saved history after a restart of `rho acp` and its daemon
+// must restore paired tool cards, arguments, result status and output before
+// session/load replies, even when successive provider turns reuse the same
+// tool-call ID.
 // Owner: ACP session replay, over the real stdio server
 #[test]
 fn load_replays_tool_calls_and_results() {
@@ -417,11 +412,11 @@ fn load_replays_tool_calls_and_results() {
             .unwrap();
         let session_id = created["sessionId"].as_str().unwrap();
         let mut expected = Vec::new();
-        let mut provider_ids = Vec::new();
+        let mut live_ids = Vec::new();
         for text in ["first output", "second output"] {
             std::fs::write(workspace.extra.join("notes.txt"), text).unwrap();
-            // Loading creates a new fixture provider, whose first response
-            // reuses the same ID as the previous process did.
+            // Each daemon builds a new fixture provider, whose first response
+            // reuses the tool-call ID the previous daemon's did.
             let (reply, live) = server.request(
                 "session/prompt",
                 json!({"sessionId": session_id, "prompt": [{"type": "text", "text": "read the shared notes"}]}),
@@ -436,7 +431,7 @@ fn load_replays_tool_calls_and_results() {
                 .find(|u| u["sessionUpdate"] == "tool_call_update" && u["status"] == status)
                 .expect("live terminal result");
             assert_ne!(result["content"], json!([]));
-            provider_ids.push(call["toolCallId"].clone());
+            live_ids.push(call["toolCallId"].clone());
             expected.push(json!({"name": call["name"], "rawInput": call["rawInput"],
                 "status": status, "content": result["content"]}));
             server
@@ -444,6 +439,9 @@ fn load_replays_tool_calls_and_results() {
                 .0
                 .unwrap();
             drop(server);
+            // A fresh daemon reopens the session from its file, with a
+            // fresh fixture provider.
+            stop_daemon(&workspace.home);
             server = workspace.server();
             server
                 .request("initialize", json!({"protocolVersion": 1}))
@@ -489,9 +487,8 @@ fn load_replays_tool_calls_and_results() {
                 .collect::<Vec<_>>();
             assert_eq!(restored, expected);
         }
-        assert_eq!(
-            provider_ids[0], provider_ids[1],
-            "fixture must reuse the provider ID"
-        );
+        // The session already holds the reused ID, so the second call
+        // gets its own wire ID, live as in replay.
+        assert_ne!(live_ids[0], live_ids[1]);
     }
 }

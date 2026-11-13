@@ -6,7 +6,7 @@ use pretty_assertions::assert_eq;
 use serde_json::json;
 
 use crate::document::{render_extracted_document, ExtractedDocument, MAX_EXTRACTED_CHARACTERS};
-use crate::hashline::format_hashline_view;
+use crate::text_view::format_numbered_view;
 use tempfile::TempDir;
 
 use super::*;
@@ -40,29 +40,22 @@ async fn reads_supported_images_without_retaining_the_source_decode() {
     );
 }
 
-// Covers: ASCII image signatures that are plain text must fall back to hashline text
+// Covers: ASCII image signatures that are plain text must fall back to numbered text
 // Owner: read_file tool
 #[tokio::test]
-async fn falls_back_to_hashline_text_when_an_ascii_signature_is_not_a_decodable_image() {
+async fn falls_back_to_numbered_text_when_an_ascii_signature_is_not_a_decodable_image() {
     let (_dir, ctx) = test_context();
     let path = ctx.cwd.join("fixture.txt");
     let text = "GIF89a ordinary fixture text";
     fs::write(&path, text).unwrap();
 
-    let output = read_file_content(
-        &path,
-        "fixture.txt",
-        None,
-        None,
-        crate::FileViewStyle::Hashline,
-        /*host_files*/ None,
-    )
-    .await
-    .unwrap();
+    let output = read_file_content(&path, "fixture.txt", None, None, /*host_files*/ None)
+        .await
+        .unwrap();
 
     assert_eq!(
         output.content,
-        format_hashline_view("fixture.txt", text, None, None).unwrap()
+        format_numbered_view("fixture.txt", text, None, None).unwrap()
     );
     assert!(output.image.is_none());
     assert!(output.preview_error.is_none());
@@ -74,16 +67,9 @@ async fn keeps_binary_image_reads_successful_when_preview_decoding_fails() {
     let path = ctx.cwd.join("broken.png");
     fs::write(&path, b"\x89PNG\r\n\x1a\n\xffbroken").unwrap();
 
-    let output = read_file_content(
-        &path,
-        "broken.png",
-        None,
-        None,
-        crate::FileViewStyle::Hashline,
-        /*host_files*/ None,
-    )
-    .await
-    .unwrap();
+    let output = read_file_content(&path, "broken.png", None, None, /*host_files*/ None)
+        .await
+        .unwrap();
 
     assert_eq!(output.content, "image/png image (15 bytes)");
     assert!(output.image.is_none());
@@ -122,10 +108,10 @@ async fn extracts_supported_binary_documents_for_whole_file_reads() {
     assert_eq!(result.content, "Tool document");
 }
 
-// Covers: files larger than one chunk must still return the split hashline window
+// Covers: files larger than one chunk must still return the split numbered window
 // Owner: read_file tool
 #[tokio::test]
-async fn large_ranged_reads_match_hashline_window() {
+async fn large_ranged_reads_match_numbered_window() {
     let (_dir, ctx) = test_context();
     let path = ctx.cwd.join("big.log");
     let mut text = String::new();
@@ -153,7 +139,7 @@ async fn large_ranged_reads_match_hashline_window() {
 
     assert_eq!(
         result.content,
-        format_hashline_view("big.log", &text, Some(lines - 2), Some(3)).unwrap()
+        format_numbered_view("big.log", &text, Some(lines - 2), Some(3)).unwrap()
     );
 }
 
@@ -178,16 +164,9 @@ async fn reports_truncated_document_extraction() {
     writer.write_all(xml.as_bytes()).unwrap();
     fs::write(&path, writer.finish().unwrap().into_inner()).unwrap();
 
-    let output = read_file_content(
-        &path,
-        "large.docx",
-        None,
-        None,
-        crate::FileViewStyle::Hashline,
-        /*host_files*/ None,
-    )
-    .await
-    .unwrap();
+    let output = read_file_content(&path, "large.docx", None, None, /*host_files*/ None)
+        .await
+        .unwrap();
 
     assert!(
         output
@@ -256,19 +235,11 @@ async fn rejects_documents_over_the_input_limit() {
     file.set_len(crate::document::MAX_DOCUMENT_INPUT_BYTES as u64 + 1)
         .unwrap();
 
-    let error = match read_file_content(
-        &path,
-        "oversized.pdf",
-        None,
-        None,
-        crate::FileViewStyle::Hashline,
-        /*host_files*/ None,
-    )
-    .await
-    {
-        Ok(_) => panic!("oversized document unexpectedly succeeded"),
-        Err(error) => error,
-    };
+    let error =
+        match read_file_content(&path, "oversized.pdf", None, None, /*host_files*/ None).await {
+            Ok(_) => panic!("oversized document unexpectedly succeeded"),
+            Err(error) => error,
+        };
 
     assert_eq!(
         error.to_string(),
@@ -303,17 +274,10 @@ async fn host_served_range_reads_check_the_disk_kind_first() {
     let read = |path: std::path::PathBuf| {
         let host = Arc::clone(&host);
         async move {
-            read_file_content(
-                &path,
-                "f",
-                Some(2),
-                Some(1),
-                crate::FileViewStyle::Hashline,
-                Some(&host),
-            )
-            .await
-            .map(|output| output.content)
-            .map_err(|error| error.to_string().contains("UTF-8"))
+            read_file_content(&path, "f", Some(2), Some(1), Some(&host))
+                .await
+                .map(|output| output.content)
+                .map_err(|error| error.to_string().contains("UTF-8"))
         }
     };
 
@@ -321,7 +285,7 @@ async fn host_served_range_reads_check_the_disk_kind_first() {
         (read(binary.clone()).await, read(text.clone()).await),
         (
             Err(true),
-            Ok(format_hashline_view("f", "one\ntwo\n", Some(2), Some(1)).unwrap())
+            Ok(format_numbered_view("f", "one\ntwo\n", Some(2), Some(1)).unwrap())
         )
     );
 }

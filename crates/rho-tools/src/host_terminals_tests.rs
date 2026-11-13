@@ -184,10 +184,7 @@ async fn host_terminal_runs_report_exits_and_kill_on_timeout_or_cancel() {
             (expected_log, expected)
         );
         let announcement = announced.recv().await.unwrap();
-        assert_eq!(
-            announcement.presentation().host_terminal_id(),
-            Some("term-1")
-        );
+        assert_eq!(announcement.metadata().host_terminal_id(), Some("term-1"));
     }
 }
 

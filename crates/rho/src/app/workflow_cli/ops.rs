@@ -2,24 +2,29 @@
 
 use std::{
     collections::BTreeMap,
+    ffi::{OsStr, OsString},
     path::{Path, PathBuf},
 };
 
 use crate::{
     app::workflow_runtime::RecoveryDecision,
+    session_environment::SessionEnvironment,
     workflow::{
         normalize_workflow, validate_runtime_budgets, validate_workflow, verify_directory_identity,
         verify_executable_identity, CollectedSources, Digest, FrozenSchedulerSettings,
-        FrozenWorkflow, InputName, PlanConsent, PlanId, PlanInventoryItem, PlannerIdentity,
-        PlanningLimits, ResolvedNode, RunId, RunInventoryItem, RunLifecycle, SourceCollector,
-        StoredPlan, StoredRun, WorkflowService, WorkflowStore, WorkflowValue,
+        FrozenWorkflow, HandleLaunch, InputName, Inventory, PlanConsent, PlanId, PlanInventory,
+        PlannerIdentity, PlanningLimits, ResolvedNode, RunId, RunInventory, RunLifecycle,
+        SourceCollector, StoredPlan, StoredRun, WorkflowService, WorkflowStore, WorkflowValue,
         FROZEN_WORKFLOW_SCHEMA_VERSION,
     },
+    workspace::ProjectTrusts,
 };
 
 use super::{
     cancel::CancellationOutcome,
-    plan_host::{resolve_nodes_with_host, DiscoveringPlanHost, PlanHost},
+    plan_host::{
+        ensure_program_launchable, resolve_nodes_with_host, DiscoveringPlanHost, PlanHost,
+    },
     planner_worker::{self, run_supervised_planner, PlannerWorkerPlan},
     STARLARK_VERSION,
 };
@@ -36,22 +41,39 @@ pub(crate) struct PreparedPlan {
     pub(crate) workflow: FrozenWorkflow,
 }
 
-pub(crate) use crate::workflow::RunRecord;
-
 /// Owns validate | plan | run | status | cancel | resume policy for both adapters.
 pub(crate) struct WorkflowOps {
     service: WorkflowService,
     workspace: PathBuf,
     config_path: Option<PathBuf>,
+    /// The `PATH` planning finds bare executables and `#!/usr/bin/env`
+    /// interpreters on, and rechecks find interpreters on again: that of
+    /// the environment runs start in (#1659).
+    search_path: Option<OsString>,
+    /// The project trust those runs have (#1779): planning finds project
+    /// agents under it, and a recheck holds a plan to it.
+    project_trust: ProjectTrusts,
+    /// The credentials those runs have, which decide the models planning
+    /// binds agent nodes to.
+    credentials: std::sync::Arc<dyn rho_providers::credentials::CredentialStore>,
 }
 
 impl WorkflowOps {
-    pub(crate) fn open(workspace: PathBuf, config_path: Option<PathBuf>) -> anyhow::Result<Self> {
+    /// Workflow operations in `workspace`, for runs that start in
+    /// `environment`: this process's, or a session's snapshot.
+    pub(crate) fn open(
+        workspace: PathBuf,
+        config_path: Option<PathBuf>,
+        environment: &SessionEnvironment,
+    ) -> anyhow::Result<Self> {
         let workspace = workspace.canonicalize()?;
         Ok(Self {
             service: WorkflowService::new(WorkflowStore::new(&crate::paths::rho_dir()?)?),
             workspace,
             config_path,
+            search_path: environment.current().path(),
+            project_trust: environment.project_trust(),
+            credentials: environment.credentials(),
         })
     }
 
@@ -73,7 +95,9 @@ impl WorkflowOps {
         limits: &PlanningLimits,
     ) -> anyhow::Result<PreparedPlan> {
         let planned = run_supervised_planner(&sources, inputs, limits).await?;
-        let resolved_nodes = resolve_nodes_with_host(&planned.program, host)?;
+        let launchable =
+            ensure_program_launchable(&planned.program, host.catalog(), HandleLaunch::CURRENT)?;
+        let resolved_nodes = resolve_nodes_with_host(launchable, host)?;
         freeze_planned_workflow(sources, planned, resolved_nodes, limits)
     }
 
@@ -86,13 +110,25 @@ impl WorkflowOps {
         limits: &PlanningLimits,
     ) -> anyhow::Result<PreparedPlan> {
         let sources = self.collect_local_sources(entry, limits).await?;
-        let host = DiscoveringPlanHost::new(&self.workspace, config, available_tools, entry)?;
+        let host = DiscoveringPlanHost::new(
+            &self.workspace,
+            config,
+            available_tools,
+            entry,
+            self.search_path.as_deref(),
+            self.project_trust,
+            self.credentials.as_ref(),
+        )?;
         self.prepare_from_sources(sources, inputs, &host, limits)
             .await
     }
 
     /// [`Self::prepare_local`] with JSON input values, as `/workflow:<name>`
-    /// and the hub supply them, under the default planning limits.
+    /// and the hub supply them, under the default planning limits. `entry`
+    /// is relative to the workspace, and resolved under the workspace as
+    /// this names it: its canonical path, which on Windows is not the one a
+    /// session names its workspace by, so a path the session made absolute
+    /// would be outside it.
     pub(crate) async fn prepare_local_json(
         &self,
         entry: &Path,
@@ -105,7 +141,8 @@ impl WorkflowOps {
             .map(|(name, value)| Ok((InputName::new(name)?, WorkflowValue::from_json(value)?)))
             .collect::<anyhow::Result<BTreeMap<_, _>>>()?;
         let limits = super::planning_limits()?;
-        self.prepare_local(entry, inputs, config, available_tools, &limits)
+        let entry = self.workspace.join(entry);
+        self.prepare_local(&entry, inputs, config, available_tools, &limits)
             .await
     }
 
@@ -132,60 +169,46 @@ impl WorkflowOps {
         Ok(self.service.store().load_run(run_id)?)
     }
 
-    /// Loads a run for display, including read-only runs from older releases.
-    pub(crate) fn load_run_record(&self, prefix: &str) -> anyhow::Result<RunRecord> {
-        let store = self.service.store();
-        let run_id = store.resolve_run(prefix)?;
-        self.load_run_record_id(run_id)
-    }
-
-    pub(crate) fn load_run_record_id(&self, run_id: RunId) -> anyhow::Result<RunRecord> {
-        Ok(self.service.store().load_run_record(run_id)?)
+    /// Run `run_id`'s revision, read without loading the run.
+    pub(crate) fn run_revision(&self, run_id: RunId) -> anyhow::Result<u64> {
+        Ok(self.service.store().read_run_revision(run_id)?)
     }
 
     pub(crate) fn load_run_id(&self, run_id: RunId) -> anyhow::Result<StoredRun> {
         Ok(self.service.store().load_run(run_id)?)
     }
 
-    pub(crate) fn read_run_inventory(&self, run_id: RunId) -> anyhow::Result<RunInventoryItem> {
-        Ok(self.service.store().read_run_inventory(run_id)?)
-    }
-
-    pub(crate) fn list_workspace_plans(&self) -> anyhow::Result<Vec<PlanInventoryItem>> {
+    pub(crate) fn list_workspace_plans(&self) -> anyhow::Result<PlanInventory> {
         let identity = workspace_identity(&self.workspace)?;
-        Ok(self
-            .service
-            .store()
-            .list_plan_inventory()?
-            .into_iter()
-            .filter(|plan| plan.workspace_identity == identity)
-            .collect())
+        let mut inventory = self.service.store().list_plan_inventory()?;
+        retain_workspace(&mut inventory, &identity, |plan| {
+            plan.workspace_identity.as_str()
+        });
+        Ok(inventory)
     }
 
-    pub(crate) fn list_workspace_runs(&self) -> anyhow::Result<Vec<RunInventoryItem>> {
+    pub(crate) fn list_workspace_runs(&self) -> anyhow::Result<RunInventory> {
         let identity = workspace_identity(&self.workspace)?;
-        Ok(self
-            .service
-            .store()
-            .list_run_inventory()?
-            .into_iter()
-            .filter(|run| run.workspace_identity == identity)
-            .collect())
+        let mut inventory = self.service.store().list_run_inventory()?;
+        retain_workspace(&mut inventory, &identity, |run| {
+            run.workspace_identity.as_str()
+        });
+        Ok(inventory)
     }
 
+    /// Deletes a plan of either generation owned by this workspace.
     pub(crate) fn delete_workspace_plan(&self, plan_id: PlanId) -> anyhow::Result<()> {
-        let manifest = self.service.store().read_plan_inventory(plan_id)?;
-        let identity = workspace_identity(&self.workspace)?;
-        if manifest.workspace_identity != identity {
+        let owner = self.service.store().plan_workspace_identity(plan_id)?;
+        if owner != workspace_identity(&self.workspace)? {
             anyhow::bail!("plan belongs to another workspace");
         }
         Ok(self.service.store().delete_plan(plan_id)?)
     }
 
+    /// Deletes a run of either generation owned by this workspace.
     pub(crate) fn delete_workspace_run(&self, run_id: RunId) -> anyhow::Result<()> {
-        let run = self.service.store().read_run_inventory(run_id)?;
-        let identity = workspace_identity(&self.workspace)?;
-        if run.workspace_identity != identity {
+        let owner = self.service.store().run_workspace_identity(run_id)?;
+        if owner != workspace_identity(&self.workspace)? {
             anyhow::bail!("run belongs to another workspace");
         }
         Ok(self.service.store().delete_run(run_id)?)
@@ -200,7 +223,12 @@ impl WorkflowOps {
                 current_workspace
             );
         }
-        recheck_frozen_graph(&plan.graph, self.config_path.clone())
+        recheck_frozen_graph(
+            &plan.graph,
+            self.config_path.clone(),
+            self.search_path.as_deref(),
+            self.project_trust,
+        )
     }
 
     pub(crate) fn recheck_run(&self, run: &StoredRun) -> anyhow::Result<()> {
@@ -220,7 +248,12 @@ impl WorkflowOps {
         {
             anyhow::bail!("workflow run consent does not match its copied frozen graph");
         }
-        recheck_frozen_graph(&run.graph, self.config_path.clone())
+        recheck_frozen_graph(
+            &run.graph,
+            self.config_path.clone(),
+            self.search_path.as_deref(),
+            self.project_trust,
+        )
     }
 
     pub(crate) fn create_confirmed_run(&self, plan: &StoredPlan) -> anyhow::Result<StoredRun> {
@@ -328,6 +361,18 @@ pub(crate) fn freeze_planned_workflow(
     Ok(PreparedPlan { sources, workflow })
 }
 
+/// Keeps only inventory rows, current or unsupported, owned by `identity`.
+fn retain_workspace<T, Id>(
+    inventory: &mut Inventory<T, Id>,
+    identity: &str,
+    owner: impl Fn(&T) -> &str,
+) {
+    inventory.items.retain(|item| owner(item) == identity);
+    inventory
+        .unsupported
+        .retain(|record| record.workspace_identity == identity);
+}
+
 #[cfg(test)]
 #[path = "ops_tests.rs"]
 mod tests;
@@ -339,6 +384,8 @@ pub(crate) fn workspace_identity(path: &Path) -> anyhow::Result<String> {
 fn recheck_frozen_graph(
     graph: &FrozenWorkflow,
     config_path: Option<PathBuf>,
+    search_path: Option<&OsStr>,
+    project_trust: ProjectTrusts,
 ) -> anyhow::Result<()> {
     validate_workflow(graph)?;
     validate_runtime_budgets(graph, &planner_worker::planning_limits()?)?;
@@ -346,7 +393,7 @@ fn recheck_frozen_graph(
     for resolved in graph.resolved_nodes.values() {
         let agent = match resolved {
             ResolvedNode::Command(command) => {
-                verify_executable_identity(&command.executable_identity)?;
+                verify_executable_identity(&command.executable_identity, search_path)?;
                 verify_directory_identity(&command.cwd_identity)?;
                 continue;
             }
@@ -354,7 +401,7 @@ fn recheck_frozen_graph(
         };
         match (&agent.executable, &agent.executable_identity) {
             (Some(_), Some(identity)) => {
-                verify_executable_identity(identity)?;
+                verify_executable_identity(identity, search_path)?;
             }
             (Some(path), None) => anyhow::bail!(
                 "frozen agent '{}' records executable '{}' without a frozen identity",
@@ -363,15 +410,13 @@ fn recheck_frozen_graph(
             ),
             (None, _) => {}
         }
-        if agent.trust_required && !crate::workspace::ProjectTrust::from_agents_env().is_trusted() {
+        if agent.trust_required && !project_trust.agents.is_trusted() {
             anyhow::bail!(
                 "workflow plan requires trusted project agent '{}'; trust is not active",
                 agent.agent_id
             );
         }
-        if agent.plugin_trust_required
-            && !crate::workspace::ProjectTrust::from_plugins_env().is_trusted()
-        {
+        if agent.plugin_trust_required && !project_trust.plugins.is_trusted() {
             anyhow::bail!(
                 "workflow plan requires trusted project plugin agent '{}'; plugin trust is not active",
                 agent.agent_id

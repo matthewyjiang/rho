@@ -121,7 +121,7 @@ impl ChatStreamAccumulator {
             _ => None,
         };
         if let Some(reason) = stop_reason {
-            on_event(ModelEvent::stop_reason(reason))?;
+            on_event(ModelEvent::Stopped(reason))?;
         }
         let delta = choice.get("delta");
         if let Some(reasoning_delta) = delta

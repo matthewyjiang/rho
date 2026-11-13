@@ -1,7 +1,7 @@
 //! Header dialects share the card's styled wrapping and continuation geometry.
 
 use ratatui::text::{Line, Span};
-use rho_tools::tool_card::{ToolCard, ToolHeader, ToolStatus};
+use rho_protocol::display::{ToolCard, ToolCardStatus, ToolHeader};
 
 use super::{header_wrap_continuation_prefix, pad_spans_line, push_wrapped_prefixed};
 use crate::tui::{syntax::highlight_source_spans, theme::Theme};
@@ -9,7 +9,7 @@ use crate::tui::{syntax::highlight_source_spans, theme::Theme};
 pub(super) fn push_header_line(
     lines: &mut Vec<Line<'static>>,
     card: &ToolCard,
-    status: ToolStatus,
+    status: ToolCardStatus,
     width: usize,
 ) {
     // Keep the status marker on the first row and hang wrapped arguments below
@@ -78,6 +78,8 @@ pub(super) fn push_header_line(
                 );
             }
         }
+        // `Unknown`, or a dialect a newer protocol adds: the marker alone.
+        _ => lines.push(pad_spans_line(vec![marker], width)),
     }
 }
 

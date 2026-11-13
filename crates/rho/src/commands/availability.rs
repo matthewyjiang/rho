@@ -30,9 +30,7 @@ impl CommandContext {
             | CommandId::Init
             | CommandId::Help
             | CommandId::Compact
-            | CommandId::Computer
             | CommandId::Copy
-            | CommandId::Goal
             | CommandId::Skills
             | CommandId::Theme
             | CommandId::Hooks
@@ -43,6 +41,7 @@ impl CommandContext {
             | CommandId::Codemode
             | CommandId::Diff
             | CommandId::Doctor
+            | CommandId::Jobs
             | CommandId::Limits
             | CommandId::Export
             | CommandId::Mcp

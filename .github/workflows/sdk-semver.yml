@@ -58,7 +58,10 @@ jobs:
           package: rho-sdk
           baseline-rev: ${{ steps.baseline.outputs.revision }}
           feature-group: all-features
-          release-type: minor
+          # Only hotfixes to main stay minor-checked. daemon-v3 and the PRs
+          # stacked on it integrate the approved rho-sdk 6.0 major (#1685),
+          # including the final daemon-v3 -> main merge.
+          release-type: ${{ (github.event_name == 'pull_request' && (github.base_ref != 'main' || github.head_ref == 'daemon-v3')) && 'major' || 'minor' }}
       # Agents and humans often "fix CI" by reverting the ideal shape. That is a
       # minor-compatible compromise and must leave greppable NEXT_MAJOR debt.
       - name: Next-major debt gate on semver failure

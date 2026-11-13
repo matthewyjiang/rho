@@ -6,7 +6,7 @@ use std::{
 use tokio::sync::mpsc;
 
 use crate::{
-    event::{ToolCompletion, ToolFailure},
+    event::{ToolCompletion, ToolExecution, ToolFailure},
     host_input::HostInputEnvelope,
     model::{Message, ToolCall},
     run::RunCommand,
@@ -210,7 +210,6 @@ pub(in crate::orchestration) async fn execute(
                 return Ok(true);
             }
             // Parked detached completions and this batch are available together.
-            // Commit all their results before any image supplements.
             CompletedToolOutput::commit_all(
                 control.pending_outputs.take_finished().into_iter().chain(
                     batch
@@ -330,7 +329,7 @@ fn append_interrupted_calls(
     history.extend(
         calls
             .iter()
-            .map(|entry| Message::ToolResult(interrupted_result(&entry.call))),
+            .map(|entry| Message::ToolResult(interrupted_result(&entry.call).into())),
     );
 }
 
@@ -349,6 +348,7 @@ async fn resolve_without_work(
                         call_id: entry.id.clone(),
                         name: entry.call.name.clone(),
                         metadata: Default::default(),
+                        execution: ToolExecution::Attached,
                     },
                 )
                 .await?;
@@ -420,6 +420,7 @@ async fn start_eligible(
                 call_id: batch[index].id.clone(),
                 name: batch[index].call.name.clone(),
                 metadata,
+                execution: ToolExecution::Attached,
             },
         )
         .await?;
@@ -694,6 +695,7 @@ async fn emit_progress_while_servicing_commands(
             result = &mut delivery => {
                 return result.map_err(|_| Error::Interrupted {
                     message: "run event consumer was dropped".into(),
+                    source: None,
                 });
             }
             () = cancellation.cancelled() => return Err(Error::Cancelled),
@@ -814,7 +816,8 @@ fn append_results(batch: &mut [BatchCall<'_>], history: &mut Vec<Message>) {
                 .result
                 .take()
                 .expect("resolved call has a result")
-                .into_result(),
+                .into_result()
+                .into(),
         )
     }));
 }

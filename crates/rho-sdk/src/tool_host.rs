@@ -19,14 +19,6 @@ use crate::{
 pub type ToolHostFuture<'a> = Pin<Box<dyn Future<Output = Result<ToolOutput, Error>> + Send + 'a>>;
 
 /// One provider-free call of a registered tool.
-///
-/// # Next major
-///
-/// NEXT_MAJOR(rho-sdk): rename the `id` setter to `with_id` and the `call_id`
-/// getter to `id`.
-///
-/// The setter took the getter's natural name; swapping them in a minor would
-/// silently change what existing calls do.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ToolHostCall {
     id: ToolCallId,
@@ -43,12 +35,12 @@ impl ToolHostCall {
         }
     }
 
-    pub fn id(mut self, id: ToolCallId) -> Self {
+    pub fn with_id(mut self, id: ToolCallId) -> Self {
         self.id = id;
         self
     }
 
-    pub fn call_id(&self) -> &ToolCallId {
+    pub fn id(&self) -> &ToolCallId {
         &self.id
     }
 
@@ -64,11 +56,13 @@ impl ToolHostCall {
         if self.name.trim().is_empty() {
             return Err(Error::InvalidConfiguration {
                 message: "host tool name must not be empty".into(),
+                source: None,
             });
         }
         if !self.arguments.is_object() {
             return Err(Error::InvalidConfiguration {
                 message: "host tool arguments must be a JSON object".into(),
+                source: None,
             });
         }
         Ok(())
@@ -205,6 +199,7 @@ impl ToolHostRun {
         self.finished = true;
         joined.map_err(|error| Error::Interrupted {
             message: format!("tool host task failed: {error}"),
+            source: Some(Box::new(error)),
         })?
     }
 }
@@ -451,6 +446,7 @@ impl ToolHost {
                 .register_shared(tool)
                 .map_err(|error| Error::InvalidConfiguration {
                     message: error.to_string(),
+                    source: Some(Box::new(error)),
                 })?;
         }
         Ok(Self {
@@ -516,6 +512,7 @@ impl ToolHost {
             .get(call.name())
             .ok_or_else(|| Error::InvalidConfiguration {
                 message: format!("tool '{}' is not registered", call.name()),
+                source: None,
             })?;
         let cancellation = CancellationToken::new();
         let (events_sender, events) = mpsc::channel(self.core.event_capacity.get());

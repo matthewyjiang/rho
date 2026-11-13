@@ -34,11 +34,19 @@ pub(crate) struct Elision {
 
 /// Stable handle for one persisted tool result. Hashing the call id with the
 /// content keeps ids unique even when providers reuse call ids like `call_0`.
+/// Images are hashed only when present, so text-only ids match the ones saved
+/// before results carried images.
 pub(crate) fn recall_id(result: &ToolResult) -> String {
     let mut digest = Sha256::new();
     digest.update(result.id.as_bytes());
     digest.update([0]);
     digest.update(result.content.as_bytes());
+    for image in &result.images {
+        digest.update([0]);
+        digest.update(image.mime_type.as_bytes());
+        digest.update([0]);
+        digest.update(image.data.as_bytes());
+    }
     let digest = hex::encode(digest.finalize());
     format!("r{}", &digest[..16])
 }
@@ -57,36 +65,29 @@ pub(crate) fn elide_tool_results(
     let owners = Owners::new(&messages[start..end], start);
 
     let mut stubs = BTreeMap::new();
-    let mut dropped = vec![false; messages.len()];
     let mut tokens = estimate_context_tokens(messages, tools);
-    for index in start..end {
+    for (index, message) in messages.iter().enumerate().take(end).skip(start) {
         if tokens <= target_tokens {
             break;
         }
-        let Message::ToolResult(result) = &messages[index] else {
+        let Message::ToolResult(result) = message else {
             continue;
         };
-        let images = owners.supplements(index);
-        if result.content.len() < MIN_ELIDED_BYTES && images.is_empty() {
+        if result.content.len() < MIN_ELIDED_BYTES && result.images.is_empty() {
             continue;
         }
-        let image_count = images
-            .iter()
-            .filter_map(|&index| messages[index].as_tool_image_supplement())
-            .map(|supplement| supplement.images().len())
-            .sum();
-        let stub = Message::ToolResult(ToolResult {
-            id: result.id.clone(),
-            ok: result.ok,
-            content: stub_text(result, owners.call(index), image_count),
-        });
+        // The stub drops the images; the original keeps them for recall.
+        let stub = Message::ToolResult(
+            ToolResult::new(
+                result.id.clone(),
+                result.status,
+                stub_text(result, owners.call(index)),
+            )
+            .into(),
+        );
         tokens = tokens
-            .saturating_sub(estimate_message_tokens(&messages[index]))
+            .saturating_sub(estimate_message_tokens(message))
             .saturating_add(estimate_message_tokens(&stub));
-        for &image_index in images {
-            tokens = tokens.saturating_sub(estimate_message_tokens(&messages[image_index]));
-            dropped[image_index] = true;
-        }
         stubs.insert(index, stub);
     }
     if stubs.is_empty() {
@@ -96,18 +97,14 @@ pub(crate) fn elide_tool_results(
     let messages = messages
         .iter()
         .enumerate()
-        .filter_map(|(index, message)| {
-            if dropped[index] {
-                return None;
-            }
-            if let Some(stub) = stubs.remove(&index) {
+        .map(|(index, message)| match stubs.remove(&index) {
+            Some(stub) => {
                 if let Message::ToolResult(result) = message {
-                    originals.push(result.clone());
+                    originals.push(ToolResult::clone(result));
                 }
-                Some(stub)
-            } else {
-                Some(message.clone())
+                stub
             }
+            None => message.clone(),
         })
         .collect();
     Some(Elision {
@@ -123,20 +120,16 @@ struct CallSummary<'a> {
 
 /// Positional ownership inside the compacted range. Providers may reuse call
 /// ids across turns (`call_0`), so ids alone are ambiguous: a result belongs to
-/// the nearest preceding call with its id, and an image supplement to the
-/// nearest preceding result for its call id.
+/// the nearest preceding call with its id.
 struct Owners<'a> {
     calls: BTreeMap<usize, CallSummary<'a>>,
-    supplements: BTreeMap<usize, Vec<usize>>,
 }
 
 impl<'a> Owners<'a> {
     fn new(range: &'a [Message], offset: usize) -> Self {
         let mut latest_call = BTreeMap::<&str, CallSummary<'a>>::new();
-        let mut latest_result = BTreeMap::<&str, usize>::new();
         let mut owners = Self {
             calls: BTreeMap::new(),
-            supplements: BTreeMap::new(),
         };
         for (position, message) in range.iter().enumerate() {
             let index = offset + position;
@@ -149,11 +142,6 @@ impl<'a> Owners<'a> {
                             arguments: call.arguments,
                         },
                     );
-                }
-                latest_result.insert(&result.id, index);
-            } else if let Some(images) = message.as_tool_image_supplement() {
-                if let Some(&owner) = latest_result.get(images.tool_call_id()) {
-                    owners.supplements.entry(owner).or_default().push(index);
                 }
             }
             for block in message.completed_assistant_content().into_iter().flatten() {
@@ -174,16 +162,9 @@ impl<'a> Owners<'a> {
     fn call(&self, result_index: usize) -> Option<&CallSummary<'a>> {
         self.calls.get(&result_index)
     }
-
-    fn supplements(&self, result_index: usize) -> &[usize] {
-        self.supplements
-            .get(&result_index)
-            .map(Vec::as_slice)
-            .unwrap_or_default()
-    }
 }
 
-fn stub_text(result: &ToolResult, call: Option<&CallSummary<'_>>, image_count: usize) -> String {
+fn stub_text(result: &ToolResult, call: Option<&CallSummary<'_>>) -> String {
     let call = match call {
         Some(call) => {
             let arguments = argument_summary(call.arguments);
@@ -195,8 +176,8 @@ fn stub_text(result: &ToolResult, call: Option<&CallSummary<'_>>, image_count: u
         }
         None => "unknown".to_owned(),
     };
-    let status = if result.ok { "ok" } else { "error" };
-    let images = match image_count {
+    let status = if result.is_failure() { "error" } else { "ok" };
+    let images = match result.images.len() {
         0 => String::new(),
         1 => " + 1 image".to_owned(),
         count => format!(" + {count} images"),

@@ -109,6 +109,11 @@ enum Slot {
 /// Groups directories into hub sections while keeping [`directory_groups`]
 /// order, so the current directory's section comes first and the current
 /// directory leads it. Missing directories collect into one final group.
+///
+/// `sessions` is every saved session. Existing directories keep only the
+/// person-facing ones; missing directories keep them all, so their cleanup
+/// also removes the hidden sessions (a script's `rho run` in a deleted
+/// checkout) that no listing would otherwise reach.
 pub(super) fn hub_groups(
     sessions: Vec<SessionSummary>,
     current_cwd: &Path,
@@ -120,8 +125,15 @@ pub(super) fn hub_groups(
     let mut repos: Vec<Vec<(DirectoryGroup, Workspace)>> = Vec::new();
     let mut repo_indexes = HashMap::<PathBuf, usize>::new();
     let mut missing = Vec::new();
-    for directory in directory_groups(sessions, current_cwd) {
-        match place(&directory.cwd) {
+    for mut directory in directory_groups(sessions, current_cwd) {
+        let placement = place(&directory.cwd);
+        if !matches!(placement, Placement::Missing) {
+            directory.sessions.retain(SessionSummary::is_person_facing);
+            if directory.sessions.is_empty() {
+                continue;
+            }
+        }
+        match placement {
             Placement::Missing => missing.push(directory),
             Placement::Lone => slots.push(Slot::Directory(directory)),
             Placement::Repo(workspace) => {

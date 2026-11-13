@@ -2,7 +2,7 @@
 
 Parent: [Configuration](/configuration). Tool behavior: [Web access](/tools-workspace/web-access).
 
-Choose **Tools → Web search** in `/config`. Mode, backend, and connection settings open a picker. Backend pages stay available in every mode. OpenAI and Exa pages show settings for both connections. Editing a backend does not select it. Changes during a turn apply to the next turn.
+Change these under `/config` → **Tools**, in the **Web search** section: the mode, the backend, each connection, and each endpoint. Editing a backend's endpoint does not select it. Changes apply to sessions opened afterwards.
 
 | Mode | Routing |
 | --- | --- |
@@ -23,11 +23,11 @@ backend = "firecrawl"
 api_base_url = "http://localhost:3002"
 ```
 
-Omit `api_base_url` to use Firecrawl Cloud at `https://api.firecrawl.dev`. Cloud requires a key. A self-hosted endpoint may omit authentication. Save keys in the TUI credential editor or set `FIRECRAWL_API_KEY`. Keys are not written into backend configuration tables.
+Omit `api_base_url` to use Firecrawl Cloud at `https://api.firecrawl.dev`. Cloud requires a key. A self-hosted endpoint may omit authentication. Set `FIRECRAWL_API_KEY`. Keys are not written into backend configuration tables.
 
 ## Backend connections
 
-Each backend has its own settings page. Editing an endpoint or key does not select that backend. API base URLs accept HTTP or HTTPS and keep reverse-proxy path prefixes. Do not include the operation path. Firecrawl appends `v2/search`, for example. URLs must not contain embedded credentials, query strings, or fragments. Clear the URL or choose its reset row to restore the default.
+Each backend has its own endpoint and, for OpenAI and Exa, connection setting. Editing them does not select that backend. API base URLs accept HTTP or HTTPS and keep reverse-proxy path prefixes. Do not include the operation path. Firecrawl appends `v2/search`, for example. URLs must not contain embedded credentials, query strings, or fragments. Clear the URL to restore the default.
 
 | Backend | Default API base | Connection |
 | --- | --- | --- |
@@ -40,18 +40,14 @@ Set `web_search.openai.connection` to `codex` to use a Codex login. Codex uses i
 
 Set `web_search.exa.connection` to `mcp` to use Exa MCP. `web_search.exa.mcp_url` defaults to `https://mcp.exa.ai/mcp`. Exa API mode does not switch to MCP when its key is missing. OpenAI and Exa both default to API connections.
 
-TUI changes to mode, backend, endpoint, connection, and credentials apply before the next turn. An active turn keeps its existing route and credential snapshot. Future delegated agents inherit the applied settings. Already-started agents keep their bound settings. **Next turn route** shows the saved connection and resolved URL, including whether it is default or custom. If applying settings fails, the next turn does not start. Direct `config.toml` edits require a restart.
+Changes to mode, backend, endpoint, and connection, from `/config` or a hand edit the daemon reads, apply to sessions opened afterwards. Running sessions and already-started agents keep their bound settings.
 
-**Test connection** asks before sending a test query. The request may incur charges. It tests the backend even when search mode is Auto or Off. A successful health check does not prove that a self-hosted deployment can search.
+API keys come from the environment: `OPENAI_API_KEY`, `EXA_API_KEY`, `BRAVE_SEARCH_API_KEY` (or `BRAVE_API_KEY`), and `FIRECRAWL_API_KEY`. Keys saved by earlier versions stay in the credential store and keep working. Entering a key from the TUI is coming with daemon credentials ([#1662](https://github.com/matthewyjiang/rho/issues/1662)).
 
 Firecrawl uses the [v2 search API](https://docs.firecrawl.dev/api-reference/endpoint/search). Self-hosted support depends on the deployed version and its search infrastructure. This integration does not enable Firecrawl scraping. `includeContent` keeps Rho's existing page-fetch behavior.
 
-## Migrating older settings
+## Older settings
 
-- Legacy `hosted = false` plus `provider = "disabled"` becomes `mode = "off"`. Legacy provider names stay case-insensitive. A backend-only or endpoint edit preserves that mode. Only an explicit `mode` overrides legacy routing.
-- A concrete legacy provider becomes the selected backend. `hosted` determines Auto versus Backend mode.
-- Legacy `provider = "auto"` becomes the OpenAI backend, with a warning. The old OpenAI, then Exa, then Brave failure chain is gone.
-- Legacy native-only configuration (`hosted = true`, `provider = "disabled"`) requires an explicit mode. Rho rejects that migration instead of enabling a client backend. Set `mode = "off"` to prevent search, or choose Auto and a backend.
-- Legacy OpenAI and Exa users get a warning to select their connection. Choose `codex` or `mcp` if that was the previously implicit transport.
+Rho 3.0 no longer reads the 2.x `hosted`, `provider`, and top-level `web_search_provider` keys. The [2.x upgrade](/configuration#upgrading-from-rho-2-x) rewrites them whenever Rho 3.0 starts and finds them: `provider = "disabled"` becomes `mode = "off"`, and a concrete `provider` becomes `backend` with `mode = "auto"`, or `mode = "backend"` when `hosted` was `false`.
 
-Existing flat `web_search_openai_api_key`, `web_search_exa_api_key`, and `web_search_brave_api_key` values still migrate to the credential store. Empty strings are ignored.
+The upgrade also moves flat `web_search_openai_api_key`, `web_search_exa_api_key`, and `web_search_brave_api_key` values to the credential store. Empty strings are ignored.

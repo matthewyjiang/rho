@@ -12,9 +12,7 @@ use super::{
     },
     OverlayFocus, OverlayScrollbarDrag, TabKey, UiPicker,
 };
-use crate::tui::{
-    app_state::PointerAction, scrollbar::HistoryScrollbar, App, ComposerMode, InteractiveRuntime,
-};
+use crate::tui::{app_state::PointerAction, scrollbar::HistoryScrollbar, App, ComposerMode};
 
 /// Lines one wheel event scrolls in either overlay pane. Tied to the history
 /// wheel speed so the two cannot drift.
@@ -457,7 +455,6 @@ impl App {
         &mut self,
         key: KeyEvent,
         terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<bool> {
         if !matches!(self.input_ui.composer(), ComposerMode::Picker(_)) {
             return Ok(false);
@@ -487,13 +484,13 @@ impl App {
             PickerKeyEffect::Submit => {
                 self.input_ui.clear_paste_burst();
                 self.ctrl_c_streak = 0;
-                self.submit_picker_selection(terminal, agent).await?;
+                self.submit_picker_selection(terminal).await?;
                 Ok(true)
             }
             PickerKeyEffect::Escape => {
                 self.handle_picker_escape(/*running*/ false)?;
                 if matches!(self.input_ui.composer(), ComposerMode::Input) {
-                    self.reconcile_auto_classifier_gate(agent).await?;
+                    self.reconcile_auto_classifier_gate()?;
                 }
                 self.input_ui.clear_paste_burst();
                 self.ctrl_c_streak = 0;

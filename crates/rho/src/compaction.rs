@@ -33,16 +33,7 @@ pub struct CompactionConfig {
     pub target_percent: u8,
     /// Model that writes text summaries, from `[internal_agents.compaction]`.
     /// `None` uses the session model, which can reuse the session's prompt cache.
-    pub summarizer: Option<SummarizerModel>,
-}
-
-/// A separately configured text-summary model and the reasoning it runs at.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SummarizerModel {
-    pub provider: String,
-    pub model: String,
-    pub auth: String,
-    pub reasoning: rho_sdk::ReasoningLevel,
+    pub summarizer: Option<crate::agent::ResolvedRhoModel>,
 }
 
 /// Single source of truth for compaction defaults; `Config::default()` derives
@@ -103,6 +94,22 @@ pub(crate) fn outcome_reduced_context(outcome: &rho_sdk::CompactionOutcome) -> b
     outcome.current_messages() < outcome.previous_messages() || outcome.removed_tokens() > 0
 }
 
+/// What a finished compaction did, as one line of text: the message and
+/// token counts before and after, or that it ran without reducing context.
+pub(crate) fn outcome_summary(outcome: &rho_sdk::CompactionOutcome) -> String {
+    if outcome_reduced_context(outcome) {
+        format!(
+            "context compacted: {} → {} messages, {} → {} tokens",
+            outcome.previous_messages(),
+            outcome.current_messages(),
+            outcome.previous_tokens(),
+            outcome.current_tokens(),
+        )
+    } else {
+        "context not compacted: compaction ran but did not reduce context".into()
+    }
+}
+
 /// History split for text-summary compaction, as positions in the partitioned
 /// history.
 ///
@@ -128,8 +135,10 @@ impl<'a> CompactionPartition<'a> {
 
     /// Text of the summary an earlier compaction wrote.
     pub(crate) fn previous_summary(&self) -> Option<&'a str> {
-        let summary = self.messages[self.previous_summary?].as_compaction_summary()?;
-        Some(summary.text())
+        match &self.messages[self.previous_summary?] {
+            Message::CompactionSummary(summary) => Some(&summary.text),
+            _ => None,
+        }
     }
 
     /// Messages the new summary covers, oldest first. The kept latest user
@@ -214,7 +223,7 @@ fn partition<'a>(
     // summary anywhere else is summarized like any other message.
     let previous_summary = messages
         .get(natural_first_turn_end)
-        .is_some_and(|message| message.as_compaction_summary().is_some())
+        .is_some_and(|message| matches!(message, Message::CompactionSummary(_)))
         .then_some(natural_first_turn_end);
     let first_turn_end = if keep_user_turns {
         natural_first_turn_end
@@ -261,10 +270,13 @@ fn partition<'a>(
         })
 }
 
-/// Input a person sent, as opposed to tool images, compaction summaries, or
-/// a checklist restatement an earlier compaction appended.
+/// Input a person sent, as opposed to tool images, compaction summaries,
+/// runtime notices, or a checklist restatement an earlier compaction appended.
 fn is_user_input(message: &Message) -> bool {
-    matches!(HistoryMessage::of(message), HistoryMessage::User(_))
+    matches!(
+        HistoryMessage::of(message),
+        HistoryMessage::Semantic(SemanticMessage::User(_))
+    )
 }
 
 /// End of the contiguous user messages at `start`, or `start` when together
@@ -351,18 +363,16 @@ fn completed_tool_group_end(messages: &[Message], index: usize) -> Option<usize>
                 SemanticMessage::ToolResult(result) if call_ids.contains(result.id.as_str()) => {
                     Some(offset)
                 }
-                SemanticMessage::ToolImageSupplement(images)
-                    if call_ids.contains(images.tool_call_id()) =>
-                {
-                    Some(offset)
-                }
                 SemanticMessage::System(_)
                 | SemanticMessage::User(_)
                 | SemanticMessage::Assistant(_)
                 | SemanticMessage::EnrichedAssistant(_)
                 | SemanticMessage::AbortedAssistant(_)
                 | SemanticMessage::ToolResult(_)
-                | SemanticMessage::ToolImageSupplement(_) => None,
+                | SemanticMessage::CompactionSummary(_)
+                | SemanticMessage::ModelContext(_)
+                | SemanticMessage::BoundaryInput(_)
+                | SemanticMessage::ReasoningShift(_) => None,
             })
             .next_back()
         else {
@@ -582,11 +592,11 @@ mod tests {
     #[test]
     fn partition_does_not_split_assistant_tool_call_group() {
         let tool_call = || {
-            ContentBlock::ToolCall(ToolCall {
-                id: "call_1".into(),
-                name: "bash".into(),
-                arguments: json!({"command": "echo hi"}),
-            })
+            ContentBlock::ToolCall(ToolCall::new(
+                "call_1".into(),
+                "bash".into(),
+                json!({"command": "echo hi"}),
+            ))
         };
         let enriched = Message::assistant(rho_providers::model::AssistantMessage {
             content: vec![tool_call()],
@@ -599,7 +609,7 @@ mod tests {
             provider_context: Vec::new(),
         });
         let cases = [
-            ("legacy", Message::Assistant(vec![tool_call()])),
+            ("legacy", Message::Assistant(vec![tool_call()].into())),
             ("enriched", enriched),
         ];
 
@@ -609,11 +619,7 @@ mod tests {
                 // Over the verbatim first-turn budget, so it is summarized.
                 Message::user_text("x".repeat(20_000)),
                 assistant.clone(),
-                Message::ToolResult(ToolResult {
-                    id: "call_1".into(),
-                    ok: true,
-                    content: "hi".into(),
-                }),
+                Message::ToolResult(ToolResult::succeeded("call_1", "hi").into()),
                 Message::user_text("new"),
             ];
 

@@ -1,15 +1,14 @@
 use rho_providers::model::{models_dev::ModelCost, ModelMetadata, ModelUsage};
 
 fn priced_metadata() -> ModelMetadata {
-    ModelMetadata {
-        cost_default: Some(ModelCost {
-            input_micros_per_m: Some(1_000_000),
-            output_micros_per_m: Some(2_000_000),
-            cache_read_micros_per_m: Some(100_000),
-            cache_write_micros_per_m: None,
-        }),
-        ..ModelMetadata::default()
-    }
+    let mut metadata = ModelMetadata::default();
+    metadata.cost_default = Some(ModelCost {
+        input_micros_per_m: Some(1_000_000),
+        output_micros_per_m: Some(2_000_000),
+        cache_read_micros_per_m: Some(100_000),
+        cache_write_micros_per_m: None,
+    });
+    metadata
 }
 
 // Covers: catalog cost bills recovered prompt size, including mute turns
@@ -136,10 +135,8 @@ fn resolves_and_combines_session_costs() {
 fn zeroed_provider_window_falls_back_to_metadata_display_window() {
     use rho_providers::model::ContextUsage;
 
-    let metadata = ModelMetadata {
-        advertised_context_window: Some(200_000),
-        ..ModelMetadata::default()
-    };
+    let mut metadata = ModelMetadata::default();
+    metadata.advertised_context_window = Some(200_000);
     // Provider reports 0: garbage value must not shadow the metadata window.
     assert_eq!(
         super::resolved_context_window(

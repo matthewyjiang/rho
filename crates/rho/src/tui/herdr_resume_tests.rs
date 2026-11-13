@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use clap::Parser;
 use pretty_assertions::assert_eq;
 use rho_providers::model::{ReasoningCapabilities, ReasoningLevelSet};
@@ -88,7 +86,6 @@ fn resume_argv_pins_only_drift_from_config() {
         (
             "unreadable config pins everything; launch flags repeat",
             ResumeLaunchOptions {
-                config: Some(PathBuf::from("/tmp/rho config/config.toml")),
                 agent: Some("reviewer".into()),
                 definition: None,
                 no_system_prompt: true,
@@ -100,8 +97,6 @@ fn resume_argv_pins_only_drift_from_config() {
             ReasoningCapabilities::Unknown,
             vec![
                 "rho",
-                "--config",
-                "/tmp/rho config/config.toml",
                 "--agent",
                 "reviewer",
                 "--no-system-prompt",
@@ -152,7 +147,8 @@ fn resume_argv_pins_only_drift_from_config() {
 
         assert_eq!(argv, expected, "{name}");
         assert!(crate::herdr::resume_argv_is_valid(&argv), "{name}");
-        let cli = crate::cli::Cli::try_parse_from(&argv)
+        let command = argv.iter().position(|arg| arg == "rho").unwrap();
+        let cli = crate::cli::Cli::try_parse_from(&argv[command..])
             .unwrap_or_else(|error| panic!("{name}: {error}"));
         assert_eq!(cli.resume, Some(Some("session-1".into())), "{name}");
         assert!(cli.command.is_none(), "{name}");

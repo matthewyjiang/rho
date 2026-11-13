@@ -19,7 +19,6 @@ use rho_sdk::{
 };
 
 use crate::{
-    file_view::FileViewPolicy,
     glob::GlobSearch,
     grep::GrepSearch,
     sdk_support::{
@@ -41,10 +40,10 @@ pub(crate) struct SearchTool<S> {
 }
 
 impl SearchTool<GrepSearch> {
-    pub(crate) fn grep(max_output_bytes: usize, file_view: FileViewPolicy) -> Self {
+    pub(crate) fn grep(max_output_bytes: usize) -> Self {
         Self {
             max_output_bytes: max_output_bytes.max(1),
-            search: GrepSearch::new(file_view),
+            search: GrepSearch,
         }
     }
 }

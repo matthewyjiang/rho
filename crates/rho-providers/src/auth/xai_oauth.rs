@@ -94,11 +94,6 @@ impl std::fmt::Debug for CallbackOutcome {
 pub enum XaiOAuthError {
     #[error("could not bind local SpaceXAI OAuth callback listener: {0}")]
     Bind(std::io::Error),
-    /// # Next major
-    ///
-    /// NEXT_MAJOR(rho-providers): remove XaiOAuthError::Browser; browser launch lives in the login dispatch layer
-    #[error("could not open browser for SpaceXAI OAuth: {0}")]
-    Browser(String),
     #[error("timed out waiting for SpaceXAI OAuth browser callback")]
     Timeout,
     #[error("could not read SpaceXAI OAuth callback: {0}")]
@@ -144,22 +139,6 @@ pub struct XaiBrowserLogin {
     pub authorize_url: String,
     listener: TcpListener,
     request: XaiOAuthRequest,
-}
-
-/// One-shot browser login used by 2.0 callers.
-///
-/// # Next major
-///
-/// NEXT_MAJOR(rho-providers): remove run_xai_oauth_flow; use start_xai_browser_login and complete_xai_browser_login
-#[deprecated(
-    since = "2.1.0",
-    note = "use start_xai_browser_login and complete_xai_browser_login so the authorize URL can be shown before the browser opens"
-)]
-pub async fn run_xai_oauth_flow() -> Result<XaiTokens, XaiOAuthError> {
-    let login = start_xai_browser_login().await?;
-    webbrowser::open(&login.authorize_url)
-        .map_err(|err| XaiOAuthError::Browser(err.to_string()))?;
-    complete_xai_browser_login(login).await
 }
 
 pub async fn start_xai_browser_login() -> Result<XaiBrowserLogin, XaiOAuthError> {

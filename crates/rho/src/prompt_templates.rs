@@ -125,11 +125,6 @@ pub fn description(template: &str) -> String {
     template.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-pub fn matches_search(name: &str, search: &str) -> bool {
-    let name = name.to_ascii_lowercase();
-    name.starts_with(search) || format!("prompt:{name}").starts_with(search)
-}
-
 pub fn find<'a>(templates: &'a PromptTemplates, name: &str) -> Option<&'a str> {
     templates
         .iter()
@@ -186,12 +181,6 @@ pub fn expand(template: &str, trailing_text: &str) -> String {
         expanded.push_str(trailing_text);
     }
     expanded
-}
-
-/// Whether the template places its arguments itself instead of having them
-/// appended.
-pub fn takes_arguments(template: &str) -> bool {
-    placeholders(template).next().is_some()
 }
 
 /// Palette usage hint naming the arguments the template places.

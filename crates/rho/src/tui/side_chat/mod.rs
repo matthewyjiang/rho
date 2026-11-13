@@ -311,21 +311,21 @@ impl App {
         for entry in self.history.entries() {
             match entry {
                 Entry::User(text) if !text.is_empty() => {
-                    messages.push(Message::User(vec![ContentBlock::Text(text.clone())]));
+                    messages.push(Message::User(vec![ContentBlock::Text(text.clone())].into()));
                 }
                 Entry::Assistant(assistant) if !assistant.text.is_empty() => {
-                    messages.push(Message::Assistant(vec![ContentBlock::Text(
-                        assistant.text.clone(),
-                    )]));
+                    messages.push(Message::Assistant(
+                        vec![ContentBlock::Text(assistant.text.clone())].into(),
+                    ));
                 }
                 _ => {}
             }
         }
         let live = self.streams.assistant_stream.emitted_text();
         if !live.is_empty() {
-            messages.push(Message::Assistant(vec![ContentBlock::Text(
-                live.to_string(),
-            )]));
+            messages.push(Message::Assistant(
+                vec![ContentBlock::Text(live.to_string())].into(),
+            ));
         }
         frozen_parent_snapshot(&messages)
     }
@@ -345,10 +345,7 @@ impl App {
     }
 
     fn side_chat_parent_session_id(&self) -> SessionId {
-        self.info
-            .session
-            .session_id
-            .as_deref()
+        self.current_session_id()
             .and_then(|id| id.parse().ok())
             .unwrap_or_default()
     }
