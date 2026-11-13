@@ -450,6 +450,53 @@ fn replayed_calls_take_their_kind_from_the_session_tools() {
     );
 }
 
+// Covers: a process call's title says what it runs, as a shell call's does:
+// a start is titled by its bare command, which Zed shows as an execute
+// card's command, and a poll or stop names the process it acts on. Replay
+// and live calls share the title, from the metadata the real tool reports.
+// Owner: session event replay titles, through the registered process tool
+#[test]
+fn process_call_titles_name_what_they_run() {
+    let config = Config::default();
+    let tool_set = AppToolSet::new(
+        &config,
+        RuntimeDiagnostics::new(&config),
+        ToolSetOptions::new(AgentCapabilities::new([ToolCapability::Process].into())),
+    );
+    let call = |id: &str, arguments| {
+        model::ContentBlock::ToolCall(model::ToolCall::new(id.into(), "process".into(), arguments))
+    };
+    let command = "cd /work/app && .venv/bin/python -m unittest tests.test_app";
+    let messages = [Message::assistant(AssistantMessage::from_content(vec![
+        call("a", json!({"action": "start", "command": command})),
+        call("b", json!({"action": "poll", "process_id": "process-1"})),
+        call("c", json!({"action": "stop", "process_id": "process-1"})),
+    ]))];
+    let titles: Vec<_> = replay_with(&tool_set, &messages)
+        .into_iter()
+        .filter_map(|event| match event {
+            // Only a call's opening carries its title; replay then closes
+            // these result-less calls with status-only updates.
+            WireEvent::ToolCall(update) => update.title.map(|title| (update.kind, title)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        titles,
+        vec![
+            (Some(ToolKind::Execute), command.to_owned()),
+            (
+                Some(ToolKind::Execute),
+                "process(poll process-1)".to_owned()
+            ),
+            (
+                Some(ToolKind::Execute),
+                "process(stop process-1)".to_owned()
+            ),
+        ]
+    );
+}
+
 // Covers: a replay ends with the session's checklist, so a client that
 // attaches sees the plan the live mapper counts as sent.
 // Owner: session event replay

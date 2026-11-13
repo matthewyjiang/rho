@@ -113,7 +113,9 @@ pub(crate) struct Choice {
 
 #[derive(Deserialize)]
 pub(crate) struct ChatResponseMessage {
-    pub(crate) content: Option<String>,
+    /// A string, or Mistral-style text and thinking chunks; see
+    /// [`crate::protocol::openai_shared::content_chunks`].
+    pub(crate) content: Option<serde_json::Value>,
     /// Qwen/DeepSeek-style raw thinking on non-stream completions.
     #[serde(default)]
     pub(crate) reasoning_content: Option<String>,

@@ -135,7 +135,8 @@ impl OpenAiCompatibleProvider {
         stream: bool,
     ) -> Result<PreparedChatRequest<'a>, ModelError> {
         let target = self.model_identity();
-        let messages = to_openai_messages_for_target(request.messages, Some(&target))?;
+        let mut messages = to_openai_messages_for_target(request.messages, Some(&target))?;
+        self.dialect.normalize_messages(&mut messages);
         let tools = request
             .tools
             .iter()

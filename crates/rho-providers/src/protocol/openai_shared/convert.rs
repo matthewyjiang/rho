@@ -15,6 +15,7 @@ use crate::protocol::openai_chat::{
     ChatResponse, OpenAiFunctionCall, OpenAiMessage, OpenAiTool, OpenAiToolCall, OpenAiToolFunction,
 };
 
+use super::content_chunks::{content_parts, ContentPart};
 use super::image_generation::{is_image_generation_replay, restore_image_generation_results};
 use super::tool_calls::{finalize_chat_tool_calls, ChatToolCallPolicy, RawChatToolCall};
 
@@ -100,14 +101,24 @@ pub(crate) fn convert_openai_response(
         .next()
         .ok_or_else(|| ModelError::InvalidResponse("missing choices".into()))?
         .message;
-    let text = message
-        .content
-        .filter(|s| !s.is_empty())
-        .unwrap_or_default();
-    let reasoning = message
+    let mut text = String::new();
+    let mut reasoning = message
         .reasoning_content
         .filter(|text| !text.is_empty())
         .unwrap_or_default();
+    let reasoning_from_chunks = reasoning.is_empty();
+    for part in message
+        .content
+        .as_ref()
+        .map(content_parts)
+        .unwrap_or_default()
+    {
+        match part {
+            ContentPart::Text(part) => text.push_str(part),
+            ContentPart::Thinking(part) if reasoning_from_chunks => reasoning.push_str(&part),
+            ContentPart::Thinking(_) => {}
+        }
+    }
     let raw_calls = message
         .tool_calls
         .unwrap_or_default()

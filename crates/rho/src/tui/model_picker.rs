@@ -677,6 +677,10 @@ fn catalog_picker(
         model: current_model,
         badge: selected_badge,
     } = current;
+    // A current alias (`mistral-small-latest`) marks the row it is listed under.
+    let listed_current =
+        rho_providers::model::provider_models::listed_model_id(current_provider, current_model);
+    let current_model = listed_current.as_str();
     let current = rho_providers::provider::model_reference(current_provider, current_model);
     let favorites = favorites::normalized_favorite_models(favorite_models);
     let effective_scope = resolve_scope(scope, &favorites, &available);

@@ -35,7 +35,8 @@ sequenceDiagram
 ```
 
 - Rho calls the `delegate_task` tool of T3's `t3-code` MCP server, with `/agent:<name> <task>` as the child's first prompt. The `agents` tool's `status` and `stop` actions map to T3's `task_status` and `task_cancel`. There is no `message` action.
-- A per-call `agent.model` travels in that `/agent:` command and is resolved by the child Rho, never through T3's model picker. If the model cannot be resolved or signed in, the child task fails.
+- A per-call `agent.model` travels in that `/agent:` command and is resolved by the child Rho. If the model cannot be resolved or signed in, the child task fails.
+- So that the child's thread shows the model it runs on, Rho asks T3's `orchestrator_capabilities` tool whether the parent's provider offers that `provider/model` with the parent's options, such as permission mode and thought level. If it does, Rho sets it as the launch `target`. Otherwise the thread keeps the parent's model label, and the child still runs on the requested model.
 - Only agents that use Rho's own runtime are offered. Agents that run through Claude Code, Cursor, or Antigravity are rejected; the model can start those with T3's `delegate_task` tool directly.
 - Workflows still run in the daemon.
 - `rho acp --t3code` asks for T3 threads each time it opens or reloads a session, so they hold across reloads and daemon restarts. The session does not save the choice: a client that reopens it without asking, such as `rho sessions attach`, runs its children in the daemon.

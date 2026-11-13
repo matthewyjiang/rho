@@ -443,7 +443,21 @@ fn load_model_metadata(
             local.as_ref(),
         ));
     }
-    row_from_catalog_source(provider, model, local.as_ref(), freshness)
+    row_from_catalog_source(provider, model, local.as_ref(), freshness).or_else(|| {
+        // An alias discovery recorded (`zai-glm-latest`) borrows the listed
+        // model's row. Its own user overrides still apply on top.
+        let listed = super::provider_models::canonical_model_for_alias(provider, model)?;
+        Some(overrides::merge_optional_toml_override(
+            row_from_catalog_source(provider, &listed, None, freshness)?,
+            local.as_ref(),
+        ))
+    })
+}
+
+/// Whether models.dev has a row for exactly this id, without alias fallback.
+/// Discovery uses it to choose which of a model's ids to list.
+pub(super) fn has_catalog_row(provider: &str, model: &str) -> bool {
+    row_from_catalog_source(provider, model, None, CacheFreshness::AllowStale).is_some()
 }
 
 /// Cache row for `model`, including builtin overrides, provider capabilities,
@@ -629,7 +643,11 @@ async fn fetch_models_dev_document<T: serde::de::DeserializeOwned>(url: &str) ->
 /// v15: the shared model-id tree also holds canonical `models.json` rows for
 /// `lab/model` ids no serving provider publishes under that slug. Older
 /// snapshots lack them, so those hosts would keep missing for a day.
-pub(super) const MODEL_METADATA_CACHE_VERSION: i64 = 15;
+///
+/// v16: the new `mistral` provider reads per-model `reasoning_effort` values
+/// from its rows. A current older snapshot has no `mistral` rows, so reasoning
+/// would stay unconfigurable until the daily refresh.
+pub(super) const MODEL_METADATA_CACHE_VERSION: i64 = 16;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CacheFreshness {

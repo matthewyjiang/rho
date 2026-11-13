@@ -25,6 +25,7 @@ pub const OPENCODE_GO_API_KEY_ACCOUNT: &str = "provider:opencode-go:api-key";
 pub const OPENCODE_API_KEY_ACCOUNT: &str = "provider:opencode:api-key";
 pub const MINIMAX_API_KEY_ACCOUNT: &str = "provider:minimax:api-key";
 pub const TYPESAFE_API_KEY_ACCOUNT: &str = "provider:typesafe:api-key";
+pub const MISTRAL_API_KEY_ACCOUNT: &str = "provider:mistral:api-key";
 
 /// Auth profile id meaning "this provider needs no credential".
 pub const KEYLESS_AUTH: &str = "none";
@@ -51,6 +52,8 @@ pub const OPENCODE_API_BASE: &str = "https://opencode.ai/zen/v1";
 pub const MINIMAX_API_BASE: &str = "https://api.minimax.io/anthropic/v1";
 /// TypeSafe System One base (`/systemone`), which serves the Jev decision models.
 pub const TYPESAFE_API_BASE: &str = "https://api.typesafe.ai/v1";
+/// Mistral La Plateforme base (Chat Completions and `/models`).
+pub const MISTRAL_API_BASE: &str = "https://api.mistral.ai/v1";
 /// Placeholder only. Config-defined hosts must take their API base from application config.
 pub const OPENAI_COMPATIBLE_API_BASE: &str = "http://127.0.0.1:0/v1";
 
@@ -203,6 +206,7 @@ pub enum ProviderId {
     OpenCode,
     MiniMax,
     TypeSafe,
+    Mistral,
     OpenAiCompatible,
 }
 
@@ -689,7 +693,8 @@ impl ProviderDescriptor {
             | ProviderId::OpenCodeGo
             | ProviderId::OpenCode
             | ProviderId::MiniMax
-            | ProviderId::TypeSafe => UnknownEffortPolicy::Omit,
+            | ProviderId::TypeSafe
+            | ProviderId::Mistral => UnknownEffortPolicy::Omit,
         }
     }
 }

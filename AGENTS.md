@@ -105,7 +105,7 @@ Short defaults:
 - Prefer `pretty_assertions::assert_eq` and whole-object comparisons when available.
 - Do not test static constants or removed behavior; do not lock copy behind string-contains tests.
 - Avoid mutating process environment; inject environment-derived values instead.
-- Interactive TUI defaults to PTY (`rho-tui-pty-testing`); use Herdr only for exploration (`rho-tui-herdr-testing`).
+- Interactive TUI defaults to PTY (`rho-tui-pty-testing`).
 - When a test flakes in CI or locally, fix the race or the product so the run is deterministic. Do not rerun the failed job, empty-commit, or otherwise retry as the resolution.
 
 ## UI copy

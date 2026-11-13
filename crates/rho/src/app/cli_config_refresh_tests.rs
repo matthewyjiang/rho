@@ -75,3 +75,38 @@ async fn cold_cache_refresh_uses_the_cli_auth_profile_credentials() {
         vec![OPENROUTER_OAUTH_KEY_ACCOUNT]
     );
 }
+
+// Covers: a provider with a descriptor default (Mistral, MiniMax, Meta) must
+// still refresh an empty cache when the CLI names another model, or
+// `rho --model mistral/mistral-small-latest run` fails as unavailable; naming
+// the default, or an unlisted model against a fresh list, must not force a
+// blocking refresh every run
+// Owner: CLI startup model refresh
+#[test]
+fn named_models_need_discovery_unless_listed_or_the_provider_default() {
+    let cache = tempfile::tempdir().unwrap();
+    set_provider_models_cache_dir_for_tests(Some(cache.path().into()));
+    let mistral = rho_providers::provider::provider_descriptor("mistral").unwrap();
+
+    let decisions = [
+        None,
+        Some("mistral-medium-latest"),
+        Some("mistral-small-latest"),
+    ]
+    .map(|model| (model, super::needs_model_discovery(mistral, model)));
+    // A fresh list that lacks the model (typo, retired id) fails fast.
+    rho_providers::model::provider_models::replace_cached_provider_models_for_tests("mistral", &[])
+        .unwrap();
+    let fresh = super::needs_model_discovery(mistral, Some("mistral-small-latest"));
+    set_provider_models_cache_dir_for_tests(None);
+
+    assert_eq!(
+        decisions,
+        [
+            (None, false),
+            (Some("mistral-medium-latest"), false),
+            (Some("mistral-small-latest"), true),
+        ]
+    );
+    assert!(!fresh);
+}

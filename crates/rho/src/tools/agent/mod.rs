@@ -2,6 +2,7 @@
 //! host.
 
 mod host_orchestrator;
+mod host_target;
 mod host_tools;
 pub(crate) mod message_receipt;
 
