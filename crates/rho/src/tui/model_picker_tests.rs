@@ -292,7 +292,8 @@ fn screen_picker_opens_on_the_configured_row_and_routes_it_back() {
 
 // Covers: an internal agent or the permission screen configured with an
 // alias (`mistral-small-latest`) opens on the row its model is listed under,
-// and the screen picker adds no second "not listed" row for it (#1945).
+// which keeps the alias, so Enter leaves the configuration as written; the
+// screen picker adds no second "not listed" row for it (#1945).
 // Owner: internal agent and permission screen model pickers
 #[test]
 fn a_configured_alias_opens_on_its_listed_row() {
@@ -352,17 +353,17 @@ fn a_configured_alias_opens_on_its_listed_row() {
                 vec![
                     CLEAR_MODEL_OVERRIDE.to_string(),
                     "mistral/mistral-medium-2604".into(),
-                    "mistral/mistral-small-2603".into(),
+                    "mistral/mistral-small-latest".into(),
                 ],
-                "mistral/mistral-small-2603".into(),
+                "mistral/mistral-small-latest".into(),
             ),
             (
                 vec![
                     CLEAR_MODEL_OVERRIDE.to_string(),
                     "mistral/mistral-medium-2604".into(),
-                    "mistral/mistral-small-2603".into(),
+                    "mistral/mistral-small-latest".into(),
                 ],
-                "mistral/mistral-small-2603".into(),
+                "mistral/mistral-small-latest".into(),
             ),
         ]
     );

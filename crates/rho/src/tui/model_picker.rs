@@ -691,7 +691,7 @@ fn catalog_picker(
         model: current_model,
         badge: selected_badge,
     } = current;
-    // A current alias (`mistral-small-latest`) marks the row it is listed
+    // A current alias (`mistral-small-latest`) takes the row it is listed
     // under, or its own row where a daemon lists it in that row's place.
     let identity = crate::app::ModelIds::new(current_provider, current_model);
     let is_current =
@@ -708,9 +708,15 @@ fn catalog_picker(
     let items = ordered
         .into_iter()
         .map(|entry| {
-            let value = rho_providers::provider::model_reference(&entry.provider, &entry.model);
             let pinned = favorites::is_favorite(&favorites, &entry.provider, &entry.model);
             let selected = is_current(&entry);
+            // The current row picks the id as configured, so Enter on it
+            // keeps a floating alias rather than pinning its listed id.
+            let value = if selected {
+                rho_providers::provider::model_reference(current_provider, current_model)
+            } else {
+                rho_providers::provider::model_reference(&entry.provider, &entry.model)
+            };
             let badge = match (pinned, selected) {
                 (true, true) => Some(PickerBadge {
                     text: format!("pinned, {selected_badge}"),
