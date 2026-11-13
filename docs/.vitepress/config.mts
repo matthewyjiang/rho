@@ -264,6 +264,15 @@ export default withMermaid({
   },
   vite: {
     plugins: [installScriptsPlugin()],
+    // mermaid >= 11.17 imports the CJS-only fastdom modules, which
+    // vitepress-plugin-mermaid does not pre-bundle. Without this the dev
+    // server serves raw CJS and the app fails to mount (blank page).
+    optimizeDeps: {
+      include: [
+        'mermaid > fastdom',
+        'mermaid > fastdom/extensions/fastdom-promised.js',
+      ],
+    },
   },
   themeConfig: {
     nav: [
