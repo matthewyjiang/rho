@@ -449,16 +449,19 @@ fn start_waiting_workflow(server: &mut AcpServer, session_id: &str) -> Value {
     call
 }
 
-/// The work updates and state among `updates` that a cancel answered
-/// with them brought, through the first state: a turn the daemon starts
-/// to deliver the result may follow it.
-fn stopped_early(updates: &[Value]) -> Vec<Value> {
-    let mut traffic = background_traffic(updates);
-    if let Some(state) = traffic
+/// The work updates and state a cancel answered with `early` brought,
+/// through the first state: those that came with the answer, then, until
+/// the state arrives, those read after it. The answer only accepts the
+/// cancel, so it may come before, between, or after them, and a turn the
+/// daemon starts to deliver the result may follow the state.
+fn stopped(server: &AcpServer, early: &[Value], kinds: &[&str], what: &str) -> Vec<Value> {
+    let mut traffic = background_traffic(early);
+    match traffic
         .iter()
         .position(|update| update["sessionUpdate"] == "state_update")
     {
-        traffic.truncate(state + 1);
+        Some(state) => traffic.truncate(state + 1),
+        None => traffic.extend(until_state(server, kinds, what)),
     }
     traffic
 }
@@ -583,17 +586,13 @@ fn v2_cancels_a_background_terminal() {
     assert!(terminal.is_string(), "{updates:#?}");
     let cancel = json!({"sessionId": session_id, "terminalId": terminal});
 
-    // The answer only accepts the cancel, so the exit may come before or
-    // after it.
     let (accepted, early) = server.request("terminal/cancel", cancel.clone());
-    let mut stopped = stopped_early(&early);
-    if stopped.is_empty() {
-        stopped = until_state(
-            &server,
-            &["terminal_update"],
-            "the cancelled terminal's exit",
-        );
-    }
+    let stopped = stopped(
+        &server,
+        &early,
+        &["terminal_update"],
+        "the cancelled terminal's exit",
+    );
     let (again, _) = server.request("terminal/cancel", cancel);
 
     assert_eq!(
@@ -658,13 +657,13 @@ fn v2_cancels_a_background_workflow() {
     let call = start_waiting_workflow(&mut server, &session_id);
     let cancel = json!({"sessionId": session_id, "toolCallId": call});
 
-    // The answer only accepts the cancel, so the run's end may come
-    // before or after it.
     let (accepted, early) = server.request("tool_call/cancel", cancel.clone());
-    let mut stopped = stopped_early(&early);
-    if stopped.is_empty() {
-        stopped = until_state(&server, &["tool_call_update"], "the cancelled run's end");
-    }
+    let stopped = stopped(
+        &server,
+        &early,
+        &["tool_call_update"],
+        "the cancelled run's end",
+    );
     let (again, _) = server.request("tool_call/cancel", cancel);
 
     assert_eq!(
