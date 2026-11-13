@@ -57,7 +57,7 @@ use super::{
     daemon_cli::Unreachable,
     daemon_client::{Daemon, DaemonError},
 };
-use crate::daemon::ConnectAs;
+use crate::{app::session_options::OfferedModels, daemon::ConnectAs};
 
 mod check;
 mod dispatch;
@@ -218,7 +218,7 @@ impl SessionControl {
         crate::worktree::require(params.worktree, opened.worktree.as_ref())
             .map_err(|error| ControlError::Invalid(error.to_string()))?;
         if let Some(model) = params.model {
-            let model = choose_model(&opened.options.model.available, &model)?;
+            let model = choose_model(&opened.options.model, &model)?;
             self.daemon
                 .request::<SessionConfigure>(&SessionConfigureParams {
                     session: opened.session.clone(),
@@ -495,23 +495,23 @@ fn prompt_content(text: &str) -> Result<Vec<ContentBlock>, ControlError> {
 /// The model `wanted` names among those the session offers: `provider/model`,
 /// or a model id one provider alone offers.
 fn choose_model(
-    available: &[rho_protocol::ModelChoice],
+    options: &rho_protocol::ModelOptions,
     wanted: &str,
 ) -> Result<ModelRef, ControlError> {
-    let named = |choice: &&rho_protocol::ModelChoice| {
-        format!("{}/{}", choice.model.provider, choice.model.model) == wanted
-    };
-    if let Some(choice) = available.iter().find(named) {
+    let offered = OfferedModels::new(options);
+    if let Some(choice) = offered.by_reference(wanted) {
         return Ok(choice.model.clone());
     }
-    let by_id: Vec<_> = available
+    let by_id: Vec<_> = options
+        .available
         .iter()
-        .filter(|choice| choice.model.model == wanted)
+        .filter(|choice| offered.answers(choice, wanted))
         .collect();
     match by_id.as_slice() {
         [choice] => Ok(choice.model.clone()),
         _ => {
-            let offered: Vec<String> = available
+            let offered: Vec<String> = options
+                .available
                 .iter()
                 .map(|choice| format!("{}/{}", choice.model.provider, choice.model.model))
                 .collect();

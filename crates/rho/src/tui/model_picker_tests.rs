@@ -289,3 +289,81 @@ fn screen_picker_opens_on_the_configured_row_and_routes_it_back() {
         assert_eq!(row, expected, "{current:?}");
     }
 }
+
+// Covers: an internal agent or the permission screen configured with an
+// alias (`mistral-small-latest`) opens on the row its model is listed under,
+// and the screen picker adds no second "not listed" row for it (#1945).
+// Owner: internal agent and permission screen model pickers
+#[test]
+fn a_configured_alias_opens_on_its_listed_row() {
+    use rho_providers::model::provider_models::{
+        replace_cached_aliased_provider_models_for_tests, with_provider_models_cache_dir_for_tests,
+    };
+
+    let available_auths = ["mistral-api-key".to_string()];
+    let cache = tempfile::tempdir().unwrap();
+    let (agent, screen) = with_provider_models_cache_dir_for_tests(cache.path().into(), || {
+        replace_cached_aliased_provider_models_for_tests(
+            "mistral",
+            &[
+                ("mistral-medium-2604", "Mistral Medium", &[]),
+                (
+                    "mistral-small-2603",
+                    "Mistral Small 4",
+                    &["mistral-small-latest"],
+                ),
+            ],
+        )
+        .unwrap();
+        let agent = internal_agent_model_picker(InternalAgentPickerInputs {
+            available_auths: &available_auths,
+            ..inputs(
+                InternalAgentSelection::RhoModel {
+                    provider: "mistral".into(),
+                    model: "mistral-small-latest".into(),
+                },
+                FallbackModelRow::Conversation { selected: false },
+                ClaudeCodeRows::Omitted,
+            )
+        });
+        let screen = screen_model_picker(ScreenPickerInputs {
+            current: ScreenSelection::Text {
+                provider: "mistral".into(),
+                model: "mistral-small-latest".into(),
+            },
+            classifier: None,
+            decision_models: Vec::new(),
+            favorite_models: &[],
+            available_auths: &available_auths,
+            scope: ModelPickerScope::All,
+            keybindings: default_keybindings(),
+        });
+        (agent, screen)
+    });
+
+    let shape = |picker: &UiPicker| {
+        let values: Vec<_> = picker.items.iter().map(|item| item.value.clone()).collect();
+        (values, picker.items[picker.selected].value.clone())
+    };
+    assert_eq!(
+        [shape(&agent), shape(&screen)],
+        [
+            (
+                vec![
+                    CLEAR_MODEL_OVERRIDE.to_string(),
+                    "mistral/mistral-medium-2604".into(),
+                    "mistral/mistral-small-2603".into(),
+                ],
+                "mistral/mistral-small-2603".into(),
+            ),
+            (
+                vec![
+                    CLEAR_MODEL_OVERRIDE.to_string(),
+                    "mistral/mistral-medium-2604".into(),
+                    "mistral/mistral-small-2603".into(),
+                ],
+                "mistral/mistral-small-2603".into(),
+            ),
+        ]
+    );
+}

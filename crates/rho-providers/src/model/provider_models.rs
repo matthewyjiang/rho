@@ -55,6 +55,30 @@ pub fn listed_model_id(provider: &str, model: &str) -> String {
     aliases::canonical_model(provider, model)
         .unwrap_or_else(|| canonicalize_cached_model_id(provider, model))
 }
+
+/// A model that answers to its own id and the id it is listed under, so
+/// a current alias (`mistral-small-latest`) matches its listed row
+/// (`mistral-small-2603`) as well as a row carrying the alias itself.
+pub struct ModelIdentity<'a> {
+    provider: &'a str,
+    model: &'a str,
+    listed: String,
+}
+
+impl<'a> ModelIdentity<'a> {
+    pub fn new(provider: &'a str, model: &'a str) -> Self {
+        Self {
+            provider,
+            model,
+            listed: listed_model_id(provider, model),
+        }
+    }
+
+    /// Whether `provider`'s `model` names this model.
+    pub fn is(&self, provider: &str, model: &str) -> bool {
+        provider == self.provider && (model == self.model || model == self.listed)
+    }
+}
 pub use openai_compatible::probe_provider_models;
 #[path = "provider_models/cli.rs"]
 mod cli;
@@ -918,17 +942,24 @@ pub fn replace_cached_provider_models_for_tests(
     replace_cached_provider_models(provider, models)
 }
 
-/// [`replace_cached_provider_models_for_tests`] where each listed model also
-/// carries the alias ids discovery gave it.
+/// Caches `provider`'s discovered models as `(model, display name, aliases)`,
+/// each listed under `model` and answering to its alias ids.
 #[doc(hidden)]
 pub fn replace_cached_aliased_provider_models_for_tests(
     provider: &str,
-    models: &[(ProviderModel, &[&str])],
+    models: &[(&str, &str, &[&str])],
 ) -> Result<(), ModelError> {
     let records = models
         .iter()
-        .map(|(model, aliases)| ProviderModelRecord {
-            model: model.clone(),
+        .map(|(model, display_name, aliases)| ProviderModelRecord {
+            model: ProviderModel {
+                provider: provider.into(),
+                model: (*model).into(),
+                display_name: (*display_name).into(),
+                context_window: None,
+                max_output_tokens: None,
+                reasoning_capabilities: ReasoningCapabilities::Unknown,
+            },
             raw_json: Value::Null,
             aliases: aliases.iter().map(|alias| (*alias).to_owned()).collect(),
         })

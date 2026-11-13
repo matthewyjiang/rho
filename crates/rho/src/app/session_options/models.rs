@@ -12,7 +12,7 @@ use rho_providers::{
         },
         display_name::model_display_name,
         favorites,
-        provider_models::listed_model_id,
+        provider_models::ModelIdentity,
     },
     provider::{model_reference, provider_descriptor},
 };
@@ -34,11 +34,8 @@ pub(super) fn model_options(
     favorite_models: &[String],
     mut available: Vec<ModelCatalogEntry>,
 ) -> wire::ModelOptions {
-    let listed_current = listed_model_id(&current.provider, &current.model);
-    let is_current = |entry: &ModelCatalogEntry| {
-        entry.provider == current.provider
-            && (entry.model == current.model || entry.model == listed_current)
-    };
+    let identity = ModelIdentity::new(&current.provider, &current.model);
+    let is_current = |entry: &ModelCatalogEntry| identity.is(&entry.provider, &entry.model);
     if !available.iter().any(is_current) {
         available.push(ModelCatalogEntry {
             provider: current.provider.clone(),
@@ -70,6 +67,42 @@ pub(super) fn model_options(
                 label,
             })
             .collect(),
+    }
+}
+
+/// Finds the choice in a session's [`wire::ModelOptions`] that a host's
+/// request names. The current model's row also answers to the id a current
+/// alias is listed under, since [`model_options`] puts the alias in that
+/// row's place: `mistral/mistral-small-2603` names a session's
+/// `mistral-small-latest` rather than a model it no longer offers.
+pub(crate) struct OfferedModels<'a> {
+    options: &'a wire::ModelOptions,
+    current: ModelIdentity<'a>,
+}
+
+impl<'a> OfferedModels<'a> {
+    pub(crate) fn new(options: &'a wire::ModelOptions) -> Self {
+        Self {
+            options,
+            current: ModelIdentity::new(&options.current.provider, &options.current.model),
+        }
+    }
+
+    /// The choice `reference` (`provider/model`) names, split on its first
+    /// `/` so a model id may itself contain slashes.
+    pub(crate) fn by_reference(&self, reference: &str) -> Option<&'a wire::ModelChoice> {
+        let (provider, model) = reference.split_once('/')?;
+        self.options
+            .available
+            .iter()
+            .find(|choice| choice.model.provider == provider && self.answers(choice, model))
+    }
+
+    /// Whether `choice` answers to the bare model id `model`.
+    pub(crate) fn answers(&self, choice: &wire::ModelChoice, model: &str) -> bool {
+        choice.model.model == model
+            || (choice.model == self.options.current
+                && self.current.is(&choice.model.provider, model))
     }
 }
 

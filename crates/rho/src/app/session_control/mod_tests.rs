@@ -24,7 +24,12 @@ fn a_model_is_chosen_by_provider_and_id() {
         choice("azure", "gpt"),
         choice("xai", "grok"),
     ];
-    let chosen = |wanted| choose_model(&offered, wanted).map_err(|error| error.to_string());
+    let options = rho_protocol::ModelOptions {
+        current: offered[0].model.clone(),
+        auth: "api-key".into(),
+        available: offered.to_vec(),
+    };
+    let chosen = |wanted| choose_model(&options, wanted).map_err(|error| error.to_string());
 
     assert_eq!(
         [chosen("azure/gpt"), chosen("grok"), chosen("gpt")],

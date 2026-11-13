@@ -73,6 +73,6 @@ pub use bootstrap::run;
 pub(crate) use login::confirms_sign_in;
 pub(crate) use session_options::{
     available_auths, config_for_new_session, read_config_file, reasoning_from_wire, DraftOptions,
-    LaunchFlag, SettingOrigin, SettingOrigins,
+    LaunchFlag, OfferedModels, SettingOrigin, SettingOrigins,
 };
 pub(crate) use session_runtime::SettingChangeError;

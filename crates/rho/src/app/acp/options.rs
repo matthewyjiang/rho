@@ -30,7 +30,10 @@ use super::{
     host_features::Toggles,
     permission::{mode_id, parse_mode_id},
 };
-use crate::{app::session_options::reasoning_from_wire, permission::PermissionMode};
+use crate::{
+    app::session_options::{reasoning_from_wire, OfferedModels},
+    permission::PermissionMode,
+};
 
 pub(super) const MODE_CONFIG_ID: &str = "mode";
 pub(super) const MODEL_CONFIG_ID: &str = "model";
@@ -168,16 +171,9 @@ fn model_option(models: &wire::ModelOptions) -> SessionConfigOption {
         .category(SessionConfigOptionCategory::Model)
 }
 
-/// The listed model `value` names, split on its first `/` so a model id
-/// may itself contain slashes.
+/// The offered model `value` (`provider/model`) names.
 fn model_change(value: &str, models: &wire::ModelOptions) -> Result<SessionChange, AcpError> {
-    let listed = value.split_once('/').and_then(|(provider, model)| {
-        models
-            .available
-            .iter()
-            .find(|choice| choice.model.provider == provider && choice.model.model == model)
-    });
-    match listed {
+    match OfferedModels::new(models).by_reference(value) {
         Some(choice) => Ok(SessionChange::Model {
             model: choice.model.clone(),
             auth: None,
