@@ -1,7 +1,9 @@
 use pretty_assertions::assert_eq;
 use rho_protocol::{ModelChoice, ModelOptions, ModelRef};
 
-use super::{model_choice, next_choice};
+use rho_providers::model::favorites::CycleDirection;
+
+use super::{model_choice, next_choice, next_pinned_model};
 
 // Covers: a bare id shared by two providers must not silently select the
 // wrong provider; fully qualified choices work without any local catalog.
@@ -216,6 +218,97 @@ fn the_model_picker_lays_offered_models_out_by_pin_and_pending_switch() {
         ),
         "a switch queued behind the turn"
     );
+}
+
+// Covers: a session on an alias (Mistral's default `mistral-medium-latest`)
+// gets the alias in its listed model's row from the daemon: the picker opens
+// on that row, marked selected and pinned by a pin of the listed id; pin
+// cycling moves on from that pin; and `/model` with the
+// listed id names the current model rather than refusing it (#1945).
+// Owner: tui daemon session options
+#[test]
+fn a_current_alias_is_the_row_offered_in_its_listed_models_place() {
+    use rho_providers::model::provider_models::{
+        replace_cached_aliased_provider_models_for_tests, with_provider_models_cache_dir_for_tests,
+    };
+
+    let model = |provider: &str, model: &str| ModelRef {
+        provider: provider.into(),
+        model: model.into(),
+    };
+    let alias = model("mistral", "mistral-small-latest");
+    let cache = tempfile::tempdir().unwrap();
+    let (picker, by_listed_id, cycled) =
+        with_provider_models_cache_dir_for_tests(cache.path().to_path_buf(), || {
+            replace_cached_aliased_provider_models_for_tests(
+                "mistral",
+                &[(
+                    "mistral-small-2603",
+                    "Mistral Small 4",
+                    &["mistral-small-latest"],
+                )],
+            )
+            .unwrap();
+            let mut app = crate::tui::tests::test_app();
+            app.info.runtime.favorite_models = vec![
+                "xai/grok".into(),
+                "mistral/mistral-small-2603".into(),
+                "poolside/laguna".into(),
+            ];
+            let mut options = options_on("mistral", "api-key");
+            options.model.current = alias.clone();
+            options.model.available = [
+                model("xai", "grok"),
+                alias.clone(),
+                model("poolside", "laguna"),
+            ]
+            .map(|model| ModelChoice {
+                label: model.model.clone(),
+                model,
+            })
+            .to_vec();
+            app.show_daemon_options(options);
+            let picker = app.daemon_model_picker().expect("daemon options are shown");
+            let by_listed_id = model_choice(
+                &app.daemon_options.as_ref().unwrap().model,
+                "mistral/mistral-small-2603",
+            )
+            .ok();
+            let options = &app.daemon_options.as_ref().unwrap().model;
+            let favorites = rho_providers::model::favorites::normalized_favorite_models(
+                &app.info.runtime.favorite_models,
+            );
+            let cycled = next_pinned_model(
+                &options.available,
+                &favorites,
+                &options.current,
+                CycleDirection::Forward,
+            )
+            .cloned();
+            (picker, by_listed_id, cycled)
+        });
+
+    let rows: Vec<_> = picker
+        .items
+        .iter()
+        .map(|item| {
+            let badge = item.badge.as_ref().map(|badge| badge.text.as_str());
+            (item.value.as_str(), badge)
+        })
+        .collect();
+    assert_eq!(
+        (rows, picker.selected),
+        (
+            vec![
+                ("xai/grok", Some("pinned")),
+                ("mistral/mistral-small-latest", Some("pinned, selected")),
+                ("poolside/laguna", Some("pinned")),
+            ],
+            1
+        )
+    );
+    assert_eq!(by_listed_id, Some(alias));
+    assert_eq!(cycled, Some(model("poolside", "laguna")));
 }
 
 /// Who asked for the model switch whose options arrive.

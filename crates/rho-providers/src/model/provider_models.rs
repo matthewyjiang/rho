@@ -55,6 +55,7 @@ pub fn listed_model_id(provider: &str, model: &str) -> String {
     aliases::canonical_model(provider, model)
         .unwrap_or_else(|| canonicalize_cached_model_id(provider, model))
 }
+
 pub use openai_compatible::probe_provider_models;
 #[path = "provider_models/cli.rs"]
 mod cli;
@@ -916,6 +917,31 @@ pub fn replace_cached_provider_models_for_tests(
     models: &[ProviderModel],
 ) -> Result<(), ModelError> {
     replace_cached_provider_models(provider, models)
+}
+
+/// Caches `provider`'s discovered models as `(model, display name, aliases)`,
+/// each listed under `model` and answering to its alias ids.
+#[doc(hidden)]
+pub fn replace_cached_aliased_provider_models_for_tests(
+    provider: &str,
+    models: &[(&str, &str, &[&str])],
+) -> Result<(), ModelError> {
+    let records = models
+        .iter()
+        .map(|(model, display_name, aliases)| ProviderModelRecord {
+            model: ProviderModel {
+                provider: provider.into(),
+                model: (*model).into(),
+                display_name: (*display_name).into(),
+                context_window: None,
+                max_output_tokens: None,
+                reasoning_capabilities: ReasoningCapabilities::Unknown,
+            },
+            raw_json: Value::Null,
+            aliases: aliases.iter().map(|alias| (*alias).to_owned()).collect(),
+        })
+        .collect::<Vec<_>>();
+    replace_cached_provider_model_records(provider, &records)
 }
 
 #[cfg(test)]

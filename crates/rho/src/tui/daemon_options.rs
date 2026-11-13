@@ -4,29 +4,30 @@
 //! replaced here and no local config default is written on behalf of a session.
 
 use rho_protocol::{ModelRef, SessionChange, SessionOptions};
-use rho_providers::model::favorites::CycleDirection;
+use rho_providers::model::favorites::{CycleDirection, FavoriteModel};
 
 use super::{
     config_row::{permission_mode_picker, ConfigRow},
     settings_screen::ConfigPage,
     App, CommandId, CommandInvocation, ComposerMode, Entry, UiPicker,
 };
-use crate::{app::reasoning_from_wire, permission::PermissionMode};
+use crate::{
+    app::{reasoning_from_wire, OfferedModels},
+    permission::PermissionMode,
+};
 
 /// Resolve only advertised identities (or their unique labels). Local aliases,
-/// credentials and catalog capabilities are not the daemon's choices.
+/// credentials and catalog capabilities are not the daemon's choices; a
+/// current alias's row also answers to its listed id (see [`OfferedModels`]).
 fn model_choice(options: &rho_protocol::ModelOptions, reference: &str) -> anyhow::Result<ModelRef> {
-    if let Some(choice) = options
-        .available
-        .iter()
-        .find(|choice| reference == format!("{}/{}", choice.model.provider, choice.model.model))
-    {
+    let offered = OfferedModels::new(options);
+    if let Some(choice) = offered.by_reference(reference) {
         return Ok(choice.model.clone());
     }
     let matches: Vec<_> = options
         .available
         .iter()
-        .filter(|choice| reference == choice.model.model || reference == choice.label)
+        .filter(|choice| offered.answers(choice, reference) || reference == choice.label)
         .collect();
     match matches.as_slice() {
         [choice] => Ok(choice.model.clone()),
@@ -70,6 +71,35 @@ pub(super) fn change_failure(change: &SessionChange) -> String {
 fn next_choice<T: Copy + PartialEq>(current: T, available: &[T]) -> Option<T> {
     let index = available.iter().position(|value| *value == current)?;
     available.get((index + 1) % available.len()).copied()
+}
+
+/// The offered model pin cycling moves to from `current`, in pin order, or
+/// `None` when no pin is offered. A pin of a listed id names the row a
+/// current alias holds in its place.
+fn next_pinned_model<'a>(
+    offered: &'a [rho_protocol::ModelChoice],
+    favorites: &[FavoriteModel],
+    current: &ModelRef,
+    direction: CycleDirection,
+) -> Option<&'a ModelRef> {
+    let pinned: Vec<_> = favorites
+        .iter()
+        .filter_map(|favorite| {
+            offered
+                .iter()
+                .find(|choice| favorite.matches(&choice.model.provider, &choice.model.model))
+        })
+        .map(|choice| &choice.model)
+        .collect();
+    let last = pinned.len().checked_sub(1)?;
+    let index = pinned.iter().position(|model| *model == current);
+    let next = match (direction, index) {
+        (CycleDirection::Forward, Some(index)) => (index + 1) % pinned.len(),
+        (CycleDirection::Backward, Some(index)) => (index + last) % pinned.len(),
+        (CycleDirection::Forward, None) => 0,
+        (CycleDirection::Backward, None) => last,
+    };
+    Some(pinned[next])
 }
 
 /// What a change asked for mid-turn says when it has no wording of its own.
@@ -328,20 +358,6 @@ impl App {
         let favorites = rho_providers::model::favorites::normalized_favorite_models(
             &self.info.runtime.favorite_models,
         );
-        // In pin order.
-        let available: Vec<_> = favorites
-            .iter()
-            .filter_map(|favorite| {
-                options.model.available.iter().find(|choice| {
-                    favorite.provider == choice.model.provider
-                        && favorite.model == choice.model.model
-                })
-            })
-            .collect();
-        if available.is_empty() {
-            self.notify_status("no pinned models offered by the daemon session");
-            return Ok(());
-        }
         let current = self
             .daemon_option_requests
             .iter()
@@ -351,16 +367,13 @@ impl App {
                 _ => None,
             })
             .unwrap_or(&options.model.current);
-        let index = available.iter().position(|choice| choice.model == *current);
-        let next = match (direction, index) {
-            (CycleDirection::Forward, Some(index)) => (index + 1) % available.len(),
-            (CycleDirection::Backward, Some(index)) => {
-                (index + available.len() - 1) % available.len()
-            }
-            (CycleDirection::Forward, None) => 0,
-            (CycleDirection::Backward, None) => available.len() - 1,
+        let Some(model) =
+            next_pinned_model(&options.model.available, &favorites, current, direction)
+        else {
+            self.notify_status("no pinned models offered by the daemon session");
+            return Ok(());
         };
-        let model = available[next].model.clone();
+        let model = model.clone();
         self.configure_daemon(SessionChange::Model {
             model,
             auth: None,

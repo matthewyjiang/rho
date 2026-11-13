@@ -12,6 +12,7 @@ use rho_providers::{
         },
         display_name::model_display_name,
         favorites,
+        provider_models::listed_model_id,
     },
     provider::{model_reference, provider_descriptor},
 };
@@ -22,6 +23,10 @@ use crate::app::session_runtime::CurrentModel;
 /// `available`, plus `current` when no catalog lists it so it stays
 /// selectable, favorites first in the TUI picker's order.
 ///
+/// A current alias (`mistral-medium-latest`) takes the place of the row its
+/// model is listed under, keeping that row's label, so `current` is always
+/// one of the choices and never shows twice.
+///
 /// Host pickers are narrow and truncate long labels, so each label is the
 /// short name a person recognizes (see [`model_labels`]).
 pub(super) fn model_options(
@@ -29,11 +34,9 @@ pub(super) fn model_options(
     favorite_models: &[String],
     mut available: Vec<ModelCatalogEntry>,
 ) -> wire::ModelOptions {
-    let current_reference = model_reference(&current.provider, &current.model);
-    if !available
-        .iter()
-        .any(|entry| model_reference(&entry.provider, &entry.model) == current_reference)
-    {
+    let identity = ModelIds::new(&current.provider, &current.model);
+    let is_current = |entry: &ModelCatalogEntry| identity.is(&entry.provider, &entry.model);
+    if !available.iter().any(is_current) {
         available.push(ModelCatalogEntry {
             provider: current.provider.clone(),
             model: current.model.clone(),
@@ -54,12 +57,76 @@ pub(super) fn model_options(
             .zip(ordered)
             .map(|(label, entry)| wire::ModelChoice {
                 model: wire::ModelRef {
+                    model: if is_current(&entry) {
+                        current.model.clone()
+                    } else {
+                        entry.model
+                    },
                     provider: entry.provider,
-                    model: entry.model,
                 },
                 label,
             })
             .collect(),
+    }
+}
+
+/// A model that answers to its own id and the id it is listed under, so
+/// a current alias (`mistral-small-latest`) matches its listed row
+/// (`mistral-small-2603`) as well as a row carrying the alias itself.
+pub(crate) struct ModelIds<'a> {
+    provider: &'a str,
+    model: &'a str,
+    listed: String,
+}
+
+impl<'a> ModelIds<'a> {
+    pub(crate) fn new(provider: &'a str, model: &'a str) -> Self {
+        Self {
+            provider,
+            model,
+            listed: listed_model_id(provider, model),
+        }
+    }
+
+    /// Whether `provider`'s `model` names this model.
+    pub(crate) fn is(&self, provider: &str, model: &str) -> bool {
+        provider == self.provider && (model == self.model || model == self.listed)
+    }
+}
+
+/// Finds the choice in a session's [`wire::ModelOptions`] that a host's
+/// request names. The current model's row also answers to the id a current
+/// alias is listed under, since [`model_options`] puts the alias in that
+/// row's place: `mistral/mistral-small-2603` names a session's
+/// `mistral-small-latest` rather than a model it no longer offers.
+pub(crate) struct OfferedModels<'a> {
+    options: &'a wire::ModelOptions,
+    current: ModelIds<'a>,
+}
+
+impl<'a> OfferedModels<'a> {
+    pub(crate) fn new(options: &'a wire::ModelOptions) -> Self {
+        Self {
+            options,
+            current: ModelIds::new(&options.current.provider, &options.current.model),
+        }
+    }
+
+    /// The choice `reference` (`provider/model`) names, split on its first
+    /// `/` so a model id may itself contain slashes.
+    pub(crate) fn by_reference(&self, reference: &str) -> Option<&'a wire::ModelChoice> {
+        let (provider, model) = reference.split_once('/')?;
+        self.options
+            .available
+            .iter()
+            .find(|choice| choice.model.provider == provider && self.answers(choice, model))
+    }
+
+    /// Whether `choice` answers to the bare model id `model`.
+    pub(crate) fn answers(&self, choice: &wire::ModelChoice, model: &str) -> bool {
+        choice.model.model == model
+            || (choice.model == self.options.current
+                && self.current.is(&choice.model.provider, model))
     }
 }
 

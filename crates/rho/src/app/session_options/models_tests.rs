@@ -6,10 +6,12 @@ use rho_providers::model::{
     models_dev::{
         with_models_dev_cache_dir_for_tests, write_cached_model_metadata_for_tests, ModelMetadata,
     },
-    provider_models::with_provider_models_cache_dir_for_tests,
+    provider_models::{
+        replace_cached_aliased_provider_models_for_tests, with_provider_models_cache_dir_for_tests,
+    },
 };
 
-use super::{model_options, resolve_model, AuthPick, CurrentModel, ModelRefused};
+use super::{model_options, resolve_model, AuthPick, CurrentModel, ModelRefused, OfferedModels};
 
 fn entry(provider: &str, model: &str) -> ModelCatalogEntry {
     ModelCatalogEntry {
@@ -137,6 +139,76 @@ fn current_model_absent_from_available_is_appended() {
                 choice("custom/local-model", "local-model"),
             ],
         }
+    );
+}
+
+// Covers: a current model set by an alias id (Mistral's default
+// `mistral-medium-latest`) is offered once, in its listed row's place under
+// that row's label, so a host picker marks the row and shows no second one;
+// a request naming the listed id still finds that row (#1945)
+// Owner: session options
+#[test]
+fn a_current_alias_takes_its_listed_rows_place() {
+    let (options, lookups) = with_catalog_names(&[], || {
+        replace_cached_aliased_provider_models_for_tests(
+            "mistral",
+            &[(
+                "mistral-small-2603",
+                "Mistral Small 4",
+                &["mistral-small-latest"],
+            )],
+        )
+        .unwrap();
+        let options = model_options(
+            &current("mistral", "mistral-small-latest"),
+            &[],
+            vec![
+                entry("mistral", "mistral-small-2603"),
+                entry("xai", "grok-3"),
+            ],
+        );
+        let offered = OfferedModels::new(&options);
+        let found = [
+            "mistral/mistral-small-2603",
+            "mistral/mistral-small-latest",
+            "xai/grok-3",
+            "xai/mistral-small-2603",
+        ]
+        .map(|reference| {
+            offered
+                .by_reference(reference)
+                .map(|choice| choice.model.clone())
+        });
+        let by_id = options
+            .available
+            .iter()
+            .filter(|choice| offered.answers(choice, "mistral-small-2603"))
+            .count();
+        (options, (found, by_id))
+    });
+
+    assert_eq!(
+        options,
+        wire::ModelOptions {
+            current: model_ref("mistral", "mistral-small-latest"),
+            auth: "api-key".into(),
+            available: vec![
+                choice("mistral/mistral-small-latest", "Mistral Small 4"),
+                choice("xai/grok-3", "grok-3"),
+            ],
+        }
+    );
+    assert_eq!(
+        lookups,
+        (
+            [
+                Some(model_ref("mistral", "mistral-small-latest")),
+                Some(model_ref("mistral", "mistral-small-latest")),
+                Some(model_ref("xai", "grok-3")),
+                None,
+            ],
+            1
+        )
     );
 }
 

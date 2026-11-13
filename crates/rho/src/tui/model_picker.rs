@@ -387,18 +387,22 @@ pub(super) fn internal_agent_model_picker(inputs: InternalAgentPickerInputs<'_>)
     if claude_code == ClaudeCodeRows::Offered {
         leading.extend(claude_code_rows(&current));
     }
+    let leading_rows = leading.len();
     catalog.items.splice(0..0, leading);
 
     // A selected fallback row outranks `current`, which then still carries
-    // the fallback model and so may also name a catalog row.
-    let wanted_value = if fallback_selected {
-        Some(CLEAR_MODEL_OVERRIDE.to_string())
-    } else {
-        current.row_value()
+    // the fallback model and so may also name a catalog row. A Rho model's
+    // row is the catalog's, which knows the row an alias is listed under.
+    let row_of = |value: String| catalog.items.iter().position(|item| item.value == value);
+    catalog.current_row = match &current {
+        _ if fallback_selected => row_of(CLEAR_MODEL_OVERRIDE.to_string()),
+        InternalAgentSelection::RhoModel { .. } => {
+            catalog.current_row.map(|row| row + leading_rows)
+        }
+        InternalAgentSelection::ClaudeCode { .. } | InternalAgentSelection::Unset => {
+            current.row_value().and_then(row_of)
+        }
     };
-    catalog.selected = wanted_value
-        .and_then(|value| catalog.items.iter().position(|item| item.value == value))
-        .unwrap_or(0);
     catalog.into_internal_agent_models()
 }
 
@@ -495,6 +499,7 @@ pub(super) fn screen_model_picker(inputs: ScreenPickerInputs<'_>) -> UiPicker {
             )
         }
     }));
+    let leading_rows = leading.len();
     catalog.items.splice(0..0, leading);
     let wanted = match &current {
         ScreenSelection::Classifier => CLEAR_MODEL_OVERRIDE.to_string(),
@@ -503,10 +508,17 @@ pub(super) fn screen_model_picker(inputs: ScreenPickerInputs<'_>) -> UiPicker {
             rho_providers::provider::model_reference(provider, model)
         }
     };
+    let listed = match &current {
+        // The catalog knows the row an alias is listed under.
+        ScreenSelection::Text { .. } => catalog.current_row.map(|row| row + leading_rows),
+        ScreenSelection::Classifier | ScreenSelection::Decision { .. } => {
+            catalog.items.iter().position(|item| item.value == wanted)
+        }
+    };
     // A configured model that is not listed (an empty or logged-out decision
     // host, a model gone from the catalog) keeps its own row, so Enter on the
     // row the picker opens on never clears the entry.
-    let selected = match catalog.items.iter().position(|item| item.value == wanted) {
+    let selected = match listed {
         Some(index) => index,
         None => {
             let (section, label) = match &current {
@@ -533,7 +545,7 @@ pub(super) fn screen_model_picker(inputs: ScreenPickerInputs<'_>) -> UiPicker {
             index
         }
     };
-    catalog.selected = selected;
+    catalog.current_row = Some(selected);
     catalog.into_internal_agent_models()
 }
 
@@ -621,14 +633,16 @@ struct CurrentModel<'a> {
 pub(super) struct ModelCatalogPicker {
     pub title: String,
     pub items: Vec<PickerItem>,
-    pub selected: usize,
+    /// The row of the current model, if listed; the picker opens on it,
+    /// else on the first row.
+    pub current_row: Option<usize>,
     pub key_hints: PickerKeyHints,
 }
 
 impl ModelCatalogPicker {
     fn into_picker(self, ctor: impl FnOnce(String, Vec<PickerItem>) -> UiPicker) -> UiPicker {
         let mut picker = ctor(self.title, self.items).with_key_hints(self.key_hints);
-        picker.selected = self.selected;
+        picker.selected = self.current_row.unwrap_or(0);
         picker
     }
 
@@ -677,11 +691,11 @@ fn catalog_picker(
         model: current_model,
         badge: selected_badge,
     } = current;
-    // A current alias (`mistral-small-latest`) marks the row it is listed under.
-    let listed_current =
-        rho_providers::model::provider_models::listed_model_id(current_provider, current_model);
-    let current_model = listed_current.as_str();
-    let current = rho_providers::provider::model_reference(current_provider, current_model);
+    // A current alias (`mistral-small-latest`) takes the row it is listed
+    // under, or its own row where a daemon lists it in that row's place.
+    let identity = crate::app::ModelIds::new(current_provider, current_model);
+    let is_current =
+        |entry: &catalog::ModelCatalogEntry| identity.is(&entry.provider, &entry.model);
     let favorites = favorites::normalized_favorite_models(favorite_models);
     let effective_scope = resolve_scope(scope, &favorites, &available);
     if effective_scope == ModelPickerScope::Pinned {
@@ -689,12 +703,20 @@ fn catalog_picker(
     }
     let pin_key = keybindings.cycle_pinned_model.chrome_label();
     let scope_key = keybindings.toggle_tool_output.chrome_label();
-    let items = favorites::reorder_models_by_favorites(available, &favorites)
+    let ordered = favorites::reorder_models_by_favorites(available, &favorites);
+    let current_row = ordered.iter().position(is_current);
+    let items = ordered
         .into_iter()
         .map(|entry| {
-            let value = rho_providers::provider::model_reference(&entry.provider, &entry.model);
             let pinned = favorites::is_favorite(&favorites, &entry.provider, &entry.model);
-            let selected = entry.provider == current_provider && entry.model == current_model;
+            let selected = is_current(&entry);
+            // The current row picks the id as configured, so Enter on it
+            // keeps a floating alias rather than pinning its listed id.
+            let value = if selected {
+                rho_providers::provider::model_reference(current_provider, current_model)
+            } else {
+                rho_providers::provider::model_reference(&entry.provider, &entry.model)
+            };
             let badge = match (pinned, selected) {
                 (true, true) => Some(PickerBadge {
                     text: format!("pinned, {selected_badge}"),
@@ -725,14 +747,10 @@ fn catalog_picker(
         })
         .collect::<Vec<_>>();
 
-    let selected = items
-        .iter()
-        .position(|item| item.value == current)
-        .unwrap_or(0);
     ModelCatalogPicker {
         title: format!("{title} · {}", effective_scope.title_suffix()),
         items,
-        selected,
+        current_row,
         key_hints: PickerKeyHints {
             pin_toggle: Some(pin_key),
             scope_toggle: Some(scope_key),
