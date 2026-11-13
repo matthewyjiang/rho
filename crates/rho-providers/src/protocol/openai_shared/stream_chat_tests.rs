@@ -71,7 +71,8 @@ fn accumulates_streamed_tool_call_deltas() {
         .unwrap();
     chat_stream
         .handle_line(
-            r#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"pwd\"}"}}]}}]}"#,
+            // Some hosts repeat a literal "null" id on continuation fragments.
+            r#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"null","function":{"arguments":"\"pwd\"}"}}]}}]}"#,
             &mut |_| Ok(()),
         )
         .unwrap();
@@ -260,6 +261,7 @@ fn chat_finish_reason_reports_early_stops() {
         ("stop", None),
         ("tool_calls", None),
         ("length", Some(ModelStopReason::MaxTokens)),
+        ("model_length", Some(ModelStopReason::MaxTokens)),
         ("content_filter", Some(ModelStopReason::Refusal)),
     ] {
         let mut chat_stream = ChatStreamAccumulator::default();
@@ -293,4 +295,79 @@ fn chat_finish_reason_reports_early_stops() {
         );
         assert_eq!(stops, Vec::from_iter(expected), "{finish_reason}");
     }
+}
+
+// Covers: Mistral streams thinking as content chunk lists, and one list can
+// close the thinking and open the answer; neither part may be dropped, and the
+// thinking must be retained for same-model replay
+// Owner: openai chat completions streaming
+#[test]
+fn chat_stream_reads_thinking_and_text_content_chunks() {
+    let mut chat_stream = ChatStreamAccumulator::default();
+    let mut events = Vec::new();
+    let mut on_event = |event: ModelEvent| {
+        events.push(event);
+        Ok(())
+    };
+    for line in [
+        r#"data: {"choices":[{"delta":{"role":"assistant","content":[{"type":"thinking","thinking":[{"type":"text","text":"plan "}]}]}}]}"#,
+        r#"data: {"choices":[{"delta":{"content":[{"type":"thinking","thinking":[{"type":"text","text":"done"}]},{"type":"text","text":"The "}]}}]}"#,
+        r#"data: {"choices":[{"delta":{"content":"answer"},"finish_reason":"stop"}]}"#,
+    ] {
+        chat_stream.handle_line(line, &mut on_event).unwrap();
+    }
+
+    let response = chat_stream.finish(&mut on_event).unwrap();
+
+    assert_eq!(
+        response,
+        ModelResponse::Assistant(vec![ContentBlock::Text("The answer".into())])
+    );
+    let reasoning = events
+        .iter()
+        .filter_map(|event| match event {
+            ModelEvent::ReasoningDelta(text) => Some(text.as_str()),
+            ModelEvent::ProviderContext { kind, data, .. }
+                if kind == "openai_chat_reasoning_content" =>
+            {
+                data.as_str()
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(reasoning, ["plan ", "done", "plan done"]);
+}
+
+// Covers: a generation the host aborted with finish_reason "error" must fail
+// as a retryable provider error instead of committing partial output
+// Owner: openai chat completions streaming
+#[test]
+fn chat_finish_reason_error_fails_retryably() {
+    use crate::model::{ModelError, ProviderReportedErrorKind};
+
+    let mut chat_stream = ChatStreamAccumulator::default();
+    chat_stream
+        .handle_line(
+            r#"data: {"choices":[{"delta":{"content":"partial"}}]}"#,
+            &mut |_| Ok(()),
+        )
+        .unwrap();
+
+    let error = chat_stream
+        .handle_line(
+            r#"data: {"choices":[{"delta":{},"finish_reason":"error"}]}"#,
+            &mut |_| Ok(()),
+        )
+        .unwrap_err();
+
+    assert!(
+        matches!(
+            error,
+            ModelError::ProviderReported {
+                kind: ProviderReportedErrorKind::Unavailable,
+                ..
+            }
+        ),
+        "{error:?}"
+    );
 }

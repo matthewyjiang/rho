@@ -1,5 +1,6 @@
 pub(crate) mod codex_sse;
 pub(crate) mod compact;
+pub(crate) mod content_chunks;
 pub(crate) mod convert;
 pub(crate) mod image_generation;
 pub(crate) mod stream;

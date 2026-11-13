@@ -443,7 +443,13 @@ async fn arm(
     let task = format!("{WAKE_COMMAND} {}", signal.token());
     let title = watcher_title(labels);
     let delegated = host_call(interrupt, |context| {
-        host.delegate(call_id(), &task, Some(title.as_str()), context)
+        host.delegate(
+            call_id(),
+            &task,
+            Some(title.as_str()),
+            /*target*/ None,
+            context,
+        )
     })
     .await;
     let task_id = match delegated {

@@ -173,6 +173,12 @@ fn initialize_schema(connection: &mut Connection, schema: Schema) -> rusqlite::R
                     error text,
                     context_json text
                 );
+                create table if not exists provider_model_aliases (
+                    provider text not null,
+                    alias text not null,
+                    model text not null,
+                    primary key(provider, alias)
+                );
                 create table if not exists decision_models (
                     provider text not null,
                     model text not null,

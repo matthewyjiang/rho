@@ -30,10 +30,11 @@ impl FavoriteModel {
         if self.provider != provider {
             return false;
         }
-        let model = crate::provider::provider_descriptor(provider)
-            .map(|descriptor| descriptor.canonicalize_model_id(model))
-            .unwrap_or_else(|| model.to_string());
-        self.model == model
+        // Compare listed ids so a pin, or a current model, naming an alias
+        // matches the row discovery listed it under. Stored pins keep the id
+        // the user chose.
+        let listed = |model| crate::model::provider_models::listed_model_id(provider, model);
+        listed(&self.model) == listed(model)
     }
 }
 

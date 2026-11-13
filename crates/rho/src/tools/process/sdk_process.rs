@@ -167,8 +167,11 @@ impl Tool for SdkProcess {
         Some(rho_tools::output_schema::<super::output::ProcessOutput>())
     }
 
-    fn start_metadata(&self, _arguments: &serde_json::Value) -> ToolMetadata {
-        process_metadata()
+    /// Replay's view of what [`Self::prepare`] reports; arguments that do
+    /// not parse report only the operation.
+    fn start_metadata(&self, arguments: &serde_json::Value) -> ToolMetadata {
+        ProcessArgs::parse(arguments.clone())
+            .map_or_else(|_| process_metadata(), |args| start_metadata(&args))
     }
 
     fn prepare<'a>(
@@ -179,7 +182,7 @@ impl Tool for SdkProcess {
         let args = parse_args(invocation.into_arguments());
         Box::pin(async move {
             let args = args?;
-            let metadata = process_metadata();
+            let metadata = start_metadata(&args);
             match &args {
                 ProcessArgs::Start { .. } => Ok(PreparedToolInvocation::exclusive(
                     metadata,
@@ -280,6 +283,15 @@ async fn execute_prepared(
 
 fn process_metadata() -> ToolMetadata {
     ToolMetadata::new().operation(OperationKind::Execute)
+}
+
+/// What a call reports as it starts, live and on replay: a start carries its
+/// command line, as a shell call does, so hosts can show what runs.
+fn start_metadata(args: &ProcessArgs) -> ToolMetadata {
+    match args {
+        ProcessArgs::Start { command, .. } => process_metadata().command_line(command),
+        ProcessArgs::Poll { .. } | ProcessArgs::Stop { .. } => process_metadata(),
+    }
 }
 
 fn map_legacy_error(error: rho_tools::tool::ToolError) -> ToolError {

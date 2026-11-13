@@ -1,5 +1,25 @@
 # Changelog
 
+## [2.34.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.33.1...rho-coding-agent-v2.34.0) (2026-11-10)
+
+
+### Features
+
+* **acp:** label T3 subagent threads with the per-call model ([#1786](https://github.com/matthewyjiang/rho/issues/1786)) ([d9eafe4](https://github.com/matthewyjiang/rho/commit/d9eafe480d8baa7e02970e75169c219fc4144546))
+* **providers:** add Mistral AI, with one picker row per model across aliased ids ([#1742](https://github.com/matthewyjiang/rho/issues/1742)) ([ec15d36](https://github.com/matthewyjiang/rho/commit/ec15d36ec68ff07774de3edfb9bcc4134ea7db6c))
+
+
+### Bug Fixes
+
+* **acp:** title process calls with the command they start ([#1790](https://github.com/matthewyjiang/rho/issues/1790)) ([c35dd43](https://github.com/matthewyjiang/rho/commit/c35dd4371e604e326a4d17acd0e19f48872f3c10))
+
+## [2.33.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.33.0...rho-coding-agent-v2.33.1) (2026-11-06)
+
+
+### Bug Fixes
+
+* **acp:** replay reasoning and tool calls as they streamed live ([#1694](https://github.com/matthewyjiang/rho/issues/1694)) ([009dde0](https://github.com/matthewyjiang/rho/commit/009dde0b193f117cdeca2025ce968bc416575899))
+
 ## [2.33.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.32.3...rho-coding-agent-v2.33.0) (2026-11-05)
 
 

@@ -141,8 +141,8 @@ On every issue implementation and PR that touches contracts:
 - [ ] Every compromise has `NEXT_MAJOR(...)` on the API
 - [ ] Helpers cover all arms; docs point hosts at helpers, not partial matches
 - [ ] No new stringly or dual-path debt without a marker
-- [ ] PR notes the compromise briefly under Breaking changes (none) or a short
-      "Next major" bullet if useful for reviewers
+- [ ] PR fills the **Next-major debt** section of the pull request template
+      with each compromise
 
 ## Related
 

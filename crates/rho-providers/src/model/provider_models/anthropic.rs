@@ -115,6 +115,7 @@ fn records_from_listed_models(
                     reasoning_capabilities,
                 },
                 raw_json,
+                aliases: Vec::new(),
             }
         })
         .collect()

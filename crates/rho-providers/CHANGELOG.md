@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.28.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.27.0...rho-providers-v2.28.0) (2026-11-10)
+
+
+### Features
+
+* **providers:** add Mistral AI, with one picker row per model across aliased ids ([#1742](https://github.com/matthewyjiang/rho/issues/1742)) ([ec15d36](https://github.com/matthewyjiang/rho/commit/ec15d36ec68ff07774de3edfb9bcc4134ea7db6c))
+
 ## [2.27.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.26.2...rho-providers-v2.27.0) (2026-11-05)
 
 

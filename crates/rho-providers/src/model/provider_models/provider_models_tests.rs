@@ -486,7 +486,10 @@ async fn openai_compatible_models_preserve_account_context_length() {
 
     let models = openai_compatible::fetch(descriptor, descriptor.default_auth(), &api_base, &store)
         .await
-        .unwrap();
+        .unwrap()
+        .into_iter()
+        .map(|record| record.model)
+        .collect::<Vec<_>>();
 
     assert_eq!(
         models,
@@ -840,66 +843,189 @@ fn cli_provider_models_round_trip_without_canonicalizing_ids() {
 // and Jev decision models that cannot chat; discovery must drop both and keep
 // paid or uncatalogued chat ids
 // Owner: OpenAI-compatible paid-only discovery
-#[tokio::test]
-async fn opencode_refresh_drops_catalog_free_models() {
-    use crate::model::models_dev::{
-        mark_catalog_snapshot_current_for_tests, write_cached_model_metadata_for_tests, ModelCost,
-        ModelMetadata, ModelsDevCacheDirGuard,
-    };
+#[test]
+fn opencode_refresh_drops_catalog_free_models() {
+    with_isolated_catalog_registry(async {
+        use crate::model::models_dev::{
+            mark_catalog_snapshot_current_for_tests, write_cached_model_metadata_for_tests,
+            ModelCost, ModelMetadata, ModelsDevCacheDirGuard,
+        };
 
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let api_base =
-        Url::parse(&format!("http://{}/zen/v1", listener.local_addr().unwrap())).unwrap();
-    tokio::spawn(async move {
-        let (mut stream, _) = listener.accept().await.unwrap();
-        let request = read_http_request(&mut stream).await;
-        assert_eq!(request_target(&request), "GET /zen/v1/models HTTP/1.1");
-        let body = r#"{"data":[{"id":"big-pickle"},{"id":"claude-sonnet-5"},{"id":"new-model"},{"id":"cheap-input-only"},{"id":"jev-1.13"}]}"#;
-        stream
-            .write_all(http_json_response("200 OK", body).as_bytes())
-            .await
-            .unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let api_base =
+            Url::parse(&format!("http://{}/zen/v1", listener.local_addr().unwrap())).unwrap();
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let request = read_http_request(&mut stream).await;
+            assert_eq!(request_target(&request), "GET /zen/v1/models HTTP/1.1");
+            let body = r#"{"data":[{"id":"big-pickle"},{"id":"claude-sonnet-5"},{"id":"new-model"},{"id":"cheap-input-only"},{"id":"jev-1.13"}]}"#;
+            stream
+                .write_all(http_json_response("200 OK", body).as_bytes())
+                .await
+                .unwrap();
+        });
+        let models_dev_cache = tempfile::tempdir().unwrap();
+        let _models_dev = ModelsDevCacheDirGuard::new(models_dev_cache.path().to_path_buf());
+        let priced = |input, output| ModelMetadata {
+            cost_default: Some(ModelCost {
+                input_micros_per_m: Some(input),
+                output_micros_per_m: Some(output),
+                ..ModelCost::default()
+            }),
+            ..ModelMetadata::default()
+        };
+        write_cached_model_metadata_for_tests("opencode", "big-pickle", &priced(0, 0));
+        write_cached_model_metadata_for_tests(
+            "opencode",
+            "claude-sonnet-5",
+            &priced(2_000_000, 10_000_000),
+        );
+        write_cached_model_metadata_for_tests("opencode", "cheap-input-only", &priced(0, 500_000));
+        // A current snapshot keeps discovery off the network.
+        mark_catalog_snapshot_current_for_tests();
+        let cache = tempfile::tempdir().unwrap();
+        set_provider_models_cache_dir_for_tests(Some(cache.path().to_path_buf()));
+        let _cache_dir_reset = CacheDirReset;
+        let store = MemoryCredentialStore::default();
+        save_provider_api_key(&store, "opencode-api-key", "zen-secret").unwrap();
+
+        let models = refresh_provider_models_with_store(
+            "opencode",
+            "opencode-api-key",
+            &store,
+            ProviderModelEndpoint::OpenAiCompatible(&api_base),
+        )
+        .await
+        .unwrap()
+        .models;
+
+        assert_eq!(
+            models
+                .iter()
+                .map(|model| model.model.as_str())
+                .collect::<Vec<_>>(),
+            ["cheap-input-only", "claude-sonnet-5", "new-model"]
+        );
     });
-    let models_dev_cache = tempfile::tempdir().unwrap();
-    let _models_dev = ModelsDevCacheDirGuard::new(models_dev_cache.path().to_path_buf());
-    let priced = |input, output| ModelMetadata {
-        cost_default: Some(ModelCost {
-            input_micros_per_m: Some(input),
-            output_micros_per_m: Some(output),
-            ..ModelCost::default()
-        }),
-        ..ModelMetadata::default()
-    };
-    write_cached_model_metadata_for_tests("opencode", "big-pickle", &priced(0, 0));
-    write_cached_model_metadata_for_tests(
-        "opencode",
-        "claude-sonnet-5",
-        &priced(2_000_000, 10_000_000),
-    );
-    write_cached_model_metadata_for_tests("opencode", "cheap-input-only", &priced(0, 500_000));
-    // A current snapshot keeps discovery off the network.
-    mark_catalog_snapshot_current_for_tests();
-    let cache = tempfile::tempdir().unwrap();
-    set_provider_models_cache_dir_for_tests(Some(cache.path().to_path_buf()));
-    let _cache_dir_reset = CacheDirReset;
-    let store = MemoryCredentialStore::default();
-    save_provider_api_key(&store, "opencode-api-key", "zen-secret").unwrap();
+}
 
-    let models = refresh_provider_models_with_store(
-        "opencode",
-        "opencode-api-key",
-        &store,
-        ProviderModelEndpoint::OpenAiCompatible(&api_base),
-    )
-    .await
-    .unwrap()
-    .models;
+/// Runs `test` while no sibling test can install custom hosts. Their catalog
+/// docs decide whether the models.dev snapshot counts as current; without the
+/// lock a refresh here could see it stale and download the real catalog.
+fn with_isolated_catalog_registry(test: impl std::future::Future<Output = ()>) {
+    let _lock = crate::provider::custom_provider_registry_test_lock();
+    crate::provider::reset_custom_openai_compatible_providers_for_tests();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(test);
+}
 
-    assert_eq!(
-        models
-            .iter()
-            .map(|model| model.model.as_str())
-            .collect::<Vec<_>>(),
-        ["cheap-input-only", "claude-sonnet-5", "new-model"]
-    );
+// Covers: Mistral lists each model under several ids (`-latest`, dated, and
+// legacy names) next to embedding and OCR models. The picker must show one
+// tool-capable chat row per model, keeping the id models.dev describes, while
+// a config or the provider default naming any alias still selects it as
+// written and borrows that model's metadata
+// Owner: OpenAI-compatible discovery and the provider model cache
+#[test]
+fn mistral_refresh_collapses_aliases_and_resolves_them() {
+    with_isolated_catalog_registry(async {
+        use crate::model::models_dev::{
+            current_model_metadata, mark_catalog_snapshot_current_for_tests,
+            write_cached_model_metadata_for_tests, ModelMetadata, ModelsDevCacheDirGuard,
+        };
+
+        let api_base = serve_models_response(
+            "200 OK",
+            r#"{"object":"list","data":[
+                {"id":"mistral-medium","name":"mistral-medium-latest","max_context_length":262144,
+                 "aliases":["mistral-medium-latest","mistral-medium-2604"],
+                 "capabilities":{"completion_chat":true,"function_calling":true}},
+                {"id":"mistral-medium-latest","name":"mistral-medium-latest","max_context_length":262144,
+                 "aliases":["mistral-medium","mistral-medium-2604"],
+                 "capabilities":{"completion_chat":true,"function_calling":true}},
+                {"id":"mistral-medium-2604","name":"mistral-medium-latest","max_context_length":262144,
+                 "aliases":["mistral-medium","mistral-medium-latest"],
+                 "capabilities":{"completion_chat":true,"function_calling":true}},
+                {"id":"mistral-small-latest","name":"mistral-small-2603","max_context_length":131072,
+                 "aliases":["mistral-small-2603"],
+                 "capabilities":{"completion_chat":true,"function_calling":true}},
+                {"id":"mistral-small-2603","name":"mistral-small-2603","max_context_length":131072,
+                 "aliases":["mistral-small-latest"],
+                 "capabilities":{"completion_chat":true,"function_calling":true}},
+                {"id":"mistral-embed","name":"mistral-embed","max_context_length":8192,"aliases":[],
+                 "capabilities":{"completion_chat":false,"function_calling":false}},
+                {"id":"mistral-ocr-latest","name":"Mistral OCR 4.1","max_context_length":16384,"aliases":[],
+                 "capabilities":{"completion_chat":false,"function_calling":true}}
+            ]}"#,
+        )
+        .await;
+        let models_dev_cache = tempfile::tempdir().unwrap();
+        let _models_dev = ModelsDevCacheDirGuard::new(models_dev_cache.path().to_path_buf());
+        // Only the dated small id has a catalog row, though `-latest` is listed
+        // first, and only the dated medium id, though `name` is the alias.
+        let small = ModelMetadata {
+            display_name: Some("Mistral Small 4".into()),
+            reasoning_metadata_complete: true,
+            ..ModelMetadata::default()
+        };
+        write_cached_model_metadata_for_tests("mistral", "mistral-small-2603", &small);
+        write_cached_model_metadata_for_tests(
+            "mistral",
+            "mistral-medium-2604",
+            &ModelMetadata::default(),
+        );
+        mark_catalog_snapshot_current_for_tests();
+        let cache = tempfile::tempdir().unwrap();
+        set_provider_models_cache_dir_for_tests(Some(cache.path().to_path_buf()));
+        let _cache_dir_reset = CacheDirReset;
+        let store = MemoryCredentialStore::default();
+        save_provider_api_key(&store, "mistral-api-key", "mistral-secret").unwrap();
+
+        let models = refresh_provider_models_with_store(
+            "mistral",
+            "mistral-api-key",
+            &store,
+            ProviderModelEndpoint::OpenAiCompatible(&api_base),
+        )
+        .await
+        .unwrap()
+        .models;
+
+        let listed = |model: &str, display_name: &str, window| ProviderModel {
+            provider: "mistral".into(),
+            model: model.into(),
+            display_name: display_name.into(),
+            context_window: Some(window),
+            max_output_tokens: None,
+            reasoning_capabilities: ReasoningCapabilities::Unknown,
+        };
+        assert_eq!(
+            models,
+            vec![
+                listed("mistral-medium-2604", "mistral-medium-latest", 262_144),
+                listed("mistral-small-2603", "mistral-small-2603", 131_072),
+            ]
+        );
+        // An alias selects the listed model but keeps the id the config named,
+        // and the descriptor default stays the floating alias.
+        assert_eq!(
+            cached_provider_model("mistral", "mistral-medium-latest"),
+            Some(listed(
+                "mistral-medium-latest",
+                "mistral-medium-latest",
+                262_144
+            ))
+        );
+        assert_eq!(
+            crate::model::catalog::default_model_for_provider("mistral").as_deref(),
+            Some("mistral-medium-latest")
+        );
+        assert_eq!(
+            current_model_metadata("mistral", "mistral-small-latest")
+                .and_then(|metadata| metadata.display_name),
+            Some("Mistral Small 4".into())
+        );
+    });
 }

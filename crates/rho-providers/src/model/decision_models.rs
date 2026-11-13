@@ -163,6 +163,7 @@ fn fixed_decision_models(id: ProviderId) -> Option<&'static [&'static str]> {
         | ProviderId::OpenCodeGo
         | ProviderId::OpenCode
         | ProviderId::MiniMax
+        | ProviderId::Mistral
         | ProviderId::OpenAiCompatible => None,
     }
 }
@@ -202,6 +203,7 @@ fn discovery_host(id: ProviderId) -> Option<DiscoveryHost> {
         | ProviderId::OpenCodeGo
         | ProviderId::OpenCode
         | ProviderId::MiniMax
+        | ProviderId::Mistral
         | ProviderId::OpenAiCompatible => None,
     }
 }

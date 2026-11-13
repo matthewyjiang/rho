@@ -196,26 +196,27 @@ fn chat_handoff_injects_empty_reasoning_content_for_same_model_tool_turns() {
     assert!(converted.reasoning_content.is_none());
 }
 
-// Covers: non-stream completions must capture reasoning_content for replay
+// Covers: non-stream completions must capture reasoning for replay, whether it
+// arrives as `reasoning_content` or as Mistral-style thinking content chunks
 // Owner: openai chat completions response conversion
 #[test]
 fn convert_openai_response_captures_reasoning_content() {
-    let response: ChatResponse = serde_json::from_value(json!({
-        "choices": [{
-            "message": {
-                "content": "done",
-                "reasoning_content": "think first"
-            }
-        }]
-    }))
-    .unwrap();
-    let finish = convert_openai_response(response, ChatToolCallPolicy::Strict).unwrap();
-    assert_eq!(finish.reasoning_content.as_deref(), Some("think first"));
-    assert!(matches!(
-        finish.response,
-        ModelResponse::Assistant(blocks)
-            if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "done")
-    ));
+    for message in [
+        json!({"content": "done", "reasoning_content": "think first"}),
+        json!({"content": [
+            {"type": "thinking", "thinking": [{"type": "text", "text": "think first"}]},
+            {"type": "text", "text": "done"}
+        ]}),
+    ] {
+        let response: ChatResponse =
+            serde_json::from_value(json!({"choices": [{"message": message}]})).unwrap();
+        let finish = convert_openai_response(response, ChatToolCallPolicy::Strict).unwrap();
+        assert_eq!(finish.reasoning_content.as_deref(), Some("think first"));
+        assert_eq!(
+            finish.response,
+            ModelResponse::Assistant(vec![ContentBlock::Text("done".into())])
+        );
+    }
 }
 
 #[test]
