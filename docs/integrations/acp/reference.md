@@ -54,7 +54,7 @@ A host that sends `"protocolVersion": 2` gets the [ACP v2 draft](https://agentcl
 
 ### Background work on v2
 
-On v2 a prompt does not wait for the background work it starts: the turn ends with `idle`, and when the work finishes, Rho starts a turn of its own to give the model the result, reported as `running`, then `idle`. A turn another client starts in the session is reported the same way. While such a turn runs, `session/prompt` fails as busy (invalid request); send the prompt once the state is `idle`. Every `state_update` carries `background`, the work still running:
+On v2 a prompt does not wait for the background work it starts: the turn ends with `idle`, and when the work finishes, Rho starts a turn of its own to give the model the result, reported as `running`, then `idle`. A turn another client starts in the session is reported the same way. While such a turn runs, `session/prompt` fails as busy (invalid request); send the prompt once the state is `idle`. A prompt sent as such a turn begins can get that error after the competing turn's `running`, and even its `idle`, have already been sent. Every `state_update` carries `background`, the work still running:
 
 - A background process is a terminal whose `terminalId` is the process ID. Rho announces it with a `terminal_update` carrying its `command` before the first state that lists it, and once it ends sends a `terminal_update` with its `exitStatus` (with the `exitCode`, when it exited with one) before the state that drops it.
 - A workflow run is a tool call `rho-workflow-<run id>`, announced with a `tool_call_update` titled with the workflow's name, `in_progress`, then `completed`, `failed`, or `cancelled` once the run ends.
@@ -62,7 +62,7 @@ On v2 a prompt does not wait for the background work it starts: the turn ends wi
 
 Each announcement carries `capabilities.cancel` while the work runs; its final update sets `capabilities` to `null`. `terminal/cancel` terminates a process and `tool_call/cancel` cancels a workflow run, and `session/cancel` with a delegated agent's `sessionId` cancels that agent. Each answers once the stop is requested; the final update follows when the work ends. Cancelling work that is not running fails with invalid params. A `session/resume` announces the running work again before its `state_update`. Closing a session detaches without stopping its background work, which keeps running in the daemon.
 
-Under `--t3code`, the agents T3 Code runs as threads of its own are not listed: T3 Code owns them and reports them itself.
+Under `--t3code`, background processes and workflow runs are listed as above, but delegated agents are not: the `agent` tool hands each one to T3 Code as a task that runs in a T3 thread, which T3 Code shows and cancels itself. Rho keeps only the task's ID, and it is not told when the task ends.
 
 ## Authentication
 

@@ -130,7 +130,7 @@ fn background_traffic(updates: &[Value]) -> Vec<Value> {
         .filter(|update| {
             matches!(
                 update["sessionUpdate"].as_str(),
-                Some("terminal_update" | "state_update")
+                Some("terminal_update" | "tool_call_update" | "subagent_update" | "state_update")
             )
         })
         .cloned()
@@ -363,6 +363,106 @@ fn t3code_process_session(workspace: &Workspace, command: &str) -> (AcpServer, S
     (server, session_id)
 }
 
+/// Which `rho acp` a test drives.
+#[derive(Clone, Copy, Debug)]
+enum Host {
+    Plain,
+    /// `rho acp --t3code`, whose children run as T3 threads.
+    T3Code,
+}
+
+/// `rho acp` as `host` in bypass mode on fixture `mode`, with one v2
+/// session.
+fn v2_session(workspace: &Workspace, mode: &str, host: Host) -> (AcpServer, String) {
+    bypass(workspace);
+    let mut command = AcpServer::command(&workspace.home, mode, &workspace.project);
+    match host {
+        Host::Plain => {}
+        Host::T3Code => {
+            command.arg("--t3code");
+        }
+    }
+    let mut server = AcpServer::from_command(&mut command);
+    server
+        .request("initialize", negotiating_initialize())
+        .0
+        .unwrap();
+    let created = server
+        .request("session/new", json!({"cwd": workspace.project}))
+        .0
+        .unwrap();
+    let session_id = created["sessionId"].as_str().unwrap().to_owned();
+    (server, session_id)
+}
+
+/// A workspace workflow, `wait-run`, whose one node waits until the test
+/// creates `release` in the workspace.
+fn waiting_workflow(workspace: &Workspace) -> std::path::PathBuf {
+    let workflow = workspace.project.join(".rho/workflows/wait-run");
+    std::fs::create_dir_all(&workflow).unwrap();
+    std::fs::write(
+        workflow.join("workflow.star"),
+        r#"def build(inputs):
+    return workflow(name = "wait-run", nodes = [
+        shell(
+            name = "wait",
+            executable = "bash",
+            arguments = ["-c"],
+            command = "while [ ! -e release ]; do sleep 0.05; done",
+            cwd = ".",
+            timeout_seconds = 600,
+            max_output_bytes = 1000,
+        ),
+    ])
+
+WORKFLOW = define(inputs = {}, build = build)
+"#,
+    )
+    .unwrap();
+    workspace.project.join("release")
+}
+
+/// Starts `wait-run` with `/workflow:`, returning its tool call's id once
+/// the prompt's `idle` lists it, after asserting the announcement before.
+fn start_waiting_workflow(server: &mut AcpServer, session_id: &str) -> Value {
+    let (reply, updates) = server.prompt_v2(session_id, "/workflow:wait-run");
+    reply.unwrap();
+    let announced = updates
+        .iter()
+        .find(|update| update["sessionUpdate"] == "tool_call_update")
+        .unwrap_or_else(|| panic!("no workflow announced: {updates:#?}"));
+    let call = announced["toolCallId"].clone();
+    assert_eq!(
+        (announced, updates.last().unwrap()),
+        (
+            &json!({
+                "sessionUpdate": "tool_call_update", "toolCallId": call, "title": "wait-run",
+                "kind": "other", "status": "in_progress", "capabilities": {"cancel": {}},
+            }),
+            &json!({
+                "sessionUpdate": "state_update", "state": "idle", "stopReason": "end_turn",
+                "background": [{"type": "tool_call", "toolCallId": call}],
+            }),
+        ),
+        "{updates:#?}"
+    );
+    call
+}
+
+/// The work updates and state among `updates` that a cancel answered
+/// with them brought, through the first state: a turn the daemon starts
+/// to deliver the result may follow it.
+fn stopped_early(updates: &[Value]) -> Vec<Value> {
+    let mut traffic = background_traffic(updates);
+    if let Some(state) = traffic
+        .iter()
+        .position(|update| update["sessionUpdate"] == "state_update")
+    {
+        traffic.truncate(state + 1);
+    }
+    traffic
+}
+
 /// Reads updates until the next `state_update`, returning those of `kinds`
 /// and the state.
 fn until_state(server: &AcpServer, kinds: &[&str], what: &str) -> Vec<Value> {
@@ -486,7 +586,7 @@ fn v2_cancels_a_background_terminal() {
     // The answer only accepts the cancel, so the exit may come before or
     // after it.
     let (accepted, early) = server.request("terminal/cancel", cancel.clone());
-    let mut stopped = background_traffic(&early);
+    let mut stopped = stopped_early(&early);
     if stopped.is_empty() {
         stopped = until_state(
             &server,
@@ -516,33 +616,86 @@ fn v2_cancels_a_background_terminal() {
     );
 }
 
-// Covers: a v2 host must see a subagent its turn leaves running (a v2
-// prompt does not wait for one, as the daemon delivers its result in a turn
-// of its own): announced as a cancellable child session before the idle
-// state lists it, then, once it finished, its idle state before the state
-// that drops it, and the daemon's delivery turn as `running`, then `idle`.
+// Covers: a v2 host, plain or T3 Code, must see a workflow run
+// `/workflow:` starts (whose prompt ends at once): announced as a
+// cancellable tool call before the idle state lists it, then, once the run
+// ends, `completed` before the state that drops it.
 // Owner: ACP v2 boundary and daemon background reporting, over the real
 // stdio server
 #[test]
-fn v2_lists_a_running_subagent_until_it_ends() {
+fn v2_lists_a_running_workflow_until_it_ends() {
+    for host in [Host::Plain, Host::T3Code] {
+        let workspace = Workspace::new();
+        let release = waiting_workflow(&workspace);
+        let (mut server, session_id) = v2_session(&workspace, "tool-call", host);
+        let call = start_waiting_workflow(&mut server, &session_id);
+
+        std::fs::write(&release, "").unwrap();
+        assert_eq!(
+            until_state(&server, &["tool_call_update"], "the workflow run's end"),
+            [
+                json!({
+                    "sessionUpdate": "tool_call_update", "toolCallId": call,
+                    "status": "completed", "capabilities": null,
+                }),
+                json!({"sessionUpdate": "state_update", "state": "idle", "background": []}),
+            ],
+            "{host:?}"
+        );
+    }
+}
+
+// Covers: a v2 host that cancels a running workflow's tool call gets an
+// accepting answer, then the call `cancelled` before the state that drops
+// it; cancelling it again, once the run ended, is invalid params.
+// Owner: ACP v2 boundary and daemon background stop, over the real stdio
+// server
+#[test]
+fn v2_cancels_a_background_workflow() {
     let workspace = Workspace::new();
-    bypass(&workspace);
-    let mut server = AcpServer::from_command(&mut AcpServer::command(
-        &workspace.home,
-        "tool-call",
-        &workspace.project,
-    ));
-    server
-        .request("initialize", negotiating_initialize())
-        .0
-        .unwrap();
-    let created = server
-        .request("session/new", json!({"cwd": workspace.project}))
-        .0
-        .unwrap();
-    let session_id = created["sessionId"].as_str().unwrap().to_owned();
-    // The child, on the same fixture model, runs a command that waits for
-    // the test to release it.
+    waiting_workflow(&workspace);
+    let (mut server, session_id) = v2_session(&workspace, "tool-call", Host::Plain);
+    let call = start_waiting_workflow(&mut server, &session_id);
+    let cancel = json!({"sessionId": session_id, "toolCallId": call});
+
+    // The answer only accepts the cancel, so the run's end may come
+    // before or after it.
+    let (accepted, early) = server.request("tool_call/cancel", cancel.clone());
+    let mut stopped = stopped_early(&early);
+    if stopped.is_empty() {
+        stopped = until_state(&server, &["tool_call_update"], "the cancelled run's end");
+    }
+    let (again, _) = server.request("tool_call/cancel", cancel);
+
+    assert_eq!(
+        (
+            accepted,
+            stopped,
+            again.map_err(|error| error["code"].clone())
+        ),
+        (
+            Ok(json!({})),
+            vec![
+                json!({
+                    "sessionUpdate": "tool_call_update", "toolCallId": call,
+                    "status": "cancelled", "capabilities": null,
+                }),
+                json!({"sessionUpdate": "state_update", "state": "idle", "background": []}),
+            ],
+            Err(json!(-32602)),
+        )
+    );
+}
+
+/// Delegates to a worker subagent that, on the same fixture model, runs a
+/// command waiting until the test creates the returned file. Returns the
+/// subagent's ACP session id once the prompt's `idle` lists it, after
+/// asserting its announcement before.
+fn start_waiting_subagent(
+    workspace: &Workspace,
+    server: &mut AcpServer,
+    session_id: &str,
+) -> (Value, std::path::PathBuf) {
     let release = workspace.project.join("release");
     let wait = json!({
         "id": "wait", "name": "bash",
@@ -552,8 +705,7 @@ fn v2_lists_a_running_subagent_until_it_ends() {
         "id": "delegate", "name": "agent",
         "arguments": {"agent_id": "worker", "prompt": wait.to_string()},
     });
-
-    let (reply, updates) = server.prompt_v2(&session_id, &delegate.to_string());
+    let (reply, updates) = server.prompt_v2(session_id, &delegate.to_string());
     reply.unwrap();
     let announced = updates
         .iter()
@@ -572,8 +724,61 @@ fn v2_lists_a_running_subagent_until_it_ends() {
                 "sessionUpdate": "state_update", "state": "idle", "stopReason": "end_turn",
                 "background": [{"type": "subagent", "sessionId": child}],
             }),
+        ),
+        "{updates:#?}"
+    );
+    (child, release)
+}
+
+// Covers: `session/cancel` on a running subagent's session id stops that
+// subagent, not the parent: it ends `idle` with `cancelled` before the
+// state that drops it, and its cancelled result still reaches the parent
+// in a delivery turn.
+// Owner: ACP v2 boundary and daemon background stop, over the real stdio
+// server
+#[test]
+fn v2_cancels_a_background_subagent() {
+    let workspace = Workspace::new();
+    let (mut server, session_id) = v2_session(&workspace, "tool-call", Host::Plain);
+    let (child, _release) = start_waiting_subagent(&workspace, &mut server, &session_id);
+
+    server.send(
+        &json!({"jsonrpc": "2.0", "method": "session/cancel", "params": {"sessionId": child}}),
+    );
+    let stopped = until_state(
+        &server,
+        &["subagent_update"],
+        "the cancelled subagent's end",
+    );
+    let delivery = until_state(&server, &[], "the delivery turn's start");
+
+    assert_eq!(
+        (stopped, delivery),
+        (
+            vec![
+                json!({
+                    "sessionUpdate": "subagent_update", "sessionId": child,
+                    "state": {"state": "idle", "stopReason": "cancelled"}, "capabilities": null,
+                }),
+                json!({"sessionUpdate": "state_update", "state": "idle", "background": []}),
+            ],
+            vec![json!({"sessionUpdate": "state_update", "state": "running", "background": []})],
         )
     );
+}
+
+// Covers: a v2 host must see a subagent its turn leaves running (a v2
+// prompt does not wait for one, as the daemon delivers its result in a turn
+// of its own): announced as a cancellable child session before the idle
+// state lists it, then, once it finished, its idle state before the state
+// that drops it, and the daemon's delivery turn as `running`, then `idle`.
+// Owner: ACP v2 boundary and daemon background reporting, over the real
+// stdio server
+#[test]
+fn v2_lists_a_running_subagent_until_it_ends() {
+    let workspace = Workspace::new();
+    let (mut server, session_id) = v2_session(&workspace, "tool-call", Host::Plain);
+    let (child, release) = start_waiting_subagent(&workspace, &mut server, &session_id);
 
     std::fs::write(&release, "").unwrap();
     let ended = until_state(&server, &["subagent_update"], "the subagent's end");
