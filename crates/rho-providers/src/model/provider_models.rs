@@ -56,29 +56,6 @@ pub fn listed_model_id(provider: &str, model: &str) -> String {
         .unwrap_or_else(|| canonicalize_cached_model_id(provider, model))
 }
 
-/// A model that answers to its own id and the id it is listed under, so
-/// a current alias (`mistral-small-latest`) matches its listed row
-/// (`mistral-small-2603`) as well as a row carrying the alias itself.
-pub struct ModelIdentity<'a> {
-    provider: &'a str,
-    model: &'a str,
-    listed: String,
-}
-
-impl<'a> ModelIdentity<'a> {
-    pub fn new(provider: &'a str, model: &'a str) -> Self {
-        Self {
-            provider,
-            model,
-            listed: listed_model_id(provider, model),
-        }
-    }
-
-    /// Whether `provider`'s `model` names this model.
-    pub fn is(&self, provider: &str, model: &str) -> bool {
-        provider == self.provider && (model == self.model || model == self.listed)
-    }
-}
 pub use openai_compatible::probe_provider_models;
 #[path = "provider_models/cli.rs"]
 mod cli;

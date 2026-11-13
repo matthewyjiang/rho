@@ -12,7 +12,7 @@ use rho_providers::{
         },
         display_name::model_display_name,
         favorites,
-        provider_models::ModelIdentity,
+        provider_models::listed_model_id,
     },
     provider::{model_reference, provider_descriptor},
 };
@@ -34,7 +34,7 @@ pub(super) fn model_options(
     favorite_models: &[String],
     mut available: Vec<ModelCatalogEntry>,
 ) -> wire::ModelOptions {
-    let identity = ModelIdentity::new(&current.provider, &current.model);
+    let identity = ModelIds::new(&current.provider, &current.model);
     let is_current = |entry: &ModelCatalogEntry| identity.is(&entry.provider, &entry.model);
     if !available.iter().any(is_current) {
         available.push(ModelCatalogEntry {
@@ -70,6 +70,30 @@ pub(super) fn model_options(
     }
 }
 
+/// A model that answers to its own id and the id it is listed under, so
+/// a current alias (`mistral-small-latest`) matches its listed row
+/// (`mistral-small-2603`) as well as a row carrying the alias itself.
+pub(crate) struct ModelIds<'a> {
+    provider: &'a str,
+    model: &'a str,
+    listed: String,
+}
+
+impl<'a> ModelIds<'a> {
+    pub(crate) fn new(provider: &'a str, model: &'a str) -> Self {
+        Self {
+            provider,
+            model,
+            listed: listed_model_id(provider, model),
+        }
+    }
+
+    /// Whether `provider`'s `model` names this model.
+    pub(crate) fn is(&self, provider: &str, model: &str) -> bool {
+        provider == self.provider && (model == self.model || model == self.listed)
+    }
+}
+
 /// Finds the choice in a session's [`wire::ModelOptions`] that a host's
 /// request names. The current model's row also answers to the id a current
 /// alias is listed under, since [`model_options`] puts the alias in that
@@ -77,14 +101,14 @@ pub(super) fn model_options(
 /// `mistral-small-latest` rather than a model it no longer offers.
 pub(crate) struct OfferedModels<'a> {
     options: &'a wire::ModelOptions,
-    current: ModelIdentity<'a>,
+    current: ModelIds<'a>,
 }
 
 impl<'a> OfferedModels<'a> {
     pub(crate) fn new(options: &'a wire::ModelOptions) -> Self {
         Self {
             options,
-            current: ModelIdentity::new(&options.current.provider, &options.current.model),
+            current: ModelIds::new(&options.current.provider, &options.current.model),
         }
     }
 

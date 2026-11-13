@@ -693,8 +693,7 @@ fn catalog_picker(
     } = current;
     // A current alias (`mistral-small-latest`) marks the row it is listed
     // under, or its own row where a daemon lists it in that row's place.
-    let identity =
-        rho_providers::model::provider_models::ModelIdentity::new(current_provider, current_model);
+    let identity = crate::app::ModelIds::new(current_provider, current_model);
     let is_current =
         |entry: &catalog::ModelCatalogEntry| identity.is(&entry.provider, &entry.model);
     let favorites = favorites::normalized_favorite_models(favorite_models);

@@ -34,7 +34,7 @@ pub(crate) use draft::{
     config_for_new_session, read_config_file, DraftOptions, LaunchFlag, SettingOrigin,
     SettingOrigins,
 };
-pub(crate) use models::{resolve_model, AuthPick, OfferedModels};
+pub(crate) use models::{resolve_model, AuthPick, ModelIds, OfferedModels};
 pub(crate) use reasoning::{reasoning_from_wire, reasoning_to_wire};
 
 /// `runtime`'s options now: the choices `process_config` gives it, the
