@@ -34,7 +34,11 @@ use tokio::{
     task::JoinHandle,
 };
 
-use super::{daemon, host_features::HostFeatures, AcpClientPort, Adapter};
+use super::{
+    daemon,
+    host_features::{HostFeatures, Turns},
+    AcpClientPort, Adapter,
+};
 use crate::{
     agent::{AgentCatalog, DEFAULT_AGENT_ID},
     app::{
@@ -116,7 +120,11 @@ impl Adapter {
             })
             .await
         {
-            Ok(list) => methods(&list.auths, HostFeatures::from_initialize(request)),
+            // Which turns the host follows has no bearing on how it signs in.
+            Ok(list) => methods(
+                &list.auths,
+                HostFeatures::from_initialize(request, Turns::default()),
+            ),
             Err(error) => {
                 tracing::warn!(%error, "could not list the rho daemon's auth profiles");
                 Vec::new()

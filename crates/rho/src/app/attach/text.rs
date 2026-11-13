@@ -82,7 +82,8 @@ impl<O: Write, E: Write> TextView<O, E> {
             // A retry shows only as the response it discarded, if any.
             | SessionEvent::ProviderRetry { .. }
             // The steer shows once it applies, as a user message.
-            | SessionEvent::SteeringDelivered { .. } => {}
+            | SessionEvent::SteeringDelivered { .. }
+            | SessionEvent::Background { .. } => {}
             // `SessionEvent` is non-exhaustive; an event a newer daemon sends
             // is not shown.
             _ => {}

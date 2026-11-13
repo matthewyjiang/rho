@@ -39,19 +39,20 @@ use agent_client_protocol::{
 };
 use rho_protocol::{
     methods::{
-        SessionAttach, SessionCancel, SessionConfigure, SessionDelete, SessionDetach, SessionNew,
+        SessionAttach, SessionBackgroundStop, SessionCancel, SessionConfigure, SessionDelete,
+        SessionDetach, SessionNew,
     },
-    ClientEnvironment, Cursor, ErrorCode, JobState, Replay, SessionAttachParams,
-    SessionAttachResponse, SessionCancelParams, SessionChange, SessionConfigureParams,
-    SessionDeleteParams, SessionDetachParams, SessionId, SessionNewParams, SessionOptions,
-    SessionProcess, SessionSetup, TurnId, TurnOutcome,
+    BackgroundItem, BackgroundWork, ClientEnvironment, Cursor, ErrorCode, JobState, Replay,
+    SessionAttachParams, SessionAttachResponse, SessionBackgroundStopParams, SessionCancelParams,
+    SessionChange, SessionConfigureParams, SessionDeleteParams, SessionDetachParams, SessionId,
+    SessionNewParams, SessionOptions, SessionSetup, TurnId, TurnOutcome,
 };
 use tokio::{
     sync::{mpsc, oneshot, watch},
     task::JoinHandle,
 };
 
-use super::{daemon, inputs::InputContext, options, requests, AcpClientPort, Adapter};
+use super::{daemon, inputs::InputContext, options, requests, AcpClientPort, Adapter, Foreground};
 use crate::app::daemon_client::{Daemon, Link, Routed, SessionRoute};
 
 /// What a session's pump reads, in order: what the router read for the
@@ -151,14 +152,25 @@ impl Attachment {
     fn busy(self) -> bool {
         matches!(self, Self::Attached(state) if busy(state))
     }
+
+    /// What the session's foreground work is doing, as far as this host
+    /// knows: an attachment that no longer delivers reports none.
+    fn foreground(self) -> Foreground {
+        match self {
+            Self::Attached(state) => Foreground::of(state),
+            Self::Stale | Self::Deleted => Foreground::Idle,
+        }
+    }
 }
 
 /// What a session's requests and its pump share.
 struct Shared {
     /// The options the host last heard of.
     options: Mutex<SessionOptions>,
-    /// The session's background processes, as the pump last heard them.
-    processes: Mutex<Vec<SessionProcess>>,
+    /// The session's background work, as the host was last told it. Held
+    /// while telling the host anything that lists it, so reports from the
+    /// pump and from a prompt reach the host in the order they read it.
+    background: Mutex<Vec<BackgroundWork>>,
     attachment: watch::Sender<Attachment>,
 }
 
@@ -252,8 +264,8 @@ pub(super) struct Started {
     /// The session's job state when the attachment began: a turn another
     /// client started may be in progress.
     pub(super) state: JobState,
-    /// The session's background processes when the attachment began.
-    pub(super) processes: Vec<SessionProcess>,
+    /// The session's background work when the attachment began.
+    pub(super) background: Vec<BackgroundWork>,
     gate: oneshot::Sender<()>,
 }
 
@@ -262,11 +274,6 @@ impl Started {
     /// response that names it.
     pub(super) fn open(self) {
         let _ = self.gate.send(());
-    }
-
-    /// A turn was in progress when the attachment began.
-    pub(super) fn busy(&self) -> bool {
-        busy(self.state)
     }
 }
 
@@ -291,13 +298,70 @@ impl Adapter {
             .ok_or_else(|| AcpError::internal_error().data("ACP connection not initialized"))
     }
 
-    /// The background processes of open session `id`, as this host last
-    /// heard of them; none for a session not open here.
-    pub(super) fn processes(&self, id: &AcpSessionId) -> Vec<SessionProcess> {
-        self.sessions
-            .get(&id.0)
-            .map(|live| lock(&live.shared.processes).clone())
-            .unwrap_or_default()
+    /// Runs `report` with the background work of open session `id`, as
+    /// the host was last told it, none for a session not open here, and
+    /// holds it so no other report of it interleaves.
+    pub(super) fn with_background<T>(
+        &self,
+        id: &AcpSessionId,
+        report: impl FnOnce(&[BackgroundWork]) -> T,
+    ) -> T {
+        match self.sessions.get(&id.0) {
+            Some(live) => report(&lock(&live.shared.background)),
+            None => report(&[]),
+        }
+    }
+
+    /// Whether session `id` is open here.
+    pub(super) fn is_open(&self, id: &AcpSessionId) -> bool {
+        self.sessions.get(&id.0).is_some()
+    }
+
+    /// Stops the running piece of open session `id`'s background work that
+    /// `find` picks. Work the host does not see running is invalid params,
+    /// as ACP v2 has the cancel of an unknown or finished item answered.
+    pub(super) async fn stop_background(
+        &self,
+        id: &AcpSessionId,
+        find: impl FnOnce(&[BackgroundWork]) -> Option<BackgroundItem>,
+    ) -> Result<(), AcpError> {
+        let live = self.live(id).await?;
+        let work = find(&lock(&live.shared.background)).ok_or_else(|| {
+            AcpError::invalid_params().data("no such running background work in this session")
+        })?;
+        self.stop_work(&live, work).await
+    }
+
+    /// Stops the running background work `find` picks in whichever open
+    /// session has it, as a cancel naming a child session asks. Returns
+    /// whether a session had it.
+    pub(super) async fn stop_any_background(
+        &self,
+        find: impl Fn(&[BackgroundWork]) -> Option<BackgroundItem>,
+    ) -> bool {
+        let lives: Vec<_> = lock(&self.sessions.live).values().cloned().collect();
+        for live in lives {
+            let Some(work) = find(&lock(&live.shared.background)) else {
+                continue;
+            };
+            if let Err(error) = self.stop_work(&live, work).await {
+                tracing::warn!(%error, "could not stop an ACP session's background work");
+            }
+            return true;
+        }
+        false
+    }
+
+    async fn stop_work(&self, live: &Live, work: BackgroundItem) -> Result<(), AcpError> {
+        let link = self.daemon.link().await?;
+        let params = SessionBackgroundStopParams {
+            session: live.id.clone(),
+            work,
+        };
+        link.request::<SessionBackgroundStop>(&params)
+            .await
+            .map_err(|error| daemon::daemon_error(&error))?;
+        Ok(())
     }
 
     /// The open session `id`, attached.
@@ -332,7 +396,7 @@ impl Adapter {
         let setup = self.launch.setup(
             &request.additional_directories,
             &request.mcp_servers,
-            self.negotiated.get().forms,
+            self.negotiated.get(),
         );
         let created = self
             .daemon
@@ -398,7 +462,7 @@ impl Adapter {
         }
         let setup = self
             .launch
-            .setup(additional_directories, servers, self.negotiated.get().forms);
+            .setup(additional_directories, servers, self.negotiated.get());
         self.open(SessionId::new(session_id.0.as_ref()), setup, show)
             .await
     }
@@ -424,9 +488,10 @@ impl Adapter {
         };
         let options = response.options.clone();
         let state = response.state;
+        let background = response.background.clone();
         let shared = Arc::new(Shared {
             options: Mutex::new(options.clone()),
-            processes: Mutex::default(),
+            background: Mutex::new(background.clone()),
             attachment: watch::channel(Attachment::Stale).0,
         });
         let context = InputContext {
@@ -457,7 +522,7 @@ impl Adapter {
         let live = Arc::new(Live {
             id,
             inbound,
-            shared: Arc::clone(&shared),
+            shared,
             prompt: tokio::sync::Mutex::new(()),
             cancelling: AtomicBool::new(false),
             closing: AtomicBool::new(false),
@@ -470,13 +535,11 @@ impl Adapter {
             self.detach(&live, Wait::Prompt).await;
             return Err(error);
         }
-        // The pump took the attach's processes once the replay was through.
-        let processes = lock(&shared.processes).clone();
         Ok(Started {
             session_id: acp_id,
             options,
             state,
-            processes,
+            background,
             gate,
         })
     }

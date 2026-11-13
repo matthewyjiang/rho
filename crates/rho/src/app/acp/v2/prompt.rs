@@ -11,8 +11,8 @@
 //! 3. The turn ends: `idle` with the stop reason, or with `error` when it
 //!    failed after acceptance.
 //!
-//! Both state updates list the session's background processes as the pump
-//! last heard them ([`super::background`]).
+//! Both state updates list the session's background work as the host was
+//! last told it, holding it while they send ([`super::background`]).
 //!
 //! A prompt that stops before its message is inserted (busy or unknown
 //! session, a rejected command, a cancel or close first) gets an error
@@ -27,7 +27,7 @@ use agent_client_protocol::{
 };
 
 use super::{background, port::V2Port, requests};
-use crate::app::acp::{sessions::Accept, Adapter, TurnEnd};
+use crate::app::acp::{sessions::Accept, Adapter, Foreground, TurnEnd};
 
 pub(super) fn spawn(
     adapter: Arc<Adapter>,
@@ -51,8 +51,10 @@ pub(super) fn spawn(
             let adapter = Arc::clone(&adapter);
             let v1_session_id = v1_request.session_id.clone();
             move |message_id| {
-                let running = background::running_state(&adapter.processes(&v1_session_id));
-                acknowledge(&port, &session_id, prompt, message_id, running, &unanswered);
+                adapter.with_background(&v1_session_id, |work| {
+                    let running = background::state(Foreground::Running, work);
+                    acknowledge(&port, &session_id, prompt, message_id, running, &unanswered);
+                });
             }
         });
         let result = adapter
@@ -69,11 +71,10 @@ pub(super) fn spawn(
             };
             return responder.respond_with_error(error);
         }
-        let processes = adapter.processes(&v1_request.session_id);
-        port.send_update(
-            &session_id,
-            requests::idle(&TurnEnd::Ended(result), &processes),
-        )
+        let end = TurnEnd::Ended(result);
+        adapter.with_background(&v1_request.session_id, |work| {
+            port.send_update(&session_id, requests::idle(&end, work))
+        })
     })
 }
 

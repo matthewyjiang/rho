@@ -25,6 +25,7 @@
 //! | [`SESSION_MCP_RESOURCE`] | [`SessionMcpResourceParams`] | [`SessionMcpResourceResponse`] |
 //! | [`SESSION_MCP_COMPLETE`] | [`SessionMcpCompleteParams`] | [`SessionMcpCompleteResponse`] |
 //! | [`SESSION_PROCESSES`] | [`SessionProcessesParams`] | [`SessionProcessesResponse`] |
+//! | [`SESSION_BACKGROUND_STOP`] | [`SessionBackgroundStopParams`] | [`SessionBackgroundStopResponse`] |
 //! | [`SESSION_INSPECT`] | [`SessionInspectParams`] | [`SessionInspectResponse`] |
 //! | [`SESSION_CONFIGURE`] | [`SessionConfigureParams`] | [`SessionConfigureResponse`] |
 //! | [`SESSION_LIST`] | [`SessionListParams`] | [`SessionListResponse`] |
@@ -64,6 +65,7 @@ use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Serialize};
 
 mod auth;
+mod background;
 mod catalog;
 mod config;
 mod daemon;
@@ -86,6 +88,10 @@ pub use auth::{
     AuthKeyParams, AuthKeyResponse, AuthKind, AuthListParams, AuthListResponse, AuthLogoutParams,
     AuthLogoutResponse, AuthStatus, AuthSummary, EnvironmentOverride, UncheckedKey,
     UncheckedReason, AUTH_KEY, AUTH_LIST, AUTH_LOGOUT,
+};
+pub use background::{
+    BackgroundItem, BackgroundStatus, BackgroundWork, SessionBackgroundStopParams,
+    SessionBackgroundStopResponse, SESSION_BACKGROUND_STOP,
 };
 pub use catalog::{
     SessionDeleteParams, SessionDeleteResponse, SessionListParams, SessionListResponse,
@@ -255,6 +261,7 @@ protocol! {
         SessionMcpResourceRead = SESSION_MCP_RESOURCE: SessionMcpResourceParams => SessionMcpResourceResponse,
         SessionMcpComplete = SESSION_MCP_COMPLETE: SessionMcpCompleteParams => SessionMcpCompleteResponse,
         SessionProcesses = SESSION_PROCESSES: SessionProcessesParams => SessionProcessesResponse,
+        SessionBackgroundStop = SESSION_BACKGROUND_STOP: SessionBackgroundStopParams => SessionBackgroundStopResponse,
         SessionInspect = SESSION_INSPECT: SessionInspectParams => SessionInspectResponse,
         SessionList = SESSION_LIST: SessionListParams => SessionListResponse,
         SessionRename = SESSION_RENAME: SessionRenameParams => SessionRenameResponse,

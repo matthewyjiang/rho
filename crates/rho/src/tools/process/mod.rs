@@ -20,9 +20,9 @@ pub use manager::ProcessManager;
 pub(crate) use notify::{notification_prompt, ProcessNotification};
 pub(crate) use output::decode_header_value;
 pub(crate) use platform::{prepare_child_command, ProcessTree};
-pub(crate) use tools::KeepWarmOffer;
 pub use tools::Process;
 pub(super) use tools::ProcessArgs;
+pub(crate) use tools::{KeepWarmOffer, STOP_GRACE};
 pub(crate) use types::{CacheWarmRoute, HostProcessView, KeepWarm, LiveProcessSummary, Stream};
 pub use types::{Chunk, ProcessLimits, Snapshot, State};
 

@@ -1581,6 +1581,7 @@ fn conversation(events: &[(Seq, SessionEvent)]) -> Vec<SessionEvent> {
                     | SessionEvent::Usage { .. }
                     | SessionEvent::TitleChanged { .. }
                     | SessionEvent::OptionsChanged { .. }
+                    | SessionEvent::Background { .. }
             )
         })
         .collect()

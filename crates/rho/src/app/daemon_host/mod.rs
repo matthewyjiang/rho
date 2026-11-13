@@ -376,6 +376,13 @@ impl Service for DaemonHost {
         self.sessions.processes(params).await
     }
 
+    async fn session_background_stop(
+        &self,
+        params: rho_protocol::SessionBackgroundStopParams,
+    ) -> Result<rho_protocol::SessionBackgroundStopResponse, RpcError> {
+        self.sessions.background_stop(params).await
+    }
+
     async fn session_mcp(
         &self,
         params: rho_protocol::SessionMcpParams,

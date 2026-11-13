@@ -15,8 +15,9 @@ use agent_client_protocol::{
 };
 use pretty_assertions::assert_eq;
 use rho_protocol::{
-    self as wire, AnswerStop, Cursor, DetachReason, JobState, Replay, Seq, SessionAttachResponse,
-    SessionEvent, SessionId, SessionSetup, TurnId, TurnOutcome,
+    self as wire, AnswerStop, BackgroundItem, BackgroundStatus, BackgroundWork, Cursor,
+    DetachReason, JobState, Replay, Seq, SessionAttachResponse, SessionEvent, SessionId,
+    SessionSetup, TurnId, TurnOutcome,
 };
 use tokio::sync::{mpsc, oneshot, watch};
 
@@ -30,7 +31,7 @@ use crate::{
             sessions::{
                 Accept, Attacher, Attachment, Control, Inbound, Opening, Shared, Show, Waiter,
             },
-            AcpClientPort, TurnEnd,
+            AcpClientPort, BackgroundChanged, Foreground, TurnEnd,
         },
         daemon_client::{test_support::attach_response, Daemon, Routed},
     },
@@ -43,9 +44,13 @@ const SESSION: &str = "s1";
 #[derive(Default)]
 struct Host {
     sent: Mutex<Vec<SessionNotification>>,
-    /// How each turn running at attach ended, as `attached_turn_ended`
-    /// told: a stop reason, `failed`, or `unseen`.
-    turn_ends: Mutex<Vec<String>>,
+    /// What the host was told of turns no prompt of its own runs: the
+    /// foreground `foreground_changed` reported, and how each ended, as
+    /// `attached_turn_ended` told: a stop reason, `failed`, or `unseen`.
+    turns: Mutex<Vec<String>>,
+    /// Each background list `background_changed` reported, with the
+    /// foreground the repeated state carried.
+    background: Mutex<Vec<(Foreground, Vec<BackgroundWork>)>>,
 }
 
 impl Host {
@@ -99,14 +104,30 @@ impl AcpClientPort for Host {
         &self,
         _session_id: &AcpSessionId,
         end: TurnEnd,
-        _processes: &[rho_protocol::SessionProcess],
+        _background: &[rho_protocol::BackgroundWork],
     ) {
         let end = match end {
             TurnEnd::Ended(Ok(stop_reason)) => format!("{stop_reason:?}"),
             TurnEnd::Ended(Err(_)) => "failed".to_owned(),
             TurnEnd::Unseen => "unseen".to_owned(),
         };
-        self.turn_ends.lock().unwrap().push(end);
+        self.turns.lock().unwrap().push(end);
+    }
+
+    fn foreground_changed(
+        &self,
+        _session_id: &AcpSessionId,
+        foreground: Foreground,
+        _background: &[BackgroundWork],
+    ) {
+        self.turns.lock().unwrap().push(format!("{foreground:?}"));
+    }
+
+    fn background_changed(&self, _session_id: &AcpSessionId, change: BackgroundChanged<'_>) {
+        self.background
+            .lock()
+            .unwrap()
+            .push((change.foreground, change.current.to_vec()));
     }
 }
 
@@ -202,7 +223,7 @@ impl Pump {
         let response = attach_response(Replay::Reset, 0, state, turn);
         let shared = Arc::new(Shared {
             options: Mutex::new(response.options.clone()),
-            processes: Mutex::default(),
+            background: Mutex::default(),
             attachment: watch::channel(Attachment::Stale).0,
         });
         let port: Arc<dyn AcpClientPort> = host.clone();
@@ -398,13 +419,14 @@ async fn armed_prompts_match_their_own_turn() {
     }
 }
 
-// Covers: a host told at attach that a turn it did not prompt is running
-// (ACP v2 `session/resume` reports `running`) must hear that turn end, with
-// its stop reason, or unseen once the pump lost track of it; otherwise the
-// host shows the session running forever. A prompt of the host's takes over
-// unreported: T3 Code closes its pending prompt on any `idle`, so one for
-// the old turn would end the new prompt early. A session idle at attach,
-// whose later turns the host was never told of, reports none.
+// Covers: a host told that a turn it did not prompt is running, at attach
+// (ACP v2 `session/resume` reports `running`) or as it begins (another
+// client's prompt, or a turn the daemon starts as background work
+// finishes), must hear that turn end, with its stop reason, or unseen once
+// the pump lost track of it; otherwise the host shows the session running
+// forever. A prompt of the host's takes over unreported: T3 Code closes its
+// pending prompt on any `idle`, so one for the old turn would end the new
+// prompt early.
 // Owner: ACP session pump
 #[tokio::test]
 async fn the_turn_running_at_attach_reports_its_end() {
@@ -497,14 +519,14 @@ async fn the_turn_running_at_attach_reports_its_end() {
             vec![],
         ),
         (
-            "idle at attach",
+            "one that begins after an idle attach",
             None,
             vec![
                 Live(running("t1")),
                 Live(user("m1")),
                 Live(ended("t1", answered("a"))),
             ],
-            vec![],
+            vec!["Running", "EndTurn"],
         ),
     ];
     for (label, running_at_attach, steps, expected) in cases {
@@ -528,7 +550,7 @@ async fn the_turn_running_at_attach_reports_its_end() {
             }
         }
         pump.flush().await;
-        assert_eq!(*pump.host.turn_ends.lock().unwrap(), expected, "{label}");
+        assert_eq!(*pump.host.turns.lock().unwrap(), expected, "{label}");
     }
 }
 
@@ -724,4 +746,51 @@ async fn ended_attachments_fail_the_prompt_and_release_job_waits() {
             "{label}"
         );
     }
+}
+
+// Covers: a host hears background work change with the foreground it was
+// told, never `running` for a turn it does not follow, so the repeated
+// state cannot leave it showing a turn that ended; and a reattach reports
+// what changed while it was behind.
+// Owner: ACP session pump
+#[tokio::test]
+async fn background_changes_repeat_the_state_the_host_was_told() {
+    let work = |status| {
+        vec![BackgroundWork {
+            item: BackgroundItem::Process { id: "p".into() },
+            title: "serve".into(),
+            status,
+            exit_code: None,
+        }]
+    };
+    let background = |status| SessionEvent::Background { work: work(status) };
+    let behind = {
+        let mut resumed = attach_response(Replay::Tail, 0, JobState::Idle, Some("t1"));
+        resumed.background = work(BackgroundStatus::Completed);
+        resumed
+    };
+
+    let mut pump = Pump::start(JobState::Idle, None, Script::default());
+    pump.live(background(BackgroundStatus::Running));
+    let _prompt = pump.arm(Some("t1"));
+    pump.live(running("t1"));
+    pump.live(background(BackgroundStatus::Cancelled));
+    pump.live(user("m1"));
+    pump.live(background(BackgroundStatus::Running));
+    pump.live(ended("t1", answered("a")));
+    pump.script.answers.lock().unwrap().push_back(Ok(behind));
+    pump.routed(Routed::Detached(DetachReason::Lagged));
+    pump.flush().await;
+
+    assert_eq!(
+        *pump.host.background.lock().unwrap(),
+        [
+            (Foreground::Idle, work(BackgroundStatus::Running)),
+            // The prompt's message has not shown, so the host has not been
+            // told its turn runs.
+            (Foreground::Idle, work(BackgroundStatus::Cancelled)),
+            (Foreground::Running, work(BackgroundStatus::Running)),
+            (Foreground::Idle, work(BackgroundStatus::Completed)),
+        ]
+    );
 }

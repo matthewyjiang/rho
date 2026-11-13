@@ -133,7 +133,7 @@ impl Updates {
             | SessionEvent::TurnEnded { .. }
             | SessionEvent::OptionsChanged { .. }
             // The pump reports them, where the protocol has a place for them.
-            | SessionEvent::Processes { .. }
+            | SessionEvent::Background { .. }
             // ACP has no update for what the turn is doing.
             | SessionEvent::ProviderRequest
             | SessionEvent::ProviderRetry { .. }

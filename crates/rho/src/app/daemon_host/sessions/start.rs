@@ -221,6 +221,10 @@ impl Sessions {
             Ok((moved, grant)) => {
                 let budget = (moved.state == JobState::Queued)
                     .then(|| self.subagents.queue_turn(&session.job));
+                // A turn the daemon starts to deliver finished work has yet
+                // to take it, so clients hear how that work ended before
+                // they hear the turn begin.
+                session.report_background();
                 session.feed.publish([state_event(&moved)]);
                 (budget, grant)
             }

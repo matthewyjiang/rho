@@ -12,10 +12,10 @@
 //! turn an event is of. Until the host prompts, the pump follows the turn
 //! the host was told is running when it attached ([`Following::Announced`]).
 //!
-//! The pump also keeps the session's background processes for the host
-//! ([`Shared`]'s): an attach's, once its replay is through, then each
+//! The pump also keeps the session's background work for the host
+//! ([`Shared`]'s): each attach's, once its replay is through, and each
 //! change the daemon sends, which it tells the host through
-//! [`AcpClientPort::processes_changed`].
+//! [`AcpClientPort::background_changed`].
 
 use std::sync::{Arc, PoisonError};
 
@@ -24,8 +24,8 @@ use agent_client_protocol::{
     Error as AcpError,
 };
 use rho_protocol::{
-    DetachReason, InputRequest, JobState, Replay, Seq, SessionAttachResponse, SessionEvent,
-    SessionOptions, SessionProcess, SessionSetup, TurnId, TurnOutcome,
+    BackgroundWork, DetachReason, InputRequest, JobState, Replay, Seq, SessionAttachResponse,
+    SessionEvent, SessionOptions, SessionSetup, TurnId, TurnOutcome,
 };
 use tokio::{
     sync::{mpsc, oneshot},
@@ -42,7 +42,7 @@ use crate::{
             inputs::{InputContext, Inputs},
             prompt,
             updates::{self, Delivery, Updates},
-            AcpClientPort, ProcessesChanged, TurnEnd,
+            AcpClientPort, BackgroundChanged, Foreground, TurnEnd,
         },
         daemon_client::{HerdrStatus, Part, Routed, StreamPosition},
     },
@@ -88,9 +88,8 @@ struct Replaying {
     title: Option<String>,
     /// The input requests open when the attachment began.
     inputs: Vec<InputRequest>,
-    /// The background processes the replay ends with, as the attach
-    /// answered.
-    processes: Vec<SessionProcess>,
+    /// The background work the replay ends with, as the attach answered.
+    background: Vec<BackgroundWork>,
     /// The job state the replay ends in, and the turn it is of, as the
     /// attach answered.
     state: JobState,
@@ -105,11 +104,12 @@ struct Replaying {
 enum Following {
     /// The prompt of this host's that the pump waits on.
     Prompt(Armed),
-    /// The turn under way when the opening attach began, which the host was
-    /// told is running: ACP v2 `session/resume` reports `running` from the
-    /// same attach state (`v2::state`). A prompt of this host's replaces it
-    /// unreported, since that prompt's own updates then give the session's
-    /// state.
+    /// A turn the host was told is running that no prompt of its own runs:
+    /// the one under way when the opening attach began, as ACP v2
+    /// `session/resume` reports `running` from the same attach state
+    /// (`v2::state`), or one that began while the pump followed none.
+    /// A prompt of this host's replaces it unreported, since that prompt's
+    /// own updates then give the session's state.
     Announced(TurnId),
 }
 
@@ -253,7 +253,7 @@ impl Pump {
             show,
             title: response.title,
             inputs: response.inputs,
-            processes: response.processes,
+            background: response.background,
             state: response.state,
             turn: response.turn,
             done,
@@ -294,14 +294,14 @@ impl Pump {
 
     /// Sends the title a history may lack, fails a prompt whose turn's
     /// end a skipped replay no longer held, takes the attach's background
-    /// processes, answers whoever waits for the replay, waits for the
-    /// host's response, then puts the open input requests to the host.
+    /// work, answers whoever waits for the replay, waits for the host's
+    /// response, then puts the open input requests to the host.
     async fn end_replay(&mut self) {
         let Some(Replaying {
             show,
             title,
             inputs,
-            processes,
+            background,
             state,
             turn,
             done,
@@ -320,13 +320,9 @@ impl Pump {
             (Show::Skip, _) => self.fail_unreplayed(state),
             (Show::History(_) | Show::Missed, _) => {}
         }
-        // The attach that opened the session leaves them to the request's
-        // response; a reattach tells the host what changed meanwhile.
-        if gate.is_some() {
-            *lock(&self.shared.processes) = processes;
-        } else {
-            self.processes_changed(processes);
-        }
+        // A reattach tells the host what changed meanwhile; the attach that
+        // opened the session already holds this work.
+        self.background_changed(background);
         let _ = done.send(Ok(()));
         if let Some(gate) = gate {
             // A request that failed to respond drops the gate; the events
@@ -363,16 +359,19 @@ impl Pump {
             // The followed turn's, which `follow_turn` settled, or one the
             // host follows no other way.
             SessionEvent::TurnEnded { .. } => {}
-            SessionEvent::State { state, .. } => {
-                self.shared
+            SessionEvent::State { state, turn } => {
+                let before = self
+                    .shared
                     .attachment
-                    .send_replace(Attachment::Attached(state));
+                    .send_replace(Attachment::Attached(state))
+                    .foreground();
+                self.foreground_changed(before, Foreground::of(state), turn);
                 self.herdr.report(state).await;
             }
             SessionEvent::InputRequested { request } => self.inputs.open(*request, &self.context),
             SessionEvent::InputResolved { id, .. } => self.inputs.resolve(id),
             SessionEvent::OptionsChanged { options } => self.options_changed(*options).await,
-            SessionEvent::Processes { processes } => self.processes_changed(processes),
+            SessionEvent::Background { work } => self.background_changed(work),
             // Another client's prompt, or a steer.
             event => self.send_mapped(&event).await,
         }
@@ -443,28 +442,69 @@ impl Pump {
                     Ok(outcome) => TurnEnd::Ended(prompt::stop_reason(outcome)),
                     Err(_) => TurnEnd::Unseen,
                 };
-                let processes = lock(&self.shared.processes).clone();
+                let background = lock(&self.shared.background);
                 self.context
                     .port
-                    .attached_turn_ended(&self.context.acp_id, end, &processes);
+                    .attached_turn_ended(&self.context.acp_id, end, &background);
             }
             None => {}
         }
     }
 
-    /// Takes `processes` as the session's background processes and tells
-    /// the host how they changed.
-    fn processes_changed(&mut self, processes: Vec<SessionProcess>) {
-        let previous = std::mem::replace(&mut *lock(&self.shared.processes), processes.clone());
-        let turn_in_progress = self.shared.attachment.borrow().busy();
-        self.context.port.processes_changed(
+    /// Takes `work` as the session's background work and tells the host
+    /// how it changed, if it did.
+    fn background_changed(&mut self, work: Vec<BackgroundWork>) {
+        let foreground = self.told_foreground();
+        let mut background = lock(&self.shared.background);
+        if *background == work {
+            return;
+        }
+        let previous = std::mem::replace(&mut *background, work);
+        self.context.port.background_changed(
             &self.context.acp_id,
-            ProcessesChanged {
+            BackgroundChanged {
                 previous: &previous,
-                current: &processes,
-                turn_in_progress,
+                current: &background,
+                foreground,
             },
         );
+    }
+
+    /// What the host was told the session's foreground work is doing: a
+    /// turn it follows, as the job's state has it, or else idle, since the
+    /// host hears of no other turn.
+    fn told_foreground(&self) -> Foreground {
+        match &self.following {
+            Some(Following::Announced(_) | Following::Prompt(Armed { shown: true, .. })) => {
+                self.shared.attachment.borrow().foreground()
+            }
+            Some(Following::Prompt(Armed { shown: false, .. })) | None => Foreground::Idle,
+        }
+    }
+
+    /// Tells the host of a change from `before` to `now` it hears no other
+    /// way: a turn it does not follow beginning, as another client's prompt
+    /// or a turn the daemon starts as background work finishes, which the
+    /// pump follows from then on ([`Following::Announced`]); or the turn it
+    /// follows starting or stopping to wait for a person. A prompt reports
+    /// its own turn's start, and a followed turn's end is reported as it
+    /// settles.
+    fn foreground_changed(&mut self, before: Foreground, now: Foreground, turn: Option<TurnId>) {
+        if before == Foreground::Idle && now != Foreground::Idle {
+            let (None, Some(turn)) = (&self.following, turn) else {
+                return;
+            };
+            self.following = Some(Following::Announced(turn));
+        } else if before == now || now == Foreground::Idle {
+            return;
+        }
+        if self.told_foreground() == Foreground::Idle {
+            return;
+        }
+        let background = lock(&self.shared.background);
+        self.context
+            .port
+            .foreground_changed(&self.context.acp_id, now, &background);
     }
 
     async fn options_changed(&mut self, options: SessionOptions) {

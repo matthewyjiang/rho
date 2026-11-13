@@ -14,7 +14,7 @@ use serde_json::json;
 
 use super::{prompt_content, session_list, Launch};
 use crate::app::{
-    acp::host_features::{FormDialect, Forms},
+    acp::host_features::{FormDialect, Forms, HostFeatures},
     prompt_content::fence_context,
 };
 
@@ -114,9 +114,12 @@ fn launch_flags_and_host_request_make_the_session_setup() {
     let with_forms = launch.setup(
         &directories,
         &servers,
-        Forms::Available(FormDialect::Standard),
+        HostFeatures {
+            forms: Forms::Available(FormDialect::Standard),
+            ..HostFeatures::default()
+        },
     );
-    let without_forms = launch.setup(&[], &[], Forms::Unavailable);
+    let without_forms = launch.setup(&[], &[], HostFeatures::default());
 
     assert_eq!(
         with_forms,

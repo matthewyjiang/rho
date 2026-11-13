@@ -37,6 +37,19 @@ pub(in crate::app) struct HostFeatures {
     /// Terminal auth methods (`clientCapabilities.auth.terminal`): the host
     /// runs `rho acp --login <auth>` in a terminal.
     pub(super) terminal: bool,
+    /// Which turns the host can be told of, by its protocol version.
+    pub(super) turns: Turns,
+}
+
+/// Which of a session's turns a host can be told of.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(in crate::app) enum Turns {
+    /// Only its own prompts' (ACP v1): its prompt's response is the turn.
+    #[default]
+    Prompted,
+    /// Any, by `state_update` (ACP v2), so the daemon may start a turn of
+    /// its own when background work finishes.
+    Any,
 }
 
 /// The shape of an on/off session config option, such as `fast_mode`.
@@ -71,7 +84,7 @@ pub(super) enum FormDialect {
 }
 
 impl HostFeatures {
-    pub(super) fn from_initialize(request: &InitializeRequest) -> Self {
+    pub(super) fn from_initialize(request: &InitializeRequest, turns: Turns) -> Self {
         let capabilities = &request.client_capabilities;
         let session = capabilities.session.as_ref();
         let toggles = match session
@@ -96,6 +109,7 @@ impl HostFeatures {
             forms,
             urls: elicitation.is_some_and(|elicitation| elicitation.url.is_some()),
             terminal: capabilities.auth.terminal,
+            turns,
         }
     }
 }
@@ -109,8 +123,15 @@ pub(super) struct NegotiatedFeatures(OnceLock<(HostFeatures, Arc<dyn AcpClientPo
 impl NegotiatedFeatures {
     /// Keeps the first `initialize`; ACP negotiates capabilities once per
     /// connection.
-    pub(super) fn record(&self, request: &InitializeRequest, client: Arc<dyn AcpClientPort>) {
-        let _ = self.0.set((HostFeatures::from_initialize(request), client));
+    pub(super) fn record(
+        &self,
+        request: &InitializeRequest,
+        client: Arc<dyn AcpClientPort>,
+        turns: Turns,
+    ) {
+        let _ = self
+            .0
+            .set((HostFeatures::from_initialize(request, turns), client));
     }
 
     pub(super) fn get(&self) -> HostFeatures {

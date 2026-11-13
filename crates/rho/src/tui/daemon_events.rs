@@ -504,6 +504,9 @@ impl DaemonEvents {
                 }),
                 cost_usd_micros: cost_usd_micros.unwrap_or_default(),
             }],
+            // The process rail reads `rho/session/processes`, which also
+            // carries each process's clock.
+            SessionEvent::Background { .. } => Vec::new(),
             // `Unknown`, or an event a newer daemon sends.
             _ => Vec::new(),
         }

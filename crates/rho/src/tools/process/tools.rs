@@ -4,7 +4,8 @@ use serde::Deserialize;
 use serde_json::json;
 use std::time::Duration;
 
-const STOP_GRACE: Duration = Duration::from_secs(2);
+/// How long a stopped process may exit on its own before it is killed.
+pub(crate) const STOP_GRACE: Duration = Duration::from_secs(2);
 
 /// Whether `process start` advertises `keep_warm`. Only a host that runs a
 /// cache warmer offers it: the daemon, for a session whose turns end while a

@@ -26,6 +26,20 @@ impl AcpServer {
         session_id: &str,
         text: &str,
     ) -> (Result<Value, Value>, Vec<Value>) {
+        let exchange = self.prompt_v2_answering(session_id, text, |request| {
+            panic!("the prompt asked the host: {request}")
+        });
+        (exchange.reply, exchange.updates)
+    }
+
+    /// [`Self::prompt_v2`], answering each request the agent sends the host
+    /// with `answer`'s result.
+    pub(super) fn prompt_v2_answering(
+        &mut self,
+        session_id: &str,
+        text: &str,
+        answer: impl Fn(&Value) -> Value,
+    ) -> V2Exchange {
         self.next_id += 1;
         let id = self.next_id;
         self.send(&json!({
@@ -34,30 +48,54 @@ impl AcpServer {
         }));
         let mut reply = None;
         let mut updates = Vec::new();
+        let mut asked = Vec::new();
         loop {
             let message = self.recv("v2 prompt traffic");
-            if message["id"] == id && message.get("method").is_none() {
-                let answer = match message.get("error") {
-                    Some(error) => Err(error.clone()),
-                    None => Ok(message["result"].clone()),
-                };
-                // A refused prompt is never inserted, so no `idle` follows.
-                if answer.is_err() {
-                    return (answer, updates);
+            match message["method"].as_str() {
+                Some("session/update") => updates.push(message["params"]["update"].clone()),
+                Some(_) => {
+                    self.send(&json!({
+                        "jsonrpc": "2.0", "id": message["id"], "result": answer(&message),
+                    }));
+                    asked.push(message);
                 }
-                reply = Some(answer);
-            } else {
-                assert_eq!(message["method"], "session/update", "{message}");
-                updates.push(message["params"]["update"].clone());
+                None => {
+                    assert_eq!(message["id"], id, "{message}");
+                    let answer = match message.get("error") {
+                        Some(error) => Err(error.clone()),
+                        None => Ok(message["result"].clone()),
+                    };
+                    // A refused prompt is never inserted, so no `idle` follows.
+                    if answer.is_err() {
+                        return V2Exchange {
+                            reply: answer,
+                            updates,
+                            asked,
+                        };
+                    }
+                    reply = Some(answer);
+                }
             }
             let idle = updates.last().is_some_and(|update| {
                 update["sessionUpdate"] == "state_update" && update["state"] == "idle"
             });
             if let (Some(reply), true) = (&reply, idle) {
-                return (reply.clone(), updates);
+                return V2Exchange {
+                    reply: reply.clone(),
+                    updates,
+                    asked,
+                };
             }
         }
     }
+}
+
+/// A v2 prompt's traffic: the reply, the updates until `idle`, and the
+/// requests the agent sent the host.
+pub(super) struct V2Exchange {
+    pub(super) reply: Result<Value, Value>,
+    pub(super) updates: Vec<Value>,
+    pub(super) asked: Vec<Value>,
 }
 
 /// Applies `updates` to message texts as a v2 host holds them by ID: a whole
@@ -295,30 +333,22 @@ fn v2_resume_replays_and_refused_prompts_send_nothing() {
     );
 }
 
-// Covers: a v2 host must see the background process a turn leaves running
-// (T3 Code's turns do not wait for one): announced as a terminal before the
-// idle state lists it, again on resume before its snapshot, then, once it
-// exits, its exit status before the repeated idle state that drops it, with
-// no new stop reason.
-// Owner: ACP v2 boundary and daemon process reporting, over the real stdio
-// server
-#[test]
-fn v2_lists_a_background_process_until_it_exits() {
-    let workspace = Workspace::new();
+/// Puts the workspace's sessions in bypass mode, so tools run unasked.
+fn bypass(workspace: &Workspace) {
     let config = workspace.home.config_path.clone();
     let settings = std::fs::read_to_string(&config)
         .unwrap()
         .replace("permission_mode = \"plan\"", "permission_mode = \"bypass\"");
     std::fs::write(config, settings).unwrap();
-    // The process waits for the test to release it, so it outlives the turn.
-    let release = workspace.project.join("release");
-    let command = format!(
-        "while [ ! -e '{}' ]; do sleep 0.05; done; exit 3",
-        release.display()
-    );
+}
+
+/// `rho acp --t3code` with one v2 session whose prompts start `command` as
+/// a background process, which T3 Code's turns do not wait for.
+fn t3code_process_session(workspace: &Workspace, command: &str) -> (AcpServer, String) {
+    bypass(workspace);
     let mut server = AcpServer::from_command(
         AcpServer::command(&workspace.home, "process-then-reply", &workspace.project)
-            .env("RHO_AUTOMATION_TEST_COMMAND", &command)
+            .env("RHO_AUTOMATION_TEST_COMMAND", command)
             .arg("--t3code"),
     );
     server
@@ -330,6 +360,48 @@ fn v2_lists_a_background_process_until_it_exits() {
         .0
         .unwrap();
     let session_id = created["sessionId"].as_str().unwrap().to_owned();
+    (server, session_id)
+}
+
+/// Reads updates until the next `state_update`, returning those of `kinds`
+/// and the state.
+fn until_state(server: &AcpServer, kinds: &[&str], what: &str) -> Vec<Value> {
+    let mut seen = Vec::new();
+    loop {
+        let message = server.recv(what);
+        assert_eq!(message["method"], "session/update", "{message}");
+        let update = message["params"]["update"].clone();
+        let kind = update["sessionUpdate"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
+        if kind == "state_update" {
+            seen.push(update);
+            return seen;
+        }
+        if kinds.contains(&kind.as_str()) {
+            seen.push(update);
+        }
+    }
+}
+
+// Covers: a v2 host must see the background process a turn leaves running
+// (T3 Code's turns do not wait for one): announced as a cancellable
+// terminal before the idle state lists it, again on resume before its
+// snapshot, then, once it exits, its exit status before the repeated idle
+// state that drops it, with no new stop reason.
+// Owner: ACP v2 boundary and daemon background reporting, over the real
+// stdio server
+#[test]
+fn v2_lists_a_background_process_until_it_exits() {
+    let workspace = Workspace::new();
+    // The process waits for the test to release it, so it outlives the turn.
+    let release = workspace.project.join("release");
+    let command = format!(
+        "while [ ! -e '{}' ]; do sleep 0.05; done; exit 3",
+        release.display()
+    );
+    let (mut server, session_id) = t3code_process_session(&workspace, &command);
 
     let (reply, updates) = server.prompt_v2(&session_id, "start the server");
     reply.unwrap();
@@ -348,15 +420,18 @@ fn v2_lists_a_background_process_until_it_exits() {
         })
         .unwrap();
     assert!(announced < first_listed, "{updates:#?}");
+    let announcement = json!({
+        "sessionUpdate": "terminal_update", "terminalId": terminal, "command": command,
+        "capabilities": {"cancel": {}},
+    });
+    let listed = json!([{"type": "terminal", "terminalId": terminal}]);
     assert_eq!(
         (&updates[announced], updates.last().unwrap()),
         (
-            &json!({"sessionUpdate": "terminal_update", "terminalId": terminal, "command": command}),
+            &announcement,
             &json!({
-                "sessionUpdate": "state_update",
-                "state": "idle",
-                "stopReason": "end_turn",
-                "background": [{"type": "terminal", "terminalId": terminal}],
+                "sessionUpdate": "state_update", "state": "idle", "stopReason": "end_turn",
+                "background": listed,
             }),
         )
     );
@@ -371,29 +446,212 @@ fn v2_lists_a_background_process_until_it_exits() {
     assert_eq!(
         background_traffic(&snapshot),
         [
-            json!({"sessionUpdate": "terminal_update", "terminalId": terminal, "command": command}),
-            json!({
-                "sessionUpdate": "state_update",
-                "state": "idle",
-                "background": [{"type": "terminal", "terminalId": terminal}],
-            }),
+            announcement,
+            json!({"sessionUpdate": "state_update", "state": "idle", "background": listed}),
         ]
     );
 
     std::fs::write(&release, "").unwrap();
-    let mut finished = Vec::new();
-    while background_traffic(&finished)
-        .last()
-        .is_none_or(|update| update["sessionUpdate"] != "state_update")
-    {
-        let message = server.recv("the background process's exit");
-        finished.push(message["params"]["update"].clone());
-    }
     assert_eq!(
-        background_traffic(&finished),
+        until_state(
+            &server,
+            &["terminal_update"],
+            "the background process's exit"
+        ),
         [
-            json!({"sessionUpdate": "terminal_update", "terminalId": terminal, "exitStatus": {"exitCode": 3}}),
+            json!({
+                "sessionUpdate": "terminal_update", "terminalId": terminal,
+                "exitStatus": {"exitCode": 3}, "capabilities": null,
+            }),
             json!({"sessionUpdate": "state_update", "state": "idle", "background": []}),
         ]
+    );
+}
+
+// Covers: a v2 host that cancels a running background terminal gets an
+// accepting answer, then the terminal's exit status before the state that
+// drops it; cancelling it again, once it exited, is invalid params.
+// Owner: ACP v2 boundary and daemon background stop, over the real stdio
+// server
+#[test]
+fn v2_cancels_a_background_terminal() {
+    let workspace = Workspace::new();
+    let (mut server, session_id) = t3code_process_session(&workspace, "sleep 600");
+    let (reply, updates) = server.prompt_v2(&session_id, "start the server");
+    reply.unwrap();
+    let terminal = updates.last().unwrap()["background"][0]["terminalId"].clone();
+    assert!(terminal.is_string(), "{updates:#?}");
+    let cancel = json!({"sessionId": session_id, "terminalId": terminal});
+
+    // The answer only accepts the cancel, so the exit may come before or
+    // after it.
+    let (accepted, early) = server.request("terminal/cancel", cancel.clone());
+    let mut stopped = background_traffic(&early);
+    if stopped.is_empty() {
+        stopped = until_state(
+            &server,
+            &["terminal_update"],
+            "the cancelled terminal's exit",
+        );
+    }
+    let (again, _) = server.request("terminal/cancel", cancel);
+
+    assert_eq!(
+        (
+            accepted,
+            stopped,
+            again.map_err(|error| error["code"].clone())
+        ),
+        (
+            Ok(json!({})),
+            vec![
+                json!({
+                    "sessionUpdate": "terminal_update", "terminalId": terminal,
+                    "exitStatus": {}, "capabilities": null,
+                }),
+                json!({"sessionUpdate": "state_update", "state": "idle", "background": []}),
+            ],
+            Err(json!(-32602)),
+        )
+    );
+}
+
+// Covers: a v2 host must see a subagent its turn leaves running (a v2
+// prompt does not wait for one, as the daemon delivers its result in a turn
+// of its own): announced as a cancellable child session before the idle
+// state lists it, then, once it finished, its idle state before the state
+// that drops it, and the daemon's delivery turn as `running`, then `idle`.
+// Owner: ACP v2 boundary and daemon background reporting, over the real
+// stdio server
+#[test]
+fn v2_lists_a_running_subagent_until_it_ends() {
+    let workspace = Workspace::new();
+    bypass(&workspace);
+    let mut server = AcpServer::from_command(&mut AcpServer::command(
+        &workspace.home,
+        "tool-call",
+        &workspace.project,
+    ));
+    server
+        .request("initialize", negotiating_initialize())
+        .0
+        .unwrap();
+    let created = server
+        .request("session/new", json!({"cwd": workspace.project}))
+        .0
+        .unwrap();
+    let session_id = created["sessionId"].as_str().unwrap().to_owned();
+    // The child, on the same fixture model, runs a command that waits for
+    // the test to release it.
+    let release = workspace.project.join("release");
+    let wait = json!({
+        "id": "wait", "name": "bash",
+        "arguments": {"command": format!("while [ ! -e '{}' ]; do sleep 0.05; done", release.display())},
+    });
+    let delegate = json!({
+        "id": "delegate", "name": "agent",
+        "arguments": {"agent_id": "worker", "prompt": wait.to_string()},
+    });
+
+    let (reply, updates) = server.prompt_v2(&session_id, &delegate.to_string());
+    reply.unwrap();
+    let announced = updates
+        .iter()
+        .find(|update| update["sessionUpdate"] == "subagent_update")
+        .unwrap_or_else(|| panic!("no subagent announced: {updates:#?}"));
+    let child = announced["sessionId"].clone();
+    assert_eq!(
+        (announced, updates.last().unwrap()),
+        (
+            &json!({
+                "sessionUpdate": "subagent_update", "sessionId": child,
+                "title": wait.to_string(), "state": {"state": "running"},
+                "capabilities": {"cancel": {}},
+            }),
+            &json!({
+                "sessionUpdate": "state_update", "state": "idle", "stopReason": "end_turn",
+                "background": [{"type": "subagent", "sessionId": child}],
+            }),
+        )
+    );
+
+    std::fs::write(&release, "").unwrap();
+    let ended = until_state(&server, &["subagent_update"], "the subagent's end");
+    let delivery = until_state(&server, &[], "the delivery turn's start");
+    let mut delivered = until_state(&server, &[], "the delivery turn's end");
+    // The turn's stop reason is the fixture's, not this test's.
+    delivered[0].as_object_mut().unwrap().remove("stopReason");
+    assert_eq!(
+        (ended, delivery, delivered),
+        (
+            vec![
+                json!({
+                    "sessionUpdate": "subagent_update", "sessionId": child,
+                    "state": {"state": "idle", "stopReason": "end_turn"}, "capabilities": null,
+                }),
+                json!({"sessionUpdate": "state_update", "state": "idle", "background": []}),
+            ],
+            vec![json!({"sessionUpdate": "state_update", "state": "running", "background": []})],
+            vec![json!({"sessionUpdate": "state_update", "state": "idle", "background": []})],
+        )
+    );
+}
+
+// Covers: a v2 host must see `requires_action` while the turn waits on its
+// permission answer, and `running` once the turn goes on, not a turn that
+// looks busy throughout.
+// Owner: ACP v2 boundary, over the real stdio server
+#[test]
+fn v2_reports_requires_action_while_a_permission_waits() {
+    let workspace = Workspace::new();
+    let mut server = AcpServer::from_command(&mut AcpServer::command(
+        &workspace.home,
+        "tool-call",
+        &workspace.project,
+    ));
+    server
+        .request("initialize", negotiating_initialize())
+        .0
+        .unwrap();
+    let created = server
+        .request("session/new", json!({"cwd": workspace.project}))
+        .0
+        .unwrap();
+    let session_id = created["sessionId"].as_str().unwrap().to_owned();
+    // The session opens in plan mode, where leaving it asks the host.
+    let call = json!({
+        "id": "plan", "name": "exit_plan_mode",
+        "arguments": {"plan": "1. Change the thing."},
+    });
+
+    let exchange = server.prompt_v2_answering(
+        &session_id,
+        &call.to_string(),
+        |_| json!({"outcome": {"outcome": "selected", "optionId": "keep_planning"}}),
+    );
+
+    exchange.reply.unwrap();
+    let methods: Vec<_> = exchange
+        .asked
+        .iter()
+        .map(|request| request["method"].clone())
+        .collect();
+    let states: Vec<_> = exchange
+        .updates
+        .iter()
+        .filter(|update| update["sessionUpdate"] == "state_update")
+        .map(|update| update["state"].clone())
+        .collect();
+    assert_eq!(
+        (methods, states),
+        (
+            vec![json!("session/request_permission")],
+            vec![
+                json!("running"),
+                json!("requires_action"),
+                json!("running"),
+                json!("idle")
+            ],
+        )
     );
 }

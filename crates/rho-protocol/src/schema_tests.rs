@@ -11,14 +11,15 @@ use crate::display::{
     NotificationVisibility, ToolCardStatus, ToolFact, ToolFamily, ToolHeader,
 };
 use crate::methods::{
-    AnswerStop, Applies, ApprovalSource, Ask, AuthKind, AuthStatus, Budget, CardTone, CommandKind,
-    CompactionStatus, CompactionTrigger, ConfigLayer, ConfigNamespace, ContentBlock,
-    CredentialStoreKind, DefaultStyle, DetachReason, InputAsker, IntegerUnit, JobKind, JobState,
-    LoginOutcome, ModelRuntime, Operation, PathScope, PermissionMode, PlanStatus, ProcessState,
-    ProcessStream, PromptAuthor, ReasoningLevel, Resolution, RetryReason, Selection,
-    SessionControlAction, SessionEvent, SessionMcpMode, SessionMcpResourceContent,
-    SessionMcpStatus, SettingKind, StoreSelectedBy, ToolContent, ToolKind, ToolStatus,
-    TurnErrorKind, TurnOutcome, UncheckedReason, UnsteerOutcome, ValueSource, WorktreeVerdict,
+    AnswerStop, Applies, ApprovalSource, Ask, AuthKind, AuthStatus, BackgroundItem,
+    BackgroundStatus, Budget, CardTone, CommandKind, CompactionStatus, CompactionTrigger,
+    ConfigLayer, ConfigNamespace, ContentBlock, CredentialStoreKind, DefaultStyle, DetachReason,
+    InputAsker, IntegerUnit, JobKind, JobState, LoginOutcome, ModelRuntime, Operation, PathScope,
+    PermissionMode, PlanStatus, ProcessState, ProcessStream, PromptAuthor, ReasoningLevel,
+    Resolution, RetryReason, Selection, SessionControlAction, SessionEvent, SessionMcpMode,
+    SessionMcpResourceContent, SessionMcpStatus, SettingKind, StoreSelectedBy, ToolContent,
+    ToolKind, ToolStatus, TurnErrorKind, TurnOutcome, UncheckedReason, UnsteerOutcome, ValueSource,
+    WorktreeVerdict,
 };
 
 // Covers: the committed schema/protocol.json is what the wire types
@@ -58,7 +59,7 @@ fn enums_marked_open_read_unknown_values_as_unknown() {
     let unseen = || json!("from_a_newer_daemon");
     let unseen_tag = || json!({ "type": "from_a_newer_daemon" });
     let unseen_kind = || json!({ "kind": "from_a_newer_daemon" });
-    let cases: [(&str, bool); 60] = [
+    let cases: [(&str, bool); 62] = [
         (
             "SessionMcpResourceContent",
             reads_as(unseen_tag(), SessionMcpResourceContent::Unknown),
@@ -72,6 +73,14 @@ fn enums_marked_open_read_unknown_values_as_unknown() {
             reads_as(unseen(), SessionMcpStatus::Unknown),
         ),
         ("ProcessState", reads_as(unseen(), ProcessState::Unknown)),
+        (
+            "BackgroundItem",
+            reads_as(unseen_kind(), BackgroundItem::Unknown),
+        ),
+        (
+            "BackgroundStatus",
+            reads_as(unseen(), BackgroundStatus::Unknown),
+        ),
         ("ProcessStream", reads_as(unseen(), ProcessStream::Unknown)),
         ("InputAsker", reads_as(unseen(), InputAsker::Unknown)),
         ("JobKind", reads_as(unseen(), JobKind::Unknown)),

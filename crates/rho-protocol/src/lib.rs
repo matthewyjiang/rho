@@ -146,6 +146,10 @@ pub use methods::{
     AuthSummary, LoginFlow, LoginId, LoginOutcome, LoginPrompt,
 };
 pub use methods::{
+    BackgroundItem, BackgroundStatus, BackgroundWork, SessionBackgroundStopParams,
+    SessionBackgroundStopResponse, SESSION_BACKGROUND_STOP,
+};
+pub use methods::{
     ChildThreads, IdleWake, McpServer, SecretMap, SessionPart, SessionSetup, SignIn,
 };
 pub use methods::{

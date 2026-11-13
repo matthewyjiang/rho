@@ -52,7 +52,7 @@ use crate::{
     herdr::{HerdrReporter, HerdrSource},
 };
 use auth::LoginFlight;
-use host_features::NegotiatedFeatures;
+use host_features::{NegotiatedFeatures, Turns};
 use requests::Launch;
 use sessions::{Sessions, Started};
 
@@ -88,29 +88,73 @@ pub(super) trait AcpClientPort: Send + Sync {
 
     /// The turn of session `session_id` that the host was told is running
     /// when it attached, which no prompt of its own runs, ended as `end`,
-    /// leaving background `processes`. Only ACP v2 reports turn state
+    /// leaving `background` work. Only ACP v2 reports turn state
     /// (`state_update`), so a v1 host has nothing to hear.
     fn attached_turn_ended(
         &self,
         _session_id: &SessionId,
         _end: TurnEnd,
-        _processes: &[rho_protocol::SessionProcess],
+        _background: &[rho_protocol::BackgroundWork],
     ) {
     }
 
-    /// Session `session_id`'s background processes changed. Only ACP v2
-    /// reports background work (a `state_update`'s `background`), so a v1
-    /// host has nothing to hear.
-    fn processes_changed(&self, _session_id: &SessionId, _change: ProcessesChanged<'_>) {}
+    /// Session `session_id`'s background work changed. Only ACP v2 reports
+    /// background work (a `state_update`'s `background`), so a v1 host has
+    /// nothing to hear.
+    fn background_changed(&self, _session_id: &SessionId, _change: BackgroundChanged<'_>) {}
+
+    /// Session `session_id`'s foreground work is now `foreground`, which no
+    /// prompt of the host's reports: a turn it did not prompt began, or the
+    /// turn it follows began or stopped waiting for a person. Never
+    /// [`Foreground::Idle`], whose turn end the prompt or
+    /// [`Self::attached_turn_ended`] reports. Only ACP v2 reports turn
+    /// state, so a v1 host has nothing to hear.
+    fn foreground_changed(
+        &self,
+        _session_id: &SessionId,
+        _foreground: Foreground,
+        _background: &[rho_protocol::BackgroundWork],
+    ) {
+    }
 }
 
-/// A session's background processes went from `previous` to `current`.
-pub(super) struct ProcessesChanged<'a> {
-    pub(super) previous: &'a [rho_protocol::SessionProcess],
-    pub(super) current: &'a [rho_protocol::SessionProcess],
-    /// Whether a turn of the session's is in progress, so the repeated
-    /// state is `running` rather than `idle`.
-    pub(super) turn_in_progress: bool,
+/// A session's background work went from `previous` to `current`.
+pub(super) struct BackgroundChanged<'a> {
+    pub(super) previous: &'a [rho_protocol::BackgroundWork],
+    pub(super) current: &'a [rho_protocol::BackgroundWork],
+    /// What the host was told the session's foreground work is doing,
+    /// which the repeated state reports.
+    pub(super) foreground: Foreground,
+}
+
+/// What a session's foreground work is doing, as ACP v2's `state_update`
+/// reports it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Foreground {
+    Running,
+    /// A turn is under way and waits for a person to answer.
+    RequiresAction,
+    Idle,
+}
+
+impl Foreground {
+    /// The foreground of a session whose job is in `state`. A state a newer
+    /// daemon sends counts as idle, as it does for a prompt.
+    pub(super) fn of(state: rho_protocol::JobState) -> Self {
+        use rho_protocol::JobState;
+        match state {
+            JobState::Running | JobState::Queued => Self::Running,
+            JobState::WaitingForInput => Self::RequiresAction,
+            JobState::Idle
+            | JobState::Completed
+            | JobState::Failed
+            | JobState::Cancelled
+            | JobState::TimedOut
+            | JobState::Interrupted
+            | JobState::Unknown => Self::Idle,
+            _ => Self::Idle,
+        }
+    }
 }
 
 /// How a turn ended, as far as the host can tell.
@@ -203,8 +247,13 @@ impl Adapter {
     }
 
     /// Keeps the host's features and connection from `initialize`.
-    pub(super) fn record_client(&self, request: &InitializeRequest, port: Arc<dyn AcpClientPort>) {
-        self.negotiated.record(request, port);
+    pub(super) fn record_client(
+        &self,
+        request: &InitializeRequest,
+        port: Arc<dyn AcpClientPort>,
+        turns: Turns,
+    ) {
+        self.negotiated.record(request, port, turns);
     }
 
     /// The v1 handshake. The v2 adapter translates the response.
@@ -330,7 +379,11 @@ fn v1_agent(adapter: Arc<Adapter>) -> impl ConnectTo<Client> {
             {
                 let adapter = Arc::clone(&adapter);
                 async move |request: InitializeRequest, responder, cx| {
-                    adapter.record_client(&request, Arc::new(ConnectionPort { cx: cx.clone() }));
+                    adapter.record_client(
+                        &request,
+                        Arc::new(ConnectionPort { cx: cx.clone() }),
+                        Turns::Prompted,
+                    );
                     let adapter = Arc::clone(&adapter);
                     spawn_response(&cx, responder, async move {
                         Ok(adapter.initialize(&request).await)

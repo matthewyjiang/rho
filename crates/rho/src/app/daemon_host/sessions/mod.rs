@@ -66,6 +66,7 @@ use crate::{
     config::Config,
 };
 
+mod background;
 mod budget;
 mod cache_warm;
 mod catalog;
@@ -102,16 +103,16 @@ mod workflows;
 mod worktree;
 
 use super::settings::ConfigStore;
+use background::SessionBackground;
 use cache_warm::KeepWarm;
 pub(super) use child_feeds::{ChildFeeds, ChildStream};
 use child_questions::ChildQuestions;
-use feed::{Attached, Feed};
+use feed::{attach_response, Feed};
 use idle_wake::IdleWatch;
 use inputs::Inputs;
 use open::open_failed;
 pub(super) use open::session_environment;
 use open::{config_for_new, open_session, OpenWith, OpenedSession, Opening, Workspace};
-use processes::ProcessWatch;
 use queued::Queued;
 use reopen::ReopenLocks;
 use start::{Entered, KeyedTurn};
@@ -196,12 +197,9 @@ struct LoadedSession {
     feed: Feed,
     /// Shared inventory handles; reads never wait for the active turn.
     mcp: Mutex<crate::app::session_mcp::SessionMcp>,
-    /// The session's background processes, when it may run any; reads
-    /// never wait for the active turn.
-    processes: Mutex<Option<crate::tools::process::ProcessManager>>,
-    /// The session's side of the watcher that tells its clients as a
-    /// process ends (see [`processes`]).
-    process_watch: ProcessWatch,
+    /// The session's background processes, workflow runs and subagents;
+    /// reads never wait for the active turn (see [`background`]).
+    background: SessionBackground,
     /// The workflow runs the session started; reads never wait for the
     /// active turn.
     workflows: crate::tools::workflow_tracker::WorkflowRunTracker,
@@ -430,8 +428,7 @@ impl LoadedSession {
             workspace: runtime.workspace_root().to_path_buf(),
             live: Mutex::new(live),
             mcp: Mutex::new(crate::app::session_mcp::SessionMcp::of(&runtime)),
-            processes: Mutex::new(runtime.tools().processes().cloned()),
-            process_watch: ProcessWatch::new(),
+            background: SessionBackground::of(&runtime),
             workflows: runtime.tools().workflow_tracker().clone(),
             feed,
             job,
@@ -468,10 +465,8 @@ impl LoadedSession {
     }
 
     /// Applies `event` to the session's job and tells attached clients the
-    /// state it left the job in, after any change to its background
-    /// processes.
+    /// state it left the job in.
     fn record(&self, event: JobEvent) {
-        self.report_processes();
         match self.jobs.record(&self.job, event) {
             Ok(moved) => self.feed.publish([state_event(&moved)]),
             Err(error) => {
@@ -484,10 +479,10 @@ impl LoadedSession {
     /// for a later daemon to replay, and tells attached clients `outcome`,
     /// if any, then the state it left the job in, in one publish, so no
     /// client's replay holds one without the other (#1669). Any change to
-    /// its background processes goes first, so a client hears the processes
-    /// the turn left running before it hears the turn end.
+    /// its background work goes first, so a client hears what the turn left
+    /// running before it hears the turn end.
     fn end_turn(&self, turn: rho_protocol::TurnId, outcome: Option<TurnOutcome>, end: TurnEnd) {
-        self.report_processes();
+        self.report_background();
         let ended = outcome
             .clone()
             .map(|outcome| rho_protocol::SessionEvent::TurnEnded { turn, outcome });
@@ -726,7 +721,7 @@ impl Sessions {
                     let entry = Arc::new(entry);
                     loaded.insert(session, Arc::clone(&entry));
                     self.watch_idle_results(&entry);
-                    self.watch_processes(&entry);
+                    self.watch_background(&entry);
                     self.watch_cache_warm(&entry);
                     self.watch_child_questions(&entry);
                     if let Some(loaded) = tool_sources {
@@ -885,40 +880,6 @@ impl Sessions {
         // panic cannot leave it half-changed.
         self.loaded.lock().unwrap_or_else(PoisonError::into_inner)
     }
-}
-
-/// The answer to an attach or observe of the session in `workspace`, and
-/// the subscription its events then arrive on.
-fn attach_response(workspace: &Path, attached: Attached) -> (SessionAttachResponse, Subscription) {
-    let Attached {
-        stream,
-        replay,
-        replay_events,
-        job,
-        turn,
-        turn_elapsed,
-        inputs,
-        title,
-        options,
-        processes,
-        subscription,
-    } = attached;
-    let response = SessionAttachResponse {
-        stream,
-        workspace: workspace.to_path_buf(),
-        replay,
-        replay_events,
-        state: job,
-        turn,
-        // Far below `u64::MAX` milliseconds.
-        turn_elapsed_ms: turn_elapsed
-            .map(|elapsed| u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)),
-        inputs,
-        title,
-        options,
-        processes,
-    };
-    (response, subscription)
 }
 
 /// How a session's turns are recorded once it is added.

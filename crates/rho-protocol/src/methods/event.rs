@@ -251,16 +251,15 @@ pub enum SessionEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         cost_usd_micros: Option<u64>,
     },
-    /// The session's background processes changed, as
-    /// [`super::SESSION_PROCESSES`] lists them: those still running, and
-    /// those that ended whose result its model has not been given. The
-    /// whole set, replacing the last one this stream or the attach response
-    /// ([`super::SessionAttachResponse::processes`]) gave, and sent only
-    /// when it differs: as a process ends, and before a change of the job's
-    /// state, which is when a process a turn started first shows.
-    Processes {
-        processes: Vec<super::SessionProcess>,
-    },
+    /// The session's background work changed: its processes, workflow
+    /// runs, and subagents still running, and those that ended whose result
+    /// its model has not been given. The whole set, replacing the last one
+    /// this stream or the attach response
+    /// ([`super::SessionAttachResponse::background`]) gave. Sent as work
+    /// starts and ends, and before a turn begins or ends, so a client hears
+    /// how the work a turn takes up ended, and what a turn left running,
+    /// before it hears of the turn.
+    Background { work: Vec<super::BackgroundWork> },
     /// A value a newer daemon sends that this crate does not know; daemons
     /// never send it.
     #[serde(other)]
