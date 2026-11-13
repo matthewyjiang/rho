@@ -43,6 +43,56 @@ fn numbered_view_uses_absolute_lines_and_path_header() {
     );
 }
 
+// Covers: a budget-cut read keeps the model text of an ordinary truncation,
+// while the window keeps only rows that text shows whole and that fit as JSON
+// Owner: text view
+#[test]
+fn bounded_render_keeps_rows_shown_whole() {
+    let short = "one\ntwo\nthree\n";
+    let numbered = "x\n".repeat(100_003);
+    let long_header = "h".repeat(50);
+    // Window JSON `{"start_line":1,"lines":[],"total_lines":3}` is 43 bytes and
+    // `"one"` adds 5, so `short` (24 bytes of text) is bounded by JSON. Rows
+    // `\n100000:x` are 9 text bytes but 4 JSON bytes, so under a 50-byte header
+    // a 70-byte budget ends after two whole rows (50 + 9 + 9) by text.
+    let cases = [
+        (
+            short,
+            "f.rs",
+            None,
+            usize::MAX,
+            Some(&["one", "two", "three"][..]),
+        ),
+        (short, "f.rs", None, 48, Some(&["one"][..])),
+        (short, "f.rs", None, 42, None),
+        (short, "f.rs", None, 5, None),
+        (
+            numbered.as_str(),
+            long_header.as_str(),
+            Some(100_000),
+            70,
+            Some(&["x", "x"][..]),
+        ),
+    ];
+    for (text, header, offset, budget, expected_lines) in cases {
+        let limit = offset.map(|_| 3);
+        let start = offset.unwrap_or(1);
+        let total = split_content_lines(text).len();
+        let expected_text = crate::tool::truncate(
+            format_numbered_view(header, text, offset, limit).unwrap(),
+            budget,
+        );
+        let expected_window = expected_lines.map(|lines| {
+            let lines = lines.iter().copied().map(Cow::Borrowed).collect();
+            TextWindow::new(start, lines, total).unwrap()
+        });
+        let bounded = select_window(text, offset, limit)
+            .unwrap()
+            .render_bounded(header, budget);
+        assert_eq!(bounded, (expected_text, expected_window), "budget={budget}");
+    }
+}
+
 // Covers: chain snapshots stay bounded and keep head+tail for large files
 // Owner: text view
 #[test]

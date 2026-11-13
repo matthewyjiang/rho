@@ -27,8 +27,8 @@ use rho_sdk::{
     model::ImageContent,
     tool::{
         AuthorizedToolContext, OperationKind, PreparedToolInvocation, Tool, ToolAsset, ToolFuture,
-        ToolInvocation, ToolMetadata, ToolOutput, ToolPreparationContext, ToolPrepareFuture,
-        ToolProgress, ToolResource, ToolResourceAccess, ToolSecurity,
+        ToolInvocation, ToolMetadata, ToolPreparationContext, ToolPrepareFuture, ToolProgress,
+        ToolResource, ToolResourceAccess, ToolSecurity,
     },
     CapabilityKind, ResolvedWorkspacePath, Workspace, WorkspacePathState,
 };
@@ -38,7 +38,7 @@ use crate::{
         check_preparation_cancelled, map_app_error, map_path_error, parse_args, path_request,
         preparation_workspace, PathCapability,
     },
-    tool::{compact_display_path, truncate, Tool as AppTool},
+    tool::{compact_display_path, Tool as AppTool},
 };
 
 use super::{
@@ -172,6 +172,10 @@ impl Tool for ReadFileTool {
         ToolSecurity::built_in([CapabilityKind::Read])
     }
 
+    fn output_schema(&self) -> Option<Value> {
+        Some(crate::output_schema::<crate::text_view::TextWindow>())
+    }
+
     fn start_metadata(&self, arguments: &Value) -> ToolMetadata {
         path_start_metadata(arguments, OperationKind::Read)
     }
@@ -205,6 +209,7 @@ impl Tool for ReadFileTool {
                             &display_path,
                             args.offset,
                             args.limit,
+                            self.max_output_bytes,
                             self.host_files.as_ref(),
                         )
                         .await
@@ -232,10 +237,12 @@ impl Tool for ReadFileTool {
                         if let Some(error) = output.preview_error {
                             metadata = metadata.presentation_notice(error);
                         }
-                        let content = truncate(output.content, self.max_output_bytes);
-                        Ok(ToolOutput::text(content)
-                            .metadata(metadata)
-                            .with_images(images))
+                        let rendered = match output.window {
+                            Some(window) => crate::Rendered::new(output.content, window),
+                            None => crate::Rendered::text_only(output.content),
+                        };
+                        // Content and window are already bounded together.
+                        Ok(rendered.into_tool_output(metadata)?.with_images(images))
                     })
                 },
             ))

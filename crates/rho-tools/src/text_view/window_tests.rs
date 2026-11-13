@@ -1,6 +1,6 @@
 use pretty_assertions::assert_eq;
 
-use super::{format_numbered_view, format_window_bytes, read_text_window, ScanError, CHUNK_SIZE};
+use super::{read_text_window, scan_window_bytes, select_window, ScanError, CHUNK_SIZE};
 
 fn numbered_log(lines: usize, pad: usize) -> String {
     let filler = "x".repeat(pad);
@@ -24,7 +24,8 @@ fn crossing_chunk_text() -> (String, usize) {
     (text, line)
 }
 
-// Covers: both numbered renderers preserve content bytes and output newline boundaries
+// Covers: split and chunked selection agree on content bytes and line
+// boundaries, and the numbered render keeps them
 // Owner: text view
 #[test]
 fn numbered_renderers_preserve_line_boundaries() {
@@ -38,10 +39,10 @@ fn numbered_renderers_preserve_line_boundaries() {
         ("α\r\n🦀", "file.txt\n1:α\n2:🦀"),
     ];
     for (text, expected) in cases {
-        let split = format_numbered_view("file.txt", text, None, None).unwrap();
-        let scanned = format_window_bytes(text.as_bytes(), None, None, "file.txt").unwrap();
-        assert_eq!(split, expected, "split input={text:?}");
-        assert_eq!(scanned, expected, "scanned input={text:?}");
+        let split = select_window(text, None, None).unwrap();
+        let scanned = scan_window_bytes(text.as_bytes(), None, None).unwrap();
+        assert_eq!(scanned, split, "scanned input={text:?}");
+        assert_eq!(split.render("file.txt"), expected, "input={text:?}");
     }
 }
 
@@ -72,8 +73,8 @@ fn window_matches_split_across_chunk_windows() {
         (wide.as_str(), Some(1), Some(2)),
     ];
     for (text, offset, limit) in cases {
-        let expected = format_numbered_view("log.txt", text, offset, limit).unwrap();
-        let actual = format_window_bytes(text.as_bytes(), offset, limit, "log.txt").unwrap();
+        let expected = select_window(text, offset, limit).unwrap();
+        let actual = scan_window_bytes(text.as_bytes(), offset, limit).unwrap();
         assert_eq!(actual, expected, "offset={offset:?} limit={limit:?}");
     }
 }
@@ -85,7 +86,7 @@ fn window_rejects_invalid_utf8_before_selected_window() {
     let mut bytes = vec![b'a'; CHUNK_SIZE];
     bytes[10] = 0xFF;
     bytes.extend_from_slice(b"ok\nmore\n");
-    let error = format_window_bytes(&bytes, Some(2), Some(1), "bad.txt").unwrap_err();
+    let error = scan_window_bytes(&bytes, Some(2), Some(1)).unwrap_err();
     assert_eq!(error, ScanError::InvalidUtf8);
 }
 
@@ -106,8 +107,8 @@ async fn numbered_disk_window_matches_split_view() {
         (Some(8_990), Some(20)),
     ];
     for (offset, limit) in cases {
-        let expected = format_numbered_view("log.txt", &text, offset, limit).unwrap();
-        let actual = read_text_window(&path, "log.txt", source_len, offset, limit)
+        let expected = select_window(&text, offset, limit).unwrap();
+        let actual = read_text_window(&path, source_len, offset, limit)
             .await
             .unwrap();
         assert_eq!(actual, expected, "offset={offset:?} limit={limit:?}");

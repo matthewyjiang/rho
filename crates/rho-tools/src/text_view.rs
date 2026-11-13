@@ -3,7 +3,10 @@
 //! Callers supply the header, normally the display path. Line splitting,
 //! window selection, and chain snapshots live here.
 
-use std::fmt::Write;
+use std::{borrow::Cow, fmt::Write};
+
+use schemars::JsonSchema;
+use serde::Serialize;
 
 mod line_split;
 mod window;
@@ -12,7 +15,7 @@ pub(crate) use line_split::read_searchable_lines;
 pub(crate) use window::{read_text_window, validate_window, CHUNK_SIZE};
 
 #[cfg(test)]
-pub(crate) use window::{format_window_bytes, ScanError};
+pub(crate) use window::{scan_window_bytes, ScanError};
 
 /// Separator between a 1-indexed line number and the line body.
 const LINE_BODY_SEP: char = ':';
@@ -29,41 +32,120 @@ const CHAIN_SNAPSHOT_HEAD_LINES: usize = 28;
 /// Tail lines kept after the head so EOF anchors stay chainable on large files.
 const CHAIN_SNAPSHOT_TAIL_LINES: usize = 8;
 
-/// Render a numbered view of `text`.
-///
-/// `offset`/`limit` select a 1-indexed inclusive window of lines. `header` is
-/// normally the display path.
+/// Contiguous 1-indexed lines of a text file. Renders as the numbered model
+/// view and serializes as `read_file`'s script-facing `data`. Lines borrow the
+/// file text until [`Self::render_bounded`] keeps the visible ones.
+#[derive(Debug, PartialEq, Eq, Serialize, JsonSchema)]
+pub(crate) struct TextWindow<'t> {
+    /// Line number of the first entry in `lines`.
+    start_line: usize,
+    /// Selected lines without number prefixes or line endings.
+    lines: Vec<Cow<'t, str>>,
+    /// Content lines in the whole file.
+    total_lines: usize,
+}
+
+impl<'t> TextWindow<'t> {
+    /// Rejects a start past the end; an empty file still allows line 1.
+    fn new(
+        start_line: usize,
+        lines: Vec<Cow<'t, str>>,
+        total_lines: usize,
+    ) -> Result<Self, String> {
+        if start_line > total_lines.max(1) {
+            return Err(offset_past_end(start_line, total_lines));
+        }
+        debug_assert!(start_line + lines.len() <= total_lines + 1);
+        Ok(Self {
+            start_line,
+            lines,
+            total_lines,
+        })
+    }
+
+    /// The model text, cut to `max_bytes` exactly as every tool output is,
+    /// and the window trimmed to rows that text shows whole and whose JSON
+    /// fits the same budget, so scripts can resume at `start_line + len(lines)`.
+    /// `None` when even an empty window's JSON exceeds the budget.
+    pub(crate) fn render_bounded(
+        self,
+        header: &str,
+        max_bytes: usize,
+    ) -> (String, Option<TextWindow<'static>>) {
+        let text = crate::tool::truncate(self.render(header), max_bytes);
+        let mut window = TextWindow {
+            start_line: self.start_line,
+            lines: Vec::new(),
+            total_lines: self.total_lines,
+        };
+        let mut json_used = json_len(&window);
+        if json_used > max_bytes {
+            return (text, None);
+        }
+        let mut text_used = header.len();
+        for (index, line) in self.lines.into_iter().enumerate() {
+            let number = self.start_line + index;
+            text_used += 2 + number.to_string().len() + line.len();
+            json_used += json_len(&line) + usize::from(index > 0);
+            if text_used > max_bytes || json_used > max_bytes {
+                break;
+            }
+            window.lines.push(Cow::Owned(line.into_owned()));
+        }
+        (text, Some(window))
+    }
+
+    /// Numbered rows under `header` (normally the display path), with a
+    /// footer when lines outside the window exist.
+    pub(crate) fn render(&self, header: &str) -> String {
+        if self.lines.is_empty() {
+            return header.to_string();
+        }
+        let mut out = header.to_string();
+        for (index, line) in self.lines.iter().enumerate() {
+            write!(out, "\n{}{LINE_BODY_SEP}{line}", self.start_line + index)
+                .expect("writing to a String cannot fail");
+        }
+        let end = self.start_line + self.lines.len() - 1;
+        if let Some(footer) = window_footer(self.start_line, end, self.total_lines) {
+            out.push_str("\n\n");
+            out.push_str(&footer);
+        }
+        out
+    }
+}
+
+/// Serialized size of plain data; serializing strings and integers cannot fail.
+fn json_len<T: Serialize + ?Sized>(value: &T) -> usize {
+    crate::json_len(value).expect("text window serializes")
+}
+
+/// Select a 1-indexed inclusive `offset`/`limit` window of `text`.
+pub(crate) fn select_window(
+    text: &str,
+    offset: Option<usize>,
+    limit: Option<usize>,
+) -> Result<TextWindow<'_>, String> {
+    let (start, limit) = validate_window(offset, limit)?;
+    let lines = split_content_lines(text);
+    let selected = lines
+        .iter()
+        .skip(start - 1)
+        .take(limit.unwrap_or(usize::MAX))
+        .map(|line| Cow::Borrowed(*line))
+        .collect();
+    TextWindow::new(start, selected, lines.len())
+}
+
+/// Render a numbered view of `text`; tests compare other read paths to it.
+#[cfg(test)]
 pub(crate) fn format_numbered_view(
     header: &str,
     text: &str,
     offset: Option<usize>,
     limit: Option<usize>,
 ) -> Result<String, String> {
-    let (start, limit) = validate_window(offset, limit)?;
-    let lines = split_content_lines(text);
-    let total = lines.len();
-    if total == 0 {
-        if start > 1 {
-            return Err(offset_past_end(start, 0));
-        }
-        return Ok(header.to_string());
-    }
-    if start > total {
-        return Err(offset_past_end(start, total));
-    }
-
-    let end = match limit {
-        Some(limit) => start.saturating_add(limit).saturating_sub(1).min(total),
-        None => total,
-    };
-    let selected: Vec<usize> = (start..=end).collect();
-    let footer = window_footer(start, end, total);
-    Ok(emit_numbered_body(
-        header,
-        &lines,
-        &selected,
-        footer.as_deref(),
-    ))
+    select_window(text, offset, limit).map(|window| window.render(header))
 }
 
 fn window_footer(start: usize, end: usize, total: usize) -> Option<String> {

@@ -39,6 +39,7 @@ async fn scripts_branch_on_workspace_and_process_results() {
 paths = call_tool("glob", {"pattern": "*.rs"})["data"]["paths"]
 hits = call_tool("grep", {"pattern": "TODO"})["data"]
 todo = {f["path"]: [l["line"] for l in f["lines"]] for f in hits["files"]}
+read = call_tool("read_file", {"path": "src/b.rs", "offset": todo["src/b.rs"][1], "limit": 1})["data"]
 kinds = {e["name"]: e["kind"] for e in call_tool("list_dir", {"path": "."})["data"]["entries"]}
 failed = call_tool("bash", {"command": "printf oops >&2; exit 3"})
 started = call_tool("process", {"action": "start", "command": "printf hi; exit 4"})["data"]
@@ -54,7 +55,7 @@ for _ in range(20):
         break
 result = {
     "paths": sorted(paths), "todo": todo, "total": hits["total_matches"],
-    "stopped": hits["stopped"], "kinds": kinds,
+    "stopped": hits["stopped"], "read": read, "kinds": kinds,
     "failure": [failed["data"]["exit_code"], failed["data"]["stderr"], failed["is_error"]] if failed["data"]["exit_code"] != 0 else None,
     "process": [polled["state"], polled["exit_code"], out, cursor > 0],
 }
@@ -63,7 +64,9 @@ result = {
         output,
         json!({
             "paths": ["src/a.rs", "src/b.rs"], "todo": {"src/a.rs": [2], "src/b.rs": [1, 2]},
-            "total": 3, "stopped": [], "kinds": {"src": "dir"}, "failure": [3, "oops", true],
+            "total": 3, "stopped": [],
+            "read": {"start_line": 2, "lines": ["// TODO three"], "total_lines": 2},
+            "kinds": {"src": "dir"}, "failure": [3, "oops", true],
             "process": ["exited", 4, "hi", true],
         })
     );
