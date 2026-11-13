@@ -34,16 +34,14 @@
       "package-name": "rho-providers",
       "component": "rho-providers",
       "changelog-path": "CHANGELOG.md",
-      "draft": true,
-      "release-as": "3.0.1"
+      "draft": true
     },
     "crates/rho-protocol": {
       "release-type": "rust",
       "package-name": "rho-protocol",
       "component": "rho-protocol",
       "changelog-path": "CHANGELOG.md",
-      "draft": true,
-      "release-as": "1.0.0"
+      "draft": true
     }
   },
   "plugins": ["cargo-workspace"]
