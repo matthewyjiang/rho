@@ -5,8 +5,11 @@
 //! request the adapter already handles ([`requests`]), the adapter's v1
 //! updates are rewritten into v2 on the way out ([`port`], [`updates`]), and
 //! the prompt lifecycle, which v2 redesigned, wraps the v1 prompt
-//! ([`prompt`]). v1 clients keep the unchanged v1 builder.
+//! ([`prompt`]). v1 clients keep the unchanged v1 builder. Every
+//! `state_update` lists the session's background work, which the host may
+//! cancel piece by piece ([`background`]).
 
+mod background;
 mod git_patch;
 mod port;
 mod prompt;
@@ -22,7 +25,7 @@ use agent_client_protocol::{
 };
 use serde::{de::DeserializeOwned, Serialize};
 
-use super::{sessions::Started, Adapter};
+use super::{host_features::Turns, sessions::Started, Adapter, Foreground};
 use port::V2Port;
 use requests::Reattach;
 
@@ -41,7 +44,7 @@ pub(super) fn agent(agent: Arc<Adapter>) -> impl ConnectTo<Client> {
                         Ok(request) => request,
                         Err(error) => return responder.respond_with_error(error),
                     };
-                    agent.record_client(&request, Arc::new(V2Port::new(cx.clone())));
+                    agent.record_client(&request, Arc::new(V2Port::new(cx.clone())), Turns::Any);
                     let agent = Arc::clone(&agent);
                     spawn_response(&cx, responder, async move {
                         requests::initialize_response(agent.initialize(&request).await)
@@ -209,14 +212,66 @@ pub(super) fn agent(agent: Arc<Adapter>) -> impl ConnectTo<Client> {
             },
             agent_client_protocol::on_receive_request!(),
         )
+        .on_receive_request(
+            {
+                let agent = Arc::clone(&agent);
+                async move |request: v2::CancelTerminalRequest,
+                            responder: Responder<v2::CancelTerminalResponse>,
+                            cx: V2ConnectionTo<Client>| {
+                    let agent = Arc::clone(&agent);
+                    spawn_response(&cx, responder, async move {
+                        let session_id = bridge::<_, v1::SessionId>(&request.session_id)?;
+                        let terminal = request.terminal_id.0.to_string();
+                        agent
+                            .stop_background(&session_id, |work| {
+                                background::terminal(work, &terminal)
+                            })
+                            .await?;
+                        Ok(v2::CancelTerminalResponse::new())
+                    })
+                }
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            {
+                let agent = Arc::clone(&agent);
+                async move |request: v2::CancelToolCallRequest,
+                            responder: Responder<v2::CancelToolCallResponse>,
+                            cx: V2ConnectionTo<Client>| {
+                    let agent = Arc::clone(&agent);
+                    spawn_response(&cx, responder, async move {
+                        let session_id = bridge::<_, v1::SessionId>(&request.session_id)?;
+                        let tool_call = request.tool_call_id.0.to_string();
+                        agent
+                            .stop_background(&session_id, |work| {
+                                background::tool_call(work, &tool_call)
+                            })
+                            .await?;
+                        Ok(v2::CancelToolCallResponse::new())
+                    })
+                }
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
         .on_receive_notification(
             {
                 let agent = Arc::clone(&agent);
                 async move |notification: v2::CancelSessionNotification,
                             _cx: V2ConnectionTo<Client>| {
-                    agent
-                        .cancel(&bridge::<_, v1::SessionId>(&notification.session_id)?)
-                        .await;
+                    let session_id = bridge::<_, v1::SessionId>(&notification.session_id)?;
+                    // A session not open here may be a child the host was
+                    // told of, whose cancel stops that subagent.
+                    if !agent.is_open(&session_id) {
+                        let child = session_id.0.to_string();
+                        let stopped = agent
+                            .stop_any_background(|work| background::subagent(work, &child))
+                            .await;
+                        if stopped {
+                            return Ok(());
+                        }
+                    }
+                    agent.cancel(&session_id).await;
                     Ok(())
                 }
             },
@@ -232,7 +287,8 @@ pub(super) fn agent(agent: Arc<Adapter>) -> impl ConnectTo<Client> {
 }
 
 /// `session/resume`, replaying history through `replay` first when asked.
-/// v2 requires a current-state snapshot before a successful response.
+/// v2 requires a current-state snapshot before a successful response, with
+/// an announcement before it of each piece of background work it lists.
 async fn resume(
     agent: &Adapter,
     request: v2::ResumeSessionRequest,
@@ -253,7 +309,10 @@ async fn resume(
         Ok(started) => started,
         Err(error) => return responder.respond_with_error(error),
     };
-    port.send_update(&session_id, v2::SessionUpdate::StateUpdate(state(&started)))?;
+    for update in background::announcements(&started.background) {
+        port.send_update(&session_id, update)?;
+    }
+    port.send_update(&session_id, state(&started))?;
     responder.respond(
         v2::ResumeSessionResponse::new()
             .config_options(setup.config_options)
@@ -267,12 +326,8 @@ async fn resume(
 /// started may still run. The session pump follows that turn from the same
 /// attach state (`sessions::pump::Following::Announced`) and reports its end
 /// through `AcpClientPort::attached_turn_ended`.
-fn state(started: &Started) -> v2::StateUpdate {
-    if started.busy() {
-        v2::StateUpdate::Running(v2::RunningStateUpdate::new())
-    } else {
-        v2::StateUpdate::Idle(v2::IdleStateUpdate::new())
-    }
+fn state(started: &Started) -> v2::SessionUpdate {
+    background::state(Foreground::of(started.state), &started.background)
 }
 
 fn spawn_response<Resp, Fut>(

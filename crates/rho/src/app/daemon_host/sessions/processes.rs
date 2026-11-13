@@ -2,8 +2,6 @@
 //! runtime: the rows a client's process rail shows and the output its peek
 //! view reads.
 
-use std::sync::PoisonError;
-
 use rho_protocol::{
     ErrorCode, ProcessChunk, ProcessOutput, ProcessState, ProcessStream, RpcError, SessionProcess,
     SessionProcessesParams, SessionProcessesResponse,
@@ -31,11 +29,7 @@ impl Sessions {
         // An idle unload may have taken it since the lookup. A read needs
         // no residency hold: it takes nothing teardown waits on.
         let turn = session.enter().ok_or_else(not_loaded)?;
-        let manager = session
-            .processes
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone();
+        let manager = session.background.processes();
         drop(turn);
         // A session without the `process` tool has none.
         let Some(manager) = manager else {

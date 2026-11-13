@@ -9,7 +9,12 @@
 //!    `user_message`, reports `running`, and answers with the message's ID.
 //! 2. The turn streams its updates as in v1.
 //! 3. The turn ends: `idle` with the stop reason, or with `error` when it
-//!    failed after acceptance.
+//!    failed after acceptance. The session's pump sends it as it reads the
+//!    end (`V2Port::turn_ended`), so no later update it sends, a delivery
+//!    turn's `running` or a background change, can come first.
+//!
+//! Both state updates list the session's background work as the host was
+//! last told it, holding it while they send ([`super::background`]).
 //!
 //! A prompt that stops before its message is inserted (busy or unknown
 //! session, a rejected command, a cancel or close first) gets an error
@@ -23,8 +28,8 @@ use agent_client_protocol::{
     Client, Error as AcpError,
 };
 
-use super::{port::V2Port, requests};
-use crate::app::acp::{sessions::Accept, Adapter, TurnEnd};
+use super::{background, port::V2Port, requests};
+use crate::app::acp::{sessions::Accept, Adapter, Foreground};
 
 pub(super) fn spawn(
     adapter: Arc<Adapter>,
@@ -45,23 +50,30 @@ pub(super) fn spawn(
             let unanswered = Arc::clone(&unanswered);
             let session_id = session_id.clone();
             let prompt = request.prompt.clone();
-            move |message_id| acknowledge(&port, &session_id, prompt, message_id, &unanswered)
+            let adapter = Arc::clone(&adapter);
+            let v1_session_id = v1_request.session_id.clone();
+            move |message_id| {
+                adapter.with_background(&v1_session_id, |work| {
+                    let running = background::state(Foreground::Running, work);
+                    acknowledge(&port, &session_id, prompt, message_id, running, &unanswered);
+                });
+            }
         });
         let result = adapter
             .prompt(&v1_request.session_id, &v1_request.prompt, Some(accept))
             .await;
-        if let Some(responder) = take(&unanswered) {
-            let error = match result {
-                Err(error) => error,
-                // The turn ended before the daemon saved the prompt, as a
-                // cancel that beat it does.
-                Ok(_) => {
-                    AcpError::request_cancelled().data("the prompt was cancelled before it started")
-                }
-            };
-            return responder.respond_with_error(error);
-        }
-        port.send_update(&session_id, requests::idle(&TurnEnd::Ended(result)))
+        let Some(responder) = take(&unanswered) else {
+            return Ok(());
+        };
+        let error = match result {
+            Err(error) => error,
+            // The turn ended before the daemon saved the prompt, as a
+            // cancel that beat it does.
+            Ok(_) => {
+                AcpError::request_cancelled().data("the prompt was cancelled before it started")
+            }
+        };
+        responder.respond_with_error(error)
     })
 }
 
@@ -71,13 +83,12 @@ fn acknowledge(
     session_id: &v2::SessionId,
     prompt: Vec<v2::ContentBlock>,
     message_id: v1::MessageId,
+    running: v2::SessionUpdate,
     unanswered: &Mutex<Option<Responder<v2::PromptResponse>>>,
 ) {
     let message_id = v2::MessageId::new(message_id.0);
     let user_message =
         v2::SessionUpdate::UserMessage(v2::UserMessage::new(message_id.clone()).content(prompt));
-    let running =
-        v2::SessionUpdate::StateUpdate(v2::StateUpdate::Running(v2::RunningStateUpdate::new()));
     let sent = port
         .send_update(session_id, user_message)
         .and_then(|()| port.send_update(session_id, running));

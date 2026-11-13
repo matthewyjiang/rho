@@ -483,6 +483,146 @@
       ],
       "type": "object"
     },
+    "BackgroundItem": {
+      "anyOf": [
+        {
+          "description": "A process the session's `process` tool started, by its\n[`super::SessionProcess::id`].",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "process",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A workflow run the session started.",
+          "properties": {
+            "kind": {
+              "const": "workflow",
+              "type": "string"
+            },
+            "run": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "run"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A subagent the daemon runs for the session, by its run id.",
+          "properties": {
+            "kind": {
+              "const": "subagent",
+              "type": "string"
+            },
+            "run": {
+              "type": "string"
+            },
+            "session": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/SessionId"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The subagent's own session, once it opened one; runtimes that\nkeep no Rho session never have one."
+            }
+          },
+          "required": [
+            "kind",
+            "run"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "properties": {
+            "kind": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object",
+          "x-rho-other": true
+        }
+      ],
+      "description": "What a piece of background work is, and the id the session names it by.\nProtocol minors may add kinds."
+    },
+    "BackgroundStatus": {
+      "anyOf": [
+        {
+          "enum": [
+            "running"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "completed",
+          "description": "It finished by itself: a process exited, with any code; a workflow or\nsubagent succeeded.",
+          "type": "string"
+        },
+        {
+          "const": "failed",
+          "description": "It failed, timed out, or never started.",
+          "type": "string"
+        },
+        {
+          "const": "cancelled",
+          "description": "Someone stopped it.",
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "Where a piece of background work is. Protocol minors may add statuses."
+    },
+    "BackgroundWork": {
+      "description": "One piece of a session's background work, as\n[`super::SessionEvent::Background`] lists it.",
+      "properties": {
+        "exit_code": {
+          "description": "A process's exit code, once it exited with one.",
+          "format": "int32",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "item": {
+          "$ref": "#/$defs/BackgroundItem"
+        },
+        "status": {
+          "$ref": "#/$defs/BackgroundStatus"
+        },
+        "title": {
+          "description": "What it shows as: a process's command line, a workflow's name, a\nsubagent's title.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "item",
+        "title",
+        "status"
+      ],
+      "type": "object"
+    },
     "Budget": {
       "anyOf": [
         {
@@ -3714,6 +3854,13 @@
     "SessionAttachResponse": {
       "description": "Result of [`SESSION_ATTACH`] and [`SESSION_OBSERVE`]. The session's\nevents then arrive as [`SESSION_EVENT`] notifications, never before this\nresponse. Attaching or observing again on the same connection replaces\nthe earlier attachment.",
       "properties": {
+        "background": {
+          "description": "The session's background work when the attachment began; a later\n[`super::SessionEvent::Background`] replaces it.",
+          "items": {
+            "$ref": "#/$defs/BackgroundWork"
+          },
+          "type": "array"
+        },
         "inputs": {
           "description": "The input requests open when the attachment began, oldest first:\nwhat a client may answer even when the replay no longer holds the\nevents that opened them (#1660). The replay may repeat some; an\ninput request's id names it.",
           "items": {
@@ -3783,6 +3930,26 @@
         "inputs",
         "options"
       ],
+      "type": "object"
+    },
+    "SessionBackgroundStopParams": {
+      "description": "Params of [`SESSION_BACKGROUND_STOP`].",
+      "properties": {
+        "session": {
+          "$ref": "#/$defs/SessionId"
+        },
+        "work": {
+          "$ref": "#/$defs/BackgroundItem"
+        }
+      },
+      "required": [
+        "session",
+        "work"
+      ],
+      "type": "object"
+    },
+    "SessionBackgroundStopResponse": {
+      "description": "Result of [`SESSION_BACKGROUND_STOP`].",
       "type": "object"
     },
     "SessionCancelParams": {
@@ -4612,6 +4779,26 @@
           },
           "required": [
             "type"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The session's background work changed: its processes, workflow\nruns, and subagents still running, and those that ended whose result\nits model has not been given. The whole set, replacing the last one\nthis stream or the attach response\n([`super::SessionAttachResponse::background`]) gave. Sent as work\nstarts and ends, and before a turn begins or ends, so a client hears\nhow the work a turn takes up ended, and what a turn left running,\nbefore it hears of the turn.",
+          "properties": {
+            "type": {
+              "const": "background",
+              "type": "string"
+            },
+            "work": {
+              "items": {
+                "$ref": "#/$defs/BackgroundWork"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "type",
+            "work"
           ],
           "type": "object"
         },
@@ -7527,6 +7714,14 @@
       },
       "result": {
         "$ref": "#/$defs/SessionAttachResponse"
+      }
+    },
+    "rho/session/background/stop": {
+      "params": {
+        "$ref": "#/$defs/SessionBackgroundStopParams"
+      },
+      "result": {
+        "$ref": "#/$defs/SessionBackgroundStopResponse"
       }
     },
     "rho/session/cancel": {

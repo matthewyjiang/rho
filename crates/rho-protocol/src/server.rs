@@ -26,7 +26,8 @@ use crate::{
         AuthLoginCancelResponse, AuthLoginParams, AuthLoginResponse, AuthLogoutParams,
         AuthLogoutResponse, ClientInfo, ConfigGet, ConfigGetParams, Hello, JobListResponse, Method,
         SessionAnswerParams, SessionAnswerResponse, SessionAttach, SessionAttachParams,
-        SessionAttachResponse, SessionCancelParams, SessionCancelResponse, SessionConfigureParams,
+        SessionAttachResponse, SessionBackgroundStopParams, SessionBackgroundStopResponse,
+        SessionCancelParams, SessionCancelResponse, SessionConfigureParams,
         SessionConfigureResponse, SessionDeleteParams, SessionDeleteResponse, SessionDetach,
         SessionDetachParams, SessionDetachResponse, SessionHoldParams, SessionHoldResponse,
         SessionInspectParams, SessionInspectResponse, SessionListParams, SessionListResponse,
@@ -38,11 +39,11 @@ use crate::{
         SessionSteerParams, SessionSteerResponse, SessionUnsteerParams, SessionUnsteerResponse,
         WorktreePruneParams, WorktreePruneResponse, AUTH_CHOOSE_STORE, AUTH_KEY, AUTH_LIST,
         AUTH_LOGIN, AUTH_LOGIN_CANCEL, AUTH_LOGOUT, CONFIG_GET, HELLO, SESSION_ANSWER,
-        SESSION_ATTACH, SESSION_CANCEL, SESSION_CONFIGURE, SESSION_DELETE, SESSION_DETACH,
-        SESSION_HOLD, SESSION_INSPECT, SESSION_LIST, SESSION_MCP, SESSION_MCP_CATALOG,
-        SESSION_MCP_COMPLETE, SESSION_MCP_RESOURCE, SESSION_NEW, SESSION_OBSERVE,
-        SESSION_PROCESSES, SESSION_PROMPT, SESSION_RENAME, SESSION_STEER, SESSION_UNSTEER,
-        WORKTREE_PRUNE,
+        SESSION_ATTACH, SESSION_BACKGROUND_STOP, SESSION_CANCEL, SESSION_CONFIGURE, SESSION_DELETE,
+        SESSION_DETACH, SESSION_HOLD, SESSION_INSPECT, SESSION_LIST, SESSION_MCP,
+        SESSION_MCP_CATALOG, SESSION_MCP_COMPLETE, SESSION_MCP_RESOURCE, SESSION_NEW,
+        SESSION_OBSERVE, SESSION_PROCESSES, SESSION_PROMPT, SESSION_RENAME, SESSION_STEER,
+        SESSION_UNSTEER, WORKTREE_PRUNE,
     },
     subscription::Subscription,
     BuildId, BuildSkew, DaemonInfo, DaemonStatus, ErrorCode, FrameError, HelloResponse, Message,
@@ -257,6 +258,16 @@ pub trait Service: SettingsService + Send + Sync {
     ) -> impl Future<Output = Result<SessionProcessesResponse, RpcError>> + Send {
         let _ = params;
         unsupported(SESSION_PROCESSES)
+    }
+
+    /// Handles `rho/session/background/stop`: stop one piece of the loaded
+    /// session's background work.
+    fn session_background_stop(
+        &self,
+        params: SessionBackgroundStopParams,
+    ) -> impl Future<Output = Result<SessionBackgroundStopResponse, RpcError>> + Send {
+        let _ = params;
+        unsupported(SESSION_BACKGROUND_STOP)
     }
 
     /// Handles `rho/session/inspect`: read a report about the loaded

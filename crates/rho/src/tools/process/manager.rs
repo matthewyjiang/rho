@@ -76,6 +76,8 @@ pub struct ProcessManager {
     inner: Arc<Mutex<Inner>>,
     environment: rho_tools::SharedProcessEnvironment,
     exited: Arc<Notify>,
+    /// Fires as a process is registered, before it starts.
+    started: Arc<Notify>,
 }
 
 impl ProcessManager {
@@ -100,6 +102,7 @@ impl ProcessManager {
             })),
             environment: environment.into(),
             exited,
+            started: Arc::new(Notify::new()),
         }
     }
 
@@ -214,6 +217,7 @@ impl ProcessManager {
             }
             inner.records.insert(id.clone(), rec.clone());
         }
+        self.started.notify_waiters();
         match cmd.spawn() {
             Ok(mut child) => {
                 let tree = match ProcessTree::attach(&child) {
@@ -323,6 +327,12 @@ impl ProcessManager {
     /// pending notifications so an exit during the wait is not lost.
     pub fn notified_owned(&self) -> impl std::future::Future<Output = ()> + Send + 'static {
         self.exited.clone().notified_owned()
+    }
+
+    /// Fires when a process is registered to start. Subscribe before
+    /// reading the processes so one registered in between is not missed.
+    pub(crate) fn started_owned(&self) -> impl std::future::Future<Output = ()> + Send + 'static {
+        self.started.clone().notified_owned()
     }
 
     /// True when a finished process is waiting to be delivered to the model.

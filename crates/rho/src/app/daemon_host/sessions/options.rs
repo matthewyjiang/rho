@@ -30,11 +30,7 @@ impl LoadedSession {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) =
             crate::app::session_mcp::SessionMcp::of(runtime);
-        *self
-            .processes
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) =
-            runtime.tools().processes().cloned();
+        self.background.refresh(runtime);
         let options = daemon_options(runtime, &self.config(), auths);
         self.feed.update_options(options.clone());
         self.feed.options()

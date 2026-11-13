@@ -40,6 +40,18 @@ pub struct SubagentSnapshot {
     pub persistence: SessionPersistence,
 }
 
+/// A child a session has yet to be given the result of; see
+/// [`SubagentManager::background`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct BackgroundChild {
+    pub(crate) run: String,
+    pub(crate) title: String,
+    /// The child's own session, when its runtime keeps one.
+    pub(crate) session: Option<rho_sdk::SessionId>,
+    /// `Running` until the run ended, then how it ended.
+    pub(crate) state: subagent::RunState,
+}
+
 /// Stable run identity and its best available task label for host presentation.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct SubagentTaskIdentity {
@@ -62,6 +74,15 @@ struct AgentEntry {
 }
 
 impl AgentEntry {
+    /// The label shown for the run: its `title`, when it reported one,
+    /// else the task it was given.
+    fn display_title(&self, title: Option<String>) -> String {
+        title
+            .filter(|title| !title.trim().is_empty())
+            .or_else(|| self.task_fallback.clone())
+            .unwrap_or_else(|| "Delegated task".into())
+    }
+
     fn snapshot(&self, id: &str) -> SubagentSnapshot {
         let status = self.handle.status();
         let elapsed = status
@@ -91,6 +112,8 @@ pub struct SubagentManager {
     executor: AgentExecutor,
     /// Notified each time a run of this manager ends.
     ended: Arc<tokio::sync::Notify>,
+    /// Notified each time a run of this manager is registered.
+    started: Arc<tokio::sync::Notify>,
     parent: Arc<Mutex<ParentBinding>>,
     /// Hears of each run this manager starts, when the host shares its
     /// pool (see `subagent_pool`).
@@ -132,6 +155,7 @@ impl SubagentManager {
                 SubagentNoticeBridge::new(),
             ),
             ended: Arc::new(tokio::sync::Notify::new()),
+            started: Arc::new(tokio::sync::Notify::new()),
             parent: Arc::new(Mutex::new(ParentBinding {
                 placement: subagent::RunPlacement::parentless(),
                 workspace: None,
@@ -305,6 +329,7 @@ impl SubagentManager {
                 explicitly_observed: false,
             },
         );
+        self.started.notify_waiters();
         // Once the run is registered, so whoever the notice wakes finds it.
         let ended = Arc::clone(&self.ended);
         tokio::spawn(async move {
@@ -395,13 +420,7 @@ impl SubagentManager {
         let id = crate::subagent::normalize_id(id).ok()?;
         let entries = self.inner.lock().expect("delegated registry lock");
         let entry = entries.get(&id)?;
-        let task = entry
-            .handle
-            .status()
-            .title
-            .filter(|title| !title.trim().is_empty())
-            .or_else(|| entry.task_fallback.clone())
-            .unwrap_or_else(|| "Delegated task".into());
+        let task = entry.display_title(entry.handle.status().title);
         Some(SubagentTaskIdentity {
             run_id: id,
             agent_id: entry.agent_id.clone(),
@@ -458,6 +477,65 @@ impl SubagentManager {
                 () = posted => {}
             }
         }
+    }
+
+    /// Resolves once a child is registered or ends from now on. Subscribe
+    /// before reading [`Self::background`], so a change in between still
+    /// wakes.
+    pub(crate) fn changed(&self) -> impl std::future::Future<Output = ()> + Send + 'static {
+        let started = Arc::clone(&self.started).notified_owned();
+        let ended = Arc::clone(&self.ended).notified_owned();
+        async move {
+            tokio::select! {
+                () = started => {}
+                () = ended => {}
+            }
+        }
+    }
+
+    /// The children of session `session_id` whose result it has yet to be
+    /// given: running, or finished and undelivered, oldest first.
+    pub(crate) fn background(&self, session_id: &str) -> Vec<BackgroundChild> {
+        let entries = self.inner.lock().expect("delegated registry lock");
+        let mut children: Vec<_> = entries
+            .iter()
+            .filter(|(_, entry)| entry.session_id == session_id && !entry.observed)
+            .map(|(id, entry)| {
+                let status = entry.handle.status();
+                let title = entry.display_title(status.title);
+                let state = if entry.handle.is_complete() {
+                    status.state
+                } else {
+                    subagent::RunState::Running
+                };
+                (
+                    entry.started,
+                    BackgroundChild {
+                        run: id.clone(),
+                        title,
+                        session: entry.handle.session().cloned(),
+                        state,
+                    },
+                )
+            })
+            .collect();
+        children.sort_by(|(left, a), (right, b)| left.cmp(right).then_with(|| a.run.cmp(&b.run)));
+        children.into_iter().map(|(_, child)| child).collect()
+    }
+
+    /// Asks running child `id` of session `session_id` to stop, without
+    /// waiting: its result, cancelled, is delivered like any other.
+    pub(crate) fn cancel(&self, session_id: &str, id: &str) -> anyhow::Result<()> {
+        let entries = self.inner.lock().expect("delegated registry lock");
+        let entry = entries
+            .get(id)
+            .filter(|entry| entry.session_id == session_id)
+            .ok_or_else(|| anyhow::anyhow!("unknown delegated run '{id}'"))?;
+        if entry.handle.is_complete() {
+            anyhow::bail!("delegated run '{id}' already ended");
+        }
+        entry.handle.cancel();
+        Ok(())
     }
 
     /// Waits for any current child to finish without marking its result delivered.

@@ -18,7 +18,7 @@ use rho_protocol::{
     SessionSetup, SessionSummary,
 };
 
-use super::host_features::Forms;
+use super::host_features::{Forms, HostFeatures, Turns};
 use crate::app::prompt_content::fence_context;
 
 /// What `rho acp`'s own flags put in every session it opens or reopens:
@@ -37,13 +37,13 @@ pub(super) struct Launch {
 
 impl Launch {
     /// The setup of a session the host opens with `directories` and
-    /// `servers`. A host that draws no `forms` gets no questionnaire, since
-    /// it could not answer one.
+    /// `servers`, as far as the host's `features` allow. A host that draws
+    /// no forms gets no questionnaire, since it could not answer one.
     pub(super) fn setup(
         &self,
         directories: &[PathBuf],
         servers: &[AcpMcpServer],
-        forms: Forms,
+        features: HostFeatures,
     ) -> SessionSetup {
         let mut additional_directories = self.added_dirs.clone();
         for directory in directories {
@@ -52,7 +52,7 @@ impl Launch {
             }
         }
         let mut without = self.without.clone();
-        match forms {
+        match features.forms {
             Forms::Available(_) => {}
             Forms::Unavailable => {
                 without.insert(SessionPart::Questions);
@@ -63,8 +63,14 @@ impl Launch {
             mcp_servers: protocol_servers(servers),
             without,
             child_threads: self.child_threads,
-            // An ACP client is told of a turn only as its own prompt's.
-            idle_wake: rho_protocol::IdleWake::Never,
+            idle_wake: match features.turns {
+                // The client is told of a turn only as its own prompt's, so
+                // a prompt waits for the background work it started.
+                Turns::Prompted => rho_protocol::IdleWake::Never,
+                // The client follows turns the daemon starts as background
+                // work finishes, so a prompt ends while that work runs on.
+                Turns::Any => rho_protocol::IdleWake::Turn,
+            },
             // A missing login is the ACP client's `auth_required`.
             sign_in: rho_protocol::SignIn::Required,
         }

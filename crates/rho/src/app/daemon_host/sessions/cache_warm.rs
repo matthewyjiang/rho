@@ -30,7 +30,7 @@ use crate::{
         WarmGate, WarmHalt, WarmLimits, WarmProgress, WarmStep, FALLBACK_PING_BUDGET,
     },
     config::{Config, ProviderConfigs},
-    tools::process::{CacheWarmRoute, ProcessManager},
+    tools::process::CacheWarmRoute,
     usage::pricing::catalog_cost_usd_micros,
 };
 
@@ -275,11 +275,9 @@ impl LoadedSession {
         let config = self.settings.agent_config().await.ok();
         let enabled = config.as_ref().is_some_and(|config| config.keep_cache_warm);
         let held = self
-            .processes
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .as_ref()
-            .is_some_and(ProcessManager::has_keep_warm_hold);
+            .background
+            .processes()
+            .is_some_and(|processes| processes.has_keep_warm_hold());
         let now = now();
         let warms = enabled && held;
         // Only a turn pauses the warming: its own requests refresh the cache.

@@ -7,9 +7,9 @@
 use agent_client_protocol::Error as AcpError;
 use agent_client_protocol::{schema::ProtocolVersion, v1::schema as v1, v2::schema as v2};
 
-use rho_protocol::SessionOptions;
+use rho_protocol::{BackgroundWork, SessionOptions};
 
-use super::bridge;
+use super::{background, bridge};
 use crate::app::acp::{host_features::Toggles, options as acp_options, TurnEnd};
 
 /// `initialize` as v1 would have negotiated it. v2 made notices, compaction
@@ -314,8 +314,9 @@ pub(super) fn permission_response(
 
 /// The `idle` that closes a turn that ended as `end`: with why it stopped,
 /// `error` with the failure of one that failed after it started, and no
-/// reason for one whose end went unseen or that v2 cannot name.
-pub(super) fn idle(end: &TurnEnd) -> v2::SessionUpdate {
+/// reason for one whose end went unseen or that v2 cannot name. It lists the
+/// `background` work the turn left running.
+pub(super) fn idle(end: &TurnEnd, background: &[BackgroundWork]) -> v2::SessionUpdate {
     let stop_reason = match end {
         TurnEnd::Ended(Ok(reason)) => match reason {
             v1::StopReason::EndTurn => Some(v2::StopReason::EndTurn),
@@ -330,9 +331,7 @@ pub(super) fn idle(end: &TurnEnd) -> v2::SessionUpdate {
         )),
         TurnEnd::Unseen => None,
     };
-    v2::SessionUpdate::StateUpdate(v2::StateUpdate::Idle(
-        v2::IdleStateUpdate::new().stop_reason(stop_reason),
-    ))
+    background::idle_state(stop_reason, background)
 }
 
 #[cfg(test)]

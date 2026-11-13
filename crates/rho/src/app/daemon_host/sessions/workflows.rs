@@ -11,7 +11,12 @@ impl Sessions {
     pub(in crate::app::daemon_host) fn undelivered_workflow_runs(&self) -> HashSet<String> {
         self.loaded()
             .values()
-            .flat_map(|session| session.workflows.undelivered_runs(session.id.as_str()))
+            .flat_map(|session| {
+                session
+                    .background
+                    .workflows()
+                    .undelivered_runs(session.id.as_str())
+            })
             .collect()
     }
 }
