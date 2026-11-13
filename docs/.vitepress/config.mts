@@ -2,12 +2,29 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { withMermaid } from 'vitepress-plugin-mermaid'
-import type { DefaultTheme } from 'vitepress'
+import type { DefaultTheme, UserConfig } from 'vitepress'
 import type { Plugin as VitePlugin } from 'vite'
 
 const configDir = path.dirname(fileURLToPath(import.meta.url))
 const repoRoot = path.resolve(configDir, '../..')
 const installScripts = ['install.sh', 'install.ps1'] as const
+
+type MarkdownIt = Parameters<NonNullable<NonNullable<UserConfig['markdown']>['config']>>[0]
+
+/**
+ * Render raw HTML in the changelog pages as text. Release Please copies commit
+ * prose such as `Vec<ContentBlock>` into the crate changelogs unescaped, and
+ * Vue would otherwise compile it as an unclosed element and fail the build.
+ */
+function escapeChangelogHtml(md: MarkdownIt) {
+  for (const rule of ['html_inline', 'html_block'] as const) {
+    const render = md.renderer.rules[rule]
+    md.renderer.rules[rule] = (tokens, idx, options, env, self) =>
+      /(^|\/)changelog\.md$/.test(env.relativePath ?? '')
+        ? md.utils.escapeHtml(tokens[idx].content)
+        : render!(tokens, idx, options, env, self)
+  }
+}
 
 /** Serve scripts/install.* at the docs site root (for example /rho/install.sh). */
 function installScriptsPlugin(): VitePlugin {
@@ -270,6 +287,9 @@ export default withMermaid({
   },
   mermaidPlugin: {
     class: 'rho-mermaid',
+  },
+  markdown: {
+    config: (md) => escapeChangelogHtml(md),
   },
   vite: {
     plugins: [installScriptsPlugin()],
