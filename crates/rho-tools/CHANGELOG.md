@@ -1,5 +1,46 @@
 # Changelog
 
+## [2.0.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v1.16.3...rho-agent-tools-v2.0.0) (2026-11-13)
+
+
+### ⚠ BREAKING CHANGES
+
+* **hooks:** HookCapability::ExecuteProcess gains a requested_command field and HOOK_SCHEMA_VERSION is now 3.
+* **sdk:** Message gains CompactionSummary, ModelContext, BoundaryInput, and ReasoningShift variants rendered through Message::wire(); ToolCall.execution replaces async marker blocks; ModelEvent gains ToolCallAccepted, Stopped, and ProviderContext with a ReplayScope; ProviderContextBlock.replay replaces the hard-coded Codex replay exception; the session snapshot schema is now 3. Saved 5.x history loads as typed entries.
+* **sdk:** ToolResult carries status: ToolResultStatus and images instead of ok: bool; the tool image supplement message API is removed; ToolCompletion::Completed replaces Success and CompletedFailure; RunEvent::ToolStarted carries execution and replaces ToolDetached; ToolProgress uses new/with_metadata with getters. Saved 2.x sessions still load.
+* **sdk:** ModelProvider has one send_turn_stream(request, ProviderTurnContext) and native_compact takes ModelRequestOptions; provider_steering_channel returns ProviderSteeringSender; StepStarted carries context_estimate; SteeringRetraction gains Delivered; InvalidConfiguration, Persistence, and Interrupted errors are struct variants with an optional source; host input and tool host builders use with_* setters and unsuffixed getters; AfterToolUsePayload carries capability and process.
+* **sdk:** QuestionKind, DefaultSelection, HostInputSource, CompactorCancellationMode, HookSessionFailureKind, and ScriptedToolOutcome are now #[non_exhaustive]; exhaustive matches outside rho-sdk need a wildcard arm. Decision adapters should reject unknown question kinds with InvalidRequest::UnsupportedQuestionKind.
+* **tools:** the hashline edit format and its `edit` tool are gone; `edit_tool = "hashline"` (global or per custom provider) now loads as `str_replace` with a migration warning. rho-agent-tools drops `EditFormat::Hashline`, the `hashline` module, `FileViewPolicy`/`FileViewStyle`, the public `rtk` module, the `Bash::new`/`PowerShell::new` RTK argument, and the `ToolCard` match_* fields, which move into the new `ToolBody::Search` variant alongside a new `ToolBody::Code` variant.
+
+### Features
+
+* **daemon:** catch client and daemon version skew at the handshake, not at the first failed request ([#1784](https://github.com/matthewyjiang/rho/issues/1784)) ([6230b86](https://github.com/matthewyjiang/rho/commit/6230b867f3fc2f30cfa5cc17433bb2acee4810aa))
+* **daemon:** run a session's commands with its client's environment ([#1733](https://github.com/matthewyjiang/rho/issues/1733)) ([0833ae2](https://github.com/matthewyjiang/rho/commit/0833ae2a9b11bf3979fb1cbbee47668c3090ed46))
+* drop computer use ([#1738](https://github.com/matthewyjiang/rho/issues/1738)) ([4ba3648](https://github.com/matthewyjiang/rho/commit/4ba36487c5d5c2ef3b37a89f212f8ce1e7effe35))
+* **hooks:** show hooks the command the model requested when rtk rewrites it ([#1892](https://github.com/matthewyjiang/rho/issues/1892)) ([e2e01bd](https://github.com/matthewyjiang/rho/commit/e2e01bd35afe50f558efc5affae8fa0d8fe20712))
+* **protocol:** send the TUI's tool cards on daemon tool calls ([#1754](https://github.com/matthewyjiang/rho/issues/1754)) ([9691ca0](https://github.com/matthewyjiang/rho/commit/9691ca0de58a11e6352e5e2a940ac9e56a48fc7e))
+
+
+### Bug Fixes
+
+* **daemon:** give each session its own client's credentials ([#1787](https://github.com/matthewyjiang/rho/issues/1787)) ([517312a](https://github.com/matthewyjiang/rho/commit/517312ac71c9571c8e9ae61afe718191e1ef0dd8)), closes [#1779](https://github.com/matthewyjiang/rho/issues/1779)
+
+
+### Code Refactoring
+
+* **sdk:** carry tool outcomes and images on tool results ([#1693](https://github.com/matthewyjiang/rho/issues/1693)) ([4d52a30](https://github.com/matthewyjiang/rho/commit/4d52a30c553665ebeeeff61a70906afd206fc413))
+* **sdk:** collapse provider turn methods and finish builder renames ([#1691](https://github.com/matthewyjiang/rho/issues/1691)) ([233e1f9](https://github.com/matthewyjiang/rho/commit/233e1f92be1f556c3469b9f8ead1447ee9e10579))
+* **sdk:** mark host-facing sdk enums non-exhaustive ([#1687](https://github.com/matthewyjiang/rho/issues/1687)) ([3bac6f5](https://github.com/matthewyjiang/rho/commit/3bac6f582ffbce71703e66b176163d5017ff92ab))
+* **sdk:** type compaction summaries, model context, and stop reasons in history ([#1695](https://github.com/matthewyjiang/rho/issues/1695)) ([4f44921](https://github.com/matthewyjiang/rho/commit/4f4492157a2835077b131a1ec719faae79f51bc8))
+* **tools:** remove the hashline edit format and the legacy rtk api ([#1692](https://github.com/matthewyjiang/rho/issues/1692)) ([f766d90](https://github.com/matthewyjiang/rho/commit/f766d90d46a7c614b2fc49d097e4ec9ef33680f1)), closes [#1684](https://github.com/matthewyjiang/rho/issues/1684)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-protocol bumped from 0.1.0 to 1.0.0
+
 ## [1.16.3](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v1.16.2...rho-agent-tools-v1.16.3) (2026-11-05)
 
 

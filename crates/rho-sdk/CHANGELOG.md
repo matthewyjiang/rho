@@ -1,5 +1,44 @@
 # Changelog
 
+## [6.0.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v5.15.2...rho-sdk-v6.0.0) (2026-11-13)
+
+
+### ⚠ BREAKING CHANGES
+
+* **sdk:** Message::User, Message::Assistant and Message::BoundaryInput hold Arc<[ContentBlock]> instead of Vec<ContentBlock>; Message::ToolResult holds Arc<ToolResult>; Message::EnrichedAssistant and Message::AbortedAssistant hold Arc instead of Box. Build them with `.into()` and change a shared payload with Arc::make_mut.
+* **hooks:** HookCapability::ExecuteProcess gains a requested_command field and HOOK_SCHEMA_VERSION is now 3.
+* **sdk:** Message gains CompactionSummary, ModelContext, BoundaryInput, and ReasoningShift variants rendered through Message::wire(); ToolCall.execution replaces async marker blocks; ModelEvent gains ToolCallAccepted, Stopped, and ProviderContext with a ReplayScope; ProviderContextBlock.replay replaces the hard-coded Codex replay exception; the session snapshot schema is now 3. Saved 5.x history loads as typed entries.
+* **sdk:** ToolResult carries status: ToolResultStatus and images instead of ok: bool; the tool image supplement message API is removed; ToolCompletion::Completed replaces Success and CompletedFailure; RunEvent::ToolStarted carries execution and replaces ToolDetached; ToolProgress uses new/with_metadata with getters. Saved 2.x sessions still load.
+* **sdk:** ModelProvider has one send_turn_stream(request, ProviderTurnContext) and native_compact takes ModelRequestOptions; provider_steering_channel returns ProviderSteeringSender; StepStarted carries context_estimate; SteeringRetraction gains Delivered; InvalidConfiguration, Persistence, and Interrupted errors are struct variants with an optional source; host input and tool host builders use with_* setters and unsuffixed getters; AfterToolUsePayload carries capability and process.
+* **sdk:** QuestionKind, DefaultSelection, HostInputSource, CompactorCancellationMode, HookSessionFailureKind, and ScriptedToolOutcome are now #[non_exhaustive]; exhaustive matches outside rho-sdk need a wildcard arm. Decision adapters should reject unknown question kinds with InvalidRequest::UnsupportedQuestionKind.
+
+### Features
+
+* **context:** timestamp user messages and assistant text sent to the model ([#1903](https://github.com/matthewyjiang/rho/issues/1903)) ([39a30ad](https://github.com/matthewyjiang/rho/commit/39a30ad2719f4882988b353a6100bf0f04904a34))
+* **daemon:** configure a session's model, reasoning, fast mode and permission mode ([#1740](https://github.com/matthewyjiang/rho/issues/1740)) ([a6c9e39](https://github.com/matthewyjiang/rho/commit/a6c9e39f05d7905014456b44cf2ed62941dfbd7a))
+* **daemon:** run a session's commands with its client's environment ([#1733](https://github.com/matthewyjiang/rho/issues/1733)) ([0833ae2](https://github.com/matthewyjiang/rho/commit/0833ae2a9b11bf3979fb1cbbee47668c3090ed46))
+* **hooks:** show hooks the command the model requested when rtk rewrites it ([#1892](https://github.com/matthewyjiang/rho/issues/1892)) ([e2e01bd](https://github.com/matthewyjiang/rho/commit/e2e01bd35afe50f558efc5affae8fa0d8fe20712))
+* **hooks:** tell hooks when a turn waits for input ([#1721](https://github.com/matthewyjiang/rho/issues/1721)) ([2258360](https://github.com/matthewyjiang/rho/commit/225836085c0b0cb3640b25fbd9fb64b00a83f422))
+* **sdk:** add a session-control capability for acting on other sessions ([91b250f](https://github.com/matthewyjiang/rho/commit/91b250f5cfdabbd2e478d4067a299acb861de566))
+
+
+### Bug Fixes
+
+* **context:** stamp user messages with only their own send time ([#1906](https://github.com/matthewyjiang/rho/issues/1906)) ([bf3af5b](https://github.com/matthewyjiang/rho/commit/bf3af5b787bcd5753479e655303eaeb4d9c55645)), closes [#1903](https://github.com/matthewyjiang/rho/issues/1903)
+
+
+### Performance Improvements
+
+* **sdk:** share message content between copies of a history ([#1934](https://github.com/matthewyjiang/rho/issues/1934)) ([b80ba7c](https://github.com/matthewyjiang/rho/commit/b80ba7c3d42494d385ee677cf56c5f4ad120f14e))
+
+
+### Code Refactoring
+
+* **sdk:** carry tool outcomes and images on tool results ([#1693](https://github.com/matthewyjiang/rho/issues/1693)) ([4d52a30](https://github.com/matthewyjiang/rho/commit/4d52a30c553665ebeeeff61a70906afd206fc413))
+* **sdk:** collapse provider turn methods and finish builder renames ([#1691](https://github.com/matthewyjiang/rho/issues/1691)) ([233e1f9](https://github.com/matthewyjiang/rho/commit/233e1f92be1f556c3469b9f8ead1447ee9e10579))
+* **sdk:** mark host-facing sdk enums non-exhaustive ([#1687](https://github.com/matthewyjiang/rho/issues/1687)) ([3bac6f5](https://github.com/matthewyjiang/rho/commit/3bac6f582ffbce71703e66b176163d5017ff92ab))
+* **sdk:** type compaction summaries, model context, and stop reasons in history ([#1695](https://github.com/matthewyjiang/rho/issues/1695)) ([4f44921](https://github.com/matthewyjiang/rho/commit/4f4492157a2835077b131a1ec719faae79f51bc8))
+
 ## [5.15.2](https://github.com/matthewyjiang/rho/compare/rho-sdk-v5.15.1...rho-sdk-v5.15.2) (2026-10-31)
 
 
