@@ -32,7 +32,7 @@ Stopping the daemon also ends the commands and background processes your session
 - `/jobs` lists everything the daemon runs, in every project. From there you can answer questions, send messages, cancel work, and open sessions ([Interactive TUI](/interactive-tui)).
 - `/login` opens the browser on the machine where the TUI runs. Sessions use the new sign-in from their next prompt.
 - You can't delete a session from a picker while the daemon has it loaded.
-- When the daemon restarts after `rho daemon restart` or an update, the TUI reconnects on its own. After `rho daemon stop`, reopen the session with `rho --resume <id>`.
+- After `rho daemon restart`, or an update the daemon picks up on its own, the TUI reconnects by itself. If the daemon stops instead, after `rho daemon stop` or a mise or Windows update, reopen the session with `rho --resume <id>`.
 
 Launch flags work as follows:
 
