@@ -395,31 +395,46 @@ fn v2_session(workspace: &Workspace, mode: &str, host: Host) -> (AcpServer, Stri
     (server, session_id)
 }
 
-/// A workspace workflow, `wait-run`, whose one node waits until the test
-/// creates `release` in the workspace.
+/// A workspace workflow, `wait-run`, whose one agent node, on the fixture
+/// model, runs a command that waits until the test creates the returned
+/// file. An agent node, not a `shell` one, so it runs where Rho cannot
+/// launch frozen workflow processes (macOS).
 fn waiting_workflow(workspace: &Workspace) -> std::path::PathBuf {
+    let release = workspace.project.join("release");
+    let wait = json!({
+        "id": "wait", "name": "bash",
+        "arguments": {"command": format!("while [ ! -e '{}' ]; do sleep 0.05; done", release.display())},
+    });
     let workflow = workspace.project.join(".rho/workflows/wait-run");
-    std::fs::create_dir_all(&workflow).unwrap();
+    std::fs::create_dir_all(workflow.join("agents")).unwrap();
+    std::fs::write(
+        workflow.join("agents/waiter.md"),
+        "---\ndescription: Fixture agent that waits\n---\n\nDo the task.\n",
+    )
+    .unwrap();
+    // A Starlark string literal holding the call's JSON.
+    let prompt = serde_json::to_string(&wait.to_string()).unwrap();
     std::fs::write(
         workflow.join("workflow.star"),
-        r#"def build(inputs):
+        format!(
+            r#"def build(inputs):
     return workflow(name = "wait-run", nodes = [
-        shell(
+        agent(
             name = "wait",
-            executable = "bash",
-            arguments = ["-c"],
-            command = "while [ ! -e release ]; do sleep 0.05; done",
-            cwd = ".",
+            agent = "waiter",
+            prompt = {prompt},
+            access = "mutating",
             timeout_seconds = 600,
-            max_output_bytes = 1000,
+            max_output_bytes = 100000,
         ),
     ])
 
-WORKFLOW = define(inputs = {}, build = build)
-"#,
+WORKFLOW = define(inputs = {{}}, build = build)
+"#
+        ),
     )
     .unwrap();
-    workspace.project.join("release")
+    release
 }
 
 /// Starts `wait-run` with `/workflow:`, returning its tool call's id once
