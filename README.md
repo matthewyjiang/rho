@@ -2,6 +2,9 @@
 
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/matthewyjiang/rho)
 
+> [!IMPORTANT]
+> **Rho 3 is out.** Sessions now keep running after you quit the TUI or close your editor. Upgrading from Rho 2? Read [Upgrading to Rho 3](https://matthewyjiang.github.io/rho/upgrading-to-3) first.
+
 Rho is a fast Rust agent harness with a small footprint and opinionated defaults.
 
 [![Rho terminal UI showing a request-ID middleware edit with read, edit, and test tool cards](docs/assets/rho-ui-demo.svg)](https://matthewyjiang.github.io/rho/interactive-tui)
@@ -64,10 +67,6 @@ rho run "summarize this repository"
 
 For a deterministic multi-step graph, see the
 [workflow guide](https://matthewyjiang.github.io/rho/workflows).
-
-## Upgrading from Rho 2.x
-
-Rho 3 moves sessions into the daemon and removes some 2.x features. See [Upgrading to Rho 3](https://matthewyjiang.github.io/rho/upgrading-to-3).
 
 ## Docs
 
