@@ -31,7 +31,7 @@ impl Tool for TodoTool {
     fn spec(&self) -> rho_sdk::model::ToolSpec {
         rho_sdk::model::ToolSpec {
             name: TOOL_NAME.into(),
-            description: "Track a short task checklist shown to the user. Replace the whole list on every call; include all items you want to keep. Use for multi-step work with three or more steps, and skip trivial single-step tasks. Keep exactly one item in_progress while working, and update the list as soon as a step finishes. Mark finished items completed.".into(),
+            description: "Track a short task checklist shown to the user. Replace the whole list on every call; include all items you want to keep. Use for multi-step work with three or more steps, and skip trivial single-step tasks. Mark each item you are actively working on in_progress (several may run in parallel), and update the list as soon as a step finishes. Mark finished items completed.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -110,16 +110,6 @@ impl TodoList {
                     index + 1
                 )));
             }
-        }
-        let in_progress = list
-            .todos
-            .iter()
-            .filter(|todo| todo.status == TodoStatus::InProgress)
-            .count();
-        if in_progress > 1 {
-            return Err(invalid(format!(
-                "todo list has {in_progress} in_progress items, limit 1"
-            )));
         }
         Ok(list)
     }

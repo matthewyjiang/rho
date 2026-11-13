@@ -28,7 +28,7 @@ fn todo_lists_validate_and_summarize() {
                 {"content": "one", "status": "in_progress"},
                 {"content": "two", "status": "in_progress"}
             ]}),
-            invalid("todo list has 2 in_progress items, limit 1"),
+            Ok("2 todos: 0 completed, 2 in progress, 0 pending".into()),
         ),
         (
             json!({"todos": vec![pending.clone(); 51]}),

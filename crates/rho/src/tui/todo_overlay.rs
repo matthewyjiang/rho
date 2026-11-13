@@ -26,7 +26,7 @@ pub(super) struct TodoOverlay {
 }
 
 impl TodoOverlay {
-    /// Return the wrapped rows and the current item's first row for initial focus.
+    /// Return the wrapped rows and the first in-progress item's first row for initial focus.
     fn rows(&self, width: usize) -> (Vec<Line<'static>>, Option<usize>) {
         let Some(list) = self.list.as_ref().filter(|list| !list.todos.is_empty()) else {
             return (
@@ -41,7 +41,7 @@ impl TodoOverlay {
             let (marker, style) = match item.status {
                 TodoStatus::Completed => ("✓", Theme::dim()),
                 TodoStatus::InProgress => {
-                    current_row = Some(lines.len());
+                    current_row.get_or_insert(lines.len());
                     ("▸", Theme::accent().add_modifier(Modifier::BOLD))
                 }
                 TodoStatus::Pending => ("○", Theme::text()),
