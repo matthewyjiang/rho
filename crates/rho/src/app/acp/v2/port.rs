@@ -6,8 +6,10 @@ use std::{collections::HashSet, future::Future, pin::Pin, sync::Mutex};
 use agent_client_protocol::{v1::schema as v1, v2::schema as v2};
 use agent_client_protocol::{v2::ConnectionTo as V2ConnectionTo, Client, Error as AcpError};
 
-use super::{bridge, requests, updates};
-use crate::app::acp::{AcpClientPort, TurnEnd};
+use rho_protocol::SessionProcess;
+
+use super::{background, bridge, requests, updates};
+use crate::app::acp::{AcpClientPort, ProcessesChanged, TurnEnd};
 
 pub(super) struct V2Port {
     cx: V2ConnectionTo<Client>,
@@ -113,11 +115,41 @@ impl AcpClientPort for V2Port {
     }
 
     /// Closes the `running` that `session/resume` reported with `idle`.
-    fn attached_turn_ended(&self, session_id: &v1::SessionId, end: TurnEnd) {
+    fn attached_turn_ended(
+        &self,
+        session_id: &v1::SessionId,
+        end: TurnEnd,
+        processes: &[SessionProcess],
+    ) {
         let sent = bridge::<_, v2::SessionId>(session_id)
-            .and_then(|session_id| self.send_update(&session_id, requests::idle(&end)));
+            .and_then(|session_id| self.send_update(&session_id, requests::idle(&end, processes)));
         if let Err(error) = sent {
             tracing::warn!(%error, "could not report the end of an attached turn over ACP v2");
+        }
+    }
+
+    /// Announces the processes that started and finalizes those that
+    /// stopped, then repeats the session's state with the new background
+    /// list. The list changes exactly when a process starts or stops, so
+    /// with neither the host hears nothing.
+    fn processes_changed(&self, session_id: &v1::SessionId, change: ProcessesChanged<'_>) {
+        let updates = background::changes(change.previous, change.current);
+        if updates.is_empty() {
+            return;
+        }
+        let sent = bridge::<_, v2::SessionId>(session_id).and_then(|session_id| {
+            for update in updates {
+                self.send_update(&session_id, update)?;
+            }
+            let state = if change.turn_in_progress {
+                background::running_state(change.current)
+            } else {
+                background::idle_state(/*stop_reason*/ None, change.current)
+            };
+            self.send_update(&session_id, state)
+        });
+        if let Err(error) = sent {
+            tracing::warn!(%error, "could not report background processes over ACP v2");
         }
     }
 }

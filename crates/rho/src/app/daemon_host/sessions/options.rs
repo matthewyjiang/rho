@@ -35,6 +35,7 @@ impl LoadedSession {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) =
             runtime.tools().processes().cloned();
+        self.process_watch.replaced();
         let options = daemon_options(runtime, &self.config(), auths);
         self.feed.update_options(options.clone());
         self.feed.options()

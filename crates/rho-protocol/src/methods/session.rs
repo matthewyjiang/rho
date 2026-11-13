@@ -491,6 +491,10 @@ pub struct SessionAttachResponse {
     /// The session's options when the attachment began; a later
     /// [`super::SessionEvent::OptionsChanged`] replaces them.
     pub options: super::SessionOptions,
+    /// The session's background processes when the attachment began; a
+    /// later [`super::SessionEvent::Processes`] replaces them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub processes: Vec<super::SessionProcess>,
 }
 
 /// What the events after a [`SessionAttachResponse`] start with.

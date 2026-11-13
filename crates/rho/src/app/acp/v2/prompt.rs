@@ -11,6 +11,9 @@
 //! 3. The turn ends: `idle` with the stop reason, or with `error` when it
 //!    failed after acceptance.
 //!
+//! Both state updates list the session's background processes as the pump
+//! last heard them ([`super::background`]).
+//!
 //! A prompt that stops before its message is inserted (busy or unknown
 //! session, a rejected command, a cancel or close first) gets an error
 //! response and no updates, which v2 reserves for prompts never inserted.
@@ -23,7 +26,7 @@ use agent_client_protocol::{
     Client, Error as AcpError,
 };
 
-use super::{port::V2Port, requests};
+use super::{background, port::V2Port, requests};
 use crate::app::acp::{sessions::Accept, Adapter, TurnEnd};
 
 pub(super) fn spawn(
@@ -45,7 +48,12 @@ pub(super) fn spawn(
             let unanswered = Arc::clone(&unanswered);
             let session_id = session_id.clone();
             let prompt = request.prompt.clone();
-            move |message_id| acknowledge(&port, &session_id, prompt, message_id, &unanswered)
+            let adapter = Arc::clone(&adapter);
+            let v1_session_id = v1_request.session_id.clone();
+            move |message_id| {
+                let running = background::running_state(&adapter.processes(&v1_session_id));
+                acknowledge(&port, &session_id, prompt, message_id, running, &unanswered);
+            }
         });
         let result = adapter
             .prompt(&v1_request.session_id, &v1_request.prompt, Some(accept))
@@ -61,7 +69,11 @@ pub(super) fn spawn(
             };
             return responder.respond_with_error(error);
         }
-        port.send_update(&session_id, requests::idle(&TurnEnd::Ended(result)))
+        let processes = adapter.processes(&v1_request.session_id);
+        port.send_update(
+            &session_id,
+            requests::idle(&TurnEnd::Ended(result), &processes),
+        )
     })
 }
 
@@ -71,13 +83,12 @@ fn acknowledge(
     session_id: &v2::SessionId,
     prompt: Vec<v2::ContentBlock>,
     message_id: v1::MessageId,
+    running: v2::SessionUpdate,
     unanswered: &Mutex<Option<Responder<v2::PromptResponse>>>,
 ) {
     let message_id = v2::MessageId::new(message_id.0);
     let user_message =
         v2::SessionUpdate::UserMessage(v2::UserMessage::new(message_id.clone()).content(prompt));
-    let running =
-        v2::SessionUpdate::StateUpdate(v2::StateUpdate::Running(v2::RunningStateUpdate::new()));
     let sent = port
         .send_update(session_id, user_message)
         .and_then(|()| port.send_update(session_id, running));

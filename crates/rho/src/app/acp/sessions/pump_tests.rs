@@ -95,7 +95,12 @@ impl AcpClientPort for Host {
         Box::pin(std::future::ready(Ok(())))
     }
 
-    fn attached_turn_ended(&self, _session_id: &AcpSessionId, end: TurnEnd) {
+    fn attached_turn_ended(
+        &self,
+        _session_id: &AcpSessionId,
+        end: TurnEnd,
+        _processes: &[rho_protocol::SessionProcess],
+    ) {
         let end = match end {
             TurnEnd::Ended(Ok(stop_reason)) => format!("{stop_reason:?}"),
             TurnEnd::Ended(Err(_)) => "failed".to_owned(),
@@ -197,6 +202,7 @@ impl Pump {
         let response = attach_response(Replay::Reset, 0, state, turn);
         let shared = Arc::new(Shared {
             options: Mutex::new(response.options.clone()),
+            processes: Mutex::default(),
             attachment: watch::channel(Attachment::Stale).0,
         });
         let port: Arc<dyn AcpClientPort> = host.clone();

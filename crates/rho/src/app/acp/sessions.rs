@@ -44,7 +44,7 @@ use rho_protocol::{
     ClientEnvironment, Cursor, ErrorCode, JobState, Replay, SessionAttachParams,
     SessionAttachResponse, SessionCancelParams, SessionChange, SessionConfigureParams,
     SessionDeleteParams, SessionDetachParams, SessionId, SessionNewParams, SessionOptions,
-    SessionSetup, TurnId, TurnOutcome,
+    SessionProcess, SessionSetup, TurnId, TurnOutcome,
 };
 use tokio::{
     sync::{mpsc, oneshot, watch},
@@ -157,6 +157,8 @@ impl Attachment {
 struct Shared {
     /// The options the host last heard of.
     options: Mutex<SessionOptions>,
+    /// The session's background processes, as the pump last heard them.
+    processes: Mutex<Vec<SessionProcess>>,
     attachment: watch::Sender<Attachment>,
 }
 
@@ -250,6 +252,8 @@ pub(super) struct Started {
     /// The session's job state when the attachment began: a turn another
     /// client started may be in progress.
     pub(super) state: JobState,
+    /// The session's background processes when the attachment began.
+    pub(super) processes: Vec<SessionProcess>,
     gate: oneshot::Sender<()>,
 }
 
@@ -285,6 +289,15 @@ impl Adapter {
         self.negotiated
             .client()
             .ok_or_else(|| AcpError::internal_error().data("ACP connection not initialized"))
+    }
+
+    /// The background processes of open session `id`, as this host last
+    /// heard of them; none for a session not open here.
+    pub(super) fn processes(&self, id: &AcpSessionId) -> Vec<SessionProcess> {
+        self.sessions
+            .get(&id.0)
+            .map(|live| lock(&live.shared.processes).clone())
+            .unwrap_or_default()
     }
 
     /// The open session `id`, attached.
@@ -413,6 +426,7 @@ impl Adapter {
         let state = response.state;
         let shared = Arc::new(Shared {
             options: Mutex::new(options.clone()),
+            processes: Mutex::default(),
             attachment: watch::channel(Attachment::Stale).0,
         });
         let context = InputContext {
@@ -443,7 +457,7 @@ impl Adapter {
         let live = Arc::new(Live {
             id,
             inbound,
-            shared,
+            shared: Arc::clone(&shared),
             prompt: tokio::sync::Mutex::new(()),
             cancelling: AtomicBool::new(false),
             closing: AtomicBool::new(false),
@@ -456,10 +470,13 @@ impl Adapter {
             self.detach(&live, Wait::Prompt).await;
             return Err(error);
         }
+        // The pump took the attach's processes once the replay was through.
+        let processes = lock(&shared.processes).clone();
         Ok(Started {
             session_id: acp_id,
             options,
             state,
+            processes,
             gate,
         })
     }

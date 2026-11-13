@@ -16,8 +16,9 @@
 //! saves it.
 //!
 //! The feed also keeps the session's options, as the last
-//! [`wire::SessionEvent::OptionsChanged`] left them, so an attach reports
-//! them without waiting for the runtime either.
+//! [`wire::SessionEvent::OptionsChanged`] left them, and its background
+//! processes, as the last [`wire::SessionEvent::Processes`] did, so an
+//! attach reports them without waiting for the runtime either.
 //!
 //! A reset's transcript events carry seq 0, except the last, which carries
 //! the seq the turn in progress began after. A client's cursor is the
@@ -92,6 +93,9 @@ struct FeedState {
     title: Option<String>,
     /// The session's options, as the last options event sent them.
     options: wire::SessionOptions,
+    /// The session's background processes, as the last processes event
+    /// sent them.
+    processes: Vec<wire::SessionProcess>,
     /// The session's context use and spend, as the last usage event sent
     /// them.
     usage: Option<wire::JobUsage>,
@@ -136,6 +140,8 @@ pub(super) struct Attached {
     pub(super) title: Option<String>,
     /// The session's options as of the attach.
     pub(super) options: wire::SessionOptions,
+    /// The session's background processes as of the attach.
+    pub(super) processes: Vec<wire::SessionProcess>,
     pub(super) subscription: Subscription,
 }
 
@@ -168,6 +174,7 @@ impl Feed {
                 inputs: BTreeMap::new(),
                 title,
                 options,
+                processes: Vec::new(),
                 usage: None,
                 saved_usage: None,
                 subscribers: Vec::new(),
@@ -192,6 +199,22 @@ impl Feed {
             state.push(wire::SessionEvent::OptionsChanged {
                 options: Box::new(options),
             });
+        }
+    }
+
+    /// Tells attached clients the session's background processes are now
+    /// `processes`, unless the same processes are already in the same
+    /// states: their clocks alone are no change.
+    pub(super) fn update_processes(&self, processes: Vec<wire::SessionProcess>) {
+        let mut state = self.state();
+        let key = |process: &wire::SessionProcess| (process.id.clone(), process.state);
+        if !state
+            .processes
+            .iter()
+            .map(key)
+            .eq(processes.iter().map(key))
+        {
+            state.push(wire::SessionEvent::Processes { processes });
         }
     }
 
@@ -283,6 +306,7 @@ impl Feed {
             inputs: state.inputs.values().cloned().collect(),
             title: state.title.clone(),
             options: state.options.clone(),
+            processes: state.processes.clone(),
             subscription,
         }
     }
@@ -374,6 +398,7 @@ impl FeedState {
             wire::SessionEvent::TitleChanged { title } => self.title = Some(title.clone()),
             wire::SessionEvent::Usage { .. } => self.usage = usage_of(&event),
             wire::SessionEvent::OptionsChanged { options } => self.options = (**options).clone(),
+            wire::SessionEvent::Processes { processes } => self.processes.clone_from(processes),
             _ => {}
         }
         let seq = Seq(self.last.0 + 1);

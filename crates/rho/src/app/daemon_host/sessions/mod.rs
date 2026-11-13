@@ -111,6 +111,7 @@ use inputs::Inputs;
 use open::open_failed;
 pub(super) use open::session_environment;
 use open::{config_for_new, open_session, OpenWith, OpenedSession, Opening, Workspace};
+use processes::ProcessWatch;
 use queued::Queued;
 use reopen::ReopenLocks;
 use start::{Entered, KeyedTurn};
@@ -198,6 +199,9 @@ struct LoadedSession {
     /// The session's background processes, when it may run any; reads
     /// never wait for the active turn.
     processes: Mutex<Option<crate::tools::process::ProcessManager>>,
+    /// The session's side of the watcher that tells its clients as a
+    /// process ends (see [`processes`]).
+    process_watch: ProcessWatch,
     /// The workflow runs the session started; reads never wait for the
     /// active turn.
     workflows: crate::tools::workflow_tracker::WorkflowRunTracker,
@@ -427,6 +431,7 @@ impl LoadedSession {
             live: Mutex::new(live),
             mcp: Mutex::new(crate::app::session_mcp::SessionMcp::of(&runtime)),
             processes: Mutex::new(runtime.tools().processes().cloned()),
+            process_watch: ProcessWatch::new(),
             workflows: runtime.tools().workflow_tracker().clone(),
             feed,
             job,
@@ -463,8 +468,10 @@ impl LoadedSession {
     }
 
     /// Applies `event` to the session's job and tells attached clients the
-    /// state it left the job in.
+    /// state it left the job in, after any change to its background
+    /// processes.
     fn record(&self, event: JobEvent) {
+        self.report_processes();
         match self.jobs.record(&self.job, event) {
             Ok(moved) => self.feed.publish([state_event(&moved)]),
             Err(error) => {
@@ -476,8 +483,11 @@ impl LoadedSession {
     /// Records that turn `turn` ended as `end`, keeping `outcome` on the job
     /// for a later daemon to replay, and tells attached clients `outcome`,
     /// if any, then the state it left the job in, in one publish, so no
-    /// client's replay holds one without the other (#1669).
+    /// client's replay holds one without the other (#1669). Any change to
+    /// its background processes goes first, so a client hears the processes
+    /// the turn left running before it hears the turn end.
     fn end_turn(&self, turn: rho_protocol::TurnId, outcome: Option<TurnOutcome>, end: TurnEnd) {
+        self.report_processes();
         let ended = outcome
             .clone()
             .map(|outcome| rho_protocol::SessionEvent::TurnEnded { turn, outcome });
@@ -716,6 +726,7 @@ impl Sessions {
                     let entry = Arc::new(entry);
                     loaded.insert(session, Arc::clone(&entry));
                     self.watch_idle_results(&entry);
+                    self.watch_processes(&entry);
                     self.watch_cache_warm(&entry);
                     self.watch_child_questions(&entry);
                     if let Some(loaded) = tool_sources {
@@ -889,6 +900,7 @@ fn attach_response(workspace: &Path, attached: Attached) -> (SessionAttachRespon
         inputs,
         title,
         options,
+        processes,
         subscription,
     } = attached;
     let response = SessionAttachResponse {
@@ -904,6 +916,7 @@ fn attach_response(workspace: &Path, attached: Attached) -> (SessionAttachRespon
         inputs,
         title,
         options,
+        processes,
     };
     (response, subscription)
 }

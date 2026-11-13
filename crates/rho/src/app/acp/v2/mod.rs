@@ -5,8 +5,11 @@
 //! request the adapter already handles ([`requests`]), the adapter's v1
 //! updates are rewritten into v2 on the way out ([`port`], [`updates`]), and
 //! the prompt lifecycle, which v2 redesigned, wraps the v1 prompt
-//! ([`prompt`]). v1 clients keep the unchanged v1 builder.
+//! ([`prompt`]). v1 clients keep the unchanged v1 builder. Every
+//! `state_update` lists the session's background processes as terminals
+//! ([`background`]).
 
+mod background;
 mod git_patch;
 mod port;
 mod prompt;
@@ -232,7 +235,8 @@ pub(super) fn agent(agent: Arc<Adapter>) -> impl ConnectTo<Client> {
 }
 
 /// `session/resume`, replaying history through `replay` first when asked.
-/// v2 requires a current-state snapshot before a successful response.
+/// v2 requires a current-state snapshot before a successful response, with
+/// a `terminal_update` before it for each background process it lists.
 async fn resume(
     agent: &Adapter,
     request: v2::ResumeSessionRequest,
@@ -253,7 +257,10 @@ async fn resume(
         Ok(started) => started,
         Err(error) => return responder.respond_with_error(error),
     };
-    port.send_update(&session_id, v2::SessionUpdate::StateUpdate(state(&started)))?;
+    for update in background::announcements(&started.processes) {
+        port.send_update(&session_id, update)?;
+    }
+    port.send_update(&session_id, state(&started))?;
     responder.respond(
         v2::ResumeSessionResponse::new()
             .config_options(setup.config_options)
@@ -267,11 +274,11 @@ async fn resume(
 /// started may still run. The session pump follows that turn from the same
 /// attach state (`sessions::pump::Following::Announced`) and reports its end
 /// through `AcpClientPort::attached_turn_ended`.
-fn state(started: &Started) -> v2::StateUpdate {
+fn state(started: &Started) -> v2::SessionUpdate {
     if started.busy() {
-        v2::StateUpdate::Running(v2::RunningStateUpdate::new())
+        background::running_state(&started.processes)
     } else {
-        v2::StateUpdate::Idle(v2::IdleStateUpdate::new())
+        background::idle_state(/*stop_reason*/ None, &started.processes)
     }
 }
 

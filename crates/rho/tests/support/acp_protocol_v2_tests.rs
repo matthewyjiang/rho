@@ -84,6 +84,21 @@ fn hold_messages(held: &mut BTreeMap<String, String>, updates: &[Value]) {
     }
 }
 
+/// The terminal and state updates among `updates`: the session's title,
+/// generated after its first turn, may land among them.
+fn background_traffic(updates: &[Value]) -> Vec<Value> {
+    updates
+        .iter()
+        .filter(|update| {
+            matches!(
+                update["sessionUpdate"].as_str(),
+                Some("terminal_update" | "state_update")
+            )
+        })
+        .cloned()
+        .collect()
+}
+
 fn kinds(updates: &[Value]) -> Vec<&str> {
     updates
         .iter()
@@ -167,12 +182,17 @@ fn t3code_v2_prompt_reports_its_lifecycle_through_state_updates() {
                 "messageId": message_id,
                 "content": [{"type": "text", "text": call.to_string()}],
             }),
-            json!({"sessionUpdate": "state_update", "state": "running"}),
+            json!({"sessionUpdate": "state_update", "state": "running", "background": []}),
         ]
     );
     assert_eq!(
         updates.last().unwrap(),
-        &json!({"sessionUpdate": "state_update", "state": "idle", "stopReason": "end_turn"})
+        &json!({
+            "sessionUpdate": "state_update",
+            "state": "idle",
+            "stopReason": "end_turn",
+            "background": [],
+        })
     );
     let kinds = kinds(&updates);
     for v1_only in ["tool_call", "plan", "current_mode_update"] {
@@ -271,6 +291,109 @@ fn v2_resume_replays_and_refused_prompts_send_nothing() {
     assert!(kinds.contains(&"tool_call_update"), "{kinds:?}");
     assert_eq!(
         replay.last().unwrap(),
-        &json!({"sessionUpdate": "state_update", "state": "idle"})
+        &json!({"sessionUpdate": "state_update", "state": "idle", "background": []})
+    );
+}
+
+// Covers: a v2 host must see the background process a turn leaves running
+// (T3 Code's turns do not wait for one): announced as a terminal before the
+// idle state lists it, again on resume before its snapshot, then, once it
+// exits, its exit status before the repeated idle state that drops it, with
+// no new stop reason.
+// Owner: ACP v2 boundary and daemon process reporting, over the real stdio
+// server
+#[test]
+fn v2_lists_a_background_process_until_it_exits() {
+    let workspace = Workspace::new();
+    let config = workspace.home.config_path.clone();
+    let settings = std::fs::read_to_string(&config)
+        .unwrap()
+        .replace("permission_mode = \"plan\"", "permission_mode = \"bypass\"");
+    std::fs::write(config, settings).unwrap();
+    // The process waits for the test to release it, so it outlives the turn.
+    let release = workspace.project.join("release");
+    let command = format!(
+        "while [ ! -e '{}' ]; do sleep 0.05; done; exit 3",
+        release.display()
+    );
+    let mut server = AcpServer::from_command(
+        AcpServer::command(&workspace.home, "process-then-reply", &workspace.project)
+            .env("RHO_AUTOMATION_TEST_COMMAND", &command)
+            .arg("--t3code"),
+    );
+    server
+        .request("initialize", negotiating_initialize())
+        .0
+        .unwrap();
+    let created = server
+        .request("session/new", json!({"cwd": workspace.project}))
+        .0
+        .unwrap();
+    let session_id = created["sessionId"].as_str().unwrap().to_owned();
+
+    let (reply, updates) = server.prompt_v2(&session_id, "start the server");
+    reply.unwrap();
+    let announced = updates
+        .iter()
+        .position(|update| update["sessionUpdate"] == "terminal_update")
+        .unwrap_or_else(|| panic!("no terminal announced: {updates:#?}"));
+    let terminal = updates[announced]["terminalId"].clone();
+    let first_listed = updates
+        .iter()
+        .position(|update| {
+            update["sessionUpdate"] == "state_update"
+                && update["background"]
+                    .as_array()
+                    .is_some_and(|work| !work.is_empty())
+        })
+        .unwrap();
+    assert!(announced < first_listed, "{updates:#?}");
+    assert_eq!(
+        (&updates[announced], updates.last().unwrap()),
+        (
+            &json!({"sessionUpdate": "terminal_update", "terminalId": terminal, "command": command}),
+            &json!({
+                "sessionUpdate": "state_update",
+                "state": "idle",
+                "stopReason": "end_turn",
+                "background": [{"type": "terminal", "terminalId": terminal}],
+            }),
+        )
+    );
+
+    // A host that resumes the session, as T3 Code does on start, hears of
+    // the terminal again before the snapshot that lists it.
+    let (resumed, snapshot) = server.request(
+        "session/resume",
+        json!({"sessionId": session_id, "cwd": workspace.project}),
+    );
+    resumed.unwrap();
+    assert_eq!(
+        background_traffic(&snapshot),
+        [
+            json!({"sessionUpdate": "terminal_update", "terminalId": terminal, "command": command}),
+            json!({
+                "sessionUpdate": "state_update",
+                "state": "idle",
+                "background": [{"type": "terminal", "terminalId": terminal}],
+            }),
+        ]
+    );
+
+    std::fs::write(&release, "").unwrap();
+    let mut finished = Vec::new();
+    while background_traffic(&finished)
+        .last()
+        .is_none_or(|update| update["sessionUpdate"] != "state_update")
+    {
+        let message = server.recv("the background process's exit");
+        finished.push(message["params"]["update"].clone());
+    }
+    assert_eq!(
+        background_traffic(&finished),
+        [
+            json!({"sessionUpdate": "terminal_update", "terminalId": terminal, "exitStatus": {"exitCode": 3}}),
+            json!({"sessionUpdate": "state_update", "state": "idle", "background": []}),
+        ]
     );
 }

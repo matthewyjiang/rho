@@ -87,10 +87,30 @@ pub(super) trait AcpClientPort: Send + Sync {
     ) -> Pin<Box<dyn Future<Output = Result<(), AcpError>> + Send + '_>>;
 
     /// The turn of session `session_id` that the host was told is running
-    /// when it attached, which no prompt of its own runs, ended as `end`.
-    /// Only ACP v2 reports turn state (`state_update`), so a v1 host has
-    /// nothing to hear.
-    fn attached_turn_ended(&self, _session_id: &SessionId, _end: TurnEnd) {}
+    /// when it attached, which no prompt of its own runs, ended as `end`,
+    /// leaving background `processes`. Only ACP v2 reports turn state
+    /// (`state_update`), so a v1 host has nothing to hear.
+    fn attached_turn_ended(
+        &self,
+        _session_id: &SessionId,
+        _end: TurnEnd,
+        _processes: &[rho_protocol::SessionProcess],
+    ) {
+    }
+
+    /// Session `session_id`'s background processes changed. Only ACP v2
+    /// reports background work (a `state_update`'s `background`), so a v1
+    /// host has nothing to hear.
+    fn processes_changed(&self, _session_id: &SessionId, _change: ProcessesChanged<'_>) {}
+}
+
+/// A session's background processes went from `previous` to `current`.
+pub(super) struct ProcessesChanged<'a> {
+    pub(super) previous: &'a [rho_protocol::SessionProcess],
+    pub(super) current: &'a [rho_protocol::SessionProcess],
+    /// Whether a turn of the session's is in progress, so the repeated
+    /// state is `running` rather than `idle`.
+    pub(super) turn_in_progress: bool,
 }
 
 /// How a turn ended, as far as the host can tell.

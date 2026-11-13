@@ -798,6 +798,7 @@ impl Service for AttachService {
                 commands: Vec::new(),
                 added_dirs: Vec::new(),
             },
+            processes: Vec::new(),
         };
         Ok((response, subscription))
     }

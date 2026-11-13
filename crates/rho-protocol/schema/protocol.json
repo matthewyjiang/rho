@@ -3725,6 +3725,13 @@
           "$ref": "#/$defs/SessionOptions",
           "description": "The session's options when the attachment began; a later\n[`super::SessionEvent::OptionsChanged`] replaces them."
         },
+        "processes": {
+          "description": "The session's background processes when the attachment began; a\nlater [`super::SessionEvent::Processes`] replaces them.",
+          "items": {
+            "$ref": "#/$defs/SessionProcess"
+          },
+          "type": "array"
+        },
         "replay": {
           "$ref": "#/$defs/Replay"
         },
@@ -4612,6 +4619,26 @@
           },
           "required": [
             "type"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The session's background processes changed, as\n[`super::SESSION_PROCESSES`] lists them: those still running, and\nthose that ended whose result its model has not been given. The\nwhole set, replacing the last one this stream or the attach response\n([`super::SessionAttachResponse::processes`]) gave, and sent only\nwhen it differs: as a process ends, and before a change of the job's\nstate, which is when a process a turn started first shows.",
+          "properties": {
+            "processes": {
+              "items": {
+                "$ref": "#/$defs/SessionProcess"
+              },
+              "type": "array"
+            },
+            "type": {
+              "const": "processes",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "processes"
           ],
           "type": "object"
         },
