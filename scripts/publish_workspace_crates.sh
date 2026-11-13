@@ -259,13 +259,8 @@ if [[ "$publish_app" == true ]]; then
   if [[ "$dry_run" == true ]]; then
     load_dry_run_validation_flags rho-coding-agent
     app_validation_flags=("${dry_run_validation_flags[@]}")
-  else
-    if [[ "$publish_sdk" != true ]]; then
-      wait_for_crate rho-sdk "$sdk_version"
-    fi
-    if [[ "$publish_protocol" != true ]]; then
-      wait_for_crate rho-protocol "$protocol_version"
-    fi
+  elif [[ "$publish_sdk" != true ]]; then
+    wait_for_crate rho-sdk "$sdk_version"
   fi
   publish_crate rho-coding-agent "$app_version" "${app_validation_flags[@]}"
 fi
