@@ -21,7 +21,7 @@ Usage: scripts/publish_workspace_crates.sh --sha <full-sha> [--sdk] [--tools] [-
   --tools           Publish rho-agent-tools
   --providers       Publish rho-providers
   --protocol        Publish rho-protocol
-  --app             Publish rho-agent-tools, rho-providers, rho-protocol, then rho-coding-agent
+  --app             Publish rho-protocol, rho-agent-tools, rho-providers, then rho-coding-agent
   --dry-run         Validate packages without publishing
 EOF
 }
@@ -214,13 +214,26 @@ load_dry_run_validation_flags() {
   done <<<"$out"
 }
 
+# rho-agent-tools and rho-coding-agent depend on rho-protocol, so it goes
+# before them; a real publish of a dependent resolves it from crates.io.
+if [[ "$publish_protocol" == true ]]; then
+  # rho-protocol has no internal dependencies, so it needs no path patches.
+  # publish_crate reuses a version that is already on crates.io.
+  publish_crate rho-protocol "$protocol_version"
+fi
+
 if [[ "$publish_tools" == true ]]; then
   tools_validation_flags=()
   if [[ "$dry_run" == true ]]; then
     load_dry_run_validation_flags rho-agent-tools
     tools_validation_flags=("${dry_run_validation_flags[@]}")
-  elif [[ "$publish_sdk" != true ]]; then
-    wait_for_crate rho-sdk "$sdk_version"
+  else
+    if [[ "$publish_sdk" != true ]]; then
+      wait_for_crate rho-sdk "$sdk_version"
+    fi
+    if [[ "$publish_protocol" != true ]]; then
+      wait_for_crate rho-protocol "$protocol_version"
+    fi
   fi
   publish_crate rho-agent-tools "$tools_version" "${tools_validation_flags[@]}"
 fi
@@ -239,12 +252,6 @@ if [[ "$publish_providers" == true ]]; then
     fi
   fi
   publish_crate rho-providers "$providers_version" "${providers_validation_flags[@]}"
-fi
-
-if [[ "$publish_protocol" == true ]]; then
-  # rho-protocol has no internal dependencies, so it needs no path patches.
-  # publish_crate reuses a version that is already on crates.io.
-  publish_crate rho-protocol "$protocol_version"
 fi
 
 if [[ "$publish_app" == true ]]; then
