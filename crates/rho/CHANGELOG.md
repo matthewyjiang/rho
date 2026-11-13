@@ -1,5 +1,19 @@
 # Changelog
 
+## [3.0.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v3.0.0...rho-coding-agent-v3.0.1) (2026-11-13)
+
+
+### Bug Fixes
+
+* **tui:** show an aliased current model once in daemon model pickers ([#1957](https://github.com/matthewyjiang/rho/issues/1957)) ([78ff2d8](https://github.com/matthewyjiang/rho/commit/78ff2d81cee03cdf7b61bf5930d2760701121ddd))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-providers bumped from 3.0.1 to 3.0.2
+
 ## [3.0.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.33.0...rho-coding-agent-v3.0.0) (2026-11-13)
 
 
