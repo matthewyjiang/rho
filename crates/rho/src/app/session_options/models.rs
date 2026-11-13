@@ -12,6 +12,7 @@ use rho_providers::{
         },
         display_name::model_display_name,
         favorites,
+        provider_models::listed_model_id,
     },
     provider::{model_reference, provider_descriptor},
 };
@@ -22,6 +23,10 @@ use crate::app::session_runtime::CurrentModel;
 /// `available`, plus `current` when no catalog lists it so it stays
 /// selectable, favorites first in the TUI picker's order.
 ///
+/// A current alias (`mistral-medium-latest`) takes the place of the row its
+/// model is listed under, keeping that row's label, so `current` is always
+/// one of the choices and never shows twice.
+///
 /// Host pickers are narrow and truncate long labels, so each label is the
 /// short name a person recognizes (see [`model_labels`]).
 pub(super) fn model_options(
@@ -29,11 +34,12 @@ pub(super) fn model_options(
     favorite_models: &[String],
     mut available: Vec<ModelCatalogEntry>,
 ) -> wire::ModelOptions {
-    let current_reference = model_reference(&current.provider, &current.model);
-    if !available
-        .iter()
-        .any(|entry| model_reference(&entry.provider, &entry.model) == current_reference)
-    {
+    let listed_current = listed_model_id(&current.provider, &current.model);
+    let is_current = |entry: &ModelCatalogEntry| {
+        entry.provider == current.provider
+            && (entry.model == current.model || entry.model == listed_current)
+    };
+    if !available.iter().any(is_current) {
         available.push(ModelCatalogEntry {
             provider: current.provider.clone(),
             model: current.model.clone(),
@@ -54,8 +60,12 @@ pub(super) fn model_options(
             .zip(ordered)
             .map(|(label, entry)| wire::ModelChoice {
                 model: wire::ModelRef {
+                    model: if is_current(&entry) {
+                        current.model.clone()
+                    } else {
+                        entry.model
+                    },
                     provider: entry.provider,
-                    model: entry.model,
                 },
                 label,
             })

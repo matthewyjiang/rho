@@ -6,7 +6,11 @@ use rho_providers::model::{
     models_dev::{
         with_models_dev_cache_dir_for_tests, write_cached_model_metadata_for_tests, ModelMetadata,
     },
-    provider_models::with_provider_models_cache_dir_for_tests,
+    provider_models::{
+        replace_cached_aliased_provider_models_for_tests, with_provider_models_cache_dir_for_tests,
+        ProviderModel,
+    },
+    ReasoningCapabilities,
 };
 
 use super::{model_options, resolve_model, AuthPick, CurrentModel, ModelRefused};
@@ -135,6 +139,50 @@ fn current_model_absent_from_available_is_appended() {
             available: vec![
                 choice("xai/grok-3", "grok-3"),
                 choice("custom/local-model", "local-model"),
+            ],
+        }
+    );
+}
+
+// Covers: a current model set by an alias id (Mistral's default
+// `mistral-medium-latest`) is offered once, in its listed row's place under
+// that row's label, so a host picker marks the row and shows no second one
+// (#1945)
+// Owner: session options
+#[test]
+fn a_current_alias_takes_its_listed_rows_place() {
+    let options = with_catalog_names(&[], || {
+        let listed = ProviderModel {
+            provider: "mistral".into(),
+            model: "mistral-small-2603".into(),
+            display_name: "Mistral Small 4".into(),
+            context_window: None,
+            max_output_tokens: None,
+            reasoning_capabilities: ReasoningCapabilities::Unknown,
+        };
+        replace_cached_aliased_provider_models_for_tests(
+            "mistral",
+            &[(listed, &["mistral-small-latest"])],
+        )
+        .unwrap();
+        model_options(
+            &current("mistral", "mistral-small-latest"),
+            &[],
+            vec![
+                entry("mistral", "mistral-small-2603"),
+                entry("xai", "grok-3"),
+            ],
+        )
+    });
+
+    assert_eq!(
+        options,
+        wire::ModelOptions {
+            current: model_ref("mistral", "mistral-small-latest"),
+            auth: "api-key".into(),
+            available: vec![
+                choice("mistral/mistral-small-latest", "Mistral Small 4"),
+                choice("xai/grok-3", "grok-3"),
             ],
         }
     );

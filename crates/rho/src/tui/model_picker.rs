@@ -677,11 +677,14 @@ fn catalog_picker(
         model: current_model,
         badge: selected_badge,
     } = current;
-    // A current alias (`mistral-small-latest`) marks the row it is listed under.
+    // A current alias (`mistral-small-latest`) marks the row it is listed
+    // under, or its own row where a daemon lists it in that row's place.
     let listed_current =
         rho_providers::model::provider_models::listed_model_id(current_provider, current_model);
-    let current_model = listed_current.as_str();
-    let current = rho_providers::provider::model_reference(current_provider, current_model);
+    let is_current = |entry: &catalog::ModelCatalogEntry| {
+        entry.provider == current_provider
+            && (entry.model == current_model || entry.model == listed_current)
+    };
     let favorites = favorites::normalized_favorite_models(favorite_models);
     let effective_scope = resolve_scope(scope, &favorites, &available);
     if effective_scope == ModelPickerScope::Pinned {
@@ -689,12 +692,14 @@ fn catalog_picker(
     }
     let pin_key = keybindings.cycle_pinned_model.chrome_label();
     let scope_key = keybindings.toggle_tool_output.chrome_label();
-    let items = favorites::reorder_models_by_favorites(available, &favorites)
+    let ordered = favorites::reorder_models_by_favorites(available, &favorites);
+    let selected = ordered.iter().position(is_current).unwrap_or(0);
+    let items = ordered
         .into_iter()
         .map(|entry| {
             let value = rho_providers::provider::model_reference(&entry.provider, &entry.model);
             let pinned = favorites::is_favorite(&favorites, &entry.provider, &entry.model);
-            let selected = entry.provider == current_provider && entry.model == current_model;
+            let selected = is_current(&entry);
             let badge = match (pinned, selected) {
                 (true, true) => Some(PickerBadge {
                     text: format!("pinned, {selected_badge}"),
@@ -725,10 +730,6 @@ fn catalog_picker(
         })
         .collect::<Vec<_>>();
 
-    let selected = items
-        .iter()
-        .position(|item| item.value == current)
-        .unwrap_or(0);
     ModelCatalogPicker {
         title: format!("{title} · {}", effective_scope.title_suffix()),
         items,

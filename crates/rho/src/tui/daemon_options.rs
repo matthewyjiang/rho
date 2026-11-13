@@ -14,8 +14,16 @@ use super::{
 use crate::{app::reasoning_from_wire, permission::PermissionMode};
 
 /// Resolve only advertised identities (or their unique labels). Local aliases,
-/// credentials and catalog capabilities are not the daemon's choices.
+/// credentials and catalog capabilities are not the daemon's choices. The
+/// one exception is a current alias: the daemon offers it in its listed
+/// model's row, so that model's `provider/model` names it too.
 fn model_choice(options: &rho_protocol::ModelOptions, reference: &str) -> anyhow::Result<ModelRef> {
+    let current = &options.current;
+    let listed_current =
+        rho_providers::model::provider_models::listed_model_id(&current.provider, &current.model);
+    if reference == rho_providers::provider::model_reference(&current.provider, &listed_current) {
+        return Ok(current.clone());
+    }
     if let Some(choice) = options
         .available
         .iter()
@@ -329,13 +337,13 @@ impl App {
             &self.info.runtime.favorite_models,
         );
         // In pin order.
+        let offered = &options.model.available;
         let available: Vec<_> = favorites
             .iter()
             .filter_map(|favorite| {
-                options.model.available.iter().find(|choice| {
-                    favorite.provider == choice.model.provider
-                        && favorite.model == choice.model.model
-                })
+                offered
+                    .iter()
+                    .find(|choice| favorite.matches(&choice.model.provider, &choice.model.model))
             })
             .collect();
         if available.is_empty() {

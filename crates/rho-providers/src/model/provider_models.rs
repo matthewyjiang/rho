@@ -918,6 +918,24 @@ pub fn replace_cached_provider_models_for_tests(
     replace_cached_provider_models(provider, models)
 }
 
+/// [`replace_cached_provider_models_for_tests`] where each listed model also
+/// carries the alias ids discovery gave it.
+#[doc(hidden)]
+pub fn replace_cached_aliased_provider_models_for_tests(
+    provider: &str,
+    models: &[(ProviderModel, &[&str])],
+) -> Result<(), ModelError> {
+    let records = models
+        .iter()
+        .map(|(model, aliases)| ProviderModelRecord {
+            model: model.clone(),
+            raw_json: Value::Null,
+            aliases: aliases.iter().map(|alias| (*alias).to_owned()).collect(),
+        })
+        .collect::<Vec<_>>();
+    replace_cached_provider_model_records(provider, &records)
+}
+
 #[cfg(test)]
 fn unique_test_cache_dir(name: &str) -> PathBuf {
     let nanos = SystemTime::now()

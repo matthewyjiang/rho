@@ -218,6 +218,83 @@ fn the_model_picker_lays_offered_models_out_by_pin_and_pending_switch() {
     );
 }
 
+// Covers: a session on an alias (Mistral's default `mistral-medium-latest`)
+// gets the alias in its listed model's row from the daemon: the picker opens
+// on that row, marked selected and pinned by a pin of the listed id, and
+// `/model` with the listed id names the current model rather than refusing
+// it as not offered (#1945).
+// Owner: tui daemon session options
+#[test]
+fn a_current_alias_marks_the_row_offered_in_its_listed_models_place() {
+    use rho_providers::model::provider_models::{
+        replace_cached_aliased_provider_models_for_tests, with_provider_models_cache_dir_for_tests,
+        ProviderModel,
+    };
+
+    let alias = ModelRef {
+        provider: "mistral".into(),
+        model: "mistral-small-latest".into(),
+    };
+    let cache = tempfile::tempdir().unwrap();
+    let (picker, by_listed_id) =
+        with_provider_models_cache_dir_for_tests(cache.path().to_path_buf(), || {
+            let listed = ProviderModel {
+                provider: "mistral".into(),
+                model: "mistral-small-2603".into(),
+                display_name: "Mistral Small 4".into(),
+                context_window: None,
+                max_output_tokens: None,
+                reasoning_capabilities: rho_providers::model::ReasoningCapabilities::Unknown,
+            };
+            replace_cached_aliased_provider_models_for_tests(
+                "mistral",
+                &[(listed, &["mistral-small-latest"])],
+            )
+            .unwrap();
+            let mut app = crate::tui::tests::test_app();
+            app.info.runtime.favorite_models = vec!["mistral/mistral-small-2603".into()];
+            let mut options = options_on("mistral", "api-key");
+            options.model.current = alias.clone();
+            options.model.available = vec![
+                ModelChoice {
+                    model: ModelRef {
+                        provider: "xai".into(),
+                        model: "grok".into(),
+                    },
+                    label: "Grok".into(),
+                },
+                ModelChoice {
+                    model: alias.clone(),
+                    label: "Mistral Small 4".into(),
+                },
+            ];
+            app.show_daemon_options(options);
+            let picker = app.daemon_model_picker().expect("daemon options are shown");
+            let options = &app.daemon_options.as_ref().unwrap().model;
+            (
+                picker,
+                model_choice(options, "mistral/mistral-small-2603").ok(),
+            )
+        });
+
+    let rows: Vec<_> = picker
+        .items
+        .iter()
+        .map(|item| {
+            let badge = item.badge.as_ref().map(|badge| badge.text.as_str());
+            (item.value.as_str(), badge)
+        })
+        .collect();
+    assert_eq!(
+        (rows, picker.selected),
+        (
+            vec![("mistral/mistral-small-latest", Some("pinned, selected"))],
+            0
+        )
+    );
+    assert_eq!(by_listed_id, Some(alias));
+}
+
 /// Who asked for the model switch whose options arrive.
 #[derive(Clone, Copy)]
 enum Switch {
