@@ -34,7 +34,8 @@
       "package-name": "rho-providers",
       "component": "rho-providers",
       "changelog-path": "CHANGELOG.md",
-      "draft": true
+      "draft": true,
+      "release-as": "3.0.1"
     },
     "crates/rho-protocol": {
       "release-type": "rust",
