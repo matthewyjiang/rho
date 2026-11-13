@@ -6,44 +6,47 @@ Change day-to-day settings from the TUI with `/config`, `/model`, `/login`, and 
 
 Secrets are never stored in config. See [authentication and models](/authentication-and-models).
 
-Unknown keys in any of these files are a load error, so typos fail loudly. A value outside its range is an error too, naming the key, the limit, and the value you set; Rho does not clamp. Every bad key is reported at once.
+Unknown keys and out-of-range values in any of these files are load errors. Rho reports every bad key at once, with its limit and the value you set. Rho 2.x clamped some values. Rho 3 does not.
 
 ## Upgrading from Rho 2.x
 
-Rho 2.x kept everything in `config.toml`. When Rho 3.0 starts and finds 2.x keys in `config.toml`, it rewrites the file to the 3.0 layout and prints what it moved. The next TUI you open shows that summary once in its transcript, whichever Rho process did the upgrade. The check runs at every start, so a 2.x key added by hand later is rewritten the same way, with a new backup:
+Rho 2.x kept every setting in `config.toml`. Rho 3 splits them across three [files](#file-layout). When Rho 3 starts and finds 2.x keys, it moves them and prints what it moved. The next TUI you open shows that summary once.
 
-- `[display]` settings, `behavior.check_for_updates`, and `keybindings.editing_mode` move to `clients/tui.toml`.
-- `display.theme` and the `[keybindings]` chords move to `tui.toml`.
-- Top-level keys such as `provider`, `model`, and `permission_mode` move into their tables in `config.toml`.
-- Plaintext `web_search_*_api_key` values move to the credential store.
-- Web-search `hosted` and `provider` become `mode` and `backend`. The 2.x native-only pair (`hosted = true`, `provider = "disabled"`) becomes `mode = "off"`, because 3.0 cannot search natively without also enabling a backend.
-- `edit_tool = "hashline"` becomes `"str_replace"`, and the retired `behavior.experimental_workspace_rewind` key is removed.
+| 2.x key | Rho 3 location |
+| --- | --- |
+| Every `[display]` key except `theme` | Top level of `clients/tui.toml` |
+| Top-level `zen_mode`, `show_reasoning_output`, `max_tool_output_lines`, `check_for_updates` | Top level of `clients/tui.toml` |
+| `behavior.check_for_updates`, `keybindings.editing_mode` | Top level of `clients/tui.toml` |
+| `display.theme`, `[keybindings]` chords | `tui.toml` |
+| `provider`, `model`, `auth`, `reasoning` or `reasoning_effort`, `fast_mode`, `favorite_models` | `[model]` |
+| `permission_mode`, `enable_subagents`, `inline_shell`, `rtk` | `[behavior]` |
+| `auto_compact`, `compact_threshold_percent`, `compact_target_percent` | `[compaction]` |
+| `max_output_bytes` | `[output]` |
+| `[title]`, `title_provider`, `title_model`, `title_auth` | `[internal_agents.session-title]` |
+| `web_search_*_api_key`, `web_search.*_api_key` | The [credential store](/authentication-and-models#where-credentials-live) |
+| `web_search.hosted`, `web_search.provider`, `web_search_provider` | `web_search.mode` and `web_search.backend` |
+| `edit_tool = "hashline"`, in `[behavior]` or a custom provider | `edit_tool = "str_replace"` |
+| `behavior.experimental_workspace_rewind` | Removed |
 
-Before Rho rewrites a file, it copies the file beside itself as `<name>.2x.bak`, for example `config.toml.2x.bak`. An existing backup is never replaced. The backup of a file that held plaintext web-search keys still holds them, so delete it once the upgrade looks right. A value already set in `tui.toml` or `clients/tui.toml` wins over the 2.x value. Comments and key order are kept for keys that stay.
-
-Only keys Rho 2.x wrote are rewritten. A key that neither version knows stays in the file and is still a load error.
-
-`--save` and the daemon's settings writes (behind `/config`) rewrite only the settings that changed. Comments, key order, formatting, and tables Rho does not manage stay as you wrote them. A save that would leave an invalid file, such as a compaction target at or above the threshold, is refused and writes nothing.
+- Rho first backs up each file it rewrites as `<name>.2x.bak`, or `<name>.2x.bak.1` and so on if a backup exists. A backup keeps any plaintext web-search keys, so delete it once the upgrade looks right.
+- `hosted = true` with `provider = "disabled"` becomes `mode = "off"`.
+- A value already set in `tui.toml` or `clients/tui.toml` wins.
+- Comments and key order stay for keys that do not move.
+- A key neither version knows stays put and is still a load error.
 
 ## File layout
 
-Agent settings in `config.toml` live in tables; no setting sits at the top level:
+Every agent setting in `config.toml` lives in a table. [Configuration file example](/configuration/full-example) has them all:
 
 ```toml
 [model]
 provider = "openai"
 model = "gpt-5.6-sol"
-auth = "api-key"
 reasoning = "medium"
-fast_mode = false
-favorite_models = ["openai/gpt-5.6-sol"]
 
 [behavior]
 permission_mode = "supervised"
-enable_subagents = true
-agent_concurrency = 10
 edit_tool = "auto"
-rtk = true
 
 [compaction]
 auto_compact = true
@@ -54,8 +57,6 @@ max_output_bytes = 64000
 [web_search]
 mode = "auto"
 ```
-
-The full set of tables is in [Configuration file example](/configuration/full-example).
 
 The TUI's own settings sit at the top level of `~/.rho/clients/tui.toml`:
 
@@ -72,7 +73,7 @@ editing_mode = "default"
 check_for_updates = true
 ```
 
-`~/.rho/tui.toml` holds the theme and keybinding chords:
+`~/.rho/tui.toml` holds the theme and keybindings. Restart the TUI after you edit it:
 
 ```toml
 theme = "terminal"
@@ -81,7 +82,7 @@ theme = "terminal"
 cycle_permission_mode = "alt+m"
 ```
 
-The TUI reads both files at startup. It hands its `clients/tui.toml` settings to the daemon, so `/config` saves them there and applies them live; see [Changing settings](#changing-settings). `tui.toml` stays hand-edited.
+`/config` and `--save` rewrite only what you changed and keep your comments and formatting. A save that would leave the file invalid writes nothing.
 
 ## Common settings
 
@@ -110,9 +111,7 @@ The TUI reads both files at startup. It hands its `clients/tui.toml` settings to
 
 ## Changing settings
 
-`/config` changes settings through the [daemon](/daemon#configuration-changes), which runs the TUI's session.
-
-The root page lists the session's own options (model, reasoning, fast mode, permission mode), then one row per settings category, then the theme and **Clear prompt history**, which stay local to this terminal. Type to find a row, Enter to open it, Esc to go back.
+`/config` saves settings through the [daemon](/daemon#configuration-changes), and every open client sees the change. The root page starts with the current session's model, reasoning, fast mode, and permission mode, then lists these categories:
 
 | Category | Contains |
 | --- | --- |
@@ -122,11 +121,9 @@ The root page lists the session's own options (model, reasoning, fast mode, perm
 | Tools | Inline shell, edit tool, RTK, codemode, web search, SpaceXAI image generation |
 | Display | The TUI's own settings in `clients/tui.toml`: zen mode, reasoning display, output streaming, header hints, notifications, cache miss notices, collapsed tool-output lines, prompt history, editing mode, update check |
 
-The credential store is not on this screen: choose it with `rho credential-store set` or at your first login, which check the store first ([Credential store](/authentication-and-models#where-credentials-live)).
+The theme and **Clear prompt history** at the bottom apply to this terminal only. To pick the credential store, run `rho credential-store set` ([Credential store](/authentication-and-models#where-credentials-live)).
 
-A category page shows each setting's value and, in its detail, when a change applies. Enter flips an on/off setting, as does Space before you type a filter. A choice or model opens a page of its values, with a **Default** row once the file sets it. A number or text opens a line editor; the prompt shows a number's range, and an empty entry removes the setting so its default applies.
-
-Every change goes to the daemon, which writes the file and tells every client; a row shows its new value once the daemon confirms it. If the settings changed elsewhere first, nothing is written and the status says to try again. If a hand edit leaves the file invalid, the TUI shows the problem, sessions already open, or reopened, keep the last good settings, and a new session fails to open with the file's errors until you fix it ([Configuration changes](/daemon#configuration-changes)).
+If a hand edit breaks the file, the TUI shows the error. Open sessions keep the last good settings, and new sessions fail to open until you fix it.
 
 When a change applies:
 
@@ -135,7 +132,7 @@ When a change applies:
 - New sessions: everything else, including the default model, permission mode, edit tool, and web search. `/model`, `/permissions`, and `/fast` change the current session.
 - Restart: keybindings and the theme in `tui.toml`.
 
-`/advisor` turns the advisor on or off, and `/advisor model` chooses its model. `/advisor on` without a model asks for one first, then saves both at once. See [Advisor mode](/configuration/advisor-mode).
+`/advisor` turns the advisor on or off, and `/advisor model` picks its model. See [Advisor mode](/configuration/advisor-mode).
 
 When `cache_miss_notices` is on, a completed turn that re-billed a large uncached prompt, over 20K tokens or $0.10, inserts a transcript notice. `/info` always shows session and latest-request cache hit rates, plus re-billed totals once misses were counted.
 
@@ -199,7 +196,7 @@ Without `--auth`, a provider selected by `--provider` or a `provider/model` refe
 rho --config ~/.rho/config.toml run "..."
 ```
 
-The interactive TUI refuses `--config`, since its session runs in the [daemon](/daemon#daemon-backed-tui), which reads the config in its Rho home. Set `RHO_HOME` to run on another.
+The interactive TUI refuses `--config`, since its session runs in the [daemon](/daemon#daemon-backed-tui) and uses the config in the daemon's Rho home. To use another config there, set `RHO_HOME`.
 
 The exact `--provider`, `--auth`, and `--model` combination for each provider is on its [provider page](/authentication-and-models#providers).
 
@@ -364,7 +361,7 @@ Built-in providers have no per-provider override. They use this table unless you
 | `xai` | `str_replace` | First-party agent tooling uses string replace |
 | all others | `str_replace` | Rho default when no first-party match is known |
 
-Pinned values stay fixed across provider changes. A change from `/config` applies to new sessions. Auto also switches live when you change providers mid-session. Rho 3.0 removed the legacy `hashline` format. The [2.x upgrade](#upgrading-from-rho-2-x) rewrites `edit_tool = "hashline"` to `"str_replace"` at startup, globally and on a custom provider. Format details: [Edit formats](/tools-workspace/edit-format).
+Pinned values stay fixed across provider changes. A change from `/config` applies to new sessions. Auto also switches live when you change providers mid-session. Rho 3 removed the `hashline` format, and the [2.x upgrade](#upgrading-from-rho-2-x) rewrites it to `str_replace`. Format details: [Edit formats](/tools-workspace/edit-format).
 
 ## Behavior
 
@@ -372,7 +369,7 @@ These keys live under `[behavior]`.
 
 `enable_subagents` controls the `agent` and `agents` tools. It defaults to `true`. Set it to `false` to remove both tools and tell the model not to delegate. The change applies to the next session. `--no-subagents` does the same for one run.
 
-`agent_concurrency` is the maximum number of delegated agents that may run at once, including background runs. It defaults to `10` and must stay between `1` and `64`. A change applies immediately: in-flight agents keep their slots, and queued agents start as capacity frees, in the order they joined the queue. The daemon shares one such budget across every session it hosts (see [Subagents](/daemon#subagents)). `RHO_AGENT_CONCURRENCY` is no longer read. Claude-cli runs also take a nested cap of 2 by default (`RHO_CLAUDE_AGENT_CONCURRENCY`), always `min(total, claude_cap)`. Cursor runs take only the global pool. There is no nested Cursor cap yet.
+`agent_concurrency` is the maximum number of delegated agents that may run at once, including background runs. It defaults to `10` and must stay between `1` and `64`. A change applies immediately. Running agents keep their slots, and queued agents start in order as slots free up. The daemon shares this budget across all its sessions ([Subagents](/daemon#subagents)). `RHO_AGENT_CONCURRENCY` is no longer read. Claude-cli runs also take a nested cap of 2 by default (`RHO_CLAUDE_AGENT_CONCURRENCY`), always `min(total, claude_cap)`. Cursor runs take only the global pool. There is no nested Cursor cap yet.
 
 `inline_shell` selects the shell for `!` and `!!` in the TUI. It defaults to `bash` on macOS and Linux and `powershell` on Windows. See [inline shell](/inline-shell).
 
@@ -417,7 +414,7 @@ Scripts call one tool with `call_tool(name, args)` or run independent calls conc
 
 `max_tool_output_lines` in `~/.rho/clients/tui.toml` is how many wrapped screen rows of a tool card show inline before the TUI collapses the rest. It defaults to `10` and must be at least `1`. Delegated agent prompts use the same limit: they stream from the beginning, then keep a stable collapsed preview. Click the card or press `Ctrl+O` to expand the full prompt while it streams or after launch. Once the agent starts or finishes, run receipts and results appear before the prompt so they remain visible when collapsed.
 
-`prompt_history_limit` in `~/.rho/clients/tui.toml` is how many sent composer prompts Rho keeps in `~/.rho/prompt-history.sqlite3` for up-arrow recall across sessions. `$RHO_HOME` moves that file. It defaults to `1000`. `0` disables persistence. It must be at most `10000`. `/config` → **Display** → **Prompt history limit** edits the cap; a lower cap deletes the oldest extras when it applies. **Clear prompt history** on the root page of `/config` clears it after asking. This is separate from `/new` and `/clear`, which reset the conversation, not composer recall.
+`prompt_history_limit` in `~/.rho/clients/tui.toml` is how many sent composer prompts Rho keeps in `~/.rho/prompt-history.sqlite3` for up-arrow recall across sessions. `$RHO_HOME` moves that file. It defaults to `1000`, at most `10000`, and `0` disables persistence. Edit it in `/config` → **Display** → **Prompt history limit**. Lowering it deletes the oldest extras. **Clear prompt history** on the root page of `/config` clears the history after asking. This is separate from `/new` and `/clear`, which reset the conversation, not composer recall.
 
 ## Update checks
 
@@ -434,6 +431,6 @@ timeout_seconds = 60
 
 That value is an example, not a default. Omit `timeout_seconds` to disable automatic answers. Zero, negative values, fractions, and strings are invalid. In `/config` → **Agent** → **Questionnaire timeout**, enter positive seconds, or clear the field to remove it. A change applies to new sessions.
 
-A [daemon](/daemon) session enforces the timeout itself, with or without a client attached, using the value it was opened with. A client holds the question once you start on the form, and it then waits for your answer ([Timeouts](/protocol#timeouts)).
+The session enforces the timeout even with no client attached, using the value it opened with. Once you start filling in the form, it waits for your answer.
 
 What the TUI shows, and what does not count as consent: [Questionnaire fallbacks](/interactive-tui#questionnaire-fallbacks).

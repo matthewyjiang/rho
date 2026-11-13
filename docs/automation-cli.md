@@ -61,43 +61,33 @@ Use `rho --no-tools run "..."` to remove tool access. That flag does not suppres
 
 ### Sessions, commands, and questions
 
-Each `rho run` saves its session like an interactive one, recorded as a `run`
-session. Session lists leave runs out, so a script's runs never crowd the
-sessions you had yourself: `rho sessions list`, the `/resume` picker and
-`/sessions` manager, `-c`, ACP session lists, and the `sessions` tool's
-search scopes skip them. A run opens by its id, which the JSONL stream's
-`run_started` reports as `session`: `rho sessions export <ID>` writes its
-transcript and `rho --resume <ID>` continues it in the TUI. A run does not ask
-a model to title its session; `rho sessions rename` names it. A
-[detached run](#running-in-the-daemon) is a daemon session instead: listed,
-and titled.
+Each `rho run` saves its session. Session lists, `/resume`, `/sessions`, `-c`,
+ACP session lists, and `sessions` tool searches skip runs, so they don't crowd
+your own sessions. The JSONL `run_started` line gives the run's session id. Use
+it to open the run:
 
-Pass `rho run --no-save` to skip saving. The run's session stays in memory:
-no session folder or index row is written, so nothing is left to export or
-resume. Its Rho subagents don't save their sessions either, and its
-`claude-cli` subagents leave no resumable Claude session. Their run artifacts
-go under `~/.rho/subagents/<id>/`, as for any run with no saved session to hold
-them. Two kinds of child still save:
+```bash
+rho sessions export <ID>           # write its transcript
+rho --resume <ID>                  # continue it in the TUI
+rho sessions rename <ID> <TITLE>   # runs get no automatic title
+```
 
-- `cursor` and `antigravity` subagents keep the sessions their CLIs save,
-  since neither has an unsaved mode.
-- Workflow nodes the run starts save their sessions, because a workflow run is
-  its own durable record that `rho workflow` resumes from.
+[Detached runs](#running-in-the-daemon) are listed and titled like your own
+sessions.
 
-Like the interactive `rho --no-save`, this is not a privacy mode: providers
+`rho run --no-save` leaves nothing to export or resume. Its Rho and
+`claude-cli` subagents don't save either, but `cursor` and `antigravity`
+subagents and workflow nodes still do. This is not a privacy mode. Providers
 still receive requests, and usage records, logs, and hooks may keep their own
 data.
 
-A prompt that starts with a slash command resolves the way it does in an ACP
-session: prompt templates (`/prompt:<name>`), MCP prompts, `/init`,
-`/agent:<name>`, and `$skill` mentions all work. `rho run` rejects commands it
-cannot run, such as `/compact` (a run's session is new, so there is nothing to
-compact), `/workflow:<name>` (use `rho workflow run`), and TUI-only commands,
-as a configuration error with exit code `2`.
+Slash commands work as in an ACP session, including `/prompt:<name>`, MCP
+prompts, `/init`, `/agent:<name>`, and `$skill` mentions. `/compact`,
+`/workflow:<name>`, and TUI-only commands fail with exit code `2`.
 
-Nobody answers questions during a run, so the run gets no questionnaire tool,
-and a question that arrives anyway, such as an MCP server's elicitation, is
-declined. The run continues with the refusal instead of failing.
+Nobody answers questions during a run. The model gets no questionnaire tool,
+and Rho declines other questions, such as an MCP server's elicitation. The run
+continues.
 
 ### Automation output
 
@@ -130,38 +120,33 @@ rho run --output jsonl "summarize this repository" \
   | jq -r 'select(.event.type == "turn_ended") | .event.outcome.text // empty'
 ```
 
-JSONL mode writes one JSON object per physical line and flushes each object.
-Every object has `schema_version` (currently `2`), a run-local monotonic `seq`
-starting at 1, and a `type`:
+JSONL mode writes one JSON object per line and flushes each one. Every object
+has `schema_version` (currently `2`), a `seq` counting up from 1, and a `type`:
 
-| `type` | When | Fields |
-| --- | --- | --- |
-| `run_started` | The run's session opened. | `session`, its id; `workspace`, the working directory. |
-| `event` | Each of the session's events. | `event`: a [daemon protocol session event](/protocol#following-a-session) of the conversation, as a client attached to a daemon session receives it. A run has no job, and nobody answers its requests, so the stream holds no `state` or `input_*` events, and `usage` carries no `cost_usd_micros`. |
-| `run_ended` | Last, unless writing to stdout failed: then the stream stops, and the run exits 1 with the write error on stderr. | `reason`, `exit_code` (the process's [exit status](#exit-status)), and a `message` unless the run completed. |
+| `type` | What it holds |
+| --- | --- |
+| `run_started` | `session` (the session id) and `workspace`. |
+| `event` | `event`: one session event, in the [daemon protocol's format](/protocol#following-a-session). |
+| `run_ended` | Always last: `reason`, `exit_code` (the [exit status](#exit-status)), and a `message` unless the run completed. If writing to stdout fails, the stream stops and the run exits 1. |
 
-Once the session opened, its last event is `turn_ended`, which names the
-turn by an id, `turn`, and whose `outcome` says
-how the prompt ended ([outcomes](/protocol#how-a-turn-ends)), as a daemon
-session's would:
+The session's last event is `turn_ended`. Its `outcome` says how the prompt
+ended ([outcomes](/protocol#how-a-turn-ends)):
 
-- `answered` carries the model's whole answer as `text`. Use it as the final
-  answer rather than the `agent_message_chunk` text: a provider retry restarts
-  the reply, and the stream holds a `response_discarded` event saying so.
-- A timeout or a signal cancels the turn, so its outcome is `cancelled`, and
-  `run_ended` names the cause.
-- A slash command `rho run` cannot run fails the prompt before any model call,
-  as a `configuration` failure.
+- `answered` carries the whole answer as `text`. Use it rather than joining
+  `agent_message_chunk` text, because a provider retry restarts the reply.
+- A timeout or a signal gives `cancelled`, and `run_ended` names the cause.
 
 A run that fails before its session opens, such as on invalid configuration,
 writes only `run_ended`.
 
-Tool calls carry their input and content, as protocol clients see them.
-Provider and fatal errors use Rho's existing sanitization: an authentication
-failure names only the provider, the auth, and how to log in. Provider
-diagnostics go to stderr only. Assistant text and tool content can contain data
-from the workspace, so do not send the JSONL stream to a system that should not
-receive that data.
+Rho 2 wrote schema version `1`, with events such as `run.completed`. Scripts
+that read those events need updating. Read the final answer from `turn_ended`,
+as the `jq` example above does.
+
+Tool calls include their input and output. Authentication errors name only the
+provider, the auth, and how to log in, and provider diagnostics go to stderr.
+Assistant text and tool output can contain workspace data, so don't send the
+stream anywhere that shouldn't see it.
 
 `--output-file` has a separate contract. It updates the existing mutable status
 artifact used for delegated runs, while `--output jsonl` writes an immutable
@@ -192,7 +177,7 @@ Exit codes are part of the automation contract:
 
 The JSONL `run_ended` gives a more exact `reason`, such as `completed`,
 `max_steps`, `timeout`, `interrupted`, `authentication`, `provider_error`,
-`tool_host_error`, `configuration_error`, `output_error`, or `other_error`;
+`tool_host_error`, `configuration_error`, `output_error`, or `other_error`.
 [`rho attach`](#attaching-to-a-daemon-session) adds `cancelled` and
 `detached`.
 A failed tool call can still lead to a successful run if the model recovers.
@@ -217,10 +202,9 @@ result:
 
 ### Running in the daemon
 
-`rho run --detach` starts the run in the [daemon](/daemon) instead, starting one
-if none runs, and exits as soon as the daemon has saved the prompt. It prints
-the session's id on stdout. The turn runs on with no terminal attached, and
-`rho attach` follows it and answers its approvals and questions:
+`rho run --detach` starts the run in the [daemon](/daemon), prints the session
+id, and exits. It starts the daemon if none is running. The turn keeps going
+without a terminal. Use `rho attach` to follow it and answer its questions:
 
 ```bash
 SESSION=$(rho run --detach --timeout 30m "migrate the config loader")
@@ -228,192 +212,121 @@ SESSION=$(rho run --detach --timeout 30m "migrate the config loader")
 rho attach "$SESSION"
 ```
 
-- `--timeout` is enforced by the daemon: a turn still running then is
-  cancelled and ends `timed_out`, which `rho attach` reports with exit 124.
-- The daemon opens the session with the workspace's config, as `rho` started
-  there would. Flags that change it (`--model`, `--provider`,
-  `--permission-mode`, `--save`, and the like) are refused with exit 2 rather
-  than dropped; set them in [config](/configuration) instead. `--agent`,
-  `--add-dir`, `--no-tools`, `--no-system-prompt`, and `--no-subagents` apply
-  to the session as they do to a foreground run, and the session keeps the
-  directories and the parts left out when the daemon unloads it and a later
-  `rho attach` or prompt reopens it.
-- Slash commands resolve as they do in a foreground run, and `/compact` and
-  `/workflow:<name>` run too; TUI-only commands fail with exit 2.
-- `--output`, `--output-file`, `--max-steps`, and `--no-save` do not apply and
-  are refused.
-- Unlike a foreground run's, the session is listed like one you had yourself,
-  and titled in the background after its first answered turn with one small
-  model call, as the TUI titles its sessions.
-- `--worktree` has the daemon open the session in a git worktree of its own,
-  as described below.
+A detached run differs from a foreground run:
+
+- It uses the workspace's config. Flags that change config, such as `--model`,
+  `--provider`, `--permission-mode`, `--config`, and `--save`, fail with exit
+  code `2`. Set them in [config](/configuration) instead.
+- `--output`, `--output-file`, `--max-steps`, and `--no-save` also fail.
+- `--agent`, `--add-dir`, `--no-tools`, `--no-system-prompt`, and
+  `--no-subagents` work, and the session keeps them when you reopen it.
+- `/compact` and `/workflow:<name>` work.
+- The session shows up in session lists and gets an automatic title.
+- When `--timeout` runs out, the daemon cancels the turn, and `rho attach`
+  exits with `124`.
 
 ### Running in a worktree
 
-Two runs in one repository edit the same files, so one can overwrite the
-other's work. `rho run --worktree`, with or without `--detach`, gives the run a
-git worktree of its own: a new branch from the repository's `HEAD`, checked out
-under `~/.rho/worktrees/` (`$RHO_HOME/worktrees/`), never inside the
-repository. The run works at the current directory's place in the worktree, and
-says where on stderr:
-
-```text
-rho: the session works in worktree /home/me/.rho/worktrees/api-3fa2c1d0 on branch rho/api-3fa2c1d0; rho removes it once it is clean and merged, and keeps the branch
-```
-
-Outside a git repository, `--worktree` fails with exit 2. A repository with no
-commit has no `HEAD` to branch from, and fails the same way.
+`rho run --worktree` gives the run its own git worktree on a new branch from
+`HEAD`, so runs in the same repository don't overwrite each other's edits. It
+works with or without `--detach`. The worktree lives under `~/.rho/worktrees/`,
+and Rho prints its path and branch on stderr. Outside a git repository, or in
+one with no commits, `--worktree` fails with exit code `2`.
 
 #### Cleaning up worktrees
 
-The daemon removes a session's worktree once nothing in it can be lost:
+The daemon removes a session's worktree, and keeps its branch, when all of
+these are true:
 
-- its session is neither loaded nor running,
-- it has no uncommitted or untracked changes, and
-- the current `HEAD` of the checkout you started it from already has its
-  branch's changes, whether you merged, squash-merged, or rebase-merged it.
+- The session isn't open or running, and nobody has used it for a day.
+- The worktree has no uncommitted or untracked changes.
+- The current `HEAD` of the checkout you started from has the branch's changes.
+  Regular, squash, and rebase merges all count.
 
-It runs `git worktree remove` (never with `--force`) and keeps the branch.
-It checks a minute after it starts and once a day, and only removes worktrees whose
-session has been unused for a day. Files git ignores, such as `.env`,
-`node_modules`, or `target/`, go with the worktree. If you reopen or read the
-session later, the daemon adds the worktree back on the branch, at the commit
-it removed, and makes the branch again if you deleted it. If git has since
-collected that commit, as it can once you delete a squash-merged branch, the
-worktree starts from the checkout's `HEAD`, which has its changes. A worktree
-you removed yourself stays removed.
+Rho checks only local git, so pull the merged pull request into that checkout
+first. Detecting a squash merge needs git 2.38 or later. Files git ignores,
+such as `.env` or `node_modules`, go with the worktree. If you reopen the
+session later, the daemon restores its worktree on the branch.
 
-A branch counts as merged when `HEAD` contains its commit, when `HEAD` has a
-commit with the same patch as each of the branch's own (a rebase merge or
-cherry-picks), or when merging the branch into `HEAD` would change nothing (a
-squash merge). Pull the merged pull request into that checkout first; rho
-checks only local git, never the forge. The squash check needs git 2.38 or
-later. With an older git, a squash-merged worktree looks unmerged and stays,
-and the daemon log says why. A squash-merged branch with more than
-one commit, whose lines `HEAD` has since edited again, can look unmerged, so
-that worktree stays until you remove it.
-
-Every other worktree stays. After 14 days unused, `rho daemon status` and
-[`/jobs`](/interactive-tui) flag it as stale. Merge what you want, then remove
-it yourself:
+Other worktrees stay. After 14 days unused, `rho daemon status` and
+[`/jobs`](/interactive-tui) mark them as stale. Merge what you want, then
+remove the worktree yourself:
 
 ```bash
 git worktree remove ~/.rho/worktrees/api-3fa2c1d0   # add --force to drop uncommitted edits
 git branch -D rho/api-3fa2c1d0
 ```
 
-`rho worktrees prune` runs the cleanup now, without waiting a day, and prints
-what it removed and why it kept the rest. `--dry-run` only lists what it would
-do, and needs the daemon running, since a daemon it started would run its own
-cleanup:
+A `rho run --worktree` without `--detach` doesn't use the daemon, so you always
+remove its worktree yourself.
 
-```text
-$ rho worktrees prune --dry-run
-would remove rho/api-3fa2c1d0 /home/me/.rho/worktrees/api-3fa2c1d0: clean and merged into main; the branch stays
-kept         rho/api-91bd22aa /home/me/.rho/worktrees/api-91bd22aa: not merged into main; stale
-kept         rho/api-07c1e5f2 /home/me/.rho/worktrees/api-07c1e5f2: uncommitted or untracked changes
+To clean up now instead of waiting a day:
+
+```bash
+rho worktrees prune             # remove clean, merged worktrees and say why the rest stay
+rho worktrees prune --dry-run   # only list what it would do, with the daemon running
 ```
-
-A foreground `rho run --worktree` has no daemon, so nothing removes its
-worktree; its stderr line says so. `git worktree list` lists every worktree of
-a repository.
 
 ### Attaching to a daemon session
 
-`rho attach <ID>` follows a session through the [daemon](/daemon) until its
-turn ends, then exits as `rho run` would have: with its [exit status](#exit-status)
-and, in JSONL, a `run_ended` that says how. `ID` is a session's id, or its
-job's as `rho/job/list` reports it. Any saved session works, from any
-workspace: the daemon reopens one it has not loaded, such as one an earlier
-daemon ran or one the TUI saved.
+`rho attach <ID>` follows a daemon session until its turn ends. It then exits
+with the [exit status](#exit-status) `rho run` would have. `ID` is a session id
+or a job id, from any workspace. If no turn is running, it reports how the last
+one ended.
 
 ```bash
-# Follow the turn under way, and exit with how it ended.
 rho attach "$SESSION"
-
-# The same events a foreground `rho run --output jsonl` writes.
-rho attach "$SESSION" --output jsonl | jq -c 'select(.type == "event") | .event.type'
+rho attach "$SESSION" --output jsonl   # the same stream as rho run --output jsonl
 ```
 
-- With a turn under way, it replays the session and follows the turn to its
-  end. With none, it reports how the session's last turn ended. Before the
-  session's first daemon turn, as for one the TUI saved, it waits for that
-  turn.
-- `--output text` streams the conversation to stdout: the prompt quoted, the
-  reply, and a line per tool call. Notices and the input requests the turn
-  waits on go to stderr, and lines typed on stdin answer them; see
-  [Answering and steering](#answering-and-steering).
-- `--output jsonl` writes `run_started`, then every event of the daemon's
-  [replay](/protocol#following-a-session) and of the turn, then `run_ended`. A
-  daemon session has a job, so unlike a foreground run's the stream holds
-  `state` and `input_*` events.
-- Ctrl+C detaches: the turn runs on in the daemon, and `rho attach` exits 130
-  (143 on SIGTERM) with the reason `detached`.
-- A client that cancels the turn ends it with the reason `cancelled`, exit 1;
-  a daemon that stops before the turn ends, with `interrupted`, exit 1. A turn
-  the daemon cancelled at its `--timeout` ends with `timeout`, exit 124.
-- A subagent job's id, or the id of the session its run writes, follows the
-  run instead: its events as they come, then exit 0 when the run completed.
-  This also holds for the agent nodes of a workflow run. Following a run only
-  reads it. The run's questions go to its parent session, so `rho attach`
-  takes no answers or steering there. A run that already ended replays the
-  session it saved. A subagent on another runtime (Claude, Cursor,
-  Antigravity) keeps no Rho session, and a workflow run's own job has no
-  events besides its agent nodes'. Both are refused, and the error names the
-  session they run in.
-- A session another process has open, such as a TUI or a foreground
-  `rho run`, is refused until that process closes it; `rho attach` fails with
-  exit 1.
-- A client that falls too far behind is detached and attaches again. When the
-  daemon no longer buffers what it missed, the replay starts over, so the
-  conversation is written again.
+In text mode, the conversation goes to stdout, and notices and questions go to
+stderr. You answer them at the terminal, as
+[Answering and steering](#answering-and-steering) describes. Ctrl+C detaches
+and leaves the turn running.
 
-`rho attach` never starts a daemon; with none running it fails with exit 1.
+| What happened | `run_ended` reason | Exit code |
+| --- | --- | ---: |
+| You pressed Ctrl+C, or sent SIGTERM | `detached` | `130`, or `143` for SIGTERM |
+| A client cancelled the turn | `cancelled` | `1` |
+| The daemon stopped before the turn ended | `interrupted` | `1` |
+| A detached run hit its `--timeout` | `timeout` | `124` |
+
+Pass a subagent's job id to watch its run. Watching is read-only, because the
+run's questions go to the session that started it. Rho can't follow Claude,
+Cursor, or Antigravity subagents, and the error names the session to attach to
+instead.
+
+`rho attach` fails with exit code `1` when no daemon is running, because it
+never starts one. It also fails when another process, such as a foreground
+`rho run` or Rho 2.x, has the session open.
 
 #### Answering and steering
 
-In text mode, `rho attach` reads the lines typed at the terminal while it
-follows the turn. When the turn waits for input, it shows the oldest open
-request, and the next line answers it:
+When the turn waits for input, `rho attach` shows the oldest open request. Type
+your answer on the next line:
 
 ```text
 rho: the turn waits for an approval to write /repo/note.txt
   1 allow once · 2 allow for session · 3 deny
 ```
 
-- An approval names what it allows, a command in full, with any line breaks
-  shown as `\n`. It takes `1`, `2`, or `3`. A plan approval takes the number of
-  the permission mode to carry the plan out in, or of `keep planning`.
-- Questions are asked one at a time and sent together. Pick a choice by its
-  number, several as `1,3` where a question allows it, or type your own answer
-  where it allows that. Enter takes a pre-selected suggestion or skips an
-  optional question. `/decline` or `/dismiss` closes the questions unanswered.
-- A line that does not answer says why and shows the question again.
-- Requests that open while you answer one are told as they open, and asked in
-  turn.
-- A request the user configured to time out
-  ([`[questionnaire] timeout_seconds`](/configuration#questionnaire-timeout))
-  says when the daemon answers it. `/hold`, or any line that starts on it
-  without answering it, holds it, so it waits for your answer.
-- When another client answers the request you are on, or the daemon does at
-  its timeout, `rho attach` says so and moves on.
-- A line means what was shown when you typed it. One typed before the request
-  now shown appeared, or for a request that has since closed, is dropped, and
-  `rho attach` says so.
+- An approval takes `1`, `2`, or `3`. A plan approval takes the number of a
+  permission mode, or the number for `keep planning`.
+- For a question, type a choice's number, several numbers like `1,3` where
+  allowed, or your own text. Enter takes the suggestion or skips an optional
+  question. `/decline` closes the questions unanswered.
+- If a request will [time out](/configuration#questionnaire-timeout),
+  `rho attach` says when. Type `/hold` to make it wait for you.
+- If another client answers first, `rho attach` says so and moves on.
 
-While the turn waits for nothing, a line steers it: the text joins the turn's
-next model request. `/cancel` cancels the turn at any point, which ends
-`rho attach` with the reason `cancelled`. A slash and one word, such as a
-mistyped `/cancle`, is refused rather than sent to the model.
+When nothing is waiting, a typed line steers the turn. Rho adds it to the
+turn's next model request. `/cancel` cancels the turn.
 
-`rho attach` reads stdin only when, as it starts, stdin is the terminal and
-`rho attach` runs in its foreground, so a script's stdin is not taken for
-answers. Otherwise it only tells the requests, and any frontend can answer them.
-It does the same at the end of input; a request it held then no longer times
-out. `--input stdin` reads stdin whatever it is, for a script that writes
-answers to it. Such a script waits for each request on stderr before it writes
-the answer: a line written earlier is dropped, or steers the turn when nothing
-was asked. JSONL output reads no input.
+`rho attach` reads answers only when stdin is a terminal and it runs in the
+foreground. Otherwise it prints the requests, and you answer them from another
+Rho frontend. A script can pass `--input stdin` to write answers, but it must
+wait for each request on stderr first. Rho drops a line written too early, or
+uses it to steer the turn.
 
 ## `rho login`
 
@@ -439,7 +352,7 @@ API-key providers are usually easier to configure interactively with `/login` in
 
 On Windows, `rho update` prints the detected update command instead of running it automatically.
 
-A running [daemon](/daemon) moves to the updated version without interrupting work. Where the update replaces the executable at its path (install script, Cargo, pacman), the daemon re-executes it once nothing would be cut short; `rho update` waits for an idle daemon to restart and reports it, and for a busy one says what it is waiting for. Where the new version lands at another path (mise) or a running daemon keeps the executable from being replaced (Windows), `rho update` stops an idle daemon so the next `rho` command starts the updated one, and tells you what to run for a busy one. See [The daemon and services](/installation#the-daemon-and-services).
+A running [daemon](/daemon) moves to the new version without interrupting work. After a Cargo, pacman, or install-script update, the daemon restarts itself once nothing would be cut short. `rho update` reports the restart, or says what a busy daemon is waiting for. After a mise update, or on Windows, `rho update` stops an idle daemon, so the next `rho` command starts the new one. For a busy daemon, it tells you what to run. See [The daemon and services](/installation#the-daemon-and-services).
 
 Set `RHO_INSTALL_METHOD` to `cargo`, `pacman`, `scoop`, `scoop-global`, or `script` to override detection.
 
@@ -476,16 +389,13 @@ The preview lists removals in execution order: data first, then the executable.
 All targets are revalidated after confirmation and before any deletion. If the
 data purge fails, the executable remains available to retry.
 
-Uninstall also stops this rho home's running [daemon](/daemon), which interrupts
-the turns under way, and removes the service saved for
-[`rho mcp serve --http`](/daemon#running-as-a-service): it asks systemd or
-launchd to stop the service and no longer start it, then deletes
-`rho-mcp.service` with the links that enable it, or `dev.rho.mcp.plist`. Both
-happen after confirmation and before anything else is removed, and they happen
-for package-managed installations too. The preview names the running daemon and
-lists each service file. If the service manager cannot be asked, as in a login
-without a user session bus, the files are still deleted and a note says to stop
-the service yourself.
+Uninstall also stops this Rho home's running [daemon](/daemon), which
+interrupts any turns in progress. It also stops and disables the service for
+[`rho mcp serve --http`](/daemon#running-as-a-service), then deletes its file,
+`rho-mcp.service` or `dev.rho.mcp.plist`. Both steps run after you confirm and
+before anything else is removed, also for package-managed installs. The preview
+lists them. If Rho can't reach systemd or launchd, it still deletes the files
+and tells you to stop the service yourself.
 
 OS keyring entries, environment credentials, shell/PATH edits, shared `~/.agents`,
 project files, and data outside `~/.rho` remain untouched. This includes a custom
@@ -547,7 +457,7 @@ Rho accepts global options before an optional subcommand. Provider, model, auth,
 | `rho plugins remove <NAME> [--yes]` | Remove a package from a managed root; keeps plugin data. |
 | `rho daemon [run\|status [--json]\|stop]` | Run the per-user [daemon](/daemon) in the foreground, show its status, or stop it. `status` and `stop` exit with status 1 when no daemon is running. |
 | `rho worktrees prune [--dry-run]` | Remove the daemon's session worktrees that are clean and merged, keep their branches, and say why each other one stays. `--dry-run` changes nothing. See [Cleaning up worktrees](#cleaning-up-worktrees). |
-| `rho doctor [--json]` | Run the same setup diagnostics as the interactive `/doctor` overlay and print a text report (or one JSON document). Root `--provider`, `--model`, `--auth`, and `--reasoning` apply to this invocation the same way they do for `rho run`. It also checks the [daemon](/daemon#checking-the-daemon), never starting one: whether it runs and matches this `rho`, its socket's permissions, the always-on service, its environment, and the credential store it can reach. Exits with status 1 when any check fails; warnings exit 0. |
+| `rho doctor [--json]` | Run the same setup diagnostics as the interactive `/doctor` overlay and print a text report (or one JSON document). Root `--provider`, `--model`, `--auth`, and `--reasoning` apply to this invocation the same way they do for `rho run`. It also checks the [daemon](/daemon#checking-the-daemon) without starting one. Exits with status 1 when any check fails; warnings exit 0. |
 | `rho update` | Update Rho using the detected installation method. |
 | `rho uninstall [--purge] [--dry-run]` | Preview and confirm uninstall; preserve local data unless `--purge` is given. |
 | `rho help [COMMAND]` | Show help for Rho or a subcommand. |

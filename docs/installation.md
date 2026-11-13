@@ -87,23 +87,19 @@ export PATH="$HOME/.cargo/bin:$PATH"
 
 ## The daemon and services
 
-Rho runs your sessions in a per-user [daemon](/daemon) that the first `rho` command starts on demand. No install method installs a service, a login item, or a scheduled task for it, and none needs a post-install hook. The one service Rho documents is optional and yours to save: a [systemd unit or LaunchAgent](/daemon#running-as-a-service) that keeps `rho mcp serve --http` listening.
+Rho runs your sessions in a per-user [daemon](/daemon) that the first `rho` command starts. No install method adds a service or login item for it. The one optional service, a [systemd unit or LaunchAgent](/daemon#running-as-a-service) for `rho mcp serve --http`, is one you save yourself.
 
-`rho update` moves a running daemon to the version it installed without interrupting work, and how depends on where the install method puts that version:
+What an update does to a running daemon depends on how you installed Rho:
 
-| Install method | Service installed | A running daemon after `rho update` |
-| --- | --- | --- |
-| Install script (`install.sh`) and release archives on macOS and Linux | None | The new binary replaces the old one at the same path. The daemon [re-executes it in place](/daemon#upgrading-in-place) once nothing would be cut short, and `rho update` waits to report the restart, or says what the daemon is waiting for. |
-| Cargo (`cargo install rho-coding-agent`) | None | As the install script. |
-| Arch `PKGBUILD` (pacman) | None. The package ships `/usr/bin/rho` and its license only. | As the install script. |
-| mise | None | mise gives each version a directory of its own, so the daemon has nothing to re-execute. `rho update` stops an idle daemon, and the next `rho` command starts the updated one. A daemon with work in progress keeps running the old version: run `rho daemon restart` once that finished. |
-| Scoop bucket, install script (`install.ps1`), and release archives on Windows | None | Windows does not let an installer replace the executable of a running daemon. `rho update` stops an idle daemon and then prints the update command for you to run. If the daemon has work in progress, run `rho daemon stop` once that finished, then the command. |
+| Install method | After `rho update` |
+| --- | --- |
+| `install.sh`, a release archive on macOS or Linux, `cargo install`, or the Arch `PKGBUILD` | The daemon [restarts on the new binary](/daemon#upgrading-in-place) once no work would be cut short. `rho update` reports the restart or what the daemon waits for. |
+| mise | `rho update` stops an idle daemon, and the next `rho` command starts the new one. If work is in progress, run `rho daemon restart` when it finishes. |
+| Scoop, `install.ps1`, or a release archive on Windows | `rho update` stops an idle daemon and prints the update command to run. If work is in progress, run `rho daemon stop` when it finishes, then the command. |
 
-An idle daemon is one a stop would interrupt nothing in: no job queued, running, or waiting for input, no login under way, and no session with a background process, subagent, or workflow run of its own. That is what the daemon itself waits for before it upgrades in place.
+An idle daemon has no queued, running, or waiting job, no login under way, and no session with its own background process, subagent, or workflow. The table applies too when you update with a package manager or the install script.
 
-The same holds when you update without `rho update`, by running the package manager or the install script yourself. On macOS and Linux a daemon whose executable was replaced upgrades itself. With mise, and on Windows, run `rho daemon restart` or `rho daemon stop` as the table says.
-
-`rho uninstall` stops the running daemon, which interrupts the turns under way, and stops and deletes the saved `rho mcp serve --http` service: `rho-mcp.service` in your systemd user directory with the links that enable it, and `~/Library/LaunchAgents/dev.rho.mcp.plist`. `rho uninstall --dry-run` lists the daemon and each service file without touching them. A service saved under another name or installed system-wide is not found, so remove that one yourself. See [`rho uninstall`](/automation-cli#rho-uninstall).
+`rho uninstall` stops the daemon, which interrupts running turns, and deletes the saved `rho mcp serve --http` service (`rho-mcp.service` or `~/Library/LaunchAgents/dev.rho.mcp.plist`). `--dry-run` lists what it would remove. Remove a service saved under another name, or installed system-wide, yourself. See [`rho uninstall`](/automation-cli#rho-uninstall).
 
 ## Claude Code binary (optional)
 

@@ -49,6 +49,11 @@ const paths = [
     <section class="rho-home__hero">
       <div class="rho-home__hero-grid">
         <div class="rho-home__hero-copy">
+          <a class="rho-home__notice" :href="withBase('/upgrading-to-3')">
+            <span class="rho-home__notice-tag">Rho 3 is out</span>
+            <span>Sessions keep running after you quit. Upgrading from Rho 2? Read the upgrade guide</span>
+            <span aria-hidden="true">→</span>
+          </a>
           <h1 class="rho-home__title">
             <RhoWordmark size="xl" />
           </h1>
@@ -190,6 +195,29 @@ const paths = [
     gap: 2.5rem;
     align-items: start;
   }
+}
+
+.rho-home__notice {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 0.6rem;
+  margin: 0 0 1.5rem;
+  padding: 0.55rem 0.8rem;
+  border: 1px solid var(--rho-accent);
+  background: var(--rho-accent-soft);
+  font-size: 0.92rem;
+  line-height: 1.4;
+  text-decoration: none;
+}
+
+.rho-home .rho-home__notice {
+  text-decoration: none;
+}
+
+.rho-home__notice-tag {
+  color: var(--rho-accent-deep);
+  font-weight: 700;
 }
 
 .rho-home__title {

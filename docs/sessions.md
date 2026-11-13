@@ -20,7 +20,7 @@ Sessions persist automatically under:
 ~/.rho/sessions/<workspace-key>/
 ```
 
-`<workspace-key>` contains a readable encoding of the absolute working directory plus a stable hash to avoid path collisions. Rho uses the current directory as its [workspace](/tools-workspace). Sessions started through [`rho acp`](/integrations/acp) use this same tree and show up in `rho sessions list` and `rho -R`. [`rho run`](/automation-cli), Rho subagents, and workflow agent nodes save their sessions here too, each recorded with the host that ran it. Session lists, pickers, `-c`, and ACP session lists leave those out, because whoever ran one already holds what it returned. Commands that take a session id, such as `rho sessions export <ID>` and `rho --resume <ID>`, still find one.
+`<workspace-key>` contains a readable encoding of the absolute working directory plus a stable hash to avoid path collisions. Rho uses the current directory as its [workspace](/tools-workspace). Sessions started through [`rho acp`](/integrations/acp) use this same tree and show up in `rho sessions list` and `rho -R`. [`rho run`](/automation-cli#sessions-commands-and-questions), Rho subagents, and workflow agent nodes save their sessions here too. Session lists, pickers, `-c`, and ACP session lists hide them. Commands that take a session id, such as `rho sessions export <ID>` and `rho --resume <ID>`, still open them.
 
 ### Layout
 
@@ -123,8 +123,8 @@ the pre-turn conversation baseline.
 secrets in files touched by native tools. They are not redacted. Disabling rewind
 does not delete existing journals. Treat session folders as sensitive data and
 include them in your retention policy. To prevent new capture, set
-`[behavior] workspace_rewind = false` or toggle `/config` → **Agent** →
-**Workspace rewind**; sessions opened afterwards stop capturing.
+`[behavior] workspace_rewind = false`, or turn off **Workspace rewind** under
+**Agent** in `/config`. Sessions you open afterwards stop capturing.
 
 ## Searching prior conversations
 
@@ -136,9 +136,8 @@ ask for approval or deny that outside-workspace read.
 
 Search and read exclude the current session unless you pass
 `"scope":"current"` (see [Searching the current session](#searching-the-current-session)).
-Every other scope also leaves out the sessions that session lists hide, those
-of `rho run`, subagents, and workflow agent nodes: whoever ran one already
-holds what it returned.
+Other scopes also skip the sessions that session lists hide, such as those of
+`rho run`, subagents, and workflow agent nodes.
 `action = "recall"` returns the original text of a tool result that
 compaction elided, by the `recall_id` in its stub. Originals are saved in the
 session folder under `recall/`. See
@@ -251,61 +250,51 @@ reliably assigned to its former repository; use `scope: all` in that case.
 
 ## Starting and driving other sessions
 
-Through the [daemon](/daemon), the `sessions` tool also lets an agent start
-peer sessions and drive them, the way a person does from another terminal. A
-peer session keeps running after the turn that started it, can run in another
-workspace, and can be picked up later by the agent or by a person. For work
-whose result comes back into this turn, the `agent` tool's
-[subagents](/subagents) remain the better fit.
+With the [daemon](/daemon) running, the `sessions` tool lets an agent start
+other sessions and drive them, as you would from another terminal. These
+sessions keep running after the agent's turn ends, can work in another
+workspace, and you can pick them up later. When the result should come back
+into the current turn, use [subagents](/subagents) instead.
 
 | Action | What it does |
 | --- | --- |
-| `list` | The daemon's sessions, most recently changed first, with each one's workspace, state, and the `parent` session that started it. Filter by `workspace` or `state`. |
-| `new` | Starts a session in `workspace`, an absolute path, with a first `prompt`; `agent` and `model` are optional. Returns its `session` id at once. |
-| `prompt` | Starts a session's next turn with `text`. |
-| `steer` | Gives the running turn `text` for its next model request. |
-| `cancel` | Stops the session's turn in progress. |
-| `wait` | Waits up to `timeout_secs` (30 by default, at most 50) for the turn to end or to stop for a person, and returns its state, its outcome with the final answer once it ended, and a `cursor` to pass to the next `wait` while `done` is false. |
-| `read` | Without an `anchor`, pages through a daemon session's transcript by `start` and `chars`, its turn in progress included. |
+| `list` | Lists the daemon's sessions with their workspace, state, and the `parent` session that started them. Filter by `workspace` or `state`. |
+| `new` | Starts a session in `workspace`, an absolute path, with a first `prompt`. `agent` and `model` are optional. Returns the session id right away. |
+| `prompt` | Starts the session's next turn with `text`. |
+| `steer` | Adds `text` to the running turn's next model request. |
+| `cancel` | Cancels the turn in progress. |
+| `wait` | Waits for the turn to end or to need a person, for up to `timeout_secs`, at most 50. Returns the state, the final answer, and a `cursor` for the next `wait`. |
+| `read` | Without an `anchor`, pages through a session's transcript, including the turn in progress. |
 
 ```json
 {"action":"new","workspace":"/home/me/other-project","prompt":"Run the test suite and summarize failures"}
 {"action":"wait","session":"<returned id>","timeout_secs":50}
 ```
 
-These actions are the [MCP server](/mcp-server)'s tools, with the same
-arguments and results, and the same core enforces the same policy:
+These are the same tools the [MCP server](/mcp-server) offers, with the same
+rules. Know these before you approve one:
 
-- Its turns share the daemon-wide
-  [agent budget](/daemon#sessions-other-sessions-start), so it may wait
-  `queued` for a slot. Started from a session the daemon runs, it also
-  records that session as its `parent`, so `list` and `rho/job/list` show who
-  started what; a rho that runs its session itself has no daemon session to
-  name, so its starts show no parent.
-- It runs one level deeper than the agent's session. Starting or prompting a
-  session at depth 4 or deeper is refused, naming the budget, its limit, and
-  the depth asked for, as the [MCP server's limits](/mcp-server#limits) are.
-  Each session may have 10 sessions it started or prompted running at once.
-- It runs in the permission mode the target workspace's configuration
-  gives, as when a person starts rho there, not in the agent's session's
-  mode: approving a `new` approves a session that may run under a looser
-  mode than the agent's.
-- It runs with the agent's session's environment. The target workspace's
-  project agents, plugins, and hooks load only as the daemon's
-  `RHO_TRUST_PROJECT_*` variables allow, as for any session the daemon opens
-  ([Environment](/daemon#environment)): starting a session there grants it
-  no trust.
-- No action answers another session's approvals or questions. A session that
-  asks for one waits in `waiting_for_input`, which `wait` reports with the
-  open requests, until a person answers it from a rho frontend.
+- `new`, `prompt`, `steer`, and `cancel` ask for approval, and `plan` mode
+  refuses them. `list`, `read`, and `wait` ask for read access to session
+  storage.
+- A new session runs in its workspace's permission mode, which can be looser
+  than the agent's.
+- A new session gets the agent session's environment, including its
+  `RHO_TRUST_PROJECT_*` variables. The target workspace's project agents,
+  plugins, and hooks load only if those allow it. Starting a session there
+  grants it no trust. See [Environment](/daemon#environment).
+- An agent can't answer another session's approvals or questions. That session
+  waits until a person answers from a Rho frontend.
 
-`new`, `prompt`, `steer`, and `cancel` act on a session, so they ask for the
-session-control capability, whose approval names the action, the session, its
-workspace, and the text sent; `plan` mode refuses them. `list`, `read`, and
-`wait` only watch, but they show other sessions' transcripts, so they ask for
-the same read of the session store as searching history does. The tool only
-reaches a daemon already running: in a rho that runs its session itself with
-no daemon running, these actions report that and start none.
+Limits apply:
+
+- Started sessions share the daemon's
+  [agent budget](/daemon#sessions-other-sessions-start), so one may wait
+  `queued` for a slot.
+- Rho refuses to start or prompt a session 4 or more levels deep.
+- A session can have at most 10 sessions it started or prompted running at
+  once.
+- The tool needs a daemon that is already running. It never starts one.
 
 ## Resuming a session
 
@@ -356,11 +345,23 @@ To work across every directory, use `/sessions` inside the TUI. It opens a full-
 
 ### One process per session
 
-Only one Rho process writes a session at a time. The [daemon](/daemon), a foreground `rho run`, a workflow run in the terminal, and a Rho 2.x process each hold the sessions they have open. The TUI and `rho acp` open sessions through the daemon, so any number of them, and other daemon clients, can follow the same session, and the daemon lets go of it once it has been idle for a while ([unloading](/daemon#unloading-idle-sessions)). While a process other than the daemon has a session open, `rho --resume`, `rho -c`, `/resume`, and ACP `session/load` and `session/resume` cannot open it, and while any process has it open, no other process can delete it. The error names the holder, for example `session '<id>' is open in another Rho process; close it there first`. Close the session there, or exit that process, then try again. `-c` picks the latest session even when another process has it open, so it fails the same way rather than start a new one.
+Only one Rho process can have a session open at a time. The [daemon](/daemon),
+a foreground `rho run`, a workflow run in the terminal, and Rho 2.x each hold
+the sessions they open. The TUI and `rho acp` go through the daemon, so many of
+them can follow one session.
 
-Within one process, opening a session it already has open shares it: a `/resume` of the current session, or an ACP `session/load` of a session already open on the same connection, which attaches it again. Commands that do not open a session work from any process: `rho sessions list`, `export`, `rename`, and session search.
+While another process holds a session, you can't delete it. If that process
+isn't the daemon, you can't resume it either. The error names the holder:
 
-Rho records an open session with an OS lock on `.<session-id>.active.lock` in its workspace's session directory. The OS releases the lock when the process exits, including after a crash, so a leftover lock file never keeps a session locked.
+```text
+session '<id>' is open in another Rho process; close it there first
+```
+
+Close the session there, or exit that process, and try again. The daemon lets
+go of a session after it sits idle ([unloading](/daemon#unloading-idle-sessions)).
+`-c` fails the same way instead of starting a new session. Listing, exporting,
+renaming, and searching sessions work from any process. A crash never leaves a
+session locked.
 
 ## Listing, renaming, exporting, and deleting sessions
 
@@ -388,11 +389,11 @@ rho sessions cleanup --force   # allow stale non-terminal related runs
 
 `export` writes the active transcript path for a saved session. Formats are HTML (default), Markdown (`.md`), and JSON (`.json`). The path extension selects the format unless you pass `--format`. When you omit `--output`, Rho writes under `~/.rho/exports/` (or `$RHO_HOME/exports/`) with a timestamped name that includes the short id and optional title slug. Existing files are refused unless you pass `--force`.
 
-`rename` sets the stored session title by UUID or unique prefix. Multi-word titles work without quotes (`rho sessions rename abc123 my new title`). Inside the TUI, `/title <name>` renames the current session. A title is trimmed, and one that is empty, holds a control character such as a newline or an escape, or runs over 500 characters is refused.
+`rename` sets the stored session title by UUID or unique prefix. Multi-word titles work without quotes (`rho sessions rename abc123 my new title`). Inside the TUI, `/title <name>` renames the current session. Rho trims the title, and refuses one that is empty, longer than 500 characters, or contains a control character such as a newline.
 
-`rm` accepts one or more session ids or unique prefixes. It resolves every id before deleting any, then keeps going past a session it cannot delete and exits non-zero after reporting it. It deletes each session transcript unit (folder layout or legacy flat `.jsonl`), its web sidecar, and its session index row. Folder deletion also removes delegated runs nested under `subagents/`. Rho still removes older or legacy-session runs under `~/.rho/subagents/` when their `result.json` records the session as `parent_session_id`. Usage ledger rows are **not** deleted, so cost history remains.
+`rm` accepts one or more session ids or unique prefixes. It checks every id before deleting anything. If it can't delete a session, it reports it, deletes the rest, and exits non-zero. It deletes each session transcript unit (folder layout or legacy flat `.jsonl`), its web sidecar, and its session index row. Folder deletion also removes delegated runs nested under `subagents/`. Rho still removes older or legacy-session runs under `~/.rho/subagents/` when their `result.json` records the session as `parent_session_id`. Usage ledger rows are **not** deleted, so cost history remains.
 
-Deleting a session also deletes the child sessions it started, such as its subagents' sessions, and their children in turn, in any workspace. A child session records its parent's id and workspace in its header, so a session with the same id in another workspace keeps its own children. Children are deleted first, oldest first, each through the same delete and the same refusals below. If one is refused, the error names that child, and it, its parent, and the children not reached yet stay, so deleting the parent again finishes the job. Deleting a child session keeps its parent. Workflow node sessions record no parent, so deleting the session that started a workflow keeps them.
+Deleting a session also deletes the sessions it started, such as its subagents' sessions, and their children, in any workspace. Each child goes through the same checks listed below. If Rho refuses one, the error names it, and the parent stays. Delete the parent again once you fix that. Deleting a child keeps its parent. Deleting the session that started a workflow keeps the workflow's node sessions.
 
 Delete refuses:
 
@@ -430,9 +431,15 @@ Manual and automatic compactions are durable tree states. A compaction node stor
 
 New session files use session format 5. Each tree node stores the model messages it adds and the transcript rows it shows. Most rows are the same messages, so format 5 stores a row as a reference to a message in the same node and keeps full content only for rows that differ, such as user input rewritten for the model. This avoids storing most messages twice. Resume, export, `/tree`, the session list, and session search show the same transcript as before.
 
-Rho reads formats 4 and 5. A file keeps the format its header declares: continuing a format 4 session appends format 4 records, so a Rho release that predates format 5 can still open it.
+Rho reads formats 4 and 5. A file keeps the format its header declares. Continuing a format 4 session appends format 4 records, so a Rho release that predates format 5 can still open it.
 
-Rho 3 does not open format 1, 2, or 3 files. Rho 0.4.0 through 1.10.x wrote them (June 21 to July 21, 2026). A file of that age that a later Rho continued still declares its original format, so Rho 3 refuses it too. Resuming one by id fails with `this session was created by rho before 1.11 (session format v2) and can't be opened in rho 3; open it with rho 2.x`. The same error appears when you export one, or open one through the daemon. `rho sessions list` shows each such file as an untitled row. The resume picker and the session hub leave them out, because they have no transcript to show. A row that an earlier Rho already indexed can still appear there, and opening it fails with the same error. Session search skips these files, and the first search after upgrading discards any evidence an earlier Rho indexed from them. Rho 2.x still opens and continues them.
+Rho 3 doesn't open format 1, 2, or 3 files. Rho 0.4.0 through 1.10.x wrote them, between June 21 and July 21, 2026. A file from then keeps its old format even if a later Rho continued it. Resuming, exporting, or opening one through the daemon fails with this error:
+
+```text
+this session was created by rho before 1.11 (session format v2) and can't be opened in rho 3; open it with rho 2.x
+```
+
+Use Rho 2.x to open and continue these sessions. In Rho 3, `rho sessions list` shows them as untitled rows, the resume picker and session hub hide them, and session search skips them.
 
 Rho releases that predate format 5 refuse format 5 files rather than show an incomplete transcript. Resuming or exporting one fails with `unsupported session version 5`. Their session list may still show a row a newer Rho indexed, and their session search skips the file. Upgrade Rho to open these sessions.
 
