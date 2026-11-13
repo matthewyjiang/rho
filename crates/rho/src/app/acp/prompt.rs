@@ -9,11 +9,11 @@
 
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc, Mutex, PoisonError,
+    Arc, Mutex,
 };
 
 use agent_client_protocol::{
-    v1::schema::{ContentBlock, MessageId, SessionId as AcpSessionId, StopReason},
+    v1::schema::{ContentBlock, SessionId as AcpSessionId, StopReason},
     Error as AcpError, ErrorCode,
 };
 use rho_protocol::{
@@ -31,8 +31,9 @@ use super::{
 impl Adapter {
     /// Runs `content` as a prompt on session `session_id` until its turn
     /// ends. `accept`, for ACP v2, hears the id of the prompt's user message
-    /// once the daemon saved it; a prompt whose turn ended before that never
-    /// calls it.
+    /// once the daemon saved it, before the turn's end; a prompt whose turn
+    /// ended before it began never calls it. The session's pump reports
+    /// the turn's end to the host ([`super::AcpClientPort::turn_ended`]).
     pub(super) async fn prompt(
         &self,
         session_id: &AcpSessionId,
@@ -60,10 +61,9 @@ impl Adapter {
         }
         let link = self.daemon.link().await?;
         let (outcome, ended) = oneshot::channel();
-        let accept = Arc::new(Mutex::new(accept));
         let waiter = Waiter {
             outcome,
-            accept: Arc::clone(&accept),
+            accept: Arc::new(Mutex::new(accept)),
         };
         let (began, turn) = oneshot::channel();
         live.deliver(&link, Control::Arm { waiter, turn }).await?;
@@ -97,12 +97,6 @@ impl Adapter {
                 };
             }
         };
-        // A saved prompt was accepted even if its user message never
-        // reached this host.
-        let unaccepted = accept.lock().unwrap_or_else(PoisonError::into_inner).take();
-        if let Some(accept) = unaccepted {
-            accept(MessageId::new(format!("rho-user-{}", uuid::Uuid::new_v4())));
-        }
         stop_reason(outcome)
     }
 }

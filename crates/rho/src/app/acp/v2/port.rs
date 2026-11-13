@@ -114,13 +114,8 @@ impl AcpClientPort for V2Port {
         })
     }
 
-    /// Closes the `running` that `session/resume` reported with `idle`.
-    fn attached_turn_ended(
-        &self,
-        session_id: &v1::SessionId,
-        end: TurnEnd,
-        background: &[BackgroundWork],
-    ) {
+    /// Closes the `running` the host was told with `idle`.
+    fn turn_ended(&self, session_id: &v1::SessionId, end: TurnEnd, background: &[BackgroundWork]) {
         let sent = bridge::<_, v2::SessionId>(session_id)
             .and_then(|session_id| self.send_update(&session_id, requests::idle(&end, background)));
         if let Err(error) = sent {
@@ -146,8 +141,9 @@ impl AcpClientPort for V2Port {
 
     /// Announces the work that started and finalizes the work that
     /// stopped, then repeats the session's state with the new background
-    /// list. The list changes exactly when work starts or stops, so with
-    /// neither the host hears nothing.
+    /// list, unless a prompt's acknowledgement is due to. The list changes
+    /// exactly when work starts or stops, so with neither the host hears
+    /// nothing.
     fn background_changed(&self, session_id: &v1::SessionId, change: BackgroundChanged<'_>) {
         let updates = background::changes(change.previous, change.current);
         if updates.is_empty() {
@@ -157,10 +153,12 @@ impl AcpClientPort for V2Port {
             for update in updates {
                 self.send_update(&session_id, update)?;
             }
-            self.send_update(
-                &session_id,
-                background::state(change.foreground, change.current),
-            )
+            match change.foreground {
+                Some(foreground) => {
+                    self.send_update(&session_id, background::state(foreground, change.current))
+                }
+                None => Ok(()),
+            }
         });
         if let Err(error) = sent {
             tracing::warn!(%error, "could not report background work over ACP v2");

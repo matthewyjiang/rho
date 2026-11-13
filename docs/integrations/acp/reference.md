@@ -54,7 +54,7 @@ A host that sends `"protocolVersion": 2` gets the [ACP v2 draft](https://agentcl
 
 ### Background work on v2
 
-On v2 a prompt does not wait for the background work it starts: the turn ends with `idle`, and when the work finishes, Rho starts a turn of its own to give the model the result, reported as `running`, then `idle`. A turn another client starts in the session is reported the same way. Every `state_update` carries `background`, the work still running:
+On v2 a prompt does not wait for the background work it starts: the turn ends with `idle`, and when the work finishes, Rho starts a turn of its own to give the model the result, reported as `running`, then `idle`. A turn another client starts in the session is reported the same way. While such a turn runs, `session/prompt` fails as busy (invalid request); send the prompt once the state is `idle`. Every `state_update` carries `background`, the work still running:
 
 - A background process is a terminal whose `terminalId` is the process ID. Rho announces it with a `terminal_update` carrying its `command` before the first state that lists it, and once it ends sends a `terminal_update` with its `exitStatus` (with the `exitCode`, when it exited with one) before the state that drops it.
 - A workflow run is a tool call `rho-workflow-<run id>`, announced with a `tool_call_update` titled with the workflow's name, `in_progress`, then `completed`, `failed`, or `cancelled` once the run ends.

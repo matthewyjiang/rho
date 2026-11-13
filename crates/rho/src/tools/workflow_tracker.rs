@@ -152,6 +152,7 @@ struct Inner {
 #[derive(Clone, Default)]
 pub struct WorkflowRunTracker {
     inner: Arc<Mutex<Inner>>,
+    started: Arc<tokio::sync::Notify>,
     finished: Arc<tokio::sync::Notify>,
 }
 
@@ -211,6 +212,8 @@ impl WorkflowRunTracker {
                 explicitly_observed: false,
             },
         );
+        drop(inner);
+        self.started.notify_waiters();
         true
     }
 
@@ -330,6 +333,12 @@ impl WorkflowRunTracker {
         entry.finished = Some(finished);
         drop(inner);
         self.finished.notify_waiters();
+    }
+
+    /// Fires when a run starts. Subscribe before reading the runs, so a
+    /// start during the wait is not lost.
+    pub(crate) fn started_owned(&self) -> impl std::future::Future<Output = ()> + Send + 'static {
+        self.started.clone().notified_owned()
     }
 
     /// Fires when any run finishes. Subscribe before checking pending

@@ -18,7 +18,6 @@ use tokio::sync::Notify;
 use super::{LoadedSession, Sessions};
 use crate::{
     app::{
-        daemon_host::jobs::JobRegistry,
         session_runtime::SessionRuntime,
         subagent_manager::{BackgroundChild, SubagentManager},
     },
@@ -82,6 +81,11 @@ impl SessionBackground {
         self.sources().processes
     }
 
+    /// The workflow runs the session started.
+    pub(super) fn workflows(&self) -> &WorkflowRunTracker {
+        &self.workflows
+    }
+
     fn sources(&self) -> Sources {
         self.sources
             .lock()
@@ -112,8 +116,7 @@ impl SessionBackground {
     }
 
     /// Resolves once a process, subagent or workflow run may have started
-    /// or ended from now on, except a workflow run's start, which its job's
-    /// registration tells (see [`watch`]).
+    /// or ended from now on.
     fn changes(&self) -> impl std::future::Future<Output = ()> + Send + 'static {
         let sources = self.sources();
         // Subscribed here, not at the first poll.
@@ -127,6 +130,7 @@ impl SessionBackground {
             .map(ProcessManager::started_owned);
         let subagents = sources.subagents.as_ref().map(SubagentManager::changed);
         let finished = self.workflows.notified_owned();
+        let launched = self.workflows.started_owned();
         let replaced = Arc::clone(&self.replaced);
         async move {
             tokio::select! {
@@ -134,6 +138,7 @@ impl SessionBackground {
                 () = or_pending(started) => {}
                 () = or_pending(subagents) => {}
                 () = finished => {}
+                () = launched => {}
                 () = replaced.notified() => {}
             }
         }
@@ -197,7 +202,7 @@ impl Sessions {
     /// Starts `session`'s background watcher. Call once, as the session is
     /// added.
     pub(super) fn watch_background(&self, session: &Arc<LoadedSession>) {
-        let watcher = watch(Arc::downgrade(session), Arc::clone(&session.jobs));
+        let watcher = watch(Arc::downgrade(session));
         let dropped = session.background.dropped.clone();
         tokio::spawn(async move {
             tokio::select! {
@@ -240,14 +245,10 @@ impl Sessions {
 /// Reports `session`'s background work each time it may have changed,
 /// until the session is gone. Holds the session weakly, so it never keeps
 /// one loaded.
-async fn watch(session: Weak<LoadedSession>, jobs: Arc<JobRegistry>) {
+async fn watch(session: Weak<LoadedSession>) {
     loop {
         // Subscribed before the report, so a change in between still wakes
-        // the next look. A workflow run registers its job once the tracker
-        // holds it, so a job change tells its start.
-        let job = jobs.changed();
-        tokio::pin!(job);
-        job.as_mut().enable();
+        // the next look.
         let changes = {
             let Some(session) = session.upgrade() else {
                 return;
@@ -256,10 +257,7 @@ async fn watch(session: Weak<LoadedSession>, jobs: Arc<JobRegistry>) {
             session.report_background();
             changes
         };
-        tokio::select! {
-            () = changes => {}
-            () = job => {}
-        }
+        changes.await;
     }
 }
 
@@ -286,6 +284,8 @@ fn workflow_work(run: WorkflowRailSummary) -> wire::BackgroundWork {
     } else if run.outcome == Some(WorkflowOutcome::Cancellation) {
         wire::BackgroundStatus::Cancelled
     } else if run.is_failure() || run.lifecycle != RunLifecycle::Completed {
+        // A run that stopped short of completing failed, whatever its
+        // outcome says.
         wire::BackgroundStatus::Failed
     } else {
         wire::BackgroundStatus::Completed

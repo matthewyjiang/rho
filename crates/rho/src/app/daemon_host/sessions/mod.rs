@@ -200,9 +200,6 @@ struct LoadedSession {
     /// The session's background processes, workflow runs and subagents;
     /// reads never wait for the active turn (see [`background`]).
     background: SessionBackground,
-    /// The workflow runs the session started; reads never wait for the
-    /// active turn.
-    workflows: crate::tools::workflow_tracker::WorkflowRunTracker,
     /// Turns the runtime's events into the feed's; only the turn under way
     /// and its steers use it, each briefly and never across an await.
     live: Mutex<LiveEvents>,
@@ -429,7 +426,6 @@ impl LoadedSession {
             live: Mutex::new(live),
             mcp: Mutex::new(crate::app::session_mcp::SessionMcp::of(&runtime)),
             background: SessionBackground::of(&runtime),
-            workflows: runtime.tools().workflow_tracker().clone(),
             feed,
             job,
             jobs,

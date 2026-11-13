@@ -9,7 +9,9 @@
 //!    `user_message`, reports `running`, and answers with the message's ID.
 //! 2. The turn streams its updates as in v1.
 //! 3. The turn ends: `idle` with the stop reason, or with `error` when it
-//!    failed after acceptance.
+//!    failed after acceptance. The session's pump sends it as it reads the
+//!    end (`V2Port::turn_ended`), so no later update it sends, a delivery
+//!    turn's `running` or a background change, can come first.
 //!
 //! Both state updates list the session's background work as the host was
 //! last told it, holding it while they send ([`super::background`]).
@@ -27,7 +29,7 @@ use agent_client_protocol::{
 };
 
 use super::{background, port::V2Port, requests};
-use crate::app::acp::{sessions::Accept, Adapter, Foreground, TurnEnd};
+use crate::app::acp::{sessions::Accept, Adapter, Foreground};
 
 pub(super) fn spawn(
     adapter: Arc<Adapter>,
@@ -60,21 +62,18 @@ pub(super) fn spawn(
         let result = adapter
             .prompt(&v1_request.session_id, &v1_request.prompt, Some(accept))
             .await;
-        if let Some(responder) = take(&unanswered) {
-            let error = match result {
-                Err(error) => error,
-                // The turn ended before the daemon saved the prompt, as a
-                // cancel that beat it does.
-                Ok(_) => {
-                    AcpError::request_cancelled().data("the prompt was cancelled before it started")
-                }
-            };
-            return responder.respond_with_error(error);
-        }
-        let end = TurnEnd::Ended(result);
-        adapter.with_background(&v1_request.session_id, |work| {
-            port.send_update(&session_id, requests::idle(&end, work))
-        })
+        let Some(responder) = take(&unanswered) else {
+            return Ok(());
+        };
+        let error = match result {
+            Err(error) => error,
+            // The turn ended before the daemon saved the prompt, as a
+            // cancel that beat it does.
+            Ok(_) => {
+                AcpError::request_cancelled().data("the prompt was cancelled before it started")
+            }
+        };
+        responder.respond_with_error(error)
     })
 }
 

@@ -185,6 +185,13 @@ fn finalization(work: &BackgroundWork) -> Option<v2::SessionUpdate> {
             let status = match work.status {
                 BackgroundStatus::Failed => v2::ToolCallStatus::Failed,
                 BackgroundStatus::Cancelled => v2::ToolCallStatus::Cancelled,
+                // v2 has no status for a call that ended in a way the host
+                // cannot tell; it did end, and claiming a failure would be
+                // a guess.
+                BackgroundStatus::Completed
+                | BackgroundStatus::Unknown
+                | BackgroundStatus::Running => v2::ToolCallStatus::Completed,
+                // A status a newer daemon sends.
                 _ => v2::ToolCallStatus::Completed,
             };
             v2::SessionUpdate::ToolCallUpdate(
@@ -198,6 +205,8 @@ fn finalization(work: &BackgroundWork) -> Option<v2::SessionUpdate> {
                 BackgroundStatus::Completed => Some(v2::StopReason::EndTurn),
                 BackgroundStatus::Cancelled => Some(v2::StopReason::Cancelled),
                 BackgroundStatus::Failed => Some(v2::StopReason::Error(v2::ErrorStopReason::new())),
+                BackgroundStatus::Unknown | BackgroundStatus::Running => None,
+                // A status a newer daemon sends.
                 _ => None,
             };
             v2::SessionUpdate::SubagentUpdate(

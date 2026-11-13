@@ -44,13 +44,14 @@ const SESSION: &str = "s1";
 #[derive(Default)]
 struct Host {
     sent: Mutex<Vec<SessionNotification>>,
-    /// What the host was told of turns no prompt of its own runs: the
-    /// foreground `foreground_changed` reported, and how each ended, as
-    /// `attached_turn_ended` told: a stop reason, `failed`, or `unseen`.
+    /// What the host was told of turns, in order: the foreground
+    /// `foreground_changed` reported, how each ended, as `turn_ended` told
+    /// (a stop reason, `failed`, or `unseen`), and `background` for each
+    /// background change.
     turns: Mutex<Vec<String>>,
     /// Each background list `background_changed` reported, with the
-    /// foreground the repeated state carried.
-    background: Mutex<Vec<(Foreground, Vec<BackgroundWork>)>>,
+    /// foreground the repeated state carried, if one was repeated.
+    background: Mutex<Vec<(Option<Foreground>, Vec<BackgroundWork>)>>,
 }
 
 impl Host {
@@ -100,7 +101,7 @@ impl AcpClientPort for Host {
         Box::pin(std::future::ready(Ok(())))
     }
 
-    fn attached_turn_ended(
+    fn turn_ended(
         &self,
         _session_id: &AcpSessionId,
         end: TurnEnd,
@@ -124,6 +125,7 @@ impl AcpClientPort for Host {
     }
 
     fn background_changed(&self, _session_id: &AcpSessionId, change: BackgroundChanged<'_>) {
+        self.turns.lock().unwrap().push("background".to_owned());
         self.background
             .lock()
             .unwrap()
@@ -424,9 +426,9 @@ async fn armed_prompts_match_their_own_turn() {
 // client's prompt, or a turn the daemon starts as background work
 // finishes), must hear that turn end, with its stop reason, or unseen once
 // the pump lost track of it; otherwise the host shows the session running
-// forever. A prompt of the host's takes over unreported: T3 Code closes its
-// pending prompt on any `idle`, so one for the old turn would end the new
-// prompt early.
+// forever. A prompt of the host's takes over, and only its own end is told:
+// T3 Code closes its pending prompt on any `idle`, so one for the old turn
+// would end the new prompt early.
 // Owner: ACP session pump
 #[tokio::test]
 async fn the_turn_running_at_attach_reports_its_end() {
@@ -507,7 +509,7 @@ async fn the_turn_running_at_attach_reports_its_end() {
             vec!["unseen"],
         ),
         (
-            "a prompt of this host's takes over unreported",
+            "a prompt of this host's takes over, and only its own end is told",
             Some("t0"),
             vec![
                 Arm("t1"),
@@ -516,7 +518,7 @@ async fn the_turn_running_at_attach_reports_its_end() {
                 Live(user("m1")),
                 Live(ended("t1", answered("a"))),
             ],
-            vec![],
+            vec!["EndTurn"],
         ),
         (
             "one that begins after an idle attach",
@@ -750,8 +752,10 @@ async fn ended_attachments_fail_the_prompt_and_release_job_waits() {
 
 // Covers: a host hears background work change with the foreground it was
 // told, never `running` for a turn it does not follow, so the repeated
-// state cannot leave it showing a turn that ended; and a reattach reports
-// what changed while it was behind.
+// state cannot leave it showing a turn that ended, and no state at all
+// while its prompt waits to be acknowledged, as an `idle` then would end
+// that prompt; its prompt's end comes before any later change; and a
+// reattach reports what changed while it was behind.
 // Owner: ACP session pump
 #[tokio::test]
 async fn background_changes_repeat_the_state_the_host_was_told() {
@@ -785,12 +789,23 @@ async fn background_changes_repeat_the_state_the_host_was_told() {
     assert_eq!(
         *pump.host.background.lock().unwrap(),
         [
-            (Foreground::Idle, work(BackgroundStatus::Running)),
-            // The prompt's message has not shown, so the host has not been
-            // told its turn runs.
-            (Foreground::Idle, work(BackgroundStatus::Cancelled)),
-            (Foreground::Running, work(BackgroundStatus::Running)),
-            (Foreground::Idle, work(BackgroundStatus::Completed)),
+            (Some(Foreground::Idle), work(BackgroundStatus::Running)),
+            // The prompt's message has not shown: its acknowledgement's
+            // `running` carries the list, and an `idle` first would end
+            // the host's pending prompt.
+            (None, work(BackgroundStatus::Cancelled)),
+            (Some(Foreground::Running), work(BackgroundStatus::Running)),
+            (Some(Foreground::Idle), work(BackgroundStatus::Completed)),
+        ]
+    );
+    assert_eq!(
+        *pump.host.turns.lock().unwrap(),
+        [
+            "background",
+            "background",
+            "background",
+            "EndTurn",
+            "background"
         ]
     );
 }

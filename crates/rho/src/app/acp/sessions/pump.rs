@@ -129,6 +129,9 @@ struct Armed {
     waiter: Waiter,
     /// Whether the turn's user message, the prompt's own, went by.
     shown: bool,
+    /// Whether a background change went unrepeated in a `state_update`
+    /// before the prompt was acknowledged (see [`Pump::told_foreground`]).
+    withheld: bool,
 }
 
 struct Pump {
@@ -201,6 +204,7 @@ impl Pump {
                         turn,
                         waiter,
                         shown: false,
+                        withheld: false,
                     }));
                 }
             }
@@ -429,25 +433,58 @@ impl Pump {
         }
     }
 
-    /// Settles the followed turn, if any: an armed prompt hears `end`, and
-    /// the host hears an announced turn end with the outcome's stop reason,
-    /// or unseen when the pump lost track of it (`end` is the error).
+    /// Settles the followed turn, if any. The host hears it end before
+    /// anything the pump reads next, as this is the only place a turn's
+    /// end is told: an announced turn with the outcome's stop reason, or
+    /// unseen when the pump lost track of it (`end` is the error); an armed
+    /// prompt's turn with the stop reason or error, once acknowledged,
+    /// before the prompt hears `end`. A prompt whose turn ended before its
+    /// user message went by is acknowledged here, as the daemon saved it.
     fn settle(&mut self, end: Result<TurnOutcome, AcpError>) {
-        match self.following.take() {
+        let told = match self.following.take() {
             Some(Following::Prompt(armed)) => {
-                let _ = armed.waiter.outcome.send(end);
-            }
-            Some(Following::Announced(_)) => {
-                let end = match end {
-                    Ok(outcome) => TurnEnd::Ended(prompt::stop_reason(outcome)),
-                    Err(_) => TurnEnd::Unseen,
+                let told = match (&end, armed.shown) {
+                    (Ok(_), shown) => {
+                        if !shown {
+                            let accept = armed
+                                .waiter
+                                .accept
+                                .lock()
+                                .unwrap_or_else(PoisonError::into_inner)
+                                .take();
+                            if let Some(accept) = accept {
+                                accept(MessageId::new(format!(
+                                    "rho-user-{}",
+                                    uuid::Uuid::new_v4()
+                                )));
+                            }
+                        }
+                        Some(TurnEnd::Ended(end.clone().and_then(prompt::stop_reason)))
+                    }
+                    (Err(error), true) => Some(TurnEnd::Ended(Err(error.clone()))),
+                    // The prompt fails unacknowledged; only the state its
+                    // wait withheld is owed.
+                    (Err(_), false) => armed.withheld.then_some(TurnEnd::Unseen),
                 };
-                let background = lock(&self.shared.background);
-                self.context
-                    .port
-                    .attached_turn_ended(&self.context.acp_id, end, &background);
+                self.tell_turn_ended(told);
+                let _ = armed.waiter.outcome.send(end);
+                return;
             }
-            None => {}
+            Some(Following::Announced(_)) => Some(match end {
+                Ok(outcome) => TurnEnd::Ended(prompt::stop_reason(outcome)),
+                Err(_) => TurnEnd::Unseen,
+            }),
+            None => None,
+        };
+        self.tell_turn_ended(told);
+    }
+
+    fn tell_turn_ended(&self, end: Option<TurnEnd>) {
+        if let Some(end) = end {
+            let background = lock(&self.shared.background);
+            self.context
+                .port
+                .turn_ended(&self.context.acp_id, end, &background);
         }
     }
 
@@ -458,6 +495,9 @@ impl Pump {
         let mut background = lock(&self.shared.background);
         if *background == work {
             return;
+        }
+        if let Some(Following::Prompt(armed)) = &mut self.following {
+            armed.withheld |= foreground.is_none();
         }
         let previous = std::mem::replace(&mut *background, work);
         self.context.port.background_changed(
@@ -472,13 +512,17 @@ impl Pump {
 
     /// What the host was told the session's foreground work is doing: a
     /// turn it follows, as the job's state has it, or else idle, since the
-    /// host hears of no other turn.
-    fn told_foreground(&self) -> Foreground {
+    /// host hears of no other turn. `None` while a prompt of the host's
+    /// waits to be acknowledged: the host was told idle, but T3 Code ends
+    /// its pending prompt on any `idle`, and the acknowledgement's
+    /// `running` comes next.
+    fn told_foreground(&self) -> Option<Foreground> {
         match &self.following {
             Some(Following::Announced(_) | Following::Prompt(Armed { shown: true, .. })) => {
-                self.shared.attachment.borrow().foreground()
+                Some(self.shared.attachment.borrow().foreground())
             }
-            Some(Following::Prompt(Armed { shown: false, .. })) | None => Foreground::Idle,
+            Some(Following::Prompt(Armed { shown: false, .. })) => None,
+            None => Some(Foreground::Idle),
         }
     }
 
@@ -498,7 +542,10 @@ impl Pump {
         } else if before == now || now == Foreground::Idle {
             return;
         }
-        if self.told_foreground() == Foreground::Idle {
+        if self
+            .told_foreground()
+            .is_none_or(|told| told == Foreground::Idle)
+        {
             return;
         }
         let background = lock(&self.shared.background);

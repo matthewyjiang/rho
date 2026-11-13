@@ -87,10 +87,15 @@ pub(super) trait AcpClientPort: Send + Sync {
     ) -> Pin<Box<dyn Future<Output = Result<(), AcpError>> + Send + '_>>;
 
     /// The turn of session `session_id` that the host was told is running
-    /// when it attached, which no prompt of its own runs, ended as `end`,
-    /// leaving `background` work. Only ACP v2 reports turn state
-    /// (`state_update`), so a v1 host has nothing to hear.
-    fn attached_turn_ended(
+    /// ended as `end`, leaving `background` work: the turn of its own
+    /// prompt, once acknowledged, or one it did not prompt, which was
+    /// running when it attached or that began since. The session's pump
+    /// tells it, so nothing it reports of later work can come first.
+    /// [`TurnEnd::Unseen`] also repeats an idle state the host was not
+    /// told while its prompt waited to be acknowledged. Only ACP v2
+    /// reports turn state (`state_update`), so a v1 host has nothing to
+    /// hear.
+    fn turn_ended(
         &self,
         _session_id: &SessionId,
         _end: TurnEnd,
@@ -106,8 +111,7 @@ pub(super) trait AcpClientPort: Send + Sync {
     /// Session `session_id`'s foreground work is now `foreground`, which no
     /// prompt of the host's reports: a turn it did not prompt began, or the
     /// turn it follows began or stopped waiting for a person. Never
-    /// [`Foreground::Idle`], whose turn end the prompt or
-    /// [`Self::attached_turn_ended`] reports. Only ACP v2 reports turn
+    /// [`Foreground::Idle`], whose turn end [`Self::turn_ended`] reports. Only ACP v2 reports turn
     /// state, so a v1 host has nothing to hear.
     fn foreground_changed(
         &self,
@@ -123,8 +127,10 @@ pub(super) struct BackgroundChanged<'a> {
     pub(super) previous: &'a [rho_protocol::BackgroundWork],
     pub(super) current: &'a [rho_protocol::BackgroundWork],
     /// What the host was told the session's foreground work is doing,
-    /// which the repeated state reports.
-    pub(super) foreground: Foreground,
+    /// which the repeated state reports; `None` while a prompt of the
+    /// host's waits to be acknowledged, whose `running` will carry the
+    /// list, so no state is repeated before it.
+    pub(super) foreground: Option<Foreground>,
 }
 
 /// What a session's foreground work is doing, as ACP v2's `state_update`

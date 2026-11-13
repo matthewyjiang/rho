@@ -74,6 +74,15 @@ struct AgentEntry {
 }
 
 impl AgentEntry {
+    /// The label shown for the run: its `title`, when it reported one,
+    /// else the task it was given.
+    fn display_title(&self, title: Option<String>) -> String {
+        title
+            .filter(|title| !title.trim().is_empty())
+            .or_else(|| self.task_fallback.clone())
+            .unwrap_or_else(|| "Delegated task".into())
+    }
+
     fn snapshot(&self, id: &str) -> SubagentSnapshot {
         let status = self.handle.status();
         let elapsed = status
@@ -411,13 +420,7 @@ impl SubagentManager {
         let id = crate::subagent::normalize_id(id).ok()?;
         let entries = self.inner.lock().expect("delegated registry lock");
         let entry = entries.get(&id)?;
-        let task = entry
-            .handle
-            .status()
-            .title
-            .filter(|title| !title.trim().is_empty())
-            .or_else(|| entry.task_fallback.clone())
-            .unwrap_or_else(|| "Delegated task".into());
+        let task = entry.display_title(entry.handle.status().title);
         Some(SubagentTaskIdentity {
             run_id: id,
             agent_id: entry.agent_id.clone(),
@@ -499,11 +502,7 @@ impl SubagentManager {
             .filter(|(_, entry)| entry.session_id == session_id && !entry.observed)
             .map(|(id, entry)| {
                 let status = entry.handle.status();
-                let title = status
-                    .title
-                    .filter(|title| !title.trim().is_empty())
-                    .or_else(|| entry.task_fallback.clone())
-                    .unwrap_or_else(|| "Delegated task".into());
+                let title = entry.display_title(status.title);
                 let state = if entry.handle.is_complete() {
                     status.state
                 } else {
