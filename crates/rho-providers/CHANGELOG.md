@@ -1,5 +1,68 @@
 # Changelog
 
+## [3.0.1](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.27.0...rho-providers-v3.0.1) (2026-11-13)
+
+
+### ⚠ BREAKING CHANGES
+
+* **sdk:** Message::User, Message::Assistant and Message::BoundaryInput hold Arc<[ContentBlock]> instead of Vec<ContentBlock>; Message::ToolResult holds Arc<ToolResult>; Message::EnrichedAssistant and Message::AbortedAssistant hold Arc instead of Box. Build them with `.into()` and change a shared payload with Arc::make_mut.
+* **tui:** `RHO_TUI_DAEMON=0` no longer keeps a session in the TUI's own process; rho ignores the variable. MCP `sampling/createMessage`, which only the in-process session answered, is no longer answered.
+* **sdk:** Message gains CompactionSummary, ModelContext, BoundaryInput, and ReasoningShift variants rendered through Message::wire(); ToolCall.execution replaces async marker blocks; ModelEvent gains ToolCallAccepted, Stopped, and ProviderContext with a ReplayScope; ProviderContextBlock.replay replaces the hard-coded Codex replay exception; the session snapshot schema is now 3. Saved 5.x history loads as typed entries.
+* **sdk:** ToolResult carries status: ToolResultStatus and images instead of ok: bool; the tool image supplement message API is removed; ToolCompletion::Completed replaces Success and CompletedFailure; RunEvent::ToolStarted carries execution and replaces ToolDetached; ToolProgress uses new/with_metadata with getters. Saved 2.x sessions still load.
+* **sdk:** ModelProvider has one send_turn_stream(request, ProviderTurnContext) and native_compact takes ModelRequestOptions; provider_steering_channel returns ProviderSteeringSender; StepStarted carries context_estimate; SteeringRetraction gains Delivered; InvalidConfiguration, Persistence, and Interrupted errors are struct variants with an optional source; host input and tool host builders use with_* setters and unsuffixed getters; AfterToolUsePayload carries capability and process.
+* **sdk:** QuestionKind, DefaultSelection, HostInputSource, CompactorCancellationMode, HookSessionFailureKind, and ScriptedToolOutcome are now #[non_exhaustive]; exhaustive matches outside rho-sdk need a wildcard arm. Decision adapters should reject unknown question kinds with InvalidRequest::UnsupportedQuestionKind.
+* **tools:** the hashline edit format and its `edit` tool are gone; `edit_tool = "hashline"` (global or per custom provider) now loads as `str_replace` with a migration warning. rho-agent-tools drops `EditFormat::Hashline`, the `hashline` module, `FileViewPolicy`/`FileViewStyle`, the public `rtk` module, the `Bash::new`/`PowerShell::new` RTK argument, and the `ToolCard` match_* fields, which move into the new `ToolBody::Search` variant alongside a new `ToolBody::Code` variant.
+* **providers:** rho-providers removes run_codex_oauth_flow, run_xai_oauth_flow, run_openrouter_oauth_flow, the OAuth and Ollama device Browser error variants, start_ollama_device_login's open_browser argument, InteractiveUserAction, InteractiveLogin::user_action, accept_unconfirmed_login and the image_input lookup; start_interactive_login now takes BrowserAvailability (replacing start_interactive_login_with_availability), InteractiveLoginCompletion::Unconfirmed carries an UnconfirmedAuthentication handle to accept, and ModelMetadata gains image_input and reasoning_control. ModelMetadata, ProviderId, ProviderRuntime, ModelSelectionError, CatalogSdkAdapter and the new ReasoningControl are #[non_exhaustive], so downstream code must build ModelMetadata from Default and keep wildcard match arms.
+
+### Features
+
+* **context:** timestamp user messages and assistant text sent to the model ([#1903](https://github.com/matthewyjiang/rho/issues/1903)) ([39a30ad](https://github.com/matthewyjiang/rho/commit/39a30ad2719f4882988b353a6100bf0f04904a34))
+* **daemon:** keep a session's prompt cache warm from the daemon ([#1878](https://github.com/matthewyjiang/rho/issues/1878)) ([79a6949](https://github.com/matthewyjiang/rho/commit/79a694966933646ab6d3010d855e9eda5f9381bd))
+* **daemon:** keep the daemon in step with rho update and rho uninstall ([#1912](https://github.com/matthewyjiang/rho/issues/1912)) ([656b3f3](https://github.com/matthewyjiang/rho/commit/656b3f3b51b189d6ec7211774e8c0a8e0b42f0b9))
+* **daemon:** log in through the daemon and relay prompts to the client ([#1743](https://github.com/matthewyjiang/rho/issues/1743)) ([f158118](https://github.com/matthewyjiang/rho/commit/f15811877996ef7251a7afa754028677226d9d70))
+* **daemon:** report the daemon's credential store and let clients choose it ([#1766](https://github.com/matthewyjiang/rho/issues/1766)) ([b9b0486](https://github.com/matthewyjiang/rho/commit/b9b0486556c39065f25d394976987263a82c72e0))
+* **daemon:** run a session's commands with its client's environment ([#1733](https://github.com/matthewyjiang/rho/issues/1733)) ([0833ae2](https://github.com/matthewyjiang/rho/commit/0833ae2a9b11bf3979fb1cbbee47668c3090ed46))
+* **daemon:** run a session's MCP servers, hooks, and OpenAPI sources with its client's environment ([#1734](https://github.com/matthewyjiang/rho/issues/1734)) ([20bf354](https://github.com/matthewyjiang/rho/commit/20bf354e3ef7ed09ef18f85ab0d328bc197f784c))
+* **daemon:** show cost and tool calls while a response streams ([#1809](https://github.com/matthewyjiang/rho/issues/1809)) ([b15909e](https://github.com/matthewyjiang/rho/commit/b15909ed44039d95b9f7ea94493fe42dd112ca84))
+* **daemon:** take a subagent's question whether or not a turn runs ([#1838](https://github.com/matthewyjiang/rho/issues/1838)) ([abb432c](https://github.com/matthewyjiang/rho/commit/abb432c89cd835401344f879ee0f70cecc4dc115))
+* drop computer use ([#1738](https://github.com/matthewyjiang/rho/issues/1738)) ([4ba3648](https://github.com/matthewyjiang/rho/commit/4ba36487c5d5c2ef3b37a89f212f8ce1e7effe35))
+* **mcp:** add authenticated HTTP access and service examples ([#1764](https://github.com/matthewyjiang/rho/issues/1764)) ([54817ee](https://github.com/matthewyjiang/rho/commit/54817ee3e5216a5ae36929f99ea4704d1956df08))
+* **providers:** add Mistral AI, with one picker row per model across aliased ids ([#1742](https://github.com/matthewyjiang/rho/issues/1742)) ([ec15d36](https://github.com/matthewyjiang/rho/commit/ec15d36ec68ff07774de3edfb9bcc4134ea7db6c))
+* **tui:** add directories, read context and hooks reports, and refresh models on the daemon ([#1798](https://github.com/matthewyjiang/rho/issues/1798)) ([679e0cf](https://github.com/matthewyjiang/rho/commit/679e0cfccede134dd20004b04c335e0ced50d369))
+* **tui:** change settings and the advisor through the daemon ([#1774](https://github.com/matthewyjiang/rho/issues/1774)) ([b300283](https://github.com/matthewyjiang/rho/commit/b3002834ecbc166a01bd78e2eded3c9016201420))
+* **tui:** delete the in-process TUI ([#1904](https://github.com/matthewyjiang/rho/issues/1904)) ([933854d](https://github.com/matthewyjiang/rho/commit/933854d5d01916818312d8d9478ee33bedd296f9))
+* **tui:** end a daemon turn while its subagents run and deliver their results when idle ([#1836](https://github.com/matthewyjiang/rho/issues/1836)) ([3134b0d](https://github.com/matthewyjiang/rho/commit/3134b0db9ac5769c0e375fef964d9a067b003f57))
+* **tui:** make the daemon-backed TUI the default on Linux and macOS ([#1890](https://github.com/matthewyjiang/rho/issues/1890)) ([f27fe2b](https://github.com/matthewyjiang/rho/commit/f27fe2b28b4819835a710107313f6127b9082a8c))
+* **tui:** name models by their catalog display name in TUI chrome ([#1832](https://github.com/matthewyjiang/rho/issues/1832)) ([6fbc42c](https://github.com/matthewyjiang/rho/commit/6fbc42cfc33a2b532e8341efa122e13576b52a00))
+* **tui:** reattach a lagged daemon session, and offer to resume a new one on exit ([#1761](https://github.com/matthewyjiang/rho/issues/1761)) ([7494490](https://github.com/matthewyjiang/rho/commit/7494490fc4243b05c0af5aa413ae33658d2c3d93))
+* **tui:** show provider retries, hosted searches and diagnostics on a daemon session ([#1829](https://github.com/matthewyjiang/rho/issues/1829)) ([6c21ce7](https://github.com/matthewyjiang/rho/commit/6c21ce72e4f89f43b9e0e44d9b475350fa1c4a57))
+
+
+### Bug Fixes
+
+* **compaction:** collect follow-up metrics in daemon sessions ([#1914](https://github.com/matthewyjiang/rho/issues/1914)) ([8c5d9a9](https://github.com/matthewyjiang/rho/commit/8c5d9a950c776edd09e02234899da69595f67961))
+* **context:** stamp user messages with only their own send time ([#1906](https://github.com/matthewyjiang/rho/issues/1906)) ([bf3af5b](https://github.com/matthewyjiang/rho/commit/bf3af5b787bcd5753479e655303eaeb4d9c55645)), closes [#1903](https://github.com/matthewyjiang/rho/issues/1903)
+* **daemon:** end an unreachable provider's turn with one clear error ([#1913](https://github.com/matthewyjiang/rho/issues/1913)) ([5a2f4c7](https://github.com/matthewyjiang/rho/commit/5a2f4c7503b79fece7646a8f3d29b7e10d801bbf))
+* **daemon:** give each session its own client's credentials ([#1787](https://github.com/matthewyjiang/rho/issues/1787)) ([517312a](https://github.com/matthewyjiang/rho/commit/517312ac71c9571c8e9ae61afe718191e1ef0dd8)), closes [#1779](https://github.com/matthewyjiang/rho/issues/1779)
+* **daemon:** keep each client's Ollama device key in its own directory ([#1800](https://github.com/matthewyjiang/rho/issues/1800)) ([ac7f33e](https://github.com/matthewyjiang/rho/commit/ac7f33e14a713f6415636afcb6393a444fbac2a3)), closes [#1789](https://github.com/matthewyjiang/rho/issues/1789)
+* **tui:** dismiss only a subagent's question on Esc while the parent turn runs ([#1860](https://github.com/matthewyjiang/rho/issues/1860)) ([7daaefc](https://github.com/matthewyjiang/rho/commit/7daaefc30b286831a360280accd3e3053216f2ee))
+* **tui:** start a daemon session signed out when its saved model has no login ([#1835](https://github.com/matthewyjiang/rho/issues/1835)) ([71db3f0](https://github.com/matthewyjiang/rho/commit/71db3f078ae0f3e8b0ae5d18f15b57876ba54d11))
+
+
+### Performance Improvements
+
+* **sdk:** share message content between copies of a history ([#1934](https://github.com/matthewyjiang/rho/issues/1934)) ([b80ba7c](https://github.com/matthewyjiang/rho/commit/b80ba7c3d42494d385ee677cf56c5f4ad120f14e))
+
+
+### Code Refactoring
+
+* **providers:** remove legacy login apis and fold model metadata sidecars ([#1689](https://github.com/matthewyjiang/rho/issues/1689)) ([01d1f07](https://github.com/matthewyjiang/rho/commit/01d1f079f002a47295267bcd8609977dee2d8d90)), closes [#1683](https://github.com/matthewyjiang/rho/issues/1683)
+* **sdk:** carry tool outcomes and images on tool results ([#1693](https://github.com/matthewyjiang/rho/issues/1693)) ([4d52a30](https://github.com/matthewyjiang/rho/commit/4d52a30c553665ebeeeff61a70906afd206fc413))
+* **sdk:** collapse provider turn methods and finish builder renames ([#1691](https://github.com/matthewyjiang/rho/issues/1691)) ([233e1f9](https://github.com/matthewyjiang/rho/commit/233e1f92be1f556c3469b9f8ead1447ee9e10579))
+* **sdk:** mark host-facing sdk enums non-exhaustive ([#1687](https://github.com/matthewyjiang/rho/issues/1687)) ([3bac6f5](https://github.com/matthewyjiang/rho/commit/3bac6f582ffbce71703e66b176163d5017ff92ab))
+* **sdk:** type compaction summaries, model context, and stop reasons in history ([#1695](https://github.com/matthewyjiang/rho/issues/1695)) ([4f44921](https://github.com/matthewyjiang/rho/commit/4f4492157a2835077b131a1ec719faae79f51bc8))
+* **tools:** remove the hashline edit format and the legacy rtk api ([#1692](https://github.com/matthewyjiang/rho/issues/1692)) ([f766d90](https://github.com/matthewyjiang/rho/commit/f766d90d46a7c614b2fc49d097e4ec9ef33680f1)), closes [#1684](https://github.com/matthewyjiang/rho/issues/1684)
+
 ## [2.28.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.27.0...rho-providers-v2.28.0) (2026-11-10)
 
 
