@@ -32,7 +32,7 @@ Stopping the daemon also ends the commands and background processes your session
 - `/jobs` lists everything the daemon runs, in every project. From there you can answer questions, send messages, cancel work, and open sessions ([Interactive TUI](/interactive-tui)).
 - `/login` opens the browser on the machine where the TUI runs. Sessions use the new sign-in from their next prompt.
 - You can't delete a session from a picker while the daemon has it loaded.
-- When the daemon restarts, the TUI reconnects on its own.
+- When the daemon restarts after `rho daemon restart` or an update, the TUI reconnects on its own. After `rho daemon stop`, reopen the session with `rho --resume <id>`.
 
 Launch flags work as follows:
 
@@ -182,7 +182,7 @@ could not open session: invalid config file /home/you/.rho/config.toml:
 
 Fix the file and open the session again.
 
-The daemon reads `RHO_LOG`, `RHO_HOME`, `XDG_RUNTIME_DIR`, `RHO_CLAUDE_AGENT_CONCURRENCY`, `RHO_CREDENTIAL_STORE`, and `--unload-idle-after` only when it starts. Run `rho daemon stop` to apply a change.
+The daemon reads these from its own environment only when it starts: `RHO_LOG`, `RHO_HOME`, `XDG_RUNTIME_DIR`, `RHO_CLAUDE_AGENT_CONCURRENCY`, `RHO_CREDENTIAL_STORE`, and `--unload-idle-after`. Run `rho daemon stop` to apply a change. `RHO_CREDENTIAL_STORE` in your shell still picks the store for the sessions you open ([Credentials](#credentials)).
 
 ## Updates {#upgrading-in-place}
 
@@ -228,7 +228,7 @@ On Windows, the daemon listens on a named pipe that only your user can open. `Ct
 
 ## Logs
 
-The daemon writes its log to `~/.rho/logs/daemon.log`. Under systemd, it logs to the journal instead. Set `RHO_LOG` to change the level, for example `RHO_LOG=rho=debug`. The default is `info`.
+The daemon writes its log to `~/.rho/logs/daemon.log`. If you run `rho daemon run` itself as a systemd service, it logs to the journal instead. Set `RHO_LOG` to change the level, for example `RHO_LOG=rho=debug`. The default is `info`.
 
 The log can contain provider error messages that echo credentials, so keep it private. Rho creates the file readable only by you. The journal doesn't get that protection.
 

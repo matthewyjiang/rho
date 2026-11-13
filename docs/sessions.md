@@ -279,10 +279,10 @@ rules. Know these before you approve one:
   storage.
 - A new session runs in its workspace's permission mode, which can be looser
   than the agent's.
-- A new session gets the agent session's environment. The target workspace's
-  project agents, plugins, and hooks load only if the daemon's
-  `RHO_TRUST_PROJECT_*` variables allow it. See
-  [Environment](/daemon#environment).
+- A new session gets the agent session's environment, including its
+  `RHO_TRUST_PROJECT_*` variables. The target workspace's project agents,
+  plugins, and hooks load only if those allow it. Starting a session there
+  grants it no trust. See [Environment](/daemon#environment).
 - An agent can't answer another session's approvals or questions. That session
   waits until a person answers from a Rho frontend.
 
