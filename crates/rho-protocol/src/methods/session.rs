@@ -223,7 +223,9 @@ pub struct SessionWorktree {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SessionPromptParams {
     pub session: SessionId,
-    /// The user message: at least one block, or the prompt is refused as
+    /// The user message: at least one block besides
+    /// [`ContentBlock::Context`], which reaches the model but is not part of
+    /// the saved message, or the prompt is refused as
     /// [`crate::ErrorCode::InvalidParams`], as is one with an image whose
     /// data is not a base64 PNG, JPEG, GIF, or WebP of the declared type
     /// within the daemon's image limit. Text and images reach the model as

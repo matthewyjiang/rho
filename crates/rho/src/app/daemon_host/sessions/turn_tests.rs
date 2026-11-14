@@ -5,7 +5,6 @@ use std::{
 };
 
 use pretty_assertions::assert_eq;
-use rho_sdk::UserInput;
 use tempfile::TempDir;
 use tokio::sync::{mpsc, watch};
 
@@ -17,6 +16,7 @@ use crate::app::daemon_host::sessions::{
     },
 };
 use crate::app::daemon_host::settings::ConfigStore;
+use crate::app::prompt_content::Prompt;
 use crate::{
     app::{
         daemon_host::{
@@ -31,6 +31,11 @@ use crate::{
     config::Config,
     session_environment::SessionEnvironment,
 };
+
+/// A prompt of `text` alone.
+fn text_prompt(text: &str) -> Prompt {
+    Prompt::parse(&[rho_protocol::ContentBlock::Text { text: text.into() }]).unwrap()
+}
 
 /// Bounds each wait on an explicit signal; never the way a test syncs.
 const TEST_BUDGET: Duration = Duration::from_secs(5);
@@ -422,7 +427,7 @@ async fn a_cancel_before_the_prompt_begins_saves_nothing() {
         stopping: rho_sdk::CancellationToken::new(),
         limit: None,
     }
-    .spawn(UserInput::text("hello"), rho_protocol::PromptAuthor::Person);
+    .spawn(text_prompt("hello"), rho_protocol::PromptAuthor::Person);
     let start = began(start).await;
     // Released once the turn recorded its end.
     let messages = session
@@ -471,7 +476,7 @@ async fn a_client_prompt_that_starts_no_workflow_saves_nothing() {
             stopping: rho_sdk::CancellationToken::new(),
             limit: None,
         }
-        .spawn(UserInput::text(&prompt), rho_protocol::PromptAuthor::Client);
+        .spawn(text_prompt(&prompt), rho_protocol::PromptAuthor::Client);
         let start = began(start).await;
         // Released once the turn recorded its end.
         let messages = session
@@ -574,7 +579,7 @@ async fn the_daemon_times_a_turn_out_at_its_limit() {
             stopping: rho_sdk::CancellationToken::new(),
             limit: Some(TurnLimit::starting_now(case.timeout_ms)),
         }
-        .spawn(UserInput::text("hello"), rho_protocol::PromptAuthor::Person);
+        .spawn(text_prompt("hello"), rho_protocol::PromptAuthor::Person);
         if case.cancelled_first {
             session.cancel_turn();
         }

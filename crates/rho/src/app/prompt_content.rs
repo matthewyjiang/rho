@@ -5,6 +5,8 @@
 //! Text and images stay typed, once each image's bytes check out.
 //! Resources, resource links, and blocks rho cannot read become fenced
 //! text, labelled with their kind and URI, so the model still sees them.
+//! Context blocks, which the client adds and the person did not write, are
+//! kept apart: only the model gets them, never the saved message.
 
 use base64::Engine as _;
 use rho_protocol::ContentBlock;
@@ -19,7 +21,7 @@ use rho_tools::MAX_IMAGE_FILE_BYTES;
 /// the prompt, from 0.
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
 pub(crate) enum InvalidPrompt {
-    #[error("a prompt needs at least one content block")]
+    #[error("a prompt needs at least one content block besides context")]
     Empty,
     #[error("content block {index}: image data is not valid base64")]
     ImageNotBase64 { index: usize },
@@ -38,19 +40,69 @@ pub(crate) enum InvalidPrompt {
     },
 }
 
-/// The user input `blocks` make. Refuses an empty prompt, which must not
-/// start a run, and an image whose data is not the PNG, JPEG, GIF, or WebP
-/// its `mime_type` declares, which a provider would refuse mid-turn.
-pub(crate) fn user_input(blocks: &[ContentBlock]) -> Result<UserInput, InvalidPrompt> {
-    let blocks = blocks
-        .iter()
-        .enumerate()
-        .map(|(index, block)| model_block(index, block))
-        .collect::<Result<Vec<_>, _>>()?;
-    // An empty prompt is the only one it refuses.
-    UserInput::content(blocks).map_err(|_| InvalidPrompt::Empty)
+/// A prompt's content as its turn runs it: the person's message, and the
+/// context the client added for the model alone.
+#[derive(Debug, PartialEq)]
+pub(crate) struct Prompt {
+    /// What the person sent: the message the session saves and shows.
+    pub(crate) person: UserInput,
+    pub(crate) context: PromptContext,
 }
 
+/// A prompt's context blocks, in order. They reach a turn's model only
+/// through [`Self::before`], never its saved message.
+#[derive(Debug, Default, PartialEq)]
+pub(crate) struct PromptContext(Vec<String>);
+
+impl PromptContext {
+    /// This context after `earlier`'s, which no turn sent yet, leaving out
+    /// the blocks of `earlier` this one repeats.
+    pub(crate) fn after(self, mut earlier: Self) -> Self {
+        earlier.0.retain(|text| !self.0.contains(text));
+        earlier.0.extend(self.0);
+        earlier
+    }
+
+    /// `model`, the input a turn sends, after this context.
+    pub(crate) fn before(&self, model: UserInput) -> UserInput {
+        if self.0.is_empty() {
+            return model;
+        }
+        let blocks = self
+            .0
+            .iter()
+            .cloned()
+            .map(model::ContentBlock::Text)
+            .chain(model.blocks().iter().cloned())
+            .collect();
+        UserInput::content(blocks).expect("context blocks keep the input non-empty")
+    }
+}
+
+impl Prompt {
+    /// The prompt `blocks` make. Refuses one with nothing but context,
+    /// which must not start a run, and an image whose data is not the PNG,
+    /// JPEG, GIF, or WebP its `mime_type` declares, which a provider would
+    /// refuse mid-turn.
+    pub(crate) fn parse(blocks: &[ContentBlock]) -> Result<Self, InvalidPrompt> {
+        let mut person = Vec::with_capacity(blocks.len());
+        let mut context = Vec::new();
+        for (index, block) in blocks.iter().enumerate() {
+            match block {
+                ContentBlock::Context { text } => context.push(text.clone()),
+                block => person.push(model_block(index, block)?),
+            }
+        }
+        // A prompt with no message is the only one it refuses.
+        let person = UserInput::content(person).map_err(|_| InvalidPrompt::Empty)?;
+        Ok(Self {
+            person,
+            context: PromptContext(context),
+        })
+    }
+}
+
+/// Block `index` of the person's message as the model gets it.
 fn model_block(index: usize, block: &ContentBlock) -> Result<model::ContentBlock, InvalidPrompt> {
     Ok(match block {
         ContentBlock::Text { text } => model::ContentBlock::Text(text.clone()),

@@ -1369,6 +1369,23 @@
           "type": "object"
         },
         {
+          "description": "Text the client adds to a prompt that the person did not write, such\nas a host's instructions. Only a prompt carries it: the model gets it\nas written, ahead of the prompt's other blocks, and the daemon never\nsaves or shows it as part of the user message.\n\n# Next major\n\nNEXT_MAJOR(rho-protocol): move prompt context to a\n`SessionPromptParams::context: Vec<String>` field and remove\n`ContentBlock::Context`.\n\nA new field on `SessionPromptParams`, which is not\n`#[non_exhaustive]`, is a major change, so context rides in the\ncontent as this variant until then. A user message never holds it.",
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "type": {
+              "const": "context",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Any other value: one a later protocol minor adds.",
           "properties": {
             "type": {
@@ -5714,7 +5731,7 @@
           "description": "Who the prompt speaks for; absent, the person."
         },
         "content": {
-          "description": "The user message: at least one block, or the prompt is refused as\n[`crate::ErrorCode::InvalidParams`], as is one with an image whose\ndata is not a base64 PNG, JPEG, GIF, or WebP of the declared type\nwithin the daemon's image limit. Text and images reach the model as\nwritten. A resource reaches it as its text, and a resource link as\nits description, else its name, each fenced under its URI (#1670). A\nslash command the message starts with that the session runs, such as\n`/init`, a prompt template, or an MCP prompt, is expanded first, as\n`rho run` expands it.",
+          "description": "The user message: at least one block besides\n[`ContentBlock::Context`], which reaches the model but is not part of\nthe saved message, or the prompt is refused as\n[`crate::ErrorCode::InvalidParams`], as is one with an image whose\ndata is not a base64 PNG, JPEG, GIF, or WebP of the declared type\nwithin the daemon's image limit. Text and images reach the model as\nwritten. A resource reaches it as its text, and a resource link as\nits description, else its name, each fenced under its URI (#1670). A\nslash command the message starts with that the session runs, such as\n`/init`, a prompt template, or an MCP prompt, is expanded first, as\n`rho run` expands it.",
           "items": {
             "$ref": "#/$defs/ContentBlock"
           },

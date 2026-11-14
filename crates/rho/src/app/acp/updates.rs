@@ -368,6 +368,8 @@ fn content_block(block: &wire::ContentBlock) -> Option<ContentBlock> {
         } => ContentBlock::ResourceLink(
             ResourceLink::new(name.as_str(), uri.as_str()).description(description.clone()),
         ),
+        // Only a prompt carries context; a user message never holds it.
+        wire::ContentBlock::Context { .. } => return None,
         // `Unknown`, or a block a newer daemon sends.
         _ => return None,
     })

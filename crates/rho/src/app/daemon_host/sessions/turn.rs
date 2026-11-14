@@ -23,6 +23,7 @@ use tokio::{
 use super::{
     super::jobs::TurnEnd,
     budget, cost,
+    held_context::UnsentContext,
     inputs::{Asker, Inputs},
     options::available_auths,
     saved_replay,
@@ -31,6 +32,7 @@ use super::{
 };
 use crate::{
     app::{
+        prompt_content::Prompt,
         session_commands::{
             self, BuiltInCommand, CommandScope, CommandSet, Hosting, PromptCommand,
         },
@@ -119,7 +121,7 @@ pub(super) enum Ran {
 
 enum TurnInput {
     Prompt {
-        input: UserInput,
+        input: Prompt,
         author: wire::PromptAuthor,
     },
     /// No prompt: the turn's first boundary delivers the background
@@ -146,7 +148,7 @@ pub(super) struct TurnTask {
 impl TurnTask {
     /// Runs the turn of `input`, which `author` sent, in a daemon task,
     /// which tells [`StartedTurn::start`] how the turn began.
-    pub(super) fn spawn(self, input: UserInput, author: wire::PromptAuthor) {
+    pub(super) fn spawn(self, input: Prompt, author: wire::PromptAuthor) {
         tokio::spawn(self.run(TurnInput::Prompt { input, author }));
     }
 
@@ -377,19 +379,28 @@ async fn report_title(session: Weak<LoadedSession>, title: TitleJob) {
     }
 }
 
-/// Begins a prompt of `input` on `runtime` and runs it: the T3 wake
-/// watcher's wait when it is one, its slash command when it starts with one
-/// the daemon runs, else a model turn on it. A command the daemon cannot run
-/// fails the turn as a configuration error before the prompt is saved, as
-/// does a prompt from the client, `author`, that does not start a workflow.
+/// Begins a prompt on `runtime` and runs it: the T3 wake watcher's wait
+/// when it is one, its slash command when the person's message starts with
+/// one the daemon runs, else a model turn on it. The prompt's context goes
+/// to the model of a model turn or an agent's, never into the shown
+/// message; a prompt that runs neither holds it for the next one. A
+/// command the daemon cannot run fails the turn as a configuration error
+/// before the prompt is saved, as does a prompt from the client, `author`,
+/// that does not start a workflow.
 async fn run_turn(
     runtime: &mut SessionRuntime,
     view: &mut DaemonView,
-    input: UserInput,
+    prompt: Prompt,
     author: wire::PromptAuthor,
     config: &Config,
     cancel: &CancellationToken,
 ) -> anyhow::Result<Ran> {
+    let Prompt {
+        person: input,
+        context,
+    } = prompt;
+    // Back to the session, for its next prompt, unless a model turn sends it.
+    let context = UnsentContext::take(&view.session, context);
     let wake_prompt = wake::prompt_started(&view.session, &input).await;
     let scope = match runtime.begin_prompt(config).await {
         Ok(scope) => scope,
@@ -435,7 +446,7 @@ async fn run_turn(
             calls,
         } => Turn {
             display: input,
-            model: wake::model_input(&origin, model),
+            model: context.send().before(wake::model_input(&origin, model)),
             calls,
         },
         PromptCommand::RunAsAgent(task) => {
@@ -450,7 +461,7 @@ async fn run_turn(
                 .refresh_options(runtime, &available_auths(runtime.credentials()).await);
             Turn {
                 display: input,
-                model: task.input,
+                model: context.send().before(task.input),
                 calls: Vec::new(),
             }
         }

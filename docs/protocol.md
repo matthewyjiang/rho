@@ -131,8 +131,9 @@ A prompt's `content`, and a `user_message` event's, is a list of blocks, each wi
 | `image` | `mime_type`, `data` (standard base64) | The image: a PNG, JPEG, GIF, or WebP. Each image may be at most 32 MiB, the limit pasted images have, but over the socket the whole request must fit in one 16 MiB line, which leaves about 12 MiB of image after base64; a longer line is an `InvalidRequest`. |
 | `resource` | `uri`, `text` | A text resource embedded whole, such as an attached file: `text` in a code fence labelled with `uri`. |
 | `resource_link` | `uri`, `name`, optional `description` | A resource named but not included: `description`, else `name`, in a code fence labelled with `uri`. |
+| `context` | `text` | Text the client adds that the person did not write, such as a host's instructions: the text, ahead of the prompt's other blocks. A prompt that runs no model turn, such as `/compact` or a `/workflow:` start, leaves it for the session's next model turn, while the daemon keeps the session loaded. Only a prompt carries it; the saved `user_message` leaves it out. |
 
-A prompt with no blocks gets `InvalidParams`, as does one with an image whose `data` is not base64, is over the limit, is not one of those formats, or is not the `mime_type` it declares; the error names the block by its position, from 0. A block of a type the daemon does not know reaches the model as a fenced placeholder. A `user_message` holds the message as saved, so a resource the prompt carried appears as its fenced `text` block, live and on replay.
+A prompt with no blocks besides `context` gets `InvalidParams`, as does one with an image whose `data` is not base64, is over the limit, is not one of those formats, or is not the `mime_type` it declares; the error names the block by its position, from 0. A block of a type the daemon does not know reaches the model as a fenced placeholder. A `user_message` holds the message as saved, so a resource the prompt carried appears as its fenced `text` block, live and on replay.
 
 ### A session's setup
 
