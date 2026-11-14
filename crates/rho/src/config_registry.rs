@@ -626,8 +626,6 @@ static XAI_IMAGE_GENERATION: Setting<Config, bool> = Setting {
     validate: any_value,
 };
 
-/// Changed only through `rho/auth/choose_store`, which checks the store
-/// can be reached; `rho/config/set` refuses it.
 static WORKTREE_FROM_REMOTE: Setting<Config, bool> = Setting {
     key: "git.worktree_from_remote",
     meta: meta(
@@ -643,6 +641,8 @@ static WORKTREE_FROM_REMOTE: Setting<Config, bool> = Setting {
     validate: any_value,
 };
 
+/// Changed only through `rho/auth/choose_store`, which checks the store
+/// can be reached; `rho/config/set` refuses it.
 pub(super) static CREDENTIAL_STORE: Setting<Config, Option<CredentialStoreBackend>> = Setting {
     key: "behavior.credential_store",
     meta: daemon_wide(meta(
