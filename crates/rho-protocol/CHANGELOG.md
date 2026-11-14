@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/matthewyjiang/rho/compare/rho-protocol-v1.0.0...rho-protocol-v1.1.0) (2026-11-14)
+
+
+### Features
+
+* **acp:** keep T3 Code's injected context out of session titles and user messages ([#1961](https://github.com/matthewyjiang/rho/issues/1961)) ([5b8d93f](https://github.com/matthewyjiang/rho/commit/5b8d93f69eec162d39024ead8c4c44dccd95fbb5))
+
 ## 1.0.0 (2026-11-13)
 
 

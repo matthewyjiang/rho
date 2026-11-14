@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.1.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v2.0.0...rho-agent-tools-v2.1.0) (2026-11-14)
+
+
+### Features
+
+* **acp:** keep T3 Code's injected context out of session titles and user messages ([#1961](https://github.com/matthewyjiang/rho/issues/1961)) ([5b8d93f](https://github.com/matthewyjiang/rho/commit/5b8d93f69eec162d39024ead8c4c44dccd95fbb5))
+
+
+### Bug Fixes
+
+* **codemode:** let scripts chain read_file lines without parsing text ([#1959](https://github.com/matthewyjiang/rho/issues/1959)) ([cbdecad](https://github.com/matthewyjiang/rho/commit/cbdecad862981f9e839ec3d2004f39a8a59bafd2))
+
 ## [2.0.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v1.16.3...rho-agent-tools-v2.0.0) (2026-11-13)
 
 

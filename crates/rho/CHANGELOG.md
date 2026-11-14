@@ -1,5 +1,28 @@
 # Changelog
 
+## [3.1.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v3.0.0...rho-coding-agent-v3.1.0) (2026-11-14)
+
+
+### Features
+
+* **acp:** keep T3 Code's injected context out of session titles and user messages ([#1961](https://github.com/matthewyjiang/rho/issues/1961)) ([5b8d93f](https://github.com/matthewyjiang/rho/commit/5b8d93f69eec162d39024ead8c4c44dccd95fbb5))
+* **daemon:** start session worktrees from the remote's default branch ([#1963](https://github.com/matthewyjiang/rho/issues/1963)) ([99a5b83](https://github.com/matthewyjiang/rho/commit/99a5b83e553c868c8f7cf7e83f22137b2f50b991))
+
+
+### Bug Fixes
+
+* **codemode:** let scripts chain read_file lines without parsing text ([#1959](https://github.com/matthewyjiang/rho/issues/1959)) ([cbdecad](https://github.com/matthewyjiang/rho/commit/cbdecad862981f9e839ec3d2004f39a8a59bafd2))
+* **tools:** allow multiple in-progress todo items ([#1958](https://github.com/matthewyjiang/rho/issues/1958)) ([cc71fde](https://github.com/matthewyjiang/rho/commit/cc71fde8ddf4486f3f4946bc5d5c20009ffbbd0c))
+* **tui:** open any project's session from /jobs, moving the TUI there ([#1962](https://github.com/matthewyjiang/rho/issues/1962)) ([e0de10f](https://github.com/matthewyjiang/rho/commit/e0de10f6a5021ab5cf0228761e26b2c13a006bba))
+* **tui:** show an aliased current model once in daemon model pickers ([#1957](https://github.com/matthewyjiang/rho/issues/1957)) ([78ff2d8](https://github.com/matthewyjiang/rho/commit/78ff2d81cee03cdf7b61bf5930d2760701121ddd))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-providers bumped from 3.0.1 to 3.0.2
+
 ## [3.0.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.33.0...rho-coding-agent-v3.0.0) (2026-11-13)
 
 
