@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.0.2](https://github.com/matthewyjiang/rho/compare/rho-providers-v3.0.1...rho-providers-v3.0.2) (2026-11-14)
+
+
+### Bug Fixes
+
+* **tui:** show an aliased current model once in daemon model pickers ([#1957](https://github.com/matthewyjiang/rho/issues/1957)) ([78ff2d8](https://github.com/matthewyjiang/rho/commit/78ff2d81cee03cdf7b61bf5930d2760701121ddd))
+
 ## [3.0.1](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.27.0...rho-providers-v3.0.1) (2026-11-13)
 
 

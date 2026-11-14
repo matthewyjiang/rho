@@ -1,6 +1,6 @@
 # Maintainer: Matthew Jiang <matthewyjiang@gmail.com>
 pkgname=rho-coding-agent
-pkgver=3.0.0 # x-release-please-version
+pkgver=3.1.0 # x-release-please-version
 pkgrel=1
 pkgdesc="A fast Rust agent harness with a small footprint and opinionated defaults"
 arch=('x86_64')
