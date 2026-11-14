@@ -56,7 +56,7 @@ Built-in skills that ship with the binary include `rho-config`, `rho-agent-creat
 
 ## Task checklists
 
-`todo` replaces the whole checklist with `{"todos":[{"content":"Implement the change","status":"in_progress"}]}`. Each item has non-empty content and a status of `pending`, `in_progress`, or `completed`. Lists accept at most 50 items and at most one item in progress; an empty list clears the checklist. Use it for work with three or more steps rather than trivial single-step tasks.
+`todo` replaces the whole checklist with `{"todos":[{"content":"Implement the change","status":"in_progress"}]}`. Each item has non-empty content and a status of `pending`, `in_progress`, or `completed`. Lists accept at most 50 items, and any number of them may be in progress for parallel work; an empty list clears the checklist. Use it for work with three or more steps rather than trivial single-step tasks.
 
 The interactive card uses the theme’s amber header accent and shows ✓ completed, ▸ in progress, and ○ pending items. Collapsed cards follow the normal tool-output row budget; press Ctrl+O to expand and see every item. Open `/todo` to see the latest checklist without finding its card in the transcript. The overlay updates while the agent works, highlights the current item, and scrolls independently of the conversation.
 
