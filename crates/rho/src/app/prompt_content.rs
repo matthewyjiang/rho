@@ -5,6 +5,8 @@
 //! Text and images stay typed, once each image's bytes check out.
 //! Resources, resource links, and blocks rho cannot read become fenced
 //! text, labelled with their kind and URI, so the model still sees them.
+//! Context blocks, which the client adds and the person did not write, are
+//! kept apart: only the model gets them, never the saved message.
 
 use base64::Engine as _;
 use rho_protocol::ContentBlock;
@@ -19,7 +21,7 @@ use rho_tools::MAX_IMAGE_FILE_BYTES;
 /// the prompt, from 0.
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
 pub(crate) enum InvalidPrompt {
-    #[error("a prompt needs at least one content block")]
+    #[error("a prompt needs at least one content block besides context")]
     Empty,
     #[error("content block {index}: image data is not valid base64")]
     ImageNotBase64 { index: usize },
@@ -38,22 +40,58 @@ pub(crate) enum InvalidPrompt {
     },
 }
 
-/// The user input `blocks` make. Refuses an empty prompt, which must not
-/// start a run, and an image whose data is not the PNG, JPEG, GIF, or WebP
-/// its `mime_type` declares, which a provider would refuse mid-turn.
-pub(crate) fn user_input(blocks: &[ContentBlock]) -> Result<UserInput, InvalidPrompt> {
-    let blocks = blocks
-        .iter()
-        .enumerate()
-        .map(|(index, block)| model_block(index, block))
-        .collect::<Result<Vec<_>, _>>()?;
-    // An empty prompt is the only one it refuses.
-    UserInput::content(blocks).map_err(|_| InvalidPrompt::Empty)
+/// A prompt's content as its turn runs it: the person's message, and the
+/// context the client added for the model alone.
+#[derive(Debug, PartialEq)]
+pub(crate) struct Prompt {
+    /// What the person sent: the message the session saves and shows.
+    pub(crate) person: UserInput,
+    /// The prompt's context blocks, in order.
+    context: Vec<String>,
 }
 
+impl Prompt {
+    /// `model`, the input a turn of this prompt sends, after the prompt's
+    /// context.
+    pub(crate) fn for_model(&self, model: UserInput) -> UserInput {
+        if self.context.is_empty() {
+            return model;
+        }
+        let blocks = self
+            .context
+            .iter()
+            .cloned()
+            .map(model::ContentBlock::Text)
+            .chain(model.blocks().iter().cloned())
+            .collect();
+        UserInput::content(blocks).expect("context blocks keep the input non-empty")
+    }
+}
+
+/// The prompt `blocks` make. Refuses one with nothing but context, which
+/// must not start a run, and an image whose data is not the PNG, JPEG, GIF,
+/// or WebP its `mime_type` declares, which a provider would refuse
+/// mid-turn.
+pub(crate) fn prompt(blocks: &[ContentBlock]) -> Result<Prompt, InvalidPrompt> {
+    let mut person = Vec::with_capacity(blocks.len());
+    let mut context = Vec::new();
+    for (index, block) in blocks.iter().enumerate() {
+        match block {
+            ContentBlock::Context { text } => context.push(text.clone()),
+            block => person.push(model_block(index, block)?),
+        }
+    }
+    // A prompt with no message is the only one it refuses.
+    let person = UserInput::content(person).map_err(|_| InvalidPrompt::Empty)?;
+    Ok(Prompt { person, context })
+}
+
+/// Block `index` of the prompt as the model gets it.
 fn model_block(index: usize, block: &ContentBlock) -> Result<model::ContentBlock, InvalidPrompt> {
     Ok(match block {
-        ContentBlock::Text { text } => model::ContentBlock::Text(text.clone()),
+        ContentBlock::Text { text } | ContentBlock::Context { text } => {
+            model::ContentBlock::Text(text.clone())
+        }
         ContentBlock::Image { mime_type, data } => {
             model::ContentBlock::Image(image(index, mime_type, data)?)
         }

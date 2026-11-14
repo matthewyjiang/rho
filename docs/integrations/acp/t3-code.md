@@ -8,7 +8,7 @@ Parent: [Agent Client Protocol](/integrations/acp).
 rho acp --t3code
 ```
 
-With `--t3code`, Rho subagents run as [T3 threads](#subagents-run-as-t3-threads) and background results [wake an idle thread](#wake-on-background-results). Without the flag, Rho still works in T3 Code as a plain ACP agent: its subagents run in the daemon, and background work holds the prompt open, as described in [Background work](/integrations/acp#background-work).
+With `--t3code`, Rho subagents run as [T3 threads](#subagents-run-as-t3-threads), background results [wake an idle thread](#wake-on-background-results), and [T3's prompt context](#t3s-prompt-context) stays out of your messages. Without the flag, Rho still works in T3 Code as a plain ACP agent: its subagents run in the daemon, and background work holds the prompt open, as described in [Background work](/integrations/acp#background-work).
 
 Rho negotiates ACP v2 when T3 Code requests it; v1 remains available when a host requests v1. Use an up-to-date T3 Code build: versions predating the October 30, 2026 prompt-echo fix can show the injected `<t3_code_instructions>` as a duplicate user message on v2. Upgrade T3 Code rather than downgrading Rho. Notices use native notice rows instead of assistant reply text.
 
@@ -58,6 +58,12 @@ The daemon never starts a turn by itself, and T3 refuses a thread's own requests
 - Watchers keep their files in `~/.rho/t3-wakes`, readable only by you. A watcher that starts cleans up files no watcher can use any more once they are 30 days old.
 
 The same applies to a finished `/workflow:` command: it wakes the thread instead of waiting for your next message.
+
+## T3's prompt context
+
+T3 Code wraps each prompt in its own blocks: `<t3_code_instructions>` before your text, with your text in `<user_request>`, and `<runtime_info>` and `<pull_request_linking>` after it. Under `--t3code`, Rho sends those blocks to the model as context ahead of your message, and saves only what you typed. Session titles, `session/list`, and transcript replay show your words, and slash commands work on a thread's first message.
+
+Only those tags count, and only whole at the start or end of the prompt. A tag in the middle of your text, or one Rho does not know, stays part of your message. Sessions saved before this change keep the blocks in their messages.
 
 ## How T3 Code shows Rho
 

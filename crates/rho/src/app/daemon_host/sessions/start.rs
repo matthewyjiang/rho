@@ -117,7 +117,7 @@ impl Sessions {
                 "the prompt's author is one this daemon does not know",
             ));
         }
-        let input = prompt_content::user_input(&params.content).map_err(|error| {
+        let input = prompt_content::prompt(&params.content).map_err(|error| {
             RpcError::new(
                 ErrorCode::InvalidParams,
                 format!("could not read the prompt: {error}"),

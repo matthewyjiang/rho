@@ -18,6 +18,7 @@ mod permission;
 mod prompt;
 mod requests;
 mod sessions;
+mod t3_prompt;
 mod updates;
 mod v2;
 
@@ -41,7 +42,7 @@ use agent_client_protocol::{
     v1::{ConnectionTo, Responder},
     Agent, Client, ConnectTo, Error as AcpError, JsonRpcResponse, Role, Stdio,
 };
-use rho_protocol::{methods::SessionList, ChildThreads, SessionListParams, SessionPart};
+use rho_protocol::{methods::SessionList, SessionListParams, SessionPart};
 
 use super::{
     daemon_client::Daemon,
@@ -53,7 +54,7 @@ use crate::{
 };
 use auth::LoginFlight;
 use host_features::{NegotiatedFeatures, Turns};
-use requests::Launch;
+use requests::{Launch, LaunchHost};
 use sessions::{Sessions, Started};
 
 /// Outbound ACP host port: session updates, permission prompts, and
@@ -238,9 +239,9 @@ impl Adapter {
                 agent: cli.agent.clone(),
                 added_dirs: added_dirs.as_slice().to_vec(),
                 without,
-                child_threads: match &cli.command {
-                    Some(crate::cli::Command::Acp(args)) if args.t3code => ChildThreads::Host,
-                    _ => ChildThreads::Daemon,
+                host: match &cli.command {
+                    Some(crate::cli::Command::Acp(args)) if args.t3code => LaunchHost::T3Code,
+                    _ => LaunchHost::Other,
                 },
             },
             negotiated: NegotiatedFeatures::default(),

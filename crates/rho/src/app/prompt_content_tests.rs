@@ -2,7 +2,7 @@ use pretty_assertions::assert_eq;
 use rho_protocol::ContentBlock;
 use rho_sdk::model::{self, ImageContent};
 
-use super::{user_input, InvalidPrompt};
+use super::InvalidPrompt;
 
 /// A 1x1 PNG.
 const PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
@@ -40,7 +40,7 @@ fn prompt_blocks_reach_the_model_as_text_images_or_fenced_context() {
         ContentBlock::Unknown,
     ];
 
-    let input = user_input(&prompt).unwrap();
+    let input = super::prompt(&prompt).unwrap().person;
 
     assert_eq!(
         input.blocks(),
@@ -115,7 +115,7 @@ fn prompt_images_must_be_the_image_they_declare() {
             },
         ];
         assert_eq!(
-            user_input(&prompt).map(|input| input.blocks().to_vec()),
+            super::prompt(&prompt).map(|input| input.person.blocks().to_vec()),
             expected,
             "{name}"
         );
@@ -140,7 +140,7 @@ fn fenced_context_outgrows_backticks_in_the_body_and_header() {
             "````resource file:///workspace/notes.md\n```\ninjected\nnotes\n````",
         ),
     ] {
-        let input = user_input(&[block]).unwrap();
+        let input = super::prompt(&[block]).unwrap().person;
         assert_eq!(input.blocks(), [model::ContentBlock::Text(expected.into())]);
     }
 }

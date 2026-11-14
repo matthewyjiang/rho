@@ -12,7 +12,7 @@ use rho_protocol::{
 };
 use serde_json::json;
 
-use super::{prompt_content, session_list, Launch};
+use super::{prompt_content, session_list, Launch, LaunchHost};
 use crate::app::{
     acp::host_features::{FormDialect, Forms, HostFeatures},
     prompt_content::fence_context,
@@ -96,7 +96,7 @@ fn launch_flags_and_host_request_make_the_session_setup() {
         agent: Some("reviewer".into()),
         added_dirs: vec![PathBuf::from("/shared")],
         without: BTreeSet::from([SessionPart::Tools]),
-        child_threads: ChildThreads::Host,
+        host: LaunchHost::T3Code,
     };
     let servers = [
         AcpMcpServer::Stdio(

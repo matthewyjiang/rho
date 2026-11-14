@@ -18,7 +18,10 @@ use rho_protocol::{
     SessionSetup, SessionSummary,
 };
 
-use super::host_features::{Forms, HostFeatures, Turns};
+use super::{
+    host_features::{Forms, HostFeatures, Turns},
+    t3_prompt,
+};
 use crate::app::prompt_content::fence_context;
 
 /// What `rho acp`'s own flags put in every session it opens or reopens:
@@ -30,12 +33,29 @@ pub(super) struct Launch {
     pub(super) added_dirs: Vec<PathBuf>,
     /// What the `--no-*` flags leave out.
     pub(super) without: BTreeSet<SessionPart>,
-    /// Who runs child agents: T3 Code's threads under `--t3code`, else the
-    /// daemon.
-    pub(super) child_threads: ChildThreads,
+    pub(super) host: LaunchHost,
+}
+
+/// The host `rho acp` was launched for.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum LaunchHost {
+    /// `--t3code`: child agents run as T3 threads, and T3's wrapping of
+    /// each prompt reaches the model as context, not the user message.
+    T3Code,
+    #[default]
+    Other,
 }
 
 impl Launch {
+    /// Prompt `prompt` as the daemon takes it from this launch's host.
+    pub(super) fn prompt_content(&self, prompt: &[AcpContentBlock]) -> Vec<ContentBlock> {
+        let content = prompt_content(prompt);
+        match self.host {
+            LaunchHost::T3Code => t3_prompt::split_context(content),
+            LaunchHost::Other => content,
+        }
+    }
+
     /// The setup of a session the host opens with `directories` and
     /// `servers`, as far as the host's `features` allow. A host that draws
     /// no forms gets no questionnaire, since it could not answer one.
@@ -62,7 +82,10 @@ impl Launch {
             additional_directories,
             mcp_servers: protocol_servers(servers),
             without,
-            child_threads: self.child_threads,
+            child_threads: match self.host {
+                LaunchHost::T3Code => ChildThreads::Host,
+                LaunchHost::Other => ChildThreads::Daemon,
+            },
             idle_wake: match features.turns {
                 // The client is told of a turn only as its own prompt's, so
                 // a prompt waits for the background work it started.
@@ -94,7 +117,7 @@ pub(super) fn session_cwd(cwd: &Path) -> Result<PathBuf, AcpError> {
 /// ACP prompt blocks as the daemon's prompt content. Blocks the wire has no
 /// kind for (audio, a binary resource, an ACP block this build does not
 /// know) become fenced text, so the model still sees them.
-pub(super) fn prompt_content(prompt: &[AcpContentBlock]) -> Vec<ContentBlock> {
+fn prompt_content(prompt: &[AcpContentBlock]) -> Vec<ContentBlock> {
     prompt.iter().map(wire_block).collect()
 }
 

@@ -684,6 +684,8 @@ fn user_text(content: &[ContentBlock]) -> String {
             // As saved: the resource fenced in the text the model saw.
             ContentBlock::Resource { text, .. } => Some(text.clone()),
             ContentBlock::ResourceLink { name, uri, .. } => Some(format!("[{name}: {uri}]")),
+            // Only a prompt carries context; a user message never holds it.
+            ContentBlock::Context { .. } => None,
             // `Unknown`, or a block a newer daemon sends.
             _ => None,
         })

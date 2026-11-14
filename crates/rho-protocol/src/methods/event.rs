@@ -399,6 +399,13 @@ pub enum ContentBlock {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         description: Option<String>,
     },
+    /// Text the client adds to a prompt that the person did not write, such
+    /// as a host's instructions. Only a prompt carries it: the model gets it
+    /// as written, ahead of the prompt's other blocks, and the daemon never
+    /// saves or shows it as part of the user message.
+    Context {
+        text: String,
+    },
     /// A block a newer peer sends that this crate does not know; nothing
     /// sends it.
     #[serde(other)]

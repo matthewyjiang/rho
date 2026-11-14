@@ -23,7 +23,7 @@ use rho_protocol::{
 use tokio::sync::oneshot;
 
 use super::{
-    daemon, requests,
+    daemon,
     sessions::{Accept, Control, Waiter},
     Adapter,
 };
@@ -70,7 +70,7 @@ impl Adapter {
         let params = SessionPromptParams {
             author: rho_protocol::PromptAuthor::Person,
             session: live.id.clone(),
-            content: requests::prompt_content(content),
+            content: self.launch.prompt_content(content),
             timeout_ms: None,
             environment: ClientEnvironment::of_this_process(),
             idempotency_key: None,
