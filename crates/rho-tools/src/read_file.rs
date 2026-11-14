@@ -11,7 +11,7 @@ use crate::{
     },
     host_files::{HostTextFiles, TextRoute},
     image_format::{supported_image_mime_type, MAX_IMAGE_FILE_BYTES},
-    text_view::{format_numbered_view, read_text_window},
+    text_view::{read_text_window, select_window, TextWindow},
     tool::*,
 };
 
@@ -55,13 +55,11 @@ impl Tool for ReadFile {
                 &display_path,
                 args.offset,
                 args.limit,
+                ctx.max_output_bytes,
                 /*host_files*/ None,
             )
             .await?;
-            Ok(ToolResult::succeeded(
-                id,
-                truncate(output.content, ctx.max_output_bytes),
-            ))
+            Ok(ToolResult::succeeded(id, output.content))
         })
     }
 }
@@ -97,10 +95,46 @@ pub(super) struct ImageAsset {
     pub(super) bytes: Vec<u8>,
 }
 
+/// A read bounded by the output byte budget: `content` is final model text.
 pub(super) struct ReadFileContent {
     pub(super) content: String,
+    /// The lines `content` shows whole, for UTF-8 text views; `None` for
+    /// images and extracted documents.
+    pub(super) window: Option<TextWindow<'static>>,
     pub(super) image: Option<ImageAsset>,
     pub(super) preview_error: Option<String>,
+}
+
+impl ReadFileContent {
+    fn text(display_path: &str, window: TextWindow<'_>, max_output_bytes: usize) -> Self {
+        let (content, window) = window.render_bounded(display_path, max_output_bytes);
+        Self {
+            content,
+            window,
+            image: None,
+            preview_error: None,
+        }
+    }
+
+    fn without_window(
+        content: String,
+        max_output_bytes: usize,
+        preview_error: Option<String>,
+    ) -> Self {
+        Self {
+            content: truncate(content, max_output_bytes),
+            window: None,
+            image: None,
+            preview_error,
+        }
+    }
+
+    fn image(content: String, max_output_bytes: usize, image: ImageAsset) -> Self {
+        Self {
+            image: Some(image),
+            ..Self::without_window(content, max_output_bytes, /*preview_error*/ None)
+        }
+    }
 }
 
 /// Reads a file for the model. Kind and size come from local disk. A UTF-8
@@ -111,6 +145,7 @@ pub(super) async fn read_file_content(
     display_path: &str,
     offset: Option<usize>,
     limit: Option<usize>,
+    max_output_bytes: usize,
     host_files: Option<&Arc<dyn HostTextFiles>>,
 ) -> Result<ReadFileContent, ToolError> {
     let route = TextRoute::for_path(host_files, path);
@@ -127,12 +162,12 @@ pub(super) async fn read_file_content(
     if ranged && !route.is_host() {
         check_document_size(path, source_len)?;
         if source_len > crate::text_view::CHUNK_SIZE as u64 {
-            let content = read_text_window(path, display_path, source_len, offset, limit).await?;
-            return Ok(ReadFileContent {
-                content,
-                image: None,
-                preview_error: None,
-            });
+            let window = read_text_window(path, source_len, offset, limit).await?;
+            return Ok(ReadFileContent::text(
+                display_path,
+                window,
+                max_output_bytes,
+            ));
         }
         let mut bytes =
             Vec::with_capacity(source_len.min(MAX_DOCUMENT_INPUT_BYTES as u64 + 1) as usize);
@@ -152,13 +187,12 @@ pub(super) async fn read_file_content(
                 path.display()
             ))
         })?;
-        let content =
-            format_numbered_view(display_path, &text, offset, limit).map_err(ToolError::Message)?;
-        return Ok(ReadFileContent {
-            content,
-            image: None,
-            preview_error: None,
-        });
+        let window = select_window(&text, offset, limit).map_err(ToolError::Message)?;
+        return Ok(ReadFileContent::text(
+            display_path,
+            window,
+            max_output_bytes,
+        ));
     }
 
     let mut header = [0_u8; 12];
@@ -171,6 +205,7 @@ pub(super) async fn read_file_content(
             mime_type,
             header,
             header_len,
+            max_output_bytes,
         )
         .await;
     }
@@ -195,13 +230,12 @@ pub(super) async fn read_file_content(
             TextRoute::Disk => disk_text,
             TextRoute::Host(_) => route.read(path, display_path).await?,
         };
-        let content =
-            format_numbered_view(display_path, &text, offset, limit).map_err(ToolError::Message)?;
-        return Ok(ReadFileContent {
-            content,
-            image: None,
-            preview_error: None,
-        });
+        let window = select_window(&text, offset, limit).map_err(ToolError::Message)?;
+        return Ok(ReadFileContent::text(
+            display_path,
+            window,
+            max_output_bytes,
+        ));
     }
 
     let name = path
@@ -211,11 +245,11 @@ pub(super) async fn read_file_content(
     let document = extract_document_from_bytes_async(name, bytes)
         .await
         .map_err(|error| ToolError::Message(error.to_string()))?;
-    Ok(ReadFileContent {
-        content: render_extracted_document(&document),
-        image: None,
-        preview_error: None,
-    })
+    Ok(ReadFileContent::without_window(
+        render_extracted_document(&document),
+        max_output_bytes,
+        /*preview_error*/ None,
+    ))
 }
 
 fn check_document_size(path: &Path, source_len: u64) -> Result<(), ToolError> {
@@ -235,16 +269,17 @@ async fn read_image_content(
     mime_type: &'static str,
     header: [u8; 12],
     header_len: usize,
+    max_output_bytes: usize,
 ) -> Result<ReadFileContent, ToolError> {
     let content = format!("{mime_type} image ({source_len} bytes)");
     if source_len > MAX_IMAGE_FILE_BYTES {
-        return Ok(ReadFileContent {
+        return Ok(ReadFileContent::without_window(
             content,
-            image: None,
-            preview_error: Some(format!(
+            max_output_bytes,
+            Some(format!(
                 "image preview unavailable: file exceeds the {MAX_IMAGE_FILE_BYTES} byte preview limit"
             )),
-        });
+        ));
     }
 
     let mut bytes = Vec::with_capacity(source_len as usize);
@@ -254,46 +289,45 @@ async fn read_image_content(
         .read_to_end(&mut bytes)
         .await?;
     if bytes.len() as u64 > MAX_IMAGE_FILE_BYTES {
-        return Ok(ReadFileContent {
+        return Ok(ReadFileContent::without_window(
             content,
-            image: None,
-            preview_error: Some(format!(
+            max_output_bytes,
+            Some(format!(
                 "image preview unavailable: file exceeds the {MAX_IMAGE_FILE_BYTES} byte preview limit"
             )),
-        });
+        ));
     }
     let content = format!("{mime_type} image ({} bytes)", bytes.len());
     let display_path = display_path.to_string();
     match tokio::task::spawn_blocking(move || thumbnail_png(bytes)).await {
-        Ok(Ok(thumbnail)) => Ok(ReadFileContent {
+        Ok(Ok(thumbnail)) => Ok(ReadFileContent::image(
             content,
-            image: Some(ImageAsset {
+            max_output_bytes,
+            ImageAsset {
                 media_type: "image/png",
                 bytes: thumbnail,
-            }),
-            preview_error: None,
-        }),
+            },
+        )),
         Ok(Err((error, bytes))) => match String::from_utf8(bytes) {
             Ok(text) => {
-                let content = format_numbered_view(&display_path, &text, None, None)
-                    .map_err(ToolError::Message)?;
-                Ok(ReadFileContent {
-                    content,
-                    image: None,
-                    preview_error: None,
-                })
+                let window = select_window(&text, None, None).map_err(ToolError::Message)?;
+                Ok(ReadFileContent::text(
+                    &display_path,
+                    window,
+                    max_output_bytes,
+                ))
             }
-            Err(_) => Ok(ReadFileContent {
+            Err(_) => Ok(ReadFileContent::without_window(
                 content,
-                image: None,
-                preview_error: Some(format!("image preview unavailable: {error}")),
-            }),
+                max_output_bytes,
+                Some(format!("image preview unavailable: {error}")),
+            )),
         },
-        Err(error) => Ok(ReadFileContent {
+        Err(error) => Ok(ReadFileContent::without_window(
             content,
-            image: None,
-            preview_error: Some(format!("image preview task failed: {error}")),
-        }),
+            max_output_bytes,
+            Some(format!("image preview task failed: {error}")),
+        )),
     }
 }
 

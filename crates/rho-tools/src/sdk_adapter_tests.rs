@@ -239,6 +239,10 @@ async fn allowed_policy_reads_and_reports_metadata() {
                             .unwrap();
                     assert_eq!(output.content(), expected);
                     assert_eq!(
+                        output.structured_content(),
+                        Some(&json!({"start_line": 1, "lines": ["hello"], "total_lines": 2}))
+                    );
+                    assert_eq!(
                         output.presentation().operation_kind(),
                         Some(&OperationKind::Read)
                     );
@@ -293,8 +297,17 @@ async fn read_file_image_reaches_the_next_model_request() {
     let session = runtime.session(SessionOptions::default()).await.unwrap();
     let mut run = session.start(UserInput::text("what color")).await.unwrap();
     while let Some(event) = run.next_event().await {
-        if matches!(event, RunEvent::Completed { .. }) {
-            break;
+        match event {
+            RunEvent::ToolFinished {
+                result: ToolCompletion::Completed(output),
+                ..
+            } => assert_eq!(
+                output.structured_content(),
+                None,
+                "images have no text window"
+            ),
+            RunEvent::Completed { .. } => break,
+            _ => {}
         }
     }
 

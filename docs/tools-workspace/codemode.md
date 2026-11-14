@@ -91,7 +91,19 @@ unknown tool.
 ## Script API
 
 Scripts use standard Starlark: `def`, `for`, `if`, comprehensions, and f-strings.
-There is no `while`, `try`, `import`, or exception handling.
+There is no `while`, `try`, `import`, or exception handling. To loop until a
+condition holds, iterate over `range(N)` and `break`; the cap bounds the loop
+like the script's tick and nested-call limits already do:
+
+```python
+pid = call_tool("process", {"action": "start", "command": "make test"})["data"]["process_id"]
+for _ in range(20):
+    polled = call_tool("process", {"action": "poll", "process_id": pid, "wait_seconds": 5})
+    if polled["is_error"] or polled["data"] == None:
+        break
+    if polled["data"]["state"] not in ("running", "starting"):
+        break
+```
 
 | Function | Returns |
 | --- | --- |

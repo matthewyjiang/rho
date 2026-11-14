@@ -37,7 +37,8 @@ adds the `parameters` schema and the `returns` schema of a successful result's `
 tool inside this script with `call_tool` or `call_tools` without loading it.
 - Output: `print()` lines, then the global `result` as JSON. Other variable names are your choice.
 - Starlark has `def`, `for`, `if`, comprehensions, and f-strings, but no `while`, `try`, imports, \
-or exceptions. At most 64 nested calls per script.
+or exceptions; to loop until a condition holds, use `for _ in range(N):` with `break`. At most \
+64 nested calls per script.
 - Nested calls follow the session's permissions and pause for approvals. Scripts get no process \
 exit notifications: for a process result named `response`, poll using \
 `response[\"data\"][\"next_cursor\"]` until `response[\"data\"][\"state\"]` is no longer running or starting.";

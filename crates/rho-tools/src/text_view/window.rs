@@ -3,14 +3,13 @@
 //! The scan walks the file once in 256 KiB chunks and keeps only the selected
 //! window. Reads still finish the file so the footer can report `of {total}`.
 
-use std::fmt::Write;
-use std::path::Path;
+use std::{borrow::Cow, path::Path};
 
 use tokio::io::AsyncReadExt;
 
 use super::{
     line_split::{decode_content_line, LineSplit},
-    offset_past_end, window_footer, LINE_BODY_SEP,
+    TextWindow,
 };
 
 use crate::document::MAX_DOCUMENT_INPUT_BYTES;
@@ -120,24 +119,6 @@ fn decode_line(bytes: &[u8]) -> Result<String, String> {
         .map_err(|()| "invalid utf-8 sequence".into())
 }
 
-fn emit_window(header: &str, start: usize, lines: &[String], footer: Option<&str>) -> String {
-    if lines.is_empty() {
-        return header.to_string();
-    }
-    let mut out = header.to_string();
-    out.push('\n');
-    for (index, line) in lines.iter().enumerate() {
-        writeln!(out, "{}{LINE_BODY_SEP}{line}", start + index)
-            .expect("writing to a String cannot fail");
-    }
-    out.pop();
-    if let Some(footer) = footer {
-        out.push_str("\n\n");
-        out.push_str(footer);
-    }
-    out
-}
-
 pub(crate) fn validate_window(
     offset: Option<usize>,
     limit: Option<usize>,
@@ -151,36 +132,12 @@ pub(crate) fn validate_window(
     Ok((offset.unwrap_or(1), limit))
 }
 
-pub(crate) fn render_window(
-    header: &str,
-    total: usize,
-    start: usize,
-    limit: Option<usize>,
-    lines: &[String],
-) -> Result<String, String> {
-    if total == 0 {
-        if start > 1 {
-            return Err(offset_past_end(start, 0));
-        }
-        return Ok(header.to_string());
-    }
-    if start > total {
-        return Err(offset_past_end(start, total));
-    }
-    let end = match limit {
-        Some(limit) => start.saturating_add(limit).saturating_sub(1).min(total),
-        None => total,
-    };
-    let footer = window_footer(start, end, total);
-    Ok(emit_window(header, start, lines, footer.as_deref()))
-}
-
 struct WindowScan {
     split: LineSplit,
     utf8: Utf8Check,
     start: usize,
     want: Option<usize>,
-    selected: Vec<String>,
+    selected: Vec<Cow<'static, str>>,
 }
 
 impl WindowScan {
@@ -205,24 +162,24 @@ impl WindowScan {
         let selected = &mut self.selected;
         self.split.push(chunk, |line_number, line| {
             if in_window(line_number, start, want, selected.len()) {
-                selected.push(decode_line(line)?);
+                selected.push(Cow::Owned(decode_line(line)?));
             }
             Ok(())
         })
     }
 
-    fn finish(self) -> Result<ScannedWindow, ScanError> {
+    fn finish(self) -> Result<TextWindow<'static>, ScanError> {
         self.utf8.finish().map_err(|()| ScanError::InvalidUtf8)?;
         let mut selected = self.selected;
         let start = self.start;
         let want = self.want;
         let total = self.split.finish(|line_number, line| {
             if in_window(line_number, start, want, selected.len()) {
-                selected.push(decode_line(line)?);
+                selected.push(Cow::Owned(decode_line(line)?));
             }
             Ok::<(), ScanError>(())
         })?;
-        Ok(ScannedWindow { total, selected })
+        Ok(TextWindow::new(start, selected, total)?)
     }
 }
 
@@ -234,44 +191,28 @@ fn in_window(line_number: usize, start: usize, want: Option<usize>, selected: us
         }
 }
 
-pub(crate) struct ScannedWindow {
-    pub(crate) total: usize,
-    pub(crate) selected: Vec<String>,
-}
-
 /// In-memory chunked scan, compared against the split view in tests.
 #[cfg(test)]
-pub(crate) fn format_window_bytes(
+pub(crate) fn scan_window_bytes(
     bytes: &[u8],
     offset: Option<usize>,
     limit: Option<usize>,
-    header: &str,
-) -> Result<String, ScanError> {
+) -> Result<TextWindow<'static>, ScanError> {
     let (start, limit) = validate_window(offset, limit)?;
     let mut scan = WindowScan::new(start, limit);
     for chunk in bytes.chunks(CHUNK_SIZE) {
         scan.push(chunk)?;
     }
-    let scanned = scan.finish()?;
-    Ok(render_window(
-        header,
-        scanned.total,
-        start,
-        limit,
-        &scanned.selected,
-    )?)
+    scan.finish()
 }
 
 /// Paginate a large on-disk UTF-8 file without retaining every prefix.
-///
-/// `header` is the display path printed above the numbered rows.
 pub(crate) async fn read_text_window(
     path: &Path,
-    header: &str,
     source_len: u64,
     offset: Option<usize>,
     limit: Option<usize>,
-) -> Result<String, ToolError> {
+) -> Result<TextWindow<'static>, ToolError> {
     let (start, limit) = validate_window(offset, limit).map_err(ToolError::Message)?;
     if source_len > MAX_DOCUMENT_INPUT_BYTES as u64 {
         return Err(ToolError::Message(format!(
@@ -297,7 +238,5 @@ pub(crate) async fn read_text_window(
         scan.push(&buf[..read])
             .map_err(|error| error.into_tool_error(path))?;
     }
-    let scanned = scan.finish().map_err(|error| error.into_tool_error(path))?;
-    render_window(header, scanned.total, start, limit, &scanned.selected)
-        .map_err(ToolError::Message)
+    scan.finish().map_err(|error| error.into_tool_error(path))
 }

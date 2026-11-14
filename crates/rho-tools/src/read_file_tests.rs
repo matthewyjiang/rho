@@ -11,6 +11,9 @@ use tempfile::TempDir;
 
 use super::*;
 
+/// Output budget for reads whose truncation is not under test.
+const UNBOUNDED: usize = usize::MAX;
+
 fn test_context() -> (TempDir, ToolContext) {
     let dir = tempfile::tempdir().unwrap();
     let ctx = ToolContext {
@@ -49,9 +52,16 @@ async fn falls_back_to_numbered_text_when_an_ascii_signature_is_not_a_decodable_
     let text = "GIF89a ordinary fixture text";
     fs::write(&path, text).unwrap();
 
-    let output = read_file_content(&path, "fixture.txt", None, None, /*host_files*/ None)
-        .await
-        .unwrap();
+    let output = read_file_content(
+        &path,
+        "fixture.txt",
+        None,
+        None,
+        UNBOUNDED,
+        /*host_files*/ None,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(
         output.content,
@@ -67,9 +77,16 @@ async fn keeps_binary_image_reads_successful_when_preview_decoding_fails() {
     let path = ctx.cwd.join("broken.png");
     fs::write(&path, b"\x89PNG\r\n\x1a\n\xffbroken").unwrap();
 
-    let output = read_file_content(&path, "broken.png", None, None, /*host_files*/ None)
-        .await
-        .unwrap();
+    let output = read_file_content(
+        &path,
+        "broken.png",
+        None,
+        None,
+        UNBOUNDED,
+        /*host_files*/ None,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(output.content, "image/png image (15 bytes)");
     assert!(output.image.is_none());
@@ -164,9 +181,16 @@ async fn reports_truncated_document_extraction() {
     writer.write_all(xml.as_bytes()).unwrap();
     fs::write(&path, writer.finish().unwrap().into_inner()).unwrap();
 
-    let output = read_file_content(&path, "large.docx", None, None, /*host_files*/ None)
-        .await
-        .unwrap();
+    let output = read_file_content(
+        &path,
+        "large.docx",
+        None,
+        None,
+        UNBOUNDED,
+        /*host_files*/ None,
+    )
+    .await
+    .unwrap();
 
     assert!(
         output
@@ -235,11 +259,19 @@ async fn rejects_documents_over_the_input_limit() {
     file.set_len(crate::document::MAX_DOCUMENT_INPUT_BYTES as u64 + 1)
         .unwrap();
 
-    let error =
-        match read_file_content(&path, "oversized.pdf", None, None, /*host_files*/ None).await {
-            Ok(_) => panic!("oversized document unexpectedly succeeded"),
-            Err(error) => error,
-        };
+    let error = match read_file_content(
+        &path,
+        "oversized.pdf",
+        None,
+        None,
+        UNBOUNDED,
+        /*host_files*/ None,
+    )
+    .await
+    {
+        Ok(_) => panic!("oversized document unexpectedly succeeded"),
+        Err(error) => error,
+    };
 
     assert_eq!(
         error.to_string(),
@@ -274,7 +306,7 @@ async fn host_served_range_reads_check_the_disk_kind_first() {
     let read = |path: std::path::PathBuf| {
         let host = Arc::clone(&host);
         async move {
-            read_file_content(&path, "f", Some(2), Some(1), Some(&host))
+            read_file_content(&path, "f", Some(2), Some(1), UNBOUNDED, Some(&host))
                 .await
                 .map(|output| output.content)
                 .map_err(|error| error.to_string().contains("UTF-8"))
