@@ -430,7 +430,12 @@ def fetch_latest_release() -> str | None:
         commit, _, ref = line.partition("\t")
         commits[ref.removeprefix("refs/tags/").removesuffix("^{}")] = commit
     tag = latest_release(list(commits))
-    if tag is None or exists(f"{tag}^{{commit}}"):
+    if tag is None:
+        return None
+    if exists(f"{tag}^{{commit}}"):
+        local = git("rev-parse", f"{tag}^{{commit}}").strip()
+        if local != commits[tag]:
+            raise SystemExit(f"error: local {tag} is {local}, but {REMOTE} has {commits[tag]}")
         return tag
     if exists(commits[tag]):
         git("tag", tag, commits[tag])
