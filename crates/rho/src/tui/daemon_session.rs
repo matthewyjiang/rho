@@ -109,7 +109,8 @@ pub(crate) struct DaemonSession {
     /// Holds the connection; dropping it closes the connection, which
     /// detaches the session.
     daemon: Arc<Daemon>,
-    /// What `/new` and a resume from here open their session with.
+    /// What `/new` and a resume from here open their session with; its
+    /// `cwd` is the followed session's workspace.
     launch: DaemonLaunch,
     /// `rho/config/changed` for the settings last read, on the
     /// connection the session is attached on.
@@ -233,6 +234,12 @@ impl DaemonSession {
             views,
             queued,
         } = Self::attach(&daemon, id, /*opened*/ None, &launch, settings).await?;
+        // `/new` opens in the followed session's workspace, where the TUI
+        // moves to follow a session found elsewhere (`/jobs`, `--resume`).
+        let launch = DaemonLaunch {
+            cwd: attachment.workspace.clone(),
+            ..launch
+        };
         let (target, requests) = watch::channel(Target::Attached {
             link,
             session: attachment.id.clone(),

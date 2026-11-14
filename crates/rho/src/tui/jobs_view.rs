@@ -7,8 +7,8 @@
 //! waiting; a request the daemon refuses shows as the view's notice. A
 //! request another session waits on is answered by that session's id, with
 //! no attachment to it, so the view answers prompts in any project.
-//! Attaching switches the session this TUI follows, which only a session
-//! of this project can be.
+//! Attaching switches the session this TUI follows, and moves the TUI to
+//! that session's workspace (`daemon_switch`).
 
 use std::{
     collections::HashMap,
@@ -39,7 +39,7 @@ use super::{
 };
 use crate::{
     app::daemon_client::{Daemon, DaemonError},
-    session::Session,
+    session::{Session, SessionTarget},
 };
 
 mod rows;
@@ -75,13 +75,9 @@ enum Mode {
     },
 }
 
-/// What closing the view asks of the TUI.
+/// What closing the view asks of the TUI: to follow this session.
 #[derive(Debug)]
-pub(super) struct Attach {
-    session: SessionId,
-    /// The workspace the session's job runs in.
-    workspace: PathBuf,
-}
+pub(super) struct Attach(SessionId);
 
 /// The `/jobs` overlay.
 pub(super) struct JobsView {
@@ -287,14 +283,14 @@ impl JobsView {
 
     /// The session a message, a cancel, or an attach for the selected job
     /// goes to: the job's own, or for a run, the session that started it.
-    fn session_of_selected(&self) -> Option<(&JobSummary, &SessionId)> {
+    fn session_of_selected(&self) -> Option<&SessionId> {
         let jobs = self.jobs.as_ref()?;
         let mut job = self.selected_job()?;
         // Each step goes up one job, so a chain is never longer than the
         // list.
         for _ in 0..jobs.len() {
             if job.kind == JobKind::Session {
-                return Some((job, job.session.as_ref()?));
+                return job.session.as_ref();
             }
             let parent = job.parent.as_ref()?;
             job = jobs.iter().find(|job| &job.id == parent)?;
@@ -317,7 +313,7 @@ impl JobsView {
     /// in a row on it: `c` copies in every other panel, and a cancelled
     /// turn does not come back.
     fn cancel(&mut self) {
-        let Some((_, session)) = self.session_of_selected() else {
+        let Some(session) = self.session_of_selected() else {
             return self.say("could not cancel job: no session of the daemon's started it");
         };
         let session = session.clone();
@@ -333,7 +329,7 @@ impl JobsView {
     }
 
     fn begin_message(&mut self) {
-        let Some((_, session)) = self.session_of_selected() else {
+        let Some(session) = self.session_of_selected() else {
             return self.say("could not message job: no session of the daemon's started it");
         };
         let session = session.clone();
@@ -545,13 +541,8 @@ impl JobsView {
             (KeyModifiers::NONE, KeyCode::Enter) => {
                 match self.session_of_selected() {
                     // Already followed: closing the view shows it.
-                    Some((_, session)) if self.followed.as_ref() == Some(session) => {}
-                    Some((job, session)) => {
-                        self.attach = Some(Attach {
-                            session: session.clone(),
-                            workspace: job.workspace.clone(),
-                        });
-                    }
+                    Some(session) if self.followed.as_ref() == Some(session) => {}
+                    Some(session) => self.attach = Some(Attach(session.clone())),
                     None if self.selected.is_some() => {
                         self.say("could not attach job: no session of the daemon's started it");
                         return PanelKeyOutcome::Handled;
@@ -856,18 +847,19 @@ impl App {
     /// Follows the session a closed `/jobs` asked to attach to. Only
     /// between turns: a session switch leaves the turn under way behind.
     pub(super) async fn attach_from_jobs_view(&mut self, terminal: &mut DefaultTerminal) {
-        let Some(Attach { session, workspace }) = self.jobs_view_attach.take() else {
+        let Some(Attach(session)) = self.jobs_view_attach.take() else {
             return;
         };
-        // A saved session attaches as `/resume` does, with its checks. One
-        // the daemon has open and has not saved yet, as a session just
-        // started, has no file to find: it is followed by its id.
+        // A saved session attaches as `/resume` does, with its checks, but
+        // from any workspace. One the daemon has open and has not saved
+        // yet, as a session just started, has no file to find: it is
+        // followed by its id.
         let attached = match Session::workspace_of(session.as_str()) {
-            Ok(Some(_)) => self.resume_daemon_session(session.as_str(), terminal).await,
-            Ok(None) => {
-                self.follow_unsaved_session(session, &workspace, terminal)
-                    .await
+            Ok(Some(workspace)) => {
+                let target = SessionTarget::new(session.as_str(), workspace);
+                self.resume_daemon_target(target, terminal).await
             }
+            Ok(None) => self.follow_unsaved_session(session, terminal).await,
             // The store could not say, so no check below would hold.
             Err(error) => Err(error),
         };
@@ -876,17 +868,15 @@ impl App {
         }
     }
 
-    /// Follows `session`, which the daemon has loaded in `workspace` and
-    /// has not saved. A launch that named an agent follows only that
-    /// agent's sessions, and an unsaved session's agent is recorded
-    /// nowhere this TUI reads, so such a launch refuses it until it saves.
+    /// Follows `session`, which the daemon has loaded and has not saved. A
+    /// launch that named an agent follows only that agent's sessions, and
+    /// an unsaved session's agent is recorded nowhere this TUI reads, so
+    /// such a launch refuses it until it saves.
     async fn follow_unsaved_session(
         &mut self,
         session: SessionId,
-        workspace: &std::path::Path,
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
-        self.ensure_this_project(workspace)?;
         anyhow::ensure!(
             self.info.session.resume_launch.definition.is_none(),
             "the session has saved nothing yet, so its agent cannot be checked against --agent; \

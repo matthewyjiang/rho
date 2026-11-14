@@ -218,7 +218,8 @@ const OTHER_PROJECT: &str = "other-project";
 // another project waiting on a permission prompt, `/jobs` lists both under
 // their projects; Tab selects the job that needs input and shows what it
 // asks, and `y` answers the prompt from the view, so the other project's
-// turn goes on while this TUI still follows its own session.
+// turn goes on while this TUI still follows its own session. Enter on the
+// other project's job then attaches to it, and the TUI moves there.
 // Owner: interactive TUI as a daemon client
 pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
     let home = IsolatedHome::new()?;
@@ -284,6 +285,33 @@ pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
         harness.inject_key(&Key::Esc)?;
         super::fixture_release::release_fixture(&mut harness, ".rho-fixture-release-reply")?;
         harness.wait_for_text("reply completed after release", STREAM)?;
+
+        harness.set_phase("attach_to_the_other_project");
+        harness.submit_text("/jobs")?;
+        harness.wait_for_text(OTHER_PROJECT, SETTLE)?;
+        harness.inject_key(&Key::Char('/'))?;
+        harness.type_text(OTHER_PROJECT)?;
+        harness.wait_for_text(&format!("Filter: {OTHER_PROJECT}"), SETTLE)?;
+        harness.inject_key(&Key::Enter)?;
+        harness.inject_key(&Key::Enter)?;
+        // The view closes on the other project's conversation, and the
+        // status line names the directory the TUI moved to.
+        harness.wait_for_screen("the other project's session", STREAM, |screen| {
+            let text = screen.contents();
+            !text.contains("Esc close")
+                && text.contains("fixture tool")
+                && text.contains(OTHER_PROJECT)
+                && !text.contains(&workspace)
+        })?;
+
+        harness.set_phase("new_session_stays_there");
+        harness.submit_text("/new")?;
+        harness.wait_for_screen("a new session in the other project", SETTLE, |screen| {
+            let text = screen.contents();
+            !text.contains("fixture tool")
+                && text.contains(OTHER_PROJECT)
+                && !text.contains(&workspace)
+        })?;
         let code = harness.quit_with_exit_command()?;
         ensure!(code == 0, "the TUI exited with code {code}");
         Ok(())

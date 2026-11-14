@@ -267,7 +267,7 @@ impl App {
         );
     }
 
-    fn restart_github_pr_fetch(&mut self) {
+    pub(super) fn restart_github_pr_fetch(&mut self) {
         self.tasks.abort(|id| *id == TaskId::GithubPr);
         self.start_github_pr_fetch();
     }

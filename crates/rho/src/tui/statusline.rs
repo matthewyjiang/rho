@@ -192,6 +192,14 @@ impl StatusLine {
         self.state.branch.as_deref()
     }
 
+    /// Names `cwd`, with its branch, in place of the directory shown.
+    pub(super) fn move_to(&mut self, cwd: PathBuf) {
+        self.state.branch = git_branch(&cwd);
+        self.state.cwd = cwd;
+        self.state.cwd_extra = None;
+        self.invalidate();
+    }
+
     pub(super) fn refresh_git_branch(&mut self) -> bool {
         let branch = git_branch(&self.state.cwd);
         if self.state.branch == branch {
