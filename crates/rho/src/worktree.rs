@@ -38,7 +38,7 @@ const REMOTE: &str = "origin";
 /// How long [`Start::Remote`] waits on the remote, every git command that
 /// asks it together, before starting from `HEAD`. Fetching one up-to-date
 /// branch from GitHub took 0.2-1.0 s (rho, 28 MiB packed; rho-ui), and
-/// `remote set-head --auto` 0.9 s, while a fetch from an unreachable host
+/// `ls-remote --symref origin HEAD` 0.9 s, while a fetch from an unreachable host
 /// was still waiting when killed at 30 s. Adding a worktree waits on the
 /// remote this long at most.
 const FETCH_TIMEOUT: Duration = Duration::from_secs(30);
@@ -292,44 +292,40 @@ struct RemoteTip {
     commit: String,
 }
 
-/// Fetches the [`REMOTE`]'s default branch into `repository` and returns
-/// its tip; `None` when the repository has no such remote. A fetch that
+/// Fetches the [`REMOTE`]'s default branch into `repository`, recording it
+/// as `origin/HEAD`, and returns its tip; `None` when the repository has no
+/// such remote. The remote names its default each time, since git never
+/// moves a recorded `origin/HEAD` when the remote's moves. A fetch that
 /// fails is an error, never a stale commit.
 async fn fetch_tip(repository: &Path) -> Result<Option<RemoteTip>, WorktreeError> {
     let remotes = succeeded(repository, "remote", ["remote"]).await?;
     if !remotes.lines().any(|remote| remote == REMOTE) {
         return Ok(None);
     }
-    // A clone records the default branch; a remote added by hand has none
-    // until asked.
-    let recorded = remote_default(repository).await?;
-    let branch = match &recorded {
-        Some(branch) => branch.clone(),
-        None => ask_default(repository).await?,
-    };
-    if let Err(error) = fetch_branch(repository, &branch).await {
-        // The remote may have renamed it since, as `master` to `main`.
-        if recorded.is_none() {
-            return Err(error);
-        }
-        match ask_default(repository).await {
-            Ok(renamed) if renamed != branch => fetch_branch(repository, &renamed).await?,
-            Ok(_) | Err(_) => return Err(error),
-        }
-    }
+    let listed = remote(
+        repository,
+        "ls-remote",
+        ["ls-remote", "--symref", REMOTE, "HEAD"],
+    )
+    .await?;
+    // `ref: refs/heads/main<TAB>HEAD`, absent when the remote's HEAD is
+    // detached.
+    let branch = listed
+        .lines()
+        .find_map(|line| {
+            line.strip_prefix("ref: refs/heads/")?
+                .strip_suffix("\tHEAD")
+        })
+        .ok_or_else(|| no_default(repository))?;
+    fetch_branch(repository, branch).await?;
+    let head = format!("refs/remotes/{REMOTE}/HEAD");
+    let target = format!("refs/remotes/{REMOTE}/{branch}");
+    let record = ["symbolic-ref", head.as_str(), target.as_str()];
+    succeeded(repository, "symbolic-ref", record).await?;
     remote_tip(repository)
         .await?
         .ok_or_else(|| no_default(repository))
         .map(Some)
-}
-
-/// Asks the [`REMOTE`] for its default branch, as `main`, and records it.
-async fn ask_default(repository: &Path) -> Result<String, WorktreeError> {
-    let set_head = ["remote", "set-head", REMOTE, "--auto"];
-    remote(repository, "remote set-head", set_head).await?;
-    remote_default(repository)
-        .await?
-        .ok_or_else(|| no_default(repository))
 }
 
 /// Fetches the [`REMOTE`]'s `branch` into its remote-tracking ref, leaving
@@ -350,7 +346,7 @@ async fn fetch_branch(repository: &Path, branch: &str) -> Result<(), WorktreeErr
 
 fn no_default(repository: &Path) -> WorktreeError {
     WorktreeError::Git {
-        action: "remote set-head".to_owned(),
+        action: "ls-remote".to_owned(),
         repository: repository.to_path_buf(),
         detail: format!("{REMOTE} names no default branch"),
     }

@@ -475,26 +475,42 @@ fn path(path: &Path) -> &str {
     path.to_str().unwrap()
 }
 
-// Covers: a worktree started from the remote starts at the commit its
-// default branch has on the remote, not the checkout's older HEAD, whether
-// the clone recorded that branch, a remote added by hand did not, or the
-// recorded one is gone from the remote since, as after a rename; its branch
+// Covers: a worktree started from the remote starts at the branch the
+// remote names its default now, fetched: whether the clone recorded it, a
+// remote added by hand was never fetched, the recorded one is gone from the
+// remote, or the remote's default moved while the old one stays; its branch
 // tracks nothing, and the checkout's own branch does not move.
 // Owner: session worktrees.
 #[tokio::test]
 async fn a_worktree_from_the_remote_starts_at_its_default_branch() {
     let mut found = Vec::new();
     let mut expected = Vec::new();
-    for recorded in ["main", "none", "renamed"] {
+    for case in ["recorded", "unrecorded", "unfetched", "gone", "moved"] {
         let home = TempDir::new().unwrap();
-        let (repo, newer) = behind_its_remote(home.path());
-        match recorded {
-            "none" => {
+        let (mut repo, newer) = behind_its_remote(home.path());
+        let remote = home.path().join("remote.git");
+        let (mut label, mut commit) = ("origin/main", newer);
+        match case {
+            "unrecorded" => {
                 git(&repo, &["remote", "set-head", "origin", "--delete"]);
             }
-            "renamed" => {
-                let head = ["symbolic-ref", "refs/remotes/origin/HEAD"];
-                git(&repo, &[head[0], head[1], "refs/remotes/origin/master"]);
+            "unfetched" => {
+                repo = home.path().join("by-hand");
+                std::fs::create_dir_all(&repo).unwrap();
+                git(&repo, &["init", "--quiet", "--initial-branch=main"]);
+                git(&repo, &["commit", "--quiet", "--allow-empty", "-m", "own"]);
+                git(&repo, &["remote", "add", "origin", path(&remote)]);
+                repo = crate::paths::canonicalize(&repo).unwrap();
+            }
+            "gone" => {
+                let head = "refs/remotes/origin/HEAD";
+                git(&repo, &["symbolic-ref", head, "refs/remotes/origin/master"]);
+            }
+            "moved" => {
+                commit = git(&repo, &["rev-parse", "HEAD"]);
+                git(&remote, &["branch", "trunk", commit.as_str()]);
+                git(&remote, &["symbolic-ref", "HEAD", "refs/heads/trunk"]);
+                label = "origin/trunk";
             }
             _ => {}
         }
@@ -506,7 +522,7 @@ async fn a_worktree_from_the_remote_starts_at_its_default_branch() {
 
         let tracking = format!("branch.{}.remote", added.worktree.branch);
         found.push((
-            recorded,
+            case,
             added.started,
             git(&added.worktree.path, &["rev-parse", "HEAD"]),
             git(
@@ -516,9 +532,9 @@ async fn a_worktree_from_the_remote_starts_at_its_default_branch() {
             git(&repo, &["rev-parse", "HEAD"]),
         ));
         expected.push((
-            recorded,
-            Started::Remote("origin/main".to_owned()),
-            newer,
+            case,
+            Started::Remote(label.to_owned()),
+            commit,
             String::new(),
             before,
         ));
