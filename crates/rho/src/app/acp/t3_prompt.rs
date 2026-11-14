@@ -11,7 +11,8 @@
 //!   and `<pull_request_linking>…</pull_request_linking>`.
 //!
 //! [`split_context`] turns that wrapping into context blocks, which the
-//! model gets but the session does not save as the person's message. Only
+//! model gets ahead of the person's message but the session does not save
+//! as part of it. Only
 //! whole, known tags at the start of the first text block or the end of the
 //! last one count: a tag mid-text, or one this module does not know, stays
 //! the person's.
@@ -22,12 +23,12 @@ use rho_protocol::ContentBlock;
 const INSTRUCTIONS: &str = "t3_code_instructions";
 /// What wraps the person's text after T3's instructions.
 const REQUEST: &str = "user_request";
-/// The blocks T3 ends every prompt with.
+/// The blocks T3 ends every prompt with, in order.
 const TRAILING: [&str; 2] = ["runtime_info", "pull_request_linking"];
 
-/// `prompt` with T3's wrapping as context blocks: its instructions first,
-/// then what the person sent, then the trailing blocks. A text block left
-/// empty is dropped.
+/// `prompt` with T3's wrapping as context blocks, ahead of what the person
+/// sent, as the model gets context: its instructions, then its trailing
+/// blocks. A text block that held nothing else is dropped.
 pub(super) fn split_context(mut prompt: Vec<ContentBlock>) -> Vec<ContentBlock> {
     let is_text = |block: &ContentBlock| matches!(block, ContentBlock::Text { .. });
     let (Some(first), Some(last)) = (
@@ -38,41 +39,48 @@ pub(super) fn split_context(mut prompt: Vec<ContentBlock>) -> Vec<ContentBlock> 
     };
     // The end first: when one block holds everything, the person's text
     // ends with `</user_request>` only once the trailing blocks are gone.
-    let trailing = match &mut prompt[last] {
-        ContentBlock::Text { text } => take_trailing(text),
-        _ => Vec::new(),
-    };
-    let leading = match &mut prompt[first] {
-        ContentBlock::Text { text } => take_instructions(text),
-        _ => None,
-    };
+    let trailing = text_mut(&mut prompt[last])
+        .map(take_trailing)
+        .unwrap_or_default();
+    let leading = text_mut(&mut prompt[first]).and_then(take_instructions);
     if leading.is_none() && trailing.is_empty() {
         return prompt;
     }
-    let context = |text| ContentBlock::Context { text };
-    leading
-        .map(context)
+    let emptied = |index: usize, block: &ContentBlock| {
+        (index == first || index == last)
+            && matches!(block, ContentBlock::Text { text } if text.is_empty())
+    };
+    let person = prompt
         .into_iter()
-        .chain(prompt.into_iter().filter(
-            |block| !matches!(block, ContentBlock::Text { text } if text.trim().is_empty()),
-        ))
-        .chain(trailing.into_iter().map(context))
+        .enumerate()
+        .filter(|(index, block)| !emptied(*index, block))
+        .map(|(_, block)| block);
+    leading
+        .into_iter()
+        .chain(trailing)
+        .map(|text| ContentBlock::Context { text })
+        .chain(person)
         .collect()
 }
 
-/// Removes the known blocks `text` ends with and returns them in order.
+fn text_mut(block: &mut ContentBlock) -> Option<&mut String> {
+    match block {
+        ContentBlock::Text { text } => Some(text),
+        _ => None,
+    }
+}
+
+/// Removes the trailing blocks T3 ends `text` with, at most one of each
+/// in their order, and returns them in order. A block that repeats one of
+/// them, or comes out of order, stays the person's.
 fn take_trailing(text: &mut String) -> Vec<String> {
     let mut taken = Vec::new();
-    loop {
+    for tag in TRAILING.iter().rev() {
         let end = text.trim_end().len();
-        let Some(start) = TRAILING
-            .iter()
-            .find_map(|tag| trailing_block(&text[..end], tag))
-        else {
-            break;
-        };
-        taken.push(text[start..end].to_owned());
-        text.truncate(start);
+        if let Some(start) = trailing_block(&text[..end], tag) {
+            taken.push(text[start..end].to_owned());
+            text.truncate(start);
+        }
     }
     if !taken.is_empty() {
         // The break that set them apart is T3's, not the person's.
@@ -98,10 +106,10 @@ fn take_instructions(text: &mut String) -> Option<String> {
     let open = format!("<{INSTRUCTIONS}>");
     let close = format!("</{INSTRUCTIONS}>");
     let end = open.len() + text.strip_prefix(&open)?.find(&close)? + close.len();
+    let instructions = text[..end].to_owned();
     let rest = text[end..].trim_start();
-    let person = unwrap_request(rest).unwrap_or(rest).to_owned();
-    let instructions = std::mem::replace(text, person);
-    Some(instructions[..end].to_owned())
+    *text = unwrap_request(rest).unwrap_or(rest).to_owned();
+    Some(instructions)
 }
 
 /// The text `<user_request>` wraps when it wraps all of `text`, without the

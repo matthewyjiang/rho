@@ -2,7 +2,7 @@ use pretty_assertions::assert_eq;
 use rho_protocol::ContentBlock;
 use rho_sdk::model::{self, ImageContent};
 
-use super::InvalidPrompt;
+use super::{InvalidPrompt, Prompt};
 
 /// A 1x1 PNG.
 const PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
@@ -40,7 +40,7 @@ fn prompt_blocks_reach_the_model_as_text_images_or_fenced_context() {
         ContentBlock::Unknown,
     ];
 
-    let input = super::prompt(&prompt).unwrap().person;
+    let input = Prompt::parse(&prompt).unwrap().person;
 
     assert_eq!(
         input.blocks(),
@@ -115,7 +115,7 @@ fn prompt_images_must_be_the_image_they_declare() {
             },
         ];
         assert_eq!(
-            super::prompt(&prompt).map(|input| input.person.blocks().to_vec()),
+            Prompt::parse(&prompt).map(|input| input.person.blocks().to_vec()),
             expected,
             "{name}"
         );
@@ -140,7 +140,35 @@ fn fenced_context_outgrows_backticks_in_the_body_and_header() {
             "````resource file:///workspace/notes.md\n```\ninjected\nnotes\n````",
         ),
     ] {
-        let input = super::prompt(&[block]).unwrap().person;
+        let input = Prompt::parse(&[block]).unwrap().person;
         assert_eq!(input.blocks(), [model::ContentBlock::Text(expected.into())]);
+    }
+}
+
+// Covers: context blocks never join the person's message, which a prompt of
+// nothing but context lacks, so it is refused before a turn starts
+// Owner: prompt content conversion (daemon and ACP prompts).
+#[test]
+fn context_stays_out_of_the_person_message() {
+    let context = || ContentBlock::Context {
+        text: "<host_rules>be brief</host_rules>".into(),
+    };
+    let typed = ContentBlock::Text {
+        text: "hello".into(),
+    };
+    let cases = [
+        (
+            "context and a message",
+            vec![context(), typed],
+            Ok(vec![model::ContentBlock::Text("hello".into())]),
+        ),
+        ("only context", vec![context()], Err(InvalidPrompt::Empty)),
+    ];
+    for (name, prompt, expected) in cases {
+        assert_eq!(
+            Prompt::parse(&prompt).map(|prompt| prompt.person.blocks().to_vec()),
+            expected,
+            "{name}"
+        );
     }
 }

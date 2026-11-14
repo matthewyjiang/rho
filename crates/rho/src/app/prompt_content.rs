@@ -46,19 +46,30 @@ pub(crate) enum InvalidPrompt {
 pub(crate) struct Prompt {
     /// What the person sent: the message the session saves and shows.
     pub(crate) person: UserInput,
-    /// The prompt's context blocks, in order.
-    context: Vec<String>,
+    pub(crate) context: PromptContext,
 }
 
-impl Prompt {
-    /// `model`, the input a turn of this prompt sends, after the prompt's
-    /// context.
-    pub(crate) fn for_model(&self, model: UserInput) -> UserInput {
-        if self.context.is_empty() {
+/// A prompt's context blocks, in order. They reach a turn's model only
+/// through [`Self::before`], never its saved message.
+#[derive(Debug, Default, PartialEq)]
+pub(crate) struct PromptContext(Vec<String>);
+
+impl PromptContext {
+    /// This context after `earlier`'s, which no turn sent yet, leaving out
+    /// the blocks of `earlier` this one repeats.
+    pub(crate) fn after(self, mut earlier: Self) -> Self {
+        earlier.0.retain(|text| !self.0.contains(text));
+        earlier.0.extend(self.0);
+        earlier
+    }
+
+    /// `model`, the input a turn sends, after this context.
+    pub(crate) fn before(&self, model: UserInput) -> UserInput {
+        if self.0.is_empty() {
             return model;
         }
         let blocks = self
-            .context
+            .0
             .iter()
             .cloned()
             .map(model::ContentBlock::Text)
@@ -68,30 +79,33 @@ impl Prompt {
     }
 }
 
-/// The prompt `blocks` make. Refuses one with nothing but context, which
-/// must not start a run, and an image whose data is not the PNG, JPEG, GIF,
-/// or WebP its `mime_type` declares, which a provider would refuse
-/// mid-turn.
-pub(crate) fn prompt(blocks: &[ContentBlock]) -> Result<Prompt, InvalidPrompt> {
-    let mut person = Vec::with_capacity(blocks.len());
-    let mut context = Vec::new();
-    for (index, block) in blocks.iter().enumerate() {
-        match block {
-            ContentBlock::Context { text } => context.push(text.clone()),
-            block => person.push(model_block(index, block)?),
+impl Prompt {
+    /// The prompt `blocks` make. Refuses one with nothing but context,
+    /// which must not start a run, and an image whose data is not the PNG,
+    /// JPEG, GIF, or WebP its `mime_type` declares, which a provider would
+    /// refuse mid-turn.
+    pub(crate) fn parse(blocks: &[ContentBlock]) -> Result<Self, InvalidPrompt> {
+        let mut person = Vec::with_capacity(blocks.len());
+        let mut context = Vec::new();
+        for (index, block) in blocks.iter().enumerate() {
+            match block {
+                ContentBlock::Context { text } => context.push(text.clone()),
+                block => person.push(model_block(index, block)?),
+            }
         }
+        // A prompt with no message is the only one it refuses.
+        let person = UserInput::content(person).map_err(|_| InvalidPrompt::Empty)?;
+        Ok(Self {
+            person,
+            context: PromptContext(context),
+        })
     }
-    // A prompt with no message is the only one it refuses.
-    let person = UserInput::content(person).map_err(|_| InvalidPrompt::Empty)?;
-    Ok(Prompt { person, context })
 }
 
-/// Block `index` of the prompt as the model gets it.
+/// Block `index` of the person's message as the model gets it.
 fn model_block(index: usize, block: &ContentBlock) -> Result<model::ContentBlock, InvalidPrompt> {
     Ok(match block {
-        ContentBlock::Text { text } | ContentBlock::Context { text } => {
-            model::ContentBlock::Text(text.clone())
-        }
+        ContentBlock::Text { text } => model::ContentBlock::Text(text.clone()),
         ContentBlock::Image { mime_type, data } => {
             model::ContentBlock::Image(image(index, mime_type, data)?)
         }

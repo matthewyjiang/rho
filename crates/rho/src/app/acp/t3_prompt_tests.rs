@@ -27,8 +27,8 @@ fn image() -> ContentBlock {
 // Covers: T3's leading instructions and its trailing runtime and PR-linking
 // blocks become context, and the `<user_request>` wrapping comes off, so
 // only what the person typed is their message; a prompt without T3's
-// blocks, and a known or unknown tag that is not whole at the prompt's
-// start or end, stay the person's text
+// blocks, a known tag beyond T3's one of each, and a known or unknown tag
+// that is not whole at the prompt's start or end, stay the person's text
 // Owner: ACP `--t3code` prompt mapping
 #[test]
 fn t3_wrapping_becomes_context_and_the_person_text_stays() {
@@ -47,16 +47,25 @@ fn t3_wrapping_becomes_context_and_the_person_text_stays() {
             ],
             vec![
                 context(INSTRUCTIONS),
-                text("fix the bug"),
-                image(),
                 context(RUNTIME),
                 context(LINKING),
+                text("fix the bug"),
+                image(),
             ],
         ),
         (
             "a later prompt, in one block",
             vec![text(&format!("push it to main\n\n{trailer}"))],
-            vec![text("push it to main"), context(RUNTIME), context(LINKING)],
+            vec![context(RUNTIME), context(LINKING), text("push it to main")],
+        ),
+        (
+            "the person's own trailing block, before T3's",
+            vec![text(&format!("this came back:\n{RUNTIME}\n\n{trailer}"))],
+            vec![
+                context(RUNTIME),
+                context(LINKING),
+                text(&format!("this came back:\n{RUNTIME}")),
+            ],
         ),
         (
             "no T3 blocks",

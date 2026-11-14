@@ -46,13 +46,29 @@ pub(super) enum LaunchHost {
     Other,
 }
 
+/// Which build the daemon behind this adapter is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum DaemonBuild {
+    /// This one, which reads every block this adapter sends.
+    Same,
+    /// Another, which may read a block newer than it as unknown.
+    Other,
+}
+
 impl Launch {
-    /// Prompt `prompt` as the daemon takes it from this launch's host.
-    pub(super) fn prompt_content(&self, prompt: &[AcpContentBlock]) -> Vec<ContentBlock> {
+    /// Prompt `prompt` as the daemon takes it from this launch's host. A
+    /// daemon of another build gets T3's wrapping as text, as before
+    /// context blocks, so an older one that does not know them still hands
+    /// it to the model.
+    pub(super) fn prompt_content(
+        &self,
+        prompt: &[AcpContentBlock],
+        daemon: DaemonBuild,
+    ) -> Vec<ContentBlock> {
         let content = prompt_content(prompt);
-        match self.host {
-            LaunchHost::T3Code => t3_prompt::split_context(content),
-            LaunchHost::Other => content,
+        match (self.host, daemon) {
+            (LaunchHost::T3Code, DaemonBuild::Same) => t3_prompt::split_context(content),
+            (LaunchHost::T3Code, DaemonBuild::Other) | (LaunchHost::Other, _) => content,
         }
     }
 

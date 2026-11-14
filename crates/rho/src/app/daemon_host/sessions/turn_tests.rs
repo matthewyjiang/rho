@@ -16,7 +16,7 @@ use crate::app::daemon_host::sessions::{
     },
 };
 use crate::app::daemon_host::settings::ConfigStore;
-use crate::app::prompt_content::{self, Prompt};
+use crate::app::prompt_content::Prompt;
 use crate::{
     app::{
         daemon_host::{
@@ -34,7 +34,7 @@ use crate::{
 
 /// A prompt of `text` alone.
 fn text_prompt(text: &str) -> Prompt {
-    prompt_content::prompt(&[rho_protocol::ContentBlock::Text { text: text.into() }]).unwrap()
+    Prompt::parse(&[rho_protocol::ContentBlock::Text { text: text.into() }]).unwrap()
 }
 
 /// Bounds each wait on an explicit signal; never the way a test syncs.

@@ -25,7 +25,7 @@ use super::{
     Queued, Sessions, TurnKind, TurnLimit, TurnSlot, TurnTask,
 };
 use crate::{
-    app::{prompt_content, session_runtime::SessionRuntime},
+    app::{prompt_content::Prompt, session_runtime::SessionRuntime},
     session_environment::TrustMismatch,
 };
 
@@ -117,7 +117,7 @@ impl Sessions {
                 "the prompt's author is one this daemon does not know",
             ));
         }
-        let input = prompt_content::prompt(&params.content).map_err(|error| {
+        let prompt = Prompt::parse(&params.content).map_err(|error| {
             RpcError::new(
                 ErrorCode::InvalidParams,
                 format!("could not read the prompt: {error}"),
@@ -150,7 +150,7 @@ impl Sessions {
                         stopping: self.stopping.clone(),
                         limit: params.timeout_ms.map(TurnLimit::starting_now),
                     }
-                    .spawn(input, params.author);
+                    .spawn(prompt, params.author);
                     break (id, start);
                 }
                 Entered::SentAgain { id, start } => break (id, start),

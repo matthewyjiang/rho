@@ -63,7 +63,7 @@ The same applies to a finished `/workflow:` command: it wakes the thread instead
 
 T3 Code wraps each prompt in its own blocks: `<t3_code_instructions>` before your text, with your text in `<user_request>`, and `<runtime_info>` and `<pull_request_linking>` after it. Under `--t3code`, Rho sends those blocks to the model as context ahead of your message, and saves only what you typed. Session titles, `session/list`, and transcript replay show your words, and slash commands work on a thread's first message.
 
-Only those tags count, and only whole at the start or end of the prompt. A tag in the middle of your text, or one Rho does not know, stays part of your message. Sessions saved before this change keep the blocks in their messages.
+Only those tags count, one of each, and only whole at the start or end of the prompt. A tag in the middle of your text, a repeat, or one Rho does not know stays part of your message. T3 states its instructions on a thread's first message alone; when that message is a command that runs no model turn, such as `/compact` or `/workflow:`, the next model turn gets them instead. A daemon of another build than `rho acp`, as after an update before the daemon restarts, gets the blocks as part of your message, as before. Sessions saved before this change keep the blocks in their messages.
 
 ## How T3 Code shows Rho
 

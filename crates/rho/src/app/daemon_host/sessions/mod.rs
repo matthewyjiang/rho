@@ -76,6 +76,7 @@ mod configure;
 mod cost;
 mod feed;
 mod grant;
+mod held_context;
 mod idle_wake;
 mod inputs;
 mod inspect;
@@ -221,6 +222,8 @@ struct LoadedSession {
     /// cache warm, when its `process` tool offers that (see
     /// [`cache_warm`]).
     cache_warm: Option<KeepWarm>,
+    /// Prompt context no model turn has sent yet (see [`held_context`]).
+    held_context: Mutex<crate::app::prompt_content::PromptContext>,
 }
 
 /// The state a session's turn lock guards.
@@ -420,6 +423,7 @@ impl LoadedSession {
             wake: T3Wake::of(&runtime, wakes).map(tokio::sync::Mutex::new),
             idle_wake: IdleWatch::of(&runtime),
             cache_warm: KeepWarm::of(&runtime),
+            held_context: Mutex::default(),
             child_questions: ChildQuestions::of(&mut runtime),
             handle: runtime.handle(),
             workspace: runtime.workspace_root().to_path_buf(),

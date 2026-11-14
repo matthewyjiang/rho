@@ -42,6 +42,45 @@ fn last_user_texts(inspection: &Value) -> Vec<&str> {
         .collect()
 }
 
+fn new_session(server: &mut AcpServer, workspace: &Workspace) -> String {
+    let created = server
+        .request(
+            "session/new",
+            json!({"cwd": workspace.project, "mcpServers": []}),
+        )
+        .0
+        .unwrap();
+    created["sessionId"].as_str().unwrap().to_owned()
+}
+
+/// Sends `prompt` and returns the model request the fixture answered with.
+fn inspected_prompt(server: &mut AcpServer, session_id: &str, prompt: Value) -> Value {
+    let (replied, updates) = server.request(
+        "session/prompt",
+        json!({"sessionId": session_id, "prompt": prompt}),
+    );
+    replied.unwrap();
+    let reply: String = updates
+        .iter()
+        .filter(|update| update["sessionUpdate"] == "agent_message_chunk")
+        .filter_map(|update| update["content"]["text"].as_str())
+        .collect();
+    serde_json::from_str(&reply).unwrap()
+}
+
+/// What T3 sends for `typed`: its instructions on a thread's first prompt.
+fn t3_prompt(typed: &str, first: bool) -> Value {
+    let typed = if first {
+        format!("{INSTRUCTIONS}\n\n<user_request>\n{typed}\n</user_request>")
+    } else {
+        typed.to_owned()
+    };
+    json!([
+        {"type": "text", "text": typed},
+        {"type": "text", "text": format!("{RUNTIME}\n\n{LINKING}")},
+    ])
+}
+
 // Covers: a T3 prompt's instructions, runtime info, and PR-linking blocks
 // reach the model, while the saved user message, which `session/list`
 // labels the session with and `session/load` replays, holds only what the
@@ -99,4 +138,26 @@ fn t3_wrapping_reaches_the_model_but_not_the_saved_message() {
         .map(|update| &update["content"])
         .collect();
     assert_eq!(shown, [&json!({"type": "text", "text": TYPED})]);
+}
+
+// Covers: T3 states its instructions on a thread's first prompt alone, so
+// when that prompt is a command that runs no model turn, the next model
+// turn still gets them, once, with that prompt's own trailing blocks
+// Owner: daemon prompt context, over the real stdio server
+#[test]
+fn t3_instructions_outlast_an_opening_command() {
+    let workspace = Workspace::new();
+    let mut server = t3_server(&workspace);
+    let session_id = new_session(&mut server, &workspace);
+    let (compacted, _) = server.request(
+        "session/prompt",
+        json!({"sessionId": session_id, "prompt": t3_prompt("/compact", true)}),
+    );
+    compacted.unwrap();
+
+    let inspection = inspected_prompt(&mut server, &session_id, t3_prompt(TYPED, false));
+    assert_eq!(
+        last_user_texts(&inspection),
+        [INSTRUCTIONS, RUNTIME, LINKING, TYPED]
+    );
 }

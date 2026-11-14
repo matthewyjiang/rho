@@ -1369,7 +1369,7 @@
           "type": "object"
         },
         {
-          "description": "Text the client adds to a prompt that the person did not write, such\nas a host's instructions. Only a prompt carries it: the model gets it\nas written, ahead of the prompt's other blocks, and the daemon never\nsaves or shows it as part of the user message.",
+          "description": "Text the client adds to a prompt that the person did not write, such\nas a host's instructions. Only a prompt carries it: the model gets it\nas written, ahead of the prompt's other blocks, and the daemon never\nsaves or shows it as part of the user message.\n\n# Next major\n\nNEXT_MAJOR(rho-protocol): move prompt context to a\n`SessionPromptParams::context: Vec<String>` field and remove\n`ContentBlock::Context`.\n\nA new field on `SessionPromptParams`, which is not\n`#[non_exhaustive]`, is a major change, so context rides in the\ncontent as this variant until then. A user message never holds it.",
           "properties": {
             "text": {
               "type": "string"

@@ -24,6 +24,7 @@ use tokio::sync::oneshot;
 
 use super::{
     daemon,
+    requests::DaemonBuild,
     sessions::{Accept, Control, Waiter},
     Adapter,
 };
@@ -70,7 +71,13 @@ impl Adapter {
         let params = SessionPromptParams {
             author: rho_protocol::PromptAuthor::Person,
             session: live.id.clone(),
-            content: self.launch.prompt_content(content),
+            content: self.launch.prompt_content(
+                content,
+                match link.skew() {
+                    None => DaemonBuild::Same,
+                    Some(_) => DaemonBuild::Other,
+                },
+            ),
             timeout_ms: None,
             environment: ClientEnvironment::of_this_process(),
             idempotency_key: None,
