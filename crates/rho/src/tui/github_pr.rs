@@ -267,7 +267,7 @@ impl App {
         );
     }
 
-    pub(super) fn restart_github_pr_fetch(&mut self) {
+    fn restart_github_pr_fetch(&mut self) {
         self.tasks.abort(|id| *id == TaskId::GithubPr);
         self.start_github_pr_fetch();
     }
@@ -280,6 +280,13 @@ impl App {
         } else {
             self.start_github_pr_fetch();
         }
+    }
+
+    /// The TUI moved to another workspace (`info.runtime.cwd`): its branch
+    /// and pull request are that checkout's.
+    pub(super) fn refresh_workspace_on_move(&mut self) {
+        self.statusline.move_to(self.info.runtime.cwd.clone());
+        self.restart_github_pr_fetch();
     }
 
     /// After a finished shell or tool command. Refetch when HEAD moved, or

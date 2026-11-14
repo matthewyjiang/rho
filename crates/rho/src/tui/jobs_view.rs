@@ -86,10 +86,11 @@ pub(super) struct JobsView {
     /// before its first prompt opened it.
     followed: Option<SessionId>,
     /// What this TUI opens its sessions with. A session started here opens
-    /// with its setup, though always saved, and in this TUI's project as
-    /// its agent too, so
-    /// attaching finds the agent the launch named. Another project may not
-    /// define that agent, so a session there runs as its default.
+    /// with its setup, though always saved, and in the followed session's
+    /// workspace as the launch's agent too, so attaching finds the agent
+    /// the launch named; following a session there already checked that
+    /// agent. Another workspace may not define it, so a session there runs
+    /// as its default.
     launch: DaemonLaunch,
     /// The daemon's jobs as last listed; `None` before the first answer.
     jobs: Option<Vec<JobSummary>>,
@@ -431,7 +432,7 @@ impl JobsView {
                 setup.without.remove(&SessionPart::Saving);
                 // The same directory however each path spells it: the
                 // daemon lists a workspace canonicalized, and a typed path
-                // or the launch's need not be. A path that does not resolve
+                // or the followed workspace's need not be. A path that does not resolve
                 // is compared as written.
                 let resolved = |path: &PathBuf| {
                     crate::paths::canonicalize(path).unwrap_or_else(|_| path.clone())

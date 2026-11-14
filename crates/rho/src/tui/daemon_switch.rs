@@ -101,13 +101,13 @@ impl App {
     }
 
     /// Points what this TUI resolves against its workspace at `workspace`,
-    /// the followed session's: the files, skills, and git state it looks
-    /// up, and the status line that names them.
+    /// the followed session's, keeping `info.runtime.cwd` equal to
+    /// `DaemonSession::workspace`: the files and skills it looks up, and
+    /// the status line's directory, branch, and pull request.
     fn move_to_workspace(&mut self, workspace: PathBuf) {
-        self.statusline.move_to(workspace.clone());
         self.info.runtime.cwd = workspace;
         self.palette_caches = PaletteCaches::default();
-        self.restart_github_pr_fetch();
+        self.refresh_workspace_on_move();
     }
 
     /// Follows the saved session `id` names, resolved as `--resume` does,

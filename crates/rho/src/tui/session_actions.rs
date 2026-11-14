@@ -174,7 +174,7 @@ impl App {
     ) -> anyhow::Result<()> {
         self.ensure_resume_saves()?;
         self.ensure_this_project(&target.cwd)?;
-        self.resume_daemon_session(&target.id, terminal).await
+        self.resume_daemon_target(target.clone(), terminal).await
     }
 
     // Checked before the daemon opens the session.

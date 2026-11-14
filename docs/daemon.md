@@ -84,7 +84,7 @@ The daemon creates a branch `rho/<repository>-<id>` from your current `HEAD` and
 
 The daemon removes a worktree once its session has sat unused for a day, the worktree has no uncommitted changes, and your checkout already has its commits. It keeps the branch, and it recreates the worktree if you reopen the session. Worktrees it can't remove are marked stale after 14 days. [Cleaning up worktrees](/automation-cli#cleaning-up-worktrees) covers the rules, `rho worktrees prune`, and how to remove a worktree yourself.
 
-A TUI started in the original project only attaches to that project's own sessions. To reach a worktree session, run `rho attach <id>` or start the TUI in the worktree.
+To open a worktree session from a TUI started anywhere, select it in `/jobs` and press `Enter`. The TUI moves into the worktree. You can also run `rho attach <id>`.
 
 ### Subagents {#subagents}
 
