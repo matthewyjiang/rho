@@ -383,8 +383,10 @@ async fn report_title(session: Weak<LoadedSession>, title: TitleJob) {
 /// when it is one, its slash command when the person's message starts with
 /// one the daemon runs, else a model turn on it. The prompt's context goes
 /// to the model of a model turn or an agent's, never into the shown
-/// message; a prompt that runs neither holds it for the next one. A command the daemon cannot run fails the turn as a configuration error before the prompt is saved, as
-/// does a prompt from the client, `author`, that does not start a workflow.
+/// message; a prompt that runs neither holds it for the next one. A
+/// command the daemon cannot run fails the turn as a configuration error
+/// before the prompt is saved, as does a prompt from the client, `author`,
+/// that does not start a workflow.
 async fn run_turn(
     runtime: &mut SessionRuntime,
     view: &mut DaemonView,

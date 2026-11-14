@@ -90,13 +90,22 @@ fn take_trailing(text: &mut String) -> Vec<String> {
     taken
 }
 
-/// Where the `tag` block `text` ends with starts: its opening tag begins
+/// Where the `tag` block `text` ends with starts: the opening tag its
+/// closing one pairs with, past any `tag` blocks nested in it, which begins
 /// the text or a line.
 fn trailing_block(text: &str, tag: &str) -> Option<usize> {
-    if !text.ends_with(&format!("</{tag}>")) {
+    let (open, close) = (format!("<{tag}>"), format!("</{tag}>"));
+    if !text.ends_with(&close) {
         return None;
     }
-    let start = text.rfind(&format!("<{tag}>"))?;
+    let mut opens = 0;
+    let start = text
+        .rmatch_indices(&open)
+        .map(|(start, _)| start)
+        .find(|&start| {
+            opens += 1;
+            text[start..].matches(&close).count() == opens
+        })?;
     (start == 0 || text[..start].ends_with('\n')).then_some(start)
 }
 

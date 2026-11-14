@@ -68,6 +68,16 @@ fn t3_wrapping_becomes_context_and_the_person_text_stays() {
             ],
         ),
         (
+            "a block nested in T3's",
+            vec![text(&format!(
+                "hello\n<runtime_info>\n{RUNTIME}\n</runtime_info>"
+            ))],
+            vec![
+                context(&format!("<runtime_info>\n{RUNTIME}\n</runtime_info>")),
+                text("hello"),
+            ],
+        ),
+        (
             "no T3 blocks",
             vec![text("rename the widget")],
             vec![text("rename the widget")],

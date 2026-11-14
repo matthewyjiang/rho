@@ -17,7 +17,7 @@ document-spreadsheets = ["dep:calamine", "dep:zip"]
 [dependencies]
 rho-sdk = { version = "6.0.0", path = "../rho-sdk" }
 # Tool cards are protocol types (`rho_protocol::display`); diff previews build them.
-rho-protocol = { version = "1.0.0", path = "../rho-protocol" }
+rho-protocol = { version = "1.1.0", path = "../rho-protocol" }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
