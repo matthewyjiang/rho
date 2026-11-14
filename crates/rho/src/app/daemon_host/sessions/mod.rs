@@ -620,8 +620,9 @@ impl Sessions {
         let (workspace, worktree) = match worktree {
             false => (workspace, None),
             true => {
+                let start = crate::worktree::Start::of(&global);
                 let (workspace, added) =
-                    worktree::add_for_session(&self.worktrees, &workspace).await?;
+                    worktree::add_for_session(&self.worktrees, &workspace, start).await?;
                 (workspace, Some(added))
             }
         };

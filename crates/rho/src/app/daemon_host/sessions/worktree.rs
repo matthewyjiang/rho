@@ -4,10 +4,10 @@
 //!
 //! Cleanup removes a worktree only when nothing could lose by it: no session
 //! loaded in it and no job in it under way, no uncommitted or untracked
-//! change, and what it has checked out merged into its origin's `HEAD`. It
-//! keeps the branch and records the commit it removed. A session reopened
-//! later gets its worktree back on that branch, made again at that commit
-//! when someone deleted it since. Reading the session does the same, or,
+//! change, and what it has checked out merged into its origin's `HEAD` or
+//! the remote's default branch. It keeps the branch and records the commit
+//! it removed. A session reopened later gets its worktree back on that
+//! branch, made again at that commit when someone deleted it since. Reading the session does the same, or,
 //! when the branch is checked out elsewhere, checks the commit out alone
 //! for the read and removes it again after, so a read never fails on the
 //! branch and turns never run off it. A worktree a person removed has no
@@ -35,7 +35,7 @@ use rho_protocol::{ErrorCode, RpcError, SessionWorktree, WorktreeReport, Worktre
 use super::{open::Workspace, Sessions};
 use crate::{
     app::daemon_host::jobs::{unix_now, JobRecord, JobSubject},
-    worktree::{Checkout, Holds},
+    worktree::{Checkout, Holds, Start, Started},
 };
 
 /// How long a worktree sits on disk unused before it is stale: no change
@@ -89,12 +89,14 @@ impl InUse {
 }
 
 /// Adds a worktree under `root` for a session asked to open in
-/// `workspace`: the workspace in it the session opens in, and the worktree.
+/// `workspace`, from where `start` says: the workspace in it the session
+/// opens in, and the worktree.
 pub(super) async fn add_for_session(
     root: &Path,
     workspace: &Workspace,
+    start: Start,
 ) -> Result<(Workspace, SessionWorktree), RpcError> {
-    let added = crate::worktree::add(root, workspace.path())
+    let added = crate::worktree::add(root, workspace.path(), start)
         .await
         .map_err(|error| {
             RpcError::new(
@@ -102,11 +104,15 @@ pub(super) async fn add_for_session(
                 format!("could not open session in a worktree: {error}"),
             )
         })?;
-    tracing::info!(
-        branch = %added.worktree.branch,
-        path = %added.worktree.path.display(),
-        "added a session worktree"
-    );
+    let (branch, path) = (&added.worktree.branch, added.worktree.path.display());
+    match &added.started {
+        Started::FellBack(_) => {
+            tracing::warn!(%branch, %path, from = %added.started, "added a session worktree");
+        }
+        Started::Head | Started::Remote(_) => {
+            tracing::info!(%branch, %path, from = %added.started, "added a session worktree");
+        }
+    }
     let workspace =
         Workspace::parse(&added.cwd).map_err(|error| kept(error, Some(&added.worktree)))?;
     Ok((workspace, added.worktree))

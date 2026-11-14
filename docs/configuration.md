@@ -92,6 +92,7 @@ cycle_permission_mode = "alt+m"
 | Theme, zen, reasoning display, output streaming | `~/.rho/tui.toml` (theme), `~/.rho/clients/tui.toml`, or `/config` → **Display**. See [Theme](/interactive-tui/theme), [Transcript display](/interactive-tui/transcript), and [Text streaming](/interactive-tui#text-streaming) |
 | Permission mode | [Permission modes](/configuration/permissions) |
 | Concurrent agents, subagents, rewind | [Behavior](#behavior) |
+| Where session worktrees start | [Git](#git) |
 | Questionnaire timeout | [Questionnaire timeout](#questionnaire-timeout) |
 | Prompt templates | [Prompt templates](#prompt-templates) |
 | Project and global instructions | [AGENTS.md](#project-and-global-instructions), `/init`, and `/remember [global] <text>` |
@@ -119,6 +120,7 @@ cycle_permission_mode = "alt+m"
 | Agent | Permission mode, Auto classifier, advisor, delegation, concurrent agents, questionnaire timeout, workspace rewind, cache warming |
 | Context | Auto compaction and max output bytes |
 | Tools | Inline shell, edit tool, RTK, codemode, web search, SpaceXAI image generation |
+| Git | Where session worktrees start |
 | Display | The TUI's own settings in `clients/tui.toml`: zen mode, reasoning display, output streaming, header hints, notifications, cache miss notices, collapsed tool-output lines, prompt history, editing mode, update check |
 
 The theme and **Clear prompt history** at the bottom apply to this terminal only. To pick the credential store, run `rho credential-store set` ([Credential store](/authentication-and-models#where-credentials-live)).
@@ -387,6 +389,19 @@ Checkpoints capture original file contents for `write` and the selected native e
 Checkpoint journals live at `<session>/workspace-checkpoints/checkpoints.jsonl`. The per-file capture budget is **2 MiB**: larger files are marked unsupported, and a transcript notice names the budget, limit, and file size. The serialized per-session journal budget is **64 MiB**: a turn that would exceed it is not appended, and a visible notice names the budget, limit, requested total, and turn size. Further capture pauses for that running session; earlier turns remain rewindable. See [workspace checkpoints](/sessions#workspace-checkpoints) for storage and privacy details.
 
 `advisor_mode` controls whether the advisor tool is available. It defaults to `false`. See [Advisor mode](/configuration/advisor-mode).
+
+## Git
+
+These keys live under `[git]`.
+
+`worktree_from_remote` decides where a [session worktree](/daemon#sessions-in-worktrees) starts. It defaults to `true`: Rho fetches the `origin` remote's default branch (`origin/main`, say) and starts the worktree's branch there, so a session starts from what the remote has even when your checkout is behind. Without an `origin`, or when the fetch fails or takes over 30 seconds, the worktree starts from `HEAD`. Set it to `false` to always start from your checkout's `HEAD`, as before:
+
+```toml
+[git]
+worktree_from_remote = false
+```
+
+Toggle it in `/config` → **Git**. The change applies to the next worktree.
 
 ## Codemode
 

@@ -3,7 +3,7 @@ use std::{path::Path, process::Command};
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 
-use super::{add, inspect, remove, restore, Checkout, Holds, WorktreeError};
+use super::{add, inspect, remove, restore, Checkout, Holds, Start, Started, WorktreeError};
 
 /// Runs `git args` in `dir`, isolated from the caller's repository and
 /// config, and returns its trimmed stdout.
@@ -51,7 +51,7 @@ async fn a_worktree_branches_from_head_and_keeps_the_workspace_place() {
     let workspace = crate::paths::canonicalize(&repository.join("src")).unwrap();
     let root = home.path().join("rho-home/worktrees");
 
-    let added = add(&root, &workspace).await.unwrap();
+    let added = add(&root, &workspace, Start::Head).await.unwrap();
 
     let path = &added.worktree.path;
     assert_eq!(
@@ -93,7 +93,7 @@ async fn a_workspace_outside_git_is_refused() {
     let home = TempDir::new().unwrap();
     let workspace = crate::paths::canonicalize(home.path()).unwrap();
 
-    let refused = add(&home.path().join("worktrees"), &workspace).await;
+    let refused = add(&home.path().join("worktrees"), &workspace, Start::Head).await;
 
     assert!(
         matches!(&refused, Err(WorktreeError::NotARepository(path)) if path == &workspace),
@@ -183,7 +183,7 @@ async fn inspect_reads_what_removing_a_worktree_would_lose() {
         ),
     ];
     for (case, arrange, holds) in cases {
-        let added = add(&root, &origin).await.unwrap();
+        let added = add(&root, &origin, Start::Head).await.unwrap();
         arrange(&added.worktree.path);
         found.push((case, inspect(&added.worktree).await.unwrap()));
         expected.push((
@@ -192,7 +192,7 @@ async fn inspect_reads_what_removing_a_worktree_would_lose() {
         ));
     }
     git(&origin, &["checkout", "--quiet", "--detach"]);
-    let detached = add(&root, &origin).await.unwrap();
+    let detached = add(&root, &origin, Start::Head).await.unwrap();
     found.push((
         "detached origin",
         inspect(&detached.worktree).await.unwrap(),
@@ -299,7 +299,9 @@ async fn inspect_reads_squash_and_rebase_merges_as_merged() {
         let home = TempDir::new().unwrap();
         let origin = repository(home.path());
         edit_line(&origin, 1, "1");
-        let added = add(&home.path().join("worktrees"), &origin).await.unwrap();
+        let added = add(&home.path().join("worktrees"), &origin, Start::Head)
+            .await
+            .unwrap();
         let path = &added.worktree.path;
         let commits = [(10, "ten"), (12, "twelve")].map(|(line, text)| {
             edit_line(path, line, text);
@@ -361,7 +363,7 @@ async fn a_removed_worktree_comes_back_at_the_commit_it_was_removed_at() {
         ("branch deleted", true, Checkout::Branch),
         ("detached", false, Checkout::Detached),
     ] {
-        let added = add(&root, &origin).await.unwrap();
+        let added = add(&root, &origin, Start::Head).await.unwrap();
         let worktree = &added.worktree;
         remove(worktree).await.unwrap();
         let branch_kept = !git(&origin, &["branch", "--list", worktree.branch.as_str()]).is_empty();
@@ -410,7 +412,9 @@ async fn a_removed_worktree_whose_commit_git_collected_comes_back_at_head() {
     for checkout in [Checkout::Branch, Checkout::Detached] {
         let home = TempDir::new().unwrap();
         let origin = repository(home.path());
-        let added = add(&home.path().join("worktrees"), &origin).await.unwrap();
+        let added = add(&home.path().join("worktrees"), &origin, Start::Head)
+            .await
+            .unwrap();
         let worktree = &added.worktree;
         edit_line(&worktree.path, 10, "ten");
         let removed_at = git(&worktree.path, &["rev-parse", "HEAD"]);
@@ -447,4 +451,140 @@ async fn a_removed_worktree_whose_commit_git_collected_comes_back_at_head() {
     }
 
     assert_eq!(found, expected);
+}
+
+/// A clone `repo` in `home` of a bare `remote.git` whose `main` then gained
+/// a commit the clone has not fetched, and that commit.
+fn behind_its_remote(home: &Path) -> (std::path::PathBuf, String) {
+    let seed = repository(home);
+    let remote = home.join("remote.git");
+    git(
+        home,
+        &["clone", "--quiet", "--bare", path(&seed), path(&remote)],
+    );
+    let repo = home.join("clone");
+    git(home, &["clone", "--quiet", path(&remote), path(&repo)]);
+    std::fs::write(seed.join("shared.txt"), "newer").unwrap();
+    git(&seed, &["commit", "--quiet", "-am", "newer"]);
+    git(&seed, &["push", "--quiet", path(&remote), "main"]);
+    let newer = git(&seed, &["rev-parse", "HEAD"]);
+    (crate::paths::canonicalize(&repo).unwrap(), newer)
+}
+
+fn path(path: &Path) -> &str {
+    path.to_str().unwrap()
+}
+
+// Covers: a worktree started from the remote starts at the commit its
+// default branch has on the remote, not the checkout's older HEAD, whether
+// the clone recorded that branch, a remote added by hand did not, or the
+// recorded one is gone from the remote since, as after a rename; its branch
+// tracks nothing, and the checkout's own branch does not move.
+// Owner: session worktrees.
+#[tokio::test]
+async fn a_worktree_from_the_remote_starts_at_its_default_branch() {
+    let mut found = Vec::new();
+    let mut expected = Vec::new();
+    for recorded in ["main", "none", "renamed"] {
+        let home = TempDir::new().unwrap();
+        let (repo, newer) = behind_its_remote(home.path());
+        match recorded {
+            "none" => {
+                git(&repo, &["remote", "set-head", "origin", "--delete"]);
+            }
+            "renamed" => {
+                let head = ["symbolic-ref", "refs/remotes/origin/HEAD"];
+                git(&repo, &[head[0], head[1], "refs/remotes/origin/master"]);
+            }
+            _ => {}
+        }
+        let before = git(&repo, &["rev-parse", "HEAD"]);
+
+        let added = add(&home.path().join("worktrees"), &repo, Start::Remote)
+            .await
+            .unwrap();
+
+        let tracking = format!("branch.{}.remote", added.worktree.branch);
+        found.push((
+            recorded,
+            added.started,
+            git(&added.worktree.path, &["rev-parse", "HEAD"]),
+            git(
+                &repo,
+                &["config", "--default", "", "--get", tracking.as_str()],
+            ),
+            git(&repo, &["rev-parse", "HEAD"]),
+        ));
+        expected.push((
+            recorded,
+            Started::Remote("origin/main".to_owned()),
+            newer,
+            String::new(),
+            before,
+        ));
+    }
+
+    assert_eq!(found, expected);
+}
+
+// Covers: a worktree asked to start from the remote starts from HEAD when
+// the repository has no `origin`, and says it fell back when `origin`
+// cannot be fetched.
+// Owner: session worktrees.
+#[tokio::test]
+async fn a_worktree_from_the_remote_falls_back_to_head() {
+    let mut found = Vec::new();
+    let mut expected = Vec::new();
+    for remote in [None, Some("/nonexistent/remote.git")] {
+        let home = TempDir::new().unwrap();
+        let repo = repository(home.path());
+        if let Some(url) = remote {
+            git(&repo, &["remote", "add", "origin", url]);
+        }
+
+        let added = add(&home.path().join("worktrees"), &repo, Start::Remote)
+            .await
+            .unwrap();
+
+        let fell_back = matches!(added.started, Started::FellBack(_));
+        found.push((
+            remote,
+            fell_back,
+            git(&added.worktree.path, &["rev-parse", "HEAD"]),
+        ));
+        expected.push((remote, remote.is_some(), git(&repo, &["rev-parse", "HEAD"])));
+    }
+
+    assert_eq!(found, expected);
+}
+
+// Covers: cleanup reads a worktree started from the remote, with nothing
+// new, as merged into the remote's default branch while the checkout's
+// HEAD is still behind, so the daemon removes it rather than keeping it as
+// unmerged forever; one with a commit neither has stays unmerged.
+// Owner: session worktrees (git plumbing under the daemon's cleanup).
+#[tokio::test]
+async fn inspect_reads_a_worktree_the_remote_has_as_merged() {
+    let home = TempDir::new().unwrap();
+    let (repo, newer) = behind_its_remote(home.path());
+    let root = home.path().join("worktrees");
+    let clean = add(&root, &repo, Start::Remote).await.unwrap();
+    let ahead = add(&root, &repo, Start::Remote).await.unwrap();
+    edit_line(&ahead.worktree.path, 3, "three");
+
+    assert_eq!(
+        (
+            inspect(&clean.worktree).await.unwrap(),
+            inspect(&ahead.worktree).await.unwrap(),
+        ),
+        (
+            Holds::Merged {
+                base: "origin/main".to_owned(),
+                commit: newer,
+            },
+            Holds::Unmerged {
+                base: "main".to_owned(),
+            },
+        )
+    );
 }

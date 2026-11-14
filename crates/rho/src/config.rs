@@ -201,6 +201,10 @@ pub struct Config {
     /// Offer `keep_warm` on `process start`, letting the model keep the
     /// provider prompt cache warm while it waits on a long background command.
     pub keep_cache_warm: bool,
+    /// Start a new session worktree from the `origin` remote's default
+    /// branch, fetched first, instead of the checkout's `HEAD` (on by
+    /// default). See [`crate::worktree::Start`].
+    pub worktree_from_remote: bool,
     pub permission_mode: PermissionMode,
     /// Explicit credential backend. `None` means unset; runtime defaults to OS.
     pub credential_store: Option<CredentialStoreBackend>,
@@ -256,6 +260,7 @@ impl Default for Config {
             advisor_mode: false,
             workspace_rewind: true,
             keep_cache_warm: true,
+            worktree_from_remote: true,
             permission_mode: PermissionMode::Bypass,
             credential_store: None,
             rtk: true,

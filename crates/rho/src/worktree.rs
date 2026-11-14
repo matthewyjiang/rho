@@ -1,27 +1,96 @@
 //! Session worktrees (#1673): a session that asks for one works in a git
-//! worktree of its workspace's repository, on a new branch from that
-//! repository's `HEAD`, so sessions running at once in one repository never
-//! write the same files. The worktree lives under the rho home's
-//! `worktrees` directory, never inside the repository, and the session
-//! works at its workspace's place in it.
+//! worktree of its workspace's repository, on a new branch, so sessions
+//! running at once in one repository never write the same files. The branch
+//! starts from the `origin` remote's default branch, fetched first, or from
+//! the repository's `HEAD`, as `git.worktree_from_remote` says ([`Start`]).
+//! The worktree lives under the rho home's `worktrees` directory, never
+//! inside the repository, and the session works at its workspace's place in
+//! it.
 //!
 //! The daemon adds one for a session opened with
 //! `SessionNewParams::worktree`, and a foreground `rho run --worktree` for
 //! its own session. The daemon removes one of its sessions' worktrees once
-//! it is clean and its origin's `HEAD` has what it has checked out,
-//! however it was merged ([`inspect`], [`remove`]), keeping the branch, and
-//! adds it back at the commit it removed when the session reopens
-//! ([`restore`]). It never removes one holding work nobody merged, and
+//! it is clean and its origin's `HEAD`, or the remote's default branch, has
+//! what it has checked out, however it was merged ([`inspect`],
+//! [`remove`]), keeping the branch, and adds it back at the commit it
+//! removed when the session reopens ([`restore`]). It never removes one holding work nobody merged, and
 //! nothing removes a foreground run's: a person does, with
 //! `git worktree remove <path>` and `git branch -D <branch>`.
 
 use std::{
     ffi::OsStr,
+    fmt,
     path::{Path, PathBuf},
     process::Stdio,
+    time::Duration,
 };
 
 use rho_protocol::SessionWorktree;
+
+use crate::{
+    config::Config,
+    process_tree::{ProcessTree as _, SupervisedTree},
+};
+
+/// The remote whose default branch [`Start::Remote`] starts from.
+const REMOTE: &str = "origin";
+
+/// How long [`Start::Remote`] waits on the remote, every git command that
+/// asks it together, before starting from `HEAD`. Fetching one up-to-date
+/// branch from GitHub took 0.2-1.0 s (rho, 28 MiB packed; rho-ui), and
+/// `remote set-head --auto` 0.9 s, while a fetch from an unreachable host
+/// was still waiting when killed at 30 s. Adding a worktree waits on the
+/// remote this long at most.
+const FETCH_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Where a new worktree's branch starts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Start {
+    /// The repository's `HEAD`, whatever its checkout has.
+    Head,
+    /// The [`REMOTE`]'s default branch, fetched first, so the worktree has
+    /// what the remote has even when the checkout is behind. `HEAD` when the
+    /// repository has no such remote, or it cannot be fetched within
+    /// [`FETCH_TIMEOUT`] ([`Started::FellBack`]).
+    Remote,
+}
+
+impl Start {
+    /// The start `config` asks for.
+    pub(crate) fn of(config: &Config) -> Self {
+        match config.worktree_from_remote {
+            true => Self::Remote,
+            false => Self::Head,
+        }
+    }
+}
+
+/// What a worktree's branch started from, as the person who asked for it
+/// is told.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Started {
+    /// `HEAD`, as asked, or as [`Start::Remote`] in a repository with no
+    /// [`REMOTE`].
+    Head,
+    /// The remote's default branch, as `origin/main`.
+    Remote(String),
+    /// `HEAD`, since the remote's default branch could not be fetched, for
+    /// this reason.
+    FellBack(String),
+}
+
+impl fmt::Display for Started {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Head => formatter.write_str("HEAD"),
+            Self::Remote(branch) => formatter.write_str(branch),
+            Self::FellBack(reason) => write!(
+                formatter,
+                "HEAD, since {REMOTE}'s default branch could not be fetched: {reason}"
+            ),
+        }
+    }
+}
 
 /// The directory under `rho_home` that holds session worktrees.
 pub(crate) fn root(rho_home: &Path) -> PathBuf {
@@ -34,6 +103,7 @@ pub(crate) fn root(rho_home: &Path) -> PathBuf {
 pub(crate) struct Added {
     pub(crate) worktree: SessionWorktree,
     pub(crate) cwd: PathBuf,
+    pub(crate) started: Started,
 }
 
 /// Why no worktree could be added, or used.
@@ -91,8 +161,8 @@ pub(crate) enum Holds {
     /// Uncommitted or untracked changes, which removing would lose.
     Changes,
     /// Nothing but `commit`, whose changes `base`, the `HEAD` of the
-    /// checkout the worktree was added from, already has, merged, rebased,
-    /// or squashed in: removing loses nothing.
+    /// checkout the worktree was added from or the remote's default branch,
+    /// already has, merged, rebased, or squashed in: removing loses nothing.
     Merged { base: String, commit: String },
     /// Changes `base` does not have.
     Unmerged { base: String },
@@ -100,9 +170,13 @@ pub(crate) enum Holds {
 
 /// Adds a worktree under `root` for a session asked to work in
 /// `workspace`, a canonical directory: of the repository `workspace` is in,
-/// on a new branch from its `HEAD`. The worktree and its branch share one
-/// name, the repository's directory name and a random suffix.
-pub(crate) async fn add(root: &Path, workspace: &Path) -> Result<Added, WorktreeError> {
+/// on a new branch from where `start` says. The worktree and its branch
+/// share one name, the repository's directory name and a random suffix.
+pub(crate) async fn add(
+    root: &Path,
+    workspace: &Path,
+    start: Start,
+) -> Result<Added, WorktreeError> {
     // In English, which the refusal below reads.
     let toplevel = match git(
         workspace,
@@ -137,13 +211,30 @@ pub(crate) async fn add(root: &Path, workspace: &Path) -> Result<Added, Worktree
     // Without the Windows verbatim prefix a rho home can carry, which git
     // cannot create directories under.
     let path = canonical(root)?.join(&name);
+    let head = || "HEAD".to_owned();
+    let (started, commit) = match start {
+        Start::Head => (Started::Head, head()),
+        // Giving up kills the git commands still asking the remote.
+        Start::Remote => match tokio::time::timeout(FETCH_TIMEOUT, fetch_tip(&toplevel)).await {
+            Ok(Ok(Some(tip))) => (Started::Remote(tip.label), tip.commit),
+            Ok(Ok(None)) => (Started::Head, head()),
+            Ok(Err(error)) => (Started::FellBack(error.to_string()), head()),
+            Err(_) => {
+                let secs = FETCH_TIMEOUT.as_secs();
+                let reason = format!("{REMOTE} did not answer within {secs} seconds");
+                (Started::FellBack(reason), head())
+            }
+        },
+    };
+    // A commit, not the remote branch's name, so the new branch tracks
+    // nothing: a push never lands on the remote's default branch.
     let args: [&OsStr; 6] = [
         "worktree".as_ref(),
         "add".as_ref(),
         "-b".as_ref(),
         branch.as_ref(),
         path.as_os_str(),
-        "HEAD".as_ref(),
+        commit.as_ref(),
     ];
     if let Ran::Failed { stderr: detail, .. } = git(&toplevel, args, &[]).await? {
         // git keeps a worktree it made when only a hook after the checkout
@@ -189,13 +280,115 @@ pub(crate) async fn add(root: &Path, workspace: &Path) -> Result<Added, Worktree
             origin: workspace.to_path_buf(),
         },
         cwd,
+        started,
     })
 }
 
+/// The commit the [`REMOTE`]'s default branch is at, as a repository last
+/// fetched it.
+struct RemoteTip {
+    /// The branch, as `origin/main`.
+    label: String,
+    commit: String,
+}
+
+/// Fetches the [`REMOTE`]'s default branch into `repository` and returns
+/// its tip; `None` when the repository has no such remote. A fetch that
+/// fails is an error, never a stale commit.
+async fn fetch_tip(repository: &Path) -> Result<Option<RemoteTip>, WorktreeError> {
+    let remotes = succeeded(repository, "remote", ["remote"]).await?;
+    if !remotes.lines().any(|remote| remote == REMOTE) {
+        return Ok(None);
+    }
+    // A clone records the default branch; a remote added by hand has none
+    // until asked.
+    let recorded = remote_default(repository).await?;
+    let branch = match &recorded {
+        Some(branch) => branch.clone(),
+        None => ask_default(repository).await?,
+    };
+    if let Err(error) = fetch_branch(repository, &branch).await {
+        // The remote may have renamed it since, as `master` to `main`.
+        if recorded.is_none() {
+            return Err(error);
+        }
+        match ask_default(repository).await {
+            Ok(renamed) if renamed != branch => fetch_branch(repository, &renamed).await?,
+            Ok(_) | Err(_) => return Err(error),
+        }
+    }
+    remote_tip(repository)
+        .await?
+        .ok_or_else(|| no_default(repository))
+        .map(Some)
+}
+
+/// Asks the [`REMOTE`] for its default branch, as `main`, and records it.
+async fn ask_default(repository: &Path) -> Result<String, WorktreeError> {
+    let set_head = ["remote", "set-head", REMOTE, "--auto"];
+    remote(repository, "remote set-head", set_head).await?;
+    remote_default(repository)
+        .await?
+        .ok_or_else(|| no_default(repository))
+}
+
+/// Fetches the [`REMOTE`]'s `branch` into its remote-tracking ref, leaving
+/// `FETCH_HEAD` and submodules alone.
+async fn fetch_branch(repository: &Path, branch: &str) -> Result<(), WorktreeError> {
+    let refspec = format!("+refs/heads/{branch}:refs/remotes/{REMOTE}/{branch}");
+    let fetch = [
+        "fetch",
+        "--quiet",
+        "--no-tags",
+        "--no-write-fetch-head",
+        "--no-recurse-submodules",
+        REMOTE,
+        refspec.as_str(),
+    ];
+    remote(repository, "fetch", fetch).await.map(drop)
+}
+
+fn no_default(repository: &Path) -> WorktreeError {
+    WorktreeError::Git {
+        action: "remote set-head".to_owned(),
+        repository: repository.to_path_buf(),
+        detail: format!("{REMOTE} names no default branch"),
+    }
+}
+
+/// The [`REMOTE`]'s default branch, as `main`, that `repository` last
+/// recorded, without asking the remote.
+async fn remote_default(repository: &Path) -> Result<Option<String>, WorktreeError> {
+    let reference = format!("refs/remotes/{REMOTE}/HEAD");
+    let read = ["symbolic-ref", "--quiet", reference.as_str()];
+    let prefix = format!("refs/remotes/{REMOTE}/");
+    Ok(answered(repository, "symbolic-ref", read)
+        .await?
+        .and_then(|target| target.strip_prefix(&prefix).map(str::to_owned)))
+}
+
+/// The [`REMOTE`]'s default branch's tip as `repository` last fetched it,
+/// without asking the remote; `None` when it records no default branch, or
+/// never fetched the one it records.
+async fn remote_tip(repository: &Path) -> Result<Option<RemoteTip>, WorktreeError> {
+    let Some(branch) = remote_default(repository).await? else {
+        return Ok(None);
+    };
+    let object = format!("refs/remotes/{REMOTE}/{branch}^{{commit}}");
+    let verify = ["rev-parse", "--verify", "--quiet", object.as_str()];
+    Ok(answered(repository, "rev-parse", verify)
+        .await?
+        .map(|commit| RemoteTip {
+            label: format!("{REMOTE}/{branch}"),
+            commit,
+        }))
+}
+
 /// What `worktree` holds: whether removing it would lose uncommitted or
-/// untracked changes, or committed changes its origin's `HEAD` lacks. It
-/// checks what the worktree has checked out, which is its branch unless a
-/// session switched: removing a worktree keeps every branch.
+/// untracked changes, or committed changes both its origin's `HEAD` and the
+/// remote's default branch, as last fetched, lack. It checks what the
+/// worktree has checked out, which is its branch unless a session
+/// switched: removing a worktree keeps every branch.
 pub(crate) async fn inspect(worktree: &SessionWorktree) -> Result<Holds, WorktreeError> {
     // Every untracked file and submodule change, whatever the repository's
     // `status.showUntrackedFiles` or submodule settings hide: `git worktree
@@ -226,10 +419,18 @@ pub(crate) async fn inspect(worktree: &SessionWorktree) -> Result<Holds, Worktre
         }
         branch => branch,
     };
-    Ok(match has_changes_of(origin, &base_commit, &head).await? {
-        true => Holds::Merged { base, commit: head },
-        false => Holds::Unmerged { base },
-    })
+    if has_changes_of(origin, &base_commit, &head).await? {
+        return Ok(Holds::Merged { base, commit: head });
+    }
+    // A worktree started from the remote, or merged there, while the
+    // checkout stayed behind.
+    if let Some(tip) = remote_tip(origin).await? {
+        if has_changes_of(origin, &tip.commit, &head).await? {
+            let base = tip.label;
+            return Ok(Holds::Merged { base, commit: head });
+        }
+    }
+    Ok(Holds::Unmerged { base })
 }
 
 /// Whether `base` already has the changes of `commit`, both in the
@@ -309,7 +510,9 @@ pub(crate) enum Checkout {
 /// directory in it, when git does not track it. When git no longer has
 /// `commit`, as once a squash-merged branch is deleted and git collects
 /// what only it held, it starts from the origin's `HEAD`, which [`inspect`]
-/// found has its changes while the origin stays on the branch it checked.
+/// found has its changes while the origin stays on the branch it checked,
+/// unless only the remote's default branch had them: then the worktree
+/// comes back without them, and they stay on the remote.
 pub(crate) async fn restore(
     worktree: &SessionWorktree,
     commit: &str,
@@ -436,34 +639,83 @@ async fn answered(
     }
 }
 
+/// [`succeeded`] for a git command that asks a remote, so may wait on the
+/// network or on a person. It runs in a process tree of its own, which on
+/// Unix has no terminal, so ssh cannot stop it asking for a passphrase or a
+/// host key; dropping the future kills the whole tree, ssh included.
+async fn remote(
+    dir: &Path,
+    action: &str,
+    args: impl IntoIterator<Item = impl AsRef<OsStr>>,
+) -> Result<String, WorktreeError> {
+    let mut command = command(dir, args, &[]);
+    SupervisedTree::prepare(&mut command);
+    let child = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(WorktreeError::NoGit)?;
+    let _tree = SupervisedTree::attach(&child).map_err(WorktreeError::NoGit)?;
+    let output = child
+        .wait_with_output()
+        .await
+        .map_err(WorktreeError::NoGit)?;
+    match ran(&output) {
+        Ran::Succeeded(stdout) => Ok(stdout),
+        Ran::Failed { stderr, .. } => Err(WorktreeError::Git {
+            action: action.to_owned(),
+            repository: dir.to_path_buf(),
+            detail: stderr,
+        }),
+    }
+}
+
 /// Runs `git args` in `dir` with `env` set.
 async fn git(
     dir: &Path,
     args: impl IntoIterator<Item = impl AsRef<OsStr>>,
     env: &[(&str, &str)],
 ) -> Result<Ran, WorktreeError> {
+    let output = command(dir, args, env)
+        .output()
+        .await
+        .map_err(WorktreeError::NoGit)?;
+    Ok(ran(&output))
+}
+
+/// The command for `git args` in `dir` with `env` set, outside any
+/// repository the caller's environment names.
+fn command(
+    dir: &Path,
+    args: impl IntoIterator<Item = impl AsRef<OsStr>>,
+    env: &[(&str, &str)],
+) -> tokio::process::Command {
     let mut command = tokio::process::Command::new("git");
     for name in crate::git::LOCATION_ENV {
         command.env_remove(name);
     }
-    let output = command
+    // Its stdin is no terminal: git fails rather than asking for a
+    // username or password.
+    command.env("GIT_TERMINAL_PROMPT", "0");
+    command
         .arg("-C")
         .arg(dir)
         .args(args)
         .envs(env.iter().copied())
-        .stdin(Stdio::null())
-        .output()
-        .await
-        .map_err(WorktreeError::NoGit)?;
+        .stdin(Stdio::null());
+    command
+}
+
+fn ran(output: &std::process::Output) -> Ran {
     let text = |bytes: &[u8]| String::from_utf8_lossy(bytes).trim().to_owned();
-    Ok(if output.status.success() {
+    if output.status.success() {
         Ran::Succeeded(text(&output.stdout))
     } else {
         Ran::Failed {
             code: output.status.code(),
             stderr: text(&output.stderr),
         }
-    })
+    }
 }
 
 fn canonical(path: &Path) -> Result<PathBuf, WorktreeError> {

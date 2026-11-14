@@ -25,11 +25,12 @@ use super::{
 
 /// The agent's settings pages, in display order. Every registry row names
 /// one of these ids.
-const CATEGORIES: [(&str, &str); 5] = [
+const CATEGORIES: [(&str, &str); 6] = [
     ("models", "Models"),
     ("agent", "Agent"),
     ("context", "Context"),
     ("tools", "Tools"),
+    ("git", "Git"),
     ("providers", "Providers"),
 ];
 
