@@ -31,7 +31,7 @@ image = { version = "0.25.6", default-features = false, features = ["png", "jpeg
 ignore = "0.4"
 globset = "0.4"
 regex = "1"
-calamine = { version = "0.37", optional = true }
+calamine = { version = "0.38", optional = true }
 flate2 = { version = "1", optional = true }
 # Same major as pdf-inspector so preflight and extraction share one lopdf build.
 lopdf = { version = "0.45", optional = true }
