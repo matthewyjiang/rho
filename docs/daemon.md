@@ -73,7 +73,7 @@ Prompting or attaching to a saved session reopens it in its own workspace, whate
 
 A session can work in its own git worktree, so several sessions in one repository don't overwrite each other's edits. Ask for one with [`rho run --worktree`](/automation-cli#running-in-a-worktree), with `Tab` when you start a session from `/jobs`, or with the `worktree` option of the [MCP server](/mcp-server)'s `new` tool.
 
-The daemon creates a branch `rho/<repository>-<id>` from your current `HEAD` and checks it out at `~/.rho/worktrees/<repository>-<id>`. The session's commands, edits, and project instructions use the worktree. The workspace must be inside a git repository.
+The daemon creates a branch `rho/<repository>-<id>` and checks it out at `~/.rho/worktrees/<repository>-<id>`. The branch starts from your `origin` remote's default branch, fetched first, so it has the latest work even when your checkout is behind. Without an `origin`, or when the fetch fails or takes over 30 seconds, it starts from your current `HEAD`. Turn off [`git.worktree_from_remote`](/configuration#git) to always start from `HEAD`. The new branch doesn't track the remote branch, so a push never lands on it. The session's commands, edits, and project instructions use the worktree. The workspace must be inside a git repository.
 
 `rho daemon status` lists the worktrees of the daemon's sessions:
 
@@ -82,7 +82,7 @@ The daemon creates a branch `rho/<repository>-<id>` from your current `HEAD` and
                rho/api-91bd22aa /home/me/.rho/worktrees/api-91bd22aa (stale)
 ```
 
-The daemon removes a worktree once its session has sat unused for a day, the worktree has no uncommitted changes, and your checkout already has its commits. It keeps the branch, and it recreates the worktree if you reopen the session. Worktrees it can't remove are marked stale after 14 days. [Cleaning up worktrees](/automation-cli#cleaning-up-worktrees) covers the rules, `rho worktrees prune`, and how to remove a worktree yourself.
+The daemon removes a worktree once its session has sat unused for a day, the worktree has no uncommitted changes, and your checkout or the remote's default branch already has its commits. It keeps the branch, and it recreates the worktree if you reopen the session. Worktrees it can't remove are marked stale after 14 days. [Cleaning up worktrees](/automation-cli#cleaning-up-worktrees) covers the rules, `rho worktrees prune`, and how to remove a worktree yourself.
 
 A TUI started in the original project only attaches to that project's own sessions. To reach a worktree session, run `rho attach <id>` or start the TUI in the worktree.
 

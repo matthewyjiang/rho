@@ -343,11 +343,13 @@ async fn prepare_startup(cli: Cli) -> anyhow::Result<PreparedStartup> {
             Some(_) | None => config_repository,
         };
         let root = crate::worktree::root(&crate::paths::rho_dir()?);
-        let added = crate::worktree::add(&root, &workspace).await?;
+        let start = crate::worktree::Start::of(&config);
+        let added = crate::worktree::add(&root, &workspace, start).await?;
         eprintln!(
             "rho: {}",
             crate::worktree::hint(&added.worktree, crate::worktree::Removal::Manual)
         );
+        eprintln!("rho: the worktree starts from {}", added.started);
         std::env::set_current_dir(&added.cwd)?;
         (added.cwd, output_file, config_repository)
     } else {

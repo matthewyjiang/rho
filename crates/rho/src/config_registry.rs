@@ -57,6 +57,7 @@ pub(crate) static AGENT_SETTINGS: &[&dyn AnySetting<Config>] = &[
     &BRAVE_SEARCH_URL,
     &FIRECRAWL_SEARCH_URL,
     &XAI_IMAGE_GENERATION,
+    &WORKTREE_FROM_REMOTE,
     &CREDENTIAL_STORE,
 ];
 
@@ -622,6 +623,21 @@ static XAI_IMAGE_GENERATION: Setting<Config, bool> = Setting {
     spec: (),
     get: |config| config.xai_image_generation,
     set: |config, enabled| config.xai_image_generation = enabled,
+    validate: any_value,
+};
+
+static WORKTREE_FROM_REMOTE: Setting<Config, bool> = Setting {
+    key: "git.worktree_from_remote",
+    meta: meta(
+        "git",
+        None,
+        "Start worktrees from the remote",
+        "Fetch the origin remote's default branch and start each new session worktree from it, instead of from your checkout's HEAD. Falls back to HEAD when there is no remote or the fetch fails.",
+        Apply::NextSession,
+    ),
+    spec: (),
+    get: |config| config.worktree_from_remote,
+    set: |config, enabled| config.worktree_from_remote = enabled,
     validate: any_value,
 };
 

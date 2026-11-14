@@ -228,10 +228,13 @@ A detached run differs from a foreground run:
 ### Running in a worktree
 
 `rho run --worktree` gives the run its own git worktree on a new branch from
-`HEAD`, so runs in the same repository don't overwrite each other's edits. It
+`origin`'s default branch, fetched first, or from `HEAD` when
+[`git.worktree_from_remote`](/configuration#git) is off or the fetch fails, so
+runs in the same repository don't overwrite each other's edits. It
 works with or without `--detach`. The worktree lives under `~/.rho/worktrees/`,
-and Rho prints its path and branch on stderr. Outside a git repository, or in
-one with no commits, `--worktree` fails with exit code `2`.
+and Rho prints its path and branch on stderr, and without `--detach` what the
+branch started from. Outside a git repository, or in one with no commits
+and no `origin` to start from, `--worktree` fails with exit code `2`.
 
 #### Cleaning up worktrees
 
@@ -240,11 +243,13 @@ these are true:
 
 - The session isn't open or running, and nobody has used it for a day.
 - The worktree has no uncommitted or untracked changes.
-- The current `HEAD` of the checkout you started from has the branch's changes.
-  Regular, squash, and rebase merges all count.
+- The current `HEAD` of the checkout you started from, or `origin`'s default
+  branch as last fetched, has the branch's changes. Regular, squash, and
+  rebase merges all count.
 
-Rho checks only local git, so pull the merged pull request into that checkout
-first. Detecting a squash merge needs git 2.38 or later. Files git ignores,
+Rho checks only local git and fetches nothing for cleanup. The next worktree
+that starts from the remote fetches its default branch, and so does a `git
+fetch` of your own. Detecting a squash merge needs git 2.38 or later. Files git ignores,
 such as `.env` or `node_modules`, go with the worktree. If you reopen the
 session later, the daemon restores its worktree on the branch.
 
