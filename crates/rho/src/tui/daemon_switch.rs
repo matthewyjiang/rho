@@ -9,10 +9,17 @@
 //! while the TUI shows no turn, so work is left behind only in a session
 //! the TUI had stopped following, or whose turn began unseen; it keeps
 //! running in the daemon and can be resumed. A resumed session's attach
-//! replays its conversation as a first attach does.
+//! replays its conversation as a first attach does. A session of another
+//! workspace, as `/jobs` attaches to, moves the TUI to that workspace
+//! before its replay shows.
 
-use super::{daemon_launch::DaemonTarget, App, ComposerMode, DefaultTerminal, InputSubmissionMode};
-use crate::session::Session;
+use std::path::PathBuf;
+
+use super::{
+    daemon_launch::DaemonTarget, palette::PaletteCaches, App, ComposerMode, DefaultTerminal,
+    InputSubmissionMode,
+};
+use crate::session::{Session, SessionTarget};
 
 impl App {
     /// Clears what the screen holds of the session it showed, for one that
@@ -66,6 +73,10 @@ impl App {
         self.info.session.session_id = opened.saved_id().map(str::to_owned);
         // The session followed until now detaches as its connection drops.
         self.info.session.daemon = opened;
+        let workspace = self.info.session.daemon.workspace().to_path_buf();
+        if workspace != self.info.runtime.cwd {
+            self.move_to_workspace(workspace);
+        }
         self.sessions_hub_state.clear();
         self.daemon_option_requests.clear();
         self.daemon_login_selected = None;
@@ -89,7 +100,18 @@ impl App {
         Ok(())
     }
 
-    /// Follows the saved session `id` names, resolved as `--resume` does.
+    /// Points what this TUI resolves against its workspace at `workspace`,
+    /// the followed session's, keeping `info.runtime.cwd` equal to
+    /// `DaemonSession::workspace`: the files and skills it looks up, and
+    /// the status line's directory, branch, and pull request.
+    fn move_to_workspace(&mut self, workspace: PathBuf) {
+        self.info.runtime.cwd = workspace;
+        self.palette_caches = PaletteCaches::default();
+        self.refresh_workspace_on_move();
+    }
+
+    /// Follows the saved session `id` names, resolved as `--resume` does,
+    /// when it is of this TUI's workspace.
     pub(super) async fn resume_daemon_session(
         &mut self,
         id: &str,
@@ -99,6 +121,16 @@ impl App {
         // An id lookup can find a session saved under another project;
         // refused before the daemon opens it.
         self.ensure_this_project(&target.cwd)?;
+        self.resume_daemon_target(target, terminal).await
+    }
+
+    /// Follows the saved session `target`, in whichever workspace it was
+    /// saved.
+    pub(super) async fn resume_daemon_target(
+        &mut self,
+        target: SessionTarget,
+        terminal: &mut DefaultTerminal,
+    ) -> anyhow::Result<()> {
         // It runs as the agent it was saved as, so a launch that named an
         // agent resumes only that agent's sessions, as at startup.
         if let Some(definition) = &self.info.session.resume_launch.definition {

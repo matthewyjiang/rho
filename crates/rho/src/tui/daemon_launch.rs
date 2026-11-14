@@ -5,6 +5,9 @@
 /// `/new` after it.
 #[derive(Clone)]
 pub(crate) struct DaemonLaunch {
+    /// Where a new session opens: the followed session's workspace, which
+    /// starts as the launch's and moves with each session the TUI follows
+    /// (`DaemonSession::follow`). The fields below stay the launch's.
     pub(crate) cwd: std::path::PathBuf,
     /// The agent a new session runs as; a resumed one runs as it was saved.
     pub(crate) agent: Option<String>,

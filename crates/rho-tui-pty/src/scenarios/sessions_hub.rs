@@ -152,7 +152,7 @@ pub(super) const SESSIONS_HUB_STEPS: &[Step] = &[
     Step::Phase("reject_direct_cross_directory_resume"),
     Step::SubmitText("/resume 11111111"),
     Step::WaitText {
-        text: "could not resume session: start Rho in",
+        text: "could not resume session: the session belongs to",
         timeout: SETTLE,
     },
     Step::Phase("open_sessions_hub"),

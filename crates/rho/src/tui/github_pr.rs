@@ -282,6 +282,13 @@ impl App {
         }
     }
 
+    /// The TUI moved to another workspace (`info.runtime.cwd`): its branch
+    /// and pull request are that checkout's.
+    pub(super) fn refresh_workspace_on_move(&mut self) {
+        self.statusline.move_to(self.info.runtime.cwd.clone());
+        self.restart_github_pr_fetch();
+    }
+
     /// After a finished shell or tool command. Refetch when HEAD moved, or
     /// when the command itself can create or retarget the current-branch PR.
     pub(super) fn refresh_git_after_command(&mut self, command: Option<&str>) {
