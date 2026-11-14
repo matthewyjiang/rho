@@ -413,17 +413,33 @@ def fetch_latest_release() -> str | None:
     """The newest release tag on the remote, fetched if it is not local.
     Asks the remote because local tags may be stale. Fetches shallowly only
     into a clone that is already shallow, such as CI's: a shallow fetch
-    makes a full clone, and every worktree sharing it, shallow."""
+    makes a full clone, and every worktree sharing it, shallow. A tagged
+    commit already in the clone, such as the release commit CI checks out,
+    only gets its tag: fetching it shallowly would make it a shallow boundary
+    and cut off the parent `--baseline-ref HEAD^1` compares against."""
     listing = git(
         "ls-remote",
         "--tags",
-        "--refs",
         REMOTE,
         "rho-coding-agent-v*",
         hint="offline, pass --baseline-ref with a local release tag",
     )
-    tag = latest_release([line.split("refs/tags/", 1)[1] for line in listing.splitlines()])
-    if tag is not None and not exists(f"{tag}^{{commit}}"):
+    # An annotated tag's peeled `<tag>^{}` line follows it and names its commit.
+    commits = {}
+    for line in listing.splitlines():
+        commit, _, ref = line.partition("\t")
+        commits[ref.removeprefix("refs/tags/").removesuffix("^{}")] = commit
+    tag = latest_release(list(commits))
+    if tag is None:
+        return None
+    if exists(f"{tag}^{{commit}}"):
+        local = git("rev-parse", f"{tag}^{{commit}}").strip()
+        if local != commits[tag]:
+            raise SystemExit(f"error: local {tag} is {local}, but {REMOTE} has {commits[tag]}")
+        return tag
+    if exists(commits[tag]):
+        git("tag", tag, commits[tag])
+    else:
         shallow = git("rev-parse", "--is-shallow-repository").strip() == "true"
         depth = ["--depth=1"] if shallow else []
         git("fetch", "--no-tags", *depth, REMOTE, f"refs/tags/{tag}:refs/tags/{tag}")
