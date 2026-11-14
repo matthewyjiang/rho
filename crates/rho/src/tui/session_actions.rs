@@ -189,8 +189,9 @@ impl App {
     pub(super) fn ensure_this_project(&self, session_cwd: &std::path::Path) -> anyhow::Result<()> {
         anyhow::ensure!(
             !is_cross_project(session_cwd, &self.info.runtime.cwd),
-            "start Rho in {} to resume this session",
-            crate::paths::display(session_cwd)
+            "the session belongs to {}, not {}, where this TUI is; start Rho there to resume it",
+            crate::paths::display(session_cwd),
+            crate::paths::display(&self.info.runtime.cwd)
         );
         Ok(())
     }
