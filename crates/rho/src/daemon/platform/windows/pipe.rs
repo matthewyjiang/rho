@@ -21,6 +21,9 @@ use super::security::{owned_by_current_user, OwnerOnly};
 
 /// How long a client waits for a pipe whose every instance is taken.
 //
+// rho-protocol's `local_daemon_pipe.rs` copies this wait and its interval
+// for frontends' `LocalDaemon`; change both.
+//
 // Tripwire. A pipe has no backlog: a client can open it only while the
 // server has an instance nobody connected to yet, and the server makes the
 // next one as soon as a client takes the last (see `PipeServer::accept`), so
