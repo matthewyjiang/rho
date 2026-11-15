@@ -81,7 +81,9 @@ Open the routine on desktop. Its **Webhook** section shows **POST to** and **key
 On every machine, save the routine as a webhook target and bind it to the token from step 3:
 
 ```bash
-printf %s '<key>' | rho mcp webhook add grok --url '<POST to URL>' --token grok
+read -rs ROUTINE_KEY   # paste the key; it isn't echoed or saved in shell history
+printf %s "$ROUTINE_KEY" | rho mcp webhook add grok --url '<POST to URL>' --token grok
+unset ROUTINE_KEY
 ```
 
 The key is read from stdin and kept in your [credential store](/authentication-and-models#where-credentials-live). `rho mcp webhook list` shows each target's last delivery and any error.
@@ -101,6 +103,8 @@ Starting work
   the list above), `prompt`, and `notify: "grok"`. Add `worktree: true` when
   several sessions may work in the same repository.
 - Keep a short ledger: machine, session id, goal, status.
+- If the result has `watch_error`, the session started but its webhook may
+  never fire. Tell me, and follow that session with `wait` until it is done.
 - Do not call `wait` in a loop. The routine "Rho session updates" runs when a
   session you started settles or needs me.
 
@@ -110,10 +114,12 @@ When "Rho session updates" runs, the JSON body has `server` (the machine),
 - Deliveries can repeat. If you already handled this session's `turn` in this
   same `state` with the same `inputs`, stop. A turn that asked me something
   and then finished arrives twice, once per state; handle both.
-- `waiting_for_input`: Rho is waiting for me. Tell me the machine, the session,
-  and what it asks (`inputs`), and that I can answer with
-  `rho attach <session>` on that machine. Never try to answer it yourself.
-- `completed`: read `outcome.text`. If the goal needs another step, call
+- Check `inputs` first, whatever `state` says. When it is not empty, Rho is
+  waiting for me, even with `state: completed` (a delegated agent can ask after
+  the turn ended). Tell me the machine, the session, and what it asks, and that
+  I can answer with `rho attach <session>` on that machine. Never try to answer
+  it yourself, and don't prompt that session until it's answered.
+- `completed` with no `inputs`: read `outcome.text`. If the goal needs another step, call
   `prompt` on the same connector with the session, the next instruction, and
   `notify: "grok"`. Otherwise tell me the result in two or three sentences.
 - `failed`, `cancelled`, `timed_out`, or `interrupted`: tell me what happened.
