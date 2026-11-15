@@ -34,6 +34,18 @@ fn every_session_event_round_trips_through_its_wire_form() {
             json!({"type": "state", "state": "idle"}),
         ),
         (
+            SessionEvent::Activity {
+                state: SessionActivity::Active,
+            },
+            json!({"type": "activity", "state": "active"}),
+        ),
+        (
+            SessionEvent::Activity {
+                state: SessionActivity::Settled,
+            },
+            json!({"type": "activity", "state": "settled"}),
+        ),
+        (
             SessionEvent::TurnEnded {
                 turn: TurnId::new("t1"),
                 outcome: TurnOutcome::Answered {
@@ -406,7 +418,7 @@ fn every_session_event_round_trips_through_its_wire_form() {
     }
 }
 
-// Covers: an event type, tool kind, tool status, or tool content a newer
+// Covers: an event type, activity, tool kind, tool status, or tool content a newer
 // daemon adds reads as `Unknown` instead of failing the notification.
 // Owner: protocol forward compatibility.
 #[test]
@@ -415,6 +427,12 @@ fn unknown_event_values_read_as_unknown() {
         (
             json!({"type": "approval", "id": "a1"}),
             SessionEvent::Unknown,
+        ),
+        (
+            json!({"type": "activity", "state": "draining"}),
+            SessionEvent::Activity {
+                state: SessionActivity::Unknown,
+            },
         ),
         (
             json!({

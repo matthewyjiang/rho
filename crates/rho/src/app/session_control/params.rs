@@ -6,7 +6,7 @@ use std::{collections::HashMap, num::NonZeroUsize, path::PathBuf, time::Duration
 
 use rho_protocol::{
     Cursor, InputRequest, JobId, JobState, JobSummary, Seq, SessionId, SessionWorktree, SteerId,
-    StreamId, TurnOutcome,
+    StreamId, TurnId, TurnOutcome,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -281,14 +281,23 @@ impl WaitParams {
 pub(crate) struct WaitResult {
     pub(crate) session: SessionId,
     pub(crate) state: JobState,
-    /// Whether the session's turn stopped running: it ended, or it waits
-    /// for a person to answer `inputs`.
+    /// Whether the session is done for now: it settled, with no turn under
+    /// way and none the daemon will start for its background work, or it
+    /// waits for a person to answer `inputs`. False with a turn that ended
+    /// means background work is still due.
     pub(crate) done: bool,
-    /// How the turn ended, the final answer included, when it ended.
+    /// How the last turn ended, the final answer included, once it ended,
+    /// even while `done` is false. It is final once `done` is true; until
+    /// then a later turn, such as one the daemon starts to deliver
+    /// background results, may replace it on the next `wait`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) outcome: Option<TurnOutcome>,
-    /// What the turn waits on a person for. Only a person answers these,
-    /// from a rho frontend; no session-control action can.
+    /// The turn `state` is of: the one under way, or the last one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) turn: Option<TurnId>,
+    /// What the turn or the session's subagents wait on a person for. Only
+    /// a person answers these, from a rho frontend; no session-control
+    /// action can.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub(crate) inputs: Vec<InputRequest>,
     /// Pass to the next `wait` on this session to resume after what this

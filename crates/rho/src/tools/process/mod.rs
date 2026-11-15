@@ -23,7 +23,9 @@ pub(crate) use platform::{prepare_child_command, ProcessTree};
 pub use tools::Process;
 pub(super) use tools::ProcessArgs;
 pub(crate) use tools::{KeepWarmOffer, STOP_GRACE};
-pub(crate) use types::{CacheWarmRoute, HostProcessView, KeepWarm, LiveProcessSummary, Stream};
+pub(crate) use types::{
+    CacheWarmRoute, HostProcessView, KeepWarm, LiveProcessSummary, ProcessRole, Stream,
+};
 pub use types::{Chunk, ProcessLimits, Snapshot, State};
 
 pub(super) struct SdkProcessBundle {

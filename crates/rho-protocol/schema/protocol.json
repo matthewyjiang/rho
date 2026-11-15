@@ -3811,6 +3811,26 @@
       "minimum": 0,
       "type": "integer"
     },
+    "SessionActivity": {
+      "anyOf": [
+        {
+          "const": "active",
+          "description": "A turn is under way, or the daemon or the session's host will start\none for work the session waits on.",
+          "type": "string"
+        },
+        {
+          "const": "settled",
+          "description": "No turn is under way, and nothing will start one but a prompt.",
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "Whether a session is settled, as [`SessionEvent::Activity`] reports it.\nProtocol minors may add values."
+    },
     "SessionAnswerParams": {
       "description": "Params of [`SESSION_ANSWER`].",
       "properties": {
@@ -3893,7 +3913,7 @@
           "$ref": "#/$defs/Replay"
         },
         "replay_events": {
-          "description": "How many events the replay holds: the first this many\n[`SESSION_EVENT`] notifications after this response replay what the\nclient missed, and the rest are live (#1669). A reset replays the\nlast turn's [`super::SessionEvent::TurnEnded`] until the next turn\nsaves, under that turn's id.",
+          "description": "How many events the replay holds: the first this many\n[`SESSION_EVENT`] notifications after this response replay what the\nclient missed, and the rest are live (#1669). A reset replays the\nlast turn's [`super::SessionEvent::TurnEnded`] until the next turn\nsaves, under that turn's id. A loaded session's replay ends with its\n[`super::SessionEvent::Activity`].",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
@@ -4816,6 +4836,23 @@
           "required": [
             "type",
             "work"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Whether the session is settled: no turn is under way, and neither\nthe daemon nor the session's host will start one for work the\nsession waits on, such as a subagent whose result the daemon delivers\nin a turn of its own. A level, which may go from settled to active\nagain. `active` comes before the [`Self::State`] that starts a turn,\nand `settled` only after the one that ends it. An attach or observe of\na loaded session ends its replay with the current activity, counted in\n[`super::SessionAttachResponse::replay_events`]. Streams that never\nreport it, such as a subagent run's, send none: follow the turn's\nstate there.\n\n# Next major\n\nNEXT_MAJOR(rho-protocol): report a session's activity as SessionAttachResponse::activity and stop replaying a trailing synthetic SessionEvent::Activity.\n\n`SessionAttachResponse` is not `#[non_exhaustive]`, so a field is a\nmajor change; until then the replay's last event carries the level.",
+          "properties": {
+            "state": {
+              "$ref": "#/$defs/SessionActivity"
+            },
+            "type": {
+              "const": "activity",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "state"
           ],
           "type": "object"
         },

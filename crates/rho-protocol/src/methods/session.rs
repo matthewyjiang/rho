@@ -465,7 +465,8 @@ pub struct SessionAttachResponse {
     /// [`SESSION_EVENT`] notifications after this response replay what the
     /// client missed, and the rest are live (#1669). A reset replays the
     /// last turn's [`super::SessionEvent::TurnEnded`] until the next turn
-    /// saves, under that turn's id.
+    /// saves, under that turn's id. A loaded session's replay ends with its
+    /// [`super::SessionEvent::Activity`].
     pub replay_events: u64,
     /// The session's job state when the attachment began, which the replay
     /// ends in.

@@ -390,7 +390,8 @@ impl SessionRuntime {
 
     /// Whether background work the session's prompts started still runs or
     /// holds a result for the next prompt, which [`Self::shutdown`] would
-    /// stop or drop (#1661).
+    /// stop or drop (#1661). A finished service's result is not counted;
+    /// see [`delegation::BackgroundSources::has_work`].
     pub(crate) fn has_background_work(&self) -> bool {
         let session_id = self.built.session.id().to_string();
         delegation::BackgroundSources::of(&self.built.tools).has_work(&session_id)

@@ -83,7 +83,8 @@ impl<O: Write, E: Write> TextView<O, E> {
             | SessionEvent::ProviderRetry { .. }
             // The steer shows once it applies, as a user message.
             | SessionEvent::SteeringDelivered { .. }
-            | SessionEvent::Background { .. } => {}
+            | SessionEvent::Background { .. }
+            | SessionEvent::Activity { .. } => {}
             // `SessionEvent` is non-exhaustive; an event a newer daemon sends
             // is not shown.
             _ => {}

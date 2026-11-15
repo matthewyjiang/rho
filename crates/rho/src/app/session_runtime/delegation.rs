@@ -2,12 +2,15 @@
 //! inbox (the daemon and `rho run`). Finished subagents, workflows, and
 //! background processes reach the model at the next boundary. Natural
 //! completion waits for every undelivered child of the session, whichever
-//! prompt started it, and for workflows and processes started during this
-//! prompt, standing in for the TUI's idle wake, unless the host wakes the
-//! idle session (see below). Workflows and processes from an earlier
-//! prompt, such as a `/workflow:<name>` start, only deliver; a later prompt
-//! does not wait for them. The wait stays inside the original run, so
-//! cancellation and the SDK step budget still govern parent continuations.
+//! prompt started it, and for workflows and process tasks started during
+//! this prompt, standing in for the TUI's idle wake, unless the host wakes
+//! the idle session (see below). Workflows and tasks from an earlier prompt,
+//! such as a `/workflow:<name>` start, only deliver; a later prompt does not
+//! wait for them. A process service (`kind: service`, such as a dev server)
+//! never holds completion, whichever prompt started it; its exit result
+//! still delivers at the next boundary of any prompt. The wait stays inside
+//! the original run, so cancellation and the SDK step budget still govern
+//! parent continuations.
 //! Hosts that show a transcript take [`Delegation::offered_displays`] to
 //! render what the model was given. Children the host runs as its own threads
 //! ([`super::ChildAgents::HostThreads`]) are not registered here: they
@@ -20,13 +23,13 @@
 //! A session whose host runs its children as its own threads (T3 Code) is
 //! woken through that host for background work too (see the daemon's
 //! `sessions::t3_wake`), so it gets [`BackgroundWait::HostWakes`]: running
-//! workflows and processes then never hold natural completion, and finished
-//! ones still deliver at every boundary. So it is for a session whose host
-//! starts a turn of its own when the work finishes, as the daemon does for
-//! the TUI ([`BackgroundWait::HostTurns`], `sessions::idle_wake`). There a
-//! prompt does not wait for its running subagents either, and a child's
-//! informational notices alone buy no provider request: they wait for the
-//! next one, in this prompt or a later turn.
+//! workflows and process tasks then never hold natural completion, and
+//! finished ones still deliver at every boundary. So it is for a session
+//! whose host starts a turn of its own when the work finishes, as the daemon
+//! does for the TUI ([`BackgroundWait::HostTurns`], `sessions::idle_wake`).
+//! There a prompt does not wait for its running subagents either, and a
+//! child's informational notices alone buy no provider request: they wait
+//! for the next one, in this prompt or a later turn.
 
 use std::time::Instant;
 
@@ -54,8 +57,8 @@ pub(super) struct Delegation {
     subagents: Option<SubagentDelivery>,
     processes: Option<ProcessManager>,
     workflows: WorkflowRunTracker,
-    /// Workflows and processes started from here on hold natural completion;
-    /// older ones only deliver.
+    /// Workflows and process tasks started from here on hold natural
+    /// completion; older ones, and services, only deliver.
     prompt_started: Instant,
     background_wait: BackgroundWait,
     /// Display rows for each delivery offered to the runtime, when a host asked.
@@ -118,17 +121,20 @@ impl<'a> BackgroundSources<'a> {
     }
 
     /// Whether work of session `session_id`'s still runs or holds a result
-    /// no prompt delivered: a subagent, a workflow run, or a background
-    /// process, whichever prompt started it.
+    /// no prompt delivered, whichever prompt started it: a subagent, a
+    /// workflow run, a live background process, task or service, or a
+    /// finished task's result. A finished service's result does not count:
+    /// it waits only for a next prompt, so it must not keep an idle
+    /// session loaded or a daemon upgrade waiting.
     pub(super) fn has_work(&self, session_id: &str) -> bool {
         self.subagents
             .is_some_and(|manager| manager.has_active_or_pending_notification(session_id))
             || self
                 .workflows
                 .has_active_or_pending_notification(session_id)
-            || self.processes.is_some_and(|processes| {
-                processes.has_live() || processes.has_pending_notification()
-            })
+            || self
+                .processes
+                .is_some_and(|processes| processes.has_live() || processes.has_task_result())
     }
 }
 
@@ -380,7 +386,7 @@ impl Delegation {
                 self.workflows
                     .has_live_started_since(&self.session_id, self.prompt_started)
                     || self.processes.as_ref().is_some_and(|processes| {
-                        processes.has_live_started_since(self.prompt_started)
+                        processes.has_live_task_started_since(self.prompt_started)
                     })
             }
             BackgroundWait::HostWakes | BackgroundWait::HostTurns => false,

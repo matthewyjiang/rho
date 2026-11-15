@@ -1,4 +1,4 @@
-use super::{output, *};
+use super::{output, types::ProcessKind, *};
 use rho_tools::tool::*;
 use serde::Deserialize;
 use serde_json::json;
@@ -37,26 +37,34 @@ impl Process {
         self
     }
 
-    /// The hold requested by `args`, honored only when the option is offered
-    /// and the bound model route can send a capped ping.
-    pub(super) fn keep_warm_for(&self, requested: bool) -> KeepWarm {
-        match (&self.keep_warm, requested) {
-            (KeepWarmOffer::Offered(route), true) if route.is_supported() => KeepWarm::On,
-            (KeepWarmOffer::Offered(_), true) => KeepWarm::Unavailable,
-            (KeepWarmOffer::Offered(_) | KeepWarmOffer::Hidden, _) => KeepWarm::Off,
+    /// The role a start asked for. A task's keep-warm hold is honored only
+    /// when the option is offered and the bound model route can send a
+    /// capped ping; [`ProcessArgs::parse`] already rejected one on a service.
+    pub(super) fn role_for(&self, kind: ProcessKind, keep_warm: bool) -> ProcessRole {
+        match kind {
+            ProcessKind::Task => ProcessRole::Task {
+                keep_warm: match (&self.keep_warm, keep_warm) {
+                    (KeepWarmOffer::Offered(route), true) if route.is_supported() => KeepWarm::On,
+                    (KeepWarmOffer::Offered(_), true) => KeepWarm::Unavailable,
+                    (KeepWarmOffer::Offered(_) | KeepWarmOffer::Hidden, _) => KeepWarm::Off,
+                },
+            },
+            ProcessKind::Service => ProcessRole::Service,
         }
     }
 
     pub(super) async fn start_execution(
         &self,
         execution: rho_sdk::ProcessExecution,
-        keep_warm: KeepWarm,
+        role: ProcessRole,
     ) -> Result<Snapshot, String> {
-        self.manager.start_execution(execution, keep_warm).await
+        self.manager.start_execution(execution, role).await
     }
 }
 
-const KEEP_WARM_DESCRIPTION: &str = " Set keep_warm on start only when you will end your turn and sit idle waiting for this process for more than about 5 minutes (long builds, test suites, training runs); Rho then sends small capped requests that keep the provider prompt cache warm so your next turn is not re-billed in full. Do not set it for quick commands, servers, watchers, or while you keep working. Warming stops when the process exits or is stopped.";
+const DESCRIPTION: &str = "Manage a background process: start requires command; poll and stop require process_id. Start kind defaults to task, for work you wait on (builds, tests, training runs): its result is delivered when it exits, waking you if idle. Use kind service for dev servers, watchers, and anything you will not wait on: it never keeps you waiting or wakes you, and its exit result arrives with your next turn. Do not poll in a loop.";
+
+const KEEP_WARM_DESCRIPTION: &str = " Set keep_warm on a task start only when you will end your turn and idle on it for more than about 5 minutes; Rho then sends small capped requests that keep the provider prompt cache warm until it exits. Not for quick commands, services, or while you keep working.";
 
 #[derive(Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
@@ -64,6 +72,8 @@ pub(crate) enum ProcessArgs {
     Start {
         command: String,
         timeout_seconds: Option<u64>,
+        #[serde(default)]
+        kind: ProcessKind,
         #[serde(default)]
         keep_warm: bool,
     },
@@ -81,29 +91,33 @@ pub(crate) enum ProcessArgs {
 impl ProcessArgs {
     pub(super) fn parse(args: serde_json::Value) -> Result<Self, ToolError> {
         let args: Self = serde_json::from_value(args)?;
-        if matches!(
-            args,
+        match args {
             Self::Poll {
-                wait_seconds: 31..,
-                ..
-            }
-        ) {
-            return Err(ToolError::Message(
+                wait_seconds: 31.., ..
+            } => Err(ToolError::Message(
                 "wait_seconds must be between 0 and 30".into(),
-            ));
+            )),
+            Self::Start {
+                kind: ProcessKind::Service,
+                keep_warm: true,
+                ..
+            } => Err(ToolError::Message(
+                "keep_warm applies only to kind task; a service is never waited on".into(),
+            )),
+            args => Ok(args),
         }
-        Ok(args)
     }
 }
 
 impl Tool for Process {
     fn spec(&self) -> ToolSpec {
-        let mut description = "Manage a background process: start requires command; poll and stop require process_id. Started processes deliver their result when they exit; do not poll in a loop.".to_string();
+        let mut description = DESCRIPTION.to_string();
         let mut input_schema = json!({
             "type": "object",
             "properties": {
                 "action": {"type": "string", "enum": ["start", "poll", "stop"]},
                 "command": {"type": "string"},
+                "kind": {"type": "string", "enum": ["task", "service"]},
                 "timeout_seconds": {"type": "integer", "minimum": 1},
                 "process_id": {"type": "string"},
                 "cursor": {"type": "integer", "minimum": 0},
@@ -160,21 +174,22 @@ impl Process {
             ProcessArgs::Start {
                 command,
                 timeout_seconds,
+                kind,
                 keep_warm,
             } => {
-                let keep_warm = self.keep_warm_for(keep_warm);
+                let role = self.role_for(kind, keep_warm);
                 let snapshot = self
                     .manager
-                    .start_with_keep_warm(
+                    .start_with_role(
                         command,
                         &context.cwd,
                         timeout_seconds.map(Duration::from_secs),
-                        keep_warm,
+                        role,
                     )
                     .await
                     .map_err(ToolError::Message)?;
                 on_update(display::snapshot_progress_lines(&snapshot));
-                Ok(output::render_start(snapshot, keep_warm))
+                Ok(output::render_start(snapshot, role))
             }
             ProcessArgs::Poll {
                 process_id,

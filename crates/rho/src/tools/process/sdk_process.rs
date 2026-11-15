@@ -52,13 +52,14 @@ impl SdkProcess {
             ProcessArgs::Start {
                 command,
                 timeout_seconds,
+                kind,
                 keep_warm,
             } => {
-                let keep_warm = self.process.keep_warm_for(keep_warm);
+                let role = self.process.role_for(kind, keep_warm);
                 self.execute_start(
                     command,
                     timeout_seconds.map(Duration::from_secs),
-                    keep_warm,
+                    role,
                     context,
                 )
                 .await
@@ -85,7 +86,7 @@ impl SdkProcess {
         &self,
         command: String,
         timeout: Option<Duration>,
-        keep_warm: super::types::KeepWarm,
+        role: super::ProcessRole,
         context: &ToolContext,
     ) -> Result<ToolOutput, ToolError> {
         let workspace = context.workspace().ok_or_else(|| {
@@ -130,7 +131,7 @@ impl SdkProcess {
             .mark_untracked_effect(rho_tools::UntrackedWorkspaceEffect::MutatingTool, "process");
         let snapshot = self
             .process
-            .start_execution(execution, keep_warm)
+            .start_execution(execution, role)
             .await
             .map_err(|error| ToolError::new(ToolErrorKind::Execution, error))?;
         let mut updates = Vec::new();
@@ -146,7 +147,7 @@ impl SdkProcess {
             }
         }
         super::output::limit_process_data(
-            super::output::render_start(snapshot, keep_warm),
+            super::output::render_start(snapshot, role),
             self.max_output_bytes,
         )?
         .limit_data(self.max_output_bytes)?

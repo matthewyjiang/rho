@@ -36,10 +36,12 @@ impl Action {
             }
             Self::Cancel => "Cancel a rho session's turn in progress.",
             Self::Wait => {
-                "Wait, up to `timeout_secs`, for a rho session's turn to end or to stop for a \
-                 person's input. Returns its state, how the turn ended with its final answer \
-                 when it did, and a `cursor`; while `done` is false, call again with the cursor. \
-                 Approvals and questions can only be answered by a person in rho."
+                "Wait, up to `timeout_secs`, for a rho session to settle, with no turn running \
+                 and none rho will start for its background work, or to stop for a person's \
+                 input, a subagent's question included. Returns its state, how its last turn \
+                 ended with its final answer when it did, and a `cursor`; while `done` is false, \
+                 call again with the cursor. Approvals and questions can only be answered by a \
+                 person in rho."
             }
         }
     }

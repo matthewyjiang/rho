@@ -20,6 +20,14 @@
 //! work, as the last [`wire::SessionEvent::Background`] did, so an attach
 //! reports them without waiting for the runtime either.
 //!
+//! A loaded session's feed reports whether the session is settled (see
+//! `settle`) as [`wire::SessionEvent::Activity`]: `active` goes out just
+//! before a state event that starts a turn, and an attach's replay ends
+//! with the current level: the event that last said it, when the replay
+//! ends with that, else the level again, even in a replay that holds
+//! nothing else. A feed
+//! that was never told its activity, as a subagent run's, reports none.
+//!
 //! A reset's transcript events carry seq 0, except the last, which carries
 //! the seq the turn in progress began after. A client's cursor is the
 //! highest seq it has seen, so one that detaches partway through a
@@ -104,6 +112,9 @@ struct FeedState {
     /// transcript: no saved row holds usage, and the turn in progress
     /// replays its own.
     saved_usage: Option<wire::JobUsage>,
+    /// Whether the session is settled, as the last activity event sent it;
+    /// `None` until the first.
+    activity: Option<wire::SessionActivity>,
     subscribers: Vec<Publisher>,
     /// Set by [`Feed::close`]: a client attaching later is detached at once.
     closed: Option<DetachReason>,
@@ -215,6 +226,7 @@ impl Feed {
                 background: Vec::new(),
                 usage: None,
                 saved_usage: None,
+                activity: None,
                 subscribers: Vec::new(),
                 closed: None,
             }),
@@ -248,6 +260,23 @@ impl Feed {
         let work = read();
         if state.background != work {
             state.push(wire::SessionEvent::Background { work });
+        }
+    }
+
+    /// Tells attached clients whether the session is settled, unless they
+    /// already know: active while a turn is under way or `wake_due` says
+    /// the daemon or the session's host will start one, settled otherwise.
+    /// `wake_due` runs under the feed's lock, as [`Self::update_background`]'s
+    /// read does, and only between turns.
+    pub(super) fn update_activity(&self, wake_due: impl FnOnce() -> bool) {
+        let mut state = self.state();
+        let activity = if state.job.in_progress() || wake_due() {
+            wire::SessionActivity::Active
+        } else {
+            wire::SessionActivity::Settled
+        };
+        if state.activity != Some(activity) {
+            state.push(wire::SessionEvent::Activity { state: activity });
         }
     }
 
@@ -405,6 +434,15 @@ impl FeedState {
         let Some(bytes) = encoded_len(&event) else {
             return;
         };
+        // A turn starting makes a settled session active, and clients hear
+        // that first.
+        if self.activity == Some(wire::SessionActivity::Settled)
+            && matches!(&event, wire::SessionEvent::State { state, .. } if state.in_progress())
+        {
+            self.push(wire::SessionEvent::Activity {
+                state: wire::SessionActivity::Active,
+            });
+        }
         match &event {
             wire::SessionEvent::State { state, turn } => {
                 // A turn waiting for input is still the same turn under way.
@@ -432,6 +470,7 @@ impl FeedState {
             wire::SessionEvent::Usage { .. } => self.usage = usage_of(&event),
             wire::SessionEvent::OptionsChanged { options } => self.options = (**options).clone(),
             wire::SessionEvent::Background { work } => self.background.clone_from(work),
+            wire::SessionEvent::Activity { state } => self.activity = Some(*state),
             _ => {}
         }
         let seq = Seq(self.last.0 + 1);
@@ -459,21 +498,41 @@ impl FeedState {
         }
     }
 
-    /// What a client resuming from `after` is sent before the live events.
+    /// What a client resuming from `after` is sent before the live events,
+    /// ending with the session's activity, once the feed reports it.
     fn replay_from(&self, after: Option<&Cursor>) -> (Replay, ReplayEvents) {
-        match after.filter(|cursor| self.resumes(cursor)) {
+        // The replay's buffered events are those after `from`.
+        let (replay, events, from) = match after.filter(|cursor| self.resumes(cursor)) {
             Some(cursor) => {
                 let tail = self.events_after(cursor.seq);
-                (
-                    Replay::Tail,
-                    ReplayEvents {
-                        len: tail.len(),
-                        events: Box::new(tail.into_iter()),
-                    },
-                )
+                let events = ReplayEvents {
+                    len: tail.len(),
+                    events: Box::new(tail.into_iter()),
+                };
+                (Replay::Tail, events, cursor.seq)
             }
-            None => (Replay::Reset, self.reset_events()),
-        }
+            None => (Replay::Reset, self.reset_events(), self.turn_start),
+        };
+        // A replay whose last event is the activity event says the level
+        // already; any other gets it again, under the stream's last seq.
+        // The buffer's back is the stream's newest event unless that one
+        // alone outgrew the buffer and was evicted (an activity event never
+        // does), so the back says the level only while its seq is the last.
+        // NEXT_MAJOR(rho-protocol): report a session's activity as SessionAttachResponse::activity and stop replaying a trailing synthetic SessionEvent::Activity.
+        let said = self.buffer.back().is_some_and(|newest| {
+            newest.seq == self.last
+                && newest.seq > from
+                && matches!(newest.event, wire::SessionEvent::Activity { .. })
+        });
+        let activity = self
+            .activity
+            .filter(|_| !said)
+            .map(|state| (self.last, wire::SessionEvent::Activity { state }));
+        let events = ReplayEvents {
+            len: events.len + usize::from(activity.is_some()),
+            events: Box::new(events.events.chain(activity)),
+        };
+        (replay, events)
     }
 
     /// Whether `cursor` is a point of this stream the buffer resumes from:

@@ -114,8 +114,8 @@ pub use daemon::{
 pub use event::{
     CacheWarmProgress, CardTone, CompactionCounts, CompactionId, CompactionStatus,
     CompactionTrigger, ContentBlock, Cursor, IdempotencyKey, Location, MessageId, PlanEntry,
-    PlanStatus, RetryReason, Seq, SessionEvent, SteerId, StreamId, ToolCallId, ToolCallUpdate,
-    ToolContent, ToolKind, ToolStatus, TurnId,
+    PlanStatus, RetryReason, Seq, SessionActivity, SessionEvent, SteerId, StreamId, ToolCallId,
+    ToolCallUpdate, ToolContent, ToolKind, ToolStatus, TurnId,
 };
 pub use grant::{GrantAccess, GrantWorkspaces, SessionGrant};
 pub use input::{

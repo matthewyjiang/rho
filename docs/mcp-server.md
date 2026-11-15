@@ -20,7 +20,7 @@ Over stdio the host has write access unless you start the server [read-only](#re
 
 ## Following a turn
 
-`new` and `prompt` return as soon as the turn starts. `wait` follows it, and returns when the turn ends, when it needs a person, or after `timeout_secs` (30 by default, at most 50):
+`new` and `prompt` return as soon as the turn starts. `wait` follows the session, and returns when it settles, with no turn running and none rho will start for its background work, when it needs a person, or after `timeout_secs` (30 by default, at most 50). A session the TUI opened ends its turn while a subagent runs and starts a turn of its own to deliver the result; `wait` returns that turn's outcome:
 
 ```json
 {
@@ -32,9 +32,11 @@ Over stdio the host has write access unless you start the server [read-only](#re
 }
 ```
 
-- If `done` is false, the turn is still running. Call `wait` again with the returned `cursor`.
+- If `done` is false, a turn is still running, or the last one ended but background work is still due, such as a subagent or task whose result rho will deliver in a turn of its own. Call `wait` again with the returned `cursor`.
+- `outcome` is how the last turn ended, present once it ended even while `done` is false. It is final once `done` is true; until then a later turn, such as the one that delivers a result, may replace it.
 - `outcome.text` is the final answer. `read` returns the whole conversation.
-- `inputs` lists the approvals or questions the turn waits on.
+- `inputs` lists the approvals or questions the turn waits on. A subagent's question stops `wait` too, even with no turn running.
+- `turn` is the turn `state` is of.
 
 ## Approvals stay with people
 

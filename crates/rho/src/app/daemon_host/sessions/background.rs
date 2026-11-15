@@ -7,18 +7,20 @@
 //! delivery turn takes ended first; as a turn ends, so it hears what the
 //! turn left running first; and by one watcher per loaded session as work
 //! starts or ends, turn or no turn. Each report reads the work under the
-//! feed's lock, so two reporters never publish out of order.
+//! feed's lock, so two reporters never publish out of order. The watcher
+//! reports the session's activity with it (see `settle`), since work that
+//! starts or ends may change what the session waits on.
 
 use std::sync::{Arc, Mutex, PoisonError, Weak};
 
 use rho_protocol::{self as wire, ErrorCode, RpcError};
 use rho_sdk::CancellationToken;
-use tokio::sync::Notify;
+use tokio::sync::watch;
 
-use super::{LoadedSession, Sessions};
+use super::{awaited::AwaitedWork, LoadedSession, Sessions};
 use crate::{
     app::{
-        session_runtime::SessionRuntime,
+        session_runtime::{BackgroundWait, SessionRuntime},
         subagent_manager::{BackgroundChild, SubagentManager},
     },
     subagent::RunState,
@@ -33,11 +35,14 @@ use crate::{
 pub(super) struct SessionBackground {
     /// The parent id the session's workflow runs and subagents report to.
     session_id: String,
+    /// How the session waits for its work, which decides what of it wakes
+    /// the idle session.
+    wait: BackgroundWait,
     sources: Mutex<Sources>,
     workflows: WorkflowRunTracker,
-    /// Wakes the watcher when the sources were replaced, so it waits on
-    /// the new ones.
-    replaced: Arc<Notify>,
+    /// Counts replacements of the sources, so the watchers that read them
+    /// wait on the new ones.
+    replaced: watch::Sender<u64>,
     /// Cancelled when the session is dropped, which ends the watcher.
     dropped: CancellationToken,
 }
@@ -63,9 +68,32 @@ impl SessionBackground {
     pub(super) fn of(runtime: &SessionRuntime) -> Self {
         Self {
             session_id: runtime.session_id().to_string(),
+            wait: runtime.background_wait(),
             sources: Mutex::new(Sources::of(runtime)),
             workflows: runtime.tools().workflow_tracker().clone(),
-            replaced: Arc::new(Notify::new()),
+            replaced: watch::Sender::new(0),
+            dropped: CancellationToken::new(),
+        }
+    }
+
+    /// The background work of session `session_id`, which waits for it as
+    /// `wait`, from these managers rather than a runtime's tools.
+    #[cfg(test)]
+    pub(super) fn for_tests(
+        session_id: &str,
+        wait: BackgroundWait,
+        processes: Option<ProcessManager>,
+        subagents: Option<SubagentManager>,
+    ) -> Self {
+        Self {
+            session_id: session_id.to_owned(),
+            wait,
+            sources: Mutex::new(Sources {
+                processes,
+                subagents,
+            }),
+            workflows: WorkflowRunTracker::new(),
+            replaced: watch::Sender::new(0),
             dropped: CancellationToken::new(),
         }
     }
@@ -73,7 +101,13 @@ impl SessionBackground {
     /// Takes the tools `runtime` has now, as after a configure.
     pub(super) fn refresh(&self, runtime: &SessionRuntime) {
         *self.sources.lock().unwrap_or_else(PoisonError::into_inner) = Sources::of(runtime);
-        self.replaced.notify_one();
+        self.replaced.send_modify(|count| *count += 1);
+    }
+
+    /// Follows replacements of the sources, as after a configure: one
+    /// that follows this call marks the receiver changed.
+    pub(super) fn replacements(&self) -> watch::Receiver<u64> {
+        self.replaced.subscribe()
     }
 
     /// The session's process manager, when its tools have one.
@@ -84,6 +118,23 @@ impl SessionBackground {
     /// The workflow runs the session started.
     pub(super) fn workflows(&self) -> &WorkflowRunTracker {
         &self.workflows
+    }
+
+    /// The work the daemon or the session's host wakes the idle session
+    /// for, from the session's tools now; `None` for a session nothing
+    /// wakes, whose prompts hold until their work finishes.
+    pub(super) fn awaited(&self) -> Option<AwaitedWork> {
+        let Sources {
+            processes,
+            subagents,
+        } = self.sources();
+        AwaitedWork::new(
+            self.wait,
+            self.session_id.clone(),
+            processes,
+            self.workflows.clone(),
+            subagents,
+        )
     }
 
     fn sources(&self) -> Sources {
@@ -118,6 +169,9 @@ impl SessionBackground {
     /// Resolves once a process, subagent or workflow run may have started
     /// or ended from now on.
     fn changes(&self) -> impl std::future::Future<Output = ()> + Send + 'static {
+        // Before reading the sources, so a replacement after the read still
+        // resolves it.
+        let mut replaced = self.replacements();
         let sources = self.sources();
         // Subscribed here, not at the first poll.
         let exited = sources
@@ -131,15 +185,18 @@ impl SessionBackground {
         let subagents = sources.subagents.as_ref().map(SubagentManager::changed);
         let finished = self.workflows.notified_owned();
         let launched = self.workflows.started_owned();
-        let replaced = Arc::clone(&self.replaced);
         async move {
+            let replaced = async move {
+                // The sender lives as long as the session.
+                let _ = replaced.changed().await;
+            };
             tokio::select! {
                 () = or_pending(exited) => {}
                 () = or_pending(started) => {}
                 () = or_pending(subagents) => {}
                 () = finished => {}
                 () = launched => {}
-                () = replaced.notified() => {}
+                () = replaced => {}
             }
         }
     }
@@ -255,6 +312,7 @@ async fn watch(session: Weak<LoadedSession>) {
             };
             let changes = session.background.changes();
             session.report_background();
+            session.report_activity();
             changes
         };
         changes.await;

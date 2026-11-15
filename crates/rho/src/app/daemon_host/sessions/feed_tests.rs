@@ -508,3 +508,65 @@ fn a_reset_replays_the_usage_as_of_the_last_save() {
         ),
     );
 }
+
+// Covers: once the feed reports activity, every attach's replay, tail or
+// reset, ends with the current level, counted in its length, said once
+// when the replay already ends with the event that said it; and a turn
+// starting on a settled session says `active` before its `running`. A
+// late observer that missed the level would wait on a session that already
+// settled, or return before a turn starts.
+// Owner: daemon session feed.
+#[test]
+fn replays_end_with_the_activity_and_active_precedes_a_running_state() {
+    let activity = |state| wire::SessionEvent::Activity { state };
+    let state = |state| wire::SessionEvent::State {
+        state,
+        turn: Some(wire::TurnId::new("t1")),
+    };
+    let unreported = idle_feed();
+    unreported.publish([state(wire::JobState::Running)]);
+    let feed = idle_feed();
+    feed.update_activity(|| false);
+    feed.publish([state(wire::JobState::Running), notice("reply")]);
+    let busy = replay(&feed, cursor(&feed, 1));
+    feed.publish([state(wire::JobState::Completed)]);
+    feed.update_activity(|| false);
+    // Already settled: no second event.
+    feed.update_activity(|| false);
+
+    assert_eq!(
+        (
+            replay(&unreported, None),
+            busy,
+            replay(&feed, None),
+            replay(&feed, cursor(&feed, 6)),
+        ),
+        (
+            (Replay::Reset, vec![(1, state(wire::JobState::Running))]),
+            (
+                Replay::Tail,
+                vec![
+                    (2, activity(wire::SessionActivity::Active)),
+                    (3, state(wire::JobState::Running)),
+                    (4, notice("reply")),
+                    (4, activity(wire::SessionActivity::Active)),
+                ]
+            ),
+            (
+                Replay::Reset,
+                vec![
+                    (1, activity(wire::SessionActivity::Settled)),
+                    (2, activity(wire::SessionActivity::Active)),
+                    (3, state(wire::JobState::Running)),
+                    (4, notice("reply")),
+                    (5, state(wire::JobState::Completed)),
+                    (6, activity(wire::SessionActivity::Settled)),
+                ]
+            ),
+            (
+                Replay::Tail,
+                vec![(6, activity(wire::SessionActivity::Settled))]
+            ),
+        )
+    );
+}

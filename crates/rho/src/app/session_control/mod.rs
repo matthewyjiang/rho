@@ -274,8 +274,8 @@ impl SessionControl {
         Ok(CancelResult {})
     }
 
-    /// Waits up to the call's timeout for the session's turn to end or ask
-    /// for input, then reports where it is, with a cursor the next `wait`
+    /// Waits up to the call's timeout for the session to settle or ask for
+    /// input, then reports where it is, with a cursor the next `wait`
     /// resumes from.
     async fn wait(&self, params: WaitParams) -> Result<WaitResult, ControlError> {
         let timeout = params.timeout()?;

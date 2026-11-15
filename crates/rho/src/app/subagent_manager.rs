@@ -437,6 +437,19 @@ impl SubagentManager {
             .any(|entry| entry.session_id == session_id && !entry.handle.is_complete())
     }
 
+    /// Whether a child of session `session_id` that no turn was given yet
+    /// still runs: among undelivered children, exactly those
+    /// [`Self::has_pending_notification`] does not count.
+    pub(crate) fn has_running(&self, session_id: &str) -> bool {
+        self.inner
+            .lock()
+            .expect("delegated registry lock")
+            .iter()
+            .any(|(id, entry)| {
+                entry.session_id == session_id && !entry.observed && !entry.snapshot(id).done
+            })
+    }
+
     /// True while this session still has an undelivered child.
     pub fn has_active_or_pending_notification(&self, session_id: &str) -> bool {
         self.inner

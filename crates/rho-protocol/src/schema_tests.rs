@@ -16,10 +16,10 @@ use crate::methods::{
     ConfigLayer, ConfigNamespace, ContentBlock, CredentialStoreKind, DefaultStyle, DetachReason,
     InputAsker, IntegerUnit, JobKind, JobState, LoginOutcome, ModelRuntime, Operation, PathScope,
     PermissionMode, PlanStatus, ProcessState, ProcessStream, PromptAuthor, ReasoningLevel,
-    Resolution, RetryReason, Selection, SessionControlAction, SessionEvent, SessionMcpMode,
-    SessionMcpResourceContent, SessionMcpStatus, SettingKind, StoreSelectedBy, ToolContent,
-    ToolKind, ToolStatus, TurnErrorKind, TurnOutcome, UncheckedReason, UnsteerOutcome, ValueSource,
-    WorktreeVerdict,
+    Resolution, RetryReason, Selection, SessionActivity, SessionControlAction, SessionEvent,
+    SessionMcpMode, SessionMcpResourceContent, SessionMcpStatus, SettingKind, StoreSelectedBy,
+    ToolContent, ToolKind, ToolStatus, TurnErrorKind, TurnOutcome, UncheckedReason, UnsteerOutcome,
+    ValueSource, WorktreeVerdict,
 };
 
 // Covers: the committed schema/protocol.json is what the wire types
@@ -59,7 +59,7 @@ fn enums_marked_open_read_unknown_values_as_unknown() {
     let unseen = || json!("from_a_newer_daemon");
     let unseen_tag = || json!({ "type": "from_a_newer_daemon" });
     let unseen_kind = || json!({ "kind": "from_a_newer_daemon" });
-    let cases: [(&str, bool); 62] = [
+    let cases: [(&str, bool); 63] = [
         (
             "SessionMcpResourceContent",
             reads_as(unseen_tag(), SessionMcpResourceContent::Unknown),
@@ -118,6 +118,10 @@ fn enums_marked_open_read_unknown_values_as_unknown() {
         (
             "SessionEvent",
             reads_as(unseen_tag(), SessionEvent::Unknown),
+        ),
+        (
+            "SessionActivity",
+            reads_as(unseen(), SessionActivity::Unknown),
         ),
         ("ToolContent", reads_as(unseen_tag(), ToolContent::Unknown)),
         (

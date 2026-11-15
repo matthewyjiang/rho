@@ -33,12 +33,10 @@ use rho_sdk::{
 };
 use tokio::task::JoinHandle;
 
+use super::awaited::AwaitedWork;
 use crate::{
-    app::{
-        session_runtime::{BackgroundWait, CommandRejected, SessionRuntime, SessionTools},
-        subagent_manager::SubagentManager,
-    },
-    tools::{agent::HostContract, process::ProcessManager, workflow_tracker::WorkflowRunTracker},
+    app::session_runtime::{BackgroundWait, CommandRejected, SessionRuntime, SessionTools},
+    tools::agent::HostContract,
 };
 
 mod signal;
@@ -106,7 +104,7 @@ struct NotifierState {
 }
 
 impl Notifier {
-    fn spawn(background: Background, signal: WakeSignal) -> Self {
+    fn spawn(background: AwaitedWork, signal: WakeSignal) -> Self {
         let state = Arc::new(Mutex::new(NotifierState::default()));
         let publish = Arc::clone(&state);
         let task = tokio::spawn(async move {
@@ -143,131 +141,6 @@ pub(super) enum PromptOrigin {
     /// result.
     WatcherNotice,
     Other,
-}
-
-/// The background work one session delivers.
-#[derive(Clone)]
-pub(super) struct Background {
-    session_id: String,
-    processes: Option<ProcessManager>,
-    workflows: WorkflowRunTracker,
-    /// The session's subagents, when the host's own turns deliver them
-    /// (see [`Self::with_subagents`]).
-    subagents: Option<SubagentManager>,
-}
-
-impl Background {
-    pub(super) fn of(tools: SessionTools<'_>, session_id: String) -> Self {
-        Self {
-            session_id,
-            processes: tools.processes().cloned(),
-            workflows: tools.workflow_tracker().clone(),
-            subagents: None,
-        }
-    }
-
-    /// Counts the session's subagents too: one that finished, and a
-    /// child's request that the parent act, are results. For a session
-    /// whose prompts do not wait for their subagents
-    /// (`BackgroundWait::HostTurns`).
-    pub(super) fn with_subagents(mut self, tools: SessionTools<'_>) -> Self {
-        self.subagents = tools.subagents().cloned();
-        self
-    }
-
-    /// Resolves once a result arrives from now on, whatever waits already.
-    /// A child's informational notice resolves it too, though it is no
-    /// result: callers look again with [`Self::has_result`].
-    pub(super) fn next_result(&self) -> impl Future<Output = ()> {
-        // Subscribed here, not at the first poll.
-        let process_exit = self.processes.as_ref().map(ProcessManager::notified_owned);
-        let workflow_finish = self.workflows.notified_owned();
-        let subagent = self.subagents.as_ref().map(SubagentManager::parent_wake);
-        async move {
-            let process_exit = async move {
-                match process_exit {
-                    Some(exit) => exit.await,
-                    None => std::future::pending().await,
-                }
-            };
-            let subagent = async move {
-                match subagent {
-                    Some(wake) => wake.await,
-                    None => std::future::pending().await,
-                }
-            };
-            tokio::select! {
-                () = process_exit => {}
-                () = workflow_finish => {}
-                () = subagent => {}
-            }
-        }
-    }
-
-    /// Whether a result is waiting or could still arrive. A workflow counts
-    /// until its terminal snapshot is published, which follows its last
-    /// runtime event.
-    fn outstanding(&self) -> bool {
-        self.processes.as_ref().is_some_and(|processes| {
-            processes.has_pending_notification()
-                || processes
-                    .live_summaries()
-                    .iter()
-                    .any(|summary| summary.state.is_live())
-        }) || self
-            .workflows
-            .has_active_or_pending_notification(&self.session_id)
-    }
-
-    /// Labels for work still running, oldest first, for the watcher title.
-    fn live_labels(&self) -> Vec<String> {
-        let processes = self
-            .processes
-            .iter()
-            .flat_map(ProcessManager::live_summaries)
-            .filter(|summary| summary.state.is_live())
-            .map(|summary| summary.command);
-        let workflows = self
-            .workflows
-            .rail_summaries(&self.session_id)
-            .into_iter()
-            .filter(|summary| summary.is_live())
-            .map(|summary| format!("workflow {}", summary.workflow_name));
-        processes.chain(workflows).collect()
-    }
-
-    /// Whether a finished result is waiting for the model.
-    pub(super) fn has_result(&self) -> bool {
-        self.processes
-            .as_ref()
-            .is_some_and(ProcessManager::has_pending_notification)
-            || self.workflows.has_pending_notification(&self.session_id)
-            || self.subagents.as_ref().is_some_and(|subagents| {
-                subagents.has_pending_notification(&self.session_id)
-                    || subagents
-                        .undelivered_notices(&self.session_id)
-                        .iter()
-                        .any(|notice| notice.delivery.requires_parent_action())
-            })
-    }
-
-    /// Resolves once a result is waiting.
-    pub(super) async fn result_ready(self) {
-        loop {
-            // Subscribe before checking so a finish in between still wakes.
-            let another = self.next_result();
-            if self.has_result() {
-                return;
-            }
-            #[cfg(debug_assertions)]
-            if let Some(subagents) = &self.subagents {
-                crate::app::quiet_notice_signal::parent_looked(
-                    subagents.undelivered_notices(&self.session_id).len(),
-                );
-            }
-            another.await;
-        }
-    }
 }
 
 impl T3Wake {
@@ -334,7 +207,7 @@ impl T3Wake {
     pub(super) async fn prompt_ended(
         &mut self,
         tools: SessionTools<'_>,
-        background: Background,
+        background: AwaitedWork,
         interrupt: &CancellationToken,
     ) -> anyhow::Result<()> {
         if !background.outstanding() {
@@ -345,7 +218,7 @@ impl T3Wake {
             return Ok(());
         }
         if self.armed.is_none() {
-            let labels = background.live_labels();
+            let labels = live_labels(&background);
             match arm(tools, &self.dir, &labels, interrupt).await {
                 Ok(watcher) => self.armed = Some(watcher),
                 Err(ArmFailure {
@@ -561,6 +434,22 @@ where
     }
 }
 
+/// Labels for the tasks and workflows still running, oldest first, for the
+/// watcher title. Services are left out: the watcher never waits on them.
+fn live_labels(background: &AwaitedWork) -> Vec<String> {
+    let tasks = background
+        .tasks()
+        .into_iter()
+        .filter(|summary| summary.state.is_live())
+        .map(|summary| summary.command);
+    let workflows = background
+        .workflows()
+        .into_iter()
+        .filter(|summary| summary.is_live())
+        .map(|summary| format!("workflow {}", summary.workflow_name));
+    tasks.chain(workflows).collect()
+}
+
 /// `waiting: <oldest label> (+N more)`.
 fn watcher_title(labels: &[String]) -> String {
     let Some(first) = labels.first() else {
@@ -577,15 +466,14 @@ fn watcher_title(labels: &[String]) -> String {
     }
 }
 
-/// The watcher's final message, shown as its result in T3's panel.
-fn finished_summary(background: &Background) -> String {
-    let process = background.processes.iter().find_map(|processes| {
-        processes
-            .live_summaries()
-            .into_iter()
-            .find(|summary| !summary.state.is_live())
-    });
-    match process {
+/// The watcher's final message, shown as its result in T3's panel: the
+/// oldest finished task's, never a service's, which wakes nothing.
+fn finished_summary(background: &AwaitedWork) -> String {
+    let task = background
+        .tasks()
+        .into_iter()
+        .find(|summary| !summary.state.is_live());
+    match task {
         Some(summary) => match summary.exit_code {
             Some(code) => format!("{} exited {code}", summary.command),
             None => format!("{} finished", summary.command),

@@ -134,6 +134,8 @@ impl Updates {
             | SessionEvent::OptionsChanged { .. }
             // The pump reports them, where the protocol has a place for them.
             | SessionEvent::Background { .. }
+            // ACP's prompt ends with its turn; nothing follows a settle.
+            | SessionEvent::Activity { .. }
             // ACP has no update for what the turn is doing.
             | SessionEvent::ProviderRequest
             | SessionEvent::ProviderRetry { .. }
