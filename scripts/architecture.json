@@ -42,6 +42,11 @@
       "manifest": "crates/rho-protocol/Cargo.toml",
       "packages": ["rho-sdk", "rho-coding-agent", "rho-providers", "rho-agent-tools"],
       "reason": "frontends depend on the protocol, so an SDK or app major must never break their build"
+    },
+    {
+      "manifest": "crates/rho-a2ui/Cargo.toml",
+      "packages": ["rho-sdk", "rho-coding-agent", "rho-providers", "rho-agent-tools", "rho-protocol"],
+      "reason": "clients such as rho-ui use the A2UI core without the rest of rho, so it depends on no other rho crate"
     }
   ],
   "forbidden_source_patterns": [
