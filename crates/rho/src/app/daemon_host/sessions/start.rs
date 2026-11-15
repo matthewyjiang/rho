@@ -40,6 +40,11 @@ pub(super) struct StartedTurn {
     pub(super) budget: Option<TurnBudget>,
     /// Told how the turn began, once it has (see [`PromptStart`]).
     pub(super) start: watch::Sender<PromptStart>,
+    /// When the daemon cancels the turn as timed out; `None` sets no limit.
+    /// Given to [`Sessions::start_turn`], so the turn runs under the limit
+    /// its record was told of: a restart continues only a turn without one
+    /// (see [`TurnRecord::continues_after_restart`]).
+    pub(super) limit: Option<TurnLimit>,
 }
 
 /// The error for a prompt whose client's project trust is not its
@@ -133,7 +138,8 @@ impl Sessions {
         let (id, mut start) = loop {
             let (session, entered) = self
                 .enter_session(&params.session, &with, |session, turn| {
-                    self.start_turn(session, turn, &with, key.clone())
+                    let limit = params.timeout_ms.map(TurnLimit::starting_now);
+                    self.start_turn(session, turn, &with, key.clone(), limit)
                 })
                 .await?;
             match entered {
@@ -148,7 +154,6 @@ impl Sessions {
                         session,
                         turn,
                         stopping: self.stopping.clone(),
-                        limit: params.timeout_ms.map(TurnLimit::starting_now),
                     }
                     .spawn(prompt, params.author);
                     break (id, start);
@@ -174,15 +179,16 @@ impl Sessions {
         }
     }
 
-    /// Starts a turn of a prompt sent with `with`, naming `key`, on
-    /// `session`, whose turn lock `turn` is held, unless the session is
-    /// busy or being deleted, or the prompt was sent before.
+    /// Starts a turn of a prompt sent with `with`, naming `key`, under
+    /// `limit`, on `session`, whose turn lock `turn` is held, unless the
+    /// session is busy or being deleted, or the prompt was sent before.
     pub(super) fn start_turn(
         &self,
         session: &LoadedSession,
         turn: &mut TurnSlot,
         with: &OpenWith,
         key: Option<IdempotencyKey>,
+        limit: Option<TurnLimit>,
     ) -> Result<Entered, RpcError> {
         match turn.hold {
             // The turn queues on the runtime behind the changes, so they
@@ -209,7 +215,13 @@ impl Sessions {
                 });
             }
         }
-        let record = TurnRecord::starting(key.clone());
+        // A restart continues the turn with one the daemon starts, under no
+        // limit (see `restart_resume`): only for a client that takes such
+        // turns, and only for a turn that had no limit to lose.
+        let record = TurnRecord {
+            continues_after_restart: session.idle_wake.is_some() && limit.is_none(),
+            ..TurnRecord::starting(key.clone())
+        };
         let id = record.id.clone();
         let (budget, grant) = match self
             .jobs
@@ -219,6 +231,9 @@ impl Sessions {
             // under too, so the feed never says `running` before the last
             // turn's end, nor a turn's end after the next turn began.
             Ok((moved, grant)) => {
+                // This turn takes the place of the one that would continue
+                // a turn the restart interrupted (see `restart_resume`).
+                self.restart_resumes.take(&session.id);
                 let budget = (moved.state == JobState::Queued)
                     .then(|| self.subagents.queue_turn(&session.job));
                 // A turn the daemon starts to deliver finished work has yet
@@ -277,6 +292,7 @@ impl Sessions {
             runtime: Queued::join(&session.runtime),
             budget,
             start,
+            limit,
         }))
     }
 }
@@ -295,7 +311,12 @@ impl KeyedTurn {
     /// recorded it, if a prompt naming a key started it and it began: one
     /// that did not begin ran nothing, so its key starts a turn again.
     pub(super) fn recorded(job: &JobRecord) -> Option<Self> {
-        let TurnRecord { id, key, began } = job.turn.clone()?;
+        let TurnRecord {
+            id,
+            key,
+            began,
+            continues_after_restart: _,
+        } = job.turn.clone()?;
         let key = key.filter(|_| began)?;
         // The sender is dropped: the turn began, and nothing changes that.
         let (_, start) = tokio::sync::watch::channel(PromptStart::Began);

@@ -320,18 +320,39 @@ impl Sandbox {
         self.try_new_session(client, environment).await.unwrap()
     }
 
+    /// Opens a new session in the workspace with `setup`.
+    pub(super) async fn new_session_with_setup(
+        &self,
+        client: &Client,
+        setup: SessionSetup,
+    ) -> SessionId {
+        self.try_new_session_with(client, self.client_environment(), setup)
+            .await
+            .unwrap()
+    }
+
     /// [`Self::new_session_with_environment`]; the error that refused it.
     pub(super) async fn try_new_session(
         &self,
         client: &Client,
         environment: ClientEnvironment,
     ) -> Result<SessionId, RpcError> {
+        self.try_new_session_with(client, environment, SessionSetup::default())
+            .await
+    }
+
+    async fn try_new_session_with(
+        &self,
+        client: &Client,
+        environment: ClientEnvironment,
+        setup: SessionSetup,
+    ) -> Result<SessionId, RpcError> {
         client
             .request::<SessionNew>(&SessionNewParams {
                 cwd: self.workspace.clone(),
                 environment,
                 agent: None,
-                setup: SessionSetup::default(),
+                setup,
                 parent: None,
                 grant: None,
                 worktree: false,
@@ -414,6 +435,32 @@ impl Sandbox {
         call: &serde_json::Value,
         environment: ClientEnvironment,
     ) {
+        self.send_tool_call(client, session, call, environment, /*timeout_ms*/ None)
+            .await;
+    }
+
+    /// [`Self::prompt_tool_call`] for a turn the daemon times out after
+    /// `timeout_ms`.
+    pub(super) async fn prompt_tool_call_limited(
+        &self,
+        client: &Client,
+        session: &SessionId,
+        call: &serde_json::Value,
+        timeout_ms: u64,
+    ) {
+        let environment = self.client_environment();
+        self.send_tool_call(client, session, call, environment, Some(timeout_ms))
+            .await;
+    }
+
+    async fn send_tool_call(
+        &self,
+        client: &Client,
+        session: &SessionId,
+        call: &serde_json::Value,
+        environment: ClientEnvironment,
+        timeout_ms: Option<u64>,
+    ) {
         client
             .request::<SessionPrompt>(&SessionPromptParams {
                 author: rho_protocol::PromptAuthor::Person,
@@ -421,7 +468,7 @@ impl Sandbox {
                 content: vec![ContentBlock::Text {
                     text: call.to_string(),
                 }],
-                timeout_ms: None,
+                timeout_ms,
                 environment,
                 idempotency_key: None,
                 grant: None,

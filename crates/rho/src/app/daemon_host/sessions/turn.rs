@@ -40,7 +40,7 @@ use crate::{
         session_runtime::{
             model_scoped_config, CommandRejected, InsertedMessage, PlanReport, PromptScope,
             SessionEvent, SessionRuntime, StartedBy, TitleJob, Turn, TurnControl, TurnIo,
-            TurnOutcome, TurnView, UnsavedCompaction, WorkflowStart,
+            TurnOutcome, TurnStart, TurnView, UnsavedCompaction, WorkflowStart,
         },
         workflow_cli::discover::WorkflowLaunch,
     },
@@ -124,9 +124,29 @@ enum TurnInput {
         input: Prompt,
         author: wire::PromptAuthor,
     },
-    /// No prompt: the turn's first boundary delivers the background
-    /// results that wait (see [`super::idle_wake`]).
-    Delivery,
+    /// A turn the daemon starts on its own.
+    Daemon(DaemonTurn),
+}
+
+/// A turn the daemon starts on its own, with no client's prompt: what its
+/// run starts from, and what clients are told as it begins. Its model input,
+/// if any, is the daemon's, so clients are not shown it live as a user's
+/// message: they see `notice` instead.
+pub(super) struct DaemonTurn {
+    pub(super) start: TurnStart,
+    /// Told clients, as a notice, before the turn's run starts.
+    pub(super) notice: Option<String>,
+}
+
+impl DaemonTurn {
+    /// No prompt: the turn's first boundary delivers the background results
+    /// that wait (see [`super::idle_wake`]), which clients see as cards.
+    pub(super) fn delivery() -> Self {
+        Self {
+            start: TurnStart::Continue,
+            notice: None,
+        }
+    }
 }
 
 /// One turn of a session whose job already recorded the turn's start.
@@ -141,8 +161,6 @@ pub(super) struct TurnTask {
     /// Cancelled once the daemon stops: a turn cancelled then was
     /// interrupted, not cancelled by a client.
     pub(super) stopping: CancellationToken,
-    /// When the daemon cancels the turn as timed out; `None` sets no limit.
-    pub(super) limit: Option<TurnLimit>,
 }
 
 impl TurnTask {
@@ -152,10 +170,9 @@ impl TurnTask {
         tokio::spawn(self.run(TurnInput::Prompt { input, author }));
     }
 
-    /// Runs a turn with no prompt, which delivers the session's waiting
-    /// background results.
-    pub(super) fn spawn_delivery(self) {
-        tokio::spawn(self.run(TurnInput::Delivery));
+    /// Runs `turn`, which the daemon started on its own, in a daemon task.
+    pub(super) fn spawn_daemon(self, turn: DaemonTurn) {
+        tokio::spawn(self.run(TurnInput::Daemon(turn)));
     }
 
     async fn run(self, input: TurnInput) {
@@ -168,9 +185,9 @@ impl TurnTask {
                     runtime,
                     budget,
                     start,
+                    limit,
                 },
             stopping,
-            limit,
         } = self;
         // Locked for the whole turn and released only after the turn's end
         // is recorded, so the daemon's stop, which waits for the lock, finds
@@ -206,8 +223,9 @@ impl TurnTask {
                                     run_turn(runtime, &mut view, input, author, &config, &cancel)
                                         .await
                                 }
-                                TurnInput::Delivery => {
-                                    run_delivery_turn(runtime, &mut view, &config, &cancel).await
+                                TurnInput::Daemon(turn) => {
+                                    run_daemon_turn(runtime, &mut view, turn, &config, &cancel)
+                                        .await
                                 }
                             }
                         };
@@ -482,12 +500,12 @@ async fn run_turn(
     })
 }
 
-/// Run a delivery of background results, which inserts no prompt, with
-/// normal persistence, child boundary delivery, cancellation, and plan
-/// handoff.
-async fn run_delivery_turn(
+/// Runs `turn`, a model turn the daemon starts on its own, with normal
+/// persistence, child boundary delivery, cancellation, and plan handoff.
+async fn run_daemon_turn(
     runtime: &mut SessionRuntime,
     view: &mut DaemonView,
+    DaemonTurn { start, notice }: DaemonTurn,
     config: &Config,
     cancel: &CancellationToken,
 ) -> anyhow::Result<Ran> {
@@ -498,7 +516,14 @@ async fn run_delivery_turn(
     if cancel.is_cancelled() {
         return Ok(Ran::Cancelled);
     }
-    let start = crate::app::session_runtime::TurnStart::Continue;
+    // The turn's input is never noted as a prompt (see
+    // `LiveEvents::prompt`), so clients are shown no user message for it
+    // live, as for a plan's implementation turn; they see the notice. The
+    // session still saves the input as the turn's user message, which a
+    // later replay shows as one.
+    view.session
+        .feed
+        .publish(notice.map(|text| wire::SessionEvent::Notice { text }));
     let ended = Box::pin(runtime.run_prompt_turn(view, &scope, start, config)).await?;
     Ok(match ended {
         TurnOutcome::Completed(run) => Ran::Completed(outcome::finished(&run)),

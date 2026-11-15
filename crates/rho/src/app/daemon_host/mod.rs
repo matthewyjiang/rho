@@ -10,7 +10,8 @@
 //! (`store.rs`), and runs the interactive logins clients start, relaying
 //! each to its client (`logins.rs`). It re-executes the daemon in place on
 //! `rho/daemon/restart` and once a replaced executable finds it idle
-//! (`upgrade.rs`, #1713).
+//! (`upgrade.rs`, #1713), and the daemon it re-executes continues the
+//! session turns that restart interrupted (`sessions/restart_resume.rs`).
 
 use std::{
     io,
@@ -75,17 +76,47 @@ const WORKTREE_PRUNE_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 // waiting a minute delays nothing it would remove.
 const WORKTREE_PRUNE_AFTER_START: Duration = Duration::from_secs(60);
 
+/// How the daemon process started, which decides whether it continues the
+/// turns its predecessor's restart interrupted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Startup {
+    /// Anew: after a stop, a crash, or a restart that exited instead of
+    /// re-executing, as one whose turns did not save in time does.
+    Fresh,
+    /// Run by its predecessor's restart in place, `rho daemon restart` or
+    /// an upgrade, which handed it the daemon lock (`--exec-handoff`).
+    RestartedInPlace,
+}
+
 /// The daemon's job records, opened before the daemon binds its socket, so
 /// a daemon that cannot keep records stops before any client reaches it.
-pub(super) struct JobRecords(Arc<JobRegistry>);
+pub(super) struct JobRecords {
+    jobs: Arc<JobRegistry>,
+    /// The sessions whose turn the restart that ran this daemon interrupted,
+    /// which it continues; none for a [`Startup::Fresh`] daemon.
+    interrupted_by_restart: Vec<rho_sdk::SessionId>,
+}
 
 impl JobRecords {
-    /// Opens the records in the daemon's `state_dir`. Opening rewrites the
-    /// records of turns an earlier daemon left open, so it takes the daemon
-    /// lock, which guards that directory, as proof the caller holds it.
-    pub(super) fn open(_held: &DaemonLock, state_dir: &Path) -> io::Result<Self> {
+    /// Opens the records in the daemon's `state_dir`, for a daemon that
+    /// started as `startup` says. Opening rewrites the records of turns an
+    /// earlier daemon left open, and clears the marks of the turns a restart
+    /// interrupted, so it takes the daemon lock, which guards that
+    /// directory, as proof the caller holds it.
+    pub(super) fn open(_held: &DaemonLock, state_dir: &Path, startup: Startup) -> io::Result<Self> {
         let store = JobStore::open(state_dir)?;
-        Ok(Self(Arc::new(JobRegistry::open(store))))
+        let jobs = JobRegistry::open(store);
+        // Taken at every start, so only the daemon a restart re-executed
+        // continues what that restart interrupted, and only once.
+        let marked = jobs.take_restart_interrupted();
+        let interrupted_by_restart = match startup {
+            Startup::Fresh => Vec::new(),
+            Startup::RestartedInPlace => marked,
+        };
+        Ok(Self {
+            jobs: Arc::new(jobs),
+            interrupted_by_restart,
+        })
     }
 }
 
@@ -117,18 +148,23 @@ impl DaemonHost {
     /// [`Self::begin_restart`], which request `shutdown`, the transport's;
     /// once the transport stopped serving, call [`Self::stop_sessions`].
     pub(super) fn new(
-        JobRecords(jobs): JobRecords,
+        JobRecords {
+            jobs,
+            interrupted_by_restart,
+        }: JobRecords,
         rho_home: &Path,
         socket: PathBuf,
         started_at: u64,
         shutdown: Shutdown,
         store_environment: Option<CredentialStoreBackend>,
     ) -> Self {
+        let sessions = Sessions::new(Arc::clone(&jobs), rho_home);
+        sessions.resume_after_restart(interrupted_by_restart);
         Self {
             socket,
             started_at,
             started: Instant::now(),
-            sessions: Sessions::new(Arc::clone(&jobs), rho_home),
+            sessions,
             logins: Arc::new(Logins::new()),
             upgrades: Upgrades::default(),
             clients: AtomicU64::new(0),
@@ -148,13 +184,18 @@ impl DaemonHost {
 
     /// Starts the daemon's restart, as [`Self::begin_stop`] starts its stop
     /// but telling clients `restarting`; the caller re-executes the daemon
-    /// once its turns are stopped.
+    /// once its turns are stopped. The session turns it interrupts that may
+    /// continue are marked for the re-executed daemon to continue (see
+    /// `sessions/restart_resume.rs`).
     pub(super) fn begin_restart(&self) {
         self.begin(Ending::Restart);
     }
 
     fn begin(&self, ending: Ending) {
         self.shutdown.request(ending, |ending| {
+            // Before any turn stops, so the registry records each turn the
+            // stop interrupts as this ending leaves it.
+            self.jobs.stopping_for(ending);
             self.sessions.begin_stop(match ending {
                 Ending::Stop => DetachReason::DaemonStopping,
                 Ending::Restart => DetachReason::Restarting,

@@ -95,6 +95,7 @@ pub(super) fn job_summary(
         turn: _,
         worktree,
         worktree_removed_at: _,
+        resume_after_restart: _,
         keeping: _,
     } = record;
     let (kind, session, run, workflow_run) = match subject {

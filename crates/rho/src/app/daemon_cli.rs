@@ -13,7 +13,7 @@ use crate::cli::{Command, DaemonCommand};
 use {
     super::{
         config_repository::ConfigRepository,
-        daemon_host::{DaemonHost, JobRecords, UNLOAD_IDLE_AFTER},
+        daemon_host::{DaemonHost, JobRecords, Startup, UNLOAD_IDLE_AFTER},
     },
     crate::daemon::{
         self, ConnectAs, DaemonPaths, Ending, Executable, Served, Shutdown, StopRequests,
@@ -217,10 +217,13 @@ async fn run_foreground(
         default_hook(info);
     }));
 
-    let (lock, inherited) = match handoff {
-        None => (daemon::acquire_lock(paths)?, None),
-        Some(handoff) => daemon::take_handoff(paths, handoff)
-            .context("could not take over the restarted daemon's lock and socket")?,
+    let (lock, inherited, startup) = match handoff {
+        None => (daemon::acquire_lock(paths)?, None, Startup::Fresh),
+        Some(handoff) => {
+            let (lock, inherited) = daemon::take_handoff(paths, handoff)
+                .context("could not take over the restarted daemon's lock and socket")?;
+            (lock, inherited, Startup::RestartedInPlace)
+        }
     };
     // Listen before the socket exists so an early request to stop still
     // shuts down cleanly.
@@ -228,7 +231,7 @@ async fn run_foreground(
     // Everything the host needs is open before the socket is published, so
     // a client never reaches a daemon that cannot serve it.
     open_credential_store();
-    let jobs = JobRecords::open(&lock, &paths.state_dir).with_context(|| {
+    let jobs = JobRecords::open(&lock, &paths.state_dir, startup).with_context(|| {
         format!(
             "could not open the daemon's job records in {}",
             paths.state_dir.display()
