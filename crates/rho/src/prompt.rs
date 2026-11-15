@@ -166,6 +166,8 @@ Use only flowchart, stateDiagram, sequenceDiagram, classDiagram, erDiagram, gitG
 For display math, use closed `$$ ... $$` blocks. The TUI renders a limited TeX subset (TXM), not full LaTeX: core commands (`\frac`, `\sqrt`, sums/integrals, Greek, `\mathbf`/`\mathrm`, `matrix`/`bmatrix`/`pmatrix`) work; prefer separate `$$` equations. Avoid `aligned`/`align`/`gather`, `\dfrac`, `\varepsilon`, and `\leq`/`\geq`/`\neq` (use `\frac`, `\epsilon`, `\le`/`\ge`/`\ne`). Keep formulas compact.
 
 Inline `$...$` math renders only when it fits one text row: simple superscripts or subscripts (`x^2`, `a_i`), Greek letters, and symbols. Taller inline formulas (`\frac`, summation limits, mixed `x_i^2` scripts) stay raw source text, so put those in `$$` blocks instead.
+
+To show the user an image file, put `![alt](path)` on its own line with a workspace-relative or absolute path. Images inside prose and remote URLs show only the alt text. Never embed base64 or `data:` URLs.
 "#,
     );
     let grep_available = tools.iter().any(|tool| tool.name == "grep");

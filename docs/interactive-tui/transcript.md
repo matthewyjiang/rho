@@ -141,7 +141,10 @@ If a response interleaves answer text and reasoning, Rho keeps those segments in
 
 `zen_mode`, under `/config` → **Display**, hides tool cards, reasoning blocks, and the `Thinking...` placeholder so the transcript shows message text. Each run of consecutive tool calls collapses into one dim summary row, such as `⋯ 3 tool calls`, so answer text written before and after tool use stays visibly separate. The [activity rail](/interactive-tui/activity) stays visible. Tools and reasoning still run. The status row displays `zen`. The setting applies immediately, including during the current turn.
 
-Image thumbnails from `read_file` paint in supporting terminals. Details:
+Image thumbnails from `read_file` paint in supporting terminals. So do images
+the assistant shows with a standalone `![alt](path)` line, where the path is
+absolute, `~/`, `file://`, or relative to the session working directory. Images
+inside prose and remote URLs render as alt text. Details:
 [Documents and images](/tools-workspace/documents-and-images).
 
 ## Exit
