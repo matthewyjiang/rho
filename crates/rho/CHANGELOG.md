@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.1.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v3.1.0...rho-coding-agent-v3.1.1) (2026-11-15)
+
+
+### Bug Fixes
+
+* **prompt:** tell the model it can show the user images ([#1966](https://github.com/matthewyjiang/rho/issues/1966)) ([71f395f](https://github.com/matthewyjiang/rho/commit/71f395f4196a05c5d1a78c34bfcc5b472f9e104e))
+
 ## [3.1.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v3.0.0...rho-coding-agent-v3.1.0) (2026-11-14)
 
 
