@@ -24,6 +24,8 @@ use windows_sys::Win32::{
 };
 
 /// The user this process runs as.
+// rho-protocol's `local_daemon_pipe.rs` keeps a copy, with
+// `owned_by_current_user`, for frontends' `LocalDaemon`; change both.
 struct CurrentUser {
     /// A `TOKEN_USER` and the SID it points to, as `GetTokenInformation`
     /// wrote them. `u64` elements keep the structure aligned.
@@ -148,7 +150,8 @@ impl Drop for OwnerOnly {
 }
 
 /// Whether the pipe open as `pipe` is owned by the user this process runs
-/// as, so its server is that user's.
+/// as, so its server is that user's. Mirrored in rho-protocol's
+/// `local_daemon_pipe.rs`; change both.
 pub(super) fn owned_by_current_user(pipe: RawHandle) -> io::Result<bool> {
     let user = CurrentUser::query()?;
     let mut owner: PSID = ptr::null_mut();

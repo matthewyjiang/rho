@@ -8,8 +8,6 @@ use std::{
     process::{ExitStatus, Stdio},
 };
 
-use tokio::io::{AsyncRead, AsyncWrite};
-
 use crate::{
     Client, ClientError, ClientHello, DaemonEndpoint, HelloResponse, Notifications,
     SocketPathTooLong,
@@ -71,8 +69,8 @@ pub enum LocalDaemonError {
 }
 
 impl LocalDaemon {
-    /// The daemon of the rho home at `rho_home`, placed by this process's
-    /// `XDG_RUNTIME_DIR` as the `rho` CLI places it.
+    /// The daemon of the rho home at `rho_home`, placed on Unix by this
+    /// process's `XDG_RUNTIME_DIR` as the `rho` CLI places it.
     pub fn new(rho_home: impl Into<PathBuf>) -> Self {
         Self {
             rho_home: rho_home.into(),
@@ -82,7 +80,8 @@ impl LocalDaemon {
 
     /// Places the socket by `xdg_runtime_dir` instead of this process's
     /// `XDG_RUNTIME_DIR`; `None` acts as if it were unset. A daemon this
-    /// starts gets the same value, so it listens where this looks.
+    /// starts gets the same value, so it listens where this looks. Windows
+    /// names the daemon's pipe without it.
     pub fn with_xdg_runtime_dir(mut self, xdg_runtime_dir: Option<PathBuf>) -> Self {
         self.xdg_runtime_dir = xdg_runtime_dir;
         self
@@ -110,6 +109,11 @@ impl LocalDaemon {
 
     /// Connects to the daemon that runs and completes the handshake as
     /// `hello`, or `None` when none runs. Never starts a daemon.
+    ///
+    /// # Panics
+    ///
+    /// On Windows, if the Tokio runtime has no timer (`enable_time`) and
+    /// every instance of the daemon's pipe is taken, which this waits out.
     pub async fn connect(
         &self,
         hello: ClientHello,
@@ -130,8 +134,13 @@ impl LocalDaemon {
     /// than this client and nobody uses it. `rho` runs `rho`: the caller
     /// sets its program and environment, and this adds the arguments,
     /// `RHO_HOME`, `XDG_RUNTIME_DIR`, and its standard streams. On Windows
-    /// it also runs with no console window, so a GUI frontend flashes none.
-    /// The daemon `rho` starts never has one either.
+    /// it also replaces any creation flags set on `rho` with
+    /// `CREATE_NO_WINDOW`, so a GUI frontend flashes no console; the daemon
+    /// `rho` starts never has one either.
+    ///
+    /// # Panics
+    ///
+    /// As [`Self::connect`] does.
     pub async fn connect_or_start(
         &self,
         rho: std::process::Command,
@@ -195,7 +204,7 @@ impl LocalDaemon {
 /// Connects to the daemon's socket. `None` when nothing listens there: no
 /// socket, or one a daemon that died without cleanup left.
 #[cfg(unix)]
-async fn open(socket: &Path) -> io::Result<Option<impl AsyncRead + AsyncWrite + Send + 'static>> {
+async fn open(socket: &Path) -> io::Result<Option<tokio::net::UnixStream>> {
     match tokio::net::UnixStream::connect(socket).await {
         Ok(stream) => Ok(Some(stream)),
         Err(error)
@@ -210,16 +219,8 @@ async fn open(socket: &Path) -> io::Result<Option<impl AsyncRead + AsyncWrite + 
     }
 }
 
-/// Connects to the daemon's named pipe, once it proved to be this user's.
-/// `None` when no pipe of that name exists.
 #[cfg(windows)]
-async fn open(pipe: &Path) -> io::Result<Option<impl AsyncRead + AsyncWrite + Send + 'static>> {
-    pipe::open(pipe.as_os_str()).await
-}
-
-#[cfg(windows)]
-#[path = "local_daemon_pipe.rs"]
-mod pipe;
+use crate::local_daemon_pipe::open;
 
 /// `path` made absolute against this process's directory, or as it is when
 /// that directory cannot be read.

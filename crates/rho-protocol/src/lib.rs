@@ -82,6 +82,8 @@ mod error;
 mod forward;
 mod jsonrpc;
 mod local_daemon;
+#[cfg(windows)]
+mod local_daemon_pipe;
 mod login_relay;
 pub mod methods;
 pub mod schema;

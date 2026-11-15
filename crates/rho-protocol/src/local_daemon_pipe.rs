@@ -1,6 +1,8 @@
-//! Opening a daemon's named pipe on Windows, the way the `rho` CLI does:
-//! wait while every instance is taken, and send nothing to a pipe that is
-//! not the current user's.
+//! Opening a daemon's named pipe on Windows for [`crate::LocalDaemon`], the
+//! way the `rho` CLI does: wait while every instance is taken, and send
+//! nothing to a pipe that is not the current user's. The owner check and the
+//! busy wait mirror the CLI's `daemon/platform/windows/{pipe,security}.rs`,
+//! which this crate cannot depend on; change both.
 //!
 //! A pipe's name is visible to every account on the machine, so another
 //! account could create a pipe of the daemon's name first. It cannot make
@@ -9,7 +11,6 @@
 //! else's server. The daemon creates its pipe owned by its user.
 
 use std::{
-    ffi::OsStr,
     io,
     os::windows::io::{AsRawHandle, RawHandle},
     path::Path,
@@ -50,7 +51,7 @@ const PIPE_BUSY_POLL_INTERVAL: Duration = Duration::from_millis(5);
 /// daemon's pipe goes with its process. The server learns who connected and
 /// cannot impersonate them: `ClientOptions` opens with the identification
 /// level.
-pub(super) async fn open(name: &OsStr) -> io::Result<Option<CloseOnShutdown<NamedPipeClient>>> {
+pub(crate) async fn open(name: &Path) -> io::Result<Option<CloseOnShutdown<NamedPipeClient>>> {
     let started = Instant::now();
     loop {
         match ClientOptions::new().open(name) {
@@ -62,7 +63,7 @@ pub(super) async fn open(name: &OsStr) -> io::Result<Option<CloseOnShutdown<Name
                     io::ErrorKind::PermissionDenied,
                     format!(
                         "{} was created by another user, so it is not this user's rho daemon",
-                        Path::new(name).display()
+                        name.display()
                     ),
                 ))
             }
@@ -76,7 +77,7 @@ pub(super) async fn open(name: &OsStr) -> io::Result<Option<CloseOnShutdown<Name
                 io::ErrorKind::TimedOut,
                 format!(
                     "every instance of {} stayed taken for PIPE_BUSY_TIMEOUT ({PIPE_BUSY_TIMEOUT:?}; waited {elapsed:?})",
-                    Path::new(name).display()
+                    name.display()
                 ),
             ));
         }
