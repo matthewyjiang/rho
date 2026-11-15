@@ -163,6 +163,7 @@ const appSidebar: DefaultTheme.SidebarItem[] = [
             ],
           },
           { text: 'Agent Plugins', link: '/integrations/plugins' },
+          { text: 'Grok Bot', link: '/integrations/grok-bot' },
           { text: 'Community', link: '/integrations/community' },
         ],
       },

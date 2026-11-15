@@ -10,6 +10,7 @@ Rho ships host and shell integrations in the binary. You do not install a plugin
 | OpenAPI | Read-only REST tools generated from an OpenAPI spec | [OpenAPI](/integrations/openapi) |
 | ACP | Run Rho in Zed, [T3 Code](/integrations/acp/t3-code), and other editor hosts | [Agent Client Protocol](/integrations/acp) |
 | Agent Plugins | Local packages installed by the user; Rho has no plugin store or remote registry | [Agent Plugins](/integrations/plugins) |
+| Grok Bot | Drive Rho sessions on your machines from a Grok Bot, with webhook updates | [Grok Bot](/integrations/grok-bot) |
 
 All stay optional. Outside Herdr, Rho skips host reporting. Without RTK, shell tools run commands unchanged. MCP stays inert until you add an enabled server under `[mcp.servers]` or a plugin package provides one. OpenAPI stays inert until you add a source under `[openapi]` or a trusted project declares one in `.rho/openapi.toml`. Agent Plugins load only from the explicit plugin roots. Disabled packages stay visible in `rho plugins list` but do not contribute components.
 
