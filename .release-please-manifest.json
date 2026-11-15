@@ -3,5 +3,6 @@
   "crates/rho-sdk": "6.0.0",
   "crates/rho-providers": "3.0.2",
   "crates/rho-tools": "2.1.0",
-  "crates/rho-protocol": "1.1.0"
+  "crates/rho-protocol": "1.1.0",
+  "crates/rho-a2ui": "0.0.0"
 }

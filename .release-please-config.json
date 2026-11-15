@@ -42,6 +42,15 @@
       "component": "rho-protocol",
       "changelog-path": "CHANGELOG.md",
       "draft": true
+    },
+    "crates/rho-a2ui": {
+      "release-type": "rust",
+      "package-name": "rho-a2ui",
+      "component": "rho-a2ui",
+      "changelog-path": "CHANGELOG.md",
+      "draft": true,
+      "bump-minor-pre-major": true,
+      "release-as": "0.1.0"
     }
   },
   "plugins": ["cargo-workspace"]

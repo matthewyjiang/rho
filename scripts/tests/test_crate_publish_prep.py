@@ -248,6 +248,12 @@ class VerifyCommandTests(unittest.TestCase):
                     "dependencies": [],
                 },
                 {
+                    "name": "rho-a2ui",
+                    "version": "0.1.0",
+                    "manifest_path": str(ROOT / "crates" / "rho-a2ui" / "Cargo.toml"),
+                    "dependencies": [],
+                },
+                {
                     "name": "rho-coding-agent",
                     "version": "1.32.0",
                     "manifest_path": str(ROOT / "crates" / "rho" / "Cargo.toml"),

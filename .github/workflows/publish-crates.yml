@@ -20,6 +20,7 @@ on:
           - rho-agent-tools
           - rho-providers
           - rho-protocol
+          - rho-a2ui
           - rho-coding-agent
       candidate-sha:
         description: Exact full commit SHA to publish
@@ -101,6 +102,7 @@ jobs:
             rho-agent-tools) args+=(--tools) ;;
             rho-providers) args+=(--providers) ;;
             rho-protocol) args+=(--protocol) ;;
+            rho-a2ui) args+=(--a2ui) ;;
             rho-coding-agent) args+=(--app) ;;
             *) echo "Unsupported package: $PACKAGE" >&2; exit 1 ;;
           esac
