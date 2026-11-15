@@ -120,7 +120,10 @@ fn validate_cli_rejects_session_flags_with_non_interactive_commands() {
                 worktree: false,
                 prompt: Vec::new(),
             },
-            Command::Update,
+            Command::Update {
+                check: false,
+                json: false,
+            },
         ] {
             let cli = Cli {
                 command: Some(command),

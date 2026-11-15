@@ -239,10 +239,19 @@ async fn dispatch_early_command(cli: &Cli) -> anyhow::Result<EarlyDispatch> {
             super::detach::run(cli, prompt.clone(), *stdin, *timeout).await,
         ));
     }
-    if matches!(cli.command, Some(Command::Update)) {
-        return Ok(EarlyDispatch::Handled(
-            update::run_update(env!("CARGO_PKG_VERSION")).await,
-        ));
+    if let Some(Command::Update { check, json }) = &cli.command {
+        let version = env!("CARGO_PKG_VERSION");
+        let result = if *check {
+            let format = if *json {
+                update::CheckFormat::Json
+            } else {
+                update::CheckFormat::Text
+            };
+            update::run_check(version, format).await
+        } else {
+            update::run_update(version).await
+        };
+        return Ok(EarlyDispatch::Handled(result));
     }
     if let Some(command) = login::command(&cli.command) {
         // agy owns its sign-in; Rho config and the credential store are not

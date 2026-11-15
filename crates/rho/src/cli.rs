@@ -312,7 +312,16 @@ Run rho model-prompt edit --help for editor setup, saving, and reload behavior."
         command: ModelPromptCommand,
     },
     /// Update rho using the detected installation method.
-    Update,
+    Update {
+        /// Report whether an update exists and how rho would install it,
+        /// without installing anything. Exits with status 1 when the
+        /// latest release cannot be looked up.
+        #[arg(long)]
+        check: bool,
+        /// Print the `--check` report as one JSON object.
+        #[arg(long, requires = "check")]
+        json: bool,
+    },
     /// Uninstall Rho after confirmation, preserving user data by default.
     Uninstall {
         /// Also permanently delete local Rho user data under ~/.rho.

@@ -361,6 +361,14 @@ A running [daemon](/daemon) moves to the new version without interrupting work. 
 
 Set `RHO_INSTALL_METHOD` to `cargo`, `pacman`, `scoop`, `scoop-global`, or `script` to override detection.
 
+`rho update --check` reports the latest release, the detected install method, and the update command without installing anything or touching the daemon. Add `--json` for one JSON object on stdout:
+
+```json
+{"current":"3.1.0","latest":"3.1.1","update_available":true,"method":"script","command":"RHO_INSTALL_DIR=... sh -c '...'","needs_terminal":false}
+```
+
+`method` is `cargo`, `mise`, `pacman`, `scoop`, `scoop-global`, or `script`. `needs_terminal` is `true` when `rho update` cannot finish unattended: pacman asks for your sudo password, and on Windows it only prints the command. Unlike `rho update`, which goes on when the release lookup fails, `--check` exits with status 1.
+
 ## `rho uninstall`
 
 ```sh
@@ -463,7 +471,7 @@ Rho accepts global options before an optional subcommand. Provider, model, auth,
 | `rho daemon [run\|status [--json]\|stop]` | Run the per-user [daemon](/daemon) in the foreground, show its status, or stop it. `status` and `stop` exit with status 1 when no daemon is running. |
 | `rho worktrees prune [--dry-run]` | Remove the daemon's session worktrees that are clean and merged, keep their branches, and say why each other one stays. `--dry-run` changes nothing. See [Cleaning up worktrees](#cleaning-up-worktrees). |
 | `rho doctor [--json]` | Run the same setup diagnostics as the interactive `/doctor` overlay and print a text report (or one JSON document). Root `--provider`, `--model`, `--auth`, and `--reasoning` apply to this invocation the same way they do for `rho run`. It also checks the [daemon](/daemon#checking-the-daemon) without starting one. Exits with status 1 when any check fails; warnings exit 0. |
-| `rho update` | Update Rho using the detected installation method. |
+| `rho update [--check [--json]]` | Update Rho using the detected installation method. `--check` only reports whether an update exists and how it would install. |
 | `rho uninstall [--purge] [--dry-run]` | Preview and confirm uninstall; preserve local data unless `--purge` is given. |
 | `rho help [COMMAND]` | Show help for Rho or a subcommand. |
 
