@@ -660,13 +660,20 @@ pub enum McpCommand {
     /// Over stdio by default, for a host that starts it as a command. With
     /// `--http`, over streamable HTTP on a loopback address, for hosts that
     /// reach MCP servers by URL through a tunnel; every request then needs
-    /// a bearer token from `rho mcp token rotate`. No tool answers a
-    /// session's approvals or questions.
+    /// a bearer token from `rho mcp token rotate`, and the server can POST
+    /// watched sessions' news to webhooks from `rho mcp webhook add`. No
+    /// tool answers a session's approvals or questions.
     Serve(McpServeArgs),
     /// Manage the bearer tokens `rho mcp serve --http` accepts.
     Token {
         #[command(subcommand)]
         command: McpTokenCommand,
+    },
+    /// Manage the webhooks `rho mcp serve --http` POSTs watched sessions'
+    /// news to.
+    Webhook {
+        #[command(subcommand)]
+        command: McpWebhookCommand,
     },
 }
 
@@ -700,6 +707,16 @@ pub struct McpServeArgs {
     /// token carries its own scope instead.
     #[arg(long, value_enum, conflicts_with = "http")]
     pub scope: Option<McpTokenScope>,
+    /// With `--http`, the name webhook news says it is from, so a bot
+    /// driving several machines tells them apart. Defaults to the host
+    /// name.
+    #[arg(long, value_name = "NAME", requires = "http")]
+    pub name: Option<String>,
+    /// With `--http`, how many sessions each token may watch at once,
+    /// stalled watches included. Defaults to 5 times --max-sessions (50
+    /// by default). `rho mcp webhook list` shows each token's count.
+    #[arg(long, value_name = "N", requires = "http")]
+    pub max_watches: Option<u32>,
 }
 
 #[derive(Subcommand, Clone, Debug)]
@@ -730,6 +747,38 @@ pub enum McpTokenCommand {
     },
     /// Delete token NAME; requests with it are refused at once.
     Revoke {
+        #[arg(value_name = "NAME")]
+        name: String,
+    },
+}
+
+#[derive(Subcommand, Clone, Debug)]
+pub enum McpWebhookCommand {
+    /// Create webhook NAME, or replace it, reading its bearer secret from
+    /// stdin: `printf %s "$KEY" | rho mcp webhook add NAME --url URL
+    /// --token TOKEN`.
+    Add {
+        /// The webhook's name, which `watch` and `notify` take.
+        #[arg(value_name = "NAME")]
+        name: String,
+        /// Where to POST: an https URL, or http to a loopback host.
+        #[arg(long, value_name = "URL")]
+        url: String,
+        /// A token whose watches may use the webhook. May be repeated; at
+        /// least one.
+        #[arg(long, value_name = "TOKEN", required = true)]
+        token: Vec<String>,
+    },
+    /// List the webhooks: their names, URLs, tokens, last delivery, and
+    /// stalled watches. Never their secrets.
+    List {
+        /// Print one JSON document instead of text rows.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Delete webhook NAME; watches that use it are dropped before their
+    /// next POST.
+    Remove {
         #[arg(value_name = "NAME")]
         name: String,
     },

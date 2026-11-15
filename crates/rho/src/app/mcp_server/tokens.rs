@@ -13,6 +13,7 @@ use rho_providers::credentials::CredentialStore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use super::token_store::{self, StoredSet};
 use crate::{
     app::session_control::{Grant, Holder},
     caller_context::{Access, Scope, Workspaces},
@@ -65,29 +66,26 @@ pub(crate) struct Rotation {
     pub(crate) workspaces: Vec<PathBuf>,
 }
 
+impl StoredSet for TokenSet {
+    const ACCOUNT: &'static str = ACCOUNT;
+    const WHAT: &'static str = "MCP server tokens";
+}
+
 impl TokenSet {
     /// The set saved in `store`; empty when none is.
     pub(crate) fn load(store: &dyn CredentialStore) -> anyhow::Result<Self> {
-        let Some(saved) = store
-            .get_secret_fresh(ACCOUNT)
-            .context("could not read the MCP server tokens from the credential store")?
-        else {
-            return Ok(Self::default());
-        };
-        serde_json::from_str(&saved).context("the saved MCP server tokens do not parse")
+        token_store::load(store)
     }
 
+    #[cfg(test)]
     pub(crate) fn save(&self, store: &dyn CredentialStore) -> anyhow::Result<()> {
-        let encoded = serde_json::to_string(self)?;
-        store
-            .set_secret(ACCOUNT, &encoded)
-            .context("could not save the MCP server tokens in the credential store")
+        token_store::save(self, store)
     }
 
     /// Gives token `name` a new secret, creating the token if it does not
     /// exist, and returns the secret. Old secrets stop working.
     pub(crate) fn rotate(&mut self, name: &str, rotation: Rotation) -> anyhow::Result<String> {
-        validate_name(name)?;
+        validate_name("token", name)?;
         let workspaces = rotation
             .workspaces
             .iter()
@@ -144,14 +142,16 @@ impl TokenSet {
     }
 }
 
-fn validate_name(name: &str) -> anyhow::Result<()> {
+/// Refuses a `kind` name (a token's, a webhook's) that refusals and lists
+/// could not show plainly.
+pub(super) fn validate_name(kind: &str, name: &str) -> anyhow::Result<()> {
     let valid = !name.is_empty()
         && name.len() <= 64
         && name
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
     if !valid {
-        anyhow::bail!("token name {name:?} must be 1 to 64 ASCII letters, digits, '-', or '_'");
+        anyhow::bail!("{kind} name {name:?} must be 1 to 64 ASCII letters, digits, '-', or '_'");
     }
     Ok(())
 }

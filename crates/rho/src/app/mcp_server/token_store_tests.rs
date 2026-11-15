@@ -5,7 +5,7 @@ use rho_providers::credentials::{CredentialResult, FileCredentialStore};
 use tempfile::TempDir;
 
 use super::*;
-use crate::app::mcp_server::tokens::Rotation;
+use crate::app::mcp_server::tokens::{Rotation, TokenSet};
 
 struct ContendedStore {
     store: FileCredentialStore,
@@ -64,17 +64,17 @@ fn token_updates_exclude_other_writers_from_reload_through_save() {
         access: None,
         workspaces: vec![root.path().to_owned()],
     };
-    let old = update_at(&store, &store.lock_path, |tokens| {
+    let old = update_at(&store, &store.lock_path, |tokens: &mut TokenSet| {
         tokens.rotate("compromised", rotation())
     })
     .unwrap();
-    update_at(&store, &store.lock_path, |tokens| {
+    update_at(&store, &store.lock_path, |tokens: &mut TokenSet| {
         store.assert_transaction_locked();
         assert!(tokens.revoke("compromised"));
         Ok(())
     })
     .unwrap();
-    let new = update_at(&store, &store.lock_path, |tokens| {
+    let new = update_at(&store, &store.lock_path, |tokens: &mut TokenSet| {
         store.assert_transaction_locked();
         assert!(tokens.authenticate(&old).is_none());
         tokens.rotate("other", rotation())

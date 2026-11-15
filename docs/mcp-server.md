@@ -15,6 +15,10 @@ The server speaks stdio by default. For hosts that connect by URL, use [`--http`
 | `steer` | Sends `text` to the running turn. | write |
 | `cancel` | Stops the turn in progress. | write |
 | `wait` | Waits for the turn to end or ask for input. See [Following a turn](#following-a-turn). | read |
+| `watch` | HTTP only. POSTs the session's news to a [webhook](#webhooks) until it settles. Returns where the session is now, as `wait` does. | read |
+| `unwatch` | HTTP only. Stops watching the session. | read |
+
+Over HTTP, `new` and `prompt` also take `notify`, a [webhook](#webhooks) name, to watch the session from that turn on.
 
 Over stdio the host has write access unless you start the server [read-only](#read-only-over-stdio). Over HTTP each [token](#tokens) has read or write access.
 
@@ -51,11 +55,14 @@ Sessions can start sessions, so the server checks two budgets on every `new` and
 - Session depth. A session started by a person or an outside agent is depth 1, a session it starts is depth 2, and so on. `--max-depth` sets the limit, 3 by default.
 - Concurrent sessions. Each caller may run `--max-sessions` sessions at once, 10 by default. Each HTTP token is a separate caller. A session counts until its turn ends, including time waiting for a person.
 
+Over HTTP, each token may also [watch](#webhooks) `--max-watches` sessions at once: unless set, 5 × `--max-sessions` (50 by default). A watch counts until its news is delivered or it is removed, including while it is stopped on an error. `rho mcp webhook list` shows each token's count against the limit.
+
 A request past a budget is refused with the budget, its limit, and the value asked for:
 
 ```text
 session depth budget: limit 3, asked 4; a session at depth 3 may not start or prompt another
 concurrent sessions budget for token "ci": limit 10, asked 11
+session watches budget for token "ci": limit 50, asked 51
 ```
 
 These limits stop runaway recursion. They are not a sandbox, since a session with a shell can reach the daemon directly.
@@ -185,3 +192,52 @@ transport = "streamable_http"
 url = "https://mcp.example.com/mcp"
 headers_from_env = { Authorization = "RHO_MCP_AUTHORIZATION" }
 ```
+
+### Webhooks
+
+An HTTP server can POST to a webhook when a session has news, so a remote host such as a bot routine does not have to keep calling `wait`. Add a target, bound to the tokens that may use it, with its bearer secret on stdin:
+
+```bash
+printf %s "$ROUTINE_KEY" | rho mcp webhook add grok --url https://example.com/hooks/abc --token grok
+rho mcp webhook list           # targets, last delivery, stalled watches, each token's watch count; --json for JSON
+rho mcp webhook remove grok
+```
+
+- `--url` must be `https`, or `http` to a loopback host, with no user name or password in it.
+- `--token` can be repeated. A token can use only the targets bound to it. Running `add` again replaces the target.
+- The secret is kept in your [credential store](/authentication-and-models#where-credentials-live). No list, tool result, or log shows it.
+
+Then a caller with a token watches a session with `watch`, or with `notify` on the `new` or `prompt` that starts its turn:
+
+```json
+{"workspace": "/home/me/src/app", "prompt": "Fix the flaky test", "notify": "grok"}
+```
+
+The server POSTs to the target's URL with `Authorization: Bearer <secret>` and `Content-Type: application/json`. The body is what `wait` would return, plus `server`, the server's `--name`, which defaults to the host name:
+
+```json
+{"server": "lab-box", "session": "8c1e…", "state": "completed", "done": true, "turn": "…", "outcome": {"type": "answered", "text": "…", "stop": "end_turn"}, "cursor": "4f0a…:42"}
+```
+
+What fires:
+
+- Each time the session stops for a person, with `state: "waiting_for_input"` and the requests in `inputs`.
+- Once when the session settles, with no turn running and none rho will start for its background work. That ends the watch. To hear about the next turn, pass `notify` to the `prompt` that starts it.
+- If the session already settled when you call `watch`, the answer is the news: it returns `watching: false` and nothing is POSTed. If it is waiting for a person, the answer is that news, and it is not POSTed again.
+
+Once `new` or `prompt` with `notify` has started the turn, the call succeeds even if the watch could not be set up, so a retry never starts the turn twice. Such a result has `watch_error` saying what went wrong; `watch` and `unwatch` report a watch they could not save the same way.
+
+Only watched sessions fire. A turn a person starts from the TUI on a session nobody watches, or whose watch already delivered, sends nothing.
+
+Delivery happens at least once, so the same news can arrive twice. To skip a repeat, compare `turn`, `state`, and the ids in `inputs` with news you already handled: the `waiting_for_input` news and the settle of one turn share its `turn`.
+
+A timeout, a network error, `408`, `429`, or a `5xx` is retried, 2 seconds later, then at gaps doubling up to 10 minutes. That is at most 15 attempts for one piece of news: 10 in the first 17 minutes of gaps, then one every 10 minutes (at most 6 an hour), the last after about 67 minutes of gaps. Those times count the gaps alone: each attempt can also take up to 30 seconds before it times out, so a receiver that never answers is given up on about 75 minutes after the first attempt, plus the server's own checks before each attempt. Any other answer, including a redirect, stops the watch at once. Redirects are never followed. `rho mcp webhook list` shows the last delivery of each target and the error of each watch that stopped. Restarting the server, or watching the session again, retries a stopped watch.
+
+Watches survive a server restart, in `mcp-serve/watches.json` in the rho home (`~/.rho` by default). News that came while the server was down is sent when it starts again; the server starts the rho daemon then if it is not running, so a turn a reboot `interrupted` is reported too. After that, a watch never starts the daemon: if you stop it, the watch stops with an error until the server restarts or the session is watched again. One server per rho home keeps the watches; a second one serves the other tools, does not offer `watch`, `unwatch`, or `notify`, and refuses them.
+
+Security:
+
+- A caller names only a target. Its URL and secret come from `rho mcp webhook add`, so a token holder cannot make the server POST anywhere else.
+- Before every POST the server checks again that the token exists, the target is still bound to it, and the session is in the token's workspaces. If not, it drops the watch without POSTing.
+- The body carries final answers and approval summaries, including paths and commands, to the target.
+- If the target is a paid bot routine, each POST is a billed run, including each approval a person has to answer.

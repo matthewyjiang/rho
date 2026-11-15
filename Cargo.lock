@@ -4879,6 +4879,7 @@ dependencies = [
  "digest-io",
  "fs2",
  "futures-util",
+ "gethostname",
  "hex",
  "http",
  "http-body-util",

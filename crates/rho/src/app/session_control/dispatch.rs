@@ -49,13 +49,13 @@ impl Action {
     /// The JSON Schema of the action's arguments.
     pub(crate) fn input_schema(self) -> Map<String, Value> {
         match self {
-            Self::List => schema::<ListParams>(),
-            Self::Read => schema::<ReadParams>(),
-            Self::New => schema::<NewParams>(),
-            Self::Prompt => schema::<PromptParams>(),
-            Self::Steer => schema::<SteerParams>(),
-            Self::Cancel => schema::<CancelParams>(),
-            Self::Wait => schema::<WaitParams>(),
+            Self::List => schema_of::<ListParams>(),
+            Self::Read => schema_of::<ReadParams>(),
+            Self::New => schema_of::<NewParams>(),
+            Self::Prompt => schema_of::<PromptParams>(),
+            Self::Steer => schema_of::<SteerParams>(),
+            Self::Cancel => schema_of::<CancelParams>(),
+            Self::Wait => schema_of::<WaitParams>(),
         }
     }
 }
@@ -74,20 +74,21 @@ impl SessionControl {
     }
 }
 
-fn schema<T: JsonSchema>() -> Map<String, Value> {
+/// The JSON Schema of `T`, as a tool's input schema.
+pub(crate) fn schema_of<T: JsonSchema>() -> Map<String, Value> {
     match serde_json::to_value(schemars::schema_for!(T)) {
         Ok(Value::Object(schema)) => schema,
         _ => unreachable!("a derived schema is a JSON object"),
     }
 }
 
-pub(super) fn parse<T: DeserializeOwned>(
-    action: Action,
+/// Tool `tool`'s `arguments` as its params `T`.
+pub(crate) fn parse_arguments<T: DeserializeOwned>(
+    tool: &str,
     arguments: Map<String, Value>,
 ) -> Result<T, ControlError> {
-    serde_json::from_value(Value::Object(arguments)).map_err(|error| {
-        ControlError::Invalid(format!("invalid `{}` arguments: {error}", action.name()))
-    })
+    serde_json::from_value(Value::Object(arguments))
+        .map_err(|error| ControlError::Invalid(format!("invalid `{tool}` arguments: {error}")))
 }
 
 pub(super) fn json(result: impl Serialize) -> Result<Value, ControlError> {

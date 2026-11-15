@@ -13,8 +13,11 @@
 //! - rmcp checks the `Host` header (loopback names, plus the tunnel's
 //!   `--allow-host`) and refuses any `Origin` that is not an
 //!   `--allow-origin`, so a web page cannot drive it from a browser.
+//!
+//! Once bound, it takes the rho home's webhook watches (`watch/`) and
+//! resumes them.
 
-use std::{convert::Infallible, net::SocketAddr, sync::Arc};
+use std::{convert::Infallible, net::SocketAddr, path::PathBuf, sync::Arc};
 
 use anyhow::Context;
 use bytes::Bytes;
@@ -26,7 +29,7 @@ use rmcp::transport::{
     streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService},
 };
 
-use super::{tokens::TokenSet, SessionTools, Transport};
+use super::{tokens::TokenSet, watch::Watches, SessionTools, Transport};
 use crate::{app::session_control::SessionControl, credential_store::UntrackedCredentialStore};
 
 #[path = "http_sessions.rs"]
@@ -49,6 +52,12 @@ pub(crate) struct HttpOptions {
     /// Browser origins to accept; requests with any other `Origin` are
     /// refused, and requests without one pass.
     pub(crate) allowed_origins: Vec<String>,
+    /// The name webhook news says it is from (`--name`).
+    pub(crate) name: String,
+    /// How many sessions each token may watch at once (`--max-watches`).
+    pub(crate) max_watches: u32,
+    /// Where the watches are kept: `<rho home>/mcp-serve`.
+    pub(crate) watches_dir: PathBuf,
 }
 
 type Body = BoxBody<Bytes, Infallible>;
@@ -76,6 +85,12 @@ pub(crate) async fn serve_http(
         .await
         .with_context(|| format!("could not listen on {}", options.address))?;
     let local = listener.local_addr()?;
+    let watches = Watches::open(
+        Arc::clone(&control),
+        options.name,
+        options.max_watches,
+        options.watches_dir,
+    )?;
     let config = StreamableHttpServerConfig::default()
         .with_allowed_hosts(
             LOOPBACK_HOSTS
@@ -90,7 +105,9 @@ pub(crate) async fn serve_http(
         move || {
             Ok(SessionTools {
                 control: Arc::clone(&control),
-                transport: Transport::Http,
+                transport: Transport::Http {
+                    watches: watches.clone(),
+                },
                 environment: environment.clone(),
             })
         },

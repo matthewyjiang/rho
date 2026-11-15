@@ -35,11 +35,19 @@
 //! connection of their own, so calls on the same session never replace each
 //! other's attachment. Observing never loads a session, so reading one
 //! never starts its MCP servers at the reader's nesting depth.
+//!
+//! Front ends that follow a session beyond one `wait`, as `rho mcp serve`'s
+//! webhook watches do, check the caller as `wait` does
+//! ([`SessionControl::check_follow`]) and keep a [`Follow`], which reports
+//! each new reason the session is done and why the daemon ended it. Their
+//! checks on nobody's call, as before a webhook POST, reach only a daemon
+//! already running ([`DaemonUse::RunningOnly`]), so they never start one a
+//! person stopped.
 
 use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, PoisonError},
+    sync::{Arc, Mutex, OnceLock, PoisonError},
 };
 
 use rho_protocol::{
@@ -70,10 +78,12 @@ pub(crate) use super::daemon_cli::Reach;
 use check::CheckedCall;
 pub(crate) use check::{Checked, Target};
 use dispatch::json;
+pub(crate) use dispatch::{parse_arguments, schema_of};
+pub(crate) use follow::{Connect, Follow, FollowEnd, Followed, NewsKey};
+pub(crate) use params::WaitResult;
 use params::{
     CancelParams, CancelResult, ListParams, ListResult, NewParams, NewResult, PromptParams,
     PromptResult, ReadParams, ReadResult, SessionEntry, SteerParams, SteerResult, WaitParams,
-    WaitResult,
 };
 pub(crate) use policy::{Action, Caller, Grant, Holder, Limits, Refusal};
 
@@ -92,6 +102,21 @@ pub(crate) enum ControlError {
     Daemon(#[from] DaemonError),
 }
 
+impl ControlError {
+    /// Whether the session is one the daemon does not know: the core found
+    /// no job or saved session for it, or the daemon answered that no
+    /// saved session has its id, as it does once the session was deleted.
+    pub(crate) fn is_unknown_session(&self) -> bool {
+        match self {
+            Self::UnknownSession(_) => true,
+            Self::Daemon(DaemonError::Request(ClientError::Rpc { error, .. })) => {
+                error.code == rho_protocol::ErrorCode::SessionNotFound.code()
+            }
+            Self::Refused(_) | Self::Invalid(_) | Self::Daemon(_) => false,
+        }
+    }
+}
+
 impl From<ClientError> for ControlError {
     fn from(error: ClientError) -> Self {
         Self::Daemon(error.into())
@@ -104,11 +129,26 @@ impl From<Unreachable> for ControlError {
     }
 }
 
+/// Which daemon a check outside the actions asks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DaemonUse {
+    /// The daemon as this core reaches it, which may start one: for a
+    /// caller's call.
+    Call,
+    /// Only a daemon already running: for a check nobody's call asked for,
+    /// as before a webhook POST, which must not start one a person stopped.
+    RunningOnly,
+}
+
 /// The core. One per process; every caller shares it.
 pub(crate) struct SessionControl {
     daemon: Daemon,
     /// How `daemon`, and the connections `read` and `wait` open, reach it.
     reach: Reach,
+    /// The daemon only while it runs, for checks no call asked for
+    /// ([`DaemonUse::RunningOnly`]) by a core that may start one. Made on
+    /// first use; a core that reaches only a running daemon uses `daemon`.
+    running: OnceLock<Daemon>,
     limits: Limits,
     /// The sessions each holder started or prompted, which its session cap
     /// counts while their turns run.
@@ -125,6 +165,7 @@ impl SessionControl {
         Self {
             daemon: Daemon::reaching(reach, ConnectAs::Agent),
             reach,
+            running: OnceLock::new(),
             limits,
             driven: Mutex::default(),
             admission: Mutex::default(),
@@ -283,6 +324,48 @@ impl SessionControl {
         follow::wait(self.reach, params.session, after, timeout).await
     }
 
+    /// Checks that `caller` may follow `session` as `wait` does: read
+    /// access, a session the daemon knows, in a workspace the grant reaches,
+    /// asking the daemon as `used` says.
+    pub(crate) async fn check_follow(
+        &self,
+        caller: &Caller,
+        session: &SessionId,
+        used: DaemonUse,
+    ) -> Result<(), ControlError> {
+        caller.grant.permit(Action::Wait)?;
+        let daemon = match (used, self.reach) {
+            (DaemonUse::Call, Reach::StartIfNeeded | Reach::Running)
+            | (DaemonUse::RunningOnly, Reach::Running) => &self.daemon,
+            (DaemonUse::RunningOnly, Reach::StartIfNeeded) => self
+                .running
+                .get_or_init(|| Daemon::reaching(Reach::Running, ConnectAs::Agent)),
+        };
+        reach_session_on(daemon, caller, session).await.map(drop)
+    }
+
+    /// Where `session` is now, as a `wait` with no timeout reports it.
+    /// Check the caller with [`Self::check_follow`] first.
+    pub(crate) async fn now(&self, session: &SessionId) -> Result<WaitResult, ControlError> {
+        follow::wait(self.reach, session.clone(), None, std::time::Duration::ZERO).await
+    }
+
+    /// Follows `session` from its start, reaching the daemon as `connect`
+    /// says; [`Connect::Reach`] with this core's own reach may start one.
+    /// Check the caller with [`Self::check_follow`] first.
+    pub(crate) async fn follow(
+        &self,
+        session: &SessionId,
+        connect: Connect,
+    ) -> Result<Follow, ControlError> {
+        Follow::open(connect, session.clone(), None).await
+    }
+
+    /// How this core reaches the daemon.
+    pub(crate) fn reach(&self) -> Reach {
+        self.reach
+    }
+
     /// Prompts `session` and counts it toward the holder's session cap.
     async fn start_turn(
         &self,
@@ -370,56 +453,13 @@ impl SessionControl {
         caller: &Caller,
         session: &SessionId,
     ) -> Result<PathBuf, ControlError> {
-        let place = self.place_of(session).await?;
-        if !caller.grant.scope.workspaces.allows(&place.project) {
-            caller.grant.reach(&place.workspace)?;
-        }
-        Ok(place.workspace)
-    }
-
-    /// Where `session` works: its job's workspace and project, or, for a
-    /// saved session no daemon has run, the catalog's workspace.
-    async fn place_of(&self, session: &SessionId) -> Result<Place, ControlError> {
-        let jobs = self.jobs().await?;
-        if let Some(job) = jobs
-            .iter()
-            .find(|job| job.session.as_ref() == Some(session))
-        {
-            return Ok(Place {
-                workspace: job.workspace.clone(),
-                project: job.project().to_path_buf(),
-            });
-        }
-        let mut cursor = None;
-        loop {
-            let page = self
-                .daemon
-                .request::<SessionList>(&SessionListParams {
-                    cwd: None,
-                    cursor,
-                    limit: std::num::NonZeroU32::new(CATALOG_PAGE),
-                })
-                .await?;
-            if let Some(saved) = page.sessions.iter().find(|saved| &saved.session == session) {
-                return Ok(Place {
-                    workspace: saved.cwd.clone(),
-                    project: saved.cwd.clone(),
-                });
-            }
-            match page.next_cursor {
-                Some(next) => cursor = Some(next),
-                None => return Err(ControlError::UnknownSession(session.clone())),
-            }
-        }
+        reach_session_on(&self.daemon, caller, session).await
     }
 
     async fn jobs(&self) -> Result<Vec<JobSummary>, ControlError> {
-        Ok(self
-            .daemon
-            .request::<JobList>(&JobListParams {})
-            .await?
-            .jobs)
+        jobs_of(&self.daemon).await
     }
+
     /// The environment a session `caller` starts or prompts runs with: the
     /// caller's, with its context one level deeper in place of any the
     /// caller's environment carries. The daemon writes the same variables
@@ -442,6 +482,58 @@ impl SessionControl {
             )
             .collect()
     }
+}
+
+/// [`SessionControl::reach_session`], asking `daemon`.
+async fn reach_session_on(
+    daemon: &Daemon,
+    caller: &Caller,
+    session: &SessionId,
+) -> Result<PathBuf, ControlError> {
+    let place = place_of(daemon, session).await?;
+    if !caller.grant.scope.workspaces.allows(&place.project) {
+        caller.grant.reach(&place.workspace)?;
+    }
+    Ok(place.workspace)
+}
+
+/// Where `session` works: its job's workspace and project, or, for a
+/// saved session no daemon has run, the catalog's workspace.
+async fn place_of(daemon: &Daemon, session: &SessionId) -> Result<Place, ControlError> {
+    let jobs = jobs_of(daemon).await?;
+    if let Some(job) = jobs
+        .iter()
+        .find(|job| job.session.as_ref() == Some(session))
+    {
+        return Ok(Place {
+            workspace: job.workspace.clone(),
+            project: job.project().to_path_buf(),
+        });
+    }
+    let mut cursor = None;
+    loop {
+        let page = daemon
+            .request::<SessionList>(&SessionListParams {
+                cwd: None,
+                cursor,
+                limit: std::num::NonZeroU32::new(CATALOG_PAGE),
+            })
+            .await?;
+        if let Some(saved) = page.sessions.iter().find(|saved| &saved.session == session) {
+            return Ok(Place {
+                workspace: saved.cwd.clone(),
+                project: saved.cwd.clone(),
+            });
+        }
+        match page.next_cursor {
+            Some(next) => cursor = Some(next),
+            None => return Err(ControlError::UnknownSession(session.clone())),
+        }
+    }
+}
+
+async fn jobs_of(daemon: &Daemon) -> Result<Vec<JobSummary>, ControlError> {
+    Ok(daemon.request::<JobList>(&JobListParams {}).await?.jobs)
 }
 
 /// The catalog page `place_of` walks: the daemon's largest

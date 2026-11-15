@@ -16,6 +16,12 @@
 //!
 //! No tool answers a session's approvals or questions: the core has no such
 //! action, and an unknown tool name is refused before anything runs.
+//!
+//! Over HTTP the server adds webhook watches (`watch/`): `watch` and
+//! `unwatch`, and `notify` on `new` and `prompt`, which have it POST a
+//! session's news to a target the owner configured (`webhooks.rs`). Every
+//! other call still goes to the core unchanged. A server that does not keep
+//! the rho home's watches, because another one does, lists none of them.
 
 use std::sync::Arc;
 
@@ -37,8 +43,11 @@ use crate::caller_context::{Access, CallerContext};
 mod http_server;
 pub(crate) mod token_store;
 pub(crate) mod tokens;
+pub(crate) mod watch;
+pub(crate) mod webhooks;
 
 pub(super) use http_server::{serve_http, HttpOptions};
+use watch::{HttpTool, WatchMode, Watches};
 
 /// What the server tells a host about itself.
 const INSTRUCTIONS: &str = "Start, drive, and follow rho agent sessions through the rho daemon. \
@@ -68,8 +77,24 @@ enum Transport {
         context: CallerContext,
     },
     /// The grant the HTTP layer put on the request after it checked the
-    /// bearer token, which a request without one lacks and is refused.
-    Http,
+    /// bearer token, which a request without one lacks and is refused; and
+    /// whether the server keeps the webhook watches.
+    Http { watches: WatchMode },
+}
+
+impl Transport {
+    /// The watches, when this server keeps them and offers their tools.
+    fn watches(&self) -> Option<&Watches> {
+        match self {
+            Self::Http {
+                watches: WatchMode::On(watches),
+            } => Some(watches.as_ref()),
+            Self::Stdio { .. }
+            | Self::Http {
+                watches: WatchMode::Off,
+            } => None,
+        }
+    }
 }
 
 impl SessionTools {
@@ -80,7 +105,7 @@ impl SessionTools {
             .map_err(|error| ErrorData::invalid_params(format!("{error:#}"), None))?;
         let (grant, default) = match &self.transport {
             Transport::Stdio { grant, context } => (grant.clone(), context.clone()),
-            Transport::Http => {
+            Transport::Http { .. } => {
                 let grant = context
                     .extensions
                     .get::<::http::request::Parts>()
@@ -106,9 +131,13 @@ impl ServerHandler for SessionTools {
             .enable_tools()
             .enable_experimental_with(CallerContext::capability())
             .build();
+        let instructions = match self.transport.watches() {
+            Some(watches) => format!("{INSTRUCTIONS} {}", watches.instructions()),
+            None => INSTRUCTIONS.to_owned(),
+        };
         ServerConfig::new(capabilities)
             .with_server_info(Implementation::new("rho", env!("CARGO_PKG_VERSION")))
-            .with_instructions(INSTRUCTIONS)
+            .with_instructions(instructions)
     }
 
     async fn list_tools(
@@ -116,9 +145,23 @@ impl ServerHandler for SessionTools {
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
-        Ok(ListToolsResult::with_all_items(
-            Action::ALL.into_iter().map(tool).collect(),
-        ))
+        let watching = self.transport.watches().is_some();
+        let mut tools: Vec<Tool> = Action::ALL
+            .into_iter()
+            .map(|action| {
+                let schema = action.input_schema();
+                let schema = if watching {
+                    watch::with_notify(action, schema)
+                } else {
+                    schema
+                };
+                tool(action, schema)
+            })
+            .collect();
+        if watching {
+            tools.extend(watch::watch_tools());
+        }
+        Ok(ListToolsResult::with_all_items(tools))
     }
 
     async fn call_tool(
@@ -126,33 +169,48 @@ impl ServerHandler for SessionTools {
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
-        let Some(action) = Action::from_name(&request.name) else {
-            return Err(ErrorData::invalid_params(
-                format!("no tool named {:?}", request.name),
-                None,
-            ));
-        };
-        let caller = self.caller(&context)?;
+        // Refused before anything runs.
+        let unknown =
+            || ErrorData::invalid_params(format!("no tool named {:?}", request.name), None);
         let arguments = request.arguments.unwrap_or_default();
-        let result = match self.control.call(&caller, action, arguments).await {
+        let outcome = match &self.transport {
+            Transport::Stdio { .. } => {
+                let action = Action::from_name(&request.name).ok_or_else(unknown)?;
+                let caller = self.caller(&context)?;
+                self.control
+                    .call(&caller, action, arguments)
+                    .await
+                    .map_err(|error| error.to_string())
+            }
+            // Parsed whether or not this server keeps the watches: one that
+            // does not answers their tools, and `notify`, that it does not.
+            Transport::Http { watches } => {
+                let tool = HttpTool::from_name(&request.name).ok_or_else(unknown)?;
+                let caller = self.caller(&context)?;
+                watches
+                    .call(&self.control, &caller, tool, arguments)
+                    .await
+                    .map_err(|error| error.to_string())
+            }
+        };
+        let result = match outcome {
             Ok(value) => {
                 let text = serde_json::to_string_pretty(&value)
                     .map_err(|error| ErrorData::internal_error(error.to_string(), None))?;
                 CallToolResult::success(vec![ContentBlock::text(text)])
             }
             // Refusals and failures go to the model, which can act on them.
-            Err(error) => CallToolResult::error(vec![ContentBlock::text(error.to_string())]),
+            Err(error) => CallToolResult::error(vec![ContentBlock::text(error)]),
         };
         Ok(result.into())
     }
 }
 
-/// The MCP tool for `action`.
-fn tool(action: Action) -> Tool {
+/// The MCP tool for `action`, taking `schema`.
+fn tool(action: Action, schema: serde_json::Map<String, serde_json::Value>) -> Tool {
     let annotations =
         ToolAnnotations::with_title(action.name()).read_only(action.needs() == Access::Read);
-    Tool::new(action.name(), action.description(), action.input_schema())
-        .with_annotations(annotations)
+    Tool::new(action.name(), action.description(), schema).with_annotations(annotations)
 }
 
 /// Serves the tools over stdio until the host closes stdin, for the
