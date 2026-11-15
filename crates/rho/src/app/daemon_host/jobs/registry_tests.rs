@@ -160,6 +160,149 @@ fn a_closed_registry_interrupts_its_turns_and_takes_no_new_jobs() {
     assert_eq!(states(store.load().unwrap()), expected);
 }
 
+// Covers: only a restart in place marks the session turns it interrupts
+// for the restarted daemon to continue, whether the turn ended interrupted
+// or the closing registry interrupted it, and only a turn its record says
+// may continue: never one with a time limit, or of a session whose client
+// takes no daemon turns, as `rho run --detach --timeout`'s. A dead daemon's
+// turn swept at the next start, a stop's, one of a restart a stop
+// overrode, a turn cancelled during a restart, and a subagent run are
+// never marked either. The next start takes a mark and clears it on disk,
+// so the start after that, as of a daemon that died continuing the turn,
+// continues nothing.
+// Owner: daemon job registry stop and startup.
+#[test]
+fn only_a_restart_marks_the_turns_it_interrupts_to_continue() {
+    use crate::daemon::Ending::{self, Restart, Stop};
+
+    /// How the job's turn ends.
+    enum Ends {
+        /// Its daemon died; the next start sweeps it.
+        SweptAtStart,
+        /// The turn task records this end during the stop.
+        Turn(TurnEnd),
+        /// The stop closes the registry with the turn still under way.
+        Closed,
+    }
+    // A session job running a turn that `continues` after a restart, as
+    // its record says.
+    let session_running = |continues: bool, session: &rho_sdk::SessionId| JobRecord {
+        state: JobState::Running,
+        turn: Some(TurnRecord {
+            continues_after_restart: continues,
+            ..TurnRecord::starting(/*key*/ None)
+        }),
+        ..JobRecord::new_session(JobId::generate(), PathBuf::from("/work"), session.clone())
+    };
+    let running_session = |session: &rho_sdk::SessionId| session_running(true, session);
+    let running_not_continued = |session: &rho_sdk::SessionId| session_running(false, session);
+    let running_subagent = |session: &rho_sdk::SessionId| JobRecord {
+        state: JobState::Running,
+        ..JobRecord::new_subagent(
+            JobId::generate(),
+            PathBuf::from("/work"),
+            Some(session.clone()),
+            "run".into(),
+        )
+    };
+    let interrupted = || Ends::Turn(TurnEnd::Interrupted);
+    /// The job a case runs, for its session.
+    type Job<'a> = &'a dyn Fn(&rho_sdk::SessionId) -> JobRecord;
+    // Name, job, the endings asked for in order, how the turn ends, and
+    // whether the next start continues it.
+    let cases: [(&str, Job<'_>, &[Ending], Ends, bool); 9] = [
+        (
+            "dead daemon",
+            &running_session,
+            &[],
+            Ends::SweptAtStart,
+            false,
+        ),
+        ("stop", &running_session, &[Stop], interrupted(), false),
+        (
+            "stop, still running",
+            &running_session,
+            &[Stop],
+            Ends::Closed,
+            false,
+        ),
+        ("restart", &running_session, &[Restart], interrupted(), true),
+        (
+            "restart, still running",
+            &running_session,
+            &[Restart],
+            Ends::Closed,
+            true,
+        ),
+        (
+            "restart, then stop",
+            &running_session,
+            &[Restart, Stop],
+            interrupted(),
+            false,
+        ),
+        (
+            "restart, cancelled",
+            &running_session,
+            &[Restart],
+            Ends::Turn(TurnEnd::Cancelled),
+            false,
+        ),
+        (
+            "restart, turn that may not continue",
+            &running_not_continued,
+            &[Restart],
+            Ends::Closed,
+            false,
+        ),
+        (
+            "restart, subagent run",
+            &running_subagent,
+            &[Restart],
+            Ends::Closed,
+            false,
+        ),
+    ];
+    // A daemon running `job`, whose stop was asked for as `endings` say, in
+    // order.
+    let stopping = |store: &JobStore, job: JobRecord, endings: &[Ending]| {
+        let registry = JobRegistry::open(store.clone());
+        registry.register(job).unwrap();
+        for ending in endings {
+            registry.stopping_for(*ending);
+        }
+        registry
+    };
+    let mut taken = Vec::new();
+    let mut expected = Vec::new();
+    for (name, job, endings, ends, marked) in cases {
+        let home = TempDir::new().unwrap();
+        let store = JobStore::open(home.path()).unwrap();
+        let session = rho_sdk::SessionId::new();
+        let job = job(&session);
+        let id = job.id.clone();
+        match ends {
+            Ends::SweptAtStart => store.write(&job).unwrap(),
+            Ends::Turn(end) => {
+                let registry = stopping(&store, job, endings);
+                registry.end_turn(&id, end, None).unwrap();
+            }
+            Ends::Closed => stopping(&store, job, endings).close(),
+        }
+
+        let next_start = JobRegistry::open(store.clone()).take_restart_interrupted();
+        let start_after = JobRegistry::open(store).take_restart_interrupted();
+
+        taken.push((name, next_start, start_after));
+        expected.push((
+            name,
+            if marked { vec![session] } else { Vec::new() },
+            Vec::new(),
+        ));
+    }
+    assert_eq!(taken, expected);
+}
+
 // Covers: an upgrade closes the registry only while no job is in progress,
 // and not after a turn that ran since it found the daemon idle, which may
 // have left work its other checks missed; once closed, no turn starts, so a

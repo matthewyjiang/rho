@@ -2,7 +2,7 @@
 //! replaced executable is re-executed once the daemon is idle, never during
 //! a turn, and the daemon keeps its pid, lock, and socket, so a client that
 //! connects meanwhile waits for it; `rho daemon restart` interrupts the
-//! turns under way, after which their sessions take prompts again.
+//! turns under way, which continue once their clients attach again.
 
 use std::{
     ffi::CString,
@@ -18,15 +18,16 @@ use std::{
 use pretty_assertions::assert_eq;
 use rho_protocol::{
     methods::{SessionAttach, SessionCancel, Status},
-    Client, ClientHello, ClientInfo, Cursor, DaemonNotification, DetachReason, JobState,
-    Notifications, PendingUpgrade, Replay, SessionAttachParams, SessionAttachResponse,
-    SessionCancelParams, SessionEvent, SessionId, SessionSetup, StatusParams,
+    AnswerStop, Client, ClientHello, ClientInfo, Cursor, DaemonNotification, DetachReason,
+    IdleWake, JobState, Notifications, PendingUpgrade, Replay, SessionAttachParams,
+    SessionAttachResponse, SessionCancelParams, SessionEvent, SessionId, SessionSetup,
+    StatusParams, TurnId, TurnOutcome,
 };
 use serde_json::json;
 use tempfile::TempDir;
 use tokio::net::UnixStream;
 
-use super::sessions::{settled_job, Sandbox, DEADLINE};
+use super::sessions::{settled_job, Sandbox, DEADLINE, REPLY};
 
 /// `rho` installed at a path a test replaces, as an upgrade does: at first
 /// a symlink to the binary under test.
@@ -103,6 +104,81 @@ async fn until_closed(notifications: &mut Notifications) -> Vec<DaemonNotificati
     heard
 }
 
+/// Everything the daemon sends on a connection until the session's job
+/// reaches `state`.
+async fn until_state(
+    notifications: &mut Notifications,
+    state: JobState,
+) -> Vec<DaemonNotification> {
+    let mut heard = Vec::new();
+    loop {
+        let notification = tokio::time::timeout(DEADLINE, notifications.recv())
+            .await
+            .expect("the daemon sends the session's next event")
+            .expect("the connection stays open");
+        let reached = matches!(
+            &notification,
+            DaemonNotification::SessionEvent(params)
+                if matches!(params.event, SessionEvent::State { state: got, .. } if got == state)
+        );
+        heard.push(notification);
+        if reached {
+            return heard;
+        }
+    }
+}
+
+/// The last turn end among `heard`: the turn's id and its outcome.
+fn turn_ended(heard: &[DaemonNotification]) -> Option<(TurnId, TurnOutcome)> {
+    heard
+        .iter()
+        .rev()
+        .find_map(|notification| match notification {
+            DaemonNotification::SessionEvent(params) => match &params.event {
+                SessionEvent::TurnEnded { turn, outcome } => Some((turn.clone(), outcome.clone())),
+                _ => None,
+            },
+            _ => None,
+        })
+}
+
+/// What `heard` holds after its first `replayed` session events, the
+/// replay of the attach it followed: the session's live events, and any
+/// other notification among them.
+fn after_replay(heard: &[DaemonNotification], replayed: u64) -> &[DaemonNotification] {
+    let replayed = usize::try_from(replayed).unwrap();
+    let start = heard
+        .iter()
+        .enumerate()
+        .filter(|(_, notification)| matches!(notification, DaemonNotification::SessionEvent(_)))
+        .nth(replayed)
+        .map_or(heard.len(), |(at, _)| at);
+    &heard[start..]
+}
+
+/// A message a client following a session was shown outside the agent's
+/// reply.
+#[derive(Debug, PartialEq, Eq)]
+enum Told {
+    Notice,
+    UserMessage,
+}
+
+/// The notices and user messages among `heard`, in order.
+fn told(heard: &[DaemonNotification]) -> Vec<Told> {
+    heard
+        .iter()
+        .filter_map(|notification| match notification {
+            DaemonNotification::SessionEvent(params) => match &params.event {
+                SessionEvent::Notice { .. } => Some(Told::Notice),
+                SessionEvent::UserMessage { .. } => Some(Told::UserMessage),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect()
+}
+
 /// What a client following a session saw of its job: each state, and why
 /// it was detached.
 #[derive(Debug, PartialEq, Eq)]
@@ -146,12 +222,24 @@ async fn attach(
     session: &SessionId,
     after: Option<Cursor>,
 ) -> SessionAttachResponse {
+    attach_with(sandbox, client, session, after, SessionSetup::default()).await
+}
+
+/// [`attach`] with `setup`, which applies when the attach reopens the
+/// session.
+async fn attach_with(
+    sandbox: &Sandbox,
+    client: &Client,
+    session: &SessionId,
+    after: Option<Cursor>,
+    setup: SessionSetup,
+) -> SessionAttachResponse {
     client
         .request::<SessionAttach>(&SessionAttachParams {
             session: session.clone(),
             after,
             environment: sandbox.client_environment(),
-            setup: SessionSetup::default(),
+            setup,
         })
         .await
         .unwrap()
@@ -369,22 +457,43 @@ async fn an_idle_daemon_upgrades_in_place_while_a_new_client_waits() {
     );
 }
 
-// Covers: `rho daemon restart` during a turn re-executes the daemon as the
-// same process: the client following the session is detached as
-// restarting, the turn is recorded interrupted, and the session takes a
-// prompt again, which completes.
+// Covers: `rho daemon restart` during turns re-executes the daemon as the
+// same process: the client following a session is detached as restarting,
+// and the job lists the turn interrupted until a client that takes the
+// daemon's turns, as the TUI does, attaches again. That attach finds a new
+// turn running, which continues the interrupted one, streams to that
+// client, shown as the daemon's notice rather than a message the user
+// sent, and completes with the model's answer. The daemon's continuing
+// turn runs with no limit, so it never continues a turn of a session opened
+// to take no daemon turns, as `rho run --detach` opens one, nor a turn that
+// had a time limit: such a session stays interrupted when the same client
+// attaches.
 // Owner: daemon restart.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn restart_interrupts_the_running_turn_and_the_session_takes_prompts_again() {
+async fn restart_continues_the_interrupted_turn_once_its_client_attaches_again() {
     let sandbox = Sandbox::new();
     sandbox.set_permission_mode("bypass");
     let (daemon, client) = sandbox.spawn_daemon(sandbox.rho("tool-call"), &[]).await;
-    let session = sandbox.new_session(&client).await;
+    // As the TUI opens and reopens its sessions.
+    let taking_turns = || SessionSetup {
+        idle_wake: IdleWake::Turn,
+        ..SessionSetup::default()
+    };
+    let session = sandbox
+        .new_session_with_setup(&client, taking_turns())
+        .await;
+    let detached = sandbox.new_session(&client).await;
+    let limited = sandbox
+        .new_session_with_setup(&client, taking_turns())
+        .await;
     fifo(sandbox.workspace.join("never.fifo"));
     let (follower, mut notifications) = sandbox.connect_following().await;
-    attach(&sandbox, &follower, &session, None).await;
+    let attached = attach(&sandbox, &follower, &session, None).await;
+    let blocked = blocked_on("never.fifo");
+    sandbox.prompt_tool_call(&client, &session, &blocked).await;
+    sandbox.prompt_tool_call(&client, &detached, &blocked).await;
     sandbox
-        .prompt_tool_call(&client, &session, &blocked_on("never.fifo"))
+        .prompt_tool_call_limited(&client, &limited, &blocked, 600_000)
         .await;
 
     let restarted = sandbox
@@ -393,27 +502,49 @@ async fn restart_interrupts_the_running_turn_and_the_session_takes_prompts_again
         .status()
         .unwrap();
     let heard = until_closed(&mut notifications).await;
-    let client = sandbox.connect().await;
-    let interrupted = settled_job(&sandbox, &client, &session).await.state;
-    let prompted = sandbox.prompt(&client, &session).await;
-    let completed = settled_job(&sandbox, &client, &session).await.state;
-    let status = client.request::<Status>(&StatusParams {}).await.unwrap();
+    let (follower, mut notifications) = sandbox.connect_following().await;
+    let interrupted = settled_job(&sandbox, &follower, &session).await.state;
+    // The setup applies, since each attach reopens its session.
+    let other = sandbox.connect().await;
+    let mut kept = Vec::new();
+    for kept_session in [&detached, &limited] {
+        let reattached = attach_with(&sandbox, &other, kept_session, None, taking_turns()).await;
+        kept.push(reattached.state);
+    }
+    let after = cursor(&attached, &heard);
+    let reattached = attach_with(&sandbox, &follower, &session, after, taking_turns()).await;
+    let followed = until_state(&mut notifications, JobState::Completed).await;
+    // The restarted daemon's stream is new, so the attach resets: it
+    // replays the saved conversation first, the interrupted turn's prompt
+    // among it. The continuing turn is what follows, live.
+    let followed = after_replay(&followed, reattached.replay_events);
+    let status = follower.request::<Status>(&StatusParams {}).await.unwrap();
 
     assert_eq!(
         (
             restarted.success(),
             seen(&heard).last(),
             interrupted,
-            prompted,
-            completed,
+            kept,
+            reattached.state,
+            told(followed),
+            turn_ended(followed),
             status.pid,
         ),
         (
             true,
             Some(&Seen::Detached(DetachReason::Restarting)),
             JobState::Interrupted,
-            Ok(()),
-            JobState::Completed,
+            vec![JobState::Interrupted, JobState::Interrupted],
+            JobState::Running,
+            vec![Told::Notice],
+            reattached.turn.clone().map(|turn| (
+                turn,
+                TurnOutcome::Answered {
+                    text: REPLY.to_owned(),
+                    stop: AnswerStop::EndTurn,
+                }
+            )),
             daemon.id(),
         ),
         "daemon log:\n{}",

@@ -88,6 +88,7 @@ fn started_turn(
         runtime: Queued::join(&session.runtime),
         budget: None,
         start,
+        limit: None,
     };
     (turn, started)
 }
@@ -425,7 +426,6 @@ async fn a_cancel_before_the_prompt_begins_saves_nothing() {
         session: Arc::clone(&session),
         turn,
         stopping: rho_sdk::CancellationToken::new(),
-        limit: None,
     }
     .spawn(text_prompt("hello"), rho_protocol::PromptAuthor::Person);
     let start = began(start).await;
@@ -474,7 +474,6 @@ async fn a_client_prompt_that_starts_no_workflow_saves_nothing() {
             session: Arc::clone(&session),
             turn,
             stopping: rho_sdk::CancellationToken::new(),
-            limit: None,
         }
         .spawn(text_prompt(&prompt), rho_protocol::PromptAuthor::Client);
         let start = began(start).await;
@@ -573,11 +572,14 @@ async fn the_daemon_times_a_turn_out_at_its_limit() {
         // limit's cancel trips.
         let cancel = session.turn().cancel.clone();
         let (turn, start) = started_turn(&session, cancel);
+        let turn = StartedTurn {
+            limit: Some(TurnLimit::starting_now(case.timeout_ms)),
+            ..turn
+        };
         TurnTask {
             session: Arc::clone(&session),
             turn,
             stopping: rho_sdk::CancellationToken::new(),
-            limit: Some(TurnLimit::starting_now(case.timeout_ms)),
         }
         .spawn(text_prompt("hello"), rho_protocol::PromptAuthor::Person);
         if case.cancelled_first {

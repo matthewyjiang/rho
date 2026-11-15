@@ -530,8 +530,10 @@ pub enum DaemonCommand {
     ///
     /// The daemon keeps its pid, socket, and lock, so clients reconnect to
     /// it rather than start another, and re-executes its executable, which
-    /// runs an installed upgrade at once. Turns under way are interrupted
-    /// and recorded as interrupted. Starts the daemon when none is running.
+    /// runs an installed upgrade at once. Turns under way are interrupted;
+    /// a TUI session's turn with no time limit continues once the TUI
+    /// attaches to its session again. Starts the daemon when none is
+    /// running.
     Restart,
 }
 

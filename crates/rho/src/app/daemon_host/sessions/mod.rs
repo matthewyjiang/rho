@@ -32,7 +32,8 @@
 //! Once the daemon starts stopping, or restarting in place (#1713), it
 //! refuses new sessions and prompts and detaches every client, telling it
 //! which; then it stops the turns under way, waits for them to save, and
-//! records them interrupted.
+//! records them interrupted. The daemon a restart re-executes continues
+//! those turns as clients attach again; see [`restart_resume`].
 
 use std::{
     collections::HashMap,
@@ -88,6 +89,7 @@ mod options;
 mod processes;
 mod queued;
 mod reopen;
+mod restart_resume;
 mod setup;
 mod start;
 mod steer;
@@ -116,10 +118,11 @@ pub(super) use open::session_environment;
 use open::{config_for_new, open_session, OpenWith, OpenedSession, Opening, Workspace};
 use queued::Queued;
 use reopen::ReopenLocks;
+use restart_resume::RestartResumes;
 use start::{Entered, KeyedTurn};
 use t3_wake::{T3Wake, WakeDir};
 pub(in crate::app) use turn::DAEMON_COMMANDS;
-use turn::{PromptStart, TurnLimit, TurnTask};
+use turn::{DaemonTurn, PromptStart, TurnLimit, TurnTask};
 use unload::Residency;
 pub(in crate::app) use unload::UNLOAD_IDLE_AFTER;
 pub(super) use worktree::{worktree_stale, Prune};
@@ -164,6 +167,9 @@ pub(super) struct Sessions {
     /// This, for the tasks that start a turn on their own (see
     /// [`idle_wake`]).
     myself: Weak<Sessions>,
+    /// The sessions whose turn the restart that ran this daemon interrupted,
+    /// which continue once a client attaches (see [`restart_resume`]).
+    restart_resumes: RestartResumes,
 }
 
 /// A session this daemon loaded.
@@ -552,6 +558,7 @@ impl Sessions {
             unloading: tokio::sync::RwLock::new(()),
             wakes: WakeDir::in_home(rho_home),
             worktrees: crate::worktree::root(rho_home),
+            restart_resumes: RestartResumes::default(),
         })
     }
 
@@ -781,7 +788,8 @@ impl Sessions {
     }
 
     /// Subscribes a client to a session's events, resuming after its cursor
-    /// when the session's feed still can.
+    /// when the session's feed still can, and continues the session's turn
+    /// if the restart that ran this daemon interrupted it.
     pub(super) async fn attach(
         &self,
         params: SessionAttachParams,
@@ -799,11 +807,23 @@ impl Sessions {
             &params.environment,
             params.setup,
         )?;
-        let (session, attached) = self
-            .enter_session(&params.session, &with, |session, _turn| {
-                Ok(session.feed.attach(params.after.as_ref()))
+        // A turn the restart interrupted continues first, so the client
+        // attaches to the turn that continues it.
+        let (session, (resumed, attached)) = self
+            .enter_session(&params.session, &with, |session, turn| {
+                let resumed = self.resume_interrupted(session, turn);
+                Ok((resumed, session.feed.attach(params.after.as_ref())))
             })
             .await?;
+        if let Some(turn) = resumed {
+            // Spawned before anything awaits, as a prompt's turn is.
+            TurnTask {
+                session: Arc::clone(&session),
+                turn,
+                stopping: self.stopping.clone(),
+            }
+            .spawn_daemon(restart_resume::resume_turn());
+        }
         Ok(attach_response(&session.workspace, attached))
     }
 

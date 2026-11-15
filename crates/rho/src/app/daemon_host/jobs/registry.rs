@@ -13,7 +13,7 @@ use super::{
     state::TransitionRefused, unix_now, Admission, JobEvent, JobId, JobRecord, JobState, JobStore,
     JobSubject, Keeping, TurnEnd, TurnRecord,
 };
-use crate::caller_context::CallerContext;
+use crate::{caller_context::CallerContext, daemon::Ending};
 
 /// The daemon's jobs: the ones it runs and the records it loaded at
 /// startup. Shared by every request and turn task.
@@ -36,6 +36,11 @@ pub(in crate::app::daemon_host) struct JobRegistry {
     /// Counts the jobs that went in progress, under the `jobs` lock, so an
     /// upgrade can tell that none did since it last found the daemon idle.
     started: AtomicU64,
+    /// Set, under the `jobs` lock, once the daemon's stop is a restart in
+    /// place, whose interrupted session turns are marked to continue (see
+    /// [`Self::stopping_for`]). Never set when the registry opens, so the
+    /// turns a dead daemon left open are never marked.
+    restarting: AtomicBool,
     /// Woken after every job is added, moves, or is forgotten.
     changed: tokio::sync::Notify,
 }
@@ -145,6 +150,7 @@ impl JobRegistry {
             ),
             closed: AtomicBool::new(false),
             started: AtomicU64::new(0),
+            restarting: AtomicBool::new(false),
             changed: tokio::sync::Notify::new(),
         };
         {
@@ -352,7 +358,8 @@ impl JobRegistry {
         let record = jobs.get_mut(id).ok_or(UnknownJob)?;
         let was_in_progress = record.state.in_progress();
         // A turn starts from every state but those of a turn under way.
-        apply(record, event).map_err(|_| StartTurnError::Busy)?;
+        self.transition(record, event)
+            .map_err(|_| StartTurnError::Busy)?;
         // The outcome kept was the last turn's.
         record.outcome = None;
         record.turn = Some(turn);
@@ -385,7 +392,7 @@ impl JobRegistry {
         let mut jobs = self.lock();
         let record = jobs.get_mut(id).ok_or(UnknownJob)?;
         let was_in_progress = record.state.in_progress();
-        apply(record, event)?;
+        self.transition(record, event)?;
         Ok(self.wrote(record, was_in_progress))
     }
 
@@ -410,7 +417,7 @@ impl JobRegistry {
     ) -> Result<Moved, TransitionError> {
         let mut jobs = self.lock();
         let record = jobs.get_mut(id).ok_or(UnknownJob)?;
-        apply(record, JobEvent::TurnEnded(end))?;
+        self.transition(record, JobEvent::TurnEnded(end))?;
         record.outcome = outcome;
         persist(&self.store, record);
         self.changed.notify_waiters();
@@ -429,7 +436,7 @@ impl JobRegistry {
     ) -> Result<(), TransitionError> {
         let mut jobs = self.lock();
         let record = jobs.get_mut(id).ok_or(UnknownJob)?;
-        apply(record, JobEvent::ConversationMoved)?;
+        self.transition(record, JobEvent::ConversationMoved)?;
         persist(&self.store, record);
         self.changed.notify_waiters();
         Ok(())
@@ -486,14 +493,77 @@ impl JobRegistry {
         self.interrupt_unfinished(&mut jobs);
     }
 
+    /// Records how the daemon's stop, about to begin, ends. Once it is a
+    /// restart in place, each session turn interrupted from then on, by the
+    /// stop or as it closes the registry, is marked for the restarted daemon
+    /// to continue (see `sessions/restart_resume.rs`) if its record says it
+    /// [`TurnRecord::continues_after_restart`]; subagent and workflow
+    /// jobs are not, since the turn that started them, or the workflow's
+    /// own recovery, decides what becomes of them. A stop asked for after a
+    /// restart marks no more; the marks a restart already made are cleared
+    /// by the next start, which is not a restart's.
+    pub(in crate::app::daemon_host) fn stopping_for(&self, ending: Ending) {
+        let _jobs = self.lock();
+        let restarting = match ending {
+            Ending::Stop => false,
+            Ending::Restart => true,
+        };
+        self.restarting.store(restarting, Ordering::Relaxed);
+    }
+
+    /// The sessions whose turn the last daemon's restart in place
+    /// interrupted, as their jobs' marks say. Clears every mark, on disk
+    /// too, before the caller continues any turn, so a daemon that dies
+    /// continuing them never continues them again. Call once, as the daemon
+    /// starts: every start clears the marks, a restart's or not.
+    pub(in crate::app::daemon_host) fn take_restart_interrupted(&self) -> Vec<rho_sdk::SessionId> {
+        let mut jobs = self.lock();
+        let mut sessions = Vec::new();
+        for record in jobs.values_mut() {
+            if !record.resume_after_restart {
+                continue;
+            }
+            record.resume_after_restart = false;
+            persist(&self.store, record);
+            match &record.subject {
+                JobSubject::Session { session } => sessions.push(session.clone()),
+                // Only a session job is ever marked.
+                JobSubject::Subagent { .. } | JobSubject::Workflow { .. } => {}
+            }
+        }
+        sessions
+    }
+
     /// Records every job in `jobs` with a turn under way as interrupted.
     fn interrupt_unfinished(&self, jobs: &mut BTreeMap<JobId, JobRecord>) {
         for record in jobs.values_mut() {
             // Refused exactly for the jobs with no turn under way.
-            if apply(record, JobEvent::TurnEnded(TurnEnd::Interrupted)).is_ok() {
+            if self
+                .transition(record, JobEvent::TurnEnded(TurnEnd::Interrupted))
+                .is_ok()
+            {
                 persist(&self.store, record);
             }
         }
+    }
+
+    /// Moves `record` on by `event`, as [`apply`] does, under the `jobs`
+    /// lock, and sets its restart mark, `resume_after_restart`: set when the
+    /// daemon's restart in place interrupts a session turn that
+    /// [`TurnRecord::continues_after_restart`] (see [`Self::stopping_for`]),
+    /// cleared by every other transition. Every transition goes through
+    /// here, so no mark outlives the interruption that set it.
+    fn transition(&self, record: &mut JobRecord, event: JobEvent) -> Result<(), TransitionRefused> {
+        let marks = matches!(event, JobEvent::TurnEnded(TurnEnd::Interrupted))
+            && matches!(record.subject, JobSubject::Session { .. })
+            && record
+                .turn
+                .as_ref()
+                .is_some_and(|turn| turn.continues_after_restart)
+            && self.restarting.load(Ordering::Relaxed);
+        apply(record, event)?;
+        record.resume_after_restart = marks;
+        Ok(())
     }
 
     fn lock(&self) -> MutexGuard<'_, BTreeMap<JobId, JobRecord>> {

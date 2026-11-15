@@ -24,7 +24,9 @@ use rho_protocol::SessionSetup;
 use rho_sdk::CancellationToken;
 use tokio::sync::watch;
 
-use super::{t3_wake::Background, Entered, LoadedSession, OpenWith, Sessions, TurnTask};
+use super::{
+    t3_wake::Background, DaemonTurn, Entered, LoadedSession, OpenWith, Sessions, TurnTask,
+};
 use crate::app::session_runtime::{BackgroundWait, SessionRuntime};
 
 /// A session's side of its watcher.
@@ -112,9 +114,9 @@ impl Sessions {
         };
         // A busy session delivers at its turn's boundaries, and the watcher
         // looks again once that turn ended.
-        let Ok(Entered::Started(turn)) =
-            self.start_turn(session, &mut slot, &with, /*key*/ None)
-        else {
+        let Ok(Entered::Started(turn)) = self.start_turn(
+            session, &mut slot, &with, /*key*/ None, /*limit*/ None,
+        ) else {
             return false;
         };
         drop(slot);
@@ -122,9 +124,8 @@ impl Sessions {
             session: Arc::clone(session),
             turn,
             stopping: self.stopping.clone(),
-            limit: None,
         }
-        .spawn_delivery();
+        .spawn_daemon(DaemonTurn::delivery());
         true
     }
 }

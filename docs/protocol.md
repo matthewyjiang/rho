@@ -197,7 +197,7 @@ The daemon detaches a client with `rho/session/detached`, after which no event o
 
 - `lagged`: the client fell 4096 events behind, the daemon unloaded the session, as a delete that fails after it unloaded the session does, or the session's conversation moved to another node of its tree (`select_node`, `rewind_workspace`). A turn never waits for a client; attach again with the cursor to catch up.
 - `daemon_stopping`: the daemon is stopping.
-- `restarting`: the daemon is re-executing in place, for an upgrade or `rho/daemon/restart`, and closes the connection next. Connect again and attach with the cursor; the restarted daemon answers with a `reset` replay.
+- `restarting`: the daemon is re-executing in place, for an upgrade or `rho/daemon/restart`, and closes the connection next. Connect again and attach with the cursor; the restarted daemon answers with a `reset` replay. When the restart cut short a turn with no `timeout_ms` of a session opened with `idle_wake: turn`, and the attach reopens the session with `idle_wake: turn` too, the daemon first starts a turn of its own that continues it, which the replay ends in. That turn begins with a `notice`, not a `user_message`; its model input is saved as the turn's user message, which a later `reset` replay of the saved conversation includes. A session reopened otherwise, or first by a prompt, keeps the turn `interrupted`, as does a turn with a `timeout_ms` or of a session opened with `idle_wake: never`.
 - `deleted`: `rho/session/delete` deleted the session.
 - `not_loaded`: `rho/session/observe` found the session unloaded, so its replay was the saved conversation and nothing follows. Observe again to read it again.
 

@@ -174,6 +174,14 @@ pub(super) struct JobRecord {
     /// back.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) worktree_removed_at: Option<String>,
+    /// Whether the daemon's restart in place interrupted this session job's
+    /// last turn, one that [`TurnRecord::continues_after_restart`], which
+    /// the restarted daemon then continues (see
+    /// `sessions/restart_resume.rs`). Only that interruption sets it; the
+    /// job's next transition clears it, and so does every daemon start,
+    /// which takes it (see [`JobRegistry::take_restart_interrupted`]).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(super) resume_after_restart: bool,
     /// Whether the record has a file. Never read from one: a record a file
     /// holds is kept.
     #[serde(skip)]
@@ -204,15 +212,26 @@ pub(super) struct TurnRecord {
     /// nothing, so a prompt sent again with its key starts a turn.
     #[serde(default)]
     pub(super) began: bool,
+    /// Whether a restart in place that interrupts the turn has the
+    /// restarted daemon continue it (see `sessions/restart_resume.rs`):
+    /// only a turn with no time limit, of a session whose client takes the
+    /// turns the daemon starts (`idle_wake: turn`). The turn that continues
+    /// it is one the daemon starts, with no limit, so it must not run a
+    /// turn its client would not have, nor outlive the limit of a turn
+    /// that had one, such as `rho run --detach --timeout`'s.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(super) continues_after_restart: bool,
 }
 
 impl TurnRecord {
-    /// A turn about to start, under a new id, for a prompt that named `key`.
+    /// A turn about to start, under a new id, for a prompt that named `key`,
+    /// which no restart continues.
     pub(super) fn starting(key: Option<rho_protocol::IdempotencyKey>) -> Self {
         Self {
             id: rho_protocol::TurnId::new(uuid::Uuid::new_v4().hyphenated().to_string()),
             key,
             began: false,
+            continues_after_restart: false,
         }
     }
 }
@@ -296,6 +315,7 @@ impl JobRecord {
             turn: None,
             worktree: None,
             worktree_removed_at: None,
+            resume_after_restart: false,
             keeping: Keeping::Stored,
         }
     }

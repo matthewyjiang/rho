@@ -11,7 +11,7 @@ There is one daemon per user and Rho home (`~/.rho`, or `$RHO_HOME`). Rho starts
 | `rho daemon status` | Show whether the daemon runs, its version, its jobs, and a pending update. Add `--json` for JSON. |
 | `rho daemon start` | Start the daemon if none runs. Safe to run again. |
 | `rho daemon stop` | Stop the daemon. Running turns stop and show as `interrupted`. |
-| `rho daemon restart` | Restart the daemon, for example after an update. Running turns stop and show as `interrupted`. |
+| `rho daemon restart` | Restart the daemon, for example after an update. Running turns stop, then continue once the TUI reattaches ([Updates](#upgrading-in-place)). |
 | `rho daemon` | Run the daemon in the foreground. Same as `rho daemon run`. |
 | `rho attach <id>` | Follow a session's turn from the terminal ([Attaching](/automation-cli#attaching-to-a-daemon-session)). |
 | `rho worktrees prune [--dry-run]` | Remove session worktrees that are clean and merged ([Sessions in worktrees](#sessions-in-worktrees)). |
@@ -32,7 +32,7 @@ Stopping the daemon also ends the commands and background processes your session
 - `/jobs` lists everything the daemon runs, in every project. From there you can answer questions, send messages, cancel work, and open sessions ([Interactive TUI](/interactive-tui)).
 - `/login` opens the browser on the machine where the TUI runs. Sessions use the new sign-in from their next prompt.
 - You can't delete a session from a picker while the daemon has it loaded.
-- After `rho daemon restart`, or an update the daemon picks up on its own, the TUI reconnects by itself. If the daemon stops instead, after `rho daemon stop` or a mise or Windows update, reopen the session with `rho --resume <id>`.
+- After `rho daemon restart`, or an update the daemon picks up on its own, the TUI reconnects by itself, and a turn the restart interrupted continues. If the daemon stops instead, after `rho daemon stop` or a mise or Windows update, reopen the session with `rho --resume <id>`.
 
 Launch flags work as follows:
 
@@ -57,7 +57,7 @@ The daemon tracks each piece of work as a job: a session's turns, a subagent run
 | `failed` | The last turn failed. The job shows why. |
 | `cancelled` | Someone cancelled the last turn. |
 | `timed_out` | The last turn hit its time limit, such as `rho run --detach --timeout`. |
-| `interrupted` | The daemon stopped before the last turn ended. |
+| `interrupted` | The daemon stopped before the last turn ended. After `rho daemon restart`, a TUI session's turn continues once the TUI attaches again ([Updates](#upgrading-in-place)). |
 
 A turn that waits for an approval or an answer waits until someone answers or cancels it. Rho never denies it because no client is attached. Any connected client can answer, and the first answer wins. The exception is a question with fallback answers when you set [`[questionnaire] timeout_seconds`](/configuration#questionnaire-timeout). Rho answers it with the fallback once the timeout passes.
 
@@ -188,7 +188,7 @@ The daemon reads these from its own environment only when it starts: `RHO_LOG`, 
 
 When you update Rho, the running daemon notices the new executable and switches to it once nothing is running. It doesn't interrupt your work. While it waits, `rho daemon status` shows `upgrade  pending to <version> (<N> in progress)`. Running turns, subagents, workflow runs, background processes, logins in progress, and questions waiting for an answer all keep it waiting.
 
-`rho daemon restart` switches right away and interrupts running turns.
+`rho daemon restart` switches right away and interrupts running turns. Each TUI turn continues once the TUI reattaches to its session, which it does by itself: the daemon shows a notice and starts a turn that tells the model the restart cut its last turn short. That message is saved as the turn's user message, so a reopened session shows it as one. The daemon waits for that attach because a session's environment and credentials come only from its client. Only sessions whose client takes turns the daemon starts, as the TUI does, continue, and only turns without a time limit: a `rho run --detach` session stays `interrupted`. So does a session no TUI reattaches to, and every turn that a stop, a crash, or a cancel ends.
 
 If you install with mise or Homebrew, the new version lands at a different path, and the daemon can't see it. Run `rho daemon restart` from the new version once your work is done.
 
