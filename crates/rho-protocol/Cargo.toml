@@ -26,6 +26,16 @@ thiserror = "2"
 # `process` reach and start the daemon (`LocalDaemon`).
 tokio = { version = "1.36", features = ["io-util", "macros", "net", "process", "rt", "sync", "time"] }
 
+# `LocalDaemon` checks that the daemon's named pipe is the current user's
+# before it writes to it, and starts `rho daemon start` with no console window.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_System_Threading",
+] }
+
 [dev-dependencies]
 pretty_assertions = "1"
 tempfile = "3"

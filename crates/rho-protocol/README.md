@@ -31,9 +31,9 @@ daemon and its frontends: the Rho TUI, rho-ui, the `rho acp` adapter, and MCP.
   requests, and the daemon's notifications on a separate `Notifications`
   stream.
 - `DaemonEndpoint::locate` says where a rho home's daemon listens, the same
-  layout the `rho` CLI uses. On Unix, `LocalDaemon` connects a frontend to
-  that daemon and, when none runs, starts it with `rho daemon start`, the
-  CLI's own ensure-running path.
+  layout the `rho` CLI uses. `LocalDaemon` connects a frontend to that
+  daemon, over its Unix socket or, on Windows, its named pipe, and when none
+  runs, starts it with `rho daemon start`, the CLI's own ensure-running path.
 - The [`methods`](https://docs.rs/rho-protocol/latest/rho_protocol/methods/)
   module lists every method and notification with its params and result. A
   session's turns run in the daemon and outlive the client that started them.

@@ -50,8 +50,8 @@
 //! # Finding the daemon
 //!
 //! Each rho home has one daemon, listening where [`DaemonEndpoint::locate`]
-//! says. On Unix, [`LocalDaemon`] connects a frontend to it, and starts it
-//! with `rho daemon start` when none runs, as the `rho` CLI does.
+//! says. [`LocalDaemon`] connects a frontend to it, and starts it with
+//! `rho daemon start` when none runs, as the `rho` CLI does.
 //!
 //! # Methods
 //!
@@ -81,7 +81,6 @@ mod endpoint;
 mod error;
 mod forward;
 mod jsonrpc;
-#[cfg(unix)]
 mod local_daemon;
 mod login_relay;
 pub mod methods;
@@ -103,7 +102,6 @@ pub use jsonrpc::{
     FrameError, Message, MessageReader, MessageWriter, Notification, ParseError, Request,
     RequestId, Response, RpcError, MAX_LINE_BYTES,
 };
-#[cfg(unix)]
 pub use local_daemon::{LocalDaemon, LocalDaemonError};
 pub use login_relay::{login_relay, LoginRelay, LoginStream};
 pub use methods::{

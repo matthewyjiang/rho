@@ -247,7 +247,6 @@ fn daemon_start_is_idempotent() {
 // of an isolated rho home through `rho daemon start` and connects to it, and
 // a later one finds that daemon running, starting nothing.
 // Owner: rho-protocol LocalDaemon against the real CLI.
-#[cfg(unix)]
 #[tokio::test]
 async fn a_frontend_starts_a_stopped_daemon_as_the_cli_does_then_finds_it() {
     use rho_protocol::{ClientHello, ClientInfo, LocalDaemon};
