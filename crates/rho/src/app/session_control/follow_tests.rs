@@ -8,6 +8,7 @@ use super::*;
 /// A watch of a job in `state`, of turn `turn`.
 fn watch(state: JobState, turn: &str) -> Watch {
     Watch {
+        session: SessionId::new("s"),
         stream: StreamId::new("stream"),
         seq: Seq(0),
         state,
@@ -15,6 +16,7 @@ fn watch(state: JobState, turn: &str) -> Watch {
         ended: None,
         inputs: Vec::new(),
         activity: None,
+        reported: None,
     }
 }
 
@@ -56,10 +58,7 @@ fn only_the_turn_that_ended_reports_an_outcome() {
     ended.push(Seq(9), &state(JobState::Completed, "t2"));
 
     assert_eq!(
-        (
-            watching.finish(SessionId::new("s")),
-            ended.finish(SessionId::new("s"))
-        ),
+        (watching.result(), ended.result()),
         (
             WaitResult {
                 session: SessionId::new("s"),
@@ -94,7 +93,7 @@ fn a_wait_boundary_does_not_skip_an_unreturned_outcome() {
         watching.seq = Seq(7);
         watching.push(Seq(8), &turn_ended(ended, answered("final answer")));
         assert_eq!(
-            watching.finish(SessionId::new("s")),
+            watching.result(),
             WaitResult {
                 session: SessionId::new("s"),
                 state: JobState::Running,
@@ -160,7 +159,7 @@ fn a_turn_waiting_for_input_reports_its_open_requests() {
         watching.push(Seq(1), &event);
     }
 
-    let waited = watching.finish(SessionId::new("s"));
+    let waited = watching.result();
     assert_eq!(
         (waited.state, waited.done, waited.inputs),
         (JobState::WaitingForInput, true, vec![request(2)])
@@ -278,7 +277,7 @@ fn wait_is_done_once_the_session_settles() {
             inputs,
             cursor,
             ..
-        } = watching.finish(SessionId::new("s"));
+        } = watching.result();
         assert_eq!(
             Waited {
                 done,
@@ -290,5 +289,95 @@ fn wait_is_done_once_the_session_settles() {
             expected,
             "{name}"
         );
+    }
+}
+
+// Covers: a follow reports each time the session is done with something
+// new, and only then: the first look at a session done already, a request
+// for a person, the session settling after a person answered it, and a
+// second request while the first is open; events while it stays done with
+// the same thing, as a title or a repeated activity, are not news again.
+// A webhook watch POSTs each piece of news, so a repeat is a billed run.
+// Owner: session-control follow news.
+#[test]
+fn a_follow_reports_each_new_reason_it_is_done_once() {
+    let request = |id| SessionEvent::InputRequested {
+        request: Box::new(question(id, InputAsker::Turn)),
+    };
+    let resolved = |id| SessionEvent::InputResolved {
+        id: InputRequestId(id),
+        resolution: Resolution::Answered,
+    };
+    let cases = [
+        (
+            "settled already, then quiet",
+            JobState::Completed,
+            vec![
+                activity(SessionActivity::Settled),
+                SessionEvent::TitleChanged {
+                    title: "named".into(),
+                },
+                activity(SessionActivity::Settled),
+            ],
+            vec![(JobState::Completed, Vec::new())],
+        ),
+        (
+            "asks, is answered, settles",
+            JobState::Running,
+            vec![
+                activity(SessionActivity::Active),
+                request(3),
+                state(JobState::WaitingForInput, "t1"),
+                resolved(3),
+                state(JobState::Running, "t1"),
+                turn_ended("t1", answered("done")),
+                state(JobState::Completed, "t1"),
+                activity(SessionActivity::Settled),
+            ],
+            vec![
+                (
+                    JobState::WaitingForInput,
+                    vec![question(3, InputAsker::Turn)],
+                ),
+                // Answered, before the turn runs again: still done, with
+                // nothing open, which a watch does not deliver.
+                (JobState::WaitingForInput, Vec::new()),
+                (JobState::Completed, Vec::new()),
+            ],
+        ),
+        (
+            "a second request while the first is open",
+            JobState::Running,
+            vec![
+                request(3),
+                state(JobState::WaitingForInput, "t1"),
+                request(4),
+            ],
+            vec![
+                (
+                    JobState::WaitingForInput,
+                    vec![question(3, InputAsker::Turn)],
+                ),
+                (
+                    JobState::WaitingForInput,
+                    vec![question(3, InputAsker::Turn), question(4, InputAsker::Turn)],
+                ),
+            ],
+        ),
+    ];
+    for (name, start, events, expected) in cases {
+        let mut watching = watch(start, "t1");
+        let mut news = Vec::new();
+        let mut look = |watching: &mut Watch| {
+            if let Some(result) = watching.news() {
+                news.push((result.state, result.inputs));
+            }
+        };
+        look(&mut watching);
+        for (seq, event) in (1..).zip(&events) {
+            watching.push(Seq(seq), event);
+            look(&mut watching);
+        }
+        assert_eq!(news, expected, "{name}");
     }
 }

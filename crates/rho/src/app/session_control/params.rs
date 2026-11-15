@@ -277,7 +277,7 @@ impl WaitParams {
 }
 
 /// Result of `wait`.
-#[derive(Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct WaitResult {
     pub(crate) session: SessionId,
     pub(crate) state: JobState,

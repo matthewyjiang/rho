@@ -99,6 +99,28 @@ pub(super) async fn connect_with(
         .map_err(|error| unreachable(error.to_string()))
 }
 
+/// Connects to this rho home's daemon once it answers again after a
+/// restart in place, waiting up to [`DAEMON_RESTART_TIMEOUT`], declaring
+/// what `connect_as` does. Never starts one.
+pub(super) async fn connect_restarted(
+    connect_as: ConnectAs,
+) -> Result<daemon::Connection, Unreachable> {
+    let unreachable = |reason: String| Unreachable { reason };
+    let paths =
+        DaemonPaths::of_this_process().map_err(|error| unreachable(format!("{error:#}")))?;
+    match tokio::time::timeout(
+        DAEMON_RESTART_TIMEOUT,
+        daemon::connect_restarting(&paths, connect_as.hello()),
+    )
+    .await
+    {
+        Ok(connected) => connected.map_err(|error| unreachable(error.to_string())),
+        Err(_elapsed) => Err(unreachable(format!(
+            "it did not answer within DAEMON_RESTART_TIMEOUT ({DAEMON_RESTART_TIMEOUT:?}) of restarting"
+        ))),
+    }
+}
+
 /// Starts the daemon once this process's own credential store choice is one
 /// rho knows. The daemon does not inherit `RHO_CREDENTIAL_STORE` (#1779),
 /// but it refuses every session and sign-in of a client whose environment

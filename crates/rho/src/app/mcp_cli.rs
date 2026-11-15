@@ -1,6 +1,6 @@
 //! CLI handlers for `rho mcp`: `list` and `show` inspect the MCP servers
-//! rho connects to; `serve` and `token` run rho's sessions as one
-//! (`app::mcp_server`).
+//! rho connects to; `serve`, `token`, and `webhook` run rho's sessions as
+//! one (`app::mcp_server`).
 
 use serde::Serialize;
 
@@ -18,6 +18,8 @@ use super::config_repository::ConfigRepository;
 
 #[path = "mcp_cli_serve.rs"]
 mod serve;
+#[path = "mcp_cli_webhook.rs"]
+mod webhook;
 
 pub(super) async fn run(command: &McpCommand, cli: &Cli) -> anyhow::Result<()> {
     match command {
@@ -29,6 +31,7 @@ pub(super) async fn run(command: &McpCommand, cli: &Cli) -> anyhow::Result<()> {
         }
         McpCommand::Serve(args) => serve::serve(args, cli).await,
         McpCommand::Token { command } => serve::token(command, cli),
+        McpCommand::Webhook { command } => webhook::webhook(command, cli),
     }
 }
 

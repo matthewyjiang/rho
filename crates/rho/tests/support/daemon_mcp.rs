@@ -5,7 +5,8 @@
 //! read-only server refuses the tools that write, and the HTTP transport
 //! refuses requests its tokens and origin rules do not allow. How a
 //! session's caller context carries depth and scope through the server
-//! into the sessions it starts is in [`caller`].
+//! into the sessions it starts is in [`caller`]; webhook watches are in
+//! [`webhooks`].
 
 use std::{path::PathBuf, process::Stdio};
 
@@ -30,6 +31,9 @@ mod caller;
 
 #[path = "daemon_mcp_native.rs"]
 mod native;
+
+#[path = "daemon_mcp_webhooks.rs"]
+mod webhooks;
 
 type McpClient = RunningService<RoleClient, ()>;
 

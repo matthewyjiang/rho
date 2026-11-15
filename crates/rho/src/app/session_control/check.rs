@@ -12,9 +12,9 @@ use rho_protocol::SessionId;
 use serde_json::{Map, Value};
 
 use super::{
-    canonical, dispatch::parse, prompt_content, Action, Caller, CancelParams, ControlError,
-    ListParams, NewParams, PromptParams, ReadParams, Refusal, SessionControl, SteerParams,
-    WaitParams,
+    canonical, dispatch::parse_arguments, prompt_content, Action, Caller, CancelParams,
+    ControlError, ListParams, NewParams, PromptParams, ReadParams, Refusal, SessionControl,
+    SteerParams, WaitParams,
 };
 
 /// A call that passed [`SessionControl::check`].
@@ -79,25 +79,25 @@ impl SessionControl {
         };
         let (call, target) = match action {
             Action::List => {
-                let params: ListParams = parse(action, arguments)?;
+                let params: ListParams = parse_arguments(action.name(), arguments)?;
                 params.limit()?;
                 (CheckedCall::List(params), None)
             }
             Action::Read => {
-                let params: ReadParams = parse(action, arguments)?;
+                let params: ReadParams = parse_arguments(action.name(), arguments)?;
                 params.window()?;
                 self.reach_session(caller, &params.session).await?;
                 (CheckedCall::Read(params), None)
             }
             Action::Wait => {
-                let params: WaitParams = parse(action, arguments)?;
+                let params: WaitParams = parse_arguments(action.name(), arguments)?;
                 params.timeout()?;
                 params.cursor()?;
                 self.reach_session(caller, &params.session).await?;
                 (CheckedCall::Wait(params), None)
             }
             Action::New => {
-                let params: NewParams = parse(action, arguments)?;
+                let params: NewParams = parse_arguments(action.name(), arguments)?;
                 let workspace = canonical(&params.workspace)?;
                 caller.grant.reach(&workspace)?;
                 prompt_content(&params.prompt)?;
@@ -106,7 +106,7 @@ impl SessionControl {
                 (CheckedCall::New { params, workspace }, target)
             }
             Action::Prompt => {
-                let params: PromptParams = parse(action, arguments)?;
+                let params: PromptParams = parse_arguments(action.name(), arguments)?;
                 let workspace = self.reach_session(caller, &params.session).await?;
                 prompt_content(&params.text)?;
                 self.check_depth(caller)?;
@@ -118,7 +118,7 @@ impl SessionControl {
                 (CheckedCall::Prompt(params), target)
             }
             Action::Steer => {
-                let params: SteerParams = parse(action, arguments)?;
+                let params: SteerParams = parse_arguments(action.name(), arguments)?;
                 let workspace = self.reach_session(caller, &params.session).await?;
                 let target = target(
                     Some(params.session.clone()),
@@ -128,7 +128,7 @@ impl SessionControl {
                 (CheckedCall::Steer(params), target)
             }
             Action::Cancel => {
-                let params: CancelParams = parse(action, arguments)?;
+                let params: CancelParams = parse_arguments(action.name(), arguments)?;
                 let workspace = self.reach_session(caller, &params.session).await?;
                 let target = target(Some(params.session.clone()), workspace, None);
                 (CheckedCall::Cancel(params), target)

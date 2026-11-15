@@ -1,7 +1,8 @@
 //! `rho mcp serve` and `rho mcp token`: the boundary that reads the process
 //! environment (the caller context it started in, the environment sessions
-//! run with) and the credential store, then hands resolved values to
-//! `app::mcp_server` and `app::session_control`.
+//! run with, the host name and rho home an HTTP server's watches use) and
+//! the credential store, then hands resolved values to `app::mcp_server`
+//! and `app::session_control`.
 
 use std::sync::Arc;
 
@@ -13,7 +14,7 @@ use crate::{
         mcp_server::{
             self, token_store,
             tokens::{Rotation, TokenSet},
-            HttpOptions,
+            watch, HttpOptions,
         },
         session_control::{Limits, Reach, SessionControl},
     },
@@ -37,14 +38,24 @@ pub(in crate::app) async fn serve(args: &McpServeArgs, cli: &Cli) -> anyhow::Res
             mcp_server::serve_stdio(control, access, context, environment).await
         }
         Some(address) => {
-            // The tokens live in the credential store.
+            // The tokens and webhooks live in the credential store.
             open_credential_store(cli)?;
+            let name = match &args.name {
+                Some(name) if name.trim().is_empty() => anyhow::bail!("--name must not be empty"),
+                Some(name) => name.clone(),
+                None => gethostname::gethostname().to_string_lossy().into_owned(),
+            };
             mcp_server::serve_http(
                 control,
                 HttpOptions {
                     address,
                     allowed_hosts: args.allow_host.clone(),
                     allowed_origins: args.allow_origin.clone(),
+                    name,
+                    max_watches: args
+                        .max_watches
+                        .unwrap_or_else(|| watch::default_max_watches(limits.max_sessions)),
+                    watches_dir: crate::paths::rho_dir()?.join(watch::DIR),
                 },
                 environment,
             )
@@ -61,7 +72,7 @@ pub(in crate::app) fn token(command: &McpTokenCommand, cli: &Cli) -> anyhow::Res
             scope,
             workspace,
         } => {
-            let secret = token_store::update(|tokens| {
+            let secret = token_store::update(|tokens: &mut TokenSet| {
                 tokens.rotate(
                     name,
                     Rotation {
@@ -99,7 +110,7 @@ pub(in crate::app) fn token(command: &McpTokenCommand, cli: &Cli) -> anyhow::Res
             }
         }
         McpTokenCommand::Revoke { name } => {
-            token_store::update(|tokens| {
+            token_store::update(|tokens: &mut TokenSet| {
                 if !tokens.revoke(name) {
                     anyhow::bail!("no MCP server token named {name:?}");
                 }
@@ -137,7 +148,7 @@ fn token_list(tokens: &TokenSet) -> serde_json::Value {
 
 /// Opens the credential store the selected config chooses, as every rho
 /// process does before it reads a secret.
-fn open_credential_store(cli: &Cli) -> anyhow::Result<()> {
+pub(super) fn open_credential_store(cli: &Cli) -> anyhow::Result<()> {
     let repository = ConfigRepository::new(cli.config.clone());
     let path = repository.configured_path()?;
     let mut config = repository.load()?;

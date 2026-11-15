@@ -76,6 +76,8 @@ shell-words = "1"
 tempfile = "3"
 portable-pty = "0.9"
 fs2 = "0.4.3"
+# `rho mcp serve --http` names itself in webhook news by the host name by default.
+gethostname = "1"
 # `rho mcp serve --http` serves rmcp's streamable HTTP service with these.
 bytes = "1"
 http-body-util = "0.1"
