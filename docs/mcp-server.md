@@ -195,7 +195,7 @@ headers_from_env = { Authorization = "RHO_MCP_AUTHORIZATION" }
 
 ### Webhooks
 
-An HTTP server can POST to a webhook when a session has news, so a remote host such as a bot routine does not have to keep calling `wait`. Add a target, bound to the tokens that may use it, with its bearer secret on stdin:
+An HTTP server can POST to a webhook when a session has news, so a remote host such as a bot routine does not have to keep calling `wait`. [Grok Bot](/integrations/grok-bot) walks through a full setup. Add a target, bound to the tokens that may use it, with its bearer secret on stdin:
 
 ```bash
 printf %s "$ROUTINE_KEY" | rho mcp webhook add grok --url https://example.com/hooks/abc --token grok
