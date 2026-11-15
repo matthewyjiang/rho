@@ -25,15 +25,17 @@ struct UpdateCheck {
     latest: String,
     update_available: bool,
     method: InstallMethod,
-    /// The command `rho update` runs (on Windows, prints) for `method`.
-    command: String,
+    /// The command `rho update` runs (on Windows, prints) for `method`;
+    /// `null` with no update, as `rho update` then resolves none either.
+    command: Option<String>,
     /// `rho update` cannot finish unattended, so a client should run it in
     /// a terminal rather than in the background.
     needs_terminal: bool,
 }
 
 impl UpdateCheck {
-    /// Fails when `method`'s command cannot be resolved, as `rho update` would.
+    /// Fails when an update is available but `method`'s command cannot be
+    /// resolved, as `rho update` would.
     fn new(update: UpdateInfo, method: InstallMethod) -> anyhow::Result<Self> {
         let update_available = update.is_available();
         let UpdateInfo {
@@ -46,7 +48,9 @@ impl UpdateCheck {
             latest: latest_version,
             update_available,
             method,
-            command: method.update_command(&install_script_ref(latest_tag))?,
+            command: update_available
+                .then(|| method.update_command(&install_script_ref(latest_tag)))
+                .transpose()?,
             needs_terminal: method.needs_terminal(),
         })
     }
@@ -68,16 +72,21 @@ pub(crate) async fn run_check(current_version: &str, format: CheckFormat) -> any
 
 fn print_summary(check: &UpdateCheck) {
     println!("install method: {}", check.method.label());
-    if !check.update_available {
-        println!("rho is up to date (v{}).", check.current);
+    let Some(command) = &check.command else {
+        println!(
+            "rho is up to date (v{}, latest release v{}).",
+            check.current, check.latest
+        );
         return;
-    }
+    };
     println!(
         "rho v{} is available (current v{}).",
         check.latest, check.current
     );
-    println!("update command: {}", check.command);
-    if check.needs_terminal {
+    println!("update command: {command}");
+    if cfg!(windows) {
+        println!("run the update command to install it.");
+    } else if check.needs_terminal {
         println!("run `rho update` in a terminal to install it.");
     } else {
         println!("run `rho update` to install it.");

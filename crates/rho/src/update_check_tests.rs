@@ -5,7 +5,8 @@ use super::{InstallMethod, UpdateCheck, UpdateInfo};
 
 // Covers: the `rho update --check --json` object rho-ui parses: field and
 // method names, `update_available` from the version order, the command
-// pinned to the latest release tag, and which methods need a terminal.
+// pinned to the latest release tag (and none, so no lookup, without an
+// update), and which methods need a terminal.
 // Owner: update check report
 #[test]
 fn check_report_is_the_client_contract() {
@@ -39,7 +40,7 @@ fn check_report_is_the_client_contract() {
                 "latest": "3.1.1",
                 "update_available": false,
                 "method": "scoop-global",
-                "command": "scoop update; scoop update -g rho",
+                "command": null,
                 "needs_terminal": cfg!(windows),
             }),
         ),
@@ -57,7 +58,7 @@ fn check_report_is_the_client_contract() {
         ),
     ];
     for (update, method, expected) in cases {
-        let check = UpdateCheck::new(update, method).expect("command resolves without a lookup");
+        let check = UpdateCheck::new(update, method).expect("the command needs no lookup");
         assert_eq!(
             serde_json::to_value(&check).expect("the report serializes"),
             expected,

@@ -367,7 +367,7 @@ Set `RHO_INSTALL_METHOD` to `cargo`, `pacman`, `scoop`, `scoop-global`, or `scri
 {"current":"3.1.0","latest":"3.1.1","update_available":true,"method":"script","command":"RHO_INSTALL_DIR=... sh -c '...'","needs_terminal":false}
 ```
 
-`method` is `cargo`, `mise`, `pacman`, `scoop`, `scoop-global`, or `script`. `needs_terminal` is `true` when `rho update` cannot finish unattended: pacman asks for your sudo password, and on Windows it only prints the command. Unlike `rho update`, which goes on when the release lookup fails, `--check` exits with status 1.
+`method` is `cargo`, `mise`, `pacman`, `scoop`, `scoop-global`, or `script`. `command` is `null` when no update is available. `needs_terminal` is `true` when `rho update` cannot finish unattended: pacman asks for your sudo password, and on Windows it only prints the command. Unlike `rho update`, which goes on when the release lookup fails, `--check` exits with status 1.
 
 ## `rho uninstall`
 
