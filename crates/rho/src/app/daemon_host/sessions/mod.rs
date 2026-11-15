@@ -16,7 +16,9 @@
 //!
 //! A session whose host runs its children as its own threads (T3 Code) is
 //! woken through that host once background work that outlived its turn
-//! finishes; see [`t3_wake`].
+//! finishes; see [`t3_wake`]. Its clients hear whether it is settled, with
+//! no turn under way and none the daemon or its host will start for work it
+//! waits on; see [`settle`].
 //!
 //! Clients attach to a loaded session to follow its events (#1657); see
 //! [`feed`]. A client that only reads a session observes it instead, which
@@ -37,9 +39,8 @@
 
 use std::{
     collections::HashMap,
-    num::NonZeroUsize,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, MutexGuard, PoisonError, Weak},
+    sync::{atomic::AtomicBool, Arc, Mutex, MutexGuard, PoisonError, Weak},
     time::Duration,
 };
 
@@ -67,6 +68,7 @@ use crate::{
     config::Config,
 };
 
+mod awaited;
 mod background;
 mod budget;
 mod cache_warm;
@@ -78,6 +80,7 @@ mod cost;
 mod feed;
 mod grant;
 mod held_context;
+mod hold;
 mod idle_wake;
 mod inputs;
 mod inspect;
@@ -90,6 +93,7 @@ mod processes;
 mod queued;
 mod reopen;
 mod restart_resume;
+mod settle;
 mod setup;
 mod start;
 mod steer;
@@ -111,6 +115,7 @@ use cache_warm::KeepWarm;
 pub(super) use child_feeds::{ChildFeeds, ChildStream};
 use child_questions::ChildQuestions;
 use feed::{attach_response, Feed};
+use hold::{Held, Hold};
 use idle_wake::IdleWatch;
 use inputs::Inputs;
 use open::open_failed;
@@ -221,6 +226,11 @@ struct LoadedSession {
     /// background work finishes idle, when its client asked for that (see
     /// [`idle_wake`]).
     idle_wake: Option<IdleWatch>,
+    /// Set once the daemon or the session's host will not wake the session
+    /// for the work it waits on, though that work holds a result, so the
+    /// session settles; cleared as a turn starts. Only [`settle`]'s methods
+    /// (`give_up_waking`, `mark_wake_given_up`, `rearm_wake`) touch it.
+    wake_gave_up: AtomicBool,
     /// The session's side of the watcher that takes its subagents'
     /// questions, when a person can be asked (see [`child_questions`]).
     child_questions: Option<ChildQuestions>,
@@ -275,65 +285,6 @@ enum TurnKind {
     /// sent meanwhile, as T3 Code sends once restarted after its `rho acp`
     /// was killed, cancels the wait and runs once it ended, resuming it.
     WakeWait,
-}
-
-/// What holds a session: its queued settings changes or its delete, which
-/// exclude each other. The turn lock is a std mutex no request holds across
-/// its awaits, so a request marks its hold in [`TurnSlot::hold`] instead of
-/// holding the lock.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Hold {
-    /// This many changes to the session's settings are queued on its
-    /// runtime or applying (see [`configure`]). A prompt still starts a
-    /// turn, which queues on the runtime behind them.
-    Configuring(NonZeroUsize),
-    /// A delete is unloading the session to delete its files; no turn
-    /// starts and no change queues meanwhile.
-    Deleting,
-}
-
-/// A request's part of a session's [`Hold`], freed when dropped, whether
-/// the request finished, failed, or was dropped.
-struct Held(Arc<LoadedSession>);
-
-impl Held {
-    /// Counts one more change queued on `session`, or `None` while a delete
-    /// holds it. `turn` is `session`'s turn lock, held.
-    fn change(session: &Arc<LoadedSession>, turn: &mut TurnSlot) -> Option<Self> {
-        let queued = match turn.hold {
-            None => NonZeroUsize::MIN,
-            Some(Hold::Configuring(queued)) => queued
-                .checked_add(1)
-                .expect("each queued change is a request in flight"),
-            Some(Hold::Deleting) => return None,
-        };
-        turn.hold = Some(Hold::Configuring(queued));
-        Some(Self(Arc::clone(session)))
-    }
-
-    /// Holds `session` for its delete. `turn` is `session`'s turn lock,
-    /// held, with nothing holding the session.
-    fn delete(session: &Arc<LoadedSession>, turn: &mut TurnSlot) -> Self {
-        debug_assert_eq!(turn.hold, None, "a delete holds only a free session");
-        turn.hold = Some(Hold::Deleting);
-        Self(Arc::clone(session))
-    }
-}
-
-impl Drop for Held {
-    /// Takes the session's turn lock, a std mutex: never drop a `Held`
-    /// while holding that lock's guard, which would deadlock.
-    fn drop(&mut self) {
-        let mut turn = self.0.turn();
-        // Changes and a delete exclude each other, so the hold in place is
-        // the kind this one is part of.
-        turn.hold = match turn.hold {
-            Some(Hold::Configuring(queued)) => {
-                NonZeroUsize::new(queued.get() - 1).map(Hold::Configuring)
-            }
-            Some(Hold::Deleting) | None => None,
-        };
-    }
 }
 
 /// Times out input request `id` of `session` after `after`, unless the
@@ -428,6 +379,7 @@ impl LoadedSession {
             id: runtime.session_id().clone(),
             wake: T3Wake::of(&runtime, wakes).map(tokio::sync::Mutex::new),
             idle_wake: IdleWatch::of(&runtime),
+            wake_gave_up: AtomicBool::new(false),
             cache_warm: KeepWarm::of(&runtime),
             held_context: Mutex::default(),
             child_questions: ChildQuestions::of(&mut runtime),
@@ -486,7 +438,8 @@ impl LoadedSession {
     /// if any, then the state it left the job in, in one publish, so no
     /// client's replay holds one without the other (#1669). Any change to
     /// its background work goes first, so a client hears what the turn left
-    /// running before it hears the turn end.
+    /// running before it hears the turn end, and whether the session settled
+    /// follows.
     fn end_turn(&self, turn: rho_protocol::TurnId, outcome: Option<TurnOutcome>, end: TurnEnd) {
         self.report_background();
         let ended = outcome
@@ -501,6 +454,7 @@ impl LoadedSession {
                 self.feed.publish(ended);
             }
         }
+        self.report_activity();
     }
 
     fn live(&self) -> MutexGuard<'_, LiveEvents> {
@@ -728,6 +682,8 @@ impl Sessions {
                 Ok(()) => {
                     let entry = Arc::new(entry);
                     loaded.insert(session, Arc::clone(&entry));
+                    // Before any attach, so every replay ends with it.
+                    entry.report_activity();
                     self.watch_idle_results(&entry);
                     self.watch_background(&entry);
                     self.watch_cache_warm(&entry);

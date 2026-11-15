@@ -10,8 +10,9 @@ use serde_json::{json, Value};
 use super::{signal::PARENT_ENDED, *};
 use crate::tools::{
     mcp::exported_name::namespaced_tool_name,
-    process::ProcessLimits,
+    process::{ProcessLimits, ProcessManager, ProcessRole},
     sdk_registry::{AppToolSet, StaticToolBundle},
+    workflow_tracker::WorkflowRunTracker,
 };
 
 /// The host's MCP server, whose task tools the watchers call.
@@ -19,6 +20,9 @@ const SERVER: &str = "t3-code";
 
 /// A command that outlives every wait here, in the shell of either platform.
 const LONG_RUNNING_COMMAND: &str = "sleep 300";
+
+/// A service's command, told apart from [`LONG_RUNNING_COMMAND`]'s task.
+const SERVICE_COMMAND: &str = "sleep 301";
 
 /// Bounds each wait on real process exits and signal polls; a hang fails.
 const TEST_WAIT: Duration = Duration::from_secs(10);
@@ -79,7 +83,8 @@ struct Fixture {
     dir: WakeDir,
     tools: AppToolSet,
     calls: Calls,
-    background: Background,
+    processes: ProcessManager,
+    workflows: WorkflowRunTracker,
     wake: T3Wake,
 }
 
@@ -121,18 +126,26 @@ impl Fixture {
             dir,
             tools,
             calls,
-            background: Background {
-                session_id: "parent".into(),
-                processes: Some(ProcessManager::new(ProcessLimits::default())),
-                workflows: WorkflowRunTracker::new(),
-                subagents: None,
-            },
+            processes: ProcessManager::new(ProcessLimits::default()),
+            workflows: WorkflowRunTracker::new(),
             wake,
         }
     }
 
     fn processes(&self) -> &ProcessManager {
-        self.background.processes.as_ref().unwrap()
+        &self.processes
+    }
+
+    /// The work the parent's watchers wait on.
+    fn background(&self) -> AwaitedWork {
+        AwaitedWork::new(
+            BackgroundWait::HostWakes,
+            "parent".into(),
+            Some(self.processes.clone()),
+            self.workflows.clone(),
+            /*subagents*/ None,
+        )
+        .expect("a host that wakes its session waits on its work")
     }
 
     async fn start_process(&self) -> String {
@@ -159,10 +172,11 @@ impl Fixture {
         &mut self,
         interrupt: &CancellationToken,
     ) -> anyhow::Result<()> {
+        let background = self.background();
         self.wake
             .prompt_ended(
                 SessionTools::of_tool_set_for_tests(&self.tools),
-                self.background.clone(),
+                background,
                 interrupt,
             )
             .await
@@ -195,10 +209,22 @@ impl Fixture {
 // titled after it, kept across idle prompts; the exit fires the watcher's
 // signal while the thread is idle, and the prompt T3 then sends is known as
 // the wake. A broken arm, fire, or match leaves the thread asleep or wakes
-// it twice. Owner: daemon T3 wake watcher.
+// it twice. An older service is neither named in the title nor reported as
+// the finished work. Owner: daemon T3 wake watcher.
 #[tokio::test]
 async fn running_process_arms_one_watcher_that_wakes_on_exit() {
     let mut fixture = Fixture::new();
+    let service = fixture
+        .processes()
+        .start_as(
+            SERVICE_COMMAND.into(),
+            Path::new("."),
+            None,
+            ProcessRole::Service,
+        )
+        .await
+        .unwrap()
+        .process_id;
     let process = fixture.start_process().await;
 
     fixture.prompt_ended().await;
@@ -224,6 +250,8 @@ async fn running_process_arms_one_watcher_that_wakes_on_exit() {
     fixture.prompt_ended().await;
     assert_eq!(fixture.take_calls(), Vec::new());
 
+    // The service exits first, holding a result older than the task's.
+    fixture.stop_process(&service).await;
     fixture.stop_process(&process).await;
     fixture.notifier_settled().await;
     // A message that lands after the signal but before the watcher reads it
@@ -297,7 +325,7 @@ async fn work_delivered_in_prompt_retires_the_watcher() {
 #[tokio::test]
 async fn workflow_completing_but_unpublished_arms_a_watcher() {
     let mut fixture = Fixture::new();
-    let workflows = &fixture.background.workflows;
+    let workflows = &fixture.workflows;
     assert!(workflows.register_start("wf-run", "review", "digest", Some("parent".into())));
     workflows.record_event(
         "wf-run",

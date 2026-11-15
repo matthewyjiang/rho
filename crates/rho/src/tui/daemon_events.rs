@@ -507,6 +507,9 @@ impl DaemonEvents {
             // The process rail reads `rho/session/processes`, which also
             // carries each process's clock.
             SessionEvent::Background { .. } => Vec::new(),
+            // The TUI shows the turn's state and the background rail; the
+            // daemon's own wake turns arrive as turns.
+            SessionEvent::Activity { .. } => Vec::new(),
             // `Unknown`, or an event a newer daemon sends.
             _ => Vec::new(),
         }

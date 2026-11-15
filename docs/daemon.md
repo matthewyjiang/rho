@@ -28,7 +28,7 @@ Stopping the daemon also ends the commands and background processes your session
 - Quitting the TUI leaves a running turn going. The exit message shows `rho --resume <id>`. Run it later to see the reply, even one that finished while the TUI was closed.
 - A new session reaches the daemon with its first prompt. If you open `rho` and quit without typing, nothing is left behind.
 - `/model`, `/permissions`, and the other settings commands change the current session. A change you make during a turn applies when the turn ends.
-- A workflow or background process that a turn started keeps running after the turn ends. When it finishes, the daemon starts a new turn that gives the model the result, whether or not a TUI is open.
+- A workflow or background process that a turn started keeps running after the turn ends. When it finishes, the daemon starts a new turn that gives the model the result, whether or not a TUI is open. A process started as a service, such as a dev server, starts no turn: its result waits for your next message.
 - `/jobs` lists everything the daemon runs, in every project. From there you can answer questions, send messages, cancel work, and open sessions ([Interactive TUI](/interactive-tui)).
 - `/login` opens the browser on the machine where the TUI runs. Sessions use the new sign-in from their next prompt.
 - You can't delete a session from a picker while the daemon has it loaded.

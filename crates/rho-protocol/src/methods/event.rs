@@ -116,6 +116,35 @@ pub struct CacheWarmProgress {
     pub max_pings: u32,
 }
 
+/// Whether a session is settled, as [`SessionEvent::Activity`] reports it.
+/// Protocol minors may add values.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum SessionActivity {
+    /// A turn is under way, or the daemon or the session's host will start
+    /// one for work the session waits on.
+    Active,
+    /// No turn is under way, and nothing will start one but a prompt.
+    Settled,
+    /// A value a newer daemon sends that this crate does not know; daemons
+    /// never send it.
+    #[serde(other)]
+    #[schemars(extend("x-rho-other" = true))]
+    Unknown,
+}
+
+impl SessionActivity {
+    /// Whether the session is settled. A value this crate does not know
+    /// counts as active, so unknown activity never looks finished.
+    pub fn is_settled(self) -> bool {
+        match self {
+            Self::Settled => true,
+            Self::Active | Self::Unknown => false,
+        }
+    }
+}
+
 /// One thing that happened in a session.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -260,6 +289,24 @@ pub enum SessionEvent {
     /// how the work a turn takes up ended, and what a turn left running,
     /// before it hears of the turn.
     Background { work: Vec<super::BackgroundWork> },
+    /// Whether the session is settled: no turn is under way, and neither
+    /// the daemon nor the session's host will start one for work the
+    /// session waits on, such as a subagent whose result the daemon delivers
+    /// in a turn of its own. A level, which may go from settled to active
+    /// again. `active` comes before the [`Self::State`] that starts a turn,
+    /// and `settled` only after the one that ends it. An attach or observe of
+    /// a loaded session ends its replay with the current activity, counted in
+    /// [`super::SessionAttachResponse::replay_events`]. Streams that never
+    /// report it, such as a subagent run's, send none: follow the turn's
+    /// state there.
+    ///
+    /// # Next major
+    ///
+    /// NEXT_MAJOR(rho-protocol): report a session's activity as SessionAttachResponse::activity and stop replaying a trailing synthetic SessionEvent::Activity.
+    ///
+    /// `SessionAttachResponse` is not `#[non_exhaustive]`, so a field is a
+    /// major change; until then the replay's last event carries the level.
+    Activity { state: SessionActivity },
     /// A value a newer daemon sends that this crate does not know; daemons
     /// never send it.
     #[serde(other)]

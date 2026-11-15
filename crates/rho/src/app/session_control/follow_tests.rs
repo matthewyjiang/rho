@@ -1,5 +1,7 @@
 use pretty_assertions::assert_eq;
-use rho_protocol::{AnswerStop, Ask, InputRequestId, Question, QuestionAsk, Resolution, Selection};
+use rho_protocol::{
+    AnswerStop, Ask, InputAsker, InputRequestId, Question, QuestionAsk, Resolution, Selection,
+};
 
 use super::*;
 
@@ -12,6 +14,7 @@ fn watch(state: JobState, turn: &str) -> Watch {
         turn: Some(TurnId::new(turn)),
         ended: None,
         inputs: Vec::new(),
+        activity: None,
     }
 }
 
@@ -63,6 +66,7 @@ fn only_the_turn_that_ended_reports_an_outcome() {
                 state: JobState::Running,
                 done: false,
                 outcome: None,
+                turn: Some(TurnId::new("t2")),
                 inputs: Vec::new(),
                 cursor: Some("stream:7".into()),
             },
@@ -71,6 +75,7 @@ fn only_the_turn_that_ended_reports_an_outcome() {
                 state: JobState::Completed,
                 done: true,
                 outcome: Some(answered("new")),
+                turn: Some(TurnId::new("t2")),
                 inputs: Vec::new(),
                 cursor: Some("stream:9".into()),
             },
@@ -95,6 +100,7 @@ fn a_wait_boundary_does_not_skip_an_unreturned_outcome() {
                 state: JobState::Running,
                 done: false,
                 outcome: None,
+                turn: Some(TurnId::new("t2")),
                 inputs: Vec::new(),
                 cursor: Some(checkpoint.into()),
             },
@@ -103,12 +109,9 @@ fn a_wait_boundary_does_not_skip_an_unreturned_outcome() {
     }
 }
 
-// Covers: a turn waiting for input stops `wait` with the requests still
-// open, and one a person answered drops out.
-// Owner: session-control wait.
-#[test]
-fn a_turn_waiting_for_input_reports_its_open_requests() {
-    let request = |id| InputRequest {
+/// Question `id`, asked by `asker`.
+fn question(id: u64, asker: InputAsker) -> InputRequest {
+    InputRequest {
         id: InputRequestId(id),
         ask: Ask::Question(QuestionAsk {
             title: "Color".into(),
@@ -126,8 +129,20 @@ fn a_turn_waiting_for_input_reports_its_open_requests() {
         }),
         tool_call: None,
         timeout: None,
-        asker: Default::default(),
-    };
+        asker,
+    }
+}
+
+fn activity(state: SessionActivity) -> SessionEvent {
+    SessionEvent::Activity { state }
+}
+
+// Covers: a turn waiting for input stops `wait` with the requests still
+// open, and one a person answered drops out.
+// Owner: session-control wait.
+#[test]
+fn a_turn_waiting_for_input_reports_its_open_requests() {
+    let request = |id| question(id, InputAsker::Turn);
     let mut watching = watch(JobState::Running, "t1");
     for event in [
         SessionEvent::InputRequested {
@@ -150,4 +165,130 @@ fn a_turn_waiting_for_input_reports_its_open_requests() {
         (waited.state, waited.done, waited.inputs),
         (JobState::WaitingForInput, true, vec![request(2)])
     );
+}
+
+/// What `wait` returns of a watch.
+#[derive(Debug, PartialEq)]
+struct Waited {
+    done: bool,
+    outcome: Option<TurnOutcome>,
+    turn: Option<TurnId>,
+    inputs: Vec<InputRequest>,
+    cursor: Option<String>,
+}
+
+// Covers: `wait` is done once the session settles, not once a turn ends: a
+// turn that ended while background work is still due (a result to deliver,
+// or a task left running that may never let it settle) keeps it waiting
+// but still returns the turn's outcome, with the cursor held before the
+// turn's end so the next wait reads it again; the delivery turn's outcome
+// then replaces it; a subagent question open at rest stops it with the
+// question listed; a stream that never reports activity, as a subagent
+// run's, is done once its turn ends.
+// Owner: session-control wait.
+#[test]
+fn wait_is_done_once_the_session_settles() {
+    let first_turn_ended = || {
+        vec![
+            activity(SessionActivity::Active),
+            state(JobState::Running, "t1"),
+            turn_ended("t1", answered("first")),
+            state(JobState::Completed, "t1"),
+        ]
+    };
+    let delivered = || {
+        let mut events = first_turn_ended();
+        events.extend([
+            state(JobState::Running, "t2"),
+            turn_ended("t2", answered("delivered")),
+            state(JobState::Completed, "t2"),
+            activity(SessionActivity::Settled),
+        ]);
+        events
+    };
+    let asked = || {
+        let mut events = first_turn_ended();
+        events.push(SessionEvent::InputRequested {
+            request: Box::new(question(1, InputAsker::Subagent)),
+        });
+        events
+    };
+    let unreported = || {
+        vec![
+            state(JobState::Running, "t1"),
+            turn_ended("t1", answered("first")),
+            state(JobState::Completed, "t1"),
+        ]
+    };
+    let cases = [
+        (
+            "a turn ended, background work still due",
+            first_turn_ended(),
+            Waited {
+                done: false,
+                outcome: Some(answered("first")),
+                turn: Some(TurnId::new("t1")),
+                inputs: Vec::new(),
+                cursor: Some("stream:2".into()),
+            },
+        ),
+        (
+            "the delivery turn ended and the session settled",
+            delivered(),
+            Waited {
+                done: true,
+                outcome: Some(answered("delivered")),
+                turn: Some(TurnId::new("t2")),
+                inputs: Vec::new(),
+                cursor: Some("stream:8".into()),
+            },
+        ),
+        (
+            "a subagent asks at rest",
+            asked(),
+            Waited {
+                done: true,
+                outcome: Some(answered("first")),
+                turn: Some(TurnId::new("t1")),
+                inputs: vec![question(1, InputAsker::Subagent)],
+                cursor: Some("stream:5".into()),
+            },
+        ),
+        (
+            "a stream that reports no activity",
+            unreported(),
+            Waited {
+                done: true,
+                outcome: Some(answered("first")),
+                turn: Some(TurnId::new("t1")),
+                inputs: Vec::new(),
+                cursor: Some("stream:3".into()),
+            },
+        ),
+    ];
+    for (name, events, expected) in cases {
+        let mut watching = watch(JobState::Idle, "t0");
+        for (seq, event) in (1..).zip(&events) {
+            watching.push(Seq(seq), event);
+        }
+        let WaitResult {
+            done,
+            outcome,
+            turn,
+            inputs,
+            cursor,
+            ..
+        } = watching.finish(SessionId::new("s"));
+        assert_eq!(
+            Waited {
+                done,
+                outcome,
+                turn,
+                inputs,
+                cursor,
+            },
+            expected,
+            "{name}"
+        );
+    }
 }

@@ -916,3 +916,72 @@ async fn keep_warm_holds_only_while_an_offered_start_is_live() {
         assert!(!manager.has_keep_warm_hold(), "{}: after stop", case.name);
     }
 }
+
+// Covers: a service never counts as a task, so it cannot hold a turn or wake
+// the session, yet its exit result still waits for delivery; keep_warm on a
+// service is rejected before anything spawns, even where keep_warm is offered.
+// Owner: process tool arguments and manager predicates
+#[tokio::test]
+async fn process_kind_decides_what_counts_as_a_task() {
+    use super::tools::KeepWarmOffer;
+    // Some(whether the start counts as a task), or None when the arguments
+    // are rejected.
+    let cases: [(&str, serde_json::Value, Option<bool>); 4] = [
+        (
+            "kind defaults to task",
+            json!({"action": "start", "command": LONG_RUNNING_COMMAND}),
+            Some(true),
+        ),
+        (
+            "task with keep_warm",
+            json!({"action": "start", "command": LONG_RUNNING_COMMAND, "kind": "task", "keep_warm": true}),
+            Some(true),
+        ),
+        (
+            "service",
+            json!({"action": "start", "command": LONG_RUNNING_COMMAND, "kind": "service"}),
+            Some(false),
+        ),
+        (
+            "service with keep_warm",
+            json!({"action": "start", "command": LONG_RUNNING_COMMAND, "kind": "service", "keep_warm": true}),
+            None,
+        ),
+    ];
+    for (name, args, expected) in cases {
+        let manager = ProcessManager::new(ProcessLimits::default());
+        let route = super::CacheWarmRoute::default();
+        route.set_supported(true);
+        let tool = Process::new(manager.clone()).with_keep_warm(KeepWarmOffer::Offered(route));
+        match (
+            tool.call(args, tool_context(), "start".into()).await,
+            expected,
+        ) {
+            (Err(_), None) => {
+                assert!(manager.live_summaries().is_empty(), "{name}: spawned");
+            }
+            (Ok(started), Some(is_task)) => {
+                let process_id = header_field(&started.content, "process_id");
+                let live = (manager.has_live(), manager.has_live_task());
+                let exited = manager.notified_owned();
+                manager.stop(&process_id, Duration::ZERO).await.unwrap();
+                tokio::time::timeout(Duration::from_secs(5), exited)
+                    .await
+                    .expect("stopped process should become terminal");
+                let finished = (
+                    manager.has_pending_notification(),
+                    manager.has_task_result(),
+                );
+                assert_eq!(
+                    (live, finished),
+                    ((true, is_task), (true, is_task)),
+                    "{name}: (has_live, has_live_task), (has_pending_notification, has_task_result)"
+                );
+            }
+            (outcome, expected) => panic!(
+                "{name}: got {:?}, expected {expected:?}",
+                outcome.map(|output| output.content)
+            ),
+        }
+    }
+}

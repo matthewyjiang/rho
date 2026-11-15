@@ -4,15 +4,23 @@
 //! the result.
 //!
 //! Such a session's prompts do not wait for the subagents, workflows and
-//! background processes they start (`BackgroundWait::HostTurns`), so a turn
+//! background tasks they start (`BackgroundWait::HostTurns`), so a turn
 //! ends while they run on. One watcher per loaded session, started as the
 //! session is added, waits for a result and for the session to be idle. A
 //! result that arrives during a turn is delivered at that turn's
-//! boundaries; one that turn left behind is delivered once it ended.
+//! boundaries; one that turn left behind is delivered once it ended. A
+//! background service's exit is no result: it wakes nothing.
 //!
 //! A subagent's request that its parent act (`request_parent_action`) is a
 //! result too. Its informational notices (`message_parent`) are not: they
 //! start no turn, and go with the next one.
+//!
+//! A delivery turn that ends without taking its result, as one that failed
+//! first or was cancelled, is not started again at once, which would loop:
+//! the watcher waits for another result or turn. Once nothing it waits on
+//! still runs, no result can come to start one, so it gives up, the
+//! session settles (see `settle`), and only a later turn's end wakes the
+//! watcher again.
 //!
 //! The watcher holds the session weakly: the session stays loaded while
 //! work runs or a result waits (see `unload`), and the watcher ends once
@@ -20,18 +28,17 @@
 
 use std::sync::{Arc, Weak};
 
-use rho_protocol::SessionSetup;
+use rho_protocol::{SessionSetup, TurnId};
 use rho_sdk::CancellationToken;
 use tokio::sync::watch;
 
 use super::{
-    t3_wake::Background, DaemonTurn, Entered, LoadedSession, OpenWith, Sessions, TurnTask,
+    awaited::AwaitedWork, DaemonTurn, Entered, LoadedSession, OpenWith, Sessions, TurnTask,
 };
 use crate::app::session_runtime::{BackgroundWait, SessionRuntime};
 
 /// A session's side of its watcher.
 pub(super) struct IdleWatch {
-    background: Background,
     /// How many of the session's turns ended.
     turns_ended: watch::Sender<u64>,
     /// Cancelled when the session is dropped.
@@ -45,8 +52,6 @@ impl IdleWatch {
         match runtime.background_wait() {
             BackgroundWait::HoldPrompt | BackgroundWait::HostWakes => None,
             BackgroundWait::HostTurns => Some(Self {
-                background: Background::of(runtime.tools(), runtime.session_id().to_string())
-                    .with_subagents(runtime.tools()),
                 turns_ended: watch::Sender::new(0),
                 dropped: CancellationToken::new(),
             }),
@@ -76,7 +81,7 @@ impl Sessions {
         let watcher = watch_results(
             self.myself.clone(),
             Arc::downgrade(session),
-            wake.background.clone(),
+            session.background.replacements(),
             wake.turns_ended.subscribe(),
         );
         let dropped = wake.dropped.clone();
@@ -90,22 +95,22 @@ impl Sessions {
 
     /// Starts a turn that delivers `session`'s waiting results, unless a
     /// turn is under way, the session is leaving, or the daemon stops.
-    /// Returns whether it started one.
-    fn deliver_idle_results(&self, session: &Arc<LoadedSession>, background: &Background) -> bool {
+    /// Returns the turn it started, if it started one.
+    fn deliver_idle_results(
+        &self,
+        session: &Arc<LoadedSession>,
+        background: &AwaitedWork,
+    ) -> Option<TurnId> {
         if self.stopping.is_cancelled() {
-            return false;
+            return None;
         }
-        let Some(mut slot) = session.enter() else {
-            return false;
-        };
+        let mut slot = session.enter()?;
         // Under the turn lock, which every turn starts under: only a turn
         // takes a result, so one that waits now is this turn's to deliver.
         if !background.has_result() {
-            return false;
+            return None;
         }
-        let Some(grant) = self.jobs.grant_of(&session.job) else {
-            return false;
-        };
+        let grant = self.jobs.grant_of(&session.job)?;
         let with = OpenWith {
             // The environment and grant the last prompt brought.
             environment: session.environment.current(),
@@ -117,31 +122,51 @@ impl Sessions {
         let Ok(Entered::Started(turn)) = self.start_turn(
             session, &mut slot, &with, /*key*/ None, /*limit*/ None,
         ) else {
-            return false;
+            return None;
         };
         drop(slot);
+        let id = turn.id.clone();
         TurnTask {
             session: Arc::clone(session),
             turn,
             stopping: self.stopping.clone(),
         }
         .spawn_daemon(DaemonTurn::delivery());
-        true
+        Some(id)
     }
 }
 
-/// Starts a delivery turn on `session` each time a result of `background`
-/// waits with the session idle, until the session or the daemon's
-/// `sessions` are gone.
+/// Starts a delivery turn on `session` each time a result of the work it
+/// waits on waits with the session idle, until the session or the daemon's
+/// `sessions` are gone. Reads that work from the session's tools as they are
+/// now, and again after `replacements` says a configure replaced them, so it
+/// waits on the same managers that decide the session's activity.
 async fn watch_results(
     sessions: Weak<Sessions>,
     session: Weak<LoadedSession>,
-    background: Background,
+    mut replacements: watch::Receiver<u64>,
     mut turns_ended: watch::Receiver<u64>,
 ) {
     loop {
+        // Marked seen before the read, so a replacement after it is not.
+        replacements.borrow_and_update();
+        let background = {
+            let Some(session) = session.upgrade() else {
+                return;
+            };
+            match session.background.awaited() {
+                Some(background) => background,
+                None => return,
+            }
+        };
         tokio::select! {
             () = background.clone().result_ready() => {}
+            changed = replacements.changed() => {
+                if changed.is_err() {
+                    return;
+                }
+                continue;
+            }
             // A turn that ended may have put back a result it took and
             // never delivered, which no result's arrival announces.
             changed = turns_ended.changed() => {
@@ -162,26 +187,89 @@ async fn watch_results(
             };
             sessions.deliver_idle_results(&session, &background)
         };
-        if started {
-            if turns_ended.changed().await.is_err() {
-                return;
-            }
-            if !background.has_result() {
-                continue;
-            }
-            // The turn ended without taking the result: it failed first or
-            // was cancelled. Starting it again at once would loop.
-        }
-        // Nothing to start now: a turn is under way or just took the
-        // result, or the start was refused. Look again once a turn ends or
-        // another result arrives.
-        tokio::select! {
-            changed = turns_ended.changed() => {
-                if changed.is_err() {
+        // The delivery turn that ended without taking the result, if any:
+        // it failed first or was cancelled. Starting it again at once would
+        // loop.
+        let undelivered = match started {
+            Some(turn) => {
+                if turns_ended.changed().await.is_err() {
                     return;
                 }
+                if !background.has_result() {
+                    continue;
+                }
+                Some(turn)
             }
-            () = another => {}
+            None => None,
+        };
+        // Nothing to start now: a turn is under way or just took the
+        // result, the start was refused, or the delivery turn ended without
+        // taking it. Look again once a turn ends or another result arrives.
+        let mut another = std::pin::pin!(another);
+        // Whatever is ready already comes before giving up: a turn that
+        // ended, another result, or a replacement. Giving up first could
+        // publish a spurious `settled` while the next pass starts a wake.
+        let ready = tokio::select! {
+            biased;
+            changed = turns_ended.changed() => Some(changed.is_ok()),
+            () = &mut another => Some(true),
+            changed = replacements.changed() => Some(changed.is_ok()),
+            () = std::future::ready(()) => None,
+        };
+        let alive = match ready {
+            Some(alive) => alive,
+            None => {
+                let gave_up = match (&undelivered, session.upgrade()) {
+                    (Some(turn), Some(session)) => try_give_up(&session, &background, turn),
+                    _ => false,
+                };
+                if gave_up {
+                    // Nothing awaited runs and no turn is under way, so a
+                    // new result can only come from work a later turn
+                    // starts, and that turn's end wakes this loop. What
+                    // `another` hears meanwhile, a service's exit or a
+                    // child's notice, starts no turn.
+                    tokio::select! {
+                        changed = turns_ended.changed() => changed.is_ok(),
+                        changed = replacements.changed() => changed.is_ok(),
+                    }
+                } else {
+                    tokio::select! {
+                        changed = turns_ended.changed() => changed.is_ok(),
+                        () = another => true,
+                        changed = replacements.changed() => changed.is_ok(),
+                    }
+                }
+            }
+        };
+        if !alive {
+            return;
         }
     }
+}
+
+/// Gives up waking `session` once its delivery turn `turn` ended without
+/// taking its result and nothing `background` waits on still runs, so no
+/// result can arrive to start another: the session settles. Returns whether
+/// it gave up; it does not when a turn started since, or the result was
+/// taken or more may come.
+pub(super) fn try_give_up(
+    session: &LoadedSession,
+    background: &AwaitedWork,
+    turn: &TurnId,
+) -> bool {
+    // Under the turn lock, which every turn starts under, so no turn
+    // started since: a later one rearms the wake as it starts, and one that
+    // ended since frees the watcher, which then looks again.
+    // The turn must also have ended: the watcher hears a turn end that may
+    // be the one before `turn`, sent after that turn let the lock go.
+    let _slot = session.turn();
+    let ended = session.jobs.get(&session.job).is_some_and(|job| {
+        !job.state.in_progress() && job.turn.is_some_and(|last| &last.id == turn)
+    });
+    let gives_up = ended && background.has_result() && !background.running();
+    if gives_up {
+        session.give_up_waking();
+    }
+    gives_up
 }

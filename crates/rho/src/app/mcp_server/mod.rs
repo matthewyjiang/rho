@@ -42,9 +42,9 @@ pub(super) use http_server::{serve_http, HttpOptions};
 
 /// What the server tells a host about itself.
 const INSTRUCTIONS: &str = "Start, drive, and follow rho agent sessions through the rho daemon. \
-    `new` starts a session in a workspace with a first prompt; `wait` follows its turn until it \
-    ends, returning a cursor to call again while `done` is false; `read` pages through a \
-    transcript. A turn that needs an approval or an answer waits for a person in rho: no tool \
+    `new` starts a session in a workspace with a first prompt; `wait` follows it until it \
+    settles or needs a person, returning a cursor to call again while `done` is false; `read` \
+    pages through a transcript. A turn that needs an approval or an answer waits for a person in rho: no tool \
     here can answer it.";
 
 /// The MCP handler: every tool call goes to the core for its caller.

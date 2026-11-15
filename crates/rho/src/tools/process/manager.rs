@@ -1,8 +1,8 @@
 use super::{
     platform::ProcessTree,
     supervisor::supervise,
-    types::{terminal, ProcessLimits},
-    Chunk, Snapshot, State,
+    types::{terminal, KeepWarm, ProcessLimits},
+    Chunk, ProcessRole, Snapshot, State,
 };
 use rho_sdk::{ProcessExecution, ProcessInvocation, ProcessOutputLimits};
 use std::{
@@ -40,8 +40,8 @@ pub(super) struct Record {
     pub(super) notify: Arc<Notify>,
     pub(super) observed: bool,
     pub(super) explicitly_observed: bool,
-    /// Holds the prompt cache warm while this record is live.
-    pub(super) keep_warm: super::types::KeepWarm,
+    /// Task or service; a task may also hold the prompt cache warm while live.
+    pub(super) role: ProcessRole,
 }
 
 impl Record {
@@ -106,9 +106,9 @@ impl ProcessManager {
         }
     }
 
-    /// Starts a shell command with no keep-warm hold. Only tests and the
-    /// debug-only TUI fixture use this; production goes through
-    /// [`Self::start_with_keep_warm`] or [`Self::start_execution`].
+    /// Starts a shell command as a task with no keep-warm hold. Only tests
+    /// and the debug-only TUI fixture use this; production goes through
+    /// [`Self::start_with_role`] or [`Self::start_execution`].
     #[cfg(any(test, debug_assertions))]
     pub async fn start(
         &self,
@@ -116,18 +116,33 @@ impl ProcessManager {
         cwd: &Path,
         timeout: Option<Duration>,
     ) -> Result<Snapshot, String> {
-        self.start_with_keep_warm(command, cwd, timeout, super::types::KeepWarm::Off)
-            .await
+        let role = ProcessRole::Task {
+            keep_warm: KeepWarm::Off,
+        };
+        self.start_with_role(command, cwd, timeout, role).await
     }
 
-    /// Starts a shell command; `keep_warm` decides whether it holds the
-    /// prompt cache warm while live.
-    pub(super) async fn start_with_keep_warm(
+    /// [`Self::start`] as `role` says, for tests outside this module that
+    /// need a service or a keep-warm task.
+    #[cfg(test)]
+    pub(crate) async fn start_as(
         &self,
         command: String,
         cwd: &Path,
         timeout: Option<Duration>,
-        keep_warm: super::types::KeepWarm,
+        role: ProcessRole,
+    ) -> Result<Snapshot, String> {
+        self.start_with_role(command, cwd, timeout, role).await
+    }
+
+    /// Starts a shell command as `role` says: a task or a service, and
+    /// whether a task holds the prompt cache warm while live.
+    pub(super) async fn start_with_role(
+        &self,
+        command: String,
+        cwd: &Path,
+        timeout: Option<Duration>,
+        role: ProcessRole,
     ) -> Result<Snapshot, String> {
         let label = command.clone();
         let execution = ProcessExecution::new(
@@ -138,25 +153,30 @@ impl ProcessManager {
         );
         // Keep the user-facing command, not the platform wrapper PowerShell
         // injects for UTF-8 and exit codes.
-        self.spawn_execution(execution, label, keep_warm).await
+        self.spawn_execution(execution, label, role).await
     }
 
     /// Starts a process from an already authorized execution plan.
     pub(crate) async fn start_execution(
         &self,
         execution: ProcessExecution,
-        keep_warm: super::types::KeepWarm,
+        role: ProcessRole,
     ) -> Result<Snapshot, String> {
         let command = record_command(execution.invocation())?;
-        self.spawn_execution(execution, command, keep_warm).await
+        self.spawn_execution(execution, command, role).await
     }
 
     /// True while any live process asked to keep the prompt cache warm. The
     /// hold ends with the process (exit, stop, timeout, or failed start).
     pub(crate) fn has_keep_warm_hold(&self) -> bool {
-        self.inner.lock().unwrap().records.values().any(|record| {
-            let record = record.lock().unwrap();
-            record.state.is_live() && record.keep_warm == super::types::KeepWarm::On
+        self.any_record(|record| {
+            record.state.is_live()
+                && matches!(
+                    record.role,
+                    ProcessRole::Task {
+                        keep_warm: KeepWarm::On
+                    }
+                )
         })
     }
 
@@ -164,7 +184,7 @@ impl ProcessManager {
         &self,
         execution: ProcessExecution,
         command: String,
-        keep_warm: super::types::KeepWarm,
+        role: ProcessRole,
     ) -> Result<Snapshot, String> {
         self.prune();
         // Build the spawn plan before registering a live record so setup failures
@@ -203,7 +223,7 @@ impl ProcessManager {
             notify,
             observed: false,
             explicitly_observed: false,
-            keep_warm,
+            role,
         }));
         {
             let mut inner = self.inner.lock().unwrap();
@@ -346,24 +366,40 @@ impl ProcessManager {
             .any(|record| record.lock().unwrap().result_pending())
     }
 
-    /// True while any process is still running.
+    /// True while any process, task or service, is still running.
     pub(crate) fn has_live(&self) -> bool {
+        self.any_record(|record| record.state.is_live())
+    }
+
+    /// True while any task is still running. Services never count: the
+    /// session neither waits on them nor is woken by them.
+    pub(crate) fn has_live_task(&self) -> bool {
+        self.any_record(|record| record.role.is_task() && record.state.is_live())
+    }
+
+    /// True while a task started at or after `since` is still running.
+    /// Headless hosts hold a prompt open only for tasks that prompt started,
+    /// so a task from an earlier prompt does not pin every later one.
+    pub(crate) fn has_live_task_started_since(&self, since: Instant) -> bool {
+        self.any_record(|record| {
+            record.role.is_task() && record.state.is_live() && record.started >= since
+        })
+    }
+
+    /// True when a finished task's result waits for the model: what wakes
+    /// an idle session. A finished service's result is still delivered (see
+    /// [`Self::has_pending_notification`]) but wakes nothing.
+    pub(crate) fn has_task_result(&self) -> bool {
+        self.any_record(|record| record.role.is_task() && record.result_pending())
+    }
+
+    fn any_record(&self, predicate: impl Fn(&Record) -> bool) -> bool {
         self.inner
             .lock()
             .unwrap()
             .records
             .values()
-            .any(|record| record.lock().unwrap().state.is_live())
-    }
-
-    /// True while a process started at or after `since` is still running.
-    /// Headless hosts hold a prompt open only for processes that prompt
-    /// started, so a server from an earlier prompt does not pin every later one.
-    pub(crate) fn has_live_started_since(&self, since: Instant) -> bool {
-        self.inner.lock().unwrap().records.values().any(|record| {
-            let record = record.lock().unwrap();
-            record.state.is_live() && record.started >= since
-        })
+            .any(|record| predicate(&record.lock().unwrap()))
     }
 
     /// Drains unobserved terminal processes, oldest first.
@@ -468,6 +504,17 @@ impl ProcessManager {
     ///
     /// Host UI uses this to render the activity rail. It is not a tool action.
     pub(crate) fn live_summaries(&self) -> Vec<super::LiveProcessSummary> {
+        self.summaries(|_| true)
+    }
+
+    /// [`Self::live_summaries`] of tasks only: the processes a session
+    /// waits on, never its services.
+    pub(crate) fn task_summaries(&self) -> Vec<super::LiveProcessSummary> {
+        self.summaries(ProcessRole::is_task)
+    }
+
+    /// [`Self::live_summaries`] of the processes whose role `wanted` keeps.
+    fn summaries(&self, wanted: impl Fn(ProcessRole) -> bool) -> Vec<super::LiveProcessSummary> {
         let records = {
             let inner = self.inner.lock().unwrap();
             inner.records.values().cloned().collect::<Vec<_>>()
@@ -477,7 +524,7 @@ impl ProcessManager {
             .filter_map(|record| {
                 let record = record.lock().unwrap();
                 let is_terminal = terminal(record.state);
-                if is_terminal && !record.result_pending() {
+                if !wanted(record.role) || (is_terminal && !record.result_pending()) {
                     return None;
                 }
                 let (elapsed_seconds, quiet_seconds) = record.host_timing();

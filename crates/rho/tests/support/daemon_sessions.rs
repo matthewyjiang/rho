@@ -19,10 +19,11 @@ use rho_protocol::{
     ClientHello, ClientInfo, CompactionStatus, ContentBlock, Cursor, DaemonNotification,
     DetachReason, ErrorCode, IdempotencyKey, InputAnswer, InputRequest, InputRequestId, JobId,
     JobKind, JobListParams, JobState, JobSummary, Notifications, Operation, PathScope, Replay,
-    Resolution, RpcError, Seq, SessionAnswerParams, SessionAttachParams, SessionAttachResponse,
-    SessionCancelParams, SessionDetachParams, SessionDetachedParams, SessionEvent,
-    SessionHoldParams, SessionId, SessionNewParams, SessionPromptParams, SessionSetup, StreamId,
-    ToolCallId, ToolContent, ToolStatus, TurnError, TurnErrorKind, TurnId, TurnOutcome,
+    Resolution, RpcError, Seq, SessionActivity, SessionAnswerParams, SessionAttachParams,
+    SessionAttachResponse, SessionCancelParams, SessionDetachParams, SessionDetachedParams,
+    SessionEvent, SessionEventParams, SessionHoldParams, SessionId, SessionNewParams,
+    SessionPromptParams, SessionSetup, StreamId, ToolCallId, ToolContent, ToolStatus, TurnError,
+    TurnErrorKind, TurnId, TurnOutcome,
 };
 use rho_tui_pty::IsolatedHome;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -1614,8 +1615,8 @@ pub(super) fn is_state(state: JobState) -> impl Fn(&SessionEvent) -> bool {
 }
 
 /// What a conversation shows: its events without job states, model
-/// requests, context usage, titles, and options, which describe the session
-/// as it was when they were sent.
+/// requests, context usage, titles, options, background work, and activity,
+/// which describe the session as it was when they were sent.
 fn conversation(events: &[(Seq, SessionEvent)]) -> Vec<SessionEvent> {
     events
         .iter()
@@ -1629,6 +1630,7 @@ fn conversation(events: &[(Seq, SessionEvent)]) -> Vec<SessionEvent> {
                     | SessionEvent::TitleChanged { .. }
                     | SessionEvent::OptionsChanged { .. }
                     | SessionEvent::Background { .. }
+                    | SessionEvent::Activity { .. }
             )
         })
         .collect()
@@ -1715,6 +1717,20 @@ async fn clients_that_leave_and_come_back_see_the_same_turn() {
         "the turn ended cancelled"
     );
 
+    // The cancelled turn left nothing to wake the session for, so it settles.
+    assert!(
+        matches!(
+            watcher.next_notification().await,
+            Some(DaemonNotification::SessionEvent(SessionEventParams {
+                event: SessionEvent::Activity {
+                    state: SessionActivity::Settled
+                },
+                ..
+            }))
+        ),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
     let stop = sandbox
         .rho("delay")
         .args(["daemon", "stop"])

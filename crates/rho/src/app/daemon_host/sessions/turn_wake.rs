@@ -10,7 +10,7 @@ use rho_sdk::{CancellationToken, UserInput};
 
 use super::{
     super::{
-        t3_wake::{wake_command, Background, PromptOrigin, WakeSignal},
+        t3_wake::{wake_command, PromptOrigin, WakeSignal},
         LoadedSession, TurnKind,
     },
     DaemonView, Ran,
@@ -76,13 +76,14 @@ pub(super) async fn prompt_started(session: &LoadedSession, input: &UserInput) -
 /// `stopping`, which takes the session's work down with it. The daemon's
 /// stop, or a cancel sent meanwhile, interrupts the host calls. Clients
 /// hear when arming failed, a cancel's interruption included, so results
-/// never wait unannounced for the next message.
+/// never wait unannounced for the next message; the session then settles,
+/// since its host will not wake it (see `settle`).
 pub(super) async fn prompt_ended(
     session: &LoadedSession,
     runtime: &SessionRuntime,
     stopping: &CancellationToken,
 ) {
-    let Some(wake) = &session.wake else {
+    let (Some(wake), Some(background)) = (&session.wake, session.background.awaited()) else {
         return;
     };
     if stopping.is_cancelled() {
@@ -98,7 +99,6 @@ pub(super) async fn prompt_ended(
     };
     let interrupt = CancellationToken::new();
     let tools = runtime.tools();
-    let background = Background::of(tools, runtime.session_id().to_string());
     let arming = async {
         wake.lock()
             .await
@@ -129,6 +129,8 @@ pub(super) async fn prompt_ended(
         return;
     }
     tracing::warn!(%error, "could not arm T3 wake watcher");
+    // Before the turn's end reports the session's activity.
+    session.mark_wake_given_up();
     session.feed.publish([wire::SessionEvent::Notice {
         text: format!(
             "could not watch background work: {error}; its results arrive with your next message"

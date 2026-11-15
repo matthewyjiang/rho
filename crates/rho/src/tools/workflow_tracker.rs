@@ -390,6 +390,19 @@ impl WorkflowRunTracker {
             })
     }
 
+    /// Whether a run for the session is still live: the complement, among
+    /// undelivered runs, of [`Self::has_pending_notification`].
+    pub(crate) fn has_live(&self, session_id: &str) -> bool {
+        self.inner
+            .lock()
+            .expect("workflow tracker lock")
+            .runs
+            .values()
+            .any(|entry| {
+                entry.session_id.as_deref() == Some(session_id) && entry.finished.is_none()
+            })
+    }
+
     /// Whether a finished run for the session still awaits delivery.
     pub fn has_pending_notification(&self, session_id: &str) -> bool {
         self.inner

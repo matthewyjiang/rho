@@ -91,6 +91,14 @@ fn events(lines: &[Value]) -> Vec<&Value> {
         .collect()
 }
 
+/// The last `turn_ended` event among `lines`.
+fn last_turn_ended(lines: &[Value]) -> Option<&Value> {
+    events(lines)
+        .into_iter()
+        .rev()
+        .find(|event| event["type"] == "turn_ended")
+}
+
 /// The first and last lines, with `seq` and the schema version left out.
 fn ends(lines: &[Value]) -> (Value, Value) {
     let bare = |line: &Value| {
@@ -161,11 +169,7 @@ async fn attach_reports_how_the_last_turn_ended() {
 
     // Both attaches, the second to the reopened session, report the turn's
     // end under the id the turn ran with.
-    let turn = events(&lines)
-        .iter()
-        .rev()
-        .nth(1)
-        .map(|ended| &ended["turn"]);
+    let turn = last_turn_ended(&lines).map(|ended| &ended["turn"]);
     assert!(
         turn.is_some_and(Value::is_string),
         "the turn's end names its turn: {lines:#?}"
@@ -176,11 +180,7 @@ async fn attach_reports_how_the_last_turn_ended() {
         "outcome": {"type": "answered", "text": REPLY, "stop": "end_turn"},
     });
     assert_eq!(
-        (
-            status.code(),
-            ends(&lines),
-            events(&lines).iter().rev().nth(1).copied(),
-        ),
+        (status.code(), ends(&lines), last_turn_ended(&lines),),
         (
             Some(0),
             (
@@ -199,7 +199,7 @@ async fn attach_reports_how_the_last_turn_ended() {
         (
             reopened_status.code(),
             ends(&reopened_lines).1,
-            events(&reopened_lines).iter().rev().nth(1).copied(),
+            last_turn_ended(&reopened_lines),
         ),
         (
             Some(0),

@@ -12,6 +12,37 @@ pub(crate) enum KeepWarm {
     Unavailable,
 }
 
+/// The `kind` a model asks for on `process start`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ProcessKind {
+    /// Work the session waits on: builds, test suites, training runs.
+    #[default]
+    Task,
+    /// Work that runs alongside the session: dev servers, watchers.
+    Service,
+}
+
+/// What a started process is to its session.
+///
+/// A task holds a prompt that started it and its exit wakes the idle
+/// session; a service does neither, though its result is still delivered
+/// at the next boundary. Only a task can keep the prompt cache warm.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ProcessRole {
+    Task { keep_warm: KeepWarm },
+    Service,
+}
+
+impl ProcessRole {
+    pub(crate) const fn is_task(self) -> bool {
+        match self {
+            Self::Task { .. } => true,
+            Self::Service => false,
+        }
+    }
+}
+
 /// The session's bound model route, as keep-warm needs to know it: whether
 /// it can send a capped ping, and whether it still holds the prefix the last
 /// request cached.

@@ -12,7 +12,7 @@ use crate::{
     app::{agent_executor::AgentRunHandle, subagent_manager::SubagentManager},
     subagent::{RunState, RunStatus},
     tools::{
-        process::{ProcessLimits, ProcessManager},
+        process::{KeepWarm, ProcessLimits, ProcessManager, ProcessRole},
         workflow_tracker::{WorkflowFinishedSnapshot, WorkflowRunTracker},
     },
 };
@@ -21,6 +21,11 @@ use crate::{
 const LONG_RUNNING_COMMAND: &str = "sleep 300";
 #[cfg(windows)]
 const LONG_RUNNING_COMMAND: &str = "Start-Sleep -Seconds 300";
+
+/// A plain `process start`: a task with no keep-warm hold.
+const TASK: ProcessRole = ProcessRole::Task {
+    keep_warm: KeepWarm::Off,
+};
 
 /// Every fixture session's id, so work from an "earlier prompt" can be
 /// registered to it before the fixture's prompt starts.
@@ -164,9 +169,9 @@ impl Fixture {
         (run.outcome().await.unwrap().text().to_owned(), applied)
     }
 
-    async fn start_process(&self) -> String {
+    async fn start_process(&self, role: ProcessRole) -> String {
         self.processes
-            .start(LONG_RUNNING_COMMAND.into(), Path::new("."), None)
+            .start_as(LONG_RUNNING_COMMAND.into(), Path::new("."), None, role)
             .await
             .unwrap()
             .process_id
@@ -197,17 +202,18 @@ impl Fixture {
 #[derive(Clone, Copy)]
 enum Work {
     Child,
-    ProcessDuringPrompt,
+    ProcessDuringPrompt(ProcessRole),
     Workflow,
     ProcessFromEarlierPrompt,
     WorkflowFromEarlierPrompt,
 }
 
-// Covers: a child, a workflow, or a process started during the prompt holds
-// natural completion, and its result continues the original run exactly once
-// with display rows the host can claim; a process or workflow left from an
-// earlier prompt, such as a `/workflow:<name>` start, does not hold it,
-// and neither does one under a host that wakes the idle session (T3 Code).
+// Covers: a child, a workflow, or a process task started during the prompt
+// holds natural completion, and its result continues the original run exactly
+// once with display rows the host can claim; a process service started during
+// the prompt does not hold it, nor does a process or workflow left from an
+// earlier prompt, such as a `/workflow:<name>` start, nor one under a host that
+// wakes the idle session (T3 Code).
 // The SDK channel tests do not own this wait.
 // Owner: shared CLI/daemon background delivery lifecycle.
 #[tokio::test]
@@ -217,10 +223,16 @@ async fn background_work_holds_or_releases_natural_completion() {
     let cases = [
         ("child", Work::Child, HoldPrompt, held),
         (
-            "process started during the prompt",
-            Work::ProcessDuringPrompt,
+            "process task started during the prompt",
+            Work::ProcessDuringPrompt(TASK),
             HoldPrompt,
             held,
+        ),
+        (
+            "process service started during the prompt",
+            Work::ProcessDuringPrompt(ProcessRole::Service),
+            HoldPrompt,
+            ("initial answer", 0, (0, 0, 1)),
         ),
         ("workflow", Work::Workflow, HoldPrompt, held),
         (
@@ -237,7 +249,7 @@ async fn background_work_holds_or_releases_natural_completion() {
         ),
         (
             "process started during the prompt when the host wakes the idle session",
-            Work::ProcessDuringPrompt,
+            Work::ProcessDuringPrompt(TASK),
             HostWakes,
             ("initial answer", 0, (0, 0, 1)),
         ),
@@ -264,11 +276,11 @@ async fn background_work_holds_or_releases_natural_completion() {
                 ));
                 None
             }
-            Work::Child | Work::ProcessDuringPrompt | Work::Workflow => None,
+            Work::Child | Work::ProcessDuringPrompt(_) | Work::Workflow => None,
         };
         let child = match work {
             Work::Child => Child::Running,
-            Work::ProcessDuringPrompt
+            Work::ProcessDuringPrompt(_)
             | Work::Workflow
             | Work::ProcessFromEarlierPrompt
             | Work::WorkflowFromEarlierPrompt => Child::Absent,
@@ -277,7 +289,7 @@ async fn background_work_holds_or_releases_natural_completion() {
         let mut displays = fixture.host.offered_displays();
         let request = fixture.final_boundary().await;
         let during = match work {
-            Work::ProcessDuringPrompt => Some(fixture.start_process().await),
+            Work::ProcessDuringPrompt(role) => Some(fixture.start_process(role).await),
             Work::Workflow => {
                 assert!(fixture
                     .workflows
@@ -301,7 +313,7 @@ async fn background_work_holds_or_releases_natural_completion() {
                     });
                     fixture.completion.send_replace(true);
                 }
-                Work::ProcessDuringPrompt => {
+                Work::ProcessDuringPrompt(_) => {
                     Fixture::stop_process(&fixture.processes, during.as_deref().unwrap()).await;
                 }
                 Work::Workflow | Work::WorkflowFromEarlierPrompt => {
@@ -409,7 +421,7 @@ async fn rejected_boundary_restores_terminal_results() {
         ..Default::default()
     });
     fixture.completion.send_replace(true);
-    let process_id = fixture.start_process().await;
+    let process_id = fixture.start_process(TASK).await;
     Fixture::stop_process(&fixture.processes, &process_id).await;
     assert!(fixture
         .workflows
@@ -562,4 +574,38 @@ async fn failed_attach_keeps_held_notices() {
     run.cancel();
     while run.next_event().await.is_some() {}
     let _ = run.outcome().await;
+}
+
+// Covers: a live process of either kind, or a finished task's undelivered
+// result, is background work that keeps an idle session loaded and a daemon
+// upgrade waiting; a finished service's result is not, since it waits only
+// for the next prompt and must not pin the session.
+// Owner: session runtime background-work predicate (unload, upgrade, delete).
+#[tokio::test]
+async fn only_live_processes_and_task_results_are_background_work() {
+    // (name, role, whether the process exits first, whether it is work)
+    let cases = [
+        ("live task", TASK, false, true),
+        ("live service", ProcessRole::Service, false, true),
+        ("finished task", TASK, true, true),
+        ("finished service", ProcessRole::Service, true, false),
+    ];
+    for (name, role, exits, expected) in cases {
+        let processes = ProcessManager::new(ProcessLimits::default());
+        let workflows = WorkflowRunTracker::new();
+        let id = processes
+            .start_as(LONG_RUNNING_COMMAND.into(), Path::new("."), None, role)
+            .await
+            .unwrap()
+            .process_id;
+        if exits {
+            Fixture::stop_process(&processes, &id).await;
+        }
+        let sources = BackgroundSources {
+            subagents: None,
+            processes: Some(&processes),
+            workflows: &workflows,
+        };
+        assert_eq!(sources.has_work(SESSION_ID), expected, "{name}");
+    }
 }

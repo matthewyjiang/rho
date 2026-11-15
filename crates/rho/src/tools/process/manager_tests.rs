@@ -144,7 +144,9 @@ fn manager_with_record(state: State) -> (ProcessManager, SharedRecord) {
         notify: Arc::new(Notify::new()),
         observed: false,
         explicitly_observed: false,
-        keep_warm: super::super::types::KeepWarm::Off,
+        role: ProcessRole::Task {
+            keep_warm: KeepWarm::Off,
+        },
     }));
     manager
         .inner

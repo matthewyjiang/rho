@@ -115,6 +115,8 @@ impl Sessions {
             &opened.config,
             &available_auths(opened.runtime.credentials()).await,
         );
+        // Unloaded, so nothing of it runs or wakes it: it is settled.
+        feed.update_activity(|| false);
         feed.close(DetachReason::NotLoaded);
         let observed = attach_response(opened.runtime.workspace_root(), feed.attach(after));
         opened.runtime.shutdown().await;

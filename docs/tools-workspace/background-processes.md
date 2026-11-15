@@ -33,7 +33,7 @@ flowchart TD
 
 | Action | Required | Optional | Result |
 | --- | --- | --- | --- |
-| `start` | `command` | `timeout_seconds` (≥ 1) | Compact snapshot with `process_id`, `command`, and early output |
+| `start` | `command` | `kind` (`task` or `service`, default `task`), `timeout_seconds` (≥ 1) | Compact snapshot with `process_id`, `command`, and early output |
 | `poll` | `process_id` | `cursor`, `wait_seconds` (0–30) | Compact snapshot of retained output from the cursor |
 | `stop` | `process_id` | | Stop request for that managed process tree |
 
@@ -48,7 +48,19 @@ Launches the command through the platform shell with:
 
 Returns a compact text snapshot that includes `process_id` and `command`. Optional
 `timeout_seconds` bounds how long the process may run before Rho marks it timed
-out and stops the tree.
+out and stops the tree. Optional `kind` says whether the session waits on the
+process; see [Tasks and services](#tasks-and-services).
+
+### Tasks and services
+
+| Kind | For | Waits | Exit |
+| --- | --- | --- | --- |
+| `task` (default) | Builds, test suites, training runs | Holds the turn that started it where the host cannot wake an idle session (such as `rho run`) | Delivers the result and wakes an idle session |
+| `service` | Dev servers, watchers, anything you will not wait on | Never holds a turn or keeps a session from settling | Delivers the result at the next boundary of any turn, or through `poll`; never wakes the session |
+
+Both kinds show in the activity rail, keep the session loaded while they run,
+and stop at shutdown. Where `keep_warm` is offered, it applies only to tasks:
+`start` rejects `keep_warm` on a service before anything spawns.
 
 ### `poll`
 
@@ -83,6 +95,7 @@ period, then force-kills if needed. Windows terminates the job immediately.
 | `exit: …` | Non-zero or failed exit code |
 | `detail: …` | Extra detail for failed or forced ends |
 | `stdout:` / `stderr:` | Coalesced stream text after a blank line; omitted when empty |
+| `kind: service` | `start` only: the process is a service, which does not hold the turn or wake the session |
 
 ## Limits
 

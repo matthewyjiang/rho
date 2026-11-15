@@ -70,22 +70,28 @@ pub(super) fn render_snapshot(snapshot: Snapshot) -> rho_tools::Rendered<Process
     .failed_if(failed)
 }
 
-/// Start result; says whether the hold warms, given the route at start time.
+/// Start result; marks a service, and says whether a task's hold warms,
+/// given the route at start time.
 pub(super) fn render_start(
     snapshot: Snapshot,
-    keep_warm: super::types::KeepWarm,
+    role: super::ProcessRole,
 ) -> rho_tools::Rendered<ProcessOutput> {
-    use super::types::KeepWarm;
-    // A process that exited or failed before the result was built holds nothing.
-    let line = match keep_warm {
-        _ if !snapshot.state.is_live() => None,
-        KeepWarm::Off => None,
-        KeepWarm::On => Some(
-            "keep_warm: on (Rho warms the prompt cache while this runs and you are idle; stops at exit, stop, the warm-up budget, or a model switch to a route that cannot warm)",
-        ),
-        KeepWarm::Unavailable => Some(
-            "keep_warm: unavailable (this model route cannot send capped requests, so the prompt cache will expire while you idle)",
-        ),
+    use super::{types::KeepWarm, ProcessRole};
+    let line = match role {
+        ProcessRole::Service => {
+            Some("kind: service (does not hold the turn or wake the session when it exits)")
+        }
+        // A task that exited or failed before the result was built holds nothing.
+        ProcessRole::Task { .. } if !snapshot.state.is_live() => None,
+        ProcessRole::Task { keep_warm } => match keep_warm {
+            KeepWarm::Off => None,
+            KeepWarm::On => Some(
+                "keep_warm: on (Rho warms the prompt cache while this runs and you are idle; stops at exit, stop, the warm-up budget, or a model switch to a route that cannot warm)",
+            ),
+            KeepWarm::Unavailable => Some(
+                "keep_warm: unavailable (this model route cannot send capped requests, so the prompt cache will expire while you idle)",
+            ),
+        },
     };
     let rendered = render_snapshot(snapshot);
     match line {
