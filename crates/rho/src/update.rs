@@ -14,9 +14,13 @@ use crate::installation::{
 #[cfg(not(windows))]
 use anyhow::Context;
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, USER_AGENT};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 #[cfg(not(windows))]
 use tokio::process::Command;
+
+#[path = "update_check.rs"]
+mod check;
+pub(crate) use check::{run_check, CheckFormat};
 
 const RELEASES_URL: &str = "https://api.github.com/repos/matthewyjiang/rho/releases";
 // GitHub documents 100 as the maximum releases page size. Use it so old drafts
@@ -62,6 +66,7 @@ fn install_script_ref(tag: String) -> String {
     }
 }
 
+/// The newest published rho release, next to the running version.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UpdateInfo {
     pub latest_tag: String,
@@ -69,7 +74,17 @@ pub struct UpdateInfo {
     pub current_version: String,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+impl UpdateInfo {
+    /// Whether the latest release is newer than the running rho.
+    pub fn is_available(&self) -> bool {
+        version_is_newer(&self.latest_version, &self.current_version)
+    }
+}
+
+/// How rho was installed, which decides how `rho update` updates it. The
+/// serialized names are the ones `rho update --check --json` reports.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum InstallMethod {
     Cargo,
     Mise,
@@ -97,6 +112,17 @@ impl InstallMethod {
         match self {
             Self::Cargo | Self::Pacman | Self::Script => Installed::OverTheExecutable,
             Self::Mise | Self::Scoop | Self::ScoopGlobal => Installed::AtAnotherPath,
+        }
+    }
+
+    /// Whether `rho update` needs a person at a terminal to finish: pacman
+    /// asks for sudo's password, and on Windows rho only prints the command.
+    fn needs_terminal(self) -> bool {
+        match self {
+            Self::Pacman => true,
+            Self::Cargo | Self::Mise | Self::Scoop | Self::ScoopGlobal | Self::Script => {
+                cfg!(windows)
+            }
         }
     }
 
@@ -132,37 +158,30 @@ fn latest_app_release_tag(releases: &[Release]) -> Option<&str> {
         .map(|release| release.tag_name.as_str())
 }
 
-pub async fn available_update(current_version: &str) -> anyhow::Result<Option<UpdateInfo>> {
+/// Looks up the newest published release. `rho update`, `rho update --check`,
+/// and the TUI's update notice all ask this.
+pub async fn latest_release(current_version: &str) -> anyhow::Result<UpdateInfo> {
     let latest_tag = latest_release_tag().await?;
     let Some(latest_version) = release_tag_to_version(&latest_tag) else {
         anyhow::bail!("latest release tag '{latest_tag}' does not contain a version");
     };
-    if version_is_newer(&latest_version, current_version) {
-        Ok(Some(UpdateInfo {
-            latest_tag,
-            latest_version,
-            current_version: current_version.to_string(),
-        }))
-    } else {
-        Ok(None)
-    }
+    Ok(UpdateInfo {
+        latest_tag,
+        latest_version,
+        current_version: current_version.to_string(),
+    })
 }
 
 pub async fn update_notice(current_version: &str) -> Option<String> {
-    match tokio::time::timeout(
-        Duration::from_millis(900),
-        available_update(current_version),
-    )
-    .await
-    {
-        Ok(Ok(Some(update))) => Some(format!(
+    match tokio::time::timeout(Duration::from_millis(900), latest_release(current_version)).await {
+        Ok(Ok(update)) if update.is_available() => Some(format!(
             "update available: v{} (current v{}). run `rho update` to {} via {}.",
             update.latest_version,
             update.current_version,
             update_action_label(),
             detect_install_method().label()
         )),
-        Ok(Ok(None)) | Ok(Err(_)) | Err(_) => None,
+        Ok(Ok(_)) | Ok(Err(_)) | Err(_) => None,
     }
 }
 
@@ -173,15 +192,15 @@ pub async fn run_update(current_version: &str) -> anyhow::Result<()> {
     // Pin the install script to the release tag being installed. If the release
     // check fails we cannot know the tag, so fall back to `main` rather than
     // block the update entirely.
-    let git_ref = match available_update(current_version).await {
-        Ok(Some(update)) => {
+    let git_ref = match latest_release(current_version).await {
+        Ok(update) if update.is_available() => {
             println!(
                 "rho v{} is available (current v{}).",
                 update.latest_version, update.current_version
             );
             install_script_ref(update.latest_tag)
         }
-        Ok(None) => {
+        Ok(_) => {
             println!("rho is up to date (v{current_version}).");
             return Ok(());
         }
@@ -564,9 +583,8 @@ fn parse_version(version: &str) -> Option<Version> {
 #[cfg(test)]
 mod tests {
     use super::{
-        install_script_ref, latest_app_release_tag, pacman_update_command_display,
-        release_tag_to_version, scoop_update_command_display, version_is_newer, InstallMethod,
-        Release, ScoopInstallScope,
+        install_script_ref, latest_app_release_tag, release_tag_to_version,
+        scoop_update_command_display, version_is_newer, InstallMethod, Release, ScoopInstallScope,
     };
 
     #[test]
@@ -713,13 +731,5 @@ mod tests {
             assert_eq!(scoop_update_command_display(scope), expected);
             assert_eq!(method.update_command("main").unwrap(), expected);
         }
-    }
-
-    #[test]
-    fn pacman_update_command_syncs_only_rho_from_mjiang_extras() {
-        assert_eq!(
-            pacman_update_command_display(),
-            "sudo pacman -Sy mjiang-extras/rho-coding-agent"
-        );
     }
 }
