@@ -185,7 +185,8 @@ pub struct PartialToolCall {
 /// replaying this entry on a later turn.
 ///
 /// An aborted turn carries reasoning forward only as opaque
-/// `provider_context`; see [`Self::replay_message`].
+/// `provider_context`: providers never replay `reasoning_summary`, which is
+/// the model's partial reasoning in readable prose.
 ///
 /// # Next major
 ///
@@ -211,25 +212,6 @@ pub struct AbortedAssistant {
     pub provider_context: Vec<ProviderContextBlock>,
     pub tool_calls: Vec<PartialToolCall>,
     pub usage: ModelUsage,
-}
-
-impl AbortedAssistant {
-    /// The assistant message a provider replays for this aborted turn, from
-    /// `content` the provider has already lowered (for example with partial
-    /// tool calls rendered as non-executable text).
-    ///
-    /// No reasoning summary travels, so [`handoff::prepare_assistant`] cannot
-    /// fall back to sending it as text. It is the model's own partial
-    /// reasoning in readable prose, and providers refuse requests that hand a
-    /// model its reasoning back that way (Anthropic: `reasoning_extraction`).
-    pub fn replay_message(&self, content: Vec<ContentBlock>) -> AssistantMessage {
-        AssistantMessage {
-            content,
-            provenance: self.provenance.clone(),
-            reasoning_summary: None,
-            provider_context: self.provider_context.clone(),
-        }
-    }
 }
 
 /// Exact provider, API, and model identity for replay-sensitive context.

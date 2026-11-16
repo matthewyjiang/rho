@@ -40,7 +40,7 @@ fn aborted_turns_never_replay_reasoning_summary_as_text() {
             responses.clone(),
             OpaqueReplay::Replayed,
             |history, target| {
-                let input = super::openai_responses::codex_input_items_for_target(
+                let input = crate::protocol::openai_responses::codex_input_items_for_target(
                     history,
                     &mut Vec::new(),
                     Some(target),
@@ -54,9 +54,11 @@ fn aborted_turns_never_replay_reasoning_summary_as_text() {
             ModelIdentity::new("openai", "openai-chat-completions", "gpt-chat"),
             OpaqueReplay::Omitted,
             |history, target| {
-                let messages =
-                    super::openai_chat::to_openai_messages_for_target(history, Some(target))
-                        .unwrap();
+                let messages = crate::protocol::openai_chat::to_openai_messages_for_target(
+                    history,
+                    Some(target),
+                )
+                .unwrap();
                 serde_json::to_string(&messages).unwrap()
             },
         ),
@@ -65,10 +67,10 @@ fn aborted_turns_never_replay_reasoning_summary_as_text() {
             ModelIdentity::new("anthropic", "anthropic-messages", "claude-opus-5-5"),
             OpaqueReplay::Omitted,
             |history, target| {
-                let conversation = super::anthropic_messages::split_system_and_messages(
+                let conversation = crate::protocol::anthropic_messages::split_system_and_messages(
                     history,
                     target,
-                    super::anthropic_messages::ProviderContextReplay::Enabled,
+                    crate::protocol::anthropic_messages::ProviderContextReplay::Enabled,
                 )
                 .unwrap();
                 serde_json::to_string(&conversation.messages).unwrap()
@@ -79,9 +81,13 @@ fn aborted_turns_never_replay_reasoning_summary_as_text() {
             ModelIdentity::new("google", "gemini-generate-content", "gemini-pro"),
             OpaqueReplay::Omitted,
             |history, target| {
-                let request =
-                    super::gemini_generate_content::build_request(history, &[], target, None)
-                        .unwrap();
+                let request = crate::protocol::gemini_generate_content::build_request(
+                    history,
+                    &[],
+                    target,
+                    None,
+                )
+                .unwrap();
                 serde_json::to_string(&request).unwrap()
             },
         ),

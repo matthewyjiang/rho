@@ -66,7 +66,10 @@ pub fn build_request<'a>(
             }
             WireMessage::AbortedAssistant(message) => {
                 let prepared = prepare_assistant(
-                    message.replay_message(aborted_content_blocks(message, target)),
+                    crate::protocol::aborted_replay::aborted_replay_message(
+                        message,
+                        aborted_content_blocks(message, target),
+                    ),
                     target,
                 );
                 let mut parts = blocks_to_parts(&prepared.content, &mut call_names);

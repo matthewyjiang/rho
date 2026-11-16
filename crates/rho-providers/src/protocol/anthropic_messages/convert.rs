@@ -122,7 +122,8 @@ pub(crate) fn split_system_and_messages(
                         other => other.clone(),
                     })
                     .collect::<Vec<_>>();
-                let mut enriched = message.replay_message(content);
+                let mut enriched =
+                    crate::protocol::aborted_replay::aborted_replay_message(message, content);
                 enriched
                     .content
                     .push(ContentBlock::Text("[Operation aborted]".into()));

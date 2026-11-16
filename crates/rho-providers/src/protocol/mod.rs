@@ -4,6 +4,7 @@
 //! to API-specific wire shapes. They do not own credentials, endpoint selection,
 //! retry policy, or provider registration.
 
+mod aborted_replay;
 pub(crate) mod anthropic_messages;
 mod cost;
 pub(crate) mod gemini_generate_content;
@@ -12,7 +13,3 @@ pub(crate) mod openai_chat;
 pub(crate) mod openai_responses;
 mod openai_shared;
 mod tool_images;
-
-#[cfg(test)]
-#[path = "aborted_replay_tests.rs"]
-mod aborted_replay_tests;
