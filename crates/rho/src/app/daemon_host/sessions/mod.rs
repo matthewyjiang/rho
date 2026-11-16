@@ -48,7 +48,7 @@ use rho_protocol::{
     DetachReason, ErrorCode, RpcError, SessionAnswerParams, SessionAnswerResponse,
     SessionAttachParams, SessionAttachResponse, SessionCancelParams, SessionCancelResponse,
     SessionHoldParams, SessionHoldResponse, SessionNewParams, SessionNewResponse,
-    SessionSurfaceActionParams, SessionSurfaceActionResponse, Subscription, TurnOutcome,
+    SessionSurfaceActionParams, SessionSurfaceActionResponse, Subscription, Surfaces, TurnOutcome,
 };
 use rho_sdk::{CancellationToken, SessionId};
 
@@ -778,6 +778,7 @@ impl Sessions {
         // Applied only if this attach reopens the session: one the daemon
         // has loaded keeps the environment and setup it opened with.
         // Its grant is its environment's: an attach names none.
+        let draws = params.setup.surfaces;
         let with = OpenWith::under(
             grant::asked(/*named*/ None, &params.environment)?,
             &params.environment,
@@ -788,7 +789,20 @@ impl Sessions {
         let (session, (resumed, attached)) = self
             .enter_session(&params.session, &with, |session, turn| {
                 let resumed = self.resume_interrupted(session, turn);
-                Ok((resumed, session.feed.attach(params.after.as_ref())))
+                // Read from every attach, not only one that opens the
+                // session: a `ui` call waits for the user only while a
+                // client that draws surfaces follows the session.
+                let viewer = match draws {
+                    Surfaces::Unsupported => None,
+                    Surfaces::Drawn => session
+                        .background
+                        .surfaces()
+                        .map(|surfaces| surfaces.viewer()),
+                };
+                Ok((
+                    resumed,
+                    session.feed.attach_viewer(params.after.as_ref(), viewer),
+                ))
             })
             .await?;
         if let Some(turn) = resumed {

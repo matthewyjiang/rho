@@ -1610,7 +1610,7 @@ impl Follower {
     }
 
     /// Detaches from the session, then leaves, as a closing frontend does.
-    async fn leave(self) -> Vec<(Seq, SessionEvent)> {
+    pub(super) async fn leave(self) -> Vec<(Seq, SessionEvent)> {
         self.client
             .request::<SessionDetach>(&SessionDetachParams {
                 session: self.session.clone(),

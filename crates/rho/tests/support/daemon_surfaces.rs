@@ -348,3 +348,31 @@ async fn a_session_whose_client_did_not_ask_for_surfaces_has_no_ui_tool() {
         ),
     );
 }
+
+// Covers: a client that draws nothing may follow a loaded session that has
+// the `ui` tool; a call that waits for the user there must be refused, not
+// wait for an answer nobody can give
+// Owner: daemon session
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_waiting_call_is_refused_while_no_follower_draws_surfaces() {
+    let sandbox = Sandbox::new();
+    let client = sandbox.start_daemon("tool-call").await;
+    let session = sandbox.new_session_with_setup(&client, drawing()).await;
+    let (mut drawer, _) = follow(&sandbox, &session).await;
+    search_ui(&sandbox, &client, &session, &mut drawer).await;
+    drawer.leave().await;
+    let (mut follower, _) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
+
+    sandbox
+        .prompt_tool_call(&client, &session, &confirm(true))
+        .await;
+    follower.read_until(call_is(ToolStatus::Failed)).await;
+
+    let (status, content) = shown(&follower.events);
+    assert_eq!(
+        (status, surface(&content)),
+        (Some(ToolStatus::Failed), None),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}

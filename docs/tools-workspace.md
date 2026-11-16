@@ -130,7 +130,7 @@ The `ui` tool lets the model show the user a small interface in the transcript, 
 | --- | --- |
 | `express` | The Express block, up to 64 KiB. A block that assigns `root` creates a surface; one that does not updates a surface that exists. |
 | `surface` | The block's default surface: the id to create or update. Without it, a new surface gets an id, which the result returns as `surfaceId`. |
-| `wait` | Return the user's next action on the surface instead of returning at once. |
+| `wait` | Return the user's next action on the surface instead of returning at once. Refused while no client that draws surfaces follows the session. |
 
 One call shows or updates one surface. An action the user takes after the call returned reaches the model as a message at its turn's next boundary; an idle session starts a turn for it when its client asked for [`idle_wake: turn`](/protocol#a-session-s-setup), and otherwise gets it with the next prompt.
 

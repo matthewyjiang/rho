@@ -45,7 +45,10 @@ use rho_protocol::{
     self as wire, Cursor, DetachReason, Published, Publisher, Replay, Seq, StreamId, Subscription,
 };
 
-use crate::app::session_events::{encoded_len, SavedTranscript, SavedTurn};
+use crate::{
+    app::session_events::{encoded_len, SavedTranscript, SavedTurn},
+    tools::ui::SurfaceViewer,
+};
 
 /// How many events one client may fall behind before the daemon drops its
 /// subscription; it then reattaches with its cursor.
@@ -116,9 +119,24 @@ struct FeedState {
     /// Whether the session is settled, as the last activity event sent it;
     /// `None` until the first.
     activity: Option<wire::SessionActivity>,
-    subscribers: Vec<Publisher>,
+    subscribers: Vec<Subscriber>,
     /// Set by [`Feed::close`]: a client attaching later is detached at once.
     closed: Option<DetachReason>,
+}
+
+/// One attached client.
+struct Subscriber {
+    publisher: Publisher,
+    /// Held while the client is attached, when it draws the session's
+    /// surfaces: the session's `ui` tool waits for the user only while one
+    /// such client follows it.
+    _viewer: Option<SurfaceViewer>,
+}
+
+impl Subscriber {
+    fn is_gone(&self) -> bool {
+        self.publisher.is_gone()
+    }
 }
 
 /// The events an attach replays, oldest first, and how many there are. A
@@ -342,8 +360,8 @@ impl Feed {
         state.turn_start_evicted = false;
         // The moved conversation's usage arrives as a live event.
         state.saved_usage = None;
-        for publisher in std::mem::take(&mut state.subscribers) {
-            publisher.close(DetachReason::Lagged);
+        for subscriber in std::mem::take(&mut state.subscribers) {
+            subscriber.publisher.close(DetachReason::Lagged);
         }
     }
 
@@ -352,6 +370,17 @@ impl Feed {
     /// resets to the transcript and the turn in progress. Once the feed is
     /// closed, the client gets that replay, then is detached.
     pub(super) fn attach(&self, after: Option<&Cursor>) -> Attached {
+        self.attach_viewer(after, /*viewer*/ None)
+    }
+
+    /// [`Self::attach`], for a client that may draw the session's
+    /// surfaces: `viewer` is its place among those that do, given up once
+    /// the client is gone.
+    pub(super) fn attach_viewer(
+        &self,
+        after: Option<&Cursor>,
+        viewer: Option<SurfaceViewer>,
+    ) -> Attached {
         let mut state = self.state();
         let (replay, events) = state.replay_from(after);
         // A replay's events are counted in memory, so far below `u64::MAX`.
@@ -360,10 +389,13 @@ impl Feed {
             rho_protocol::subscription(SUBSCRIBER_BACKLOG, events.events);
         // Clients that left an idle session would otherwise stay until the
         // next event.
-        state.subscribers.retain(|publisher| !publisher.is_gone());
+        state.subscribers.retain(|subscriber| !subscriber.is_gone());
         match state.closed {
             Some(reason) => publisher.close(reason),
-            None => state.subscribers.push(publisher),
+            None => state.subscribers.push(Subscriber {
+                publisher,
+                _viewer: viewer,
+            }),
         }
         Attached {
             stream: state.stream.clone(),
@@ -413,7 +445,7 @@ impl Feed {
     /// Whether a client still follows the session's events.
     pub(super) fn followed(&self) -> bool {
         let mut state = self.state();
-        state.subscribers.retain(|publisher| !publisher.is_gone());
+        state.subscribers.retain(|subscriber| !subscriber.is_gone());
         !state.subscribers.is_empty()
     }
 
@@ -423,8 +455,8 @@ impl Feed {
     pub(super) fn close(&self, reason: DetachReason) {
         let mut state = self.state();
         let reason = *state.closed.get_or_insert(reason);
-        for publisher in std::mem::take(&mut state.subscribers) {
-            publisher.close(reason);
+        for subscriber in std::mem::take(&mut state.subscribers) {
+            subscriber.publisher.close(reason);
         }
     }
 
@@ -482,12 +514,12 @@ impl FeedState {
         }
         let seq = Seq(self.last.0 + 1);
         self.last = seq;
-        self.subscribers.retain(
-            |publisher| match publisher.try_publish(seq, event.clone()) {
+        self.subscribers.retain(|subscriber| {
+            match subscriber.publisher.try_publish(seq, event.clone()) {
                 Ok(()) => true,
                 Err(Published::Lagged | Published::Gone) => false,
-            },
-        );
+            }
+        });
         self.buffer.push_back(Buffered { seq, event, bytes });
         self.buffered_bytes += bytes;
         while self.buffered_bytes > REPLAY_BUFFER_BYTES {

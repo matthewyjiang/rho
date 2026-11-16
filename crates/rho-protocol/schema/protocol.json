@@ -5950,7 +5950,7 @@
         },
         "surfaces": {
           "$ref": "#/$defs/Surfaces",
-          "description": "Whether the client draws A2UI surfaces: not, when absent, so the\nsession has no `ui` tool. Like [`Self::child_threads`], it is the\nopening client's and never saved."
+          "description": "Whether the client draws A2UI surfaces: not, when absent, so the\nsession has no `ui` tool. Like [`Self::child_threads`], it is the\nopening client's and never saved. Unlike the rest of a setup, the\ndaemon also reads it from an attach to a session it has loaded\n([`Surfaces::Drawn`])."
         },
         "without": {
           "description": "Parts of the session left out, as `rho`'s `--no-tools`,\n`--no-system-prompt`, and `--no-subagents` leave them out, and\nquestions a client cannot show. The session saves all but\n[`SessionPart::Questions`] and [`SessionPart::Saving`]; a reopen\nleaves out the saved parts and these, except\n[`SessionPart::Saving`], which only a new session takes.",
@@ -6483,7 +6483,7 @@
         },
         {
           "const": "drawn",
-          "description": "The client draws them and sends what the user does on one with\n[`super::SESSION_SURFACE_ACTION`]: a session it opens has the `ui`\ntool.",
+          "description": "The client draws them and sends what the user does on one with\n[`super::SESSION_SURFACE_ACTION`]: a session it opens has the `ui`\ntool. An attach to a session the daemon has loaded does not change\nthe session's tools, but one that says this counts the client among\nthose the user can act on a surface in: a `ui` call that waits for\nthe user is refused while no such client follows the session.",
           "type": "string"
         }
       ]

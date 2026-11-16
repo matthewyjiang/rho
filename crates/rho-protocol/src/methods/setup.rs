@@ -74,7 +74,9 @@ pub struct SessionSetup {
     pub sign_in: SignIn,
     /// Whether the client draws A2UI surfaces: not, when absent, so the
     /// session has no `ui` tool. Like [`Self::child_threads`], it is the
-    /// opening client's and never saved.
+    /// opening client's and never saved. Unlike the rest of a setup, the
+    /// daemon also reads it from an attach to a session it has loaded
+    /// ([`Surfaces::Drawn`]).
     #[serde(default, skip_serializing_if = "Surfaces::is_unsupported")]
     pub surfaces: Surfaces,
 }
@@ -179,7 +181,10 @@ pub enum Surfaces {
     Unsupported,
     /// The client draws them and sends what the user does on one with
     /// [`super::SESSION_SURFACE_ACTION`]: a session it opens has the `ui`
-    /// tool.
+    /// tool. An attach to a session the daemon has loaded does not change
+    /// the session's tools, but one that says this counts the client among
+    /// those the user can act on a surface in: a `ui` call that waits for
+    /// the user is refused while no such client follows the session.
     Drawn,
 }
 

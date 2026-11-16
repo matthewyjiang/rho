@@ -20,7 +20,7 @@ use super::{code_mode::ContextExposure, sdk_registry::ToolBundle};
 
 mod host;
 
-pub(crate) use host::{SurfaceAction, SurfaceContent, SurfaceHost, SurfaceRequest};
+pub(crate) use host::{SurfaceAction, SurfaceContent, SurfaceHost, SurfaceRequest, SurfaceViewer};
 
 pub(crate) const TOOL_NAME: &str = "ui";
 

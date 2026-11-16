@@ -128,6 +128,17 @@ struct Shared {
     state: Mutex<State>,
     /// Told when an action no call waits for arrives.
     acted: Arc<Notify>,
+    /// Shared with every [`SurfaceViewer`], so its count says whether one
+    /// lives.
+    viewers: Arc<()>,
+}
+
+/// A client that draws the session's surfaces and follows the session, for
+/// as long as this is kept: the user can act on a surface there. Whoever
+/// holds the client's subscription holds this next to it.
+#[derive(Debug)]
+pub(crate) struct SurfaceViewer {
+    _counted: Arc<()>,
 }
 
 /// A `ui` call's wait for the user's next action on its surface.
@@ -189,6 +200,7 @@ impl Default for SurfaceHost {
                 actions: VecDeque::new(),
             }),
             acted: Arc::new(Notify::new()),
+            viewers: Arc::new(()),
         }))
     }
 }
@@ -228,14 +240,22 @@ impl SurfaceHost {
     /// so no action on the surface falls between them: a client that
     /// already shows the surface can send one at any moment.
     ///
-    /// Refused, showing nothing, for a block that leaves no surface to
-    /// act on.
+    /// Refused, showing nothing, while no client that draws surfaces
+    /// follows the session, since nobody could answer, and for a block
+    /// that leaves no surface to act on.
     pub(super) fn show_waiting(
         &self,
         call_id: &str,
         request: &SurfaceRequest,
     ) -> Result<(Arc<SurfaceContent>, Waiting), String> {
         let mut state = self.state();
+        if Arc::strong_count(&self.0.viewers) == 1 {
+            return Err(
+                "no client that draws surfaces is following the session, so nobody could act \
+                 on one; ask in text, or show the surface without `wait`"
+                    .to_owned(),
+            );
+        }
         let content = state.show(call_id, request, Shows::ToActOn)?;
         let (sender, action) = oneshot::channel();
         state.waiting.insert(content.surface.clone(), sender);
@@ -244,6 +264,14 @@ impl SurfaceHost {
             action,
         };
         Ok((content, waiting))
+    }
+
+    /// Counts a client that draws surfaces among the session's followers
+    /// until the returned [`SurfaceViewer`] drops.
+    pub(crate) fn viewer(&self) -> SurfaceViewer {
+        SurfaceViewer {
+            _counted: Arc::clone(&self.0.viewers),
+        }
     }
 
     /// Takes what the user did on `surface`: `message` is A2UI's `action`

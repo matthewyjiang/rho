@@ -84,6 +84,7 @@ fn an_action_whose_call_stopped_waiting_is_kept_for_a_turn() {
     let host = SurfaceHost::default();
     let content = host.show("call-1", &request(CONFIRM, "s")).unwrap();
     let button = component_id(&content, "Button");
+    let _viewer = host.viewer();
     let asked_again = request(r#"question = Text("Merge now?")"#, "s");
     drop(host.show_waiting("call-2", &asked_again).unwrap());
 
@@ -150,6 +151,7 @@ fn an_action_the_surface_cannot_send_is_refused() {
 #[tokio::test]
 async fn a_waiting_call_gets_the_next_action_on_a_surface_already_shown() {
     let host = SurfaceHost::default();
+    let _viewer = host.viewer();
     let content = host.show("call-1", &request(CONFIRM, "s")).unwrap();
     let button = component_id(&content, "Button");
     let update = request(r#"question = Text("Merge now?")"#, "s");
@@ -176,6 +178,7 @@ async fn a_waiting_call_gets_the_next_action_on_a_surface_already_shown() {
 #[test]
 fn an_action_a_cancelled_call_already_had_is_kept_for_a_turn() {
     let host = SurfaceHost::default();
+    let _viewer = host.viewer();
     let (content, waiting) = host.show_waiting("call-1", &request(CONFIRM, "s")).unwrap();
     let button = component_id(&content, "Button");
     host.act("s", &pressed("s", &button, "merge"), None)
@@ -189,5 +192,25 @@ fn an_action_a_cancelled_call_already_had_is_kept_for_a_turn() {
             surface: "s".to_owned(),
             action: pressed("s", &button, "merge")["action"].clone(),
         }]
+    );
+}
+
+// Covers: a call must not wait for the user while no client that draws
+// surfaces follows the session, and a call refused for that must show
+// nothing, or its surface id is taken by a surface nobody was sent
+// Owner: surface host
+#[test]
+fn a_call_waits_only_while_a_client_that_draws_surfaces_follows() {
+    let host = SurfaceHost::default();
+
+    let unwatched = host.show_waiting("call-1", &request(CONFIRM, "s")).err();
+    let viewer = host.viewer();
+    let watched = host.show_waiting("call-2", &request(CONFIRM, "s")).is_ok();
+    drop(viewer);
+    let left = host.show_waiting("call-3", &request(CONFIRM, "t")).err();
+
+    assert_eq!(
+        (unwatched.is_some(), watched, left.is_some()),
+        (true, true, true)
     );
 }
