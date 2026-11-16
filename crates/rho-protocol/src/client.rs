@@ -3,6 +3,7 @@
 
 use std::{
     collections::HashMap,
+    future::Future,
     sync::{
         atomic::{AtomicI64, Ordering},
         Arc, Mutex, MutexGuard, PoisonError,
@@ -134,7 +135,7 @@ impl ClientError {
     }
 }
 
-/// A message for the writer task, and where to report its write.
+/// A message for the connection's writer, and where to report its write.
 type Write = (Message, oneshot::Sender<Result<(), FrameError>>);
 
 impl Client {
@@ -152,7 +153,7 @@ impl Client {
     /// # Panics
     ///
     /// Outside a Tokio runtime, because the connection's reader and writer
-    /// run in spawned tasks.
+    /// run in a spawned task.
     pub async fn handshake<S>(
         stream: S,
         hello: ClientHello,
@@ -160,23 +161,56 @@ impl Client {
     where
         S: AsyncRead + AsyncWrite + Send + 'static,
     {
+        let (handshake, io) = Self::handshake_with_io(stream, hello);
+        tokio::spawn(io);
+        handshake.await
+    }
+
+    /// [`Client::handshake`] for any executor, such as a browser's, which
+    /// has no Tokio runtime to spawn on: returns the handshake and the
+    /// connection's I/O, its reader and writer, as a future the caller must
+    /// run beside it. The handshake, and every request after it, waits on
+    /// that future; it ends once the connection has closed and the client is
+    /// dropped. Dropping it closes the connection: every pending request,
+    /// and every later one, fails with [`ClientError::Closed`].
+    pub fn handshake_with_io<S>(
+        stream: S,
+        hello: ClientHello,
+    ) -> (
+        impl Future<Output = Result<(Self, Notifications, HelloResponse), ClientError>>,
+        impl Future<Output = ()>,
+    )
+    where
+        S: AsyncRead + AsyncWrite + 'static,
+    {
         let (reader, writer) = tokio::io::split(stream);
         let shared = Arc::new(Shared {
             pending: Mutex::new(Pending::Open(HashMap::new())),
         });
         let (writes, write_queue) = mpsc::unbounded_channel();
         let (notify, receiver) = mpsc::unbounded_channel();
-        tokio::spawn(read_messages(
-            MessageReader::new(reader),
-            Arc::clone(&shared),
-            notify,
-        ));
-        tokio::spawn(write_messages(MessageWriter::new(writer), write_queue));
+        let reads = read_messages(MessageReader::new(reader), Arc::clone(&shared), notify);
+        let io = async move {
+            tokio::join!(
+                reads,
+                write_messages(MessageWriter::new(writer), write_queue)
+            );
+        };
         let this = Self {
             shared,
             writes,
             next_id: AtomicI64::new(1),
         };
+        (this.finish_handshake(hello, receiver), io)
+    }
+
+    /// Sends `rho/hello` on this connection, whose I/O already runs, and
+    /// checks the daemon's answer.
+    async fn finish_handshake(
+        self,
+        hello: ClientHello,
+        receiver: mpsc::UnboundedReceiver<DaemonNotification>,
+    ) -> Result<(Self, Notifications, HelloResponse), ClientError> {
         let ClientHello {
             client,
             role,
@@ -189,7 +223,7 @@ impl Client {
             capabilities,
             build: Some(BuildId::of_this_crate()),
         };
-        let hello = match this.request::<Hello>(&params).await {
+        let hello = match self.request::<Hello>(&params).await {
             Ok(hello) => hello,
             Err(ClientError::Rpc { method, error })
                 if error.error_code() == Some(ErrorCode::VersionMismatch) =>
@@ -211,7 +245,7 @@ impl Client {
         if let Some(mismatch) = VersionMismatch::between(hello.protocol, PROTOCOL_VERSION) {
             return Err(ClientError::VersionMismatch(mismatch));
         }
-        Ok((this, Notifications { receiver }, hello))
+        Ok((self, Notifications { receiver }, hello))
     }
 
     /// Sends one request and waits for its response. Requests may overlap;
@@ -230,7 +264,7 @@ impl Client {
             params: Some(params),
         });
         let (ack, written) = oneshot::channel();
-        // The writer task finishes a write even if this call is dropped, so
+        // The connection's writer finishes a write even if this call is dropped, so
         // a cancelled request never leaves half a line behind.
         let written = match self.writes.send((request, ack)) {
             Ok(()) => written.await.ok(),
@@ -262,7 +296,8 @@ impl Notifications {
     }
 }
 
-/// The requests awaiting responses, shared by callers and the reader task.
+/// The requests awaiting responses, shared by callers and the connection's
+/// reader.
 struct Shared {
     pending: Mutex<Pending>,
 }
@@ -342,12 +377,21 @@ impl Shared {
     }
 
     /// Fails every pending request, and every later one, with `reason`.
+    /// Closing again keeps the first reason.
     fn close(&self, reason: Option<ParseError>) {
-        let previous = std::mem::replace(&mut *self.lock(), Pending::Closed(reason.clone()));
-        if let Pending::Open(waiters) = previous {
-            for waiter in waiters.into_values() {
-                waiter.fail(&reason);
+        let waiters = {
+            let mut pending = self.lock();
+            match &mut *pending {
+                Pending::Open(waiters) => {
+                    let waiters = std::mem::take(waiters);
+                    *pending = Pending::Closed(reason.clone());
+                    waiters
+                }
+                Pending::Closed(_) => return,
             }
+        };
+        for waiter in waiters.into_values() {
+            waiter.fail(&reason);
         }
     }
 
@@ -355,6 +399,17 @@ impl Shared {
     /// consistent.
     fn lock(&self) -> MutexGuard<'_, Pending> {
         self.pending.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+/// Closes the connection's requests when the reader stops, also when its
+/// caller drops the I/O ([`Client::handshake_with_io`]) before the daemon
+/// closes: requests already sent then fail rather than wait forever.
+struct CloseOnDrop(Arc<Shared>);
+
+impl Drop for CloseOnDrop {
+    fn drop(&mut self) {
+        self.0.close(None);
     }
 }
 
@@ -366,6 +421,8 @@ async fn read_messages<R: AsyncRead + Unpin>(
     shared: Arc<Shared>,
     notify: mpsc::UnboundedSender<DaemonNotification>,
 ) {
+    let closing = CloseOnDrop(shared);
+    let shared = &closing.0;
     let reason = loop {
         let line = match reader.read_line().await {
             Ok(Some(line)) => line,
