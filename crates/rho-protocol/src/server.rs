@@ -826,14 +826,23 @@ impl Connection {
             (Self::Ready(declared), method) => {
                 declared.permit(method)?;
                 match method {
-                    SESSION_ATTACH => decode_params::<SessionAttach>(params)
-                        .map(|params| Route::Attach(AttachRequest::Attach(params))),
+                    SESSION_ATTACH => {
+                        let params = decode_params::<SessionAttach>(params)?;
+                        declared.permit_setup(&params.setup)?;
+                        Ok(Route::Attach(AttachRequest::Attach(params)))
+                    }
                     SESSION_OBSERVE => decode_params::<SessionObserve>(params)
                         .map(|params| Route::Attach(AttachRequest::Observe(params))),
                     SESSION_DETACH => decode_params::<SessionDetach>(params).map(Route::Detach),
                     AUTH_LOGIN => decode_params::<AuthLogin>(params).map(Route::Login),
                     CONFIG_GET => decode_params::<ConfigGet>(params).map(Route::ConfigGet),
-                    method => ServiceCall::decode(method, params).map(Route::Call),
+                    method => {
+                        let call = ServiceCall::decode(method, params)?;
+                        if let ServiceCall::NewSession(params) = &call {
+                            declared.permit_setup(&params.setup)?;
+                        }
+                        Ok(Route::Call(call))
+                    }
                 }
             }
         }

@@ -16,7 +16,7 @@ use crate::{
         Replay, Seq, SessionDetachedParams, SessionEvent, SessionEventParams, SessionId,
         SessionOptions, StreamId, AUTH_LOGIN_FINISHED, AUTH_LOGIN_PROMPT, CONFIG_CHANGED,
         DAEMON_STATUS, DAEMON_STOP, SESSION_ANSWER, SESSION_DETACHED, SESSION_EVENT, SESSION_HOLD,
-        SESSION_LIST, SESSION_PROMPT,
+        SESSION_LIST, SESSION_NEW, SESSION_PROMPT,
     },
     subscription, ClientRole, ConfigChangedParams, ConfigGetResponse, ConfigNamespace,
     ConfigRevision, ConfigWatch, CredentialStoreKind, CredentialStoreStatus, HelloParams,
@@ -293,7 +293,7 @@ async fn exchange<Svc: Service + 'static>(service: Svc, lines: &[String]) -> Vec
 // Covers: the hello gate (nothing before hello, no second hello, a rejected
 // hello leaves the connection unhandshaken), the capabilities a hello
 // declares (#1780: answer and hold need `answer`, which an agent's role may
-// not declare), unknown methods, and recoverable parse errors that keep the
+// not declare, and so does asking for surfaces), unknown methods, and recoverable parse errors that keep the
 // connection open.
 // Owner: protocol server dispatch.
 #[tokio::test]
@@ -422,6 +422,60 @@ async fn dispatch_enforces_the_handshake_and_rejects_unknown_requests() {
             vec![
                 (id(1), Ok(())),
                 (id(2), Err(Some(ErrorCode::CapabilityRequired))),
+            ],
+        ),
+        (
+            "only a connection that declared `answer` may ask for surfaces",
+            vec![
+                hello_as(1, PROTOCOL_VERSION, "frontend", &[]),
+                request_with_params(
+                    2,
+                    SESSION_NEW,
+                    serde_json::json!({
+                        "cwd": "/",
+                        "environment": {},
+                        "setup": {"surfaces": "drawn"},
+                    }),
+                ),
+                request_with_params(
+                    3,
+                    SESSION_ATTACH,
+                    serde_json::json!({
+                        "session": "s",
+                        "environment": {},
+                        "setup": {"surfaces": "drawn"},
+                    }),
+                ),
+                request_with_params(
+                    4,
+                    SESSION_NEW,
+                    serde_json::json!({"cwd": "/", "environment": {}}),
+                ),
+            ],
+            vec![
+                (id(1), Ok(())),
+                (id(2), Err(Some(ErrorCode::CapabilityRequired))),
+                (id(3), Err(Some(ErrorCode::CapabilityRequired))),
+                (id(4), Err(Some(ErrorCode::MethodNotFound))),
+            ],
+        ),
+        (
+            "a frontend that declared `answer` asks for surfaces and reaches the service",
+            vec![
+                hello_line(1, PROTOCOL_VERSION),
+                request_with_params(
+                    2,
+                    SESSION_NEW,
+                    serde_json::json!({
+                        "cwd": "/",
+                        "environment": {},
+                        "setup": {"surfaces": "drawn"},
+                    }),
+                ),
+            ],
+            vec![
+                (id(1), Ok(())),
+                (id(2), Err(Some(ErrorCode::MethodNotFound))),
             ],
         ),
         (

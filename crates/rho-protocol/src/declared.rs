@@ -11,6 +11,7 @@ use serde_json::Value;
 use crate::{
     methods::{HELLO, SESSION_ANSWER, SESSION_HOLD, SESSION_SURFACE_ACTION},
     ClientCapability, ClientInfo, ClientRole, ErrorCode, HelloParams, ProtocolVersion, RpcError,
+    SessionSetup, Surfaces,
 };
 
 /// The role and capabilities an accepted hello declared, which hold until
@@ -62,6 +63,27 @@ impl Declared {
                 ),
             )),
             None => Ok(()),
+        }
+    }
+}
+
+impl Declared {
+    /// Refuses a setup that asks for surfaces from a connection that cannot
+    /// act on one: `surfaces: drawn` promises the client sends what the user
+    /// does with [`SESSION_SURFACE_ACTION`], which needs `answer`, so a `ui`
+    /// call waiting on such a client would wait for nobody.
+    pub(crate) fn permit_setup(&self, setup: &SessionSetup) -> Result<(), RpcError> {
+        let answers = self.capabilities.contains(&ClientCapability::Answer);
+        match setup.surfaces {
+            Surfaces::Drawn if !answers => Err(RpcError::new(
+                ErrorCode::CapabilityRequired,
+                format!(
+                    "`surfaces: drawn` needs capability `{}` to send {SESSION_SURFACE_ACTION}, which this connection, of role `{}`, did not declare in {HELLO}",
+                    capability_name(ClientCapability::Answer),
+                    role_name(self.role)
+                ),
+            )),
+            Surfaces::Drawn | Surfaces::Unsupported => Ok(()),
         }
     }
 }
