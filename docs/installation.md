@@ -85,6 +85,12 @@ If Cargo's bin directory is not on your `PATH`, add it before running the [inter
 export PATH="$HOME/.cargo/bin:$PATH"
 ```
 
+To switch an Intel Mac from an earlier standalone install to Cargo, delete the old binary so it does not shadow Cargo's copy. Use your `RHO_INSTALL_DIR` in place of `~/.local/bin` if you set one:
+
+```bash
+rm ~/.local/bin/rho
+```
+
 ## The daemon and services
 
 Rho runs your sessions in a per-user [daemon](/daemon) that the first `rho` command starts. No install method adds a service or login item for it. The one optional service, a [systemd unit or LaunchAgent](/daemon#running-as-a-service) for `rho mcp serve --http`, is one you save yourself.
