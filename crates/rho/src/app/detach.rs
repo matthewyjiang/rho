@@ -73,6 +73,8 @@ pub(super) fn detach_flags(cli: &Cli) -> Result<Passed<'_>, Vec<&'static str>> {
         (SessionPart::Tools, *no_tools),
         (SessionPart::SystemPrompt, *no_system_prompt),
         (SessionPart::Subagents, *no_subagents),
+        // Nobody watches a detached run, so it shows no A2UI surfaces.
+        (SessionPart::Surfaces, true),
     ]
     .into_iter()
     .filter_map(|(part, set)| set.then_some(part))

@@ -88,6 +88,8 @@ impl Launch {
             }
         }
         let mut without = self.without.clone();
+        // ACP has no A2UI surfaces to draw.
+        without.insert(SessionPart::Surfaces);
         match features.forms {
             Forms::Available(_) => {}
             Forms::Unavailable => {

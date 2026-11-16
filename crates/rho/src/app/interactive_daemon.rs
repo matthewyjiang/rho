@@ -105,6 +105,8 @@ pub(super) async fn open(
         (SessionPart::SystemPrompt, *no_system_prompt),
         (SessionPart::Subagents, *no_subagents),
         (SessionPart::Saving, *no_save),
+        // The terminal UI draws no A2UI surfaces yet.
+        (SessionPart::Surfaces, true),
     ]
     .into_iter()
     .filter_map(|(part, left_out)| left_out.then_some(part))

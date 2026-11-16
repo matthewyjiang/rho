@@ -57,7 +57,8 @@ use rho_protocol::{
     },
     ClientEnvironment, ClientError, ContentBlock, JobId, JobKind, JobListParams, JobSummary,
     ModelRef, SessionCancelParams, SessionChange, SessionConfigureParams, SessionId,
-    SessionListParams, SessionNewParams, SessionPromptParams, SessionSetup, SessionSteerParams,
+    SessionListParams, SessionNewParams, SessionPart, SessionPromptParams, SessionSetup,
+    SessionSteerParams,
 };
 use serde_json::Value;
 
@@ -248,7 +249,11 @@ impl SessionControl {
                 cwd: workspace.clone(),
                 environment: Self::child_environment(caller),
                 agent: params.agent,
-                setup: SessionSetup::default(),
+                // An agent started it, and draws no A2UI surfaces.
+                setup: SessionSetup {
+                    without: [SessionPart::Surfaces].into(),
+                    ..SessionSetup::default()
+                },
                 parent: caller.session.clone(),
                 grant: Some(caller.child_context().into()),
                 worktree: params.worktree,
