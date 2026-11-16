@@ -66,12 +66,7 @@ pub fn build_request<'a>(
             }
             WireMessage::AbortedAssistant(message) => {
                 let prepared = prepare_assistant(
-                    crate::model::AssistantMessage {
-                        content: aborted_content_blocks(message, target),
-                        provenance: message.provenance.clone(),
-                        reasoning_summary: message.reasoning_summary.clone(),
-                        provider_context: message.provider_context.clone(),
-                    },
+                    message.replay_message(aborted_content_blocks(message, target)),
                     target,
                 );
                 let mut parts = blocks_to_parts(&prepared.content, &mut call_names);

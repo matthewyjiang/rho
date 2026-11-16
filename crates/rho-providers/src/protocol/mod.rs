@@ -12,3 +12,7 @@ pub(crate) mod openai_chat;
 pub(crate) mod openai_responses;
 mod openai_shared;
 mod tool_images;
+
+#[cfg(test)]
+#[path = "aborted_replay_tests.rs"]
+mod aborted_replay_tests;

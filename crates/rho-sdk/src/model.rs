@@ -183,18 +183,50 @@ pub struct PartialToolCall {
 /// explicit cancellation and terminal provider/run failure with streamed
 /// progress. Provider adapters may append a model-visible abort marker when
 /// replaying this entry on a later turn.
+///
+/// An aborted turn carries reasoning forward only as opaque
+/// `provider_context`; see [`Self::replay_message`].
+///
+/// # Next major
+///
+/// NEXT_MAJOR(rho-sdk): remove `AbortedAssistant::reasoning` and
+/// `AbortedAssistant::reasoning_summary`.
+///
+/// The SDK never fills either field and providers never replay them; they
+/// remain so sessions that recorded them still deserialize.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct AbortedAssistant {
     pub content: Vec<ContentBlock>,
     pub reasoning: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provenance: Option<ModelIdentity>,
+    /// Older sessions recorded the partial reasoning summary here. It is
+    /// never replayed to a provider.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_summary: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub provider_context: Vec<ProviderContextBlock>,
     pub tool_calls: Vec<PartialToolCall>,
     pub usage: ModelUsage,
+}
+
+impl AbortedAssistant {
+    /// The assistant message a provider replays for this aborted turn, from
+    /// `content` the provider has already lowered (for example with partial
+    /// tool calls rendered as non-executable text).
+    ///
+    /// No reasoning summary travels, so [`handoff::prepare_assistant`] cannot
+    /// fall back to sending it as text. It is the model's own partial
+    /// reasoning in readable prose, and providers refuse requests that hand a
+    /// model its reasoning back that way (Anthropic: `reasoning_extraction`).
+    pub fn replay_message(&self, content: Vec<ContentBlock>) -> AssistantMessage {
+        AssistantMessage {
+            content,
+            provenance: self.provenance.clone(),
+            reasoning_summary: None,
+            provider_context: self.provider_context.clone(),
+        }
+    }
 }
 
 /// Exact provider, API, and model identity for replay-sensitive context.
