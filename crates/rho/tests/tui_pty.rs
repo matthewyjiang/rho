@@ -1006,6 +1006,48 @@ fn process_rail_click_opens_peek_and_q_returns() {
     assert_pass("process_rail_peek");
 }
 
+// Covers: a waiting `ui` call's surface draws under its card and takes the
+// keyboard; a field, a checkbox, a choice and a slider edited from the
+// keyboard reach the model with the pressed button's action.
+// Owner: interactive TUI
+#[test]
+fn surface_form_is_edited_and_submitted_from_the_keyboard() {
+    assert_pass("surface_form");
+}
+
+// Covers: Esc on a surface during a turn returns the keyboard to the
+// composer instead of aborting the turn, typing then goes to the composer,
+// and Alt+U returns to the surface.
+// Owner: interactive TUI
+#[test]
+fn surface_escape_returns_the_keyboard_to_the_composer() {
+    assert_pass("surface_escape");
+}
+
+// Covers: a surface whose call returned leaves the keyboard alone, stays
+// operable in the transcript, and its action wakes the idle session.
+// Owner: interactive TUI
+#[test]
+fn surface_action_after_its_call_returned_reaches_the_model() {
+    assert_pass("surface_idle_action");
+}
+
+// Covers: a reset replay must rebuild each surface once, without taking
+// the keyboard, and the rebuilt surface must still send actions.
+// Owner: interactive TUI as a daemon client
+#[test]
+fn surface_survives_a_reset_replay() {
+    assert_pass("surface_reset");
+}
+
+// Covers: zen mode hides tool cards, and must not hide the surface a call
+// waits on or the surface a returned call left.
+// Owner: interactive TUI transcript under zen display policy
+#[test]
+fn surface_stays_in_zen_mode() {
+    assert_pass("surface_zen");
+}
+
 // Covers: hover lifts and drops a questionnaire choice, a click selects it
 // without submitting, and a double click confirms it like Enter.
 // Owner: interactive TUI
