@@ -133,6 +133,7 @@ const ESCAPE_STEPS: &[Step] = &[
     // `draft_survived` below checks the draft is whole.
     Step::Key(Key::Backspace),
     Step::Key(Key::Ctrl('w')),
+    Step::Key(Key::Ctrl('z')),
     Step::Key(Key::End),
     // From the first control, back past the last one to Cancel.
     Step::Key(Key::Up),

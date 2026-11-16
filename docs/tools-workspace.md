@@ -151,7 +151,7 @@ A call that waits for you gives its surface the keyboard, unless you are typing 
 | `Enter` / `Esc` while editing | Stop editing the field. `Tab` and `Shift+Tab` stop and move on |
 | `Esc` | Return the keyboard to the composer. During a turn, a second `Esc` aborts the turn as usual |
 
-Typing on a focused field starts editing it, and a paste goes into the field being edited. Edits go to the surface's data model as you type, so its checks update at once and a button sends the values you entered. A check that fails shows its message under the control, and a button whose own check fails is disabled. In a multiline field the newline key (`insert_newline`, `Ctrl+J` by default) adds a line.
+Typing on a focused field starts editing it, and a paste goes into the field being edited. While a surface has the keyboard, keys it does not use never edit the composer's draft: only `Ctrl+C` and the chords that act on the app rather than the draft (search transcript, jump to bottom, toggle tool output, cycle streaming mode, cycle permission mode, cycle pinned model) go on to the rest of the TUI. Edits go to the surface's data model as you type, so its checks update at once and a button sends the values you entered. A check that fails shows its message under the control, and a button whose own check fails is disabled. In a multiline field the newline key (`insert_newline`, `Ctrl+J` by default) adds a line.
 
 Pressing a button whose action is an event sends it to the session and returns the keyboard to the composer. A waiting `ui` call returns the action; otherwise an idle session starts a turn to read it. A button that opens a link does not start a browser: the terminal UI prints the link as a notice.
 

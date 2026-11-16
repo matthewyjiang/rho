@@ -3,7 +3,7 @@
 
 use std::{collections::HashMap, sync::Arc};
 
-use crossterm::event::{KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use rho_a2ui::{Action, Effect, Pointer, RendererMessage};
 use rho_sdk::ToolCallId;
 use serde_json::Value;
@@ -13,10 +13,7 @@ use super::{
     tree::{Control, FieldKind, Focusable, SurfaceTree, Target},
     Editing, Keyboard, SurfaceEntry, SurfaceFocus, SurfaceView, Surfaces,
 };
-use crate::tui::{
-    composer_buffer::ComposerEditKey, line_editor::LineEditor, tool_call_batch::LiveToolKey, App,
-    ComposerMode, Entry,
-};
+use crate::tui::{line_editor::LineEditor, tool_call_batch::LiveToolKey, App, ComposerMode, Entry};
 
 impl App {
     /// Shows the surface a `ui` call carries. Every update of the call
@@ -273,12 +270,19 @@ impl App {
     }
 
     /// Whether `key`, which the surface did not use, goes on to the rest
-    /// of the TUI: a Ctrl or Alt chord that does not edit the composer.
+    /// of the TUI: Ctrl+C, or a chord that acts on the app, not on the
+    /// composer's draft. An allow-list, so a chord that edits the draft,
+    /// such as undo or paste image, cannot reach it by being left off.
     fn passes_surface(&self, key: KeyEvent) -> bool {
-        key.modifiers
-            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
-            && ComposerEditKey::from_key(key).is_none()
-            && !self.info.runtime.keybindings.insert_newline.matches(key)
+        let bindings = &self.info.runtime.keybindings;
+        (key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Char('c'))
+            || bindings.search_transcript.matches(key)
+            || bindings.jump_to_bottom.matches(key)
+            || bindings.toggle_tool_output.matches(key)
+            || bindings.cycle_streaming_mode.matches(key)
+            || bindings.cycle_permission_mode_matches(key)
+            || bindings.cycle_pinned_model.matches(key)
+            || bindings.cycle_pinned_model_back.matches(key)
     }
 
     fn edit_field(&mut self, key: KeyEvent, control: &Control) -> bool {
