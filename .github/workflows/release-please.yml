@@ -30,6 +30,10 @@ on:
         description: Existing rho-protocol tag to resume
         required: false
         type: string
+      a2ui-tag:
+        description: Existing rho-a2ui tag to resume
+        required: false
+        type: string
 
 permissions:
   actions: write
@@ -57,12 +61,14 @@ jobs:
       tools_release_created: ${{ steps.release.outputs['crates/rho-tools--release_created'] || steps.recovery.outputs.tools_release_created }}
       providers_release_created: ${{ steps.release.outputs['crates/rho-providers--release_created'] || steps.recovery.outputs.providers_release_created }}
       protocol_release_created: ${{ steps.release.outputs['crates/rho-protocol--release_created'] || steps.recovery.outputs.protocol_release_created }}
-      candidate_sha: ${{ steps.release.outputs['crates/rho--sha'] || steps.release.outputs['crates/rho-sdk--sha'] || steps.release.outputs['crates/rho-tools--sha'] || steps.release.outputs['crates/rho-providers--sha'] || steps.release.outputs['crates/rho-protocol--sha'] || steps.recovery.outputs.candidate_sha }}
+      a2ui_release_created: ${{ steps.release.outputs['crates/rho-a2ui--release_created'] || steps.recovery.outputs.a2ui_release_created }}
+      candidate_sha: ${{ steps.release.outputs['crates/rho--sha'] || steps.release.outputs['crates/rho-sdk--sha'] || steps.release.outputs['crates/rho-tools--sha'] || steps.release.outputs['crates/rho-providers--sha'] || steps.release.outputs['crates/rho-protocol--sha'] || steps.release.outputs['crates/rho-a2ui--sha'] || steps.recovery.outputs.candidate_sha }}
       tag_name: ${{ steps.release.outputs['crates/rho--tag_name'] || steps.recovery.outputs.tag_name }}
       sdk_tag_name: ${{ steps.release.outputs['crates/rho-sdk--tag_name'] || steps.recovery.outputs.sdk_tag_name }}
       tools_tag_name: ${{ steps.release.outputs['crates/rho-tools--tag_name'] || steps.recovery.outputs.tools_tag_name }}
       providers_tag_name: ${{ steps.release.outputs['crates/rho-providers--tag_name'] || steps.recovery.outputs.providers_tag_name }}
       protocol_tag_name: ${{ steps.release.outputs['crates/rho-protocol--tag_name'] || steps.recovery.outputs.protocol_tag_name }}
+      a2ui_tag_name: ${{ steps.release.outputs['crates/rho-a2ui--tag_name'] || steps.recovery.outputs.a2ui_tag_name }}
     steps:
       - id: release
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.candidate-sha == '' }}
@@ -79,6 +85,7 @@ jobs:
         id: recovery
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate-sha != '' }}
         env:
+          A2UI_TAG: ${{ inputs.a2ui-tag }}
           APP_TAG: ${{ inputs.app-tag }}
           CANDIDATE_SHA: ${{ inputs.candidate-sha }}
           GH_TOKEN: ${{ github.token }}
@@ -92,7 +99,7 @@ jobs:
             echo "Candidate SHA must be a full lowercase commit SHA" >&2
             exit 1
           fi
-          if [[ -z "$APP_TAG" && -z "$SDK_TAG" && -z "$TOOLS_TAG" && -z "$PROVIDERS_TAG" && -z "$PROTOCOL_TAG" ]]; then
+          if [[ -z "$APP_TAG" && -z "$SDK_TAG" && -z "$TOOLS_TAG" && -z "$PROVIDERS_TAG" && -z "$PROTOCOL_TAG" && -z "$A2UI_TAG" ]]; then
             echo "At least one existing release tag is required" >&2
             exit 1
           fi
@@ -119,6 +126,7 @@ jobs:
           tools_version="$(python3 -c 'import tomllib; print(tomllib.load(open("crates/rho-tools/Cargo.toml", "rb"))["package"]["version"])')"
           providers_version="$(python3 -c 'import tomllib; print(tomllib.load(open("crates/rho-providers/Cargo.toml", "rb"))["package"]["version"])')"
           protocol_version="$(python3 -c 'import tomllib; print(tomllib.load(open("crates/rho-protocol/Cargo.toml", "rb"))["package"]["version"])')"
+          a2ui_version="$(python3 -c 'import tomllib; print(tomllib.load(open("crates/rho-a2ui/Cargo.toml", "rb"))["package"]["version"])')"
           if [[ -n "$APP_TAG" ]]; then
             verify_tag "$APP_TAG" "rho-coding-agent-v$app_version"
           fi
@@ -134,6 +142,9 @@ jobs:
           if [[ -n "$PROTOCOL_TAG" ]]; then
             verify_tag "$PROTOCOL_TAG" "rho-protocol-v$protocol_version"
           fi
+          if [[ -n "$A2UI_TAG" ]]; then
+            verify_tag "$A2UI_TAG" "rho-a2ui-v$a2ui_version"
+          fi
           {
             echo "releases_created=true"
             echo "release_created=$([[ -n "$APP_TAG" ]] && echo true || echo false)"
@@ -141,12 +152,14 @@ jobs:
             echo "tools_release_created=$([[ -n "$TOOLS_TAG" ]] && echo true || echo false)"
             echo "providers_release_created=$([[ -n "$PROVIDERS_TAG" ]] && echo true || echo false)"
             echo "protocol_release_created=$([[ -n "$PROTOCOL_TAG" ]] && echo true || echo false)"
+            echo "a2ui_release_created=$([[ -n "$A2UI_TAG" ]] && echo true || echo false)"
             echo "candidate_sha=$CANDIDATE_SHA"
             echo "tag_name=$APP_TAG"
             echo "sdk_tag_name=$SDK_TAG"
             echo "tools_tag_name=$TOOLS_TAG"
             echo "providers_tag_name=$PROVIDERS_TAG"
             echo "protocol_tag_name=$PROTOCOL_TAG"
+            echo "a2ui_tag_name=$A2UI_TAG"
           } >> "$GITHUB_OUTPUT"
       # The downstream fixture is a deliberately separate workspace, so the
       # cargo-workspace plugin cannot update its lockfile when rho-sdk changes.
@@ -247,6 +260,7 @@ jobs:
           PUBLISH_TOOLS: ${{ needs.release.outputs.tools_release_created }}
           PUBLISH_PROVIDERS: ${{ needs.release.outputs.providers_release_created }}
           PUBLISH_PROTOCOL: ${{ needs.release.outputs.protocol_release_created }}
+          PUBLISH_A2UI: ${{ needs.release.outputs.a2ui_release_created }}
           PUBLISH_APP: ${{ needs.release.outputs.release_created }}
         run: |
           set -euo pipefail
@@ -262,6 +276,9 @@ jobs:
           fi
           if [[ "$PUBLISH_PROTOCOL" == "true" ]]; then
             args+=(--protocol)
+          fi
+          if [[ "$PUBLISH_A2UI" == "true" ]]; then
+            args+=(--a2ui)
           fi
           if [[ "$PUBLISH_APP" == "true" ]]; then
             args+=(--app)
@@ -291,6 +308,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PROTOCOL_TAG: ${{ needs.release.outputs.protocol_tag_name }}
         run: gh release edit "$PROTOCOL_TAG" --draft=false
+      - name: Publish draft rho-a2ui release after crates.io success
+        if: ${{ needs.release.outputs.a2ui_release_created == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          A2UI_TAG: ${{ needs.release.outputs.a2ui_tag_name }}
+        run: gh release edit "$A2UI_TAG" --draft=false
 
   # Binary assets upload to the draft app release. They do not need crates.io.
   # Start beside publish-crates; publish-app-release still waits on both.
