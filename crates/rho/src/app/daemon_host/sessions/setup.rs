@@ -29,7 +29,7 @@ use crate::{
         session_runtime::{ChildAgents, IdleTurns, LeftOut, QuestionSupport},
     },
     session::{Session as StoredSession, SessionPersistence},
-    tools::mcp::config::McpConfig,
+    tools::{mcp::config::McpConfig, ui::SurfaceHost},
 };
 
 /// What a session opens with.
@@ -38,6 +38,8 @@ pub(super) struct Setup {
     pub(super) left_out: LeftOut,
     /// Whether its client shows questions.
     pub(super) questions: QuestionSupport,
+    /// Its A2UI surfaces, unless its client cannot draw them.
+    pub(super) surfaces: Option<SurfaceHost>,
     /// Who runs its children: the host's threads when the request says so.
     pub(super) children: ChildAgents,
     /// Whether the daemon starts a turn when its background work finishes
@@ -89,6 +91,7 @@ impl Setup {
         };
         let mut asked = LeftOut::default();
         let mut questions = QuestionSupport::Available;
+        let mut surfaces = Some(SurfaceHost::default());
         let mut persistence = SessionPersistence::Saved;
         for part in &requested.without {
             match part {
@@ -96,6 +99,7 @@ impl Setup {
                 SessionPart::SystemPrompt => asked.system_prompt = true,
                 SessionPart::Subagents => asked.subagents = true,
                 SessionPart::Questions => questions = QuestionSupport::Unavailable,
+                SessionPart::Surfaces => surfaces = None,
                 SessionPart::Saving if saved.is_some() => {
                     return Err(invalid(
                         "a saved session cannot be reopened without saving; open a new one",
@@ -125,6 +129,7 @@ impl Setup {
                 && (left_out != saved_left_out || added_dirs != saved_dirs),
             left_out,
             questions,
+            surfaces,
             children,
             idle_turns,
             added_dirs,

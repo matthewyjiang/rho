@@ -1,13 +1,27 @@
 //! MCP section of the system prompt: connected servers, their exported
 //! name patterns, and fenced server-authored instructions.
 
-/// Stable external tool context, shared by startup assembly and deferred
-/// notices: MCP servers, then OpenAPI sources.
+/// Whether the session offers the `ui` tool, which stays out of context
+/// until `tool_search` loads it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum UiTool {
+    Offered,
+    Absent,
+}
+
+/// Stable context for the tools `tool_search` loads, shared by startup
+/// assembly and deferred notices: MCP servers, then OpenAPI sources, then
+/// the `ui` tool.
 pub(crate) fn tool_sources_context(
     mcp: &crate::tools::mcp::McpSessionReport,
     openapi: &crate::tools::openapi::report::OpenApiReport,
+    ui: UiTool,
 ) -> String {
-    mcp_context(mcp) + &openapi.prompt_context()
+    let ui = match ui {
+        UiTool::Offered => "\n\n# User interface\n\n`ui` shows the user a form, a choice or a result card in the transcript and returns what they do on it. Load it with top-level `tool_search` before the first call.",
+        UiTool::Absent => "",
+    };
+    mcp_context(mcp) + &openapi.prompt_context() + ui
 }
 
 /// Stable MCP prompt context.

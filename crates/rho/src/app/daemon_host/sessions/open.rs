@@ -331,6 +331,7 @@ async fn open_runtime(
     let Setup {
         left_out,
         questions,
+        surfaces,
         children,
         idle_turns,
         added_dirs,
@@ -397,6 +398,7 @@ async fn open_runtime(
         },
         host: HostCapabilities {
             questions,
+            surfaces,
             children,
             idle_turns,
             subagent_pool,

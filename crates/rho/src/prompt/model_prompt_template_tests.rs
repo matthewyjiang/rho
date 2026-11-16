@@ -93,6 +93,7 @@ fn retained_suffix_and_mcp_rerender_match_the_built_prompt() {
             ..Default::default()
         },
         &Default::default(),
+        crate::prompt::UiTool::Absent,
     );
     let mut built = template.build(&running).unwrap();
     let suffix = "\n\n# Agent instructions\n\nsession suffix";

@@ -24,6 +24,8 @@ pub(crate) struct ToolsAndPromptOptions<'a> {
     pub(crate) no_tools: bool,
     pub(crate) no_subagents: bool,
     pub(crate) questionnaire_enabled: bool,
+    /// The session's A2UI surfaces, when its host's clients draw them.
+    pub(crate) surfaces: Option<crate::tools::ui::SurfaceHost>,
     /// Whether this run can put an MCP server's question in front of a person.
     /// Only a host that answers questionnaires may declare `elicitation`.
     pub(crate) mcp_elicitation: crate::tools::mcp::McpElicitationSupport,
@@ -201,6 +203,9 @@ pub(crate) async fn assemble_tools_and_prompt(
     if !options.questionnaire_enabled {
         capabilities.remove(&ToolCapability::Questionnaire);
     }
+    if options.surfaces.is_none() {
+        capabilities.remove(&ToolCapability::Ui);
+    }
     // The capability says the run may offer the advisor; config says whether it
     // does right now. Advisor mode on with no advisor model configured is a real
     // state, and the TUI surfaces it.
@@ -323,7 +328,8 @@ pub(crate) async fn assemble_tools_and_prompt(
     } else {
         let mut tool_options = ToolSetOptions::new(capabilities)
             .process_keep_warm(options.process_keep_warm)
-            .environment(options.environment.clone());
+            .environment(options.environment.clone())
+            .surfaces(options.surfaces.clone());
         let workflow_tracker = crate::tools::workflow_tracker::WorkflowRunTracker::new();
         tool_options = tool_options.workflow_tracker(workflow_tracker.clone());
         if advisor_capable {
@@ -387,7 +393,7 @@ pub(crate) async fn assemble_tools_and_prompt(
                     advisor.as_ref(),
                     plugin_skills,
                 );
-                template.replace_tool_sources(&mcp_report, &openapi_report);
+                template.replace_tool_sources(&mcp_report, &openapi_report, tools.ui_tool());
                 template.set_added_dirs(options.added_dirs);
                 let mut retained = String::new();
                 if !launch_delegation_enabled {

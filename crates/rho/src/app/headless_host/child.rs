@@ -171,6 +171,8 @@ pub(crate) async fn run_child(run: ChildRun) -> anyhow::Result<()> {
             prompt_suffix: Some(CHILD_COMMUNICATION_CONTRACT),
         },
         host: HostCapabilities {
+            // A child shows its parent's user nothing in this version.
+            surfaces: None,
             questions: match &questions {
                 Some(_) => QuestionSupport::Available,
                 None => QuestionSupport::Unavailable,

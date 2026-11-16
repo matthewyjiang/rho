@@ -152,6 +152,7 @@ pub(in crate::app) async fn unattended_runtime_on(
     provider: Arc<dyn ModelProvider>,
 ) -> SessionRuntime {
     let host = HostCapabilities {
+        surfaces: None,
         questions,
         ..HostCapabilities::unattended(UnattendedApprovals::Alone)
     };
@@ -168,6 +169,7 @@ pub(in crate::app) async fn host_woken_runtime_on(
     provider: Arc<dyn ModelProvider>,
 ) -> SessionRuntime {
     let host = HostCapabilities {
+        surfaces: None,
         children: ChildAgents::HostThreads,
         ..HostCapabilities::unattended(UnattendedApprovals::Alone)
     };
@@ -226,6 +228,7 @@ pub(in crate::app) fn test_build(config: &Config, workspace_root: &Path) -> Sess
             prompt_suffix: None,
         },
         host: HostCapabilities {
+            surfaces: None,
             questions: QuestionSupport::Unavailable,
             children: ChildAgents::InProcess,
             idle_turns: super::IdleTurns::Never,

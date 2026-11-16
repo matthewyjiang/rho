@@ -75,6 +75,7 @@ async fn assemble_awaiting_catalog(
         no_tools: false,
         no_subagents: true,
         questionnaire_enabled: false,
+        surfaces: None,
         mcp_elicitation: crate::tools::mcp::McpElicitationSupport::Unavailable,
         tool_source_attach: super::ToolSourceAttach::Connect,
         mcp_authorization: crate::tools::mcp::McpAuthorizationMode::NonInteractive,
@@ -148,6 +149,7 @@ async fn the_advisor_receives_the_executor_system_prompt() {
         no_tools: false,
         no_subagents: true,
         questionnaire_enabled: false,
+        surfaces: None,
         mcp_elicitation: crate::tools::mcp::McpElicitationSupport::Unavailable,
         tool_source_attach: super::ToolSourceAttach::Connect,
         mcp_authorization: crate::tools::mcp::McpAuthorizationMode::NonInteractive,
@@ -269,6 +271,7 @@ async fn deferred_mcp_connect_returns_pending_inventory_without_waiting() {
             no_tools: false,
             no_subagents: true,
             questionnaire_enabled: false,
+            surfaces: None,
             mcp_elicitation: crate::tools::mcp::McpElicitationSupport::Unavailable,
             tool_source_attach: super::ToolSourceAttach::Connect,
             mcp_authorization: crate::tools::mcp::McpAuthorizationMode::NonInteractive,
@@ -330,6 +333,7 @@ auth = { type = "bearer", token_env = "TOKEN" }"#,
         no_tools: false,
         no_subagents: true,
         questionnaire_enabled: false,
+        surfaces: None,
         mcp_elicitation: crate::tools::mcp::McpElicitationSupport::Unavailable,
         tool_source_attach: super::ToolSourceAttach::Connect,
         mcp_authorization: crate::tools::mcp::McpAuthorizationMode::NonInteractive,
@@ -384,7 +388,7 @@ fn deferred_mcp_catalog_replaces_startup_status() {
         ..Default::default()
     };
     let before = deferred.render(&running, None);
-    deferred.replace_tool_sources(&report, &Default::default());
+    deferred.replace_tool_sources(&report, &Default::default(), crate::prompt::UiTool::Absent);
     let connecting = deferred.render(&running, None);
     assert_eq!(
         (connecting.text, connecting.sources),
@@ -405,10 +409,10 @@ fn deferred_mcp_catalog_replaces_startup_status() {
         })],
         ..Default::default()
     };
-    deferred.replace_tool_sources(&report, &Default::default());
-    deferred.replace_tool_sources(&report, &Default::default());
+    deferred.replace_tool_sources(&report, &Default::default(), crate::prompt::UiTool::Absent);
+    deferred.replace_tool_sources(&report, &Default::default(), crate::prompt::UiTool::Absent);
     let mut immediate = make_template();
-    immediate.replace_tool_sources(&report, &Default::default());
+    immediate.replace_tool_sources(&report, &Default::default(), crate::prompt::UiTool::Absent);
     let deferred = deferred.render(&running, None);
     let immediate = immediate.render(&running, None);
     assert_eq!(

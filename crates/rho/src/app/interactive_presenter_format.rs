@@ -288,6 +288,16 @@ pub(super) fn preview_card(
         ),
         ToolKind::Todo => todo_format::card(arguments, status),
         ToolKind::ExitPlanMode => plan_exit_format::card(arguments, status),
+        // One line: clients that draw the surface show it under the card,
+        // and the Express block is not for reading.
+        ToolKind::Ui => kind_card(
+            status,
+            kind,
+            ToolHeader::call(
+                "ui",
+                string_arg(arguments, "surface").filter(|surface| !surface.is_empty()),
+            ),
+        ),
         ToolKind::Questionnaire => match crate::questionnaire::parse_request(arguments.clone()) {
             Ok(request) => {
                 let primary = request.title.clone().or_else(|| Some(name.to_string()));
@@ -475,6 +485,13 @@ pub(super) fn finished_card(
         ToolKind::Questionnaire => {
             preview_card(&view.kind, &view.name, Some(&view.arguments), cwd, status)
         }
+        ToolKind::Ui => {
+            let mut card = preview_card(&view.kind, &view.name, Some(&view.arguments), cwd, status);
+            if !ok {
+                push_error_output(&mut card, content);
+            }
+            card
+        }
         ToolKind::Codemode => codemode_format::finished_card(&view.arguments, content, ok, data),
         ToolKind::ToolSearch => tool_search_format::finished_card(&view.arguments, content, ok),
         ToolKind::Workflow => {
@@ -592,7 +609,9 @@ pub(super) fn family_for_kind(kind: &ToolKind, metadata: Option<&ToolMetadata>) 
         ToolKind::WebSearch | ToolKind::FetchContent | ToolKind::GetSearchContent => {
             ToolFamily::Web
         }
-        ToolKind::Questionnaire | ToolKind::ExitPlanMode | ToolKind::Todo => ToolFamily::Form,
+        ToolKind::Questionnaire | ToolKind::ExitPlanMode | ToolKind::Todo | ToolKind::Ui => {
+            ToolFamily::Form
+        }
         ToolKind::Mcp(_)
         | ToolKind::Sessions
         | ToolKind::Codemode

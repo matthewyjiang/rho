@@ -625,7 +625,8 @@ fn bind_rho_capabilities(
 /// the same definition still binds when those tools are present.
 fn may_omit_unavailable_tool(tool: &ToolCapability, role: AgentRole) -> bool {
     match tool {
-        ToolCapability::Questionnaire => true,
+        // Only a session whose client draws A2UI surfaces offers `ui`.
+        ToolCapability::Questionnaire | ToolCapability::Ui => true,
         ToolCapability::Agent
         | ToolCapability::Agents
         | ToolCapability::Advisor

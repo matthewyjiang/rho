@@ -67,6 +67,10 @@ pub(crate) struct SessionLaunch {
 pub(crate) struct HostCapabilities {
     /// Whether the host can put questions to a person.
     pub(crate) questions: QuestionSupport,
+    /// The session's A2UI surfaces, for a host whose clients draw them;
+    /// `None` leaves the session without the `ui` tool. One host serves
+    /// every tool set the session builds.
+    pub(crate) surfaces: Option<crate::tools::ui::SurfaceHost>,
     /// Who runs the `agent` tool's children.
     pub(crate) children: ChildAgents,
     /// Whether the host starts a turn when background work finishes idle.
@@ -116,6 +120,7 @@ impl HostCapabilities {
     pub(crate) fn unattended(approvals: UnattendedApprovals) -> Self {
         Self {
             questions: QuestionSupport::Unavailable,
+            surfaces: None,
             children: ChildAgents::InProcess,
             idle_turns: IdleTurns::Never,
             subagent_pool: SubagentPool::Own,
@@ -370,6 +375,7 @@ pub(super) async fn build_session(
         no_tools: build.launch.left_out.tools,
         no_subagents: build.launch.left_out.subagents,
         questionnaire_enabled: questions,
+        surfaces: build.host.surfaces.clone(),
         mcp_elicitation: if questions {
             crate::tools::mcp::McpElicitationSupport::Available
         } else {
