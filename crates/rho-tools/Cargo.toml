@@ -1,6 +1,6 @@
 [package]
 name = "rho-agent-tools"
-version = "2.1.0"
+version = "2.2.0"
 edition = "2021"
 rust-version = "1.92"
 description = "Workspace coding tools and SDK tool adapters for Rho"
@@ -15,7 +15,7 @@ document-pdf = ["dep:flate2", "dep:lopdf", "dep:pdf-inspector"]
 document-spreadsheets = ["dep:calamine", "dep:zip"]
 
 [dependencies]
-rho-sdk = { version = "6.0.0", path = "../rho-sdk" }
+rho-sdk = { version = "6.0.1", path = "../rho-sdk" }
 # Tool cards are protocol types (`rho_protocol::display`); diff previews build them.
 rho-protocol = { version = "1.2.0", path = "../rho-protocol" }
 tokio = { version = "1", features = ["full"] }

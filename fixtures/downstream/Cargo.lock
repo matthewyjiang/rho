@@ -348,7 +348,7 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
 name = "rho-sdk"
-version = "6.0.0"
+version = "6.0.1"
 dependencies = [
  "chrono",
  "serde",

@@ -1,5 +1,12 @@
 # Changelog
 
+## [6.0.1](https://github.com/matthewyjiang/rho/compare/rho-sdk-v6.0.0...rho-sdk-v6.0.1) (2026-11-16)
+
+
+### Bug Fixes
+
+* **providers:** stop interrupted turns from getting later Claude requests refused ([#1981](https://github.com/matthewyjiang/rho/issues/1981)) ([5b1435d](https://github.com/matthewyjiang/rho/commit/5b1435def36f11cd8dcb057bd64e544068aed3b4))
+
 ## [6.0.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v5.15.2...rho-sdk-v6.0.0) (2026-11-13)
 
 

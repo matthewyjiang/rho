@@ -1,8 +1,8 @@
 {
-  "crates/rho": "3.1.1",
-  "crates/rho-sdk": "6.0.0",
-  "crates/rho-providers": "3.0.2",
-  "crates/rho-tools": "2.1.0",
-  "crates/rho-protocol": "1.1.0",
-  "crates/rho-a2ui": "0.0.0"
+  "crates/rho": "3.2.0",
+  "crates/rho-sdk": "6.0.1",
+  "crates/rho-providers": "3.1.0",
+  "crates/rho-tools": "2.2.0",
+  "crates/rho-protocol": "1.2.0",
+  "crates/rho-a2ui": "0.1.0"
 }

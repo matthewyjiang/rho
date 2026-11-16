@@ -1,5 +1,27 @@
 # Changelog
 
+## [3.2.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v3.1.1...rho-coding-agent-v3.2.0) (2026-11-16)
+
+
+### Features
+
+* **daemon:** continue turns a restart in place interrupted ([#1970](https://github.com/matthewyjiang/rho/issues/1970)) ([b0cda89](https://github.com/matthewyjiang/rho/commit/b0cda8911b4a4438962755b348855720f6011a21))
+* **daemon:** report when a session settles and add process kinds ([#1973](https://github.com/matthewyjiang/rho/issues/1973)) ([6d371fc](https://github.com/matthewyjiang/rho/commit/6d371fc21c5b289a2064db90e71259ca85f0e930))
+* **mcp:** notify a webhook when a watched session settles ([#1974](https://github.com/matthewyjiang/rho/issues/1974)) ([8e2aac9](https://github.com/matthewyjiang/rho/commit/8e2aac94253c514a127fbda5724a18c1deb6b832))
+* **protocol:** let LocalDaemon reach the daemon on Windows ([#1972](https://github.com/matthewyjiang/rho/issues/1972)) ([0bffb06](https://github.com/matthewyjiang/rho/commit/0bffb06ae314e5eccb6d547531589ea3e2b71675))
+* **protocol:** list every loaded session's background work in one request ([#1978](https://github.com/matthewyjiang/rho/issues/1978)) ([076ac6e](https://github.com/matthewyjiang/rho/commit/076ac6eacf6da35cd75f37935e221fe7f9ac96e1))
+* **tools:** let the model show the user a form or choice and get the answer back ([#1977](https://github.com/matthewyjiang/rho/issues/1977)) ([c99b141](https://github.com/matthewyjiang/rho/commit/c99b141ae65e54097d6a6909cfad84db1f36243e))
+* **tui:** draw ui surfaces in the terminal and operate them from the keyboard ([#1979](https://github.com/matthewyjiang/rho/issues/1979)) ([93d243f](https://github.com/matthewyjiang/rho/commit/93d243f7ec4d8ddc221a3af25b510899d943a87c))
+* **update:** add `rho update --check [--json]` to report available updates ([#1969](https://github.com/matthewyjiang/rho/issues/1969)) ([6e774d9](https://github.com/matthewyjiang/rho/commit/6e774d90e8c7b6cb7dea4ca8520a3871070da40c))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 6.0.0 to 6.0.1
+    * rho-providers bumped from 3.0.2 to 3.1.0
+
 ## [3.1.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v3.1.0...rho-coding-agent-v3.1.1) (2026-11-15)
 
 

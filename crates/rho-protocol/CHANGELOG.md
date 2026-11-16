@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.2.0](https://github.com/matthewyjiang/rho/compare/rho-protocol-v1.1.0...rho-protocol-v1.2.0) (2026-11-16)
+
+
+### Features
+
+* **daemon:** report when a session settles and add process kinds ([#1973](https://github.com/matthewyjiang/rho/issues/1973)) ([6d371fc](https://github.com/matthewyjiang/rho/commit/6d371fc21c5b289a2064db90e71259ca85f0e930))
+* **protocol:** build the client for the browser ([#1983](https://github.com/matthewyjiang/rho/issues/1983)) ([b81ff5a](https://github.com/matthewyjiang/rho/commit/b81ff5a9ef168750f2b636e8137bfd7596d4575d))
+* **protocol:** let LocalDaemon reach the daemon on Windows ([#1972](https://github.com/matthewyjiang/rho/issues/1972)) ([0bffb06](https://github.com/matthewyjiang/rho/commit/0bffb06ae314e5eccb6d547531589ea3e2b71675))
+* **protocol:** list every loaded session's background work in one request ([#1978](https://github.com/matthewyjiang/rho/issues/1978)) ([076ac6e](https://github.com/matthewyjiang/rho/commit/076ac6eacf6da35cd75f37935e221fe7f9ac96e1))
+* **tools:** let the model show the user a form or choice and get the answer back ([#1977](https://github.com/matthewyjiang/rho/issues/1977)) ([c99b141](https://github.com/matthewyjiang/rho/commit/c99b141ae65e54097d6a6909cfad84db1f36243e))
+
 ## [1.1.0](https://github.com/matthewyjiang/rho/compare/rho-protocol-v1.0.0...rho-protocol-v1.1.0) (2026-11-14)
 
 
