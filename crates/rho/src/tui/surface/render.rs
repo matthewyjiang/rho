@@ -412,7 +412,7 @@ impl Painter<'_> {
             } => {
                 let mut lines = Vec::new();
                 if !label.is_empty() {
-                    lines.extend(wrapped(label, width, Theme::dim()));
+                    lines.extend(wrapped(label, width, self.label(*focus, Theme::dim())));
                 }
                 let editing = self.editing(*focus);
                 let fill = Theme::command_block();
@@ -493,7 +493,7 @@ impl Painter<'_> {
             } => {
                 let mut lines = Vec::new();
                 if !label.is_empty() {
-                    lines.extend(wrapped(label, width, Theme::dim()));
+                    lines.extend(wrapped(label, width, self.label(*focus, Theme::dim())));
                 }
                 let track = SLIDER_TRACK.min(width.saturating_sub(8)).max(1);
                 let span = max - min;
