@@ -45,6 +45,7 @@ Additional tools:
 | `rho` | Read-only harness diagnostics, including an agent definition check (`agents`) |
 | `todo` | Replace the session task checklist shown in the transcript and `/todo` |
 | `sessions` | Search and read prior session evidence without resuming it |
+| `ui` | Show the user a form, a choice, or a result card, in a client that draws [surfaces](#surfaces) |
 | `advisor` | Second-model review when [advisor mode](/configuration/advisor-mode) is on |
 | `exit_plan_mode` | Present a markdown plan for approval and [hand off to execution](/configuration/permissions#plan-execute-handoff) in interactive Plan mode |
 
@@ -120,6 +121,20 @@ Details: [Documents and images](/tools-workspace/documents-and-images).
 Web tools store large bodies by `responseId`, refuse private destinations by default, and add provider amenities such as SpaceXAI `x_search` and `image_generation` when relevant.
 
 Details: [Web access and related tools](/tools-workspace/web-access).
+
+## Surfaces
+
+The `ui` tool lets the model show the user a small interface in the transcript, such as a confirmation, a form, or a result card, and read what the user does on it. The model writes the surface in [A2UI](https://a2ui.org) Express, a compact notation for A2UI v1.0. The daemon compiles the block, checks it against the basic catalog and the surfaces the session already has, and sends the resulting A2UI messages to the session's clients. A block that does not compile or check is the call's error, with its line and column, so the model corrects it in the same turn.
+
+| Argument | Meaning |
+| --- | --- |
+| `express` | The Express block, up to 64 KiB. A block that assigns `root` creates a surface; one that does not updates a surface that exists. |
+| `surface` | The block's default surface: the id to create or update. Without it, a new surface gets an id, which the result returns as `surfaceId`. |
+| `wait` | Return the user's next action on the surface instead of returning at once. |
+
+One call shows or updates one surface. An action the user takes after the call returned reaches the model as a message at its turn's next boundary; an idle session starts a turn for it when its client asked for [`idle_wake: turn`](/protocol#a-session-s-setup), and otherwise gets it with the next prompt.
+
+The tool's description teaches the whole notation, so it stays out of the model's context until `tool_search` loads it; the system prompt only says that it exists. Only a daemon session whose client draws surfaces has the tool. Rho's own terminal UI, `rho run`, `rho attach`, the ACP server, sessions an agent starts, and subagents do not have it yet. Writing a client that draws them: [Protocol](/protocol#surfaces).
 
 ## Background processes
 
