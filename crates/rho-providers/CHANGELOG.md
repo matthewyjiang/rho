@@ -1,5 +1,24 @@
 # Changelog
 
+## [3.1.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v3.0.2...rho-providers-v3.1.0) (2026-11-16)
+
+
+### Features
+
+* **tui:** draw ui surfaces in the terminal and operate them from the keyboard ([#1979](https://github.com/matthewyjiang/rho/issues/1979)) ([93d243f](https://github.com/matthewyjiang/rho/commit/93d243f7ec4d8ddc221a3af25b510899d943a87c))
+
+
+### Bug Fixes
+
+* **providers:** stop interrupted turns from getting later Claude requests refused ([#1981](https://github.com/matthewyjiang/rho/issues/1981)) ([5b1435d](https://github.com/matthewyjiang/rho/commit/5b1435def36f11cd8dcb057bd64e544068aed3b4))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 6.0.0 to 6.0.1
+
 ## [3.0.2](https://github.com/matthewyjiang/rho/compare/rho-providers-v3.0.1...rho-providers-v3.0.2) (2026-11-14)
 
 

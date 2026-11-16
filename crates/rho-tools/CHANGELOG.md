@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.2.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v2.1.0...rho-agent-tools-v2.2.0) (2026-11-16)
+
+
+### Features
+
+* **daemon:** report when a session settles and add process kinds ([#1973](https://github.com/matthewyjiang/rho/issues/1973)) ([6d371fc](https://github.com/matthewyjiang/rho/commit/6d371fc21c5b289a2064db90e71259ca85f0e930))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 6.0.0 to 6.0.1
+
 ## [2.1.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v2.0.0...rho-agent-tools-v2.1.0) (2026-11-14)
 
 
