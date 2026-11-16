@@ -13,7 +13,7 @@ use rho_protocol::{
     methods::{JobList, SessionAttach, SessionObserve},
     Client, ClientError, Cursor, DaemonNotification, DetachReason, ErrorCode, JobId, JobKind,
     JobListParams, JobState, JobSummary, Replay, SessionAttachParams, SessionAttachResponse,
-    SessionEvent, SessionId, SessionObserveParams, SessionPart, SessionSetup,
+    SessionEvent, SessionId, SessionObserveParams, SessionSetup,
 };
 
 use super::{
@@ -314,11 +314,7 @@ async fn request_attach(
                 after: after.cloned(),
                 // Only a session the attach reopens takes it (#1659).
                 environment: rho_protocol::ClientEnvironment::of_this_process(),
-                // `rho attach` draws no A2UI surfaces.
-                setup: SessionSetup {
-                    without: [SessionPart::Surfaces].into(),
-                    ..SessionSetup::default()
-                },
+                setup: SessionSetup::default(),
             };
             client.request::<SessionAttach>(&params).await
         }

@@ -140,20 +140,17 @@ fn launch_flags_and_host_request_make_the_session_setup() {
                     headers: [].into_iter().collect(),
                 },
             ],
-            without: BTreeSet::from([SessionPart::Tools, SessionPart::Surfaces]),
+            without: BTreeSet::from([SessionPart::Tools]),
             child_threads: ChildThreads::Host,
             idle_wake: rho_protocol::IdleWake::Never,
             sign_in: rho_protocol::SignIn::Required,
+            surfaces: rho_protocol::Surfaces::Unsupported,
         }
     );
     assert_eq!(
         (without_forms.without, without_forms.child_threads),
         (
-            BTreeSet::from([
-                SessionPart::Tools,
-                SessionPart::Questions,
-                SessionPart::Surfaces,
-            ]),
+            BTreeSet::from([SessionPart::Tools, SessionPart::Questions]),
             ChildThreads::Host,
         )
     );

@@ -421,7 +421,7 @@ pub enum ToolContent {
     /// messages once per call: when it first sees them, live or in a
     /// replay. The user's actions on the surface go back with
     /// [`super::SESSION_SURFACE_ACTION`]. Only a session opened with
-    /// [`super::SessionPart::Surfaces`] sends it.
+    /// [`super::Surfaces::Drawn`] sends it.
     Surface {
         surface: String,
         messages: Vec<serde_json::Value>,

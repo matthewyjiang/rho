@@ -88,8 +88,6 @@ impl Launch {
             }
         }
         let mut without = self.without.clone();
-        // ACP has no A2UI surfaces to draw.
-        without.insert(SessionPart::Surfaces);
         match features.forms {
             Forms::Available(_) => {}
             Forms::Unavailable => {
@@ -114,6 +112,8 @@ impl Launch {
             },
             // A missing login is the ACP client's `auth_required`.
             sign_in: rho_protocol::SignIn::Required,
+            // ACP has no A2UI surfaces to draw.
+            surfaces: rho_protocol::Surfaces::Unsupported,
         }
     }
 }

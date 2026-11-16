@@ -151,7 +151,7 @@ pub use methods::{
     SessionBackgroundStopResponse, SESSION_BACKGROUND_LIST, SESSION_BACKGROUND_STOP,
 };
 pub use methods::{
-    ChildThreads, IdleWake, McpServer, SecretMap, SessionPart, SessionSetup, SignIn,
+    ChildThreads, IdleWake, McpServer, SecretMap, SessionPart, SessionSetup, SignIn, Surfaces,
 };
 pub use methods::{
     CommandKind, FastModeOptions, ModelChoice, ModelOptions, ModelRef, PermissionModeOptions,

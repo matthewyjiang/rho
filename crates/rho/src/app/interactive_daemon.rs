@@ -105,8 +105,6 @@ pub(super) async fn open(
         (SessionPart::SystemPrompt, *no_system_prompt),
         (SessionPart::Subagents, *no_subagents),
         (SessionPart::Saving, *no_save),
-        // The terminal UI draws no A2UI surfaces yet.
-        (SessionPart::Surfaces, true),
     ]
     .into_iter()
     .filter_map(|(part, left_out)| left_out.then_some(part))
@@ -127,6 +125,8 @@ pub(super) async fn open(
             // A session without a login opens signed out, and the TUI
             // offers /login.
             sign_in: SignIn::Later,
+            // The terminal UI draws no A2UI surfaces yet.
+            surfaces: rho_protocol::Surfaces::Unsupported,
         },
         config: std::sync::Arc::new(config.clone()),
         definition: std::sync::Arc::new(bound.definition().clone()),

@@ -134,7 +134,7 @@ The `ui` tool lets the model show the user a small interface in the transcript, 
 
 One call shows or updates one surface. An action the user takes after the call returned reaches the model as a message at its turn's next boundary; an idle session starts a turn for it when its client asked for [`idle_wake: turn`](/protocol#a-session-s-setup), and otherwise gets it with the next prompt.
 
-The tool's description teaches the whole notation, so it stays out of the model's context until `tool_search` loads it; the system prompt only says that it exists. Only a daemon session whose client draws surfaces has the tool. Rho's own terminal UI, `rho run`, `rho attach`, the ACP server, sessions an agent starts, and subagents do not have it yet. Writing a client that draws them: [Protocol](/protocol#surfaces).
+The tool's description teaches the whole notation, so it stays out of the model's context until `tool_search` loads it; the system prompt only says that it exists. Only a daemon session whose client asked for surfaces when it opened the session has the tool. Rho's own terminal UI, `rho run`, `rho attach`, the ACP server, sessions an agent starts, and subagents do not have it yet. Writing a client that draws them: [Protocol](/protocol#surfaces).
 
 ## Background processes
 

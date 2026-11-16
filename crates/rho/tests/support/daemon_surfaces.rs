@@ -4,8 +4,9 @@
 
 use pretty_assertions::assert_eq;
 use rho_protocol::{
-    methods::SessionSurfaceAction, Client, IdleWake, JobState, Seq, SessionEvent, SessionId,
-    SessionPart, SessionSetup, SessionSurfaceActionParams, ToolCallId, ToolContent, ToolStatus,
+    methods::SessionSurfaceAction, Client, IdleWake, JobState, Seq, SessionAttachResponse,
+    SessionEvent, SessionId, SessionSetup, SessionSurfaceActionParams, Surfaces, ToolCallId,
+    ToolContent, ToolStatus,
 };
 use serde_json::{json, Value};
 
@@ -25,6 +26,19 @@ fn confirm(wait: bool) -> Value {
             "wait": wait,
         },
     })
+}
+
+/// The setup of a client that draws surfaces.
+fn drawing() -> SessionSetup {
+    SessionSetup {
+        surfaces: Surfaces::Drawn,
+        ..SessionSetup::default()
+    }
+}
+
+/// Attaches to `session` as a client that draws surfaces.
+async fn follow(sandbox: &Sandbox, session: &SessionId) -> (Follower, SessionAttachResponse) {
+    Follower::attach_with_setup(sandbox, session, Vec::new(), None, drawing()).await
 }
 
 /// Searches for the `ui` tool in a turn of its own, as the model does
@@ -140,8 +154,8 @@ async fn act(client: &Client, session: &SessionId, action: Value) {
 async fn a_block_that_does_not_compile_is_the_calls_error_and_shows_nothing() {
     let sandbox = Sandbox::new();
     let client = sandbox.start_daemon("tool-call").await;
-    let session = sandbox.new_session(&client).await;
-    let (mut follower, _) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
+    let session = sandbox.new_session_with_setup(&client, drawing()).await;
+    let (mut follower, _) = follow(&sandbox, &session).await;
     search_ui(&sandbox, &client, &session, &mut follower).await;
     let call = json!({
         "id": CALL,
@@ -183,8 +197,8 @@ async fn a_surface_reaches_clients_live_after_a_reset_and_after_a_reload() {
     let client = sandbox
         .start_daemon_with("tool-call", &["--unload-idle-after", "200ms"])
         .await;
-    let session = sandbox.new_session(&client).await;
-    let (mut live, _) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
+    let session = sandbox.new_session_with_setup(&client, drawing()).await;
+    let (mut live, _) = follow(&sandbox, &session).await;
     search_ui(&sandbox, &client, &session, &mut live).await;
 
     sandbox
@@ -192,12 +206,12 @@ async fn a_surface_reaches_clients_live_after_a_reset_and_after_a_reload() {
         .await;
     live.read_until(is_state(JobState::Completed)).await;
     let (live_status, live_content) = shown(&live.events);
-    let (mut reset, _) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
+    let (mut reset, _) = follow(&sandbox, &session).await;
     reset.read_until(call_is(ToolStatus::Completed)).await;
     let (_, reset_content) = shown(&reset.events);
     drop((live, reset));
     sandbox.wait_unloaded(&session, 1).await;
-    let (mut reloaded, _) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
+    let (mut reloaded, _) = follow(&sandbox, &session).await;
     reloaded.read_until(call_is(ToolStatus::Completed)).await;
     let (_, replayed_content) = shown(&reloaded.events);
 
@@ -227,8 +241,8 @@ async fn a_surface_reaches_clients_live_after_a_reset_and_after_a_reload() {
 async fn a_waiting_call_returns_the_users_action() {
     let sandbox = Sandbox::new();
     let client = sandbox.start_daemon("tool-call").await;
-    let session = sandbox.new_session(&client).await;
-    let (mut follower, _) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
+    let session = sandbox.new_session_with_setup(&client, drawing()).await;
+    let (mut follower, _) = follow(&sandbox, &session).await;
     search_ui(&sandbox, &client, &session, &mut follower).await;
 
     sandbox
@@ -268,11 +282,11 @@ async fn a_later_action_wakes_the_idle_session_with_the_action_for_the_model() {
             &client,
             SessionSetup {
                 idle_wake: IdleWake::Turn,
-                ..SessionSetup::default()
+                ..drawing()
             },
         )
         .await;
-    let (mut follower, _) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
+    let (mut follower, _) = follow(&sandbox, &session).await;
     search_ui(&sandbox, &client, &session, &mut follower).await;
     sandbox
         .prompt_tool_call(&client, &session, &confirm(false))
@@ -308,22 +322,14 @@ async fn a_later_action_wakes_the_idle_session_with_the_action_for_the_model() {
     );
 }
 
-// Covers: a client that cannot draw surfaces must get a session whose
-// model cannot show one
+// Covers: a client that never asked for surfaces, as every client built
+// before them, must get a session whose model cannot show one
 // Owner: daemon session
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_session_opened_without_surfaces_has_no_ui_tool() {
+async fn a_session_whose_client_did_not_ask_for_surfaces_has_no_ui_tool() {
     let sandbox = Sandbox::new();
     let client = sandbox.start_daemon("tool-call").await;
-    let session = sandbox
-        .new_session_with_setup(
-            &client,
-            SessionSetup {
-                without: [SessionPart::Surfaces].into(),
-                ..SessionSetup::default()
-            },
-        )
-        .await;
+    let session = sandbox.new_session(&client).await;
     let (mut follower, _) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
     search_ui(&sandbox, &client, &session, &mut follower).await;
 

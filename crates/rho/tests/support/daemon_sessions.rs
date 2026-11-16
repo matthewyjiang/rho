@@ -1536,13 +1536,24 @@ impl Follower {
         events: Vec<(Seq, SessionEvent)>,
         after: Option<Cursor>,
     ) -> (Self, SessionAttachResponse) {
+        Self::attach_with_setup(sandbox, session, events, after, SessionSetup::default()).await
+    }
+
+    /// [`Self::attach`], as a client whose attach carries `setup`.
+    pub(super) async fn attach_with_setup(
+        sandbox: &Sandbox,
+        session: &SessionId,
+        events: Vec<(Seq, SessionEvent)>,
+        after: Option<Cursor>,
+        setup: SessionSetup,
+    ) -> (Self, SessionAttachResponse) {
         let (client, notifications) = sandbox.connect_following().await;
         let attached = client
             .request::<SessionAttach>(&SessionAttachParams {
                 session: session.clone(),
                 after,
                 environment: sandbox.client_environment(),
-                setup: SessionSetup::default(),
+                setup,
             })
             .await
             .unwrap();

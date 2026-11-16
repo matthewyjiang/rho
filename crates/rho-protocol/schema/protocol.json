@@ -5697,11 +5697,6 @@
           "type": "string"
         },
         {
-          "const": "surfaces",
-          "description": "A2UI surfaces: the session has no `ui` tool, for a client that\ncannot draw [`crate::ToolContent::Surface`]. Like\n[`Self::Questions`] it belongs to the client and is never saved.",
-          "type": "string"
-        },
-        {
           "const": "saving",
           "description": "The session's file, as with `--no-save`: the session lives in the\ndaemon's memory alone. The daemon keeps it while a client follows it\nor it has work under way, and discards it once it sits idle, as it\ndoes a session that took no prompt; a daemon restart loses it. Only\na new session takes this: reopening a saved one without its file is\n[`crate::ErrorCode::InvalidParams`].",
           "type": "string"
@@ -5925,7 +5920,7 @@
       ]
     },
     "SessionSetup": {
-      "description": "Choices a client makes for a session the daemon opens for it.\n\nThe session owns its directories and the parts it leaves out but\nquestions: it saves them, and a reopen adds the opening request's to the\nsaved ones, so a later client can narrow a session, never widen it. The\nopening client owns its MCP servers, whether it shows questions, and\nwhether its host runs the session's children: a reopened session has\nthose its opening request names, and none when a prompt reopens it.\n\nThat holds across the daemon's reopens. A host that opens the session\nfile in its own process does not keep it yet: `rho acp`'s\n`session/load` and `session/resume` save the session with that\nprocess's own flags and directories, and the terminal UI keeps what a\nsession saved but does not save its own `--no-*` flags.",
+      "description": "Choices a client makes for a session the daemon opens for it.\n\nThe session owns its directories and the parts it leaves out but\nquestions: it saves them, and a reopen adds the opening request's to the\nsaved ones, so a later client can narrow a session, never widen it. The\nopening client owns its MCP servers, whether it shows questions and\ndraws surfaces, and whether its host runs the session's children: a\nreopened session has those its opening request names, and none when a\nprompt reopens it.\n\nThat holds across the daemon's reopens. A host that opens the session\nfile in its own process does not keep it yet: `rho acp`'s\n`session/load` and `session/resume` save the session with that\nprocess's own flags and directories, and the terminal UI keeps what a\nsession saved but does not save its own `--no-*` flags.",
       "properties": {
         "additional_directories": {
           "description": "Directories outside the workspace the session's tools may use, as\n`--add-dir` adds them: absolute paths to existing directories. An\nentry that is not one is [`crate::ErrorCode::InvalidParams`], naming\nit, and the session does not open. One the workspace or another\nentry already holds is folded in. The session saves them; a reopen\nkeeps the saved ones that still exist and adds these.",
@@ -5952,6 +5947,10 @@
         "sign_in": {
           "$ref": "#/$defs/SignIn",
           "description": "Whether the session may open before its model's auth profile has\nusable credentials: not, when absent, so the open fails with\n[`crate::ErrorCode::SignInRequired`], or signed out. Like\n[`Self::child_threads`], it is the opening client's and never saved."
+        },
+        "surfaces": {
+          "$ref": "#/$defs/Surfaces",
+          "description": "Whether the client draws A2UI surfaces: not, when absent, so the\nsession has no `ui` tool. Like [`Self::child_threads`], it is the\nopening client's and never saved."
         },
         "without": {
           "description": "Parts of the session left out, as `rho`'s `--no-tools`,\n`--no-system-prompt`, and `--no-subagents` leave them out, and\nquestions a client cannot show. The session saves all but\n[`SessionPart::Questions`] and [`SessionPart::Saving`]; a reopen\nleaves out the saved parts and these, except\n[`SessionPart::Saving`], which only a new session takes.",
@@ -6474,6 +6473,21 @@
       "description": "One loaded session's event stream. A new daemon, or a reload, starts\na new stream.",
       "type": "string"
     },
+    "Surfaces": {
+      "description": "Whether a client draws the A2UI surfaces a session's `ui` tool shows\n([`crate::ToolContent::Surface`]). The daemon reads it, so it has no\n`Unknown`.\n\nA client asks for surfaces instead of declining them, so a client that\nhas never heard of them gets a session without the `ui` tool, and a\ndaemon that has never heard of them ignores the field.",
+      "oneOf": [
+        {
+          "const": "unsupported",
+          "description": "The client draws none: a session it opens has no `ui` tool.",
+          "type": "string"
+        },
+        {
+          "const": "drawn",
+          "description": "The client draws them and sends what the user does on one with\n[`super::SESSION_SURFACE_ACTION`]: a session it opens has the `ui`\ntool.",
+          "type": "string"
+        }
+      ]
+    },
     "ToolBody": {
       "description": "Optional expandable body content.\n\nEvery variant except [`Self::Diff`] carries plain text lines; [`Self::Code`]\nand [`Self::Search`] add the metadata renderers need to highlight them.\n\nClosed: its variants carry their content under `lines`, which serde\ncannot read into a unit `Unknown`, so a new variant is a protocol major.",
       "oneOf": [
@@ -6801,7 +6815,7 @@
           "type": "object"
         },
         {
-          "description": "An A2UI surface the `ui` tool shows the user: `messages` are checked\nA2UI v1.0 agent-to-renderer messages, all about surface `surface`,\nfor the client's A2UI processor. A call has at most one, and every\nupdate of the call repeats it unchanged, so a client applies the\nmessages once per call: when it first sees them, live or in a\nreplay. The user's actions on the surface go back with\n[`super::SESSION_SURFACE_ACTION`]. Only a session opened with\n[`super::SessionPart::Surfaces`] sends it.",
+          "description": "An A2UI surface the `ui` tool shows the user: `messages` are checked\nA2UI v1.0 agent-to-renderer messages, all about surface `surface`,\nfor the client's A2UI processor. A call has at most one, and every\nupdate of the call repeats it unchanged, so a client applies the\nmessages once per call: when it first sees them, live or in a\nreplay. The user's actions on the surface go back with\n[`super::SESSION_SURFACE_ACTION`]. Only a session opened with\n[`super::Surfaces::Drawn`] sends it.",
           "properties": {
             "messages": {
               "items": true,

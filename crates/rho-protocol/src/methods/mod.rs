@@ -166,7 +166,9 @@ pub use session::{
     SESSION_DETACH, SESSION_DETACHED, SESSION_EVENT, SESSION_NEW, SESSION_OBSERVE, SESSION_PROMPT,
     SESSION_STEER, SESSION_UNSTEER,
 };
-pub use setup::{ChildThreads, IdleWake, McpServer, SecretMap, SessionPart, SessionSetup, SignIn};
+pub use setup::{
+    ChildThreads, IdleWake, McpServer, SecretMap, SessionPart, SessionSetup, SignIn, Surfaces,
+};
 pub use store::{
     AuthChooseStoreParams, AuthChooseStoreResponse, CredentialStoreKind, CredentialStoreStatus,
     StoreSelectedBy, AUTH_CHOOSE_STORE,

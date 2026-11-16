@@ -5,8 +5,9 @@
 //! that renders A2UI applies to its own A2UI processor and draws in the
 //! transcript. When the user acts on it, by pressing a button for example,
 //! the client sends the A2UI `action` message with
-//! [`SESSION_SURFACE_ACTION`]. A client that cannot draw surfaces opens
-//! its sessions without [`super::SessionPart::Surfaces`].
+//! [`SESSION_SURFACE_ACTION`]. Only a client that asks for surfaces
+//! ([`super::Surfaces::Drawn`] in its [`super::SessionSetup`]) opens
+//! sessions that have the tool.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

@@ -19,9 +19,10 @@ use serde::{Deserialize, Serialize};
 /// The session owns its directories and the parts it leaves out but
 /// questions: it saves them, and a reopen adds the opening request's to the
 /// saved ones, so a later client can narrow a session, never widen it. The
-/// opening client owns its MCP servers, whether it shows questions, and
-/// whether its host runs the session's children: a reopened session has
-/// those its opening request names, and none when a prompt reopens it.
+/// opening client owns its MCP servers, whether it shows questions and
+/// draws surfaces, and whether its host runs the session's children: a
+/// reopened session has those its opening request names, and none when a
+/// prompt reopens it.
 ///
 /// That holds across the daemon's reopens. A host that opens the session
 /// file in its own process does not keep it yet: `rho acp`'s
@@ -71,6 +72,11 @@ pub struct SessionSetup {
     /// [`Self::child_threads`], it is the opening client's and never saved.
     #[serde(default, skip_serializing_if = "SignIn::is_required")]
     pub sign_in: SignIn,
+    /// Whether the client draws A2UI surfaces: not, when absent, so the
+    /// session has no `ui` tool. Like [`Self::child_threads`], it is the
+    /// opening client's and never saved.
+    #[serde(default, skip_serializing_if = "Surfaces::is_unsupported")]
+    pub surfaces: Surfaces,
 }
 
 impl SessionSetup {
@@ -158,6 +164,32 @@ impl SignIn {
     }
 }
 
+/// Whether a client draws the A2UI surfaces a session's `ui` tool shows
+/// ([`crate::ToolContent::Surface`]). The daemon reads it, so it has no
+/// `Unknown`.
+///
+/// A client asks for surfaces instead of declining them, so a client that
+/// has never heard of them gets a session without the `ui` tool, and a
+/// daemon that has never heard of them ignores the field.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Surfaces {
+    /// The client draws none: a session it opens has no `ui` tool.
+    #[default]
+    Unsupported,
+    /// The client draws them and sends what the user does on one with
+    /// [`super::SESSION_SURFACE_ACTION`]: a session it opens has the `ui`
+    /// tool.
+    Drawn,
+}
+
+impl Surfaces {
+    /// Whether the client draws none, so the wire leaves it out.
+    pub fn is_unsupported(&self) -> bool {
+        *self == Self::Unsupported
+    }
+}
+
 /// A part of a session a client can leave out.
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
@@ -178,10 +210,6 @@ pub enum SessionPart {
     /// model: which connections may answer a request is decided by the
     /// [`crate::ClientCapability::Answer`] each declared, not by this.
     Questions,
-    /// A2UI surfaces: the session has no `ui` tool, for a client that
-    /// cannot draw [`crate::ToolContent::Surface`]. Like
-    /// [`Self::Questions`] it belongs to the client and is never saved.
-    Surfaces,
     /// The session's file, as with `--no-save`: the session lives in the
     /// daemon's memory alone. The daemon keeps it while a client follows it
     /// or it has work under way, and discards it once it sits idle, as it
@@ -266,3 +294,7 @@ impl fmt::Debug for SecretMap {
         formatter.debug_set().entries(self.0.keys()).finish()
     }
 }
+
+#[cfg(test)]
+#[path = "setup_tests.rs"]
+mod tests;
