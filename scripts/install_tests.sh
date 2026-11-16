@@ -74,6 +74,24 @@ VERSION=1.5.0
 actual="$(release_tag "$archive")"
 assert_eq rho-coding-agent-v1.5.0 "$actual" "pinned release selection"
 
+# Platform rows: uname -s, uname -m, sysctl.proc_translated, expected target.
+# "none" means the sysctl is absent; "unsupported" means platform exits 1.
+for row in \
+  "Linux x86_64 none x86_64-unknown-linux-gnu" \
+  "Darwin arm64 none aarch64-apple-darwin" \
+  "Darwin x86_64 1 aarch64-apple-darwin" \
+  "Darwin x86_64 none unsupported"; do
+  # shellcheck disable=SC2086 # split the row into fields
+  set -- $row
+  actual="$(
+    uname() { case "$1" in -s) echo "$stub_os" ;; -m) echo "$stub_arch" ;; esac; }
+    sysctl() { [ "$stub_translated" != none ] && echo "$stub_translated"; }
+    stub_os="$1" stub_arch="$2" stub_translated="$3"
+    (platform) 2>/dev/null || echo unsupported
+  )"
+  assert_eq "$4" "$actual" "platform for $row"
+done
+
 credential_command_log="$(mktemp)"
 record_credential_command() {
   printf '%s\n' "$*" >> "$credential_command_log"
