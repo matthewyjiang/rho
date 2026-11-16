@@ -53,6 +53,12 @@
 //! says. [`LocalDaemon`] connects a frontend to it, and starts it with
 //! `rho daemon start` when none runs, as the `rho` CLI does.
 //!
+//! A browser can reach neither a socket nor a program, so on wasm the crate
+//! has no `LocalDaemon` or `DaemonEndpoint`. A frontend there brings its own
+//! stream, such as a WebSocket that a native server relays to the daemon,
+//! and runs the client's I/O on its own executor
+//! ([`Client::handshake_with_io`]).
+//!
 //! # Methods
 //!
 //! [`methods`] lists every method with its params and result types. A
@@ -77,10 +83,12 @@ mod build_id;
 mod client;
 mod declared;
 pub mod display;
+#[cfg(not(target_family = "wasm"))]
 mod endpoint;
 mod error;
 mod forward;
 mod jsonrpc;
+#[cfg(not(target_family = "wasm"))]
 mod local_daemon;
 #[cfg(windows)]
 mod local_daemon_pipe;
@@ -97,6 +105,7 @@ mod version;
 
 pub use build_id::BuildId;
 pub use client::{Client, ClientError, DaemonNotification, Notifications};
+#[cfg(not(target_family = "wasm"))]
 pub use endpoint::{DaemonEndpoint, SocketPathTooLong};
 pub use error::ErrorCode;
 pub use forward::ConfigWatch;
@@ -104,6 +113,7 @@ pub use jsonrpc::{
     FrameError, Message, MessageReader, MessageWriter, Notification, ParseError, Request,
     RequestId, Response, RpcError, MAX_LINE_BYTES,
 };
+#[cfg(not(target_family = "wasm"))]
 pub use local_daemon::{LocalDaemon, LocalDaemonError};
 pub use login_relay::{login_relay, LoginRelay, LoginStream};
 pub use methods::{

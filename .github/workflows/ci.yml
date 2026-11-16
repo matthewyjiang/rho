@@ -39,6 +39,9 @@ jobs:
         run: sh scripts/install_tests.sh
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          # For the step that checks rho-protocol for the browser.
+          targets: wasm32-unknown-unknown
       - name: Cache Cargo registry
         uses: swatinem/rust-cache@v2
       - name: Test validation scripts
@@ -55,6 +58,10 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Run Clippy
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - name: Check rho-protocol for the browser
+        # rho-ui's web build runs the protocol client in wasm, on the
+        # browser's executor (Client::handshake_with_io).
+        run: cargo clippy -p rho-protocol --target wasm32-unknown-unknown --locked -- -D warnings
       - name: Run workspace tests
         # Linux leg of the native PTY suite (tui_pty_native); the platform job
         # covers macOS and Windows. Nextest runs every test in its own process

@@ -66,6 +66,12 @@ impl Service for HandshakeOnly {
 
 impl SettingsService for HandshakeOnly {}
 
+/// Held while a test makes a stale socket, and while one may start a
+/// program. A program forked while the stale socket's listener is open
+/// holds a copy of it until it runs `exec`, so a connect would reach it
+/// instead of finding the socket stale.
+static FORKS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 /// A `rho` that must never run.
 fn unreachable_rho(root: &Path) -> Command {
     Command::new(root.join("no-such-rho"))
@@ -121,7 +127,10 @@ async fn no_daemon_runs_without_a_home_or_behind_a_stale_socket() {
     fs::create_dir(&home).unwrap();
     let endpoint = daemon.endpoint().unwrap().expect("the home exists");
     fs::create_dir(&endpoint.runtime_dir).unwrap();
-    drop(UnixListener::bind(&endpoint.socket).unwrap());
+    {
+        let _no_forks = FORKS.lock().await;
+        drop(UnixListener::bind(&endpoint.socket).unwrap());
+    }
     assert!(endpoint.socket.exists());
     assert!(
         daemon.connect(hello()).await.unwrap().is_none(),
@@ -150,10 +159,13 @@ async fn a_stopped_daemon_is_started_with_rho_daemon_start() {
     .unwrap();
     fs::set_permissions(&rho, fs::Permissions::from_mode(0o755)).unwrap();
 
-    let started = LocalDaemon::new(&home)
-        .with_xdg_runtime_dir(Some(xdg.clone()))
-        .connect_or_start(Command::new(&rho), hello())
-        .await;
+    let started = {
+        let _forking = FORKS.lock().await;
+        LocalDaemon::new(&home)
+            .with_xdg_runtime_dir(Some(xdg.clone()))
+            .connect_or_start(Command::new(&rho), hello())
+            .await
+    };
 
     let Err(LocalDaemonError::Start { stderr, status, .. }) = started else {
         panic!("expected a failed start, got {:?}", started.err());

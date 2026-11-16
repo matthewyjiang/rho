@@ -34,6 +34,10 @@ daemon and its frontends: the Rho TUI, rho-ui, the `rho acp` adapter, and MCP.
   layout the `rho` CLI uses. `LocalDaemon` connects a frontend to that
   daemon, over its Unix socket or, on Windows, its named pipe, and when none
   runs, starts it with `rho daemon start`, the CLI's own ensure-running path.
+- Builds for `wasm32-unknown-unknown` without `LocalDaemon` or
+  `DaemonEndpoint`, for a frontend in
+  a browser: `Client::handshake_with_io` returns the connection's I/O as a
+  future for the caller's executor instead of spawning it on Tokio.
 - The [`methods`](https://docs.rs/rho-protocol/latest/rho_protocol/methods/)
   module lists every method and notification with its params and result. A
   session's turns run in the daemon and outlive the client that started them.

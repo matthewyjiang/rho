@@ -314,3 +314,100 @@ async fn pending_requests_fail_when_the_daemon_cannot_answer_them() {
         daemon.await.unwrap();
     }
 }
+
+/// Polls `future` to completion on this thread, outside any Tokio runtime,
+/// as a browser's executor runs one. Panics if it takes 10 s, which only a
+/// future that never ends does here: these finish in milliseconds.
+fn block_on_without_tokio<F: Future>(future: F) -> F::Output {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    struct Unpark(std::thread::Thread);
+    impl std::task::Wake for Unpark {
+        fn wake(self: Arc<Self>) {
+            self.0.unpark();
+        }
+    }
+    let waker = std::task::Waker::from(Arc::new(Unpark(std::thread::current())));
+    let mut cx = std::task::Context::from_waker(&waker);
+    let mut future = std::pin::pin!(future);
+    loop {
+        if let std::task::Poll::Ready(output) = future.as_mut().poll(&mut cx) {
+            return output;
+        }
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        assert!(!left.is_zero(), "the future didn't finish within 10 s");
+        std::thread::park_timeout(left);
+    }
+}
+
+// Covers: a client whose caller runs its I/O, with no Tokio runtime to spawn
+// on, handshakes and gets its answers, and the I/O ends once the client is
+// dropped and the daemon closes.
+// Owner: protocol client handshake.
+#[test]
+fn handshake_with_io_runs_on_the_callers_executor() {
+    let (client, server) = duplex(64 * 1024);
+    let (handshake, io) = Client::handshake_with_io(client, client_hello());
+    let daemon = async move {
+        let (read, mut write) = tokio::io::split(server);
+        let mut reader = MessageReader::new(read);
+        accept_hello(&mut reader, &mut write).await;
+        let status = read_request(&mut reader).await;
+        let result = serde_json::to_value(fake_status()).unwrap();
+        write_lines(
+            &mut write,
+            &[json!({"jsonrpc": "2.0", "id": status.id, "result": result})],
+        )
+        .await;
+        // Wait for the client to leave, then close.
+        assert_eq!(reader.read_line().await.unwrap(), None);
+    };
+    let frontend = async move {
+        let (client, _notifications, _) = handshake.await.unwrap();
+        client.request::<Status>(&StatusParams {}).await.unwrap()
+    };
+
+    let ((), (), status) = block_on_without_tokio(async { tokio::join!(io, daemon, frontend) });
+
+    assert_eq!(status, fake_status());
+}
+
+// Covers: a caller that drops the connection's I/O while a request it sent
+// awaits its answer gets `Closed`, rather than waiting forever, as a browser
+// tab that drops a connection's task on reconnect does.
+// Owner: protocol client routing.
+#[test]
+fn dropping_the_io_fails_requests_already_sent() {
+    let (client, server) = duplex(64 * 1024);
+    let (handshake, io) = Client::handshake_with_io(client, client_hello());
+    let (read, mut write) = tokio::io::split(server);
+    let mut reader = MessageReader::new(read);
+
+    let outcome = block_on_without_tokio(async move {
+        // Boxed, so `drop` drops the I/O itself.
+        let mut io = Box::pin(io);
+        let (client, _notifications) = tokio::select! {
+            biased;
+            (connected, ()) = async {
+                tokio::join!(handshake, accept_hello(&mut reader, &mut write))
+            } => {
+                let (client, notifications, _) = connected.unwrap();
+                (client, notifications)
+            }
+            () = &mut io => panic!("the I/O ended before the handshake"),
+        };
+        let mut status = std::pin::pin!(client.request::<Status>(&StatusParams {}));
+        tokio::select! {
+            biased;
+            _ = read_request(&mut reader) => {}
+            _ = &mut status => panic!("an answer the daemon never sent"),
+            () = &mut io => panic!("the I/O ended while the request went out"),
+        }
+        drop(io);
+        status.await
+    });
+
+    assert!(
+        matches!(outcome, Err(ClientError::Closed)),
+        "expected Closed, got {outcome:?}"
+    );
+}
