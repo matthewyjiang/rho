@@ -125,8 +125,10 @@ pub(super) async fn open(
             // A session without a login opens signed out, and the TUI
             // offers /login.
             sign_in: SignIn::Later,
-            // The terminal UI draws no A2UI surfaces yet.
-            surfaces: rho_protocol::Surfaces::Unsupported,
+            // The TUI draws A2UI surfaces, so its sessions have the `ui`
+            // tool. It attaches with this setup too, which counts it among
+            // the clients a waiting `ui` call can be answered in.
+            surfaces: rho_protocol::Surfaces::Drawn,
         },
         config: std::sync::Arc::new(config.clone()),
         definition: std::sync::Arc::new(bound.definition().clone()),
