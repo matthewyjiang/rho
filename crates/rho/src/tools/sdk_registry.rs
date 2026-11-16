@@ -91,6 +91,7 @@ pub struct ToolSetOptions {
     workflow_tracker: super::workflow_tracker::WorkflowRunTracker,
     process_keep_warm: super::process::KeepWarmOffer,
     environment: crate::session_environment::SessionEnvironment,
+    surfaces: Option<super::ui::SurfaceHost>,
 }
 
 impl Default for ToolSetOptions {
@@ -109,7 +110,16 @@ impl ToolSetOptions {
             workflow_tracker: super::workflow_tracker::WorkflowRunTracker::new(),
             process_keep_warm: super::process::KeepWarmOffer::Hidden,
             environment: Default::default(),
+            surfaces: None,
         }
+    }
+
+    /// Supplies the session's surfaces, which the `ui` tool shows the user.
+    /// Without them the capability alone registers no tool: only a host
+    /// whose clients draw A2UI surfaces offers it.
+    pub(crate) fn surfaces(mut self, surfaces: Option<super::ui::SurfaceHost>) -> Self {
+        self.surfaces = surfaces;
+        self
     }
 
     /// The environment the session's children see: process tools, the
@@ -230,6 +240,8 @@ pub struct AppToolSet {
     /// the only way to read an elided result back.
     recall: Option<crate::session::recall::RecallStore>,
     todo: super::todo::TodoState,
+    /// The session's A2UI surfaces, when the `ui` tool is installed.
+    surfaces: Option<super::ui::SurfaceHost>,
     /// The credentials of the session the tools belong to.
     credentials: Arc<dyn rho_providers::credentials::CredentialStore>,
 }
@@ -265,6 +277,7 @@ impl AppToolSet {
             session_search: super::sessions::SessionBinding::default(),
             recall: None,
             todo: super::todo::TodoState::default(),
+            surfaces: None,
             credentials,
         }
     }
@@ -278,6 +291,7 @@ impl AppToolSet {
             workflow_tracker,
             process_keep_warm,
             environment,
+            surfaces,
         } = options;
         let mut tool_set = Self::disabled_for(environment.credentials());
         tool_set.workflow_tracker = workflow_tracker;
@@ -336,6 +350,10 @@ impl AppToolSet {
         }
         if capabilities.contains(&ToolCapability::Questionnaire) {
             tool_set.add_bundle(super::sdk_features::questionnaire_bundle());
+        }
+        if let (true, Some(surfaces)) = (capabilities.contains(&ToolCapability::Ui), surfaces) {
+            tool_set.add_bundle(super::ui::UiBundle::new(surfaces.clone()));
+            tool_set.surfaces = Some(surfaces);
         }
         if let (true, Some(store)) = (capabilities.contains(&ToolCapability::Advisor), advisor) {
             // The tool set owns advisor initialization: the model, the
@@ -449,6 +467,19 @@ impl AppToolSet {
     /// this agent cannot call `sessions` and so could never recall.
     pub(crate) fn recall_store(&self) -> Option<crate::session::recall::RecallStore> {
         self.recall.clone()
+    }
+
+    /// The session's A2UI surfaces, when it offers the `ui` tool.
+    pub(crate) fn surfaces(&self) -> Option<&super::ui::SurfaceHost> {
+        self.surfaces.as_ref()
+    }
+
+    /// Whether the session offers the `ui` tool, for its system prompt.
+    pub(crate) fn ui_tool(&self) -> crate::prompt::UiTool {
+        match self.surfaces {
+            Some(_) => crate::prompt::UiTool::Offered,
+            None => crate::prompt::UiTool::Absent,
+        }
     }
 
     pub(crate) fn todo_state(&self) -> super::todo::TodoState {

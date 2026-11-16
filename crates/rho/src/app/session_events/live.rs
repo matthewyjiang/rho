@@ -103,6 +103,11 @@ pub(crate) struct LiveEvents {
     presenter: InteractiveToolPresenter,
     /// The run's announced calls, by provider call id.
     announced: BTreeMap<String, AnnouncedCall>,
+    /// The A2UI surface each `ui` call still running showed, by provider
+    /// call id: a call that waits for the user reports it as progress, and
+    /// its result, which replaces the call's content, has to repeat it,
+    /// also when the wait was cancelled and the result carries nothing.
+    surfaces: HashMap<String, ToolContent>,
     /// The context fill last reported, which usage the provider counts
     /// within a response repeats.
     used_tokens: Option<u64>,
@@ -199,6 +204,7 @@ impl LiveEvents {
             prompt: None,
             proposed: HashMap::new(),
             announced: BTreeMap::new(),
+            surfaces: HashMap::new(),
             previews: HashMap::new(),
             used_tokens: None,
             call_ids: CallIds::default(),
@@ -479,9 +485,16 @@ impl LiveEvents {
             RunEvent::ToolUpdated { call_id, progress } => {
                 self.present_proposal(call_id.as_str());
                 let card = self.presenter.updated(call_id, progress).card;
+                let surface = crate::tools::ui::shown_surface(progress.metadata());
+                if let Some(surface) = &surface {
+                    self.surfaces
+                        .insert(call_id.as_str().to_owned(), surface.clone());
+                }
                 let shown = CallUpdate {
                     status: ToolStatus::InProgress,
-                    content: vec![text_content(progress.message())],
+                    content: std::iter::once(text_content(progress.message()))
+                        .chain(surface)
+                        .collect(),
                     locations: None,
                     display: Presentation::Card(card),
                 };
@@ -492,7 +505,13 @@ impl LiveEvents {
             RunEvent::ToolFinished { call_id, result } => {
                 self.present_proposal(call_id.as_str());
                 let (_ok, shown) = self.presenter.finished(call_id, result);
-                let finished = finished_update(result, &self.workspace, shown.presentation);
+                let mut finished = finished_update(result, &self.workspace, shown.presentation);
+                let reported = self.surfaces.remove(call_id.as_str());
+                let surface = result
+                    .output()
+                    .and_then(|output| crate::tools::ui::shown_surface(output.presentation()))
+                    .or(reported);
+                finished.content.extend(surface);
                 let finished = self.tool_update(call_id, CallState::Finished, finished);
                 // The call may have replaced the checklist, whether it ran
                 // directly or inside code mode.
@@ -630,6 +649,7 @@ impl LiveEvents {
             InteractiveToolPresenter::new(self.workspace.clone(), self.mcp_tools.clone());
         self.steers.clear();
         self.applied_unseen.clear();
+        self.surfaces.clear();
         // Never the run's own error: it is not redacted, and may echo a
         // credential; the turn's end carries the redacted outcome (#1670).
         let compaction =

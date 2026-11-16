@@ -134,6 +134,7 @@ rho
 shell
 skill
 todo
+ui
 web_search
 write
 ```
@@ -144,6 +145,7 @@ Notes:
 - unknown names become extension capabilities and still fail bind unless the host supplies them
 - delegated agents never receive `agent` / `agents` / `advisor` even if listed
 - `questionnaire` is offered on delegated Rho runs when a parent session can answer; if the host cannot offer it for that launch, bind omits it instead of failing
+- `ui` is offered only to a daemon session whose client draws [surfaces](/tools-workspace#surfaces), never to a delegated run; elsewhere bind omits it instead of failing
 
 **`runtime: claude-cli`**
 

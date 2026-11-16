@@ -12,14 +12,16 @@
 //! A new session opened without saving has no file, so none of this is kept
 //! and no request can reopen it.
 //! The opening client owns its MCP servers, whose `env` and `headers` may
-//! hold secrets, whether it shows questions, and whether its own threads
-//! run the session's children, which goes with the MCP server they go
+//! hold secrets, whether it shows questions and draws surfaces, and whether
+//! its own threads run the session's children, which goes with the MCP server they go
 //! through: a reopen takes them from its own request alone, so a prompt,
 //! which brings no setup, reopens a session without them.
 
 use std::path::Path;
 
-use rho_protocol::{ChildThreads, ErrorCode, IdleWake, RpcError, SessionPart, SessionSetup};
+use rho_protocol::{
+    ChildThreads, ErrorCode, IdleWake, RpcError, SessionPart, SessionSetup, Surfaces,
+};
 
 use super::open_failed;
 use crate::{
@@ -29,7 +31,7 @@ use crate::{
         session_runtime::{ChildAgents, IdleTurns, LeftOut, QuestionSupport},
     },
     session::{Session as StoredSession, SessionPersistence},
-    tools::mcp::config::McpConfig,
+    tools::{mcp::config::McpConfig, ui::SurfaceHost},
 };
 
 /// What a session opens with.
@@ -38,6 +40,8 @@ pub(super) struct Setup {
     pub(super) left_out: LeftOut,
     /// Whether its client shows questions.
     pub(super) questions: QuestionSupport,
+    /// Its A2UI surfaces, when the request says its client draws them.
+    pub(super) surfaces: Option<SurfaceHost>,
     /// Who runs its children: the host's threads when the request says so.
     pub(super) children: ChildAgents,
     /// Whether the daemon starts a turn when its background work finishes
@@ -114,6 +118,10 @@ impl Setup {
             ChildThreads::Daemon => ChildAgents::InProcess,
             ChildThreads::Host => ChildAgents::HostThreads,
         };
+        let surfaces = match requested.surfaces {
+            Surfaces::Unsupported => None,
+            Surfaces::Drawn => Some(SurfaceHost::default()),
+        };
         let idle_turns = match requested.idle_wake {
             IdleWake::Never => IdleTurns::Never,
             IdleWake::Turn => IdleTurns::Host,
@@ -125,6 +133,7 @@ impl Setup {
                 && (left_out != saved_left_out || added_dirs != saved_dirs),
             left_out,
             questions,
+            surfaces,
             children,
             idle_turns,
             added_dirs,

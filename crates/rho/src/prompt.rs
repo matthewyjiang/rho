@@ -10,7 +10,7 @@ pub(crate) mod model_prompt_edit;
 mod model_prompt_template;
 pub(crate) mod model_prompts;
 mod project_instructions;
-pub(crate) use mcp_context::tool_sources_context;
+pub(crate) use mcp_context::{tool_sources_context, UiTool};
 pub(crate) use model_prompt_template::ModelPromptTemplate;
 pub(crate) use project_instructions::added_dir_context;
 

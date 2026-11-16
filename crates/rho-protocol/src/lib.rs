@@ -151,7 +151,7 @@ pub use methods::{
     SessionBackgroundStopResponse, SESSION_BACKGROUND_LIST, SESSION_BACKGROUND_STOP,
 };
 pub use methods::{
-    ChildThreads, IdleWake, McpServer, SecretMap, SessionPart, SessionSetup, SignIn,
+    ChildThreads, IdleWake, McpServer, SecretMap, SessionPart, SessionSetup, SignIn, Surfaces,
 };
 pub use methods::{
     CommandKind, FastModeOptions, ModelChoice, ModelOptions, ModelRef, PermissionModeOptions,
@@ -177,6 +177,9 @@ pub use methods::{
     SessionMcpCompleteResponse, SessionMcpPrompt, SessionMcpPromptArgument, SessionMcpResource,
     SessionMcpResourceContent, SessionMcpResourceParams, SessionMcpResourceResponse,
     SESSION_MCP_CATALOG, SESSION_MCP_COMPLETE, SESSION_MCP_RESOURCE,
+};
+pub use methods::{
+    SessionSurfaceActionParams, SessionSurfaceActionResponse, SESSION_SURFACE_ACTION,
 };
 pub use methods::{
     WorktreePruneParams, WorktreePruneResponse, WorktreeReport, WorktreeVerdict, WORKTREE_PRUNE,

@@ -70,6 +70,8 @@ enum ToolKind {
     Questionnaire,
     Todo,
     ExitPlanMode,
+    /// The `ui` tool, which shows the user an A2UI surface.
+    Ui,
     Sessions,
     Codemode,
     ToolSearch,
@@ -107,6 +109,7 @@ impl ToolKind {
             "questionnaire" => Self::Questionnaire,
             "todo" => Self::Todo,
             "exit_plan_mode" => Self::ExitPlanMode,
+            crate::tools::ui::TOOL_NAME => Self::Ui,
             "sessions" => Self::Sessions,
             "workflow" => Self::Workflow,
             crate::tools::code_mode::CODEMODE_TOOL_NAME => Self::Codemode,
@@ -152,6 +155,7 @@ impl ToolKind {
             | Self::Questionnaire
             | Self::Todo
             | Self::ExitPlanMode
+            | Self::Ui
             | Self::Sessions
             | Self::Workflow
             | Self::Codemode

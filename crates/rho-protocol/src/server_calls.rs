@@ -19,15 +19,15 @@ use crate::{
         SessionMcpComplete, SessionMcpCompleteParams, SessionMcpParams, SessionMcpResourceParams,
         SessionMcpResourceRead, SessionNew, SessionNewParams, SessionProcesses,
         SessionProcessesParams, SessionPrompt, SessionPromptParams, SessionRename,
-        SessionRenameParams, SessionSteer, SessionSteerParams, SessionUnsteer,
-        SessionUnsteerParams, Status, Stop, WorktreePrune, WorktreePruneParams, AUTH_CHOOSE_STORE,
-        AUTH_KEY, AUTH_LIST, AUTH_LOGIN_CANCEL, AUTH_LOGOUT, CONFIG_REGISTER, CONFIG_SCHEMA,
-        CONFIG_SET, DAEMON_RESTART, DAEMON_STATUS, DAEMON_STOP, JOB_LIST, SESSION_ANSWER,
-        SESSION_BACKGROUND_LIST, SESSION_BACKGROUND_STOP, SESSION_CANCEL, SESSION_CONFIGURE,
-        SESSION_DELETE, SESSION_HOLD, SESSION_INSPECT, SESSION_LIST, SESSION_MCP,
-        SESSION_MCP_CATALOG, SESSION_MCP_COMPLETE, SESSION_MCP_RESOURCE, SESSION_NEW,
-        SESSION_PROCESSES, SESSION_PROMPT, SESSION_RENAME, SESSION_STEER, SESSION_UNSTEER,
-        WORKTREE_PRUNE,
+        SessionRenameParams, SessionSteer, SessionSteerParams, SessionSurfaceAction,
+        SessionSurfaceActionParams, SessionUnsteer, SessionUnsteerParams, Status, Stop,
+        WorktreePrune, WorktreePruneParams, AUTH_CHOOSE_STORE, AUTH_KEY, AUTH_LIST,
+        AUTH_LOGIN_CANCEL, AUTH_LOGOUT, CONFIG_REGISTER, CONFIG_SCHEMA, CONFIG_SET, DAEMON_RESTART,
+        DAEMON_STATUS, DAEMON_STOP, JOB_LIST, SESSION_ANSWER, SESSION_BACKGROUND_LIST,
+        SESSION_BACKGROUND_STOP, SESSION_CANCEL, SESSION_CONFIGURE, SESSION_DELETE, SESSION_HOLD,
+        SESSION_INSPECT, SESSION_LIST, SESSION_MCP, SESSION_MCP_CATALOG, SESSION_MCP_COMPLETE,
+        SESSION_MCP_RESOURCE, SESSION_NEW, SESSION_PROCESSES, SESSION_PROMPT, SESSION_RENAME,
+        SESSION_STEER, SESSION_SURFACE_ACTION, SESSION_UNSTEER, WORKTREE_PRUNE,
     },
     server::{decode_params, encode_result, Service},
     ErrorCode, RpcError, StatusParams, StopParams, StopResponse,
@@ -45,6 +45,7 @@ pub(crate) enum ServiceCall {
     UnsteerSession(SessionUnsteerParams),
     AnswerSession(SessionAnswerParams),
     HoldSession(SessionHoldParams),
+    SurfaceAction(SessionSurfaceActionParams),
     ConfigureSession(SessionConfigureParams),
     SessionMcp(SessionMcpParams),
     SessionMcpCatalog(SessionMcpCatalogParams),
@@ -86,6 +87,9 @@ impl ServiceCall {
             SESSION_UNSTEER => decode_params::<SessionUnsteer>(params).map(Self::UnsteerSession),
             SESSION_ANSWER => decode_params::<SessionAnswer>(params).map(Self::AnswerSession),
             SESSION_HOLD => decode_params::<SessionHold>(params).map(Self::HoldSession),
+            SESSION_SURFACE_ACTION => {
+                decode_params::<SessionSurfaceAction>(params).map(Self::SurfaceAction)
+            }
             SESSION_CONFIGURE => {
                 decode_params::<SessionConfigure>(params).map(Self::ConfigureSession)
             }
@@ -139,6 +143,7 @@ impl ServiceCall {
             | Self::UnsteerSession(SessionUnsteerParams { session, .. })
             | Self::AnswerSession(SessionAnswerParams { session, .. })
             | Self::HoldSession(SessionHoldParams { session, .. })
+            | Self::SurfaceAction(SessionSurfaceActionParams { session, .. })
             | Self::SessionMcp(SessionMcpParams { session, .. })
             | Self::SessionMcpCatalog(SessionMcpCatalogParams { session, .. })
             | Self::SessionMcpResource(SessionMcpResourceParams { session, .. })
@@ -197,6 +202,9 @@ impl ServiceCall {
             }
             Self::AnswerSession(params) => {
                 encode_result::<SessionAnswer>(&service.answer_session(params).await?)
+            }
+            Self::SurfaceAction(params) => {
+                encode_result::<SessionSurfaceAction>(&service.surface_action(params).await?)
             }
             Self::HoldSession(params) => {
                 encode_result::<SessionHold>(&service.hold_session(params).await?)

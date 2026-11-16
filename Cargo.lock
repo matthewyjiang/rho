@@ -5006,6 +5006,7 @@ dependencies = [
  "ratatui-image",
  "regex",
  "reqwest",
+ "rho-a2ui",
  "rho-agent-tools",
  "rho-protocol",
  "rho-providers",

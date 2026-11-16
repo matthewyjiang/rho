@@ -9,8 +9,9 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::{
-    methods::{HELLO, SESSION_ANSWER, SESSION_HOLD},
+    methods::{HELLO, SESSION_ANSWER, SESSION_HOLD, SESSION_SURFACE_ACTION},
     ClientCapability, ClientInfo, ClientRole, ErrorCode, HelloParams, ProtocolVersion, RpcError,
+    SessionSetup, Surfaces,
 };
 
 /// The role and capabilities an accepted hello declared, which hold until
@@ -66,6 +67,27 @@ impl Declared {
     }
 }
 
+impl Declared {
+    /// Refuses a setup that asks for surfaces from a connection that cannot
+    /// act on one: `surfaces: drawn` promises the client sends what the user
+    /// does with [`SESSION_SURFACE_ACTION`], which needs `answer`, so a `ui`
+    /// call waiting on such a client would wait for nobody.
+    pub(crate) fn permit_setup(&self, setup: &SessionSetup) -> Result<(), RpcError> {
+        let answers = self.capabilities.contains(&ClientCapability::Answer);
+        match setup.surfaces {
+            Surfaces::Drawn if !answers => Err(RpcError::new(
+                ErrorCode::CapabilityRequired,
+                format!(
+                    "`surfaces: drawn` needs capability `{}` to send {SESSION_SURFACE_ACTION}, which this connection, of role `{}`, did not declare in {HELLO}",
+                    capability_name(ClientCapability::Answer),
+                    role_name(self.role)
+                ),
+            )),
+            Surfaces::Drawn | Surfaces::Unsupported => Ok(()),
+        }
+    }
+}
+
 /// The protocol a hello names, whatever else it holds.
 pub(crate) fn hello_protocol(params: Option<&Value>) -> Result<ProtocolVersion, RpcError> {
     #[derive(Deserialize)]
@@ -94,7 +116,8 @@ fn may_declare(role: ClientRole, capability: ClientCapability) -> bool {
 /// The capability `method` needs, if it needs one. A new method that acts
 /// for a person, as an answer does, belongs here.
 ///
-/// Answering and holding are the only gated methods, on purpose. An agent
+/// Answering, holding and acting on a surface are the only gated methods,
+/// on purpose. An agent
 /// connection may change settings (`rho/config/set` and the other settings
 /// methods) and reconfigure a session (`rho/session/configure`): agents
 /// legitimately tune the sessions they run, and a role is declared, not
@@ -102,7 +125,7 @@ fn may_declare(role: ClientRole, capability: ClientCapability) -> bool {
 /// them. Custom per-method permissions may come after the beta (#1810).
 fn needed_by(method: &str) -> Option<ClientCapability> {
     match method {
-        SESSION_ANSWER | SESSION_HOLD => Some(ClientCapability::Answer),
+        SESSION_ANSWER | SESSION_HOLD | SESSION_SURFACE_ACTION => Some(ClientCapability::Answer),
         _ => None,
     }
 }

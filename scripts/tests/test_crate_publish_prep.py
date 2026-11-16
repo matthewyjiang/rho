@@ -87,7 +87,13 @@ class PathPatchPolicyTests(unittest.TestCase):
         patched = {patch.package_name for patch in patches}
         self.assertEqual(
             patched,
-            {"rho-sdk", "rho-protocol", "rho-providers", "rho-agent-tools"},
+            {
+                "rho-sdk",
+                "rho-protocol",
+                "rho-providers",
+                "rho-agent-tools",
+                "rho-a2ui",
+            },
         )
 
     def test_select_patches_empty_when_all_direct_deps_published(self) -> None:

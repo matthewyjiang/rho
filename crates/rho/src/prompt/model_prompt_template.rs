@@ -27,7 +27,8 @@ pub(crate) struct ModelPromptTemplate {
     home: Option<PathBuf>,
     before_model: String,
     parts: Vec<PromptPart>,
-    /// MCP servers, then OpenAPI sources; see [`super::tool_sources_context`].
+    /// MCP servers, OpenAPI sources and the `ui` tool; see
+    /// [`super::tool_sources_context`].
     tool_sources: String,
 }
 
@@ -104,8 +105,9 @@ impl ModelPromptTemplate {
         &mut self,
         mcp: &crate::tools::mcp::McpSessionReport,
         openapi: &crate::tools::openapi::report::OpenApiReport,
+        ui: super::UiTool,
     ) {
-        self.tool_sources = super::tool_sources_context(mcp, openapi);
+        self.tool_sources = super::tool_sources_context(mcp, openapi, ui);
     }
 
     /// A model switch preserves instruction files cached for the current session.

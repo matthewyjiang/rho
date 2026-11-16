@@ -47,8 +47,8 @@ use std::{
 use rho_protocol::{
     DetachReason, ErrorCode, RpcError, SessionAnswerParams, SessionAnswerResponse,
     SessionAttachParams, SessionAttachResponse, SessionCancelParams, SessionCancelResponse,
-    SessionHoldParams, SessionHoldResponse, SessionNewParams, SessionNewResponse, Subscription,
-    TurnOutcome,
+    SessionHoldParams, SessionHoldResponse, SessionNewParams, SessionNewResponse,
+    SessionSurfaceActionParams, SessionSurfaceActionResponse, Subscription, Surfaces, TurnOutcome,
 };
 use rho_sdk::{CancellationToken, SessionId};
 
@@ -730,6 +730,26 @@ impl Sessions {
         Ok(SessionAnswerResponse {})
     }
 
+    /// Hands a session what the user did on an A2UI surface its `ui` tool
+    /// showed. The `ui` call waiting on the surface returns it; with none,
+    /// the session's next turn delivers it, which the idle watcher starts
+    /// where the session's client asked for that (see [`idle_wake`]).
+    pub(super) async fn surface_action(
+        &self,
+        params: SessionSurfaceActionParams,
+    ) -> Result<SessionSurfaceActionResponse, RpcError> {
+        let invalid = |message: String| RpcError::new(ErrorCode::InvalidParams, message);
+        let surfaces = self
+            .loaded_session(&params.session)
+            .await?
+            .and_then(|session| session.background.surfaces())
+            .ok_or_else(|| invalid(format!("the session has no surface `{}`", params.surface)))?;
+        surfaces
+            .act(&params.surface, &params.action, params.data_model)
+            .map_err(invalid)?;
+        Ok(SessionSurfaceActionResponse {})
+    }
+
     /// Stops one of a session's open input requests from timing out, for a
     /// client whose user started on it (#1660).
     pub(super) async fn hold(
@@ -758,6 +778,7 @@ impl Sessions {
         // Applied only if this attach reopens the session: one the daemon
         // has loaded keeps the environment and setup it opened with.
         // Its grant is its environment's: an attach names none.
+        let draws = params.setup.surfaces;
         let with = OpenWith::under(
             grant::asked(/*named*/ None, &params.environment)?,
             &params.environment,
@@ -768,7 +789,20 @@ impl Sessions {
         let (session, (resumed, attached)) = self
             .enter_session(&params.session, &with, |session, turn| {
                 let resumed = self.resume_interrupted(session, turn);
-                Ok((resumed, session.feed.attach(params.after.as_ref())))
+                // Read from every attach, not only one that opens the
+                // session: a `ui` call waits for the user only while a
+                // client that draws surfaces follows the session.
+                let viewer = match draws {
+                    Surfaces::Unsupported => None,
+                    Surfaces::Drawn => session
+                        .background
+                        .surfaces()
+                        .map(|surfaces| surfaces.viewer()),
+                };
+                Ok((
+                    resumed,
+                    session.feed.attach_viewer(params.after.as_ref(), viewer),
+                ))
             })
             .await?;
         if let Some(turn) = resumed {

@@ -120,6 +120,8 @@ fn session_new(
             idle_wake: rho_protocol::IdleWake::Never,
             // A run without a login exits as an authentication failure.
             sign_in: rho_protocol::SignIn::Required,
+            // Nobody watches a detached run.
+            surfaces: rho_protocol::Surfaces::Unsupported,
         },
         parent: None,
         grant: None,

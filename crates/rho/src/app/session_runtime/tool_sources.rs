@@ -108,6 +108,7 @@ impl SessionRuntime {
             template.replace_tool_sources(
                 self.built.tools.mcp_report(),
                 self.built.tools.openapi_report(),
+                self.built.tools.ui_tool(),
             );
             let running = PromptModel::from_sdk_identity(&self.built.provider.identity());
             let built = template.render(&running, self.built.prompt.loaded.as_ref());

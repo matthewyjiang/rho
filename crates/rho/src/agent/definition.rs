@@ -76,6 +76,7 @@ define_tool_capabilities! {
     Shell => "shell" : "Run shell commands.",
     Skill => "skill" : "Load skill files.",
     Todo => "todo" : "Track a short task checklist shown to the user.",
+    Ui => "ui" : "Show the user an interactive surface, such as a form.",
     WebSearch => "web_search" : "Search the web.",
     Workflow => "workflow" : "Validate, plan, and run workflows.",
     WriteFile => "write" : "Create or overwrite files.",

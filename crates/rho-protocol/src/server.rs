@@ -36,14 +36,15 @@ use crate::{
         SessionMcpParams, SessionMcpResourceParams, SessionMcpResourceResponse, SessionNewParams,
         SessionNewResponse, SessionObserve, SessionObserveParams, SessionProcessesParams,
         SessionProcessesResponse, SessionPromptParams, SessionPromptResponse, SessionRenameParams,
-        SessionRenameResponse, SessionSteerParams, SessionSteerResponse, SessionUnsteerParams,
+        SessionRenameResponse, SessionSteerParams, SessionSteerResponse,
+        SessionSurfaceActionParams, SessionSurfaceActionResponse, SessionUnsteerParams,
         SessionUnsteerResponse, WorktreePruneParams, WorktreePruneResponse, AUTH_CHOOSE_STORE,
         AUTH_KEY, AUTH_LIST, AUTH_LOGIN, AUTH_LOGIN_CANCEL, AUTH_LOGOUT, CONFIG_GET, HELLO,
         SESSION_ANSWER, SESSION_ATTACH, SESSION_BACKGROUND_LIST, SESSION_BACKGROUND_STOP,
         SESSION_CANCEL, SESSION_CONFIGURE, SESSION_DELETE, SESSION_DETACH, SESSION_HOLD,
         SESSION_INSPECT, SESSION_LIST, SESSION_MCP, SESSION_MCP_CATALOG, SESSION_MCP_COMPLETE,
         SESSION_MCP_RESOURCE, SESSION_NEW, SESSION_OBSERVE, SESSION_PROCESSES, SESSION_PROMPT,
-        SESSION_RENAME, SESSION_STEER, SESSION_UNSTEER, WORKTREE_PRUNE,
+        SESSION_RENAME, SESSION_STEER, SESSION_SURFACE_ACTION, SESSION_UNSTEER, WORKTREE_PRUNE,
     },
     subscription::Subscription,
     BuildId, BuildSkew, DaemonInfo, DaemonStatus, ErrorCode, FrameError, HelloResponse, Message,
@@ -187,6 +188,16 @@ pub trait Service: SettingsService + Send + Sync {
     ) -> impl Future<Output = Result<SessionAnswerResponse, RpcError>> + Send {
         let _ = params;
         unsupported(SESSION_ANSWER)
+    }
+
+    /// Handles `rho/session/surface_action`: hand a user's action on an
+    /// A2UI surface to the session that showed it.
+    fn surface_action(
+        &self,
+        params: SessionSurfaceActionParams,
+    ) -> impl Future<Output = Result<SessionSurfaceActionResponse, RpcError>> + Send {
+        let _ = params;
+        unsupported(SESSION_SURFACE_ACTION)
     }
 
     /// Handles `rho/session/hold`: stop an open request's timeout, so it
@@ -815,14 +826,23 @@ impl Connection {
             (Self::Ready(declared), method) => {
                 declared.permit(method)?;
                 match method {
-                    SESSION_ATTACH => decode_params::<SessionAttach>(params)
-                        .map(|params| Route::Attach(AttachRequest::Attach(params))),
+                    SESSION_ATTACH => {
+                        let params = decode_params::<SessionAttach>(params)?;
+                        declared.permit_setup(&params.setup)?;
+                        Ok(Route::Attach(AttachRequest::Attach(params)))
+                    }
                     SESSION_OBSERVE => decode_params::<SessionObserve>(params)
                         .map(|params| Route::Attach(AttachRequest::Observe(params))),
                     SESSION_DETACH => decode_params::<SessionDetach>(params).map(Route::Detach),
                     AUTH_LOGIN => decode_params::<AuthLogin>(params).map(Route::Login),
                     CONFIG_GET => decode_params::<ConfigGet>(params).map(Route::ConfigGet),
-                    method => ServiceCall::decode(method, params).map(Route::Call),
+                    method => {
+                        let call = ServiceCall::decode(method, params)?;
+                        if let ServiceCall::NewSession(params) = &call {
+                            declared.permit_setup(&params.setup)?;
+                        }
+                        Ok(Route::Call(call))
+                    }
                 }
             }
         }

@@ -47,6 +47,7 @@ use crate::{
     tools::{
         process::{ProcessManager, ProcessNotification},
         sdk_registry::AppToolSet,
+        ui::{SurfaceAction, SurfaceHost},
         workflow_tracker::{WorkflowNotification, WorkflowRunTracker},
     },
 };
@@ -57,6 +58,9 @@ pub(super) struct Delegation {
     subagents: Option<SubagentDelivery>,
     processes: Option<ProcessManager>,
     workflows: WorkflowRunTracker,
+    /// The session's A2UI surfaces, whose actions no `ui` call waited for
+    /// are delivered like finished work.
+    surfaces: Option<SurfaceHost>,
     /// Workflows and process tasks started from here on hold natural
     /// completion; older ones, and services, only deliver.
     prompt_started: Instant,
@@ -109,6 +113,7 @@ pub(super) struct BackgroundSources<'a> {
     pub(super) subagents: Option<&'a SubagentManager>,
     pub(super) processes: Option<&'a ProcessManager>,
     pub(super) workflows: &'a WorkflowRunTracker,
+    pub(super) surfaces: Option<&'a SurfaceHost>,
 }
 
 impl<'a> BackgroundSources<'a> {
@@ -117,6 +122,7 @@ impl<'a> BackgroundSources<'a> {
             subagents: tools.subagents(),
             processes: tools.processes(),
             workflows: tools.workflow_tracker(),
+            surfaces: tools.surfaces(),
         }
     }
 
@@ -135,6 +141,7 @@ impl<'a> BackgroundSources<'a> {
             || self
                 .processes
                 .is_some_and(|processes| processes.has_live() || processes.has_task_result())
+            || self.surfaces.is_some_and(SurfaceHost::has_action)
     }
 }
 
@@ -187,6 +194,7 @@ impl Delegation {
             subagents,
             processes: sources.processes.cloned(),
             workflows,
+            surfaces: sources.surfaces.cloned(),
             prompt_started: Instant::now(),
             background_wait: wait,
             displays: None,
@@ -237,6 +245,7 @@ impl Delegation {
             // and the wait below still wakes it.
             let process_exit = self.processes.as_ref().map(ProcessManager::notified_owned);
             let workflow_finish = self.workflows.notified_owned();
+            let surface_action = self.surfaces.as_ref().map(SurfaceHost::acted_owned);
             {
                 let _delivery = crate::app::notification_delivery::lock();
                 let batch = self.collect();
@@ -279,6 +288,12 @@ impl Delegation {
                     None => std::future::pending().await,
                 }
             };
+            let surface_action = async move {
+                match surface_action {
+                    Some(acted) => acted.await,
+                    None => std::future::pending().await,
+                }
+            };
             match &mut self.subagents {
                 Some(subagents) => tokio::select! {
                     notice = subagents.notices.recv(), if notices_open => {
@@ -291,10 +306,12 @@ impl Delegation {
                     () = subagents.manager.wait_for_notification(&self.session_id) => {}
                     () = process_exit => {}
                     () = workflow_finish => {}
+                    () = surface_action => {}
                 },
                 None => tokio::select! {
                     () = process_exit => {}
                     () = workflow_finish => {}
+                    () = surface_action => {}
                 },
             }
         };
@@ -345,6 +362,12 @@ impl Delegation {
                 .as_ref()
                 .map(ProcessManager::take_notifications)
                 .unwrap_or_default(),
+            surfaces: self.surfaces.clone(),
+            surface_actions: self
+                .surfaces
+                .as_ref()
+                .map(SurfaceHost::take_actions)
+                .unwrap_or_default(),
         }
     }
 
@@ -359,6 +382,7 @@ impl Delegation {
             subagents: &batch.subagent_results,
             workflows: &batch.workflow_results,
             processes: &batch.process_results,
+            surface_actions: &batch.surface_actions,
         }
         .render(self.subagents.as_ref().map(|subagents| &subagents.manager))
         .finish()
@@ -380,7 +404,8 @@ impl Delegation {
             || self
                 .processes
                 .as_ref()
-                .is_some_and(ProcessManager::has_pending_notification);
+                .is_some_and(ProcessManager::has_pending_notification)
+            || self.surfaces.as_ref().is_some_and(SurfaceHost::has_action);
         let running = match self.background_wait {
             BackgroundWait::HoldPrompt => {
                 self.workflows
@@ -443,6 +468,8 @@ struct DeliveryReservation {
     workflow_results: Vec<WorkflowNotification>,
     processes: Option<ProcessManager>,
     process_results: Vec<ProcessNotification>,
+    surfaces: Option<SurfaceHost>,
+    surface_actions: Vec<SurfaceAction>,
 }
 
 impl DeliveryReservation {
@@ -450,12 +477,14 @@ impl DeliveryReservation {
         !self.subagent_results.is_empty()
             || !self.workflow_results.is_empty()
             || !self.process_results.is_empty()
+            || !self.surface_actions.is_empty()
     }
 
     fn commit(&mut self) {
         self.subagent_results.clear();
         self.workflow_results.clear();
         self.process_results.clear();
+        self.surface_actions.clear();
     }
 }
 
@@ -467,6 +496,9 @@ impl Drop for DeliveryReservation {
         self.workflows.restore_notifications(&self.workflow_results);
         if let Some(processes) = &self.processes {
             processes.restore_notifications(&self.process_results);
+        }
+        if let Some(surfaces) = &self.surfaces {
+            surfaces.restore_actions(&self.surface_actions);
         }
     }
 }

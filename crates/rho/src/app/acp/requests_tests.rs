@@ -144,6 +144,7 @@ fn launch_flags_and_host_request_make_the_session_setup() {
             child_threads: ChildThreads::Host,
             idle_wake: rho_protocol::IdleWake::Never,
             sign_in: rho_protocol::SignIn::Required,
+            surfaces: rho_protocol::Surfaces::Unsupported,
         }
     );
     assert_eq!(

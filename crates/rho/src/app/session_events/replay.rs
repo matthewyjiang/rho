@@ -24,7 +24,10 @@ use crate::{
     app::{interactive_presenter::InteractiveToolPresenter, session_runtime::SessionTools},
     display_transcript::DisplayTranscript,
     session::tree::{DisplayRowOrigin, ProjectedMessage},
-    tools::mcp::exported_name::McpToolNames,
+    tools::{
+        mcp::exported_name::McpToolNames,
+        ui::{SurfaceContent, SurfaceRequest},
+    },
 };
 
 /// Display rows a session saved together, such as one turn's, kept to
@@ -77,6 +80,14 @@ pub(crate) struct SavedTurn {
 struct OpenedCall {
     id: ToolCallId,
     start: ToolMetadata,
+    /// The A2UI surface a `ui` call showed. Saved calls keep no surface
+    /// messages either: the session's surfaces show the call again from
+    /// its arguments, which is how they come back after a reload. Only a
+    /// call whose saved result says it showed its surface is shown again
+    /// ([`crate::tools::ui::showed`]): one that was refused, found no `ui`
+    /// tool or never ran showed the user nothing, though its arguments may
+    /// be a block the session's surfaces would take now.
+    surface: Option<Arc<SurfaceContent>>,
 }
 
 impl SavedTurn {
@@ -91,9 +102,19 @@ impl SavedTurn {
     ) -> Self {
         let mcp_tools = tools.mcp_report().tool_names();
         let plan = plan_entries(&tools.todo_state());
+        let mut showed: HashMap<&str, VecDeque<bool>> = HashMap::new();
+        for row in rows {
+            if let Message::ToolResult(result) = &row.message {
+                showed
+                    .entry(result.id.as_str())
+                    .or_default()
+                    .push_back(crate::tools::ui::showed(result));
+            }
+        }
         let mut calls = Capture {
             tools,
             ids,
+            showed,
             opened: Vec::new(),
         };
         // Rendering once, a row at a time, records the calls and finds the
@@ -238,6 +259,10 @@ trait CallSource {
 struct Capture<'a> {
     tools: SessionTools<'a>,
     ids: &'a mut CallIds,
+    /// Whether each saved result under an id says its call showed a
+    /// surface, in the rows' order: the answer for the calls opened under
+    /// the id, in theirs. A call the rows hold no result for showed none.
+    showed: HashMap<&'a str, VecDeque<bool>>,
     opened: Vec<OpenedCall>,
 }
 
@@ -249,9 +274,22 @@ impl CallSource for Capture<'_> {
                 Some(tool.start_metadata(&call.arguments))
             })
             .unwrap_or_default();
+        let showed = call.is_some_and(|_| {
+            self.showed
+                .get_mut(saved)
+                .and_then(VecDeque::pop_front)
+                .unwrap_or(false)
+        });
+        let surface = call
+            .filter(|call| showed && call.name == crate::tools::ui::TOOL_NAME)
+            .and_then(|call| {
+                let request = SurfaceRequest::of_arguments(&call.arguments)?;
+                self.tools.surfaces()?.show(saved, &request).ok()
+            });
         let opened = OpenedCall {
             id: self.ids.open(saved),
             start,
+            surface,
         };
         self.opened.push(opened.clone());
         opened
@@ -315,6 +353,8 @@ struct ReplayedCall {
     results: Vec<Arc<ToolResult>>,
     /// How many calls replay opened before it, for closing calls in order.
     opened_at: usize,
+    /// The A2UI surface it showed, which every update of the call repeats.
+    surface: Option<Arc<SurfaceContent>>,
 }
 
 impl ReplayedCall {
@@ -322,11 +362,13 @@ impl ReplayedCall {
         WireEvent::tool_call(status_update(self.id, Some(ToolStatus::Failed)))
     }
 
-    /// The call's content: every result's, in order.
+    /// The call's content: every result's, in order, then the surface it
+    /// showed.
     fn content(&self) -> Vec<rho_protocol::ToolContent> {
         self.results
             .iter()
             .flat_map(|result| result_content(&result.content, &result.images))
+            .chain(self.surface.as_deref().map(SurfaceContent::wire))
             .collect()
     }
 }
@@ -455,6 +497,7 @@ impl Replay {
         let OpenedCall {
             id,
             start: metadata,
+            surface,
         } = calls.open(&call.id, Some(call));
         // Drawn as live draws the call's start; an empty saved id cannot
         // start, so its proposal's card stands.
@@ -468,6 +511,10 @@ impl Replay {
         self.presenter.forget(&call.id);
         let opened = ToolCallUpdate {
             display: Some(Presentation::Card(card)),
+            // A call that waited showed its surface before it had a result.
+            content: surface
+                .as_deref()
+                .map(|surface| vec![SurfaceContent::wire(surface)]),
             ..opened_call(
                 id.clone(),
                 &call.name,
@@ -477,7 +524,7 @@ impl Replay {
                 &self.mcp_tools,
             )
         };
-        self.open(&call.id, id, call.clone(), Vec::new(), opened);
+        self.open(&call.id, id, call.clone(), Vec::new(), surface, opened);
     }
 
     /// A result updates the latest call opened under its id; results replace
@@ -516,7 +563,14 @@ impl Replay {
             display: Some(shown.presentation),
             ..status_update(id.clone(), Some(status))
         };
-        self.open(&result.id, id, call, vec![Arc::clone(result)], orphan);
+        self.open(
+            &result.id,
+            id,
+            call,
+            vec![Arc::clone(result)],
+            /*surface*/ None,
+            orphan,
+        );
     }
 
     /// Sends `opened`, the card of `call` opened as `id` under `saved` with
@@ -528,6 +582,7 @@ impl Replay {
         id: ToolCallId,
         call: model::ToolCall,
         results: Vec<Arc<ToolResult>>,
+        surface: Option<Arc<SurfaceContent>>,
         opened: ToolCallUpdate,
     ) {
         let call = ReplayedCall {
@@ -536,6 +591,7 @@ impl Replay {
             status: opened.status.unwrap_or(ToolStatus::InProgress),
             results,
             opened_at: self.opened,
+            surface,
         };
         self.opened += 1;
         if let Some(superseded) = self.calls.insert(saved.to_owned(), call) {

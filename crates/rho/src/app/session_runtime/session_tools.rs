@@ -50,6 +50,11 @@ impl<'a> SessionTools<'a> {
         self.0.mcp_report()
     }
 
+    /// The session's A2UI surfaces, when it offers the `ui` tool.
+    pub(crate) fn surfaces(self) -> Option<&'a crate::tools::ui::SurfaceHost> {
+        self.0.surfaces()
+    }
+
     /// The session's todo checklist, shared with its `todo` tool.
     pub(crate) fn todo_state(self) -> TodoState {
         self.0.todo_state()

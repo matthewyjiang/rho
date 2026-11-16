@@ -23,6 +23,7 @@ pub(crate) use sdk_features::message_parent_bundle;
 pub mod sdk_registry;
 #[cfg(debug_assertions)]
 pub(crate) mod tui_fixture;
+pub(crate) mod ui;
 pub mod web;
 pub(crate) mod workflow;
 mod workflow_output;
