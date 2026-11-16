@@ -38,6 +38,7 @@ impl SoftSettingsDelta {
             Entry::Reasoning(_) => self.zen || self.reasoning_output,
             Entry::User(_)
             | Entry::Assistant(_)
+            | Entry::Surface(_)
             | Entry::Notice(_)
             | Entry::Changelog(_)
             | Entry::Error(_) => false,

@@ -586,14 +586,17 @@ impl Theme {
         match state {
             RailRowState::Idle => Self::activity_rail(),
             RailRowState::Hovered => Self::activity_rail().fg(Palette::current().accent),
-            RailRowState::Pressed => {
-                let accent = Palette::current().accent;
-                Style::default()
-                    .fg(Self::contrasting_ink_on(accent))
-                    .bg(accent)
-                    .add_modifier(Modifier::BOLD)
-            }
+            RailRowState::Pressed => Self::accent_fill(),
         }
+    }
+
+    /// Bold ink on a solid accent fill: a pressed row, a primary button.
+    pub(super) fn accent_fill() -> Style {
+        let accent = Palette::current().accent;
+        Style::default()
+            .fg(Self::contrasting_ink_on(accent))
+            .bg(accent)
+            .add_modifier(Modifier::BOLD)
     }
 
     pub(super) fn success() -> Style {

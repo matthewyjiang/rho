@@ -100,6 +100,7 @@ pub(in crate::tui) fn render_entry_with_options(
         crate::tui::Entry::User(_) => Style::default(),
         crate::tui::Entry::Assistant(_)
         | crate::tui::Entry::Reasoning(_)
+        | crate::tui::Entry::Surface(_)
         | crate::tui::Entry::Notice(_)
         | crate::tui::Entry::Changelog(_)
         | crate::tui::Entry::Error(_) => lines

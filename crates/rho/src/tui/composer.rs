@@ -108,7 +108,9 @@ impl App {
 
     fn composer_accepts_paste_burst_char(&self, ch: char) -> bool {
         match self.input_ui.composer() {
-            ComposerMode::Input => self.composer_vim_mode() != Some(VimMode::Normal),
+            ComposerMode::Input => {
+                !self.surfaces.has_keyboard() && self.composer_vim_mode() != Some(VimMode::Normal)
+            }
             ComposerMode::Side => true,
             ComposerMode::Questionnaire(questionnaire) => {
                 questionnaire.accepts_paste_burst_char(ch)
@@ -126,7 +128,8 @@ impl App {
 
     fn composer_accepts_paste_burst_enter(&self) -> bool {
         match self.input_ui.composer() {
-            ComposerMode::Input | ComposerMode::Side => true,
+            ComposerMode::Input => !self.surfaces.has_keyboard(),
+            ComposerMode::Side => true,
             ComposerMode::Questionnaire(questionnaire) => {
                 questionnaire.active_text_entry_active()
                     || (self.input_ui.paste_burst().has_pending()
@@ -510,6 +513,9 @@ impl App {
     pub(super) fn apply_external_paste(&mut self, text: &str) {
         self.flush_pending_paste_burst();
         let text = normalize_paste(text);
+        if self.paste_into_surface(&text) {
+            return;
+        }
         self.insert_external_paste(&text);
         self.input_ui.clear_paste_burst();
     }

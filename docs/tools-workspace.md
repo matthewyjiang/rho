@@ -134,7 +134,47 @@ The `ui` tool lets the model show the user a small interface in the transcript, 
 
 One call shows or updates one surface. An action the user takes after the call returned reaches the model as a message at its turn's next boundary; an idle session starts a turn for it when its client asked for [`idle_wake: turn`](/protocol#a-session-s-setup), and otherwise gets it with the next prompt.
 
-The tool's description teaches the whole notation, so it stays out of the model's context until `tool_search` loads it; the system prompt only says that it exists. Only a daemon session whose client asked for surfaces when it opened the session has the tool. Rho's own terminal UI, `rho run`, `rho attach`, the ACP server, sessions an agent starts, and subagents do not have it yet. Writing a client that draws them: [Protocol](/protocol#surfaces).
+The tool's description teaches the whole notation, so it stays out of the model's context until `tool_search` loads it; the system prompt only says that it exists. Only a daemon session whose client asked for surfaces when it opened the session has the tool. Rho's terminal UI draws them ([below](#surfaces-in-the-terminal-ui)). `rho run`, `rho attach`, the ACP server, sessions an agent starts, and subagents do not have the tool yet. Writing a client that draws them: [Protocol](/protocol#surfaces).
+
+### Surfaces in the terminal UI
+
+The terminal UI draws a surface in the transcript, in a rounded frame under the card of the `ui` call that showed it. The frame is at most 80 columns wide, and it takes the accent color while the surface has the keyboard. The surface stays there and stays usable after the call returns. A later call that updates the surface moves it under that call's card, and a deleted surface leaves its card alone. Zen mode keeps surfaces, and they are never truncated.
+
+A call that waits for you gives its surface the keyboard, unless you are typing in the composer or a picker is open. Otherwise press `Alt+U` to move the keyboard to the latest surface. The line under the surface names the keys that apply. The control the keyboard is on has its label in bold and underlined.
+
+| Key | Action |
+| --- | --- |
+| `Alt+U` | From the composer, move the keyboard to the latest surface. A key you bound to something else in `[keybindings]` keeps that binding |
+| `Tab` / `Down`, `Shift+Tab` / `Up` | Move to the next or previous control |
+| `Enter` / `Space` | Press a button, toggle a checkbox or a choice, open or close a modal, or start editing a field |
+| `Left` / `Right` | Move a slider or switch tabs; on other controls, move to the previous or next one |
+| `Enter` / `Esc` while editing | Stop editing the field. `Tab` and `Shift+Tab` stop and move on |
+| `Esc` | Return the keyboard to the composer. During a turn, a second `Esc` aborts the turn as usual |
+
+Typing on a focused field starts editing it, and a paste goes into the field being edited. While a surface has the keyboard, keys it does not use never edit the composer's draft: only `Ctrl+C` and the chords that act on the app rather than the draft (search transcript, jump to bottom, toggle tool output, cycle streaming mode, cycle permission mode, cycle pinned model) go on to the rest of the TUI. Edits go to the surface's data model as you type, so its checks update at once and a button sends the values you entered. A check that fails shows its message under the control, and a button whose own check fails is disabled. In a multiline field the newline key (`insert_newline`, `Ctrl+J` by default) adds a line.
+
+Pressing a button whose action is an event sends it to the session and returns the keyboard to the composer. A waiting `ui` call returns the action; otherwise an idle session starts a turn to read it. A button that opens a link does not start a browser: the terminal UI prints the link as a notice.
+
+Each component of the A2UI basic catalog has a terminal form:
+
+| Component | Drawn as |
+| --- | --- |
+| `Text` | Markdown, as assistant text is. A heading (`h1` to `h5`) is bold in the accent color, and a caption is dimmed |
+| `Row`, `Column`, `List` | Layout. A row puts its children side by side when they fit, in equal columns when those are at least 12 columns wide, and stacks them otherwise. A column leaves a blank line between its children, except between lines of text, between checkboxes, and beside a divider |
+| `Card` | A rounded border. A card at the root is the surface's own frame. A line of bold text that opens a card is its title, drawn as a heading |
+| `Button` | Its label on a filled block: the accent color for a primary button, a muted wash for a default one. A borderless button is its label in the accent color. `▸` leads the label of the filled button the keyboard is on |
+| `CheckBox` | `■ label` when checked, `□ label` when not |
+| `TextField` | Its label, then the value on a muted wash at most 48 columns wide, with `▌` at its left edge while the keyboard is on it. A placeholder is dimmed and italic. Long text wraps, and an obscured value shows as bullets |
+| `DateTimeInput` | A field that takes ISO 8601 text, such as `2026-01-31` or `2026-01-31T09:30`, and keeps anything else out of the data model |
+| `ChoicePicker` | One line for each option, `●` or `○` for one choice and `■` or `□` for several, or a row of `( chip )`s with each selected one filled as `(✓ chip)`. The `filterable` option is ignored |
+| `Slider` | `━━━━●──── 3` |
+| `Tabs` | A tab bar with the active tab bold in the accent color over a heavy rule, then that tab's content |
+| `Modal` | Its trigger as `▸ label`, and `▾ label` once opened, with the content in a border below it |
+| `Icon` | One glyph for each icon name, `◆` for a name without one |
+| `Divider` | A rule |
+| `Image`, `Video`, `AudioPlayer` | One line with the description and the URL |
+
+A surface is not operated with the mouse. A field edits as one run of text: the arrow keys move the caret along it, and `Up` and `Down` leave the field.
 
 ## Background processes
 

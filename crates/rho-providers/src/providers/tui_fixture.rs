@@ -22,6 +22,7 @@ mod send_confirm;
 mod sessions;
 mod stream_scenarios;
 mod streaming_controls;
+mod surface;
 mod todo;
 mod workflow;
 mod write_stream;
@@ -268,6 +269,11 @@ fn fixture_response(request: &ModelRequest<'_>) -> Result<ModelResponse, Provide
         return response;
     }
     if let Some(response) = plan_exit::intercept(&prompt, request) {
+        return response;
+    }
+    if let Some(response) =
+        surface::call(&prompt, request).or_else(|| surface::completion(request, &prompt))
+    {
         return response;
     }
     if let Some(response) = response_scenarios::intercept(request) {

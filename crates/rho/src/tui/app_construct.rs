@@ -60,6 +60,7 @@ impl App {
             process_panel: ProcessPanel::default(),
             workflow_panel: WorkflowPanel::default(),
             daemon_answers: Default::default(),
+            surfaces: Default::default(),
             input_ui: InputUi::default(),
             palette_caches: PaletteCaches::default(),
             status_overlay: None,

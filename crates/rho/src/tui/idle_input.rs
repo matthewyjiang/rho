@@ -121,6 +121,10 @@ impl App {
             return Ok(());
         }
 
+        if self.handle_surface_key(key).await {
+            return Ok(());
+        }
+
         if self.handle_questionnaire_transcript_key(key, terminal)? {
             return Ok(());
         }

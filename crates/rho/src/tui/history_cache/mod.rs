@@ -36,6 +36,7 @@ pub(super) fn incremental_entry_source(entry: &Entry) -> Option<(&str, EntryCont
         | Entry::Reasoning(_)
         | Entry::User(_)
         | Entry::Tool(_)
+        | Entry::Surface(_)
         | Entry::Notice(_)
         | Entry::Changelog(_)
         | Entry::Error(_) => None,
@@ -95,6 +96,8 @@ impl HistoryRenderSettings {
             Entry::Reasoning(reasoning) => {
                 self.zen_mode || (!self.show_reasoning_output && reasoning.thought_for.is_none())
             }
+            // A surface stays in zen mode: the user is asked to act on it.
+            Entry::Surface(surface) => surface.view.is_none(),
             Entry::User(_)
             | Entry::Assistant(_)
             | Entry::Notice(_)
@@ -914,6 +917,7 @@ fn render_cache_entry(
         Entry::User(_)
         | Entry::Assistant(_)
         | Entry::Reasoning(_)
+        | Entry::Surface(_)
         | Entry::Notice(_)
         | Entry::Changelog(_)
         | Entry::Error(_) => rendered.image_placement.is_some(),

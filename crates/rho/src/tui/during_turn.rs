@@ -79,6 +79,9 @@ impl App {
         if self.handle_transcript_search_key(key) {
             return Ok(());
         }
+        if self.handle_surface_key(key).await {
+            return Ok(());
+        }
 
         if self.handle_questionnaire_transcript_key(key, terminal)? {
             return Ok(());
@@ -517,6 +520,8 @@ impl App {
         self.active_palette().is_some()
             || self.pending_input_focused()
             || !matches!(self.input_ui.composer(), ComposerMode::Input)
+            // Esc first returns the keyboard from a surface to the composer.
+            || self.surfaces.has_keyboard()
     }
 
     /// Empty-composer abort copy. Overlays, shells, and palettes are already
@@ -526,6 +531,7 @@ impl App {
             && self.input_ui.shell_mode().is_none()
             && !self.pending_input_focused()
             && !self.vim_captures_esc()
+            && !self.surfaces.has_keyboard()
             && self.pending_inline_shells.is_empty()
             && self.turn.session_ui().esc_aborts_operation()
     }

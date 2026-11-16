@@ -226,6 +226,7 @@ mod stream_preview;
 mod streaming_mode;
 mod subagent_attach;
 mod subagent_panel;
+mod surface;
 mod synced_backend;
 mod terminal_events;
 mod terminal_probe;
@@ -534,6 +535,8 @@ struct App {
     /// The followed daemon session's input request the TUI shows, and those
     /// waiting behind it.
     daemon_answers: daemon_answers::DaemonAnswers,
+    /// The followed daemon session's A2UI surfaces.
+    surfaces: surface::Surfaces,
     input_ui: InputUi,
     /// Palette match caches shared by keystroke and render paths.
     palette_caches: palette::PaletteCaches,

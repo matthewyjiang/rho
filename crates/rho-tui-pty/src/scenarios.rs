@@ -121,6 +121,7 @@ mod steering;
 mod streaming_controls;
 mod subagent_rail;
 mod supervised_approval;
+mod surface;
 #[cfg(unix)]
 mod terminal_ownership;
 mod text_selection;
@@ -356,6 +357,11 @@ const ALL_SCENARIOS: &[Scenario] = &[
     questionnaire_timeout::TIMEOUT,
     questionnaire_timeout::PAUSE,
     DOCUMENT_ATTACHMENT_SCENARIO,
+    surface::FORM,
+    surface::ESCAPE,
+    surface::IDLE,
+    surface::RESET,
+    surface::ZEN,
     questionnaire::QUESTIONNAIRE_SCENARIO,
     questionnaire::QUESTIONNAIRE_CLICK_SCENARIO,
     questionnaire::APPROVAL_CLICK_SCENARIO,
