@@ -72,6 +72,9 @@ impl StreamCapture {
         (summary, provider_context)
     }
 
+    /// Partial output for an interrupted turn. A streamed reasoning summary
+    /// still marks the turn as aborted, but its text is dropped: reasoning
+    /// survives an abort only as opaque provider context.
     pub(super) fn into_aborted_assistant(self) -> Option<AbortedAssistant> {
         if self.content.is_empty()
             && self.reasoning_summary.is_empty()
@@ -85,8 +88,7 @@ impl StreamCapture {
             content: self.content,
             reasoning: String::new(),
             provenance: None,
-            reasoning_summary: (!self.reasoning_summary.is_empty())
-                .then_some(self.reasoning_summary),
+            reasoning_summary: None,
             provider_context: self.provider_context,
             // Keep fragments for provider fallbacks even when complete calls were also
             // placed into `content` to preserve stream positions.

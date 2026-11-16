@@ -10,7 +10,8 @@ fn identity() -> ModelIdentity {
 }
 
 // Covers: raw reasoning remains host-visible but is never replayed on abort;
-// portable summaries and opaque provider context survive both completion paths.
+// opaque provider context survives both completion paths, and the reasoning
+// summary survives only completion.
 // Owner: SDK stream capture.
 #[test]
 fn reasoning_forwarding_preserves_summary_and_abort_contracts() {
@@ -54,7 +55,7 @@ fn reasoning_forwarding_preserves_summary_and_abort_contracts() {
                     content: Vec::new(),
                     reasoning: String::new(),
                     provenance: None,
-                    reasoning_summary: Some("summary".into()),
+                    reasoning_summary: None,
                     provider_context: vec![context],
                     tool_calls: Vec::new(),
                     usage: ModelUsage::default(),
@@ -68,6 +69,19 @@ fn reasoning_forwarding_preserves_summary_and_abort_contracts() {
             assert_eq!(capture.into_aborted_assistant(), None);
         }
     }
+
+    // A turn interrupted mid-summary still records its abort, without the text.
+    let mut capture = StreamCapture::default();
+    capture_provider_event(
+        ModelEvent::ReasoningSummaryDelta("summary".into()),
+        &identity(),
+        &ModelUsage::default(),
+        &mut capture,
+    );
+    assert_eq!(
+        capture.into_aborted_assistant(),
+        Some(AbortedAssistant::default())
+    );
 }
 
 fn capture_tool_delta(

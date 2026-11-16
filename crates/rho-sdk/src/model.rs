@@ -183,12 +183,29 @@ pub struct PartialToolCall {
 /// explicit cancellation and terminal provider/run failure with streamed
 /// progress. Provider adapters may append a model-visible abort marker when
 /// replaying this entry on a later turn.
+///
+/// An aborted turn carries reasoning forward only as opaque
+/// `provider_context`: providers never replay `reasoning_summary`, which is
+/// the model's partial reasoning in readable prose.
+///
+/// # Next major
+///
+/// NEXT_MAJOR(rho-sdk): remove `AbortedAssistant::reasoning` and
+/// `AbortedAssistant::reasoning_summary`.
+///
+/// The SDK never fills either field and providers never replay them. They
+/// remain only because removing public fields breaks hosts that construct or
+/// match `AbortedAssistant`; snapshots that contain them still load after
+/// removal. `reasoning` has no serde default, so readers older than the
+/// removal need the key: keep writing it empty or accept that cutoff.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct AbortedAssistant {
     pub content: Vec<ContentBlock>,
     pub reasoning: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provenance: Option<ModelIdentity>,
+    /// Older sessions recorded the partial reasoning summary here. It is
+    /// never replayed to a provider.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_summary: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

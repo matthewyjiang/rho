@@ -4,6 +4,7 @@
 //! to API-specific wire shapes. They do not own credentials, endpoint selection,
 //! retry policy, or provider registration.
 
+mod aborted_replay;
 pub(crate) mod anthropic_messages;
 mod cost;
 pub(crate) mod gemini_generate_content;

@@ -327,12 +327,10 @@ fn append_codex_history_message(
             append_codex_prepared_assistant(input, prepared, &async_call_ids)?;
         }
         WireMessage::AbortedAssistant(message) => {
-            let mut enriched = crate::model::AssistantMessage {
-                content: aborted_content_as_non_executable(message),
-                provenance: message.provenance.clone(),
-                reasoning_summary: message.reasoning_summary.clone(),
-                provider_context: message.provider_context.clone(),
-            };
+            let mut enriched = crate::protocol::aborted_replay::aborted_replay_message(
+                message,
+                aborted_content_as_non_executable(message),
+            );
             enriched
                 .content
                 .push(ContentBlock::Text("[Operation aborted]".into()));
@@ -594,12 +592,10 @@ pub(crate) fn to_openai_message_for_target(
             openai_prepared_assistant(prepare_assistant(message.clone(), target), synthesize)?
         }
         WireMessage::AbortedAssistant(message) => {
-            let mut enriched = crate::model::AssistantMessage {
-                content: aborted_content_as_non_executable(message),
-                provenance: message.provenance.clone(),
-                reasoning_summary: message.reasoning_summary.clone(),
-                provider_context: message.provider_context.clone(),
-            };
+            let mut enriched = crate::protocol::aborted_replay::aborted_replay_message(
+                message,
+                aborted_content_as_non_executable(message),
+            );
             enriched
                 .content
                 .push(ContentBlock::Text("[Operation aborted]".into()));

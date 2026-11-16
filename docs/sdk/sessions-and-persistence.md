@@ -23,7 +23,7 @@ A run starts from a cloned history and appends user input to a private candidate
 
 An automatic compaction is its own immediate commit. If a later step fails, that already successful compaction remains committed, and cooperative terminal failure still commits later recoverable candidate progress. Hosts must not assume every failed run leaves the starting revision unchanged.
 
-Raw streamed reasoning is not committed. A provider-produced reasoning summary may be retained. On cooperative cancellation or terminal failure, partial text, summary, provider context, partial tool calls, and usage may be retained in `AbortedAssistant`, but its raw `reasoning` field is cleared before snapshot construction and import.
+Raw streamed reasoning is not committed. A provider-produced reasoning summary may be retained. On cooperative cancellation or terminal failure, partial text, provider context, partial tool calls, and usage may be retained in `AbortedAssistant`, but its raw `reasoning` field is cleared before snapshot construction and import. An aborted turn carries reasoning forward only as opaque provider context: the SDK does not record its reasoning summary, and summaries that older sessions recorded are never replayed to a provider.
 
 ## Compaction
 

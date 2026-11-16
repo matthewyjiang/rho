@@ -40,9 +40,10 @@ pub fn estimate_message_tokens(message: &Message) -> u64 {
             message.portable_fallback(),
             &message.provider_context,
         ),
+        // Aborted turns never replay their reasoning summary.
         Message::AbortedAssistant(message) => assistant_message_tokens(
             &message.content,
-            message.reasoning_summary.as_deref(),
+            /*reasoning_summary*/ None,
             /*portable_fallback*/ None,
             &message.provider_context,
         ),
