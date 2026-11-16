@@ -17,6 +17,7 @@
 //! | [`SESSION_UNSTEER`] | [`SessionUnsteerParams`] | [`SessionUnsteerResponse`] |
 //! | [`SESSION_ANSWER`] | [`SessionAnswerParams`] | [`SessionAnswerResponse`] |
 //! | [`SESSION_HOLD`] | [`SessionHoldParams`] | [`SessionHoldResponse`] |
+//! | [`SESSION_SURFACE_ACTION`] | [`SessionSurfaceActionParams`] | [`SessionSurfaceActionResponse`] |
 //! | [`SESSION_ATTACH`] | [`SessionAttachParams`] | [`SessionAttachResponse`] |
 //! | [`SESSION_OBSERVE`] | [`SessionObserveParams`] | [`SessionAttachResponse`] |
 //! | [`SESSION_DETACH`] | [`SessionDetachParams`] | [`SessionDetachResponse`] |
@@ -83,6 +84,7 @@ mod process;
 mod session;
 mod setup;
 mod store;
+mod surface;
 mod worktree;
 
 pub use auth::{
@@ -169,6 +171,9 @@ pub use store::{
     AuthChooseStoreParams, AuthChooseStoreResponse, CredentialStoreKind, CredentialStoreStatus,
     StoreSelectedBy, AUTH_CHOOSE_STORE,
 };
+pub use surface::{
+    SessionSurfaceActionParams, SessionSurfaceActionResponse, SESSION_SURFACE_ACTION,
+};
 pub use worktree::{
     WorktreePruneParams, WorktreePruneResponse, WorktreeReport, WorktreeVerdict, WORKTREE_PRUNE,
 };
@@ -254,6 +259,7 @@ protocol! {
         SessionUnsteer = SESSION_UNSTEER: SessionUnsteerParams => SessionUnsteerResponse,
         SessionAnswer = SESSION_ANSWER: SessionAnswerParams => SessionAnswerResponse,
         SessionHold = SESSION_HOLD: SessionHoldParams => SessionHoldResponse,
+        SessionSurfaceAction = SESSION_SURFACE_ACTION: SessionSurfaceActionParams => SessionSurfaceActionResponse,
         SessionAttach = SESSION_ATTACH: SessionAttachParams => SessionAttachResponse,
         SessionObserve = SESSION_OBSERVE: SessionObserveParams => SessionAttachResponse,
         SessionDetach = SESSION_DETACH: SessionDetachParams => SessionDetachResponse,

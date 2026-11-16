@@ -745,7 +745,7 @@
       "oneOf": [
         {
           "const": "answer",
-          "description": "Answer a session's open requests, its approvals and questions, and\nhold their timeouts: [`super::SESSION_ANSWER`] and\n[`super::SESSION_HOLD`].",
+          "description": "Answer a session's open requests, its approvals and questions, and\nhold their timeouts: [`super::SESSION_ANSWER`] and\n[`super::SESSION_HOLD`]. Acting on a surface it shows needs it too:\n[`super::SESSION_SURFACE_ACTION`].",
           "type": "string"
         }
       ]
@@ -5697,6 +5697,11 @@
           "type": "string"
         },
         {
+          "const": "surfaces",
+          "description": "A2UI surfaces: the session has no `ui` tool, for a client that\ncannot draw [`crate::ToolContent::Surface`]. Like\n[`Self::Questions`] it belongs to the client and is never saved.",
+          "type": "string"
+        },
+        {
           "const": "saving",
           "description": "The session's file, as with `--no-save`: the session lives in the\ndaemon's memory alone. The daemon keeps it while a client follows it\nor it has work under way, and discards it once it sits idle, as it\ndoes a session that took no prompt; a daemon restart loses it. Only\na new session takes this: reopening a saved one without its file is\n[`crate::ErrorCode::InvalidParams`].",
           "type": "string"
@@ -6039,6 +6044,34 @@
         "added_dirs",
         "updated_at"
       ],
+      "type": "object"
+    },
+    "SessionSurfaceActionParams": {
+      "description": "Params of [`SESSION_SURFACE_ACTION`].",
+      "properties": {
+        "action": {
+          "description": "A2UI's renderer-to-agent `action` message, whole:\n`{\"version\": \"v1.0\", \"action\": {\"name\", \"surfaceId\",\n\"sourceComponentId\", \"timestamp\", \"context\", ...}}`. The model reads\nit as sent."
+        },
+        "data_model": {
+          "description": "The surface's data model, for a surface created with\n`sendDataModel`, as A2UI's transport attaches it to the message."
+        },
+        "session": {
+          "$ref": "#/$defs/SessionId"
+        },
+        "surface": {
+          "description": "The surface the user acted on, as its\n[`super::ToolContent::Surface`] names it.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "session",
+        "surface",
+        "action"
+      ],
+      "type": "object"
+    },
+    "SessionSurfaceActionResponse": {
+      "description": "Result of [`SESSION_SURFACE_ACTION`]: the session has the action. A\n`ui` call waiting on the surface returns it; otherwise the model reads\nit at its turn's next boundary, in a turn the daemon starts for it when\nthe session is idle and was opened with `idle_wake: turn`, or with the\nnext prompt. A surface the session does not have, an `action` that is\nnot A2UI's message for that surface, and a component with no such\naction are [`crate::ErrorCode::InvalidParams`].",
       "type": "object"
     },
     "SessionUnsteerParams": {
@@ -6764,6 +6797,28 @@
             "type",
             "path",
             "new_text"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "An A2UI surface the `ui` tool shows the user: `messages` are checked\nA2UI v1.0 agent-to-renderer messages, all about surface `surface`,\nfor the client's A2UI processor. A call has at most one, and every\nupdate of the call repeats it unchanged, so a client applies the\nmessages once per call: when it first sees them, live or in a\nreplay. The user's actions on the surface go back with\n[`super::SESSION_SURFACE_ACTION`]. Only a session opened with\n[`super::SessionPart::Surfaces`] sends it.",
+          "properties": {
+            "messages": {
+              "items": true,
+              "type": "array"
+            },
+            "surface": {
+              "type": "string"
+            },
+            "type": {
+              "const": "surface",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "surface",
+            "messages"
           ],
           "type": "object"
         },
@@ -7960,6 +8015,14 @@
       },
       "result": {
         "$ref": "#/$defs/SessionSteerResponse"
+      }
+    },
+    "rho/session/surface_action": {
+      "params": {
+        "$ref": "#/$defs/SessionSurfaceActionParams"
+      },
+      "result": {
+        "$ref": "#/$defs/SessionSurfaceActionResponse"
       }
     },
     "rho/session/unsteer": {

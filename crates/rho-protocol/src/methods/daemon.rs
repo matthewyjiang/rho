@@ -60,7 +60,8 @@ pub enum ClientRole {
 pub enum ClientCapability {
     /// Answer a session's open requests, its approvals and questions, and
     /// hold their timeouts: [`super::SESSION_ANSWER`] and
-    /// [`super::SESSION_HOLD`].
+    /// [`super::SESSION_HOLD`]. Acting on a surface it shows needs it too:
+    /// [`super::SESSION_SURFACE_ACTION`].
     Answer,
 }
 

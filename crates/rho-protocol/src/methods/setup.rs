@@ -178,6 +178,10 @@ pub enum SessionPart {
     /// model: which connections may answer a request is decided by the
     /// [`crate::ClientCapability::Answer`] each declared, not by this.
     Questions,
+    /// A2UI surfaces: the session has no `ui` tool, for a client that
+    /// cannot draw [`crate::ToolContent::Surface`]. Like
+    /// [`Self::Questions`] it belongs to the client and is never saved.
+    Surfaces,
     /// The session's file, as with `--no-save`: the session lives in the
     /// daemon's memory alone. The daemon keeps it while a client follows it
     /// or it has work under way, and discards it once it sits idle, as it

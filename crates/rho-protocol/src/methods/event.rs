@@ -414,6 +414,18 @@ pub enum ToolContent {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         deleted: bool,
     },
+    /// An A2UI surface the `ui` tool shows the user: `messages` are checked
+    /// A2UI v1.0 agent-to-renderer messages, all about surface `surface`,
+    /// for the client's A2UI processor. A call has at most one, and every
+    /// update of the call repeats it unchanged, so a client applies the
+    /// messages once per call: when it first sees them, live or in a
+    /// replay. The user's actions on the surface go back with
+    /// [`super::SESSION_SURFACE_ACTION`]. Only a session opened with
+    /// [`super::SessionPart::Surfaces`] sends it.
+    Surface {
+        surface: String,
+        messages: Vec<serde_json::Value>,
+    },
     /// A value a newer daemon sends that this crate does not know; daemons
     /// never send it.
     #[serde(other)]
