@@ -35,8 +35,18 @@ const MAX_SURFACE_ID_BYTES: usize = 64;
 const SURFACE_MEDIA_TYPE: &str = "application/vnd.rho.a2ui-surface+json";
 
 /// How the error of a call that showed its surface and then stopped
-/// waiting on it begins.
+/// waiting on it begins. A session saves a call's result as text alone, so
+/// this is what tells replay the call showed something ([`showed`]).
 const STOPPED_WAITING: &str = "stopped waiting on surface ";
+
+/// Whether a `ui` call whose saved result is `result` showed its surface.
+/// One that succeeded did, and so did one that stopped waiting for the
+/// user, as when its turn was cancelled: the user had the surface by
+/// then. A call that was refused, or interrupted before it ran, showed
+/// nothing.
+pub(crate) fn showed(result: &rho_sdk::model::ToolResult) -> bool {
+    !result.is_failure() || result.content.starts_with(STOPPED_WAITING)
+}
 
 fn stopped_waiting(surface: &str, why: &str) -> ToolError {
     ToolError::new(
@@ -176,11 +186,15 @@ impl Tool for UiTool {
                         .with_metadata(metadata.clone()),
                 )
                 .await;
-            // An action that arrived as the turn was cancelled goes back
-            // to the session when `waiting` drops.
+            // The user saw the surface, so a wait that ends early says so
+            // instead of ending as a call interrupted before it ran, which
+            // showed nothing. An action that arrived as the turn was
+            // cancelled goes back to the session when `waiting` drops.
             let action = tokio::select! {
                 biased;
-                () = context.cancellation().cancelled() => return Err(ToolError::cancelled()),
+                () = context.cancellation().cancelled() => {
+                    return Err(stopped_waiting(&content.surface, "the turn was cancelled"));
+                }
                 action = waiting.action() => action.map_err(|_| {
                     stopped_waiting(&content.surface, "another call waits on it now, or the conversation moved to another branch")
                 })?,

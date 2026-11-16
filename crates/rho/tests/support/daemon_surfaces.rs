@@ -4,9 +4,10 @@
 
 use pretty_assertions::assert_eq;
 use rho_protocol::{
-    methods::SessionSurfaceAction, Client, IdleWake, JobState, Seq, SessionAttachResponse,
-    SessionEvent, SessionId, SessionSetup, SessionSurfaceActionParams, Surfaces, ToolCallId,
-    ToolContent, ToolStatus,
+    methods::{SessionCancel, SessionSurfaceAction},
+    Client, IdleWake, JobState, Seq, SessionAttachResponse, SessionCancelParams, SessionEvent,
+    SessionId, SessionSetup, SessionSurfaceActionParams, Surfaces, ToolCallId, ToolContent,
+    ToolStatus,
 };
 use serde_json::{json, Value};
 
@@ -372,6 +373,82 @@ async fn a_waiting_call_is_refused_while_no_follower_draws_surfaces() {
     assert_eq!(
         (status, surface(&content)),
         (Some(ToolStatus::Failed), None),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
+// Covers: a reload shows surfaces again from the saved calls' arguments,
+// so a call that showed nothing, here for want of a `ui` tool, must not
+// show a surface once a client that draws them reopens the session
+// Owner: daemon session
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_call_that_showed_nothing_shows_nothing_after_a_reload() {
+    let sandbox = Sandbox::new();
+    let client = sandbox
+        .start_daemon_with("tool-call", &["--unload-idle-after", "200ms"])
+        .await;
+    let session = sandbox.new_session(&client).await;
+    let (mut live, _) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
+    sandbox
+        .prompt_tool_call(&client, &session, &confirm(false))
+        .await;
+    live.read_until(is_state(JobState::Completed)).await;
+    drop(live);
+    sandbox.wait_unloaded(&session, 1).await;
+
+    let (mut reloaded, _) = follow(&sandbox, &session).await;
+    reloaded.read_until(call_is(ToolStatus::Failed)).await;
+
+    let (_, content) = shown(&reloaded.events);
+    assert_eq!(surface(&content), None);
+}
+
+// Covers: a waiting call whose turn is cancelled showed its surface, so
+// the surface must stay on the call and come back after a reload, though
+// the call failed
+// Owner: daemon session
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_cancelled_wait_keeps_its_surface_after_a_reload() {
+    let sandbox = Sandbox::new();
+    let client = sandbox
+        .start_daemon_with("tool-call", &["--unload-idle-after", "200ms"])
+        .await;
+    let session = sandbox.new_session_with_setup(&client, drawing()).await;
+    let (mut live, _) = follow(&sandbox, &session).await;
+    search_ui(&sandbox, &client, &session, &mut live).await;
+    sandbox
+        .prompt_tool_call(&client, &session, &confirm(true))
+        .await;
+    live.read_until(|event| {
+        matches!(event, SessionEvent::ToolCall(update)
+            if update.content.as_deref().is_some_and(|content| surface(content).is_some()))
+    })
+    .await;
+    let waiting = surface(&shown(&live.events).1).cloned();
+
+    client
+        .request::<SessionCancel>(&SessionCancelParams {
+            session: session.clone(),
+        })
+        .await
+        .unwrap();
+    live.read_until(is_state(JobState::Cancelled)).await;
+    let (live_status, live_content) = shown(&live.events);
+    drop(live);
+    sandbox.wait_unloaded(&session, 1).await;
+    let (mut reloaded, _) = follow(&sandbox, &session).await;
+    reloaded.read_until(call_is(ToolStatus::Failed)).await;
+    let (_, replayed_content) = shown(&reloaded.events);
+
+    assert_eq!(
+        (
+            waiting.is_some(),
+            live_status,
+            surface(&live_content).cloned(),
+            surface(&replayed_content).cloned(),
+        ),
+        (true, Some(ToolStatus::Failed), waiting.clone(), waiting),
         "log:\n{}",
         sandbox.isolated.daemon_log()
     );
