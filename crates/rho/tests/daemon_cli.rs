@@ -38,6 +38,9 @@ mod sessions;
 #[path = "support/daemon_setup.rs"]
 mod setup;
 
+#[path = "support/daemon_surfaces.rs"]
+mod surfaces;
+
 #[path = "support/daemon_configure.rs"]
 mod configure;
 

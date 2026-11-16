@@ -47,8 +47,8 @@ use std::{
 use rho_protocol::{
     DetachReason, ErrorCode, RpcError, SessionAnswerParams, SessionAnswerResponse,
     SessionAttachParams, SessionAttachResponse, SessionCancelParams, SessionCancelResponse,
-    SessionHoldParams, SessionHoldResponse, SessionNewParams, SessionNewResponse, Subscription,
-    TurnOutcome,
+    SessionHoldParams, SessionHoldResponse, SessionNewParams, SessionNewResponse,
+    SessionSurfaceActionParams, SessionSurfaceActionResponse, Subscription, TurnOutcome,
 };
 use rho_sdk::{CancellationToken, SessionId};
 
@@ -728,6 +728,26 @@ impl Sessions {
         };
         session.change_inputs(|inputs| inputs.answer(params.request, params.answer))?;
         Ok(SessionAnswerResponse {})
+    }
+
+    /// Hands a session what the user did on an A2UI surface its `ui` tool
+    /// showed. The `ui` call waiting on the surface returns it; with none,
+    /// the session's next turn delivers it, which the idle watcher starts
+    /// where the session's client asked for that (see [`idle_wake`]).
+    pub(super) async fn surface_action(
+        &self,
+        params: SessionSurfaceActionParams,
+    ) -> Result<SessionSurfaceActionResponse, RpcError> {
+        let invalid = |message: String| RpcError::new(ErrorCode::InvalidParams, message);
+        let surfaces = self
+            .loaded_session(&params.session)
+            .await?
+            .and_then(|session| session.background.surfaces())
+            .ok_or_else(|| invalid(format!("the session has no surface `{}`", params.surface)))?;
+        surfaces
+            .act(&params.surface, &params.action, params.data_model)
+            .map_err(invalid)?;
+        Ok(SessionSurfaceActionResponse {})
     }
 
     /// Stops one of a session's open input requests from timing out, for a

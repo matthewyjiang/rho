@@ -102,6 +102,7 @@ async fn started(
         Some(processes.clone()),
         WorkflowRunTracker::new(),
         Some(subagents),
+        /*surfaces*/ None,
     )
     .unwrap();
     (awaited, processes, running)

@@ -6050,10 +6050,10 @@
       "description": "Params of [`SESSION_SURFACE_ACTION`].",
       "properties": {
         "action": {
-          "description": "A2UI's renderer-to-agent `action` message, whole:\n`{\"version\": \"v1.0\", \"action\": {\"name\", \"surfaceId\",\n\"sourceComponentId\", \"timestamp\", \"context\", ...}}`. The model reads\nit as sent."
+          "description": "A2UI's renderer-to-agent `action` message, whole, as a client's\nA2UI processor writes it: `{\"version\": ..., \"action\": {\"name\",\n\"surfaceId\", \"sourceComponentId\", \"timestamp\", \"context\", ...}}`.\nThe model reads its `action` member."
         },
         "data_model": {
-          "description": "The surface's data model, for a surface created with\n`sendDataModel`, as A2UI's transport attaches it to the message."
+          "description": "The surface's data model, for a surface created with\n`sendDataModel`, as A2UI's transport attaches it to the message.\nThe model reads it with the action, as `dataModel`."
         },
         "session": {
           "$ref": "#/$defs/SessionId"

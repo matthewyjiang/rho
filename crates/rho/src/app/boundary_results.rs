@@ -13,6 +13,7 @@ use crate::{
     tools::{
         agent::{SubagentManager, SubagentNotification},
         process::ProcessNotification,
+        ui::SurfaceAction,
         workflow_tracker::WorkflowNotification,
     },
 };
@@ -27,6 +28,8 @@ pub(crate) struct BoundaryResults<'a> {
     pub(crate) subagents: &'a [SubagentNotification],
     pub(crate) workflows: &'a [WorkflowNotification],
     pub(crate) processes: &'a [ProcessNotification],
+    /// What the user did on A2UI surfaces while no `ui` call waited.
+    pub(crate) surface_actions: &'a [SurfaceAction],
 }
 
 /// Model input sections and display rows for one boundary, in delivery order.
@@ -91,6 +94,16 @@ impl BoundaryResults<'_> {
                     .iter()
                     .map(|notification| DisplayRow::Notification(Box::new(notification.card()))),
             );
+        }
+        for SurfaceAction { surface, action } in self.surface_actions {
+            model.push(format!(
+                "The user acted on surface `{surface}`, which the `ui` tool showed. The A2UI action:\n\n{action}"
+            ));
+            let name = action.get("name").and_then(serde_json::Value::as_str);
+            rows.push(DisplayRow::Notice(format!(
+                "surface action\n{} on surface {surface}",
+                name.unwrap_or("action")
+            )));
         }
         BoundaryMessage { model, rows }
     }

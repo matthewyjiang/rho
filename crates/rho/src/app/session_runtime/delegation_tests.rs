@@ -94,6 +94,7 @@ impl Fixture {
         let host = Delegation::attach(
             &session,
             BackgroundSources {
+                surfaces: None,
                 subagents: Some(&manager),
                 processes: Some(&processes),
                 workflows: &workflows,
@@ -560,6 +561,7 @@ async fn failed_attach_keeps_held_notices() {
     let attached = Delegation::attach(
         &session,
         BackgroundSources {
+            surfaces: None,
             subagents: Some(&manager),
             processes: Some(&processes),
             workflows: &workflows,
@@ -602,6 +604,7 @@ async fn only_live_processes_and_task_results_are_background_work() {
             Fixture::stop_process(&processes, &id).await;
         }
         let sources = BackgroundSources {
+            surfaces: None,
             subagents: None,
             processes: Some(&processes),
             workflows: &workflows,

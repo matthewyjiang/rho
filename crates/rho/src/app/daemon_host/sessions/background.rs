@@ -27,6 +27,7 @@ use crate::{
     subagent::RunState,
     tools::{
         process::{LiveProcessSummary, ProcessManager, State, STOP_GRACE},
+        ui::SurfaceHost,
         workflow_tracker::{WorkflowRailSummary, WorkflowRunTracker},
     },
     workflow::{RunLifecycle, WorkflowOutcome},
@@ -54,6 +55,7 @@ pub(super) struct SessionBackground {
 struct Sources {
     processes: Option<ProcessManager>,
     subagents: Option<SubagentManager>,
+    surfaces: Option<SurfaceHost>,
 }
 
 impl Sources {
@@ -61,6 +63,7 @@ impl Sources {
         Self {
             processes: runtime.tools().processes().cloned(),
             subagents: runtime.tools().subagents().cloned(),
+            surfaces: runtime.tools().surfaces().cloned(),
         }
     }
 }
@@ -92,6 +95,7 @@ impl SessionBackground {
             sources: Mutex::new(Sources {
                 processes,
                 subagents,
+                surfaces: None,
             }),
             workflows: WorkflowRunTracker::new(),
             replaced: watch::Sender::new(0),
@@ -111,6 +115,11 @@ impl SessionBackground {
         self.replaced.subscribe()
     }
 
+    /// The session's A2UI surfaces, when it offers the `ui` tool.
+    pub(super) fn surfaces(&self) -> Option<SurfaceHost> {
+        self.sources().surfaces
+    }
+
     /// The session's process manager, when its tools have one.
     pub(super) fn processes(&self) -> Option<ProcessManager> {
         self.sources().processes
@@ -128,6 +137,7 @@ impl SessionBackground {
         let Sources {
             processes,
             subagents,
+            surfaces,
         } = self.sources();
         AwaitedWork::new(
             self.wait,
@@ -135,6 +145,7 @@ impl SessionBackground {
             processes,
             self.workflows.clone(),
             subagents,
+            surfaces,
         )
     }
 

@@ -13,6 +13,7 @@ use crate::{
     app::{session_runtime::BackgroundWait, subagent_manager::SubagentManager},
     tools::{
         process::{LiveProcessSummary, ProcessManager},
+        ui::SurfaceHost,
         workflow_tracker::{WorkflowRailSummary, WorkflowRunTracker},
     },
 };
@@ -27,6 +28,9 @@ pub(super) struct AwaitedWork {
     /// (`BackgroundWait::HostTurns`): one that finished, and a child's
     /// request that the parent act, are results.
     subagents: Option<SubagentManager>,
+    /// The session's A2UI surfaces, where the daemon starts a turn for what
+    /// the user does on one.
+    surfaces: Option<SurfaceHost>,
 }
 
 impl AwaitedWork {
@@ -38,19 +42,21 @@ impl AwaitedWork {
         processes: Option<ProcessManager>,
         workflows: WorkflowRunTracker,
         subagents: Option<SubagentManager>,
+        surfaces: Option<SurfaceHost>,
     ) -> Option<Self> {
-        let subagents = match wait {
+        let (subagents, surfaces) = match wait {
             BackgroundWait::HoldPrompt => return None,
             // The host runs the session's children as its own threads and
-            // reports them itself.
-            BackgroundWait::HostWakes => None,
-            BackgroundWait::HostTurns => subagents,
+            // reports them itself, and its client draws no surfaces.
+            BackgroundWait::HostWakes => (None, None),
+            BackgroundWait::HostTurns => (subagents, surfaces),
         };
         Some(Self {
             session_id,
             processes,
             workflows,
             subagents,
+            surfaces,
         })
     }
 
@@ -63,7 +69,14 @@ impl AwaitedWork {
         let process_exit = self.processes.as_ref().map(ProcessManager::notified_owned);
         let workflow_finish = self.workflows.notified_owned();
         let subagent = self.subagents.as_ref().map(SubagentManager::parent_wake);
+        let surface_action = self.surfaces.as_ref().map(SurfaceHost::acted_owned);
         async move {
+            let surface_action = async move {
+                match surface_action {
+                    Some(acted) => acted.await,
+                    None => std::future::pending().await,
+                }
+            };
             let process_exit = async move {
                 match process_exit {
                     Some(exit) => exit.await,
@@ -80,6 +93,7 @@ impl AwaitedWork {
                 () = process_exit => {}
                 () = workflow_finish => {}
                 () = subagent => {}
+                () = surface_action => {}
             }
         }
     }
@@ -145,6 +159,7 @@ impl AwaitedWork {
                         .iter()
                         .any(|notice| notice.delivery.requires_parent_action())
             })
+            || self.surfaces.as_ref().is_some_and(SurfaceHost::has_action)
     }
 
     /// Resolves once a result is waiting.

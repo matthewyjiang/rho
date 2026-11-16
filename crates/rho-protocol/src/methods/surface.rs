@@ -22,13 +22,14 @@ pub struct SessionSurfaceActionParams {
     /// The surface the user acted on, as its
     /// [`super::ToolContent::Surface`] names it.
     pub surface: String,
-    /// A2UI's renderer-to-agent `action` message, whole:
-    /// `{"version": "v1.0", "action": {"name", "surfaceId",
-    /// "sourceComponentId", "timestamp", "context", ...}}`. The model reads
-    /// it as sent.
+    /// A2UI's renderer-to-agent `action` message, whole, as a client's
+    /// A2UI processor writes it: `{"version": ..., "action": {"name",
+    /// "surfaceId", "sourceComponentId", "timestamp", "context", ...}}`.
+    /// The model reads its `action` member.
     pub action: serde_json::Value,
     /// The surface's data model, for a surface created with
     /// `sendDataModel`, as A2UI's transport attaches it to the message.
+    /// The model reads it with the action, as `dataModel`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub data_model: Option<serde_json::Value>,
 }
