@@ -498,6 +498,12 @@ fn render_non_assistant_entry(
         Entry::Tool(tool) => {
             super::tool_card_render::push_tool_entry(lines, tool, width, max_tool_output_lines);
         }
+        Entry::Surface(surface) => lines.extend(
+            surface
+                .view
+                .iter()
+                .flat_map(|view| super::surface::surface_lines(view, width)),
+        ),
         Entry::Notice(text) => {
             push_wrapped_text(lines, text, width, Theme::dim_italic(), LineFill::Natural)
         }

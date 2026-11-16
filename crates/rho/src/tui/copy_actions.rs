@@ -36,6 +36,7 @@ impl App {
                 Entry::Assistant(_)
                 | Entry::Reasoning(_)
                 | Entry::Tool(_)
+                | Entry::Surface(_)
                 | Entry::Notice(_)
                 | Entry::Changelog(_)
                 | Entry::Error(_) => {}

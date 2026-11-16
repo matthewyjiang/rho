@@ -3,9 +3,13 @@
 //! opened session has a turn, so before the first prompt they ask nothing.
 
 use rho_protocol::{
-    methods::{SessionAnswer, SessionCancel, SessionHold, SessionSteer, SessionUnsteer},
+    methods::{
+        SessionAnswer, SessionCancel, SessionHold, SessionSteer, SessionSurfaceAction,
+        SessionUnsteer,
+    },
     ClientError, ErrorCode, InputAnswer, InputRequestId, SessionAnswerParams, SessionCancelParams,
-    SessionHoldParams, SessionSteerParams, SessionUnsteerParams, SteerId, UnsteerOutcome,
+    SessionHoldParams, SessionSteerParams, SessionSurfaceActionParams, SessionUnsteerParams,
+    SteerId, UnsteerOutcome,
 };
 use rho_sdk::SteeringId;
 
@@ -120,6 +124,37 @@ impl DaemonSession {
                 )));
                 false
             }
+        }
+    }
+
+    /// Hands the session what the user did on `surface`: `action` is
+    /// A2UI's `action` message, and `data_model` the surface's data model
+    /// when it was created to send one. Once a refusal fails it, its error
+    /// row waits for [`Self::take_views`].
+    pub(in crate::tui) async fn surface_action(
+        &mut self,
+        surface: String,
+        action: serde_json::Value,
+        data_model: Option<serde_json::Value>,
+    ) {
+        let sent = match (self.attached_link().await, self.opened_id()) {
+            (Ok(link), Ok(session)) => link
+                .request::<SessionSurfaceAction>(&SessionSurfaceActionParams {
+                    session,
+                    surface,
+                    action,
+                    data_model,
+                })
+                .await
+                .map(drop)
+                .map_err(|error| format!("{:#}", anyhow::Error::new(error))),
+            // Following ends once the TUI reads the connection's loss.
+            _ => Err(LOST.to_owned()),
+        };
+        if let Err(error) = sent {
+            self.pending.push(DaemonView::Error(format!(
+                "could not send the surface action: {error}"
+            )));
         }
     }
 }

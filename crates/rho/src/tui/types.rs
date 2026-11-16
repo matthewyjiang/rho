@@ -485,6 +485,8 @@ pub(super) enum Entry {
     Assistant(AssistantEntry),
     Reasoning(ReasoningEntry),
     Tool(ToolEntry),
+    /// An A2UI surface, under the card of the `ui` call that showed it.
+    Surface(super::surface::SurfaceEntry),
     Notice(String),
     Changelog(Box<crate::changelog::ChangelogDisplay>),
     Error(String),

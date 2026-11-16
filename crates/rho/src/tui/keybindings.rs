@@ -85,6 +85,9 @@ impl App {
         } else if self.info.runtime.keybindings.search_transcript.matches(key) {
             self.open_transcript_search(terminal)
                 .map_err(|error| anyhow::anyhow!("could not read terminal size: {error}"))?;
+        } else if self.handle_surface_focus_chord(key) {
+            // After every configurable chord, so a binding the user gave
+            // this key keeps it.
         } else {
             match undo_direction(&self.info.runtime.keybindings, key) {
                 Some(UndoDirection::Undo) => self.undo_input(),
@@ -154,6 +157,9 @@ impl App {
             self.insert_input_char('\n');
         } else if self.info.runtime.keybindings.search_transcript.matches(key) {
             self.open_transcript_search(terminal)?;
+        } else if self.handle_surface_focus_chord(key) {
+            // After every configurable chord, so a binding the user gave
+            // this key keeps it.
         } else {
             match undo_direction(&self.info.runtime.keybindings, key) {
                 Some(UndoDirection::Undo) => self.undo_input(),

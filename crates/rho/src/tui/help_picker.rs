@@ -135,6 +135,11 @@ fn help_items(keybindings: &Keybindings) -> Vec<PickerItem> {
             ),
         ),
         entry(
+            "Alt+U",
+            "Use surface",
+            "Move the keyboard to the latest form or card the ui tool showed in the transcript. Tab, Shift+Tab, and the arrow keys move between its controls. Enter or Space presses a button, toggles a choice, or edits a field. Left/Right move a slider or switch tabs. Esc returns to the composer.",
+        ),
+        entry(
             cycle_streaming,
             "Cycle streaming",
             "Cycle live → paragraph → off → live text display for this TUI, including during a turn; set the saved default in /config → Display → Output streaming. Switching reveals held text. Only assistant and reasoning text display changes, not generation or tools.",

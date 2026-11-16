@@ -32,8 +32,8 @@ use rho_protocol::{
     display::{Presentation, ToolCard, ToolCardStatus},
     CompactionStatus, CompactionTrigger, ContentBlock, InputRequest, InputRequestId, JobState,
     LoginId, LoginOutcome, LoginPrompt, MessageId, PlanEntry, PlanStatus, Replay, RetryReason,
-    SessionEvent, SteerId, ToolCallId as WireCallId, ToolCallUpdate, ToolStatus, TurnId,
-    TurnOutcome,
+    SessionEvent, SteerId, ToolCallId as WireCallId, ToolCallUpdate, ToolContent, ToolStatus,
+    TurnId, TurnOutcome,
 };
 use rho_sdk::{ProviderErrorKind, ProviderStreamResetReason, SteeringId, ToolCallId};
 
@@ -96,6 +96,15 @@ pub(super) enum DaemonView {
     ToolFinished {
         call: ToolCallId,
         presentation: Presentation,
+    },
+    /// The A2UI surface a `ui` call carries, after the card it is drawn
+    /// under. Every update of the call repeats it. `replayed` when the
+    /// call showed it before this TUI followed.
+    Surface {
+        call: ToolCallId,
+        surface: String,
+        messages: Vec<serde_json::Value>,
+        replayed: bool,
     },
     /// A compaction started: its card opens. `command` when a `/compact`
     /// prompt started it, so the turn is the compaction.
@@ -390,7 +399,7 @@ impl DaemonEvents {
             SessionEvent::ThoughtChunk { message, text } => {
                 vec![self.text(StreamKind::Reasoning, message, text)]
             }
-            SessionEvent::ToolCall(update) => self.tool_call(*update).into_iter().collect(),
+            SessionEvent::ToolCall(update) => self.tool_call(*update),
             SessionEvent::Plan { entries } => vec![DaemonView::Plan(todo_list(&entries))],
             SessionEvent::Usage {
                 used_tokens,
@@ -571,20 +580,49 @@ impl DaemonEvents {
         self.stepped_since_reply = false;
     }
 
-    fn tool_call(&mut self, update: ToolCallUpdate) -> Option<DaemonView> {
+    fn tool_call(&mut self, update: ToolCallUpdate) -> Vec<DaemonView> {
         // The step's text ends at its calls; the next text starts a row.
         self.open_message = None;
         self.stepped_since_reply = true;
         let ToolCallUpdate {
             id,
             status,
+            content,
             display,
             ..
         } = update;
         let Ok(call) = ToolCallId::from_string(id.as_str()) else {
             tracing::debug!("skipping a daemon tool call without an id");
-            return None;
+            return Vec::new();
         };
+        let surface = content
+            .into_iter()
+            .flatten()
+            .find_map(|content| match content {
+                ToolContent::Surface { surface, messages } => Some(DaemonView::Surface {
+                    call: call.clone(),
+                    surface,
+                    messages,
+                    replayed: self.replay_end.is_some(),
+                }),
+                // Text, images and diffs, which the card shows, or content
+                // a newer daemon sends.
+                _ => None,
+            });
+        self.tool_card(id, call, status, display)
+            .into_iter()
+            .chain(surface)
+            .collect()
+    }
+
+    /// What an update does to the call's card.
+    fn tool_card(
+        &mut self,
+        id: WireCallId,
+        call: ToolCallId,
+        status: Option<ToolStatus>,
+        display: Option<Presentation>,
+    ) -> Option<DaemonView> {
         let closed = match status {
             Some(ToolStatus::Completed) => Some(ToolCardStatus::Ok),
             // A call that closes `failed` without a display was cut off.

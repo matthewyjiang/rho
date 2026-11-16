@@ -119,7 +119,15 @@ impl App {
                         },
                         terminal,
                     )?;
+                    // Its surface follows its card into the transcript.
+                    self.settle_surfaces();
                 }
+                DaemonView::Surface {
+                    call,
+                    surface,
+                    messages,
+                    replayed,
+                } => self.show_surface(call, surface, &messages, replayed),
                 DaemonView::CompactionStarted { command } => {
                     if command {
                         self.begin_daemon_compact_turn();
@@ -316,6 +324,7 @@ impl App {
         self.usage.live_stream.clear();
         self.set_history_entries(Vec::new());
         self.turn.clear_tool_calls();
+        self.clear_surfaces();
         self.set_todo_list(None);
         self.drop_daemon_inputs();
         self.turn.set_current_turn_start(None);
@@ -365,6 +374,7 @@ impl App {
             self.insert_entry(&Entry::Tool(entry));
         }
         self.turn.clear_tool_calls();
+        self.settle_surfaces();
         self.turn.set_activity_phase(ActivityPhase::default());
         if !self.turn.is_provider_turn() {
             return;

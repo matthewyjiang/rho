@@ -839,6 +839,9 @@ impl App {
                     }
                 });
         }
+        // After the cards and outside `show_tools`: a surface waits for the
+        // user, so zen mode shows it too.
+        lines.extend(self.surfaces.live_lines(width));
         if let Some(kind) = self
             .streams
             .live_stream_preview
