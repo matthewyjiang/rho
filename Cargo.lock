@@ -1826,6 +1826,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "fancy-regex"
+version = "0.20.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0a2e16b9a584b602f1e0e5e22c30ca0906786088c27500653e432d086def8b53"
+dependencies = [
+ "bit-set 0.8.0",
+ "regex-automata",
+ "regex-syntax",
+]
+
+[[package]]
 name = "fast-float2"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2003,6 +2014,16 @@ checksum = "e076045bb43dac435333ed5f04caf35c7463631d0dae2deb2638d94dd0a5b872"
 dependencies = [
  "lazy_static",
  "num",
+]
+
+[[package]]
+name = "fraction"
+version = "0.17.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e246562084dde8ebbcc943b261c406ce4f68e5032ec28029a251a47d6a295500"
+dependencies = [
+ "num",
+ "num-bigint",
 ]
 
 [[package]]
@@ -2958,16 +2979,44 @@ dependencies = [
  "data-encoding",
  "email_address",
  "fancy-regex 0.19.0",
- "fraction",
+ "fraction 0.15.4",
  "getrandom 0.3.4",
  "idna",
  "itoa",
- "jsonschema-regex",
- "jsonschema-value",
+ "jsonschema-regex 0.49.9",
+ "jsonschema-value 0.49.9",
  "num-cmp",
  "num-traits",
  "percent-encoding",
- "referencing",
+ "referencing 0.49.9",
+ "regex",
+ "serde",
+ "serde_json",
+ "strum",
+ "unicode-general-category",
+ "uuid-simd",
+]
+
+[[package]]
+name = "jsonschema"
+version = "0.61.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0e37f27df77c7887edbc5f5a59ecd8e5ec4a669319266ec1b61068667a603183"
+dependencies = [
+ "ahash",
+ "bytecount",
+ "data-encoding",
+ "email_address",
+ "fancy-regex 0.20.2",
+ "fraction 0.17.0",
+ "getrandom 0.3.4",
+ "itoa",
+ "jsonschema-regex 0.61.2",
+ "jsonschema-value 0.61.2",
+ "num-cmp",
+ "num-traits",
+ "percent-encoding",
+ "referencing 0.61.2",
  "regex",
  "serde",
  "serde_json",
@@ -2986,6 +3035,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "jsonschema-regex"
+version = "0.61.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7e41151614b6c927e21982be8bef5a26741ae5a0ae6a781eedee2aa930a980e6"
+dependencies = [
+ "regex-syntax",
+]
+
+[[package]]
 name = "jsonschema-value"
 version = "0.49.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2993,10 +3051,27 @@ checksum = "7ec7637f83e510868ae6ed625f7ebfbbde4554ee8ce49854caa5126a8b9b9ecb"
 dependencies = [
  "ahash",
  "bytecount",
- "fraction",
+ "fraction 0.15.4",
  "num-cmp",
  "num-traits",
  "serde_json",
+]
+
+[[package]]
+name = "jsonschema-value"
+version = "0.61.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1515b9a91134ef67d7bac95c2d76fbc7e383c4c55ee544204ceec8088f881fef"
+dependencies = [
+ "ahash",
+ "bytecount",
+ "fraction 0.17.0",
+ "getrandom 0.3.4",
+ "memchr",
+ "num-cmp",
+ "num-traits",
+ "serde_json",
+ "zmij",
 ]
 
 [[package]]
@@ -3518,9 +3593,9 @@ dependencies = [
 
 [[package]]
 name = "num-bigint"
-version = "0.4.6"
+version = "0.4.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a5e44f723f1133c9deac646763579fdb3ac745e418f2a7af9cd0c431da1f20b9"
+checksum = "c89e69e7e0f03bea5ef08013795c25018e101932225a656383bd384495ecc367"
 dependencies = [
  "num-integer",
  "num-traits",
@@ -4750,6 +4825,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "referencing"
+version = "0.61.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a028057ef852c58a42d75e09da87b5e733f4030f4c7411728955e4f87203a577"
+dependencies = [
+ "ahash",
+ "fluent-uri 0.4.1",
+ "getrandom 0.3.4",
+ "hashbrown 0.17.1",
+ "itoa",
+ "micromap",
+ "parking_lot",
+ "percent-encoding",
+ "serde_json",
+]
+
+[[package]]
 name = "regex"
 version = "1.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4832,6 +4924,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "rho-a2ui"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "fancy-regex 0.16.2",
+ "jsonschema 0.61.2",
+ "serde_json",
+ "serde_yaml_ng",
+ "thiserror 2.0.21",
+ "unicode-ident",
+]
+
+[[package]]
 name = "rho-agent-tools"
 version = "2.1.0"
 dependencies = [
@@ -4841,7 +4946,7 @@ dependencies = [
  "globset",
  "ignore",
  "image",
- "jsonschema",
+ "jsonschema 0.49.9",
  "libc",
  "lopdf",
  "pdf-inspector",
@@ -4887,7 +4992,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "image",
- "jsonschema",
+ "jsonschema 0.49.9",
  "katex-rs",
  "keyring",
  "libc",
@@ -7840,9 +7945,9 @@ checksum = "b142a20ec14a91d5bc708c1dc21b080c550113d8aa77afa29635673a65dd02c5"
 
 [[package]]
 name = "zmij"
-version = "1.0.21"
+version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
+checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
 
 [[package]]
 name = "zopfli"

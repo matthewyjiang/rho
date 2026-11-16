@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/rho",
+    "crates/rho-a2ui",
     "crates/rho-protocol",
     "crates/rho-providers",
     "crates/rho-sdk",

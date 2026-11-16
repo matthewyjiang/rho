@@ -1,0 +1,36 @@
+[package]
+name = "rho-a2ui"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.92"
+description = "A2UI v1.0 core for Rho: catalogs, validation, message processing, and A2UI Express"
+license = "MIT AND Apache-2.0"
+repository = "https://github.com/matthewyjiang/rho"
+readme = "README.md"
+keywords = ["a2ui", "agent", "ai", "ui"]
+categories = ["gui", "parser-implementations"]
+# The vendored A2UI files are Google's, under vendor/a2ui/LICENSE (Apache-2.0).
+# The schemas and basic catalog are compiled in, and the tests run the
+# conformance suites, so the package ships all of vendor/.
+include = [
+    "/src/**",
+    "/tests/**",
+    "/vendor/**",
+    "/CHANGELOG.md",
+    "/README.md",
+    "/LICENSE",
+]
+
+# Clients such as rho-ui use this crate without the rest of rho, so it depends
+# on no other rho crate. scripts/architecture.json enforces that boundary.
+[dependencies]
+chrono = { version = "0.4", default-features = false }
+fancy-regex = "0.16"
+jsonschema = { version = "0.61", default-features = false }
+# Express reads positional arguments in a catalog's property order.
+serde_json = { version = "1", features = ["preserve_order"] }
+thiserror = "2"
+unicode-ident = "1"
+
+[dev-dependencies]
+serde_yaml_ng = "0.10"

@@ -79,6 +79,16 @@ CI still holds that exception, and that the version never goes down, comparing e
 python3 scripts/check_protocol_compat.py --baseline-ref origin/daemon-v3 --unstable-only
 ```
 
+### Changing the A2UI core
+
+`crates/rho-a2ui` is rho's [A2UI](https://a2ui.org) v1.0 core. It loads and validates catalogs, applies an agent's messages to surfaces on the renderer side, and compiles and decompiles A2UI Express, the compact notation a model writes a surface in. It is released and published on its own as `rho-a2ui`, so clients such as rho-ui can use it without the rest of rho. Its [README](https://github.com/matthewyjiang/rho/blob/main/crates/rho-a2ui/README.md) lists what it holds.
+
+It is tested against the conformance suites Google publishes with A2UI, vendored unmodified under `crates/rho-a2ui/vendor/a2ui` with their Apache-2.0 license. `cargo test -p rho-a2ui` runs each suite as one test, and the README lists each suite's status. Never edit a vendored file. To refresh them from a checkout of [google/A2UI](https://github.com/google/A2UI), or after adding a path to `vendor/a2ui/FILES`:
+
+```bash
+crates/rho-a2ui/scripts/vendor-a2ui.sh <upstream-checkout>
+```
+
 ## Crate publish preparation
 
 CI runs `scripts/check_crate_publish_prep.sh` before release packaging. That
@@ -311,7 +321,7 @@ The script uses only the Python standard library and reads policy from `scripts/
 - Existing oversized production files are listed explicitly in `legacy_file_budgets`. Their ceilings prevent further growth and should be lowered or removed as the files are split.
 - `crates/rho-providers/src/credentials` must remain independent of `model`, keeping credential storage separate from model runtime metadata (`forbidden_dependencies`).
 - `crates/rho/src/main.rs` has a 50-line thin-binary budget so application orchestration remains in the library (`thin_binary_budgets`).
-- Package dependency boundaries are also declared in `forbidden_package_dependencies` so lower-level crates cannot depend on the application or reverse the intended layering. `crates/rho-protocol` depends on no other rho crate, so an SDK or application major release cannot break frontends that only speak the daemon protocol.
+- Package dependency boundaries are also declared in `forbidden_package_dependencies` so lower-level crates cannot depend on the application or reverse the intended layering. `crates/rho-protocol` depends on no other rho crate, so an SDK or application major release cannot break frontends that only speak the daemon protocol. `crates/rho-a2ui` depends on no other rho crate either, so clients such as rho-ui can use the A2UI core without the rest of rho.
 
 Current legacy file budgets are: none.
 

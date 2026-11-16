@@ -14,13 +14,14 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 usage() {
   cat <<'EOF'
-Usage: scripts/publish_workspace_crates.sh --sha <full-sha> [--sdk] [--tools] [--providers] [--protocol] [--app] [--dry-run]
+Usage: scripts/publish_workspace_crates.sh --sha <full-sha> [--sdk] [--tools] [--providers] [--protocol] [--a2ui] [--app] [--dry-run]
 
   --sha <full-sha>  Exact 40-character commit that must be checked out
   --sdk             Publish rho-sdk
   --tools           Publish rho-agent-tools
   --providers       Publish rho-providers
   --protocol        Publish rho-protocol
+  --a2ui            Publish rho-a2ui
   --app             Publish rho-protocol, rho-agent-tools, rho-providers, then rho-coding-agent
   --dry-run         Validate packages without publishing
 EOF
@@ -31,6 +32,7 @@ publish_sdk=false
 publish_tools=false
 publish_providers=false
 publish_protocol=false
+publish_a2ui=false
 publish_app=false
 dry_run=false
 
@@ -54,6 +56,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --protocol)
       publish_protocol=true
+      shift
+      ;;
+    --a2ui)
+      publish_a2ui=true
       shift
       ;;
     --app)
@@ -90,8 +96,8 @@ if [[ ! "$sha" =~ ^[0-9a-f]{40}$ ]]; then
   exit 1
 fi
 
-if [[ "$publish_sdk" != true && "$publish_tools" != true && "$publish_providers" != true && "$publish_protocol" != true && "$publish_app" != true ]]; then
-  echo "Select at least one of --sdk, --tools, --providers, --protocol, or --app" >&2
+if [[ "$publish_sdk" != true && "$publish_tools" != true && "$publish_providers" != true && "$publish_protocol" != true && "$publish_a2ui" != true && "$publish_app" != true ]]; then
+  echo "Select at least one of --sdk, --tools, --providers, --protocol, --a2ui, or --app" >&2
   exit 2
 fi
 
@@ -123,6 +129,7 @@ sdk_version="$(crate_version rho-sdk)"
 tools_version="$(crate_version rho-agent-tools)"
 providers_version="$(crate_version rho-providers)"
 protocol_version="$(crate_version rho-protocol)"
+a2ui_version="$(crate_version rho-a2ui)"
 app_version="$(crate_version rho-coding-agent)"
 
 crates_io_curl=(
@@ -220,6 +227,11 @@ if [[ "$publish_protocol" == true ]]; then
   # rho-protocol has no internal dependencies, so it needs no path patches.
   # publish_crate reuses a version that is already on crates.io.
   publish_crate rho-protocol "$protocol_version"
+fi
+
+if [[ "$publish_a2ui" == true ]]; then
+  # rho-a2ui has no internal dependencies, so it needs no path patches.
+  publish_crate rho-a2ui "$a2ui_version"
 fi
 
 if [[ "$publish_tools" == true ]]; then
