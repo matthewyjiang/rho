@@ -6,10 +6,17 @@
 use std::path::Path;
 
 use pretty_assertions::assert_eq;
-use rho_protocol::{methods::SessionCancel, JobState, SessionCancelParams};
+use rho_protocol::{
+    methods::{SessionBackgroundList, SessionCancel},
+    BackgroundStatus, IdleWake, JobState, SessionBackgroundListParams, SessionCancelParams,
+    SessionSetup,
+};
 use serde_json::json;
 
-use super::sessions::{settled_job, Sandbox};
+use super::{
+    sessions::{settled_job, Sandbox},
+    upgrade::{fifo, open_gate},
+};
 
 /// A command whose shell starts a child that sleeps, records the child's
 /// pid in `file` in the workspace, and waits for it. The child is the
@@ -69,6 +76,69 @@ impl Drop for Sleepers {
             }
         }
     }
+}
+
+// Covers: a session whose turn completed while a background process it
+// started runs on, as a TUI session's turns do, lists that process in
+// `rho/session/background/list`, so a client that never attached shows the
+// session busy rather than done; once the process exits and the daemon's
+// turn gives the model its result, the session leaves the list.
+// Owner: daemon session background.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_background_list_shows_work_that_outlives_the_turn() {
+    let sandbox = Sandbox::new();
+    sandbox.set_permission_mode("bypass");
+    let client = sandbox.start_daemon("tool-call").await;
+    let session = sandbox
+        .new_session_with_setup(
+            &client,
+            SessionSetup {
+                idle_wake: IdleWake::Turn,
+                ..SessionSetup::default()
+            },
+        )
+        .await;
+    let gate = fifo(sandbox.workspace.join("background.fifo"));
+    let command = "read _ < background.fifo";
+    let process = json!({
+        "id": "background",
+        "name": "process",
+        "arguments": {"action": "start", "command": command},
+    });
+    sandbox.prompt_tool_call(&client, &session, &process).await;
+    let listed = async || {
+        let list = client
+            .request::<SessionBackgroundList>(&SessionBackgroundListParams {})
+            .await
+            .unwrap();
+        list.sessions
+            .into_iter()
+            .filter(|listed| listed.session == session)
+            .flat_map(|listed| listed.work)
+            .map(|work| (work.title, work.status))
+            .collect::<Vec<_>>()
+    };
+    let completed = settled_job(&sandbox, &client, &session).await.state;
+    let outlived = listed().await;
+
+    assert_eq!(
+        (completed, outlived),
+        (
+            JobState::Completed,
+            vec![(command.to_owned(), BackgroundStatus::Running)],
+        ),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+    open_gate(&sandbox, &gate).await;
+    // The poll is the check: it times out unless the session leaves the
+    // list once its delivery turn gave the model the process's result.
+    sandbox
+        .poll_until("the session to leave the background list", async || {
+            listed().await.is_empty().then_some(())
+        })
+        .await;
+    settled_job(&sandbox, &client, &session).await;
 }
 
 // Covers: `rho daemon stop` ends the processes its sessions' tools started,

@@ -11,21 +11,23 @@ use crate::{
         AuthLoginCancel, AuthLoginCancelParams, AuthLogout, AuthLogoutParams, ConfigRegister,
         ConfigRegisterParams, ConfigSchemaMethod, ConfigSchemaParams, ConfigSet, ConfigSetParams,
         JobList, JobListParams, Restart, RestartParams, RestartResponse, SessionAnswer,
-        SessionAnswerParams, SessionBackgroundStop, SessionBackgroundStopParams, SessionCancel,
-        SessionCancelParams, SessionConfigure, SessionConfigureParams, SessionDelete,
-        SessionDeleteParams, SessionHold, SessionHoldParams, SessionId, SessionInspect,
-        SessionInspectParams, SessionList, SessionListParams, SessionMcp, SessionMcpCatalogParams,
-        SessionMcpCatalogRead, SessionMcpComplete, SessionMcpCompleteParams, SessionMcpParams,
-        SessionMcpResourceParams, SessionMcpResourceRead, SessionNew, SessionNewParams,
-        SessionProcesses, SessionProcessesParams, SessionPrompt, SessionPromptParams,
-        SessionRename, SessionRenameParams, SessionSteer, SessionSteerParams, SessionUnsteer,
+        SessionAnswerParams, SessionBackgroundList, SessionBackgroundListParams,
+        SessionBackgroundStop, SessionBackgroundStopParams, SessionCancel, SessionCancelParams,
+        SessionConfigure, SessionConfigureParams, SessionDelete, SessionDeleteParams, SessionHold,
+        SessionHoldParams, SessionId, SessionInspect, SessionInspectParams, SessionList,
+        SessionListParams, SessionMcp, SessionMcpCatalogParams, SessionMcpCatalogRead,
+        SessionMcpComplete, SessionMcpCompleteParams, SessionMcpParams, SessionMcpResourceParams,
+        SessionMcpResourceRead, SessionNew, SessionNewParams, SessionProcesses,
+        SessionProcessesParams, SessionPrompt, SessionPromptParams, SessionRename,
+        SessionRenameParams, SessionSteer, SessionSteerParams, SessionUnsteer,
         SessionUnsteerParams, Status, Stop, WorktreePrune, WorktreePruneParams, AUTH_CHOOSE_STORE,
         AUTH_KEY, AUTH_LIST, AUTH_LOGIN_CANCEL, AUTH_LOGOUT, CONFIG_REGISTER, CONFIG_SCHEMA,
         CONFIG_SET, DAEMON_RESTART, DAEMON_STATUS, DAEMON_STOP, JOB_LIST, SESSION_ANSWER,
-        SESSION_BACKGROUND_STOP, SESSION_CANCEL, SESSION_CONFIGURE, SESSION_DELETE, SESSION_HOLD,
-        SESSION_INSPECT, SESSION_LIST, SESSION_MCP, SESSION_MCP_CATALOG, SESSION_MCP_COMPLETE,
-        SESSION_MCP_RESOURCE, SESSION_NEW, SESSION_PROCESSES, SESSION_PROMPT, SESSION_RENAME,
-        SESSION_STEER, SESSION_UNSTEER, WORKTREE_PRUNE,
+        SESSION_BACKGROUND_LIST, SESSION_BACKGROUND_STOP, SESSION_CANCEL, SESSION_CONFIGURE,
+        SESSION_DELETE, SESSION_HOLD, SESSION_INSPECT, SESSION_LIST, SESSION_MCP,
+        SESSION_MCP_CATALOG, SESSION_MCP_COMPLETE, SESSION_MCP_RESOURCE, SESSION_NEW,
+        SESSION_PROCESSES, SESSION_PROMPT, SESSION_RENAME, SESSION_STEER, SESSION_UNSTEER,
+        WORKTREE_PRUNE,
     },
     server::{decode_params, encode_result, Service},
     ErrorCode, RpcError, StatusParams, StopParams, StopResponse,
@@ -49,6 +51,7 @@ pub(crate) enum ServiceCall {
     SessionMcpResource(SessionMcpResourceParams),
     SessionMcpComplete(SessionMcpCompleteParams),
     SessionProcesses(SessionProcessesParams),
+    ListSessionBackground,
     SessionBackgroundStop(SessionBackgroundStopParams),
     InspectSession(SessionInspectParams),
     ListSessions(SessionListParams),
@@ -99,6 +102,8 @@ impl ServiceCall {
             SESSION_PROCESSES => {
                 decode_params::<SessionProcesses>(params).map(Self::SessionProcesses)
             }
+            SESSION_BACKGROUND_LIST => decode_params::<SessionBackgroundList>(params)
+                .map(|SessionBackgroundListParams {}| Self::ListSessionBackground),
             SESSION_BACKGROUND_STOP => {
                 decode_params::<SessionBackgroundStop>(params).map(Self::SessionBackgroundStop)
             }
@@ -150,6 +155,7 @@ impl ServiceCall {
             | Self::ListSessions(_)
             | Self::DeleteSession(_)
             | Self::ListJobs
+            | Self::ListSessionBackground
             | Self::PruneWorktrees(_)
             | Self::SaveAuthKey(_)
             | Self::LogoutAuth(_)
@@ -212,6 +218,9 @@ impl ServiceCall {
             }
             Self::SessionProcesses(params) => {
                 encode_result::<SessionProcesses>(&service.session_processes(params).await?)
+            }
+            Self::ListSessionBackground => {
+                encode_result::<SessionBackgroundList>(&service.list_session_background().await?)
             }
             Self::SessionBackgroundStop(params) => encode_result::<SessionBackgroundStop>(
                 &service.session_background_stop(params).await?,

@@ -1,6 +1,7 @@
 //! A loaded session's background work: the processes, workflow runs and
 //! subagents its turns started that run on their own. Its clients follow it
-//! as [`wire::SessionEvent::Background`] and stop one piece with
+//! as [`wire::SessionEvent::Background`], list every session's with
+//! [`wire::SESSION_BACKGROUND_LIST`], and stop one piece with
 //! [`wire::SESSION_BACKGROUND_STOP`].
 //!
 //! The work is reported as a turn begins, so a client hears how the work a
@@ -267,6 +268,30 @@ impl Sessions {
                 () = watcher => {}
             }
         });
+    }
+
+    /// `rho/session/background/list`: each loaded session with background
+    /// work, by session id.
+    pub(in crate::app::daemon_host) fn background_list(
+        &self,
+    ) -> wire::SessionBackgroundListResponse {
+        // Copied out first, so the daemon-wide map is not held while each
+        // feed's list is cloned.
+        let loaded: Vec<_> = self
+            .loaded()
+            .iter()
+            .map(|(session, loaded)| (session.clone(), Arc::clone(loaded)))
+            .collect();
+        let mut sessions: Vec<_> = loaded
+            .into_iter()
+            .map(|(session, loaded)| wire::SessionBackground {
+                session: wire::SessionId::new(session.to_string()),
+                work: loaded.feed.background(),
+            })
+            .filter(|listed| !listed.work.is_empty())
+            .collect();
+        sessions.sort_by(|a, b| a.session.cmp(&b.session));
+        wire::SessionBackgroundListResponse { sessions }
     }
 
     /// `rho/session/background/stop`.

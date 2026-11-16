@@ -17,8 +17,9 @@
 //!
 //! The feed also keeps the session's options, as the last
 //! [`wire::SessionEvent::OptionsChanged`] left them, and its background
-//! work, as the last [`wire::SessionEvent::Background`] did, so an attach
-//! reports them without waiting for the runtime either.
+//! work, as the last [`wire::SessionEvent::Background`] did, so an attach,
+//! and `rho/session/background/list`, report them without waiting for the
+//! runtime either.
 //!
 //! A loaded session's feed reports whether the session is settled (see
 //! `settle`) as [`wire::SessionEvent::Activity`]: `active` goes out just
@@ -278,6 +279,12 @@ impl Feed {
         if state.activity != Some(activity) {
             state.push(wire::SessionEvent::Activity { state: activity });
         }
+    }
+
+    /// The session's background work, as the last background event sent
+    /// it.
+    pub(super) fn background(&self) -> Vec<wire::BackgroundWork> {
+        self.state().background.clone()
     }
 
     /// The session's options now.
