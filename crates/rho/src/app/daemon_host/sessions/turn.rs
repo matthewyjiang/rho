@@ -349,6 +349,11 @@ pub(super) async fn restart_transcript(session: &LoadedSession, runtime: &Sessio
     let (saved, usage) = {
         let mut live = session.live();
         live.forget_replayed();
+        // The branch's own `ui` calls show its surfaces, as the replay
+        // below reaches them.
+        if let Some(surfaces) = runtime.tools().surfaces() {
+            surfaces.reset();
+        }
         (
             saved_replay(&mut live, runtime, &session.job),
             live.context_usage(runtime.context_estimate()),
