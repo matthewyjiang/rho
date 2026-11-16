@@ -20,6 +20,13 @@ fn aborted(content: Vec<ContentBlock>, provider_context: Vec<ProviderContextBloc
 /// Lowers `history` for one wire and returns the serialized request messages.
 type Lower = fn(&[Message], &ModelIdentity) -> String;
 
+/// Whether the wire's target is the model that produced the opaque reasoning.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OpaqueReplay {
+    Replayed,
+    Omitted,
+}
+
 // Covers: an interrupted turn must never replay the model's reasoning summary
 // as plain assistant text (Anthropic refuses such requests as
 // `reasoning_extraction`), whether or not its opaque reasoning survived.
@@ -27,19 +34,25 @@ type Lower = fn(&[Message], &ModelIdentity) -> String;
 #[test]
 fn aborted_turns_never_replay_reasoning_summary_as_text() {
     let responses = ModelIdentity::new("cliproxyapi", "openai-responses", "claude-opus-5-5");
-    let wires: [(&str, ModelIdentity, Lower); 4] = [
-        ("responses", responses.clone(), |history, target| {
-            let input = super::openai_responses::codex_input_items_for_target(
-                history,
-                &mut Vec::new(),
-                Some(target),
-            )
-            .unwrap();
-            serde_json::to_string(&input).unwrap()
-        }),
+    let wires: [(&str, ModelIdentity, OpaqueReplay, Lower); 4] = [
+        (
+            "responses",
+            responses.clone(),
+            OpaqueReplay::Replayed,
+            |history, target| {
+                let input = super::openai_responses::codex_input_items_for_target(
+                    history,
+                    &mut Vec::new(),
+                    Some(target),
+                )
+                .unwrap();
+                serde_json::to_string(&input).unwrap()
+            },
+        ),
         (
             "chat",
             ModelIdentity::new("openai", "openai-chat-completions", "gpt-chat"),
+            OpaqueReplay::Omitted,
             |history, target| {
                 let messages =
                     super::openai_chat::to_openai_messages_for_target(history, Some(target))
@@ -50,6 +63,7 @@ fn aborted_turns_never_replay_reasoning_summary_as_text() {
         (
             "anthropic",
             ModelIdentity::new("anthropic", "anthropic-messages", "claude-opus-5-5"),
+            OpaqueReplay::Omitted,
             |history, target| {
                 let conversation = super::anthropic_messages::split_system_and_messages(
                     history,
@@ -63,6 +77,7 @@ fn aborted_turns_never_replay_reasoning_summary_as_text() {
         (
             "gemini",
             ModelIdentity::new("google", "gemini-generate-content", "gemini-pro"),
+            OpaqueReplay::Omitted,
             |history, target| {
                 let request =
                     super::gemini_generate_content::build_request(history, &[], target, None)
@@ -88,17 +103,18 @@ fn aborted_turns_never_replay_reasoning_summary_as_text() {
         Message::user_text("continue"),
     ];
 
-    for (wire, target, lower) in wires {
+    for (wire, target, opaque, lower) in wires {
         let request = lower(&history, &target);
         assert!(
             !request.contains(SUMMARY),
             "{wire} leaked the summary: {request}"
         );
         assert!(request.contains("[Operation aborted]"), "{wire}: {request}");
-        assert_eq!(
-            request.contains("\"encrypted_content\":\"opaque\""),
-            wire == "responses",
-            "{wire} replays opaque reasoning only to its own model: {request}"
-        );
+        let replayed = if request.contains("\"encrypted_content\":\"opaque\"") {
+            OpaqueReplay::Replayed
+        } else {
+            OpaqueReplay::Omitted
+        };
+        assert_eq!(replayed, opaque, "{wire}: {request}");
     }
 }

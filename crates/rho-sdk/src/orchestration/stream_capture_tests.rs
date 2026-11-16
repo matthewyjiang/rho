@@ -69,6 +69,19 @@ fn reasoning_forwarding_preserves_summary_and_abort_contracts() {
             assert_eq!(capture.into_aborted_assistant(), None);
         }
     }
+
+    // A turn interrupted mid-summary still records its abort, without the text.
+    let mut capture = StreamCapture::default();
+    capture_provider_event(
+        ModelEvent::ReasoningSummaryDelta("summary".into()),
+        &identity(),
+        &ModelUsage::default(),
+        &mut capture,
+    );
+    assert_eq!(
+        capture.into_aborted_assistant(),
+        Some(AbortedAssistant::default())
+    );
 }
 
 fn capture_tool_delta(

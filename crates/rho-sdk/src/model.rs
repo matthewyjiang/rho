@@ -192,8 +192,11 @@ pub struct PartialToolCall {
 /// NEXT_MAJOR(rho-sdk): remove `AbortedAssistant::reasoning` and
 /// `AbortedAssistant::reasoning_summary`.
 ///
-/// The SDK never fills either field and providers never replay them; they
-/// remain so sessions that recorded them still deserialize.
+/// The SDK never fills either field and providers never replay them. They
+/// remain only because removing public fields breaks hosts that construct or
+/// match `AbortedAssistant`; snapshots that contain them still load after
+/// removal. `reasoning` has no serde default, so readers older than the
+/// removal need the key: keep writing it empty or accept that cutoff.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct AbortedAssistant {
     pub content: Vec<ContentBlock>,
