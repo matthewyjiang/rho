@@ -34,6 +34,17 @@ const MAX_SURFACE_ID_BYTES: usize = 64;
 /// [`rho_protocol::ToolContent::Surface`] as JSON.
 const SURFACE_MEDIA_TYPE: &str = "application/vnd.rho.a2ui-surface+json";
 
+/// How the error of a call that showed its surface and then stopped
+/// waiting on it begins.
+const STOPPED_WAITING: &str = "stopped waiting on surface ";
+
+fn stopped_waiting(surface: &str, why: &str) -> ToolError {
+    ToolError::new(
+        ToolErrorKind::Execution,
+        format!("{STOPPED_WAITING}`{surface}`: {why}"),
+    )
+}
+
 /// The surface `metadata` carries, if a `ui` call reported one.
 pub(crate) fn shown_surface(metadata: &ToolMetadata) -> Option<rho_protocol::ToolContent> {
     metadata
@@ -134,21 +145,23 @@ impl Tool for UiTool {
             let invalid = |message| ToolError::new(ToolErrorKind::InvalidArguments, message);
             let Arguments { request, wait } =
                 Arguments::parse(&invocation.into_arguments()).map_err(invalid)?;
-            let content = self
-                .surfaces
-                .show(call_id.as_str(), &request)
-                .map_err(invalid)?;
-            // Registered before clients learn of the surface, so no action
-            // on it can arrive first.
-            let action = if wait {
-                Some(self.surfaces.wait(&content.surface).map_err(invalid)?)
+            let (content, waiting) = if wait {
+                let (content, waiting) = self
+                    .surfaces
+                    .show_waiting(call_id.as_str(), &request)
+                    .map_err(invalid)?;
+                (content, Some(waiting))
             } else {
-                None
+                let content = self
+                    .surfaces
+                    .show(call_id.as_str(), &request)
+                    .map_err(invalid)?;
+                (content, None)
             };
             let shown = serde_json::to_vec(&content.wire())
                 .map_err(|error| ToolError::new(ToolErrorKind::Execution, error.to_string()))?;
             let metadata = ToolMetadata::new().asset(ToolAsset::new(SURFACE_MEDIA_TYPE, shown));
-            let Some(action) = action else {
+            let Some(mut waiting) = waiting else {
                 return Ok(
                     ToolOutput::text(json!({ "surfaceId": content.surface }).to_string())
                         .metadata(metadata),
@@ -163,14 +176,13 @@ impl Tool for UiTool {
                         .with_metadata(metadata.clone()),
                 )
                 .await;
+            // An action that arrived as the turn was cancelled goes back
+            // to the session when `waiting` drops.
             let action = tokio::select! {
                 biased;
                 () = context.cancellation().cancelled() => return Err(ToolError::cancelled()),
-                action = action => action.map_err(|_| {
-                    ToolError::new(
-                        ToolErrorKind::Execution,
-                        format!("stopped waiting on surface {}", content.surface),
-                    )
+                action = waiting.action() => action.map_err(|_| {
+                    stopped_waiting(&content.surface, "another call waits on it now, or the conversation moved to another branch")
                 })?,
             };
             Ok(ToolOutput::text(action.action.to_string()).metadata(metadata))

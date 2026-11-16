@@ -130,6 +130,35 @@ struct Shared {
     acted: Arc<Notify>,
 }
 
+/// A `ui` call's wait for the user's next action on its surface.
+///
+/// Dropping it ends the wait. An action [`SurfaceHost::act`] handed it
+/// that the call did not take, as when its turn is cancelled in between,
+/// goes back to the host, first in line for a turn to deliver.
+pub(super) struct Waiting {
+    host: SurfaceHost,
+    action: oneshot::Receiver<SurfaceAction>,
+}
+
+impl Waiting {
+    /// The user's next action on the surface. Fails when another call
+    /// starts waiting on the surface, or the surfaces are reset.
+    pub(super) async fn action(&mut self) -> Result<SurfaceAction, oneshot::error::RecvError> {
+        (&mut self.action).await
+    }
+}
+
+impl Drop for Waiting {
+    fn drop(&mut self) {
+        // Closed first, so `act` either sent before this and the action is
+        // taken here, or fails to send and queues the action itself.
+        self.action.close();
+        if let Ok(action) = self.action.try_recv() {
+            self.host.restore_actions(&[action]);
+        }
+    }
+}
+
 struct State {
     processor: MessageProcessor,
     /// What every call showed, in order: what a client's processor has
@@ -191,32 +220,30 @@ impl SurfaceHost {
         call_id: &str,
         request: &SurfaceRequest,
     ) -> Result<Arc<SurfaceContent>, String> {
-        let mut state = self.state();
-        if let Some((shown, outcome)) = state.shown.get(call_id) {
-            if shown == request {
-                return outcome.clone();
-            }
-        }
-        let outcome = state.apply(call_id, request);
-        state
-            .shown
-            .insert(call_id.to_owned(), (request.clone(), outcome.clone()));
-        outcome
+        self.state().show(call_id, request, Shows::Anything)
     }
 
-    /// Waits for the user's next action on `surface`. The receiver fails
-    /// when another call starts waiting on the surface, or the surfaces
-    /// are reset.
-    pub(super) fn wait(&self, surface: &str) -> Result<oneshot::Receiver<SurfaceAction>, String> {
+    /// [`Self::show`], for a call that then waits for the user's next
+    /// action on the surface. Showing and starting to wait are one step,
+    /// so no action on the surface falls between them: a client that
+    /// already shows the surface can send one at any moment.
+    ///
+    /// Refused, showing nothing, for a block that leaves no surface to
+    /// act on.
+    pub(super) fn show_waiting(
+        &self,
+        call_id: &str,
+        request: &SurfaceRequest,
+    ) -> Result<(Arc<SurfaceContent>, Waiting), String> {
         let mut state = self.state();
-        if state.processor.surface(surface).is_none() {
-            return Err(format!(
-                "surface `{surface}` no longer exists, so there is nothing to wait on"
-            ));
-        }
-        let (sender, receiver) = oneshot::channel();
-        state.waiting.insert(surface.to_owned(), sender);
-        Ok(receiver)
+        let content = state.show(call_id, request, Shows::ToActOn)?;
+        let (sender, action) = oneshot::channel();
+        state.waiting.insert(content.surface.clone(), sender);
+        let waiting = Waiting {
+            host: self.clone(),
+            action,
+        };
+        Ok((content, waiting))
     }
 
     /// Takes what the user did on `surface`: `message` is A2UI's `action`
@@ -295,11 +322,38 @@ impl SurfaceHost {
     }
 }
 
+/// What a call's block has to leave behind.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Shows {
+    /// Whatever it does, a block that deletes its surface included.
+    Anything,
+    /// A surface, which the call waits on.
+    ToActOn,
+}
+
 impl State {
+    fn show(
+        &mut self,
+        call_id: &str,
+        request: &SurfaceRequest,
+        shows: Shows,
+    ) -> Result<Arc<SurfaceContent>, String> {
+        if let Some((shown, outcome)) = self.shown.get(call_id) {
+            if shown == request {
+                return outcome.clone();
+            }
+        }
+        let outcome = self.apply(call_id, request, shows);
+        self.shown
+            .insert(call_id.to_owned(), (request.clone(), outcome.clone()));
+        outcome
+    }
+
     fn apply(
         &mut self,
         call_id: &str,
         request: &SurfaceRequest,
+        shows: Shows,
     ) -> Result<Arc<SurfaceContent>, String> {
         let surface = request.surface_id(call_id);
         let messages = EXPRESS
@@ -314,10 +368,15 @@ impl State {
                 _ => error.message().to_owned(),
             })
             .collect::<Vec<_>>();
-        let refused = if refused.is_empty() {
-            self.unresolved(&surface)
-        } else {
+        let refused = if !refused.is_empty() {
             Some(refused.join("; "))
+        } else if shows == Shows::ToActOn && self.processor.surface(&surface).is_none() {
+            Some(format!(
+                "the block leaves no surface `{surface}`, so there is nothing to wait on; \
+                 call again without `wait`"
+            ))
+        } else {
+            self.unresolved(&surface)
         };
         if let Some(refused) = refused {
             // A message the processor took before the one it refused stays

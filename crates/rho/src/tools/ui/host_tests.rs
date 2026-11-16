@@ -3,7 +3,8 @@ use serde_json::json;
 
 use super::*;
 
-const CONFIRM: &str = r#"root = Column([Text("Merge?"), Button(Text("Merge"), action=Event("merge", {branch: "fix"}))])"#;
+const CONFIRM: &str = r#"root = Column([question, Button(Text("Merge"), action=Event("merge", {branch: "fix"}))])
+question = Text("Merge?")"#;
 
 fn request(express: &str, surface: &str) -> SurfaceRequest {
     SurfaceRequest {
@@ -83,7 +84,8 @@ fn an_action_whose_call_stopped_waiting_is_kept_for_a_turn() {
     let host = SurfaceHost::default();
     let content = host.show("call-1", &request(CONFIRM, "s")).unwrap();
     let button = component_id(&content, "Button");
-    drop(host.wait("s").unwrap());
+    let asked_again = request(r#"question = Text("Merge now?")"#, "s");
+    drop(host.show_waiting("call-2", &asked_again).unwrap());
 
     host.act("s", &pressed("s", &button, "merge"), None)
         .unwrap();
@@ -139,4 +141,53 @@ fn an_action_the_surface_cannot_send_is_refused() {
         assert!(host.act(surface, &message, None).is_err(), "{case}");
     }
     assert_eq!(host.take_actions(), Vec::new());
+}
+
+// Covers: an update to a surface the client already shows can be acted on
+// at once, so the call that shows it and waits must get that action; it
+// must not sit in the queue for a turn while the call waits on
+// Owner: surface host
+#[tokio::test]
+async fn a_waiting_call_gets_the_next_action_on_a_surface_already_shown() {
+    let host = SurfaceHost::default();
+    let content = host.show("call-1", &request(CONFIRM, "s")).unwrap();
+    let button = component_id(&content, "Button");
+    let update = request(r#"question = Text("Merge now?")"#, "s");
+
+    let (_, mut waiting) = host.show_waiting("call-2", &update).unwrap();
+    host.act("s", &pressed("s", &button, "merge"), None)
+        .unwrap();
+
+    assert_eq!(
+        (waiting.action().await.ok(), host.take_actions()),
+        (
+            Some(SurfaceAction {
+                surface: "s".to_owned(),
+                action: pressed("s", &button, "merge")["action"].clone(),
+            }),
+            Vec::new(),
+        )
+    );
+}
+
+// Covers: an action handed to a waiting call as its turn is cancelled
+// must not be lost with the call; the next turn delivers it
+// Owner: surface host
+#[test]
+fn an_action_a_cancelled_call_already_had_is_kept_for_a_turn() {
+    let host = SurfaceHost::default();
+    let (content, waiting) = host.show_waiting("call-1", &request(CONFIRM, "s")).unwrap();
+    let button = component_id(&content, "Button");
+    host.act("s", &pressed("s", &button, "merge"), None)
+        .unwrap();
+
+    drop(waiting);
+
+    assert_eq!(
+        host.take_actions(),
+        vec![SurfaceAction {
+            surface: "s".to_owned(),
+            action: pressed("s", &button, "merge")["action"].clone(),
+        }]
+    );
 }
