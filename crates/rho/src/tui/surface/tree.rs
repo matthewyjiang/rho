@@ -107,6 +107,14 @@ pub(super) enum MediaKind {
     Audio,
 }
 
+/// How much a `Text` weighs among the text around it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum TextRole {
+    Heading,
+    Body,
+    Caption,
+}
+
 /// A check that failed, as the surface shows it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct Failure {
@@ -129,7 +137,7 @@ pub(super) struct ChoiceOption {
 pub(super) enum Node {
     Text {
         text: String,
-        caption: bool,
+        role: TextRole,
     },
     Icon(String),
     Media {
@@ -293,7 +301,11 @@ impl Builder<'_> {
         match resolved.kind.as_str() {
             "Text" => Node::Text {
                 text: properties.text("text"),
-                caption: properties.literal("variant") == Some("caption"),
+                role: match properties.literal("variant") {
+                    Some("h1" | "h2" | "h3" | "h4" | "h5") => TextRole::Heading,
+                    Some("caption") => TextRole::Caption,
+                    _ => TextRole::Body,
+                },
             },
             "Icon" => Node::Icon(properties.literal("name").unwrap_or_default().to_owned()),
             "Image" => media(MediaKind::Image, &properties),

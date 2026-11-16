@@ -138,9 +138,9 @@ The tool's description teaches the whole notation, so it stays out of the model'
 
 ### Surfaces in the terminal UI
 
-The terminal UI draws a surface in the transcript, under the card of the `ui` call that showed it. The surface stays there and stays usable after the call returns. A later call that updates the surface moves it under that call's card, and a deleted surface leaves its card alone. Zen mode keeps surfaces, and they are never truncated.
+The terminal UI draws a surface in the transcript, in a rounded frame under the card of the `ui` call that showed it. The frame is at most 80 columns wide, and it takes the accent color while the surface has the keyboard. The surface stays there and stays usable after the call returns. A later call that updates the surface moves it under that call's card, and a deleted surface leaves its card alone. Zen mode keeps surfaces, and they are never truncated.
 
-A call that waits for you gives its surface the keyboard, unless you are typing in the composer or a picker is open. Otherwise press `Alt+U` to move the keyboard to the latest surface. The line under the surface names the keys that apply.
+A call that waits for you gives its surface the keyboard, unless you are typing in the composer or a picker is open. Otherwise press `Alt+U` to move the keyboard to the latest surface. The line under the surface names the keys that apply. The control the keyboard is on has its label in bold and underlined.
 
 | Key | Action |
 | --- | --- |
@@ -159,17 +159,17 @@ Each component of the A2UI basic catalog has a terminal form:
 
 | Component | Drawn as |
 | --- | --- |
-| `Text` | Markdown, as assistant text is; a caption is dimmed |
-| `Row`, `Column`, `List` | Layout. A row puts its children side by side when they fit, in equal columns when those are at least 12 columns wide, and stacks them otherwise |
-| `Card` | A rounded border, at most 72 columns wide |
-| `Button` | `[ Label ]`; a primary button is bold in the accent color, and a borderless one is underlined text |
-| `CheckBox` | `[x] label` |
-| `TextField` | Its label, then the value on a line marked `│`. Long text wraps, and an obscured value shows as bullets |
+| `Text` | Markdown, as assistant text is. A heading (`h1` to `h5`) is bold in the accent color, and a caption is dimmed |
+| `Row`, `Column`, `List` | Layout. A row puts its children side by side when they fit, in equal columns when those are at least 12 columns wide, and stacks them otherwise. A column leaves a blank line between its children, except between lines of text, between checkboxes, and beside a divider |
+| `Card` | A rounded border. A card at the root is the surface's own frame. A line of bold text that opens a card is its title, drawn as a heading |
+| `Button` | Its label on a filled block: the accent color for a primary button, a muted wash for a default one. A borderless button is its label in the accent color. `▸` leads the label of the filled button the keyboard is on |
+| `CheckBox` | `■ label` when checked, `□ label` when not |
+| `TextField` | Its label, then the value on a muted wash at most 48 columns wide, with `▌` at its left edge while the keyboard is on it. A placeholder is dimmed and italic. Long text wraps, and an obscured value shows as bullets |
 | `DateTimeInput` | A field that takes ISO 8601 text, such as `2026-01-31` or `2026-01-31T09:30`, and keeps anything else out of the data model |
-| `ChoicePicker` | One line for each option, `(•)` for one choice and `[x]` for several, or a row of `( chip )`s. The `filterable` option is ignored |
+| `ChoicePicker` | One line for each option, `●` or `○` for one choice and `■` or `□` for several, or a row of `( chip )`s with each selected one filled as `(✓ chip)`. The `filterable` option is ignored |
 | `Slider` | `━━━━●──── 3` |
-| `Tabs` | A tab bar with the active tab in brackets, then that tab's content |
-| `Modal` | Its trigger as `▸ label`; once opened, the content in a border below it |
+| `Tabs` | A tab bar with the active tab bold in the accent color over a heavy rule, then that tab's content |
+| `Modal` | Its trigger as `▸ label`, and `▾ label` once opened, with the content in a border below it |
 | `Icon` | One glyph for each icon name, `◆` for a name without one |
 | `Divider` | A rule |
 | `Image`, `Video`, `AudioPlayer` | One line with the description and the URL |

@@ -10,7 +10,14 @@ use crate::{
     env::IsolatedHome,
     keys::Key,
     scenario::{Scenario, Step},
-    PtyHarness,
+    PtyHarness, PtySize,
+};
+
+/// Rows enough for a whole surface above the lines that follow its call:
+/// these scenarios read its first line after the transcript has grown.
+const TALL: PtySize = PtySize {
+    rows: 40,
+    cols: 100,
 };
 
 /// The hint under a surface the keyboard is on.
@@ -53,14 +60,14 @@ const FORM_STEPS: &[Step] = &[
     Step::Key(Key::Tab),
     Step::Key(Key::Char(' ')),
     Step::WaitText {
-        text: "[x] Email me updates",
+        text: "■ Email me updates",
         timeout: STREAM,
     },
     Step::Key(Key::Tab),
     Step::Key(Key::Tab),
     Step::Key(Key::Enter),
     Step::WaitText {
-        text: "(•) Pro",
+        text: "● Pro",
         timeout: STREAM,
     },
     Step::Key(Key::Tab),
@@ -283,7 +290,7 @@ const RESET_STEPS: &[Step] = &[
 pub(super) const RESET: Scenario = Scenario::new(
     "surface_reset",
     "A reset replay rebuilds a surface once, and it still takes actions",
-    DEFAULT_SIZE,
+    TALL,
     RESET_STEPS,
     /*smoke*/ false,
 );
@@ -333,7 +340,7 @@ const ZEN_STEPS: &[Step] = &[
 pub(super) const ZEN: Scenario = Scenario::new(
     "surface_zen",
     "Zen mode hides the ui call's card and keeps its surface",
-    DEFAULT_SIZE,
+    TALL,
     ZEN_STEPS,
     /*smoke*/ false,
 )

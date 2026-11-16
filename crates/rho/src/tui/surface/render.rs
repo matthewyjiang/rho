@@ -8,12 +8,12 @@ use ratatui::{
 use unicode_width::UnicodeWidthChar;
 
 use super::{
-    tree::{ButtonVariant, ChoiceOption, Control, Failure, FieldKind, MediaKind, Node},
+    tree::{ButtonVariant, ChoiceOption, Control, Failure, FieldKind, MediaKind, Node, TextRole},
     Editing, Keyboard, SurfaceView,
 };
 use crate::tui::{
     markdown::{render_markdown, CodeFenceState},
-    render::{display_width, push_wrapped_text, spans_display_width, LineFill},
+    render::{clip_line, display_width, push_wrapped_text, spans_display_width, LineFill},
     theme::Theme,
 };
 
@@ -24,13 +24,20 @@ const ROW_GAP: usize = 2;
 /// instead.
 const MIN_COLUMN: usize = 12;
 
-/// The widest a card draws, so a form stays readable on a wide terminal.
-const MAX_CARD: usize = 72;
+/// The widest a surface draws, so a form stays readable on a wide terminal.
+const MAX_WIDTH: usize = 80;
+
+/// The widest a field's value area draws.
+const MAX_FIELD: usize = 48;
+
+/// The narrowest width that still has room for a frame around content.
+const MIN_FRAMED: usize = 6;
 
 /// Cells in a slider's track.
 const SLIDER_TRACK: usize = 20;
 
-/// The lines of `view`, each at most `width` columns wide.
+/// The lines of `view`, each at most `width` columns wide: the surface in a
+/// frame, then the keys that apply to it.
 pub(in crate::tui) fn surface_lines(view: &SurfaceView, width: usize) -> Vec<Line<'static>> {
     let painter = Painter {
         view,
@@ -39,12 +46,25 @@ pub(in crate::tui) fn surface_lines(view: &SurfaceView, width: usize) -> Vec<Lin
             Keyboard::Away { .. } => None,
         },
     };
-    let width = width.max(1);
-    let mut lines = painter.block(&view.tree.root, width);
+    let width = width.clamp(1, MAX_WIDTH);
+    // A card at the root is the surface's own frame, not a second one.
+    let content = match &view.tree.root {
+        Node::Card(content) => content,
+        root => root,
+    };
+    let border = if painter.focused.is_some() {
+        Theme::accent()
+    } else {
+        Theme::dim()
+    };
+    let mut lines = framed(painter.card(content, frame_inner(width)), width, border);
     if let Some(hint) = painter.hint() {
         push_wrapped_text(&mut lines, hint, width, Theme::dim(), LineFill::Natural);
     }
     lines
+        .into_iter()
+        .map(|line| clip_line(line, width))
+        .collect()
 }
 
 /// The glyph drawn for the basic catalog's icon `name`.
@@ -113,14 +133,48 @@ impl Painter<'_> {
         focus.is_some() && focus == self.focused
     }
 
-    /// `style` as the control at `focus` draws it: reversed under the
-    /// keyboard, so focus reads without color.
-    fn control(&self, focus: Option<usize>, style: Style) -> Style {
+    /// `style` as the control at `focus` draws its label: bold and
+    /// underlined under the keyboard, so focus reads without color and is
+    /// never taken for a filled button.
+    fn label(&self, focus: Option<usize>, style: Style) -> Style {
         if self.is_focused(focus) {
-            style.add_modifier(Modifier::REVERSED | Modifier::BOLD)
+            style.add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
         } else {
             style
         }
+    }
+
+    /// The label of a checkbox or a choice.
+    fn option_label(&self, focus: Option<usize>) -> Style {
+        if self.is_focused(focus) {
+            self.label(focus, Theme::accent())
+        } else {
+            Theme::text()
+        }
+    }
+
+    /// The mark of a checkbox or a choice: its shape says whether it is
+    /// selected, and the accent says so again.
+    fn option_mark(
+        &self,
+        focus: Option<usize>,
+        mark: &'static str,
+        selected: bool,
+    ) -> Span<'static> {
+        let focused = self.is_focused(focus);
+        let style = if selected || focused {
+            Theme::accent()
+        } else {
+            Theme::dim()
+        };
+        Span::styled(
+            mark,
+            if focused {
+                style.add_modifier(Modifier::BOLD)
+            } else {
+                style
+            },
+        )
     }
 
     fn editing(&self, focus: Option<usize>) -> Option<&Editing> {
@@ -155,17 +209,58 @@ impl Painter<'_> {
         }
     }
 
+    /// A card's content. A column that opens with a line of bold text has
+    /// that line as its title.
+    fn card(&self, content: &Node, width: usize) -> Vec<Line<'static>> {
+        match content {
+            Node::Column(children) => self.column(children, width, Titled::Yes),
+            content => self.block(content, width),
+        }
+    }
+
+    /// Children stacked, with a blank line between any two that do not
+    /// belong together.
+    fn column(&self, children: &[Node], width: usize, titled: Titled) -> Vec<Line<'static>> {
+        let mut lines = Vec::new();
+        let mut above: Option<&Node> = None;
+        for (index, child) in children.iter().enumerate() {
+            let block = match child {
+                Node::Text {
+                    text,
+                    role: TextRole::Body,
+                } if titled == Titled::Yes && index == 0 && is_bold_line(text) => {
+                    self.text(text, TextRole::Heading, width)
+                }
+                child => self.block(child, width),
+            };
+            if block.is_empty() {
+                continue;
+            }
+            if above.is_some_and(|above| !sits_tight(above, child)) {
+                lines.push(Line::default());
+            }
+            lines.extend(block);
+            above = Some(child);
+        }
+        lines
+    }
+
+    fn text(&self, text: &str, role: TextRole, width: usize) -> Vec<Line<'static>> {
+        let mut lines = render_markdown(text, width, &mut CodeFenceState::default()).lines;
+        let style = match role {
+            TextRole::Heading => Theme::input_prompt(),
+            TextRole::Body => return lines,
+            TextRole::Caption => Theme::dim(),
+        };
+        for span in lines.iter_mut().flat_map(|line| &mut line.spans) {
+            span.style = span.style.patch(style);
+        }
+        lines
+    }
+
     fn block(&self, node: &Node, width: usize) -> Vec<Line<'static>> {
         match node {
-            Node::Text { text, caption } => {
-                let mut lines = render_markdown(text, width, &mut CodeFenceState::default()).lines;
-                if *caption {
-                    for span in lines.iter_mut().flat_map(|line| &mut line.spans) {
-                        span.style = span.style.patch(Theme::dim());
-                    }
-                }
-                lines
-            }
+            Node::Text { text, role } => self.text(text, *role, width),
             Node::Icon(name) => vec![Line::from(Span::styled(icon_glyph(name), Theme::accent()))],
             Node::Media {
                 kind,
@@ -186,11 +281,10 @@ impl Painter<'_> {
             }
             Node::Divider => vec![Line::from(Span::styled("─".repeat(width), Theme::dim()))],
             Node::Row(children) => self.row(children, width),
-            Node::Column(children) => children
-                .iter()
-                .flat_map(|child| self.block(child, width))
-                .collect(),
-            Node::Card(child) => boxed(self.block(child, card_inner(width)), width),
+            Node::Column(children) => self.column(children, width, Titled::No),
+            Node::Card(content) => {
+                framed(self.card(content, frame_inner(width)), width, Theme::dim())
+            }
             Node::Tabs {
                 focus,
                 titles,
@@ -198,18 +292,35 @@ impl Painter<'_> {
                 body,
             } => {
                 let mut bar = Vec::new();
+                let mut rule = Vec::new();
+                let mut used = 0;
                 for (index, title) in titles.iter().enumerate() {
                     if index > 0 {
-                        bar.push(Span::styled(" │ ", Theme::dim()));
+                        bar.push(Span::raw(" ".repeat(ROW_GAP)));
+                        rule.push(Span::styled("─".repeat(ROW_GAP), Theme::dim()));
+                        used += ROW_GAP;
                     }
-                    bar.push(if index == *active {
-                        let style = Theme::accent().add_modifier(Modifier::BOLD);
-                        Span::styled(format!("[{title}]"), self.control(Some(*focus), style))
+                    let tab_width = display_width(title);
+                    used += tab_width;
+                    if index == *active {
+                        bar.push(Span::styled(
+                            title.clone(),
+                            self.label(Some(*focus), Theme::input_prompt()),
+                        ));
+                        rule.push(Span::styled("━".repeat(tab_width), Theme::accent()));
                     } else {
-                        Span::styled(format!(" {title} "), Theme::dim())
-                    });
+                        bar.push(Span::styled(title.clone(), Theme::dim()));
+                        rule.push(Span::styled("─".repeat(tab_width), Theme::dim()));
+                    }
                 }
-                let mut lines = flow(bar, width);
+                // The rule marks the active tab only while the bar is one
+                // line; a bar that wraps leaves it to the tab's own style.
+                let mut lines = if used <= width {
+                    rule.push(Span::styled("─".repeat(width - used), Theme::dim()));
+                    vec![Line::from(bar), Line::from(rule)]
+                } else {
+                    flow(bar, width)
+                };
                 lines.extend(body.iter().flat_map(|body| self.block(body, width)));
                 lines
             }
@@ -219,10 +330,14 @@ impl Painter<'_> {
                 content,
             } => {
                 let marker = if content.is_some() { "▾" } else { "▸" };
-                let style = self.control(Some(*focus), Theme::markdown_link());
+                let style = self.label(Some(*focus), Theme::accent());
                 let mut lines = vec![Line::from(Span::styled(format!("{marker} {label}"), style))];
                 if let Some(content) = content {
-                    lines.extend(boxed(self.block(content, card_inner(width)), width));
+                    lines.extend(framed(
+                        self.card(content, frame_inner(width)),
+                        width,
+                        Theme::dim(),
+                    ));
                 }
                 lines
             }
@@ -240,19 +355,34 @@ impl Painter<'_> {
                         .map(|focusable| &focusable.control),
                     Some(Control::Button { action: Some(_) })
                 );
-                let (text, style) = match variant {
-                    _ if !enabled => (format!("[ {label} ]"), Theme::dim()),
-                    ButtonVariant::Default => (format!("[ {label} ]"), Theme::text()),
-                    ButtonVariant::Primary => (
-                        format!("[ {label} ]"),
-                        Theme::accent().add_modifier(Modifier::BOLD),
-                    ),
-                    ButtonVariant::Borderless => (label.clone(), Theme::markdown_link()),
+                let focus = Some(*focus);
+                let fill = match variant {
+                    ButtonVariant::Borderless => None,
+                    ButtonVariant::Default | ButtonVariant::Primary if !enabled => {
+                        Some(Theme::command_block().patch(Theme::activity_rail_dim()))
+                    }
+                    ButtonVariant::Default => Some(Theme::command_block()),
+                    ButtonVariant::Primary => Some(Theme::accent_fill()),
                 };
-                let mut lines = vec![Line::from(Span::styled(
-                    text,
-                    self.control(Some(*focus), style),
-                ))];
+                let spans = match fill {
+                    Some(fill) => {
+                        let lead = if self.is_focused(focus) { "▸ " } else { "  " };
+                        vec![
+                            Span::styled(lead, fill),
+                            Span::styled(label.clone(), self.label(focus, fill)),
+                            Span::styled("  ", fill),
+                        ]
+                    }
+                    None => {
+                        let style = if enabled {
+                            Theme::accent()
+                        } else {
+                            Theme::dim()
+                        };
+                        vec![Span::styled(label.clone(), self.label(focus, style))]
+                    }
+                };
+                let mut lines = vec![Line::from(spans)];
                 push_failures(&mut lines, failures, width);
                 lines
             }
@@ -262,11 +392,12 @@ impl Painter<'_> {
                 checked,
                 failures,
             } => {
-                let mark = if *checked { "[x]" } else { "[ ]" };
+                let mark = if *checked { "■" } else { "□" };
                 let mut lines = hanging(
-                    Span::styled(mark, self.control(*focus, Theme::text())),
+                    self.option_mark(*focus, mark, *checked),
                     label,
                     width,
+                    self.option_label(*focus),
                 );
                 push_failures(&mut lines, failures, width);
                 lines
@@ -284,23 +415,34 @@ impl Painter<'_> {
                     lines.extend(wrapped(label, width, Theme::dim()));
                 }
                 let editing = self.editing(*focus);
-                let bar = if self.is_focused(*focus) {
-                    Span::styled("┃ ", Theme::accent().add_modifier(Modifier::BOLD))
+                let fill = Theme::command_block();
+                let edge = if self.is_focused(*focus) {
+                    Span::styled("▌", fill.patch(Theme::accent()))
                 } else {
-                    Span::styled("│ ", Theme::dim())
+                    Span::styled(" ", fill)
                 };
                 let (text, cursor) = match editing {
                     Some(editing) => (editing.text.as_str(), Some(editing.cursor)),
                     None => (value.as_str(), None),
                 };
+                // The value area: an edge, the text, and a column to spare.
+                let inner = width.min(MAX_FIELD).saturating_sub(2).max(1);
                 let rows = if text.is_empty() && cursor.is_none() {
-                    vec![vec![Span::styled(placeholder.clone(), Theme::dim())]]
+                    let style = fill
+                        .patch(Theme::activity_rail_dim())
+                        .add_modifier(Modifier::ITALIC);
+                    wrapped(placeholder, inner, style)
+                        .into_iter()
+                        .map(|line| line.spans)
+                        .collect()
                 } else {
-                    field_rows(text, cursor, *kind, width.saturating_sub(2).max(1))
+                    field_rows(text, cursor, *kind, inner, fill)
                 };
                 for row in rows {
-                    let mut spans = vec![bar.clone()];
+                    let pad = inner.saturating_sub(spans_display_width(&row)) + 1;
+                    let mut spans = vec![edge.clone()];
                     spans.extend(row);
+                    spans.push(Span::styled(" ".repeat(pad), fill));
                     lines.push(Line::from(spans));
                 }
                 if let Some(invalid) = editing.and_then(|editing| editing.invalid) {
@@ -325,15 +467,16 @@ impl Painter<'_> {
                 } else {
                     for option in options {
                         let mark = match (multiple, option.selected) {
-                            (true, true) => "[x]",
-                            (true, false) => "[ ]",
-                            (false, true) => "(•)",
-                            (false, false) => "( )",
+                            (true, true) => "■",
+                            (true, false) => "□",
+                            (false, true) => "●",
+                            (false, false) => "○",
                         };
                         lines.extend(hanging(
-                            Span::styled(mark, self.control(option.focus, Theme::text())),
+                            self.option_mark(option.focus, mark, option.selected),
                             &option.label,
                             width,
+                            self.option_label(option.focus),
                         ));
                     }
                 }
@@ -359,12 +502,17 @@ impl Painter<'_> {
                 } else {
                     0
                 };
-                let style = self.control(*focus, Theme::accent());
+                let number = if self.is_focused(*focus) {
+                    self.label(*focus, Theme::accent())
+                } else {
+                    Theme::text()
+                };
                 lines.push(Line::from(vec![
                     Span::styled("━".repeat(filled), Theme::accent()),
-                    Span::styled("●", style),
+                    Span::styled("●", Theme::accent()),
                     Span::styled("─".repeat(track - 1 - filled), Theme::dim()),
-                    Span::styled(format!(" {}", number_text(*value)), Theme::text()),
+                    Span::raw(" "),
+                    Span::styled(number_text(*value), number),
                 ]));
                 push_failures(&mut lines, failures, width);
                 lines
@@ -404,30 +552,68 @@ impl Painter<'_> {
                 spans.push(Span::raw(" "));
             }
             let (text, style) = if option.selected {
-                (
-                    format!("(✓ {})", option.label),
-                    Theme::accent().add_modifier(Modifier::BOLD),
-                )
+                (format!("(✓ {})", option.label), Theme::accent_fill())
             } else {
                 (format!("( {} )", option.label), Theme::text())
             };
-            spans.push(Span::styled(text, self.control(option.focus, style)));
+            let style = if option.selected {
+                self.label(option.focus, style)
+            } else {
+                self.option_label(option.focus)
+            };
+            spans.push(Span::styled(text, style));
         }
         spans
     }
 }
 
-fn card_inner(width: usize) -> usize {
-    width.min(MAX_CARD).saturating_sub(4).max(1)
+/// Whether a column's first child is the title of the card it fills.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Titled {
+    Yes,
+    No,
 }
 
-/// `content` in a rounded border, or as it is where no border fits.
-fn boxed(content: Vec<Line<'static>>, width: usize) -> Vec<Line<'static>> {
-    let inner = card_inner(width);
-    if width < 6 {
+/// Whether `text` is one line of markdown, all of it bold.
+fn is_bold_line(text: &str) -> bool {
+    let text = text.trim();
+    text.strip_prefix("**")
+        .and_then(|rest| rest.strip_suffix("**"))
+        .is_some_and(|inner| !inner.is_empty() && !inner.contains("**") && !inner.contains('\n'))
+}
+
+/// Whether `below` follows `above` in a column with no blank line between:
+/// a divider and its neighbors, lines of text, and a run of checkboxes.
+fn sits_tight(above: &Node, below: &Node) -> bool {
+    let prose = |node: &Node| {
+        matches!(
+            node,
+            Node::Text { .. } | Node::Icon(_) | Node::Media { .. } | Node::Placeholder(_)
+        )
+    };
+    let checkbox = |node: &Node| matches!(node, Node::CheckBox { .. });
+    matches!(above, Node::Divider)
+        || matches!(below, Node::Divider)
+        || (prose(above) && prose(below))
+        || (checkbox(above) && checkbox(below))
+}
+
+/// The width a frame `width` columns wide leaves its content.
+fn frame_inner(width: usize) -> usize {
+    if width < MIN_FRAMED {
+        width
+    } else {
+        width - 4
+    }
+}
+
+/// `content` in a rounded border `width` columns wide, or as it is where no
+/// border fits.
+fn framed(content: Vec<Line<'static>>, width: usize, border: Style) -> Vec<Line<'static>> {
+    if width < MIN_FRAMED {
         return content;
     }
-    let border = Theme::dim();
+    let inner = frame_inner(width);
     let rule = "─".repeat(inner + 2);
     let mut lines = Vec::with_capacity(content.len() + 2);
     lines.push(Line::from(Span::styled(format!("╭{rule}╮"), border)));
@@ -509,10 +695,10 @@ fn wrapped(text: &str, width: usize, style: Style) -> Vec<Line<'static>> {
 }
 
 /// `mark`, then `text` wrapped beside it with a hanging indent.
-fn hanging(mark: Span<'static>, text: &str, width: usize) -> Vec<Line<'static>> {
+fn hanging(mark: Span<'static>, text: &str, width: usize, style: Style) -> Vec<Line<'static>> {
     let indent = display_width(&mark.content) + 1;
     let mut mark = Some(mark);
-    wrapped(text, width.saturating_sub(indent).max(1), Theme::text())
+    wrapped(text, width.saturating_sub(indent).max(1), style)
         .into_iter()
         .map(|line| {
             let mut spans = match mark.take() {
@@ -543,8 +729,8 @@ fn field_rows(
     cursor: Option<usize>,
     kind: FieldKind,
     width: usize,
+    style: Style,
 ) -> Vec<Vec<Span<'static>>> {
-    let style = Theme::text();
     let caret = style.add_modifier(Modifier::REVERSED);
     let mut rows = vec![Vec::new()];
     let mut run = String::new();
