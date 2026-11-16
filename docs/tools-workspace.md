@@ -134,7 +134,47 @@ The `ui` tool lets the model show the user a small interface in the transcript, 
 
 One call shows or updates one surface. An action the user takes after the call returned reaches the model as a message at its turn's next boundary; an idle session starts a turn for it when its client asked for [`idle_wake: turn`](/protocol#a-session-s-setup), and otherwise gets it with the next prompt.
 
-The tool's description teaches the whole notation, so it stays out of the model's context until `tool_search` loads it; the system prompt only says that it exists. Only a daemon session whose client asked for surfaces when it opened the session has the tool. Rho's own terminal UI, `rho run`, `rho attach`, the ACP server, sessions an agent starts, and subagents do not have it yet. Writing a client that draws them: [Protocol](/protocol#surfaces).
+The tool's description teaches the whole notation, so it stays out of the model's context until `tool_search` loads it; the system prompt only says that it exists. Only a daemon session whose client asked for surfaces when it opened the session has the tool. Rho's terminal UI draws them ([below](#surfaces-in-the-terminal-ui)). `rho run`, `rho attach`, the ACP server, sessions an agent starts, and subagents do not have the tool yet. Writing a client that draws them: [Protocol](/protocol#surfaces).
+
+### Surfaces in the terminal UI
+
+The terminal UI draws a surface in the transcript, under the card of the `ui` call that showed it. The surface stays there and stays usable after the call returns. A later call that updates the surface moves it under that call's card, and a deleted surface leaves its card alone. Zen mode keeps surfaces, and they are never truncated.
+
+A call that waits for you gives its surface the keyboard, unless you are typing in the composer or a picker is open. Otherwise press `Alt+U` to move the keyboard to the latest surface. The line under the surface names the keys that apply.
+
+| Key | Action |
+| --- | --- |
+| `Alt+U` | From the composer, move the keyboard to the latest surface. A key you bound to something else in `[keybindings]` keeps that binding |
+| `Tab` / `Down`, `Shift+Tab` / `Up` | Move to the next or previous control |
+| `Enter` / `Space` | Press a button, toggle a checkbox or a choice, open or close a modal, or start editing a field |
+| `Left` / `Right` | Move a slider or switch tabs; on other controls, move to the previous or next one |
+| `Enter` / `Esc` while editing | Stop editing the field. `Tab` and `Shift+Tab` stop and move on |
+| `Esc` | Return the keyboard to the composer. During a turn, a second `Esc` aborts the turn as usual |
+
+Typing on a focused field starts editing it, and a paste goes into the field being edited. Edits go to the surface's data model as you type, so its checks update at once and a button sends the values you entered. A check that fails shows its message under the control, and a button whose own check fails is disabled. In a multiline field the newline key (`insert_newline`, `Ctrl+J` by default) adds a line.
+
+Pressing a button whose action is an event sends it to the session and returns the keyboard to the composer. A waiting `ui` call returns the action; otherwise an idle session starts a turn to read it. A button that opens a link does not start a browser: the terminal UI prints the link as a notice.
+
+Each component of the A2UI basic catalog has a terminal form:
+
+| Component | Drawn as |
+| --- | --- |
+| `Text` | Markdown, as assistant text is; a caption is dimmed |
+| `Row`, `Column`, `List` | Layout. A row puts its children side by side when they fit, in equal columns when those are at least 12 columns wide, and stacks them otherwise |
+| `Card` | A rounded border, at most 72 columns wide |
+| `Button` | `[ Label ]`; a primary button is bold in the accent color, and a borderless one is underlined text |
+| `CheckBox` | `[x] label` |
+| `TextField` | Its label, then the value on a line marked `│`. Long text wraps, and an obscured value shows as bullets |
+| `DateTimeInput` | A field that takes ISO 8601 text, such as `2026-01-31` or `2026-01-31T09:30`, and keeps anything else out of the data model |
+| `ChoicePicker` | One line for each option, `(•)` for one choice and `[x]` for several, or a row of `( chip )`s. The `filterable` option is ignored |
+| `Slider` | `━━━━●──── 3` |
+| `Tabs` | A tab bar with the active tab in brackets, then that tab's content |
+| `Modal` | Its trigger as `▸ label`; once opened, the content in a border below it |
+| `Icon` | One glyph for each icon name, `◆` for a name without one |
+| `Divider` | A rule |
+| `Image`, `Video`, `AudioPlayer` | One line with the description and the URL |
+
+A surface is not operated with the mouse. A field edits as one run of text: the arrow keys move the caret along it, and `Up` and `Down` leave the field.
 
 ## Background processes
 
