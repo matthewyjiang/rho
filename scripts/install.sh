@@ -38,7 +38,7 @@ platform() {
   target="$arch-$os"
 
   case "$target" in
-    x86_64-unknown-linux-gnu|x86_64-apple-darwin|aarch64-apple-darwin)
+    x86_64-unknown-linux-gnu|aarch64-apple-darwin)
       printf '%s' "$target"
       ;;
     *)
