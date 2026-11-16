@@ -1,5 +1,6 @@
 //! A session's background work: what its turns started that runs on its
-//! own, which attached clients follow and may stop.
+//! own, which attached clients follow and may stop, and any client lists
+//! for every loaded session at once.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -13,6 +14,46 @@ use super::SessionId;
 /// [`crate::ErrorCode::InvalidParams`]; an unloaded session is
 /// [`crate::ErrorCode::SessionNotLoaded`].
 pub const SESSION_BACKGROUND_STOP: &str = "rho/session/background/stop";
+
+/// List the background work of every loaded session that has some, as each
+/// session's last [`super::SessionEvent::Background`] did, without
+/// attaching to any. Work runs on after the turn that started it ends, so
+/// a session whose job is no longer in progress may still list some; a
+/// client that shows sessions from [`super::JOB_LIST`] reads this to tell
+/// one that is done from one whose work still runs. Reissue to refresh. A
+/// daemon from before this method answers [`crate::ErrorCode::MethodNotFound`].
+///
+/// # Next major
+///
+/// NEXT_MAJOR(rho-protocol): list each session's background work as a `background` field of `JobLive` and remove `rho/session/background/list`.
+///
+/// `JobLive` is not `#[non_exhaustive]`, so a field is a major change.
+pub const SESSION_BACKGROUND_LIST: &str = "rho/session/background/list";
+
+/// Params of [`SESSION_BACKGROUND_LIST`].
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SessionBackgroundListParams {}
+
+/// Result of [`SESSION_BACKGROUND_LIST`]: a point-in-time read, not a
+/// subscription.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SessionBackgroundListResponse {
+    /// Each loaded session with background work, by session id. A session
+    /// absent here has none, or is not loaded. A subagent's session lists
+    /// none while its run is under way; the run is a
+    /// [`BackgroundItem::Subagent`] of its parent's.
+    pub sessions: Vec<SessionBackground>,
+}
+
+/// One loaded session's background work.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SessionBackground {
+    pub session: SessionId,
+    /// What still runs, and what ended whose result the session's model has
+    /// not been given, as [`super::SessionEvent::Background`] lists it;
+    /// never empty. [`BackgroundStatus::is_running`] tells which runs.
+    pub work: Vec<BackgroundWork>,
+}
 
 /// Params of [`SESSION_BACKGROUND_STOP`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

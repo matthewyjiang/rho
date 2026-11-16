@@ -417,6 +417,12 @@ impl Service for DaemonHost {
         self.sessions.processes(params).await
     }
 
+    async fn list_session_background(
+        &self,
+    ) -> Result<rho_protocol::SessionBackgroundListResponse, RpcError> {
+        Ok(self.sessions.background_list())
+    }
+
     async fn session_background_stop(
         &self,
         params: rho_protocol::SessionBackgroundStopParams,

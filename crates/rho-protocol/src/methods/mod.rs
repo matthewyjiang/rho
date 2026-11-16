@@ -25,6 +25,7 @@
 //! | [`SESSION_MCP_RESOURCE`] | [`SessionMcpResourceParams`] | [`SessionMcpResourceResponse`] |
 //! | [`SESSION_MCP_COMPLETE`] | [`SessionMcpCompleteParams`] | [`SessionMcpCompleteResponse`] |
 //! | [`SESSION_PROCESSES`] | [`SessionProcessesParams`] | [`SessionProcessesResponse`] |
+//! | [`SESSION_BACKGROUND_LIST`] | [`SessionBackgroundListParams`] | [`SessionBackgroundListResponse`] |
 //! | [`SESSION_BACKGROUND_STOP`] | [`SessionBackgroundStopParams`] | [`SessionBackgroundStopResponse`] |
 //! | [`SESSION_INSPECT`] | [`SessionInspectParams`] | [`SessionInspectResponse`] |
 //! | [`SESSION_CONFIGURE`] | [`SessionConfigureParams`] | [`SessionConfigureResponse`] |
@@ -90,8 +91,9 @@ pub use auth::{
     UncheckedReason, AUTH_KEY, AUTH_LIST, AUTH_LOGOUT,
 };
 pub use background::{
-    BackgroundItem, BackgroundStatus, BackgroundWork, SessionBackgroundStopParams,
-    SessionBackgroundStopResponse, SESSION_BACKGROUND_STOP,
+    BackgroundItem, BackgroundStatus, BackgroundWork, SessionBackground,
+    SessionBackgroundListParams, SessionBackgroundListResponse, SessionBackgroundStopParams,
+    SessionBackgroundStopResponse, SESSION_BACKGROUND_LIST, SESSION_BACKGROUND_STOP,
 };
 pub use catalog::{
     SessionDeleteParams, SessionDeleteResponse, SessionListParams, SessionListResponse,
@@ -261,6 +263,7 @@ protocol! {
         SessionMcpResourceRead = SESSION_MCP_RESOURCE: SessionMcpResourceParams => SessionMcpResourceResponse,
         SessionMcpComplete = SESSION_MCP_COMPLETE: SessionMcpCompleteParams => SessionMcpCompleteResponse,
         SessionProcesses = SESSION_PROCESSES: SessionProcessesParams => SessionProcessesResponse,
+        SessionBackgroundList = SESSION_BACKGROUND_LIST: SessionBackgroundListParams => SessionBackgroundListResponse,
         SessionBackgroundStop = SESSION_BACKGROUND_STOP: SessionBackgroundStopParams => SessionBackgroundStopResponse,
         SessionInspect = SESSION_INSPECT: SessionInspectParams => SessionInspectResponse,
         SessionList = SESSION_LIST: SessionListParams => SessionListResponse,

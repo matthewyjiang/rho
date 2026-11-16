@@ -26,24 +26,24 @@ use crate::{
         AuthLoginCancelResponse, AuthLoginParams, AuthLoginResponse, AuthLogoutParams,
         AuthLogoutResponse, ClientInfo, ConfigGet, ConfigGetParams, Hello, JobListResponse, Method,
         SessionAnswerParams, SessionAnswerResponse, SessionAttach, SessionAttachParams,
-        SessionAttachResponse, SessionBackgroundStopParams, SessionBackgroundStopResponse,
-        SessionCancelParams, SessionCancelResponse, SessionConfigureParams,
-        SessionConfigureResponse, SessionDeleteParams, SessionDeleteResponse, SessionDetach,
-        SessionDetachParams, SessionDetachResponse, SessionHoldParams, SessionHoldResponse,
-        SessionInspectParams, SessionInspectResponse, SessionListParams, SessionListResponse,
-        SessionMcpCatalog, SessionMcpCatalogParams, SessionMcpCompleteParams,
-        SessionMcpCompleteResponse, SessionMcpInventory, SessionMcpParams,
-        SessionMcpResourceParams, SessionMcpResourceResponse, SessionNewParams, SessionNewResponse,
-        SessionObserve, SessionObserveParams, SessionProcessesParams, SessionProcessesResponse,
-        SessionPromptParams, SessionPromptResponse, SessionRenameParams, SessionRenameResponse,
-        SessionSteerParams, SessionSteerResponse, SessionUnsteerParams, SessionUnsteerResponse,
-        WorktreePruneParams, WorktreePruneResponse, AUTH_CHOOSE_STORE, AUTH_KEY, AUTH_LIST,
-        AUTH_LOGIN, AUTH_LOGIN_CANCEL, AUTH_LOGOUT, CONFIG_GET, HELLO, SESSION_ANSWER,
-        SESSION_ATTACH, SESSION_BACKGROUND_STOP, SESSION_CANCEL, SESSION_CONFIGURE, SESSION_DELETE,
-        SESSION_DETACH, SESSION_HOLD, SESSION_INSPECT, SESSION_LIST, SESSION_MCP,
-        SESSION_MCP_CATALOG, SESSION_MCP_COMPLETE, SESSION_MCP_RESOURCE, SESSION_NEW,
-        SESSION_OBSERVE, SESSION_PROCESSES, SESSION_PROMPT, SESSION_RENAME, SESSION_STEER,
-        SESSION_UNSTEER, WORKTREE_PRUNE,
+        SessionAttachResponse, SessionBackgroundListResponse, SessionBackgroundStopParams,
+        SessionBackgroundStopResponse, SessionCancelParams, SessionCancelResponse,
+        SessionConfigureParams, SessionConfigureResponse, SessionDeleteParams,
+        SessionDeleteResponse, SessionDetach, SessionDetachParams, SessionDetachResponse,
+        SessionHoldParams, SessionHoldResponse, SessionInspectParams, SessionInspectResponse,
+        SessionListParams, SessionListResponse, SessionMcpCatalog, SessionMcpCatalogParams,
+        SessionMcpCompleteParams, SessionMcpCompleteResponse, SessionMcpInventory,
+        SessionMcpParams, SessionMcpResourceParams, SessionMcpResourceResponse, SessionNewParams,
+        SessionNewResponse, SessionObserve, SessionObserveParams, SessionProcessesParams,
+        SessionProcessesResponse, SessionPromptParams, SessionPromptResponse, SessionRenameParams,
+        SessionRenameResponse, SessionSteerParams, SessionSteerResponse, SessionUnsteerParams,
+        SessionUnsteerResponse, WorktreePruneParams, WorktreePruneResponse, AUTH_CHOOSE_STORE,
+        AUTH_KEY, AUTH_LIST, AUTH_LOGIN, AUTH_LOGIN_CANCEL, AUTH_LOGOUT, CONFIG_GET, HELLO,
+        SESSION_ANSWER, SESSION_ATTACH, SESSION_BACKGROUND_LIST, SESSION_BACKGROUND_STOP,
+        SESSION_CANCEL, SESSION_CONFIGURE, SESSION_DELETE, SESSION_DETACH, SESSION_HOLD,
+        SESSION_INSPECT, SESSION_LIST, SESSION_MCP, SESSION_MCP_CATALOG, SESSION_MCP_COMPLETE,
+        SESSION_MCP_RESOURCE, SESSION_NEW, SESSION_OBSERVE, SESSION_PROCESSES, SESSION_PROMPT,
+        SESSION_RENAME, SESSION_STEER, SESSION_UNSTEER, WORKTREE_PRUNE,
     },
     subscription::Subscription,
     BuildId, BuildSkew, DaemonInfo, DaemonStatus, ErrorCode, FrameError, HelloResponse, Message,
@@ -258,6 +258,14 @@ pub trait Service: SettingsService + Send + Sync {
     ) -> impl Future<Output = Result<SessionProcessesResponse, RpcError>> + Send {
         let _ = params;
         unsupported(SESSION_PROCESSES)
+    }
+
+    /// Handles `rho/session/background/list`: list the background work of
+    /// every loaded session that has some.
+    fn list_session_background(
+        &self,
+    ) -> impl Future<Output = Result<SessionBackgroundListResponse, RpcError>> + Send {
+        unsupported(SESSION_BACKGROUND_LIST)
     }
 
     /// Handles `rho/session/background/stop`: stop one piece of the loaded

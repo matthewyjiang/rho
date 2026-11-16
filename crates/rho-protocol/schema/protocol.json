@@ -3969,6 +3969,46 @@
       ],
       "type": "object"
     },
+    "SessionBackground": {
+      "description": "One loaded session's background work.",
+      "properties": {
+        "session": {
+          "$ref": "#/$defs/SessionId"
+        },
+        "work": {
+          "description": "What still runs, and what ended whose result the session's model has\nnot been given, as [`super::SessionEvent::Background`] lists it;\nnever empty. [`BackgroundStatus::is_running`] tells which runs.",
+          "items": {
+            "$ref": "#/$defs/BackgroundWork"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "session",
+        "work"
+      ],
+      "type": "object"
+    },
+    "SessionBackgroundListParams": {
+      "description": "Params of [`SESSION_BACKGROUND_LIST`].",
+      "type": "object"
+    },
+    "SessionBackgroundListResponse": {
+      "description": "Result of [`SESSION_BACKGROUND_LIST`]: a point-in-time read, not a\nsubscription.",
+      "properties": {
+        "sessions": {
+          "description": "Each loaded session with background work, by session id. A session\nabsent here has none, or is not loaded. A subagent's session lists\nnone while its run is under way; the run is a\n[`BackgroundItem::Subagent`] of its parent's.",
+          "items": {
+            "$ref": "#/$defs/SessionBackground"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "sessions"
+      ],
+      "type": "object"
+    },
     "SessionBackgroundStopParams": {
       "description": "Params of [`SESSION_BACKGROUND_STOP`].",
       "properties": {
@@ -7768,6 +7808,14 @@
       },
       "result": {
         "$ref": "#/$defs/SessionAttachResponse"
+      }
+    },
+    "rho/session/background/list": {
+      "params": {
+        "$ref": "#/$defs/SessionBackgroundListParams"
+      },
+      "result": {
+        "$ref": "#/$defs/SessionBackgroundListResponse"
       }
     },
     "rho/session/background/stop": {
