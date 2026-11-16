@@ -129,6 +129,11 @@ const ESCAPE_STEPS: &[Step] = &[
         text: FOCUSED,
         timeout: STREAM,
     },
+    // Keys the surface has no use for must not edit the draft behind it;
+    // `draft_survived` below checks the draft is whole.
+    Step::Key(Key::Backspace),
+    Step::Key(Key::Ctrl('w')),
+    Step::Key(Key::End),
     // From the first control, back past the last one to Cancel.
     Step::Key(Key::Up),
     Step::Key(Key::Up),

@@ -3,7 +3,7 @@
 
 use std::{collections::HashMap, sync::Arc};
 
-use crossterm::event::KeyEvent;
+use crossterm::event::{KeyEvent, KeyModifiers};
 use rho_a2ui::{Action, Effect, Pointer, RendererMessage};
 use rho_sdk::ToolCallId;
 use serde_json::Value;
@@ -13,7 +13,10 @@ use super::{
     tree::{Control, FieldKind, Focusable, SurfaceTree, Target},
     Editing, Keyboard, SurfaceEntry, SurfaceFocus, SurfaceView, Surfaces,
 };
-use crate::tui::{line_editor::LineEditor, tool_call_batch::LiveToolKey, App, ComposerMode, Entry};
+use crate::tui::{
+    composer_buffer::ComposerEditKey, line_editor::LineEditor, tool_call_batch::LiveToolKey, App,
+    ComposerMode, Entry,
+};
 
 impl App {
     /// Shows the surface a `ui` call carries. Every update of the call
@@ -192,20 +195,43 @@ impl App {
         true
     }
 
-    /// Pastes `text` into the field being edited, if one is.
+    /// Pastes `text` into the field being edited, keeping what typing
+    /// would keep. While the keyboard is on a surface but not in a field,
+    /// the paste is dropped rather than reaching the composer behind it.
     pub(in crate::tui) fn paste_into_surface(&mut self, text: &str) -> bool {
-        let SurfaceFocus::Editing { editor, .. } = &mut self.surfaces.focus else {
+        if !matches!(self.input_ui.composer(), ComposerMode::Input) {
+            return false;
+        }
+        let Some((surface, index)) = self.surfaces.focus.place() else {
             return false;
         };
-        editor.insert_text(text);
+        let kind = self.surfaces.store.tree(surface).and_then(|tree| {
+            match tree.focusables.get(index)?.control {
+                Control::Field { kind, .. } => Some(kind),
+                _ => None,
+            }
+        });
+        let (Some(kind), SurfaceFocus::Editing { editor, .. }) = (kind, &mut self.surfaces.focus)
+        else {
+            return true;
+        };
+        let text: String = text
+            .chars()
+            .filter(|&ch| match ch {
+                '\n' => kind == FieldKind::Long,
+                _ => !ch.is_control() && kind.accepts(ch),
+            })
+            .collect();
+        editor.insert_text(&text);
         self.write_edited_field();
         self.sync_surfaces();
         true
     }
 
-    /// Handles `key` while the keyboard is on a surface. Keys a surface
-    /// has no use for, such as the scroll keys and Ctrl+C, are left to
-    /// the rest of the TUI.
+    /// Handles `key` while the keyboard is on a surface. Of the keys the
+    /// surface has no use for, chords such as Ctrl+C go on to the rest
+    /// of the TUI, and the others are dropped, so none edits the
+    /// composer's draft behind the surface.
     pub(in crate::tui) async fn handle_surface_key(&mut self, key: KeyEvent) -> bool {
         if !matches!(self.input_ui.composer(), ComposerMode::Input) {
             return false;
@@ -238,8 +264,21 @@ impl App {
             self.input_ui.clear_paste_burst();
             self.ctrl_c_streak = 0;
             self.sync_surfaces();
+            return true;
         }
-        handled
+        // The composer is behind the surface, so a key the surface has no
+        // use for must not edit its draft. Chords the rest of the TUI owns
+        // still pass.
+        !self.passes_surface(key)
+    }
+
+    /// Whether `key`, which the surface did not use, goes on to the rest
+    /// of the TUI: a Ctrl or Alt chord that does not edit the composer.
+    fn passes_surface(&self, key: KeyEvent) -> bool {
+        key.modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+            && ComposerEditKey::from_key(key).is_none()
+            && !self.info.runtime.keybindings.insert_newline.matches(key)
     }
 
     fn edit_field(&mut self, key: KeyEvent, control: &Control) -> bool {
