@@ -1174,12 +1174,12 @@ fn delegated_fast_mode_follows_definition_not_parent() {
     // (definition, parent fast_mode, expected child fast_mode or bind error)
     let cases: [(Arc<AgentDefinition>, bool, Result<bool, ()>); 6] = [
         (
-            pinned("openai-codex", "gpt-5.5", "codex", true),
+            pinned("openai-codex", "gpt-5.6-sol", "codex", true),
             false,
             Ok(true),
         ),
         (
-            pinned("openai-codex", "gpt-5.5", "codex", false),
+            pinned("openai-codex", "gpt-5.6-sol", "codex", false),
             true,
             Ok(false),
         ),
@@ -1203,7 +1203,7 @@ fn delegated_fast_mode_follows_definition_not_parent() {
     for (index, (definition, parent_fast, expected)) in cases.into_iter().enumerate() {
         let host = Config {
             provider: "openai-codex".into(),
-            model: "gpt-5.5".into(),
+            model: "gpt-5.6-sol".into(),
             auth: "codex".into(),
             fast_mode: parent_fast,
             ..Config::default()
@@ -1233,8 +1233,8 @@ fn keep_host_fast_mode_restores_session_fast_when_servable() {
     let store = credentials(&["codex", "xai-api-key"]);
     // (host provider, model, auth, host fast_mode, expected bound fast_mode)
     for (provider, model, auth, host_fast, expected) in [
-        ("openai-codex", "gpt-5.5", "codex", true, true),
-        ("openai-codex", "gpt-5.5", "codex", false, false),
+        ("openai-codex", "gpt-5.6-sol", "codex", true, true),
+        ("openai-codex", "gpt-5.6-sol", "codex", false, false),
         ("openai-codex", "gpt-5.3-codex", "codex", true, false),
         ("xai", "grok-4.7", "xai-api-key", true, false),
     ] {

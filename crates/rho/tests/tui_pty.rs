@@ -586,7 +586,7 @@ fn fast_mode_appears_beside_the_active_model() {
 
 [model]
 provider = "openai-codex"
-model = "gpt-5.5"
+model = "gpt-5.6-sol"
 auth = "codex"
 
 [behavior]
@@ -605,13 +605,13 @@ credential_store = "file"
     );
     let mut harness = PtyHarness::spawn_named(&plan, "fast_mode_statusline").unwrap();
     harness
-        .wait_for_text("gpt-5.5", WaitTimeout::secs(20, "startup"))
+        .wait_for_text("gpt-5.6-sol", WaitTimeout::secs(20, "startup"))
         .unwrap();
 
     harness.submit_text("/fast on").unwrap();
     harness
         .wait_for_text(
-            "gpt-5.5 (fast)",
+            "gpt-5.6-sol (fast)",
             WaitTimeout::secs(10, "fast mode statusline"),
         )
         .unwrap();

@@ -76,7 +76,8 @@ fn codex_model_switch_preserves_native_context_on_repeated_sends() {
 #[tokio::test]
 async fn priority_service_tier_is_sent_only_for_fast_capable_codex_models() {
     for (model, expected) in [
-        ("gpt-5.5", Some("priority")),
+        ("gpt-6.2-astra", Some("priority")),
+        ("gpt-6.2-sol", Some("priority")),
         ("gpt-6-astra", Some("priority")),
         ("gpt-6.1-sol", Some("priority")),
         ("gpt-6.1-terra", Some("priority")),

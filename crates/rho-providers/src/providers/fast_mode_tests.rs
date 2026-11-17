@@ -10,10 +10,10 @@ fn fast_serving_follows_the_provider_implementation() {
     let cases = [
         (
             "openai-codex",
-            "gpt-5.5",
+            "gpt-5.6-sol",
             "codex",
             Some(FastServing::PriorityTier),
-            "gpt-5.5",
+            "gpt-5.6-sol",
         ),
         (
             "openai-codex",

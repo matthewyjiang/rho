@@ -51,7 +51,9 @@ Environment variables are CI/development escape hatches and override stored cred
 
 Codex OAuth uses this static model allowlist rather than a refreshable API list:
 
-- `gpt-6-astra` (default; reasoning effort `low` through `max`)
+- `gpt-6.2-astra` (default; reasoning effort `low` through `max`)
+- `gpt-6.2-sol` (reasoning effort `low` through `max`)
+- `gpt-6-astra` (reasoning effort `low` through `max`)
 - `gpt-6.1-sol`
 - `gpt-6.1-terra` (reasoning effort `none` through `max`)
 - `gpt-6-sol`
@@ -59,10 +61,9 @@ Codex OAuth uses this static model allowlist rather than a refreshable API list:
 - `gpt-5.6-sol`
 - `gpt-5.6-terra`
 - `gpt-5.6-luna`
-- `gpt-5.5`
 - `gpt-5.3-codex-spark`
 
-GPT-5.4 and GPT-5.4 mini [retired from Codex](https://learn.chatgpt.com/docs/models#deprecated-codex-models) on August 31, 2026. If your saved Codex configuration uses either model, switch to `gpt-6-sol` or `gpt-6-luna`, respectively. GPT-5.5 retires from Codex on October 14, 2026; switch to `gpt-6-sol` before then. OpenAI API access is unaffected.
+GPT-5.4 and GPT-5.4 mini [retired from Codex](https://learn.chatgpt.com/docs/models#deprecated-codex-models) on August 31, 2026. If your saved Codex configuration uses either model, switch to `gpt-6-sol` or `gpt-6-luna`, respectively. GPT-5.5 retired from Codex on October 14, 2026; switch to `gpt-6-sol`. OpenAI API access is unaffected.
 
 Switch to a Codex model with:
 
@@ -78,7 +79,7 @@ rho --provider openai-codex --auth codex --model gpt-6-sol run "hello"
 
 Run `rho login openai-codex` first or provide `CODEX_ACCESS_TOKEN` in the automation environment.
 
-Supported GPT-5.5, GPT-5.6, and GPT-6 Codex models can use OpenAI's faster priority tier at a higher credit rate. In the TUI, use `/fast on` or `/fast off`. Running `/fast` with no argument toggles the mode. Rho saves the choice as `model.fast_mode`, shows `(fast)` after the active model name, and sends `service_tier: "priority"` on later supported Codex turns.
+Supported GPT-5.6 and GPT-6 Codex models can use OpenAI's faster priority tier at a higher credit rate. In the TUI, use `/fast on` or `/fast off`. Running `/fast` with no argument toggles the mode. Rho saves the choice as `model.fast_mode`, shows `(fast)` after the active model name, and sends `service_tier: "priority"` on later supported Codex turns.
 
 `/fast` is the same command for every provider that has a fast mode. Codex implements it as the priority tier above. SpaceXAI OAuth `grok-4.7` keeps that model selected and sends `grok-4.7-build-fast` instead of a service-tier header.
 
@@ -87,11 +88,14 @@ Supported GPT-5.5, GPT-5.6, and GPT-6 Codex models can use OpenAI's faster prior
 - Switching between Codex models preserves encrypted compaction items without changing stored history.
 - Handoff warnings can still repeat after compaction: raw reasoning and other native items require the exact model. The reasoning-effort note saved by GPT-6 turns is never sent and never reported.
 - On GPT-6 models (`gpt-6-*` and point releases such as `gpt-6.1-*`), `/reasoning` changes are sent as `configuration_update` items so the prompt cache prefix is preserved. That includes changes to and from `off`.
+- Starting with GPT-6.2, OpenAI drops earlier reasoning items when it detects a mid-conversation prefix edit, model downgrade, or end-user or organization change. Rho still sends them, but after such a change the model may repeat earlier work and use more tokens.
 - As a subscription auth mode, the statusline estimates an equivalent API cost from [models.dev](https://models.dev/) pricing (including long-context rate tiers when available). `/info` marks that cost as a subscription.
 - [`/limits`](/interactive-tui#commands) reports the usage windows for Codex OAuth when you are logged in.
 - Context windows come from cached model metadata. Set `usable_context_window` in `~/.rho/models.toml` to raise or cap a model. See [local model metadata](/configuration#local-model-metadata).
 
 ## Mid-turn steering (`gpt-6-astra`)
+
+Steering is not yet enabled on `gpt-6.2-*` models, including the default `gpt-6.2-astra`; their steering is applied at the turn boundary.
 
 On `gpt-6-astra` over the Codex websocket, steering entered during a model turn is forwarded as `response.steer`. The original response ends `incomplete` with reason `steered` (or completes if it finished first). The server then continues automatically with the steer prepended; Rho reuses that continuation instead of sending another `response.create`. Already-streamed text is not rewritten. If the original turn ended waiting for a client tool result, Rho replays a full next request so the server does not prepend an orphaned steer.
 

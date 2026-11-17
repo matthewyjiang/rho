@@ -229,8 +229,8 @@ fn cli_selection_overrides_resolve_provider_model_and_auth() {
             name: "qualified model selects its provider auth",
             cached: None,
             configured: None,
-            args: &["--model", "openai-codex/gpt-5.5"],
-            expected: ["openai-codex", "gpt-5.5", "codex"],
+            args: &["--model", "openai-codex/gpt-5.6-sol"],
+            expected: ["openai-codex", "gpt-5.6-sol", "codex"],
         },
         Case {
             name: "bare anthropic provider takes the built-in default",
@@ -266,15 +266,15 @@ fn cli_selection_overrides_resolve_provider_model_and_auth() {
             name: "unqualified model keeps the configured provider",
             cached: None,
             configured: Some(("openai-codex", "codex")),
-            args: &["--model", "gpt-5.5"],
-            expected: ["openai-codex", "gpt-5.5", "codex"],
+            args: &["--model", "gpt-5.6-sol"],
+            expected: ["openai-codex", "gpt-5.6-sol", "codex"],
         },
         Case {
             name: "--auth wins over the model provider auth",
             cached: None,
             configured: None,
-            args: &["--model", "openai-codex/gpt-5.5", "--auth", "api-key"],
-            expected: ["openai", "gpt-5.5", "api-key"],
+            args: &["--model", "openai-codex/gpt-5.6-sol", "--auth", "api-key"],
+            expected: ["openai", "gpt-5.6-sol", "api-key"],
         },
         Case {
             name: "--auth alone selects its provider",
@@ -459,7 +459,7 @@ fn decision_model_host_is_refused_as_the_chat_provider() {
         (
             "--auth after a chat --model",
             Cli {
-                model: Some("openai-codex/gpt-5.5".into()),
+                model: Some("openai-codex/gpt-5.6-sol".into()),
                 auth: Some("typesafe-api-key".into()),
                 ..test_cli()
             },
