@@ -90,12 +90,12 @@ struct FakeFollow {
 }
 
 impl FollowPort for FakeFollow {
-    async fn next(&mut self) -> Followed {
+    async fn next(&mut self) -> Result<Followed, Denied> {
         loop {
             match self.steps.pop_front() {
-                Some(Step::Read(read)) => return read,
+                Some(Step::Read(read)) => return Ok(read),
                 Some(Step::Live) => self.progressed = true,
-                None => return Followed::Ended(FollowEnd::Closed),
+                None => return Ok(Followed::Ended(FollowEnd::Closed)),
             }
         }
     }
@@ -431,6 +431,7 @@ async fn a_watcher_delivers_each_piece_of_news_once() {
         let watching = Watching {
             session: SessionId::new("s"),
             webhook: "hook".into(),
+            server: None,
             reported: case.reported,
         };
         let end = run(&fake, schedule, "lab-box", watching).await;

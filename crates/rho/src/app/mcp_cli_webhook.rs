@@ -26,7 +26,9 @@ pub(in crate::app) fn webhook(command: &McpWebhookCommand, cli: &Cli) -> anyhow:
         McpWebhookCommand::Add { name, url, token } => {
             // Before the secret is read, so a typo does not cost a paste.
             webhooks::validate_url(url)?;
-            let secret = read_secret()?;
+            let secret = read_secret(
+                "pipe the webhook's secret on stdin, as `printf %s \"$KEY\" | rho mcp webhook add ...`, so it stays out of your shell history",
+            )?;
             token_store::update(|webhooks: &mut WebhookSet| {
                 webhooks.upsert(name, url, &secret, token)
             })?;
@@ -69,12 +71,11 @@ pub(in crate::app) fn webhook(command: &McpWebhookCommand, cli: &Cli) -> anyhow:
     Ok(())
 }
 
-/// The secret piped on stdin: one line, its line ending dropped.
-fn read_secret() -> anyhow::Result<String> {
+/// The secret piped on stdin: one line, its line ending dropped. On a
+/// terminal, fails with `hint`, which says how to pipe it.
+pub(super) fn read_secret(hint: &str) -> anyhow::Result<String> {
     if crate::stdio::stdin_is_terminal() {
-        anyhow::bail!(
-            "pipe the webhook's secret on stdin, as `printf %s \"$KEY\" | rho mcp webhook add ...`, so it stays out of your shell history"
-        );
+        anyhow::bail!("{hint}");
     }
     let mut secret = String::new();
     std::io::stdin().read_to_string(&mut secret)?;

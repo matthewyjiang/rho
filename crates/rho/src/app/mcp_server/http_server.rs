@@ -2,8 +2,10 @@
 //! for hosts that reach MCP servers by URL through a tunnel.
 //!
 //! What this layer guards, in order:
-//! - it binds a loopback address only, so the network reaches it only
-//!   through a tunnel the user set up;
+//! - it binds a loopback address, which the network reaches only through a
+//!   tunnel the user set up, or an address on a private network
+//!   (`private_network.rs`), such as an overlay network's, where the owner
+//!   decided the network keeps plain HTTP private;
 //! - every request carries a bearer token from `rho mcp token`, read from the
 //!   credential store per request so rotation/revoke affects new requests,
 //!   and the token's grant rides on the request to the core, which enforces
@@ -29,8 +31,11 @@ use rmcp::transport::{
     streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService},
 };
 
-use super::{tokens::TokenSet, watch::Watches, SessionTools, Transport};
-use crate::{app::session_control::SessionControl, credential_store::UntrackedCredentialStore};
+use super::{
+    private_network::is_private, remotes::Servers, token_store, tokens::TokenSet, watch::Watches,
+    SessionTools, Transport,
+};
+use crate::app::session_control::SessionControl;
 
 #[path = "http_sessions.rs"]
 mod sessions;
@@ -75,16 +80,20 @@ pub(crate) async fn serve_http(
     options: HttpOptions,
     environment: rho_protocol::ClientEnvironment,
 ) -> anyhow::Result<()> {
-    if !options.address.ip().is_loopback() {
+    let ip = options.address.ip();
+    if !is_private(ip) {
         anyhow::bail!(
-            "rho mcp serve --http binds a loopback address only, such as 127.0.0.1:8765, not {}; reach it from elsewhere through a tunnel",
+            "rho mcp serve --http binds a loopback address, such as 127.0.0.1:8765, or this machine's address on a private network, such as 192.168.1.20:8765 or a NetBird or Tailscale peer's 100.x.y.z:8765, not {}; reach it from elsewhere through a tunnel",
             options.address
         );
     }
+    // Requests to a private address name it as their `Host`.
+    let own_host = (!ip.is_loopback()).then(|| ip.to_string());
     let listener = tokio::net::TcpListener::bind(options.address)
         .await
         .with_context(|| format!("could not listen on {}", options.address))?;
     let local = listener.local_addr()?;
+    let servers = Servers::new(options.name.clone());
     let watches = Watches::open(
         Arc::clone(&control),
         options.name,
@@ -96,6 +105,7 @@ pub(crate) async fn serve_http(
             LOOPBACK_HOSTS
                 .iter()
                 .map(|host| (*host).to_owned())
+                .chain(own_host.clone())
                 .chain(options.allowed_hosts),
         )
         .with_allowed_origins(options.allowed_origins)
@@ -108,6 +118,7 @@ pub(crate) async fn serve_http(
                 transport: Transport::Http {
                     watches: watches.clone(),
                 },
+                servers: servers.clone(),
                 environment: environment.clone(),
             })
         },
@@ -116,6 +127,11 @@ pub(crate) async fn serve_http(
     );
     let server = Arc::new(HttpServer { service, sessions });
     eprintln!("rho mcp serve listening on http://{local}{ENDPOINT}");
+    if own_host.is_some() {
+        eprintln!(
+            "rho mcp serve: plain HTTP on a network address: anyone who can read traffic on that network can read requests, bearer tokens included"
+        );
+    }
     loop {
         let (stream, _) = listener.accept().await?;
         let server = Arc::clone(&server);
@@ -142,7 +158,9 @@ async fn handle(server: &HttpServer, mut request: Request<Incoming>) -> Response
     let Some(presented) = bearer(&request) else {
         return unauthorized("missing bearer token");
     };
-    let tokens = match load_tokens().await {
+    // Read past the OS store's per-process cache, so a rotation or revoke
+    // another process saved applies to the next request.
+    let tokens = match token_store::load_fresh::<TokenSet>().await {
         Ok(tokens) => tokens,
         Err(error) => {
             tracing::warn!(error = %format!("{error:#}"), "could not read the MCP server tokens");
@@ -180,12 +198,6 @@ fn bearer(request: &Request<Incoming>) -> Option<String> {
     scheme
         .eq_ignore_ascii_case("bearer")
         .then(|| token.trim().to_owned())
-}
-
-/// The saved tokens, read past the OS store's per-process cache so a
-/// rotation or revoke another process saved applies to the next request.
-async fn load_tokens() -> anyhow::Result<TokenSet> {
-    tokio::task::spawn_blocking(|| TokenSet::load(&UntrackedCredentialStore)).await?
 }
 
 fn unauthorized(message: &str) -> Response<Body> {

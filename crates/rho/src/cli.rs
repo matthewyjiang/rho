@@ -658,11 +658,13 @@ pub enum McpCommand {
     /// prompt, steer, cancel, and wait for them.
     ///
     /// Over stdio by default, for a host that starts it as a command. With
-    /// `--http`, over streamable HTTP on a loopback address, for hosts that
-    /// reach MCP servers by URL through a tunnel; every request then needs
-    /// a bearer token from `rho mcp token rotate`, and the server can POST
-    /// watched sessions' news to webhooks from `rho mcp webhook add`. No
-    /// tool answers a session's approvals or questions.
+    /// `--http`, over streamable HTTP on a loopback or private network
+    /// address, for hosts that reach MCP servers by URL; every request then
+    /// needs a bearer token from `rho mcp token rotate`, and the server can
+    /// POST watched sessions' news to webhooks from `rho mcp webhook add`.
+    /// With remotes from `rho mcp remote add`, it drives their sessions
+    /// too, and every tool takes `server`. No tool answers a session's
+    /// approvals or questions.
     Serve(McpServeArgs),
     /// Manage the bearer tokens `rho mcp serve --http` accepts.
     Token {
@@ -675,12 +677,20 @@ pub enum McpCommand {
         #[command(subcommand)]
         command: McpWebhookCommand,
     },
+    /// Manage the other machines' `rho mcp serve --http` that this
+    /// machine's `rho mcp serve` drives as a hub.
+    Remote {
+        #[command(subcommand)]
+        command: McpRemoteCommand,
+    },
 }
 
 #[derive(clap::Args, Clone, Debug)]
 pub struct McpServeArgs {
-    /// Serve streamable HTTP on this loopback address, such as
-    /// 127.0.0.1:8765, instead of stdio.
+    /// Serve streamable HTTP on this address instead of stdio: a loopback
+    /// one, such as 127.0.0.1:8765, or this machine's address on a private
+    /// network, such as a NetBird or Tailscale peer's 100.x.y.z:8765, where
+    /// requests travel as plain HTTP.
     #[arg(long, value_name = "ADDR")]
     pub http: Option<std::net::SocketAddr>,
     /// With `--http`, also accept this `Host` header, such as the tunnel's
@@ -707,10 +717,10 @@ pub struct McpServeArgs {
     /// token carries its own scope instead.
     #[arg(long, value_enum, conflicts_with = "http")]
     pub scope: Option<McpTokenScope>,
-    /// With `--http`, the name webhook news says it is from, so a bot
-    /// driving several machines tells them apart. Defaults to the host
-    /// name.
-    #[arg(long, value_name = "NAME", requires = "http")]
+    /// The name this machine goes by: what webhook news says it is from,
+    /// and what `server` names it when the server has remotes. Defaults to
+    /// the host name.
+    #[arg(long, value_name = "NAME")]
     pub name: Option<String>,
     /// With `--http`, how many sessions each token may watch at once,
     /// stalled watches included. Defaults to 5 times --max-sessions (50
@@ -778,6 +788,36 @@ pub enum McpWebhookCommand {
     },
     /// Delete webhook NAME; watches that use it are dropped before their
     /// next POST.
+    Remove {
+        #[arg(value_name = "NAME")]
+        name: String,
+    },
+}
+
+#[derive(Subcommand, Clone, Debug)]
+pub enum McpRemoteCommand {
+    /// Add remote NAME, or replace it, reading the secret of the token it
+    /// issued this machine from stdin, and check that it answers:
+    /// `ssh NAME rho mcp token rotate hub --scope write --workspace DIR |
+    /// rho mcp remote add NAME --url URL`.
+    Add {
+        /// The remote's name, which `server` takes and webhook news names.
+        #[arg(value_name = "NAME")]
+        name: String,
+        /// The remote's MCP endpoint, such as
+        /// http://100.92.10.4:8765/mcp: https, or http to a loopback or
+        /// private network address.
+        #[arg(long, value_name = "URL")]
+        url: String,
+    },
+    /// List the remotes: their names and URLs. Never their secrets.
+    List {
+        /// Print one JSON document instead of text rows.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Delete remote NAME; watches of its sessions are dropped before
+    /// their next POST.
     Remove {
         #[arg(value_name = "NAME")]
         name: String,

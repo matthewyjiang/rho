@@ -1,8 +1,8 @@
 //! `rho mcp serve` and `rho mcp token`: the boundary that reads the process
 //! environment (the caller context it started in, the environment sessions
-//! run with, the host name and rho home an HTTP server's watches use) and
-//! the credential store, then hands resolved values to `app::mcp_server`
-//! and `app::session_control`.
+//! run with, the host name the server goes by, the rho home an HTTP
+//! server's watches use) and the credential store, then hands resolved
+//! values to `app::mcp_server` and `app::session_control`.
 
 use std::sync::Arc;
 
@@ -31,20 +31,25 @@ pub(in crate::app) async fn serve(args: &McpServeArgs, cli: &Cli) -> anyhow::Res
     };
     let control = Arc::new(SessionControl::new(limits, Reach::StartIfNeeded));
     let environment = ClientEnvironment::of_this_process();
+    let name = match &args.name {
+        Some(name) if name.trim().is_empty() => anyhow::bail!("--name must not be empty"),
+        Some(name) => name.clone(),
+        None => gethostname::gethostname().to_string_lossy().into_owned(),
+    };
     match args.http {
         None => {
             let context = CallerContext::from_env(|name| std::env::var_os(name))?;
             let access = args.scope.map_or(Access::Write, access);
-            mcp_server::serve_stdio(control, access, context, environment).await
+            // The remotes live in the credential store. A host whose store
+            // cannot open still drives this machine's sessions.
+            if let Err(error) = open_credential_store(cli) {
+                tracing::warn!(error = %format!("{error:#}"), "could not open the credential store; serving this machine only");
+            }
+            mcp_server::serve_stdio(control, access, context, environment, name).await
         }
         Some(address) => {
-            // The tokens and webhooks live in the credential store.
+            // The tokens, webhooks, and remotes live in the credential store.
             open_credential_store(cli)?;
-            let name = match &args.name {
-                Some(name) if name.trim().is_empty() => anyhow::bail!("--name must not be empty"),
-                Some(name) => name.clone(),
-                None => gethostname::gethostname().to_string_lossy().into_owned(),
-            };
             mcp_server::serve_http(
                 control,
                 HttpOptions {

@@ -6,7 +6,7 @@
 //! refuses requests its tokens and origin rules do not allow. How a
 //! session's caller context carries depth and scope through the server
 //! into the sessions it starts is in [`caller`]; webhook watches are in
-//! [`webhooks`].
+//! [`webhooks`]; a hub driving another machine's server is in [`remotes`].
 
 use std::{path::PathBuf, process::Stdio};
 
@@ -31,6 +31,9 @@ mod caller;
 
 #[path = "daemon_mcp_native.rs"]
 mod native;
+
+#[path = "daemon_mcp_remotes.rs"]
+mod remotes;
 
 #[path = "daemon_mcp_webhooks.rs"]
 mod webhooks;

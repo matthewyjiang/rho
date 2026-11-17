@@ -55,10 +55,11 @@ const MAX_RETRY_GAP: Duration = Duration::from_secs(10 * 60);
 // store read and one daemon round trip.
 const RETRY_HORIZON: Duration = Duration::from_secs(70 * 60);
 
-/// When a failed delivery is tried again: gaps doubling from `first_gap`
+/// When a failed attempt is tried again: gaps doubling from `first_gap`
 /// up to `max_gap`, while the gaps so far add up to at most `horizon`. The
 /// gaps alone count, not the attempts' own time. Data, so tests run it
-/// without waiting.
+/// without waiting. [`Self::DEFAULT`] is a delivery's; a remote follow has
+/// its own (`remote_follow.rs`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct RetrySchedule {
     pub(super) first_gap: Duration,

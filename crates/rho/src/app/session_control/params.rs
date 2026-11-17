@@ -33,7 +33,7 @@ const DEFAULT_WAIT_SECS: u64 = 30;
 // Codex's default `tool_timeout_sec`, 60 s, is the smallest default among
 // the hosts the docs cover; 50 s leaves the reply time to arrive. Remote
 // hosts behind an HTTP time limit call again with the cursor.
-const MAX_WAIT_SECS: u64 = 50;
+pub(crate) const MAX_WAIT_SECS: u64 = 50;
 
 /// Params of `list`.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
@@ -276,8 +276,8 @@ impl WaitParams {
     }
 }
 
-/// Result of `wait`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+/// Result of `wait`. A hub reads it back from a remote's `wait`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct WaitResult {
     pub(crate) session: SessionId,
     pub(crate) state: JobState,
@@ -290,19 +290,19 @@ pub(crate) struct WaitResult {
     /// even while `done` is false. It is final once `done` is true; until
     /// then a later turn, such as one the daemon starts to deliver
     /// background results, may replace it on the next `wait`.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) outcome: Option<TurnOutcome>,
     /// The turn `state` is of: the one under way, or the last one.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) turn: Option<TurnId>,
     /// What the turn or the session's subagents wait on a person for. Only
     /// a person answers these, from a rho frontend; no session-control
     /// action can.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) inputs: Vec<InputRequest>,
     /// Pass to the next `wait` on this session to resume after what this
     /// one saw; absent when it saw nothing to resume after.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) cursor: Option<String>,
 }
 

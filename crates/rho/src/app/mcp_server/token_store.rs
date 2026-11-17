@@ -1,12 +1,12 @@
 //! Cross-process transactions for the MCP server's credential accounts:
-//! its tokens (`tokens.rs`) and its webhook targets (`webhooks.rs`), each
-//! one JSON entry.
+//! its tokens (`tokens.rs`), its webhook targets (`webhooks.rs`), and the
+//! remotes a hub reaches (`remotes/store.rs`), each one JSON entry.
 //!
 //! The OS credential account is shared across rho homes. Serialize mutations
 //! per OS user, including file-backed stores, rather than keying a lock by
 //! RHO_HOME, TMPDIR, or the server's runtime directory. Where that user's
 //! lock file is, and what makes it theirs alone, is the platform's (see
-//! `daemon::account_lock_path`). One lock guards both accounts: they change
+//! `daemon::account_lock_path`). One lock guards every account: they change
 //! only at a person's command, so they never wait on each other long.
 
 use std::path::Path;
@@ -25,8 +25,8 @@ use crate::{
 /// the rename change the accounts at once.
 const LOCK_FILE: &str = ".rho-mcp-tokens.lock";
 
-/// What the lock guards, as its errors name it: the tokens and the
-/// webhook targets.
+/// What the lock guards, as its errors name it: the tokens, the webhook
+/// targets, and the remotes.
 const GUARDED: &str = "MCP server credentials";
 
 /// A set kept as one JSON entry in the credential store, changed only
@@ -49,6 +49,12 @@ pub(crate) fn load<S: StoredSet>(store: &dyn CredentialStore) -> anyhow::Result<
         return Ok(S::default());
     };
     serde_json::from_str(&saved).with_context(|| format!("the saved {} do not parse", S::WHAT))
+}
+
+/// [`load`] from the store rho opened, off the async workers, as a server
+/// reads a set on every request so a change another process saved applies.
+pub(crate) async fn load_fresh<S: StoredSet + Send + 'static>() -> anyhow::Result<S> {
+    tokio::task::spawn_blocking(|| load::<S>(&UntrackedCredentialStore)).await?
 }
 
 pub(crate) fn save<S: StoredSet>(set: &S, store: &dyn CredentialStore) -> anyhow::Result<()> {

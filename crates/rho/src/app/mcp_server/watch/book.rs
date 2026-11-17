@@ -167,6 +167,7 @@ impl WatchBook {
         &mut self,
         token: &str,
         webhook: String,
+        server: Option<String>,
         now: &WaitResult,
         read: Revision,
     ) -> Result<Watched, OverBudget> {
@@ -188,20 +189,28 @@ impl WatchBook {
             session: key.1,
             token: key.0,
             webhook,
+            server,
             reported,
             error: None,
         })))
     }
 
-    /// The watch of `notify`, with `slot`, of `session`, whose turn the
-    /// call just started: from the turn's start.
-    pub(super) fn notify(&mut self, slot: Slot, session: SessionId, webhook: String) -> Start {
+    /// The watch of `notify`, with `slot`, of `session` on `server`, whose
+    /// turn the call just started: from the turn's start.
+    pub(super) fn notify(
+        &mut self,
+        slot: Slot,
+        session: SessionId,
+        webhook: String,
+        server: Option<String>,
+    ) -> Start {
         let token = slot.token.clone();
         self.release(slot);
         self.upsert(WatchRecord {
             session,
             token,
             webhook,
+            server,
             reported: None,
             error: None,
         })
@@ -327,6 +336,7 @@ impl WatchBook {
             watching: Watching {
                 session: row.session,
                 webhook: row.webhook,
+                server: row.server,
                 reported: row.reported,
             },
         }

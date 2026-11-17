@@ -240,7 +240,7 @@ You need a service only for [`rho mcp serve --http`](/mcp-server#over-http), whi
 
 - Leave the daemon running when you stop or restart the service. Stop the daemon itself with `rho daemon stop`.
 - Set `PATH`. A service doesn't get your shell's environment, and the sessions it starts look up tools, MCP servers, and CLI subagents on this `PATH`. Add the directories your tools live in, and any variable your sessions need, such as a provider key. On Linux, keep `/usr/bin` in it.
-- Listen on `127.0.0.1` only. To reach the server from another machine, use a tunnel ([Over HTTP](/mcp-server#over-http)).
+- Listen on `127.0.0.1`, or on this machine's private network address for a [hub](/mcp-server#several-machines) to reach it. To reach the server from anywhere else, use a tunnel ([Over HTTP](/mcp-server#over-http)).
 
 ### systemd
 
