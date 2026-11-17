@@ -458,7 +458,7 @@ fn fast_mode_available_requires_every_login_when_auth_is_unset() {
         ("xai", "grok-4.7", None, false),
         ("xai", "grok-4.7", Some("xai-oauth"), true),
         ("xai", "grok-4.7", Some("xai-api-key"), false),
-        ("openai-codex", "gpt-5.5", None, true),
+        ("openai-codex", "gpt-5.6-sol", None, true),
         ("openai-codex", "gpt-5.3-codex", None, false),
         ("not-a-provider", "gpt-5.5", None, false),
     ] {

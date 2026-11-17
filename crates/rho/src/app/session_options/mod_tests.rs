@@ -37,7 +37,7 @@ fn fast_mode_of(provider: &str, model: &str, auth: &str) -> Option<wire::FastMod
 fn fast_mode_is_available_only_for_fast_capable_models() {
     let on = Some(wire::FastModeOptions { enabled: true });
     let cases = [
-        (("openai-codex", "gpt-5.5", "codex"), on.clone()),
+        (("openai-codex", "gpt-5.6-sol", "codex"), on.clone()),
         (("xai", "grok-4.7", "xai-oauth"), on),
         (("xai", "grok-4.7", "api-key"), None),
         (("openai-codex", "gpt-5.4", "codex"), None),

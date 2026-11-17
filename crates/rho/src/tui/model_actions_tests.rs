@@ -72,8 +72,8 @@ fn aliases(entries: &[(&str, &str)]) -> ModelAliases {
 #[test]
 fn resolves_aliases_before_interactive_model_lookup() {
     for (alias, target, provider, auth) in [
-        ("deep", "openai-codex/gpt-5.5", "openai", "api-key"),
-        ("fast", "gpt-5.5", "openai-codex", "codex"),
+        ("deep", "openai-codex/gpt-5.6-sol", "openai", "api-key"),
+        ("fast", "gpt-5.6-sol", "openai-codex", "codex"),
     ] {
         let mut app = test_app();
         app.info.runtime.model_aliases = aliases(&[(alias, target)]);
@@ -87,7 +87,7 @@ fn resolves_aliases_before_interactive_model_lookup() {
             InteractiveModelSelection {
                 selection: ModelSelection {
                     provider: "openai-codex".into(),
-                    model: "gpt-5.5".into(),
+                    model: "gpt-5.6-sol".into(),
                     auth: "codex".into(),
                     from_catalog: true,
                 },

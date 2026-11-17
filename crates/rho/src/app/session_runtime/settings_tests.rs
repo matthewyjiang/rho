@@ -134,7 +134,7 @@ async fn unsupported_reasoning_level_names_the_supported_ones() {
 // Owner: session runtime settings
 #[tokio::test]
 async fn fast_mode_sets_the_next_request_service_tier() {
-    let codex = ("openai-codex", "gpt-5.5", "codex");
+    let codex = ("openai-codex", "gpt-5.6-sol", "codex");
     let plain = ("test", "model", "api-key");
     let priority = Some(ServiceTier::Priority);
     let cases = [

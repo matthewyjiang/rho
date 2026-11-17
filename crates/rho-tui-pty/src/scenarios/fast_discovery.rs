@@ -21,7 +21,7 @@ pub(super) const FAST_DISCOVERY_SCENARIO: Scenario = Scenario::new(
     DEFAULT_SIZE,
     &[
         Step::WaitText {
-            text: "OpenAI Codex · gpt-5.5",
+            text: "OpenAI Codex · gpt-5.6-sol",
             timeout: STARTUP,
         },
         Step::Custom(assert_supported),
@@ -43,7 +43,7 @@ pub(super) const FAST_DISCOVERY_SCENARIO: Scenario = Scenario::new(
             text: "fast mode is off",
             timeout: SETTLE,
         },
-        Step::Phase("same_model_other_provider"),
+        Step::Phase("openai_api_provider"),
         Step::SubmitText("/model openai/gpt-5.5"),
         Step::WaitText {
             text: "OpenAI · gpt-5.5",
@@ -51,9 +51,9 @@ pub(super) const FAST_DISCOVERY_SCENARIO: Scenario = Scenario::new(
         },
         Step::Custom(assert_hidden),
         Step::Phase("supported_again"),
-        Step::SubmitText("/model openai-codex/gpt-5.5"),
+        Step::SubmitText("/model openai-codex/gpt-5.6-sol"),
         Step::WaitText {
-            text: "OpenAI Codex · gpt-5.5",
+            text: "OpenAI Codex · gpt-5.6-sol",
             timeout: SETTLE,
         },
         Step::Custom(assert_supported),
@@ -76,7 +76,7 @@ fn setup(home: &IsolatedHome) -> Result<()> {
 
 [model]
 provider = "openai-codex"
-model = "gpt-5.5"
+model = "gpt-5.6-sol"
 auth = "codex"
 
 [behavior]
@@ -187,7 +187,7 @@ pub(super) const DAEMON_FAST_OFF_SCENARIO: Scenario = Scenario {
     smoke: false,
     steps: &[
         Step::WaitText {
-            text: "OpenAI Codex · gpt-5.5",
+            text: "OpenAI Codex · gpt-5.6-sol",
             timeout: STARTUP,
         },
         Step::SubmitText("/fast on"),
@@ -205,9 +205,9 @@ pub(super) const DAEMON_FAST_OFF_SCENARIO: Scenario = Scenario {
             text: "fast mode is off",
             timeout: SETTLE,
         },
-        Step::SubmitText("/model openai-codex/gpt-5.5"),
+        Step::SubmitText("/model openai-codex/gpt-5.6-sol"),
         Step::WaitText {
-            text: "model switched to openai-codex/gpt-5.5",
+            text: "model switched to openai-codex/gpt-5.6-sol",
             timeout: SETTLE,
         },
         Step::SubmitText("/fast"),
