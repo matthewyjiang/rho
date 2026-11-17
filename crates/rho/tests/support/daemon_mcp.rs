@@ -6,7 +6,8 @@
 //! refuses requests its tokens and origin rules do not allow. How a
 //! session's caller context carries depth and scope through the server
 //! into the sessions it starts is in [`caller`]; webhook watches are in
-//! [`webhooks`]; a hub driving another machine's server is in [`remotes`].
+//! [`webhooks`]; a hub driving another machine's server is in [`remotes`];
+//! an HTTP server upgrading in place is in [`upgrade`].
 
 use std::{path::PathBuf, process::Stdio};
 
@@ -34,6 +35,9 @@ mod native;
 
 #[path = "daemon_mcp_remotes.rs"]
 mod remotes;
+
+#[path = "daemon_mcp_upgrade.rs"]
+mod upgrade;
 
 #[path = "daemon_mcp_webhooks.rs"]
 mod webhooks;
@@ -582,25 +586,48 @@ async fn http_server(
     args: &[&str],
     env: &[(&str, &str)],
 ) -> (tokio::process::Child, String) {
-    let mut command = tokio::process::Command::from(sandbox.rho("tool-call"));
+    let mut command = sandbox.rho("tool-call");
+    command.envs(env.iter().copied());
+    let (server, _, url) = listening(command, args).await;
+    (server, url)
+}
+
+/// What a server prints to its stderr, line by line.
+type Stderr = tokio::io::Lines<BufReader<tokio::process::ChildStderr>>;
+
+/// `command` run as `rho mcp serve --http` on a free loopback port, with
+/// `args`: the process, its stderr after the line saying where it listens,
+/// and its endpoint URL.
+async fn listening(
+    command: std::process::Command,
+    args: &[&str],
+) -> (tokio::process::Child, Stderr, String) {
+    let mut command = tokio::process::Command::from(command);
     command
         .args(["mcp", "serve", "--http", "127.0.0.1:0"])
         .args(args)
-        .envs(env.iter().copied())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
     let mut server = command.spawn().unwrap();
-    let mut lines = BufReader::new(server.stderr.take().unwrap()).lines();
-    let line = tokio::time::timeout(DEADLINE, lines.next_line())
-        .await
-        .expect("the server listens")
-        .unwrap()
-        .expect("the server says where it listens");
+    let mut stderr = BufReader::new(server.stderr.take().unwrap()).lines();
+    let line = next_line(&mut stderr).await;
     let url = line
-        .strip_prefix("rho mcp serve listening on ")
+        .strip_prefix(LISTENING)
         .unwrap_or_else(|| panic!("unexpected first line: {line}"))
         .to_owned();
-    (server, url)
+    (server, stderr, url)
+}
+
+/// How a server's line saying where it listens starts.
+const LISTENING: &str = "rho mcp serve listening on ";
+
+/// The next line a server prints to its stderr.
+async fn next_line(stderr: &mut Stderr) -> String {
+    tokio::time::timeout(DEADLINE, stderr.next_line())
+        .await
+        .expect("the server prints a line")
+        .unwrap()
+        .expect("the server's stderr stays open")
 }
 
 /// Creates token `name` with `args` and returns its secret.

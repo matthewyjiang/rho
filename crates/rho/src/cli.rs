@@ -727,6 +727,10 @@ pub struct McpServeArgs {
     /// by default). `rho mcp webhook list` shows each token's count.
     #[arg(long, value_name = "N", requires = "http")]
     pub max_watches: Option<u32>,
+    /// Internal: the listening socket a server that upgraded in place
+    /// handed this one.
+    #[arg(long, value_name = "FD", requires = "http", hide = true)]
+    pub listener_fd: Option<i32>,
 }
 
 #[derive(Subcommand, Clone, Debug)]

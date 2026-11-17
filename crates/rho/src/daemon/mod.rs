@@ -54,6 +54,8 @@ pub(crate) use platform::{
     release_freed_memory, stderr_is_journal_stream, sync_dir, FileIdentity, StopRequests,
     REPLACEABLE_WHILE_RUNNING,
 };
+#[cfg(unix)]
+pub(crate) use platform::{adopt, reap_exited_children, set_close_on_exec};
 pub(crate) use server::{bind, rebind, take_handoff, Served};
 pub(crate) use service::{
     find_services, ServiceFiles, ServiceManager, LAUNCHD_LABEL, SYSTEMD_UNIT,

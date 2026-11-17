@@ -192,6 +192,8 @@ When you update Rho, the running daemon notices the new executable and switches 
 
 If you install with mise or Homebrew, the new version lands at a different path, and the daemon can't see it. Run `rho daemon restart` from the new version once your work is done.
 
+A [`rho mcp serve --http`](/mcp-server#http-updates) service switches to the new version by itself too, once the calls under way finish.
+
 ## Versions
 
 If your `rho` and the daemon are different versions, here is what happens:
