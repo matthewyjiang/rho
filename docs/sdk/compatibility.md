@@ -49,7 +49,7 @@ global configuration for the host.
 
 CI compiles and tests the workspace on the current GitHub-hosted stable Rust
 toolchain for Linux, macOS, and Windows. The release binary matrix additionally
-builds Linux x86_64 GNU, macOS x86_64 and arm64, and Windows x86_64 MSVC
+builds Linux x86_64 GNU, macOS arm64, and Windows x86_64 MSVC
 artifacts. Other Rust targets may work, but are not part of the supported CI
 platform contract.
 

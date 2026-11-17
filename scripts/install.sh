@@ -35,10 +35,17 @@ platform() {
       ;;
   esac
 
+  # A Rosetta-translated shell on Apple Silicon reports x86_64. The arm64
+  # binary runs natively there. Intel Macs lack this sysctl and print nothing.
+  if [ "$os-$arch" = "apple-darwin-x86_64" ] &&
+    [ "$(sysctl -n sysctl.proc_translated 2>/dev/null)" = "1" ]; then
+    arch="aarch64"
+  fi
+
   target="$arch-$os"
 
   case "$target" in
-    x86_64-unknown-linux-gnu|x86_64-apple-darwin|aarch64-apple-darwin)
+    x86_64-unknown-linux-gnu|aarch64-apple-darwin)
       printf '%s' "$target"
       ;;
     *)

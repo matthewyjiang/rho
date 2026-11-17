@@ -1,6 +1,6 @@
 # Installation
 
-Install the latest prebuilt Rho binary on macOS and Linux:
+Install the latest prebuilt Rho binary on Apple Silicon macOS and x86_64 Linux:
 
 ```bash
 curl -fsSL https://matthewyjiang.github.io/rho/install.sh | sh
@@ -67,7 +67,7 @@ mise use -g 'github:matthewyjiang/rho[version_prefix=rho-coding-agent-v]'
 
 `rho update` recognizes mise installs, including `MISE_DATA_DIR` and `MISE_INSTALLS_DIR` overrides, and uses `mise upgrade --global` (mise 2026.10.7 or newer) for that tool instead of overwriting mise's copy with the standalone installer. `rho uninstall` prints the matching `mise unuse -g` command, which also removes versions no other config needs.
 
-If your platform has no prebuilt binary, install from crates.io with Cargo:
+If your platform has no prebuilt binary, such as Intel macOS, install from crates.io with Cargo:
 
 ```bash
 cargo install rho-coding-agent
@@ -83,6 +83,12 @@ If Cargo's bin directory is not on your `PATH`, add it before running the [inter
 
 ```bash
 export PATH="$HOME/.cargo/bin:$PATH"
+```
+
+To switch an Intel Mac from an earlier standalone install to Cargo, delete the old binary so it does not shadow Cargo's copy. Use your `RHO_INSTALL_DIR` in place of `~/.local/bin` if you set one:
+
+```bash
+rm ~/.local/bin/rho
 ```
 
 ## The daemon and services
