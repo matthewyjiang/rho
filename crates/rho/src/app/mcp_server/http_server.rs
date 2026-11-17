@@ -87,8 +87,7 @@ pub(crate) async fn serve_http(
             options.address
         );
     }
-    // Requests to a private address name it as their `Host`.
-    let own_host = (!ip.is_loopback()).then(|| ip.to_string());
+    let own_hosts = own_hosts(ip);
     let listener = tokio::net::TcpListener::bind(options.address)
         .await
         .with_context(|| format!("could not listen on {}", options.address))?;
@@ -105,7 +104,7 @@ pub(crate) async fn serve_http(
             LOOPBACK_HOSTS
                 .iter()
                 .map(|host| (*host).to_owned())
-                .chain(own_host.clone())
+                .chain(own_hosts.iter().cloned())
                 .chain(options.allowed_hosts),
         )
         .with_allowed_origins(options.allowed_origins)
@@ -127,7 +126,7 @@ pub(crate) async fn serve_http(
     );
     let server = Arc::new(HttpServer { service, sessions });
     eprintln!("rho mcp serve listening on http://{local}{ENDPOINT}");
-    if own_host.is_some() {
+    if !own_hosts.is_empty() {
         eprintln!(
             "rho mcp serve: plain HTTP on a network address: anyone who can read traffic on that network can read requests, bearer tokens included"
         );
@@ -148,6 +147,25 @@ pub(crate) async fn serve_http(
             }
         });
     }
+}
+
+/// The `Host`s requests to private address `ip` name, which are allowed
+/// without `--allow-host`: none for loopback, which is always allowed. An
+/// IPv6 address can be written two ways, as Rust prints it and as a URL
+/// does, which writes a mapped IPv4 address in hex; both are allowed.
+fn own_hosts(ip: std::net::IpAddr) -> Vec<String> {
+    if ip.is_loopback() {
+        return Vec::new();
+    }
+    let mut hosts = vec![ip.to_string()];
+    if let std::net::IpAddr::V6(v6) = ip {
+        let url_form = url::Host::<String>::Ipv6(v6).to_string();
+        let url_form = url_form.trim_start_matches('[').trim_end_matches(']');
+        if url_form != hosts[0] {
+            hosts.push(url_form.to_owned());
+        }
+    }
+    hosts
 }
 
 /// Authenticates `request` and hands it to rmcp with its token's grant.
@@ -214,3 +232,7 @@ fn refusal(status: StatusCode, message: &str) -> Response<Body> {
     *response.status_mut() = status;
     response
 }
+
+#[cfg(test)]
+#[path = "http_server_tests.rs"]
+mod tests;

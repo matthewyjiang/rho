@@ -28,7 +28,7 @@ pub(in crate::app) async fn remote(command: &McpRemoteCommand, cli: &Cli) -> any
         McpRemoteCommand::Add { name, url } => {
             // Before the secret is read, so a typo fails before anything else.
             check_name(name)?;
-            let url = check_url(url).await?;
+            let url = check_url(url).await?.url;
             let secret = read_secret(&format!(
                 "pipe the secret of the token {name} issued this machine on stdin, as `ssh {name} rho mcp token rotate hub --scope write --workspace DIR | rho mcp remote add {name} --url {url}`"
             ))?;

@@ -43,10 +43,13 @@ pub(crate) enum BearerError {
 /// and initializes. `identity` names the server in logs. Redirects are
 /// never followed, so the secret never reaches another origin, and plain
 /// `http`, which a caller allows only on a private network, bypasses any
-/// proxy, which would carry the secret off it.
+/// proxy, which would carry the secret off it. When `pinned` names
+/// addresses, the URL's host name connects only to those, the ones the
+/// caller checked, rather than to whatever it resolves to now.
 pub(crate) async fn connect_bearer(
     identity: &str,
-    url: &str,
+    url: &url::Url,
+    pinned: &[std::net::SocketAddr],
     secret: &str,
 ) -> Result<BearerConnection, BearerError> {
     // Server-initiated list changes have no session to act on here.
@@ -64,22 +67,22 @@ pub(crate) async fn connect_bearer(
             ),
         },
     );
-    let plain_http = url::Url::parse(url)
-        .map_err(|error| BearerError::Failed(format!("URL {url:?}: {error}")))?
-        .scheme()
-        == "http";
-    let client = if plain_http {
-        crate::reqwest_client_builder()
+    let client = if url.scheme() == "http" {
+        let mut builder = crate::reqwest_client_builder()
             .pool_max_idle_per_host(0)
             .redirect(reqwest::redirect::Policy::none())
-            .no_proxy()
+            .no_proxy();
+        if let (Some(domain), false) = (url.domain(), pinned.is_empty()) {
+            builder = builder.resolve_to_addrs(domain, pinned);
+        }
+        builder
             .build()
             .map_err(|error| BearerError::Failed(error.to_string()))?
     } else {
         oauth::transport_http_client().map_err(|error| BearerError::Failed(format!("{error:#}")))?
     };
     let client = McpTransportClient::Plain(client);
-    let config = StreamableHttpClientTransportConfig::with_uri(url.to_owned())
+    let config = StreamableHttpClientTransportConfig::with_uri(url.to_string())
         .auth_header(secret.to_owned());
     let transport = StreamableHttpClientTransport::with_client(client, config);
     handler.serve(transport).await.map_err(describe)

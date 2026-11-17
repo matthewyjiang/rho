@@ -3,7 +3,7 @@
 //! name, MCP URL, and the bearer secret of the token the remote issued the
 //! hub. `Debug` leaves the secret out; nothing lists, logs, or returns it.
 
-use std::fmt;
+use std::{fmt, net::SocketAddr};
 
 use rho_providers::credentials::CredentialStore;
 use serde::{Deserialize, Serialize};
@@ -108,13 +108,26 @@ impl RemoteSet {
     }
 }
 
+/// Where a call to a remote connects: the URL [`check_url`] passed, and for
+/// plain `http` to a host name, the private addresses it resolved to then,
+/// which the connection is pinned to, so a name that later resolves to a
+/// public address never gets the secret in plaintext.
+pub(crate) struct Endpoint {
+    pub(crate) url: Url,
+    /// Empty for `https` and for an address literal.
+    pub(crate) pinned: Vec<SocketAddr>,
+}
+
 /// `url` as a remote's endpoint: `https`, or plain `http` to a host on a
 /// private network (`private_network`), where the owner decided the network
 /// keeps it private; and no userinfo, which would put a second secret in
 /// the URL `list` shows. A host name for plain `http` is resolved here, and
-/// every address it has must be private.
-pub(crate) async fn check_url(url: &str) -> anyhow::Result<Url> {
-    let parsed = Url::parse(url).map_err(|error| anyhow::anyhow!("remote URL {url:?}: {error}"))?;
+/// every address it has must be private. Checked again at each call, so the
+/// name is resolved again then.
+pub(crate) async fn check_url(url: &str) -> anyhow::Result<Endpoint> {
+    // Not echoed: a URL that fails to parse may still carry userinfo.
+    let parsed =
+        Url::parse(url).map_err(|error| anyhow::anyhow!("the remote URL is not valid: {error}"))?;
     if !parsed.username().is_empty() || parsed.password().is_some() {
         // Not echoed: the userinfo may be a secret.
         anyhow::bail!(
@@ -122,19 +135,23 @@ pub(crate) async fn check_url(url: &str) -> anyhow::Result<Url> {
         );
     }
     match parsed.scheme() {
-        "https" => Ok(parsed),
+        "https" => Ok(Endpoint {
+            url: parsed,
+            pinned: Vec::new(),
+        }),
         "http" => {
-            let private = match parsed.host() {
-                Some(Host::Ipv4(address)) => is_private(address.into()),
-                Some(Host::Ipv6(address)) => is_private(address.into()),
+            let (private, pinned) = match parsed.host() {
+                Some(Host::Ipv4(address)) => (is_private(address.into()), Vec::new()),
+                Some(Host::Ipv6(address)) => (is_private(address.into()), Vec::new()),
                 Some(Host::Domain(domain)) => {
                     let port = parsed.port_or_known_default().unwrap_or(80);
                     let addresses: Vec<_> = tokio::net::lookup_host((domain, port))
                         .await
                         .map_err(|error| anyhow::anyhow!("could not resolve {domain}: {error}"))?
                         .collect();
-                    !addresses.is_empty()
-                        && addresses.iter().all(|address| is_private(address.ip()))
+                    let private = !addresses.is_empty()
+                        && addresses.iter().all(|address| is_private(address.ip()));
+                    (private, addresses)
                 }
                 None => anyhow::bail!("remote URL {url:?} names no host"),
             };
@@ -143,7 +160,10 @@ pub(crate) async fn check_url(url: &str) -> anyhow::Result<Url> {
                     "remote URL {url:?} must use https; plain http is allowed only to a loopback or private network address, such as 192.168.x.x or a NetBird or Tailscale peer's 100.x.y.z"
                 );
             }
-            Ok(parsed)
+            Ok(Endpoint {
+                url: parsed,
+                pinned,
+            })
         }
         scheme => anyhow::bail!("remote URL {url:?} must use https or http, not {scheme}"),
     }

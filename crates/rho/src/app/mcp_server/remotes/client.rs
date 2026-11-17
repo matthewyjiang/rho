@@ -22,7 +22,7 @@ use rmcp::{
 };
 use serde_json::{Map, Value};
 
-use super::Remote;
+use super::{check_url, Remote};
 use crate::{
     app::session_control::{Action, WaitResult},
     caller_context::CallerContext,
@@ -117,14 +117,22 @@ pub(crate) async fn call(
         detail,
     };
     let outcome = tokio::time::timeout(CALL_TIMEOUT, async {
-        let connection = connect_bearer(&remote.name, &remote.url, &remote.secret)
+        let endpoint = check_url(&remote.url)
             .await
-            .map_err(|error| match error {
-                BearerError::Unauthorized => RemoteError::Refused {
-                    server: remote.name.clone(),
-                },
-                BearerError::Failed(detail) => unreachable(detail),
-            })?;
+            .map_err(|error| unreachable(format!("{error:#}")))?;
+        let connection = connect_bearer(
+            &remote.name,
+            &endpoint.url,
+            &endpoint.pinned,
+            &remote.secret,
+        )
+        .await
+        .map_err(|error| match error {
+            BearerError::Unauthorized => RemoteError::Refused {
+                server: remote.name.clone(),
+            },
+            BearerError::Failed(detail) => unreachable(detail),
+        })?;
         let mut meta = Map::from_iter([(FORWARDED.to_owned(), Value::from(asked.name()))]);
         if connection
             .peer_info()

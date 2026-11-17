@@ -52,7 +52,8 @@ fn add_remote(hub: &Sandbox, name: &str, url: &str, secret: &str) {
     assert!(output.status.success(), "{output:?}");
 }
 
-/// The servers a fanned-out `list` names, each with its sessions' ids.
+/// The servers a fanned-out `list` names, each with its sessions' ids; a
+/// server that could not list fails the test with its error.
 fn listed(list: &Value) -> Vec<(Value, Vec<Value>)> {
     list["servers"]
         .as_array()
@@ -61,13 +62,10 @@ fn listed(list: &Value) -> Vec<(Value, Vec<Value>)> {
         .map(|server| {
             let sessions = server["sessions"]
                 .as_array()
-                .map(|sessions| {
-                    sessions
-                        .iter()
-                        .map(|entry| entry["session"].clone())
-                        .collect()
-                })
-                .unwrap_or_default();
+                .unwrap_or_else(|| panic!("a server that listed its sessions, not {server}"))
+                .iter()
+                .map(|entry| entry["session"].clone())
+                .collect();
             (server["server"].clone(), sessions)
         })
         .collect()
