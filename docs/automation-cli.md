@@ -238,39 +238,52 @@ and no `origin` to start from, `--worktree` fails with exit code `2`.
 
 #### Cleaning up worktrees
 
-The daemon removes a session's worktree, and keeps its branch, when all of
-these are true:
+The daemon removes a worktree under `~/.rho/worktrees/`, and keeps its
+branch, when all of these are true:
 
-- The session isn't open or running, and nobody has used it for a day.
+- Nothing uses it, and nothing has for a day. For a daemon session's
+  worktree, the session isn't open or running. For any other worktree there,
+  such as one from a `rho run --worktree` without `--detach` or one an agent
+  made with `git worktree add`, no process has its working directory inside
+  it, and its checkout hasn't moved.
 - The worktree has no uncommitted or untracked changes.
 - The current `HEAD` of the checkout you started from, or `origin`'s default
   branch as last fetched, has the branch's changes. Regular, squash, and
-  rebase merges all count.
+  rebase merges all count, also once later commits edit the same lines.
 
 Rho checks only local git and fetches nothing for cleanup. The next worktree
 that starts from the remote fetches its default branch, and so does a `git
-fetch` of your own. Detecting a squash merge needs git 2.38 or later. Files git ignores,
-such as `.env` or `node_modules`, go with the worktree. If you reopen the
-session later, the daemon restores its worktree on the branch.
+fetch` of your own. A squash merge whose base changed nearby lines first
+needs git 2.38 or later to detect. Files git ignores, such as `.env` or
+`node_modules`, go with the worktree. If you reopen a daemon session later,
+the daemon restores its worktree on the branch. A worktree no session owns
+doesn't come back.
+
+On Windows, Rho can't see which processes work in a worktree, so it keeps
+those no session owns. To keep any worktree, lock it with `git worktree lock
+<path>`.
 
 Other worktrees stay. After 14 days unused, `rho daemon status` and
-[`/jobs`](/interactive-tui) mark them as stale. Merge what you want, then
-remove the worktree yourself:
+[`/jobs`](/interactive-tui) mark a session's as stale. Merge what you want,
+then remove the worktree yourself:
 
 ```bash
 git worktree remove ~/.rho/worktrees/api-3fa2c1d0   # add --force to drop uncommitted edits
 git branch -D rho/api-3fa2c1d0
 ```
 
-A `rho run --worktree` without `--detach` doesn't use the daemon, so you always
-remove its worktree yourself.
-
-To clean up now instead of waiting a day:
+To see what the worktrees take, or to clean up now instead of waiting a day:
 
 ```bash
+rho worktrees status            # each worktree's size and why it stays, then what a prune frees
 rho worktrees prune             # remove clean, merged worktrees and say why the rest stay
-rho worktrees prune --dry-run   # only list what it would do, with the daemon running
+rho worktrees prune --dry-run   # only list what it would do
 ```
+
+`status` and `--dry-run` change nothing, so they need the daemon running. A
+prune doesn't wait a day for a session's worktree, but it still keeps a
+worktree no session owns that was used within the last day: a session's new
+worktree looks like one until the session finishes opening.
 
 ### Attaching to a daemon session
 
@@ -469,7 +482,8 @@ Rho accepts global options before an optional subcommand. Provider, model, auth,
 | `rho plugins disable <NAME>` | Disable a plugin without deleting package files. |
 | `rho plugins remove <NAME> [--yes]` | Remove a package from a managed root; keeps plugin data. |
 | `rho daemon [run\|status [--json]\|stop]` | Run the per-user [daemon](/daemon) in the foreground, show its status, or stop it. `status` and `stop` exit with status 1 when no daemon is running. |
-| `rho worktrees prune [--dry-run]` | Remove the daemon's session worktrees that are clean and merged, keep their branches, and say why each other one stays. `--dry-run` changes nothing. See [Cleaning up worktrees](#cleaning-up-worktrees). |
+| `rho worktrees prune [--dry-run]` | Remove the worktrees under `~/.rho/worktrees/` that are clean and merged, keep their branches, and say why each other one stays. `--dry-run` changes nothing. See [Cleaning up worktrees](#cleaning-up-worktrees). |
+| `rho worktrees status` | List each worktree under `~/.rho/worktrees/`, largest first, with its size and whether a prune removes it, then the total and what a prune frees. Changes nothing. |
 | `rho doctor [--json]` | Run the same setup diagnostics as the interactive `/doctor` overlay and print a text report (or one JSON document). Root `--provider`, `--model`, `--auth`, and `--reasoning` apply to this invocation the same way they do for `rho run`. It also checks the [daemon](/daemon#checking-the-daemon) without starting one. Exits with status 1 when any check fails; warnings exit 0. |
 | `rho update [--check [--json]]` | Update Rho using the detected installation method. `--check` only reports whether an update exists and how it would install. |
 | `rho uninstall [--purge] [--dry-run]` | Preview and confirm uninstall; preserve local data unless `--purge` is given. |

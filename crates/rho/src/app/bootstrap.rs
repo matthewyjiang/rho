@@ -356,7 +356,7 @@ async fn prepare_startup(cli: Cli) -> anyhow::Result<PreparedStartup> {
         let added = crate::worktree::add(&root, &workspace, start).await?;
         eprintln!(
             "rho: {}",
-            crate::worktree::hint(&added.worktree, crate::worktree::Removal::Manual)
+            crate::worktree::hint(&added.worktree, crate::worktree::Removal::Unowned)
         );
         eprintln!("rho: the worktree starts from {}", added.started);
         std::env::set_current_dir(&added.cwd)?;

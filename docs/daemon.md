@@ -14,7 +14,8 @@ There is one daemon per user and Rho home (`~/.rho`, or `$RHO_HOME`). Rho starts
 | `rho daemon restart` | Restart the daemon, for example after an update. Running turns stop, then continue once the TUI reattaches ([Updates](#upgrading-in-place)). |
 | `rho daemon` | Run the daemon in the foreground. Same as `rho daemon run`. |
 | `rho attach <id>` | Follow a session's turn from the terminal ([Attaching](/automation-cli#attaching-to-a-daemon-session)). |
-| `rho worktrees prune [--dry-run]` | Remove session worktrees that are clean and merged ([Sessions in worktrees](#sessions-in-worktrees)). |
+| `rho worktrees prune [--dry-run]` | Remove worktrees that are clean and merged ([Sessions in worktrees](#sessions-in-worktrees)). |
+| `rho worktrees status` | Show each worktree's size and what a prune would free. |
 | `rho mcp serve` | Let another agent start and follow your sessions ([MCP server](/mcp-server)). |
 
 `rho daemon status`, `rho daemon stop`, and `rho attach` never start a daemon. With none running, they print `rho daemon is not running` and exit with status 1.
@@ -82,7 +83,7 @@ The daemon creates a branch `rho/<repository>-<id>` and checks it out at `~/.rho
                rho/api-91bd22aa /home/me/.rho/worktrees/api-91bd22aa (stale)
 ```
 
-The daemon removes a worktree once its session has sat unused for a day, the worktree has no uncommitted changes, and your checkout or the remote's default branch already has its commits. It keeps the branch, and it recreates the worktree if you reopen the session. Worktrees it can't remove are marked stale after 14 days. [Cleaning up worktrees](/automation-cli#cleaning-up-worktrees) covers the rules, `rho worktrees prune`, and how to remove a worktree yourself.
+The daemon removes a worktree once its session has sat unused for a day, the worktree has no uncommitted changes, and your checkout or the remote's default branch already has its commits. It keeps the branch, and it recreates the worktree if you reopen the session. It cleans up other worktrees under `~/.rho/worktrees` the same way, such as one from a foreground `rho run --worktree`, once no process works in it. Worktrees it can't remove are marked stale after 14 days. `rho worktrees status` shows what each one takes on disk. [Cleaning up worktrees](/automation-cli#cleaning-up-worktrees) covers the rules, `rho worktrees prune`, and how to remove a worktree yourself.
 
 To open a worktree session from a TUI started anywhere, select it in `/jobs` and press `Enter`. The TUI moves into the worktree. You can also run `rho attach <id>`.
 

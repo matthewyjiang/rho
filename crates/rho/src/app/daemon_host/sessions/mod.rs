@@ -130,7 +130,7 @@ pub(in crate::app) use turn::DAEMON_COMMANDS;
 use turn::{DaemonTurn, PromptStart, TurnLimit, TurnTask};
 use unload::Residency;
 pub(in crate::app) use unload::UNLOAD_IDLE_AFTER;
-pub(super) use worktree::{worktree_stale, Prune};
+pub(super) use worktree::{worktree_stale, Pass, Prune};
 
 /// How long the daemon's stop waits for its turns to save once it was
 /// asked to stop, before it records them interrupted and exits anyway.

@@ -55,7 +55,7 @@ mod wire;
 
 use jobs::{JobRegistry, JobStore, JobSubject};
 use logins::Logins;
-use sessions::{worktree_stale, Prune, Sessions};
+use sessions::{worktree_stale, Pass, Prune, Sessions};
 pub(super) use sessions::{DAEMON_COMMANDS, UNLOAD_IDLE_AFTER};
 use upgrade::UPGRADE_CHECK_INTERVAL;
 use upgrade::{Check, Upgrades, Watch};
@@ -274,7 +274,7 @@ impl DaemonHost {
         self.sessions.unload_idle(grace).await;
     }
 
-    /// Prunes the session worktrees [`WORKTREE_PRUNE_AFTER_START`] after
+    /// Prunes the worktrees [`WORKTREE_PRUNE_AFTER_START`] after
     /// the daemon starts and every [`WORKTREE_PRUNE_INTERVAL`] after that,
     /// until the daemon starts stopping.
     pub(super) async fn prune_worktrees_daily(&self) {
@@ -284,7 +284,11 @@ impl DaemonHost {
                 () = tokio::time::sleep(wait) => {}
                 () = self.shutdown.requested() => return,
             }
-            self.sessions.prune_worktrees(Prune::Daily).await;
+            let pass = Pass {
+                prune: Prune::Daily,
+                measure: false,
+            };
+            self.sessions.prune_worktrees(pass).await;
             wait = WORKTREE_PRUNE_INTERVAL;
         }
     }
@@ -551,13 +555,18 @@ impl Service for DaemonHost {
         &self,
         params: WorktreePruneParams,
     ) -> Result<WorktreePruneResponse, RpcError> {
-        let WorktreePruneParams { dry_run } = params;
+        let WorktreePruneParams { dry_run, measure } = params;
         let prune = match dry_run {
             true => Prune::DryRun,
             false => Prune::Now,
         };
+        // Only a dry run measures, so a pass never walks what it removes.
+        let pass = Pass {
+            prune,
+            measure: measure && dry_run,
+        };
         Ok(WorktreePruneResponse {
-            worktrees: self.sessions.prune_worktrees(prune).await,
+            worktrees: self.sessions.prune_worktrees(pass).await,
         })
     }
 

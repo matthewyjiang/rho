@@ -13,9 +13,10 @@
 //! it is clean and its origin's `HEAD`, or the remote's default branch, has
 //! what it has checked out, however it was merged ([`inspect`],
 //! [`remove`]), keeping the branch, and adds it back at the commit it
-//! removed when the session reopens ([`restore`]). It never removes one holding work nobody merged, and
-//! nothing removes a foreground run's: a person does, with
-//! `git worktree remove <path>` and `git branch -D <branch>`.
+//! removed when the session reopens ([`restore`]). It removes the other
+//! worktrees under the directory the same way ([`unowned`]), once no
+//! process works in one, and never adds those back. It never removes one
+//! holding work nobody merged, nor one `git worktree lock` locked.
 
 use std::{
     ffi::OsStr,
@@ -31,6 +32,14 @@ use crate::{
     config::Config,
     process_tree::{ProcessTree as _, SupervisedTree},
 };
+
+mod squash;
+mod unowned;
+
+mod size;
+
+pub(crate) use size::size;
+pub(crate) use unowned::unowned;
 
 /// The remote whose default branch [`Start::Remote`] starts from.
 const REMOTE: &str = "origin";
@@ -420,7 +429,10 @@ pub(crate) async fn inspect(worktree: &SessionWorktree) -> Result<Holds, Worktre
     }
     // A worktree started from the remote, or merged there, while the
     // checkout stayed behind.
-    if let Some(tip) = remote_tip(origin).await? {
+    if let Some(tip) = remote_tip(origin)
+        .await?
+        .filter(|tip| tip.commit != base_commit)
+    {
         if has_changes_of(origin, &tip.commit, &head).await? {
             let base = tip.label;
             return Ok(Holds::Merged { base, commit: head });
@@ -433,7 +445,9 @@ pub(crate) async fn inspect(worktree: &SessionWorktree) -> Result<Holds, Worktre
 /// repository at `dir`: it contains `commit`, as after a fast-forward or a
 /// merge commit; it has a commit with the same patch as each of
 /// `commit`'s own, as after a rebase merge or cherry-picks; or merging
-/// `commit` into it would change nothing, as after a squash merge.
+/// `commit` into it would change nothing, as after a squash merge; or one
+/// of its commits since `commit` forked makes `commit`'s changes at once,
+/// as the squash commit of a merge does once `base` edited them again.
 async fn has_changes_of(dir: &Path, base: &str, commit: &str) -> Result<bool, WorktreeError> {
     let ancestor = ["merge-base", "--is-ancestor", commit, base];
     if answered(dir, "merge-base", ancestor).await?.is_some() {
@@ -459,24 +473,34 @@ async fn has_changes_of(dir: &Path, base: &str, commit: &str) -> Result<bool, Wo
     // the squash commit of a branch behind its base does. Exit 1 is a
     // conflict.
     let merge = ["merge-tree", "--write-tree", base, commit];
-    let tree = match answered(dir, "merge-tree", merge).await {
-        Ok(Some(tree)) => tree,
-        Ok(None) => return Ok(false),
+    match answered(dir, "merge-tree", merge).await {
+        Ok(Some(tree)) => {
+            let base_tree = format!("{base}^{{tree}}");
+            let base_tree = succeeded(dir, "rev-parse", ["rev-parse", base_tree.as_str()]).await?;
+            if tree.lines().next() == Some(base_tree.as_str()) {
+                return Ok(true);
+            }
+        }
+        Ok(None) => {}
         // As on a git before 2.38, which has no `--write-tree`, or for
-        // unrelated histories: no squash merge can be told, so the worktree
-        // reads as unmerged and stays, as before.
+        // unrelated histories: the squash commit check below still runs.
         Err(error) => {
             tracing::warn!(
                 %error,
-                "could not check for a squash merge (it needs git 2.38 or later); \
-                 the worktree reads as unmerged"
+                "could not merge a worktree's branch in memory (it needs git 2.38 or later)"
             );
-            return Ok(false);
         }
-    };
-    let base_tree = format!("{base}^{{tree}}");
-    let base_tree = succeeded(dir, "rev-parse", ["rev-parse", base_tree.as_str()]).await?;
-    Ok(tree.lines().next() == Some(base_tree.as_str()))
+    }
+    // A squash merge `base` edited again since, so merging conflicts.
+    match squash::squashed_into(dir, base, commit).await {
+        Ok(squashed) => Ok(squashed),
+        // As on a git before 2.28, which has no `--no-relative`: the
+        // worktree reads as unmerged and stays.
+        Err(error) => {
+            tracing::warn!(%error, "could not look for a worktree branch's squash commit");
+            Ok(false)
+        }
+    }
 }
 
 /// Removes `worktree` with `git worktree remove`, which refuses one with
@@ -577,13 +601,15 @@ pub(crate) fn require(asked: bool, opened: Option<&SessionWorktree>) -> Result<(
     }
 }
 
-/// Who removes a session's worktree.
+/// How the daemon cleans up a session's worktree.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Removal {
-    /// The daemon, once it is clean and merged, keeping the branch.
+    /// As its session's: once it is clean and merged, keeping the branch,
+    /// and adds it back when the session reopens.
     Daemon,
-    /// A person: a foreground run's is no daemon's to remove.
-    Manual,
+    /// As one no session owns, a foreground run's: also only once no
+    /// process works in it, and never adds it back.
+    Unowned,
 }
 
 /// What a run tells the person where its session works, as `rho run
@@ -591,7 +617,9 @@ pub(crate) enum Removal {
 pub(crate) fn hint(worktree: &SessionWorktree, removal: Removal) -> String {
     let removal = match removal {
         Removal::Daemon => "rho removes it once it is clean and merged, and keeps the branch",
-        Removal::Manual => "rho never removes it",
+        Removal::Unowned => {
+            "rho removes it once it is clean, merged, and unused for a day, and keeps the branch"
+        }
     };
     format!(
         "the session works in worktree {} on branch {}; {removal}",

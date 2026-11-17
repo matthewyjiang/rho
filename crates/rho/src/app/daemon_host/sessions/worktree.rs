@@ -19,15 +19,24 @@
 //! the files git ignores there. `rho/worktree/prune` checks every worktree
 //! at once. An unsaved session's worktree is checked as the session is
 //! discarded, since nothing would remember it after. Every check and
-//! removal of one worktree holds its session's reopen lock, so the session
-//! cannot load meanwhile.
+//! removal of a session's worktree holds its session's reopen lock, so the
+//! session cannot load meanwhile.
 //!
 //! A worktree that stays on disk unused for [`STALE_AFTER`] is stale:
 //! clients flag it, and only a person removes it.
+//!
+//! The pass then checks the worktrees in the directory no job names, such
+//! as a foreground `rho run --worktree`'s or one an agent added with `git
+//! worktree add`, by the same rules. With no lock to hold, it keeps one
+//! whose checkout moved within [`QUIET_BEFORE_DAILY`], every pass alike:
+//! a session's worktree has no job naming it until the session opens, and
+//! an agent works in its own between commands. It also keeps one a process
+//! works in, checked again just before removing it. Nothing gives one of
+//! those back once removed.
 
 use std::{
     path::{Path, PathBuf},
-    time::Duration,
+    time::{Duration, UNIX_EPOCH},
 };
 
 use rho_protocol::{ErrorCode, RpcError, SessionWorktree, WorktreeReport, WorktreeVerdict};
@@ -56,8 +65,8 @@ const QUIET_BEFORE_DAILY: Duration = Duration::from_secs(24 * 60 * 60);
 /// What a cleanup pass does with the worktrees it may remove.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::app::daemon_host) enum Prune {
-    /// The daemon's own pass: removes those whose session has been quiet
-    /// for [`QUIET_BEFORE_DAILY`], and skips the rest unreported.
+    /// The daemon's own pass: removes those unused for
+    /// [`QUIET_BEFORE_DAILY`], and skips the rest unreported.
     Daily,
     /// A person's request: removes them all now.
     Now,
@@ -264,10 +273,11 @@ impl Sessions {
     }
 
     /// Runs one cleanup pass over every session worktree the daemon knows,
-    /// and reports each that was on disk.
+    /// then the others in its worktree directory, and reports each that
+    /// was on disk.
     pub(in crate::app::daemon_host) async fn prune_worktrees(
         &self,
-        prune: Prune,
+        pass: Pass,
     ) -> Vec<WorktreeReport> {
         // Only a new session's job gets a worktree, and a reopen reuses
         // that job, so one record holds each.
@@ -277,25 +287,33 @@ impl Sessions {
             else {
                 continue;
             };
-            let _reopening = self.reopening.lock(session).await;
+            let reopening = self.reopening.lock(session).await;
             // Read again under the lock: the session may have run since.
             let Some(record) = self.jobs.get(&listed.id) else {
                 continue;
             };
-            if !prune.checks(record.updated_at, unix_now()) {
+            if !pass.prune.checks(record.updated_at, unix_now()) {
                 continue;
             }
-            reports.extend(self.prune_worktree(&record, prune).await);
+            let Some(mut report) = self.prune_worktree(&record, pass.prune).await else {
+                continue;
+            };
+            drop(reopening);
+            // Walked once the session may load again: a build's output
+            // takes long.
+            report.bytes = pass.measure(&report.worktree).await;
+            reports.push(report);
         }
+        reports.extend(self.prune_unowned(pass).await);
         let removed = reports
             .iter()
-            .filter(|report| matches!(report.verdict, WorktreeVerdict::Merged { .. }))
+            .filter(|report| report.verdict.removes())
             .count();
         tracing::info!(
-            ?prune,
+            ?pass,
             removed,
             kept = reports.len() - removed,
-            "pruned session worktrees"
+            "pruned worktrees"
         );
         reports
     }
@@ -316,42 +334,183 @@ impl Sessions {
         let in_use = self.worktrees_in_use(&self.jobs.list());
         let verdict = match in_use.holds(&worktree.path) {
             true => WorktreeVerdict::InUse,
-            false => match crate::worktree::inspect(worktree).await {
-                Ok(Holds::Changes) => WorktreeVerdict::Dirty,
-                Ok(Holds::Unmerged { base }) => WorktreeVerdict::Unmerged { base },
-                Ok(Holds::Merged { base, commit }) => match prune {
-                    Prune::DryRun => WorktreeVerdict::Merged { base },
-                    Prune::Daily | Prune::Now => match crate::worktree::remove(worktree).await {
-                        Ok(()) => {
-                            self.jobs
-                                .set_worktree_removed_at(&record.id, Some(commit.clone()));
-                            tracing::info!(
-                                branch = %worktree.branch,
-                                path = %worktree.path.display(),
-                                %base,
-                                %commit,
-                                "removed a merged session worktree"
-                            );
-                            WorktreeVerdict::Merged { base }
-                        }
-                        Err(error) => WorktreeVerdict::Failed {
-                            error: error.to_string(),
-                        },
-                    },
-                },
-                Err(error) => WorktreeVerdict::Failed {
-                    error: error.to_string(),
-                },
-            },
+            false => {
+                let checked = check_and_remove(worktree, prune, Guard::None).await;
+                if let Some(commit) = checked.removed_at {
+                    self.jobs.set_worktree_removed_at(&record.id, Some(commit));
+                }
+                checked.verdict
+            }
         };
         // A removed worktree is no longer on disk, so it is not stale.
         let stale = worktree_stale(record, &in_use, unix_now());
         Some(WorktreeReport {
-            job: (&record.id).into(),
+            job: Some((&record.id).into()),
             worktree: worktree.clone(),
+            detached: false,
             verdict,
             stale,
+            bytes: None,
         })
+    }
+
+    /// Checks each worktree in the worktree directory that no session owns
+    /// (see [`crate::worktree::unowned`]), and removes it as `pass` says
+    /// when it may. With no session's reopen lock to hold, it keeps one
+    /// whose checkout moved, or a job in it changed, within
+    /// [`QUIET_BEFORE_DAILY`], as a session's still opening in it has, and
+    /// one a process works in, checked again just before removing it.
+    async fn prune_unowned(&self, pass: Pass) -> Vec<WorktreeReport> {
+        let records = self.jobs.list();
+        let owned: Vec<&Path> = records
+            .iter()
+            .filter_map(|record| Some(record.worktree.as_ref()?.path.as_path()))
+            .collect();
+        let found = crate::worktree::unowned(&self.worktrees, &owned).await;
+        let now = unix_now();
+        let mut reports = Vec::new();
+        for unowned in found {
+            let worktree = &unowned.worktree;
+            let moved_at = unowned
+                .moved_at
+                .and_then(|at| at.duration_since(UNIX_EPOCH).ok())
+                .map_or(0, |since| since.as_secs());
+            let used_at = records
+                .iter()
+                .filter(|record| record.workspace.starts_with(&worktree.path))
+                .map(|record| record.updated_at)
+                .fold(moved_at, u64::max);
+            let quiet = now.saturating_sub(used_at) >= QUIET_BEFORE_DAILY.as_secs();
+            let verdict = match (quiet, pass.prune) {
+                (false, Prune::Daily) => continue,
+                (false, Prune::Now | Prune::DryRun) => WorktreeVerdict::Recent,
+                (true, prune) => {
+                    let guard = Guard::Unowned {
+                        sessions: self,
+                        path: &worktree.path,
+                    };
+                    match guard.verdict() {
+                        Some(verdict) => verdict,
+                        None => check_and_remove(worktree, prune, guard).await.verdict,
+                    }
+                }
+            };
+            let bytes = pass.measure(worktree).await;
+            reports.push(WorktreeReport {
+                job: None,
+                worktree: worktree.clone(),
+                detached: unowned.detached,
+                verdict,
+                stale: false,
+                bytes,
+            });
+        }
+        reports
+    }
+}
+
+/// One cleanup pass: what it does with the worktrees it may remove, and
+/// whether it measures them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::app::daemon_host) struct Pass {
+    pub(in crate::app::daemon_host) prune: Prune,
+    /// Whether to report the bytes each worktree it keeps, or a dry run
+    /// would remove, takes.
+    pub(in crate::app::daemon_host) measure: bool,
+}
+
+impl Pass {
+    /// The bytes `worktree` takes, when this pass measures and it is still
+    /// on disk.
+    async fn measure(self, worktree: &SessionWorktree) -> Option<u64> {
+        match self.measure && worktree.path.exists() {
+            true => Some(crate::worktree::size(&worktree.path).await),
+            false => None,
+        }
+    }
+}
+
+/// What must still hold right before a worktree is removed.
+#[derive(Clone, Copy)]
+enum Guard<'a> {
+    /// Nothing more: the caller holds the session's reopen lock.
+    None,
+    /// For one no session owns: no job uses it, and no process works in it.
+    Unowned {
+        sessions: &'a Sessions,
+        path: &'a Path,
+    },
+}
+
+impl Guard<'_> {
+    /// The verdict that keeps the worktree now, if one does.
+    fn verdict(self) -> Option<WorktreeVerdict> {
+        let Self::Unowned { sessions, path } = self else {
+            return None;
+        };
+        if sessions.worktrees_in_use(&sessions.jobs.list()).holds(path) {
+            return Some(WorktreeVerdict::InUse);
+        }
+        match crate::process_cwds::scan() {
+            Some(cwds) if cwds.iter().any(|cwd| cwd.starts_with(path)) => {
+                Some(WorktreeVerdict::Occupied)
+            }
+            Some(_) => None,
+            None => Some(WorktreeVerdict::Failed {
+                error: "rho cannot see which processes work in it on this platform, \
+                        so it keeps worktrees no session owns"
+                    .to_owned(),
+            }),
+        }
+    }
+}
+
+/// What [`check_and_remove`] found and did.
+struct Checked {
+    verdict: WorktreeVerdict,
+    /// The commit it removed the worktree at, when it did.
+    removed_at: Option<String>,
+}
+
+/// Inspects `worktree`, which nothing uses, and removes it as `prune`
+/// says when it holds nothing unmerged and `guard` still lets it; the
+/// inspection can take seconds, so the guard is checked again after.
+async fn check_and_remove(worktree: &SessionWorktree, prune: Prune, guard: Guard<'_>) -> Checked {
+    let kept = |verdict| Checked {
+        verdict,
+        removed_at: None,
+    };
+    let failed = |error: crate::worktree::WorktreeError| {
+        kept(WorktreeVerdict::Failed {
+            error: error.to_string(),
+        })
+    };
+    let (base, commit) = match crate::worktree::inspect(worktree).await {
+        Ok(Holds::Changes) => return kept(WorktreeVerdict::Dirty),
+        Ok(Holds::Unmerged { base }) => return kept(WorktreeVerdict::Unmerged { base }),
+        Ok(Holds::Merged { base, commit }) => (base, commit),
+        Err(error) => return failed(error),
+    };
+    match prune {
+        Prune::DryRun => return kept(WorktreeVerdict::Merged { base }),
+        Prune::Daily | Prune::Now => {}
+    }
+    if let Some(verdict) = guard.verdict() {
+        return kept(verdict);
+    }
+    if let Err(error) = crate::worktree::remove(worktree).await {
+        return failed(error);
+    }
+    tracing::info!(
+        branch = %worktree.branch,
+        path = %worktree.path.display(),
+        %base,
+        %commit,
+        "removed a merged worktree"
+    );
+    Checked {
+        verdict: WorktreeVerdict::Merged { base },
+        removed_at: Some(commit),
     }
 }
 
