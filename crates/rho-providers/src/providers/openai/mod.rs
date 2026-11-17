@@ -25,6 +25,8 @@ pub fn supports_fast_mode(provider: &str, model: &str) -> bool {
             model,
             "gpt-5.5"
                 | "gpt-5.6"
+                | "gpt-6.2-astra"
+                | "gpt-6.2-sol"
                 | "gpt-6-astra"
                 | "gpt-6.1-sol"
                 | "gpt-6.1-terra"
