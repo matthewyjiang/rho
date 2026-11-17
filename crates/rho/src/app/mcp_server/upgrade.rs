@@ -13,6 +13,11 @@
 //! starts a new one, as the protocol has it do for a session the server no
 //! longer knows.
 //!
+//! A replacement older than the running server, as after a rollback, may
+//! predate `--listener-fd`, so it is not handed the socket: the server
+//! closes it as it re-executes, and the replacement listens anew. A host
+//! that connects in that gap is refused.
+//!
 //! Unix only: elsewhere the server keeps running the binary it started
 //! with until it is restarted.
 
@@ -108,12 +113,21 @@ impl Upgrade {
         }
     }
 
-    /// Re-executes the replacement as this process, handing it `listener`.
-    /// Returns only with why that failed.
-    fn relaunch(self, listener: TcpListener) -> anyhow::Error {
+    /// Re-executes the replacement, `version`, as this process, handing it
+    /// `listener` unless it is older than this server. Returns only with
+    /// why that failed.
+    fn relaunch(self, listener: TcpListener, version: &str) -> anyhow::Error {
+        let running = env!("CARGO_PKG_VERSION");
+        let older = crate::update::version_is_newer(running, version);
+        if older {
+            eprintln!(
+                "rho mcp serve: {version} is older than {running} and may not take over the listening socket; it listens anew"
+            );
+        }
         #[cfg(unix)]
         {
-            let error = unix::relaunch(&listener, self.executable.path(), self.args);
+            let handed = (!older).then_some(&listener);
+            let error = unix::relaunch(handed, self.executable.path(), self.args);
             anyhow::Error::new(error).context(format!(
                 "could not re-execute {} to upgrade",
                 self.executable.path().display()
@@ -193,7 +207,7 @@ impl Drain {
             );
         }
         match listener.into_std() {
-            Ok(listener) => upgrade.relaunch(listener),
+            Ok(listener) => upgrade.relaunch(listener, version),
             Err(error) => {
                 anyhow::Error::new(error).context("could not hand on the listening socket")
             }
@@ -267,7 +281,10 @@ mod unix {
         ffi::OsString,
         io,
         net::TcpListener,
-        os::{fd::AsFd, unix::process::CommandExt},
+        os::{
+            fd::{AsFd, AsRawFd},
+            unix::process::CommandExt,
+        },
         path::Path,
         process::Command,
     };
@@ -276,26 +293,34 @@ mod unix {
     use crate::daemon::{reap_exited_children, set_close_on_exec};
 
     /// Re-executes `executable` as this process with `args`, handing it
-    /// `listener`. Returns only if that failed.
+    /// `handed`, the listening socket, if any; without one the exec closes
+    /// it. Returns only if that failed.
     pub(super) fn relaunch(
-        listener: &TcpListener,
+        handed: Option<&TcpListener>,
         executable: &Path,
         args: Vec<OsString>,
     ) -> io::Error {
-        let socket = listener.as_fd();
+        let socket = handed.map(AsFd::as_fd);
         // From here until the exec, a child another thread starts inherits
         // the socket too, as with the daemon's handoff; the window is the
         // two calls below.
-        if let Err(error) = set_close_on_exec(socket, /*close*/ false) {
+        if let Some(Err(error)) =
+            socket.map(|socket| set_close_on_exec(socket, /*close*/ false))
+        {
             return error;
         }
         reap_exited_children();
-        let error = Command::new(executable)
-            .args(args)
-            .arg(LISTENER_FD_FLAG)
-            .arg(std::os::fd::AsRawFd::as_raw_fd(&socket).to_string())
-            .exec();
-        let _ = set_close_on_exec(socket, /*close*/ true);
+        let mut command = Command::new(executable);
+        command.args(args);
+        if let Some(socket) = socket {
+            command
+                .arg(LISTENER_FD_FLAG)
+                .arg(socket.as_raw_fd().to_string());
+        }
+        let error = command.exec();
+        if let Some(socket) = socket {
+            let _ = set_close_on_exec(socket, /*close*/ true);
+        }
         error
     }
 }

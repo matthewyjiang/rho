@@ -19,7 +19,9 @@ use super::{
 };
 
 /// `rho` installed at a path a test replaces, as an upgrade does: at first
-/// a symlink to the binary under test.
+/// a symlink to the binary under test. Each test starts the daemon from the
+/// binary itself first: a server starts one from its own path, which on
+/// macOS is the install's, so a replacement would start it too.
 struct Install {
     dir: tempfile::TempDir,
     rho: PathBuf,
@@ -105,6 +107,7 @@ async fn a_replaced_server_finishes_its_calls_then_upgrades_in_place() {
     );
     let bearer = format!("Bearer {secret}");
     let install = Install::new();
+    let _daemon = sandbox.spawn_daemon(sandbox.rho("tool-call"), &[]).await;
     let (mut server, mut stderr, url) =
         listening(sandbox.rho_at(&install.rho, "tool-call"), &[]).await;
     let host = http_client(&url, &secret).await;
@@ -195,6 +198,7 @@ async fn a_replacement_that_is_not_rho_runs_once() {
         &["--scope", "read", "--workspace", &workspace],
     );
     let install = Install::new();
+    let _daemon = sandbox.spawn_daemon(sandbox.rho("tool-call"), &[]).await;
     let (_server, mut stderr, url) =
         listening(sandbox.rho_at(&install.rho, "tool-call"), &[]).await;
     let runs = install.beside("runs");
