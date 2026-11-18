@@ -17,7 +17,7 @@ type Received = (Option<String>, Value);
 
 /// A webhook receiver on a free loopback port that answers every POST 200
 /// and hands it to the returned channel; returns its URL too.
-async fn receiver() -> (String, mpsc::UnboundedReceiver<Received>) {
+pub(super) async fn receiver() -> (String, mpsc::UnboundedReceiver<Received>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}/hook", listener.local_addr().unwrap());
     let (sender, received) = mpsc::unbounded_channel();
@@ -52,7 +52,7 @@ async fn receiver() -> (String, mpsc::UnboundedReceiver<Received>) {
 }
 
 /// Adds webhook `name` at `url` for `token`, its secret piped on stdin.
-fn add_webhook(sandbox: &Sandbox, name: &str, url: &str, token: &str, secret: &str) {
+pub(super) fn add_webhook(sandbox: &Sandbox, name: &str, url: &str, token: &str, secret: &str) {
     let mut add = sandbox
         .rho("tool-call")
         .args([

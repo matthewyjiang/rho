@@ -45,6 +45,8 @@ const MAX_REOPENS_WITHOUT_PROGRESS: u32 = 3;
 pub(super) struct Watching {
     pub(super) session: SessionId,
     pub(super) webhook: String,
+    /// The remote the session is on, by name; none for this server's own.
+    pub(super) server: Option<String>,
     /// The news last reported, which is not delivered again.
     pub(super) reported: Option<NewsKey>,
 }
@@ -80,13 +82,24 @@ pub(super) enum Unfollowed {
     Failed(String),
 }
 
-/// Why news may not be POSTed now.
+/// Why a watch cannot go on: news may not be POSTed, or its session no
+/// longer followed.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Denied {
     /// For good, as a revoked token or a removed target: drop the watch.
     Drop(String),
-    /// The check itself failed, as with the daemon down: stall.
+    /// For now, as with the daemon down or a remote unreachable past its
+    /// retries: stall.
     Stall(String),
+}
+
+impl From<Denied> for End {
+    fn from(denied: Denied) -> Self {
+        match denied {
+            Denied::Drop(why) => Self::Dropped(why),
+            Denied::Stall(why) => Self::Stalled(why),
+        }
+    }
 }
 
 /// What the watcher records as it goes, durably, before it reads on.
@@ -112,7 +125,8 @@ pub(super) trait Ports: Send + Sync {
 
     /// The target to POST to, checked right before every POST: the token
     /// still exists, the target is still bound to it, and the session is
-    /// still in the token's reach.
+    /// still in the token's reach, or on a remote the server still has,
+    /// whose token for it decides the reach.
     fn authorize(&self) -> impl Future<Output = Result<WebhookTarget, Denied>> + Send;
 
     fn post(&self, target: &WebhookTarget, body: &Value) -> impl Future<Output = Answer> + Send;
@@ -124,9 +138,12 @@ pub(super) trait Ports: Send + Sync {
     fn record(&self, record: Record<'_>) -> impl Future<Output = ()> + Send;
 }
 
-/// A follow of the watched session (`session_control::Follow`).
+/// A follow of the watched session: on this server's daemon
+/// (`session_control::Follow`), or on a remote (`remote_follow.rs`).
 pub(super) trait FollowPort: Send {
-    fn next(&mut self) -> impl Future<Output = Followed> + Send;
+    /// The session's next news, or why the follow ended; `Err` when it
+    /// failed past what the follow retries itself.
+    fn next(&mut self) -> impl Future<Output = Result<Followed, Denied>> + Send;
 
     /// Whether the follow read an event past its replay.
     fn progressed(&self) -> bool;
@@ -200,7 +217,11 @@ pub(super) async fn run<P: Ports>(
             }
         };
         connect = loop {
-            let news = match follow.next().await {
+            let followed = match follow.next().await {
+                Ok(followed) => followed,
+                Err(denied) => return denied.into(),
+            };
+            let news = match followed {
                 Followed::News(news) => news,
                 Followed::Ended(FollowEnd::Detached(
                     reason @ (DetachReason::Lagged | DetachReason::NotLoaded),
@@ -275,11 +296,7 @@ async fn deliver<P: Ports>(
     // The gaps slept between attempts, which the attempts' own time adds to.
     let mut waited = Duration::ZERO;
     let error = loop {
-        let target = match ports.authorize().await {
-            Ok(target) => target,
-            Err(Denied::Drop(why)) => return Err(End::Dropped(why)),
-            Err(Denied::Stall(why)) => return Err(End::Stalled(why)),
-        };
+        let target = ports.authorize().await.map_err(End::from)?;
         attempts += 1;
         let answer = ports.post(&target, &body).await;
         match verdict(&answer) {

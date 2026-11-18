@@ -234,14 +234,18 @@ impl CallerContext {
         capabilities: &rmcp::model::ServerCapabilities,
         environment: &crate::session_environment::Ambient,
     ) -> anyhow::Result<Option<Self>> {
-        let accepts = capabilities
-            .experimental
-            .as_ref()
-            .is_some_and(|accepted| accepted.contains_key(META_KEY));
-        if !accepts {
+        if !Self::accepted_by(capabilities) {
             return Ok(None);
         }
         Self::from_env(|name| environment.read_os(name)).map(Some)
+    }
+
+    /// Whether a server with `capabilities` declared it reads the context.
+    pub(crate) fn accepted_by(capabilities: &rmcp::model::ServerCapabilities) -> bool {
+        capabilities
+            .experimental
+            .as_ref()
+            .is_some_and(|accepted| accepted.contains_key(META_KEY))
     }
 
     /// The experimental capability a server that reads the context declares.

@@ -10,6 +10,7 @@ fn file(error: Option<&str>) -> WatchFile {
             session: SessionId::new("s1"),
             token: "grok".into(),
             webhook: "grok-routine".into(),
+            server: None,
             reported: Some(NewsKey {
                 state: JobState::WaitingForInput,
                 turn: Some(TurnId::new("t1")),

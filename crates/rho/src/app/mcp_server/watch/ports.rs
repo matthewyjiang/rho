@@ -1,5 +1,6 @@
-//! A watch's [`Ports`] on the server: its session through the daemon, the
-//! tokens and targets in the credential store, HTTP, and the watch store.
+//! A watch's [`Ports`] on the server: its session through the daemon, or
+//! through its remote's `wait`, the tokens, targets, and remotes in the
+//! credential store, HTTP, and the watch store.
 
 use std::{sync::Arc, time::Duration};
 
@@ -10,12 +11,14 @@ use super::{
     book::Key,
     delivery::Answer,
     lock,
+    remote_follow::{RemoteFollow, ServerWaits, REACH_RETRY},
     watcher::{Denied, End, FollowPort, Ports, Reconnect, Record, Unfollowed},
     Watches,
 };
 use crate::{
     app::{
         mcp_server::{
+            remotes::RemoteSet,
             tokens::TokenSet,
             webhooks::{WebhookSet, WebhookTarget},
         },
@@ -32,12 +35,14 @@ fn unix_now() -> u64 {
         .map_or(0, |elapsed| elapsed.as_secs())
 }
 
-/// One watch's ports: the watch's key and webhook, and the task generation
-/// running it.
+/// One watch's ports: the watch's key, webhook, and remote, and the task
+/// generation running it.
 pub(super) struct ServerPorts {
     pub(super) watches: Arc<Watches>,
     pub(super) key: Key,
     pub(super) webhook: String,
+    /// The remote the session is on, by name; none for this server's own.
+    pub(super) server: Option<String>,
     pub(super) generation: u64,
 }
 
@@ -69,16 +74,27 @@ impl ServerPorts {
     }
 }
 
-/// A watch's follow of its session.
-pub(super) struct ServerFollow(Follow);
+/// A watch's follow of its session, on this server's daemon or a remote.
+pub(super) enum ServerFollow {
+    Local(Box<Follow>),
+    Remote(Box<RemoteFollow<ServerWaits>>),
+}
 
 impl FollowPort for ServerFollow {
-    async fn next(&mut self) -> Followed {
-        self.0.next().await
+    async fn next(&mut self) -> Result<Followed, Denied> {
+        match self {
+            Self::Local(follow) => Ok(follow.next().await),
+            Self::Remote(follow) => follow.next().await.map(Followed::News),
+        }
     }
 
     fn progressed(&self) -> bool {
-        self.0.progressed()
+        match self {
+            Self::Local(follow) => follow.progressed(),
+            // Never asked: a remote's follow ends only with an error, which
+            // ends the watch, never with a detach to reopen after.
+            Self::Remote(_) => true,
+        }
     }
 }
 
@@ -86,6 +102,16 @@ impl Ports for ServerPorts {
     type Follow = ServerFollow;
 
     async fn follow(&self, connect: Reconnect) -> Result<ServerFollow, Unfollowed> {
+        if let Some(server) = &self.server {
+            let waits = ServerWaits {
+                server: server.clone(),
+                session: self.key.1.clone(),
+            };
+            return Ok(ServerFollow::Remote(Box::new(RemoteFollow::new(
+                waits,
+                REACH_RETRY,
+            ))));
+        }
         let control = &self.watches.control;
         let connect = match connect {
             // As the server reaches the daemon: a watch's first follow
@@ -99,7 +125,7 @@ impl Ports for ServerPorts {
             Reconnect::Restarted => Connect::Restarted,
         };
         match control.follow(&self.key.1, connect).await {
-            Ok(follow) => Ok(ServerFollow(follow)),
+            Ok(follow) => Ok(ServerFollow::Local(Box::new(follow))),
             Err(error) if error.is_unknown_session() => Err(Unfollowed::UnknownSession),
             Err(error) => Err(Unfollowed::Failed(error.to_string())),
         }
@@ -110,10 +136,11 @@ impl Ports for ServerPorts {
             anyhow::Ok((
                 TokenSet::load(&UntrackedCredentialStore)?,
                 WebhookSet::load(&UntrackedCredentialStore)?,
+                RemoteSet::load(&UntrackedCredentialStore)?,
             ))
         })
         .await;
-        let (tokens, webhooks) = match sets {
+        let (tokens, webhooks, remotes) = match sets {
             Ok(Ok(sets)) => sets,
             Ok(Err(error)) => return Err(Denied::Stall(format!("{error:#}"))),
             Err(error) => return Err(Denied::Stall(error.to_string())),
@@ -126,6 +153,12 @@ impl Ports for ServerPorts {
             .for_token(name, &self.webhook)
             .map_err(|unbound| Denied::Drop(unbound.to_string()))?
             .clone();
+        if let Some(server) = &self.server {
+            // The remote holds the hub to its workspaces on every `wait`
+            // the follow makes; here it only has to be there still.
+            remotes.require(server).map_err(Denied::Drop)?;
+            return Ok(target);
+        }
         let caller = Caller::new(
             token.grant(),
             &CallerContext::ROOT,

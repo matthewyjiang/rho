@@ -9,31 +9,12 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
-use crate::app::session_control::{schema_of, Action, ControlError};
+use crate::app::{
+    mcp_server::tool::ServedTool,
+    session_control::{schema_of, Action, ControlError},
+};
 
-pub(super) const WATCH: &str = "watch";
-pub(super) const UNWATCH: &str = "unwatch";
 const NOTIFY: &str = "notify";
-
-/// A tool the HTTP server answers, parsed once from its name: a core
-/// action, or a watch tool.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum HttpTool {
-    Core(Action),
-    Watch,
-    Unwatch,
-}
-
-impl HttpTool {
-    /// The tool called `name`, if there is one.
-    pub(crate) fn from_name(name: &str) -> Option<Self> {
-        match name {
-            WATCH => Some(Self::Watch),
-            UNWATCH => Some(Self::Unwatch),
-            _ => Action::from_name(name).map(Self::Core),
-        }
-    }
-}
 
 /// Params of `watch`.
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -52,27 +33,34 @@ pub(super) struct UnwatchParams {
     pub(super) session: SessionId,
 }
 
-/// `watch` and `unwatch`.
-pub(crate) fn tools() -> [Tool; 2] {
+/// `watch` and `unwatch`, each with the tool it is.
+pub(crate) fn tools() -> [(ServedTool, Tool); 2] {
+    let (watch, unwatch) = (ServedTool::Watch.name(), ServedTool::Unwatch.name());
     [
-        Tool::new(
-            WATCH,
-            "Have this server POST a rho session's news to a webhook: each time it stops to \
+        (
+            ServedTool::Watch,
+            Tool::new(
+                watch,
+                "Have this server POST a rho session's news to a webhook: each time it stops to \
              wait for a person, and once when it settles, which ends the watch. Returns where \
              the session is now, as `wait` does; when it settled already, that is the news \
              and this call adds no watch; `watching` says whether one is left, such as one a \
              concurrent `prompt` with `notify` set. `notify` on the next `prompt` watches \
              again. Calling it again replaces the session's watch. `watch_error`, when present, \
              says the server could not save the change, so a restart of the server loses it.",
-            schema_of::<WatchParams>(),
-        )
-        .with_annotations(ToolAnnotations::with_title(WATCH)),
-        Tool::new(
-            UNWATCH,
-            "Stop watching a rho session; nothing more is POSTed for it.",
-            schema_of::<UnwatchParams>(),
-        )
-        .with_annotations(ToolAnnotations::with_title(UNWATCH).idempotent(true)),
+                schema_of::<WatchParams>(),
+            )
+            .with_annotations(ToolAnnotations::with_title(watch)),
+        ),
+        (
+            ServedTool::Unwatch,
+            Tool::new(
+                unwatch,
+                "Stop watching a rho session; nothing more is POSTed for it.",
+                schema_of::<UnwatchParams>(),
+            )
+            .with_annotations(ToolAnnotations::with_title(unwatch).idempotent(true)),
+        ),
     ]
 }
 

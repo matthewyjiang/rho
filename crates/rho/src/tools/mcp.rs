@@ -17,6 +17,7 @@ use super::{code_mode::ContextExposure, sdk_registry::ToolBundle};
 use crate::session_environment::SessionEnvironment;
 use config::{McpConfig, McpServerConfig};
 
+pub(crate) mod bearer_client;
 pub(crate) mod catalog;
 pub(crate) mod client;
 pub(crate) mod config;

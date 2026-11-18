@@ -27,6 +27,10 @@
 //! is the [`WatchBook`]'s, a pure type under one mutex; this module runs
 //! what it decides: the calls, the watchers' tasks, and the writes of its
 //! snapshots, which wait on the disk off that mutex.
+//!
+//! A hub watches its remotes' sessions too (`remote_follow.rs`): it follows
+//! each through its remote's `wait` and POSTs its news itself, naming the
+//! remote as `server`, so a remote needs no webhook of its own.
 
 use std::{
     collections::HashMap,
@@ -39,17 +43,20 @@ use rho_protocol::SessionId;
 use serde_json::{Map, Value};
 use tokio::task::AbortHandle;
 
-use super::webhooks::{Unbound, WebhookSet};
-use crate::{
-    app::session_control::{
-        parse_arguments, Action, Caller, ControlError, DaemonUse, Holder, SessionControl,
-    },
-    credential_store::UntrackedCredentialStore,
+use super::{
+    remotes::{control_lasts, Lasts, RouteError, Target},
+    token_store,
+    tool::ServedTool,
+    webhooks::{Unbound, WebhookSet},
+};
+use crate::app::session_control::{
+    parse_arguments, Action, Caller, ControlError, Holder, SessionControl,
 };
 
 mod book;
 mod delivery;
 mod ports;
+mod remote_follow;
 mod store;
 mod tools;
 mod watcher;
@@ -59,8 +66,8 @@ use delivery::{HttpPoster, RetrySchedule};
 use ports::ServerPorts;
 pub(crate) use store::{DeliveryRecord, DeliveryResult, WatchFile, WatchStore, DIR};
 use store::{Snapshot, Writer};
-use tools::{take_notify, UnwatchParams, WatchParams, UNWATCH, WATCH};
-pub(crate) use tools::{tools as watch_tools, with_notify, HttpTool};
+use tools::{take_notify, UnwatchParams, WatchParams};
+pub(crate) use tools::{tools as watch_tools, with_notify};
 
 /// How many sessions each token may watch at once when `--max-watches`
 /// is not given: [`WATCHES_PER_SESSION`] for each session it may run
@@ -91,6 +98,8 @@ pub(crate) enum WatchError {
     #[error(transparent)]
     Control(#[from] ControlError),
     #[error(transparent)]
+    Route(#[from] RouteError),
+    #[error(transparent)]
     Unbound(#[from] Unbound),
     #[error(transparent)]
     Budget(#[from] OverBudget),
@@ -104,6 +113,19 @@ pub(crate) enum WatchError {
     Failed(String),
 }
 
+impl WatchError {
+    /// Whether calling again could change the error: not when the call was
+    /// refused or named what is not there.
+    pub(crate) fn lasts(&self) -> Lasts {
+        match self {
+            Self::Control(error) => control_lasts(error),
+            Self::Route(error) => error.lasts(),
+            Self::Unbound(_) | Self::Off => Lasts::ForGood,
+            Self::Budget(_) | Self::Failed(_) => Lasts::ForNow,
+        }
+    }
+}
+
 /// Whether the HTTP server keeps the rho home's watches.
 #[derive(Clone)]
 pub(crate) enum WatchMode {
@@ -114,23 +136,24 @@ pub(crate) enum WatchMode {
 }
 
 impl WatchMode {
-    /// Answers `tool` for `caller`: the watch tools and a call with
-    /// `notify` with the watches, or refused when off; every other call in
-    /// the core.
+    /// Answers `tool` for `caller` on `target`: the watch tools and a call
+    /// with `notify` with the watches, or refused when off; every other
+    /// call where `target` is.
     pub(crate) async fn call(
         &self,
         control: &SessionControl,
         caller: &Caller,
-        tool: HttpTool,
+        tool: ServedTool,
         mut arguments: Map<String, Value>,
+        target: &Target,
     ) -> Result<Value, WatchError> {
         match self {
-            Self::On(watches) => watches.call(caller, tool, arguments).await,
+            Self::On(watches) => watches.call(caller, tool, arguments, target).await,
             Self::Off => match tool {
-                HttpTool::Watch | HttpTool::Unwatch => Err(WatchError::Off),
-                HttpTool::Core(action) => match take_notify(action, &mut arguments)? {
+                ServedTool::Watch | ServedTool::Unwatch => Err(WatchError::Off),
+                ServedTool::Core(action) => match take_notify(action, &mut arguments)? {
                     Some(_) => Err(WatchError::Off),
-                    None => Ok(control.call(caller, action, arguments).await?),
+                    None => Ok(target.call(control, caller, action, arguments).await?),
                 },
             },
         }
@@ -210,6 +233,12 @@ impl Watches {
         Ok(WatchMode::On(watches))
     }
 
+    /// The name news says it is from: the remote's the session is on, or
+    /// this server's.
+    fn name_of<'a>(&'a self, remote: Option<&'a str>) -> &'a str {
+        remote.unwrap_or(&self.server)
+    }
+
     /// What the server's instructions add about watches.
     pub(crate) fn instructions(&self) -> String {
         format!(
@@ -220,23 +249,39 @@ impl Watches {
         )
     }
 
-    /// Answers `tool` for `caller`: the watch tools and a call with
-    /// `notify` here, every other call in the core.
+    /// Answers `tool` for `caller` on `target`: the watch tools and a call
+    /// with `notify` here, every other call where `target` is.
     pub(crate) async fn call(
         self: &Arc<Self>,
         caller: &Caller,
-        tool: HttpTool,
+        tool: ServedTool,
         mut arguments: Map<String, Value>,
+        target: &Target,
     ) -> Result<Value, WatchError> {
         match tool {
-            HttpTool::Watch => self.watch(caller, parse_arguments(WATCH, arguments)?).await,
-            HttpTool::Unwatch => {
-                self.unwatch(caller, parse_arguments(UNWATCH, arguments)?)
-                    .await
+            ServedTool::Watch => {
+                self.watch(
+                    caller,
+                    parse_arguments(ServedTool::Watch.name(), arguments)?,
+                    target,
+                )
+                .await
             }
-            HttpTool::Core(action) => match take_notify(action, &mut arguments)? {
-                Some(webhook) => self.notify(caller, action, arguments, webhook).await,
-                None => Ok(self.control.call(caller, action, arguments).await?),
+            ServedTool::Unwatch => {
+                self.unwatch(
+                    caller,
+                    parse_arguments(ServedTool::Unwatch.name(), arguments)?,
+                )
+                .await
+            }
+            ServedTool::Core(action) => match take_notify(action, &mut arguments)? {
+                Some(webhook) => {
+                    self.notify(caller, action, arguments, webhook, target)
+                        .await
+                }
+                None => Ok(target
+                    .call(&self.control, caller, action, arguments)
+                    .await?),
             },
         }
     }
@@ -248,10 +293,11 @@ impl Watches {
         self: &Arc<Self>,
         caller: &Caller,
         params: WatchParams,
+        target: &Target,
     ) -> Result<Value, WatchError> {
         let token = token_of(caller)?;
-        self.control
-            .check_follow(caller, &params.session, DaemonUse::Call)
+        target
+            .check_follow(&self.control, caller, &params.session)
             .await?;
         load_webhooks().await?.for_token(token, &params.webhook)?;
         let key = (token.to_owned(), params.session);
@@ -259,10 +305,14 @@ impl Watches {
         // `notify` starting a turn after `now` saw the session settled,
         // decides it.
         let read = lock(&self.state).book.revision(&key);
-        let now = self.control.now(&key.1).await?;
+        let now = target.now(&self.control, caller, &key.1).await?;
+        let server = target.remote_name().map(str::to_owned);
         let (watching, snapshot) = {
             let mut state = lock(&self.state);
-            match state.book.watch(token, params.webhook, &now, read)? {
+            match state
+                .book
+                .watch(token, params.webhook, server, &now, read)?
+            {
                 Watched::Unchanged { watching } => (watching, None),
                 Watched::Removed => {
                     state.abort(&key);
@@ -274,7 +324,7 @@ impl Watches {
                 }
             }
         };
-        let mut result = watcher::body(&self.server, &now);
+        let mut result = watcher::body(self.name_of(target.remote_name()), &now);
         result.insert("watching".to_owned(), Value::Bool(watching));
         if let Some(snapshot) = snapshot {
             self.save_into(snapshot, &mut result).await;
@@ -310,6 +360,7 @@ impl Watches {
         action: Action,
         arguments: Map<String, Value>,
         webhook: String,
+        target: &Target,
     ) -> Result<Value, WatchError> {
         let token = token_of(caller)?;
         load_webhooks().await?.for_token(token, &webhook)?;
@@ -320,7 +371,10 @@ impl Watches {
             .filter(|_| action == Action::Prompt)
             .map(SessionId::new);
         let reservation = Reservation::hold(&self.state, token, prompted.as_ref())?;
-        let mut result = match self.control.call(caller, action, arguments).await? {
+        let mut result = match target
+            .call(&self.control, caller, action, arguments)
+            .await?
+        {
             Value::Object(result) => result,
             other => return Ok(other),
         };
@@ -342,7 +396,10 @@ impl Watches {
         };
         let snapshot = {
             let mut state = lock(&self.state);
-            let start = state.book.notify(reservation.take(), session, webhook);
+            let server = target.remote_name().map(str::to_owned);
+            let start = state
+                .book
+                .notify(reservation.take(), session, webhook, server);
             self.spawn(&mut state, start);
             state.book.snapshot()
         };
@@ -364,11 +421,13 @@ impl Watches {
             watches: Arc::clone(self),
             key: key.clone(),
             webhook: watching.webhook.clone(),
+            server: watching.server.clone(),
             generation,
         };
         let task = tokio::spawn(async move {
             let watches = &ports.watches;
-            let end = watcher::run(&ports, watches.schedule, &watches.server, watching).await;
+            let server = watches.name_of(ports.server.as_deref());
+            let end = watcher::run(&ports, watches.schedule, server, watching).await;
             ports.finish(end).await;
         });
         state.tasks.insert(key, task.abort_handle());
@@ -454,15 +513,13 @@ fn token_of(caller: &Caller) -> Result<&str, WatchError> {
 /// The saved targets, read past the store's cache as tokens are. A
 /// failure's cause goes to the server's log only, as a save's does.
 async fn load_webhooks() -> Result<WebhookSet, WatchError> {
-    let loaded =
-        match tokio::task::spawn_blocking(|| WebhookSet::load(&UntrackedCredentialStore)).await {
-            Ok(loaded) => loaded,
-            Err(error) => Err(error.into()),
-        };
-    loaded.map_err(|error| {
-        tracing::error!(error = %format!("{error:#}"), "could not read the webhook targets");
-        WatchError::Failed(
-            "the server could not read its webhook targets; the server's log says why".to_owned(),
-        )
-    })
+    token_store::load_fresh::<WebhookSet>()
+        .await
+        .map_err(|error| {
+            tracing::error!(error = %format!("{error:#}"), "could not read the webhook targets");
+            WatchError::Failed(
+                "the server could not read its webhook targets; the server's log says why"
+                    .to_owned(),
+            )
+        })
 }

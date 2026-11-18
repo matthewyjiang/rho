@@ -17,6 +17,7 @@ fn row(token: &str, id: &str, error: Option<&str>) -> WatchRecord {
         session: session(id),
         token: token.to_owned(),
         webhook: "hook".to_owned(),
+        server: None,
         reported: None,
         error: error.map(str::to_owned),
     }
@@ -67,6 +68,7 @@ fn started(generation: u64, reported: Option<NewsKey>) -> Result<Watched, OverBu
         watching: Watching {
             session: session("s1"),
             webhook: "hook".into(),
+            server: None,
             reported,
         },
     }))
@@ -148,7 +150,7 @@ fn resuming_clears_stalled_errors_and_starts_every_watch() {
 fn a_replaced_task_changes_nothing() {
     let (mut book, _) = book(50, vec![row("bot", "s1", None)]);
     let slot = book.reserve("bot", Some(&session("s1"))).unwrap();
-    let renewed = book.notify(slot, session("s1"), "hook".into());
+    let renewed = book.notify(slot, session("s1"), "hook".into(), None);
     let settled = NewsKey {
         state: JobState::Completed,
         turn: Some(TurnId::new("t1")),
@@ -261,7 +263,7 @@ fn a_watch_starts_from_the_news_its_call_answered() {
     for (name, watched_session, now, expected, watches) in cases {
         let (mut book, _) = book(1, vec![row("bot", watched_session, None)]);
         let read = book.revision(&key("bot", "s1"));
-        let result = book.watch("bot", "hook".into(), &now, read);
+        let result = book.watch("bot", "hook".into(), None, &now, read);
         let after = book.snapshot().file.watches.len();
         assert_eq!((result, after), (expected, watches), "{name}");
     }
@@ -277,8 +279,14 @@ fn a_watch_leaves_a_watch_a_later_call_set() {
     let (mut book, _) = book(50, Vec::new());
     let read = book.revision(&key("bot", "s1"));
     let slot = book.reserve("bot", Some(&session("s1"))).unwrap();
-    book.notify(slot, session("s1"), "hook".into());
-    let watched = book.watch("bot", "hook".into(), &now(JobState::Completed, true), read);
+    book.notify(slot, session("s1"), "hook".into(), None);
+    let watched = book.watch(
+        "bot",
+        "hook".into(),
+        None,
+        &now(JobState::Completed, true),
+        read,
+    );
 
     assert_eq!(
         (watched, book.snapshot().file.watches),
@@ -297,7 +305,13 @@ fn a_watch_leaves_a_resumed_watch_that_ended_meanwhile() {
     let (mut book, starts) = book(50, vec![row("bot", "s1", None)]);
     let read = book.revision(&key("bot", "s1"));
     book.apply_end(&key("bot", "s1"), starts[0].generation, &End::Delivered);
-    let watched = book.watch("bot", "hook".into(), &now(JobState::Running, false), read);
+    let watched = book.watch(
+        "bot",
+        "hook".into(),
+        None,
+        &now(JobState::Running, false),
+        read,
+    );
 
     assert_eq!(
         (watched, book.snapshot().file.watches),

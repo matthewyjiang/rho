@@ -20,6 +20,8 @@ The server speaks stdio by default. For hosts that connect by URL, use [`--http`
 
 Over HTTP, `new` and `prompt` also take `notify`, a [webhook](#webhooks) name, to watch the session from that turn on.
 
+A server with [remotes](#several-machines) also takes `server` on every tool: the machine to act on.
+
 Over stdio the host has write access unless you start the server [read-only](#read-only-over-stdio). Over HTTP each [token](#tokens) has read or write access.
 
 ## Following a turn
@@ -126,7 +128,13 @@ rho mcp serve --http 127.0.0.1:8765
 
 The server prints its URL, `http://127.0.0.1:8765/mcp`, on stderr. Port `0` picks a free port.
 
-It binds only to a loopback address. To reach it from another machine, use a tunnel such as an SSH forward. [Running as a service](/daemon#running-as-a-service) has a systemd unit and a launchd agent that keep it running.
+It binds a loopback address, or this machine's address on a private network: `10.x`, `172.16–31.x`, `192.168.x`, an overlay network peer's `100.64.0.0/10` address such as NetBird's or Tailscale's, or an IPv6 unique local address. It refuses any other address, including `0.0.0.0`.
+
+```bash
+rho mcp serve --http 100.75.19.168:8765   # this machine's NetBird address
+```
+
+On a private network address the server speaks plain HTTP, and says so on stderr: anyone who can read traffic on that network can read the requests, bearer tokens included. Use it on a network that encrypts its own traffic, such as NetBird or Tailscale, or one you trust. Requests to the address are accepted as their `Host` without `--allow-host`. To reach the server from anywhere else, use a tunnel such as an SSH forward. [Running as a service](/daemon#running-as-a-service) has a systemd unit and a launchd agent that keep it running.
 
 ### Tokens
 
@@ -241,3 +249,76 @@ Security:
 - Before every POST the server checks again that the token exists, the target is still bound to it, and the session is in the token's workspaces. If not, it drops the watch without POSTing.
 - The body carries final answers and approval summaries, including paths and commands, to the target.
 - If the target is a paid bot routine, each POST is a billed run, including each approval a person has to answer.
+
+## Several machines
+
+One `rho mcp serve` can drive the sessions of several machines: a hub. Add each other machine's [HTTP server](#over-http) as a remote, and every tool takes `server`, the machine to act on. Your MCP host then needs one connection, to the hub.
+
+```mermaid
+flowchart TD
+    H[MCP host] -->|one connection| U[rho mcp serve on the hub]
+    U -->|server: hub| D[the hub's daemon]
+    U -->|server: lab-box| L[rho mcp serve --http on lab-box]
+    U -->|server: laptop| P[rho mcp serve --http on laptop]
+```
+
+### Adding a remote
+
+On the remote, run the HTTP server as a [service](/daemon#running-as-a-service) on an address the hub can reach, such as its NetBird address, with `ExecStart=%h/.local/bin/rho mcp serve --http 100.92.10.4:8765 --name lab-box`. Then, from the hub, give the hub a token on the remote and add it, in one line over SSH:
+
+```bash
+ssh lab-box 'rho mcp token rotate hub --scope write --workspace ~/src' \
+  | rho mcp remote add lab-box --url http://100.92.10.4:8765/mcp
+```
+
+`rho mcp remote add` reads the token's secret on stdin, so it goes from one machine's credential store to the other's without reaching your terminal or shell history. It checks the remote answers with that secret, then saves it in the hub's [credential store](/authentication-and-models#where-credentials-live). If the remote does not answer, nothing is saved; run the line again once it does. Running `add` again for a name replaces it.
+
+- `--url` must be `https`, or plain `http` to a loopback or private network address, as the remote listens on. A host name for plain `http` must resolve only to private addresses; it is resolved and checked again before every call, and the call connects only to the addresses checked. Plain `http` never goes through a proxy.
+- The name is what `server` takes and what [webhook](#webhooks) news calls the machine. Give the remote the same `--name`, so its own logs agree.
+
+```bash
+rho mcp remote list           # names and URLs; --json for JSON
+rho mcp remote remove lab-box
+```
+
+Adding and removing apply from the next call, without a restart. A host sees the new choice of `server` when it next lists the tools.
+
+### Calling a hub
+
+Once the hub has a remote, every tool takes `server`, one of the hub's own name (its `--name`, the host name by default) and its remotes' names. Every tool but `list` and `unwatch` needs it:
+
+```json
+{"server": "lab-box", "workspace": "/home/me/src/app", "prompt": "Fix the flaky test"}
+```
+
+```text
+`new` needs `server`, the machine to act on: one of hub, lab-box, laptop
+```
+
+Results name the machine they came from as `server`. `list` without `server` lists every machine at once, each with its sessions or why it could not list them:
+
+```json
+{"servers": [
+  {"server": "hub", "sessions": [], "more": false},
+  {"server": "lab-box", "sessions": [{"session": "8c1e…", "state": "running", "…": "…"}], "more": false},
+  {"server": "laptop", "error": "could not reach server \"laptop\": …"}
+]}
+```
+
+A hub with no remotes offers no `server` and works as before. If the hub cannot read its remotes from the credential store, it serves its own sessions, and a call naming a remote says why it cannot reach it.
+
+A remote can be a hub too, and two hubs can list each other. A call a hub forwards is served on the sessions of the machine it reaches and goes no further.
+
+### Who may do what on a remote
+
+- The hub checks the caller's access, read or write, and sends the call on. The remote's token for the hub holds it to that machine's workspaces and [limits](#limits).
+- Every token of the hub reaches every remote. A token's `--workspace` paths are on the hub's machine; on a remote, the remote's token for the hub decides which workspaces the call reaches. So a hub token limited to one workspace still reaches every workspace the remotes' tokens allow, and so do the sessions it starts. Keep the remotes' tokens for the hub narrow.
+- Session depth counts across machines: a session one hub session starts on a remote runs one level deeper.
+
+Revoke the remote's token (`rho mcp token revoke hub` on the remote) to cut the hub off.
+
+### Webhooks from a hub
+
+An HTTP hub [watches](#webhooks) remote sessions itself. A `notify` or `watch` with `server` set follows the session through the remote's `wait`, and the hub POSTs its news to its own webhook, naming the remote as `server`. The remotes need no webhook of their own.
+
+Each check reads the remote as the hub has it then, so running `rho mcp remote add` again with a new token or address applies to the watches already running. If a remote stops answering, refuses the hub's secret, or answers with an error that may pass, as with its daemon stopped, the hub tries again at gaps doubling from 2 seconds to a minute, for an hour, so a remote that reboots is followed again once it is back. After that hour the watch stops with an error until the hub restarts or the session is watched again; it still counts toward `--max-watches` until then. A watch's checks never start a remote's daemon: if you stop it, the watch waits for it, as a watch of the hub's own sessions does. A session waiting for a person is checked every 10 seconds until a person answers it. If the remote refuses the session for good, as one it does not know, or is removed from the hub, the watch is dropped.

@@ -80,11 +80,11 @@ pub(crate) use check::{Checked, Target};
 use dispatch::json;
 pub(crate) use dispatch::{parse_arguments, schema_of};
 pub(crate) use follow::{Connect, Follow, FollowEnd, Followed, NewsKey};
-pub(crate) use params::WaitResult;
 use params::{
     CancelParams, CancelResult, ListParams, ListResult, NewParams, NewResult, PromptParams,
     PromptResult, ReadParams, ReadResult, SessionEntry, SteerParams, SteerResult, WaitParams,
 };
+pub(crate) use params::{WaitResult, MAX_WAIT_SECS};
 pub(crate) use policy::{Action, Caller, Grant, Holder, Limits, Refusal};
 
 /// Why an action failed. Its `Display` is what the caller sees.
@@ -188,7 +188,7 @@ impl SessionControl {
             CheckedCall::Prompt(params) => json(self.prompt(caller, params).await?),
             CheckedCall::Steer(params) => json(self.steer(params).await?),
             CheckedCall::Cancel(params) => json(self.cancel(params).await?),
-            CheckedCall::Wait(params) => json(self.wait(params).await?),
+            CheckedCall::Wait(params) => json(self.wait(caller, params).await?),
         }
     }
 
@@ -318,10 +318,14 @@ impl SessionControl {
     /// Waits up to the call's timeout for the session to settle or ask for
     /// input, then reports where it is, with a cursor the next `wait`
     /// resumes from.
-    async fn wait(&self, params: WaitParams) -> Result<WaitResult, ControlError> {
+    async fn wait(&self, caller: &Caller, params: WaitParams) -> Result<WaitResult, ControlError> {
         let timeout = params.timeout()?;
         let after = params.cursor()?;
-        follow::wait(self.reach, params.session, after, timeout).await
+        let reach = match caller.daemon {
+            DaemonUse::Call => self.reach,
+            DaemonUse::RunningOnly => Reach::Running,
+        };
+        follow::wait(reach, params.session, after, timeout).await
     }
 
     /// Checks that `caller` may follow `session` as `wait` does: read
@@ -334,14 +338,20 @@ impl SessionControl {
         used: DaemonUse,
     ) -> Result<(), ControlError> {
         caller.grant.permit(Action::Wait)?;
-        let daemon = match (used, self.reach) {
+        reach_session_on(self.daemon_for(used), caller, session)
+            .await
+            .map(drop)
+    }
+
+    /// The daemon a check `used` so asks.
+    fn daemon_for(&self, used: DaemonUse) -> &Daemon {
+        match (used, self.reach) {
             (DaemonUse::Call, Reach::StartIfNeeded | Reach::Running)
             | (DaemonUse::RunningOnly, Reach::Running) => &self.daemon,
             (DaemonUse::RunningOnly, Reach::StartIfNeeded) => self
                 .running
                 .get_or_init(|| Daemon::reaching(Reach::Running, ConnectAs::Agent)),
-        };
-        reach_session_on(daemon, caller, session).await.map(drop)
+        }
     }
 
     /// Where `session` is now, as a `wait` with no timeout reports it.
@@ -453,7 +463,7 @@ impl SessionControl {
         caller: &Caller,
         session: &SessionId,
     ) -> Result<PathBuf, ControlError> {
-        reach_session_on(&self.daemon, caller, session).await
+        reach_session_on(self.daemon_for(caller.daemon), caller, session).await
     }
 
     async fn jobs(&self) -> Result<Vec<JobSummary>, ControlError> {

@@ -1,6 +1,6 @@
 //! CLI handlers for `rho mcp`: `list` and `show` inspect the MCP servers
-//! rho connects to; `serve`, `token`, and `webhook` run rho's sessions as
-//! one (`app::mcp_server`).
+//! rho connects to; `serve`, `token`, `webhook`, and `remote` run rho's
+//! sessions as one (`app::mcp_server`).
 
 use serde::Serialize;
 
@@ -16,6 +16,8 @@ use crate::{
 
 use super::config_repository::ConfigRepository;
 
+#[path = "mcp_cli_remote.rs"]
+mod remote;
 #[path = "mcp_cli_serve.rs"]
 mod serve;
 #[path = "mcp_cli_webhook.rs"]
@@ -32,6 +34,7 @@ pub(super) async fn run(command: &McpCommand, cli: &Cli) -> anyhow::Result<()> {
         McpCommand::Serve(args) => serve::serve(args, cli).await,
         McpCommand::Token { command } => serve::token(command, cli),
         McpCommand::Webhook { command } => webhook::webhook(command, cli),
+        McpCommand::Remote { command } => remote::remote(command, cli).await,
     }
 }
 

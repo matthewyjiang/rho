@@ -37,6 +37,8 @@ enum Step {
     Read(Followed),
     /// The follow reads a live event that is no news, and reads on.
     Live,
+    /// The follow's next read is refused, as a remote's can be.
+    Refused(Denied),
 }
 
 /// News of turn `turn` in `state`, with requests `inputs` open.
@@ -90,12 +92,13 @@ struct FakeFollow {
 }
 
 impl FollowPort for FakeFollow {
-    async fn next(&mut self) -> Followed {
+    async fn next(&mut self) -> Result<Followed, Denied> {
         loop {
             match self.steps.pop_front() {
-                Some(Step::Read(read)) => return read,
+                Some(Step::Read(read)) => return Ok(read),
                 Some(Step::Live) => self.progressed = true,
-                None => return Followed::Ended(FollowEnd::Closed),
+                Some(Step::Refused(denied)) => return Err(denied),
+                None => return Ok(Followed::Ended(FollowEnd::Closed)),
             }
         }
     }
@@ -187,7 +190,9 @@ struct Case {
 // reposting what it reported, stalls a follow the daemon keeps dropping
 // before it reads anything past its replay but reopens one that read on
 // each time, drops a watch whose session or token is gone without
-// POSTing, stalls when the daemon stops or the receiver refuses, and
+// POSTing, as it drops one whose remote refuses the session for good,
+// stalls when the daemon stops, a remote stays unreachable, or the
+// receiver refuses, and
 // retries a receiver that may recover until it takes it or the schedule
 // runs out.
 // Owner: webhook watcher loop.
@@ -362,6 +367,34 @@ async fn a_watcher_delivers_each_piece_of_news_once() {
             ),
         },
         Case {
+            name: "a remote refuses the session for good",
+            reported: None,
+            follows: vec![vec![Step::Refused(Denied::Drop("unknown session s".into()))]],
+            denials: Vec::new(),
+            answers: Vec::new(),
+            expected: ran(
+                End::Dropped("unknown session s".into()),
+                Vec::new(),
+                vec![Reconnect::First],
+                0,
+                &[],
+            ),
+        },
+        Case {
+            name: "a remote stays unreachable",
+            reported: None,
+            follows: vec![vec![Step::Refused(Denied::Stall("could not reach server".into()))]],
+            denials: Vec::new(),
+            answers: Vec::new(),
+            expected: ran(
+                End::Stalled("could not reach server".into()),
+                Vec::new(),
+                vec![Reconnect::First],
+                0,
+                &[],
+            ),
+        },
+        Case {
             name: "the token is revoked before the POST",
             reported: None,
             follows: vec![vec![settled("t1")]],
@@ -431,6 +464,7 @@ async fn a_watcher_delivers_each_piece_of_news_once() {
         let watching = Watching {
             session: SessionId::new("s"),
             webhook: "hook".into(),
+            server: None,
             reported: case.reported,
         };
         let end = run(&fake, schedule, "lab-box", watching).await;

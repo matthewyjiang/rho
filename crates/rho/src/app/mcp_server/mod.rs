@@ -22,14 +22,18 @@
 //! session's news to a target the owner configured (`webhooks.rs`). Every
 //! other call still goes to the core unchanged. A server that does not keep
 //! the rho home's watches, because another one does, lists none of them.
+//!
+//! A server with remotes is a hub (`remotes/`): every tool takes `server`,
+//! and a call for another machine goes to that machine's server. The hub
+//! keeps the watches of remote sessions itself, so remotes need no webhook.
 
 use std::sync::Arc;
 
 use rmcp::{
     model::{
         CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, Implementation,
-        ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerConfig, Tool,
-        ToolAnnotations,
+        ListToolsResult, MetaObject, PaginatedRequestParams, ServerCapabilities, ServerConfig,
+        Tool, ToolAnnotations,
     },
     service::RequestContext,
     ErrorData, RoleServer, ServerHandler, ServiceExt,
@@ -41,13 +45,18 @@ use super::session_control::{Action, Caller, Grant, SessionControl};
 use crate::caller_context::{Access, CallerContext};
 
 mod http_server;
+mod private_network;
+pub(crate) mod remotes;
 pub(crate) mod token_store;
 pub(crate) mod tokens;
+mod tool;
 pub(crate) mod watch;
 pub(crate) mod webhooks;
 
 pub(super) use http_server::{serve_http, HttpOptions};
-use watch::{HttpTool, WatchMode, Watches};
+use remotes::{Arrival, Asked, Lasts, Machines, Route, Servers, LASTING};
+use tool::ServedTool;
+use watch::{WatchMode, Watches};
 
 /// What the server tells a host about itself.
 const INSTRUCTIONS: &str = "Start, drive, and follow rho agent sessions through the rho daemon. \
@@ -61,6 +70,8 @@ const INSTRUCTIONS: &str = "Start, drive, and follow rho agent sessions through 
 pub(super) struct SessionTools {
     control: Arc<SessionControl>,
     transport: Transport,
+    /// This server, by name, and the remotes it reaches.
+    servers: Servers,
     /// The environment the sessions a call starts or prompts run with, the
     /// call's context set in it: this process's.
     environment: ClientEnvironment,
@@ -143,9 +154,10 @@ impl ServerHandler for SessionTools {
     async fn list_tools(
         &self,
         _request: Option<PaginatedRequestParams>,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
         let watching = self.transport.watches().is_some();
+        let machines = self.servers.load(Arrival::of(&context.meta)).await;
         let mut tools: Vec<Tool> = Action::ALL
             .into_iter()
             .map(|action| {
@@ -155,11 +167,18 @@ impl ServerHandler for SessionTools {
                 } else {
                     schema
                 };
-                tool(action, schema)
+                tool(
+                    action,
+                    machines.with_server(ServedTool::Core(action), schema),
+                )
             })
             .collect();
         if watching {
-            tools.extend(watch::watch_tools());
+            tools.extend(watch::watch_tools().map(|(served, mut tool)| {
+                let schema = machines.with_server(served, (*tool.input_schema).clone());
+                tool.input_schema = Arc::new(schema);
+                tool
+            }));
         }
         Ok(ListToolsResult::with_all_items(tools))
     }
@@ -169,40 +188,80 @@ impl ServerHandler for SessionTools {
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
-        // Refused before anything runs.
-        let unknown =
-            || ErrorData::invalid_params(format!("no tool named {:?}", request.name), None);
-        let arguments = request.arguments.unwrap_or_default();
-        let outcome = match &self.transport {
-            Transport::Stdio { .. } => {
-                let action = Action::from_name(&request.name).ok_or_else(unknown)?;
-                let caller = self.caller(&context)?;
-                self.control
-                    .call(&caller, action, arguments)
-                    .await
-                    .map_err(|error| error.to_string())
-            }
-            // Parsed whether or not this server keeps the watches: one that
-            // does not answers their tools, and `notify`, that it does not.
-            Transport::Http { watches } => {
-                let tool = HttpTool::from_name(&request.name).ok_or_else(unknown)?;
-                let caller = self.caller(&context)?;
-                watches
-                    .call(&self.control, &caller, tool, arguments)
-                    .await
-                    .map_err(|error| error.to_string())
-            }
+        // Refused before anything runs. Stdio serves no watch tools.
+        let tool = match &self.transport {
+            Transport::Stdio { .. } => Action::from_name(&request.name).map(ServedTool::Core),
+            Transport::Http { .. } => ServedTool::from_name(&request.name),
+        }
+        .ok_or_else(|| {
+            ErrorData::invalid_params(format!("no tool named {:?}", request.name), None)
+        })?;
+        let arrival = Arrival::of(&context.meta);
+        let caller = match (self.caller(&context)?, arrival) {
+            // A hub's watch asks on nobody's call.
+            (caller, Arrival::Forwarded(Asked::ByWatch)) => caller.running_only(),
+            (caller, Arrival::Direct | Arrival::Forwarded(Asked::ByCall)) => caller,
         };
-        let result = match outcome {
+        let machines = self.servers.load(arrival).await;
+        let arguments = request.arguments.unwrap_or_default();
+        let result = match self.dispatch(&caller, &machines, tool, arguments).await {
             Ok(value) => {
                 let text = serde_json::to_string_pretty(&value)
                     .map_err(|error| ErrorData::internal_error(error.to_string(), None))?;
                 CallToolResult::success(vec![ContentBlock::text(text)])
             }
-            // Refusals and failures go to the model, which can act on them.
-            Err(error) => CallToolResult::error(vec![ContentBlock::text(error)]),
+            // Refusals and failures go to the model, which can act on them,
+            // and say whether they last, which a hub's watch reads.
+            Err((error, lasts)) => {
+                let result = CallToolResult::error(vec![ContentBlock::text(error)]);
+                match lasts {
+                    Lasts::ForGood => {
+                        result.with_meta(Some(MetaObject(serde_json::Map::from_iter([(
+                            LASTING.to_owned(),
+                            serde_json::Value::Bool(true),
+                        )]))))
+                    }
+                    Lasts::ForNow => result,
+                }
+            }
         };
         Ok(result.into())
+    }
+}
+
+impl SessionTools {
+    /// Runs `tool` for `caller` on the one of `machines` its `arguments`
+    /// name.
+    async fn dispatch(
+        &self,
+        caller: &Caller,
+        machines: &Machines,
+        tool: ServedTool,
+        mut arguments: serde_json::Map<String, serde_json::Value>,
+    ) -> Result<serde_json::Value, (String, Lasts)> {
+        let target = match machines
+            .route(tool, &mut arguments)
+            .map_err(|error| (error.to_string(), error.lasts()))?
+        {
+            Route::Every => return Ok(machines.list_every(&self.control, caller, arguments).await),
+            Route::One(target) => target,
+        };
+        let mut result = match (&self.transport, tool) {
+            (Transport::Http { watches }, tool) => watches
+                .call(&self.control, caller, tool, arguments, &target)
+                .await
+                .map_err(|error| (error.to_string(), error.lasts()))?,
+            (Transport::Stdio { .. }, ServedTool::Core(action)) => target
+                .call(&self.control, caller, action, arguments)
+                .await
+                .map_err(|error| (error.to_string(), error.lasts()))?,
+            // `call_tool` refused these already.
+            (Transport::Stdio { .. }, ServedTool::Watch | ServedTool::Unwatch) => {
+                return Err((format!("no tool named {:?}", tool.name()), Lasts::ForGood))
+            }
+        };
+        machines.stamp(&mut result, &target, tool);
+        Ok(result)
     }
 }
 
@@ -215,12 +274,14 @@ fn tool(action: Action, schema: serde_json::Map<String, serde_json::Value>) -> T
 
 /// Serves the tools over stdio until the host closes stdin, for the
 /// process's caller with `access`, in `context` unless a call sends its
-/// own, the sessions they start running with `environment`.
+/// own, the sessions they start running with `environment`, as the server
+/// called `name`.
 pub(super) async fn serve_stdio(
     control: Arc<SessionControl>,
     access: Access,
     context: CallerContext,
     environment: ClientEnvironment,
+    name: String,
 ) -> anyhow::Result<()> {
     let tools = SessionTools {
         control,
@@ -228,6 +289,7 @@ pub(super) async fn serve_stdio(
             grant: Grant::local(access),
             context,
         },
+        servers: Servers::new(name),
         environment,
     };
     let running = tools.serve(rmcp::transport::stdio()).await?;

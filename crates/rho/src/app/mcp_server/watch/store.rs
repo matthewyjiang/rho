@@ -57,6 +57,9 @@ pub(crate) struct WatchRecord {
     pub(crate) session: SessionId,
     pub(crate) token: String,
     pub(crate) webhook: String,
+    /// The remote the session is on, by name; none for this server's own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) server: Option<String>,
     /// The news last delivered, or returned by the `watch` call itself,
     /// which is not delivered again.
     #[serde(default)]

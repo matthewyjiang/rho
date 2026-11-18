@@ -10,6 +10,7 @@ use std::{
 
 use rho_protocol::ClientEnvironment;
 
+use super::DaemonUse;
 use crate::caller_context::{Access, CallerContext, Scope, Workspaces};
 
 /// The deepest a session the core starts or prompts may run by default: a
@@ -161,6 +162,9 @@ pub(crate) struct Caller {
     /// sessions it starts or prompts run with; the daemon sets the grant
     /// the core names for them in it.
     pub(crate) environment: ClientEnvironment,
+    /// Which daemon the call asks: as the core reaches it, or, for a call
+    /// on nobody's behalf, as a hub's watch makes, only one running.
+    pub(crate) daemon: DaemonUse,
 }
 
 impl Caller {
@@ -180,6 +184,16 @@ impl Caller {
             depth: context.depth,
             session: None,
             environment,
+            daemon: DaemonUse::Call,
+        }
+    }
+
+    /// This caller, asking only a daemon already running: a hub's watch,
+    /// whose checks are on nobody's call.
+    pub(crate) fn running_only(self) -> Self {
+        Self {
+            daemon: DaemonUse::RunningOnly,
+            ..self
         }
     }
 
