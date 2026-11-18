@@ -251,7 +251,9 @@ pub enum Command {
         /// on a new branch from its HEAD, so runs in one repository cannot
         /// overwrite each other's edits. The worktree is made under the rho
         /// home, and the run works at the current directory's place in it.
-        /// Rho never removes it: `git worktree remove <PATH>` does.
+        /// The daemon removes it once it is clean and merged, nothing has
+        /// worked in it for a day, and no process works in it; the branch
+        /// stays (see `rho worktrees`).
         #[arg(long)]
         worktree: bool,
         /// Prompt text to send to the agent.
@@ -370,7 +372,7 @@ Run rho model-prompt edit --help for editor setup, saving, and reload behavior."
         #[command(subcommand)]
         command: Option<DaemonCommand>,
     },
-    /// Clean up the git worktrees the daemon added for sessions.
+    /// Inspect and clean up the git worktrees under the rho home.
     Worktrees {
         #[command(subcommand)]
         command: WorktreesCommand,
@@ -548,19 +550,28 @@ pub enum DaemonCommand {
 
 #[derive(Subcommand, Clone, Debug)]
 pub enum WorktreesCommand {
-    /// Remove each session worktree that is clean and merged, keeping its
-    /// branch, and say why each other one stays.
+    /// Remove each worktree that is clean and merged, keeping its branch,
+    /// and say why each other one stays.
     ///
-    /// A worktree is removed when its session is neither loaded nor
-    /// running, it has no uncommitted or untracked changes, and its branch
-    /// is merged into the current HEAD of the checkout it was added from.
-    /// The daemon does the same soon after it starts and once a day. Starts the
-    /// daemon when none is running.
+    /// A worktree is removed when nothing uses it, it has no uncommitted or
+    /// untracked changes, and its branch is merged into the current HEAD of
+    /// the checkout it was added from or the remote's default branch, by a
+    /// merge, rebase, or squash. Nothing uses a session's worktree when the
+    /// session is neither loaded nor running; nothing uses one no session
+    /// owns, as `rho run --worktree` and `git worktree add` make, when no
+    /// process works in it. The daemon does the same soon after it starts
+    /// and once a day, for worktrees unused for a day. Starts the daemon
+    /// when none is running.
     Prune {
         /// List what would be removed, and why, without removing anything.
         #[arg(long)]
         dry_run: bool,
     },
+    /// List each worktree, largest first, with the space it takes and
+    /// whether `rho worktrees prune` would remove it, then the totals.
+    ///
+    /// Changes nothing, and needs the daemon running.
+    Status,
 }
 
 #[derive(Subcommand, Clone, Debug)]

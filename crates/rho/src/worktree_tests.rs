@@ -211,11 +211,12 @@ async fn inspect_reads_what_removing_a_worktree_would_lose() {
 // Covers: cleanup reads a branch whose changes the origin's HEAD has as
 // merged however they got there: a merge commit, a squash merge, or a
 // rebase merge (cherry-picks), each after HEAD changed a line next to the
-// branch's, as a base moving on under a branch does, and a rebase merge
-// whose lines HEAD edited again since; it reads one HEAD has only some of,
-// none of, or conflicting changes for, as unmerged, and one whose merge
-// commit adds changes of its own, though HEAD has each of its other
-// commits' patches.
+// branch's, as a base moving on under a branch does, and a rebase or
+// squash merge whose lines HEAD edited again since, the squash made after
+// HEAD changed a line next to them; it reads one HEAD has
+// only some of, none of, or conflicting changes for, as unmerged, also
+// when HEAD squashed only part of it, and one whose merge commit adds
+// changes of its own, though HEAD has each of its other commits' patches.
 // Owner: session worktrees (git plumbing under the daemon's cleanup).
 #[tokio::test]
 async fn inspect_reads_squash_and_rebase_merges_as_merged() {
@@ -227,7 +228,7 @@ async fn inspect_reads_squash_and_rebase_merges_as_merged() {
     // line; given the origin, the worktree, and the branch's two commits,
     // oldest first.
     type Merge = fn(&Path, &Path, &[String; 2]);
-    let cases: [(&str, usize, Merge, bool); 8] = [
+    let cases: [(&str, usize, Merge, bool); 10] = [
         (
             "merge commit",
             NEXT_TO,
@@ -264,6 +265,26 @@ async fn inspect_reads_squash_and_rebase_merges_as_merged() {
                 edit_line(origin, 10, "ten, edited again");
             },
             true,
+        ),
+        (
+            "squash merge after an edit next to it, its lines edited since",
+            NEXT_TO,
+            |origin, _, [_, last]| {
+                git(origin, &["merge", "--quiet", "--squash", last.as_str()]);
+                git(origin, &["commit", "--quiet", "-m", "squash"]);
+                edit_line(origin, 10, "ten, edited again");
+            },
+            true,
+        ),
+        (
+            "half squashed, its lines edited since",
+            3,
+            |origin, _, [first, _]| {
+                git(origin, &["merge", "--quiet", "--squash", first.as_str()]);
+                git(origin, &["commit", "--quiet", "-m", "squash"]);
+                edit_line(origin, 10, "ten, edited again");
+            },
+            false,
         ),
         (
             "conflicts with HEAD",
@@ -327,6 +348,40 @@ async fn inspect_reads_squash_and_rebase_merges_as_merged() {
     }
 
     assert_eq!(found, expected);
+}
+
+// Covers: a squash merge the base edited again since still reads as merged
+// when the branch's files have names git quotes or trims, as one with a tab
+// or a leading space: the squash check limits its search to those files by
+// their exact names.
+// Owner: session worktrees (git plumbing under the daemon's cleanup).
+#[cfg(unix)]
+#[tokio::test]
+async fn inspect_reads_a_squash_of_oddly_named_files_as_merged() {
+    let home = TempDir::new().unwrap();
+    let origin = repository(home.path());
+    let added = add(&home.path().join("worktrees"), &origin, Start::Head)
+        .await
+        .unwrap();
+    let path = &added.worktree.path;
+    for (name, text) in [(" leading.txt", "one"), ("a\tb.txt", "two")] {
+        std::fs::write(path.join(name), text).unwrap();
+        git(path, &["add", "--", name]);
+        git(path, &["commit", "--quiet", "-m", name]);
+    }
+    let branch = git(path, &["branch", "--show-current"]);
+    git(&origin, &["merge", "--quiet", "--squash", branch.as_str()]);
+    git(&origin, &["commit", "--quiet", "-m", "squash"]);
+    std::fs::write(origin.join("a\tb.txt"), "edited since").unwrap();
+    git(&origin, &["commit", "--quiet", "-am", "edit"]);
+
+    assert_eq!(
+        inspect(&added.worktree).await.unwrap(),
+        Holds::Merged {
+            base: "main".to_owned(),
+            commit: git(path, &["rev-parse", "HEAD"]),
+        }
+    );
 }
 
 /// Commits, in the checkout at `dir`, `lines.txt` with line `number` of 20

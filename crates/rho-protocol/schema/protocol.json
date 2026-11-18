@@ -7505,6 +7505,10 @@
         "dry_run": {
           "description": "Report what would be removed without removing anything.",
           "type": "boolean"
+        },
+        "measure": {
+          "description": "Also measure the space each worktree takes\n([`WorktreeReport::bytes`]), which walks every file in it; only a\ndry run measures.",
+          "type": "boolean"
         }
       },
       "type": "object"
@@ -7513,7 +7517,7 @@
       "description": "Result of [`WORKTREE_PRUNE`].",
       "properties": {
         "worktrees": {
-          "description": "Each session worktree that was on disk when the pass reached it, in\nthe order the daemon lists jobs.",
+          "description": "Each worktree that was on disk when the pass reached it: the\nsessions' in the order the daemon lists jobs, then the others.",
           "items": {
             "$ref": "#/$defs/WorktreeReport"
           },
@@ -7526,11 +7530,31 @@
       "type": "object"
     },
     "WorktreeReport": {
-      "description": "One session worktree, and what [`WORKTREE_PRUNE`] did with it.",
+      "description": "One worktree, and what [`WORKTREE_PRUNE`] did with it.",
       "properties": {
+        "bytes": {
+          "description": "The bytes of the files in the worktree, each file linked more than\nonce counted once: about what removing it frees. Only a dry run\nasked to [`WorktreePruneParams::measure`] measures.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "detached": {
+          "description": "Whether the worktree has a commit checked out alone, on no branch:\n`worktree.branch` names the commit, and removing it keeps no branch.",
+          "type": "boolean"
+        },
         "job": {
-          "$ref": "#/$defs/JobId",
-          "description": "The job of the session the worktree was added for."
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JobId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The job of the session the worktree was added for; absent for one\nno daemon session owns. For that one, `worktree` names the branch\nchecked out, or the commit when [`Self::detached`], and as its\n`origin` the repository's main checkout."
         },
         "stale": {
           "description": "Whether the worktree is stale, as\n[`super::JobSummary::worktree_stale`] says.",
@@ -7544,7 +7568,6 @@
         }
       },
       "required": [
-        "job",
         "worktree",
         "verdict"
       ],
@@ -7553,7 +7576,7 @@
     "WorktreeVerdict": {
       "anyOf": [
         {
-          "description": "Clean, and its branch is merged into `base`, the current `HEAD` of\nthe checkout it was added from: removed with its branch kept, or, in\na dry run, would be.",
+          "description": "Clean, and its branch is merged into `base`, the current `HEAD` of\nthe checkout it was added from: removed with its branch kept, or, in\na dry run, would be. A [`WorktreeReport::detached`] one has no branch\nto keep: `base` has its changes, but maybe not its commits.",
           "properties": {
             "base": {
               "type": "string"
@@ -7574,6 +7597,45 @@
           "properties": {
             "kind": {
               "const": "in_use",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "No daemon session owns it, and a process works in it, such as a\nshell or a foreground `rho run --worktree`.",
+          "properties": {
+            "kind": {
+              "const": "occupied",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "No daemon session owns it, and its checkout moved, or a job in it\nchanged, within the last day, as one a session is still opening in,\nor an agent just added, has.",
+          "properties": {
+            "kind": {
+              "const": "recent",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "`git worktree lock` locked it, which keeps it until someone unlocks\nit.",
+          "properties": {
+            "kind": {
+              "const": "locked",
               "type": "string"
             }
           },
@@ -7613,7 +7675,7 @@
           "type": "object"
         },
         {
-          "description": "Git could not check or remove it, saying `error`.",
+          "description": "Rho could not check or remove it, saying `error`: git failed, or,\nfor one no session owns, rho cannot see which processes work in it\non this platform.",
           "properties": {
             "error": {
               "type": "string"

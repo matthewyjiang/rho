@@ -143,6 +143,166 @@ async fn prune_removes_only_clean_merged_worktrees_and_keeps_their_branches() {
     );
 }
 
+/// `rho worktrees status` against the fixture in `mode`.
+fn status(sandbox: &Sandbox, mode: &str) -> Output {
+    sandbox
+        .rho(mode)
+        .args(["worktrees", "status"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .unwrap()
+}
+
+/// Sets when `worktree`'s checkout last moved, as cleanup reads it, to two
+/// days ago.
+fn unused_for_two_days(worktree: &Path) {
+    let admin = git(worktree, &["rev-parse", "--absolute-git-dir"]);
+    let then = std::time::SystemTime::now() - std::time::Duration::from_secs(2 * 24 * 60 * 60);
+    for file in ["HEAD", "logs/HEAD"] {
+        std::fs::File::options()
+            .write(true)
+            .open(Path::new(&admin).join(file))
+            .and_then(|file| file.set_modified(then))
+            .unwrap();
+    }
+}
+
+// Covers: worktrees under the rho home that no session owns, as `git
+// worktree add` there and a foreground `rho run --worktree` make, are
+// cleaned up as a session's are: `rho worktrees status` lists each with
+// its size and whether a prune removes it, then the count, and `rho
+// worktrees prune` removes the clean one whose branch was squash-merged
+// and then edited again, so it no longer merges cleanly, keeping its
+// branch; it keeps the one a process works in, the one `git worktree lock`
+// locked, which the dry run already says, and the one added just now, as a
+// session's still opening is before its job names it.
+// Owner: daemon worktree cleanup through `rho worktrees status` and
+// `rho worktrees prune`.
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn worktrees_no_session_owns_are_listed_and_pruned() {
+    let sandbox = Sandbox::new();
+    init_repo(&sandbox.workspace);
+    let _client = sandbox.start_daemon("fixed").await;
+    let root = sandbox.isolated.rho_home().join("worktrees");
+    std::fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let add = |name: &str| {
+        let path = root.join(name);
+        let at = path.to_string_lossy().into_owned();
+        git(
+            &sandbox.workspace,
+            &["worktree", "add", "--quiet", "-b", name, at.as_str()],
+        );
+        SessionWorktree {
+            branch: name.to_owned(),
+            path,
+            origin: sandbox.workspace.clone(),
+        }
+    };
+    let merged = add("merged");
+    let occupied = add("occupied");
+    let fresh = add("fresh");
+    let locked = add("locked");
+    git(
+        &sandbox.workspace,
+        &["worktree", "lock", locked.path.to_str().unwrap()],
+    );
+    // Two commits, squashed into one, then edited again: the branch is no
+    // ancestor, matches no single commit's patch, and conflicts.
+    commit(&merged.path, "merged.txt");
+    commit(&merged.path, "more.txt");
+    git(
+        &sandbox.workspace,
+        &["merge", "--quiet", "--squash", merged.branch.as_str()],
+    );
+    git(&sandbox.workspace, &["commit", "--quiet", "-m", "squash"]);
+    std::fs::write(sandbox.workspace.join("merged.txt"), "edited since").unwrap();
+    git(&sandbox.workspace, &["commit", "--quiet", "-am", "edit"]);
+    unused_for_two_days(&merged.path);
+    unused_for_two_days(&occupied.path);
+    unused_for_two_days(&locked.path);
+    // Waits on its stdin, so it works there until the checks are done.
+    let mut occupant = std::process::Command::new("cat")
+        .current_dir(&occupied.path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .spawn()
+        .unwrap();
+
+    let listed = status(&sandbox, "fixed");
+    let pruned = prune(&sandbox, "fixed", &[]);
+    drop(occupant.stdin.take());
+    occupant.wait().unwrap();
+
+    // Each row without its size, which the paths in `.git` files vary,
+    // and whether it had one; then the count line, up to the sizes.
+    let stdout = String::from_utf8_lossy(&listed.stdout);
+    let (rows, summary) = stdout.split_once("\n\n").unwrap_or((&stdout, ""));
+    let mut rows: Vec<(bool, String)> = rows
+        .lines()
+        .map(|row| {
+            let (size, rest) = row.split_at(10);
+            (size.trim() != "?", rest.trim_start().to_owned())
+        })
+        .collect();
+    rows.sort();
+    let unowned = "; no session owns it";
+    let merged_reason = format!("clean and merged into main; the branch stays{unowned}");
+    let occupied_reason = format!("a process works in it{unowned}");
+    let fresh_reason =
+        format!("its checkout moved or a job in it changed within the last day{unowned}");
+    let locked_reason = format!("locked with `git worktree lock`{unowned}");
+    let row = |action: &str, worktree: &SessionWorktree, reason: &str| {
+        let (branch, path) = (&worktree.branch, worktree.path.display());
+        (true, format!("{action:<9} {branch} {path}: {reason}"))
+    };
+    let mut expected_rows = vec![
+        row("kept", &fresh, &fresh_reason),
+        row("kept", &locked, &locked_reason),
+        row("kept", &occupied, &occupied_reason),
+        row("removable", &merged, &merged_reason),
+    ];
+    expected_rows.sort();
+    let mut expected_pruned = vec![
+        line("kept", &fresh, &fresh_reason),
+        line("kept", &locked, &locked_reason),
+        line("kept", &occupied, &occupied_reason),
+        line("removed", &merged, &merged_reason),
+    ];
+    expected_pruned.sort();
+    assert_eq!(
+        (
+            listed.status.code(),
+            rows,
+            summary.split(", ").next(),
+            summary
+                .split("; ")
+                .nth(1)
+                .and_then(|part| part.split(", ").next()),
+            pruned.status.code(),
+            sorted_lines(&pruned),
+            [&merged.path, &occupied.path, &fresh.path, &locked.path].map(|path| path.exists()),
+            git(&sandbox.workspace, &["branch", "--list", "merged"]),
+        ),
+        (
+            Some(0),
+            expected_rows,
+            Some("4 worktrees"),
+            Some("1 removable"),
+            Some(0),
+            expected_pruned,
+            [false, true, true, true],
+            "merged".to_owned(),
+        ),
+        "stderr: {}{}\nlog:\n{}",
+        String::from_utf8_lossy(&listed.stderr),
+        String::from_utf8_lossy(&pruned.stderr),
+        sandbox.isolated.daemon_log()
+    );
+}
+
 // Covers: `rho worktrees prune` keeps the worktree of a session whose turn
 // is running, though it is clean and merged, and says why.
 // Owner: daemon worktree cleanup through `rho worktrees prune`.
