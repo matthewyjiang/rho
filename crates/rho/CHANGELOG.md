@@ -1,5 +1,22 @@
 # Changelog
 
+## [3.3.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v3.2.0...rho-coding-agent-v3.3.0) (2026-11-18)
+
+
+### Features
+
+* **codex:** add gpt-6.2-astra and gpt-6.2-sol, drop retired gpt-5.5 ([#1987](https://github.com/matthewyjiang/rho/issues/1987)) ([b6a50b8](https://github.com/matthewyjiang/rho/commit/b6a50b8c6e45de4d669db15f4d6655a7ae8d1651))
+* **daemon:** clean up squash-merged and foreground worktrees and show their disk use ([#1990](https://github.com/matthewyjiang/rho/issues/1990)) ([8189050](https://github.com/matthewyjiang/rho/commit/81890506342f8185287706b7417617ea65e6d59e))
+* **mcp:** drive every machine's sessions from one rho mcp serve ([#1986](https://github.com/matthewyjiang/rho/issues/1986)) ([a83957f](https://github.com/matthewyjiang/rho/commit/a83957f822e510f5ac0e35f0e699a5b304c9da4e))
+* **mcp:** upgrade rho mcp serve in place after rho update ([#1988](https://github.com/matthewyjiang/rho/issues/1988)) ([6a711d9](https://github.com/matthewyjiang/rho/commit/6a711d9c7b421c5fff8684501b98fd7298a81b54))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-providers bumped from 3.1.0 to 3.2.0
+
 ## [3.2.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v3.1.1...rho-coding-agent-v3.2.0) (2026-11-16)
 
 

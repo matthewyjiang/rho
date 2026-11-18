@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.0](https://github.com/matthewyjiang/rho/compare/rho-protocol-v1.2.0...rho-protocol-v1.3.0) (2026-11-18)
+
+
+### Features
+
+* **daemon:** clean up squash-merged and foreground worktrees and show their disk use ([#1990](https://github.com/matthewyjiang/rho/issues/1990)) ([8189050](https://github.com/matthewyjiang/rho/commit/81890506342f8185287706b7417617ea65e6d59e))
+
 ## [1.2.0](https://github.com/matthewyjiang/rho/compare/rho-protocol-v1.1.0...rho-protocol-v1.2.0) (2026-11-16)
 
 

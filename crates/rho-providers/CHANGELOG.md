@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.2.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v3.1.0...rho-providers-v3.2.0) (2026-11-18)
+
+
+### Features
+
+* **codex:** add gpt-6.2-astra and gpt-6.2-sol, drop retired gpt-5.5 ([#1987](https://github.com/matthewyjiang/rho/issues/1987)) ([b6a50b8](https://github.com/matthewyjiang/rho/commit/b6a50b8c6e45de4d669db15f4d6655a7ae8d1651))
+
 ## [3.1.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v3.0.2...rho-providers-v3.1.0) (2026-11-16)
 
 
