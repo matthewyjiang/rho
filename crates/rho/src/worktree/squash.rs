@@ -12,10 +12,12 @@ use super::{answered, command, succeeded, WorktreeError};
 /// What every patch here is printed with, whatever the person's config
 /// sets: color, external diffs, text conversion, rename detection, or a
 /// diff relative to a subdirectory would change the patch IDs, or which
-/// changes they cover. Pathspecs are taken literally. No context lines, so
-/// a squash commit made after `base` changed lines next to the branch's
-/// still has the branch's patch ID: an ID ignores line numbers, and a
-/// commit can only match by making exactly the branch's changes.
+/// changes they cover. Pathspecs are taken literally. One line of context:
+/// a squash commit made after `base` changed a line two or more away from
+/// the branch's still has the branch's patch ID, while an unrelated commit
+/// making the same one-line change elsewhere in a file, as deleting a blank
+/// line does, has other context and does not match. An ID ignores line
+/// numbers, so the context is all that places a change.
 const PLAIN: [&str; 7] = [
     "--literal-pathspecs",
     "--no-color",
@@ -23,7 +25,7 @@ const PLAIN: [&str; 7] = [
     "--no-textconv",
     "--no-renames",
     "--no-relative",
-    "--unified=0",
+    "--unified=1",
 ];
 
 /// Whether a commit on `base` since it and `commit` parted makes exactly
