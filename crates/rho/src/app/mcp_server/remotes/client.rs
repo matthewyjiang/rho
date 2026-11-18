@@ -152,9 +152,14 @@ pub(crate) async fn call(
             Ok(handle) => handle.await_response().await,
             Err(error) => Err(error),
         };
-        if let Err(error) = connection.cancel().await {
-            tracing::debug!(%error, server = remote.name, "could not close a remote connection");
-        }
+        // Closed off the call's path: the answer is in, and closing can wait
+        // seconds on the remote, which must not cost the caller the answer.
+        let server = remote.name.clone();
+        tokio::spawn(async move {
+            if let Err(error) = connection.cancel().await {
+                tracing::debug!(%error, server, "could not close a remote connection");
+            }
+        });
         match response {
             Ok(ServerResult::CallToolResult(result)) => {
                 let text = text_of(&result.content);

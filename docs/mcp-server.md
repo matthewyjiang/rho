@@ -273,7 +273,7 @@ ssh lab-box 'rho mcp token rotate hub --scope write --workspace ~/src' \
 
 `rho mcp remote add` reads the token's secret on stdin, so it goes from one machine's credential store to the other's without reaching your terminal or shell history. It checks the remote answers with that secret, then saves it in the hub's [credential store](/authentication-and-models#where-credentials-live). If the remote does not answer, nothing is saved; run the line again once it does. Running `add` again for a name replaces it.
 
-- `--url` must be `https`, or plain `http` to a loopback or private network address, as the remote listens on. A host name for plain `http` must resolve only to private addresses when you add it; it is not checked again, so prefer the address itself. Plain `http` never goes through a proxy.
+- `--url` must be `https`, or plain `http` to a loopback or private network address, as the remote listens on. A host name for plain `http` must resolve only to private addresses; it is resolved and checked again before every call, and the call connects only to the addresses checked. Plain `http` never goes through a proxy.
 - The name is what `server` takes and what [webhook](#webhooks) news calls the machine. Give the remote the same `--name`, so its own logs agree.
 
 ```bash
