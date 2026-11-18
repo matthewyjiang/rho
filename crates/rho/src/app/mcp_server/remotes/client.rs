@@ -154,10 +154,16 @@ pub(crate) async fn call(
         };
         // Closed off the call's path: the answer is in, and closing can wait
         // seconds on the remote, which must not cost the caller the answer.
+        // Bounded as the call is, so a remote that never answers the close
+        // leaks no task.
         let server = remote.name.clone();
         tokio::spawn(async move {
-            if let Err(error) = connection.cancel().await {
-                tracing::debug!(%error, server, "could not close a remote connection");
+            match tokio::time::timeout(CALL_TIMEOUT, connection.cancel()).await {
+                Ok(Ok(_)) => {}
+                Ok(Err(error)) => {
+                    tracing::debug!(%error, server, "could not close a remote connection");
+                }
+                Err(_) => tracing::debug!(server, "gave up closing a remote connection"),
             }
         });
         match response {
