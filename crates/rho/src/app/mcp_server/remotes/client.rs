@@ -78,7 +78,7 @@ pub(crate) enum Lasts {
 // to 50 s (`MAX_WAIT_SECS`); the rest is connecting and initializing, a
 // few round trips. Twenty seconds over that covers a slow link, while a
 // hung remote still frees its caller.
-const CALL_TIMEOUT: Duration = Duration::from_secs(70);
+pub(crate) const CALL_TIMEOUT: Duration = Duration::from_secs(70);
 
 /// Why a call on a remote failed. Its `Display` is what the caller sees.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]

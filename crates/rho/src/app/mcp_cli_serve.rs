@@ -1,10 +1,13 @@
 //! `rho mcp serve` and `rho mcp token`: the boundary that reads the process
 //! environment (the caller context it started in, the environment sessions
 //! run with, the host name the server goes by, the rho home an HTTP
-//! server's watches use) and the credential store, then hands resolved
+//! server's watches use, the executable and arguments it upgrades with,
+//! the socket a server it replaced handed it) and the credential store, then hands resolved
 //! values to `app::mcp_server` and `app::session_control`.
 
 use std::sync::Arc;
+
+use anyhow::Context;
 
 use rho_protocol::ClientEnvironment;
 
@@ -14,16 +17,25 @@ use crate::{
         mcp_server::{
             self, token_store,
             tokens::{Rotation, TokenSet},
-            watch, HttpOptions,
+            watch, HttpOptions, Upgrade,
         },
         session_control::{Limits, Reach, SessionControl},
     },
     caller_context::{Access, CallerContext},
     cli::{Cli, McpServeArgs, McpTokenCommand, McpTokenScope},
     credential_store::UntrackedCredentialStore,
+    daemon::Executable,
 };
 
 pub(in crate::app) async fn serve(args: &McpServeArgs, cli: &Cli) -> anyhow::Result<()> {
+    // Taken first, before anything this process starts could inherit it.
+    let inherited_listener = args
+        .listener_fd
+        .map(|fd| {
+            mcp_server::inherit_listener(fd)
+                .with_context(|| format!("could not take over the listening socket {fd}"))
+        })
+        .transpose()?;
     let defaults = Limits::default();
     let limits = Limits {
         max_depth: args.max_depth.unwrap_or(defaults.max_depth),
@@ -61,12 +73,25 @@ pub(in crate::app) async fn serve(args: &McpServeArgs, cli: &Cli) -> anyhow::Res
                         .max_watches
                         .unwrap_or_else(|| watch::default_max_watches(limits.max_sessions)),
                     watches_dir: crate::paths::rho_dir()?.join(watch::DIR),
+                    inherited_listener,
+                    upgrade: upgrade(),
                 },
                 environment,
             )
             .await
         }
     }
+}
+
+/// How this server upgrades in place: its executable, re-executed with the
+/// arguments it started with. None where it cannot.
+fn upgrade() -> Option<Upgrade> {
+    let executable = Executable::of_this_process()
+        .inspect_err(|error| {
+            tracing::warn!(%error, "could not find the server's executable; it will not upgrade in place");
+        })
+        .ok()?;
+    Upgrade::new(executable, std::env::args_os().skip(1))
 }
 
 pub(in crate::app) fn token(command: &McpTokenCommand, cli: &Cli) -> anyhow::Result<()> {

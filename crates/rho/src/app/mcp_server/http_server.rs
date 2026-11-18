@@ -17,9 +17,10 @@
 //!   `--allow-origin`, so a web page cannot drive it from a browser.
 //!
 //! Once bound, it takes the rho home's webhook watches (`watch/`) and
-//! resumes them.
+//! resumes them. Once `rho update` replaced its executable, it upgrades in
+//! place (`upgrade.rs`).
 
-use std::{convert::Infallible, net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{convert::Infallible, future::Future, net::SocketAddr, path::PathBuf, sync::Arc};
 
 use anyhow::Context;
 use bytes::Bytes;
@@ -32,7 +33,12 @@ use rmcp::transport::{
 };
 
 use super::{
-    private_network::is_private, remotes::Servers, token_store, tokens::TokenSet, watch::Watches,
+    private_network::is_private,
+    remotes::Servers,
+    token_store,
+    tokens::TokenSet,
+    upgrade::{Drain, InFlight, Upgrade},
+    watch::Watches,
     SessionTools, Transport,
 };
 use crate::app::session_control::SessionControl;
@@ -63,6 +69,12 @@ pub(crate) struct HttpOptions {
     pub(crate) max_watches: u32,
     /// Where the watches are kept: `<rho home>/mcp-serve`.
     pub(crate) watches_dir: PathBuf,
+    /// The listening socket a re-executing server handed this one
+    /// (`upgrade.rs`), on `address`, to serve on in place of binding it.
+    pub(crate) inherited_listener: Option<std::net::TcpListener>,
+    /// How the server upgrades in place once its executable is replaced;
+    /// without one it keeps its binary.
+    pub(crate) upgrade: Option<Upgrade>,
 }
 
 type Body = BoxBody<Bytes, Infallible>;
@@ -88,9 +100,12 @@ pub(crate) async fn serve_http(
         );
     }
     let own_hosts = own_hosts(ip);
-    let listener = tokio::net::TcpListener::bind(options.address)
-        .await
-        .with_context(|| format!("could not listen on {}", options.address))?;
+    let listener = match options.inherited_listener {
+        Some(socket) => inherited(socket, options.address)?,
+        None => tokio::net::TcpListener::bind(options.address)
+            .await
+            .with_context(|| format!("could not listen on {}", options.address))?,
+    };
     let local = listener.local_addr()?;
     let servers = Servers::new(options.name.clone());
     let watches = Watches::open(
@@ -131,18 +146,52 @@ pub(crate) async fn serve_http(
             "rho mcp serve: plain HTTP on a network address: anyone who can read traffic on that network can read requests, bearer tokens included"
         );
     }
+    let drain = Drain::new();
+    let Some(upgrade) = options.upgrade else {
+        let never = std::future::pending::<String>();
+        return Ok(accept_until(&listener, &server, &drain, never)
+            .await
+            .map(drop)?);
+    };
+    let version = accept_until(&listener, &server, &drain, upgrade.replaced()).await?;
+    Err(drain.finish(upgrade, &version, listener).await)
+}
+
+/// Serves each connection `listener` accepts until `replaced` resolves
+/// with the version to upgrade to; connections that `drain` tells to
+/// close close after the call they serve.
+async fn accept_until(
+    listener: &tokio::net::TcpListener,
+    server: &Arc<HttpServer>,
+    drain: &Drain,
+    replaced: impl Future<Output = String>,
+) -> std::io::Result<String> {
+    tokio::pin!(replaced);
     loop {
-        let (stream, _) = listener.accept().await?;
-        let server = Arc::clone(&server);
+        let stream = tokio::select! {
+            accepted = listener.accept() => accepted?.0,
+            version = &mut replaced => return Ok(version),
+        };
+        let server = Arc::clone(server);
+        let calls = drain.calls();
+        let began = drain.began();
         tokio::spawn(async move {
             let handler = hyper::service::service_fn(move |request| {
                 let server = Arc::clone(&server);
-                async move { Ok::<_, Infallible>(handle(&server, request).await) }
+                let calls = calls.clone();
+                async move { Ok::<_, Infallible>(counted(&server, &calls, request).await) }
             });
-            if let Err(error) = hyper::server::conn::http1::Builder::new()
-                .serve_connection(TokioIo::new(stream), handler)
-                .await
-            {
+            let connection = hyper::server::conn::http1::Builder::new()
+                .serve_connection(TokioIo::new(stream), handler);
+            tokio::pin!(connection);
+            let ended = tokio::select! {
+                ended = connection.as_mut() => ended,
+                () = began => {
+                    connection.as_mut().graceful_shutdown();
+                    connection.await
+                }
+            };
+            if let Err(error) = ended {
                 tracing::debug!(%error, "MCP HTTP connection ended");
             }
         });
@@ -166,6 +215,44 @@ fn own_hosts(ip: std::net::IpAddr) -> Vec<String> {
         }
     }
     hosts
+}
+
+/// `socket`, handed on by a re-executing server, once it listens on
+/// `address`, the address this server was told to bind: the checks above
+/// hold for the socket it serves.
+fn inherited(
+    socket: std::net::TcpListener,
+    address: SocketAddr,
+) -> anyhow::Result<tokio::net::TcpListener> {
+    let local = socket.local_addr()?;
+    if local.ip() != address.ip() || (address.port() != 0 && local.port() != address.port()) {
+        anyhow::bail!("the inherited listening socket is on {local}, not on --http {address}");
+    }
+    Ok(tokio::net::TcpListener::from_std(socket)?)
+}
+
+/// [`handle`], counting a POST, which carries a tool call, as under way
+/// until its response's body is sent or dropped, so an upgrade waits for
+/// it. A GET opens a host's event stream, which lasts as long as the host
+/// keeps it, so an upgrade does not wait for those.
+async fn counted(
+    server: &HttpServer,
+    in_flight: &InFlight,
+    request: Request<Incoming>,
+) -> Response<Body> {
+    let call = (request.method() == hyper::Method::POST).then(|| in_flight.enter());
+    let response = handle(server, request).await;
+    match call {
+        Some(call) => response.map(|body| {
+            body.map_frame(move |frame| {
+                // Held by the body, so dropped with it.
+                let _call = &call;
+                frame
+            })
+            .boxed()
+        }),
+        None => response,
+    }
 }
 
 /// Authenticates `request` and hands it to rmcp with its token's grant.

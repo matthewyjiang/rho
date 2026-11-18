@@ -11,7 +11,7 @@
 //! | Private files | [`DaemonPathError`], [`create_private_dir`], [`prepare_private_dir`], [`create_private_file`], [`sync_dir`], [`open_lock_file`], [`open_log_file`], [`FileIdentity`], [`running_identity`], [`account_lock_path`], [`lock_account_file`] |
 //! | Process | [`spawn_detached`], [`MACHINE_VARIABLES`], [`is_variable`], [`request_stop`], [`StopRequests`], [`stderr_is_journal_stream`] |
 //! | Memory | [`release_freed_memory`] |
-//! | Restart | [`relaunch`], [`take_handoff`] |
+//! | Restart | [`relaunch`], [`take_handoff`]; on Unix, for any process re-executing itself: `adopt`, `set_close_on_exec`, `reap_exited_children` |
 //! | Install | [`REPLACEABLE_WHILE_RUNNING`], [`stop_service`] |
 //!
 //! What each must guarantee:
@@ -67,5 +67,8 @@ pub(super) use imp::{
     stop_service, take_handoff, Listener, Stream, MACHINE_VARIABLES,
 };
 
+// Re-executing in place hands descriptors on only on Unix.
 #[cfg(test)]
 pub(crate) use imp::test_support::StopTarget;
+#[cfg(unix)]
+pub(crate) use imp::{adopt, reap_exited_children, set_close_on_exec};

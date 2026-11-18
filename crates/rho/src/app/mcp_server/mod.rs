@@ -50,12 +50,14 @@ pub(crate) mod remotes;
 pub(crate) mod token_store;
 pub(crate) mod tokens;
 mod tool;
+mod upgrade;
 pub(crate) mod watch;
 pub(crate) mod webhooks;
 
 pub(super) use http_server::{serve_http, HttpOptions};
 use remotes::{Arrival, Asked, Lasts, Machines, Route, Servers, LASTING};
 use tool::ServedTool;
+pub(super) use upgrade::{inherit_listener, Upgrade};
 use watch::{WatchMode, Watches};
 
 /// What the server tells a host about itself.

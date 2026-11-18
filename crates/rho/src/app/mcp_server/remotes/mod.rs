@@ -36,7 +36,7 @@ use crate::{
 mod client;
 mod store;
 
-pub(crate) use client::{call, wait, Asked, Lasts, RemoteError, FORWARDED, LASTING};
+pub(crate) use client::{call, wait, Asked, Lasts, RemoteError, CALL_TIMEOUT, FORWARDED, LASTING};
 pub(crate) use store::{check_name, check_url, Remote, RemoteSet};
 
 /// The argument that names a call's server.

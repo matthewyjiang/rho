@@ -21,6 +21,7 @@ pub(crate) use files::{
 pub(in crate::daemon) use files::{
     open_lock_file, open_log_file, prepare_private_dir, running_identity,
 };
+pub(crate) use handoff::{adopt, reap_exited_children, set_close_on_exec};
 pub(in crate::daemon) use handoff::{relaunch, take_handoff};
 pub(crate) use memory::release_freed_memory;
 pub(in crate::daemon) use process::{is_variable, request_stop, spawn_detached, MACHINE_VARIABLES};

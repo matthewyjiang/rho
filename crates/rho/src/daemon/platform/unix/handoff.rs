@@ -97,8 +97,9 @@ pub(in crate::daemon) fn relaunch(
 }
 
 /// Reaps the children that already exited, which the exec would leave as
-/// zombies: the new binary never waits for what this one started.
-fn reap_exited_children() {
+/// zombies: the new binary never waits for what this one started. Also
+/// used by `rho mcp serve` re-executing itself.
+pub(crate) fn reap_exited_children() {
     loop {
         // SAFETY: a null status pointer is allowed; `WNOHANG` returns at
         // once with 0 while children still run, and -1 once none is left.
@@ -145,9 +146,11 @@ pub(in crate::daemon) fn take_handoff(
 }
 
 /// Takes ownership of inherited descriptor `fd`, once it is open, and marks
-/// it close-on-exec again, so the processes the daemon's sessions start do
-/// not inherit the lock or the socket.
-fn adopt(fd: RawFd) -> io::Result<OwnedFd> {
+/// it close-on-exec again, so the processes this one starts, such as the
+/// daemon's sessions, do not inherit it. Callers adopt each descriptor a
+/// predecessor handed them once, at startup: the daemon its lock and
+/// socket, and `rho mcp serve` its listening socket.
+pub(crate) fn adopt(fd: RawFd) -> io::Result<OwnedFd> {
     // SAFETY: `fcntl(F_GETFD)` takes no pointers; on a descriptor that is
     // not open it fails with EBADF and touches nothing.
     if unsafe { libc::fcntl(fd, libc::F_GETFD) } == -1 {
@@ -155,7 +158,7 @@ fn adopt(fd: RawFd) -> io::Result<OwnedFd> {
     }
     // SAFETY: `fd` is open, and nothing else in this process owns it: the
     // predecessor left it open across the exec for this process alone, and
-    // `rho daemon run` adopts each handoff once, at startup.
+    // each is adopted once, at startup.
     let owned = unsafe { OwnedFd::from_raw_fd(fd) };
     set_close_on_exec(owned.as_fd(), true)?;
     Ok(owned)
@@ -163,7 +166,7 @@ fn adopt(fd: RawFd) -> io::Result<OwnedFd> {
 
 /// Sets or clears `FD_CLOEXEC` on `fd`. The handoff clears it right before
 /// the exec, so the exec keeps the descriptor open.
-fn set_close_on_exec(fd: BorrowedFd<'_>, close: bool) -> io::Result<()> {
+pub(crate) fn set_close_on_exec(fd: BorrowedFd<'_>, close: bool) -> io::Result<()> {
     let raw = fd.as_raw_fd();
     // SAFETY: `fcntl` with these commands takes no pointers.
     let flags = unsafe { libc::fcntl(raw, libc::F_GETFD) };

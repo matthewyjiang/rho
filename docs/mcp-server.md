@@ -136,6 +136,10 @@ rho mcp serve --http 100.75.19.168:8765   # this machine's NetBird address
 
 On a private network address the server speaks plain HTTP, and says so on stderr: anyone who can read traffic on that network can read the requests, bearer tokens included. Use it on a network that encrypts its own traffic, such as NetBird or Tailscale, or one you trust. Requests to the address are accepted as their `Host` without `--allow-host`. To reach the server from anywhere else, use a tunnel such as an SSH forward. [Running as a service](/daemon#running-as-a-service) has a systemd unit and a launchd agent that keep it running.
 
+### Updates {#http-updates}
+
+On macOS and Linux, when you update Rho, the HTTP server notices the new executable within a second, as the [daemon](/daemon#upgrading-in-place) does, and switches to it as the same process on the same address. First it stops taking new connections and lets the calls under way finish, waiting at most 90 seconds, then cuts the rest short. A host that connects meanwhile waits until the new version answers. The hosts' MCP sessions end with the switch, so each host starts a new one, as MCP hosts do for a session the server no longer knows. Watches carry over, and news that came during the switch is sent; a webhook POST under way at the moment of the switch may be sent twice, as after a crash. If calls still run after 90 seconds, or the new file is not rho, the server says so on stderr. Rolling back to an older version works the same way, except that the server closes its address while it switches and the older version opens it again, so a host that connects in that moment is refused and calls again. A server started over stdio keeps running its version until its host starts it again. If you install with mise or Homebrew, the new version lands at a different path, and the server can't see it; restart the service.
+
 ### Tokens
 
 Every HTTP request needs a bearer token. Create one and name the workspaces it may reach:
