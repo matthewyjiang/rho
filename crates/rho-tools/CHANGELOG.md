@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.3.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v2.2.0...rho-agent-tools-v2.3.0) (2026-11-18)
+
+
+### Features
+
+* **daemon:** clean up squash-merged and foreground worktrees and show their disk use ([#1990](https://github.com/matthewyjiang/rho/issues/1990)) ([8189050](https://github.com/matthewyjiang/rho/commit/81890506342f8185287706b7417617ea65e6d59e))
+
 ## [2.2.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v2.1.0...rho-agent-tools-v2.2.0) (2026-11-16)
 
 
