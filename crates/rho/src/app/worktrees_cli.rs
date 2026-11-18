@@ -52,7 +52,9 @@ fn reason(report: &WorktreeReport) -> String {
         }
         WorktreeVerdict::InUse => "its session is loaded or running".to_owned(),
         WorktreeVerdict::Occupied => "a process works in it".to_owned(),
-        WorktreeVerdict::Recent => "used within the last day".to_owned(),
+        WorktreeVerdict::Recent => {
+            "its checkout moved or a job in it changed within the last day".to_owned()
+        }
         WorktreeVerdict::Locked => "locked with `git worktree lock`".to_owned(),
         WorktreeVerdict::Dirty => "uncommitted or untracked changes".to_owned(),
         WorktreeVerdict::Unmerged { base } => format!("not merged into {base}"),

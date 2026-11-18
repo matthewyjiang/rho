@@ -251,7 +251,8 @@ async fn worktrees_no_session_owns_are_listed_and_pruned() {
     let unowned = "; no session owns it";
     let merged_reason = format!("clean and merged into main; the branch stays{unowned}");
     let occupied_reason = format!("a process works in it{unowned}");
-    let fresh_reason = format!("used within the last day{unowned}");
+    let fresh_reason =
+        format!("its checkout moved or a job in it changed within the last day{unowned}");
     let locked_reason = format!("locked with `git worktree lock`{unowned}");
     let row = |action: &str, worktree: &SessionWorktree, reason: &str| {
         let (branch, path) = (&worktree.branch, worktree.path.display());

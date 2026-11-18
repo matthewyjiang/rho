@@ -286,8 +286,9 @@ rho worktrees prune --dry-run   # only list what it would do
 
 `status` and `--dry-run` change nothing, so they need the daemon running. A
 prune doesn't wait a day for a session's worktree, but it still keeps a
-worktree no session owns that was used within the last day: a session's new
-worktree looks like one until the session finishes opening.
+worktree no session owns whose checkout moved (a commit, checkout, or reset)
+or whose daemon job changed within the last day: a session's new worktree
+looks like one until the session finishes opening.
 
 ### Attaching to a daemon session
 
