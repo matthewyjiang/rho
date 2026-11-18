@@ -7632,6 +7632,19 @@
           "type": "object"
         },
         {
+          "description": "`git worktree lock` locked it, which keeps it until someone unlocks\nit.",
+          "properties": {
+            "kind": {
+              "const": "locked",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
           "description": "It holds uncommitted or untracked changes.",
           "properties": {
             "kind": {
@@ -7662,7 +7675,7 @@
           "type": "object"
         },
         {
-          "description": "Rho could not check or remove it, saying `error`: git failed, as for\na worktree `git worktree lock` locked, or, for one no session owns,\nrho cannot see which processes work in it on this platform.",
+          "description": "Rho could not check or remove it, saying `error`: git failed, or,\nfor one no session owns, rho cannot see which processes work in it\non this platform.",
           "properties": {
             "error": {
               "type": "string"

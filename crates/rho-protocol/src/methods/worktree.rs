@@ -83,13 +83,16 @@ pub enum WorktreeVerdict {
     /// changed, within the last day, as one a session is still opening in,
     /// or an agent just added, has.
     Recent,
+    /// `git worktree lock` locked it, which keeps it until someone unlocks
+    /// it.
+    Locked,
     /// It holds uncommitted or untracked changes.
     Dirty,
     /// Its branch has commits `base` does not.
     Unmerged { base: String },
-    /// Rho could not check or remove it, saying `error`: git failed, as for
-    /// a worktree `git worktree lock` locked, or, for one no session owns,
-    /// rho cannot see which processes work in it on this platform.
+    /// Rho could not check or remove it, saying `error`: git failed, or,
+    /// for one no session owns, rho cannot see which processes work in it
+    /// on this platform.
     Failed { error: String },
     /// A verdict a newer daemon sends that this crate does not know.
     #[serde(other)]
@@ -101,6 +104,16 @@ impl WorktreeVerdict {
     /// Whether the pass removes a worktree with this verdict, or in a dry
     /// run would.
     pub fn removes(&self) -> bool {
-        matches!(self, Self::Merged { .. })
+        match self {
+            Self::Merged { .. } => true,
+            Self::InUse
+            | Self::Occupied
+            | Self::Recent
+            | Self::Locked
+            | Self::Dirty
+            | Self::Unmerged { .. }
+            | Self::Failed { .. }
+            | Self::Unknown => false,
+        }
     }
 }

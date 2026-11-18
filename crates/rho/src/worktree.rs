@@ -503,6 +503,34 @@ async fn has_changes_of(dir: &Path, base: &str, commit: &str) -> Result<bool, Wo
     }
 }
 
+/// What git keeps of a worktree in its admin directory, as cleanup reads it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Admin {
+    /// When its checkout last moved, by a commit, checkout, or reset in it.
+    pub(crate) moved_at: Option<std::time::SystemTime>,
+    /// Whether `git worktree lock` locked it, which `git worktree remove`
+    /// then refuses.
+    pub(crate) locked: bool,
+}
+
+/// Reads [`Admin`] of the worktree at `path`.
+pub(crate) async fn admin(path: &Path) -> Result<Admin, WorktreeError> {
+    let dir = succeeded(path, "rev-parse", ["rev-parse", "--absolute-git-dir"]).await?;
+    let dir = Path::new(&dir);
+    let moved_at = [dir.join("HEAD"), dir.join("logs/HEAD")]
+        .iter()
+        .filter_map(|file| {
+            std::fs::metadata(file)
+                .and_then(|meta| meta.modified())
+                .ok()
+        })
+        .max();
+    Ok(Admin {
+        moved_at,
+        locked: dir.join("locked").exists(),
+    })
+}
+
 /// Removes `worktree` with `git worktree remove`, which refuses one with
 /// uncommitted or untracked changes, and keeps its branch.
 pub(crate) async fn remove(worktree: &SessionWorktree) -> Result<(), WorktreeError> {

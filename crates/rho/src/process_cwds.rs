@@ -5,11 +5,15 @@
 use std::path::PathBuf;
 
 /// The working directory of every process this user may inspect, or
-/// `None` on a platform where rho cannot read them (Windows, and Unixes
-/// other than Linux, Android, and macOS). Processes that exit, or deny access, while
-/// it reads are left out.
-pub(crate) fn scan() -> Option<Vec<PathBuf>> {
-    platform::scan()
+/// `None` where rho cannot read them: on Windows, Unixes other than Linux,
+/// Android, and macOS, or when listing processes fails. Processes that
+/// exit, or deny access, while it reads are left out. It reads every
+/// process, so it runs off the async runtime's workers.
+pub(crate) async fn scan() -> Option<Vec<PathBuf>> {
+    tokio::task::spawn_blocking(platform::scan)
+        .await
+        .ok()
+        .flatten()
 }
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -53,6 +57,11 @@ mod platform {
         // SAFETY: `pids` holds `capacity` bytes, and the call writes at most
         // that many, returning how many pids it wrote.
         let count = unsafe { libc::proc_listallpids(pids.as_mut_ptr().cast::<c_void>(), capacity) };
+        // A failed call may answer 0 rather than -1; no process running
+        // would leave out this one, so 0 is never a real list.
+        if count <= 0 {
+            return None;
+        }
         let count = usize::try_from(count).ok()?.min(pids.len());
         Some(pids[..count].iter().filter_map(|&pid| cwd(pid)).collect())
     }

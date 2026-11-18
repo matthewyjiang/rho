@@ -3,10 +3,7 @@
 //! or a person added there with `git worktree add`. Cleanup checks them as
 //! it does a session's, without a session to give one back to.
 
-use std::{
-    path::{Path, PathBuf},
-    time::SystemTime,
-};
+use std::path::{Path, PathBuf};
 
 use rho_protocol::SessionWorktree;
 
@@ -20,23 +17,34 @@ pub(crate) struct Unowned {
     pub(crate) worktree: SessionWorktree,
     /// Whether it has a commit checked out on no branch.
     pub(crate) detached: bool,
-    /// When its checkout last moved, by a commit, checkout, or reset in it.
-    pub(crate) moved_at: Option<SystemTime>,
 }
 
 /// Every git worktree directly under `root` but those in `owned`, which
 /// are canonical. A directory that is no linked worktree, as a clone is
 /// not, stays out, and so does one git cannot read, with a warning.
 pub(crate) async fn unowned(root: &Path, owned: &[&Path]) -> Vec<Unowned> {
-    let Ok(root) = canonical(root) else {
-        // No worktree was ever added.
-        return Vec::new();
-    };
-    let Ok(entries) = std::fs::read_dir(&root) else {
-        return Vec::new();
+    let entries = match canonical(root).and_then(|root| {
+        std::fs::read_dir(&root).map_err(|error| WorktreeError::Io { path: root, error })
+    }) {
+        Ok(entries) => entries,
+        Err(WorktreeError::Io { error, .. }) if error.kind() == std::io::ErrorKind::NotFound => {
+            // No worktree was ever added.
+            return Vec::new();
+        }
+        Err(error) => {
+            tracing::warn!(%error, "could not list the worktree directory; checking no worktree no session owns");
+            return Vec::new();
+        }
     };
     let mut found = Vec::new();
-    for entry in entries.flatten() {
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                tracing::warn!(%error, "could not read an entry of the worktree directory; leaving it");
+                continue;
+            }
+        };
         let path = entry.path();
         // Not followed: a symlink there is none of rho's.
         let is_dir = entry.file_type().is_ok_and(|kind| kind.is_dir());
@@ -62,7 +70,6 @@ async fn read(path: PathBuf) -> Result<Unowned, WorktreeError> {
         repository: path.clone(),
         detail: detail.to_owned(),
     };
-    let admin = succeeded(&path, "rev-parse", ["rev-parse", "--absolute-git-dir"]).await?;
     // One block per worktree, the main one first: `worktree <path>`, then
     // `HEAD <commit>`, then `branch refs/heads/<name>` or `detached`.
     let listed = succeeded(&path, "worktree list", ["worktree", "list", "--porcelain"]).await?;
@@ -84,15 +91,6 @@ async fn read(path: PathBuf) -> Result<Unowned, WorktreeError> {
         (None, Some(head)) => (head.chars().take(12).collect(), true),
         (None, None) => return Err(malformed("git names neither its branch nor its commit")),
     };
-    let admin = Path::new(&admin);
-    let moved_at = [admin.join("HEAD"), admin.join("logs/HEAD")]
-        .iter()
-        .filter_map(|file| {
-            std::fs::metadata(file)
-                .and_then(|meta| meta.modified())
-                .ok()
-        })
-        .max();
     Ok(Unowned {
         worktree: SessionWorktree {
             branch,
@@ -100,7 +98,6 @@ async fn read(path: PathBuf) -> Result<Unowned, WorktreeError> {
             origin,
         },
         detached,
-        moved_at,
     })
 }
 

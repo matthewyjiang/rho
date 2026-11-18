@@ -174,8 +174,9 @@ fn unused_for_two_days(worktree: &Path) {
 // its size and whether a prune removes it, then the count, and `rho
 // worktrees prune` removes the clean one whose branch was squash-merged
 // and then edited again, so it no longer merges cleanly, keeping its
-// branch; it keeps the one a process works in, and the one added just now,
-// as a session's still opening is before its job names it.
+// branch; it keeps the one a process works in, the one `git worktree lock`
+// locked, which the dry run already says, and the one added just now, as a
+// session's still opening is before its job names it.
 // Owner: daemon worktree cleanup through `rho worktrees status` and
 // `rho worktrees prune`.
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
@@ -203,6 +204,11 @@ async fn worktrees_no_session_owns_are_listed_and_pruned() {
     let merged = add("merged");
     let occupied = add("occupied");
     let fresh = add("fresh");
+    let locked = add("locked");
+    git(
+        &sandbox.workspace,
+        &["worktree", "lock", locked.path.to_str().unwrap()],
+    );
     // Two commits, squashed into one, then edited again: the branch is no
     // ancestor, matches no single commit's patch, and conflicts.
     commit(&merged.path, "merged.txt");
@@ -216,17 +222,19 @@ async fn worktrees_no_session_owns_are_listed_and_pruned() {
     git(&sandbox.workspace, &["commit", "--quiet", "-am", "edit"]);
     unused_for_two_days(&merged.path);
     unused_for_two_days(&occupied.path);
-    let mut sleeper = std::process::Command::new("sleep")
-        .arg("30")
+    unused_for_two_days(&locked.path);
+    // Waits on its stdin, so it works there until the checks are done.
+    let mut occupant = std::process::Command::new("cat")
         .current_dir(&occupied.path)
-        .stdin(Stdio::null())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
         .spawn()
         .unwrap();
 
     let listed = status(&sandbox, "fixed");
     let pruned = prune(&sandbox, "fixed", &[]);
-    sleeper.kill().unwrap();
-    sleeper.wait().unwrap();
+    drop(occupant.stdin.take());
+    occupant.wait().unwrap();
 
     // Each row without its size, which the paths in `.git` files vary,
     // and whether it had one; then the count line, up to the sizes.
@@ -244,18 +252,21 @@ async fn worktrees_no_session_owns_are_listed_and_pruned() {
     let merged_reason = format!("clean and merged into main; the branch stays{unowned}");
     let occupied_reason = format!("a process works in it{unowned}");
     let fresh_reason = format!("used within the last day{unowned}");
+    let locked_reason = format!("locked with `git worktree lock`{unowned}");
     let row = |action: &str, worktree: &SessionWorktree, reason: &str| {
         let (branch, path) = (&worktree.branch, worktree.path.display());
         (true, format!("{action:<9} {branch} {path}: {reason}"))
     };
     let mut expected_rows = vec![
         row("kept", &fresh, &fresh_reason),
+        row("kept", &locked, &locked_reason),
         row("kept", &occupied, &occupied_reason),
         row("removable", &merged, &merged_reason),
     ];
     expected_rows.sort();
     let mut expected_pruned = vec![
         line("kept", &fresh, &fresh_reason),
+        line("kept", &locked, &locked_reason),
         line("kept", &occupied, &occupied_reason),
         line("removed", &merged, &merged_reason),
     ];
@@ -271,17 +282,17 @@ async fn worktrees_no_session_owns_are_listed_and_pruned() {
                 .and_then(|part| part.split(", ").next()),
             pruned.status.code(),
             sorted_lines(&pruned),
-            [&merged.path, &occupied.path, &fresh.path].map(|path| path.exists()),
+            [&merged.path, &occupied.path, &fresh.path, &locked.path].map(|path| path.exists()),
             git(&sandbox.workspace, &["branch", "--list", "merged"]),
         ),
         (
             Some(0),
             expected_rows,
-            Some("3 worktrees"),
+            Some("4 worktrees"),
             Some("1 removable"),
             Some(0),
             expected_pruned,
-            [false, true, true],
+            [false, true, true, true],
             "merged".to_owned(),
         ),
         "stderr: {}{}\nlog:\n{}",

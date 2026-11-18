@@ -241,11 +241,15 @@ and no `origin` to start from, `--worktree` fails with exit code `2`.
 The daemon removes a worktree under `~/.rho/worktrees/`, and keeps its
 branch, when all of these are true:
 
-- Nothing uses it, and nothing has for a day. For a daemon session's
-  worktree, the session isn't open or running. For any other worktree there,
-  such as one from a `rho run --worktree` without `--detach` or one an agent
-  made with `git worktree add`, no process has its working directory inside
-  it, and its checkout hasn't moved.
+- Nothing uses it. For a daemon session's worktree, the session isn't open
+  or running, and for the daemon's own pass hasn't been for a day. For any
+  other worktree there, such as one from a `rho run --worktree` without
+  `--detach` or one an agent made with `git worktree add`: no process has its
+  working directory inside it now, no daemon job in it changed within a day,
+  and its checkout hasn't moved (a commit, checkout, or reset) within a day.
+  Reading files or running commands there without moving the checkout
+  doesn't count as use once the process exits.
+- `git worktree lock` hasn't locked it.
 - The worktree has no uncommitted or untracked changes.
 - The current `HEAD` of the checkout you started from, or `origin`'s default
   branch as last fetched, has the branch's changes. Regular, squash, and
@@ -260,8 +264,8 @@ the daemon restores its worktree on the branch. A worktree no session owns
 doesn't come back.
 
 On Windows, Rho can't see which processes work in a worktree, so it keeps
-those no session owns. To keep any worktree, lock it with `git worktree lock
-<path>`.
+those no session owns. To keep any worktree,
+lock it with `git worktree lock`.
 
 Other worktrees stay. After 14 days unused, `rho daemon status` and
 [`/jobs`](/interactive-tui) mark a session's as stale. Merge what you want,

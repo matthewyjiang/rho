@@ -53,6 +53,7 @@ fn reason(report: &WorktreeReport) -> String {
         WorktreeVerdict::InUse => "its session is loaded or running".to_owned(),
         WorktreeVerdict::Occupied => "a process works in it".to_owned(),
         WorktreeVerdict::Recent => "used within the last day".to_owned(),
+        WorktreeVerdict::Locked => "locked with `git worktree lock`".to_owned(),
         WorktreeVerdict::Dirty => "uncommitted or untracked changes".to_owned(),
         WorktreeVerdict::Unmerged { base } => format!("not merged into {base}"),
         WorktreeVerdict::Failed { error } => error.clone(),
@@ -99,13 +100,14 @@ fn status_text(reports: &[WorktreeReport]) -> String {
     let mut rows: Vec<_> = reports.iter().collect();
     rows.sort_by_key(|report| std::cmp::Reverse(report.bytes));
     let mut text = String::new();
-    let (mut total, mut freed, mut removable) = (0, 0, 0);
+    let mut total = Bytes::default();
+    let mut freed = Bytes::default();
+    let mut removable = 0;
     for report in rows {
-        let bytes = report.bytes.unwrap_or_default();
         let removes = report.verdict.removes();
-        total += bytes;
+        total.add(report.bytes);
         if removes {
-            freed += bytes;
+            freed.add(report.bytes);
             removable += 1;
         }
         let size = report.bytes.map_or_else(|| "?".to_owned(), human_bytes);
@@ -120,11 +122,36 @@ fn status_text(reports: &[WorktreeReport]) -> String {
     let count = reports.len();
     let worktrees = if count == 1 { "worktree" } else { "worktrees" };
     text += &format!(
-        "\n{count} {worktrees}, {}; {removable} removable, {} (run `rho worktrees prune`)\n",
-        human_bytes(total),
-        human_bytes(freed)
+        "\n{count} {worktrees}, {total}; {removable} removable, {freed} (run `rho worktrees prune`)\n"
     );
     text
+}
+
+/// A sum of sizes, some of which the daemon may not have measured, as a
+/// daemon older than `rho worktrees status` does not.
+#[derive(Default)]
+struct Bytes {
+    measured: u64,
+    unmeasured: bool,
+}
+
+impl Bytes {
+    fn add(&mut self, bytes: Option<u64>) {
+        match bytes {
+            Some(bytes) => self.measured += bytes,
+            None => self.unmeasured = true,
+        }
+    }
+}
+
+impl std::fmt::Display for Bytes {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let bytes = human_bytes(self.measured);
+        match self.unmeasured {
+            true => write!(formatter, "at least {bytes}"),
+            false => formatter.write_str(&bytes),
+        }
+    }
 }
 
 /// `bytes` in binary units, one decimal from KiB up.

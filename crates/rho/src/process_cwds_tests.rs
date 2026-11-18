@@ -9,19 +9,20 @@ use super::scan;
 // still works in.
 // Owner: process working-directory scan (Linux, Android, macOS).
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
-#[test]
-fn a_running_process_is_found_in_its_working_directory() {
+#[tokio::test]
+async fn a_running_process_is_found_in_its_working_directory() {
     let dir = TempDir::new().unwrap();
     let dir = crate::paths::canonicalize(dir.path()).unwrap();
-    let mut child = Command::new("sleep")
-        .arg("30")
+    // Waits on its stdin, so it works there until the scan is done.
+    let mut child = Command::new("cat")
         .current_dir(&dir)
-        .stdin(Stdio::null())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
         .spawn()
         .unwrap();
 
-    let found = scan().map(|cwds| cwds.contains(&dir));
-    child.kill().unwrap();
+    let found = scan().await.map(|cwds| cwds.contains(&dir));
+    drop(child.stdin.take());
     child.wait().unwrap();
 
     assert_eq!(found, Some(true));

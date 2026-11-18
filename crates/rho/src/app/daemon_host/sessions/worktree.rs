@@ -357,9 +357,7 @@ impl Sessions {
     /// Checks each worktree in the worktree directory that no session owns
     /// (see [`crate::worktree::unowned`]), and removes it as `pass` says
     /// when it may. With no session's reopen lock to hold, it keeps one
-    /// whose checkout moved, or a job in it changed, within
-    /// [`QUIET_BEFORE_DAILY`], as a session's still opening in it has, and
-    /// one a process works in, checked again just before removing it.
+    /// [`Guard::Unowned`] keeps, checked again just before removing it.
     async fn prune_unowned(&self, pass: Pass) -> Vec<WorktreeReport> {
         let records = self.jobs.list();
         let owned: Vec<&Path> = records
@@ -367,33 +365,18 @@ impl Sessions {
             .filter_map(|record| Some(record.worktree.as_ref()?.path.as_path()))
             .collect();
         let found = crate::worktree::unowned(&self.worktrees, &owned).await;
-        let now = unix_now();
         let mut reports = Vec::new();
         for unowned in found {
             let worktree = &unowned.worktree;
-            let moved_at = unowned
-                .moved_at
-                .and_then(|at| at.duration_since(UNIX_EPOCH).ok())
-                .map_or(0, |since| since.as_secs());
-            let used_at = records
-                .iter()
-                .filter(|record| record.workspace.starts_with(&worktree.path))
-                .map(|record| record.updated_at)
-                .fold(moved_at, u64::max);
-            let quiet = now.saturating_sub(used_at) >= QUIET_BEFORE_DAILY.as_secs();
-            let verdict = match (quiet, pass.prune) {
-                (false, Prune::Daily) => continue,
-                (false, Prune::Now | Prune::DryRun) => WorktreeVerdict::Recent,
-                (true, prune) => {
-                    let guard = Guard::Unowned {
-                        sessions: self,
-                        path: &worktree.path,
-                    };
-                    match guard.verdict() {
-                        Some(verdict) => verdict,
-                        None => check_and_remove(worktree, prune, guard).await.verdict,
-                    }
-                }
+            let guard = Guard::Unowned {
+                sessions: self,
+                path: &worktree.path,
+            };
+            let verdict = match (guard.verdict().await, pass.prune) {
+                // The daemon's own pass skips what was used lately unreported.
+                (Some(WorktreeVerdict::Recent), Prune::Daily) => continue,
+                (Some(verdict), _) => verdict,
+                (None, prune) => check_and_remove(worktree, prune, guard).await.verdict,
             };
             let bytes = pass.measure(worktree).await;
             reports.push(WorktreeReport {
@@ -435,7 +418,10 @@ impl Pass {
 enum Guard<'a> {
     /// Nothing more: the caller holds the session's reopen lock.
     None,
-    /// For one no session owns: no job uses it, and no process works in it.
+    /// For one no session owns: no job uses it; neither its checkout nor a
+    /// job in it changed within [`QUIET_BEFORE_DAILY`], as they have for a
+    /// session still opening in it, before its job names it; and no process
+    /// works in it.
     Unowned {
         sessions: &'a Sessions,
         path: &'a Path,
@@ -444,14 +430,34 @@ enum Guard<'a> {
 
 impl Guard<'_> {
     /// The verdict that keeps the worktree now, if one does.
-    fn verdict(self) -> Option<WorktreeVerdict> {
+    async fn verdict(self) -> Option<WorktreeVerdict> {
         let Self::Unowned { sessions, path } = self else {
             return None;
         };
-        if sessions.worktrees_in_use(&sessions.jobs.list()).holds(path) {
+        let records = sessions.jobs.list();
+        if sessions.worktrees_in_use(&records).holds(path) {
             return Some(WorktreeVerdict::InUse);
         }
-        match crate::process_cwds::scan() {
+        let admin = match crate::worktree::admin(path).await {
+            Ok(admin) => admin,
+            Err(error) => {
+                let error = error.to_string();
+                return Some(WorktreeVerdict::Failed { error });
+            }
+        };
+        let moved_at = admin
+            .moved_at
+            .and_then(|at| at.duration_since(UNIX_EPOCH).ok())
+            .map_or(0, |since| since.as_secs());
+        let used_at = records
+            .iter()
+            .filter(|record| record.workspace.starts_with(path))
+            .map(|record| record.updated_at)
+            .fold(moved_at, u64::max);
+        if unix_now().saturating_sub(used_at) < QUIET_BEFORE_DAILY.as_secs() {
+            return Some(WorktreeVerdict::Recent);
+        }
+        match crate::process_cwds::scan().await {
             Some(cwds) if cwds.iter().any(|cwd| cwd.starts_with(path)) => {
                 Some(WorktreeVerdict::Occupied)
             }
@@ -491,11 +497,17 @@ async fn check_and_remove(worktree: &SessionWorktree, prune: Prune, guard: Guard
         Ok(Holds::Merged { base, commit }) => (base, commit),
         Err(error) => return failed(error),
     };
+    // `git worktree remove` would refuse it, so a dry run says so too.
+    match crate::worktree::admin(&worktree.path).await {
+        Ok(admin) if admin.locked => return kept(WorktreeVerdict::Locked),
+        Ok(_) => {}
+        Err(error) => return failed(error),
+    }
     match prune {
         Prune::DryRun => return kept(WorktreeVerdict::Merged { base }),
         Prune::Daily | Prune::Now => {}
     }
-    if let Some(verdict) = guard.verdict() {
+    if let Some(verdict) = guard.verdict().await {
         return kept(verdict);
     }
     if let Err(error) = crate::worktree::remove(worktree).await {

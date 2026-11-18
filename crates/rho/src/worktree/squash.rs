@@ -12,21 +12,25 @@ use super::{answered, command, succeeded, WorktreeError};
 /// What every patch here is printed with, whatever the person's config
 /// sets: color, external diffs, text conversion, rename detection, or a
 /// diff relative to a subdirectory would change the patch IDs, or which
-/// changes they cover. Pathspecs are taken literally.
-const PLAIN: [&str; 6] = [
+/// changes they cover. Pathspecs are taken literally. No context lines, so
+/// a squash commit made after `base` changed lines next to the branch's
+/// still has the branch's patch ID: an ID ignores line numbers, and a
+/// commit can only match by making exactly the branch's changes.
+const PLAIN: [&str; 7] = [
     "--literal-pathspecs",
     "--no-color",
     "--no-ext-diff",
     "--no-textconv",
     "--no-renames",
     "--no-relative",
+    "--unified=0",
 ];
 
 /// Whether a commit on `base` since it and `commit` parted makes exactly
 /// the changes `commit` has since then, in the files it changed, as the
 /// squash commit a forge makes of a pull request does, both in the
 /// repository at `dir`. Patch IDs ignore line numbers, so the squash commit
-/// matches however far `base` moved on after.
+/// matches however far `base` moved on before or after.
 pub(super) async fn squashed_into(
     dir: &Path,
     base: &str,
@@ -47,13 +51,18 @@ pub(super) async fn squashed_into(
     // took 1.4 s to print whole and 0.2 s limited to a branch's 20 files.
     // A commit touching more matches when, in those files, it makes the
     // branch's changes, which `base` then has. The files go on stdin, which
-    // no command-line limit bounds.
-    let names = ["diff", "--name-only", "--no-renames", "--no-relative"];
+    // no command-line limit bounds, one a line, so a name with a newline
+    // in it leaves the commits unlimited. `-z` keeps names unquoted.
+    let names = ["diff", "--name-only", "-z", "--no-renames", "--no-relative"];
     let names = succeeded(dir, "diff", [&names[..], &[fork.as_str(), commit]].concat()).await?;
-    let mut stdin = format!("{fork}..{base}\n--\n");
-    for name in names.lines() {
-        stdin.push_str(name);
-        stdin.push('\n');
+    let mut stdin = format!("{fork}..{base}\n");
+    let names: Vec<&str> = names.split('\0').filter(|name| !name.is_empty()).collect();
+    if !names.iter().any(|name| name.contains('\n')) {
+        stdin.push_str("--\n");
+        for name in names {
+            stdin.push_str(name);
+            stdin.push('\n');
+        }
     }
     let log = ["--stdin", "--no-merges", "--patch", "--format=commit %H"];
     let found = patch_ids(dir, "log", &log, Some(stdin))

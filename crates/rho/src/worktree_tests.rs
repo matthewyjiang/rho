@@ -212,7 +212,8 @@ async fn inspect_reads_what_removing_a_worktree_would_lose() {
 // merged however they got there: a merge commit, a squash merge, or a
 // rebase merge (cherry-picks), each after HEAD changed a line next to the
 // branch's, as a base moving on under a branch does, and a rebase or
-// squash merge whose lines HEAD edited again since; it reads one HEAD has
+// squash merge whose lines HEAD edited again since, the squash made after
+// HEAD changed a line next to them; it reads one HEAD has
 // only some of, none of, or conflicting changes for, as unmerged, also
 // when HEAD squashed only part of it, and one whose merge commit adds
 // changes of its own, though HEAD has each of its other commits' patches.
@@ -266,8 +267,8 @@ async fn inspect_reads_squash_and_rebase_merges_as_merged() {
             true,
         ),
         (
-            "squash merge, its lines edited since",
-            3,
+            "squash merge after an edit next to it, its lines edited since",
+            NEXT_TO,
             |origin, _, [_, last]| {
                 git(origin, &["merge", "--quiet", "--squash", last.as_str()]);
                 git(origin, &["commit", "--quiet", "-m", "squash"]);
