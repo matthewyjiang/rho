@@ -32,7 +32,11 @@ pub(crate) async fn unowned(root: &Path, owned: &[&Path]) -> Vec<Unowned> {
             return Vec::new();
         }
         Err(error) => {
-            tracing::warn!(%error, "could not list the worktree directory; checking no worktree no session owns");
+            tracing::warn!(
+                root = %root.display(),
+                %error,
+                "could not list the worktree directory; checking no worktree no session owns"
+            );
             return Vec::new();
         }
     };
@@ -41,13 +45,27 @@ pub(crate) async fn unowned(root: &Path, owned: &[&Path]) -> Vec<Unowned> {
         let entry = match entry {
             Ok(entry) => entry,
             Err(error) => {
-                tracing::warn!(%error, "could not read an entry of the worktree directory; leaving it");
+                tracing::warn!(
+                    root = %root.display(),
+                    %error,
+                    "could not read an entry of the worktree directory; leaving it"
+                );
                 continue;
             }
         };
         let path = entry.path();
         // Not followed: a symlink there is none of rho's.
-        let is_dir = entry.file_type().is_ok_and(|kind| kind.is_dir());
+        let is_dir = match entry.file_type() {
+            Ok(kind) => kind.is_dir(),
+            Err(error) => {
+                tracing::warn!(
+                    path = %path.display(),
+                    %error,
+                    "could not tell what an entry of the worktree directory is; leaving it"
+                );
+                continue;
+            }
+        };
         // A linked worktree's `.git` is a file naming its admin directory.
         if !is_dir || !path.join(".git").is_file() || owned.contains(&path.as_path()) {
             continue;
