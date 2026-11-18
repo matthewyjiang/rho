@@ -350,6 +350,40 @@ async fn inspect_reads_squash_and_rebase_merges_as_merged() {
     assert_eq!(found, expected);
 }
 
+// Covers: a squash merge the base edited again since still reads as merged
+// when the branch's files have names git quotes or trims, as one with a tab
+// or a leading space: the squash check limits its search to those files by
+// their exact names.
+// Owner: session worktrees (git plumbing under the daemon's cleanup).
+#[cfg(unix)]
+#[tokio::test]
+async fn inspect_reads_a_squash_of_oddly_named_files_as_merged() {
+    let home = TempDir::new().unwrap();
+    let origin = repository(home.path());
+    let added = add(&home.path().join("worktrees"), &origin, Start::Head)
+        .await
+        .unwrap();
+    let path = &added.worktree.path;
+    for (name, text) in [(" leading.txt", "one"), ("a\tb.txt", "two")] {
+        std::fs::write(path.join(name), text).unwrap();
+        git(path, &["add", "--", name]);
+        git(path, &["commit", "--quiet", "-m", name]);
+    }
+    let branch = git(path, &["branch", "--show-current"]);
+    git(&origin, &["merge", "--quiet", "--squash", branch.as_str()]);
+    git(&origin, &["commit", "--quiet", "-m", "squash"]);
+    std::fs::write(origin.join("a\tb.txt"), "edited since").unwrap();
+    git(&origin, &["commit", "--quiet", "-am", "edit"]);
+
+    assert_eq!(
+        inspect(&added.worktree).await.unwrap(),
+        Holds::Merged {
+            base: "main".to_owned(),
+            commit: git(path, &["rev-parse", "HEAD"]),
+        }
+    );
+}
+
 /// Commits, in the checkout at `dir`, `lines.txt` with line `number` of 20
 /// set to `text`; the first commit writes the lines `1` to `20`.
 fn edit_line(dir: &Path, number: usize, text: &str) {

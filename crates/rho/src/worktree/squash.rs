@@ -7,7 +7,7 @@ use std::{path::Path, process::Stdio};
 
 use tokio::io::AsyncWriteExt as _;
 
-use super::{answered, command, succeeded, WorktreeError};
+use super::{answered, command, WorktreeError};
 
 /// What every patch here is printed with, whatever the person's config
 /// sets: color, external diffs, text conversion, rename detection, or a
@@ -54,16 +54,27 @@ pub(super) async fn squashed_into(
     // A commit touching more matches when, in those files, it makes the
     // branch's changes, which `base` then has. The files go on stdin, which
     // no command-line limit bounds, one a line, so a name with a newline
-    // in it leaves the commits unlimited. `-z` keeps names unquoted.
+    // in it leaves the commits unlimited. `-z` keeps names unquoted, and
+    // they stay bytes, untrimmed, as git wrote them.
     let names = ["diff", "--name-only", "-z", "--no-renames", "--no-relative"];
-    let names = succeeded(dir, "diff", [&names[..], &[fork.as_str(), commit]].concat()).await?;
-    let mut stdin = format!("{fork}..{base}\n");
-    let names: Vec<&str> = names.split('\0').filter(|name| !name.is_empty()).collect();
-    if !names.iter().any(|name| name.contains('\n')) {
-        stdin.push_str("--\n");
+    let names = command(dir, [&names[..], &[fork.as_str(), commit]].concat(), &[])
+        .output()
+        .await
+        .map_err(WorktreeError::NoGit)?;
+    if !names.status.success() {
+        return Err(failed(dir, "diff", &names));
+    }
+    let mut stdin = format!("{fork}..{base}\n").into_bytes();
+    let names: Vec<&[u8]> = names
+        .stdout
+        .split(|&byte| byte == 0)
+        .filter(|name| !name.is_empty())
+        .collect();
+    if !names.iter().any(|name| name.contains(&b'\n')) {
+        stdin.extend_from_slice(b"--\n");
         for name in names {
-            stdin.push_str(name);
-            stdin.push('\n');
+            stdin.extend_from_slice(name);
+            stdin.push(b'\n');
         }
     }
     let log = ["--stdin", "--no-merges", "--patch", "--format=commit %H"];
@@ -76,6 +87,15 @@ pub(super) async fn squashed_into(
     Ok(found)
 }
 
+/// `action`, a git command in `dir` that failed as `output` says.
+fn failed(dir: &Path, action: &str, output: &std::process::Output) -> WorktreeError {
+    WorktreeError::Git {
+        action: action.to_owned(),
+        repository: dir.to_path_buf(),
+        detail: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+    }
+}
+
 /// The stable patch ID of each patch `git <subcommand> PLAIN args`
 /// prints in `dir`, given `stdin`. The patches stream from that git
 /// process into `git patch-id`, so a long history never sits in memory.
@@ -83,13 +103,8 @@ async fn patch_ids(
     dir: &Path,
     subcommand: &str,
     args: &[&str],
-    stdin: Option<String>,
+    stdin: Option<Vec<u8>>,
 ) -> Result<Vec<String>, WorktreeError> {
-    let failed = |action: &str, output: &std::process::Output| WorktreeError::Git {
-        action: action.to_owned(),
-        repository: dir.to_path_buf(),
-        detail: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
-    };
     let (reader, writer) = std::io::pipe().map_err(WorktreeError::NoGit)?;
     let [literal, rest @ ..] = PLAIN;
     let full = [&[literal, subcommand][..], &rest, args].concat();
@@ -116,7 +131,7 @@ async fn patch_ids(
         // `--stdin` reads it all before printing, so this never waits on
         // the patches. Closed after, which ends git's input; a short write
         // shows as git's own failure below.
-        let _ = pipe.write_all(input.as_bytes()).await;
+        let _ = pipe.write_all(&input).await;
     }
     let (ids, patched) = tokio::join!(ids.wait_with_output(), patches.wait_with_output());
     let (ids, patched) = (
@@ -125,10 +140,10 @@ async fn patch_ids(
     );
     // First: when `patch-id` dies, the patches fail on the closed pipe.
     if !ids.status.success() {
-        return Err(failed("patch-id", &ids));
+        return Err(failed(dir, "patch-id", &ids));
     }
     if !patched.status.success() {
-        return Err(failed(subcommand, &patched));
+        return Err(failed(dir, subcommand, &patched));
     }
     // `<patch id> <commit>`, one line per patch.
     Ok(String::from_utf8_lossy(&ids.stdout)
