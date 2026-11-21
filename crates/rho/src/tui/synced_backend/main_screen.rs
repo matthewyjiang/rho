@@ -89,11 +89,11 @@ impl SyncedBackend {
         queue_erase_rows(&mut self.inner, 0..height)
     }
 
-    /// Paints every row of `buffer` on the screen rows from the top.
-    fn paint_rows(&mut self, buffer: &Buffer) -> io::Result<()> {
-        for row in 0..buffer.area.height {
-            queue_erase_rows(&mut self.inner, row..row + 1)?;
-            let cells = row_cells(buffer, buffer.area.top() + row, row);
+    /// Paints `buffer` rows `rows` on the screen rows from the top.
+    fn paint_rows(&mut self, buffer: &Buffer, rows: Range<u16>) -> io::Result<()> {
+        for (screen_row, row) in (0..).zip(rows) {
+            queue_erase_rows(&mut self.inner, screen_row..screen_row + 1)?;
+            let cells = row_cells(buffer, buffer.area.top() + row, screen_row);
             self.inner.draw(cells.into_iter())?;
         }
         Ok(())
@@ -113,17 +113,26 @@ impl SyncedBackend {
         Ok(())
     }
 
-    /// Writes every row of `rows`, which fit on the screen, into the
-    /// terminal's scrollback below whatever scrolled there before.
+    /// Writes every row of `rows` into the terminal's scrollback below
+    /// whatever scrolled there before, a screen at a time.
+    ///
+    /// The height is read again for each slice, so a screen that shrank
+    /// since the caller sized `rows` never gets rows painted past its bottom
+    /// row, where they would overwrite each other.
     ///
     /// Leaves the visible rows undefined: the caller repaints every row
     /// ([`repaint_every_row`]) and draws a full frame in the same update.
     pub(crate) fn push_to_scrollback(&mut self, rows: &Buffer) -> io::Result<()> {
         debug_assert_eq!(self.screen, TerminalScreen::Main);
-        debug_assert!(rows.area.height <= self.size()?.height);
         queue!(self.inner, BeginSynchronizedUpdate)?;
-        self.paint_rows(rows)?;
-        self.scroll_up(rows.area.height)
+        let mut start = 0;
+        while start < rows.area.height {
+            let count = (rows.area.height - start).min(self.size()?.height.max(1));
+            self.paint_rows(rows, start..start + count)?;
+            self.scroll_up(count)?;
+            start += count;
+        }
+        Ok(())
     }
 
     /// Scrolls the rows above `cursor` into scrollback, so frames can take
@@ -152,7 +161,7 @@ impl SyncedBackend {
         debug_assert_eq!(self.screen, TerminalScreen::Main);
         let height = self.size()?.height;
         queue!(self.inner, BeginSynchronizedUpdate)?;
-        self.paint_rows(tail)?;
+        self.paint_rows(tail, 0..tail.area.height)?;
         queue_erase_rows(&mut self.inner, tail.area.height..height)?;
         queue!(self.inner, MoveTo(0, tail.area.height), Show)?;
         Backend::flush(self)

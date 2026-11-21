@@ -26,6 +26,7 @@ use ratatui::{
 
 use super::{
     history_cache::{HistoryLineCache, HistoryRenderSettings},
+    render::entry_lines,
     screen_layout::terminal_meets_minimum,
     synced_backend::repaint_every_row,
     App, DefaultTerminal,
@@ -74,6 +75,33 @@ impl FeedMark {
             _ => mark,
         }
     }
+
+    /// The mark after its entry, `old_len` rows at the last paint's width,
+    /// rewrapped to `new_len` rows. The written share of the entry keeps its
+    /// proportion, rounded down: wrapping does not split text evenly, and a
+    /// repeated row is better than a lost one.
+    fn rewrapped(self, old_len: usize, new_len: usize) -> Self {
+        match self {
+            Self::Entry { index, line } if old_len > 0 => Self::Entry {
+                index,
+                line: line.min(old_len).saturating_mul(new_len) / old_len,
+            },
+            Self::Entry { .. } | Self::Header(_) => self,
+        }
+    }
+}
+
+/// Whether a paint writes rows to scrollback.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum FeedRows {
+    /// The session view is on screen, and rows leave it as it scrolls.
+    Write,
+    /// A screen that replaces the session (setup, attach, peek) is up: the
+    /// session's rows are not on screen, and its layout under that screen
+    /// would push rows the session view shows once it returns. A resize is
+    /// still reconciled, so rows a reflowing terminal pulled back are not
+    /// lost.
+    Hold,
 }
 
 /// Minimal mode's link between the history pane and native scrollback.
@@ -229,10 +257,20 @@ struct FeedDocument {
     committed_len: usize,
 }
 
+/// Rows [`App::take_unwritten_rows`] took, and screen rows to push back
+/// into scrollback before them.
+struct UnwrittenRows {
+    rows: Vec<Line<'static>>,
+    foreign_rows: u16,
+}
+
 /// The document and the mark's row in it, from [`App::settle_feed_mark`].
 struct SettledFeed {
     document: FeedDocument,
+    /// The mark's row, after any resize rewind.
     mark_row: usize,
+    /// Rows at the top of the screen to push back into scrollback first.
+    foreign_rows: u16,
     /// Whether entries were measured, which changes the frame's history.
     measured: bool,
 }
@@ -245,43 +283,46 @@ impl App {
     }
 
     /// Writes to scrollback any committed rows the next frame would scroll
-    /// off the top of the history pane. See [`App::paint`].
-    pub(super) fn feed_scrollback(&mut self, terminal: &mut DefaultTerminal) -> io::Result<()> {
+    /// off the top of the history pane, as `feed_rows` allows. See
+    /// [`App::paint`].
+    pub(super) fn feed_scrollback(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+        feed_rows: FeedRows,
+    ) -> io::Result<()> {
         let size = terminal.size()?;
         let area = Rect::new(0, 0, size.width, size.height);
         if !terminal_meets_minimum(area) {
-            return Ok(());
+            // No layout to feed from; the too-small notice still needs a
+            // whole repaint after a resize.
+            return if std::mem::take(&mut self.feed_mut().repaint_pending) {
+                repaint_every_row(terminal)
+            } else {
+                Ok(())
+            };
         }
         // Rows above the mark are in scrollback; in-app scrolling is off.
         self.scroll_history_to_bottom();
         let mut ctx = self.frame_context(area);
         let settings = ctx.settings;
-        let settled = self.settle_feed_mark(settings);
+        let settled = self.settle_feed_mark(settings, size);
         if settled.measured {
             ctx = self.frame_context(area);
         }
         let document = settled.document;
-        let feed = self.feed_mut();
-        let resized = feed
-            .last_paint
-            .map(|last| last.size)
-            .filter(|previous| *previous != size);
-        feed.last_paint = Some(LastPaint { size, settings });
-        let mut rows = feed.retired.take().unwrap_or_default();
-        let rewind = match resized {
-            Some(previous) => ScrollbackFeed::rewind_after_resize(settled.mark_row, previous, size),
-            None => ResizeRewind {
-                mark_row: settled.mark_row,
-                foreign_rows: 0,
-            },
+        let (mut rows, end) = match feed_rows {
+            FeedRows::Write => {
+                let pane_height = usize::from(ctx.layout.history_content.height);
+                let pane_start = ctx.history_len.saturating_sub(pane_height);
+                let end = pane_start.min(document.committed_len).max(settled.mark_row);
+                (self.feed_mut().retired.take().unwrap_or_default(), end)
+            }
+            FeedRows::Hold => (Vec::new(), settled.mark_row),
         };
-        let pane_height = usize::from(ctx.layout.history_content.height);
-        let pane_start = ctx.history_len.saturating_sub(pane_height);
-        let end = pane_start.min(document.committed_len).max(rewind.mark_row);
-        rows.extend(self.feed_rows(settings, rewind.mark_row..end));
+        rows.extend(self.feed_rows(settings, settled.mark_row..end));
         self.set_feed_mark(end, document);
         let repaint = std::mem::take(&mut self.feed_mut().repaint_pending);
-        if rows.is_empty() && rewind.foreign_rows == 0 {
+        if rows.is_empty() && settled.foreign_rows == 0 {
             return if repaint {
                 repaint_every_row(terminal)
             } else {
@@ -290,7 +331,7 @@ impl App {
         }
         terminal
             .backend_mut()
-            .push_screen_top(rewind.foreign_rows)?;
+            .push_screen_top(settled.foreign_rows)?;
         write_to_scrollback(terminal, &rows, size)?;
         repaint_every_row(terminal)
     }
@@ -305,6 +346,7 @@ impl App {
         let mut rows = feed.retired.take().unwrap_or_default();
         let last_settings = feed.last_paint.map(|last| last.settings);
         let size = terminal.size()?;
+        let mut foreign_rows = 0;
         let area = Rect::new(0, 0, size.width, size.height);
         // Too small a screen lays out no frame; the last paint's settings
         // still render the rows.
@@ -314,8 +356,13 @@ impl App {
             last_settings
         };
         if let Some(settings) = settings {
-            rows.extend(self.take_unwritten_rows(settings));
+            let unwritten = self.take_unwritten_rows(settings, size);
+            rows.extend(unwritten.rows);
+            foreign_rows = unwritten.foreign_rows;
         }
+        // A resize since the last paint, such as during shutdown, is
+        // reconciled as a paint would.
+        terminal.backend_mut().push_screen_top(foreign_rows)?;
         let kept = rows.len().min(usize::from(size.height.saturating_sub(1)));
         let (head, tail) = rows.split_at(rows.len() - kept);
         write_to_scrollback(terminal, head, size)?;
@@ -328,40 +375,70 @@ impl App {
     /// scrollback yet, for the next paint to write, and starts the feed over
     /// at the new transcript's header. Call before replacing the transcript.
     pub(super) fn retire_scrollback_document(&mut self) {
-        let Some(settings) = self
+        let Some(last) = self
             .scrollback
             .as_ref()
             .filter(|feed| feed.retired.is_none())
             .and_then(|feed| feed.last_paint)
-            .map(|last| last.settings)
         else {
             return;
         };
-        let rows = self.take_unwritten_rows(settings);
+        // At the last paint's size, so there is no resize to reconcile.
+        let unwritten = self.take_unwritten_rows(last.settings, last.size);
         let feed = self.feed_mut();
-        feed.retired = Some(rows);
+        feed.retired = Some(unwritten.rows);
         feed.mark = FeedMark::Header(0);
         feed.mark_row = 0;
     }
 
     /// Every committed row after the mark, which moves to the document's end.
-    fn take_unwritten_rows(&mut self, settings: HistoryRenderSettings) -> Vec<Line<'static>> {
-        let settled = self.settle_feed_mark(settings);
+    fn take_unwritten_rows(
+        &mut self,
+        settings: HistoryRenderSettings,
+        size: Size,
+    ) -> UnwrittenRows {
+        let settled = self.settle_feed_mark(settings, size);
         let document = settled.document;
         let rows = self.feed_rows(settings, settled.mark_row..document.committed_len);
         self.set_feed_mark(document.committed_len, document);
-        rows
+        UnwrittenRows {
+            rows,
+            foreign_rows: settled.foreign_rows,
+        }
     }
 
-    /// Brings the mark up to date with the transcript ([`FeedMark::rewound`]),
-    /// then measures every entry from it on, so its rows have numbers.
-    fn settle_feed_mark(&mut self, settings: HistoryRenderSettings) -> SettledFeed {
+    /// Brings the mark up to date with the transcript ([`FeedMark::rewound`])
+    /// and the last paint's width ([`FeedMark::rewrapped`]), measures every
+    /// entry from it on, so its rows have numbers, then follows a resize
+    /// since the last paint ([`ScrollbackFeed::rewind_after_resize`]). Takes
+    /// `size` and `settings` as the last paint's from then on.
+    fn settle_feed_mark(&mut self, settings: HistoryRenderSettings, size: Size) -> SettledFeed {
         let operated = self.surfaces.operated_entry(self.history.entries());
         let removed_from = self.history.take_removed_from();
         let feed = self.feed_mut();
         let left_surface = feed.operated_surface.filter(|&last| operated != Some(last));
         feed.operated_surface = operated;
         feed.mark = feed.mark.rewound(left_surface, removed_from);
+        let last_paint = feed.last_paint.replace(LastPaint { size, settings });
+        let rewrap_from = last_paint
+            .map(|last| last.settings)
+            .filter(|previous| previous.width != settings.width);
+        if let (Some(previous), FeedMark::Entry { index, .. }) = (rewrap_from, feed.mark) {
+            if let Some(entry) = self.history.get(index) {
+                let rows = |settings: HistoryRenderSettings| {
+                    entry_lines(
+                        entry,
+                        settings.width,
+                        settings.max_tool_output_lines,
+                        settings.max_image_height,
+                    )
+                    .len()
+                };
+                let (old_len, new_len) = (rows(previous), rows(settings));
+                let feed = self.feed_mut();
+                feed.mark = feed.mark.rewrapped(old_len, new_len);
+            }
+        }
         let first = match self.feed_mut().mark {
             FeedMark::Entry { index, .. } => index,
             FeedMark::Header(_) => 0,
@@ -381,9 +458,19 @@ impl App {
             .as_ref()
             .expect("minimal mode has a feed")
             .mark_row(self.history.lines(), document);
+        let rewind = match last_paint.map(|last| last.size) {
+            Some(previous) if previous != size => {
+                ScrollbackFeed::rewind_after_resize(mark_row, previous, size)
+            }
+            Some(_) | None => ResizeRewind {
+                mark_row,
+                foreign_rows: 0,
+            },
+        };
         SettledFeed {
             document,
-            mark_row,
+            mark_row: rewind.mark_row,
+            foreign_rows: rewind.foreign_rows,
             measured,
         }
     }

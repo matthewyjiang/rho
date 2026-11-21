@@ -109,13 +109,18 @@ impl App {
     /// the history pane. Every session frame goes through here, except the
     /// mouse selection's redraw, which minimal mode never reaches.
     ///
-    /// A screen that replaces the session (setup, attach, peek) writes
-    /// nothing: the session's rows are not on screen, and its layout under
-    /// them, such as setup's pickers in the composer, would push rows the
-    /// session view shows once it returns.
+    /// A screen that replaces the session (setup, attach, peek) writes no
+    /// rows; see [`FeedRows::Hold`].
+    ///
+    /// [`FeedRows::Hold`]: super::scrollback_feed::FeedRows::Hold
     pub(super) fn paint(&mut self, terminal: &mut super::DefaultTerminal) -> std::io::Result<()> {
-        if self.terminal_owns_scrollback() && self.exclusive.shows_session() {
-            self.feed_scrollback(terminal)?;
+        if self.terminal_owns_scrollback() {
+            let feed_rows = if self.exclusive.shows_session() {
+                super::scrollback_feed::FeedRows::Write
+            } else {
+                super::scrollback_feed::FeedRows::Hold
+            };
+            self.feed_scrollback(terminal, feed_rows)?;
         }
         terminal.draw(|frame| self.draw(frame))?;
         Ok(())

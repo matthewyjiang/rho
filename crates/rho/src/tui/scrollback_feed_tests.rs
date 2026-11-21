@@ -127,3 +127,31 @@ fn transcript_changes_rewind_the_mark_before_them() {
         assert_eq!(mark.rewound(left_surface, removed_from), expected, "{name}");
     }
 }
+
+// Covers: a new width rewraps the entry the mark is in, so a line count from
+// the old width would skip its unwritten rows (wider) or repeat many written
+// ones (narrower). The written share keeps its proportion, rounded down.
+#[test]
+fn a_new_width_keeps_the_written_share_of_the_marked_entry() {
+    let entry = |line| FeedMark::Entry { index: 3, line };
+    let cases = [
+        ("wider, partly written", entry(180), 200, 100, entry(90)),
+        ("narrower, partly written", entry(50), 100, 200, entry(100)),
+        ("rounds down", entry(1), 3, 2, entry(0)),
+        ("whole entry", entry(200), 200, 100, entry(100)),
+        // Rows the entry grew by since the last paint stay unwritten.
+        (
+            "grew since the last paint",
+            entry(200),
+            220,
+            110,
+            entry(100),
+        ),
+        ("past the end", entry(usize::MAX), 200, 100, entry(100)),
+        ("empty before", entry(0), 0, 10, entry(0)),
+        ("header", FeedMark::Header(4), 10, 20, FeedMark::Header(4)),
+    ];
+    for (name, mark, old_len, new_len, expected) in cases {
+        assert_eq!(mark.rewrapped(old_len, new_len), expected, "{name}");
+    }
+}
