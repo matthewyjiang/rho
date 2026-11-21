@@ -4,6 +4,12 @@ use std::num::NonZeroU16;
 
 use vt100::Parser;
 
+/// Rows the main screen keeps after they scroll off the top. The longest
+/// scenario transcript (`fixture bulk one`, about 200 rows) fits several
+/// times over; a scenario that outgrows it loses its oldest rows and fails
+/// on them.
+const SCROLLBACK_ROWS: usize = 4096;
+
 /// Visible terminal state driven by a VT100 parser.
 pub struct ScreenModel {
     parser: Parser<TerminalReplies>,
@@ -86,7 +92,7 @@ impl ScreenModel {
             parser: Parser::new_with_callbacks(
                 rows,
                 cols,
-                /*scrollback_len*/ 0,
+                /*scrollback_len*/ SCROLLBACK_ROWS,
                 TerminalReplies::default(),
             ),
         }
@@ -136,6 +142,26 @@ impl ScreenModel {
     /// Full visible contents with trailing spaces trimmed per row.
     pub fn contents(&self) -> String {
         self.presented().contents()
+    }
+
+    /// Every row a user could scroll to, oldest first: the main screen's
+    /// scrollback, then the visible rows. Trailing spaces are trimmed.
+    pub fn history_rows(&self) -> Vec<String> {
+        let mut screen = self.presented().clone();
+        let cols = screen.size().1.get();
+        let scrollback = screen.scrollback_len();
+        let mut rows = Vec::with_capacity(scrollback + usize::from(self.rows()));
+        // Offset `n` puts scrollback row `len - n` at the top of the view.
+        for offset in (1..=scrollback).rev() {
+            screen.set_scrollback(offset);
+            rows.extend(screen.rows(0, cols).next());
+        }
+        screen.set_scrollback(0);
+        rows.extend(screen.rows(0, cols));
+        for row in &mut rows {
+            row.truncate(row.trim_end().len());
+        }
+        rows
     }
 
     /// Visible rows as individual strings with trailing spaces trimmed.
@@ -248,5 +274,14 @@ mod tests {
             shown.push(screen.contents());
         }
         assert_eq!(shown, ["old", "old", "old", "old", "new"]);
+    }
+
+    // Covers: history reads rows scrolled off the top in order, ahead of the
+    // visible rows, as a minimal-mode transcript leaves them.
+    #[test]
+    fn history_rows_lists_scrollback_before_the_visible_rows() {
+        let mut screen = ScreenModel::new(2, 10);
+        screen.process(b"one\r\ntwo\r\nthree\r\nfour");
+        assert_eq!(screen.history_rows(), ["one", "two", "three", "four"]);
     }
 }

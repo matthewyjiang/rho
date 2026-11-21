@@ -1,7 +1,8 @@
+use anyhow::Context as _;
 use std::{collections::VecDeque, path::PathBuf, sync::Arc, time::Duration};
 
 use questionnaire::QuestionnaireCancelReason;
-use synced_backend::{repaint_after_resize, DefaultTerminal};
+use synced_backend::{repaint_every_row, DefaultTerminal};
 mod activity;
 mod add_dir_command;
 mod advisor_command;
@@ -94,6 +95,7 @@ fn plural_suffix(count: usize) -> &'static str {
 
 pub(crate) use client_settings::TuiSettings;
 pub(crate) use first_run::SetupEntry;
+pub(crate) use synced_backend::TerminalScreen;
 mod antigravity_login;
 mod changelog_command;
 mod chat_media;
@@ -183,6 +185,7 @@ mod rendered_entry;
 mod run_lifecycle;
 mod screen_layout;
 mod screen_model;
+mod scrollback_feed;
 mod scrollbar;
 mod send_confirm;
 mod session_actions;
@@ -466,6 +469,9 @@ pub struct SessionBootstrap {
 
 pub struct ApplicationServices {
     pub(crate) config_repository: ConfigRepository,
+    /// Where the TUI draws: the alternate screen, or the main screen in
+    /// minimal mode. Fixed for the process.
+    pub(crate) screen: TerminalScreen,
     /// The `tui` client settings, theme, and chords read at startup. Toggles
     /// change this copy only; the files are not written.
     pub(crate) settings: TuiSettings,
@@ -495,12 +501,21 @@ pub use herdr_resume::ResumeLaunchOptions;
 pub(crate) use smoke_injection::seed_matrix_model_cache;
 
 pub(crate) async fn run(info: TuiBootstrap) -> anyhow::Result<Option<ExitReceipt>> {
-    let mut terminal = synced_backend::init();
+    let screen = info.services.screen;
+    let mut terminal = synced_backend::init(screen);
     let probe = terminal_probe::probe_terminal();
+    // After the probe, before the event reader takes stdin.
+    let claimed = match screen {
+        TerminalScreen::Main => synced_backend::claim_main_screen(&mut terminal),
+        TerminalScreen::Alternate => Ok(()),
+    };
     Theme::initialize_palette(probe.palette);
     Theme::apply_committed(&info.services.settings.theme);
     let herdr = info.services.herdr.clone();
-    let result = match smoke_injection::after_terminal_init() {
+    let started = claimed
+        .context("claim the main screen")
+        .and_then(|()| smoke_injection::after_terminal_init());
+    let result = match started {
         Ok(()) => {
             let mut app = App::new(
                 info,
@@ -509,7 +524,7 @@ pub(crate) async fn run(info: TuiBootstrap) -> anyhow::Result<Option<ExitReceipt
                     .with_override(std::env::var("RHO_PROGRAM_STATUS").ok().as_deref()),
             );
             app.spawn_initial_herdr_report();
-            app.terminal_session = Some(TerminalSession::acquire());
+            app.terminal_session = Some(TerminalSession::acquire(screen));
             let (result, mut program_status) = app.run(&mut terminal).await;
             // Teardown must clear the terminal record even when the loop
             // exits through an error rather than its clean-return path.
@@ -521,7 +536,7 @@ pub(crate) async fn run(info: TuiBootstrap) -> anyhow::Result<Option<ExitReceipt
         Err(error) => Err(error),
     };
     let _ = herdr.release().await;
-    ratatui::restore();
+    synced_backend::restore(screen);
     result
 }
 
@@ -559,6 +574,9 @@ struct App {
     pending: PendingWorkUi,
     pending_inline_shells: Vec<inline_shell::PendingShellTask>,
     history: HistoryUi,
+    /// Minimal mode's writer of committed rows into native scrollback;
+    /// `None` on the alternate screen.
+    scrollback: Option<scrollback_feed::ScrollbackFeed>,
     credential_store: Arc<dyn CredentialStore>,
     available_auths: Vec<String>,
     /// Who owns the full terminal. Setup and attach replace session chrome.

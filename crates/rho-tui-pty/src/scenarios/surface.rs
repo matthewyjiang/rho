@@ -217,6 +217,17 @@ pub(super) const IDLE: Scenario = Scenario::new(
     /*smoke*/ false,
 );
 
+/// [`IDLE`] in minimal mode, where the surface's top is in scrollback by the
+/// time the keyboard moves to it.
+pub(super) const IDLE_MINIMAL: Scenario = Scenario::new(
+    "surface_idle_action_minimal",
+    "Act on a surface partly in native scrollback, in minimal mode",
+    DEFAULT_SIZE,
+    IDLE_STEPS,
+    /*smoke*/ false,
+)
+.with_args(&["--minimal"]);
+
 fn drawn_once_after_reset(harness: &mut PtyHarness) -> Result<()> {
     harness.wait_for_text("Component gallery", STREAM)?;
     harness.wait_for_text(REACHABLE, STREAM)?;

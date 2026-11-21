@@ -16,6 +16,7 @@ pub(super) fn render_user_entry(prompt: &str, media: &[ChatMedia]) -> String {
 
 impl super::App {
     pub(super) fn set_history_entries(&mut self, entries: Vec<Entry>) {
+        self.retire_scrollback_document();
         self.history.set_entries(entries);
         self.history.images_mut().clear();
     }

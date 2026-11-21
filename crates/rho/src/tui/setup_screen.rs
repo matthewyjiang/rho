@@ -188,7 +188,7 @@ impl App {
     /// which would paint session chrome over the setup screen.
     fn open_setup_model_picker(&mut self, terminal: &mut super::DefaultTerminal) {
         self.show_setup_model_picker();
-        let _ = terminal.draw(|frame| self.draw(frame));
+        let _ = self.paint(terminal);
     }
 
     pub(super) fn show_setup_model_picker(&mut self) {

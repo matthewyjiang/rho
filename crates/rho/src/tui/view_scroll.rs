@@ -254,7 +254,8 @@ impl App {
         key: KeyEvent,
         terminal: &mut Terminal<B>,
     ) -> Result<bool, B::Error> {
-        if self.input_ui.composer().is_centered_overlay() {
+        // Minimal mode leaves scrolling to the terminal's scrollback.
+        if self.input_ui.composer().is_centered_overlay() || self.terminal_owns_scrollback() {
             return Ok(false);
         }
         match ReservedComposerKey::from_key(key) {

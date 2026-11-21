@@ -160,6 +160,11 @@ async fn run_inner(startup: Startup<'_>) -> anyhow::Result<()> {
         },
         services: ApplicationServices {
             config_repository,
+            screen: if cli.minimal || settings.minimal_mode {
+                tui::TerminalScreen::Main
+            } else {
+                tui::TerminalScreen::Alternate
+            },
             settings,
             first_run,
             auth_unavailable: missing_auth_error,

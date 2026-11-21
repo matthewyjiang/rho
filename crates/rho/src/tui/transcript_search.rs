@@ -321,6 +321,14 @@ impl App {
         &mut self,
         terminal: &mut Terminal<B>,
     ) -> Result<(), B::Error> {
+        if self.terminal_owns_scrollback() {
+            // Most of the transcript is in the terminal's scrollback, where
+            // only the terminal's own search reaches it.
+            self.notify_status(
+                "transcript search is off in minimal mode; use your terminal's search",
+            );
+            return Ok(());
+        }
         let size = terminal.size()?;
         let ctx = self.frame_context(Rect::new(0, 0, size.width, size.height));
         let height = ctx.layout.history_content.height as usize;

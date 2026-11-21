@@ -6,7 +6,8 @@ The interactive TUI owns the transcript viewport while it is open. Scroll with
 the built-in controls, not the terminal's scrollback, and use
 [in-app find](#find-in-the-transcript) instead of the terminal's search. When
 you exit, your previous shell view returns. If a session exists, Rho prints
-only a short saved-session summary.
+only a short saved-session summary. To keep the transcript in your terminal's
+scrollback instead, use [minimal mode](#minimal-mode).
 
 ```mermaid
 flowchart TD
@@ -147,9 +148,45 @@ absolute, `~/`, `file://`, or relative to the session working directory. Images
 inside prose and remote URLs render as alt text. Details:
 [Documents and images](/tools-workspace/documents-and-images).
 
+## Minimal mode
+
+`rho --minimal`, or `minimal_mode = true` in `~/.rho/clients/tui.toml`, draws
+the TUI on the terminal's main screen instead of the alternate screen. The
+composer and status rows stay at the bottom. As transcript rows scroll off the
+top, Rho writes them to the terminal's own scrollback, so the terminal's mouse
+wheel, selection, and search reach them, and they stay after you exit. The
+setting takes effect at the next launch. In `/config`, it is **Minimal mode**.
+
+Your terminal now owns the history, so these TUI features are off in minimal
+mode:
+
+- In-app scrolling: `pageup`/`pagedown` and the jump-to-bottom control do
+  nothing, and the mouse wheel scrolls the terminal.
+- Mouse capture: clicks reach the terminal, so card toggles and drag-to-copy
+  inside the TUI do not work. Use the terminal's selection.
+- [Find in the transcript](#find-in-the-transcript). Use your terminal's search.
+- Inline images, which show as text instead.
+
+Rows reach scrollback as they scroll off the top of the transcript. Live rows,
+such as a running tool or the paragraph a reply is still writing, stay on
+screen until they settle. Once a row is in scrollback, Rho cannot change it:
+it keeps the width it was written at, and if a provider retry replaces a
+partial reply, the partial rows stay above the retry. Settings that redraw
+the transcript, such as zen mode or showing reasoning output, and expanding
+a tool card with `ctrl+o`, change only the rows still on screen. While the
+keyboard is on a [surface](/tools-workspace#surfaces), the TUI shows all of
+it on screen, even rows already in scrollback; when you leave it, its final
+state goes to scrollback again. When you resize the
+window, a few rows may show twice in scrollback; Rho repeats rows rather than
+risk losing any. Opening another session with `/new` or `/resume`, or a
+daemon restart that replays the session, prints the header and transcript
+again below the old ones.
+
 ## Exit
 
-Leaving the TUI restores the prior shell view. Session data stays on disk under
+Leaving the TUI restores the prior shell view. In
+[minimal mode](#minimal-mode), the end of the transcript stays on screen
+instead. Session data stays on disk under
 the [sessions](/sessions) layout. Export a transcript with `/export` or
 `rho sessions export`.
 

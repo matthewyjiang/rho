@@ -80,6 +80,7 @@ pub(super) fn test_bootstrap() -> TuiBootstrap {
         },
         services: ApplicationServices {
             config_repository: ConfigRepository::temporary_for_tests().unwrap(),
+            screen: crate::tui::TerminalScreen::Alternate,
             settings: crate::tui::TuiSettings::default(),
             first_run: None,
             auth_unavailable: None,

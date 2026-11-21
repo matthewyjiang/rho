@@ -83,6 +83,7 @@ mod markdown_stream;
 mod mcp;
 mod mcp_composer;
 mod mermaid;
+mod minimal_mode;
 mod model_cycle_reasoning;
 mod model_prompts;
 mod new_session_prompt;
@@ -360,6 +361,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
     surface::FORM,
     surface::ESCAPE,
     surface::IDLE,
+    surface::IDLE_MINIMAL,
     surface::RESET,
     surface::ZEN,
     questionnaire::QUESTIONNAIRE_SCENARIO,
@@ -504,6 +506,13 @@ const ALL_SCENARIOS: &[Scenario] = &[
         DEFAULT_SIZE,
         &[],
         /*smoke*/ false,
+    ),
+    Scenario::new(
+        minimal_mode::MINIMAL_MODE_ID,
+        "Keep the transcript in native scrollback on the main screen",
+        DEFAULT_SIZE,
+        &[],
+        /*smoke*/ true,
     ),
     Scenario::new(
         continue_latest::CONTINUE_LATEST_ID,
@@ -682,6 +691,18 @@ const ALL_SCENARIOS: &[Scenario] = &[
     )
     .with_env(FIRST_RUN_SIGNIN_ENV)
     .with_setup(first_run::setup_without_credential_store),
+    // Setup's screen replaces the session, so in minimal mode it must not
+    // push the session's rows to scrollback under it.
+    Scenario::new(
+        "first_run_setup_minimal",
+        "Walk a minimal-mode first launch through setup into a session",
+        DEFAULT_SIZE,
+        FIRST_RUN_SETUP_STEPS,
+        /*smoke*/ false,
+    )
+    .with_env(FIRST_RUN_SIGNIN_ENV)
+    .with_setup(first_run::setup_without_credential_store)
+    .with_args(&["--minimal"]),
     Scenario::new(
         "first_run_decision_host",
         "Sign in to a decision-model host at first launch, then finish setup with a chat provider",

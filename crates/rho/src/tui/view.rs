@@ -104,6 +104,24 @@ fn draw_terminal_too_small(frame: &mut Frame<'_>, area: Rect) {
 }
 
 impl App {
+    /// Draws one session frame. In minimal mode it first writes to
+    /// scrollback any committed rows the frame would scroll off the top of
+    /// the history pane. Every session frame goes through here, except the
+    /// mouse selection's redraw, which minimal mode never captures the mouse
+    /// for.
+    ///
+    /// A screen that replaces the session (setup, attach, peek) writes
+    /// nothing: the session's rows are not on screen, and its layout under
+    /// them, such as setup's pickers in the composer, would push rows the
+    /// session view shows once it returns.
+    pub(super) fn paint(&mut self, terminal: &mut super::DefaultTerminal) -> std::io::Result<()> {
+        if self.terminal_owns_scrollback() && self.exclusive.shows_session() {
+            self.feed_scrollback(terminal)?;
+        }
+        terminal.draw(|frame| self.draw(frame))?;
+        Ok(())
+    }
+
     pub(super) fn draw(&mut self, frame: &mut Frame<'_>) {
         let now = Instant::now();
         let area = frame.area();
@@ -900,9 +918,17 @@ impl App {
     }
 
     pub(super) fn visible_history_start(&self, history_len: usize, height: usize) -> usize {
-        self.history
+        let start = self
+            .history
             .scroll_chrome()
-            .visible_start(history_len, height)
+            .visible_start(history_len, height);
+        // Minimal mode: rows above the feed's mark are in scrollback already.
+        // A surface with the keyboard may be among them, and the user must
+        // see what they operate, so it shows them again on screen.
+        match &self.scrollback {
+            Some(feed) if !self.surfaces.has_keyboard() => feed.clamp_start(start, history_len),
+            Some(_) | None => start,
+        }
     }
 
     fn refresh_statusline_state(&mut self) {

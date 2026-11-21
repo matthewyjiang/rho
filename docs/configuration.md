@@ -71,6 +71,7 @@ max_tool_output_lines = 10
 prompt_history_limit = 1000
 editing_mode = "default"
 check_for_updates = true
+minimal_mode = false
 ```
 
 `~/.rho/tui.toml` holds the theme and keybindings. Restart the TUI after you edit it:

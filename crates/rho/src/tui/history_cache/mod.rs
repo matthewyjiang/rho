@@ -356,13 +356,7 @@ impl HistoryLineCache {
         image_resolver: EntryImageResolver<'_>,
     ) -> Option<usize> {
         self.ensure_current(entries, settings, image_resolver);
-        // Ranges are contiguous and sorted by start; binary search scales with
-        // long transcripts where linear scan showed up in mouse hit-testing.
-        let index = self.entry_ranges.partition_point(|range| range.end <= line);
-        self.entry_ranges
-            .get(index)
-            .filter(|range| range.contains(&line))
-            .map(|_| index.saturating_add(self.measured_from))
+        self.entry_at_cached_line(line).map(|(index, _)| index)
     }
 
     /// Cached line span of transcript `index`. Valid only while the cache is
@@ -373,6 +367,20 @@ impl HistoryLineCache {
     pub(super) fn entry_line_range(&self, transcript_index: usize) -> Option<Range<usize>> {
         let cache_index = self.cache_index(transcript_index)?;
         self.entry_ranges.get(cache_index).cloned()
+    }
+
+    /// Transcript index and first cached row of the entry holding cached row
+    /// `line`. Valid only while the cache is current, like
+    /// [`Self::entry_line_range`].
+    pub(super) fn entry_at_cached_line(&self, line: usize) -> Option<(usize, usize)> {
+        // Ranges are contiguous and sorted by start; binary search scales with
+        // long transcripts where linear scan showed up in mouse hit-testing.
+        let index = self.entry_ranges.partition_point(|range| range.end <= line);
+        let range = self
+            .entry_ranges
+            .get(index)
+            .filter(|range| range.contains(&line))?;
+        Some((index.saturating_add(self.measured_from), range.start))
     }
 
     /// Every measured transcript row in paint order, after bringing the cache

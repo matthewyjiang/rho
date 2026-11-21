@@ -59,6 +59,8 @@ pub(super) async fn open(
         // The TUI submits it from the composer, which sends it to the
         // session like any prompt.
         prompt: _,
+        // Where the TUI draws; the session never sees it.
+        minimal: _,
         // `None`: interactive launches have no subcommand.
         command: _,
     } = cli;

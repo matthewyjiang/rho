@@ -656,13 +656,12 @@ impl App {
     fn reset_provider_attempt_stream(&mut self, retry: super::activity::ProviderRetryHint) {
         self.reset_streams();
         self.turn.clear_tool_calls();
-        if let Some(start) = self
-            .turn
-            .provider_attempt_mut()
-            .reset_output(self.history.entries_mut())
+        let attempt = self.turn.provider_attempt_mut();
+        if self
+            .history
+            .remove_entries(|transcript| attempt.reset_output(transcript))
         {
             self.history.images_mut().clear();
-            self.history.invalidate_from(start);
         }
         self.set_status(retry.status_label());
         self.turn.set_provider_retry(retry);

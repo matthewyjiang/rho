@@ -550,6 +550,8 @@ impl App {
             // Local to `tui.toml`; the daemon never serves them.
             theme: _,
             keybindings,
+            // Read once at startup; the settings page marks it restart-only.
+            minimal_mode: _,
         } = next.clone();
         let runtime = &mut self.info.runtime;
         // Each changes how history renders.

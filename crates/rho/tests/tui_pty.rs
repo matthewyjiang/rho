@@ -530,6 +530,14 @@ fn smoke_terminal_restoration() {
     assert_pass("terminal_restoration");
 }
 
+// Covers: minimal mode keeps the transcript in native scrollback, once and in
+// order, through a resize and after exit, without the alternate screen.
+// Owner: interactive TUI
+#[test]
+fn smoke_minimal_mode() {
+    assert_pass("minimal_mode");
+}
+
 // Covers: an interactive workflow must use its own resizable screen, show typed parallel and
 // exclusive node states, and restore the terminal after a durable completion.
 // Owner: interactive TUI
@@ -621,6 +629,14 @@ credential_store = "file"
 #[test]
 fn first_launch_walks_the_full_screen_setup() {
     assert_pass("first_run_setup");
+}
+
+// Covers: minimal mode keeps the session header on screen after setup hands
+// off, rather than pushing it to scrollback under setup's screen.
+// Owner: interactive TUI minimal mode
+#[test]
+fn minimal_first_launch_shows_the_session_after_setup() {
+    assert_pass("first_run_setup_minimal");
 }
 
 #[test]
@@ -1030,6 +1046,14 @@ fn surface_escape_returns_the_keyboard_to_the_composer() {
 #[test]
 fn surface_action_after_its_call_returned_reaches_the_model() {
     assert_pass("surface_idle_action");
+}
+
+// Covers: in minimal mode, a surface whose top is already in native
+// scrollback shows in full while the keyboard is on it.
+// Owner: interactive TUI minimal mode
+#[test]
+fn minimal_surface_shows_in_full_while_operated() {
+    assert_pass("surface_idle_action_minimal");
 }
 
 // Covers: a reset replay must rebuild each surface once, without taking

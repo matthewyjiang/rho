@@ -41,7 +41,8 @@ pub(crate) async fn run(
         );
     }
 
-    let mut terminal = crate::tui::synced_backend::init();
+    let mut terminal =
+        crate::tui::synced_backend::init(crate::tui::synced_backend::TerminalScreen::Alternate);
     let _terminal_restore = RestoreTerminal {
         mouse_capture: mouse_capture::Guard::acquire(),
     };
@@ -108,7 +109,7 @@ async fn run_loop(
                         }
                     }
                     Event::Resize(_, _) => {
-                        crate::tui::repaint_after_resize(terminal)?;
+                        crate::tui::repaint_every_row(terminal)?;
                         terminal.draw(|frame| view::draw(frame, app))?;
                     }
                     Event::FocusGained => {

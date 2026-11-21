@@ -49,6 +49,9 @@ pub(crate) struct TuiSettings {
     pub(crate) theme: String,
     /// Chords from `tui.toml`; `editing_mode` comes from the client file.
     pub(crate) keybindings: Keybindings,
+    /// Draw on the terminal's main screen and keep the transcript in its
+    /// native scrollback. Read once at startup.
+    pub(crate) minimal_mode: bool,
 }
 
 impl Default for TuiSettings {
@@ -65,6 +68,7 @@ impl Default for TuiSettings {
             check_for_updates: true,
             theme: "terminal".into(),
             keybindings: Keybindings::default(),
+            minimal_mode: false,
         }
     }
 }
@@ -174,6 +178,7 @@ pub(crate) static TUI_SETTINGS: &[&dyn AnySetting<TuiSettings>] = &[
     &PROMPT_HISTORY_LIMIT,
     &EDITING_MODE,
     &CHECK_FOR_UPDATES,
+    &MINIMAL_MODE,
 ];
 
 const fn meta(label: &'static str, help: &'static str) -> SettingMeta {
@@ -313,6 +318,21 @@ static CHECK_FOR_UPDATES: Setting<TuiSettings, bool> = Setting {
     spec: (),
     get: |settings| settings.check_for_updates,
     set: |settings, enabled| settings.check_for_updates = enabled,
+    validate: any_value,
+};
+
+static MINIMAL_MODE: Setting<TuiSettings, bool> = Setting {
+    key: "minimal_mode",
+    meta: SettingMeta {
+        applies: Apply::Restart,
+        ..meta(
+            "Minimal mode",
+            "Draw on the terminal's main screen and keep the transcript in its native scrollback. Turns off mouse capture, in-app scrolling, transcript search, and inline images.",
+        )
+    },
+    spec: (),
+    get: |settings| settings.minimal_mode,
+    set: |settings, enabled| settings.minimal_mode = enabled,
     validate: any_value,
 };
 

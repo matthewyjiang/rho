@@ -141,7 +141,7 @@ impl App {
         }
 
         self.set_status("refreshing model list");
-        terminal.draw(|frame| self.draw(frame))?;
+        self.paint(terminal)?;
         for (provider, auth) in providers {
             if lists_decision_models(&provider) {
                 self.refresh_decision_models(&provider, &auth).await?;
