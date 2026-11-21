@@ -24,7 +24,6 @@ use crate::{
 use super::super::{
     live_started_at,
     model_performance::ModelPerformanceAggregate,
-    mouse_capture,
     provider_attempt::ProviderAttempt,
     render::truncate_one_line,
     scrollbar::{HistoryScrollChrome, HistoryScrollbar, ScrollbarMouseInput},
@@ -557,9 +556,9 @@ impl AttachmentApp {
                 }
                 AttachInput::Stay
             }
+            // The app re-asserts mouse capture, which minimal mode leaves off.
             Event::FocusGained => {
                 self.clear_press();
-                mouse_capture::reassert();
                 AttachInput::Stay
             }
             Event::FocusLost => {

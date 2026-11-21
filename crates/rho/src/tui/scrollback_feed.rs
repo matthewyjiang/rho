@@ -28,7 +28,7 @@ use super::{
     history_cache::{HistoryLineCache, HistoryRenderSettings},
     screen_layout::terminal_meets_minimum,
     synced_backend::repaint_every_row,
-    App, DefaultTerminal, Entry,
+    App, DefaultTerminal,
 };
 
 /// How much of the history document is in scrollback.
@@ -40,6 +40,40 @@ enum FeedMark {
     /// entry `index`. Past the entry's end means all of it, so rows the entry
     /// grows by land after the mark.
     Entry { index: usize, line: usize },
+}
+
+impl FeedMark {
+    /// The mark after the transcript changed under rows already written.
+    ///
+    /// `left_surface` is the entry of a surface the keyboard just left: it
+    /// may have changed in rows already written, so it is written again from
+    /// its start. `removed_from` is the first entry removed or moved: indices
+    /// from it on no longer mean what was written, so the mark steps back
+    /// before it. What was written of either stays in scrollback.
+    fn rewound(self, left_surface: Option<usize>, removed_from: Option<usize>) -> Self {
+        let Self::Entry { index, .. } = self else {
+            return self;
+        };
+        let mark = match left_surface {
+            Some(surface) if surface <= index => Self::Entry {
+                index: surface,
+                line: 0,
+            },
+            Some(_) | None => self,
+        };
+        match (mark, removed_from) {
+            (Self::Entry { index, .. }, Some(removed)) if index >= removed => {
+                match removed.checked_sub(1) {
+                    Some(kept) => Self::Entry {
+                        index: kept,
+                        line: usize::MAX,
+                    },
+                    None => Self::Header(usize::MAX),
+                }
+            }
+            _ => mark,
+        }
+    }
 }
 
 /// Minimal mode's link between the history pane and native scrollback.
@@ -54,8 +88,13 @@ pub(super) struct ScrollbackFeed {
     retired: Option<Vec<Line<'static>>>,
     /// `None` before the first paint.
     last_paint: Option<LastPaint>,
-    /// Whether a surface had the keyboard at the last paint.
-    surface_had_keyboard: bool,
+    /// The transcript entry of the surface the keyboard was on at the last
+    /// paint. The pane shows all of it, rows in scrollback too, since the
+    /// user must see what they operate.
+    operated_surface: Option<usize>,
+    /// Set by a resize, for the next paint to repaint every row once rows a
+    /// reflowing terminal pulled back onto the screen are back in scrollback.
+    repaint_pending: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -81,14 +120,26 @@ impl ScrollbackFeed {
             mark_row: 0,
             retired: None,
             last_paint: None,
-            surface_had_keyboard: false,
+            operated_surface: None,
+            repaint_pending: false,
         }
     }
 
     /// `start`, the pane's first row of `history_len`, moved past rows the
-    /// feed already wrote, so none shows twice.
+    /// feed already wrote, so none shows twice, unless a surface has the
+    /// keyboard.
     pub(super) fn clamp_start(&self, start: usize, history_len: usize) -> usize {
-        start.max(self.mark_row.min(history_len))
+        match self.operated_surface {
+            Some(_) => start,
+            None => start.max(self.mark_row.min(history_len)),
+        }
+    }
+
+    /// Defers the repaint a resize needs to the next paint. Erasing now
+    /// would blank rows a reflowing terminal pulled back from scrollback
+    /// before the paint pushes them back there.
+    pub(super) fn repaint_after_resize(&mut self) {
+        self.repaint_pending = true;
     }
 
     /// How the feed follows the screen going from `previous` to `size`.
@@ -96,24 +147,31 @@ impl ScrollbackFeed {
     /// Terminals that reflow on resize pull scrollback rows back onto a
     /// taller screen, where the next frame would paint over them. The mark
     /// steps back over the document rows among them, so those show again and
-    /// later scroll out as usual. Rows pulled back from before the document,
-    /// the shell's or a replaced transcript's, go back into scrollback. A
-    /// terminal that pulls nothing back repeats rows in scrollback instead: a
-    /// repeated row is better than a lost one. A shorter screen, or a new
-    /// width, keeps the mark, for the same reason.
+    /// later scroll out as usual. With a new width the pulled-back rows no
+    /// longer line up with the document's rows, so the mark steps back twice
+    /// as far. Rows pulled back from before the document, the shell's or a
+    /// replaced transcript's, go back into scrollback. A terminal that pulls
+    /// nothing back repeats rows in scrollback instead: a repeated row is
+    /// better than a lost one. A shorter screen keeps the mark, for the same
+    /// reason.
     fn rewind_after_resize(mark_row: usize, previous: Size, size: Size) -> ResizeRewind {
-        if previous.width != size.width || size.height <= previous.height {
+        if size.height <= previous.height {
             return ResizeRewind {
                 mark_row,
                 foreign_rows: 0,
             };
         }
         let grown = size.height - previous.height;
-        let rewound = mark_row.min(usize::from(grown));
+        let pulled_back = mark_row.min(usize::from(grown));
+        let rewound = if previous.width == size.width {
+            pulled_back
+        } else {
+            mark_row.min(2 * usize::from(grown))
+        };
         ResizeRewind {
             mark_row: mark_row - rewound,
-            // `rewound` is at most `grown`, a `u16`.
-            foreign_rows: grown - rewound as u16,
+            // `pulled_back` is at most `grown`, a `u16`.
+            foreign_rows: grown - pulled_back as u16,
         }
     }
 
@@ -222,8 +280,13 @@ impl App {
         let end = pane_start.min(document.committed_len).max(rewind.mark_row);
         rows.extend(self.feed_rows(settings, rewind.mark_row..end));
         self.set_feed_mark(end, document);
+        let repaint = std::mem::take(&mut self.feed_mut().repaint_pending);
         if rows.is_empty() && rewind.foreign_rows == 0 {
-            return Ok(());
+            return if repaint {
+                repaint_every_row(terminal)
+            } else {
+                Ok(())
+            };
         }
         terminal
             .backend_mut()
@@ -290,38 +353,15 @@ impl App {
         rows
     }
 
-    /// Brings the mark up to date with the transcript: steps it back before
-    /// removed entries, whose indices no longer mean what it wrote, and to
-    /// the start of a surface the keyboard just left, which may have changed
-    /// in rows already written. Then measures every entry from the mark on,
-    /// so its rows have numbers.
+    /// Brings the mark up to date with the transcript ([`FeedMark::rewound`]),
+    /// then measures every entry from it on, so its rows have numbers.
     fn settle_feed_mark(&mut self, settings: HistoryRenderSettings) -> SettledFeed {
-        let has_keyboard = self.surfaces.has_keyboard();
+        let operated = self.surfaces.operated_entry(self.history.entries());
+        let removed_from = self.history.take_removed_from();
         let feed = self.feed_mut();
-        let left_surface =
-            std::mem::replace(&mut feed.surface_had_keyboard, has_keyboard) && !has_keyboard;
-        if let FeedMark::Entry { index, .. } = feed.mark {
-            if left_surface && matches!(self.history.entries().get(index), Some(Entry::Surface(_)))
-            {
-                self.feed_mut().mark = FeedMark::Entry { index, line: 0 };
-            }
-        }
-        if let Some(removed) = self.history.take_removed_from() {
-            let feed = self.feed_mut();
-            if let FeedMark::Entry { index, .. } = feed.mark {
-                if index >= removed {
-                    // What was written of the removed entries stays in
-                    // scrollback; their replacements are written after it.
-                    feed.mark = match removed.checked_sub(1) {
-                        Some(kept) => FeedMark::Entry {
-                            index: kept,
-                            line: usize::MAX,
-                        },
-                        None => FeedMark::Header(usize::MAX),
-                    };
-                }
-            }
-        }
+        let left_surface = feed.operated_surface.filter(|&last| operated != Some(last));
+        feed.operated_surface = operated;
+        feed.mark = feed.mark.rewound(left_surface, removed_from);
         let first = match self.feed_mut().mark {
             FeedMark::Entry { index, .. } => index,
             FeedMark::Header(_) => 0,

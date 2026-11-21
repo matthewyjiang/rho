@@ -94,4 +94,14 @@ impl Surfaces {
     pub(super) fn has_keyboard(&self) -> bool {
         !matches!(self.focus, SurfaceFocus::Idle)
     }
+
+    /// The index in `entries`, the transcript, of the surface the keyboard
+    /// is on. `None` while it is elsewhere or on a live call's surface.
+    pub(super) fn operated_entry(&self, entries: &[super::Entry]) -> Option<usize> {
+        let (surface, _) = self.focus.place()?;
+        entries.iter().rposition(|entry| {
+            matches!(entry, super::Entry::Surface(shown)
+                if shown.surface == surface && shown.view.is_some())
+        })
+    }
 }

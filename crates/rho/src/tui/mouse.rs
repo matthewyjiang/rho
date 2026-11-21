@@ -487,6 +487,9 @@ impl App {
                         selection.update(position);
                     }
                     if selection.has_moved() {
+                        // Bypasses `App::paint`: minimal mode never captures
+                        // the mouse, so it has no selection to get here.
+                        debug_assert!(!self.terminal_owns_scrollback());
                         // Redraw so the completed frame holds the text the
                         // selection was made over; the terminal's current
                         // buffer is the cleared back buffer after a draw.

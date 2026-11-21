@@ -143,6 +143,11 @@ impl App {
 
     pub(super) fn route_attach_event(&mut self, event: Event) -> bool {
         let resize = matches!(event, Event::Resize(_, _));
+        if matches!(event, Event::FocusGained) {
+            if let Some(session) = &self.terminal_session {
+                session.reassert_mouse_capture();
+            }
+        }
         if let Event::Key(key) = event {
             if let Some(delta) = cycle_delta(key) {
                 self.cycle_attachment_view(delta);
