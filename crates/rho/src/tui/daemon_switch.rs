@@ -53,8 +53,7 @@ impl App {
         self.usage.current_context = None;
         self.turn.set_current_turn_start(None);
         self.discard_side_chat();
-        self.history.clear_entries();
-        self.history.images_mut().clear();
+        self.set_history_entries(Vec::new());
         self.history.set_images_dirty_from(None);
         self.history.lines_mut().invalidate_from(0);
         self.scroll_history_to_bottom();

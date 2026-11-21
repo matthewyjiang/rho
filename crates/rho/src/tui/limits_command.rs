@@ -209,7 +209,7 @@ impl App {
         terminal: &mut crate::tui::DefaultTerminal,
     ) -> anyhow::Result<()> {
         self.start_limits_command();
-        terminal.draw(|frame| self.draw(frame))?;
+        self.paint(terminal)?;
         Ok(())
     }
 

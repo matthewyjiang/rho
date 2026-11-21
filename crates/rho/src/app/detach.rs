@@ -52,6 +52,8 @@ pub(super) fn detach_flags(cli: &Cli) -> Result<Passed<'_>, Vec<&'static str>> {
         resume: _,
         continue_latest: _,
         prompt: _,
+        // A detached run opens no TUI to draw.
+        minimal: _,
         command: _,
     } = cli;
     let refused: Vec<_> = [

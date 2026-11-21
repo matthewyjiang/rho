@@ -134,6 +134,7 @@ fn a_home_saved_by_2x_loads_with_its_settings() {
                 check_for_updates: false,
                 theme: "nord".into(),
                 keybindings,
+                minimal_mode: false,
             },
             PermissionMode::Plan,
             Some(CredentialStoreBackend::File),

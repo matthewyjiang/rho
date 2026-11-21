@@ -50,6 +50,13 @@ impl App {
         let notifier = super::notifications::TerminalNotifier::new(
             super::notifications::NotificationChannel::detect(|key| std::env::var(key).ok()),
         );
+        let (image_picker, scrollback) = match info.services.screen {
+            super::TerminalScreen::Alternate => (picker_from_environment(), None),
+            // Graphics protocols do not survive the trip into scrollback.
+            super::TerminalScreen::Main => {
+                (None, Some(super::scrollback_feed::ScrollbackFeed::new()))
+            }
+        };
         let mut statusline = StatusLine::new(&info.runtime);
         statusline.update_not_saved(info.session.no_save);
         let mut app = Self {
@@ -74,10 +81,11 @@ impl App {
                 ..StreamUi::default()
             },
             turn: TurnUi::default(),
-            image_picker: picker_from_environment(),
+            image_picker,
             pending: PendingWorkUi::default(),
             pending_inline_shells: Vec::new(),
             history: HistoryUi::default(),
+            scrollback,
             credential_store,
             available_auths,
             exclusive: super::exclusive_screen::ExclusiveOccupant::Session,

@@ -47,7 +47,7 @@ pub(super) async fn run(
         })?;
         let event = events.next().await?;
         if matches!(event, Event::Resize(_, _)) {
-            crate::tui::repaint_after_resize(terminal)?;
+            crate::tui::repaint_every_row(terminal)?;
         }
         if let Event::Key(key) = &event {
             if key.kind != KeyEventKind::Press {

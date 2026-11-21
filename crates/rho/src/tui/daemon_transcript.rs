@@ -307,8 +307,10 @@ impl App {
         self.daemon_compact_turn = Some(DaemonCompactTurn::default());
         if matches!(self.history.last(), Some(Entry::User(_))) {
             let index = self.history.len() - 1;
-            self.history.entries_mut().pop();
-            self.history.invalidate_from(index);
+            self.history.remove_entries(|transcript| {
+                transcript.pop();
+                Some(index)
+            });
             if let Some(start) = self.turn.current_turn_start() {
                 self.turn.set_current_turn_start(Some(start.min(index)));
             }

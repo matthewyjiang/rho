@@ -42,7 +42,7 @@ impl App {
             },
             ChangelogRequest::Latest => {
                 if self.start_latest_changelog_command() {
-                    terminal.draw(|frame| self.draw(frame))?;
+                    self.paint(terminal)?;
                 }
             }
         }

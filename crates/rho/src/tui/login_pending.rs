@@ -47,7 +47,7 @@ impl App {
             InteractiveLoginMode::Browser => format!("starting {provider_label} login"),
             InteractiveLoginMode::Device => format!("starting {provider_label} device login"),
         });
-        terminal.draw(|frame| self.draw(frame))?;
+        self.paint(terminal)?;
         let login = match ProviderAuthentication::start_interactive_login(
             self.credential_store.as_ref(),
             &target.auth,

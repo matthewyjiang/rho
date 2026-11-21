@@ -8,8 +8,8 @@ use crate::herdr::{HerdrDelivery, HerdrSession};
 use super::herdr_resume::HerdrSyncStep;
 use super::program_status::{BlockedKind, ProgramStatus, ProgramStatusReporter};
 use super::{
-    media_attach, mouse_capture, ActivityPhase, ActivityStatus, App, BackgroundCounts,
-    ComposerMode, ExitReceipt, HerdrState, PanelOverlay, UserWait,
+    media_attach, ActivityPhase, ActivityStatus, App, BackgroundCounts, ComposerMode, ExitReceipt,
+    HerdrState, PanelOverlay, UserWait,
 };
 
 /// What blocks the session on the user, while resting or during a turn.
@@ -66,6 +66,9 @@ impl App {
         // enclosing startup poll frames, which must fit Windows' main stack.
         Box::pin(async move {
             let result = self.run_inner(terminal).await;
+            let released = self.release_main_screen(terminal);
+            // A loop error explains more than a failed release after it.
+            let result = result.and_then(|receipt| released.map(|()| receipt).map_err(Into::into));
             // Return the reporter on both success and error for startup's
             // canonical teardown, without retaining App on its stack frame.
             (result, self.program_status)
@@ -128,7 +131,7 @@ impl App {
             // A subagent may ask while no turn runs.
             needs_redraw |= self.answer_idle_daemon_input(terminal).await?;
             if needs_redraw {
-                terminal.draw(|frame| self.draw(frame))?;
+                self.paint(terminal)?;
                 needs_redraw = false;
                 if first_frame {
                     first_frame = false;
@@ -315,7 +318,9 @@ impl App {
         self.input_ui.cancel_pointer_click_sequence();
         // Some Windows hosts drop application mouse tracking on focus
         // changes; re-assert so wheel scrolling keeps working.
-        mouse_capture::reassert();
+        if let Some(session) = &self.terminal_session {
+            session.reassert_mouse_capture();
+        }
         self.refresh_workspace_on_focus();
     }
 
@@ -580,7 +585,10 @@ impl App {
         &mut self,
         terminal: &mut DefaultTerminal,
     ) -> std::io::Result<()> {
-        crate::tui::repaint_after_resize(terminal)?;
+        match &mut self.scrollback {
+            Some(feed) => feed.repaint_after_resize(),
+            None => crate::tui::repaint_every_row(terminal)?,
+        }
         self.flush_pending_paste_burst();
         self.clamp_overlay_detail_scroll(terminal);
         self.clamp_panel_overlay_scroll(terminal);

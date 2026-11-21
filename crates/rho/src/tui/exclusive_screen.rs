@@ -27,6 +27,15 @@ pub(super) enum ExclusiveOccupant {
 }
 
 impl ExclusiveOccupant {
+    /// Whether the session view is on screen, rather than a screen that
+    /// replaces it.
+    pub(super) fn shows_session(&self) -> bool {
+        match self {
+            Self::Session => true,
+            Self::Setup(_) | Self::Attach { .. } | Self::Peek { .. } => false,
+        }
+    }
+
     pub(super) fn setup_step(&self) -> Option<SetupStep> {
         match self {
             Self::Setup(step) => Some(*step),

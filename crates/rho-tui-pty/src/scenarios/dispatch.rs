@@ -4,7 +4,9 @@ use anyhow::Result;
 
 use crate::scenario::{ScenarioOutcome, ScenarioRunner};
 
-use super::{all_scenarios, calibrated_context, continue_latest, resume_scrollback, workflow};
+use super::{
+    all_scenarios, calibrated_context, continue_latest, minimal_mode, resume_scrollback, workflow,
+};
 
 pub fn run_named(runner: &ScenarioRunner, name: &str) -> Result<ScenarioOutcome> {
     let scenario = all_scenarios()
@@ -27,6 +29,9 @@ pub fn run_named(runner: &ScenarioRunner, name: &str) -> Result<ScenarioOutcome>
     }
     if resume_scrollback::is_resume_scrollback_scenario(name) {
         return resume_scrollback::run_resume_scrollback(runner);
+    }
+    if minimal_mode::is_minimal_mode_scenario(name) {
+        return minimal_mode::run_minimal_mode(runner);
     }
     if continue_latest::is_continue_latest_scenario(name) {
         return continue_latest::run_continue_latest(runner);

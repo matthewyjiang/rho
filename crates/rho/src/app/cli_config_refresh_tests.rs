@@ -28,6 +28,7 @@ fn test_cli() -> Cli {
         resume: None,
         continue_latest: false,
         prompt: None,
+        minimal: false,
         command: None,
     }
 }

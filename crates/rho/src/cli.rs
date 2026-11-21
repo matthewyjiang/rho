@@ -156,6 +156,14 @@ pub struct Cli {
     /// then exit.
     #[arg(long, value_name = "PROMPT")]
     pub prompt: Option<String>,
+    /// Draw the interactive TUI on the terminal's main screen so the
+    /// transcript stays in native scrollback, for this launch.
+    ///
+    /// Turns off mouse capture, in-app scrolling, transcript search, and
+    /// inline images. Set `minimal_mode = true` in `clients/tui.toml` to make
+    /// it the default.
+    #[arg(long)]
+    pub minimal: bool,
     #[command(subcommand)]
     pub command: Option<Command>,
 }

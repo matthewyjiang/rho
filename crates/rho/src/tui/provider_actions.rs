@@ -43,7 +43,7 @@ impl App {
         }
 
         self.set_status(format!("refreshing {} model list", target.provider));
-        terminal.draw(|frame| self.draw(frame))?;
+        self.paint(terminal)?;
         let config = self.info.services.config_repository.load()?;
         let endpoint = config.resolved_provider_endpoint(&target.provider);
         let model_endpoint = endpoint.as_ref().map_or(

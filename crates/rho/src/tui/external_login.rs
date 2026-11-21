@@ -134,7 +134,7 @@ impl App {
         E: std::error::Error + Send + Sync + 'static,
     {
         self.insert_entry(&Entry::Notice(spec.handoff_notice.into()));
-        terminal.draw(|frame| self.draw(frame))?;
+        self.paint(terminal)?;
 
         let mut terminal_session = self
             .terminal_session

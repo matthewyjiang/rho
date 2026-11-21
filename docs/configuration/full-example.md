@@ -120,6 +120,7 @@ show_header_hints = true # keyboard hints under the session header; sign-in hint
 notifications = true # OSC 9 or bell when a turn finishes or needs you while unfocused; off under Herdr
 editing_mode = "default" # or "vim" for vim-style normal/insert editing in the composer
 check_for_updates = true
+minimal_mode = false # true keeps the transcript in terminal scrollback; restart to apply
 ```
 
 The theme and keybinding chords live in `~/.rho/tui.toml`:

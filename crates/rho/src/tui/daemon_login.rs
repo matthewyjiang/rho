@@ -71,7 +71,7 @@ impl App {
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
         self.set_status(format!("checking the {} key", target.provider));
-        terminal.draw(|frame| self.draw(frame))?;
+        self.paint(terminal)?;
         let session = self.daemon_session();
         match session.save_key(&target.auth, key).await {
             Ok(saved) => {
@@ -117,7 +117,7 @@ impl App {
             return Ok(());
         }
         self.set_status(format!("starting {provider_label} login"));
-        terminal.draw(|frame| self.draw(frame))?;
+        self.paint(terminal)?;
         // The daemon's end maps them back (`app/login/relay_wire.rs`,
         // which only a platform with a daemon builds).
         let flow = match mode {
@@ -164,7 +164,7 @@ impl App {
         let (target, finish) = (pending.target.clone(), pending.finish.clone());
         let url = pending.prompt.copyable_url().to_string();
         self.set_status(format!("recording the {} login", target.provider));
-        terminal.draw(|frame| self.draw(frame))?;
+        self.paint(terminal)?;
         // The provider has one flow, so the daemon ignores this one.
         let flow = rho_protocol::LoginFlow::default();
         match self

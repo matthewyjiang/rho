@@ -20,6 +20,9 @@ pub(in crate::tui) struct HistoryUi {
     lines: HistoryLineCache,
     images: markdown_image::MarkdownImageCache,
     images_dirty_from: Option<usize>,
+    /// Lowest index whose entry was removed or moved since it was last
+    /// taken; see [`Self::remove_entries`].
+    removed_from: Option<usize>,
     scroll: HistoryScrollChrome,
     hovered_code_block_copy: Option<usize>,
     text_selection: Option<TextSelection>,
@@ -32,8 +35,33 @@ impl HistoryUi {
         &self.transcript
     }
 
-    pub(in crate::tui) fn entries_mut(&mut self) -> &mut Vec<Entry> {
+    /// Entries to edit in place. Removing entries goes through
+    /// [`Self::remove_entries`], which minimal mode's feed watches.
+    pub(in crate::tui) fn entries_mut(&mut self) -> &mut [Entry] {
         &mut self.transcript
+    }
+
+    /// Removes entries with `remove`, which returns the first index whose
+    /// entry it removed or moved, or `None` when it changed nothing, and
+    /// invalidates the caches from there. Returns whether anything changed.
+    pub(in crate::tui) fn remove_entries(
+        &mut self,
+        remove: impl FnOnce(&mut Vec<Entry>) -> Option<usize>,
+    ) -> bool {
+        let Some(first) = remove(&mut self.transcript) else {
+            return false;
+        };
+        self.removed_from = Some(
+            self.removed_from
+                .map_or(first, |earlier| earlier.min(first)),
+        );
+        self.invalidate_from(first);
+        true
+    }
+
+    /// The lowest index [`Self::remove_entries`] reported since the last call.
+    pub(in crate::tui) fn take_removed_from(&mut self) -> Option<usize> {
+        self.removed_from.take()
     }
 
     pub(in crate::tui) fn len(&self) -> usize {
@@ -48,13 +76,9 @@ impl HistoryUi {
         self.transcript.last_mut()
     }
 
-    pub(in crate::tui) fn clear_entries(&mut self) {
-        self.transcript.clear();
-        self.lines.mark_unmeasured(0);
-    }
-
     pub(in crate::tui) fn set_entries(&mut self, entries: Vec<Entry>) {
         self.transcript = entries;
+        self.removed_from = None;
         self.lines.mark_unmeasured(self.transcript.len());
     }
 
@@ -64,6 +88,10 @@ impl HistoryUi {
 
     pub(in crate::tui) fn get(&self, index: usize) -> Option<&Entry> {
         self.transcript.get(index)
+    }
+
+    pub(in crate::tui) fn lines(&self) -> &HistoryLineCache {
+        &self.lines
     }
 
     pub(in crate::tui) fn lines_mut(&mut self) -> &mut HistoryLineCache {

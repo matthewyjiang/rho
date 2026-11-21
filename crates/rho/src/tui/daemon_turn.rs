@@ -341,7 +341,7 @@ impl App {
         terminal: &mut DefaultTerminal,
         frame_scheduler: &mut FrameScheduler,
     ) -> anyhow::Result<()> {
-        terminal.draw(|frame| self.draw(frame))?;
+        self.paint(terminal)?;
         frame_scheduler.rendered(Instant::now());
         Ok(())
     }

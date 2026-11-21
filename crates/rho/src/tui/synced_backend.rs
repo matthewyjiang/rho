@@ -10,9 +10,11 @@
 use std::io::{self, Stdout};
 
 use crossterm::{
+    cursor::Show,
     execute, queue,
     terminal::{
-        self, enable_raw_mode, BeginSynchronizedUpdate, EndSynchronizedUpdate, EnterAlternateScreen,
+        self, disable_raw_mode, enable_raw_mode, BeginSynchronizedUpdate, EndSynchronizedUpdate,
+        EnterAlternateScreen,
     },
 };
 use ratatui::{
@@ -22,37 +24,77 @@ use ratatui::{
     Terminal,
 };
 
+mod main_screen;
+
+pub(crate) use main_screen::{claim_main_screen, queue_erase_rows};
+
 /// Rho's interactive terminal. Every TUI surface draws through this type so no
 /// frame bypasses synchronized output; `scripts/architecture.json` forbids
 /// ratatui's unsynchronized `init`, `try_init`, and `DefaultTerminal`.
 pub(crate) type DefaultTerminal = Terminal<SyncedBackend>;
 
+/// The terminal buffer frames draw on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TerminalScreen {
+    /// The alternate screen: frames own the whole terminal and leave the
+    /// user's scrollback untouched.
+    Alternate,
+    /// The main screen: frames still fill the visible rows, and rows written
+    /// with [`SyncedBackend::push_to_scrollback`] stay in the terminal's own
+    /// scrollback, where native scrolling, selection, and search reach them.
+    Main,
+}
+
 /// `ratatui::try_init` for [`SyncedBackend`]: install a panic hook that
-/// restores the terminal, enter raw mode and the alternate screen.
-pub(crate) fn try_init() -> io::Result<DefaultTerminal> {
+/// restores the terminal, enter raw mode, and enter `screen`.
+pub(crate) fn try_init(screen: TerminalScreen) -> io::Result<DefaultTerminal> {
     let hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        ratatui::restore();
+        restore(screen);
         hook(info);
     }));
     enable_raw_mode()?;
-    execute!(io::stdout(), EnterAlternateScreen)?;
-    Terminal::new(SyncedBackend(CrosstermBackend::new(io::stdout())))
+    match screen {
+        TerminalScreen::Alternate => execute!(io::stdout(), EnterAlternateScreen)?,
+        TerminalScreen::Main => {}
+    }
+    Terminal::new(SyncedBackend {
+        inner: CrosstermBackend::new(io::stdout()),
+        screen,
+    })
 }
 
 /// Panicking [`try_init`], mirroring `ratatui::init`. The panic runs the hook,
 /// so a half-initialized terminal is still restored.
-pub(crate) fn init() -> DefaultTerminal {
-    try_init().expect("failed to initialize terminal")
+pub(crate) fn init(screen: TerminalScreen) -> DefaultTerminal {
+    try_init(screen).expect("failed to initialize terminal")
 }
 
-/// Forces the next draw to repaint every cell after a terminal resize event.
+/// `ratatui::restore` for `screen`: leave raw mode and give the terminal back.
+///
+/// The main screen is never left: leaving an alternate screen that was never
+/// entered restores a cursor xterm saved at some earlier entry.
+pub(crate) fn restore(screen: TerminalScreen) {
+    match screen {
+        TerminalScreen::Alternate => ratatui::restore(),
+        TerminalScreen::Main => {
+            let _ = disable_raw_mode();
+            let _ = execute!(io::stdout(), EndSynchronizedUpdate, Show);
+        }
+    }
+}
+
+/// Forces the next draw to repaint every cell, as after a terminal resize event.
 ///
 /// Ratatui only clears when the size differs from its last frame. A shrink
 /// then restore can coalesce into events that all report the old size, yet
 /// the terminal truncated cells on the shrink; a diff-only redraw then leaves
 /// them blank. Call this from each surface's `Event::Resize` handler.
-pub(crate) fn repaint_after_resize(terminal: &mut DefaultTerminal) -> io::Result<()> {
+///
+/// Also clears for any other full repaint: unlike `Terminal::clear`, this
+/// never queries the cursor, whose reply the session's event reader would
+/// swallow.
+pub(crate) fn repaint_every_row(terminal: &mut DefaultTerminal) -> io::Result<()> {
     let size = terminal.size()?;
     terminal.resize(Rect::new(0, 0, size.width, size.height))
 }
@@ -64,7 +106,10 @@ pub(crate) fn repaint_after_resize(terminal: &mut DefaultTerminal) -> io::Result
 /// must be followed by a draw; ratatui's resize and autoresize always are.
 /// Both markers are idempotent, so no open-update state is tracked. Cells are
 /// reordered by [`write_covered_cells_first`] so wide emoji draw intact.
-pub(crate) struct SyncedBackend(CrosstermBackend<Stdout>);
+pub(crate) struct SyncedBackend {
+    inner: CrosstermBackend<Stdout>,
+    screen: TerminalScreen,
+}
 
 /// Size of the terminal this backend draws to, read from stdout with one ioctl.
 ///
@@ -127,35 +172,35 @@ impl Backend for SyncedBackend {
     where
         I: Iterator<Item = (u16, u16, &'a Cell)>,
     {
-        queue!(self.0, BeginSynchronizedUpdate)?;
+        queue!(self.inner, BeginSynchronizedUpdate)?;
         let mut cells: Vec<_> = content.collect();
         write_covered_cells_first(&mut cells);
-        self.0.draw(cells.into_iter())
+        self.inner.draw(cells.into_iter())
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        queue!(self.0, EndSynchronizedUpdate)?;
-        Backend::flush(&mut self.0)
+        queue!(self.inner, EndSynchronizedUpdate)?;
+        Backend::flush(&mut self.inner)
     }
 
     fn append_lines(&mut self, n: u16) -> io::Result<()> {
-        self.0.append_lines(n)
+        self.inner.append_lines(n)
     }
 
     fn hide_cursor(&mut self) -> io::Result<()> {
-        self.0.hide_cursor()
+        self.inner.hide_cursor()
     }
 
     fn show_cursor(&mut self) -> io::Result<()> {
-        self.0.show_cursor()
+        self.inner.show_cursor()
     }
 
     fn get_cursor_position(&mut self) -> io::Result<Position> {
-        self.0.get_cursor_position()
+        self.inner.get_cursor_position()
     }
 
     fn set_cursor_position<P: Into<Position>>(&mut self, position: P) -> io::Result<()> {
-        self.0.set_cursor_position(position)
+        self.inner.set_cursor_position(position)
     }
 
     fn clear(&mut self) -> io::Result<()> {
@@ -166,14 +211,16 @@ impl Backend for SyncedBackend {
     /// flushing it. Ratatui clears before redrawing a resized frame, and a
     /// flushed clear shows a blank screen until that frame arrives.
     fn clear_region(&mut self, clear_type: ClearType) -> io::Result<()> {
-        let clear_type = match clear_type {
-            ClearType::All => terminal::ClearType::All,
-            ClearType::AfterCursor => terminal::ClearType::FromCursorDown,
-            ClearType::BeforeCursor => terminal::ClearType::FromCursorUp,
-            ClearType::CurrentLine => terminal::ClearType::CurrentLine,
-            ClearType::UntilNewLine => terminal::ClearType::UntilNewLine,
+        queue!(self.inner, BeginSynchronizedUpdate)?;
+        let clear_type = match (clear_type, self.screen) {
+            (ClearType::All, TerminalScreen::Main) => return self.clear_rows(),
+            (ClearType::All, TerminalScreen::Alternate) => terminal::ClearType::All,
+            (ClearType::AfterCursor, _) => terminal::ClearType::FromCursorDown,
+            (ClearType::BeforeCursor, _) => terminal::ClearType::FromCursorUp,
+            (ClearType::CurrentLine, _) => terminal::ClearType::CurrentLine,
+            (ClearType::UntilNewLine, _) => terminal::ClearType::UntilNewLine,
         };
-        queue!(self.0, BeginSynchronizedUpdate, terminal::Clear(clear_type))
+        queue!(self.inner, terminal::Clear(clear_type))
     }
 
     fn size(&self) -> io::Result<Size> {
@@ -181,10 +228,10 @@ impl Backend for SyncedBackend {
         if let Some(size) = stdout_window_size() {
             return Ok(size);
         }
-        self.0.size()
+        self.inner.size()
     }
 
     fn window_size(&mut self) -> io::Result<WindowSize> {
-        self.0.window_size()
+        self.inner.window_size()
     }
 }

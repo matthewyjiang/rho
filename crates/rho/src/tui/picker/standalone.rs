@@ -11,7 +11,9 @@ pub(in crate::tui) async fn select(
     keybindings: &Keybindings,
     theme: &str,
 ) -> anyhow::Result<Option<String>> {
-    let mut terminal = crate::tui::synced_backend::try_init()?;
+    let mut terminal = crate::tui::synced_backend::try_init(
+        crate::tui::synced_backend::TerminalScreen::Alternate,
+    )?;
     let _restore = RestoreTerminal {
         keyboard: Some(keyboard_modes::Enabled::acquire()),
         mouse_capture: mouse_capture::Guard::acquire(),

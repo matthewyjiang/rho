@@ -111,6 +111,7 @@ async fn run_inner(startup: Startup<'_>) -> anyhow::Result<()> {
         no_system_prompt: cli.no_system_prompt,
         no_tools: cli.no_tools,
         no_subagents: cli.no_subagents,
+        minimal: cli.minimal,
     };
     // Background credential reads must stop writing to stderr before the TUI
     // takes ownership of the terminal.
@@ -160,6 +161,11 @@ async fn run_inner(startup: Startup<'_>) -> anyhow::Result<()> {
         },
         services: ApplicationServices {
             config_repository,
+            screen: if cli.minimal || settings.minimal_mode {
+                tui::TerminalScreen::Main
+            } else {
+                tui::TerminalScreen::Alternate
+            },
             settings,
             first_run,
             auth_unavailable: missing_auth_error,

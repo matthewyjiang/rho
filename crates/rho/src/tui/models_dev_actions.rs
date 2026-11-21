@@ -12,7 +12,7 @@ impl App {
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<usize> {
         self.set_status("refreshing models.dev catalog");
-        terminal.draw(|frame| self.draw(frame))?;
+        self.paint(terminal)?;
         let written = force_refresh_models_dev_catalog().await;
         if written == 0 {
             self.insert_entry(&Entry::Error(

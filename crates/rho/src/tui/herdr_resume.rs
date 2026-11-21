@@ -27,6 +27,7 @@ pub struct ResumeLaunchOptions {
     pub no_system_prompt: bool,
     pub no_tools: bool,
     pub no_subagents: bool,
+    pub minimal: bool,
 }
 
 /// The selection a resumed session would get from config alone.
@@ -263,6 +264,7 @@ pub(super) fn resume_argv(
         (launch.no_system_prompt, "--no-system-prompt"),
         (launch.no_tools, "--no-tools"),
         (launch.no_subagents, "--no-subagents"),
+        (launch.minimal, "--minimal"),
     ] {
         if enabled {
             argv.push(flag.into());

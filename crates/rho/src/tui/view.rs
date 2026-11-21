@@ -104,6 +104,28 @@ fn draw_terminal_too_small(frame: &mut Frame<'_>, area: Rect) {
 }
 
 impl App {
+    /// Draws one session frame. In minimal mode it first writes to
+    /// scrollback any committed rows the frame would scroll off the top of
+    /// the history pane. Every session frame goes through here, except the
+    /// mouse selection's redraw, which minimal mode never reaches.
+    ///
+    /// A screen that replaces the session (setup, attach, peek) writes no
+    /// rows; see [`FeedRows::Hold`].
+    ///
+    /// [`FeedRows::Hold`]: super::scrollback_feed::FeedRows::Hold
+    pub(super) fn paint(&mut self, terminal: &mut super::DefaultTerminal) -> std::io::Result<()> {
+        if self.terminal_owns_scrollback() {
+            let feed_rows = if self.exclusive.shows_session() {
+                super::scrollback_feed::FeedRows::Write
+            } else {
+                super::scrollback_feed::FeedRows::Hold
+            };
+            self.feed_scrollback(terminal, feed_rows)?;
+        }
+        terminal.draw(|frame| self.draw(frame))?;
+        Ok(())
+    }
+
     pub(super) fn draw(&mut self, frame: &mut Frame<'_>) {
         let now = Instant::now();
         let area = frame.area();
@@ -900,9 +922,13 @@ impl App {
     }
 
     pub(super) fn visible_history_start(&self, history_len: usize, height: usize) -> usize {
-        self.history
+        let start = self
+            .history
             .scroll_chrome()
-            .visible_start(history_len, height)
+            .visible_start(history_len, height);
+        self.scrollback
+            .as_ref()
+            .map_or(start, |feed| feed.clamp_start(start, history_len))
     }
 
     fn refresh_statusline_state(&mut self) {
