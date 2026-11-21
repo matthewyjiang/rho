@@ -130,23 +130,26 @@ fn transcript_changes_rewind_the_mark_before_them() {
 
 // Covers: a new width rewraps the entry the mark is in, so a line count from
 // the old width would skip its unwritten rows (wider) or repeat many written
-// ones (narrower). The written share keeps its proportion, rounded down.
+// ones (narrower), and a proportional mark skips unwritten rows that rewrap
+// less than the written ones.
 #[test]
-fn a_new_width_keeps_the_written_share_of_the_marked_entry() {
+fn a_new_width_never_marks_unwritten_rows_of_the_marked_entry() {
     let entry = |line| FeedMark::Entry { index: 3, line };
     let cases = [
-        ("wider, partly written", entry(180), 200, 100, entry(90)),
-        ("narrower, partly written", entry(50), 100, 200, entry(100)),
-        ("rounds down", entry(1), 3, 2, entry(0)),
+        // 180 long rows halve to 90; 20 short unwritten rows stay 20.
+        (
+            "wider, short rows unwritten",
+            entry(180),
+            200,
+            110,
+            entry(89),
+        ),
+        ("wider, partly written", entry(180), 200, 100, entry(79)),
+        ("narrower, partly written", entry(50), 100, 200, entry(49)),
+        ("nothing written", entry(0), 100, 50, entry(0)),
         ("whole entry", entry(200), 200, 100, entry(100)),
         // Rows the entry grew by since the last paint stay unwritten.
-        (
-            "grew since the last paint",
-            entry(200),
-            220,
-            110,
-            entry(100),
-        ),
+        ("grew since the last paint", entry(200), 220, 110, entry(89)),
         ("past the end", entry(usize::MAX), 200, 100, entry(100)),
         ("empty before", entry(0), 0, 10, entry(0)),
         ("header", FeedMark::Header(4), 10, 20, FeedMark::Header(4)),

@@ -77,15 +77,26 @@ impl FeedMark {
     }
 
     /// The mark after its entry, `old_len` rows at the last paint's width,
-    /// rewrapped to `new_len` rows. The written share of the entry keeps its
-    /// proportion, rounded down: wrapping does not split text evenly, and a
-    /// repeated row is better than a lost one.
+    /// rewrapped to `new_len` rows.
+    ///
+    /// Rows do not map across widths, and parts of an entry rewrap at
+    /// different rates, so the mark takes a bound that holds for any entry
+    /// whose content needs no more rows at a wider width: the written rows
+    /// need at least as many at a narrower width, and the unwritten rows no
+    /// more at a wider one. One more row back covers the row the boundary
+    /// may now share. A whole written entry stays whole.
     fn rewrapped(self, old_len: usize, new_len: usize) -> Self {
         match self {
-            Self::Entry { index, line } if old_len > 0 => Self::Entry {
-                index,
-                line: line.min(old_len).saturating_mul(new_len) / old_len,
-            },
+            Self::Entry { index, line } if old_len > 0 => {
+                let line = if line >= old_len {
+                    new_len
+                } else {
+                    let unwritten = old_len - line;
+                    line.min(new_len.saturating_sub(unwritten))
+                        .saturating_sub(1)
+                };
+                Self::Entry { index, line }
+            }
             Self::Entry { .. } | Self::Header(_) => self,
         }
     }
