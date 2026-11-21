@@ -1,5 +1,5 @@
 use pretty_assertions::assert_eq;
-use ratatui::layout::Size;
+use ratatui::{layout::Size, text::Line};
 
 use super::{FeedMark, ResizeRewind, ScrollbackFeed};
 
@@ -128,33 +128,165 @@ fn transcript_changes_rewind_the_mark_before_them() {
     }
 }
 
-// Covers: a new width rewraps the entry the mark is in, so a line count from
-// the old width would skip its unwritten rows (wider) or repeat many written
-// ones (narrower), and a proportional mark skips unwritten rows that rewrap
-// less than the written ones.
+// Covers: a new width rewraps the entry the mark is in, and parts of it
+// rewrap at different rates, so no row count from the old width says where
+// its unwritten rows start; a mark past them would never write them.
 #[test]
 fn a_new_width_never_marks_unwritten_rows_of_the_marked_entry() {
     let entry = |line| FeedMark::Entry { index: 3, line };
+    let lines = |rows: &[&str]| {
+        rows.iter()
+            .map(|&row| Line::from(row.to_owned()))
+            .collect::<Vec<_>>()
+    };
+    let paragraph = lines(&["aaa bbb", "ccc ddd", "eee"]);
+    let widened = lines(&["aaa bbb ccc", "ddd eee"]);
     let cases = [
-        // 180 long rows halve to 90; 20 short unwritten rows stay 20.
         (
-            "wider, short rows unwritten",
-            entry(180),
-            200,
-            110,
-            entry(89),
+            "wider, boundary mid-row",
+            entry(1),
+            paragraph.clone(),
+            widened.clone(),
+            entry(0),
         ),
-        ("wider, partly written", entry(180), 200, 100, entry(79)),
-        ("narrower, partly written", entry(50), 100, 200, entry(49)),
-        ("nothing written", entry(0), 100, 50, entry(0)),
-        ("whole entry", entry(200), 200, 100, entry(100)),
-        // Rows the entry grew by since the last paint stay unwritten.
-        ("grew since the last paint", entry(200), 220, 110, entry(89)),
-        ("past the end", entry(usize::MAX), 200, 100, entry(100)),
-        ("empty before", entry(0), 0, 10, entry(0)),
-        ("header", FeedMark::Header(4), 10, 20, FeedMark::Header(4)),
+        (
+            "wider, boundary on a row",
+            entry(2),
+            paragraph.clone(),
+            lines(&["aaa bbb ccc ddd", "eee"]),
+            entry(1),
+        ),
+        (
+            "narrower",
+            entry(1),
+            widened.clone(),
+            paragraph.clone(),
+            entry(1),
+        ),
+        // Long written rows halve; short unwritten rows stay.
+        (
+            "short rows unwritten",
+            entry(2),
+            lines(&["aaa", "bbb", "c", "d"]),
+            lines(&["aaa bbb", "c", "d"]),
+            entry(1),
+        ),
+        (
+            "blank rows unwritten",
+            entry(1),
+            lines(&["aaa", "", "", "bbb"]),
+            lines(&["aaa", "", "", "bbb"]),
+            entry(1),
+        ),
+        (
+            "other text at the new width",
+            entry(2),
+            lines(&["| a | b |", "| c | d |", "| e | f |"]),
+            lines(&["a  b", "c  d", "e  f"]),
+            entry(0),
+        ),
+        (
+            "whole entry",
+            entry(3),
+            paragraph.clone(),
+            widened.clone(),
+            entry(2),
+        ),
+        (
+            "header",
+            FeedMark::Header(4),
+            paragraph.clone(),
+            widened.clone(),
+            FeedMark::Header(4),
+        ),
     ];
-    for (name, mark, old_len, new_len, expected) in cases {
-        assert_eq!(mark.rewrapped(old_len, new_len), expected, "{name}");
+    for (name, mark, old, new, expected) in cases {
+        assert_eq!(mark.rewrapped(&old, &new), expected, "{name}");
     }
+}
+
+// Covers: real entries rewrap unevenly (a paragraph halves, a table switches
+// between source text and a boxed layout), so a mark at any row of the old
+// width keeps every word below it unwritten at the new width.
+#[test]
+fn a_new_width_keeps_every_unwritten_word_of_a_rendered_entry() {
+    use super::super::{
+        render::entry_lines,
+        types::{AssistantEntry, Entry},
+    };
+    let header: Vec<String> = (1..=10).map(|column| format!("h{column}")).collect();
+    let row = |row: usize| {
+        (1..=10)
+            .map(|column| format!("r{row}c{column}"))
+            .collect::<Vec<_>>()
+    };
+    let table_row = |cells: &[String]| format!("| {} |", cells.join(" | "));
+    let text = [
+        "lorem ipsum dolor sit amet ".repeat(12),
+        String::new(),
+        table_row(&header),
+        table_row(&vec!["---".to_owned(); 10]),
+        table_row(&row(1)),
+        table_row(&row(2)),
+        String::new(),
+        "short".to_owned(),
+        "tail".to_owned(),
+    ]
+    .join("\n");
+    let entry = Entry::Assistant(AssistantEntry::new(text));
+    let words = |rows: &[Line<'_>]| {
+        let mut words: Vec<String> = rows
+            .iter()
+            .flat_map(|row| row.spans.iter())
+            .flat_map(|span| span.content.split(|ch: char| !ch.is_alphanumeric()))
+            .filter(|word| !word.is_empty())
+            .map(str::to_owned)
+            .collect();
+        words.sort();
+        words
+    };
+    let intersection = |left: &[String], right: &[String]| {
+        let mut right = right.to_vec();
+        left.iter()
+            .filter(|word| match right.binary_search(word) {
+                Ok(found) => {
+                    right.remove(found);
+                    true
+                }
+                Err(_) => false,
+            })
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    let mut layouts = std::collections::BTreeSet::new();
+    for width in 30..110 {
+        for (old_width, new_width) in [(width, width + 1), (width + 1, width)] {
+            let old = entry_lines(&entry, old_width, 20, 10);
+            let new = entry_lines(&entry, new_width, 20, 10);
+            layouts.insert(old.iter().any(|row| row.to_string().contains('│')));
+            for line in 0..old.len() {
+                let mark = FeedMark::Entry { index: 0, line }.rewrapped(&old, &new);
+                let FeedMark::Entry { line: new_line, .. } = mark else {
+                    unreachable!("an entry mark stays an entry mark");
+                };
+                // Words the new width renders at all, as a narrow boxed
+                // table truncates its cells.
+                let mut missing = intersection(&words(&old[line..]), &words(&new));
+                for word in words(&new[new_line..]) {
+                    if let Ok(found) = missing.binary_search(&word) {
+                        missing.remove(found);
+                    }
+                }
+                assert!(
+                    missing.is_empty(),
+                    "{old_width} -> {new_width}, line {line} -> {new_line}: lost {missing:?}"
+                );
+            }
+        }
+    }
+    assert_eq!(
+        layouts.len(),
+        2,
+        "the table renders both ways in this range"
+    );
 }

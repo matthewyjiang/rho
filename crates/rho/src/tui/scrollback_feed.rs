@@ -76,29 +76,46 @@ impl FeedMark {
         }
     }
 
-    /// The mark after its entry, `old_len` rows at the last paint's width,
-    /// rewrapped to `new_len` rows.
+    /// The mark after its entry, rendered as `old` rows at the last paint's
+    /// width, is rendered as `new` rows.
     ///
-    /// Rows do not map across widths, and parts of an entry rewrap at
-    /// different rates, so the mark takes a bound that holds for any entry
-    /// whose content needs no more rows at a wider width: the written rows
-    /// need at least as many at a narrower width, and the unwritten rows no
-    /// more at a wider one. One more row back covers the row the boundary
-    /// may now share. A whole written entry stays whole.
-    fn rewrapped(self, old_len: usize, new_len: usize) -> Self {
-        match self {
-            Self::Entry { index, line } if old_len > 0 => {
-                let line = if line >= old_len {
-                    new_len
-                } else {
-                    let unwritten = old_len - line;
-                    line.min(new_len.saturating_sub(unwritten))
-                        .saturating_sub(1)
-                };
-                Self::Entry { index, line }
-            }
-            Self::Entry { .. } | Self::Header(_) => self,
+    /// Rows do not map across widths, so the boundary is found by content:
+    /// the unwritten rows' text, whitespace aside, must end the new rows, and
+    /// the mark goes to the last row before it, then back over blank rows.
+    /// When the entry renders other text at the new width, such as a table
+    /// that switches layout, the whole entry is written again: a repeated
+    /// row is better than a lost one. A whole written entry stays whole.
+    fn rewrapped(self, old: &[Line<'_>], new: &[Line<'_>]) -> Self {
+        let Self::Entry { index, line } = self else {
+            return self;
+        };
+        if old.is_empty() || line >= old.len() {
+            let line = if old.is_empty() { line } else { new.len() };
+            return Self::Entry { index, line };
         }
+        let unwritten = rows_text(&old[line..]);
+        let rows: Vec<String> = new
+            .iter()
+            .map(|row| rows_text(std::slice::from_ref(row)))
+            .collect();
+        let text = rows.concat();
+        let Some(written_text) = text.strip_suffix(unwritten.as_str()) else {
+            return Self::Entry { index, line: 0 };
+        };
+        // Rows wholly within the written text, then back over blank rows.
+        let mut end = 0;
+        let mut row = 0;
+        for row_text in &rows {
+            end += row_text.len();
+            if end > written_text.len() {
+                break;
+            }
+            row += 1;
+        }
+        while row > 0 && rows[row - 1].is_empty() {
+            row -= 1;
+        }
+        Self::Entry { index, line: row }
     }
 }
 
@@ -456,11 +473,10 @@ impl App {
                         settings.max_tool_output_lines,
                         settings.max_image_height,
                     )
-                    .len()
                 };
-                let (old_len, new_len) = (rows(previous), rows(settings));
+                let (old, new) = (rows(previous), rows(settings));
                 let feed = self.feed_mut();
-                feed.mark = feed.mark.rewrapped(old_len, new_len);
+                feed.mark = feed.mark.rewrapped(&old, &new);
             }
         }
         let first = match self.feed_mut().mark {
@@ -515,6 +531,15 @@ impl App {
     fn feed_mut(&mut self) -> &mut ScrollbackFeed {
         self.scrollback.as_mut().expect("minimal mode has a feed")
     }
+}
+
+/// The text of `rows` without whitespace, which wrapping adds and removes.
+fn rows_text(rows: &[Line<'_>]) -> String {
+    rows.iter()
+        .flat_map(|row| row.spans.iter())
+        .flat_map(|span| span.content.chars())
+        .filter(|ch| !ch.is_whitespace())
+        .collect()
 }
 
 /// Writes `rows` to scrollback a screen at a time.
