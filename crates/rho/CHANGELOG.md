@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.4.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v3.3.0...rho-coding-agent-v3.4.0) (2026-11-21)
+
+
+### Features
+
+* **tui:** add minimal mode that keeps the transcript in native scrollback ([#1993](https://github.com/matthewyjiang/rho/issues/1993)) ([7714be3](https://github.com/matthewyjiang/rho/commit/7714be3868ee87dbbba3b372d0882bd5f1af1c08))
+
 ## [3.3.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v3.2.0...rho-coding-agent-v3.3.0) (2026-11-18)
 
 
