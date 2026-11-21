@@ -293,9 +293,22 @@ impl App {
         let size = terminal.size()?;
         let area = Rect::new(0, 0, size.width, size.height);
         if !terminal_meets_minimum(area) {
-            // No layout to feed from; the too-small notice still needs a
-            // whole repaint after a resize.
-            return if std::mem::take(&mut self.feed_mut().repaint_pending) {
+            // No layout to feed from, but a resize is still reconciled at the
+            // last paint's settings, so the notice's repaint does not erase
+            // rows a reflowing terminal pulled back.
+            let foreign_rows = match self.feed_mut().last_paint {
+                Some(last) => {
+                    let settled = self.settle_feed_mark(last.settings, size);
+                    self.set_feed_mark(settled.mark_row, settled.document);
+                    settled.foreign_rows
+                }
+                None => 0,
+            };
+            let repaint = std::mem::take(&mut self.feed_mut().repaint_pending);
+            if foreign_rows > 0 {
+                terminal.backend_mut().push_screen_top(foreign_rows)?;
+            }
+            return if repaint || foreign_rows > 0 {
                 repaint_every_row(terminal)
             } else {
                 Ok(())
