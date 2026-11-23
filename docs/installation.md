@@ -39,6 +39,8 @@ scoop install https://raw.githubusercontent.com/matthewyjiang/rho/main/bucket/rh
 
 `rho update` recognizes custom Scoop roots from `SCOOP` and `SCOOP_GLOBAL`, as well as the default Scoop layout. It prints the Scoop update command, including `-g` for global installs, rather than replacing a Scoop-managed binary with the standalone installer.
 
+Run `rho daemon stop` before `scoop uninstall rho`. A Scoop install's [daemon](#the-daemon-and-services) runs from a copy under `~/.rho/daemon/bin`, so Scoop does not see it and leaves it running. `rho uninstall` stops it for you.
+
 To use a different directory, set `RHO_INSTALL_DIR`:
 
 ```bash
