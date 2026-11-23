@@ -92,8 +92,16 @@ pub(super) async fn connect_with(
             .await
             .map_err(|error| unreachable(error.to_string()));
     }
-    let spawner = daemon::ProcessSpawner::current_exe()
+    let executable = std::env::current_exe()
         .map_err(|error| unreachable(format!("could not find the rho executable: {error}")))?;
+    // Scoop will not update an app while a process runs from its directory,
+    // so the daemon of a Scoop install runs from a copy outside it.
+    let run_from = if crate::installation::scoop_install_scope(&executable).is_some() {
+        daemon::RunFrom::Copy
+    } else {
+        daemon::RunFrom::Installed
+    };
+    let spawner = daemon::ProcessSpawner::new(executable, run_from);
     daemon::connect_or_spawn(&paths, connect_as.hello(), &CheckedSpawner(spawner))
         .await
         .map_err(|error| unreachable(error.to_string()))

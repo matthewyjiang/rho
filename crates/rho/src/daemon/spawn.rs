@@ -16,6 +16,7 @@ use rho_protocol::{ClientError, ClientHello};
 
 use super::{
     client::{connect, ConnectError, Connection},
+    executable_copy,
     lock::{self, LockError},
     paths::DaemonPaths,
     platform::{self, DaemonPathError},
@@ -69,7 +70,8 @@ pub(crate) trait DaemonSpawner: Send + Sync {
 /// What [`DaemonSpawner::spawn`] returns.
 pub(crate) type SpawnFuture<'a> = Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>>;
 
-/// Starts `rho daemon run` from the current executable, detached from the
+/// Starts `rho daemon run` from an executable, or from a copy of it (see
+/// [`RunFrom`]), detached from the
 /// caller's terminal and, where the platform can, from the caller's
 /// service-manager unit.
 ///
@@ -89,32 +91,52 @@ pub(crate) type SpawnFuture<'a> = Pin<Box<dyn Future<Output = io::Result<()>> + 
 /// another directory there.
 pub(crate) struct ProcessSpawner {
     executable: PathBuf,
+    run_from: RunFrom,
+}
+
+/// Which file a [`ProcessSpawner`] runs the daemon from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RunFrom {
+    /// The executable where it is installed.
+    Installed,
+    /// A copy of the executable under `<state dir>/bin`, so no process runs
+    /// from the installation directory (see [`super::executable_copy`]).
+    Copy,
 }
 
 impl ProcessSpawner {
-    pub(crate) fn current_exe() -> io::Result<Self> {
-        Ok(Self {
-            executable: std::env::current_exe()?,
-        })
+    pub(crate) fn new(executable: PathBuf, run_from: RunFrom) -> Self {
+        Self {
+            executable,
+            run_from,
+        }
     }
 }
 
 impl DaemonSpawner for ProcessSpawner {
-    /// Spawns off the async runtime: placing the daemon waits on the
-    /// service manager.
+    /// Spawns off the async runtime: copying the executable writes a file,
+    /// and placing the daemon waits on the service manager.
     fn spawn<'a>(&'a self, paths: &'a DaemonPaths) -> SpawnFuture<'a> {
-        let mut command = Command::new(&self.executable);
-        command
-            .args(["daemon", "run"])
-            .env_clear()
-            .envs(daemon_environment(std::env::vars_os()))
-            .env("RHO_HOME", &paths.home)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
+        let executable = self.executable.clone();
+        let run_from = self.run_from;
         let paths = paths.clone();
         Box::pin(async move {
             tokio::task::spawn_blocking(move || {
+                let program = match run_from {
+                    RunFrom::Installed => executable,
+                    RunFrom::Copy => {
+                        executable_copy::stage(&executable, &paths.state_dir.join("bin"))?
+                    }
+                };
+                let mut command = Command::new(program);
+                command
+                    .args(["daemon", "run"])
+                    .env_clear()
+                    .envs(daemon_environment(std::env::vars_os()))
+                    .env("RHO_HOME", &paths.home)
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null());
                 let mut child = platform::spawn_detached(&mut command, &paths)?;
                 // Reap the daemon if it exits while this process is still
                 // running.

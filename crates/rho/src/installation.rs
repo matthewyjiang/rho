@@ -60,6 +60,22 @@ struct ScoopRoots {
     global: Option<String>,
 }
 
+impl ScoopRoots {
+    fn of_environment() -> Self {
+        Self {
+            user: std::env::var("SCOOP").ok(),
+            global: std::env::var("SCOOP_GLOBAL").ok(),
+        }
+    }
+}
+
+/// The Scoop install `path` belongs to, if any. Unlike [`detect`], this asks
+/// no package manager, so it is cheap enough to call before every daemon
+/// start.
+pub(crate) fn scoop_install_scope(path: &Path) -> Option<ScoopInstallScope> {
+    scoop_install_scope_for_path(path, &ScoopRoots::of_environment())
+}
+
 pub(crate) fn detect(path: &Path) -> InstallationEvidence {
     let cargo_metadata = cargo_root_from_bin_path(path).is_some_and(|root| {
         root.join(".crates.toml").exists() || root.join(".crates2.json").exists()
@@ -68,10 +84,7 @@ pub(crate) fn detect(path: &Path) -> InstallationEvidence {
     let managed = detect_with(
         path,
         &mise_installs_roots(|name| std::env::var_os(name)),
-        &ScoopRoots {
-            user: std::env::var("SCOOP").ok(),
-            global: std::env::var("SCOOP_GLOBAL").ok(),
-        },
+        &ScoopRoots::of_environment(),
         cargo_install_root_contains_crate,
         |path| {
             let owner = pacman_owner(path);
