@@ -763,8 +763,10 @@ pub enum McpWebhookCommand {
 pub enum McpRemoteCommand {
     /// Add remote NAME, or replace it, reading the secret of the token it
     /// issued this machine from stdin, and check that it answers:
-    /// `ssh NAME rho mcp token rotate hub --scope write --workspace DIR |
-    /// rho mcp remote add NAME --url URL`.
+    /// `ssh NAME '~/.local/bin/rho mcp token rotate hub --scope write
+    /// --workspace DIR' | rho mcp remote add NAME --url URL`, with the full
+    /// path of `rho` on NAME, which a non-interactive SSH shell may not
+    /// have on its PATH.
     Add {
         /// The remote's name, which `server` takes and webhook news names.
         #[arg(value_name = "NAME")]
