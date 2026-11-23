@@ -115,7 +115,7 @@ The hub connects to the machine on the MCP port, here TCP 8765. Allow that from 
 Check from the hub before you go on:
 
 ```bash
-curl -sS -o /dev/null -w '%{http_code}\n' http://100.92.10.4:8765/mcp
+curl -sS --noproxy '*' -o /dev/null -w '%{http_code}\n' http://100.92.10.4:8765/mcp
 ```
 
 `401` means the server is reachable and wants a token. A timeout or `connection refused` means it isn't: see [If `remote add` can't reach it](#remote-unreachable).
@@ -143,7 +143,7 @@ The token's secret goes from one machine to the other without reaching your term
 - The address, port, or path is wrong. The URL ends in `/mcp`.
 - The server isn't running on that machine, or listens on another address. `systemctl --user status rho-mcp` and `journalctl --user -u rho-mcp` there say which.
 
-The `curl` above tells you when it's fixed. Then run the same line again. The secret the failed line rotated was not saved on the hub, and rotating again replaces it, so running it again is safe. If the hub already had this remote, it is refused until the line succeeds, since the rotate replaced its secret.
+The `curl` above tells you when it's fixed. Then run the same line again. That is safe: the secret the failed line rotated was not saved on the hub, and the new rotate replaces it. If the hub already had this remote, it is refused until the line succeeds, since the rotate replaced its secret. A webhook watch of that remote's sessions stops after an hour of refusals; once the line succeeds, look for stopped watches in `rho mcp webhook list` and restart the hub or watch those sessions again.
 
 ## Once, in Grok Bot
 
