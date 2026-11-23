@@ -427,7 +427,7 @@ async fn a_session_runs_as_the_agent_its_client_names() {
 // Covers: `/agent:<name> <task>` in a daemon session rebinds the fresh
 // session to that agent before its turn: the model gets the agent's
 // instructions, which the default agent's lack, and the task alone, not the
-// command, and a follower gets the agent's options, which name it, before
+// command, and a follower hears the agent's id and gets its options before
 // the turn's output (#1670).
 // Owner: daemon session commands.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -471,7 +471,7 @@ async fn an_agent_command_runs_its_task_as_that_agent() {
     order.dedup();
     order.truncate(2);
     let rebound_to = events.iter().find_map(|event| match event {
-        SessionEvent::OptionsChanged { options } => Some(options.agent.clone()),
+        SessionEvent::Agent { id } => Some(id.clone()),
         _ => None,
     });
     assert_eq!(
@@ -480,7 +480,7 @@ async fn an_agent_command_runs_its_task_as_that_agent() {
             true,
             Some(serde_json::json!({"User": [{"Text": "summarize the notes"}]})),
             vec!["options_changed", "agent_message_chunk"],
-            Some(Some("archivist".to_owned())),
+            Some("archivist".to_owned()),
         ),
         "events: {events:?}\nlog:\n{}",
         sandbox.isolated.daemon_log()

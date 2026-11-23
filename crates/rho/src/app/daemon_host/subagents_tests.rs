@@ -200,7 +200,6 @@ async fn a_followed_run_lists_its_model_and_title() {
         },
         commands: Vec::new(),
         added_dirs: Vec::new(),
-        agent: None,
     };
     let titled = |title: &str| RunStatus {
         title: Some(title.into()),
@@ -237,9 +236,10 @@ async fn a_followed_run_lists_its_model_and_title() {
     let unopened = subagents.feeds().live(&session);
 
     events
-        .send(crate::app::subagent_pool::ChildEvent::Opened(Box::new(
-            options,
-        )))
+        .send(crate::app::subagent_pool::ChildEvent::Opened {
+            options: Box::new(options),
+            agent: "worker".into(),
+        })
         .unwrap();
     let early = listed(Some("Early title")).await;
     status_tx.send_replace(titled("Late title"));

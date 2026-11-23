@@ -51,14 +51,26 @@ fn shown(text: &str) -> wire::SessionEvent {
     }
 }
 
-/// The events an attach from `after` replays, and whether it resets. Also
-/// checks the count the attach reports, which the client reads before the
-/// lazily rendered events.
+/// The agent [`idle_feed`]'s session runs as.
+const AGENT: &str = "default";
+
+fn agent(id: &str) -> wire::SessionEvent {
+    wire::SessionEvent::Agent { id: id.into() }
+}
+
+/// The events an attach from `after` replays, and whether it resets; a
+/// reset's after the agent it starts with. Also checks the count the attach
+/// reports, which the client reads before the lazily rendered events, and
+/// that a reset starts with the agent.
 fn replay(feed: &Feed, after: Option<Cursor>) -> (Replay, Vec<(u64, wire::SessionEvent)>) {
     let (replay, events) = feed.state().replay_from(after.as_ref());
     let len = events.len;
-    let events: Vec<_> = events.events.map(|(seq, event)| (seq.0, event)).collect();
+    let mut events: Vec<_> = events.events.map(|(seq, event)| (seq.0, event)).collect();
     assert_eq!(len, events.len(), "the reported replay length");
+    if replay == Replay::Reset {
+        let (_, first) = events.remove(0);
+        assert_eq!(first, agent(AGENT), "a reset starts with the agent");
+    }
     (replay, events)
 }
 
@@ -81,7 +93,6 @@ fn options(mode: wire::PermissionMode) -> wire::SessionOptions {
         },
         commands: Vec::new(),
         added_dirs: Vec::new(),
-        agent: None,
     }
 }
 
@@ -91,6 +102,7 @@ fn idle_feed() -> Feed {
         /*turn*/ None,
         /*title*/ None,
         options(wire::PermissionMode::Bypass),
+        AGENT.into(),
     )
 }
 
@@ -282,6 +294,7 @@ fn an_attach_reports_the_saved_title_until_a_title_change() {
         /*turn*/ None,
         Some("Saved title".into()),
         options(wire::PermissionMode::Bypass),
+        AGENT.into(),
     );
     assert_eq!(feed.attach(None).title, Some("Saved title".into()));
     feed.publish([wire::SessionEvent::TitleChanged {
@@ -353,6 +366,32 @@ fn options_reach_clients_only_when_they_change() {
     assert_eq!(
         feed.attach(None).options,
         options(wire::PermissionMode::Plan)
+    );
+}
+
+// Covers: a reset starts with the agent the session runs as, which no saved
+// row holds: the one it opened as until an `/agent:` rebind changes it, and
+// clients hear of that change once.
+// Owner: daemon session feed.
+#[test]
+fn a_reset_starts_with_the_agent_a_rebind_last_named() {
+    let feed = idle_feed();
+    let opened = feed.reset_replay_for_tests().first().cloned();
+    feed.update_agent(AGENT);
+    feed.update_agent("archivist");
+    feed.update_agent("archivist");
+
+    assert_eq!(
+        (
+            opened,
+            feed.buffered_for_tests(),
+            feed.reset_replay_for_tests().first().cloned(),
+        ),
+        (
+            Some(agent(AGENT)),
+            vec![agent("archivist")],
+            Some(agent("archivist")),
+        ),
     );
 }
 

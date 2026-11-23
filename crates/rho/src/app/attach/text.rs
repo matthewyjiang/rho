@@ -84,7 +84,8 @@ impl<O: Write, E: Write> TextView<O, E> {
             // The steer shows once it applies, as a user message.
             | SessionEvent::SteeringDelivered { .. }
             | SessionEvent::Background { .. }
-            | SessionEvent::Activity { .. } => {}
+            | SessionEvent::Activity { .. }
+            | SessionEvent::Agent { .. } => {}
             // `SessionEvent` is non-exhaustive; an event a newer daemon sends
             // is not shown.
             _ => {}

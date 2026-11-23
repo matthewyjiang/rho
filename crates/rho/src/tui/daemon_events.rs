@@ -519,6 +519,8 @@ impl DaemonEvents {
             // The TUI shows the turn's state and the background rail; the
             // daemon's own wake turns arrive as turns.
             SessionEvent::Activity { .. } => Vec::new(),
+            // The transcript shows no agent change.
+            SessionEvent::Agent { .. } => Vec::new(),
             // `Unknown`, or an event a newer daemon sends.
             _ => Vec::new(),
         }

@@ -307,6 +307,22 @@ pub enum SessionEvent {
     /// `SessionAttachResponse` is not `#[non_exhaustive]`, so a field is a
     /// major change; until then the replay's last event carries the level.
     Activity { state: SessionActivity },
+    /// The agent the session runs as, by its id, as
+    /// [`super::SessionNewParams::agent`] takes it and the session saved
+    /// it: `default` for the default agent, which is an id like any other,
+    /// `worker`, or a workspace's own agent. A subagent's or workflow agent
+    /// node's session names the agent it runs as. Every reset replay starts
+    /// with it, since no saved transcript holds it, and a session an
+    /// `/agent:` first prompt rebinds sends it again, before its new
+    /// options.
+    ///
+    /// # Next major
+    ///
+    /// NEXT_MAJOR(rho-protocol): report the agent a session runs as in SessionOptions::agent and remove SessionEvent::Agent.
+    ///
+    /// `SessionOptions` is not `#[non_exhaustive]`, so a field is a major
+    /// change; until then a reset replay carries the agent as this event.
+    Agent { id: String },
     /// A value a newer daemon sends that this crate does not know; daemons
     /// never send it.
     #[serde(other)]

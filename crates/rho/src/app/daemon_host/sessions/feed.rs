@@ -19,7 +19,9 @@
 //! [`wire::SessionEvent::OptionsChanged`] left them, and its background
 //! work, as the last [`wire::SessionEvent::Background`] did, so an attach,
 //! and `rho/session/background/list`, report them without waiting for the
-//! runtime either.
+//! runtime either. It keeps the agent the session runs as, as the last
+//! [`wire::SessionEvent::Agent`] said it, which every reset replays first:
+//! no saved row holds it.
 //!
 //! A loaded session's feed reports whether the session is settled (see
 //! `settle`) as [`wire::SessionEvent::Activity`]: `active` goes out just
@@ -106,6 +108,9 @@ struct FeedState {
     title: Option<String>,
     /// The session's options, as the last options event sent them.
     options: wire::SessionOptions,
+    /// The id of the agent the session runs as: the one it opened as,
+    /// then the last agent event sent.
+    agent: String,
     /// The session's background work, as the last background event sent
     /// it.
     background: Vec<wire::BackgroundWork>,
@@ -218,12 +223,13 @@ impl Feed {
     /// session, its last turn's end for a reopened one (#1661), whose saved
     /// conversation [`Self::end_turn`] then adds. `turn` is the turn `job`
     /// is of, and `title` the one the session has saved, if any; the
-    /// session opened with `options`.
+    /// session opened with `options`, running as agent `agent`.
     pub(super) fn new(
         job: wire::JobState,
         turn: Option<wire::TurnId>,
         title: Option<String>,
         options: wire::SessionOptions,
+        agent: String,
     ) -> Self {
         Self {
             state: Mutex::new(FeedState {
@@ -242,6 +248,7 @@ impl Feed {
                 inputs: BTreeMap::new(),
                 title,
                 options,
+                agent,
                 background: Vec::new(),
                 usage: None,
                 saved_usage: None,
@@ -268,6 +275,15 @@ impl Feed {
             state.push(wire::SessionEvent::OptionsChanged {
                 options: Box::new(options),
             });
+        }
+    }
+
+    /// Tells attached clients the session runs as agent `id` now, unless
+    /// they already know: an `/agent:` rebind changes it.
+    pub(super) fn update_agent(&self, id: &str) {
+        let mut state = self.state();
+        if state.agent != id {
+            state.push(wire::SessionEvent::Agent { id: id.to_owned() });
         }
     }
 
@@ -508,6 +524,7 @@ impl FeedState {
             wire::SessionEvent::TitleChanged { title } => self.title = Some(title.clone()),
             wire::SessionEvent::Usage { .. } => self.usage = usage_of(&event),
             wire::SessionEvent::OptionsChanged { options } => self.options = (**options).clone(),
+            wire::SessionEvent::Agent { id } => self.agent.clone_from(id),
             wire::SessionEvent::Background { work } => self.background.clone_from(work),
             wire::SessionEvent::Activity { state } => self.activity = Some(*state),
             _ => {}
@@ -596,25 +613,30 @@ impl FeedState {
             .collect()
     }
 
-    /// The transcript and the usage as of its last save at seq 0 but the
-    /// last event, which carries the point the turn in progress began after,
-    /// then the turn's buffered events. No saved row holds usage, so without
-    /// it a client that resets shows no context or spend until the next
-    /// turn. The transcript renders as the client takes it, so a reset
-    /// never holds a long session's events at once.
+    /// The agent, the transcript, and the usage as of its last save at seq
+    /// 0 but the last event, which carries the point the turn in progress
+    /// began after, then the turn's buffered events. No saved row holds the
+    /// agent or usage, so without them a client that resets would not know
+    /// the agent, and would show no context or spend until the next turn.
+    /// The transcript renders as the client takes it, so a reset never
+    /// holds a long session's events at once.
     fn reset_events(&self) -> ReplayEvents {
+        let agent = wire::SessionEvent::Agent {
+            id: self.agent.clone(),
+        };
         let evicted = self.turn_start_evicted.then(|| wire::SessionEvent::Notice {
             text: TURN_START_EVICTED.to_owned(),
         });
         let usage = self.saved_usage.map(usage_event);
-        let saved =
-            self.transcript.len() + usize::from(evicted.is_some()) + usize::from(usage.is_some());
+        let saved = 1
+            + self.transcript.len()
+            + usize::from(evicted.is_some())
+            + usize::from(usage.is_some());
         let turn_start = self.turn_start;
         let tail = self.events_after(turn_start);
         let len = saved + tail.len();
-        let events = self
-            .transcript
-            .events()
+        let events = std::iter::once(agent)
+            .chain(self.transcript.events())
             .chain(evicted)
             .chain(usage)
             .enumerate()

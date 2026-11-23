@@ -16,10 +16,11 @@ use crate::{
 
 impl LoadedSession {
     /// Rebuilds the session's options from `runtime` and `auths` (see
-    /// [`available_auths`]), tells attached clients when they changed, and
-    /// returns them. Call after anything that may change them: a configure,
-    /// a plan approval's mode switch, a credential write, or a turn, which
-    /// may leave new skills, prompts, or MCP prompts behind.
+    /// [`available_auths`]), tells attached clients when they or the agent
+    /// the session runs as changed, and returns the options. Call after
+    /// anything that may change them: a configure, a plan approval's mode
+    /// switch, a credential write, an `/agent:` rebind, or a turn, which may
+    /// leave new skills, prompts, or MCP prompts behind.
     pub(super) fn refresh_options(
         &self,
         runtime: &SessionRuntime,
@@ -31,6 +32,8 @@ impl LoadedSession {
             .unwrap_or_else(std::sync::PoisonError::into_inner) =
             crate::app::session_mcp::SessionMcp::of(runtime);
         self.background.refresh(runtime);
+        // Before the options, so a client knows whose they are.
+        self.feed.update_agent(runtime.agent_id().as_str());
         let options = daemon_options(runtime, &self.config(), auths);
         self.feed.update_options(options.clone());
         self.feed.options()

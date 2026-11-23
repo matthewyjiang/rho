@@ -338,6 +338,7 @@ fn opening_feed(
         last.turn.clone(),
         runtime.stored_title(),
         options::daemon_options(runtime, config, auths),
+        runtime.agent_id().to_string(),
     );
     if let Some(saved) = saved_replay(&mut live, runtime, &job.id) {
         feed.end_turn(saved);

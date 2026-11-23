@@ -3,23 +3,23 @@
 //! each session's project trust is its own client's, and a prompt from a
 //! client with other trust is refused. A session's credentials are its own
 //! client's too: an API key in the starting client's environment signs in
-//! nobody else. A session's options name the agent it runs as, a subagent
-//! run's included, whether the daemon has it loaded or reads its file.
+//! nobody else. A session's replay names the agent it runs as, a subagent
+//! run's included, whether the daemon follows it or reads its file.
 
 use std::sync::{Arc, Mutex};
 
 use pretty_assertions::assert_eq;
 use rho_protocol::{
     methods::{JobList, SessionNew, SessionObserve, SessionPrompt},
-    Client, ClientEnvironment, ClientError, ContentBlock, ErrorCode, JobKind, JobListParams,
-    JobState, ProjectTrustMismatch, SessionEvent, SessionId, SessionNewParams,
-    SessionObserveParams, SessionPromptParams, SessionSetup,
+    Client, ClientEnvironment, ClientError, ContentBlock, DaemonNotification, ErrorCode, JobKind,
+    JobListParams, JobState, ProjectTrustMismatch, SessionEvent, SessionEventParams, SessionId,
+    SessionNewParams, SessionObserveParams, SessionPromptParams, SessionSetup,
 };
 use serde_json::json;
 
 use super::{
     key_checking_provider::spawn_provider,
-    sessions::{answer, blue, first_request, is_state, settled_job, Follower, Sandbox},
+    sessions::{answer, blue, first_request, is_state, settled_job, Follower, Sandbox, DEADLINE},
 };
 
 /// Every variable that grants a workspace's project files.
@@ -347,7 +347,7 @@ async fn a_prompt_refused_for_its_trust_leaves_the_session_and_its_viewers_alone
 }
 
 // Covers: an unloaded session replays as the agent it was saved as, and its
-// options name that agent. Observing carries no client environment, so no
+// replay names that agent. Observing carries no client environment, so no
 // trust to find a project's agent with: a session saved as one still
 // replays, and one saved as a built-in agent is not handed a project file of
 // the same name that appeared since.
@@ -385,22 +385,12 @@ async fn an_unloaded_session_replays_as_the_agent_it_was_saved_as() {
         .status()
         .unwrap();
     assert!(stopped.success(), "daemon stop: {stopped:?}");
-    let client = started_by_client(&sandbox, "fixed", &[]).await;
+    // Observed on connections of their own, which read the replay.
+    let _client = started_by_client(&sandbox, "fixed", &[]).await;
 
     let mut replayed = Vec::new();
     for (label, session) in saved {
-        let observed = client
-            .request::<SessionObserve>(&SessionObserveParams {
-                session,
-                after: None,
-            })
-            .await;
-        replayed.push((
-            label,
-            observed
-                .map(|observed| observed.options.agent)
-                .map_err(|error| error.to_string()),
-        ));
+        replayed.push((label, observed_agent(&sandbox, &session).await));
     }
 
     assert_eq!(
@@ -417,16 +407,34 @@ async fn an_unloaded_session_replays_as_the_agent_it_was_saved_as() {
     );
 }
 
-/// The agent `client`'s observe of `session` says it runs as.
-async fn observed_agent(client: &Client, session: &SessionId) -> Result<Option<String>, String> {
-    client
+/// The agent a new observer of `session` hears it runs as: what the
+/// `agent` event of its replay says, if the replay holds one.
+async fn observed_agent(sandbox: &Sandbox, session: &SessionId) -> Result<Option<String>, String> {
+    let (observer, mut notifications) = sandbox.connect_following().await;
+    let observed = observer
         .request::<SessionObserve>(&SessionObserveParams {
             session: session.clone(),
             after: None,
         })
         .await
-        .map(|observed| observed.options.agent)
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    let mut agent = None;
+    let mut replayed = observed.replay_events;
+    while replayed > 0 {
+        let notification = tokio::time::timeout(DEADLINE, notifications.recv())
+            .await
+            .expect("the daemon sends the replay")
+            .expect("the connection stays open");
+        let DaemonNotification::SessionEvent(SessionEventParams { event, .. }) = notification
+        else {
+            continue;
+        };
+        replayed -= 1;
+        if let SessionEvent::Agent { id } = event {
+            agent = Some(id);
+        }
+    }
+    Ok(agent)
 }
 
 // Covers: a subagent run's session names the agent the run runs as, not its
@@ -482,11 +490,11 @@ async fn an_observed_subagent_session_names_its_agent() {
         .session
         .expect("a Rho subagent writes a session");
 
-    let under_way = observed_agent(&client, &run_session).await;
+    let under_way = observed_agent(&sandbox, &run_session).await;
     answer(&client, &session, request, blue()).await.unwrap();
     run(false).await;
-    let saved = observed_agent(&client, &run_session).await;
-    let parents = observed_agent(&client, &session).await;
+    let saved = observed_agent(&sandbox, &run_session).await;
+    let parents = observed_agent(&sandbox, &session).await;
 
     let agent = |id: &str| Ok(Some(id.to_owned()));
     assert_eq!(

@@ -148,7 +148,6 @@ fn daemon_options(provider: &str, model: &str, label: &str) -> rho_protocol::Ses
         },
         commands: Vec::new(),
         added_dirs: Vec::new(),
-        agent: None,
     }
 }
 

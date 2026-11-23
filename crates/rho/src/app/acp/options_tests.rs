@@ -60,7 +60,6 @@ fn options() -> wire::SessionOptions {
         },
         commands: Vec::new(),
         added_dirs: Vec::new(),
-        agent: None,
     }
 }
 
