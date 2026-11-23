@@ -24,6 +24,7 @@ use super::{
     progress::McpProgressRouter,
     roots::McpRoots,
 };
+use crate::error_causes::with_causes;
 
 /// An initialized connection; `cancel` it to close.
 pub(crate) type BearerConnection = RunningService<RoleClient, McpClientHandler>;
@@ -104,21 +105,4 @@ fn describe(error: ClientInitializeError) -> BearerError {
         Some(other) => BearerError::Failed(with_causes(other)),
         None => BearerError::Failed(with_causes(error.error.as_ref())),
     }
-}
-
-/// `error` and the causes under it, as `reqwest`'s bare "error sending
-/// request" says nothing of why: "connection refused" or a timeout is
-/// further down. A cause the text already shows is not repeated.
-fn with_causes(error: &(dyn std::error::Error + 'static)) -> String {
-    let mut text = error.to_string();
-    let mut cause = error.source();
-    while let Some(next) = cause {
-        let next_text = next.to_string();
-        if !text.contains(&next_text) {
-            text.push_str(": ");
-            text.push_str(&next_text);
-        }
-        cause = next.source();
-    }
-    text
 }

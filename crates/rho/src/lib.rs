@@ -27,6 +27,7 @@ mod decision;
 mod diagnostics;
 mod display_transcript;
 mod doctor;
+mod error_causes;
 mod executable;
 mod export;
 mod external_editor;
