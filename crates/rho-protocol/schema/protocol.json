@@ -5630,6 +5630,13 @@
           },
           "type": "array"
         },
+        "agent": {
+          "description": "The id of the agent the session runs as, as\n[`super::SessionNewParams::agent`] takes it and the session saved\nit: `worker`, a workspace's own agent, or `default` for the default\nagent, which is an id like any other. A subagent's or workflow agent\nnode's session reports the agent it runs as. A first prompt that\nruns as another agent (`/agent:<id>`) changes it, which\n[`super::SessionEvent::OptionsChanged`] tells. The daemon always\nsends it; absent only from a daemon that predates it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "commands": {
           "description": "The commands a prompt may start with or mention, in menu order.",
           "items": {

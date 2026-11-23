@@ -41,6 +41,7 @@ pub(crate) fn attach_response(
             },
             commands: Vec::new(),
             added_dirs: Vec::new(),
+            agent: None,
         },
         background: Vec::new(),
     }

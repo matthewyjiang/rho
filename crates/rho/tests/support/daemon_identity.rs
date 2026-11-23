@@ -3,22 +3,23 @@
 //! each session's project trust is its own client's, and a prompt from a
 //! client with other trust is refused. A session's credentials are its own
 //! client's too: an API key in the starting client's environment signs in
-//! nobody else.
+//! nobody else. A session's options name the agent it runs as, a subagent
+//! run's included, whether the daemon has it loaded or reads its file.
 
 use std::sync::{Arc, Mutex};
 
 use pretty_assertions::assert_eq;
 use rho_protocol::{
-    methods::{SessionNew, SessionObserve, SessionPrompt},
-    Client, ClientEnvironment, ClientError, ContentBlock, ErrorCode, JobState,
-    ProjectTrustMismatch, SessionEvent, SessionId, SessionNewParams, SessionObserveParams,
-    SessionPromptParams, SessionSetup,
+    methods::{JobList, SessionNew, SessionObserve, SessionPrompt},
+    Client, ClientEnvironment, ClientError, ContentBlock, ErrorCode, JobKind, JobListParams,
+    JobState, ProjectTrustMismatch, SessionEvent, SessionId, SessionNewParams,
+    SessionObserveParams, SessionPromptParams, SessionSetup,
 };
 use serde_json::json;
 
 use super::{
     key_checking_provider::spawn_provider,
-    sessions::{is_state, settled_job, Follower, Sandbox},
+    sessions::{answer, blue, first_request, is_state, settled_job, Follower, Sandbox},
 };
 
 /// Every variable that grants a workspace's project files.
@@ -345,10 +346,11 @@ async fn a_prompt_refused_for_its_trust_leaves_the_session_and_its_viewers_alone
     );
 }
 
-// Covers: an unloaded session replays as the agent it was saved as. Observing
-// carries no client environment, so no trust to find a project's agent
-// with: a session saved as one still replays, and one saved as a built-in
-// agent is not handed a project file of the same name that appeared since.
+// Covers: an unloaded session replays as the agent it was saved as, and its
+// options name that agent. Observing carries no client environment, so no
+// trust to find a project's agent with: a session saved as one still
+// replays, and one saved as a built-in agent is not handed a project file of
+// the same name that appeared since.
 // Owner: daemon session observe.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_unloaded_session_replays_as_the_agent_it_was_saved_as() {
@@ -395,16 +397,101 @@ async fn an_unloaded_session_replays_as_the_agent_it_was_saved_as() {
             .await;
         replayed.push((
             label,
-            observed.map(|_| ()).map_err(|error| error.to_string()),
+            observed
+                .map(|observed| observed.options.agent)
+                .map_err(|error| error.to_string()),
         ));
     }
 
     assert_eq!(
         replayed,
         [
-            ("a project's agent", Ok(())),
-            ("a built-in agent the project shadows since", Ok(())),
+            ("a project's agent", Ok(Some("project-probe".to_owned()))),
+            (
+                "a built-in agent the project shadows since",
+                Ok(Some("default".to_owned()))
+            ),
         ],
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
+/// The agent `client`'s observe of `session` says it runs as.
+async fn observed_agent(client: &Client, session: &SessionId) -> Result<Option<String>, String> {
+    client
+        .request::<SessionObserve>(&SessionObserveParams {
+            session: session.clone(),
+            after: None,
+        })
+        .await
+        .map(|observed| observed.options.agent)
+        .map_err(|error| error.to_string())
+}
+
+// Covers: a subagent run's session names the agent the run runs as, not its
+// parent's, both observed through the run's stream while the run is under
+// way and read from its file once the run ended (#1668).
+// Owner: daemon session observe.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_observed_subagent_session_names_its_agent() {
+    let sandbox = Sandbox::new();
+    // The fixture makes the call the prompt spells out as JSON.
+    let client = sandbox.start_daemon("tool-call").await;
+    let session = sandbox.new_session(&client).await;
+    let (mut parent, _) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
+    // The run's prompt is a call too: it asks its parent and waits, so the
+    // run is under way while it is observed.
+    let ask = json!({
+        "id": "ask",
+        "name": "questionnaire",
+        "arguments": {
+            "questions": [{
+                "id": "color",
+                "question": "Which color?",
+                "choices": ["Red", "Blue"],
+            }],
+        },
+    });
+    let delegate = json!({
+        "id": "delegate",
+        "name": "agent",
+        "arguments": {"agent_id": "worker", "prompt": ask.to_string()},
+    });
+    sandbox.prompt_tool_call(&client, &session, &delegate).await;
+    parent
+        .read_until(|event| matches!(event, SessionEvent::InputRequested { .. }))
+        .await;
+    let request = first_request(&parent.events).id;
+    // Where the run is, once the daemon follows it (`followed`) or once it
+    // let go of the run's stream, so an observe reads its file.
+    let run = async |followed: bool| {
+        sandbox
+            .poll_until("the run's stream to open or close", async || {
+                let jobs = client.request::<JobList>(&JobListParams {}).await.unwrap();
+                jobs.jobs.into_iter().find(|job| {
+                    job.kind == JobKind::Subagent
+                        && job.live.is_some() == followed
+                        && (followed || !job.state.in_progress())
+                })
+            })
+            .await
+    };
+    let run_session = run(true)
+        .await
+        .session
+        .expect("a Rho subagent writes a session");
+
+    let under_way = observed_agent(&client, &run_session).await;
+    answer(&client, &session, request, blue()).await.unwrap();
+    run(false).await;
+    let saved = observed_agent(&client, &run_session).await;
+    let parents = observed_agent(&client, &session).await;
+
+    let agent = |id: &str| Ok(Some(id.to_owned()));
+    assert_eq!(
+        (under_way, saved, parents),
+        (agent("worker"), agent("worker"), agent("default")),
         "log:\n{}",
         sandbox.isolated.daemon_log()
     );

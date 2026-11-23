@@ -1,7 +1,7 @@
 //! What a session offers its host to show and change, as `rho-protocol`'s
 //! [`wire::SessionOptions`]: its settings, with the choices it has for each
-//! (model, reasoning level, fast mode, permission mode), and the commands a
-//! prompt may run.
+//! (model, reasoning level, fast mode, permission mode), the commands a
+//! prompt may run, and the agent the session runs as.
 //!
 //! The daemon sends them as they are, and the TUI client reads them (#1667).
 //! The ACP adapter renders them as config options and
@@ -62,6 +62,7 @@ pub(crate) fn of(
         available_commands(&scope, commands),
     );
     options.added_dirs = runtime.added_dirs().as_slice().to_vec();
+    options.agent = Some(runtime.agent_id().to_string());
     options
 }
 
@@ -111,6 +112,7 @@ fn build(
         },
         commands,
         added_dirs: Vec::new(),
+        agent: None,
     }
 }
 

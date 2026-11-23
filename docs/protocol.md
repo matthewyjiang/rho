@@ -296,6 +296,7 @@ A session's `options` are what a frontend shows as its settings and command menu
 | `permission_mode` | The `current` permission mode and every mode (`available`): `bypass`, `auto`, `allow_edits`, `plan`, `supervised`. |
 | `commands` | The commands a prompt may run, in menu order: each `name`, `kind`, `description`, and `input_hint`, what to type after the name, absent when it takes nothing. A `slash` command starts the prompt as `/<name>`; a `skill` is mentioned anywhere as `$<name>`. `/workflow:<name>` commands are listed when the session has the `workflow` tool, and `/agent:<name>` ones for every workspace agent that runs on Rho. |
 | `added_dirs` | The directories the session's tools reach besides its workspace; absent when it has none. |
+| `agent` | The id of the agent the session runs as, as `rho/session/new` takes `agent` and the session saved it: `default` for the default agent, `worker`, or a workspace's own agent. A subagent's or workflow agent node's session reports the agent it runs as, whether observed while its run is under way or read once it saved. An `/agent:<name>` first prompt changes it, which `options_changed` tells. Absent only from a daemon that predates it. |
 
 `rho/session/configure` applies one `change`, tagged by `kind`, and answers with the session's `options` as they are now:
 

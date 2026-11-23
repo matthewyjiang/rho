@@ -200,6 +200,7 @@ async fn a_followed_run_lists_its_model_and_title() {
         },
         commands: Vec::new(),
         added_dirs: Vec::new(),
+        agent: None,
     };
     let titled = |title: &str| RunStatus {
         title: Some(title.into()),

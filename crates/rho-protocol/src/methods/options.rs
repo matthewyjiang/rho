@@ -1,9 +1,10 @@
 //! A session's options: the settings a client may change between turns,
-//! the choices it offers for each, and the commands a prompt may start
-//! with. Frontends render them as the session's model picker, reasoning
-//! and fast-mode controls, permission mode, and command menu: ACP's config
-//! options and `available_commands_update` (#1670), and the TUI's `/model`,
-//! reasoning, `/fast`, and `/permissions` (#1667).
+//! the choices it offers for each, the commands a prompt may start with,
+//! and the agent the session runs as. Frontends render them as the
+//! session's model picker, reasoning and fast-mode controls, permission
+//! mode, and command menu: ACP's config options and
+//! `available_commands_update` (#1670), and the TUI's `/model`, reasoning,
+//! `/fast`, and `/permissions` (#1667).
 //!
 //! [`super::SessionNewResponse`] and [`super::SessionAttachResponse`] carry
 //! them, and [`super::SessionEvent::OptionsChanged`] replaces them whenever
@@ -147,6 +148,16 @@ pub struct SessionOptions {
     /// The directories the session's tools reach besides its workspace.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub added_dirs: Vec<PathBuf>,
+    /// The id of the agent the session runs as, as
+    /// [`super::SessionNewParams::agent`] takes it and the session saved
+    /// it: `worker`, a workspace's own agent, or `default` for the default
+    /// agent, which is an id like any other. A subagent's or workflow agent
+    /// node's session reports the agent it runs as. A first prompt that
+    /// runs as another agent (`/agent:<id>`) changes it, which
+    /// [`super::SessionEvent::OptionsChanged`] tells. The daemon always
+    /// sends it; absent only from a daemon that predates it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
 }
 
 /// A model, by its provider and the provider's model id.

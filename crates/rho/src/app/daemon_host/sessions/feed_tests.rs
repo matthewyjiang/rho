@@ -81,6 +81,7 @@ fn options(mode: wire::PermissionMode) -> wire::SessionOptions {
         },
         commands: Vec::new(),
         added_dirs: Vec::new(),
+        agent: None,
     }
 }
 
