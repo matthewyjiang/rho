@@ -161,6 +161,8 @@ In the Grok Bot desktop app, open **Connect apps**, then **Add a custom connecto
 
 Type the secret into the form. Don't paste it into a chat, where the Bot would see it.
 
+When the hub restarts or [updates](/mcp-server#http-updates), the Bot's MCP session ends with it, and a request with the old `Mcp-Session-Id` gets `404 Not Found`. MCP clients answer that by initializing a new session, as the protocol has them do; nothing changes on the hub. If the Bot's calls keep failing after a restart, reconnect the connector.
+
 ### 6. Create the routine that hears from Rho
 
 Ask the Bot:
@@ -186,7 +188,7 @@ The key is read from stdin and kept in your [credential store](/authentication-a
 
 ### 8. Teach the Bot the loop
 
-Ask the Bot to save the prompt below as a skill called "Rho orchestration". Replace the machines and workspaces with your own.
+Ask the Bot to save the prompt below as a skill called "Rho orchestration". Replace the machines and workspaces with your own. [Following a turn](/mcp-server#following-a-turn) describes `inputs` and the rest of the body, and [Webhooks](/mcp-server#webhooks) describes `watch_error`.
 
 ````text
 You orchestrate Rho coding agents on my machines through the rho connector.
@@ -208,7 +210,7 @@ Starting work
 
 When "Rho session updates" runs, the JSON body has `server` (the machine),
 `session`, `turn`, `state`, `done`, and `outcome` (with the final answer in
-`outcome.text`) or `inputs`.
+`outcome.text`) or `inputs` (the approvals or questions it waits on).
 - Deliveries can repeat. If you already handled this session's `turn` in this
   same `state` with the same `inputs`, stop. A turn that asked me something
   and then finished arrives twice, once per state; handle both.
