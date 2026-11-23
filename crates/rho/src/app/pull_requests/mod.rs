@@ -14,11 +14,13 @@
 //! - [`poller`]: one poll pass, the reads a show or a watch makes itself,
 //!   and the one door to the forge.
 //! - [`inbox`]: [`PullRequestInbox`], one session's side of the service.
+//! - [`wire`]: a session's pull requests as `rho-protocol` sends them.
 //!
 //! Branch lookups and the parts of [`model::PrDetail`] no watch reads serve
 //! clients, which list and show a session's pull requests.
 
-mod checkout;
+// The daemon resolves each session's checkout as a client asks.
+pub(crate) mod checkout;
 mod due;
 mod gh;
 mod gh_query;
@@ -34,6 +36,7 @@ mod store;
 #[cfg(test)]
 mod test_forge;
 mod watch;
+mod wire;
 
 // The surface the daemon's wiring and the PR tools consume.
 pub(crate) use self::{
@@ -44,7 +47,7 @@ pub(crate) use self::{
     },
     model::{Mergeable, PrState, Rollup},
     record::LinkOrigin,
-    service::{unix_ms, PullRequests},
+    service::{unix_ms, PullRequests, ShowRead, ShowTarget},
     state::Gate,
 };
 #[cfg(test)]

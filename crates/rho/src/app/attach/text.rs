@@ -85,7 +85,8 @@ impl<O: Write, E: Write> TextView<O, E> {
             | SessionEvent::SteeringDelivered { .. }
             | SessionEvent::Background { .. }
             | SessionEvent::Activity { .. }
-            | SessionEvent::Agent { .. } => {}
+            | SessionEvent::Agent { .. }
+            | SessionEvent::PullRequests { .. } => {}
             // `SessionEvent` is non-exhaustive; an event a newer daemon sends
             // is not shown.
             _ => {}

@@ -36,6 +36,7 @@ use super::{
     record::SessionRecord,
     state::News,
     store::PullRequestStore,
+    wire,
 };
 
 /// The daemon-wide PR service. Cheap to clone; every clone is the same
@@ -512,6 +513,15 @@ impl PullRequests {
     /// missed.
     pub(crate) fn changes(&self) -> impl Future<Output = ()> + Send + 'static {
         Arc::clone(&self.0.changed).notified_owned()
+    }
+
+    /// `session`'s pull requests as clients see them at `now` (unix
+    /// milliseconds), from what was last read; see [`wire::session`].
+    /// Never waits on a forge read.
+    pub(crate) fn view(&self, session: &SessionId, now: u64) -> rho_protocol::SessionPullRequests {
+        self.read_view(|state, budgets| {
+            wire::session(state, |host| budgets.paused(host, now), session)
+        })
     }
 
     /// Runs `read` on the state and the hosts' budgets, never waiting on a

@@ -21,7 +21,8 @@
 //! `rho uninstall` do about it is in [`install`]; a turn whose provider
 //! cannot be reached is in [`unreachable`]; what a session records about
 //! what follows a compaction is in [`compaction`]; what a loaded session
-//! costs the daemon in memory is in [`memory`].
+//! costs the daemon in memory is in [`memory`]; a session's pull requests,
+//! which clients list, show, link and unlink, are in [`pull_requests`].
 
 use std::{
     fs::File,
@@ -121,6 +122,11 @@ mod compaction;
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
 #[path = "support/daemon_memory.rs"]
 mod memory;
+
+// Unix: the `gh` it reads pull requests with is a shell script.
+#[cfg(unix)]
+#[path = "support/daemon_pull_requests.rs"]
+mod pull_requests;
 
 #[path = "support/key_checking_provider.rs"]
 mod key_checking_provider;

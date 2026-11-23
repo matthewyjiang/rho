@@ -21,7 +21,9 @@
 //! and `rho/session/background/list`, report them without waiting for the
 //! runtime either. It keeps the agent the session runs as, as the last
 //! [`wire::SessionEvent::Agent`] said it, which every reset replays first:
-//! no saved row holds it.
+//! no saved row holds it. It keeps the session's pull requests, as the
+//! last [`wire::SessionEvent::PullRequests`] sent them, so it sends them
+//! again only when they change (see `pull_requests`).
 //!
 //! A loaded session's feed reports whether the session is settled (see
 //! `settle`) as [`wire::SessionEvent::Activity`]: `active` goes out just
@@ -114,6 +116,9 @@ struct FeedState {
     /// The session's background work, as the last background event sent
     /// it.
     background: Vec<wire::BackgroundWork>,
+    /// The session's pull requests, as the last pull requests event sent
+    /// them; empty until the first.
+    pull_requests: wire::SessionPullRequests,
     /// The session's context use and spend, as the last usage event sent
     /// them.
     usage: Option<wire::JobUsage>,
@@ -250,6 +255,7 @@ impl Feed {
                 options,
                 agent,
                 background: Vec::new(),
+                pull_requests: wire::SessionPullRequests::default(),
                 usage: None,
                 saved_usage: None,
                 activity: None,
@@ -296,6 +302,25 @@ impl Feed {
         if state.background != work {
             state.push(wire::SessionEvent::Background { work });
         }
+    }
+
+    /// Tells attached clients the session's pull requests are now what
+    /// `read` reads, unless they already are, and returns them. `read` runs
+    /// under the feed's lock, as [`Self::update_background`]'s does, so of
+    /// two reports the later read is the later publish, and a request that
+    /// answers with what this returns answers with what the feed last sent.
+    pub(super) fn update_pull_requests(
+        &self,
+        read: impl FnOnce() -> wire::SessionPullRequests,
+    ) -> wire::SessionPullRequests {
+        let mut state = self.state();
+        let pull_requests = read();
+        if state.pull_requests != pull_requests {
+            state.push(wire::SessionEvent::PullRequests {
+                pull_requests: Box::new(pull_requests.clone()),
+            });
+        }
+        pull_requests
     }
 
     /// Tells attached clients whether the session is settled, unless they
@@ -526,6 +551,9 @@ impl FeedState {
             wire::SessionEvent::OptionsChanged { options } => self.options = (**options).clone(),
             wire::SessionEvent::Agent { id } => self.agent.clone_from(id),
             wire::SessionEvent::Background { work } => self.background.clone_from(work),
+            wire::SessionEvent::PullRequests { pull_requests } => {
+                self.pull_requests = (**pull_requests).clone();
+            }
             wire::SessionEvent::Activity { state } => self.activity = Some(*state),
             _ => {}
         }

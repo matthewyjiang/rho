@@ -211,11 +211,13 @@ impl Drop for ReopenGuard<'_> {
 /// The workspace of the session saved under `id`; `SessionNotFound` when
 /// nothing is.
 async fn saved_workspace(id: &SessionId) -> Result<PathBuf, RpcError> {
-    let lookup = {
-        let id = id.clone();
-        store_blocking(LOOK_UP, move || StoredSession::workspace_of(id.as_str())).await?
-    };
-    lookup.ok_or_else(|| not_found(id))
+    find_saved_workspace(id).await?.ok_or_else(|| not_found(id))
+}
+
+/// The workspace of the session saved under `id`; `None` when nothing is.
+pub(super) async fn find_saved_workspace(id: &SessionId) -> Result<Option<PathBuf>, RpcError> {
+    let id = id.clone();
+    store_blocking(LOOK_UP, move || StoredSession::workspace_of(id.as_str())).await
 }
 
 /// What a saved session is opened for.

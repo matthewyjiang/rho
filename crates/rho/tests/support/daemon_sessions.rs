@@ -1626,8 +1626,9 @@ pub(super) fn is_state(state: JobState) -> impl Fn(&SessionEvent) -> bool {
 }
 
 /// What a conversation shows: its events without job states, model
-/// requests, context usage, titles, options, background work, activity, and
-/// agent, which describe the session as it was when they were sent.
+/// requests, context usage, titles, options, background work, activity,
+/// agent, and pull requests, which describe the session as it was when
+/// they were sent.
 fn conversation(events: &[(Seq, SessionEvent)]) -> Vec<SessionEvent> {
     events
         .iter()
@@ -1643,6 +1644,7 @@ fn conversation(events: &[(Seq, SessionEvent)]) -> Vec<SessionEvent> {
                     | SessionEvent::Background { .. }
                     | SessionEvent::Activity { .. }
                     | SessionEvent::Agent { .. }
+                    | SessionEvent::PullRequests { .. }
             )
         })
         .collect()
