@@ -43,11 +43,13 @@ pub(super) fn stage(executable: &Path, dir: &Path) -> io::Result<PathBuf> {
 /// `rho-<length>-<modified ns>`, keeping `executable`'s extension.
 fn copy_name(executable: &Path) -> io::Result<OsString> {
     let metadata = fs::metadata(executable)?;
-    let modified = metadata
-        .modified()?
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
+    // Signed, so distinct modification times before 1970 stay distinct.
+    let modified = match metadata.modified()?.duration_since(UNIX_EPOCH) {
+        Ok(after) => i128::try_from(after.as_nanos()).unwrap_or(i128::MAX),
+        Err(before) => {
+            i128::try_from(before.duration().as_nanos()).map_or(i128::MIN, |nanos| -nanos)
+        }
+    };
     let mut name = OsString::from(format!("rho-{}-{modified}", metadata.len()));
     if let Some(extension) = executable.extension() {
         name.push(".");

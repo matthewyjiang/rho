@@ -138,15 +138,15 @@ pub(super) async fn connect_restarted(
 struct CheckedSpawner(daemon::ProcessSpawner);
 
 impl daemon::DaemonSpawner for CheckedSpawner {
-    fn check(&self) -> std::io::Result<()> {
-        crate::credential_store::environment_backend()
-            .map(drop)
-            .map_err(|error| {
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    format!("RHO_CREDENTIAL_STORE in this environment: {error}"),
-                )
-            })
+    fn check<'a>(&'a self, paths: &'a DaemonPaths) -> daemon::SpawnFuture<'a> {
+        if let Err(error) = crate::credential_store::environment_backend() {
+            let error = std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("RHO_CREDENTIAL_STORE in this environment: {error}"),
+            );
+            return Box::pin(std::future::ready(Err(error)));
+        }
+        self.0.check(paths)
     }
 
     fn spawn<'a>(&'a self, paths: &'a DaemonPaths) -> daemon::SpawnFuture<'a> {

@@ -57,11 +57,13 @@ const DRAIN_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
 /// lock, so at most one `spawn` runs per runtime directory at a time.
 pub(crate) trait DaemonSpawner: Send + Sync {
     /// Whether a daemon `spawn` starts could start, as far as the caller's
-    /// side can tell. `connect_or_spawn` asks before every `spawn`, and
-    /// before it stops an older daemon to start this one in its place, so a
-    /// daemon that works is never stopped for one that cannot start.
-    fn check(&self) -> io::Result<()> {
-        Ok(())
+    /// side can tell, preparing what `spawn` needs on disk. `connect_or_spawn`
+    /// awaits it before every `spawn`, and before it stops an older daemon to
+    /// start this one in its place, so a daemon that works is never stopped
+    /// for one that cannot start. Like `spawn`, it must not block the async
+    /// runtime.
+    fn check<'a>(&'a self, _paths: &'a DaemonPaths) -> SpawnFuture<'a> {
+        Box::pin(std::future::ready(Ok(())))
     }
 
     fn spawn<'a>(&'a self, paths: &'a DaemonPaths) -> SpawnFuture<'a>;
@@ -113,22 +115,39 @@ impl ProcessSpawner {
     }
 }
 
+impl ProcessSpawner {
+    /// The file the daemon runs, copied first for [`RunFrom::Copy`]: staging
+    /// again finds the copy `check` made and reuses it. Blocks on the file
+    /// system; the caller runs it off the async runtime.
+    fn program(executable: PathBuf, run_from: RunFrom, paths: &DaemonPaths) -> io::Result<PathBuf> {
+        match run_from {
+            RunFrom::Installed => Ok(executable),
+            RunFrom::Copy => executable_copy::stage(&executable, &paths.state_dir.join("bin")),
+        }
+    }
+}
+
 impl DaemonSpawner for ProcessSpawner {
-    /// Spawns off the async runtime: copying the executable writes a file,
-    /// and placing the daemon waits on the service manager.
-    fn spawn<'a>(&'a self, paths: &'a DaemonPaths) -> SpawnFuture<'a> {
-        let executable = self.executable.clone();
-        let run_from = self.run_from;
-        let paths = paths.clone();
+    /// Copies the executable for [`RunFrom::Copy`], so a copy that fails
+    /// stops no older daemon.
+    fn check<'a>(&'a self, paths: &'a DaemonPaths) -> SpawnFuture<'a> {
+        let (executable, run_from, paths) = (self.executable.clone(), self.run_from, paths.clone());
         Box::pin(async move {
             tokio::task::spawn_blocking(move || {
-                let program = match run_from {
-                    RunFrom::Installed => executable,
-                    RunFrom::Copy => {
-                        executable_copy::stage(&executable, &paths.state_dir.join("bin"))?
-                    }
-                };
-                let mut command = Command::new(program);
+                Self::program(executable, run_from, &paths).map(drop)
+            })
+            .await
+            .unwrap_or_else(|error| Err(io::Error::other(error)))
+        })
+    }
+
+    /// Spawns off the async runtime: staging writes a file, and placing the
+    /// daemon waits on the service manager.
+    fn spawn<'a>(&'a self, paths: &'a DaemonPaths) -> SpawnFuture<'a> {
+        let (executable, run_from, paths) = (self.executable.clone(), self.run_from, paths.clone());
+        Box::pin(async move {
+            tokio::task::spawn_blocking(move || {
+                let mut command = Command::new(Self::program(executable, run_from, &paths)?);
                 command
                     .args(["daemon", "run"])
                     .env_clear()
@@ -241,7 +260,7 @@ async fn connect_or_spawn_observing(
         Err(SpawnError::Connect(refusal)) if is_unused_older_daemon(&refusal) => Some(refusal),
         Err(error) => return Err(error),
     };
-    spawner.check().map_err(SpawnError::Spawn)?;
+    spawner.check(paths).await.map_err(SpawnError::Spawn)?;
     if let Some(refusal) = unused_older {
         tracing::info!(%refusal, "replacing the unused rho daemon with this rho");
         stop_older(paths).await?;
