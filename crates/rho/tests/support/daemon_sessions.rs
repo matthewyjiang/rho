@@ -1683,19 +1683,25 @@ async fn clients_that_leave_and_come_back_see_the_same_turn() {
     let (mut latecomer, late) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
     latecomer.read_until(is_state(JobState::Cancelled)).await;
 
-    // The watcher's reset replay, the new session's agent, carries seq 0;
-    // every live event after it is numbered.
-    let replayed = usize::try_from(watched.replay_events).unwrap();
-    let seqs: Vec<u64> = watcher
+    // The watcher's reset starts with the session's agent, which no saved
+    // row holds, at seq 0; the stream numbers every event after it.
+    let (first, rest) = watcher
         .events
-        .iter()
-        .skip(replayed)
-        .map(|(seq, _)| seq.0)
-        .collect();
+        .split_first()
+        .expect("the watcher's reset replays the agent");
+    let seqs: Vec<u64> = rest.iter().map(|(seq, _)| seq.0).collect();
     assert_eq!(
-        (replayed, seqs.clone()),
-        (1, (1..=seqs.len() as u64).collect::<Vec<_>>()),
-        "the stream numbers every live event once, in order"
+        (first.clone(), seqs.clone()),
+        (
+            (
+                Seq(0),
+                SessionEvent::Agent {
+                    id: "default".into()
+                }
+            ),
+            (1..=seqs.len() as u64).collect::<Vec<_>>(),
+        ),
+        "the stream numbers every event once, in order"
     );
     assert_eq!(
         (
