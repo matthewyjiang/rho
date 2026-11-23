@@ -13,6 +13,7 @@
 //! - [`due`]: what a poll pass reads, from the state and the leases.
 //! - [`poller`]: one poll pass, the reads a show or a watch makes itself,
 //!   and the one door to the forge.
+//! - [`reads`]: what reads of the forge learned, and how it is kept.
 //! - [`inbox`]: [`PullRequestInbox`], one session's side of the service.
 //! - [`wire`]: a session's pull requests as `rho-protocol` sends them.
 //!
@@ -29,6 +30,7 @@ mod interest;
 mod model;
 mod news;
 mod poller;
+mod reads;
 mod record;
 mod service;
 mod state;

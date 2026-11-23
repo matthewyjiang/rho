@@ -5,7 +5,8 @@
 //!
 //! A listed pull request gets its summary only. A watched or shown one gets
 //! its detail when [`detail_due`] says so, else its summary, and its detail
-//! in the tick's second query when the summary moved.
+//! in the tick's second query when the summary moved; so does the PR a
+//! shown branch's lookup finds.
 //!
 //! Also what a client's show reads itself before it answers
 //! ([`show_reads`]).
@@ -33,6 +34,10 @@ use super::{
 /// conflict, and an edit to branch protection; this bounds how late such a
 /// wake can be. 6 details an hour per quiet watch; 25 watches are 150
 /// details, about 60 points an hour.
+///
+/// Also how long an observed default branch stops lookups of a session
+/// on it: past this, its lookup runs and observes the default again, at
+/// most one branch in a query 6 times an hour.
 pub(crate) const QUIET_REREAD: Duration = Duration::from_secs(10 * 60);
 
 /// What one tick asks one host.
@@ -44,6 +49,10 @@ pub(super) struct Due {
     /// get their detail in a second query when it moved. A listed PR never
     /// gets a detail.
     pub(super) wants_detail: HashSet<PrId>,
+    /// The branches due at the shown cadence: the PR a lookup of one finds
+    /// wants its detail too, though this plan did not know it. A listed
+    /// branch's lookup stays summary-only.
+    pub(super) shown_branches: HashSet<BranchId>,
 }
 
 /// Why a tick may read one pull request.
@@ -100,7 +109,13 @@ pub(super) fn due(state: &State, now: u64) -> BTreeMap<String, Due> {
         let Some(cadence) = state.interest.cadence(session, &Shown::Branch, now) else {
             continue;
         };
-        if state.is_default(branch) {
+        // A default branch has no PR of its own, but only an observation
+        // younger than QUIET_REREAD says so: an older one lets the lookup
+        // run, which observes it again, so a default that moved is seen.
+        let default_now = state
+            .default_seen_at(branch)
+            .is_some_and(|at| Duration::from_millis(now.saturating_sub(at)) < QUIET_REREAD);
+        if default_now {
             continue;
         }
         let fastest = branches.entry(branch).or_insert(cadence);
@@ -117,6 +132,12 @@ pub(super) fn due(state: &State, now: u64) -> BTreeMap<String, Due> {
         if cadence.due(asked_at, now) {
             let due = hosts.entry(branch.repo.host.clone()).or_default();
             due.plan.branches.push(branch.clone());
+            match cadence {
+                Cadence::Shown => {
+                    due.shown_branches.insert(branch.clone());
+                }
+                Cadence::Watched | Cadence::Listed => {}
+            }
         }
     }
     for (pr, want) in prs {
@@ -237,7 +258,11 @@ fn kept_detail(snapshot: Option<&Snapshot>) -> Kept {
     let Some(snapshot) = snapshot else {
         return Kept::Missing;
     };
-    match (&snapshot.detail, &snapshot.trouble, snapshot.asked_at) {
+    match (
+        snapshot.newest_detail(),
+        &snapshot.trouble,
+        snapshot.asked_at,
+    ) {
         (Some(_), _, _) => Kept::Answer,
         (None, Some(_), Some(at)) => Kept::FailedAt(at),
         (None, Some(_), None) | (None, None, _) => Kept::Missing,

@@ -263,7 +263,7 @@ impl PullRequestInbox {
             let state = self.shared.state();
             let watching = self.watching(&state.sessions, &pr)?;
             let snapshot = state.snapshots.get(&pr);
-            watching.then(|| snapshot.and_then(|s| s.detail.as_ref().map(|d| d.detail.clone())))
+            watching.then(|| snapshot.and_then(|s| s.newest_detail().map(|d| d.detail.clone())))
         };
         if let Some(Some(detail)) = known {
             return Ok(Watched::of(&detail, /*started*/ false));
@@ -344,13 +344,15 @@ impl PullRequestInbox {
         let url = pr.url();
         let new = self.shared.update(|state| {
             let entry = state.entry(&self.session);
-            let new = entry
-                .record
-                .link(pr.clone(), url.clone(), origin, now / 1000);
+            // Changed in a copy until it is saved, so a retry after a failed
+            // save finds the change still to make.
+            let mut record = entry.record.clone();
+            let new = record.link(pr.clone(), url.clone(), origin, now / 1000);
             if new {
                 self.shared
-                    .save(&self.session, &entry.record)
+                    .save(&self.session, &record)
                     .map_err(PullRequestError::Store)?;
+                entry.record = record;
                 state.recheck_branch(&self.session, &pr);
                 self.shared.poke_if_leased(state, &self.session, now);
             }
@@ -367,11 +369,14 @@ impl PullRequestInbox {
             let Some(entry) = state.sessions.get_mut(&self.session) else {
                 return Ok(false);
             };
-            let was_linked = entry.record.unlink(&pr);
+            // Changed in a copy until it is saved, as in `link`.
+            let mut record = entry.record.clone();
+            let was_linked = record.unlink(&pr);
             if was_linked {
                 self.shared
-                    .save(&self.session, &entry.record)
+                    .save(&self.session, &record)
                     .map_err(PullRequestError::Store)?;
+                entry.record = record;
             }
             Ok::<_, PullRequestError>(was_linked)
         })?;

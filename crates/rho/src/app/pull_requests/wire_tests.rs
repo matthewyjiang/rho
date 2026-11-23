@@ -9,7 +9,7 @@ use crate::app::pull_requests::{
     model::{BranchId, Budget, ChangeKey, Found, PrId, PrState, PrSummary, RepoId, Rollup},
     poller::BUDGET_FLOOR,
     record::LinkOrigin,
-    service::{BranchRead, Snapshot, State, Trouble},
+    service::{BranchRead, DefaultBranch, Snapshot, State, Trouble},
 };
 
 /// When each case's view is built, in unix milliseconds.
@@ -268,7 +268,11 @@ fn a_view_says_what_was_found_and_why_not() {
             "the default branch is not looked up",
             |state| {
                 list(state, Checkout::Branch(branch("main")));
-                state.default_branches.insert(repo(), Some("main".into()));
+                let main = DefaultBranch {
+                    name: Some("main".into()),
+                    at: NOW,
+                };
+                state.default_branches.insert(repo(), main);
             },
             false,
             wire::SessionPullRequests::new(

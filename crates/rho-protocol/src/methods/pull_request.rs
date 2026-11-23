@@ -5,7 +5,10 @@
 //! The daemon reads a pull request only while something wants it: a session
 //! that watches it, or a client that listed or showed it recently. Each
 //! `list` and `show` takes a lease on what it names, which runs out unless
-//! renewed: reissue `list` within 5 minutes and `show` within 30 seconds.
+//! renewed: a `list` lease lasts 10 minutes and a `show` lease 60 seconds,
+//! two periods of the cadence each is read at (5 minutes and 30 seconds).
+//! Reissue `list` every 5 minutes and `show` every 30 seconds, so one late
+//! request does not stop the reads.
 
 use std::fmt;
 
@@ -15,10 +18,12 @@ use serde::{Deserialize, Serialize};
 use super::{PullRequestDetail, SessionId};
 
 /// List the pull requests of each session named, as the daemon last read
-/// them, and keep reading them: the request leases each session for 5
-/// minutes, so a client reissues it within that to keep its rows read. Asks
-/// for more than 1,000 sessions are [`crate::ErrorCode::InvalidParams`],
-/// naming the limit and the count asked. A daemon from before this method
+/// them, and keep reading them every 5 minutes: the request leases each
+/// session for 10 minutes, so a client reissues it every 5 minutes to keep
+/// its rows read. Asks for more than
+/// [`SessionPullRequestListParams::MAX_SESSIONS`] sessions are
+/// [`crate::ErrorCode::InvalidParams`], naming the limit and the count
+/// asked. A daemon from before this method
 /// answers [`crate::ErrorCode::MethodNotFound`].
 pub const SESSION_PULL_REQUEST_LIST: &str = "rho/session/pull_request/list";
 
@@ -26,7 +31,9 @@ pub const SESSION_PULL_REQUEST_LIST: &str = "rho/session/pull_request/list";
 /// target. Answers from the daemon's last read; it reads GitHub first when
 /// `read` is [`PullRequestRead::Fresh`], or when it has no detail of the
 /// target to answer with, unless its last attempt to read it failed within
-/// the last 15 seconds. Leases the target for 30 seconds.
+/// the last 15 seconds. Leases the target for 60 seconds, in which the
+/// daemon reads it every 30 seconds; a client reissues it every 30 seconds
+/// while the target is on screen.
 /// An unknown session is [`crate::ErrorCode::SessionNotFound`]; a linked
 /// target that is not linked to the session, or names no pull request, is
 /// [`crate::ErrorCode::InvalidParams`].
@@ -50,10 +57,17 @@ pub const SESSION_PULL_REQUEST_UNLINK: &str = "rho/session/pull_request/unlink";
 #[non_exhaustive]
 pub struct SessionPullRequestListParams {
     /// The sessions to list and lease, at most 1,000.
+    #[schemars(length(max = SessionPullRequestListParams::MAX_SESSIONS))]
     pub sessions: Vec<SessionId>,
 }
 
 impl SessionPullRequestListParams {
+    /// The most sessions one request names: the bound of a
+    /// `rho/session/list` page, so a client leases every row of a page in
+    /// one request. The daemon refuses more with
+    /// [`crate::ErrorCode::InvalidParams`].
+    pub const MAX_SESSIONS: usize = 1_000;
+
     /// Builds it from each of its fields.
     pub fn new(sessions: Vec<SessionId>) -> Self {
         Self { sessions }
@@ -271,7 +285,14 @@ impl SessionPullRequests {
     pub fn branch_pull_request(&self) -> Option<&PullRequestSummary> {
         match &self.branch.as_ref()?.lookup {
             BranchLookup::Found { pull_request } => Some(pull_request),
-            _ => None,
+            BranchLookup::NotGit
+            | BranchLookup::Detached { .. }
+            | BranchLookup::NoForge
+            | BranchLookup::DefaultBranch
+            | BranchLookup::Looking
+            | BranchLookup::None
+            | BranchLookup::OnlyForks { .. }
+            | BranchLookup::Unknown => None,
         }
     }
 

@@ -79,8 +79,17 @@ pub(super) struct State {
     /// What the last lookup of each branch a session has checked out found.
     pub(super) branches: HashMap<BranchId, BranchRead>,
     /// Each repository's default branch, which has no PR of its own, as
-    /// the last read in it said; `None` when it has none.
-    pub(super) default_branches: HashMap<RepoId, Option<String>>,
+    /// the last read in it said.
+    pub(super) default_branches: HashMap<RepoId, DefaultBranch>,
+}
+
+/// A repository's default branch as one read saw it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct DefaultBranch {
+    /// `None` when the repository has none.
+    pub(super) name: Option<String>,
+    /// When the read saw it, in unix milliseconds.
+    pub(super) at: u64,
 }
 
 impl State {
@@ -123,9 +132,14 @@ impl State {
     /// Whether `branch` is its repository's default branch, which has no
     /// PR of its own, as the last read in its repository said.
     pub(super) fn is_default(&self, branch: &BranchId) -> bool {
-        self.default_branches
-            .get(&branch.repo)
-            .is_some_and(|default| default.as_deref() == Some(branch.branch.as_str()))
+        self.default_seen_at(branch).is_some()
+    }
+
+    /// When the last read in `branch`'s repository saw it as the default
+    /// branch, in unix milliseconds; `None` when it did not.
+    pub(super) fn default_seen_at(&self, branch: &BranchId) -> Option<u64> {
+        let default = self.default_branches.get(&branch.repo)?;
+        (default.name.as_deref() == Some(branch.branch.as_str())).then_some(default.at)
     }
 
     /// Whether any session watches `pr`.
@@ -185,8 +199,16 @@ impl Entry {
 pub(super) struct Snapshot {
     /// The newest summary, from a summary or a detail.
     pub(super) summary: Option<PrSummary>,
-    /// Kept while a session watches it or a client shows it.
+    /// The last detail a tick read, against which its watches were
+    /// evaluated, or one read before any session watched it. Kept while a
+    /// session watches it or a client shows it.
     pub(super) detail: Option<Detailed>,
+    /// A detail of a watched PR a client's show read outside a tick, which
+    /// no watch has been evaluated against: it answers shows only, while
+    /// it is newer than [`Self::detail`], so a show never answers with a
+    /// detail older than the summary it reports. See
+    /// `Shared::keep_unjudged`.
+    pub(super) unjudged: Option<Detailed>,
     /// When anything was last read of it, in unix milliseconds.
     pub(super) read_at: Option<u64>,
     /// When it was last asked for, in unix milliseconds, whether or not
@@ -265,6 +287,35 @@ impl Snapshot {
     pub(super) fn saw_detail(&mut self, detail: PrDetail, now: u64) {
         self.saw_summary(detail.summary.clone(), now);
         self.detail = Some(Detailed { detail, at: now });
+        if self
+            .unjudged
+            .as_ref()
+            .is_some_and(|unjudged| unjudged.at <= now)
+        {
+            self.unjudged = None;
+        }
+    }
+
+    /// A show read `detail` of a watched PR at `now`, outside a tick: its
+    /// summary is the newest, and its detail answers shows only.
+    pub(super) fn saw_unjudged(&mut self, detail: PrDetail, now: u64) {
+        self.saw_summary(detail.summary.clone(), now);
+        self.unjudged = Some(Detailed { detail, at: now });
+    }
+
+    /// The newest detail kept, to answer a show with.
+    pub(super) fn newest_detail(&self) -> Option<&Detailed> {
+        match (&self.detail, &self.unjudged) {
+            (Some(judged), Some(unjudged)) if unjudged.at > judged.at => Some(unjudged),
+            (Some(judged), _) => Some(judged),
+            (None, unjudged) => unjudged.as_ref(),
+        }
+    }
+
+    /// Drops both details: no session watches the PR and no client shows it.
+    pub(super) fn forget_details(&mut self) {
+        self.detail = None;
+        self.unjudged = None;
     }
 }
 
@@ -565,7 +616,7 @@ fn kept_detail(state: &State, of: ShowOf<'_>) -> Option<Detailed> {
         ShowOf::Linked(pr) => pr,
         ShowOf::Branch(branch) => state.found(branch)?,
     };
-    state.snapshots.get(pr)?.detail.clone()
+    state.snapshots.get(pr)?.newest_detail().cloned()
 }
 
 impl fmt::Debug for PullRequests {

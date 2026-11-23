@@ -47,8 +47,10 @@ use crate::{
 // command measured for `checkout::GIT_DEADLINE`, about 1 s by arithmetic;
 // and for the poller, 10 summary queries a host every 5 minutes
 // (`gh_query::SUMMARIES_PER_QUERY`), which it logs. A tripwire: more is
-// refused with this limit and the asked count.
-const LISTED_SESSIONS: usize = 1_000;
+// refused with this limit and the asked count. The protocol publishes it as
+// the request schema's `maxItems`; this check serves clients that do not
+// validate against the schema.
+const LISTED_SESSIONS: usize = wire::SessionPullRequestListParams::MAX_SESSIONS;
 
 impl Sessions {
     /// `rho/session/pull_request/list` at `now` (unix milliseconds): each

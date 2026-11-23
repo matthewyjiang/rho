@@ -3,7 +3,7 @@ use std::{collections::BTreeMap, time::Duration};
 use pretty_assertions::assert_eq;
 use rho_sdk::SessionId;
 
-use super::{due, show_reads, tick_period, Due, ShowOf};
+use super::{due, show_reads, tick_period, Due, ShowOf, QUIET_REREAD};
 use crate::app::pull_requests::{
     checkout::Checkout,
     gh::ReadError,
@@ -14,7 +14,7 @@ use crate::app::pull_requests::{
     },
     poller::WATCH_POLL,
     record::LinkOrigin,
-    service::{BranchRead, Detailed, ShowRead, Snapshot, State, Trouble},
+    service::{BranchRead, DefaultBranch, Detailed, ShowRead, Snapshot, State, Trouble},
     state::{Baseline, WatchState},
 };
 
@@ -123,6 +123,7 @@ fn read_quiet(state: &mut State, number: u32, at: u64) {
         Snapshot {
             summary: Some(detail.summary.clone()),
             detail: Some(Detailed { detail, at }),
+            unjudged: None,
             read_at: Some(at),
             asked_at: Some(at),
             trouble: None,
@@ -143,12 +144,28 @@ fn read_summary(state: &mut State, number: u32, at: u64) {
     );
 }
 
+/// A read at `at` saw `name` as the repository's default branch.
+fn default_branch(state: &mut State, name: &str, at: u64) {
+    let observed = DefaultBranch {
+        name: Some(name.into()),
+        at,
+    };
+    state.default_branches.insert(repo(), observed);
+}
+
 fn on(name: &str) -> Checkout {
     Checkout::Branch(branch(name))
 }
 
-/// What a tick asks github.com.
-fn asks(branches: &[&str], links: &[u32], details: &[u32], wants_detail: &[u32]) -> Option<Due> {
+/// What a tick asks github.com: `branches` looked up, of which those also
+/// in `shown` at the shown cadence.
+fn asks(
+    branches: &[&str],
+    links: &[u32],
+    details: &[u32],
+    wants_detail: &[u32],
+    shown: &[&str],
+) -> Option<Due> {
     Some(Due {
         plan: FetchPlan {
             branches: branches.iter().copied().map(branch).collect(),
@@ -156,6 +173,7 @@ fn asks(branches: &[&str], links: &[u32], details: &[u32], wants_detail: &[u32])
             details: details.iter().copied().map(pr).collect(),
         },
         wants_detail: wants_detail.iter().copied().map(pr).collect(),
+        shown_branches: shown.iter().copied().map(branch).collect(),
     })
 }
 
@@ -171,8 +189,10 @@ struct Case {
 // session's links get summaries and its branch a lookup, never a detail,
 // once their cadence is due; a shown PR gets its detail when it needs one,
 // else its summary, and a shown branch's PR comes with its lookup; the
-// default branch and a checkout on no forge are never looked up; a watch is
-// due within the slack; and a lease that ran out reads nothing.
+// default branch is not looked up while its observation is younger than the
+// reread period (else a default that moved is never seen), and a checkout on
+// no forge never is; a watch is due within the slack; and a lease that ran
+// out reads nothing.
 // Owner: pure unit (due.rs)
 #[test]
 fn a_lease_decides_what_a_tick_reads() {
@@ -200,7 +220,7 @@ fn a_lease_decides_what_a_tick_reads() {
                 state.interest.list(&session(), Checkout::NotGit, ago(10));
                 read_summary(state, 12, ago(290));
             },
-            asked: asks(&[], &[12], &[], &[]),
+            asked: asks(&[], &[12], &[], &[], &[]),
             period: WATCH_POLL,
         },
         Case {
@@ -208,16 +228,26 @@ fn a_lease_decides_what_a_tick_reads() {
             given: |state| {
                 state.interest.list(&session(), on("feature"), NOW);
             },
-            asked: asks(&["feature"], &[], &[], &[]),
+            asked: asks(&["feature"], &[], &[], &[], &[]),
             period: WATCH_POLL,
         },
         Case {
             name: "a listed session on its repository's default branch",
             given: |state| {
                 state.interest.list(&session(), on("main"), NOW);
-                state.default_branches.insert(repo(), Some("main".into()));
+                default_branch(state, "main", ago(10));
             },
             asked: None,
+            period: WATCH_POLL,
+        },
+        Case {
+            name: "a listed session on a default branch observed the reread period ago: looked up",
+            given: |state| {
+                state.interest.list(&session(), on("main"), NOW);
+                let observed = NOW - u64::try_from(QUIET_REREAD.as_millis()).unwrap();
+                default_branch(state, "main", observed);
+            },
+            asked: asks(&["main"], &[], &[], &[], &[]),
             period: WATCH_POLL,
         },
         Case {
@@ -248,7 +278,7 @@ fn a_lease_decides_what_a_tick_reads() {
                     .interest
                     .show(&session(), Checkout::NotGit, Shown::Linked(pr(12)), NOW);
             },
-            asked: asks(&[], &[], &[12], &[12]),
+            asked: asks(&[], &[], &[12], &[12], &[]),
             period: SHOWN_POLL,
         },
         Case {
@@ -260,7 +290,7 @@ fn a_lease_decides_what_a_tick_reads() {
                     .show(&session(), Checkout::NotGit, Shown::Linked(pr(12)), NOW);
                 read_quiet(state, 12, ago(30));
             },
-            asked: asks(&[], &[12], &[], &[12]),
+            asked: asks(&[], &[12], &[], &[12], &[]),
             period: SHOWN_POLL,
         },
         Case {
@@ -277,7 +307,7 @@ fn a_lease_decides_what_a_tick_reads() {
                 state.branches.insert(branch("feature"), found);
                 read_quiet(state, 12, ago(30));
             },
-            asked: asks(&["feature"], &[], &[], &[12]),
+            asked: asks(&["feature"], &[], &[], &[12], &["feature"]),
             period: SHOWN_POLL,
         },
         Case {
@@ -295,7 +325,7 @@ fn a_lease_decides_what_a_tick_reads() {
                 watch(state, 12);
                 read_quiet(state, 12, ago(45));
             },
-            asked: asks(&[], &[12], &[], &[12]),
+            asked: asks(&[], &[12], &[], &[12], &[]),
             period: WATCH_POLL,
         },
         Case {
@@ -307,7 +337,7 @@ fn a_lease_decides_what_a_tick_reads() {
                     .show(&session(), Checkout::NotGit, Shown::Linked(pr(12)), NOW);
                 read_quiet(state, 12, ago(30));
             },
-            asked: asks(&[], &[12], &[], &[12]),
+            asked: asks(&[], &[12], &[], &[12], &[]),
             period: SHOWN_POLL,
         },
     ];
@@ -458,11 +488,7 @@ fn a_show_reads_only_what_nothing_kept_answers() {
         ),
         (
             "the default branch, never looked up",
-            |state| {
-                state
-                    .default_branches
-                    .insert(repo(), Some("feature".into()));
-            },
+            |state| default_branch(state, "feature", ago(5)),
             Of::Feature,
             ShowRead::Cached,
             false,

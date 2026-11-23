@@ -6881,6 +6881,7 @@
           "items": {
             "$ref": "#/$defs/SessionId"
           },
+          "maxItems": 1000,
           "type": "array"
         }
       },

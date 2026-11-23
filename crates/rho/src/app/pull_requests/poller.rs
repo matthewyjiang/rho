@@ -6,10 +6,11 @@
 //!
 //! A tick reads each host once for what [`due`] says is due: branch
 //! lookups, cheap summaries, and the full detail of those that need it. A
-//! watched or shown PR whose summary shows it changed since its last detail
-//! gets its detail in a second query. Every watch is then evaluated against
-//! what the tick read, and only then are sessions told, so one wake carries
-//! all of a session's news from the tick.
+//! watched or shown PR whose summary shows it changed since its last detail,
+//! the PR a shown branch's lookup found included, gets its detail in a
+//! second query. Every watch is then evaluated against what the tick read,
+//! and only then are sessions told, so one wake carries all of a session's
+//! news from the tick.
 //!
 //! With no client asking, a PR linked and not watched is kept, and not
 //! read.
@@ -26,8 +27,8 @@ use tokio::sync::Notify;
 use super::{
     due::{self, Due},
     gh::{Forge, ReadError},
-    gh_query,
-    model::{Batch, BranchId, Budget, FetchPlan, Found, PrDetail, PrId, PrSummary, RepoId},
+    model::{Batch, BranchId, Budget, FetchPlan, Found, PrDetail, PrId},
+    reads::{keep, read_into, Read, Reads},
     record::{SessionRecord, NEWS_PER_SESSION},
     service::{Detailed, Shared, State, Trouble},
     state::{CheckTally, News},
@@ -154,37 +155,6 @@ impl Reader {
     }
 }
 
-/// What one read learned of one pull request.
-enum Read {
-    /// Its summary only: it did not change, its detail could not follow,
-    /// or a branch lookup found it.
-    Summary(PrSummary),
-    /// Boxed: a detail is several times the size of the other reads.
-    Detail(Box<PrDetail>),
-    /// The forge answered without it: no such PR, or one the account can't
-    /// see, in the forge's words.
-    Refused(String),
-    Failed(ReadError),
-}
-
-/// What reads learned: of each pull request, of each branch, and of each
-/// repository's default branch.
-#[derive(Default)]
-struct Reads {
-    prs: HashMap<PrId, Read>,
-    branches: HashMap<BranchId, Result<Found, Trouble>>,
-    default_branches: HashMap<RepoId, Option<String>>,
-}
-
-impl Reads {
-    /// Adds what a later read learned, which replaces what this one says.
-    fn extend(&mut self, later: Self) {
-        self.prs.extend(later.prs);
-        self.branches.extend(later.branches);
-        self.default_branches.extend(later.default_branches);
-    }
-}
-
 /// Why [`Shared::read_detail`] has no detail. A watch refuses to start
 /// with it (see `PullRequestInbox::watch`); a show keeps it as trouble.
 pub(super) enum DetailError {
@@ -201,11 +171,24 @@ impl Shared {
         let mut reader = self.reader.lock().await;
         let hosts = due::due(&self.state(), now);
         let mut reads = Reads::default();
-        for (host, Due { plan, wants_detail }) in hosts {
+        for (host, due) in hosts {
+            let Due {
+                plan,
+                mut wants_detail,
+                shown_branches,
+            } = due;
             if reader.paused(&host, now).is_some() {
                 continue;
             }
             read_into(&mut reader, &host, plan, now, &mut reads).await;
+            // The PR a shown branch's lookup found wants its detail as a
+            // shown PR does, though the planner may not have known it.
+            wants_detail.extend(shown_branches.iter().filter_map(|branch| {
+                match reads.branches.get(branch)? {
+                    Ok(Found::Pr(summary)) => Some(summary.id.clone()),
+                    Ok(Found::None | Found::OnlyForks(_)) | Err(_) => None,
+                }
+            }));
             let moved = {
                 let state = self.state();
                 let mut moved: Vec<PrId> = reads
@@ -310,25 +293,33 @@ impl Shared {
     /// Keeps what a read outside a tick learned. A tick tells a watch's
     /// news by comparing the summary it reads with the last detail; a
     /// detail read here was never evaluated against the PR's watches, and
-    /// kept, it would hide what changed since. So of a watched PR only the
-    /// summary is kept, and it is not counted as asked: the next tick due
-    /// for the watch still reads the detail and evaluates it, however
-    /// often clients read it fresh.
+    /// kept as that detail, it would hide what changed since. So a watched
+    /// PR's detail is kept apart, for shows to answer with (see
+    /// [`super::service::Snapshot::newest_detail`]), and no read of a
+    /// watched PR here is counted as asked, a failed one included: the next
+    /// tick due for the watch still reads the PR and evaluates it, however
+    /// often clients read it. A failure is kept as trouble for the client;
+    /// a cached show retries it only once the shown cadence allows since
+    /// the last tick's ask (see [`due::show_reads`]), so at most once per
+    /// show a client sends at its cadence.
     fn keep_unjudged(&self, mut reads: Reads, now: u64) {
         self.update(|state| {
-            let unjudged: Vec<PrId> = reads
+            let watched: Vec<PrId> = reads
                 .prs
-                .iter()
-                .filter(|(pr, read)| match read {
-                    Read::Detail(_) => state.watched(pr),
-                    Read::Summary(_) | Read::Refused(_) | Read::Failed(_) => false,
-                })
-                .map(|(pr, _)| pr.clone())
+                .keys()
+                .filter(|pr| state.watched(pr))
+                .cloned()
                 .collect();
-            for pr in unjudged {
-                if let Some(Read::Detail(detail)) = reads.prs.remove(&pr) {
-                    let snapshot = state.snapshots.entry(pr).or_default();
-                    snapshot.saw_summary(detail.summary, now);
+            for pr in watched {
+                let Some(read) = reads.prs.remove(&pr) else {
+                    continue;
+                };
+                let snapshot = state.snapshots.entry(pr).or_default();
+                match read {
+                    Read::Summary(summary) => snapshot.saw_summary(summary, now),
+                    Read::Detail(detail) => snapshot.saw_unjudged(*detail, now),
+                    Read::Refused(why) => snapshot.trouble = Some(Trouble::Refused(why)),
+                    Read::Failed(error) => snapshot.trouble = Some(Trouble::Failed(error)),
                 }
             }
             keep(state, &reads, now);
@@ -381,50 +372,22 @@ impl Shared {
                 Some(Found::None | Found::OnlyForks(_)) | None => None,
             })
             .collect();
+        // Each linked PR, and whether any session watches it.
+        let mut linked: HashMap<&PrId, bool> = HashMap::new();
+        for link in sessions.values().flat_map(|entry| entry.record.links()) {
+            *linked.entry(&link.pr).or_default() |= link.watch.is_some();
+        }
         snapshots.retain(|pr, snapshot| {
-            let links = sessions.values().flat_map(|entry| entry.record.links());
-            let (linked, watched) = links
-                .filter(|link| link.pr == *pr)
-                .fold((false, false), |(_, watched), link| {
-                    (true, watched || link.watch.is_some())
-                });
-            if !linked && !found.contains(pr) {
+            let watched = linked.get(pr).copied();
+            if watched.is_none() && !found.contains(pr) {
                 return false;
             }
-            if !watched && !shown.contains(pr) {
-                snapshot.detail = None;
+            if watched != Some(true) && !shown.contains(pr) {
+                snapshot.forget_details();
             }
             true
         });
         told
-    }
-}
-
-/// Keeps what `reads` learned at `now` in `state`.
-fn keep(state: &mut State, reads: &Reads, now: u64) {
-    for (repo, default) in &reads.default_branches {
-        state.default_branches.insert(repo.clone(), default.clone());
-    }
-    for (branch, answered) in &reads.branches {
-        let read = state.branches.entry(branch.clone()).or_default();
-        read.asked_at = Some(now);
-        match answered {
-            Ok(found) => {
-                read.found = Some(found.clone());
-                read.trouble = None;
-            }
-            Err(trouble) => read.trouble = Some(trouble.clone()),
-        }
-    }
-    for (pr, read) in &reads.prs {
-        let snapshot = state.snapshots.entry(pr.clone()).or_default();
-        snapshot.asked_at = Some(now);
-        match read {
-            Read::Summary(summary) => snapshot.saw_summary(summary.clone(), now),
-            Read::Detail(detail) => snapshot.saw_detail(PrDetail::clone(detail), now),
-            Read::Refused(why) => snapshot.trouble = Some(Trouble::Refused(why.clone())),
-            Read::Failed(error) => snapshot.trouble = Some(Trouble::Failed(error.clone())),
-        }
     }
 }
 
@@ -484,113 +447,6 @@ fn evaluate(
         }
     }
     (changed, news)
-}
-
-/// Reads `plan` from `host` into `reads`, in as many queries as
-/// [`gh_query::split`] makes of it, while the host's budget allows.
-async fn read_into(reader: &mut Reader, host: &str, plan: FetchPlan, now: u64, reads: &mut Reads) {
-    let plans = gh_query::split(plan);
-    if plans.len() > 1 {
-        tracing::info!(
-            host,
-            queries = plans.len(),
-            "reading this host's pull requests takes more than one query"
-        );
-    }
-    for plan in plans {
-        if reader.paused(host, now).is_some() {
-            return;
-        }
-        match reader.read(host, &plan).await {
-            Ok(batch) => reads.extend(answer(&plan, batch)),
-            Err(error) => {
-                tracing::warn!(host, %error, "could not read pull requests");
-                for branch in &plan.branches {
-                    let failed = Err(Trouble::Failed(error.clone()));
-                    reads.branches.insert(branch.clone(), failed);
-                }
-                for pr in plan.links.iter().chain(&plan.details) {
-                    reads.prs.insert(pr.clone(), Read::Failed(error.clone()));
-                }
-            }
-        }
-    }
-}
-
-/// What `batch` says of each branch and PR `plan` asked for. A branch's PR
-/// reads as that PR's summary too. A branch or PR the answer left out
-/// entirely reads as a failed read, which keeps a watch's refusal count
-/// where it is.
-fn answer(plan: &FetchPlan, batch: Batch) -> Reads {
-    let Batch {
-        budget: _,
-        default_branches,
-        branches,
-        links,
-        details,
-        missing,
-    } = batch;
-    let refused = |repo: &RepoId| {
-        missing
-            .iter()
-            .find(|(missing, _)| missing == repo)
-            .map(|(_, why)| why.clone())
-    };
-    let mut reads = Reads {
-        default_branches: default_branches.into_iter().collect(),
-        ..Reads::default()
-    };
-    let mut found: HashMap<BranchId, Found> = branches.into_iter().collect();
-    for branch in &plan.branches {
-        let answered = found
-            .remove(branch)
-            .ok_or_else(|| match refused(&branch.repo) {
-                Some(why) => Trouble::Refused(why),
-                None => Trouble::Failed(ReadError::Failed(format!(
-                    "GitHub's answer left out the branch {}",
-                    branch.branch
-                ))),
-            });
-        if let Ok(Found::Pr(summary)) = &answered {
-            reads
-                .prs
-                .insert(summary.id.clone(), Read::Summary(summary.clone()));
-        }
-        reads.branches.insert(branch.clone(), answered);
-    }
-    let mut answered: HashMap<PrId, Read> = HashMap::new();
-    for (pr, found) in links {
-        let read = match found {
-            Found::Pr(summary) => Read::Summary(summary),
-            Found::None | Found::OnlyForks(_) => Read::Refused(no_such(&pr)),
-        };
-        answered.insert(pr, read);
-    }
-    for (pr, detail) in details {
-        let read = detail.map_or_else(
-            || Read::Refused(no_such(&pr)),
-            |detail| Read::Detail(Box::new(detail)),
-        );
-        answered.insert(pr, read);
-    }
-    let mut asked = HashSet::new();
-    for pr in plan.links.iter().chain(&plan.details) {
-        if !asked.insert(pr) {
-            continue;
-        }
-        let read = answered
-            .remove(pr)
-            .unwrap_or_else(|| match refused(&pr.repo) {
-                Some(why) => Read::Refused(why),
-                None => Read::Failed(ReadError::Failed(format!("GitHub's answer left out {pr}"))),
-            });
-        reads.prs.insert(pr.clone(), read);
-    }
-    reads
-}
-
-fn no_such(pr: &PrId) -> String {
-    format!("GitHub shows this account no pull request {pr}")
 }
 
 #[cfg(test)]
