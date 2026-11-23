@@ -95,9 +95,16 @@ async fn probe(remote: &Remote) -> anyhow::Result<()> {
     .map_err(|error| {
         let name = &remote.name;
         let url = &remote.url;
+        // Plain `http` to a remote never goes through a proxy, so neither
+        // does the check.
+        let no_proxy = if url.starts_with("http://") {
+            "--noproxy '*' "
+        } else {
+            ""
+        };
         let hint = match error {
             RemoteError::Unreachable { .. } => format!(
-                "\nlikely causes: a firewall or network policy (such as a NetBird or Tailscale ACL) blocks this machine from the port; the address, port, or path (it ends in /mcp) is wrong; or `rho mcp serve --http` is not running there, or listens on another address. `curl -sS -o /dev/null -w '%{{http_code}}\\n' '{url}'` from this machine prints 401 once it is reachable. Then run the same line again: rotating the token again replaces the secret that was not saved. Until it succeeds, a remote already saved under this name is refused, since that rotate replaced its secret"
+                "\nlikely causes: a firewall or network policy (such as a NetBird or Tailscale ACL) blocks this machine from the port; the address, port, or path (it ends in /mcp) is wrong; or `rho mcp serve --http` is not running there, or listens on another address. `curl -sS {no_proxy}-o /dev/null -w '%{{http_code}}\\n' '{url}'` from this machine prints 401 once it is reachable. Then run the same line again: rotating the token again replaces the secret that was not saved. Until it succeeds, a remote already saved under this name is refused, since that rotate replaced its secret"
             ),
             RemoteError::Refused { .. } | RemoteError::Failed { .. } => String::new(),
         };
