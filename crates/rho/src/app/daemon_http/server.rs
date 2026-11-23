@@ -1,8 +1,7 @@
 //! HTTP/1.1 + WebSocket server for `rho daemon serve --http`.
 
 use std::{
-    collections::BTreeMap, convert::Infallible, future::Future, net::SocketAddr, pin::Pin,
-    sync::Arc, time::Duration,
+    convert::Infallible, future::Future, net::SocketAddr, pin::Pin, sync::Arc, time::Duration,
 };
 
 use anyhow::Context;
@@ -11,11 +10,10 @@ use http_body_util::{combinators::BoxBody, BodyExt, Full};
 use hyper::{body::Incoming, header, Method, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use rho_protocol::ClientEnvironment;
-use rho_sdk::CancellationToken;
+use serde_json::{Map, Value};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     net::TcpListener,
-    task::JoinSet,
 };
 use tokio_tungstenite::{
     tungstenite::{handshake::derive_accept_key, protocol::Role},
@@ -27,17 +25,25 @@ use super::{
     tokens::DaemonTokenSet,
 };
 use crate::app::{
-    http_guard::{bearer_token, check_host, check_origin, is_private, own_hosts, LOOPBACK_HOSTS},
-    http_upgrade::{adopted_listener, Upgrade},
+    http_guard::{
+        bearer_token, check_host, check_origin, is_private, own_hosts, AllowedHost, AllowedOrigin,
+        Refusal, LOOPBACK_HOSTS,
+    },
+    http_upgrade::{adopted_listener, Drain, Upgrade},
     mcp_server::token_store,
 };
 
 /// WebSocket endpoint path served by `rho daemon serve --http`.
 pub(super) const ENDPOINT: &str = "/ws";
 
-/// How long an in-place upgrade waits for active WebSocket bridges to flush
-/// closing frames and finish in-flight daemon responses before re-executing.
-const UPGRADE_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
+/// The longest the server waits, on a stop signal or an in-place upgrade,
+/// for each WebSocket to receive the daemon's answers to requests it already
+/// sent and its closing frame.
+//
+// A tripwire for a stalled client or daemon: daemon requests answer once
+// started (a prompt or a login answers, then streams), and a closing daemon
+// connection gives each write `rho_protocol::CLOSE_GRACE` (1 s).
+const DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Options for `rho daemon serve --http`.
 pub(crate) struct HttpOptions {
@@ -93,26 +99,39 @@ impl DaemonConnector for LocalDaemonConnector {
     }
 }
 
-struct ServerState<C, T> {
-    allowed_hosts: Vec<String>,
-    allowed_origins: Vec<String>,
-    host_env: Arc<BTreeMap<String, String>>,
+/// What every connection the server accepts shares.
+pub(super) struct ServerState<C, T> {
+    allowed_hosts: Vec<AllowedHost>,
+    allowed_origins: Vec<AllowedOrigin>,
+    /// The server's environment, the base of a remote client's.
+    host_env: Map<String, Value>,
     connector: C,
     tokens: T,
-    shutdown: CancellationToken,
-    bridges: Arc<tokio::sync::Mutex<JoinSet<()>>>,
+    /// Counts each open WebSocket as a call under way, and tells each to
+    /// close once the server stops or upgrades.
+    pub(super) drain: Drain,
 }
 
-/// How [`serve_with`] stopped accepting connections.
-enum ServeEnd {
-    /// Stopped by signal/caller shutdown.
-    Stopped,
-    /// Executable was replaced with `version`; the caller hands `listener` to
-    /// the replacement.
-    Upgrade {
-        version: String,
-        listener: TcpListener,
-    },
+impl<C: DaemonConnector, T: TokenLoader> ServerState<C, T> {
+    pub(super) fn new(
+        allowed_hosts: Vec<AllowedHost>,
+        allowed_origins: Vec<AllowedOrigin>,
+        environment: ClientEnvironment,
+        connector: C,
+        tokens: T,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            allowed_hosts,
+            allowed_origins,
+            host_env: environment
+                .into_iter()
+                .map(|(key, value)| (key, Value::String(value)))
+                .collect(),
+            connector,
+            tokens,
+            drain: Drain::new(),
+        })
+    }
 }
 
 /// Binds `options.address` (or adopts `options.inherited_listener`) and serves
@@ -131,6 +150,18 @@ pub(crate) async fn serve_http(
         );
     }
     let own = own_hosts(ip);
+    let allowed_hosts = LOOPBACK_HOSTS
+        .iter()
+        .map(|host| (*host).to_owned())
+        .chain(own.iter().cloned())
+        .chain(options.allowed_hosts)
+        .map(|host| AllowedHost::parse(&host))
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    let allowed_origins = options
+        .allowed_origins
+        .iter()
+        .map(|origin| AllowedOrigin::parse(origin))
+        .collect::<anyhow::Result<Vec<_>>>()?;
     let listener = match options.inherited_listener {
         Some(socket) => adopted_listener(socket, options.address)?,
         None => TcpListener::bind(options.address)
@@ -144,126 +175,75 @@ pub(crate) async fn serve_http(
             "rho daemon serve: plain HTTP/WS on a network address: anyone who can read traffic on that network can read requests, bearer tokens included"
         );
     }
-    let allowed_hosts: Vec<String> = LOOPBACK_HOSTS
-        .iter()
-        .map(|host| (*host).to_owned())
-        .chain(own)
-        .chain(options.allowed_hosts)
-        .collect();
-    let Some(upgrade) = options.upgrade else {
-        serve_with(
-            listener,
-            allowed_hosts,
-            options.allowed_origins,
-            environment,
-            LocalDaemonConnector,
-            StoreTokenLoader,
-            shutdown,
-        )
-        .await?;
-        return Ok(());
-    };
-    match serve_until(
-        listener,
+    let state = ServerState::new(
         allowed_hosts,
-        options.allowed_origins,
+        allowed_origins,
         environment,
         LocalDaemonConnector,
         StoreTokenLoader,
-        shutdown,
-        upgrade.replaced(),
-    )
-    .await?
-    {
-        ServeEnd::Stopped => Ok(()),
-        ServeEnd::Upgrade { version, listener } => {
-            eprintln!("rho daemon serve: upgrading to {version} in place");
-            match listener.into_std() {
-                Ok(listener) => Err(upgrade.relaunch(listener, &version)),
-                Err(error) => {
-                    Err(anyhow::Error::new(error).context("could not hand on the listening socket"))
-                }
-            }
+    );
+    let Some(upgrade) = options.upgrade else {
+        accept_until(&listener, &state, shutdown).await?;
+        stop(&state.drain).await;
+        return Ok(());
+    };
+    let replaced = accept_until(&listener, &state, async {
+        tokio::select! {
+            () = shutdown => None,
+            version = upgrade.replaced() => Some(version),
+        }
+    })
+    .await?;
+    match replaced {
+        Some(version) => Err(state
+            .drain
+            .finish(upgrade, &version, listener, DRAIN_TIMEOUT)
+            .await),
+        None => {
+            stop(&state.drain).await;
+            Ok(())
         }
     }
 }
 
-/// Testable core accept loop with injectable daemon connector and token loader.
-pub(super) async fn serve_with<C, T>(
-    listener: TcpListener,
-    allowed_hosts: Vec<String>,
-    allowed_origins: Vec<String>,
-    environment: ClientEnvironment,
-    connector: C,
-    tokens: T,
-    shutdown: impl Future<Output = ()>,
-) -> anyhow::Result<()>
-where
-    C: DaemonConnector,
-    T: TokenLoader,
-{
-    let _ = serve_until(
-        listener,
-        allowed_hosts,
-        allowed_origins,
-        environment,
-        connector,
-        tokens,
-        shutdown,
-        std::future::pending::<String>(),
-    )
-    .await?;
-    Ok(())
+/// Closes every open WebSocket once the daemon has answered what it sent,
+/// waiting at most [`DRAIN_TIMEOUT`].
+async fn stop(drain: &Drain) {
+    let left = drain.settle(DRAIN_TIMEOUT).await;
+    if left > 0 {
+        eprintln!(
+            "rho daemon serve: {left} WebSockets still open after DRAIN_TIMEOUT ({DRAIN_TIMEOUT:?}); closing them"
+        );
+    }
 }
 
-#[allow(clippy::too_many_arguments)]
-async fn serve_until<C, T>(
-    listener: TcpListener,
-    allowed_hosts: Vec<String>,
-    allowed_origins: Vec<String>,
-    environment: ClientEnvironment,
-    connector: C,
-    tokens: T,
-    shutdown: impl Future<Output = ()>,
-    replaced: impl Future<Output = String>,
-) -> anyhow::Result<ServeEnd>
+/// Serves each connection `listener` accepts until `until` resolves, and
+/// returns its output. Connections close once `state.drain` begins.
+pub(super) async fn accept_until<C, T, U>(
+    listener: &TcpListener,
+    state: &Arc<ServerState<C, T>>,
+    until: impl Future<Output = U>,
+) -> std::io::Result<U>
 where
     C: DaemonConnector,
     T: TokenLoader,
 {
-    let host_env: BTreeMap<String, String> = environment.into_iter().collect();
-    let cancel = CancellationToken::new();
-    let bridges = Arc::new(tokio::sync::Mutex::new(JoinSet::new()));
-    let state = Arc::new(ServerState {
-        allowed_hosts,
-        allowed_origins,
-        host_env: Arc::new(host_env),
-        connector,
-        tokens,
-        shutdown: cancel.clone(),
-        bridges: Arc::clone(&bridges),
-    });
-    let mut connections = JoinSet::new();
-    tokio::pin!(shutdown);
-    tokio::pin!(replaced);
-    let end = loop {
+    tokio::pin!(until);
+    loop {
         let stream = tokio::select! {
-            biased;
-            () = &mut shutdown => break ServeEnd::Stopped,
-            version = &mut replaced => break ServeEnd::Upgrade { version, listener },
-            Some(_) = connections.join_next(), if !connections.is_empty() => continue,
+            ended = &mut until => return Ok(ended),
             accepted = listener.accept() => match accepted {
                 Ok((stream, _)) => stream,
                 Err(error) if is_transient_accept_error(&error) => {
                     tracing::debug!(%error, "daemon HTTP accept failed");
                     continue;
                 }
-                Err(error) => return Err(error).context("daemon HTTP accept failed"),
+                Err(error) => return Err(error),
             }
         };
-        let state = Arc::clone(&state);
-        let cancel_conn = cancel.clone();
-        connections.spawn(async move {
+        let state = Arc::clone(state);
+        let began = state.drain.began();
+        tokio::spawn(async move {
             let handler = hyper::service::service_fn(move |request| {
                 let state = Arc::clone(&state);
                 async move { Ok::<_, Infallible>(handle(state, request).await) }
@@ -274,7 +254,7 @@ where
             tokio::pin!(connection);
             let ended = tokio::select! {
                 ended = connection.as_mut() => ended,
-                () = cancel_conn.cancelled() => {
+                () = began => {
                     connection.as_mut().graceful_shutdown();
                     connection.await
                 }
@@ -283,29 +263,7 @@ where
                 tracing::debug!(%error, "daemon HTTP connection ended");
             }
         });
-    };
-    cancel.cancel();
-    // Drain active HTTP connections and WebSocket bridges (bounded on upgrade
-    // so a stalled remote peer cannot block re-execution indefinitely).
-    let drain = async {
-        while connections.join_next().await.is_some() {}
-        let mut bridges = bridges.lock().await;
-        while bridges.join_next().await.is_some() {}
-    };
-    match &end {
-        ServeEnd::Stopped => drain.await,
-        ServeEnd::Upgrade { .. } => {
-            if tokio::time::timeout(UPGRADE_DRAIN_TIMEOUT, drain)
-                .await
-                .is_err()
-            {
-                eprintln!(
-                    "rho daemon serve: connections still active after {UPGRADE_DRAIN_TIMEOUT:?}; cutting them short to upgrade"
-                );
-            }
-        }
     }
-    Ok(end)
 }
 
 async fn handle<C: DaemonConnector, T: TokenLoader>(
@@ -315,16 +273,10 @@ async fn handle<C: DaemonConnector, T: TokenLoader>(
     if request.uri().path() != ENDPOINT {
         return refusal(StatusCode::NOT_FOUND, "not found");
     }
-    if let Err(status) = check_host(&request, &state.allowed_hosts) {
-        let message = if status == StatusCode::BAD_REQUEST {
-            "missing or invalid Host header"
-        } else {
-            "Host header is not allowed"
-        };
-        return refusal(status, message);
-    }
-    if let Err(status) = check_origin(&request, &state.allowed_origins) {
-        return refusal(status, "Origin header is not allowed");
+    if let Err(Refusal { status, reason }) = check_host(&request, &state.allowed_hosts)
+        .and_then(|()| check_origin(&request, &state.allowed_origins))
+    {
+        return refusal(status, reason);
     }
     let Some(presented) = bearer_token(&request) else {
         return unauthorized("missing bearer token");
@@ -332,7 +284,7 @@ async fn handle<C: DaemonConnector, T: TokenLoader>(
     let tokens = match state.tokens.load().await {
         Ok(tokens) => tokens,
         Err(error) => {
-            tracing::warn!(error = %format!("{error:#}"), "could not read daemon HTTP tokens");
+            eprintln!("rho daemon serve: could not read the daemon HTTP tokens: {error:#}");
             return refusal(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "could not read the server's tokens",
@@ -367,7 +319,7 @@ async fn handle<C: DaemonConnector, T: TokenLoader>(
     let daemon_stream = match state.connector.connect().await {
         Ok(stream) => stream,
         Err(error) => {
-            tracing::warn!(error = %format!("{error:#}"), "could not reach local rho daemon");
+            eprintln!("rho daemon serve: could not reach the rho daemon: {error:#}");
             return refusal(
                 StatusCode::SERVICE_UNAVAILABLE,
                 &format!("could not reach the rho daemon: {error:#}"),
@@ -377,48 +329,46 @@ async fn handle<C: DaemonConnector, T: TokenLoader>(
 
     let accept = derive_accept_key(ws_key.as_bytes());
     let token_name = token.name.clone();
-    let host_env = Arc::clone(&state.host_env);
-    let shutdown = state.shutdown.clone();
     let upgrade = hyper::upgrade::on(request);
-    {
-        let mut bridges = state.bridges.lock().await;
-        // Reap finished bridge tasks so the set stays bounded over long uptime.
-        while bridges.try_join_next().is_some() {}
-        bridges.spawn(async move {
-            match upgrade.await {
-                Ok(upgraded) => {
-                    tracing::debug!(token = %token_name, "accepted daemon WebSocket client");
-                    let ws = WebSocketStream::from_raw_socket(
-                        TokioIo::new(upgraded),
-                        Role::Server,
-                        Some(websocket_config()),
-                    )
-                    .await;
-                    relay_websocket(ws, daemon_stream, host_env, shutdown).await;
-                    tracing::debug!(token = %token_name, "daemon WebSocket client disconnected");
-                }
-                Err(error) => {
-                    tracing::debug!(token = %token_name, %error, "WebSocket upgrade failed");
-                }
+    // Counted from the response on, so a drain that begins meanwhile waits
+    // for this WebSocket too.
+    let call = state.drain.calls().enter();
+    let draining = state.drain.began();
+    tokio::spawn(async move {
+        let _call = call;
+        match upgrade.await {
+            Ok(upgraded) => {
+                tracing::debug!(token = %token_name, "accepted daemon WebSocket client");
+                let ws = WebSocketStream::from_raw_socket(
+                    TokioIo::new(upgraded),
+                    Role::Server,
+                    Some(websocket_config()),
+                )
+                .await;
+                relay_websocket(ws, daemon_stream, &state.host_env, draining).await;
+                tracing::debug!(token = %token_name, "daemon WebSocket client disconnected");
             }
-        });
-    }
+            Err(error) => {
+                tracing::debug!(token = %token_name, %error, "WebSocket upgrade failed");
+            }
+        }
+    });
 
     let mut response = Response::new(Full::new(Bytes::new()).boxed());
     *response.status_mut() = StatusCode::SWITCHING_PROTOCOLS;
-    response.headers_mut().insert(
+    let headers = response.headers_mut();
+    headers.insert(
         header::UPGRADE,
         header::HeaderValue::from_static("websocket"),
     );
-    response.headers_mut().insert(
+    headers.insert(
         header::CONNECTION,
         header::HeaderValue::from_static("Upgrade"),
     );
-    if let Ok(value) = header::HeaderValue::from_str(&accept) {
-        response
-            .headers_mut()
-            .insert(header::SEC_WEBSOCKET_ACCEPT, value);
-    }
+    headers.insert(
+        header::SEC_WEBSOCKET_ACCEPT,
+        header::HeaderValue::from_str(&accept).expect("a base64 accept key is a valid header"),
+    );
     response
 }
 

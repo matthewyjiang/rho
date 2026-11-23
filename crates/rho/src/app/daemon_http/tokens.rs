@@ -10,7 +10,7 @@ use rho_providers::credentials::CredentialStore;
 use serde::{Deserialize, Serialize};
 
 use crate::app::{
-    http_guard::{constant_time_eq, new_secret, sha256_hex, validate_name},
+    http_guard::{find_by_secret, new_secret, sha256_hex, validate_name},
     mcp_server::token_store::{self, StoredSet},
 };
 
@@ -75,14 +75,7 @@ impl DaemonTokenSet {
 
     /// Returns the matching token record in constant time across all tokens.
     pub(crate) fn authenticate(&self, presented: &str) -> Option<&DaemonTokenRecord> {
-        let presented = sha256_hex(presented);
-        self.tokens.iter().fold(None, |found, token| {
-            if constant_time_eq(token.sha256.as_bytes(), presented.as_bytes()) {
-                Some(token)
-            } else {
-                found
-            }
-        })
+        find_by_secret(&self.tokens, presented, |token| &token.sha256)
     }
 }
 

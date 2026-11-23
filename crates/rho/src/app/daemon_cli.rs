@@ -8,16 +8,14 @@
 //! daemon. `restart` re-executes the running daemon in place (#1713), as a
 //! replaced executable does once the daemon is idle.
 
-use crate::cli::{Cli, Command, DaemonCommand, DaemonServeArgs, DaemonTokenCommand};
+use crate::cli::{Cli, Command, DaemonCommand};
 
 use {
     super::{
         config_repository::ConfigRepository,
         daemon_host::{DaemonHost, JobRecords, Startup, UNLOAD_IDLE_AFTER},
-        daemon_http::{self, tokens::DaemonTokenSet},
-        mcp_server::token_store,
+        daemon_http,
     },
-    crate::credential_store::UntrackedCredentialStore,
     crate::daemon::{
         self, ConnectAs, DaemonPaths, Ending, Executable, Served, Shutdown, StopRequests,
         DAEMON_RESTART_TIMEOUT,
@@ -25,8 +23,8 @@ use {
     crate::logging::{self, LogSink},
     anyhow::Context,
     rho_protocol::{
-        methods, ClientEnvironment, ClientError, DaemonStatus, JobListParams, JobSummary,
-        PendingUpgrade, RestartParams, StatusParams, StopParams,
+        methods, ClientError, DaemonStatus, JobListParams, JobSummary, PendingUpgrade,
+        RestartParams, StatusParams, StopParams,
     },
     std::{ffi::OsString, sync::Arc, time::Duration},
 };
@@ -49,8 +47,8 @@ pub(super) async fn run(command: Option<DaemonCommand>, cli: &Cli) -> anyhow::Re
         DaemonCommand::Status { json } => status(&paths, json).await,
         DaemonCommand::Stop => stop(&paths).await,
         DaemonCommand::Restart => restart(&paths).await,
-        DaemonCommand::Serve(args) => serve(&paths, &args, cli).await,
-        DaemonCommand::Token { command } => token(&command, cli),
+        DaemonCommand::Serve(args) => daemon_http::cli::serve(&args, cli).await,
+        DaemonCommand::Token { command } => daemon_http::cli::token(&command, cli),
     }
 }
 
@@ -398,12 +396,7 @@ fn rerun_args(unload_idle_after: Duration, handoff: Option<String>) -> Vec<OsStr
 /// A config that does not load is logged, and sessions then fail to open
 /// with the same error.
 fn open_credential_store() {
-    let repository = ConfigRepository::new(None);
-    let opened = repository.configured_path().and_then(|path| {
-        let mut config = repository.load()?;
-        crate::credential_store::initialize_from_config(&mut config, &path)
-    });
-    if let Err(error) = opened {
+    if let Err(error) = ConfigRepository::new(None).open_credential_store() {
         tracing::warn!(error = %format!("{error:#}"), "could not open the credential store");
     }
 }
@@ -611,97 +604,6 @@ async fn restart(paths: &DaemonPaths) -> anyhow::Result<()> {
             paths.log_file.display()
         ),
     }
-}
-
-/// `rho daemon serve --http`: exposes the local daemon over HTTP WebSockets.
-async fn serve(paths: &DaemonPaths, args: &DaemonServeArgs, cli: &Cli) -> anyhow::Result<()> {
-    // Taken first, before anything this process starts could inherit it.
-    let inherited_listener = args
-        .listener_fd
-        .map(|fd| {
-            super::http_upgrade::inherit_listener(fd)
-                .with_context(|| format!("could not take over the listening socket {fd}"))
-        })
-        .transpose()?;
-    open_cli_credential_store(cli)?;
-    let mut stops = StopRequests::listen(paths)?;
-    let environment = ClientEnvironment::of_this_process();
-    let upgrade = Executable::of_this_process()
-        .inspect_err(|error| {
-            tracing::warn!(%error, "could not find the server's executable; it will not upgrade in place");
-        })
-        .ok()
-        .and_then(|executable| {
-            super::http_upgrade::Upgrade::new(
-                "rho daemon serve",
-                executable,
-                std::env::args_os().skip(1),
-            )
-        });
-    daemon_http::serve_http(
-        daemon_http::HttpOptions {
-            address: args.http,
-            allowed_hosts: args.allow_host.clone(),
-            allowed_origins: args.allow_origin.clone(),
-            inherited_listener,
-            upgrade,
-        },
-        environment,
-        async move {
-            let signal = stops.recv().await;
-            tracing::info!(%signal, "shutting down daemon HTTP server on signal");
-        },
-    )
-    .await
-}
-
-/// `rho daemon token`: manages bearer tokens for `rho daemon serve --http`.
-fn token(command: &DaemonTokenCommand, cli: &Cli) -> anyhow::Result<()> {
-    open_cli_credential_store(cli)?;
-    match command {
-        DaemonTokenCommand::Rotate { name } => {
-            let secret = token_store::update(|tokens: &mut DaemonTokenSet| tokens.rotate(name))?;
-            // The secret alone on stdout, so a script can capture it.
-            println!("{secret}");
-            eprintln!(
-                "saved daemon token {name:?}; this is the only time its secret is shown. Send it as `Authorization: Bearer <secret>`."
-            );
-        }
-        DaemonTokenCommand::List { json } => {
-            let tokens = DaemonTokenSet::load(&UntrackedCredentialStore)?;
-            if *json {
-                let names: Vec<_> = tokens
-                    .tokens
-                    .iter()
-                    .map(|token| serde_json::json!({ "name": token.name }))
-                    .collect();
-                println!("{}", serde_json::to_string_pretty(&names)?);
-            } else if tokens.tokens.is_empty() {
-                println!("no daemon HTTP tokens; create one with `rho daemon token rotate`");
-            } else {
-                for token in &tokens.tokens {
-                    println!("{}", token.name);
-                }
-            }
-        }
-        DaemonTokenCommand::Revoke { name } => {
-            token_store::update(|tokens: &mut DaemonTokenSet| {
-                if !tokens.revoke(name) {
-                    anyhow::bail!("no daemon HTTP token named {name:?}");
-                }
-                Ok(())
-            })?;
-            println!("revoked daemon token {name:?}");
-        }
-    }
-    Ok(())
-}
-
-fn open_cli_credential_store(cli: &Cli) -> anyhow::Result<()> {
-    let repository = ConfigRepository::new(cli.config.clone());
-    let path = repository.configured_path()?;
-    let mut config = repository.load()?;
-    crate::credential_store::initialize_from_config(&mut config, &path)
 }
 
 #[cfg(test)]

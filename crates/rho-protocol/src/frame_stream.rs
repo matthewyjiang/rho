@@ -21,6 +21,10 @@ use tokio::{
 /// [`crate::Client::handshake_with_io`]) and its message-framed endpoints
 /// ([`FrameSender`] for frames arriving from the peer, [`FrameReceiver`] for
 /// frames to send to the peer).
+///
+/// Both directions are unbounded, like the transport buffers they stand in
+/// for: a [`crate::Client`] reads every incoming frame as it arrives, and
+/// writes only its own requests.
 pub fn frame_channel() -> (FrameStream, FrameSender, FrameReceiver) {
     let (in_tx, in_rx) = mpsc::unbounded_channel();
     let (out_tx, out_rx) = mpsc::unbounded_channel();
@@ -51,11 +55,28 @@ pub struct FrameSender {
 impl FrameSender {
     /// Queues one complete JSON-RPC message received from the peer.
     ///
-    /// Returns `false` once the [`FrameStream`] has closed or been dropped.
-    pub fn send(&self, frame: impl Into<String>) -> bool {
-        self.sender.send(frame.into()).is_ok()
+    /// # Errors
+    ///
+    /// [`FrameStreamClosed`] once the [`FrameStream`] has shut down or been
+    /// dropped; the transport can then close.
+    pub fn send(&self, frame: impl Into<String>) -> Result<(), FrameStreamClosed> {
+        self.sender
+            .send(frame.into())
+            .map_err(|_| FrameStreamClosed)
     }
 }
+
+/// The [`FrameStream`] a [`FrameSender`] feeds has shut down or been dropped.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FrameStreamClosed;
+
+impl std::fmt::Display for FrameStreamClosed {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("the frame stream is closed")
+    }
+}
+
+impl std::error::Error for FrameStreamClosed {}
 
 /// Receives outgoing JSON-RPC text frames written by a [`crate::Client`] to
 /// forward over a message-framed transport (such as a WebSocket).

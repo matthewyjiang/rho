@@ -14,10 +14,19 @@ async fn frames_round_trip_as_single_lines_without_smuggling() {
     let mut lines = BufReader::new(reader).lines();
 
     // Compact frame and pretty-printed frame both read as single lines.
-    assert!(sender.send(r#"{"jsonrpc":"2.0","id":1,"result":{}}"#));
-    assert!(sender.send("{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 2,\n  \"result\": {}\n}\n"));
+    assert_eq!(
+        sender.send(r#"{"jsonrpc":"2.0","id":1,"result":{}}"#),
+        Ok(())
+    );
+    assert_eq!(
+        sender.send("{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 2,\n  \"result\": {}\n}\n"),
+        Ok(())
+    );
     // Invalid JSON containing a newline must stay one line (no smuggling).
-    assert!(sender.send("not json\n{\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{}}"));
+    assert_eq!(
+        sender.send("not json\n{\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{}}"),
+        Ok(())
+    );
 
     assert_eq!(
         lines.next_line().await.unwrap().as_deref(),

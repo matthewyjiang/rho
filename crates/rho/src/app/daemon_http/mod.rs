@@ -15,10 +15,10 @@
 //!   any `Origin` not listed in `--allow-origin`;
 //! - authenticates every upgrade with a bearer token from `rho daemon token`
 //!   (stored hashed in a dedicated credential-store account, read fresh per
-//!   upgrade so rotation/revocation applies immediately).
+//!   upgrade so rotation/revocation applies to the next connection; an open
+//!   WebSocket is not re-checked).
 
 mod bridge;
+pub(super) mod cli;
 mod server;
-pub(super) mod tokens;
-
-pub(super) use server::{serve_http, HttpOptions};
+mod tokens;

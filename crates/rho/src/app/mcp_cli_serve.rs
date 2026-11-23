@@ -180,8 +180,5 @@ fn token_list(tokens: &TokenSet) -> serde_json::Value {
 /// Opens the credential store the selected config chooses, as every rho
 /// process does before it reads a secret.
 pub(super) fn open_credential_store(cli: &Cli) -> anyhow::Result<()> {
-    let repository = ConfigRepository::new(cli.config.clone());
-    let path = repository.configured_path()?;
-    let mut config = repository.load()?;
-    crate::credential_store::initialize_from_config(&mut config, &path)
+    ConfigRepository::new(cli.config.clone()).open_credential_store()
 }

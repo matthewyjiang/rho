@@ -3,6 +3,7 @@ use std::{
     net::SocketAddr,
     path::PathBuf,
     sync::{Arc, Mutex},
+    time::Duration,
 };
 
 use futures_util::{SinkExt, StreamExt};
@@ -16,20 +17,22 @@ use rho_protocol::{
     SessionNewResponse, SessionOptions, SettingsService, StatusParams, StoreSelectedBy, StreamId,
     Subscription, PROTOCOL_VERSION,
 };
-use rho_sdk::CancellationToken;
-use tokio::{io::DuplexStream, net::TcpListener};
+use tokio::{io::DuplexStream, net::TcpListener, sync::oneshot};
 use tokio_tungstenite::{
     connect_async,
     tungstenite::{
         client::IntoClientRequest,
         http::{header, HeaderValue, StatusCode},
-        protocol::frame::coding::CloseCode,
+        protocol::{frame::coding::CloseCode, CloseFrame},
         Error as WsError, Message as WsMessage,
     },
 };
 
-use super::{serve_with, BoxFuture, DaemonConnector, TokenLoader};
-use crate::app::daemon_http::tokens::DaemonTokenSet;
+use super::{accept_until, BoxFuture, DaemonConnector, ServerState, TokenLoader};
+use crate::app::{
+    daemon_http::tokens::DaemonTokenSet,
+    http_guard::{AllowedHost, AllowedOrigin},
+};
 
 fn test_options() -> SessionOptions {
     let model = ModelRef {
@@ -59,6 +62,14 @@ fn test_options() -> SessionOptions {
 struct FakeDaemon {
     last_env: Mutex<Option<BTreeMap<String, String>>>,
     events_tx: Mutex<Option<rho_protocol::Publisher>>,
+    /// When set, `rho/session/new` reports it started on `entered`, then
+    /// answers only once `release` fires.
+    held_session_new: Mutex<Option<HeldCall>>,
+}
+
+struct HeldCall {
+    entered: oneshot::Sender<()>,
+    release: oneshot::Receiver<()>,
 }
 
 impl FakeDaemon {
@@ -66,6 +77,7 @@ impl FakeDaemon {
         Self {
             last_env: Mutex::new(None),
             events_tx: Mutex::new(None),
+            held_session_new: Mutex::new(None),
         }
     }
 }
@@ -114,6 +126,11 @@ impl Service for FakeDaemon {
     }
 
     async fn new_session(&self, params: SessionNewParams) -> Result<SessionNewResponse, RpcError> {
+        let held = self.held_session_new.lock().unwrap().take();
+        if let Some(HeldCall { entered, release }) = held {
+            let _ = entered.send(());
+            let _ = release.await;
+        }
         let env: BTreeMap<String, String> = params.environment.into_iter().collect();
         *self.last_env.lock().unwrap() = Some(env);
         Ok(SessionNewResponse {
@@ -200,8 +217,8 @@ struct TestHarness {
     secret: String,
     daemon: Arc<FakeDaemon>,
     tokens: Arc<Mutex<DaemonTokenSet>>,
-    shutdown: CancellationToken,
-    server: tokio::task::JoinHandle<anyhow::Result<()>>,
+    shutdown: oneshot::Sender<()>,
+    server: tokio::task::JoinHandle<std::io::Result<()>>,
 }
 
 impl TestHarness {
@@ -212,33 +229,29 @@ impl TestHarness {
         let secret = set.rotate("test-client").unwrap();
         let tokens = Arc::new(Mutex::new(set));
         let daemon = Arc::new(FakeDaemon::new());
-        let shutdown = CancellationToken::new();
+        let (shutdown, stopped) = oneshot::channel::<()>();
         let host_env = ClientEnvironment::from_iter([
             ("PATH".to_owned(), "/host/bin".to_owned()),
             ("HOST_ONLY".to_owned(), "yes".to_owned()),
         ]);
-        let server_shutdown = shutdown.clone();
-        let connector = InMemoryConnector {
-            service: Arc::clone(&daemon),
-        };
-        let loader = SharedTokenLoader {
-            tokens: Arc::clone(&tokens),
-        };
+        let state = ServerState::new(
+            ["localhost", "127.0.0.1", "::1", "tunnel.example.com"]
+                .into_iter()
+                .map(|host| AllowedHost::parse(host).unwrap())
+                .collect(),
+            vec![AllowedOrigin::parse("https://ui.example.com").unwrap()],
+            host_env,
+            InMemoryConnector {
+                service: Arc::clone(&daemon),
+            },
+            SharedTokenLoader {
+                tokens: Arc::clone(&tokens),
+            },
+        );
         let server = tokio::spawn(async move {
-            serve_with(
-                listener,
-                vec![
-                    "localhost".to_owned(),
-                    "127.0.0.1".to_owned(),
-                    "::1".to_owned(),
-                    "tunnel.example.com".to_owned(),
-                ],
-                vec!["https://ui.example.com".to_owned()],
-                host_env,
-                connector,
-                loader,
-                server_shutdown.cancelled(),
-            )
+            accept_until(&listener, &state, async {
+                let _ = stopped.await;
+            })
             .await
         });
         Self {
@@ -252,8 +265,76 @@ impl TestHarness {
     }
 
     async fn stop(self) {
-        self.shutdown.cancel();
+        let _ = self.shutdown.send(());
         self.server.await.unwrap().unwrap();
+    }
+}
+
+/// A WebSocket request to `addr` carrying bearer `secret`.
+fn authorized_request(
+    addr: SocketAddr,
+    secret: &str,
+) -> tokio_tungstenite::tungstenite::handshake::client::Request {
+    let mut request = format!("ws://{addr}/ws").into_client_request().unwrap();
+    request.headers_mut().insert(
+        header::AUTHORIZATION,
+        HeaderValue::from_str(&format!("Bearer {secret}")).unwrap(),
+    );
+    request
+}
+
+/// Connects a `rho_protocol::Client` over WebSocket `request`. The returned
+/// task ends with the close frame the server sent, if any.
+async fn connect_client(
+    request: tokio_tungstenite::tungstenite::handshake::client::Request,
+) -> (
+    Client,
+    rho_protocol::Notifications,
+    tokio::task::JoinHandle<Option<CloseFrame>>,
+) {
+    let (ws, _) = connect_async(request).await.unwrap();
+    let (mut ws_sink, mut ws_stream) = ws.split();
+    let (frame_stream, incoming, mut outgoing) = frame_channel();
+    let pump_in = tokio::spawn(async move {
+        while let Some(Ok(message)) = ws_stream.next().await {
+            match message {
+                WsMessage::Text(text) => {
+                    if incoming.send(text.to_string()).is_err() {
+                        return None;
+                    }
+                }
+                WsMessage::Close(frame) => return frame,
+                _ => {}
+            }
+        }
+        None
+    });
+    tokio::spawn(async move {
+        while let Some(frame) = outgoing.recv().await {
+            if ws_sink.send(WsMessage::Text(frame.into())).await.is_err() {
+                break;
+            }
+        }
+        let _ = ws_sink.close().await;
+    });
+    let hello = ClientHello::frontend(ClientInfo {
+        name: "ws-test".to_owned(),
+        version: "0.1.0".to_owned(),
+    });
+    let (client, notifications, hello) = Client::handshake(frame_stream, hello).await.unwrap();
+    assert_eq!(hello.daemon.pid, 4242);
+    (client, notifications, pump_in)
+}
+
+fn session_new_params(environment: ClientEnvironment) -> SessionNewParams {
+    SessionNewParams {
+        cwd: PathBuf::from("/tmp"),
+        environment,
+        agent: None,
+        setup: Default::default(),
+        parent: None,
+        grant: None,
+        worktree: false,
     }
 }
 
@@ -353,48 +434,12 @@ async fn http_guards_enforce_auth_host_origin_and_upgrade_rules() {
 #[tokio::test]
 async fn rho_protocol_client_runs_rpc_and_notifications_over_websocket() {
     let harness = TestHarness::start().await;
-
-    let mut request = format!("ws://{}/ws", harness.addr)
-        .into_client_request()
-        .unwrap();
-    request.headers_mut().insert(
-        header::AUTHORIZATION,
-        HeaderValue::from_str(&format!("Bearer {}", harness.secret)).unwrap(),
-    );
+    let mut request = authorized_request(harness.addr, &harness.secret);
     request.headers_mut().insert(
         header::ORIGIN,
         HeaderValue::from_static("https://ui.example.com"),
     );
-
-    let (ws, _) = connect_async(request).await.unwrap();
-    let (mut ws_sink, mut ws_stream) = ws.split();
-    let (frame_stream, incoming, mut outgoing) = frame_channel();
-
-    let pump_in = tokio::spawn(async move {
-        while let Some(Ok(message)) = ws_stream.next().await {
-            if let WsMessage::Text(text) = message {
-                if !incoming.send(text.to_string()) {
-                    break;
-                }
-            }
-        }
-    });
-    let pump_out = tokio::spawn(async move {
-        while let Some(frame) = outgoing.recv().await {
-            if ws_sink.send(WsMessage::Text(frame.into())).await.is_err() {
-                break;
-            }
-        }
-        let _ = ws_sink.close().await;
-    });
-
-    let hello_req = ClientHello::frontend(ClientInfo {
-        name: "ws-test".to_owned(),
-        version: "0.1.0".to_owned(),
-    });
-    let (client, mut notifications, hello) =
-        Client::handshake(frame_stream, hello_req).await.unwrap();
-    assert_eq!(hello.daemon.pid, 4242);
+    let (client, mut notifications, pump_in) = connect_client(request).await;
 
     let status = client
         .request::<methods::Status>(&StatusParams {})
@@ -404,15 +449,10 @@ async fn rho_protocol_client_runs_rpc_and_notifications_over_websocket() {
 
     // Empty/partial client environment inherits host_env with client overrides.
     let created = client
-        .request::<methods::SessionNew>(&SessionNewParams {
-            cwd: PathBuf::from("/tmp"),
-            environment: ClientEnvironment::from_iter([("CLIENT_VAR".to_owned(), "42".to_owned())]),
-            agent: None,
-            setup: Default::default(),
-            parent: None,
-            grant: None,
-            worktree: false,
-        })
+        .request::<methods::SessionNew>(&session_new_params(ClientEnvironment::from_iter([(
+            "CLIENT_VAR".to_owned(),
+            "42".to_owned(),
+        )])))
         .await
         .unwrap();
     assert_eq!(created.session, SessionId::new("sess-1"));
@@ -462,7 +502,7 @@ async fn rho_protocol_client_runs_rpc_and_notifications_over_websocket() {
     }
 
     drop(client);
-    let _ = tokio::join!(pump_in, pump_out);
+    let _ = pump_in.await;
     harness.stop().await;
 }
 
@@ -497,58 +537,69 @@ async fn binary_websocket_frames_are_refused_with_unsupported() {
     harness.stop().await;
 }
 
-// Covers: when an executable replacement triggers an in-place upgrade, active
-// WebSocket clients receive CloseCode::Away and the server returns the still-
-// bound listening socket for handoff to the replacement binary.
-// Owner: daemon_http::server in-place upgrade.
+// Covers: an in-place upgrade stops accepting and hands back the listening
+// socket, and each open WebSocket gets the daemon's answer to a request
+// already under way before it closes with `Away`; the drain ends once it has.
+// Owner: daemon_http::server in-place upgrade + bridge close ordering.
 #[tokio::test]
-async fn upgrade_trigger_closes_active_websockets_and_hands_back_listener() {
+async fn upgrade_delivers_answers_under_way_then_closes_with_away() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let mut set = DaemonTokenSet::default();
     let secret = set.rotate("upgrade-test").unwrap();
-    let tokens = Arc::new(Mutex::new(set));
     let daemon = Arc::new(FakeDaemon::new());
-    let (upgrade_tx, upgrade_rx) = tokio::sync::oneshot::channel::<String>();
-
-    let server = tokio::spawn(async move {
-        super::serve_until(
-            listener,
-            vec!["127.0.0.1".to_owned(), "localhost".to_owned()],
-            Vec::new(),
-            ClientEnvironment::default(),
-            InMemoryConnector { service: daemon },
-            SharedTokenLoader { tokens },
-            std::future::pending::<()>(),
-            async move { upgrade_rx.await.unwrap() },
-        )
-        .await
+    let (entered_tx, entered) = oneshot::channel();
+    let (release, release_rx) = oneshot::channel();
+    *daemon.held_session_new.lock().unwrap() = Some(HeldCall {
+        entered: entered_tx,
+        release: release_rx,
+    });
+    let state = ServerState::new(
+        vec![AllowedHost::parse("127.0.0.1").unwrap()],
+        Vec::new(),
+        ClientEnvironment::default(),
+        InMemoryConnector { service: daemon },
+        SharedTokenLoader {
+            tokens: Arc::new(Mutex::new(set)),
+        },
+    );
+    let (upgrade_tx, replaced) = oneshot::channel::<String>();
+    let server = tokio::spawn({
+        let state = Arc::clone(&state);
+        async move {
+            let version = accept_until(&listener, &state, async { replaced.await.unwrap() })
+                .await
+                .unwrap();
+            (version, listener)
+        }
     });
 
-    let mut request = format!("ws://{addr}/ws").into_client_request().unwrap();
-    request.headers_mut().insert(
-        header::AUTHORIZATION,
-        HeaderValue::from_str(&format!("Bearer {secret}")).unwrap(),
-    );
-    let (mut ws, _) = connect_async(request).await.unwrap();
+    let (client, _notifications, closed) = connect_client(authorized_request(addr, &secret)).await;
+    let created = tokio::spawn(async move {
+        client
+            .request::<methods::SessionNew>(&session_new_params(ClientEnvironment::default()))
+            .await
+    });
+    entered.await.unwrap();
 
     upgrade_tx.send("9.9.9".to_owned()).unwrap();
+    let (version, listener) = server.await.unwrap();
+    assert_eq!(version, "9.9.9");
+    assert_eq!(listener.local_addr().unwrap(), addr);
 
-    let closed = loop {
-        match ws.next().await {
-            Some(Ok(WsMessage::Close(frame))) => break frame,
-            Some(Ok(_)) => continue,
-            other => panic!("expected Close frame on upgrade, got {other:?}"),
-        }
-    };
-    assert_eq!(closed.map(|frame| frame.code), Some(CloseCode::Away));
-    drop(ws);
+    let settle = state.drain.settle(Duration::from_secs(30));
+    tokio::pin!(settle);
+    // The first poll begins the drain, which waits on the open WebSocket.
+    assert!(futures_util::poll!(&mut settle).is_pending());
+    release.send(()).unwrap();
 
-    match server.await.unwrap().unwrap() {
-        super::ServeEnd::Upgrade { version, listener } => {
-            assert_eq!(version, "9.9.9");
-            assert_eq!(listener.local_addr().unwrap(), addr);
-        }
-        super::ServeEnd::Stopped => panic!("expected ServeEnd::Upgrade"),
-    }
+    assert_eq!(
+        created.await.unwrap().unwrap().session,
+        SessionId::new("sess-1")
+    );
+    assert_eq!(
+        closed.await.unwrap().map(|frame| frame.code),
+        Some(CloseCode::Away)
+    );
+    assert_eq!(settle.await, 0);
 }

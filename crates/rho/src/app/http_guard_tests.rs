@@ -1,7 +1,9 @@
 use hyper::{header, Request, StatusCode};
 use pretty_assertions::assert_eq;
 
-use super::{bearer_token, check_host, check_origin, is_private, own_hosts};
+use super::{
+    bearer_token, check_host, check_origin, is_private, own_hosts, AllowedHost, AllowedOrigin,
+};
 
 // Covers: private-network bind policy accepts loopback, RFC 1918, RFC 6598
 // (Tailscale/NetBird), and IPv6 ULA, and refuses public, link-local, and
@@ -57,25 +59,39 @@ fn a_private_address_is_its_own_host_in_either_form() {
 }
 
 // Covers: Host header validation rejects missing/malformed headers (400) and
-// DNS-rebinding hosts (403), while accepting loopback, IPv6 brackets, ports,
-// and explicitly allowed tunnel hostnames.
+// DNS-rebinding hosts (403), accepts loopback, IPv6 brackets, and allowed
+// tunnel hostnames on any port, and holds an entry with a port to that port,
+// as rmcp does for `rho mcp serve --allow-host`.
 // Owner: shared HTTP guard.
 #[test]
 fn host_validation_blocks_rebinding_and_accepts_allowed_hosts() {
-    let allowed: Vec<String> = ["localhost", "127.0.0.1", "::1", "rho.example.com"]
-        .into_iter()
-        .map(str::to_owned)
-        .collect();
+    let allowed: Vec<AllowedHost> = [
+        "localhost",
+        "127.0.0.1",
+        "::1",
+        "rho.example.com",
+        "tunnel.example.com:443",
+        "[fd7a::1]:8766",
+    ]
+    .into_iter()
+    .map(|entry| AllowedHost::parse(entry).unwrap())
+    .collect();
     let cases = [
         (None, Err(StatusCode::BAD_REQUEST)),
         (Some(""), Err(StatusCode::BAD_REQUEST)),
         (Some("localhost:notaport"), Err(StatusCode::BAD_REQUEST)),
+        (Some("user@localhost"), Err(StatusCode::BAD_REQUEST)),
         (Some("localhost:8766"), Ok(())),
         (Some("LOCALHOST"), Ok(())),
         (Some("127.0.0.1:8766"), Ok(())),
         (Some("[::1]:8766"), Ok(())),
         (Some("[::1]"), Ok(())),
         (Some("rho.example.com:443"), Ok(())),
+        (Some("tunnel.example.com:443"), Ok(())),
+        (Some("tunnel.example.com:8443"), Err(StatusCode::FORBIDDEN)),
+        (Some("tunnel.example.com"), Err(StatusCode::FORBIDDEN)),
+        (Some("[fd7a::1]:8766"), Ok(())),
+        (Some("[fd7a::1]:8767"), Err(StatusCode::FORBIDDEN)),
         (Some("evil.example.com:8766"), Err(StatusCode::FORBIDDEN)),
     ];
     for (host, expected) in cases {
@@ -84,8 +100,46 @@ fn host_validation_blocks_rebinding_and_accepts_allowed_hosts() {
             builder = builder.header(header::HOST, host);
         }
         let request = builder.body(()).unwrap();
-        assert_eq!(check_host(&request, &allowed), expected, "{host:?}");
+        assert_eq!(
+            check_host(&request, &allowed).map_err(|refusal| refusal.status),
+            expected,
+            "{host:?}"
+        );
     }
+}
+
+// Covers: `--allow-host` and `--allow-origin` entries that could never match
+// a request are refused when the server starts, not silently at request time.
+// Owner: shared HTTP guard.
+#[test]
+fn allow_entries_that_can_never_match_are_refused_up_front() {
+    let hosts = [
+        ("rho.example.com", true),
+        ("rho.example.com:443", true),
+        ("fd7a::1", true),
+        ("[fd7a::1]:8766", true),
+        ("https://rho.example.com", false),
+        ("rho.example.com:https", false),
+        ("rho.example.com/ws", false),
+        ("", false),
+    ];
+    let actual: Vec<_> = hosts
+        .iter()
+        .map(|(entry, _)| (*entry, AllowedHost::parse(entry).is_ok()))
+        .collect();
+    assert_eq!(actual, hosts.to_vec());
+    let origins = [
+        ("https://app.example.com", true),
+        ("http://localhost:5173", true),
+        ("app.example.com", false),
+        ("https://app.example.com/path", false),
+        ("null", false),
+    ];
+    let actual: Vec<_> = origins
+        .iter()
+        .map(|(entry, _)| (*entry, AllowedOrigin::parse(entry).is_ok()))
+        .collect();
+    assert_eq!(actual, origins.to_vec());
 }
 
 // Covers: Origin validation allows non-browser requests (no Origin), rejects
@@ -94,7 +148,7 @@ fn host_validation_blocks_rebinding_and_accepts_allowed_hosts() {
 // Owner: shared HTTP guard.
 #[test]
 fn origin_validation_blocks_unlisted_browser_origins() {
-    let allowed = vec!["https://App.Example.com:443".to_owned()];
+    let allowed = vec![AllowedOrigin::parse("https://App.Example.com:443").unwrap()];
     let cases = [
         (None, Ok(())),
         (Some("https://app.example.com"), Ok(())),
@@ -113,7 +167,11 @@ fn origin_validation_blocks_unlisted_browser_origins() {
             builder = builder.header(header::ORIGIN, origin);
         }
         let request = builder.body(()).unwrap();
-        assert_eq!(check_origin(&request, &allowed), expected, "{origin:?}");
+        assert_eq!(
+            check_origin(&request, &allowed).map_err(|refusal| refusal.status),
+            expected,
+            "{origin:?}"
+        );
     }
 }
 

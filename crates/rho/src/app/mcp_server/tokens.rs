@@ -15,9 +15,7 @@ use serde::{Deserialize, Serialize};
 use super::token_store::{self, StoredSet};
 use crate::{
     app::{
-        http_guard::{
-            constant_time_eq, new_secret, sha256_hex, validate_name as guard_validate_name,
-        },
+        http_guard::{find_by_secret, new_secret, sha256_hex, validate_name},
         session_control::{Grant, Holder},
     },
     caller_context::{Access, Scope, Workspaces},
@@ -132,21 +130,8 @@ impl TokenSet {
     /// every token, each in constant time, so the time taken does not tell
     /// which matched.
     pub(crate) fn authenticate(&self, presented: &str) -> Option<&TokenRecord> {
-        let presented = sha256_hex(presented);
-        self.tokens.iter().fold(None, |found, token| {
-            if constant_time_eq(token.sha256.as_bytes(), presented.as_bytes()) {
-                Some(token)
-            } else {
-                found
-            }
-        })
+        find_by_secret(&self.tokens, presented, |token| &token.sha256)
     }
-}
-
-/// Refuses a `kind` name (a token's, a webhook's) that refusals and lists
-/// could not show plainly.
-pub(super) fn validate_name(kind: &str, name: &str) -> anyhow::Result<()> {
-    guard_validate_name(kind, name)
 }
 
 fn canonical_dir(path: &Path) -> anyhow::Result<PathBuf> {

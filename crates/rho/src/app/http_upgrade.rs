@@ -187,27 +187,38 @@ impl Drain {
         async move { drop(begin.wait_for(|began| *began).await) }
     }
 
+    /// Tells every connection to close after the call it serves, then waits
+    /// for the calls under way, at most `timeout`. Returns how many are still
+    /// under way: zero once they all ended.
+    pub(crate) async fn settle(&self, timeout: Duration) -> usize {
+        self.begin.send_replace(true);
+        self.calls.drained(timeout).await;
+        self.calls.count()
+    }
+
     /// Waits for the calls under way, at most `timeout`, then re-executes
     /// `upgrade`'s replacement, `version`, handing it `listener`, which the
     /// caller stopped accepting on. Returns only with why that failed.
     pub(crate) async fn finish(
-        self,
+        &self,
         upgrade: Upgrade,
         version: &str,
         listener: tokio::net::TcpListener,
         timeout: Duration,
     ) -> anyhow::Error {
+        // Begun before announcing it, so a call that ends once a client sees
+        // the announcement already finds its connection told to close.
         self.begin.send_replace(true);
         eprintln!(
             "{}: upgrading to {version} in place once the calls under way end ({} now)",
             upgrade.label,
             self.calls.count()
         );
-        if !self.calls.drained(timeout).await {
+        let left = self.settle(timeout).await;
+        if left > 0 {
             eprintln!(
-                "{}: {} calls still under way after DRAIN_TIMEOUT ({timeout:?}); cutting them short to upgrade",
+                "{}: {left} calls still under way after {timeout:?}; cutting them short to upgrade",
                 upgrade.label,
-                self.calls.count()
             );
         }
         match listener.into_std() {
@@ -241,10 +252,9 @@ impl InFlight {
         self.count.load(Ordering::SeqCst)
     }
 
-    /// Resolves once no call is under way, or after `timeout`; whether
-    /// they all ended.
-    async fn drained(&self, timeout: Duration) -> bool {
-        tokio::time::timeout(timeout, async {
+    /// Resolves once no call is under way, or after `timeout`.
+    async fn drained(&self, timeout: Duration) {
+        let _ = tokio::time::timeout(timeout, async {
             loop {
                 let ended = self.ended.notified();
                 if self.count() == 0 {
@@ -253,8 +263,7 @@ impl InFlight {
                 ended.await;
             }
         })
-        .await
-        .is_ok()
+        .await;
     }
 }
 

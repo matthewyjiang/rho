@@ -88,13 +88,15 @@ pub struct DaemonServeArgs {
     /// 100.x.y.z:8766, where traffic travels as plain HTTP/WS.
     #[arg(long, value_name = "ADDR")]
     pub http: SocketAddr,
-    /// Also accept this `Host` header, such as a tunnel's public hostname.
-    /// May be repeated.
+    /// Also accept this `Host` header, such as a tunnel's public hostname,
+    /// on any port unless it names one (rho.example.com:443). May be
+    /// repeated.
     #[arg(long, value_name = "HOST")]
     pub allow_host: Vec<String>,
     /// Accept WebSocket upgrades from this browser origin, such as
-    /// https://app.example.com. Any other `Origin` is refused. May be
-    /// repeated.
+    /// https://app.example.com. Any other `Origin` is refused. Browsers
+    /// cannot send the bearer token themselves, so they need a proxy that
+    /// adds `Authorization`. May be repeated.
     #[arg(long, value_name = "ORIGIN")]
     pub allow_origin: Vec<String>,
     /// Internal: the listening socket a server that upgraded in place
@@ -122,7 +124,9 @@ pub enum DaemonTokenCommand {
         #[arg(long)]
         json: bool,
     },
-    /// Delete token NAME; upgrades presenting it are refused at once.
+    /// Delete token NAME; new connections presenting it are refused at once.
+    /// Open WebSockets stay connected until they close or the bridge
+    /// restarts.
     Revoke {
         #[arg(value_name = "NAME")]
         name: String,

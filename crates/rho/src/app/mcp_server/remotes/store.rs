@@ -10,11 +10,8 @@ use serde::{Deserialize, Serialize};
 use url::{Host, Url};
 
 use crate::app::{
-    http_guard::is_private,
-    mcp_server::{
-        token_store::{self, StoredSet},
-        tokens::validate_name,
-    },
+    http_guard::{is_private, validate_name},
+    mcp_server::token_store::{self, StoredSet},
 };
 
 /// The credential-store account that holds the remotes.

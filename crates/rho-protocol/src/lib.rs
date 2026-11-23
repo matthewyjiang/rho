@@ -110,7 +110,7 @@ pub use client::{Client, ClientError, DaemonNotification, Notifications};
 pub use endpoint::{DaemonEndpoint, SocketPathTooLong};
 pub use error::ErrorCode;
 pub use forward::ConfigWatch;
-pub use frame_stream::{frame_channel, FrameReceiver, FrameSender, FrameStream};
+pub use frame_stream::{frame_channel, FrameReceiver, FrameSender, FrameStream, FrameStreamClosed};
 pub use jsonrpc::{
     FrameError, Message, MessageReader, MessageWriter, Notification, ParseError, Request,
     RequestId, Response, RpcError, MAX_LINE_BYTES,

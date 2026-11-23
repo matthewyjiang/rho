@@ -4,7 +4,7 @@
 //! What this layer guards, in order:
 //! - it binds a loopback address, which the network reaches only through a
 //!   tunnel the user set up, or an address on a private network
-//!   (`private_network.rs`), such as an overlay network's, where the owner
+//!   (`app::http_guard`), such as an overlay network's, where the owner
 //!   decided the network keeps plain HTTP private;
 //! - every request carries a bearer token from `rho mcp token`, read from the
 //!   credential store per request so rotation/revoke affects new requests,
@@ -18,7 +18,14 @@
 //!
 //! Once bound, it takes the rho home's webhook watches (`watch/`) and
 //! resumes them. Once `rho update` replaced its executable, it upgrades in
-//! place (`upgrade.rs`).
+//! place (`app::http_upgrade`).
+//!
+//! The watches carry over an upgrade: they are on disk, and the new binary
+//! resumes them, delivering any news that came meanwhile. A delivery under
+//! way as the server re-executes may be sent again, as after a crash. A
+//! host's MCP session does not carry over: the new binary knows none, so the
+//! host starts a new one, as the protocol has it do for a session the server
+//! no longer knows.
 
 use std::{
     convert::Infallible, future::Future, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration,
@@ -76,7 +83,7 @@ pub(crate) struct HttpOptions {
     /// Where the watches are kept: `<rho home>/mcp-serve`.
     pub(crate) watches_dir: PathBuf,
     /// The listening socket a re-executing server handed this one
-    /// (`upgrade.rs`), on `address`, to serve on in place of binding it.
+    /// (`app::http_upgrade`), on `address`, to serve on in place of binding it.
     pub(crate) inherited_listener: Option<std::net::TcpListener>,
     /// How the server upgrades in place once its executable is replaced;
     /// without one it keeps its binary.
