@@ -162,7 +162,7 @@ A session signs in with the API keys in the environment of the client that opens
 - A session keeps the keys it opened with while it stays loaded. A prompt from a terminal with a different key still runs on the first one.
 - An API key in the daemon's own environment signs in no session. Put it in your shell, or save it with `rho login`.
 - `rho login`, `/login`, and the editor's sign-in run through the daemon. Running sessions pick up the change at their next prompt.
-- The daemon fetches a provider's model list once you sign in to it, and every signed-in provider's on `/refresh-models`. Every client then offers the same models.
+- The daemon fetches a provider's model list once you sign in to it, and every signed-in provider's on `/refresh-models`. Clients share the lists it fetched, and each offers the models its own credentials reach.
 - You can't replace or remove a key with `rho login` or `/logout` while your shell sets it. Unset it first.
 - `RHO_CREDENTIAL_STORE` in your shell picks the store for the sessions you open.
 - For the [Ollama Cloud device key](/providers/ollama-cloud#setup-with-a-device-key), set `OLLAMA_DEVICE_KEY_DIR` to an absolute path. Without it, Rho uses `~/.ollama`.

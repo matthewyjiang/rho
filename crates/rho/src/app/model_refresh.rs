@@ -166,10 +166,12 @@ fn saved(models: usize) -> wire::ModelRefreshOutcome {
     }
 }
 
-/// Why a fetch failed, as a client is told: an HTTP status alone, since a
-/// body may echo the request, and a fixed phrase for a transport error,
-/// whose text may quote the URL, where a key can sit percent-encoded beyond
-/// redaction's reach (#1662, as `credential_writes` checks a key).
+/// Why a fetch failed, as a client is told, with nothing the provider sent
+/// or the credential store holds: an HTTP status alone, since a body may
+/// echo the request; a fixed phrase for a transport error, whose text may
+/// quote the URL, where a key can sit percent-encoded beyond redaction's
+/// reach (#1662, as `credential_writes` checks a key); and a fixed phrase
+/// for an answer rho couldn't read, whose text may quote it.
 fn failure(error: &ModelError) -> String {
     match error {
         ModelError::HttpStatus { status, .. } => format!("HTTP {status}"),
@@ -180,7 +182,18 @@ fn failure(error: &ModelError) -> String {
             }
             None => "the request to the provider failed".into(),
         },
-        error => error.to_string(),
+        ModelError::InvalidResponse(_)
+        | ModelError::RetryableInvalidResponse { .. }
+        | ModelError::ProviderReported { .. }
+        | ModelError::StreamFailedAfterOutput { .. }
+        | ModelError::Interrupted
+        | ModelError::StreamIdleTimeout { .. } => "could not read the provider's answer".into(),
+        ModelError::Credentials(_) => "could not read the credential store".into(),
+        // rho's own words, naming at most the provider, auth mode or model.
+        ModelError::MissingCredentials(_)
+        | ModelError::Io(_)
+        | ModelError::UnsupportedReasoning { .. }
+        | ModelError::UnsupportedProvider(_) => error.to_string(),
     }
 }
 
