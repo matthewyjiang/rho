@@ -106,6 +106,7 @@ fn login_messages_travel_in_their_wire_form() {
             AuthLoginFinishedParams {
                 login: LoginId::new("l1"),
                 outcome,
+                refreshed: Vec::new(),
             },
             json!({"login": "l1", "outcome": wire}),
         );

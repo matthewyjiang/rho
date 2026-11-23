@@ -49,6 +49,8 @@
 //! | [`CONFIG_REGISTER`] | [`ConfigRegisterParams`] | [`ConfigRegisterResponse`] |
 //! | [`CONFIG_GET`] | [`ConfigGetParams`] | [`ConfigGetResponse`] |
 //! | [`CONFIG_SET`] | [`ConfigSetParams`] | [`ConfigSetResponse`] |
+//! | [`MODEL_LIST`] | [`ModelListParams`] | [`ModelList`] |
+//! | [`MODEL_REFRESH`] | [`ModelRefreshParams`] | [`ModelRefreshResponse`] |
 //!
 //! The daemon sends these notifications; clients send none.
 //!
@@ -59,6 +61,7 @@
 //! | [`AUTH_LOGIN_PROMPT`] | [`AuthLoginPromptParams`] |
 //! | [`AUTH_LOGIN_FINISHED`] | [`AuthLoginFinishedParams`] |
 //! | [`CONFIG_CHANGED`] | [`ConfigChangedParams`] |
+//! | [`MODEL_CHANGED`] | [`ModelList`] |
 //!
 //! [`crate::schema`] publishes every method and notification as JSON Schema.
 //! Enums that read values they do not know as `Unknown`, so a protocol minor
@@ -82,6 +85,7 @@ mod inspect;
 mod job;
 mod login;
 mod mcp;
+mod models;
 mod options;
 mod outcome;
 mod process;
@@ -151,6 +155,11 @@ pub use mcp::{
     SessionMcpPrompt, SessionMcpPromptArgument, SessionMcpResource, SessionMcpResourceContent,
     SessionMcpResourceParams, SessionMcpResourceResponse, SessionMcpServer, SessionMcpStatus,
     SESSION_MCP, SESSION_MCP_CATALOG, SESSION_MCP_COMPLETE, SESSION_MCP_RESOURCE,
+};
+pub use models::{
+    ClaudeCliModel, ModelList, ModelListKind, ModelListParams, ModelListRefresh,
+    ModelRefreshOutcome, ModelRefreshParams, ModelRefreshResponse, ModelRefreshTarget,
+    MODEL_CHANGED, MODEL_LIST, MODEL_REFRESH,
 };
 pub use options::{
     CommandKind, FastModeOptions, ModelChoice, ModelOptions, ModelRef, PermissionModeOptions,
@@ -313,6 +322,8 @@ protocol! {
         ConfigRegister = CONFIG_REGISTER: ConfigRegisterParams => ConfigRegisterResponse,
         ConfigGet = CONFIG_GET: ConfigGetParams => ConfigGetResponse,
         ConfigSet = CONFIG_SET: ConfigSetParams => ConfigSetResponse,
+        ModelListMethod = MODEL_LIST: ModelListParams => ModelList,
+        ModelRefresh = MODEL_REFRESH: ModelRefreshParams => ModelRefreshResponse,
     }
     notifications {
         SessionEventNotification = SESSION_EVENT: SessionEventParams,
@@ -320,5 +331,6 @@ protocol! {
         AuthLoginPromptNotification = AUTH_LOGIN_PROMPT: AuthLoginPromptParams,
         AuthLoginFinishedNotification = AUTH_LOGIN_FINISHED: AuthLoginFinishedParams,
         ConfigChangedNotification = CONFIG_CHANGED: ConfigChangedParams,
+        ModelChangedNotification = MODEL_CHANGED: ModelList,
     }
 }

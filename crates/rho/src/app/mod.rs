@@ -38,6 +38,7 @@ mod mcp_server;
 mod model_compactor;
 mod model_prompt_cli;
 mod model_prompt_metadata;
+pub(crate) mod model_refresh;
 pub(crate) mod notification_delivery;
 mod parent_bridge;
 mod parent_steering;

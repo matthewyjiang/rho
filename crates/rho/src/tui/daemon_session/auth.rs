@@ -39,7 +39,15 @@ pub(super) fn take_logins(
 fn update(event: LoginEvent) -> LoginUpdate {
     match event {
         LoginEvent::Prompt { login, prompt } => LoginUpdate::Prompt { login, prompt },
-        LoginEvent::Finished { login, outcome } => LoginUpdate::Finished { login, outcome },
+        LoginEvent::Finished {
+            login,
+            outcome,
+            refreshed,
+        } => LoginUpdate::Finished {
+            login,
+            outcome,
+            refreshed,
+        },
         LoginEvent::Lost => LoginUpdate::Lost,
     }
 }

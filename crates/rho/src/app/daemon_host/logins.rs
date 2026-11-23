@@ -7,8 +7,9 @@
 //! asked, which opens the URL. `login/drive.rs` drives the flow, as it does
 //! for the in-process logins. Once the provider approves, the daemon saves
 //! the credential to the store its config selects then, so every session it
-//! runs uses it from its next prompt, and refreshes their options
-//! ([`super::auth::credentials_changed`]).
+//! runs uses it from its next prompt, fetches the provider's model lists
+//! with it ([`super::models`]), and refreshes the sessions' options and the
+//! clients' model lists ([`super::auth::credentials_changed`]).
 //!
 //! One login per auth profile runs at a time, whichever client started it,
 //! so two cannot race to save one profile or to bind one callback port.
@@ -28,7 +29,7 @@ use std::{
 use rho_protocol::{
     login_relay, AuthLoginCancelParams, AuthLoginCancelResponse, AuthLoginParams,
     AuthLoginResponse, ErrorCode, LoginFlow, LoginId, LoginOutcome, LoginRelay, LoginStream,
-    RpcError,
+    ModelListRefresh, RpcError,
 };
 use rho_providers::{
     auth::{
@@ -42,14 +43,18 @@ use rho_sdk::CancellationToken;
 
 use super::{
     auth::{client_credentials, credentials_changed, off_workers, repository},
+    models::refresh_after_sign_in,
     sessions::Sessions,
 };
-use crate::app::{
-    credential_writes::{self, CredentialWrite},
-    login::{
-        drive::{self, Approval},
-        relay_wire::{flow_from_wire, prompt_to_wire},
+use crate::{
+    app::{
+        credential_writes::{self, CredentialWrite},
+        login::{
+            drive::{self, Approval},
+            relay_wire::{flow_from_wire, prompt_to_wire},
+        },
     },
+    config::Config,
 };
 
 /// The logins under way.
@@ -264,17 +269,19 @@ async fn run(
         () = cancel.cancelled() => Ended::Cancelled,
         () = relay.closed() => Ended::ClientLeft,
     };
-    let outcome = match ended {
-        Ended::Approved(Ok(approval)) => save(&target, approval, &sessions).await,
+    let saved = match ended {
+        Ended::Approved(Ok(approval)) => save(&target, approval, &sessions)
+            .await
+            .map_err(|message| LoginOutcome::Failed { message }),
         Ended::Approved(Err(error)) => {
             tracing::info!(auth, "login failed");
-            LoginOutcome::Failed {
+            Err(LoginOutcome::Failed {
                 message: format!("the {} login failed: {error}", target.provider_label),
-            }
+            })
         }
         Ended::Cancelled => {
             tracing::info!(auth, "login cancelled");
-            LoginOutcome::Cancelled
+            Err(LoginOutcome::Cancelled)
         }
         Ended::ClientLeft => {
             tracing::info!(auth, "login cancelled: the client that started it left");
@@ -284,42 +291,49 @@ async fn run(
     // Free the profile before the client hears the end, so a login it
     // starts next is not refused as busy.
     drop(slot);
-    relay.finish(outcome);
+    match saved {
+        Ok(refreshed) => relay.succeed(refreshed),
+        Err(outcome) => relay.finish(outcome),
+    }
 }
 
 /// Saves what the provider approved to the store the daemon's config
 /// selects now, records the login of a provider logged in through its
-/// endpoint as `rho login` always has, and tells every session.
-async fn save(target: &LoginAuth, approval: Approval, sessions: &Sessions) -> LoginOutcome {
+/// endpoint as `rho login` always has, fetches the provider's model lists
+/// with the new credential, and tells every session. The fetches' reports
+/// once saved, or why the save failed, for a person.
+async fn save(
+    target: &LoginAuth,
+    approval: Approval,
+    sessions: &Sessions,
+) -> Result<Vec<ModelListRefresh>, String> {
     let descriptor = *target.descriptor;
     let credentials = Arc::clone(&target.credentials);
-    let saved = off_workers(move || -> anyhow::Result<()> {
+    let saved = off_workers(move || -> anyhow::Result<Config> {
         // The config may have chosen another store since the login started.
-        credential_writes::load_config_and_store(&repository())?;
+        let config = credential_writes::load_config_and_store(&repository())?;
         // A provider that sends no confirmation (Ollama Cloud's device key)
         // already told the user what to approve in its prompt.
-        approval.save(descriptor, &repository(), credentials.as_ref())
+        approval.save(descriptor, &repository(), credentials.as_ref())?;
+        Ok(config)
     })
     .await;
-    // Even a failed save may have written part of an entry.
-    credentials_changed(sessions).await;
     let auth = target.auth;
-    match saved {
-        Ok(Ok(())) => {
+    let saved = match saved {
+        Ok(Ok(config)) => {
             tracing::info!(auth, "login saved");
-            LoginOutcome::Succeeded
+            Ok(refresh_after_sign_in(auth, target.credentials.as_ref(), &config).await)
         }
         Ok(Err(error)) => {
             tracing::warn!(auth, "could not save a login: {error:#}");
-            LoginOutcome::Failed {
-                message: format!(
-                    "could not save the {} credentials: {error:#}",
-                    target.provider_label
-                ),
-            }
+            Err(format!(
+                "could not save the {} credentials: {error:#}",
+                target.provider_label
+            ))
         }
-        Err(error) => LoginOutcome::Failed {
-            message: error.message,
-        },
-    }
+        Err(error) => Err(error.message),
+    };
+    // Even a failed save may have written part of an entry.
+    credentials_changed(sessions).await;
+    saved
 }

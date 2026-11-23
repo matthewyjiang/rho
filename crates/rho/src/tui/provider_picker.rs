@@ -5,8 +5,6 @@ use rho_providers::{
     provider,
 };
 
-pub(super) const ALL_REFRESHABLE_PROVIDERS: &str = "all";
-
 /// Next step after choosing a top-level `/login` provider group.
 pub(super) enum LoginGroupNext {
     /// One method only: start that provider login directly.
@@ -122,28 +120,6 @@ fn delegated_methods(
     super::login_target::external_login_methods()
         .into_iter()
         .filter(move |method| method.group_id == group_id)
-}
-
-/// Providers that `/refresh-models` refreshes: each has a model or decision-model list and an
-/// available auth mode, and none awaits its endpoint login. Built-in Ollama is
-/// skipped until `/login ollama`, so a local server is never probed before that.
-pub(super) fn refreshable_providers(
-    available_auths: &[String],
-    configs: &ProviderConfigs,
-) -> Vec<&'static provider::ProviderDescriptor> {
-    provider::providers()
-        .into_iter()
-        .filter(|descriptor| {
-            descriptor.supports_model_refresh()
-                || rho_providers::model::decision_models::lists_decision_models(descriptor.name)
-        })
-        .filter(|descriptor| {
-            descriptor
-                .auth_modes()
-                .any(|mode| available_auths.iter().any(|auth| auth == mode.id))
-        })
-        .filter(|descriptor| !configs.awaits_endpoint_login(**descriptor))
-        .collect()
 }
 
 /// Logout targets: stored credentials, plus a host logged in through its

@@ -3,6 +3,7 @@
 
 use super::{
     background_tasks::{SessionOutput, TaskId},
+    daemon_login::LoginModelLists,
     *,
 };
 use rho_providers::auth::{
@@ -144,7 +145,10 @@ impl App {
                 match saved {
                     Ok(()) => {
                         self.input_ui.set_composer(ComposerMode::Input);
-                        self.finish_daemon_login(target, terminal).await
+                        // Saved by this process, so the daemon has not
+                        // fetched the provider's lists.
+                        self.finish_daemon_login(target, LoginModelLists::Unfetched, terminal)
+                            .await
                     }
                     Err(err) => {
                         self.input_ui.set_composer(ComposerMode::Input);

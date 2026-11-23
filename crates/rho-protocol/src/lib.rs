@@ -109,7 +109,7 @@ pub use client::{Client, ClientError, DaemonNotification, Notifications};
 #[cfg(not(target_family = "wasm"))]
 pub use endpoint::{DaemonEndpoint, SocketPathTooLong};
 pub use error::ErrorCode;
-pub use forward::ConfigWatch;
+pub use forward::{ConfigWatch, ModelWatch};
 pub use frame_stream::{frame_channel, FrameReceiver, FrameSender, FrameStream, FrameStreamClosed};
 pub use jsonrpc::{
     FrameError, Message, MessageReader, MessageWriter, Notification, ParseError, Request,
@@ -176,6 +176,10 @@ pub use methods::{
 };
 pub use methods::{
     ChildThreads, IdleWake, McpServer, SecretMap, SessionPart, SessionSetup, SignIn, Surfaces,
+};
+pub use methods::{
+    ClaudeCliModel, ModelList, ModelListKind, ModelListParams, ModelListRefresh,
+    ModelRefreshOutcome, ModelRefreshParams, ModelRefreshResponse, ModelRefreshTarget,
 };
 pub use methods::{
     CommandKind, FastModeOptions, ModelChoice, ModelOptions, ModelRef, PermissionModeOptions,

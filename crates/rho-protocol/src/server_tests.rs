@@ -12,16 +12,18 @@ use crate::{
     login_relay,
     methods::{
         AuthLoginFinishedParams, AuthLoginPromptParams, DetachReason, JobState, LoginId,
-        LoginOutcome, LoginPrompt, ModelOptions, ModelRef, PermissionMode, PermissionModeOptions,
-        Replay, Seq, SessionDetachedParams, SessionEvent, SessionEventParams, SessionId,
-        SessionOptions, StreamId, AUTH_LOGIN_FINISHED, AUTH_LOGIN_PROMPT, CONFIG_CHANGED,
-        DAEMON_STATUS, DAEMON_STOP, SESSION_ANSWER, SESSION_DETACHED, SESSION_EVENT, SESSION_HOLD,
-        SESSION_LIST, SESSION_NEW, SESSION_PROMPT,
+        LoginOutcome, LoginPrompt, ModelChoice, ModelList, ModelListKind, ModelListParams,
+        ModelListRefresh, ModelOptions, ModelRef, ModelRefreshOutcome, PermissionMode,
+        PermissionModeOptions, Replay, Seq, SessionDetachedParams, SessionEvent,
+        SessionEventParams, SessionId, SessionOptions, StreamId, AUTH_LOGIN_FINISHED,
+        AUTH_LOGIN_PROMPT, CONFIG_CHANGED, DAEMON_STATUS, DAEMON_STOP, MODEL_CHANGED, MODEL_LIST,
+        SESSION_ANSWER, SESSION_DETACHED, SESSION_EVENT, SESSION_HOLD, SESSION_LIST, SESSION_NEW,
+        SESSION_PROMPT,
     },
-    subscription, ClientRole, ConfigChangedParams, ConfigGetResponse, ConfigNamespace,
-    ConfigRevision, ConfigWatch, CredentialStoreKind, CredentialStoreStatus, HelloParams,
-    LoginRelay, ProtocolVersion, Published, Publisher, RequestId, SettingEntry, SettingKey,
-    SettingValue, StoreSelectedBy, ValueSource,
+    subscription, ClientRole, ConfigChangedParams, ConfigGetParams, ConfigGetResponse,
+    ConfigNamespace, ConfigRevision, ConfigWatch, CredentialStoreKind, CredentialStoreStatus,
+    HelloParams, LoginRelay, ModelWatch, ProtocolVersion, Published, Publisher, RequestId,
+    SettingEntry, SettingKey, SettingValue, StoreSelectedBy, ValueSource,
 };
 
 /// Failure bound for each response a test waits for. The tests synchronize
@@ -549,7 +551,8 @@ impl SettingsService for DefaultsService {}
 
 // Covers: a service that overrides none of its fallible methods answers each
 // as not supported, whichever path serves it: a plain call, an attach, a
-// login, or a settings read; and the connection keeps serving after.
+// login, or a settings or model read; and the connection keeps serving
+// after.
 // Owner: Service defaults.
 #[tokio::test]
 async fn a_method_the_service_leaves_to_its_default_is_not_supported() {
@@ -572,7 +575,8 @@ async fn a_method_the_service_leaves_to_its_default_is_not_supported() {
             CONFIG_GET,
             serde_json::json!({"namespace": {"kind": "agent"}}),
         ),
-        request_line(6, DAEMON_STATUS),
+        request_with_params(6, MODEL_LIST, serde_json::json!({"environment": {}})),
+        request_line(7, DAEMON_STATUS),
     ];
 
     let mut outcomes = exchange(DefaultsService, &lines).await;
@@ -591,7 +595,8 @@ async fn a_method_the_service_leaves_to_its_default_is_not_supported() {
             (id(3), not_supported),
             (id(4), not_supported),
             (id(5), not_supported),
-            (id(6), Ok(())),
+            (id(6), not_supported),
+            (id(7), Ok(())),
         ]
     );
 }
@@ -869,6 +874,7 @@ enum Seen {
     LoginPrompt(AuthLoginPromptParams),
     LoginFinished(AuthLoginFinishedParams),
     ConfigChanged(ConfigChangedParams),
+    ModelsChanged(ModelList),
 }
 
 fn answered(id: i64) -> Seen {
@@ -946,6 +952,7 @@ impl Peer {
                         Seen::LoginFinished(serde_json::from_value(params).unwrap())
                     }
                     CONFIG_CHANGED => Seen::ConfigChanged(serde_json::from_value(params).unwrap()),
+                    MODEL_CHANGED => Seen::ModelsChanged(serde_json::from_value(params).unwrap()),
                     other => panic!("unexpected notification {other}"),
                 }
             }
@@ -1202,7 +1209,7 @@ impl Service for LoginService {
         let (relay, stream) = login_relay();
         relay.prompt(login_prompt());
         if self.finish_early {
-            relay.finish(LoginOutcome::Succeeded);
+            relay.succeed(vec![refreshed_list()]);
         } else {
             self.relays.send(relay).unwrap();
         }
@@ -1214,6 +1221,15 @@ impl Service for LoginService {
 }
 
 impl SettingsService for LoginService {}
+
+/// The model list a test login's daemon fetched once it saved.
+fn refreshed_list() -> ModelListRefresh {
+    ModelListRefresh {
+        provider: "xai".into(),
+        list: ModelListKind::Chat,
+        outcome: ModelRefreshOutcome::Refreshed { models: 3 },
+    }
+}
 
 fn login_line(id: i64) -> String {
     request_with_params(
@@ -1250,6 +1266,7 @@ async fn a_login_answers_then_forwards_its_prompt_and_end() {
             Seen::LoginFinished(AuthLoginFinishedParams {
                 login: LoginId::new("l1"),
                 outcome: LoginOutcome::Succeeded,
+                refreshed: vec![refreshed_list()],
             }),
         ]
     );
@@ -1385,6 +1402,77 @@ async fn config_get_answers_then_forwards_every_changed_entry() {
         .state
         .send_replace(config_state("r3", &[("a", false), ("b", true)]));
     assert_eq!(peer.take(1).await, [changed("r3", &[("a", false)])]);
+    peer.close_input().await;
+    assert_eq!(peer.remaining().await, []);
+}
+
+/// Serves the model list, which the test publishes.
+struct ModelService {
+    list: tokio::sync::watch::Sender<Arc<ModelList>>,
+}
+
+impl Service for ModelService {
+    async fn status(&self) -> DaemonStatus {
+        test_status()
+    }
+
+    async fn stop(&self) {}
+
+    hosts_no_sessions!();
+    nobody_uses_it!();
+}
+
+impl SettingsService for ModelService {
+    async fn list_models(&self, _: ModelListParams) -> Result<ModelWatch, RpcError> {
+        Ok(ModelWatch::new(self.list.subscribe()))
+    }
+}
+
+/// A list of `models`, each `provider/model`.
+fn model_list(models: &[&str]) -> ModelList {
+    ModelList {
+        models: models
+            .iter()
+            .map(|reference| {
+                let (provider, model) = reference.split_once('/').unwrap();
+                ModelChoice {
+                    model: ModelRef {
+                        provider: provider.into(),
+                        model: model.into(),
+                    },
+                    label: model.into(),
+                }
+            })
+            .collect(),
+        claude_cli: Vec::new(),
+    }
+}
+
+// Covers: `rho/model/list` answers, then sends `rho/model/changed` with the
+// whole list each time it changes; listing again replaces the forwarder
+// instead of adding a second one.
+// Owner: protocol server model forwarding.
+#[tokio::test]
+async fn model_list_answers_then_forwards_each_changed_list() {
+    let service = Arc::new(ModelService {
+        list: tokio::sync::watch::Sender::new(Arc::new(model_list(&["openai/gpt-5.5"]))),
+    });
+    let mut peer = Peer::connect(Arc::clone(&service));
+    let list_line =
+        |id| request_with_params(id, MODEL_LIST, serde_json::json!({"environment": {}}));
+    peer.send(hello_line(1, PROTOCOL_VERSION)).await;
+    peer.send(list_line(2)).await;
+    assert_eq!(peer.take(2).await, [answered(1), answered(2)]);
+
+    let grown = model_list(&["openai/gpt-5.5", "xai/grok-5"]);
+    service.list.send_replace(Arc::new(grown.clone()));
+    assert_eq!(peer.take(1).await, [Seen::ModelsChanged(grown)]);
+
+    peer.send(list_line(3)).await;
+    assert_eq!(peer.take(1).await, [answered(3)]);
+    let shrunk = model_list(&["xai/grok-5"]);
+    service.list.send_replace(Arc::new(shrunk.clone()));
+    assert_eq!(peer.take(1).await, [Seen::ModelsChanged(shrunk)]);
     peer.close_input().await;
     assert_eq!(peer.remaining().await, []);
 }

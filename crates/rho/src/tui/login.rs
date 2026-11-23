@@ -1,6 +1,6 @@
 use super::{
-    setup_screen::SetupStep, InlineChoice, InlineChoiceModal, InlineChoiceOption,
-    InlineChoicePending, *,
+    daemon_login::LoginModelLists, setup_screen::SetupStep, InlineChoice, InlineChoiceModal,
+    InlineChoiceOption, InlineChoicePending, *,
 };
 use {
     rho_providers::auth::login_dispatch::{
@@ -437,8 +437,11 @@ impl App {
                     &target.auth,
                 ) {
                     Ok(has_key) => {
+                        // Nothing was saved in the daemon; the endpoint is
+                        // this process's config write.
                         self.finish_daemon_login(
                             resolve_blank_optional_key(target, has_key),
+                            LoginModelLists::Unfetched,
                             terminal,
                         )
                         .await

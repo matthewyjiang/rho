@@ -41,13 +41,16 @@ impl LoadedSession {
 }
 
 impl Sessions {
-    /// Refreshes every loaded session's options after a credential write
-    /// or a refreshed model list changed the models they may switch to. Each refresh waits in its own
-    /// task for the session's runtime, so a session in a turn or a
+    /// Follows a credential write or a refreshed model list, which may
+    /// change the models clients may pick: each `rho/model/list`
+    /// subscriber builds its list again (see [`Self::model_changes`]), and
+    /// every loaded session refreshes its options. Each refresh waits in
+    /// its own task for the session's runtime, so a session in a turn or a
     /// configure refreshes once it lets the runtime go, even when its own
     /// refresh there read the auths before the write. The runtime's lock
     /// is fair, so refreshes for later writes queue after this one's.
-    pub(in crate::app::daemon_host) async fn refresh_all_options(&self) {
+    pub(in crate::app::daemon_host) async fn models_changed(&self) {
+        self.model_lists.send_replace(());
         let sessions: Vec<Arc<LoadedSession>> = self.loaded().values().cloned().collect();
         for session in sessions {
             tokio::spawn(async move {
@@ -59,6 +62,12 @@ impl Sessions {
                 }
             });
         }
+    }
+
+    /// What [`Self::models_changed`] signals, for a `rho/model/list`
+    /// subscriber to build its list again on.
+    pub(in crate::app::daemon_host) fn model_changes(&self) -> tokio::sync::watch::Receiver<()> {
+        self.model_lists.subscribe()
     }
 }
 
