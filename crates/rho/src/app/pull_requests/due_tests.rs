@@ -126,6 +126,7 @@ fn read_quiet(state: &mut State, number: u32, at: u64) {
             unjudged: None,
             read_at: Some(at),
             asked_at: Some(at),
+            show_failed_at: None,
             trouble: None,
         },
     );
@@ -376,6 +377,34 @@ fn read_failed(state: &mut State, number: u32, at: u64) {
     );
 }
 
+/// A read of PR `number` outside a tick failed at `at`, and nothing was
+/// read of it before; a tick last asked for it at `asked`, if ever.
+fn show_failed(state: &mut State, number: u32, asked: Option<u64>, at: u64) {
+    state.snapshots.insert(
+        pr(number),
+        Snapshot {
+            asked_at: asked,
+            show_failed_at: Some(at),
+            trouble: Some(Trouble::Failed(ReadError::Failed("timed out".into()))),
+            ..Snapshot::default()
+        },
+    );
+}
+
+/// PR `number` as [`quiet`], after an edit that moved its change key.
+fn edited(number: u32) -> PrDetail {
+    let mut detail = quiet(number);
+    detail.summary.change.updated_at = "2026-11-22T00:05:00Z".into();
+    detail
+}
+
+/// A tick read PR `number` in full 30 s ago, and its summary since moved.
+fn moved_since_read(state: &mut State, number: u32) {
+    read_quiet(state, number, ago(30));
+    let snapshot = state.snapshots.get_mut(&pr(number)).unwrap();
+    snapshot.summary = Some(edited(number).summary);
+}
+
 /// Branch `feature` was last looked up at `at`, and found `found`.
 fn looked_up(state: &mut State, found: Found, at: u64) {
     let read = BranchRead {
@@ -403,13 +432,16 @@ type ShowCase = (&'static str, fn(&mut State), Of, ShowRead, bool);
 // PR never read, or read only as a summary (as a listed tick reads it),
 // and a branch never looked up or whose PR has no detail; never when the
 // detail is there or the lookup found no PR, nor on the default branch;
-// and after a failed attempt only once the shown cadence is due again. A
-// fresh show always reads. Otherwise a panel opened after the sidebar's
-// tick answers with no detail, or a failing target is read on every show.
+// and after a failed attempt, a tick's or a show's own (a watched PR's
+// show never moves the tick's ask), only once the shown cadence is due
+// again; a detail older than the summary is no answer, unless a show read
+// a newer one. A fresh show always reads. Otherwise a panel opened after
+// the sidebar's tick answers with no detail or one older than its summary,
+// or a failing target is read on every show.
 // Owner: pure unit (due.rs)
 #[test]
 fn a_show_reads_only_what_nothing_kept_answers() {
-    let cases: [ShowCase; 11] = [
+    let cases: [ShowCase; 15] = [
         (
             "a linked PR never read",
             |_| {},
@@ -451,6 +483,41 @@ fn a_show_reads_only_what_nothing_kept_answers() {
             Of::Linked,
             ShowRead::Cached,
             true,
+        ),
+        (
+            "a linked PR no tick asked for, whose show's read failed 5 s ago",
+            |state| show_failed(state, 12, None, ago(5)),
+            Of::Linked,
+            ShowRead::Cached,
+            false,
+        ),
+        (
+            "a linked PR a tick asked for 20 s ago, whose show's read failed 5 s ago",
+            |state| show_failed(state, 12, Some(ago(20)), ago(5)),
+            Of::Linked,
+            ShowRead::Cached,
+            false,
+        ),
+        (
+            "a linked PR read in full, its summary since moved",
+            |state| moved_since_read(state, 12),
+            Of::Linked,
+            ShowRead::Cached,
+            true,
+        ),
+        (
+            "a linked PR read in full, its summary since moved, a show read it since",
+            |state| {
+                moved_since_read(state, 12);
+                let snapshot = state.snapshots.get_mut(&pr(12)).unwrap();
+                snapshot.unjudged = Some(Detailed {
+                    detail: edited(12),
+                    at: ago(5),
+                });
+            },
+            Of::Linked,
+            ShowRead::Cached,
+            false,
         ),
         (
             "a branch never looked up",

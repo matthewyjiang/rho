@@ -720,47 +720,76 @@ async fn a_listed_branch_is_looked_up_and_kept_after_its_lease() {
     );
 }
 
-// Covers: linking a PR in the session's repository looks its branch up
-// again on the next tick, though the listed cadence is not due: the agent
-// may have just opened that PR for its branch. Otherwise a client shows the
-// PR as a link beside a branch that says it has none, for up to 5 minutes.
+/// What a case's session does to PR 12 once its branch was looked up.
+#[derive(Clone, Copy, Debug)]
+enum Adds {
+    /// Links it.
+    Link,
+    /// Watches it, linked before the lookup.
+    WatchLinked,
+}
+
+// Covers: linking a PR in the session's repository, or starting to watch
+// one it links already, looks its branch up again on the next tick, though
+// the listed cadence is not due: the agent may have just opened that PR for
+// its branch. Otherwise a client shows the PR as a link beside a branch
+// that says it has none, for up to 5 minutes.
 // Owner: PR service
 #[tokio::test]
-async fn a_link_looks_the_branch_up_again() {
-    let fixture = Fixture::new();
-    let session = SessionId::new();
-    let feature = BranchId {
-        repo: pr(12).repo,
-        branch: "feature".into(),
-    };
-    let on_feature = || Checkout::Branch(feature.clone());
-    fixture.forge.set(open(12, CheckStatus::Passed));
-    fixture.service.list(&session, on_feature(), NOW);
-    fixture.service.tick(NOW).await;
-    let before = fixture.service.view(&session, NOW).branch;
-    fixture.forge.set_branch(&target(12), "feature");
-    fixture
-        .inbox(&session)
-        .link(&target(12), LinkOrigin::Agent, NOW + MINUTE)
-        .await
-        .unwrap();
+async fn a_link_or_a_new_watch_looks_the_branch_up_again() {
+    for adds in [Adds::Link, Adds::WatchLinked] {
+        let fixture = Fixture::new();
+        let session = SessionId::new();
+        let inbox = fixture.inbox(&session);
+        let feature = BranchId {
+            repo: pr(12).repo,
+            branch: "feature".into(),
+        };
+        let on_feature = || Checkout::Branch(feature.clone());
+        fixture.forge.set(open(12, CheckStatus::Passed));
+        match adds {
+            Adds::Link => {}
+            Adds::WatchLinked => {
+                inbox
+                    .link(&target(12), LinkOrigin::User, NOW)
+                    .await
+                    .unwrap();
+            }
+        }
+        fixture.service.list(&session, on_feature(), NOW);
+        fixture.service.tick(NOW).await;
+        let before = fixture.service.view(&session, NOW).branch;
+        fixture.forge.set_branch(&target(12), "feature");
+        match adds {
+            Adds::Link => {
+                inbox
+                    .link(&target(12), LinkOrigin::Agent, NOW + MINUTE)
+                    .await
+                    .unwrap();
+            }
+            Adds::WatchLinked => {
+                inbox.watch(&target(12), NOW + MINUTE).await.unwrap();
+            }
+        }
 
-    fixture.service.tick(NOW + MINUTE).await;
+        fixture.service.tick(NOW + MINUTE).await;
 
-    let lookup = |found| {
-        Some(wire::BranchPullRequest::new(
-            Some("feature".into()),
-            found,
-            None,
-        ))
-    };
-    let found = wire::BranchLookup::Found {
-        pull_request: Box::new((&open(12, CheckStatus::Passed).summary).into()),
-    };
-    assert_eq!(
-        (before, fixture.service.view(&session, NOW + MINUTE).branch),
-        (lookup(wire::BranchLookup::None), lookup(found))
-    );
+        let lookup = |found| {
+            Some(wire::BranchPullRequest::new(
+                Some("feature".into()),
+                found,
+                None,
+            ))
+        };
+        let found = wire::BranchLookup::Found {
+            pull_request: Box::new((&open(12, CheckStatus::Passed).summary).into()),
+        };
+        assert_eq!(
+            (before, fixture.service.view(&session, NOW + MINUTE).branch),
+            (lookup(wire::BranchLookup::None), lookup(found)),
+            "{adds:?}"
+        );
+    }
 }
 
 // Covers: a cached show of a PR a listed tick read only as a summary reads
@@ -940,6 +969,102 @@ async fn a_cached_show_answers_the_detail_a_fresh_show_read() {
                 base: "main".into(),
             })],
         )
+    );
+}
+
+// Covers: a show of a watched PR that reads it at the time its judged
+// detail was read answers a later cached show with its own, later-stored
+// read, without reading again. Otherwise the older judged detail wins the
+// tie, disagrees with the summary, and the cached show reads the forge.
+// Owner: PR service
+#[tokio::test]
+async fn a_show_read_at_the_time_of_the_judged_detail_answers_cached_shows() {
+    let fixture = Fixture::new();
+    let session = SessionId::new();
+    fixture.forge.set(open(12, CheckStatus::Passed));
+    fixture
+        .inbox(&session)
+        .watch(&target(12), NOW)
+        .await
+        .unwrap();
+    fixture.forge.set(edited(open(12, CheckStatus::Passed)));
+    fixture
+        .service
+        .show(
+            &session,
+            Checkout::NotGit,
+            ShowTarget::Linked(pr(12)),
+            ShowRead::Fresh,
+            NOW,
+        )
+        .await
+        .unwrap();
+
+    let cached = fixture
+        .service
+        .show(
+            &session,
+            Checkout::NotGit,
+            ShowTarget::Linked(pr(12)),
+            ShowRead::Cached,
+            NOW + 1_000,
+        )
+        .await;
+
+    assert_eq!(
+        (cached, fixture.forge.take_asked()),
+        (
+            Ok(Some(Detailed {
+                detail: edited(open(12, CheckStatus::Passed)),
+                at: NOW,
+            })),
+            vec![details(&[12]), details(&[12])],
+        )
+    );
+}
+
+// Covers: after a daemon restart, before any tick asked for a watched PR,
+// a cached show whose read of it fails is not read again by a cached show
+// within the shown cadence: the failure keeps its own time, apart from the
+// tick's ask. Otherwise a failing PR is read on every show until a tick.
+// Owner: PR poller
+#[tokio::test]
+async fn a_failed_show_after_a_restart_waits_before_reading_again() {
+    let fixture = Fixture::new();
+    let session = SessionId::new();
+    fixture.forge.set(open(12, CheckStatus::Passed));
+    fixture
+        .inbox(&session)
+        .watch(&target(12), NOW)
+        .await
+        .unwrap();
+    let forge = ScriptedForge::new();
+    forge.set(open(12, CheckStatus::Passed));
+    forge.fail_next(ReadError::Failed("timed out".into()));
+    let restarted = PullRequests::open(fixture.dir.path(), forge.clone());
+
+    let failed = restarted
+        .show(
+            &session,
+            Checkout::NotGit,
+            ShowTarget::Linked(pr(12)),
+            ShowRead::Cached,
+            TICK,
+        )
+        .await;
+    let again = restarted
+        .show(
+            &session,
+            Checkout::NotGit,
+            ShowTarget::Linked(pr(12)),
+            ShowRead::Cached,
+            TICK + 5_000,
+        )
+        .await;
+
+    assert_eq!(
+        (failed, again, forge.take_asked()),
+        (Ok(None), Ok(None), vec![details(&[12])])
     );
 }
 

@@ -30,10 +30,13 @@ pub const SESSION_PULL_REQUEST_LIST: &str = "rho/session/pull_request/list";
 /// Show one of a session's pull requests: its set, and the detail of the
 /// target. Answers from the daemon's last read; it reads GitHub first when
 /// `read` is [`PullRequestRead::Fresh`], or when it has no detail of the
-/// target to answer with, unless its last attempt to read it failed within
-/// the last 15 seconds. Leases the target for 60 seconds, in which the
-/// daemon reads it every 30 seconds; a client reissues it every 30 seconds
-/// while the target is on screen.
+/// target as new as its summary to answer with, unless its last attempt to
+/// read it failed within the last 15 seconds. Leases the target for 60
+/// seconds, in which the daemon reads it every 30 seconds; a client
+/// reissues it every 30 seconds while the target is on screen. A read that
+/// finds the summary unchanged and no checks running keeps the last full
+/// detail, read in full again at least every 10 minutes: a client that
+/// needs a new full read sends [`PullRequestRead::Fresh`].
 /// An unknown session is [`crate::ErrorCode::SessionNotFound`]; a linked
 /// target that is not linked to the session, or names no pull request, is
 /// [`crate::ErrorCode::InvalidParams`].

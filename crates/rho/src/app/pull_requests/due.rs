@@ -226,8 +226,8 @@ pub(super) enum ShowOf<'a> {
 
 /// What `state` keeps of a show's target.
 enum Kept {
-    /// Something to answer with: the PR's detail, or a lookup that found
-    /// no PR, or the default branch, which has none.
+    /// Something to answer with: the PR's detail, as new as its summary,
+    /// or a lookup that found no PR, or the default branch, which has none.
     Answer,
     /// Nothing to answer with, and no attempt to read it failed.
     Missing,
@@ -239,8 +239,9 @@ enum Kept {
 /// Whether a client's show of `of` reads the forge at `now` (unix
 /// milliseconds) before it answers: always when `read` is fresh; else when
 /// `state` keeps nothing to answer with (a summary a tick read is not a
-/// detail), unless the last attempt failed within the shown cadence, so a
-/// failing target is not read on every show.
+/// detail, and a detail older than the summary is no answer), unless the
+/// last attempt failed within the shown cadence, so a failing target is
+/// not read on every show.
 pub(super) fn show_reads(state: &State, of: ShowOf<'_>, read: ShowRead, now: u64) -> bool {
     let kept = match of {
         ShowOf::Linked(pr) => kept_detail(state.snapshots.get(pr)),
@@ -253,16 +254,15 @@ pub(super) fn show_reads(state: &State, of: ShowOf<'_>, read: ShowRead, now: u64
     }
 }
 
-/// What `snapshot` keeps to answer a show of its PR with.
+/// What `snapshot` keeps to answer a show of its PR with: a detail that
+/// reads as its summary does ([`Snapshot::answer`]).
 fn kept_detail(snapshot: Option<&Snapshot>) -> Kept {
     let Some(snapshot) = snapshot else {
         return Kept::Missing;
     };
-    match (
-        snapshot.newest_detail(),
-        &snapshot.trouble,
-        snapshot.asked_at,
-    ) {
+    // The last failed attempt: a tick's, or a read outside a tick.
+    let failed_at = snapshot.asked_at.max(snapshot.show_failed_at);
+    match (snapshot.answer(), &snapshot.trouble, failed_at) {
         (Some(_), _, _) => Kept::Answer,
         (None, Some(_), Some(at)) => Kept::FailedAt(at),
         (None, Some(_), None) | (None, None, _) => Kept::Missing,
@@ -318,10 +318,14 @@ pub(super) fn detail_due(snapshot: Option<&Snapshot>, now: u64) -> bool {
 pub(super) fn moved_since_detail(snapshot: Option<&Snapshot>, summary: &PrSummary) -> bool {
     snapshot
         .and_then(|snapshot| snapshot.detail.as_ref())
-        .is_none_or(|detailed| {
-            let last = &detailed.detail.summary;
-            last.change != summary.change || last.state != summary.state
-        })
+        .is_none_or(|detailed| !reads_as(&detailed.detail.summary, summary))
+}
+
+/// Whether a detail whose summary was `last` reads as `summary` does: the
+/// same change key and state, so a detail read now would not differ in
+/// what either shows.
+pub(super) fn reads_as(last: &PrSummary, summary: &PrSummary) -> bool {
+    last.change == summary.change && last.state == summary.state
 }
 
 /// Orders PRs by repository, then number.

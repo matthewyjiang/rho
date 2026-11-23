@@ -6,7 +6,9 @@
 //!
 //! Locks, each taken before the next and never after it:
 //! - `reader`, the async lock every forge read takes (see
-//!   [`super::poller::Reader`]);
+//!   [`super::poller::Reader`]), held until what the read learned is kept
+//!   in `state`, so a read that started later is never overwritten by an
+//!   older one; a tick tells sessions their news only once it is released;
 //! - a session's feed lock in the daemon, under which its reporter reads
 //!   the session's view; nothing takes a feed lock while holding `state`;
 //! - `state`, a plain mutex, never held across an await, and held while a
@@ -205,16 +207,22 @@ pub(super) struct Snapshot {
     pub(super) detail: Option<Detailed>,
     /// A detail of a watched PR a client's show read outside a tick, which
     /// no watch has been evaluated against: it answers shows only, while
-    /// it is newer than [`Self::detail`], so a show never answers with a
-    /// detail older than the summary it reports. See
-    /// `Shared::keep_unjudged`.
+    /// it is as new as [`Self::detail`] or newer (see
+    /// [`Self::newest_detail`]). See `Shared::keep_unjudged`.
     pub(super) unjudged: Option<Detailed>,
     /// When anything was last read of it, in unix milliseconds.
     pub(super) read_at: Option<u64>,
-    /// When it was last asked for, in unix milliseconds, whether or not
-    /// the read succeeded: what its cadence counts from, so a failing read
-    /// is not asked again on every tick.
+    /// When a tick last asked for it, or a read outside a tick of a PR no
+    /// session watches, in unix milliseconds, whether or not the read
+    /// succeeded: what its cadence counts from, so a failing read is not
+    /// asked again on every tick.
     pub(super) asked_at: Option<u64>,
+    /// When a read of it outside a tick last failed, in unix milliseconds:
+    /// a cached show retries it only once the shown cadence allows since
+    /// then (see [`due::show_reads`]). Kept apart from [`Self::asked_at`],
+    /// which shows never move for a watched PR, so they cannot postpone
+    /// its watch.
+    pub(super) show_failed_at: Option<u64>,
     /// Why the last read failed; `None` once one succeeds.
     pub(super) trouble: Option<Trouble>,
 }
@@ -303,13 +311,31 @@ impl Snapshot {
         self.unjudged = Some(Detailed { detail, at: now });
     }
 
-    /// The newest detail kept, to answer a show with.
+    /// The newest detail kept. On equal times the unjudged one wins: a
+    /// show stores it after the tick that read at the same time.
     pub(super) fn newest_detail(&self) -> Option<&Detailed> {
         match (&self.detail, &self.unjudged) {
-            (Some(judged), Some(unjudged)) if unjudged.at > judged.at => Some(unjudged),
+            (Some(judged), Some(unjudged)) if unjudged.at >= judged.at => Some(unjudged),
             (Some(judged), _) => Some(judged),
             (None, unjudged) => unjudged.as_ref(),
         }
+    }
+
+    /// What a show answers with: the newest detail kept, while it reads
+    /// as [`Self::summary`] does (see [`due::reads_as`]); a detail older
+    /// than the summary sent beside it is no answer.
+    pub(super) fn answer(&self) -> Option<&Detailed> {
+        self.newest_detail().filter(|detailed| {
+            self.summary
+                .as_ref()
+                .is_none_or(|summary| due::reads_as(&detailed.detail.summary, summary))
+        })
+    }
+
+    /// A read of it outside a tick failed at `now` for `trouble`.
+    pub(super) fn show_failed(&mut self, trouble: Trouble, now: u64) {
+        self.trouble = Some(trouble);
+        self.show_failed_at = Some(now);
     }
 
     /// Drops both details: no session watches the PR and no client shows it.
@@ -511,7 +537,8 @@ impl PullRequests {
     /// A client shows `target` of `session` at `now` (unix milliseconds);
     /// `checkout` is what its workspace has checked out. Answers the
     /// target's detail: the branch's PR's or the linked PR's, `None` while
-    /// there is none to answer with. Then leases the target at
+    /// there is none to answer with (see [`Snapshot::answer`]). Then leases
+    /// the target at
     /// [`super::interest::SHOWN_POLL`]: after the read, so the tick a new
     /// lease wakes finds the target just asked rather than reading it again.
     ///
@@ -520,8 +547,8 @@ impl PullRequests {
     /// [`ShowRead::Fresh`], or there is no detail to answer with and the
     /// last attempt did not fail within the shown cadence. A read that
     /// fails is kept as the target's trouble, and a paused host as its
-    /// budget, for the view to show; the answer is then the detail last
-    /// read.
+    /// budget, for the view to show; the answer is then the detail kept,
+    /// if it still reads as the PR's summary.
     ///
     /// # Errors
     ///
@@ -616,7 +643,7 @@ fn kept_detail(state: &State, of: ShowOf<'_>) -> Option<Detailed> {
         ShowOf::Linked(pr) => pr,
         ShowOf::Branch(branch) => state.found(branch)?,
     };
-    state.snapshots.get(pr)?.newest_detail().cloned()
+    state.snapshots.get(pr)?.answer().cloned()
 }
 
 impl fmt::Debug for PullRequests {

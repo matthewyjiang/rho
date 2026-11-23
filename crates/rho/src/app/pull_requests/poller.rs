@@ -215,8 +215,10 @@ impl Shared {
             };
             read_into(&mut reader, &host, plan, now, &mut reads).await;
         }
-        drop(reader);
+        // Applied before `reader` is released, so a show's read that waited
+        // on it lands after, and this tick's older reads never overwrite it.
         let told = self.update(|state| self.apply(state, &reads, now));
+        drop(reader);
         self.tell(told);
     }
 
@@ -235,7 +237,6 @@ impl Shared {
         };
         let mut reads = Reads::default();
         read_into(&mut reader, host, plan, now, &mut reads).await;
-        drop(reader);
         let detail = match reads.prs.get(pr) {
             Some(Read::Detail(detail)) => Ok(PrDetail::clone(detail)),
             Some(Read::Refused(why)) => Err(DetailError::Refused(why.clone())),
@@ -245,6 +246,7 @@ impl Shared {
             )))),
         };
         self.keep_unjudged(reads, now);
+        drop(reader);
         detail
     }
 
@@ -278,7 +280,6 @@ impl Shared {
             };
             read_into(&mut reader, host, plan, now, &mut reads).await;
         }
-        drop(reader);
         let detail = found.and_then(|pr| match reads.prs.get(&pr) {
             Some(Read::Detail(detail)) => Some(Detailed {
                 detail: PrDetail::clone(detail),
@@ -287,6 +288,7 @@ impl Shared {
             Some(Read::Summary(_) | Read::Refused(_) | Read::Failed(_)) | None => None,
         });
         self.keep_unjudged(reads, now);
+        drop(reader);
         detail
     }
 
@@ -298,10 +300,11 @@ impl Shared {
     /// [`super::service::Snapshot::newest_detail`]), and no read of a
     /// watched PR here is counted as asked, a failed one included: the next
     /// tick due for the watch still reads the PR and evaluates it, however
-    /// often clients read it. A failure is kept as trouble for the client;
-    /// a cached show retries it only once the shown cadence allows since
-    /// the last tick's ask (see [`due::show_reads`]), so at most once per
-    /// show a client sends at its cadence.
+    /// often clients read it. A failure is kept as trouble for the client,
+    /// with when it failed apart from the tick's ask: a cached show retries
+    /// it only once the shown cadence allows since then (see
+    /// [`due::show_reads`]), so at most once per show a client sends at its
+    /// cadence. Call it holding `reader`, so a tick cannot read in between.
     fn keep_unjudged(&self, mut reads: Reads, now: u64) {
         self.update(|state| {
             let watched: Vec<PrId> = reads
@@ -318,8 +321,8 @@ impl Shared {
                 match read {
                     Read::Summary(summary) => snapshot.saw_summary(summary, now),
                     Read::Detail(detail) => snapshot.saw_unjudged(*detail, now),
-                    Read::Refused(why) => snapshot.trouble = Some(Trouble::Refused(why)),
-                    Read::Failed(error) => snapshot.trouble = Some(Trouble::Failed(error)),
+                    Read::Refused(why) => snapshot.show_failed(Trouble::Refused(why), now),
+                    Read::Failed(error) => snapshot.show_failed(Trouble::Failed(error), now),
                 }
             }
             keep(state, &reads, now);

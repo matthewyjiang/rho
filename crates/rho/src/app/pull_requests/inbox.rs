@@ -292,8 +292,8 @@ impl PullRequestInbox {
             if linked || started {
                 // The watch runs in memory; a failed save is logged.
                 let _ = self.shared.save(&self.session, &entry.record);
-            }
-            if linked {
+                // A new watch, of a PR linked already too, may be of the PR
+                // the session's agent just opened for its branch.
                 state.recheck_branch(&self.session, &pr);
                 self.shared.poke_if_leased(state, &self.session, now);
             }
