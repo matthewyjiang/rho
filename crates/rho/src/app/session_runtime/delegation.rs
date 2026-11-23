@@ -39,6 +39,7 @@ use tokio::sync::mpsc;
 use crate::{
     app::{
         boundary_results::BoundaryResults,
+        pull_requests::{NewsBatch, PullRequestInbox},
         subagent_manager::{SubagentManager, SubagentNotification},
         subagent_messaging::{NoticePermits, SubagentNotice},
     },
@@ -61,6 +62,9 @@ pub(super) struct Delegation {
     /// The session's A2UI surfaces, whose actions no `ui` call waited for
     /// are delivered like finished work.
     surfaces: Option<SurfaceHost>,
+    /// The session's watched pull requests, whose news is delivered like
+    /// finished work.
+    pull_requests: Option<PullRequestInbox>,
     /// Workflows and process tasks started from here on hold natural
     /// completion; older ones, and services, only deliver.
     prompt_started: Instant,
@@ -114,6 +118,7 @@ pub(super) struct BackgroundSources<'a> {
     pub(super) processes: Option<&'a ProcessManager>,
     pub(super) workflows: &'a WorkflowRunTracker,
     pub(super) surfaces: Option<&'a SurfaceHost>,
+    pub(super) pull_requests: Option<&'a PullRequestInbox>,
 }
 
 impl<'a> BackgroundSources<'a> {
@@ -123,6 +128,7 @@ impl<'a> BackgroundSources<'a> {
             processes: tools.processes(),
             workflows: tools.workflow_tracker(),
             surfaces: tools.surfaces(),
+            pull_requests: tools.pull_requests(),
         }
     }
 
@@ -131,7 +137,9 @@ impl<'a> BackgroundSources<'a> {
     /// workflow run, a live background process, task or service, or a
     /// finished task's result. A finished service's result does not count:
     /// it waits only for a next prompt, so it must not keep an idle
-    /// session loaded or a daemon upgrade waiting.
+    /// session loaded or a daemon upgrade waiting. Neither does pull request
+    /// news: it is saved, so an unloaded session or a restarted daemon still
+    /// delivers it.
     pub(super) fn has_work(&self, session_id: &str) -> bool {
         self.subagents
             .is_some_and(|manager| manager.has_active_or_pending_notification(session_id))
@@ -195,6 +203,7 @@ impl Delegation {
             processes: sources.processes.cloned(),
             workflows,
             surfaces: sources.surfaces.cloned(),
+            pull_requests: sources.pull_requests.cloned(),
             prompt_started: Instant::now(),
             background_wait: wait,
             displays: None,
@@ -246,6 +255,10 @@ impl Delegation {
             let process_exit = self.processes.as_ref().map(ProcessManager::notified_owned);
             let workflow_finish = self.workflows.notified_owned();
             let surface_action = self.surfaces.as_ref().map(SurfaceHost::acted_owned);
+            let news = self
+                .pull_requests
+                .as_ref()
+                .map(PullRequestInbox::news_owned);
             {
                 let _delivery = crate::app::notification_delivery::lock();
                 let batch = self.collect();
@@ -294,6 +307,12 @@ impl Delegation {
                     None => std::future::pending().await,
                 }
             };
+            let news = async move {
+                match news {
+                    Some(news) => news.await,
+                    None => std::future::pending().await,
+                }
+            };
             match &mut self.subagents {
                 Some(subagents) => tokio::select! {
                     notice = subagents.notices.recv(), if notices_open => {
@@ -307,11 +326,13 @@ impl Delegation {
                     () = process_exit => {}
                     () = workflow_finish => {}
                     () = surface_action => {}
+                    () = news => {}
                 },
                 None => tokio::select! {
                     () = process_exit => {}
                     () = workflow_finish => {}
                     () = surface_action => {}
+                    () = news => {}
                 },
             }
         };
@@ -368,6 +389,12 @@ impl Delegation {
                 .as_ref()
                 .map(SurfaceHost::take_actions)
                 .unwrap_or_default(),
+            pull_requests: self.pull_requests.clone(),
+            pull_request_news: self
+                .pull_requests
+                .as_ref()
+                .map(PullRequestInbox::take_news)
+                .unwrap_or_default(),
         }
     }
 
@@ -383,6 +410,7 @@ impl Delegation {
             workflows: &batch.workflow_results,
             processes: &batch.process_results,
             surface_actions: &batch.surface_actions,
+            pull_requests: &batch.pull_request_news,
         }
         .render(self.subagents.as_ref().map(|subagents| &subagents.manager))
         .finish()
@@ -405,7 +433,11 @@ impl Delegation {
                 .processes
                 .as_ref()
                 .is_some_and(ProcessManager::has_pending_notification)
-            || self.surfaces.as_ref().is_some_and(SurfaceHost::has_action);
+            || self.surfaces.as_ref().is_some_and(SurfaceHost::has_action)
+            || self
+                .pull_requests
+                .as_ref()
+                .is_some_and(PullRequestInbox::has_news);
         let running = match self.background_wait {
             BackgroundWait::HoldPrompt => {
                 self.workflows
@@ -470,6 +502,8 @@ struct DeliveryReservation {
     process_results: Vec<ProcessNotification>,
     surfaces: Option<SurfaceHost>,
     surface_actions: Vec<SurfaceAction>,
+    pull_requests: Option<PullRequestInbox>,
+    pull_request_news: NewsBatch,
 }
 
 impl DeliveryReservation {
@@ -478,9 +512,17 @@ impl DeliveryReservation {
             || !self.workflow_results.is_empty()
             || !self.process_results.is_empty()
             || !self.surface_actions.is_empty()
+            || !self.pull_request_news.is_empty()
     }
 
+    /// The SDK applied the input: the results are delivered. Pull request
+    /// news is also removed from disk now, and only now, so a crash before
+    /// this delivers it again rather than never.
     fn commit(&mut self) {
+        if let Some(inbox) = &self.pull_requests {
+            inbox.acknowledge(&self.pull_request_news);
+        }
+        self.pull_request_news = NewsBatch::default();
         self.subagent_results.clear();
         self.workflow_results.clear();
         self.process_results.clear();
@@ -499,6 +541,9 @@ impl Drop for DeliveryReservation {
         }
         if let Some(surfaces) = &self.surfaces {
             surfaces.restore_actions(&self.surface_actions);
+        }
+        if let Some(inbox) = &self.pull_requests {
+            inbox.restore_news(&self.pull_request_news);
         }
     }
 }

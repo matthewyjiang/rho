@@ -15,6 +15,7 @@ use crate::app::daemon_host::{
     },
     wire::session_to_wire,
 };
+use crate::app::pull_requests::ScriptedForge;
 
 /// Bounds each wait on an explicit signal; never the way a test syncs.
 const TEST_BUDGET: Duration = Duration::from_secs(5);
@@ -74,6 +75,7 @@ async fn a_prompt_sent_again_with_its_key_starts_no_second_turn() {
     let sessions = Sessions::new(
         Arc::new(JobRegistry::open(JobStore::open(home.path()).unwrap())),
         home.path(),
+        ScriptedForge::new(),
     );
     let session = load(&sessions, &root, Load::Saved).await;
 

@@ -237,6 +237,7 @@ async fn assemble_side_session(launch: &SideChatLaunch) -> anyhow::Result<BuiltS
         no_subagents: true,
         questionnaire_enabled: false,
         surfaces: None,
+        pull_requests: None,
         mcp_elicitation: crate::tools::mcp::McpElicitationSupport::Unavailable,
         tool_source_attach: ToolSourceAttach::None,
         tool_source_load: super::tools_prompt::ToolSourceLoad::Inline,

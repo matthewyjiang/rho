@@ -111,7 +111,8 @@ pub(crate) use settings::SettingChangeError;
 pub(crate) use switch::resolve_switch_reasoning;
 #[cfg(test)]
 pub(in crate::app) use test_support::{
-    host_woken_runtime_on, unattended_runtime_on, unsaved_unattended_runtime_on, HangUntilCancel,
+    host_woken_runtime_on, idle_woken_runtime_on, unattended_runtime_on,
+    unsaved_unattended_runtime_on, HangUntilCancel,
 };
 pub(crate) use title::TitleJob;
 use title::TitleState;

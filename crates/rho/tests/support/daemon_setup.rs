@@ -8,10 +8,10 @@ use std::{collections::BTreeSet, path::PathBuf};
 use pretty_assertions::assert_eq;
 use rho_protocol::{
     methods::{JobList, SessionAttach, SessionDetach, SessionList, SessionNew},
-    Ask, ChildThreads, Client, ClientError, DaemonNotification, ErrorCode, JobKind, JobListParams,
-    JobState, Operation, PathScope, SessionAttachParams, SessionDetachParams, SessionEvent,
-    SessionEventParams, SessionId, SessionListParams, SessionNewParams, SessionPart, SessionSetup,
-    ToolCallId, ToolStatus, TurnOutcome,
+    Ask, ChildThreads, Client, ClientError, DaemonNotification, ErrorCode, IdleWake, JobKind,
+    JobListParams, JobState, Operation, PathScope, SessionAttachParams, SessionDetachParams,
+    SessionEvent, SessionEventParams, SessionId, SessionListParams, SessionNewParams, SessionPart,
+    SessionSetup, ToolCallId, ToolStatus, TurnOutcome,
 };
 use serde_json::Value;
 
@@ -643,6 +643,62 @@ async fn child_threads_follow_the_client_that_opened_the_session() {
         [
             (Some(ToolStatus::Failed), 0),
             (Some(ToolStatus::Completed), 1)
+        ],
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
+// Covers: only a session the daemon starts idle turns on offers pull
+// request tools, since news could wake no other: one whose client takes
+// daemon turns offers the model the two watch tools directly (the other
+// three load through `tool_search`); one whose client takes none
+// (`idle_wake: never`, as `rho run --detach` and ACP ask) offers none, so
+// its agent waits as a headless run does; and one whose host runs its
+// children, as T3 Code does, offers none, since T3 has its own. No tool
+// runs, so no `gh` does.
+// Owner: daemon session setup.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn only_a_session_the_daemon_wakes_offers_pull_request_tools() {
+    let sandbox = Sandbox::new();
+    // The fixture answers with the request it got.
+    let client = sandbox.start_daemon("inspect").await;
+    let setups = [
+        SessionSetup {
+            idle_wake: IdleWake::Turn,
+            ..SessionSetup::default()
+        },
+        SessionSetup {
+            idle_wake: IdleWake::Never,
+            ..SessionSetup::default()
+        },
+        SessionSetup {
+            child_threads: ChildThreads::Host,
+            idle_wake: IdleWake::Turn,
+            ..SessionSetup::default()
+        },
+    ];
+    let mut offered = Vec::new();
+    for setup in setups {
+        let session = new_session(&sandbox, &client, None, setup).await.unwrap();
+        let tools = offered_tools(&inspected_request(&sandbox, &client, &session).await);
+        offered.push(
+            tools
+                .into_iter()
+                .filter(|tool| tool.contains("pull_request"))
+                .collect::<Vec<_>>(),
+        );
+    }
+
+    assert_eq!(
+        offered,
+        [
+            vec![
+                "unwatch_pull_request".to_owned(),
+                "watch_pull_request".to_owned()
+            ],
+            Vec::new(),
+            Vec::new(),
         ],
         "log:\n{}",
         sandbox.isolated.daemon_log()

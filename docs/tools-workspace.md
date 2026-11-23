@@ -46,6 +46,9 @@ Additional tools:
 | `todo` | Replace the session task checklist shown in the transcript and `/todo` |
 | `sessions` | Search and read prior session evidence without resuming it |
 | `ui` | Show the user a form, a choice, or a result card, in a client that draws [surfaces](#surfaces) |
+| `watch_pull_request` / `unwatch_pull_request` | Watch a GitHub [pull request](#pull-requests) so the daemon wakes the session when it changes, or stop |
+| `link_pull_request` / `unlink_pull_request` | Link a [pull request](#pull-requests) to the session without watching it, or remove the link |
+| `list_session_pull_requests` | List the session's linked [pull requests](#pull-requests) with rho's last read of each |
 | `advisor` | Second-model review when [advisor mode](/configuration/advisor-mode) is on |
 | `exit_plan_mode` | Present a markdown plan for approval and [hand off to execution](/configuration/permissions#plan-execute-handoff) in interactive Plan mode |
 
@@ -175,6 +178,16 @@ Each component of the A2UI basic catalog has a terminal form:
 | `Image`, `Video`, `AudioPlayer` | One line with the description and the URL |
 
 A surface is not operated with the mouse. A field edits as one run of text: the arrow keys move the caret along it, and `Up` and `Down` leave the field.
+
+## Pull requests
+
+A daemon session's agent can link GitHub pull requests to its session and have the daemon watch them, instead of polling with `sleep` or `gh pr checks --watch`. Every tool but `list_session_pull_requests` takes `pull_request`: a URL, `owner/name#12`, or `#12` in the workspace's `origin` repository.
+
+`watch_pull_request` links the pull request, reads it once, and returns that read as the baseline: its head, its checks, whether it conflicts, and how many comments it has. The agent handles the baseline and ends its turn. The daemon then wakes the session when checks fail, when the required checks pass (all checks when none is required), on new comments or reviews by other people, on a merge conflict, and once when the pull request merges or closes. The watch stays on until `unwatch_pull_request`, `unlink_pull_request`, or the merge or close. Text quoted from comments and reviews reaches the model as information from other people, not as instructions.
+
+`watch_pull_request` refuses, naming the cause, when the pull request already merged or closed, when `gh` is missing or not signed in to the host on the daemon's machine, when the account's GitHub API budget is at the daemon's floor, and past 25 watched pull requests in one session.
+
+`watch_pull_request` and `unwatch_pull_request` are in the model's context from the start. The other three load through `tool_search`; the system prompt names them. Only sessions whose client takes daemon turns (`idle_wake: turn`) have the tools, and not those a T3 Code thread opens. Polling, budgets, and where the daemon keeps the links: [Daemon](/daemon#pull-requests).
 
 ## Background processes
 

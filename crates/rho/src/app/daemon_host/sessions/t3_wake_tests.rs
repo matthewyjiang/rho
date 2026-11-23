@@ -145,6 +145,7 @@ impl Fixture {
             self.workflows.clone(),
             /*subagents*/ None,
             /*surfaces*/ None,
+            /*pull_requests*/ None,
         )
         .expect("a host that wakes its session waits on its work")
     }

@@ -128,6 +128,7 @@ grep
 list_dir
 powershell
 process
+pull_requests
 questionnaire
 read_file
 rho
@@ -146,6 +147,7 @@ Notes:
 - delegated agents never receive `agent` / `agents` / `advisor` even if listed
 - `questionnaire` is offered on delegated Rho runs when a parent session can answer; if the host cannot offer it for that launch, bind omits it instead of failing
 - `ui` is offered only to a daemon session whose client draws [surfaces](/tools-workspace#surfaces), never to a delegated run; elsewhere bind omits it instead of failing
+- `pull_requests` is offered only to a session the daemon runs, except one a T3 Code thread opened, and never to a delegated run; elsewhere bind omits it instead of failing
 
 **`runtime: claude-cli`**
 

@@ -48,6 +48,8 @@ pub(super) struct SessionAssemblyOptions<'a, ExtendTools, Approval, Options> {
     pub questionnaire_enabled: bool,
     /// The session's A2UI surfaces, when its host's clients draw them.
     pub(crate) surfaces: Option<crate::tools::ui::SurfaceHost>,
+    /// The session's side of the daemon's pull request service.
+    pub(crate) pull_requests: Option<crate::app::pull_requests::PullRequestInbox>,
     pub mcp_elicitation: crate::tools::mcp::McpElicitationSupport,
     pub tool_source_attach: super::tools_prompt::ToolSourceAttach,
     pub tool_source_load: super::tools_prompt::ToolSourceLoad,
@@ -195,6 +197,7 @@ where
         no_subagents,
         questionnaire_enabled,
         surfaces,
+        pull_requests,
         mcp_elicitation,
         tool_source_attach,
         tool_source_load,
@@ -270,6 +273,7 @@ where
         no_subagents,
         questionnaire_enabled,
         surfaces,
+        pull_requests,
         mcp_elicitation,
         tool_source_attach,
         mcp_authorization,

@@ -50,7 +50,7 @@ use super::{
 };
 use crate::app::{
     http_guard::{bearer_token, is_private, own_hosts, LOOPBACK_HOSTS},
-    http_upgrade::{adopted_listener, Drain, InFlight, Upgrade},
+    http_upgrade::{adopted_listener, Call, Drain, InFlight, Upgrade},
     session_control::SessionControl,
 };
 
@@ -191,10 +191,11 @@ async fn accept_until(
         let calls = drain.calls();
         let began = drain.began();
         tokio::spawn(async move {
-            let handler = hyper::service::service_fn(move |request| {
+            let last_post = LastPost::default();
+            let handler = hyper::service::service_fn(move |request: Request<Incoming>| {
                 let server = Arc::clone(&server);
-                let calls = calls.clone();
-                async move { Ok::<_, Infallible>(counted(&server, &calls, request).await) }
+                last_post.serving(&calls, request.method());
+                async move { Ok::<_, Infallible>(handle(&server, request).await) }
             });
             let connection = hyper::server::conn::http1::Builder::new()
                 .serve_connection(TokioIo::new(stream), handler);
@@ -213,27 +214,27 @@ async fn accept_until(
     }
 }
 
-/// [`handle`], counting a POST, which carries a tool call, as under way
-/// until its response's body is sent or dropped, so an upgrade waits for
-/// it. A GET opens a host's event stream, which lasts as long as the host
+/// A connection's latest POST, which carries a tool call, counted as under
+/// way until the connection serves its next request or closes, so an
+/// upgrade waits for it. Not until its body drops: hyper drops a body
+/// before it writes and flushes the body's last chunk, and a re-execution
+/// in that gap cuts the response short. HTTP/1 serves one request at a
+/// time, so the next request starts only once this response was written.
+/// A GET opens a host's event stream, which lasts as long as the host
 /// keeps it, so an upgrade does not wait for those.
-async fn counted(
-    server: &HttpServer,
-    in_flight: &InFlight,
-    request: Request<Incoming>,
-) -> Response<Body> {
-    let call = (request.method() == hyper::Method::POST).then(|| in_flight.enter());
-    let response = handle(server, request).await;
-    match call {
-        Some(call) => response.map(|body| {
-            body.map_frame(move |frame| {
-                // Held by the body, so dropped with it.
-                let _call = &call;
-                frame
-            })
-            .boxed()
-        }),
-        None => response,
+#[derive(Default)]
+struct LastPost(Arc<std::sync::Mutex<Option<Call>>>);
+
+impl LastPost {
+    /// Starts serving a request with `method`: a POST is counted in
+    /// `in_flight`, and the connection's previous POST no longer is.
+    fn serving(&self, in_flight: &InFlight, method: &hyper::Method) {
+        let call = (method == hyper::Method::POST).then(|| in_flight.enter());
+        let mut last = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *last = call;
     }
 }
 
