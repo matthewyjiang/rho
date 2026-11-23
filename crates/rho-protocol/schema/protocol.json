@@ -4063,6 +4063,13 @@
             "null"
           ]
         },
+        "avatar_url": {
+          "description": "Where the forge serves the author's picture, 72 pixels square;\nabsent for a deleted account.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "body": {
           "description": "In Markdown; a review may have none.",
           "type": "string"

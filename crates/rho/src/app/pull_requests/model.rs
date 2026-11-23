@@ -304,6 +304,9 @@ pub(crate) struct Post {
     /// The author's standing in the repository, as GitHub names it (such as
     /// `OWNER`, `MEMBER` or `NONE`); `None` when the read didn't say.
     pub(crate) author_association: Option<String>,
+    /// Where the forge serves the author's picture; `None` for a deleted
+    /// account.
+    pub(crate) avatar_url: Option<String>,
     /// Unix seconds.
     pub(crate) at: i64,
     /// Markdown; a review may have none.

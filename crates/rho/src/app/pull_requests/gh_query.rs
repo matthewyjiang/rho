@@ -87,7 +87,9 @@ const SUMMARY: &str = "fragment Summary on PullRequest {
 /// it merge cost nothing more (rho-ui measured it on matthewyjiang/rho-ui#35:
 /// still 1 point, 0.46 s). A new comment updates the PR's `updatedAt`
 /// (cli/cli#10513: comment 20:42:15, update 20:42:16), so a summary read
-/// sees it.
+/// sees it. Each post's author's picture, at 72 pixels (drawn at 24 and
+/// sharp to a display scale of 3), cost nothing more either (rho-ui
+/// measured it on cli/cli#14578).
 const DETAIL: &str = "fragment Detail on PullRequest {
   ...Summary
   body author { login } headRefName baseRefName additions deletions changedFiles reviewDecision
@@ -102,7 +104,7 @@ const DETAIL: &str = "fragment Detail on PullRequest {
   } } } } }
   comments(last: 30) { totalCount nodes { ...Post } }
   reviews(last: 30) { totalCount nodes {
-    id author { login } authorAssociation body state submittedAt url
+    id author { login avatarUrl(size: 72) } authorAssociation body state submittedAt url
   } }
   reviewThreads(last: 30) { totalCount nodes {
     id isResolved isOutdated path line
@@ -111,7 +113,7 @@ const DETAIL: &str = "fragment Detail on PullRequest {
   } }
 }
 fragment Post on Comment {
-  id author { login } authorAssociation body createdAt publishedAt
+  id author { login avatarUrl(size: 72) } authorAssociation body createdAt publishedAt
   ... on IssueComment { url } ... on PullRequestReviewComment { url }
 }
 ";
@@ -540,8 +542,12 @@ impl GhMergeSettings {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct Login {
     login: String,
+    /// Asked for posts' authors only.
+    #[serde(default)]
+    avatar_url: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -610,17 +616,23 @@ struct GhThread {
     latest: Option<Nodes<GhComment>>,
 }
 
-/// Whose it is: a deleted account's reads as GitHub shows it, `ghost`.
-fn login(author: Option<Login>) -> String {
-    author.map_or_else(|| "ghost".to_owned(), |author| author.login)
+/// Whose it is, and their picture: a deleted account's reads as GitHub
+/// shows it, `ghost`, with none.
+fn login(author: Option<Login>) -> (String, Option<String>) {
+    author.map_or_else(
+        || ("ghost".to_owned(), None),
+        |author| (author.login, author.avatar_url),
+    )
 }
 
 impl GhComment {
     fn into_post(self) -> Post {
+        let (author, avatar_url) = login(self.author);
         Post {
             id: self.id,
-            author: login(self.author),
+            author,
             author_association: self.author_association,
+            avatar_url,
             at: unix_seconds(self.published_at.as_deref().unwrap_or(&self.created_at))
                 .unwrap_or_default(),
             body: self.body,
@@ -642,10 +654,12 @@ impl GhReview {
             "COMMENTED" if !self.body.trim().is_empty() => Verdict::Commented,
             _ => return None,
         };
+        let (author, avatar_url) = login(self.author);
         Some(Post {
             id: self.id,
-            author: login(self.author),
+            author,
             author_association: self.author_association,
+            avatar_url,
             at: unix_seconds(self.submitted_at.as_deref()?).unwrap_or_default(),
             body: self.body,
             verdict: Some(verdict),

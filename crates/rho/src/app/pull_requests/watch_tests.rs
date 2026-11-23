@@ -123,6 +123,7 @@ fn post(id: &str, author: &str, at: i64) -> Post {
         id: id.into(),
         author: author.into(),
         author_association: Some("MEMBER".into()),
+        avatar_url: None,
         at,
         body: format!("about {id}"),
         verdict: None,

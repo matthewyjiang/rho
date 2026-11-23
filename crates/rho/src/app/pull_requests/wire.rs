@@ -266,6 +266,7 @@ impl From<&Post> for wire::PullRequestPost {
             id,
             author,
             author_association,
+            avatar_url,
             at,
             body,
             verdict,
@@ -273,6 +274,7 @@ impl From<&Post> for wire::PullRequestPost {
         } = post;
         let mut sent = Self::new(id, author, *at, body, url);
         sent.author_association.clone_from(author_association);
+        sent.avatar_url.clone_from(avatar_url);
         sent.verdict = (*verdict).map(Into::into);
         sent
     }

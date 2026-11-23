@@ -430,7 +430,8 @@ fn a_full_read_takes_what_the_watch_needs() {
                         "url": format!("{url}#issuecomment-1")
                     }] },
                     "reviews": { "totalCount": 1, "nodes": [{
-                        "id": "PRR_1", "author": { "login": "bob" },
+                        "id": "PRR_1",
+                        "author": { "login": "bob", "avatarUrl": "https://avatars.githubusercontent.com/u/2?s=72" },
                         "authorAssociation": "OWNER", "body": "", "state": "APPROVED",
                         "submittedAt": "2026-11-22T00:45:00Z",
                         "url": format!("{url}#pullrequestreview-1")
@@ -478,6 +479,7 @@ fn a_full_read_takes_what_the_watch_needs() {
         id: format!("PRRC_{n}"),
         author: "carol".to_owned(),
         author_association: Some("CONTRIBUTOR".to_owned()),
+        avatar_url: None,
         at: MIDNIGHT + 3_600 + n * 60,
         body: format!("reply {n}"),
         verdict: None,
@@ -520,6 +522,7 @@ fn a_full_read_takes_what_the_watch_needs() {
                 id: "IC_1".to_owned(),
                 author: "carol".to_owned(),
                 author_association: Some("NONE".to_owned()),
+                avatar_url: None,
                 at: MIDNIGHT + 30 * 60,
                 body: "nice".to_owned(),
                 verdict: None,
@@ -529,6 +532,7 @@ fn a_full_read_takes_what_the_watch_needs() {
                 id: "PRR_1".to_owned(),
                 author: "bob".to_owned(),
                 author_association: Some("OWNER".to_owned()),
+                avatar_url: Some("https://avatars.githubusercontent.com/u/2?s=72".to_owned()),
                 at: MIDNIGHT + 45 * 60,
                 body: String::new(),
                 verdict: Some(Verdict::Approved),

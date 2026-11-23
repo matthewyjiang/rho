@@ -199,6 +199,10 @@ pub struct PullRequestPost {
     /// `MEMBER`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub author_association: Option<String>,
+    /// Where the forge serves the author's picture, 72 pixels square;
+    /// absent for a deleted account.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub avatar_url: Option<String>,
     /// When it was written, in unix seconds.
     pub at: i64,
     /// In Markdown; a review may have none.
@@ -222,6 +226,7 @@ impl PullRequestPost {
             id: id.into(),
             author: author.into(),
             author_association: None,
+            avatar_url: None,
             at,
             body: body.into(),
             verdict: None,
