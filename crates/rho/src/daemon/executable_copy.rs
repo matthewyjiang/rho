@@ -7,8 +7,8 @@
 //! name comes from the length and modification time of the file it copies,
 //! so starting from the same install again reuses its copy, and an update
 //! gets a new one. Each time a copy is staged, the others are removed. A copy
-//! that a daemon still runs cannot be removed on Windows, so it is removed
-//! at a later start.
+//! that a daemon still runs may resist removal, as Windows refuses to delete
+//! a running program's file; a later start removes it.
 
 use std::{
     ffi::OsString,
