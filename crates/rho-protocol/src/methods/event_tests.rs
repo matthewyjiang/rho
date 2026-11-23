@@ -46,6 +46,12 @@ fn every_session_event_round_trips_through_its_wire_form() {
             json!({"type": "activity", "state": "settled"}),
         ),
         (
+            SessionEvent::Agent {
+                id: "worker".into(),
+            },
+            json!({"type": "agent", "id": "worker"}),
+        ),
+        (
             SessionEvent::TurnEnded {
                 turn: TurnId::new("t1"),
                 outcome: TurnOutcome::Answered {

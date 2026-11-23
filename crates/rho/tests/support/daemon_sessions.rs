@@ -1626,8 +1626,8 @@ pub(super) fn is_state(state: JobState) -> impl Fn(&SessionEvent) -> bool {
 }
 
 /// What a conversation shows: its events without job states, model
-/// requests, context usage, titles, options, background work, and activity,
-/// which describe the session as it was when they were sent.
+/// requests, context usage, titles, options, background work, activity, and
+/// agent, which describe the session as it was when they were sent.
 fn conversation(events: &[(Seq, SessionEvent)]) -> Vec<SessionEvent> {
     events
         .iter()
@@ -1642,6 +1642,7 @@ fn conversation(events: &[(Seq, SessionEvent)]) -> Vec<SessionEvent> {
                     | SessionEvent::OptionsChanged { .. }
                     | SessionEvent::Background { .. }
                     | SessionEvent::Activity { .. }
+                    | SessionEvent::Agent { .. }
             )
         })
         .collect()
@@ -1682,10 +1683,24 @@ async fn clients_that_leave_and_come_back_see_the_same_turn() {
     let (mut latecomer, late) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
     latecomer.read_until(is_state(JobState::Cancelled)).await;
 
-    let seqs: Vec<u64> = watcher.events.iter().map(|(seq, _)| seq.0).collect();
+    // The watcher's reset starts with the session's agent, which no saved
+    // row holds, at seq 0; the stream numbers every event after it.
+    let (first, rest) = watcher
+        .events
+        .split_first()
+        .expect("the watcher's reset replays the agent");
+    let seqs: Vec<u64> = rest.iter().map(|(seq, _)| seq.0).collect();
     assert_eq!(
-        seqs,
-        (1..=seqs.len() as u64).collect::<Vec<_>>(),
+        (first.clone(), seqs.clone()),
+        (
+            (
+                Seq(0),
+                SessionEvent::Agent {
+                    id: "default".into()
+                }
+            ),
+            (1..=seqs.len() as u64).collect::<Vec<_>>(),
+        ),
         "the stream numbers every event once, in order"
     );
     assert_eq!(

@@ -109,9 +109,12 @@ pub(crate) trait ChildObserver: Send + Sync {
 
 /// What a Rho child run tells the observer that follows it (#1668).
 pub(crate) enum ChildEvent {
-    /// The run opened its session, which runs with these options. Sent
-    /// once, before any [`Self::Session`].
-    Opened(Box<SessionOptions>),
+    /// The run opened its session, which runs with `options` as the agent
+    /// whose id is `agent`. Sent once, before any [`Self::Session`].
+    Opened {
+        options: Box<SessionOptions>,
+        agent: String,
+    },
     /// One event of the run's session, as the daemon protocol's.
     Session(WireEvent),
 }

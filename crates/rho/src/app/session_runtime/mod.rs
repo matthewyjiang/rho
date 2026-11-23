@@ -260,6 +260,12 @@ impl SessionRuntime {
         self.built.session.id()
     }
 
+    /// The id of the agent the session runs as now, which an `/agent:`
+    /// rebind changes.
+    pub(crate) fn agent_id(&self) -> &crate::agent::AgentId {
+        self.agent.id()
+    }
+
     /// The session's credentials: those of the environment it opened with
     /// (see [`crate::session_environment::SessionEnvironment::credentials`]).
     pub(crate) fn credentials(

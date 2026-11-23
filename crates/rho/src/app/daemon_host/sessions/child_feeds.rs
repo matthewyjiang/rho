@@ -110,8 +110,8 @@ pub(in crate::app::daemon_host) struct ChildStream {
 
 impl ChildStream {
     /// Opens the stream: the run opened its session, which runs with
-    /// `options`.
-    pub(in crate::app::daemon_host) fn open(&self, options: wire::SessionOptions) {
+    /// `options` as agent `agent`.
+    pub(in crate::app::daemon_host) fn open(&self, options: wire::SessionOptions, agent: String) {
         self.feed.send_if_modified(|feed| {
             if feed.is_some() {
                 return false;
@@ -121,6 +121,7 @@ impl ChildStream {
                 Some(self.turn.clone()),
                 /*title*/ None,
                 options,
+                agent,
             )));
             true
         });

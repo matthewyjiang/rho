@@ -4897,6 +4897,23 @@
           "type": "object"
         },
         {
+          "description": "The agent the session runs as, by its id, as\n[`super::SessionNewParams::agent`] takes it and the session saved\nit: `default` for the default agent, which is an id like any other,\n`worker`, or a workspace's own agent. A subagent's or workflow agent\nnode's session names the agent it runs as. Every reset replay starts\nwith it, since no saved transcript holds it, and a session an\n`/agent:` first prompt rebinds sends it again, before its new\noptions.\n\n# Next major\n\nNEXT_MAJOR(rho-protocol): report the agent a session runs as in SessionOptions::agent and remove SessionEvent::Agent.\n\n`SessionOptions` is not `#[non_exhaustive]`, so a field is a major\nchange; until then a reset replay carries the agent as this event.",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "type": {
+              "const": "agent",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Any other value: one a later protocol minor adds.",
           "properties": {
             "type": {

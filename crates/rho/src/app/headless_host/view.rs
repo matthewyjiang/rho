@@ -298,7 +298,10 @@ impl<'a> WireView<'a> {
                     /*available_auths*/ &[],
                     CHILD_COMMANDS,
                 );
-                let _ = host.send(ChildEvent::Opened(Box::new(options)));
+                let _ = host.send(ChildEvent::Opened {
+                    options: Box::new(options),
+                    agent: runtime.agent_id().to_string(),
+                });
             }
         }
     }

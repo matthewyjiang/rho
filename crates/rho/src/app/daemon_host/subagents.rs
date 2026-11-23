@@ -287,8 +287,8 @@ impl Followed {
     /// stands: a stream that opens takes the title the run already has.
     fn show(&self, event: ChildEvent, status: &RunStatus) {
         match event {
-            ChildEvent::Opened(options) => {
-                self.stream.open(*options);
+            ChildEvent::Opened { options, agent } => {
+                self.stream.open(*options, agent);
                 self.show_status(status);
             }
             ChildEvent::Session(event) => self.stream.publish([event]),
