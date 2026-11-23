@@ -45,8 +45,8 @@ use std::{
 
 use anyhow::Context;
 use rho_protocol::{
-    methods::SessionAttach, ClientEnvironment, ConfigChangedParams, ContentBlock, DetachReason,
-    SessionAttachParams, SessionAttachResponse, SessionId, SessionNewParams, SessionOptions,
+    methods::SessionAttach, ClientEnvironment, ContentBlock, DetachReason, SessionAttachParams,
+    SessionAttachResponse, SessionId, SessionNewParams, SessionOptions,
 };
 use tokio::sync::{mpsc, oneshot, watch};
 
@@ -60,7 +60,7 @@ use super::{
 use crate::{
     app::{
         available_auths,
-        daemon_client::{Daemon, Link, LoginEvent, Part, Routed, StreamPosition},
+        daemon_client::{Daemon, Link, LoginEvent, Part, Routed, SettingsChange, StreamPosition},
         DraftOptions, SettingOrigins,
     },
     credential_store::AppCredentialStore,
@@ -72,6 +72,7 @@ mod auth;
 mod draft;
 mod initial_settings;
 mod mcp;
+mod models;
 mod relink;
 mod requests;
 mod tool_sources;
@@ -114,7 +115,7 @@ pub(crate) struct DaemonSession {
     launch: DaemonLaunch,
     /// `rho/config/changed` for the settings last read, on the
     /// connection the session is attached on.
-    config_changes: mpsc::UnboundedReceiver<ConfigChangedParams>,
+    settings_changes: mpsc::UnboundedReceiver<SettingsChange>,
     /// Where the session's requests go.
     target: watch::Sender<Target>,
     /// Views made outside the event stream, shown with the next views:
@@ -225,7 +226,7 @@ impl DaemonSession {
         let Connection {
             daemon,
             link: _,
-            config_changes,
+            settings_changes,
             settings: read,
         } = Connection::open().await?;
         let Attached {
@@ -250,7 +251,7 @@ impl DaemonSession {
             requests: Some(DaemonRequests::new(requests, Arc::clone(&daemon))),
             daemon,
             launch,
-            config_changes,
+            settings_changes,
             target,
             pending,
             logins: None,
@@ -299,7 +300,7 @@ impl DaemonSession {
                         .expect("the built-in default agent"),
                 ),
             },
-            config_changes: mpsc::unbounded_channel().1,
+            settings_changes: mpsc::unbounded_channel().1,
             target: watch::channel(Target::Ended).0,
             pending: Vec::new(),
             requests: None,
@@ -479,8 +480,8 @@ impl DaemonSession {
             Some(error) = self.requests.as_mut().expect("followed session has requests").views.recv() => {
                 views.push(error);
             }
-            Some(changed) = self.config_changes.recv() => {
-                views.push(DaemonView::SettingsChanged(Box::new(changed)));
+            Some(changed) = self.settings_changes.recv() => {
+                views.push(DaemonView::of_settings(changed));
             }
             Some(update) = auth::next_login(&mut self.logins) => {
                 views.push(DaemonView::Login(update));
@@ -495,8 +496,8 @@ impl DaemonSession {
     /// Appends every settings change and login step already received,
     /// after `views`: neither waits for the session's events to pause.
     fn take_settings_changes(&mut self, views: &mut Vec<DaemonView>) {
-        while let Ok(changed) = self.config_changes.try_recv() {
-            views.push(DaemonView::SettingsChanged(Box::new(changed)));
+        while let Ok(changed) = self.settings_changes.try_recv() {
+            views.push(DaemonView::of_settings(changed));
         }
         views.extend(auth::take_logins(&mut self.logins).map(DaemonView::Login));
     }
@@ -543,7 +544,7 @@ impl DaemonSession {
                     link,
                     routed,
                     session,
-                    config_changes,
+                    settings_changes,
                     settings,
                     tool_sources,
                 }) = relinked
@@ -552,7 +553,7 @@ impl DaemonSession {
                     // new session in its place has none of it.
                     lost_conversation =
                         session != attachment.id && attachment.saved && !attachment.keeps_file;
-                    self.config_changes = config_changes;
+                    self.settings_changes = settings_changes;
                     views.push(settings_loaded(settings));
                     let status = format!("reconnected to rho daemon {}", link.daemon().version);
                     views.push(DaemonView::Status(if session == attachment.id {

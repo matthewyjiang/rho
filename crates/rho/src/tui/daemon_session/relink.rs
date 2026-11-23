@@ -5,8 +5,8 @@ use std::{future::Future, pin::Pin, sync::Arc};
 
 use rho_protocol::{
     methods::{SessionAttach, SessionNew},
-    ClientEnvironment, ConfigChangedParams, ErrorCode, SessionAttachParams, SessionAttachResponse,
-    SessionId, SessionNewParams, SessionOptions,
+    ClientEnvironment, ErrorCode, SessionAttachParams, SessionAttachResponse, SessionId,
+    SessionNewParams, SessionOptions,
 };
 use tokio::sync::mpsc;
 
@@ -17,8 +17,8 @@ use super::{
     DaemonSettings,
 };
 use crate::{
-    app::daemon_client::{Daemon, Link, Routed},
-    tui::daemon_settings_read::{load_settings, route_config},
+    app::daemon_client::{Daemon, Link, Routed, SettingsChange},
+    tui::daemon_settings_read::{load_settings, route_settings},
 };
 
 pub(super) type Reattach = Pin<Box<dyn Future<Output = anyhow::Result<Reattached>> + Send>>;
@@ -40,7 +40,7 @@ pub(super) struct Relinked {
     pub(super) session: SessionId,
     /// The settings, read again: the restarted daemon knows neither
     /// this connection's subscription nor the TUI's registration.
-    pub(super) config_changes: mpsc::UnboundedReceiver<ConfigChangedParams>,
+    pub(super) settings_changes: mpsc::UnboundedReceiver<SettingsChange>,
     pub(super) settings: anyhow::Result<DaemonSettings>,
     /// Whether the session's MCP servers connect, read again: the
     /// restarted daemon starts them again.
@@ -72,7 +72,7 @@ impl Relink {
             old.closed().await;
         }
         let routed = route(&daemon, &params.session);
-        let config_changes = route_config(&daemon);
+        let settings_changes = route_settings(&daemon);
         // A daemon that failed to come back resets the connections that
         // waited for it; the second try starts a new daemon.
         let link = match daemon.link().await {
@@ -88,7 +88,7 @@ impl Relink {
                     link,
                     routed,
                     session: params.session,
-                    config_changes,
+                    settings_changes,
                     settings,
                 }),
             }),
@@ -122,7 +122,7 @@ impl Relink {
                             link,
                             routed,
                             session,
-                            config_changes,
+                            settings_changes,
                             settings,
                         }),
                     })

@@ -14,7 +14,7 @@ use std::fmt;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::ClientEnvironment;
+use super::{ClientEnvironment, ModelListRefresh};
 
 /// Start an auth profile's interactive login.
 pub const AUTH_LOGIN: &str = "rho/auth/login";
@@ -154,6 +154,19 @@ impl fmt::Debug for LoginPrompt {
 pub struct AuthLoginFinishedParams {
     pub login: LoginId,
     pub outcome: LoginOutcome,
+    /// For a login that `succeeded`, the provider's model lists the daemon
+    /// fetched with the new credential before it said so, and how each
+    /// fetch went; empty for a provider that lists no models, and for any
+    /// other outcome.
+    ///
+    /// # Next major
+    ///
+    /// NEXT_MAJOR(rho-protocol): move `refreshed` into `LoginOutcome::Succeeded`, the only outcome that has it.
+    ///
+    /// `Succeeded` is a unit variant, so a field there would break every
+    /// match on it; send it with [`crate::LoginRelay::succeed`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub refreshed: Vec<ModelListRefresh>,
 }
 
 /// How a login ended. A login that saved a credential applies to every

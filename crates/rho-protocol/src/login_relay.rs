@@ -11,7 +11,7 @@
 
 use tokio::sync::mpsc;
 
-use crate::methods::{LoginOutcome, LoginPrompt};
+use crate::methods::{LoginOutcome, LoginPrompt, ModelListRefresh};
 
 /// Opens the relay of one login.
 ///
@@ -37,9 +37,24 @@ impl LoginRelay {
         let _ = self.events.send(LoginEvent::Prompt(prompt));
     }
 
-    /// Sends how the login ended, its last message.
+    /// Sends how the login ended, its last message, with no model lists:
+    /// a login that saved its credential sends [`Self::succeed`] instead,
+    /// which reports the lists the daemon fetched with it.
     pub fn finish(self, outcome: LoginOutcome) {
-        let _ = self.events.send(LoginEvent::Finished(outcome));
+        let _ = self.events.send(LoginEvent::Finished {
+            outcome,
+            refreshed: Vec::new(),
+        });
+    }
+
+    /// Sends that the login saved its credential, with the model lists the
+    /// daemon then fetched with it: [`LoginOutcome::Succeeded`] and
+    /// [`crate::AuthLoginFinishedParams::refreshed`].
+    pub fn succeed(self, refreshed: Vec<ModelListRefresh>) {
+        let _ = self.events.send(LoginEvent::Finished {
+            outcome: LoginOutcome::Succeeded,
+            refreshed,
+        });
     }
 
     /// Resolves once the connection that started the login is gone.
@@ -58,7 +73,10 @@ pub struct LoginStream {
 #[derive(Debug)]
 pub(crate) enum LoginEvent {
     Prompt(LoginPrompt),
-    Finished(LoginOutcome),
+    Finished {
+        outcome: LoginOutcome,
+        refreshed: Vec<ModelListRefresh>,
+    },
 }
 
 impl LoginStream {

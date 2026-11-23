@@ -34,6 +34,7 @@ use crate::{
         config_repository::ConfigRepository,
         credential_writes::{self, ApiKeyAuth, CredentialWriteError, KeyCheck},
     },
+    config::Config,
     credential_store::AppCredentialStore,
 };
 
@@ -57,20 +58,30 @@ pub(super) fn repository() -> ConfigRepository {
 /// custom providers of the daemon's config.
 pub(super) async fn list(params: AuthListParams) -> Result<AuthListResponse, RpcError> {
     let credentials = client_credentials(&params.environment)?;
-    let auths = off_workers(move || -> Result<_, CredentialWriteError> {
-        credential_writes::load_config_and_store(&repository())?;
+    let (_, signed_in) = config_and_auths(credentials).await?;
+    let auths = catalog::login_targets()
+        .into_iter()
+        .filter_map(|target| summary(target, &signed_in))
+        .collect();
+    Ok(AuthListResponse { auths })
+}
+
+/// The daemon's config, with the credential store it selects opened, and
+/// the auths `credentials` has credentials for. Config and the OS keyring
+/// block, so it runs off the async workers.
+pub(super) async fn config_and_auths(
+    credentials: Arc<dyn CredentialStore>,
+) -> Result<(Config, Vec<String>), RpcError> {
+    off_workers(move || -> Result<_, CredentialWriteError> {
+        let config = credential_writes::load_config_and_store(&repository())?;
         // The TUI and ACP still sign in in their own processes until they
         // become daemon clients (#1667, #1670), so their logins are new to
         // the OS store's cache.
         AppCredentialStore::reread_external_logins();
-        let signed_in = available_auth_modes(credentials.as_ref());
-        Ok(catalog::login_targets()
-            .into_iter()
-            .filter_map(|target| summary(target, &signed_in))
-            .collect::<Vec<_>>())
+        Ok((config, available_auth_modes(credentials.as_ref())))
     })
-    .await??;
-    Ok(AuthListResponse { auths })
+    .await?
+    .map_err(RpcError::from)
 }
 
 /// `target` as `rho/auth/list` reports it, given the auths `signed_in`;
@@ -103,14 +114,16 @@ fn summary(target: LoginTarget, signed_in: &[String]) -> Option<AuthSummary> {
 /// What every credential write is followed by: forget the OS store's
 /// cached reads, so the refresh sees this write and any login another
 /// process saved since (the TUI's or ACP's, until #1667 and #1670), then
-/// refresh every loaded session's options, whose models follow the store.
+/// refresh every loaded session's options and every client's model list,
+/// whose models follow the store.
 pub(super) async fn credentials_changed(sessions: &Sessions) {
     AppCredentialStore::reread_external_logins();
-    sessions.refresh_all_options().await;
+    sessions.models_changed().await;
 }
 
-/// Checks `params.key` with its provider and saves it. Only the provider's
-/// check runs on the async workers.
+/// Checks `params.key` with its provider and saves it, then fetches the
+/// provider's model lists with it. Only the provider's check and the fetch
+/// run on the async workers.
 pub(super) async fn save_key(params: AuthKeyParams) -> Result<AuthKeyResponse, RpcError> {
     let AuthKeyParams {
         auth,
@@ -130,12 +143,15 @@ pub(super) async fn save_key(params: AuthKeyParams) -> Result<AuthKeyResponse, R
     })
     .await??;
     let check = login.check(&key, &config).await?;
+    let saved_to = Arc::clone(&credentials);
     off_workers(move || {
-        login.save(&key, credentials.as_ref())?;
+        login.save(&key, saved_to.as_ref())?;
         login.record_login(&repository())
     })
     .await??;
     tracing::info!(auth = %login.auth(), "saved an API key");
+    let refreshed =
+        super::models::refresh_after_sign_in(login.auth(), credentials.as_ref(), &config).await;
     let unchecked = match check {
         KeyCheck::Accepted => None,
         KeyCheck::NoModelListing => Some(UncheckedKey {
@@ -151,7 +167,10 @@ pub(super) async fn save_key(params: AuthKeyParams) -> Result<AuthKeyResponse, R
             message: "the key may not list the provider's models (HTTP 403 Forbidden), so rho could not ask about it".into(),
         }),
     };
-    Ok(AuthKeyResponse { unchecked })
+    Ok(AuthKeyResponse {
+        unchecked,
+        refreshed,
+    })
 }
 
 /// Deletes `params.auth`'s saved credentials.

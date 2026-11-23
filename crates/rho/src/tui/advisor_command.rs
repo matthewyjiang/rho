@@ -111,8 +111,7 @@ impl App {
         let settings = self.daemon_settings.as_ref()?;
         let key = SettingKey::new(ADVISOR_MODEL_KEY);
         let label = settings.spec(SettingsNamespace::Agent, &key)?.label.clone();
-        let mut items =
-            settings.value_rows(SettingsNamespace::Agent, &key, self.daemon_models())?;
+        let mut items = settings.value_rows(SettingsNamespace::Agent, &key)?;
         items.retain_mut(|item| {
             let Some(ConfigRow::Set { value, .. }) = ConfigRow::parse(&item.value) else {
                 return false;

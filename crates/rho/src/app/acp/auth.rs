@@ -352,7 +352,7 @@ impl RunningLogin<'_> {
                 Some(LoginEvent::Prompt { login, prompt }) if ours(&login) => {
                     return Ok(Step::Prompt(prompt));
                 }
-                Some(LoginEvent::Finished { login, outcome }) if ours(&login) => {
+                Some(LoginEvent::Finished { login, outcome, .. }) if ours(&login) => {
                     self.login = None;
                     return Ok(Step::Finished(outcome));
                 }

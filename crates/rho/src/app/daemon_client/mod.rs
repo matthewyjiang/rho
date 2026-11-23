@@ -15,6 +15,8 @@ mod position;
 #[cfg(test)]
 pub(crate) mod test_support;
 
-pub(crate) use connection::{Daemon, DaemonError, Link, LoginEvent, Routed, SessionRoute};
+pub(crate) use connection::{
+    Daemon, DaemonError, Link, LoginEvent, Routed, SessionRoute, SettingsChange,
+};
 pub(crate) use herdr::HerdrStatus;
 pub(crate) use position::{Part, StreamPosition};

@@ -22,7 +22,7 @@
 //! `~/.ollama`). So the daemon's prompt is compared with the one shown, and
 //! shown too when it names another key.
 
-use rho_protocol::{LoginId, LoginOutcome, SessionChange};
+use rho_protocol::{LoginId, LoginOutcome, ModelListRefresh, ModelRefreshTarget, SessionChange};
 use rho_providers::{
     auth::{
         browser::{self, BrowserAvailability},
@@ -41,6 +41,16 @@ use super::{
     DefaultTerminal, Entry, PendingLoginComposer, PendingLoginFinish,
 };
 use crate::credential_store::AppCredentialStore;
+
+/// What became of a signed-in provider's model lists.
+pub(super) enum LoginModelLists {
+    /// The daemon saved the credential, then fetched them; how each fetch
+    /// went.
+    Fetched(Vec<ModelListRefresh>),
+    /// This process saved what the login needs, so the daemon does not
+    /// know to fetch them yet.
+    Unfetched,
+}
 
 /// The interactive login the daemon runs for this TUI.
 pub(super) struct DaemonLogin {
@@ -81,7 +91,12 @@ impl App {
                         target.provider, unchecked.message
                     )));
                 }
-                self.finish_daemon_login(target, terminal).await
+                self.finish_daemon_login(
+                    target,
+                    LoginModelLists::Fetched(saved.refreshed),
+                    terminal,
+                )
+                .await
             }
             Err(error) => {
                 self.insert_entry(&Entry::Error(format!(
@@ -251,13 +266,20 @@ impl App {
                 ));
                 Ok(())
             }
-            LoginUpdate::Finished { login: id, outcome } if id == login.id => {
+            LoginUpdate::Finished {
+                login: id,
+                outcome,
+                refreshed,
+            } if id == login.id => {
                 let target = login.target.clone();
                 self.end_daemon_login();
                 match outcome {
                     // Also one the provider approved before a cancel
                     // reached the daemon.
-                    LoginOutcome::Succeeded => self.finish_daemon_login(target, terminal).await,
+                    LoginOutcome::Succeeded => {
+                        let lists = LoginModelLists::Fetched(refreshed);
+                        self.finish_daemon_login(target, lists, terminal).await
+                    }
                     LoginOutcome::Cancelled => {
                         self.set_status("login cancelled");
                         Ok(())
@@ -411,21 +433,26 @@ impl App {
         Ok(())
     }
 
-    /// What follows a credential the daemon saved for `target`: this
-    /// process reads the store again, the provider's model list is
-    /// refreshed, and the daemon's sessions offer its models.
+    /// What follows a credential saved for `target`: this process reads
+    /// the store again, shows how the daemon's fetches of the provider's
+    /// model lists went, having it fetch them when it did not save the
+    /// credential itself, and the daemon's sessions offer its models.
     pub(super) async fn finish_daemon_login(
         &mut self,
         target: LoginTarget,
+        lists: LoginModelLists,
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
         // The OS store caches reads, misses included.
         AppCredentialStore::reread_external_logins();
         self.persist_default_login_auth(&target);
         self.refresh_available_auths();
-        self.refresh_model_list_after_login(&target, terminal)
-            .await?;
-        self.configure_daemon(SessionChange::ModelCatalog)?;
+        let refreshed = match lists {
+            LoginModelLists::Fetched(refreshed) => refreshed,
+            LoginModelLists::Unfetched => self.fetch_login_model_lists(&target, terminal).await?,
+        };
+        self.show_model_list_refreshes(&refreshed);
+        self.model_lists_refreshed();
         if self.finish_decision_host_login(&target).await {
             return Ok(());
         }
@@ -504,6 +531,31 @@ impl App {
     fn fail_daemon_login(&mut self, message: String) {
         self.insert_entry(&Entry::Error(message));
         self.set_status("login failed");
+    }
+
+    /// Has the daemon fetch `target`'s provider's model lists, for a login
+    /// this process saved; none, said why, when the daemon could not.
+    async fn fetch_login_model_lists(
+        &mut self,
+        target: &LoginTarget,
+        terminal: &mut DefaultTerminal,
+    ) -> anyhow::Result<Vec<ModelListRefresh>> {
+        self.set_status(format!("refreshing {} model list", target.provider));
+        self.paint(terminal)?;
+        let only = ModelRefreshTarget {
+            provider: target.provider.clone(),
+            auth: target.auth.clone(),
+        };
+        match self.daemon_session().refresh_models(Some(only)).await {
+            Ok(response) => Ok(response.lists),
+            Err(error) => {
+                let provider = &target.provider;
+                self.insert_entry(&Entry::Error(format!(
+                    "stored credentials for {provider}, but could not refresh its model list: {error:#}"
+                )));
+                Ok(Vec::new())
+            }
+        }
     }
 
     fn daemon_session(&self) -> &super::DaemonSession {

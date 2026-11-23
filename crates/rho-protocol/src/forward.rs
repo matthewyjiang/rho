@@ -21,13 +21,13 @@
 //! login or with the connection, and dropping its stream then tells the
 //! login its client left.
 //!
-//! A connection also has one forwarder per settings namespace it read; see
-//! [`config`].
+//! A connection also has one forwarder per settings namespace it read, and
+//! one for the models it listed; see [`watched`].
 
-#[path = "config_forward.rs"]
-mod config;
+#[path = "watch_forward.rs"]
+mod watched;
 
-pub use config::ConfigWatch;
+pub use watched::{ConfigWatch, ModelWatch};
 
 use std::{
     collections::HashMap,
@@ -44,9 +44,9 @@ use crate::{
     login_relay::{LoginEvent, LoginStream},
     methods::{
         AuthLoginFinishedNotification, AuthLoginFinishedParams, AuthLoginPromptNotification,
-        AuthLoginPromptParams, ConfigNamespace, LoginId, Notification, Seq,
-        SessionDetachedNotification, SessionDetachedParams, SessionEvent, SessionEventNotification,
-        SessionEventParams, SessionId,
+        AuthLoginPromptParams, LoginId, Notification, Seq, SessionDetachedNotification,
+        SessionDetachedParams, SessionEvent, SessionEventNotification, SessionEventParams,
+        SessionId,
     },
     server::{Outbox, Outgoing},
     subscription::{Next, Subscription},
@@ -80,8 +80,8 @@ struct Table {
     /// is no longer current.
     next_id: u64,
     current: HashMap<SessionId, Current>,
-    /// Each settings namespace's current forwarder.
-    config: HashMap<ConfigNamespace, config::ConfigCurrent>,
+    /// Each watched state's current forwarder.
+    watched: HashMap<watched::Watched, watched::WatchCurrent>,
     tasks: JoinSet<()>,
 }
 
@@ -103,7 +103,7 @@ impl Forwarders {
                 open: true,
                 next_id: 0,
                 current: HashMap::new(),
-                config: HashMap::new(),
+                watched: HashMap::new(),
                 tasks: JoinSet::new(),
             }),
         }
@@ -390,10 +390,11 @@ fn login_notification(login: &LoginId, event: LoginEvent) -> jsonrpc::Notificati
                 prompt,
             })
         }
-        LoginEvent::Finished(outcome) => {
+        LoginEvent::Finished { outcome, refreshed } => {
             notification::<AuthLoginFinishedNotification>(&AuthLoginFinishedParams {
                 login: login.clone(),
                 outcome,
+                refreshed,
             })
         }
     };

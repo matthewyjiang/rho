@@ -13,7 +13,7 @@ use tokio::{
 };
 
 use crate::server_calls::ServiceCall;
-use crate::server_settings::{self, SettingsService};
+use crate::server_settings::{self, SettingsService, WatchRequest};
 use crate::server_streams::{attach, login, AttachRequest};
 use crate::{
     declared::{hello_protocol, Declared},
@@ -24,7 +24,7 @@ use crate::{
         AuthChooseStoreParams, AuthChooseStoreResponse, AuthKeyParams, AuthKeyResponse,
         AuthListParams, AuthListResponse, AuthLogin, AuthLoginCancelParams,
         AuthLoginCancelResponse, AuthLoginParams, AuthLoginResponse, AuthLogoutParams,
-        AuthLogoutResponse, ClientInfo, ConfigGet, ConfigGetParams, Hello, JobListResponse, Method,
+        AuthLogoutResponse, ClientInfo, ConfigGet, Hello, JobListResponse, Method, ModelListMethod,
         SessionAnswerParams, SessionAnswerResponse, SessionAttach, SessionAttachParams,
         SessionAttachResponse, SessionBackgroundListResponse, SessionBackgroundStopParams,
         SessionBackgroundStopResponse, SessionCancelParams, SessionCancelResponse,
@@ -40,11 +40,12 @@ use crate::{
         SessionSurfaceActionParams, SessionSurfaceActionResponse, SessionUnsteerParams,
         SessionUnsteerResponse, WorktreePruneParams, WorktreePruneResponse, AUTH_CHOOSE_STORE,
         AUTH_KEY, AUTH_LIST, AUTH_LOGIN, AUTH_LOGIN_CANCEL, AUTH_LOGOUT, CONFIG_GET, HELLO,
-        SESSION_ANSWER, SESSION_ATTACH, SESSION_BACKGROUND_LIST, SESSION_BACKGROUND_STOP,
-        SESSION_CANCEL, SESSION_CONFIGURE, SESSION_DELETE, SESSION_DETACH, SESSION_HOLD,
-        SESSION_INSPECT, SESSION_LIST, SESSION_MCP, SESSION_MCP_CATALOG, SESSION_MCP_COMPLETE,
-        SESSION_MCP_RESOURCE, SESSION_NEW, SESSION_OBSERVE, SESSION_PROCESSES, SESSION_PROMPT,
-        SESSION_RENAME, SESSION_STEER, SESSION_SURFACE_ACTION, SESSION_UNSTEER, WORKTREE_PRUNE,
+        MODEL_LIST, SESSION_ANSWER, SESSION_ATTACH, SESSION_BACKGROUND_LIST,
+        SESSION_BACKGROUND_STOP, SESSION_CANCEL, SESSION_CONFIGURE, SESSION_DELETE, SESSION_DETACH,
+        SESSION_HOLD, SESSION_INSPECT, SESSION_LIST, SESSION_MCP, SESSION_MCP_CATALOG,
+        SESSION_MCP_COMPLETE, SESSION_MCP_RESOURCE, SESSION_NEW, SESSION_OBSERVE,
+        SESSION_PROCESSES, SESSION_PROMPT, SESSION_RENAME, SESSION_STEER, SESSION_SURFACE_ACTION,
+        SESSION_UNSTEER, WORKTREE_PRUNE,
     },
     subscription::Subscription,
     BuildId, BuildSkew, DaemonInfo, DaemonStatus, ErrorCode, FrameError, HelloResponse, Message,
@@ -651,18 +652,13 @@ where
                         while calls.try_join_next().is_some() {}
                         continue;
                     }
-                    Ok(Route::ConfigGet(params)) => {
+                    Ok(Route::Watch(request)) => {
                         let responder = Responder::new(id, &outbox);
                         let service = Arc::clone(&service);
                         let forwarders = Arc::clone(forwarders);
                         calls.spawn(async move {
-                            server_settings::watch_config(
-                                &*service,
-                                params,
-                                responder,
-                                &forwarders,
-                            )
-                            .await;
+                            server_settings::watch(&*service, request, responder, &forwarders)
+                                .await;
                         });
                         while calls.try_join_next().is_some() {}
                         continue;
@@ -756,9 +752,9 @@ enum Route {
     /// `rho/auth/login`: the service answers it in its own task, then the
     /// connection forwards the login's prompt and end.
     Login(AuthLoginParams),
-    /// `rho/config/get`: the service answers it in its own task, then the
-    /// connection forwards the namespace's changes.
-    ConfigGet(ConfigGetParams),
+    /// `rho/config/get` or `rho/model/list`: the service answers it in its
+    /// own task, then the connection forwards the state's changes.
+    Watch(WatchRequest),
 }
 
 impl Connection {
@@ -835,7 +831,10 @@ impl Connection {
                         .map(|params| Route::Attach(AttachRequest::Observe(params))),
                     SESSION_DETACH => decode_params::<SessionDetach>(params).map(Route::Detach),
                     AUTH_LOGIN => decode_params::<AuthLogin>(params).map(Route::Login),
-                    CONFIG_GET => decode_params::<ConfigGet>(params).map(Route::ConfigGet),
+                    CONFIG_GET => decode_params::<ConfigGet>(params)
+                        .map(|params| Route::Watch(WatchRequest::Config(params))),
+                    MODEL_LIST => decode_params::<ModelListMethod>(params)
+                        .map(|params| Route::Watch(WatchRequest::Models(params))),
                     method => {
                         let call = ServiceCall::decode(method, params)?;
                         if let ServiceCall::NewSession(params) = &call {

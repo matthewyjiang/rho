@@ -1,37 +1,11 @@
-use crate::tui::DefaultTerminal;
-
 use rho_providers::credentials::available_auth_modes;
-use rho_providers::model::decision_models::lists_decision_models;
-use rho_providers::model::provider_models::{
-    refresh_provider_models_with_store, ProviderModelEndpoint,
-};
 
 use crate::agent::{carry_internal_agent_reasoning, ADVISOR_AGENT_ID};
 
 use super::{
-    agent_picker::InternalAgentModelPickerOrigin, catalog, favorites, provider, provider_picker,
-    App, ComposerMode, Entry, InteractiveModelSelection, ModelSelection,
+    agent_picker::InternalAgentModelPickerOrigin, catalog, favorites, App, ComposerMode, Entry,
+    InteractiveModelSelection, ModelSelection,
 };
-
-pub(super) fn refresh_auth_for_provider(
-    descriptor: &'static provider::ProviderDescriptor,
-    preferred_auth: &str,
-    available_auths: &[String],
-) -> &'static str {
-    let modes: Vec<String> = descriptor
-        .auth_modes()
-        .map(|mode| mode.id.to_string())
-        .collect();
-    let selected = catalog::SelectionAuthContext {
-        current: Some(preferred_auth),
-        available: available_auths,
-    }
-    .select(&modes);
-    descriptor
-        .auth_mode(&selected)
-        .unwrap_or_else(|| descriptor.default_auth())
-        .id
-}
 
 impl App {
     /// `/model` and config model pickers with an empty cache: keep the refresh
@@ -95,98 +69,6 @@ impl App {
             )?,
         };
         Ok(InteractiveModelSelection { selection, alias })
-    }
-
-    pub(in crate::tui) async fn refresh_model_lists(
-        &mut self,
-        selected_provider: &str,
-        terminal: &mut DefaultTerminal,
-    ) -> anyhow::Result<()> {
-        let config = self.info.services.config_repository.load()?;
-        let providers = if selected_provider == provider_picker::ALL_REFRESHABLE_PROVIDERS {
-            self.refresh_available_auths();
-            provider_picker::refreshable_providers(&self.available_auths, &config.providers)
-                .into_iter()
-                .map(|descriptor| {
-                    (
-                        descriptor.name.to_string(),
-                        refresh_auth_for_provider(
-                            descriptor,
-                            &self.info.runtime.auth,
-                            &self.available_auths,
-                        )
-                        .to_string(),
-                    )
-                })
-                .collect()
-        } else {
-            let auth = provider::provider_descriptor(selected_provider)
-                .map(|descriptor| {
-                    refresh_auth_for_provider(
-                        descriptor,
-                        &self.info.runtime.auth,
-                        &self.available_auths,
-                    )
-                    .to_string()
-                })
-                .unwrap_or_else(|| self.info.runtime.auth.clone());
-            vec![(selected_provider.to_string(), auth)]
-        };
-
-        if providers.is_empty() {
-            self.set_status(
-                "no refreshable providers are configured. open Config > Log in to provider to add one.",
-            );
-            return Ok(());
-        }
-
-        self.set_status("refreshing model list");
-        self.paint(terminal)?;
-        for (provider, auth) in providers {
-            if lists_decision_models(&provider) {
-                self.refresh_decision_models(&provider, &auth).await?;
-            }
-            if !provider::provider_descriptor(&provider)
-                .is_some_and(|descriptor| descriptor.supports_model_refresh())
-            {
-                continue;
-            }
-            let endpoint = config.resolved_provider_endpoint(&provider);
-            let model_endpoint = endpoint.as_ref().map_or(
-                ProviderModelEndpoint::ProviderOwned,
-                ProviderModelEndpoint::OpenAiCompatible,
-            );
-            match refresh_provider_models_with_store(
-                &provider,
-                &auth,
-                self.credential_store.as_ref(),
-                model_endpoint,
-            )
-            .await
-            {
-                Ok(refresh) => self.apply_model_list_refresh(refresh),
-                Err(err) => {
-                    self.insert_entry(&Entry::Error(format!(
-                        "could not refresh {provider} model list: {err}"
-                    )));
-                }
-            }
-        }
-        self.set_status("model list refresh complete");
-        Ok(())
-    }
-
-    /// Provider discovery can change capabilities without changing model identity.
-    pub(super) fn apply_model_list_refresh(
-        &mut self,
-        refresh: rho_providers::model::provider_models::ProviderModelRefresh,
-    ) {
-        self.refresh_catalog_chrome();
-        self.insert_entry(&Entry::Notice(format!(
-            "refreshed {} model list: {} models",
-            refresh.provider,
-            refresh.models.len()
-        )));
     }
 
     pub(super) fn toggle_selected_model_favorite(&mut self) -> anyhow::Result<()> {

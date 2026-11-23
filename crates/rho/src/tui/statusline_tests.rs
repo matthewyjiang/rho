@@ -55,12 +55,7 @@ fn reasoning_capabilities_refresh_on_catalog_and_metadata_changes() {
                 .update_model_metadata(app.statusline.state.model_metadata.clone().as_ref());
             assert_eq!(app.statusline.state.reasoning_configurable, before);
             if levels.is_some() {
-                app.apply_model_list_refresh(
-                    rho_providers::model::provider_models::ProviderModelRefresh {
-                        provider: app.info.runtime.provider.clone(),
-                        models: vec![],
-                    },
-                );
+                app.model_lists_refreshed();
             } else {
                 app.statusline.update_model_metadata(Some(&metadata));
             }
