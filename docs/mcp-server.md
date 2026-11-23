@@ -151,7 +151,7 @@ rho mcp token rotate laptop --scope write --workspace ~/src/app --workspace ~/sr
 `rotate` prints the secret once on stdout. Rho keeps only a hash of it, in your [credential store](/authentication-and-models#where-credentials-live). Clients send it as `Authorization: Bearer <secret>`.
 
 - `--scope read`, the default, allows `list`, `read`, and `wait`. `--scope write` also allows `new`, `prompt`, `steer`, and `cancel`.
-- `--workspace` grants a directory and everything under it. A new token needs at least one. The token cannot see or touch sessions anywhere else. A session in a [worktree](/daemon#sessions-in-worktrees) counts as in the workspace it was started in, so a token that reaches that workspace reaches the session too, though its worktree is under `~/.rho/worktrees`.
+- `--workspace` grants a directory and everything under it. A new token needs at least one. The token cannot see or touch sessions anywhere else. A daemon session in a [worktree](/daemon#sessions-in-worktrees), such as one `new` starts with `worktree: true`, counts as in the workspace it was started in, so a token that reaches that workspace reaches the session too, though its worktree is under `~/.rho/worktrees`. A foreground `rho run --worktree` session counts as in its worktree only.
 - Running `rotate` on an existing token issues a new secret. It keeps the token's scope and workspaces unless you pass new ones.
 
 ```bash
@@ -271,14 +271,13 @@ flowchart TD
 On the remote, run the HTTP server as a [service](/daemon#running-as-a-service) on an address the hub can reach, such as its NetBird address, with `ExecStart=%h/.local/bin/rho mcp serve --http 100.92.10.4:8765 --name lab-box`. Then, from the hub, give the hub a token on the remote and add it, in one line over SSH:
 
 ```bash
-set -o pipefail
 ssh lab-box '~/.local/bin/rho mcp token rotate hub --scope write --workspace ~/src' \
   | rho mcp remote add lab-box --url http://100.92.10.4:8765/mcp
 ```
 
-Give the full path of `rho` on the remote: a non-interactive SSH shell often lacks `~/.local/bin` or mise's shims on its `PATH`. If the rotate fails, `add` refuses the empty stdin, and `pipefail` makes the line fail as a whole.
+Give the full path of `rho` on the remote: a non-interactive SSH shell often lacks `~/.local/bin` or mise's shims on its `PATH`. If the rotate fails, `add` refuses the empty stdin, so the line fails.
 
-`rho mcp remote add` reads the token's secret on stdin, so it goes from one machine's credential store to the other's without reaching your terminal or shell history. It checks the remote answers with that secret, then saves it in the hub's [credential store](/authentication-and-models#where-credentials-live). If the remote does not answer, nothing is saved, and the error lists the likely causes. Run the line again once it does: the secret the failed line rotated was never saved, and rotating again replaces it. `curl http://100.92.10.4:8765/mcp` from the hub answering `401` shows the remote is reachable. [Grok Bot](/integrations/grok-bot#let-the-hub-reach-it) covers the firewall rule and an SSH-forward fallback. Running `add` again for a name replaces it.
+`rho mcp remote add` reads the token's secret on stdin, so it goes from one machine's credential store to the other's without reaching your terminal or shell history. It checks the remote answers with that secret, then saves it in the hub's [credential store](/authentication-and-models#where-credentials-live). If the remote does not answer, nothing is saved, and the error lists the likely causes. Run the line again once it does: the secret the failed line rotated was not saved on the hub, and rotating again replaces it. Until then, a remote already saved under that name is refused, since the rotate replaced its secret. `curl -sS -o /dev/null -w '%{http_code}\n' http://100.92.10.4:8765/mcp` from the hub printing `401` shows the remote is reachable. [Grok Bot](/integrations/grok-bot#let-the-hub-reach-it) covers the firewall rule and an SSH-forward fallback. Running `add` again for a name replaces it.
 
 - `--url` must be `https`, or plain `http` to a loopback or private network address, as the remote listens on. A host name for plain `http` must resolve only to private addresses; it is resolved and checked again before every call, and the call connects only to the addresses checked. Plain `http` never goes through a proxy.
 - The name is what `server` takes and what [webhook](#webhooks) news calls the machine. Give the remote the same `--name`, so its own logs agree.

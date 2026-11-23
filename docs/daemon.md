@@ -260,7 +260,7 @@ You need a service only for [`rho mcp serve --http`](/mcp-server#over-http) or [
 
 - Leave the daemon running when you stop or restart the service. Stop the daemon itself with `rho daemon stop`.
 - Set `PATH`. A service doesn't get your shell's environment, and the sessions it starts look up tools, MCP servers, and CLI subagents on this `PATH`. Add the directories your tools live in, and any variable your sessions need, such as a provider key. On Linux, keep `/usr/bin` in it.
-- Listen on `127.0.0.1`, or on this machine's private network address for a remote client or [hub](/mcp-server#several-machines) to reach it. To reach the server from anywhere else, use a tunnel ([Over HTTP](#over-http)). An overlay network's address, such as NetBird's, can come up after `network.target`, and listening on it fails until then: use `Restart=always` and `RestartSec=10` so systemd keeps trying. [Grok Bot](/integrations/grok-bot#hub-service) has complete units for a hub and its remotes, with `--name`.
+- Listen on `127.0.0.1`, or on this machine's private network address for a remote client or [hub](/mcp-server#several-machines) to reach it. To reach the server from anywhere else, use a tunnel ([Over HTTP](#over-http)). An overlay network's address, such as NetBird's, can come up after `network.target`, and listening on it fails until then. The units below wait 10 seconds between tries (`RestartSec=10`); with systemd's default of 100 milliseconds, the unit reaches the start limit within a second and gives up. [Grok Bot](/integrations/grok-bot#hub-service) has complete units for a hub and its remotes, with `--name`.
 
 ### systemd
 
@@ -279,7 +279,8 @@ ExecStart=%h/.local/bin/rho mcp serve --http 127.0.0.1:8765
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 # Stop only the server. The daemon keeps running its turns.
 KillMode=process
-Restart=on-failure
+Restart=always
+RestartSec=10
 
 [Install]
 WantedBy=default.target
@@ -316,7 +317,8 @@ ExecStart=%h/.local/bin/rho daemon serve --http 127.0.0.1:8766
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 # Stop only the bridge. The daemon keeps running its turns.
 KillMode=process
-Restart=on-failure
+Restart=always
+RestartSec=10
 
 [Install]
 WantedBy=default.target

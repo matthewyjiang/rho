@@ -120,31 +120,30 @@ curl -sS -o /dev/null -w '%{http_code}\n' http://100.92.10.4:8765/mcp
 
 `401` means the server is reachable and wants a token. A timeout or `connection refused` means it isn't: see [If `remote add` can't reach it](#remote-unreachable).
 
-If you can't open the port, forward it over SSH instead. Keep `ssh -N -L 18765:100.92.10.4:8765 lab-box` running on the hub, for example in a user unit with `Restart=always`, and use `http://127.0.0.1:18765/mcp` as the URL below. The hub accepts a loopback URL, and the server accepts the forwarded request's loopback `Host`. Give each machine its own local port.
+If you can't open the port, forward it over SSH instead. Keep `ssh -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -L 18765:100.92.10.4:8765 lab-box` running on the hub, for example in a user unit with `Restart=always`, and use `http://127.0.0.1:18765/mcp` as the URL below. The hub accepts a loopback URL, and the server accepts the forwarded request's loopback `Host`. Give each machine its own local port. Use this only on a hub no one else logs into: while the forward is down, another local user could listen on that port and receive the hub's secret for the remote.
 
 #### Add it as a remote
 
 From the hub, give the hub a token for that machine's workspaces and add the machine as a remote, in one line:
 
 ```bash
-set -o pipefail
 ssh lab-box '~/.local/bin/rho mcp token rotate hub --scope write --workspace ~/src' \
   | rho mcp remote add lab-box --url http://100.92.10.4:8765/mcp
 ```
 
-Use the full path of `rho` on that machine: a non-interactive SSH shell often doesn't have `~/.local/bin` or mise's shims on its `PATH`, so a bare `rho` is not found. If the rotate fails, `rho mcp remote add` gets an empty stdin and refuses it, and `pipefail` makes the line's exit status report the failure in a script.
+Use the full path of `rho` on that machine: a non-interactive SSH shell often doesn't have `~/.local/bin` or mise's shims on its `PATH`, so a bare `rho` is not found. If the rotate fails, `rho mcp remote add` gets an empty stdin and refuses it, so the line fails.
 
 The token's secret goes from one machine to the other without reaching your terminal. `rho mcp remote add` checks the machine answers before it saves it. These steps need no interaction, so an agent with SSH access to your machines can run them. Plain `http` is allowed only to a private network address: the network keeps the traffic private. Over the internet, use `https`.
 
 #### If `remote add` can't reach it {#remote-unreachable}
 
-`could not reach server "lab-box"` ends with the cause, such as `Connection refused` or `Connection timed out`. Usually:
+`could not reach server "lab-box"` includes the cause, such as `Connection refused` or `Connection timed out`. Usually:
 
 - A firewall or network policy blocks the hub from the port ([Let the hub reach it](#let-the-hub-reach-it)). A timeout often means this.
-- The address or port is wrong.
+- The address, port, or path is wrong. The URL ends in `/mcp`.
 - The server isn't running on that machine, or listens on another address. `systemctl --user status rho-mcp` and `journalctl --user -u rho-mcp` there say which.
 
-The `curl` above tells you when it's fixed. Then run the same line again. The secret the failed line rotated was never saved anywhere, and rotating again replaces it, so running it again is safe.
+The `curl` above tells you when it's fixed. Then run the same line again. The secret the failed line rotated was not saved on the hub, and rotating again replaces it, so running it again is safe. If the hub already had this remote, it is refused until the line succeeds, since the rotate replaced its secret.
 
 ## Once, in Grok Bot
 
