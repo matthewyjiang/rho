@@ -16,7 +16,7 @@ sequenceDiagram
     B->>H: prompt {server: "lab-box", session, text, notify: "grok"}
 ```
 
-Grok Bot runs in the cloud, so the hub needs an HTTPS URL the Bot can reach. The other machines only need to be reachable from the hub, for example over a private network such as NetBird or Tailscale. Every webhook delivery is a billed routine run.
+Grok Bot runs in the cloud, so the hub needs an HTTPS URL the Bot can reach, unless the Bot's computer is on your private network ([A hub that isn't public](#private-hub)). The other machines only need to be reachable from the hub, for example over a private network such as NetBird or Tailscale. Every webhook delivery is a billed routine run.
 
 ## On the hub
 
@@ -233,6 +233,22 @@ Boundaries
   in this chat.
 ````
 
+## A hub that isn't public {#private-hub}
+
+The public HTTPS URL is for a Bot that reaches the hub from the cloud. If the computer the Bot runs its tools on is on your private network, such as a NetBird peer, it can reach the hub's private address directly, and the hub needs no tunnel:
+
+1. Run the hub as the other machines run (step 4): on its private address, with `--name hub` and no `--allow-host`. Skip step 2.
+2. Instead of the remote connector in step 5, ask the Bot to add a custom stdio MCP server that bridges to the hub, with a `Bearer` header from an environment variable:
+
+   ```text
+   Add a custom MCP server called rho that runs:
+   npx -y mcp-remote http://100.92.10.1:8765/mcp --allow-http --transport http-only --header Authorization:${RHO_AUTH}
+   ```
+
+   Give it the environment variable `RHO_AUTH` with the value `Bearer <secret from step 3>`. The Bot keeps it on the server entry. If you give it the value in the chat, the Bot sees the secret, which the remote connector's form avoids, so keep that token's workspaces narrow.
+
+The Bot starts the bridge on its own computer, and the bridge speaks to the hub over the private network. Webhooks still work: the hub posts to the routine's URL from its side, which needs only outbound internet access. The rest of the steps stay the same.
+
 ## Approvals stay with you
 
 A session that needs an approval or an answer waits. The Bot tells you, and you answer from `rho attach <session>` or the TUI on that machine. To let sessions work without asking, configure a [permission mode](/configuration/permissions) that doesn't ask for those workspaces, as you would for `rho run`.
@@ -246,7 +262,7 @@ A session that needs an approval or an answer waits. The Bot tells you, and you 
 
 ## Security
 
-- The hub is on the internet behind a bearer token that can start agents on every machine it reaches. The Bot's token's workspaces limit it on the hub only; on each other machine, the token that machine issued the hub limits it, so keep those narrow too. Revoke the Bot's with `rho mcp token revoke grok` on the hub when you stop using it. `rho mcp token revoke hub` on another machine cuts the hub off from it.
+- A hub with a public URL is on the internet behind a bearer token that can start agents on every machine it reaches. The Bot's token's workspaces limit it on the hub only; on each other machine, the token that machine issued the hub limits it, so keep those narrow too. Revoke the Bot's with `rho mcp token revoke grok` on the hub when you stop using it. `rho mcp token revoke hub` on another machine cuts the hub off from it.
 - The other machines speak plain HTTP to the hub on your private network. Anyone who can read that network's traffic can read their requests, tokens included, so use a network that encrypts it, such as NetBird or Tailscale.
 - The Bot only names a webhook target. The URL and key come from `rho mcp webhook add` on the hub, so a token holder cannot make it post anywhere else.
 - Webhook bodies carry final answers and approval summaries, including paths and commands, to Grok Bot.
