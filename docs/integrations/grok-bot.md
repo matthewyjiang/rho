@@ -22,13 +22,38 @@ Grok Bot runs in the cloud, so the hub needs an HTTPS URL the Bot can reach. The
 
 Pick the machine the Bot connects to. It can run sessions of its own too.
 
-### 1. Run the MCP server as a service
+### 1. Run the MCP server as a service {#hub-service}
 
-Use the [systemd unit or launchd agent](/daemon#running-as-a-service), with a name for the hub and the public hostname of your tunnel:
+On Linux, save this user unit as `~/.config/systemd/user/rho-mcp.service`. It names the hub and allows the public hostname of your tunnel. Change `ExecStart` to where `rho` is installed and `PATH` to the directories your sessions' tools live in:
+
+```ini
+[Unit]
+Description=rho MCP server
+After=network.target
+
+[Service]
+ExecStart=%h/.local/bin/rho mcp serve --http 127.0.0.1:8765 --name hub --allow-host hub.tail1234.ts.net
+# The sessions this server starts look up executables on this PATH,
+# including mise's shims and bun's global bin.
+Environment=PATH=%h/.local/bin:%h/.local/share/mise/shims:%h/.bun/bin:/usr/local/bin:/usr/bin:/bin
+# Stop only the server. The daemon keeps running its turns.
+KillMode=process
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target
+```
+
+Start it, and keep it running while you are logged out, which a machine you reach over SSH needs:
 
 ```bash
-rho mcp serve --http 127.0.0.1:8765 --name hub --allow-host hub.tail1234.ts.net
+systemctl --user daemon-reload
+systemctl --user enable --now rho-mcp
+loginctl enable-linger "$USER"
 ```
+
+On macOS, use the [launchd agent](/daemon#launchd) with the same arguments.
 
 ### 2. Give it an HTTPS URL
 
@@ -52,20 +77,72 @@ rho mcp token rotate grok --scope write --workspace ~/src/app
 
 ### 4. Serve it to the hub
 
-Run the MCP server as a [service](/daemon#running-as-a-service) on the machine's private network address, the one the hub reaches it at, such as its NetBird address:
+Run the MCP server as a service on the machine's private network address, the one the hub reaches it at, such as its NetBird address. The unit is the hub's with another `ExecStart`, saved as `~/.config/systemd/user/rho-mcp.service` on that machine:
 
-```bash
-rho mcp serve --http 100.92.10.4:8765 --name lab-box
+```ini
+[Unit]
+Description=rho MCP server
+After=network.target
+
+[Service]
+ExecStart=%h/.local/bin/rho mcp serve --http 100.92.10.4:8765 --name lab-box
+# The sessions this server starts look up executables on this PATH,
+# including mise's shims and bun's global bin.
+Environment=PATH=%h/.local/bin:%h/.local/share/mise/shims:%h/.bun/bin:/usr/local/bin:/usr/bin:/bin
+# Stop only the server. The daemon keeps running its turns.
+KillMode=process
+# The private address can come up after network.target, and listening on it
+# fails until then. Try again every 10 seconds rather than give up.
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target
 ```
 
-Then, from the hub, give the hub a token for that machine's workspaces and add the machine as a remote, in one line:
+Enable it and the linger as on the hub (step 1). Give it the same `--name` you give the remote below.
+
+#### Let the hub reach it {#let-the-hub-reach-it}
+
+The hub connects to the machine on the MCP port, here TCP 8765. Allow that from the hub:
+
+- In NetBird, an access control policy from the hub's peer or group to this one on TCP 8765. The default policy that allows everything already does.
+- In Tailscale, an ACL or grant from the hub to `lab-box:8765`.
+- In a host firewall such as `ufw`, the port on the overlay interface, for example `ufw allow in on wt0 to any port 8765 proto tcp` for NetBird.
+
+Check from the hub before you go on:
 
 ```bash
-ssh lab-box 'rho mcp token rotate hub --scope write --workspace ~/src' \
+curl -sS -o /dev/null -w '%{http_code}\n' http://100.92.10.4:8765/mcp
+```
+
+`401` means the server is reachable and wants a token. A timeout or `connection refused` means it isn't: see [If `remote add` can't reach it](#remote-unreachable).
+
+If you can't open the port, forward it over SSH instead. Keep `ssh -N -L 18765:100.92.10.4:8765 lab-box` running on the hub, for example in a user unit with `Restart=always`, and use `http://127.0.0.1:18765/mcp` as the URL below. The hub accepts a loopback URL, and the server accepts the forwarded request's loopback `Host`. Give each machine its own local port.
+
+#### Add it as a remote
+
+From the hub, give the hub a token for that machine's workspaces and add the machine as a remote, in one line:
+
+```bash
+set -o pipefail
+ssh lab-box '~/.local/bin/rho mcp token rotate hub --scope write --workspace ~/src' \
   | rho mcp remote add lab-box --url http://100.92.10.4:8765/mcp
 ```
 
+Use the full path of `rho` on that machine: a non-interactive SSH shell often doesn't have `~/.local/bin` or mise's shims on its `PATH`, so a bare `rho` is not found. If the rotate fails, `rho mcp remote add` gets an empty stdin and refuses it, and `pipefail` makes the line's exit status report the failure in a script.
+
 The token's secret goes from one machine to the other without reaching your terminal. `rho mcp remote add` checks the machine answers before it saves it. These steps need no interaction, so an agent with SSH access to your machines can run them. Plain `http` is allowed only to a private network address: the network keeps the traffic private. Over the internet, use `https`.
+
+#### If `remote add` can't reach it {#remote-unreachable}
+
+`could not reach server "lab-box"` ends with the cause, such as `Connection refused` or `Connection timed out`. Usually:
+
+- A firewall or network policy blocks the hub from the port ([Let the hub reach it](#let-the-hub-reach-it)). A timeout often means this.
+- The address or port is wrong.
+- The server isn't running on that machine, or listens on another address. `systemctl --user status rho-mcp` and `journalctl --user -u rho-mcp` there say which.
+
+The `curl` above tells you when it's fixed. Then run the same line again. The secret the failed line rotated was never saved anywhere, and rotating again replaces it, so running it again is safe.
 
 ## Once, in Grok Bot
 
