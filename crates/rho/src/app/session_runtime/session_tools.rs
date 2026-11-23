@@ -55,6 +55,12 @@ impl<'a> SessionTools<'a> {
         self.0.surfaces()
     }
 
+    /// The session's side of the daemon's pull request service, when it
+    /// offers the pull request tools.
+    pub(crate) fn pull_requests(self) -> Option<&'a crate::app::pull_requests::PullRequestInbox> {
+        self.0.pull_requests()
+    }
+
     /// The session's todo checklist, shared with its `todo` tool.
     pub(crate) fn todo_state(self) -> TodoState {
         self.0.todo_state()

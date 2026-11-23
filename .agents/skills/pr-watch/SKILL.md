@@ -1,18 +1,25 @@
 ---
 name: pr-watch
 description: >
-  Babysit an open GitHub PR until it is approved and CI is fully green.
-  Use when the user says watch a PR, babysit a PR, wait on review or
-  checks, sit on a PR until it merges, or keep an eye on PR activity.
-  Fix outstanding reviews and known red checks before starting the
-  waiter. Prefer this over polling `gh` or the GitHub API. Start the
-  wait helper as a background process, then either do other work or
-  stop. Do not inspect that process while it runs. When it exits, its
-  stdout is the event.
+  Babysit an open GitHub PR from a session rho cannot wake (a headless
+  `rho run`, a workflow node, an ACP client) until it is approved and CI
+  is fully green. Interactive daemon sessions that offer
+  `watch_pull_request` must use that tool instead:
+  call it and end the turn, and rho wakes the session on changes. Use
+  this skill only when that tool is absent and the user says watch a PR,
+  babysit a PR, wait on review or checks, or sit on a PR until it
+  merges. Fix outstanding reviews and known red checks before starting
+  the waiter. Start the wait helper as a background process, then either
+  do other work or stop. Do not inspect that process while it runs. When
+  it exits, its stdout is the event.
 compatibility: bun or npx, python3, `gh auth login`, Pullfrog GitHub App on the repo.
 ---
 
 # Watch / babysit a PR
+
+If `watch_pull_request` is offered, use it and stop reading: it watches
+without a helper process and wakes the session itself. This skill is for
+sessions rho cannot wake, such as headless runs, where that tool is absent.
 
 The finish line is **approval and fully green CI**. Small comments,
 review edits, and one passing job are not done.

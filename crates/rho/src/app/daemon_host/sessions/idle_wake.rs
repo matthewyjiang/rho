@@ -150,14 +150,8 @@ async fn watch_results(
     loop {
         // Marked seen before the read, so a replacement after it is not.
         replacements.borrow_and_update();
-        let background = {
-            let Some(session) = session.upgrade() else {
-                return;
-            };
-            match session.background.awaited() {
-                Some(background) => background,
-                None => return,
-            }
+        let Some(mut background) = awaited(&session) else {
+            return;
         };
         tokio::select! {
             () = background.clone().result_ready() => {}
@@ -195,6 +189,16 @@ async fn watch_results(
                 if turns_ended.changed().await.is_err() {
                     return;
                 }
+                // Every turn refreshes the session's sources as it ends (see
+                // `LoadedSession::refresh_options`), which is no replacement
+                // to look again for: that would start this delivery again at
+                // once, and one that ends without taking the result would
+                // loop. The sources are read again here instead.
+                replacements.borrow_and_update();
+                let Some(now) = awaited(&session) else {
+                    return;
+                };
+                background = now;
                 if !background.has_result() {
                     continue;
                 }
@@ -219,6 +223,9 @@ async fn watch_results(
         let alive = match ready {
             Some(alive) => alive,
             None => {
+                // Subscribed before giving up, so news a tick queues once
+                // `settled` is published still wakes this loop.
+                let news = background.outside_news();
                 let gave_up = match (&undelivered, session.upgrade()) {
                     (Some(turn), Some(session)) => try_give_up(&session, &background, turn),
                     _ => false,
@@ -226,12 +233,14 @@ async fn watch_results(
                 if gave_up {
                     // Nothing awaited runs and no turn is under way, so a
                     // new result can only come from work a later turn
-                    // starts, and that turn's end wakes this loop. What
+                    // starts, and that turn's end wakes this loop, or from
+                    // a watched pull request, which needs no turn. What
                     // `another` hears meanwhile, a service's exit or a
                     // child's notice, starts no turn.
                     tokio::select! {
                         changed = turns_ended.changed() => changed.is_ok(),
                         changed = replacements.changed() => changed.is_ok(),
+                        () = news => true,
                     }
                 } else {
                     tokio::select! {
@@ -246,6 +255,12 @@ async fn watch_results(
             return;
         }
     }
+}
+
+/// The work `session` waits on, from its tools now; `None` once it is gone
+/// or nothing wakes it.
+fn awaited(session: &Weak<LoadedSession>) -> Option<AwaitedWork> {
+    session.upgrade()?.background.awaited()
 }
 
 /// Gives up waking `session` once its delivery turn `turn` ended without

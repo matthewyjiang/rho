@@ -9,7 +9,11 @@ use rho_sdk::{
 
 use super::{BackgroundSources, BackgroundWait, Delegation};
 use crate::{
-    app::{agent_executor::AgentRunHandle, subagent_manager::SubagentManager},
+    app::{
+        agent_executor::AgentRunHandle,
+        pull_requests::{PullRequestInbox, PullRequests, ScriptedForge},
+        subagent_manager::SubagentManager,
+    },
     subagent::{RunState, RunStatus},
     tools::{
         process::{KeepWarm, ProcessLimits, ProcessManager, ProcessRole},
@@ -30,6 +34,47 @@ const TASK: ProcessRole = ProcessRole::Task {
 /// Every fixture session's id, so work from an "earlier prompt" can be
 /// registered to it before the fixture's prompt starts.
 const SESSION_ID: &str = "headless-fixture";
+
+/// The pull request the fixture session watches.
+const PULL_REQUEST: &str = "acme/widgets#12";
+
+/// When the fixture session watches [`PULL_REQUEST`], in unix milliseconds.
+const WATCHED_AT: u64 = 1_700_000_000_000;
+
+/// A PR service over a scripted forge in `dir`.
+struct PullRequestFixture {
+    service: PullRequests,
+    forge: std::sync::Arc<ScriptedForge>,
+    /// The fixture session's inbox, which watches [`PULL_REQUEST`], its
+    /// check `ci` running.
+    inbox: PullRequestInbox,
+}
+
+impl PullRequestFixture {
+    async fn watching(dir: &Path) -> Self {
+        let forge = ScriptedForge::new();
+        let service = PullRequests::open(dir, forge.clone());
+        let inbox = service.inbox(&session_id(), dir);
+        forge.set_open(PULL_REQUEST, &["ci"], &[]);
+        inbox.watch(PULL_REQUEST, WATCHED_AT).await.unwrap();
+        Self {
+            service,
+            forge,
+            inbox,
+        }
+    }
+
+    /// Check `ci` failed, as the next poll tells the session.
+    async fn fail_check(&self) {
+        self.forge.set_open(PULL_REQUEST, &[], &["ci"]);
+        self.service.tick(WATCHED_AT + 60_000).await;
+        assert!(self.inbox.has_news(), "the failed check is news");
+    }
+}
+
+fn session_id() -> rho_sdk::SessionId {
+    rho_sdk::SessionId::from_string(SESSION_ID).unwrap()
+}
 
 /// Whether the fixture registers a running child before the prompt starts.
 enum Child {
@@ -57,6 +102,7 @@ impl Fixture {
             BackgroundWait::HoldPrompt,
             ProcessManager::new(ProcessLimits::default()),
             WorkflowRunTracker::new(),
+            /*pull_requests*/ None,
         )
         .await
     }
@@ -68,6 +114,7 @@ impl Fixture {
         wait: BackgroundWait,
         processes: ProcessManager,
         workflows: WorkflowRunTracker,
+        pull_requests: Option<PullRequestInbox>,
     ) -> Self {
         let root = tempfile::tempdir().unwrap();
         let manager = SubagentManager::new(
@@ -95,6 +142,7 @@ impl Fixture {
             &session,
             BackgroundSources {
                 surfaces: None,
+                pull_requests: pull_requests.as_ref(),
                 subagents: Some(&manager),
                 processes: Some(&processes),
                 workflows: &workflows,
@@ -286,7 +334,10 @@ async fn background_work_holds_or_releases_natural_completion() {
             | Work::ProcessFromEarlierPrompt
             | Work::WorkflowFromEarlierPrompt => Child::Absent,
         };
-        let mut fixture = Fixture::build(child, wait, processes, workflows).await;
+        let mut fixture = Fixture::build(
+            child, wait, processes, workflows, /*pull_requests*/ None,
+        )
+        .await;
         let mut displays = fixture.host.offered_displays();
         let request = fixture.final_boundary().await;
         let during = match work {
@@ -497,6 +548,63 @@ async fn accepted_boundary_is_reaped_when_event_pump_returns() {
     let _ = fixture.run.outcome().await;
 }
 
+// Covers: pull request news a boundary offered stays queued, on disk too,
+// until the SDK applied that boundary: a rejected one puts it back for the
+// next, and an applied one removes it for good, so a crash never loses news
+// and a delivered one is never told again.
+// Owner: shared CLI/daemon delivery receipts.
+#[tokio::test]
+async fn pull_request_news_is_acknowledged_only_when_its_boundary_is_applied() {
+    let dir = tempfile::tempdir().unwrap();
+    let pull_requests = PullRequestFixture::watching(dir.path()).await;
+    let inbox = &pull_requests.inbox;
+    // What a daemon restarted now would find queued.
+    let saved = || PullRequests::open(dir.path(), ScriptedForge::new()).has_news(&session_id());
+    let fixture = || {
+        Fixture::build(
+            Child::Absent,
+            BackgroundWait::HoldPrompt,
+            ProcessManager::new(ProcessLimits::default()),
+            WorkflowRunTracker::new(),
+            Some(inbox.clone()),
+        )
+    };
+
+    // Rejected: the run is cancelled before its last boundary is answered.
+    let mut rejecting = fixture().await;
+    let request = rejecting.final_boundary().await;
+    pull_requests.fail_check().await;
+    rejecting.run.cancel();
+    while rejecting.run.next_event().await.is_some() {}
+    rejecting.host.respond(request).await;
+    drop(rejecting);
+    let rejected = (inbox.has_news(), saved());
+    let news = inbox.take_news();
+    inbox.restore_news(&news);
+
+    // Applied: the next run's first boundary offers it.
+    let mut fixture = fixture().await;
+    let applied = Delegation::drive(&mut fixture.host, async {
+        loop {
+            match fixture.run.next_event().await {
+                Some(RunEvent::BoundaryInputApplied { input, .. }) => break input,
+                Some(_) => {}
+                None => panic!("run ended before the news was delivered"),
+            }
+        }
+    })
+    .await;
+    let acknowledged = (inbox.has_news(), saved());
+    fixture.run.cancel();
+    while fixture.run.next_event().await.is_some() {}
+    let _ = fixture.run.outcome().await;
+
+    assert_eq!(
+        (rejected, applied, acknowledged),
+        ((true, true), UserInput::text(news.prompt()), (false, false))
+    );
+}
+
 // Covers: routine notices cannot wake an idle parent, while an action request
 // releases the held boundary even though the requesting child is still alive.
 // Owner: shared CLI/daemon notice scheduling.
@@ -562,6 +670,7 @@ async fn failed_attach_keeps_held_notices() {
         &session,
         BackgroundSources {
             surfaces: None,
+            pull_requests: None,
             subagents: Some(&manager),
             processes: Some(&processes),
             workflows: &workflows,
@@ -578,33 +687,62 @@ async fn failed_attach_keeps_held_notices() {
     let _ = run.outcome().await;
 }
 
+/// What a session's earlier prompts left behind.
+#[derive(Clone, Copy)]
+enum Left {
+    /// A process, which exited first when `exits`.
+    Process { role: ProcessRole, exits: bool },
+    /// News on a pull request it watches.
+    PullRequestNews,
+}
+
 // Covers: a live process of either kind, or a finished task's undelivered
 // result, is background work that keeps an idle session loaded and a daemon
 // upgrade waiting; a finished service's result is not, since it waits only
-// for the next prompt and must not pin the session.
+// for the next prompt and must not pin the session; nor is queued pull
+// request news, which is saved, so an unloaded session or a restarted
+// daemon still delivers it.
 // Owner: session runtime background-work predicate (unload, upgrade, delete).
 #[tokio::test]
 async fn only_live_processes_and_task_results_are_background_work() {
-    // (name, role, whether the process exits first, whether it is work)
+    let process = |role, exits| Left::Process { role, exits };
+    // (name, what is left, whether it is work)
     let cases = [
-        ("live task", TASK, false, true),
-        ("live service", ProcessRole::Service, false, true),
-        ("finished task", TASK, true, true),
-        ("finished service", ProcessRole::Service, true, false),
+        ("live task", process(TASK, false), true),
+        ("live service", process(ProcessRole::Service, false), true),
+        ("finished task", process(TASK, true), true),
+        (
+            "finished service",
+            process(ProcessRole::Service, true),
+            false,
+        ),
+        ("pull request news", Left::PullRequestNews, false),
     ];
-    for (name, role, exits, expected) in cases {
+    for (name, left, expected) in cases {
         let processes = ProcessManager::new(ProcessLimits::default());
         let workflows = WorkflowRunTracker::new();
-        let id = processes
-            .start_as(LONG_RUNNING_COMMAND.into(), Path::new("."), None, role)
-            .await
-            .unwrap()
-            .process_id;
-        if exits {
-            Fixture::stop_process(&processes, &id).await;
+        let dir = tempfile::tempdir().unwrap();
+        let mut pull_requests = None;
+        match left {
+            Left::Process { role, exits } => {
+                let id = processes
+                    .start_as(LONG_RUNNING_COMMAND.into(), Path::new("."), None, role)
+                    .await
+                    .unwrap()
+                    .process_id;
+                if exits {
+                    Fixture::stop_process(&processes, &id).await;
+                }
+            }
+            Left::PullRequestNews => {
+                let watched = PullRequestFixture::watching(dir.path()).await;
+                watched.fail_check().await;
+                pull_requests = Some(watched);
+            }
         }
         let sources = BackgroundSources {
             surfaces: None,
+            pull_requests: pull_requests.as_ref().map(|watched| &watched.inbox),
             subagents: None,
             processes: Some(&processes),
             workflows: &workflows,

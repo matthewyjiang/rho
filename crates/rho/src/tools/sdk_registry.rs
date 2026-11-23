@@ -92,6 +92,7 @@ pub struct ToolSetOptions {
     process_keep_warm: super::process::KeepWarmOffer,
     environment: crate::session_environment::SessionEnvironment,
     surfaces: Option<super::ui::SurfaceHost>,
+    pull_requests: Option<crate::app::pull_requests::PullRequestInbox>,
 }
 
 impl Default for ToolSetOptions {
@@ -111,6 +112,7 @@ impl ToolSetOptions {
             process_keep_warm: super::process::KeepWarmOffer::Hidden,
             environment: Default::default(),
             surfaces: None,
+            pull_requests: None,
         }
     }
 
@@ -119,6 +121,17 @@ impl ToolSetOptions {
     /// whose clients draw A2UI surfaces offers it.
     pub(crate) fn surfaces(mut self, surfaces: Option<super::ui::SurfaceHost>) -> Self {
         self.surfaces = surfaces;
+        self
+    }
+
+    /// Supplies the session's side of the daemon's pull request service,
+    /// which the pull request tools use. Without it the capability alone
+    /// registers no tool: only a daemon root session offers them.
+    pub(crate) fn pull_requests(
+        mut self,
+        pull_requests: Option<crate::app::pull_requests::PullRequestInbox>,
+    ) -> Self {
+        self.pull_requests = pull_requests;
         self
     }
 
@@ -242,6 +255,9 @@ pub struct AppToolSet {
     todo: super::todo::TodoState,
     /// The session's A2UI surfaces, when the `ui` tool is installed.
     surfaces: Option<super::ui::SurfaceHost>,
+    /// The session's side of the daemon's pull request service, when the
+    /// pull request tools are installed.
+    pull_requests: Option<crate::app::pull_requests::PullRequestInbox>,
     /// The credentials of the session the tools belong to.
     credentials: Arc<dyn rho_providers::credentials::CredentialStore>,
 }
@@ -278,6 +294,7 @@ impl AppToolSet {
             recall: None,
             todo: super::todo::TodoState::default(),
             surfaces: None,
+            pull_requests: None,
             credentials,
         }
     }
@@ -292,6 +309,7 @@ impl AppToolSet {
             process_keep_warm,
             environment,
             surfaces,
+            pull_requests,
         } = options;
         let mut tool_set = Self::disabled_for(environment.credentials());
         tool_set.workflow_tracker = workflow_tracker;
@@ -354,6 +372,14 @@ impl AppToolSet {
         if let (true, Some(surfaces)) = (capabilities.contains(&ToolCapability::Ui), surfaces) {
             tool_set.add_bundle(super::ui::UiBundle::new(surfaces.clone()));
             tool_set.surfaces = Some(surfaces);
+        }
+        if let (true, Some(inbox)) = (
+            capabilities.contains(&ToolCapability::PullRequests),
+            pull_requests,
+        ) {
+            tool_set.add_bundle(super::pull_request::PullRequestBundle::watch(&inbox));
+            tool_set.add_bundle(super::pull_request::PullRequestBundle::link(&inbox));
+            tool_set.pull_requests = Some(inbox);
         }
         if let (true, Some(store)) = (capabilities.contains(&ToolCapability::Advisor), advisor) {
             // The tool set owns advisor initialization: the model, the
@@ -472,6 +498,12 @@ impl AppToolSet {
     /// The session's A2UI surfaces, when it offers the `ui` tool.
     pub(crate) fn surfaces(&self) -> Option<&super::ui::SurfaceHost> {
         self.surfaces.as_ref()
+    }
+
+    /// The session's side of the daemon's pull request service, when it
+    /// offers the pull request tools.
+    pub(crate) fn pull_requests(&self) -> Option<&crate::app::pull_requests::PullRequestInbox> {
+        self.pull_requests.as_ref()
     }
 
     /// Whether the session offers the `ui` tool, for its system prompt.
@@ -660,6 +692,16 @@ impl AppToolSet {
         advertised: crate::agent::AdvertisedAgents,
     ) {
         self.advertised_agents = Some(advertised);
+    }
+
+    /// Gives a tool set built without a config a session's pull request
+    /// inbox, as a daemon session whose turns the daemon starts has.
+    #[cfg(test)]
+    pub(crate) fn set_pull_requests_for_tests(
+        &mut self,
+        inbox: crate::app::pull_requests::PullRequestInbox,
+    ) {
+        self.pull_requests = Some(inbox);
     }
 
     pub fn processes(&self) -> Option<&super::process::ProcessManager> {

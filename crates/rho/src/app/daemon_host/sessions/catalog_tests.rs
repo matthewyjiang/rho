@@ -13,6 +13,7 @@ use crate::app::daemon_host::{
     },
     wire::session_to_wire,
 };
+use crate::app::pull_requests::ScriptedForge;
 
 /// Bounds each wait on an explicit signal; never the way a test syncs.
 const TEST_BUDGET: Duration = Duration::from_secs(5);
@@ -27,7 +28,7 @@ const TEST_BUDGET: Duration = Duration::from_secs(5);
 async fn a_client_that_attaches_while_a_sparing_delete_waits_keeps_its_session() {
     let (root, home) = (TempDir::new().unwrap(), TempDir::new().unwrap());
     let jobs = Arc::new(JobRegistry::open(JobStore::open(home.path()).unwrap()));
-    let sessions = Sessions::new(jobs, home.path());
+    let sessions = Sessions::new(jobs, home.path(), ScriptedForge::new());
     let session = load(&sessions, &root, Load::Saved).await;
     let ended_turn = session.runtime.try_lock().unwrap();
 

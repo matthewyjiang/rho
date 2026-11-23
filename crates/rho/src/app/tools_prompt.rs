@@ -26,6 +26,8 @@ pub(crate) struct ToolsAndPromptOptions<'a> {
     pub(crate) questionnaire_enabled: bool,
     /// The session's A2UI surfaces, when its host's clients draw them.
     pub(crate) surfaces: Option<crate::tools::ui::SurfaceHost>,
+    /// The session's side of the daemon's pull request service.
+    pub(crate) pull_requests: Option<crate::app::pull_requests::PullRequestInbox>,
     /// Whether this run can put an MCP server's question in front of a person.
     /// Only a host that answers questionnaires may declare `elicitation`.
     pub(crate) mcp_elicitation: crate::tools::mcp::McpElicitationSupport,
@@ -206,6 +208,9 @@ pub(crate) async fn assemble_tools_and_prompt(
     if options.surfaces.is_none() {
         capabilities.remove(&ToolCapability::Ui);
     }
+    if options.pull_requests.is_none() {
+        capabilities.remove(&ToolCapability::PullRequests);
+    }
     // The capability says the run may offer the advisor; config says whether it
     // does right now. Advisor mode on with no advisor model configured is a real
     // state, and the TUI surfaces it.
@@ -329,7 +334,8 @@ pub(crate) async fn assemble_tools_and_prompt(
         let mut tool_options = ToolSetOptions::new(capabilities)
             .process_keep_warm(options.process_keep_warm)
             .environment(options.environment.clone())
-            .surfaces(options.surfaces.clone());
+            .surfaces(options.surfaces.clone())
+            .pull_requests(options.pull_requests.clone());
         let workflow_tracker = crate::tools::workflow_tracker::WorkflowRunTracker::new();
         tool_options = tool_options.workflow_tracker(workflow_tracker.clone());
         if advisor_capable {

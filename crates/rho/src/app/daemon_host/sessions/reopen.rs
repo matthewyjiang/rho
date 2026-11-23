@@ -107,6 +107,9 @@ impl Sessions {
         id: &SessionId,
         with: &OpenWith,
     ) -> Result<Arc<LoadedSession>, RpcError> {
+        // This request brings its own opening, so one an unload kept for
+        // pull request news goes (see `pull_request_wake`).
+        self.pull_requests.drop_opening(id);
         self.refuse_when_stopping()?;
         let mut last = match self.jobs.session_job(id) {
             SessionJob::Busy(job) => return Err(writing(&job, id)),
@@ -141,6 +144,7 @@ impl Sessions {
             Opening::Saved(stored),
             with,
             &self.subagents,
+            &self.pull_requests,
             &self.settings,
             global,
             &job,

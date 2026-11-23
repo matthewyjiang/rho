@@ -1,0 +1,140 @@
+{
+ "data": {
+  "rateLimit": {
+   "remaining": 4988,
+   "resetAt": "2026-11-15T06:18:47Z"
+  },
+  "r0": {
+   "defaultBranchRef": {
+    "name": "main"
+   },
+   "b0": {
+    "nodes": [
+     {
+      "number": 32,
+      "title": "Add CI and a pull request template",
+      "url": "https://github.com/matthewyjiang/rho-ui/pull/32",
+      "state": "MERGED",
+      "isDraft": false,
+      "isCrossRepository": false,
+      "updatedAt": "2026-11-15T04:20:39Z",
+      "headRefOid": "dd6b8db41c86e64969e078e7138bfeccd0599ca4",
+      "commits": {
+       "nodes": [
+        {
+         "commit": {
+          "statusCheckRollup": {
+           "state": "SUCCESS"
+          }
+         }
+        }
+       ]
+      }
+     }
+    ]
+   },
+   "b1": {
+    "nodes": []
+   },
+   "p0": {
+    "number": 32,
+    "title": "Add CI and a pull request template",
+    "url": "https://github.com/matthewyjiang/rho-ui/pull/32",
+    "state": "MERGED",
+    "isDraft": false,
+    "isCrossRepository": false,
+    "updatedAt": "2026-11-15T04:20:39Z",
+    "headRefOid": "dd6b8db41c86e64969e078e7138bfeccd0599ca4",
+    "commits": {
+     "nodes": [
+      {
+       "commit": {
+        "statusCheckRollup": {
+         "state": "SUCCESS",
+         "contexts": {
+          "totalCount": 2,
+          "nodes": [
+           {
+            "__typename": "CheckRun",
+            "name": "ubuntu-24.04",
+            "status": "COMPLETED",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/matthewyjiang/rho-ui/actions/runs/43674422509/job/132696150868",
+            "checkSuite": {
+             "workflowRun": {
+              "workflow": {
+               "name": "CI"
+              }
+             }
+            }
+           },
+           {
+            "__typename": "CheckRun",
+            "name": "macos-15",
+            "status": "COMPLETED",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/matthewyjiang/rho-ui/actions/runs/43674422509/job/132696151057",
+            "checkSuite": {
+             "workflowRun": {
+              "workflow": {
+               "name": "CI"
+              }
+             }
+            }
+           }
+          ]
+         }
+        }
+       }
+      }
+     ]
+    },
+    "body": "rho-ui had no CI.\n\n## What changed\n\n- **CI**: runs fmt, clippy and the tests.\n",
+    "author": {
+     "login": "matthewyjiang"
+    },
+    "headRefName": "ci-and-pr-template",
+    "baseRefName": "main",
+    "additions": 111,
+    "deletions": 4,
+    "changedFiles": 8,
+    "reviewDecision": null,
+    "comments": {
+     "totalCount": 0,
+     "nodes": []
+    },
+    "reviews": {
+     "totalCount": 0,
+     "nodes": []
+    },
+    "reviewThreads": {
+     "totalCount": 0,
+     "nodes": []
+    },
+    "mergeable": "UNKNOWN",
+    "repository": {
+     "mergeCommitAllowed": true,
+     "squashMergeAllowed": true,
+     "rebaseMergeAllowed": true,
+     "viewerDefaultMergeMethod": "SQUASH"
+    }
+   }
+  },
+  "r1": null
+ },
+ "errors": [
+  {
+   "type": "NOT_FOUND",
+   "path": [
+    "r1"
+   ],
+   "locations": [
+    {
+     "line": 9,
+     "column": 3
+    }
+   ],
+   "message": "Could not resolve to a Repository with the name 'matthewyjiang/does-not-exist-xyz'."
+  }
+ ]
+}

@@ -62,6 +62,7 @@ use super::{
 };
 use crate::{
     app::{
+        pull_requests::Forge,
         session_events::{LiveEvents, SavedTurn},
         session_runtime::{SessionHandle, SessionRuntime},
     },
@@ -90,6 +91,7 @@ mod observe;
 mod open;
 mod options;
 mod processes;
+mod pull_request_wake;
 mod queued;
 mod reopen;
 mod restart_resume;
@@ -175,6 +177,8 @@ pub(super) struct Sessions {
     /// The sessions whose turn the restart that ran this daemon interrupted,
     /// which continue once a client attaches (see [`restart_resume`]).
     restart_resumes: RestartResumes,
+    /// The daemon's pull request service (see [`pull_request_wake`]).
+    pull_requests: pull_request_wake::PullRequestWake,
 }
 
 /// A session this daemon loaded.
@@ -201,6 +205,8 @@ struct LoadedSession {
     environment: crate::session_environment::SessionEnvironment,
     /// The directory the session works in.
     workspace: PathBuf,
+    /// The setup it opened with, kept to reopen it (see [`pull_request_wake`]).
+    setup: rho_protocol::SessionSetup,
     /// The turn's cancel and the session's residency. A prompt's start, an
     /// attach, a turn's end, a cancel, and the idle unload are ordered by
     /// this lock.
@@ -372,6 +378,7 @@ impl LoadedSession {
             config,
             global,
             environment,
+            setup,
         } = opened;
         let (feed, live) = opening_feed(job, &runtime, &config, auths);
         let keyed = KeyedTurn::recorded(job);
@@ -402,6 +409,7 @@ impl LoadedSession {
             config: next_turn::SessionConfig::new(config, global),
             settings: Arc::clone(settings),
             environment,
+            setup,
             turn: Mutex::new(TurnSlot {
                 cancel: CancellationToken::new(),
                 kind: TurnKind::Prompt,
@@ -496,10 +504,10 @@ impl LoadedSession {
 }
 
 impl Sessions {
-    /// No sessions yet; their turns are recorded in `jobs`, and they keep
+    /// No sessions yet; their turns are recorded in `jobs`, they keep
     /// their T3 wake watchers' files under `rho_home`, the daemon's Rho
-    /// home.
-    pub(super) fn new(jobs: Arc<JobRegistry>, rho_home: &Path) -> Arc<Self> {
+    /// home, and their pull requests are read through `forge`.
+    pub(super) fn new(jobs: Arc<JobRegistry>, rho_home: &Path, forge: Arc<dyn Forge>) -> Arc<Self> {
         let stopping = CancellationToken::new();
         let subagents = Subagents::new(Arc::clone(&jobs), stopping.clone());
         Arc::new_cyclic(|myself| Self {
@@ -514,6 +522,7 @@ impl Sessions {
             wakes: WakeDir::in_home(rho_home),
             worktrees: crate::worktree::root(rho_home),
             restart_resumes: RestartResumes::default(),
+            pull_requests: pull_request_wake::PullRequestWake::open(rho_home, forge),
         })
     }
 
@@ -597,6 +606,7 @@ impl Sessions {
             Opening::New { workspace, agent },
             &with,
             &self.subagents,
+            &self.pull_requests,
             &self.settings,
             global,
             &job,

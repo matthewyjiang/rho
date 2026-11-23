@@ -16,6 +16,7 @@ use crate::app::daemon_host::{
     },
     wire::session_to_wire,
 };
+use crate::app::pull_requests::ScriptedForge;
 
 /// Bounds each wait on an explicit signal; never the way a test syncs.
 const TEST_BUDGET: Duration = Duration::from_secs(5);
@@ -25,6 +26,7 @@ fn new_sessions(home: &TempDir) -> Arc<Sessions> {
     Sessions::new(
         Arc::new(JobRegistry::open(JobStore::open(home.path()).unwrap())),
         home.path(),
+        ScriptedForge::new(),
     )
 }
 

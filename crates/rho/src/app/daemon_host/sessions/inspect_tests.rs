@@ -14,6 +14,7 @@ use crate::app::{
         },
         wire::session_to_wire,
     },
+    pull_requests::ScriptedForge,
 };
 
 // Covers: a client reads what fills a loaded session's context window as
@@ -30,6 +31,7 @@ async fn a_context_report_is_read_between_turns() {
     let sessions = Sessions::new(
         Arc::new(JobRegistry::open(JobStore::open(home.path()).unwrap())),
         home.path(),
+        ScriptedForge::new(),
     );
     let session = load(&sessions, &root, Load::Saved).await;
     let in_turn = load(&sessions, &other_root, Load::Busy).await;

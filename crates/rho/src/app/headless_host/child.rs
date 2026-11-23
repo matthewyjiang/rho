@@ -173,6 +173,7 @@ pub(crate) async fn run_child(run: ChildRun) -> anyhow::Result<()> {
         host: HostCapabilities {
             // A child shows its parent's user nothing in this version.
             surfaces: None,
+            pull_requests: None,
             questions: match &questions {
                 Some(_) => QuestionSupport::Available,
                 None => QuestionSupport::Unavailable,

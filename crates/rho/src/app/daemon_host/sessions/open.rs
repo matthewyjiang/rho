@@ -40,6 +40,7 @@ use rho_protocol::{ClientEnvironment, ErrorCode, RpcError, SessionSetup};
 
 use super::{
     super::{jobs::JobId, settings::ConfigStore, subagents::Subagents},
+    pull_request_wake::PullRequestWake,
     setup::Setup,
 };
 use crate::{
@@ -145,6 +146,23 @@ pub(super) struct OpenedSession {
     /// The environment the session's children see, which each prompt
     /// replaces with its client's.
     pub(super) environment: SessionEnvironment,
+    /// The setup the opening request brought, as it brought it: what the
+    /// session reopens with when pull request news wakes it unloaded (see
+    /// `pull_request_wake.rs`).
+    pub(super) setup: SessionSetup,
+}
+
+/// What a session is opened for.
+enum Purpose<'a> {
+    /// Running turns, signed in as `sign_in` says, with the opening
+    /// request's `setup` and the daemon's pull request service.
+    Run {
+        sign_in: SignIn,
+        setup: SessionSetup,
+        pull_requests: &'a PullRequestWake,
+    },
+    /// Only reading what it saved.
+    Read,
 }
 
 /// The environment a client's `environment` gives a session's children:
@@ -204,6 +222,7 @@ pub(super) async fn open_session(
     opening: Opening,
     with: &OpenWith,
     subagents: &Subagents,
+    pull_requests: &PullRequestWake,
     settings: &ConfigStore,
     global: Arc<Config>,
     job: &JobId,
@@ -221,7 +240,11 @@ pub(super) async fn open_session(
         opening,
         SessionEnvironment::new(with.environment.clone()),
         setup,
-        SessionUse::Run(sign_in),
+        Purpose::Run {
+            sign_in,
+            setup: with.setup.clone(),
+            pull_requests,
+        },
         subagents.pool_for(job.clone()),
         settings,
         global,
@@ -304,7 +327,7 @@ pub(super) async fn open_to_read(
         Opening::Saved(stored),
         SessionEnvironment::for_reading(project_trust),
         setup,
-        SessionUse::Read,
+        Purpose::Read,
         subagents.pool_for(job.clone()),
         settings,
         global,
@@ -314,18 +337,27 @@ pub(super) async fn open_to_read(
 }
 
 /// [`open_session`] and [`open_to_read`] once the setup resolved and
-/// `global` was read from `settings`. The session's children share
-/// `subagent_pool`; its agent is found under `environment`'s project trust
-/// (#1779).
+/// `global` was read from `settings`, for `purpose`. The session's children
+/// share `subagent_pool`; its agent is found under `environment`'s project
+/// trust (#1779).
 async fn open_runtime(
     opening: Opening,
     environment: SessionEnvironment,
     setup: Setup,
-    session_use: SessionUse,
+    purpose: Purpose<'_>,
     subagent_pool: SubagentPool,
     settings: &ConfigStore,
     global: Arc<Config>,
 ) -> anyhow::Result<OpenedSession> {
+    // A session opened to read takes no setup but what its file keeps.
+    let (session_use, requested, pull_requests) = match purpose {
+        Purpose::Run {
+            sign_in,
+            setup,
+            pull_requests,
+        } => (SessionUse::Run(sign_in), setup, Some(pull_requests)),
+        Purpose::Read => (SessionUse::Read, SessionSetup::default(), None),
+    };
     let cwd = &opening.cwd().to_path_buf();
     let config_path = settings.agent_path().to_path_buf();
     let Setup {
@@ -388,6 +420,22 @@ async fn open_runtime(
         IdleTurns::Host if config.keep_cache_warm => CacheWarming::Host(Default::default()),
         IdleTurns::Host | IdleTurns::Never => CacheWarming::None,
     };
+    // Bound before the tools are built, so the session's pull request inbox
+    // is keyed by the id it opens with.
+    let id = match &opening {
+        Opening::New { .. } => rho_sdk::SessionId::new(),
+        Opening::Saved(stored) => rho_sdk::SessionId::from_string(stored.id())?,
+    };
+    // Only a session whose idle turns the daemon starts links and watches
+    // pull requests, since news could wake no other: one whose wait
+    // `BackgroundWait::of` (session_runtime/delegation.rs) makes `HostTurns`.
+    // A T3 Code session has T3's own. A client that takes no daemon turns
+    // (`rho run --detach`, ACP, `idle_wake: never`) gets no tools, so its
+    // agent waits as a headless run does.
+    let pull_requests = match (pull_requests, children, idle_turns) {
+        (Some(service), ChildAgents::InProcess, IdleTurns::Host) => Some(service.inbox(&id, cwd)),
+        _ => None,
+    };
     let build = SessionBuild {
         launch: SessionLaunch {
             config_path,
@@ -399,6 +447,7 @@ async fn open_runtime(
         host: HostCapabilities {
             questions,
             surfaces,
+            pull_requests,
             children,
             idle_turns,
             subagent_pool,
@@ -431,16 +480,14 @@ async fn open_runtime(
     };
     // Opening a session builds a large future; keep it on the heap.
     let runtime = match opening {
-        Opening::New { .. } => {
-            Box::pin(SessionRuntime::open_new(
-                session,
-                rho_sdk::SessionId::new(),
-                persistence,
-            ))
-            .await?
-        }
+        Opening::New { .. } => Box::pin(SessionRuntime::open_new(session, id, persistence)).await?,
         Opening::Saved(stored) => {
             let mut runtime = Box::pin(SessionRuntime::open_saved(session, stored)).await?;
+            debug_assert_eq!(
+                runtime.session_id(),
+                &id,
+                "a saved session opens with its file's id"
+            );
             if adds_to_saved {
                 // The next turn would save it too; an unload before then
                 // would lose it.
@@ -459,6 +506,7 @@ async fn open_runtime(
         config,
         global,
         environment,
+        setup: requested,
     })
 }
 

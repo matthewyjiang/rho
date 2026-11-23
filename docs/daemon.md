@@ -107,6 +107,14 @@ A workflow run started from a session runs in the daemon and shows in `/jobs`. I
 
 If the daemon stops during a run, the run shows as `interrupted`. The daemon doesn't resume it on its own. Resume it with the session's `workflow` tool, or with `rho workflow resume --recover-uncertain` once you have checked that no process the interrupted node started is still running.
 
+### Pull requests {#pull-requests}
+
+A session's agent can watch GitHub pull requests with the [pull request tools](/tools-workspace#pull-requests), and the daemon starts a turn in the session when one changes. Only a session whose client takes daemon turns (`idle_wake: turn`), as Rho's terminal UI does, has the tools, since nothing could wake any other: a `rho run --detach`, ACP, or `idle_wake: never` session has none, and neither has one a T3 Code thread opened (`child_threads: host`), which has T3's own.
+
+The daemon reads the watched pull requests with `gh` on its own machine every 60 seconds: a short summary of each, batched per host, then a full read of each one that changed or went 10 minutes without one. Reads spend the signed-in account's GitHub API points. When an account has 50 points or fewer left, the daemon stops reading that host until GitHub resets the budget, logs one warning, and `watch_pull_request` refuses with the points left and the reset time.
+
+The daemon keeps each session's links, watches, and undelivered news in `<rho home>/daemon/pull-requests/` (`~/.rho/daemon/pull-requests/` by default), one file per session, so they survive a restart. News for a session the daemon unloaded reopens it for a turn, once per batch of news: if that turn fails before it takes the news, the news waits for the session's next turn. After a daemon restart, news for an unloaded session waits for its next prompt or attach.
+
 ### Unloading idle sessions
 
 After a session sits idle for 60 seconds, the daemon unloads it. It stops the session's MCP servers and releases the session file, so another program, such as a foreground `rho run`, can open it. The next prompt or attach reopens it within moments.

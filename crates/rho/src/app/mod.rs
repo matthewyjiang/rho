@@ -45,6 +45,7 @@ mod plugins_cli;
 mod policy;
 mod prompt_content;
 pub(crate) mod provider_context_report;
+pub(crate) mod pull_requests;
 #[cfg(debug_assertions)]
 pub(crate) mod quiet_notice_signal;
 mod runtime_builder;
