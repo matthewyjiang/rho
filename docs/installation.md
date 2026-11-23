@@ -108,7 +108,7 @@ What an update does to a running daemon depends on how you installed Rho:
 
 An idle daemon has no queued, running, or waiting job, no login under way, and no session with its own background process, subagent, or workflow. The table applies too when you update with a package manager or the install script.
 
-`rho uninstall` stops the daemon, which interrupts running turns, and deletes the saved `rho mcp serve --http` service (`rho-mcp.service` or `~/Library/LaunchAgents/dev.rho.mcp.plist`). `--dry-run` lists what it would remove. Remove a service saved under another name, or installed system-wide, yourself. See [`rho uninstall`](/automation-cli#rho-uninstall).
+`rho uninstall` stops the daemon, which interrupts running turns, and deletes saved HTTP services (`rho-mcp.service`, `rho-daemon-http.service`, `~/Library/LaunchAgents/dev.rho.mcp.plist`, or `~/Library/LaunchAgents/dev.rho.daemon-http.plist`). `--dry-run` lists what it would remove. Remove a service saved under another name, or installed system-wide, yourself. See [`rho uninstall`](/automation-cli#rho-uninstall).
 
 ## Claude Code binary (optional)
 

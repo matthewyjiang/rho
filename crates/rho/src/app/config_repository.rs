@@ -41,6 +41,14 @@ impl ConfigRepository {
         Config::load(self.path.clone())
     }
 
+    /// Opens the credential store this config chooses, as every rho process
+    /// does before it reads a secret.
+    pub(crate) fn open_credential_store(&self) -> anyhow::Result<()> {
+        let path = self.configured_path()?;
+        let mut config = self.load()?;
+        crate::credential_store::initialize_from_config(&mut config, &path)
+    }
+
     /// Saves every value of `config` that differs from the file, keeping
     /// the rest of the file as written.
     pub(crate) fn save(&self, config: &Config) -> anyhow::Result<()> {

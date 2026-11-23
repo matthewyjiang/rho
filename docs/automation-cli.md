@@ -421,9 +421,10 @@ All targets are revalidated after confirmation and before any deletion. If the
 data purge fails, the executable remains available to retry.
 
 Uninstall also stops this Rho home's running [daemon](/daemon), which
-interrupts any turns in progress. It also stops and disables the service for
-[`rho mcp serve --http`](/daemon#running-as-a-service), then deletes its file,
-`rho-mcp.service` or `dev.rho.mcp.plist`. Both steps run after you confirm and
+interrupts any turns in progress. It also stops and disables any saved services for
+[`rho mcp serve --http` or `rho daemon serve --http`](/daemon#running-as-a-service), then deletes their files
+(`rho-mcp.service`, `rho-daemon-http.service`, `dev.rho.mcp.plist`, or
+`dev.rho.daemon-http.plist`). Both steps run after you confirm and
 before anything else is removed, also for package-managed installs. The preview
 lists them. If Rho can't reach systemd or launchd, it still deletes the files
 and tells you to stop the service yourself.

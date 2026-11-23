@@ -4,7 +4,7 @@
 //! What this layer guards, in order:
 //! - it binds a loopback address, which the network reaches only through a
 //!   tunnel the user set up, or an address on a private network
-//!   (`private_network.rs`), such as an overlay network's, where the owner
+//!   (`app::http_guard`), such as an overlay network's, where the owner
 //!   decided the network keeps plain HTTP private;
 //! - every request carries a bearer token from `rho mcp token`, read from the
 //!   credential store per request so rotation/revoke affects new requests,
@@ -18,9 +18,18 @@
 //!
 //! Once bound, it takes the rho home's webhook watches (`watch/`) and
 //! resumes them. Once `rho update` replaced its executable, it upgrades in
-//! place (`upgrade.rs`).
+//! place (`app::http_upgrade`).
+//!
+//! The watches carry over an upgrade: they are on disk, and the new binary
+//! resumes them, delivering any news that came meanwhile. A delivery under
+//! way as the server re-executes may be sent again, as after a crash. A
+//! host's MCP session does not carry over: the new binary knows none, so the
+//! host starts a new one, as the protocol has it do for a session the server
+//! no longer knows.
 
-use std::{convert::Infallible, future::Future, net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{
+    convert::Infallible, future::Future, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration,
+};
 
 use anyhow::Context;
 use bytes::Bytes;
@@ -33,15 +42,22 @@ use rmcp::transport::{
 };
 
 use super::{
-    private_network::is_private,
-    remotes::Servers,
+    remotes::{Servers, CALL_TIMEOUT},
     token_store,
     tokens::TokenSet,
-    upgrade::{Drain, InFlight, Upgrade},
     watch::Watches,
     SessionTools, Transport,
 };
-use crate::app::session_control::SessionControl;
+use crate::app::{
+    http_guard::{bearer_token, is_private, own_hosts, LOOPBACK_HOSTS},
+    http_upgrade::{adopted_listener, Drain, InFlight, Upgrade},
+    session_control::SessionControl,
+};
+
+/// The longest the MCP HTTP server waits for calls under way before
+/// re-executing in place: one forwarded call (`CALL_TIMEOUT`) plus 20 s to
+/// flush its answer.
+const DRAIN_TIMEOUT: Duration = CALL_TIMEOUT.saturating_add(Duration::from_secs(20));
 
 #[path = "http_sessions.rs"]
 mod sessions;
@@ -50,9 +66,6 @@ use sessions::{Owner, Sessions};
 
 /// The path the MCP endpoint answers on.
 const ENDPOINT: &str = "/mcp";
-
-/// The `Host` names rmcp accepts by default, which `--allow-host` adds to.
-const LOOPBACK_HOSTS: [&str; 3] = ["localhost", "127.0.0.1", "::1"];
 
 /// How `rho mcp serve --http` listens.
 pub(crate) struct HttpOptions {
@@ -70,7 +83,7 @@ pub(crate) struct HttpOptions {
     /// Where the watches are kept: `<rho home>/mcp-serve`.
     pub(crate) watches_dir: PathBuf,
     /// The listening socket a re-executing server handed this one
-    /// (`upgrade.rs`), on `address`, to serve on in place of binding it.
+    /// (`app::http_upgrade`), on `address`, to serve on in place of binding it.
     pub(crate) inherited_listener: Option<std::net::TcpListener>,
     /// How the server upgrades in place once its executable is replaced;
     /// without one it keeps its binary.
@@ -101,7 +114,7 @@ pub(crate) async fn serve_http(
     }
     let own_hosts = own_hosts(ip);
     let listener = match options.inherited_listener {
-        Some(socket) => inherited(socket, options.address)?,
+        Some(socket) => adopted_listener(socket, options.address)?,
         None => tokio::net::TcpListener::bind(options.address)
             .await
             .with_context(|| format!("could not listen on {}", options.address))?,
@@ -154,7 +167,9 @@ pub(crate) async fn serve_http(
             .map(drop)?);
     };
     let version = accept_until(&listener, &server, &drain, upgrade.replaced()).await?;
-    Err(drain.finish(upgrade, &version, listener).await)
+    Err(drain
+        .finish(upgrade, &version, listener, DRAIN_TIMEOUT)
+        .await)
 }
 
 /// Serves each connection `listener` accepts until `replaced` resolves
@@ -198,39 +213,6 @@ async fn accept_until(
     }
 }
 
-/// The `Host`s requests to private address `ip` name, which are allowed
-/// without `--allow-host`: none for loopback, which is always allowed. An
-/// IPv6 address can be written two ways, as Rust prints it and as a URL
-/// does, which writes a mapped IPv4 address in hex; both are allowed.
-fn own_hosts(ip: std::net::IpAddr) -> Vec<String> {
-    if ip.is_loopback() {
-        return Vec::new();
-    }
-    let mut hosts = vec![ip.to_string()];
-    if let std::net::IpAddr::V6(v6) = ip {
-        let url_form = url::Host::<String>::Ipv6(v6).to_string();
-        let url_form = url_form.trim_start_matches('[').trim_end_matches(']');
-        if url_form != hosts[0] {
-            hosts.push(url_form.to_owned());
-        }
-    }
-    hosts
-}
-
-/// `socket`, handed on by a re-executing server, once it listens on
-/// `address`, the address this server was told to bind: the checks above
-/// hold for the socket it serves.
-fn inherited(
-    socket: std::net::TcpListener,
-    address: SocketAddr,
-) -> anyhow::Result<tokio::net::TcpListener> {
-    let local = socket.local_addr()?;
-    if local.ip() != address.ip() || (address.port() != 0 && local.port() != address.port()) {
-        anyhow::bail!("the inherited listening socket is on {local}, not on --http {address}");
-    }
-    Ok(tokio::net::TcpListener::from_std(socket)?)
-}
-
 /// [`handle`], counting a POST, which carries a tool call, as under way
 /// until its response's body is sent or dropped, so an upgrade waits for
 /// it. A GET opens a host's event stream, which lasts as long as the host
@@ -260,7 +242,7 @@ async fn handle(server: &HttpServer, mut request: Request<Incoming>) -> Response
     if request.uri().path() != ENDPOINT {
         return refusal(StatusCode::NOT_FOUND, "not found");
     }
-    let Some(presented) = bearer(&request) else {
+    let Some(presented) = bearer_token(&request) else {
         return unauthorized("missing bearer token");
     };
     // Read past the OS store's per-process cache, so a rotation or revoke
@@ -292,19 +274,6 @@ async fn handle(server: &HttpServer, mut request: Request<Incoming>) -> Response
     server.service.handle(request).await
 }
 
-/// The token in an `Authorization: Bearer <token>` header.
-fn bearer(request: &Request<Incoming>) -> Option<String> {
-    let value = request
-        .headers()
-        .get(header::AUTHORIZATION)?
-        .to_str()
-        .ok()?;
-    let (scheme, token) = value.split_once(' ')?;
-    scheme
-        .eq_ignore_ascii_case("bearer")
-        .then(|| token.trim().to_owned())
-}
-
 fn unauthorized(message: &str) -> Response<Body> {
     let mut response = refusal(StatusCode::UNAUTHORIZED, message);
     response.headers_mut().insert(
@@ -319,7 +288,3 @@ fn refusal(status: StatusCode, message: &str) -> Response<Body> {
     *response.status_mut() = status;
     response
 }
-
-#[cfg(test)]
-#[path = "http_server_tests.rs"]
-mod tests;

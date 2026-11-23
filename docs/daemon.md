@@ -13,6 +13,8 @@ There is one daemon per user and Rho home (`~/.rho`, or `$RHO_HOME`). Rho starts
 | `rho daemon stop` | Stop the daemon. Running turns stop and show as `interrupted`. |
 | `rho daemon restart` | Restart the daemon, for example after an update. Running turns stop, then continue once the TUI reattaches ([Updates](#upgrading-in-place)). |
 | `rho daemon` | Run the daemon in the foreground. Same as `rho daemon run`. |
+| `rho daemon serve --http <addr>` | Expose `rho-protocol` over HTTP WebSockets (`GET /ws`) for hosts that cannot use SSH ([Over HTTP](#over-http)). |
+| `rho daemon token` | Create, list, or revoke bearer tokens for `rho daemon serve --http`. |
 | `rho attach <id>` | Follow a session's turn from the terminal ([Attaching](/automation-cli#attaching-to-a-daemon-session)). |
 | `rho worktrees prune [--dry-run]` | Remove worktrees that are clean and merged ([Sessions in worktrees](#sessions-in-worktrees)). |
 | `rho worktrees status` | Show each worktree's size and what a prune would free. |
@@ -193,7 +195,7 @@ When you update Rho, the running daemon notices the new executable and switches 
 
 If you install with mise or Homebrew, the new version lands at a different path, and the daemon can't see it. Run `rho daemon restart` from the new version once your work is done.
 
-A [`rho mcp serve --http`](/mcp-server#http-updates) service switches to the new version by itself too, once the calls under way finish.
+A [`rho mcp serve --http`](/mcp-server#http-updates) or [`rho daemon serve --http`](#over-http) service switches to the new version by itself too: `rho mcp serve --http` once calls under way finish, and `rho daemon serve --http` once each open WebSocket has received the daemon's answers to the requests it already sent and closed with `1001` (`Away`), so clients reconnect to the replacement on the same listening socket while the daemon's turns keep running.
 
 ## Versions
 
@@ -217,7 +219,7 @@ If your `rho` and the daemon are different versions, here is what happens:
 | --- | --- |
 | `Daemon` | The daemon's version is different from yours, or can't work with it ([Versions](#versions)). |
 | `Daemon socket` | The socket or its directory is open to other users. |
-| `Service` | A `rho-mcp.service` systemd unit is saved but not enabled ([Running as a service](#running-as-a-service)). |
+| `Service` | A documented systemd unit (`rho-mcp.service` or `rho-daemon-http.service`) is saved but not enabled ([Running as a service](#running-as-a-service)). |
 | `Daemon environment` | The daemon's proxy settings or `RHO_LOG` differ from your shell's. Linux only. |
 | `Daemon credential store` | The daemon can't reach its credential store ([Credentials](#credentials)). |
 
@@ -229,6 +231,21 @@ On Linux and macOS, the daemon listens on a Unix socket, `daemon.sock`, under `$
 
 On Windows, the daemon listens on a named pipe that only your user can open. `Ctrl+C` stops a `rho daemon run` started in a console.
 
+## Over HTTP {#over-http}
+
+To reach the daemon from a host that cannot use SSH, run the HTTP WebSocket bridge beside it:
+
+```bash
+rho daemon token rotate laptop
+rho daemon serve --http 127.0.0.1:8766
+```
+
+`rho daemon token rotate <name>` prints a `rho_daemon_` bearer secret once on stdout and keeps only its SHA-256 hash in your credential store (separate from `rho mcp token`). Manage tokens with `rho daemon token list [--json]` and `rho daemon token revoke <name>`; rotations and revocations apply on the next connection without restarting the bridge. A revoked token's open WebSockets stay connected until they close; restart the bridge to cut them off at once.
+
+- **Access level**: a daemon HTTP token grants full user-level `rho-protocol` access (opening sessions in any workspace, answering approvals, editing config, and stopping or restarting the daemon). Treat it like SSH login for that user.
+- **Binding and tunnels**: `--http` accepts only loopback (`127.0.0.1`, `::1`) or a private/overlay network address (`10.x`, `172.16–31.x`, `192.168.x`, `100.64.0.0/10` such as Tailscale or NetBird, or IPv6 ULA). On a non-loopback address traffic travels as plain HTTP/WS, so use an encrypted overlay network or put TLS in front of a loopback bind (`--allow-host <hostname>` for the public `Host` header, matching any port unless it names one, as in `--allow-host rho.example.com:443`). Browsers cannot set `Authorization` on a WebSocket, so a browser client (`--allow-origin <origin>`) needs a proxy in front of the bridge that adds the header. A `--allow-host` or `--allow-origin` value that could never match a request stops the bridge at startup.
+- **Lifecycle and updates**: the bridge starts the local daemon on demand and relays each authenticated WebSocket connection (`GET /ws`) to `daemon.sock` (or the Windows named pipe). Stopping or restarting `rho daemon serve` (SIGINT or SIGTERM, or Ctrl+C on Windows) closes each open WebSocket with `1001` (`Away`) once the daemon has answered the requests it already sent, and leaves the daemon and its running turns untouched; `rho daemon stop` stops only the daemon. On macOS and Linux, once `rho update` replaces the `rho` binary in place, `rho daemon serve --http` drains active WebSockets and re-executes on the same listening socket so reconnecting clients wait in the backlog instead of being refused. Keep it running across reboots with [Running as a service](#running-as-a-service). See [Protocol over HTTP](/protocol#over-http) for the WebSocket framing contract.
+
 ## Logs
 
 The daemon writes its log to `~/.rho/logs/daemon.log`. If you run `rho daemon run` itself as a systemd service, it logs to the journal instead. Set `RHO_LOG` to change the level, for example `RHO_LOG=rho=debug`. The default is `info`.
@@ -239,13 +256,15 @@ The log can contain provider error messages that echo credentials, so keep it pr
 
 The daemon doesn't need a service. Rho starts it on demand. To have it running before anything connects, for example in a script, run `rho daemon start`.
 
-You need a service only for [`rho mcp serve --http`](/mcp-server#over-http), which has to listen before any client shows up. Both examples below:
+You need a service only for [`rho mcp serve --http`](/mcp-server#over-http) or [`rho daemon serve --http`](#over-http), which have to listen before any client shows up. All examples below:
 
 - Leave the daemon running when you stop or restart the service. Stop the daemon itself with `rho daemon stop`.
 - Set `PATH`. A service doesn't get your shell's environment, and the sessions it starts look up tools, MCP servers, and CLI subagents on this `PATH`. Add the directories your tools live in, and any variable your sessions need, such as a provider key. On Linux, keep `/usr/bin` in it.
-- Listen on `127.0.0.1`, or on this machine's private network address for a [hub](/mcp-server#several-machines) to reach it. To reach the server from anywhere else, use a tunnel ([Over HTTP](/mcp-server#over-http)).
+- Listen on `127.0.0.1`, or on this machine's private network address for a remote client or [hub](/mcp-server#several-machines) to reach it. To reach the server from anywhere else, use a tunnel ([Over HTTP](#over-http)).
 
 ### systemd
+
+#### MCP HTTP server (`rho-mcp.service`)
 
 Save this as `~/.config/systemd/user/rho-mcp.service`. Change `ExecStart` to where `rho` is installed and `PATH` to your own:
 
@@ -282,7 +301,41 @@ rho mcp token rotate laptop --scope write --workspace ~/src/app
 
 `systemctl --user restart rho-mcp` restarts the server and leaves the daemon's turns running. The server logs to the journal (`journalctl --user -u rho-mcp`). The daemon logs to `~/.rho/logs/daemon.log`.
 
+#### Daemon HTTP WebSocket bridge (`rho-daemon-http.service`)
+
+Save this as `~/.config/systemd/user/rho-daemon-http.service` to keep `rho-protocol` reachable over HTTP WebSockets (`GET /ws`) across reboots and auto-start the daemon on demand:
+
+```ini
+[Unit]
+Description=rho daemon HTTP WebSocket bridge
+After=network.target
+
+[Service]
+ExecStart=%h/.local/bin/rho daemon serve --http 127.0.0.1:8766
+# Remote clients that omit environment inherit this PATH.
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+# Stop only the bridge. The daemon keeps running its turns.
+KillMode=process
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+```
+
+Enable it and issue a bearer token for each remote client:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now rho-daemon-http
+loginctl enable-linger "$USER"   # optional: keep it running while you are logged out
+rho daemon token rotate laptop
+```
+
+`systemctl --user restart rho-daemon-http` restarts the bridge and leaves the daemon's turns running. The bridge logs to the journal (`journalctl --user -u rho-daemon-http`).
+
 ### launchd
+
+#### MCP HTTP server (`dev.rho.mcp`)
 
 Save this as `~/Library/LaunchAgents/dev.rho.mcp.plist`. Change the `rho` path, `PATH`, and the log path to your own:
 
@@ -334,3 +387,51 @@ rho mcp token rotate laptop --scope write --workspace ~/src/app
 ```
 
 The server logs to the `StandardErrorPath` file. The daemon logs to `~/.rho/logs/daemon.log`.
+
+#### Daemon HTTP WebSocket bridge (`dev.rho.daemon-http`)
+
+Save this as `~/Library/LaunchAgents/dev.rho.daemon-http.plist`. Change the `rho` path, `PATH`, and the log path to your own:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>dev.rho.daemon-http</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/rho</string>
+    <string>daemon</string>
+    <string>serve</string>
+    <string>--http</string>
+    <string>127.0.0.1:8766</string>
+  </array>
+  <!-- Remote clients that omit environment inherit this PATH. -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+  <!-- Stop only the bridge. The daemon keeps running its turns. -->
+  <key>AbandonProcessGroup</key>
+  <true/>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardErrorPath</key>
+  <string>/Users/you/Library/Logs/rho-daemon-http.log</string>
+</dict>
+</plist>
+```
+
+Load it and issue a bearer token for each remote client:
+
+```bash
+launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/dev.rho.daemon-http.plist
+launchctl kickstart -k "gui/$(id -u)/dev.rho.daemon-http"   # restart the bridge
+rho daemon token rotate laptop
+```
+
+The bridge logs to the `StandardErrorPath` file. The daemon logs to `~/.rho/logs/daemon.log`.

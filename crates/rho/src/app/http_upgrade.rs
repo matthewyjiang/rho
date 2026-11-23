@@ -1,31 +1,24 @@
-//! Upgrading `rho mcp serve --http` in place, as the daemon upgrades
-//! (`daemon::Executable`): once `rho update` replaced the server's
-//! executable with one that proves itself rho, the server stops accepting
-//! connections, lets the calls under way finish, and re-executes the
-//! replacement as the same process. It hands the new binary its listening
-//! socket, so a host that connects meanwhile waits in the backlog instead
-//! of finding nothing there, and a service manager sees the same process.
-//!
-//! The watches carry over: they are on disk, and the new binary resumes
-//! them, delivering any news that came meanwhile. A delivery under way as
-//! the server re-executes may be sent again, as after a crash. A host's MCP
-//! session does not carry over: the new binary knows none, so the host
-//! starts a new one, as the protocol has it do for a session the server no
-//! longer knows.
+//! Upgrading an HTTP server (`rho mcp serve --http`, `rho daemon serve --http`)
+//! in place, as the daemon upgrades (`daemon::Executable`): once `rho update`
+//! replaced the server's executable with one that proves itself rho, the
+//! server stops accepting connections, drains work under way, and re-executes
+//! the replacement as the same process. It hands the new binary its listening
+//! socket (`--listener-fd`), so a client that connects meanwhile waits in the
+//! backlog instead of finding nothing there, and a service manager sees the
+//! same process.
 //!
 //! A replacement older than the running server, as after a rollback, may
-//! predate `--listener-fd`, so it is not handed the socket: the server
-//! closes it as it re-executes, and the replacement listens anew. A host
-//! that connects in that gap is refused.
+//! predate `--listener-fd`, so it is not handed the socket: the server closes
+//! it as it re-executes, and the replacement listens anew.
 //!
-//! Unix only: elsewhere the server keeps running the binary it started
-//! with until it is restarted.
+//! Unix only: elsewhere the server keeps running the binary it started with
+//! until it is restarted.
 
 use std::{
     ffi::OsString,
     future::Future,
     io,
-    net::TcpListener,
+    net::{SocketAddr, TcpListener},
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -35,7 +28,6 @@ use std::{
 
 use tokio::sync::{watch, Notify};
 
-use super::remotes::CALL_TIMEOUT;
 use crate::daemon::Executable;
 
 /// The hidden flag that hands a re-executed server its listening socket.
@@ -43,23 +35,15 @@ const LISTENER_FD_FLAG: &str = "--listener-fd";
 
 /// How often the server checks whether its executable was replaced.
 //
-// The daemon's interval (`UPGRADE_CHECK_INTERVAL`), for its receipt: a
-// check is one `stat(2)` of the executable, a couple of microseconds, and a
-// second bounds how long a server runs a replaced binary before it drains.
+// Matches the daemon's interval (`UPGRADE_CHECK_INTERVAL`): one `stat(2)` of
+// the executable (~microseconds), bounding how long a server runs a replaced
+// binary before it drains.
 const CHECK_INTERVAL: Duration = Duration::from_secs(1);
 
-/// The longest the server waits for calls under way before it re-executes.
-//
-// Tripwire. The longest call the server answers on purpose is a hub's
-// forwarded call, bounded by `CALL_TIMEOUT`; every core call, a `wait`
-// included, takes less (`MAX_WAIT_SECS`). Twenty seconds over that sends
-// the answer. A call still running then is cut short, and its host calls
-// again.
-const DRAIN_TIMEOUT: Duration = CALL_TIMEOUT.saturating_add(Duration::from_secs(20));
-
-/// How a server upgrades in place: the executable it watches, and the
-/// arguments it re-executes the replacement with.
+/// How an HTTP server upgrades in place: its log label, the executable it
+/// watches, and the arguments it re-executes the replacement with.
 pub(crate) struct Upgrade {
+    label: &'static str,
     executable: Executable,
     args: Vec<OsString>,
 }
@@ -69,10 +53,12 @@ impl Upgrade {
     /// server started with after its program. None off Unix, where a server
     /// keeps the binary it started with.
     pub(crate) fn new(
+        label: &'static str,
         executable: Executable,
         args: impl Iterator<Item = OsString>,
     ) -> Option<Self> {
         cfg!(unix).then(|| Self {
+            label,
             executable,
             args: without_listener_fd(args),
         })
@@ -81,7 +67,7 @@ impl Upgrade {
     /// Resolves with the replacement's version once the executable was
     /// replaced by a binary that proves itself rho. Keep one such future
     /// for the server's life: it runs each replacement once.
-    pub(super) async fn replaced(&self) -> String {
+    pub(crate) async fn replaced(&self) -> String {
         let executable = &self.executable;
         let mut checks = tokio::time::interval(CHECK_INTERVAL);
         checks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -104,7 +90,8 @@ impl Upgrade {
                 }
                 Err(error) => {
                     eprintln!(
-                        "rho mcp serve: {} was replaced by a file that is not rho ({error}); not upgrading",
+                        "{}: {} was replaced by a file that is not rho ({error}); not upgrading",
+                        self.label,
                         executable.path().display()
                     );
                     probed = Some(replacement.identity);
@@ -114,14 +101,15 @@ impl Upgrade {
     }
 
     /// Re-executes the replacement, `version`, as this process, handing it
-    /// `listener` unless it is older than this server. Returns only with
-    /// why that failed.
-    fn relaunch(self, listener: TcpListener, version: &str) -> anyhow::Error {
+    /// `listener` unless it is older than this server. Returns only with why
+    /// that failed.
+    pub(crate) fn relaunch(self, listener: TcpListener, version: &str) -> anyhow::Error {
         let running = env!("CARGO_PKG_VERSION");
         let older = crate::update::version_is_newer(running, version);
         if older {
             eprintln!(
-                "rho mcp serve: {version} is older than {running} and may not take over the listening socket; it listens anew"
+                "{}: {version} is older than {running} and may not take over the listening socket; it listens anew",
+                self.label
             );
         }
         #[cfg(unix)]
@@ -158,15 +146,29 @@ pub(crate) fn inherit_listener(fd: i32) -> io::Result<TcpListener> {
     )))
 }
 
-/// Draining the server for an upgrade: the calls under way, and the signal
+/// Validates that an inherited `socket` listens on `address` (allowing port
+/// `0` as a wildcard for the requested port) and converts it to a Tokio
+/// `TcpListener`.
+pub(crate) fn adopted_listener(
+    socket: TcpListener,
+    address: SocketAddr,
+) -> anyhow::Result<tokio::net::TcpListener> {
+    let local = socket.local_addr()?;
+    if local.ip() != address.ip() || (address.port() != 0 && local.port() != address.port()) {
+        anyhow::bail!("the inherited listening socket is on {local}, not on --http {address}");
+    }
+    Ok(tokio::net::TcpListener::from_std(socket)?)
+}
+
+/// Draining an HTTP server for an upgrade: the calls under way, and the signal
 /// that tells each connection to close after the call it serves.
-pub(super) struct Drain {
+pub(crate) struct Drain {
     calls: InFlight,
     begin: watch::Sender<bool>,
 }
 
 impl Drain {
-    pub(super) fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             calls: InFlight::default(),
             begin: watch::Sender::new(false),
@@ -174,36 +176,49 @@ impl Drain {
     }
 
     /// The calls under way, for a connection to count its calls in.
-    pub(super) fn calls(&self) -> InFlight {
+    pub(crate) fn calls(&self) -> InFlight {
         self.calls.clone()
     }
 
     /// Resolves once draining began, so a connection closes after the call
-    /// it serves and the host's next call lands on the replacement.
-    pub(super) fn began(&self) -> impl Future<Output = ()> + Send + 'static {
+    /// it serves and the client's next call lands on the replacement.
+    pub(crate) fn began(&self) -> impl Future<Output = ()> + Send + 'static {
         let mut begin = self.begin.subscribe();
         async move { drop(begin.wait_for(|began| *began).await) }
     }
 
-    /// Waits for the calls under way, at most [`DRAIN_TIMEOUT`], then
-    /// re-executes `upgrade`'s replacement, `version`, handing it
-    /// `listener`, which the caller stopped accepting on. Returns only with
-    /// why that failed.
-    pub(super) async fn finish(
-        self,
+    /// Tells every connection to close after the call it serves, then waits
+    /// for the calls under way, at most `timeout`. Returns how many are still
+    /// under way: zero once they all ended.
+    pub(crate) async fn settle(&self, timeout: Duration) -> usize {
+        self.begin.send_replace(true);
+        self.calls.drained(timeout).await;
+        self.calls.count()
+    }
+
+    /// Waits for the calls under way, at most `timeout`, then re-executes
+    /// `upgrade`'s replacement, `version`, handing it `listener`, which the
+    /// caller stopped accepting on. Returns only with why that failed.
+    pub(crate) async fn finish(
+        &self,
         upgrade: Upgrade,
         version: &str,
         listener: tokio::net::TcpListener,
+        timeout: Duration,
     ) -> anyhow::Error {
+        // Begun before announcing it, so a call that ends once a client sees
+        // the announcement already finds its connection told to close.
         self.begin.send_replace(true);
         eprintln!(
-            "rho mcp serve: upgrading to {version} in place once the calls under way end ({} now)",
+            "{}: upgrading to {version} in place once the calls under way end ({} now)",
+            upgrade.label,
             self.calls.count()
         );
-        if !self.calls.drained(DRAIN_TIMEOUT).await {
+        let left = self.settle(timeout).await;
+        if left > 0 {
             eprintln!(
-                "rho mcp serve: {} calls still under way after DRAIN_TIMEOUT ({DRAIN_TIMEOUT:?}); cutting them short to upgrade",
-                self.calls.count()
+                "{}: {left} calls still under way after {timeout:?}; cutting them short to upgrade",
+                upgrade.label,
             );
         }
         match listener.into_std() {
@@ -217,18 +232,18 @@ impl Drain {
 
 /// The calls under way, which an upgrade waits for.
 #[derive(Clone, Default)]
-pub(super) struct InFlight {
+pub(crate) struct InFlight {
     count: Arc<AtomicUsize>,
     /// Wakes a drain each time a call ends.
     ended: Arc<Notify>,
 }
 
 /// One call under way, until dropped.
-pub(super) struct Call(InFlight);
+pub(crate) struct Call(InFlight);
 
 impl InFlight {
     /// Counts a call under way until the returned guard drops.
-    pub(super) fn enter(&self) -> Call {
+    pub(crate) fn enter(&self) -> Call {
         self.count.fetch_add(1, Ordering::SeqCst);
         Call(self.clone())
     }
@@ -237,10 +252,9 @@ impl InFlight {
         self.count.load(Ordering::SeqCst)
     }
 
-    /// Resolves once no call is under way, or after `timeout`; whether
-    /// they all ended.
-    async fn drained(&self, timeout: Duration) -> bool {
-        tokio::time::timeout(timeout, async {
+    /// Resolves once no call is under way, or after `timeout`.
+    async fn drained(&self, timeout: Duration) {
+        let _ = tokio::time::timeout(timeout, async {
             loop {
                 let ended = self.ended.notified();
                 if self.count() == 0 {
@@ -249,8 +263,7 @@ impl InFlight {
                 ended.await;
             }
         })
-        .await
-        .is_ok()
+        .await;
     }
 }
 
@@ -326,5 +339,5 @@ mod unix {
 }
 
 #[cfg(test)]
-#[path = "upgrade_tests.rs"]
+#[path = "http_upgrade_tests.rs"]
 mod tests;

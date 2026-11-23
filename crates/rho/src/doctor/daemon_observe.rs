@@ -23,7 +23,7 @@ use crate::daemon::{
 use super::{
     daemon::{
         environment_check, process_check, service_check, socket_check, DaemonEnvironment,
-        DaemonProcess, DaemonService, DaemonSocket,
+        DaemonProcess, DaemonService, DaemonSocket, InstalledService,
     },
     daemon_store::{daemon_store_check, DaemonStore},
     report::DoctorCheck,
@@ -221,19 +221,27 @@ fn inspect_socket(paths: &DaemonPaths) -> DaemonSocket {
     }
 }
 
-/// The service `docs/daemon.md` has the user save, the systemd user unit
-/// before the LaunchAgent, as its files show it (see
-/// [`daemon::find_services`]).
+/// The services `docs/daemon.md` has the user save, systemd user units before
+/// LaunchAgents, as their files show them (see [`daemon::find_services`]).
 fn find_service(home: &Path, xdg_config_home: Option<PathBuf>) -> DaemonService {
-    match daemon::find_services(home, xdg_config_home).first() {
-        None => DaemonService::NotInstalled,
-        Some(service) => match service.manager {
-            ServiceManager::Systemd => DaemonService::Systemd {
-                enabled: !service.enabled_by.is_empty(),
-            },
-            ServiceManager::Launchd => DaemonService::Launchd,
-        },
+    let found = daemon::find_services(home, xdg_config_home);
+    if found.is_empty() {
+        return DaemonService::NotInstalled;
     }
+    DaemonService::Installed(
+        found
+            .into_iter()
+            .map(|service| match service.manager {
+                ServiceManager::Systemd => InstalledService::Systemd {
+                    unit: service.unit,
+                    enabled: !service.enabled_by.is_empty(),
+                },
+                ServiceManager::Launchd => InstalledService::Launchd {
+                    label: service.unit,
+                },
+            })
+            .collect(),
+    )
 }
 
 /// Sorts the variables that differ between `daemon`'s environment and the

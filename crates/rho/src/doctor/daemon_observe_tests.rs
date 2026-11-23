@@ -165,7 +165,7 @@ async fn a_socket_others_can_reach_is_reported_as_exposed() {
 #[cfg(unix)]
 #[test]
 fn the_systemd_unit_is_installed_once_saved_and_enabled_once_wanted() {
-    use crate::daemon::SYSTEMD_UNIT;
+    use crate::daemon::{DAEMON_HTTP_SYSTEMD_UNIT, SYSTEMD_UNIT};
     let home = TempDir::new().unwrap();
     let default_units = home.path().join(".config/systemd/user");
     let xdg = home.path().join("xdg");
@@ -182,35 +182,63 @@ fn the_systemd_unit_is_installed_once_saved_and_enabled_once_wanted() {
     std::fs::create_dir_all(&wants).unwrap();
     std::fs::write(xdg_units.join(SYSTEMD_UNIT), "[Service]\n").unwrap();
     std::os::unix::fs::symlink(xdg_units.join(SYSTEMD_UNIT), wants.join(SYSTEMD_UNIT)).unwrap();
-    let enabled = find(Some(&xdg));
+    std::fs::write(xdg_units.join(DAEMON_HTTP_SYSTEMD_UNIT), "[Service]\n").unwrap();
+    let both = find(Some(&xdg));
 
     assert_eq!(
-        [missing, saved, elsewhere, relative, enabled],
+        [missing, saved, elsewhere, relative, both],
         [
             DaemonService::NotInstalled,
-            DaemonService::Systemd { enabled: false },
+            DaemonService::Installed(vec![InstalledService::Systemd {
+                unit: SYSTEMD_UNIT,
+                enabled: false,
+            }]),
             DaemonService::NotInstalled,
-            DaemonService::Systemd { enabled: false },
-            DaemonService::Systemd { enabled: true },
+            DaemonService::Installed(vec![InstalledService::Systemd {
+                unit: SYSTEMD_UNIT,
+                enabled: false,
+            }]),
+            DaemonService::Installed(vec![
+                InstalledService::Systemd {
+                    unit: SYSTEMD_UNIT,
+                    enabled: true,
+                },
+                InstalledService::Systemd {
+                    unit: DAEMON_HTTP_SYSTEMD_UNIT,
+                    enabled: false,
+                },
+            ]),
         ]
     );
 }
 
-// Covers: the LaunchAgent the docs have the user save is found by its label.
+// Covers: the LaunchAgents the docs have the user save are found by their labels.
 // Owner: doctor daemon observation (service files).
 #[test]
 fn the_launch_agent_is_installed_once_saved() {
+    use crate::daemon::{DAEMON_HTTP_LAUNCHD_LABEL, LAUNCHD_LABEL};
     let home = TempDir::new().unwrap();
     let agents = home.path().join("Library/LaunchAgents");
 
     let missing = find_service(home.path(), None);
     std::fs::create_dir_all(&agents).unwrap();
     std::fs::write(agents.join("dev.rho.mcp.plist"), "").unwrap();
+    std::fs::write(agents.join("dev.rho.daemon-http.plist"), "").unwrap();
     let saved = find_service(home.path(), None);
 
     assert_eq!(
         [missing, saved],
-        [DaemonService::NotInstalled, DaemonService::Launchd]
+        [
+            DaemonService::NotInstalled,
+            DaemonService::Installed(vec![
+                InstalledService::Launchd {
+                    label: LAUNCHD_LABEL,
+                },
+                InstalledService::Launchd {
+                    label: DAEMON_HTTP_LAUNCHD_LABEL,
+                },
+            ]),
+        ]
     );
 }
 

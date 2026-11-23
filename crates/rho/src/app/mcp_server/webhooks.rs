@@ -14,10 +14,8 @@ use rho_providers::credentials::CredentialStore;
 use serde::{Deserialize, Serialize};
 use url::{Host, Url};
 
-use super::{
-    token_store::{self, StoredSet},
-    tokens::validate_name,
-};
+use super::token_store::{self, StoredSet};
+use crate::app::http_guard::validate_name;
 
 /// The credential-store account that holds the targets.
 pub(crate) const ACCOUNT: &str = "mcp-serve-webhooks";

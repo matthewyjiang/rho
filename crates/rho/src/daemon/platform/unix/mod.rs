@@ -11,8 +11,9 @@ mod service;
 mod user_scope;
 
 pub(crate) use account::{account_lock_path, lock_account_file};
+pub(crate) use endpoint::Stream;
 pub(in crate::daemon) use endpoint::{
-    connect, connect_restarting, inspect_endpoint, remove_endpoint, Listener, Stream,
+    connect, connect_restarting, inspect_endpoint, remove_endpoint, Listener,
 };
 pub(crate) use files::{
     create_private_dir, create_private_file, sync_dir, DaemonPathError, FileIdentity,

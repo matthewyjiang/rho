@@ -78,6 +78,22 @@ pub(crate) async fn connect(
     handshake(paths, platform::connect(paths).await, hello).await
 }
 
+/// Opens a raw stream to the running daemon without sending `rho/hello`.
+///
+/// Used by protocol relays (such as `rho daemon serve --http`) so the remote
+/// client completes the handshake directly with the daemon. Never starts a
+/// daemon.
+pub(crate) async fn connect_raw(paths: &DaemonPaths) -> Result<Stream, ConnectError> {
+    match platform::connect(paths).await {
+        Ok(Some(stream)) => Ok(stream),
+        Ok(None) => Err(ConnectError::NotRunning),
+        Err(source) => Err(ConnectError::Io {
+            socket: paths.socket.clone(),
+            source,
+        }),
+    }
+}
+
 /// Connects to a daemon that began restarting in place, once the restarted
 /// daemon answers, and completes the handshake. Bound it with
 /// [`DAEMON_RESTART_TIMEOUT`]: where a restart closes the endpoint, this

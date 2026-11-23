@@ -9,25 +9,13 @@ use crate::{
     permission::{PermissionMode, PermissionModeParseError},
 };
 
+#[path = "cli_daemon.rs"]
+mod daemon;
+
+pub use daemon::{DaemonCommand, DaemonServeArgs, DaemonTokenCommand};
+
 fn parse_permission_mode(value: &str) -> Result<PermissionMode, PermissionModeParseError> {
     value.parse()
-}
-
-/// The shortest `rho daemon run --unload-idle-after`. Shorter, a session
-/// could unload between one client's consecutive requests, as a reopen
-/// takes up to 41 ms measured (`UNLOAD_IDLE_AFTER` has the receipt), and
-/// the sweep, which runs once per period, would spin.
-const MIN_UNLOAD_IDLE_AFTER: Duration = Duration::from_millis(100);
-
-fn parse_unload_idle_after(value: &str) -> Result<Duration, String> {
-    let duration = parse_duration(value)?;
-    if duration < MIN_UNLOAD_IDLE_AFTER {
-        return Err(format!(
-            "invalid duration '{value}': must be at least {}",
-            humantime::format_duration(MIN_UNLOAD_IDLE_AFTER)
-        ));
-    }
-    Ok(duration)
 }
 
 fn parse_credential_store_backend(value: &str) -> Result<CredentialStoreBackend, String> {
@@ -508,52 +496,6 @@ pub enum WorkflowCommand {
         #[arg(long, value_enum)]
         output: Option<WorkflowRunFormat>,
     },
-}
-
-#[derive(Subcommand, Clone, Debug, PartialEq, Eq)]
-pub enum DaemonCommand {
-    /// Run the daemon in the foreground until stopped. The default.
-    Run {
-        /// Unload a session once it has sat idle this long: no turn under
-        /// way and no client attached. Unloading closes its MCP servers and
-        /// lets other rho processes open it; the next prompt or attach
-        /// reopens it. A session that saved nothing is discarded instead.
-        /// Defaults to 60s; at least 100ms.
-        #[arg(long, value_name = "DURATION", value_parser = parse_unload_idle_after)]
-        unload_idle_after: Option<Duration>,
-        /// The lock and socket descriptors a daemon that re-executes itself
-        /// in place hands the new binary. Only the daemon passes it.
-        #[arg(long, value_name = "LOCK:SOCKET", hide = true)]
-        exec_handoff: Option<String>,
-    },
-    /// Start the daemon in the background unless it is already running,
-    /// and wait until it answers.
-    ///
-    /// Exits 0 once a daemon runs, including one that already did. Waits
-    /// for a daemon that is stopping to exit before starting a new one.
-    Start,
-    /// Show the running daemon's pid, version, uptime, socket, and any
-    /// upgrade it waits to run.
-    ///
-    /// Never starts a daemon. Exits with status 1 when none is running.
-    Status {
-        /// Print one JSON document instead of text.
-        #[arg(long)]
-        json: bool,
-    },
-    /// Stop the running daemon and wait for it to exit.
-    ///
-    /// Exits with status 1 when none is running.
-    Stop,
-    /// Restart the running daemon in place and wait until it answers again.
-    ///
-    /// The daemon keeps its pid, socket, and lock, so clients reconnect to
-    /// it rather than start another, and re-executes its executable, which
-    /// runs an installed upgrade at once. Turns under way are interrupted;
-    /// a TUI session's turn with no time limit continues once the TUI
-    /// attaches to its session again. Starts the daemon when none is
-    /// running.
-    Restart,
 }
 
 #[derive(Subcommand, Clone, Debug)]

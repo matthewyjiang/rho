@@ -8,12 +8,13 @@
 //! daemon. `restart` re-executes the running daemon in place (#1713), as a
 //! replaced executable does once the daemon is idle.
 
-use crate::cli::{Command, DaemonCommand};
+use crate::cli::{Cli, Command, DaemonCommand};
 
 use {
     super::{
         config_repository::ConfigRepository,
         daemon_host::{DaemonHost, JobRecords, Startup, UNLOAD_IDLE_AFTER},
+        daemon_http,
     },
     crate::daemon::{
         self, ConnectAs, DaemonPaths, Ending, Executable, Served, Shutdown, StopRequests,
@@ -28,7 +29,7 @@ use {
     std::{ffi::OsString, sync::Arc, time::Duration},
 };
 
-pub(super) async fn run(command: Option<DaemonCommand>) -> anyhow::Result<()> {
+pub(super) async fn run(command: Option<DaemonCommand>, cli: &Cli) -> anyhow::Result<()> {
     let paths = DaemonPaths::of_this_process()?;
     let run = DaemonCommand::Run {
         unload_idle_after: None,
@@ -46,6 +47,8 @@ pub(super) async fn run(command: Option<DaemonCommand>) -> anyhow::Result<()> {
         DaemonCommand::Status { json } => status(&paths, json).await,
         DaemonCommand::Stop => stop(&paths).await,
         DaemonCommand::Restart => restart(&paths).await,
+        DaemonCommand::Serve(args) => daemon_http::cli::serve(&args, cli).await,
+        DaemonCommand::Token { command } => daemon_http::cli::token(&command, cli),
     }
 }
 
@@ -76,6 +79,23 @@ pub(crate) enum Reach {
 /// `rho login`, and `rho daemon start`.
 pub(super) async fn connect() -> Result<daemon::Connection, Unreachable> {
     connect_with(Reach::StartIfNeeded, ConnectAs::Command).await
+}
+
+/// Opens a raw stream to this rho home's daemon without performing `rho/hello`,
+/// starting the daemon first if none is running. Used by `rho daemon serve`
+/// so remote WebSocket clients complete the handshake end-to-end with the
+/// daemon.
+pub(super) async fn connect_raw_or_start() -> anyhow::Result<daemon::RawStream> {
+    let paths = DaemonPaths::of_this_process()?;
+    match daemon::connect_raw(&paths).await {
+        Ok(stream) => return Ok(stream),
+        Err(daemon::ConnectError::NotRunning) => {}
+        Err(error) => return Err(error.into()),
+    }
+    // Ensure the daemon is running via the standard serialized spawn path,
+    // then open a fresh unhandshaken stream for the remote client.
+    drop(connect().await?);
+    Ok(daemon::connect_raw(&paths).await?)
 }
 
 /// Connects to this rho home's daemon as `reach` allows, declaring what
@@ -384,12 +404,7 @@ fn rerun_args(unload_idle_after: Duration, handoff: Option<String>) -> Vec<OsStr
 /// A config that does not load is logged, and sessions then fail to open
 /// with the same error.
 fn open_credential_store() {
-    let repository = ConfigRepository::new(None);
-    let opened = repository.configured_path().and_then(|path| {
-        let mut config = repository.load()?;
-        crate::credential_store::initialize_from_config(&mut config, &path)
-    });
-    if let Err(error) = opened {
+    if let Err(error) = ConfigRepository::new(None).open_credential_store() {
         tracing::warn!(error = %format!("{error:#}"), "could not open the credential store");
     }
 }
