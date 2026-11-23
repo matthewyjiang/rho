@@ -5,8 +5,8 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use rho_protocol::{
-    methods::SessionAttach, ClientEnvironment, ConfigChangedParams, JobState, SessionAttachParams,
-    SessionChange, SessionId, SessionNewParams,
+    methods::SessionAttach, ClientEnvironment, JobState, SessionAttachParams, SessionChange,
+    SessionId, SessionNewParams,
 };
 use tokio::sync::mpsc;
 
@@ -19,7 +19,7 @@ use super::{
 };
 use crate::{
     app::{
-        daemon_client::{Daemon, Link, StreamPosition},
+        daemon_client::{Daemon, Link, SettingsChange, StreamPosition},
         SettingOrigins,
     },
     tui::{
@@ -27,7 +27,7 @@ use crate::{
         daemon_launch::{DaemonLaunch, InitialSettings},
         daemon_options::setting_name,
         daemon_settings::DaemonSettings,
-        daemon_settings_read::{load_settings, route_config},
+        daemon_settings_read::{load_settings, route_settings},
     },
 };
 
@@ -36,7 +36,7 @@ use crate::{
 pub(super) struct Connection {
     pub(super) daemon: Arc<Daemon>,
     pub(super) link: Arc<Link>,
-    pub(super) config_changes: mpsc::UnboundedReceiver<ConfigChangedParams>,
+    pub(super) settings_changes: mpsc::UnboundedReceiver<SettingsChange>,
     pub(super) settings: anyhow::Result<DaemonSettings>,
 }
 
@@ -50,12 +50,12 @@ impl Connection {
             .await
             .context("could not reach the rho daemon")?;
         // Routed before the reads, so no change after them is dropped.
-        let config_changes = route_config(&daemon);
+        let settings_changes = route_settings(&daemon);
         let settings = load_settings(&link).await;
         Ok(Self {
             daemon,
             link,
-            config_changes,
+            settings_changes,
             settings,
         })
     }

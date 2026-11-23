@@ -21,9 +21,9 @@ use crate::{
     methods::{
         AuthLoginFinishedNotification, AuthLoginFinishedParams, AuthLoginPromptNotification,
         AuthLoginPromptParams, ConfigChangedNotification, ConfigChangedParams, Hello, Method,
-        Notification, SessionDetachedNotification, SessionDetachedParams, SessionEventNotification,
-        SessionEventParams, AUTH_LOGIN_FINISHED, AUTH_LOGIN_PROMPT, CONFIG_CHANGED,
-        SESSION_DETACHED, SESSION_EVENT,
+        ModelChangedNotification, ModelList, Notification, SessionDetachedNotification,
+        SessionDetachedParams, SessionEventNotification, SessionEventParams, AUTH_LOGIN_FINISHED,
+        AUTH_LOGIN_PROMPT, CONFIG_CHANGED, MODEL_CHANGED, SESSION_DETACHED, SESSION_EVENT,
     },
     BuildId, ClientHello, ErrorCode, FrameError, HelloParams, HelloResponse, Message,
     MessageReader, MessageWriter, ParseError, Request, RequestId, Response, RpcError,
@@ -62,6 +62,9 @@ pub enum DaemonNotification {
     LoginPrompt(AuthLoginPromptParams),
     LoginFinished(AuthLoginFinishedParams),
     ConfigChanged(ConfigChangedParams),
+    /// `rho/model/changed`: the whole list, for a connection that listed
+    /// the models.
+    ModelsChanged(ModelList),
     /// A notification a newer daemon sends that this crate does not know.
     Unknown {
         method: String,
@@ -469,6 +472,8 @@ fn decode(notification: jsonrpc::Notification) -> Result<DaemonNotification, Par
             .map(DaemonNotification::LoginFinished)
     } else if method == CONFIG_CHANGED {
         decode_params::<ConfigChangedNotification>(params).map(DaemonNotification::ConfigChanged)
+    } else if method == MODEL_CHANGED {
+        decode_params::<ModelChangedNotification>(params).map(DaemonNotification::ModelsChanged)
     } else {
         Ok(DaemonNotification::Unknown { method })
     }

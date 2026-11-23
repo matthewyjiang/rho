@@ -2,12 +2,13 @@ use std::collections::BTreeMap;
 
 use pretty_assertions::assert_eq;
 use rho_protocol::{
-    Applies, ConfigCategory, ConfigChangedParams, ConfigError, ConfigNamespace, ConfigRevision,
-    ConfigSchema, IntegerUnit, ModelChoice, ModelRef, ModelRuntime, ModelSelection, SettingChoice,
-    SettingEntry, SettingKey, SettingKind, SettingSpec, SettingValue, ValueSource,
+    Applies, ClaudeCliModel, ConfigCategory, ConfigChangedParams, ConfigError, ConfigNamespace,
+    ConfigRevision, ConfigSchema, IntegerUnit, ModelChoice, ModelList, ModelRef, ModelRuntime,
+    ModelSelection, SettingChoice, SettingEntry, SettingKey, SettingKind, SettingSpec,
+    SettingValue, ValueSource,
 };
 
-use super::{Applied, DaemonSettings, NamespaceValues, SettingsNamespace};
+use super::{Applied, DaemonSettings, ListedModels, NamespaceValues, SettingsNamespace};
 use crate::tui::config_row::ConfigRow;
 use crate::tui::{picker::PickerDetail, PickerItem};
 
@@ -44,14 +45,22 @@ fn values(
     }
 }
 
-fn models() -> Vec<ModelChoice> {
-    vec![ModelChoice {
-        model: ModelRef {
-            provider: "openai".into(),
-            model: "gpt-5.5".into(),
-        },
-        label: "GPT-5.5".into(),
-    }]
+/// The daemon's model list: one model rho runs, and Claude Code's default.
+fn models() -> ModelList {
+    ModelList {
+        models: vec![ModelChoice {
+            model: ModelRef {
+                provider: "openai".into(),
+                model: "gpt-5.5".into(),
+            },
+            label: "GPT-5.5".into(),
+        }],
+        claude_cli: vec![ClaudeCliModel {
+            model: None,
+            label: "claude-code/default".into(),
+            detail: "Set no model and use whichever model Claude Code selects.".into(),
+        }],
+    }
 }
 
 /// One kind of each, as the daemon would serve them.
@@ -203,7 +212,13 @@ pub(in crate::tui) fn settings() -> DaemonSettings {
         ],
         Vec::new(),
     );
-    DaemonSettings::new(schema, vec![zen], agent, tui)
+    DaemonSettings::new(
+        schema,
+        vec![zen],
+        agent,
+        tui,
+        ListedModels::Listed(models()),
+    )
 }
 
 /// What a row shows and does, compared whole.
@@ -289,7 +304,7 @@ fn setting_rows_show_values_applies_and_problems() {
     let settings = settings();
     let agent = SettingsNamespace::Agent;
     assert_eq!(
-        rows(settings.setting_rows(agent, "agent", &models())),
+        rows(settings.setting_rows(agent, "agent")),
         vec![
             Row {
                 section: Some("Advisor".into()),
@@ -315,7 +330,7 @@ fn setting_rows_show_values_applies_and_problems() {
         ]
     );
     assert_eq!(
-        rows(settings.setting_rows(agent, "context", &models())),
+        rows(settings.setting_rows(agent, "context")),
         vec![Row {
             section: None,
             label: "Compact threshold".into(),
@@ -329,7 +344,7 @@ fn setting_rows_show_values_applies_and_problems() {
     );
 }
 
-// Covers: a model setting's page offers the session's models and Claude Code's
+// Covers: a model setting's page offers the daemon's models and Claude Code's
 // rows as its runtimes allow, marks the current one, and offers a reset once the
 // file sets it; a choice left at its default offers no reset.
 // Owner: daemon settings schema → `/config` rows (pure).
@@ -346,13 +361,7 @@ fn value_rows_offer_each_value_and_a_reset_once_set() {
     };
     let model_key = SettingKey::new("internal_agents.advisor");
     assert_eq!(
-        rows(settings.value_rows(agent, &model_key, &models()).unwrap())
-            .into_iter()
-            // Each Claude Code alias gets a row too; the default stands in.
-            .filter(
-                |row| !row.label.starts_with("claude-code/") || row.label == "claude-code/default"
-            )
-            .collect::<Vec<_>>(),
+        rows(settings.value_rows(agent, &model_key).unwrap()),
         vec![
             Row {
                 section: None,
@@ -391,7 +400,7 @@ fn value_rows_offer_each_value_and_a_reset_once_set() {
     );
     let shell = SettingKey::new("behavior.inline_shell");
     assert_eq!(
-        rows(settings.value_rows(agent, &shell, &models()).unwrap())
+        rows(settings.value_rows(agent, &shell).unwrap())
             .into_iter()
             .map(|row| (row.label, row.badge))
             .collect::<Vec<_>>(),
@@ -401,7 +410,7 @@ fn value_rows_offer_each_value_and_a_reset_once_set() {
         ]
     );
     let mode = SettingKey::new("behavior.advisor_mode");
-    assert!(settings.value_rows(agent, &mode, &models()).is_none());
+    assert!(settings.value_rows(agent, &mode).is_none());
 }
 
 // Covers: a change notification carries only changed entries, so the cache

@@ -20,7 +20,7 @@ use rho_protocol::{
 
 use super::{
     config_row::ConfigRow,
-    daemon_settings::{display_value, DaemonSettings, SettingsNamespace},
+    daemon_settings::{DaemonSettings, SettingsNamespace},
     text_input::TextInput,
     App, ComposerMode, Entry, PickerItem, TuiSettings, UiPicker,
 };
@@ -49,6 +49,8 @@ pub(super) enum ConfigPage {
 pub(super) enum SettingsUpdate {
     Loaded(Box<DaemonSettings>),
     Changed(Box<rho_protocol::ConfigChangedParams>),
+    /// The daemon's model list changed (`rho/model/changed`).
+    ModelsChanged(Box<rho_protocol::ModelList>),
     /// A read failed, with why. The connection gets no changes then, so
     /// the settings read before are dropped rather than kept stale.
     Unreadable(String),
@@ -73,16 +75,13 @@ impl App {
                 let settings = self.daemon_settings.as_ref()?;
                 UiPicker::config(
                     settings.category_label(*namespace, id),
-                    settings.setting_rows(*namespace, id, self.daemon_models()),
+                    settings.setting_rows(*namespace, id),
                 )
             }
             ConfigPage::Setting { namespace, key } => {
                 let settings = self.daemon_settings.as_ref()?;
                 let label = settings.spec(*namespace, key)?.label.clone();
-                UiPicker::config(
-                    label,
-                    settings.value_rows(*namespace, key, self.daemon_models())?,
-                )
+                UiPicker::config(label, settings.value_rows(*namespace, key)?)
             }
             ConfigPage::AdvisorOn => self.advisor_on_picker()?,
         };
@@ -132,12 +131,6 @@ impl App {
             "Delete every saved composer prompt, after a confirmation.",
         ));
         Some(UiPicker::config("Config · saves automatically", items))
-    }
-
-    pub(super) fn daemon_models(&self) -> &[rho_protocol::ModelChoice] {
-        self.daemon_options
-            .as_ref()
-            .map_or(&[], |options| options.model.available.as_slice())
     }
 
     /// Rebuilds a config page so its rows show the current settings.
@@ -415,18 +408,15 @@ impl App {
 
     /// Sends `change` to the daemon and says what it will do.
     pub(super) fn save_setting(&mut self, namespace: SettingsNamespace, change: SettingChange) {
-        let Some(spec) = self
-            .daemon_settings
-            .as_ref()
-            .and_then(|settings| settings.spec(namespace, change.key()))
-        else {
+        let Some(settings) = self.daemon_settings.as_ref() else {
+            return;
+        };
+        let Some(spec) = settings.spec(namespace, change.key()) else {
             return;
         };
         let label = status_label(&spec.label);
         let shown = match &change {
-            SettingChange::Set { value, .. } => {
-                display_value(spec, Some(value), self.daemon_models())
-            }
+            SettingChange::Set { value, .. } => settings.display_value(spec, Some(value)),
             SettingChange::Reset { .. } => "default".into(),
         };
         let status = match applies_status(spec.applies) {
@@ -478,6 +468,9 @@ impl App {
         // what each change names.
         let (tui_values, problems) = match update {
             SettingsUpdate::Loaded(settings) => {
+                if let Some(error) = settings.unlisted_models() {
+                    self.insert_entry(&Entry::Error(format!("could not list the models: {error}")));
+                }
                 let problems = settings.problems();
                 let mut values = settings.values(SettingsNamespace::Tui).values.clone();
                 if self.streams.mode_from_shortcut {
@@ -495,6 +488,16 @@ impl App {
                 self.insert_entry(&Entry::Error(format!(
                     "could not read the rho settings: {error}"
                 )));
+                self.refresh_open_config_page();
+                return;
+            }
+            SettingsUpdate::ModelsChanged(models) => {
+                if let Some(settings) = &mut self.daemon_settings {
+                    settings.set_models(*models);
+                }
+                // The lists the daemon fetched also name models and say
+                // what they can do.
+                self.model_lists_refreshed();
                 self.refresh_open_config_page();
                 return;
             }

@@ -14,12 +14,12 @@ use crate::methods::{
     AnswerStop, Applies, ApprovalSource, Ask, AuthKind, AuthStatus, BackgroundItem,
     BackgroundStatus, Budget, CardTone, CommandKind, CompactionStatus, CompactionTrigger,
     ConfigLayer, ConfigNamespace, ContentBlock, CredentialStoreKind, DefaultStyle, DetachReason,
-    InputAsker, IntegerUnit, JobKind, JobState, LoginOutcome, ModelRuntime, Operation, PathScope,
-    PermissionMode, PlanStatus, ProcessState, ProcessStream, PromptAuthor, ReasoningLevel,
-    Resolution, RetryReason, Selection, SessionActivity, SessionControlAction, SessionEvent,
-    SessionMcpMode, SessionMcpResourceContent, SessionMcpStatus, SettingKind, StoreSelectedBy,
-    ToolContent, ToolKind, ToolStatus, TurnErrorKind, TurnOutcome, UncheckedReason, UnsteerOutcome,
-    ValueSource, WorktreeVerdict,
+    InputAsker, IntegerUnit, JobKind, JobState, LoginOutcome, ModelListKind, ModelRefreshOutcome,
+    ModelRuntime, Operation, PathScope, PermissionMode, PlanStatus, ProcessState, ProcessStream,
+    PromptAuthor, ReasoningLevel, Resolution, RetryReason, Selection, SessionActivity,
+    SessionControlAction, SessionEvent, SessionMcpMode, SessionMcpResourceContent,
+    SessionMcpStatus, SettingKind, StoreSelectedBy, ToolContent, ToolKind, ToolStatus,
+    TurnErrorKind, TurnOutcome, UncheckedReason, UnsteerOutcome, ValueSource, WorktreeVerdict,
 };
 
 // Covers: the committed schema/protocol.json is what the wire types
@@ -59,7 +59,7 @@ fn enums_marked_open_read_unknown_values_as_unknown() {
     let unseen = || json!("from_a_newer_daemon");
     let unseen_tag = || json!({ "type": "from_a_newer_daemon" });
     let unseen_kind = || json!({ "kind": "from_a_newer_daemon" });
-    let cases: [(&str, bool); 63] = [
+    let cases: [(&str, bool); 65] = [
         (
             "SessionMcpResourceContent",
             reads_as(unseen_tag(), SessionMcpResourceContent::Unknown),
@@ -200,6 +200,11 @@ fn enums_marked_open_read_unknown_values_as_unknown() {
         (
             "WorktreeVerdict",
             reads_as(unseen_kind(), WorktreeVerdict::Unknown),
+        ),
+        ("ModelListKind", reads_as(unseen(), ModelListKind::Unknown)),
+        (
+            "ModelRefreshOutcome",
+            reads_as(unseen_tag(), ModelRefreshOutcome::Unknown),
         ),
     ];
 

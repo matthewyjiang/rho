@@ -22,7 +22,7 @@ use crate::{
         daemon_launch::{DaemonLaunch, InitialSettings},
         daemon_options::{change_failure, setting_name},
         daemon_requests::DaemonRequests,
-        daemon_settings_read::{load_settings, route_config, settings_loaded},
+        daemon_settings_read::{load_settings, route_settings, settings_loaded},
     },
 };
 
@@ -46,7 +46,7 @@ impl DaemonSession {
         let Connection {
             daemon,
             link,
-            config_changes,
+            settings_changes,
             settings,
         } = Connection::open().await?;
         let (target, requests) = watch::channel(Target::Unopened);
@@ -58,7 +58,7 @@ impl DaemonSession {
             requests: Some(DaemonRequests::new(requests, Arc::clone(&daemon))),
             daemon,
             launch,
-            config_changes,
+            settings_changes,
             target,
             pending,
             logins: None,
@@ -154,7 +154,7 @@ impl DaemonSession {
         // A connection since the settings were read has none of their
         // subscription.
         if !Arc::ptr_eq(&link, &settings_link) {
-            self.config_changes = route_config(&self.daemon);
+            self.settings_changes = route_settings(&self.daemon);
             self.pending
                 .push(settings_loaded(load_settings(&link).await));
         }
@@ -207,7 +207,8 @@ impl DaemonSession {
             SessionChange::AddDirectory { path } => options.add_directory(path.clone()),
             // The session reads the agent and model lists as it opens; the
             // draft's models follow the auths the app reads
-            // (`set_draft_auths`).
+            // (`set_draft_auths`) and the lists the daemon fetches
+            // (`model_lists_changed`).
             SessionChange::AgentCatalog | SessionChange::ModelCatalog => Ok(()),
             // Each needs a turn or a saved conversation, which a session
             // has only once its first prompt opened it.
@@ -253,6 +254,16 @@ impl DaemonSession {
                 self.pending
                     .push(DaemonView::Options(Box::new(draft.options.options())));
             }
+        }
+    }
+
+    /// Lists a draft's models again once the daemon fetched model lists,
+    /// which may add or drop some; nothing once the session opened, whose
+    /// options the daemon refreshes itself.
+    pub(in crate::tui) fn model_lists_changed(&mut self) {
+        if let Following::Draft(draft) = &self.following {
+            self.pending
+                .push(DaemonView::Options(Box::new(draft.options.options())));
         }
     }
 }

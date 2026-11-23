@@ -10,24 +10,26 @@ use crate::{
         AuthChooseStore, AuthChooseStoreParams, AuthKey, AuthKeyParams, AuthList, AuthListParams,
         AuthLoginCancel, AuthLoginCancelParams, AuthLogout, AuthLogoutParams, ConfigRegister,
         ConfigRegisterParams, ConfigSchemaMethod, ConfigSchemaParams, ConfigSet, ConfigSetParams,
-        JobList, JobListParams, Restart, RestartParams, RestartResponse, SessionAnswer,
-        SessionAnswerParams, SessionBackgroundList, SessionBackgroundListParams,
-        SessionBackgroundStop, SessionBackgroundStopParams, SessionCancel, SessionCancelParams,
-        SessionConfigure, SessionConfigureParams, SessionDelete, SessionDeleteParams, SessionHold,
-        SessionHoldParams, SessionId, SessionInspect, SessionInspectParams, SessionList,
-        SessionListParams, SessionMcp, SessionMcpCatalogParams, SessionMcpCatalogRead,
-        SessionMcpComplete, SessionMcpCompleteParams, SessionMcpParams, SessionMcpResourceParams,
+        JobList, JobListParams, ModelRefresh, ModelRefreshParams, Restart, RestartParams,
+        RestartResponse, SessionAnswer, SessionAnswerParams, SessionBackgroundList,
+        SessionBackgroundListParams, SessionBackgroundStop, SessionBackgroundStopParams,
+        SessionCancel, SessionCancelParams, SessionConfigure, SessionConfigureParams,
+        SessionDelete, SessionDeleteParams, SessionHold, SessionHoldParams, SessionId,
+        SessionInspect, SessionInspectParams, SessionList, SessionListParams, SessionMcp,
+        SessionMcpCatalogParams, SessionMcpCatalogRead, SessionMcpComplete,
+        SessionMcpCompleteParams, SessionMcpParams, SessionMcpResourceParams,
         SessionMcpResourceRead, SessionNew, SessionNewParams, SessionProcesses,
         SessionProcessesParams, SessionPrompt, SessionPromptParams, SessionRename,
         SessionRenameParams, SessionSteer, SessionSteerParams, SessionSurfaceAction,
         SessionSurfaceActionParams, SessionUnsteer, SessionUnsteerParams, Status, Stop,
         WorktreePrune, WorktreePruneParams, AUTH_CHOOSE_STORE, AUTH_KEY, AUTH_LIST,
         AUTH_LOGIN_CANCEL, AUTH_LOGOUT, CONFIG_REGISTER, CONFIG_SCHEMA, CONFIG_SET, DAEMON_RESTART,
-        DAEMON_STATUS, DAEMON_STOP, JOB_LIST, SESSION_ANSWER, SESSION_BACKGROUND_LIST,
-        SESSION_BACKGROUND_STOP, SESSION_CANCEL, SESSION_CONFIGURE, SESSION_DELETE, SESSION_HOLD,
-        SESSION_INSPECT, SESSION_LIST, SESSION_MCP, SESSION_MCP_CATALOG, SESSION_MCP_COMPLETE,
-        SESSION_MCP_RESOURCE, SESSION_NEW, SESSION_PROCESSES, SESSION_PROMPT, SESSION_RENAME,
-        SESSION_STEER, SESSION_SURFACE_ACTION, SESSION_UNSTEER, WORKTREE_PRUNE,
+        DAEMON_STATUS, DAEMON_STOP, JOB_LIST, MODEL_REFRESH, SESSION_ANSWER,
+        SESSION_BACKGROUND_LIST, SESSION_BACKGROUND_STOP, SESSION_CANCEL, SESSION_CONFIGURE,
+        SESSION_DELETE, SESSION_HOLD, SESSION_INSPECT, SESSION_LIST, SESSION_MCP,
+        SESSION_MCP_CATALOG, SESSION_MCP_COMPLETE, SESSION_MCP_RESOURCE, SESSION_NEW,
+        SESSION_PROCESSES, SESSION_PROMPT, SESSION_RENAME, SESSION_STEER, SESSION_SURFACE_ACTION,
+        SESSION_UNSTEER, WORKTREE_PRUNE,
     },
     server::{decode_params, encode_result, Service},
     ErrorCode, RpcError, StatusParams, StopParams, StopResponse,
@@ -68,6 +70,7 @@ pub(crate) enum ServiceCall {
     ConfigSchema,
     RegisterConfig(ConfigRegisterParams),
     SetConfig(ConfigSetParams),
+    RefreshModels(ModelRefreshParams),
 }
 
 impl ServiceCall {
@@ -126,6 +129,7 @@ impl ServiceCall {
                 .map(|ConfigSchemaParams {}| Self::ConfigSchema),
             CONFIG_REGISTER => decode_params::<ConfigRegister>(params).map(Self::RegisterConfig),
             CONFIG_SET => decode_params::<ConfigSet>(params).map(Self::SetConfig),
+            MODEL_REFRESH => decode_params::<ModelRefresh>(params).map(Self::RefreshModels),
             method => Err(RpcError::new(
                 ErrorCode::MethodNotFound,
                 format!("unknown method {method}"),
@@ -169,7 +173,8 @@ impl ServiceCall {
             | Self::ChooseStore(_)
             | Self::ConfigSchema
             | Self::RegisterConfig(_)
-            | Self::SetConfig(_) => None,
+            | Self::SetConfig(_)
+            | Self::RefreshModels(_) => None,
         }
     }
 
@@ -272,6 +277,9 @@ impl ServiceCall {
             }
             Self::SetConfig(params) => {
                 encode_result::<ConfigSet>(&service.set_config(params).await?)
+            }
+            Self::RefreshModels(params) => {
+                encode_result::<ModelRefresh>(&service.refresh_models(params).await?)
             }
         }
     }

@@ -318,11 +318,8 @@ use {
     rho_providers::credentials::CredentialStore,
     rho_providers::model::{
         catalog::{self, LoginTarget, ModelSelection},
-        favorites,
-        provider_models::refresh_provider_models_with_store,
-        ModelMetadata, ReasoningRequestSource,
+        favorites, ModelMetadata, ReasoningRequestSource,
     },
-    rho_providers::provider,
     rho_providers::reasoning::ReasoningLevel,
 };
 /// Viewport height used by line-level tests that render without a real terminal.

@@ -470,7 +470,7 @@ fn ollama_is_refreshed_and_listed_only_after_login() {
     harness.submit_text("/refresh-models").unwrap();
     harness
         .wait_for_text(
-            "failed to refresh the models.dev catalog",
+            "could not refresh the models.dev catalog",
             WaitTimeout::secs(20, "refresh-all finished"),
         )
         .unwrap();

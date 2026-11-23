@@ -160,6 +160,8 @@ pub(super) enum DaemonView {
     SettingsLoaded(Result<Box<super::daemon_settings::DaemonSettings>, String>),
     /// Settings of a namespace the TUI read changed.
     SettingsChanged(Box<rho_protocol::ConfigChangedParams>),
+    /// The models the settings' model pages offer changed.
+    ModelsChanged(Box<rho_protocol::ModelList>),
     /// One background configure request finished, successfully or otherwise.
     ConfigureFinished,
     /// Whether a turn runs, as the job's state says.
@@ -207,9 +209,22 @@ pub(super) enum LoginUpdate {
     Finished {
         login: LoginId,
         outcome: LoginOutcome,
+        /// The model lists the daemon fetched once it saved the login.
+        refreshed: Vec<rho_protocol::ModelListRefresh>,
     },
     /// The connection it belonged to closed, which cancelled it.
     Lost,
+}
+
+impl DaemonView {
+    /// The view of what the settings route carried.
+    pub(super) fn of_settings(change: crate::app::daemon_client::SettingsChange) -> Self {
+        use crate::app::daemon_client::SettingsChange;
+        match change {
+            SettingsChange::Config(changed) => Self::SettingsChanged(Box::new(changed)),
+            SettingsChange::Models(list) => Self::ModelsChanged(Box::new(list)),
+        }
+    }
 }
 
 /// Whether the session runs a turn.

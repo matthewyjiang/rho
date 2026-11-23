@@ -263,6 +263,7 @@ async fn a_relayed_login_signs_in_a_running_session() {
             AuthLoginFinishedParams {
                 login,
                 outcome: LoginOutcome::Succeeded,
+                refreshed: Vec::new(),
             },
             (BTreeSet::from(["xai".to_owned()]), 0),
             AuthStatus::SignedIn,
@@ -372,6 +373,7 @@ async fn a_login_ends_when_cancelled_or_its_client_leaves() {
             AuthLoginFinishedParams {
                 login,
                 outcome: LoginOutcome::Cancelled,
+                refreshed: Vec::new(),
             },
             Some(Some(ErrorCode::LoginNotFound)),
             None,

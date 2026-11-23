@@ -256,8 +256,15 @@
       "type": "object"
     },
     "AuthKeyResponse": {
-      "description": "Result of [`AUTH_KEY`]: the key is saved to the credential store the\ndaemon's config selects. Running sessions on the auth profile use it from\ntheir next prompt; new sessions use it at once.\n\nThe daemon first asks the provider's models endpoint about the key and\nrefuses one the provider refuses with\n[`crate::ErrorCode::KeyRefused`], saving nothing. A key the provider\ncannot be asked about, because rho lists no models for it, the endpoint\ndid not answer, or the key may not list models, is saved unchecked.",
+      "description": "Result of [`AUTH_KEY`]: the key is saved to the credential store the\ndaemon's config selects. Running sessions on the auth profile use it from\ntheir next prompt; new sessions use it at once.\n\nThe daemon first asks the provider's models endpoint about the key and\nrefuses one the provider refuses with\n[`crate::ErrorCode::KeyRefused`], saving nothing. A key the provider\ncannot be asked about, because rho lists no models for it, the endpoint\ndid not answer, or the key may not list models, is saved unchecked.\n\nOnce the key is saved, the daemon fetches the provider's model lists\nwith it, then answers.",
       "properties": {
+        "refreshed": {
+          "description": "The provider's model lists the daemon fetched with the key, and\nhow each fetch went; empty for a provider that lists no models.",
+          "items": {
+            "$ref": "#/$defs/ModelListRefresh"
+          },
+          "type": "array"
+        },
         "unchecked": {
           "anyOf": [
             {
@@ -344,6 +351,13 @@
         },
         "outcome": {
           "$ref": "#/$defs/LoginOutcome"
+        },
+        "refreshed": {
+          "description": "For a login that `succeeded`, the provider's model lists the daemon\nfetched with the new credential before it said so, and how each\nfetch went; empty for a provider that lists no models, and for any\nother outcome.\n\n# Next major\n\nNEXT_MAJOR(rho-protocol): move `refreshed` into `LoginOutcome::Succeeded`, the only outcome that has it.\n\n`Succeeded` is a unit variant, so a field there would break every\nmatch on it; send it with [`crate::LoginRelay::succeed`].",
+          "items": {
+            "$ref": "#/$defs/ModelListRefresh"
+          },
+          "type": "array"
         }
       },
       "required": [
@@ -737,6 +751,30 @@
       "required": [
         "value",
         "label"
+      ],
+      "type": "object"
+    },
+    "ClaudeCliModel": {
+      "description": "One model the Claude Code CLI runs.",
+      "properties": {
+        "detail": {
+          "description": "What the model is, for a picker row.",
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "model": {
+          "description": "What [`super::ModelSelection::ClaudeCli`]'s `model` holds for it;\nabsent for the CLI's own default.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "label",
+        "detail"
       ],
       "type": "object"
     },
@@ -2682,6 +2720,83 @@
       ],
       "type": "object"
     },
+    "ModelList": {
+      "description": "Result of [`MODEL_LIST`], and the params of [`MODEL_CHANGED`], which\ncarries the whole list again whenever it changes: after a credential\nwrite, a refreshed model list, or [`super::SessionChange::ModelCatalog`].\nListing again replaces the connection's subscription, so the\nnotification then follows the latest `environment`.",
+      "properties": {
+        "claude_cli": {
+          "description": "The models a [`super::ModelRuntime::ClaudeCli`] setting may take:\nthe CLI's own default first, then the aliases it resolves to its\nlatest models. The CLI also takes full model ids this list does\nnot carry.",
+          "items": {
+            "$ref": "#/$defs/ClaudeCliModel"
+          },
+          "type": "array"
+        },
+        "models": {
+          "description": "The models rho runs that the client's credentials reach\n([`super::ModelRuntime::Rho`]), the user's favorites first, labelled\nas a session's [`super::ModelOptions::available`] labels them. A\nchange to the favorites alone sends no [`MODEL_CHANGED`]; the order\nfollows at the next change above.",
+          "items": {
+            "$ref": "#/$defs/ModelChoice"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "models",
+        "claude_cli"
+      ],
+      "type": "object"
+    },
+    "ModelListKind": {
+      "anyOf": [
+        {
+          "const": "chat",
+          "description": "The models a session can talk to.",
+          "type": "string"
+        },
+        {
+          "const": "decision",
+          "description": "The models a host serves for decisions, such as the permission\nclassifier's.",
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "Which of a provider's model lists. Protocol minors may add kinds."
+    },
+    "ModelListParams": {
+      "description": "Params of [`MODEL_LIST`].",
+      "properties": {
+        "environment": {
+          "$ref": "#/$defs/ClientEnvironment",
+          "description": "The asking client's environment, whose credential variables and\n`RHO_CREDENTIAL_STORE` decide which providers it is signed in to,\nas for [`super::AUTH_LIST`]."
+        }
+      },
+      "required": [
+        "environment"
+      ],
+      "type": "object"
+    },
+    "ModelListRefresh": {
+      "description": "One provider model list the daemon fetched.",
+      "properties": {
+        "list": {
+          "$ref": "#/$defs/ModelListKind"
+        },
+        "outcome": {
+          "$ref": "#/$defs/ModelRefreshOutcome"
+        },
+        "provider": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider",
+        "list",
+        "outcome"
+      ],
+      "type": "object"
+    },
     "ModelOptions": {
       "description": "The session's model and the models it may switch to.",
       "properties": {
@@ -2720,6 +2835,128 @@
       "required": [
         "provider",
         "model"
+      ],
+      "type": "object"
+    },
+    "ModelRefreshOutcome": {
+      "anyOf": [
+        {
+          "description": "The fetch saved `models` entries.",
+          "properties": {
+            "models": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": {
+              "const": "refreshed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "models"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The fetch failed; `message` says why, for a person. The list the\ndaemon had stays.",
+          "properties": {
+            "message": {
+              "type": "string"
+            },
+            "type": {
+              "const": "failed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "message"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "properties": {
+            "type": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object",
+          "x-rho-other": true
+        }
+      ],
+      "description": "How one fetch went. Protocol minors may add outcomes."
+    },
+    "ModelRefreshParams": {
+      "description": "Params of [`MODEL_REFRESH`].",
+      "properties": {
+        "environment": {
+          "$ref": "#/$defs/ClientEnvironment",
+          "description": "The asking client's environment, as for [`ModelListParams`]: its\ncredentials fetch the lists."
+        },
+        "only": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelRefreshTarget"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Only this provider's lists, without the models.dev catalog, as\nafter a sign-in the client made without the daemon. Absent fetches\nevery signed-in provider's lists, then the catalog."
+        }
+      },
+      "required": [
+        "environment"
+      ],
+      "type": "object"
+    },
+    "ModelRefreshResponse": {
+      "description": "Result of [`MODEL_REFRESH`], once every fetch ended. Every loaded\nsession's options and every [`MODEL_LIST`] subscriber follow.",
+      "properties": {
+        "catalog": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelRefreshOutcome"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The models.dev catalog, which names models and says what each can\ndo; absent when the refresh asked for [`ModelRefreshParams::only`]\none provider."
+        },
+        "lists": {
+          "description": "Each list fetched, by provider: one for each signed-in provider\nthat lists its models, none for one that lists none.",
+          "items": {
+            "$ref": "#/$defs/ModelListRefresh"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "lists"
+      ],
+      "type": "object"
+    },
+    "ModelRefreshTarget": {
+      "description": "The one provider a [`MODEL_REFRESH`] fetches the lists of.",
+      "properties": {
+        "auth": {
+          "description": "The auth profile whose credential fetches them, as `--auth` names\none, such as `none` for a host that takes no key. One the provider\ndoes not take is [`crate::ErrorCode::InvalidParams`], as is a host\nlogged in through its endpoint (Ollama) before that login.",
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider",
+        "auth"
       ],
       "type": "object"
     },
@@ -4203,7 +4440,7 @@
           "type": "object"
         },
         {
-          "description": "Read the model lists again: a client sends it after it refreshed\nthe lists the daemon shares on disk. Every loaded session's options\nfollow.",
+          "description": "Read the model lists again: a client sends it after it refreshed\nthe lists the daemon shares on disk. Every loaded session's options\nfollow, and so does every [`super::MODEL_LIST`] subscriber.\n\n# Next major\n\nNEXT_MAJOR(rho-protocol): remove `SessionChange::ModelCatalog`; clients have the daemon fetch the lists with `rho/model/refresh`, which needs no session.\n\nThe daemon now fetches the lists itself, so nothing in rho sends it;\nit stays so a client of this major that writes the lists still\nreaches the daemon.",
           "properties": {
             "kind": {
               "const": "model_catalog",
@@ -7942,6 +8179,22 @@
         "$ref": "#/$defs/JobListResponse"
       }
     },
+    "rho/model/list": {
+      "params": {
+        "$ref": "#/$defs/ModelListParams"
+      },
+      "result": {
+        "$ref": "#/$defs/ModelList"
+      }
+    },
+    "rho/model/refresh": {
+      "params": {
+        "$ref": "#/$defs/ModelRefreshParams"
+      },
+      "result": {
+        "$ref": "#/$defs/ModelRefreshResponse"
+      }
+    },
     "rho/session/answer": {
       "params": {
         "$ref": "#/$defs/SessionAnswerParams"
@@ -8149,6 +8402,11 @@
     "rho/config/changed": {
       "params": {
         "$ref": "#/$defs/ConfigChangedParams"
+      }
+    },
+    "rho/model/changed": {
+      "params": {
+        "$ref": "#/$defs/ModelList"
       }
     },
     "rho/session/detached": {

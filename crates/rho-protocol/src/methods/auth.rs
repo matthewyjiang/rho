@@ -11,7 +11,7 @@ use std::fmt;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::ClientEnvironment;
+use super::{ClientEnvironment, ModelListRefresh};
 
 /// List the auth profiles a client can sign the daemon in to. The ACP
 /// adapter's `initialize` reads it for its auth methods (#1670).
@@ -128,12 +128,19 @@ impl fmt::Debug for AuthKeyParams {
 /// [`crate::ErrorCode::KeyRefused`], saving nothing. A key the provider
 /// cannot be asked about, because rho lists no models for it, the endpoint
 /// did not answer, or the key may not list models, is saved unchecked.
+///
+/// Once the key is saved, the daemon fetches the provider's model lists
+/// with it, then answers.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct AuthKeyResponse {
     /// Why the key was saved without the provider checking it. Absent when
     /// the provider accepted it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unchecked: Option<UncheckedKey>,
+    /// The provider's model lists the daemon fetched with the key, and
+    /// how each fetch went; empty for a provider that lists no models.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub refreshed: Vec<ModelListRefresh>,
 }
 
 /// Why [`AUTH_KEY`] saved a key the provider did not check.

@@ -198,6 +198,9 @@ impl App {
                 DaemonView::SettingsChanged(changed) => {
                     self.show_daemon_settings(SettingsUpdate::Changed(changed));
                 }
+                DaemonView::ModelsChanged(models) => {
+                    self.show_daemon_settings(SettingsUpdate::ModelsChanged(models));
+                }
                 DaemonView::ConfigureFinished => self.finish_daemon_option_request(),
                 DaemonView::Turn(state) => self.show_daemon_turn(state).await,
                 DaemonView::SteerApplied(id) => {

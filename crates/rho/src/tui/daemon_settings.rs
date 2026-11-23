@@ -3,16 +3,18 @@
 //! Once it attaches, a followed session registers the `tui` client's
 //! settings, then reads the agent schema and both namespaces' values
 //! (`daemon_settings_read`), and again on the new connection after the
-//! daemon restarts; `rho/config/changed` keeps them current.
-//! [`DaemonSettings`] is that cache, and maps it to `/config` rows;
-//! `settings_screen` owns the pages and what choosing a row does.
+//! daemon restarts; `rho/config/changed` keeps them current. It reads the
+//! models a model setting may take there too, which `rho/model/changed`
+//! keeps current. [`DaemonSettings`] is that cache, and maps it to
+//! `/config` rows; `settings_screen` owns the pages and what choosing a row
+//! does.
 
 use std::collections::BTreeMap;
 
 use rho_protocol::{
     Applies, ClientName, ConfigChangedParams, ConfigError, ConfigGetResponse, ConfigNamespace,
-    ConfigRevision, ConfigSchema, IntegerUnit, ModelRuntime, ModelSelection, SettingEntry,
-    SettingKey, SettingKind, SettingSpec, SettingValue,
+    ConfigRevision, ConfigSchema, IntegerUnit, ModelChoice, ModelList, ModelRuntime,
+    ModelSelection, SettingEntry, SettingKey, SettingKind, SettingSpec, SettingValue,
 };
 
 use super::{
@@ -97,6 +99,20 @@ pub(crate) struct DaemonSettings {
     tui_specs: Vec<SettingSpec>,
     agent: NamespaceValues,
     tui: NamespaceValues,
+    /// The models a model setting may take, as `rho/model/list` answered
+    /// this process.
+    models: ListedModels,
+}
+
+/// The models a model setting may take, as the daemon listed them.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum ListedModels {
+    Listed(ModelList),
+    /// The daemon could not list them, and said why: a build older than
+    /// `rho/model/list`, or a config file that does not load. The other
+    /// settings still show; a model setting offers no models until the
+    /// settings are read again.
+    Unlisted(String),
 }
 
 impl DaemonSettings {
@@ -105,6 +121,7 @@ impl DaemonSettings {
         tui_specs: Vec<SettingSpec>,
         agent: NamespaceValues,
         tui: NamespaceValues,
+        models: ListedModels,
     ) -> Self {
         schema
             .settings
@@ -114,7 +131,33 @@ impl DaemonSettings {
             tui_specs,
             agent,
             tui,
+            models,
         }
+    }
+
+    /// The models rho runs that a model setting may take.
+    pub(super) fn models(&self) -> &[ModelChoice] {
+        self.listed().map_or(&[], |list| &list.models)
+    }
+
+    /// Why the daemon could not list the models, when it could not.
+    pub(super) fn unlisted_models(&self) -> Option<&str> {
+        match &self.models {
+            ListedModels::Listed(_) => None,
+            ListedModels::Unlisted(error) => Some(error),
+        }
+    }
+
+    fn listed(&self) -> Option<&ModelList> {
+        match &self.models {
+            ListedModels::Listed(list) => Some(list),
+            ListedModels::Unlisted(_) => None,
+        }
+    }
+
+    /// Takes in a `rho/model/changed`.
+    pub(super) fn set_models(&mut self, models: ModelList) {
+        self.models = ListedModels::Listed(models);
     }
 
     /// Takes in a `rho/config/changed`; `None` for a namespace the TUI
@@ -243,12 +286,7 @@ impl DaemonSettings {
     /// Category `id`'s setting rows, in registry order, under their
     /// sections. A row's badge is its value; its detail is the help, when
     /// the change applies, and the file's problem with it, if any.
-    pub(super) fn setting_rows(
-        &self,
-        namespace: SettingsNamespace,
-        id: &str,
-        models: &[rho_protocol::ModelChoice],
-    ) -> Vec<PickerItem> {
+    pub(super) fn setting_rows(&self, namespace: SettingsNamespace, id: &str) -> Vec<PickerItem> {
         let current = self.values(namespace);
         self.specs(namespace)
             .iter()
@@ -276,7 +314,7 @@ impl DaemonSettings {
                 PickerItem {
                     section: spec.section.clone(),
                     detail: Some(PickerDetail::Text(detail)),
-                    badge: Some(selected_badge(display_value(spec, value, models))),
+                    badge: Some(selected_badge(self.display_value(spec, value))),
                     selection_verb: Some(match spec.kind {
                         SettingKind::Bool => "toggle",
                         _ => "change",
@@ -302,7 +340,6 @@ impl DaemonSettings {
         &self,
         namespace: SettingsNamespace,
         key: &SettingKey,
-        models: &[rho_protocol::ModelChoice],
     ) -> Option<Vec<PickerItem>> {
         let spec = self.spec(namespace, key)?;
         let current = self.value(namespace, key);
@@ -326,7 +363,7 @@ impl DaemonSettings {
             SettingKind::Model { runtimes } => {
                 let mut rows = Vec::new();
                 if runtimes.contains(&ModelRuntime::Rho) {
-                    rows.extend(models.iter().map(|choice| {
+                    rows.extend(self.models().iter().map(|choice| {
                         let value = SettingValue::Model(ModelSelection::Rho {
                             provider: choice.model.provider.clone(),
                             model: choice.model.model.clone(),
@@ -342,7 +379,7 @@ impl DaemonSettings {
                     }));
                 }
                 if runtimes.contains(&ModelRuntime::ClaudeCli) {
-                    rows.extend(claude_code_rows(current).into_iter().map(
+                    rows.extend(self.claude_code_rows(current).into_iter().map(
                         |(label, detail, model)| {
                             let value = SettingValue::Model(ModelSelection::ClaudeCli { model });
                             PickerItem {
@@ -364,7 +401,7 @@ impl DaemonSettings {
             .get(key)
             .is_some_and(|entry| entry.source == rho_protocol::ValueSource::Global);
         if from_file {
-            let default = display_value(spec, spec.default.as_ref(), models);
+            let default = self.display_value(spec, spec.default.as_ref());
             rows.push(PickerItem {
                 detail: Some(PickerDetail::Text(
                     "Remove the setting from the file, so its default applies.".into(),
@@ -381,76 +418,78 @@ impl DaemonSettings {
         }
         Some(rows)
     }
-}
 
-/// Claude Code's model rows as `(label, detail, model)`: its own default,
-/// each alias, then `current`'s model when no alias names it.
-fn claude_code_rows(current: Option<&SettingValue>) -> Vec<(String, String, Option<String>)> {
-    use crate::claude_runtime::models::{
-        is_offered_alias, CLAUDE_CODE_SOURCE_LABEL, CLAUDE_DEFAULT_MODEL_BADGE,
-        CLAUDE_DEFAULT_MODEL_DETAIL, CLAUDE_MODEL_ALIASES,
-    };
-    let label = |model: &str| format!("{CLAUDE_CODE_SOURCE_LABEL}/{model}");
-    let mut rows = vec![(
-        label(CLAUDE_DEFAULT_MODEL_BADGE),
-        CLAUDE_DEFAULT_MODEL_DETAIL.to_owned(),
-        None,
-    )];
-    rows.extend(CLAUDE_MODEL_ALIASES.iter().map(|alias| {
-        (
-            label(alias.name),
-            alias.detail.to_owned(),
-            Some(alias.name.to_owned()),
-        )
-    }));
-    if let Some(SettingValue::Model(ModelSelection::ClaudeCli { model: Some(model) })) = current {
-        if !is_offered_alias(model) {
-            rows.push((
-                label(model),
-                "Runs on Claude Code.".to_owned(),
-                Some(model.clone()),
-            ));
+    /// Claude Code's model rows as `(label, detail, model)`: the daemon's
+    /// list, its own default first, then `current`'s model when the list
+    /// does not name it.
+    fn claude_code_rows(
+        &self,
+        current: Option<&SettingValue>,
+    ) -> Vec<(String, String, Option<String>)> {
+        let offered = self.listed().map_or(&[][..], |list| &list.claude_cli);
+        let mut rows: Vec<_> = offered
+            .iter()
+            .map(|model| {
+                (
+                    model.label.clone(),
+                    model.detail.clone(),
+                    model.model.clone(),
+                )
+            })
+            .collect();
+        if let Some(SettingValue::Model(ModelSelection::ClaudeCli { model: Some(model) })) = current
+        {
+            if !offered
+                .iter()
+                .any(|offered| offered.model.as_ref() == Some(model))
+            {
+                rows.push((
+                    rho_providers::provider::model_reference(
+                        crate::claude_runtime::models::CLAUDE_CODE_SOURCE_LABEL,
+                        model,
+                    ),
+                    "Runs on Claude Code.".to_owned(),
+                    Some(model.clone()),
+                ));
+            }
         }
+        rows
     }
-    rows
-}
 
-/// `value` as a row's badge says it.
-pub(super) fn display_value(
-    spec: &SettingSpec,
-    value: Option<&SettingValue>,
-    models: &[rho_protocol::ModelChoice],
-) -> String {
-    let Some(value) = value else {
-        return "not set".into();
-    };
-    match (&spec.kind, value) {
-        (SettingKind::Bool, SettingValue::Bool(on)) => if *on { "on" } else { "off" }.into(),
-        (SettingKind::Choice { choices }, SettingValue::Text(text)) => choices
-            .iter()
-            .find(|choice| &choice.value == text)
-            .map_or_else(|| text.clone(), |choice| choice.label.clone()),
-        (SettingKind::Integer { unit, .. }, SettingValue::Integer(number)) => match unit {
-            Some(IntegerUnit::Percent) => format!("{number}%"),
-            Some(IntegerUnit::Seconds) => format!("{number}s"),
-            Some(IntegerUnit::Lines) => format!("{number} lines"),
-            Some(IntegerUnit::Bytes) => format!("{number} bytes"),
-            // `Unknown`, or a unit a newer daemon sends.
-            _ => number.to_string(),
-        },
-        (_, SettingValue::Model(ModelSelection::Rho { provider, model })) => models
-            .iter()
-            .find(|choice| &choice.model.provider == provider && &choice.model.model == model)
-            .map_or_else(
-                || format!("{provider}/{model}"),
-                |choice| choice.label.clone(),
-            ),
-        (_, SettingValue::Model(ModelSelection::ClaudeCli { model })) => {
-            format!("claude-code/{}", model.as_deref().unwrap_or("default"))
+    /// `value` as a row's badge says it.
+    pub(super) fn display_value(&self, spec: &SettingSpec, value: Option<&SettingValue>) -> String {
+        let Some(value) = value else {
+            return "not set".into();
+        };
+        match (&spec.kind, value) {
+            (SettingKind::Bool, SettingValue::Bool(on)) => if *on { "on" } else { "off" }.into(),
+            (SettingKind::Choice { choices }, SettingValue::Text(text)) => choices
+                .iter()
+                .find(|choice| &choice.value == text)
+                .map_or_else(|| text.clone(), |choice| choice.label.clone()),
+            (SettingKind::Integer { unit, .. }, SettingValue::Integer(number)) => match unit {
+                Some(IntegerUnit::Percent) => format!("{number}%"),
+                Some(IntegerUnit::Seconds) => format!("{number}s"),
+                Some(IntegerUnit::Lines) => format!("{number} lines"),
+                Some(IntegerUnit::Bytes) => format!("{number} bytes"),
+                // `Unknown`, or a unit a newer daemon sends.
+                _ => number.to_string(),
+            },
+            (_, SettingValue::Model(ModelSelection::Rho { provider, model })) => self
+                .models()
+                .iter()
+                .find(|choice| &choice.model.provider == provider && &choice.model.model == model)
+                .map_or_else(
+                    || format!("{provider}/{model}"),
+                    |choice| choice.label.clone(),
+                ),
+            (_, SettingValue::Model(ModelSelection::ClaudeCli { model })) => {
+                format!("claude-code/{}", model.as_deref().unwrap_or("default"))
+            }
+            (_, SettingValue::Text(text)) => text.clone(),
+            (_, SettingValue::Integer(number)) => number.to_string(),
+            (_, SettingValue::Bool(on)) => on.to_string(),
         }
-        (_, SettingValue::Text(text)) => text.clone(),
-        (_, SettingValue::Integer(number)) => number.to_string(),
-        (_, SettingValue::Bool(on)) => on.to_string(),
     }
 }
 

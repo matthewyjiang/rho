@@ -120,7 +120,7 @@ impl Sessions {
             return Err(stopping());
         };
         // Read under the runtime's lock, which a credential write's refresh
-        // waits for (see `Sessions::refresh_all_options`): a refresh queued
+        // waits for (see `Sessions::models_changed`): a refresh queued
         // before this ran first, and one queued after runs once this is
         // done, so the options this publishes are never older than one.
         let auths = available_auths(runtime.credentials()).await;
@@ -186,7 +186,7 @@ impl Sessions {
             Ok(Applied::SharedOptions) => {
                 // Each session's, once its runtime is free; this one's
                 // also follow below.
-                self.refresh_all_options().await;
+                self.models_changed().await;
                 Ok(())
             }
             Ok(Applied::Superseded) => Ok(()),

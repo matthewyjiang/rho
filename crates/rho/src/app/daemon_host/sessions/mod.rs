@@ -175,6 +175,9 @@ pub(super) struct Sessions {
     /// The sessions whose turn the restart that ran this daemon interrupted,
     /// which continue once a client attaches (see [`restart_resume`]).
     restart_resumes: RestartResumes,
+    /// Signals each time the models clients may pick may have changed
+    /// (see [`Self::models_changed`]).
+    model_lists: tokio::sync::watch::Sender<()>,
 }
 
 /// A session this daemon loaded.
@@ -514,6 +517,7 @@ impl Sessions {
             wakes: WakeDir::in_home(rho_home),
             worktrees: crate::worktree::root(rho_home),
             restart_resumes: RestartResumes::default(),
+            model_lists: tokio::sync::watch::Sender::new(()),
         })
     }
 

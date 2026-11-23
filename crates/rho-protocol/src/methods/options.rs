@@ -101,7 +101,15 @@ pub enum SessionChange {
     AddDirectory { path: PathBuf },
     /// Read the model lists again: a client sends it after it refreshed
     /// the lists the daemon shares on disk. Every loaded session's options
-    /// follow.
+    /// follow, and so does every [`super::MODEL_LIST`] subscriber.
+    ///
+    /// # Next major
+    ///
+    /// NEXT_MAJOR(rho-protocol): remove `SessionChange::ModelCatalog`; clients have the daemon fetch the lists with `rho/model/refresh`, which needs no session.
+    ///
+    /// The daemon now fetches the lists itself, so nothing in rho sends it;
+    /// it stays so a client of this major that writes the lists still
+    /// reaches the daemon.
     ModelCatalog,
     /// Continue the conversation from `node`, a node of the session's saved
     /// tree, as it stood there: later turns branch from it, and the nodes

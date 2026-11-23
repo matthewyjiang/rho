@@ -9,8 +9,8 @@
 //!
 //! One task per connection drains its notifications in order and routes
 //! them: a session's events and detach to that session's route, a login's
-//! prompt and outcome to the login waiting on them, and settings changes to
-//! the settings route. When the daemon closes
+//! prompt and outcome to the login waiting on them, and settings and model
+//! list changes to the settings route. When the daemon closes
 //! the connection, every route hears [`Routed::Lost`], and the next request
 //! connects again. A session the daemon detached as restarting routes
 //! itself again once the connection closed ([`Link::closed`]), then attaches
@@ -23,8 +23,8 @@ use std::{
 
 use rho_protocol::{
     methods::Method, BuildSkew, Client, ClientError, ConfigChangedParams, DaemonInfo,
-    DaemonNotification, DetachReason, LoginId, LoginOutcome, LoginPrompt, Notifications, Seq,
-    SessionEvent, SessionId,
+    DaemonNotification, DetachReason, LoginId, LoginOutcome, LoginPrompt, ModelList,
+    ModelListRefresh, Notifications, Seq, SessionEvent, SessionId,
 };
 use rho_sdk::CancellationToken;
 use tokio::sync::{mpsc, oneshot};
@@ -67,8 +67,19 @@ pub(crate) enum LoginEvent {
     Finished {
         login: LoginId,
         outcome: LoginOutcome,
+        /// The model lists the daemon fetched once it saved the login.
+        refreshed: Vec<ModelListRefresh>,
     },
     Lost,
+}
+
+/// What the router hands the settings route: what the settings and model
+/// lists this process read became.
+pub(crate) enum SettingsChange {
+    /// `rho/config/changed`.
+    Config(ConfigChangedParams),
+    /// `rho/model/changed`: the whole model list.
+    Models(ModelList),
 }
 
 /// Where the router sends what it reads. Shared across connections, so a
@@ -77,8 +88,9 @@ pub(crate) enum LoginEvent {
 struct Routes {
     sessions: HashMap<SessionId, SessionRoute>,
     login: Option<mpsc::UnboundedSender<LoginEvent>>,
-    /// Where `rho/config/changed` goes, for the settings this process read.
-    config: Option<mpsc::UnboundedSender<ConfigChangedParams>>,
+    /// Where `rho/config/changed` and `rho/model/changed` go, for the
+    /// settings and models this process read.
+    settings: Option<mpsc::UnboundedSender<SettingsChange>>,
 }
 
 /// The daemon as this process reaches it. It has no default: each owner
@@ -193,9 +205,10 @@ impl Daemon {
         lock(&self.routes).login = None;
     }
 
-    /// Routes settings changes to `sender`, replacing an earlier route.
-    pub(crate) fn route_config(&self, sender: mpsc::UnboundedSender<ConfigChangedParams>) {
-        lock(&self.routes).config = Some(sender);
+    /// Routes settings and model list changes to `sender`, replacing an
+    /// earlier route.
+    pub(crate) fn route_settings(&self, sender: mpsc::UnboundedSender<SettingsChange>) {
+        lock(&self.routes).settings = Some(sender);
     }
 }
 
@@ -312,13 +325,20 @@ fn deliver(routes: &Mutex<Routes>, notification: DaemonNotification) {
                 let _ = login.send(LoginEvent::Finished {
                     login: params.login,
                     outcome: params.outcome,
+                    refreshed: params.refreshed,
                 });
             }
             return;
         }
         DaemonNotification::ConfigChanged(params) => {
-            if let Some(config) = &routes.config {
-                let _ = config.send(params);
+            if let Some(settings) = &routes.settings {
+                let _ = settings.send(SettingsChange::Config(params));
+            }
+            return;
+        }
+        DaemonNotification::ModelsChanged(list) => {
+            if let Some(settings) = &routes.settings {
+                let _ = settings.send(SettingsChange::Models(list));
             }
             return;
         }

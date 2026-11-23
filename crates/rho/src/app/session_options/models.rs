@@ -35,8 +35,10 @@ pub(super) fn model_options(
     mut available: Vec<ModelCatalogEntry>,
 ) -> wire::ModelOptions {
     let identity = ModelIds::new(&current.provider, &current.model);
-    let is_current = |entry: &ModelCatalogEntry| identity.is(&entry.provider, &entry.model);
-    if !available.iter().any(is_current) {
+    if !available
+        .iter()
+        .any(|entry| identity.is(&entry.provider, &entry.model))
+    {
         available.push(ModelCatalogEntry {
             provider: current.provider.clone(),
             model: current.model.clone(),
@@ -44,30 +46,44 @@ pub(super) fn model_options(
             auth_modes: vec![current.auth.clone()],
         });
     }
-    let favorites = favorites::normalized_favorite_models(favorite_models);
-    let ordered = favorites::reorder_models_by_favorites(available, &favorites);
+    let mut choices = model_choices(favorite_models, available);
+    for choice in choices
+        .iter_mut()
+        .filter(|choice| identity.is(&choice.model.provider, &choice.model.model))
+    {
+        choice.model.model.clone_from(&current.model);
+    }
     wire::ModelOptions {
         current: wire::ModelRef {
             provider: current.provider.clone(),
             model: current.model.clone(),
         },
         auth: current.auth.clone(),
-        available: model_labels(&ordered)
-            .into_iter()
-            .zip(ordered)
-            .map(|(label, entry)| wire::ModelChoice {
-                model: wire::ModelRef {
-                    model: if is_current(&entry) {
-                        current.model.clone()
-                    } else {
-                        entry.model
-                    },
-                    provider: entry.provider,
-                },
-                label,
-            })
-            .collect(),
+        available: choices,
     }
+}
+
+/// The models of `available` as a picker offers them: `favorite_models`
+/// first, each with its short label (see [`model_labels`]). A session's
+/// options and the daemon's model list (`rho/model/list`) both build their
+/// choices here, so the two read alike.
+pub(crate) fn model_choices(
+    favorite_models: &[String],
+    available: Vec<ModelCatalogEntry>,
+) -> Vec<wire::ModelChoice> {
+    let favorites = favorites::normalized_favorite_models(favorite_models);
+    let ordered = favorites::reorder_models_by_favorites(available, &favorites);
+    model_labels(&ordered)
+        .into_iter()
+        .zip(ordered)
+        .map(|(label, entry)| wire::ModelChoice {
+            model: wire::ModelRef {
+                provider: entry.provider,
+                model: entry.model,
+            },
+            label,
+        })
+        .collect()
 }
 
 /// A model that answers to its own id and the id it is listed under, so

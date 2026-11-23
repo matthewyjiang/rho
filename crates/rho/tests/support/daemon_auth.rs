@@ -1,7 +1,9 @@
 //! Signing the daemon in and out over its socket (#1662): a key one client
 //! saves or deletes applies to another client's running session from its
 //! next prompt, against a provider that checks every key over real HTTP.
-//! Also the credential store the daemon reports and a client chooses.
+//! Also the credential store the daemon reports and a client chooses, and
+//! the model list a client reads without a session, which follows a key
+//! another client saves.
 
 use std::{
     process::Command,
@@ -10,17 +12,25 @@ use std::{
 
 use pretty_assertions::assert_eq;
 use rho_protocol::{
-    methods::{AuthChooseStore, AuthKey, AuthLogout, JobList, SessionPrompt, Status},
+    methods::{
+        AuthChooseStore, AuthKey, AuthLogout, JobList, ModelListMethod, ModelRefresh,
+        SessionPrompt, Status,
+    },
     AuthChooseStoreParams, AuthChooseStoreResponse, AuthKeyParams, AuthKeyResponse,
     AuthLogoutParams, AuthLogoutResponse, Client, ClientEnvironment, ClientError, ContentBlock,
-    CredentialStoreKind, CredentialStoreStatus, EnvironmentOverride, ErrorCode, JobListParams,
-    JobState, RpcError, SessionId, SessionPromptParams, StatusParams, StoreSelectedBy, TurnError,
-    TurnErrorKind, TurnOutcome,
+    CredentialStoreKind, CredentialStoreStatus, DaemonNotification, EnvironmentOverride, ErrorCode,
+    JobListParams, JobState, ModelList, ModelListKind, ModelListParams, ModelListRefresh, ModelRef,
+    ModelRefreshOutcome, ModelRefreshParams, ModelRefreshResponse, ModelRefreshTarget,
+    Notifications, RpcError, SessionId, SessionPromptParams, StatusParams, StoreSelectedBy,
+    TurnError, TurnErrorKind, TurnOutcome,
 };
 use rho_providers::credentials::{CredentialStore, FileCredentialStore};
 use serde_json::Value;
 
-use super::{key_checking_provider::spawn_provider, sessions::Sandbox};
+use super::{
+    key_checking_provider::spawn_provider,
+    sessions::{Sandbox, DEADLINE},
+};
 
 pub(super) const FIRST_KEY: &str = "test-first-key";
 const SECOND_KEY: &str = "test-second-key";
@@ -153,6 +163,19 @@ async fn save_key(client: &Client, key: &str) -> Result<AuthKeyResponse, RpcErro
     save_key_from(client, key, ClientEnvironment::default()).await
 }
 
+/// What a key the mock provider accepts saves: the daemon then lists the
+/// provider's models with it, which it answers with one.
+fn saved() -> AuthKeyResponse {
+    AuthKeyResponse {
+        unchecked: None,
+        refreshed: vec![ModelListRefresh {
+            provider: "mock".into(),
+            list: ModelListKind::Chat,
+            outcome: ModelRefreshOutcome::Refreshed { models: 1 },
+        }],
+    }
+}
+
 /// Saves `key` for a client whose environment is `environment`.
 async fn save_key_from(
     client: &Client,
@@ -231,10 +254,7 @@ async fn a_key_saved_or_deleted_by_one_client_applies_to_another_clients_session
         fixture.sandbox.connect().await,
     );
 
-    assert_eq!(
-        save_key(&first, FIRST_KEY).await,
-        Ok(AuthKeyResponse { unchecked: None })
-    );
+    assert_eq!(save_key(&first, FIRST_KEY).await, Ok(saved()));
     let session = fixture.sandbox.new_session(&first).await;
     assert_eq!(
         fixture.prompt(&first, &session).await,
@@ -256,10 +276,7 @@ async fn a_key_saved_or_deleted_by_one_client_applies_to_another_clients_session
             Some(FIRST_KEY.into())
         )
     );
-    assert_eq!(
-        save_key(&second, SECOND_KEY).await,
-        Ok(AuthKeyResponse { unchecked: None })
-    );
+    assert_eq!(save_key(&second, SECOND_KEY).await, Ok(saved()));
     assert_eq!(
         fixture.prompt(&first, &session).await,
         Ok(JobState::Completed),
@@ -332,11 +349,7 @@ async fn a_key_in_a_clients_environment_refuses_its_sign_in_and_out() {
             logout(&client).await,
             fixture.saved_key(),
         ),
-        (
-            Ok(AuthKeyResponse { unchecked: None }),
-            Ok(AuthLogoutResponse {}),
-            None
-        ),
+        (Ok(saved()), Ok(AuthLogoutResponse {}), None),
         "log:\n{}",
         fixture.sandbox.isolated.daemon_log()
     );
@@ -407,10 +420,7 @@ async fn a_daemon_without_a_session_bus_fails_closed_until_a_client_chooses_the_
         })
     );
     assert_eq!(store_status(&client).await, chosen);
-    assert_eq!(
-        save_key(&client, FIRST_KEY).await,
-        Ok(AuthKeyResponse { unchecked: None })
-    );
+    assert_eq!(save_key(&client, FIRST_KEY).await, Ok(saved()));
     let session = fixture.sandbox.new_session(&client).await;
     assert_eq!(
         (fixture.saved_key(), fixture.prompt(&client, &session).await),
@@ -452,5 +462,80 @@ async fn a_store_the_daemons_environment_chose_cannot_be_replaced() {
                 )
             )
         )
+    );
+}
+
+/// The next model list the daemon sends on `notifications`.
+async fn next_model_list(notifications: &mut Notifications) -> ModelList {
+    let wait = async {
+        loop {
+            match notifications.recv().await {
+                Some(DaemonNotification::ModelsChanged(list)) => return list,
+                Some(_) => {}
+                None => panic!("the daemon closed the connection"),
+            }
+        }
+    };
+    tokio::time::timeout(DEADLINE, wait)
+        .await
+        .expect("the model list changes within DEADLINE")
+}
+
+/// Whether `list` offers the mock provider's model.
+fn offers_mock_model(list: &ModelList) -> bool {
+    let mock = ModelRef {
+        provider: "mock".into(),
+        model: "mock-model".into(),
+    };
+    list.models.iter().any(|choice| choice.model == mock)
+}
+
+// Covers: a client's model list, read without a session, follows a key
+// another client saves: the daemon lists the provider's models with the new
+// key and sends the list again as `rho/model/changed`; `rho/model/refresh`
+// fetches one provider's list on request.
+// Owner: daemon model list methods, over the real socket and HTTP.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_clients_model_list_follows_a_key_another_client_saves() {
+    let valid = Arc::new(Mutex::new(FIRST_KEY.to_owned()));
+    let fixture = Fixture::start(&valid, &[]).await;
+    let (lister, mut notifications) = fixture.sandbox.connect_following().await;
+    let saver = fixture.sandbox.connect().await;
+
+    let before = lister
+        .request::<ModelListMethod>(&ModelListParams::default())
+        .await
+        .unwrap();
+    let saved_key = save_key(&saver, FIRST_KEY).await;
+    let after = next_model_list(&mut notifications).await;
+    let refreshed = saver
+        .request::<ModelRefresh>(&ModelRefreshParams {
+            environment: ClientEnvironment::default(),
+            only: Some(ModelRefreshTarget {
+                provider: "mock".into(),
+                auth: AUTH.into(),
+            }),
+        })
+        .await
+        .map_err(rpc_error);
+
+    assert_eq!(
+        (
+            offers_mock_model(&before),
+            saved_key,
+            offers_mock_model(&after),
+            refreshed,
+        ),
+        (
+            false,
+            Ok(saved()),
+            true,
+            Ok(ModelRefreshResponse {
+                lists: saved().refreshed,
+                catalog: None,
+            }),
+        ),
+        "log:\n{}",
+        fixture.sandbox.isolated.daemon_log()
     );
 }

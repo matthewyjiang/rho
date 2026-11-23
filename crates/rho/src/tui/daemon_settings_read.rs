@@ -3,22 +3,22 @@
 //! and the TUI's registration.
 
 use rho_protocol::{
-    methods::{ConfigGet, ConfigRegister, ConfigSchemaMethod},
-    ConfigChangedParams, ConfigGetParams, ConfigRegisterParams, ConfigSchemaParams,
+    methods::{ConfigGet, ConfigRegister, ConfigSchemaMethod, ModelListMethod},
+    ClientEnvironment, ConfigGetParams, ConfigRegisterParams, ConfigSchemaParams, ModelListParams,
 };
 use tokio::sync::mpsc;
 
 use super::{
     daemon_events::DaemonView,
-    daemon_settings::{tui_client, DaemonSettings, SettingsNamespace},
+    daemon_settings::{tui_client, DaemonSettings, ListedModels, SettingsNamespace},
 };
-use crate::app::daemon_client::{Daemon, Link};
+use crate::app::daemon_client::{Daemon, Link, SettingsChange};
 
-/// Routes `rho/config/changed` to the receiver this returns, replacing
-/// any earlier route.
-pub(super) fn route_config(daemon: &Daemon) -> mpsc::UnboundedReceiver<ConfigChangedParams> {
+/// Routes `rho/config/changed` and `rho/model/changed` to the receiver
+/// this returns, replacing any earlier route.
+pub(super) fn route_settings(daemon: &Daemon) -> mpsc::UnboundedReceiver<SettingsChange> {
     let (sender, changes) = mpsc::unbounded_channel();
-    daemon.route_config(sender);
+    daemon.route_settings(sender);
     changes
 }
 
@@ -27,9 +27,10 @@ pub(super) fn settings_loaded(settings: anyhow::Result<DaemonSettings>) -> Daemo
     DaemonView::SettingsLoaded(settings.map(Box::new).map_err(|error| format!("{error:#}")))
 }
 
-/// Registers the `tui` client's settings, then reads the agent schema
-/// and both namespaces' values, which subscribes this connection to
-/// their changes.
+/// Registers the `tui` client's settings, then reads the agent schema,
+/// both namespaces' values, and the models a model setting may take,
+/// which subscribes this connection to their changes. Models the daemon
+/// cannot list leave the other settings readable.
 pub(super) async fn load_settings(link: &Link) -> anyhow::Result<DaemonSettings> {
     let tui_specs = crate::tui::client_settings::tui_setting_specs();
     link.request::<ConfigRegister>(&ConfigRegisterParams {
@@ -50,10 +51,20 @@ pub(super) async fn load_settings(link: &Link) -> anyhow::Result<DaemonSettings>
             namespace: SettingsNamespace::Tui.wire(),
         })
         .await?;
+    let models = match link
+        .request::<ModelListMethod>(&ModelListParams {
+            environment: ClientEnvironment::of_this_process(),
+        })
+        .await
+    {
+        Ok(list) => ListedModels::Listed(list),
+        Err(error) => ListedModels::Unlisted(format!("{error:#}")),
+    };
     Ok(DaemonSettings::new(
         schema,
         tui_specs,
         agent.into(),
         tui.into(),
+        models,
     ))
 }
