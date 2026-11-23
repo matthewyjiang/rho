@@ -94,6 +94,10 @@ impl PrId {
     /// When `text` names no PR, or only a number with no `repo`: why.
     pub(crate) fn parse(text: &str, repo: Option<&RepoId>) -> Result<Self, &'static str> {
         const FORMS: &str = "Give the pull request's URL, owner/name#number, or #number.";
+        // Such as a GitLab merge request's or a GitHub issue's URL.
+        const NOT_A_PR_URL: &str = "That URL is not a GitHub pull request's; rho reads GitHub \
+                                    pull requests only, by a URL such as \
+                                    https://github.com/owner/name/pull/12.";
         let text = text.trim();
         let number = |text: &str| text.parse::<u32>().ok().filter(|&number| number > 0);
         if let Some((_, rest)) = text.split_once("://") {
@@ -105,9 +109,9 @@ impl PrId {
                 parts.next(),
                 parts.next(),
             ) else {
-                return Err(FORMS);
+                return Err(NOT_A_PR_URL);
             };
-            let number = number(n.split(['#', '?']).next().unwrap_or(n)).ok_or(FORMS)?;
+            let number = number(n.split(['#', '?']).next().unwrap_or(n)).ok_or(NOT_A_PR_URL)?;
             let repo = RepoId {
                 host: without_user(host).to_ascii_lowercase(),
                 owner: owner.to_owned(),

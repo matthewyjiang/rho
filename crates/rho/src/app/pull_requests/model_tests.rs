@@ -92,6 +92,11 @@ fn text_names_its_pull_request() {
             Some(&widgets),
             None,
         ),
+        (
+            "https://gitlab.com/up/stream/-/merge_requests/7",
+            Some(&widgets),
+            None,
+        ),
         ("#0", Some(&widgets), None),
         ("stream#7", Some(&widgets), None),
         ("widgets", Some(&widgets), None),
