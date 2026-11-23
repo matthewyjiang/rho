@@ -99,6 +99,27 @@ impl State {
         }
     }
 
+    /// Makes `session`'s branch lookup due again when `pr`, just linked or
+    /// watched, is in its repository and the last lookup did not find it:
+    /// it may be the PR the session's agent has just opened for its branch.
+    /// Otherwise clients would show it beside a branch that says it has
+    /// none until the lookup's next period.
+    pub(super) fn recheck_branch(&mut self, session: &SessionId, pr: &PrId) {
+        let Some(branch) = self
+            .interest
+            .session(session)
+            .and_then(|interest| interest.checkout().branch())
+        else {
+            return;
+        };
+        if branch.repo != pr.repo || self.found(branch) == Some(pr) {
+            return;
+        }
+        if let Some(read) = self.branches.get_mut(branch) {
+            read.asked_at = None;
+        }
+    }
+
     /// Whether `branch` is its repository's default branch, which has no
     /// PR of its own, as the last read in its repository said.
     pub(super) fn is_default(&self, branch: &BranchId) -> bool {

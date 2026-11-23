@@ -266,6 +266,19 @@ impl SessionPullRequests {
     pub fn new(branch: Option<BranchPullRequest>, linked: Vec<LinkedPullRequest>) -> Self {
         Self { branch, linked }
     }
+
+    /// The pull request the branch's lookup found, if it found one.
+    pub fn branch_pull_request(&self) -> Option<&PullRequestSummary> {
+        match &self.branch.as_ref()?.lookup {
+            BranchLookup::Found { pull_request } => Some(pull_request),
+            _ => None,
+        }
+    }
+
+    /// The link to pull request `id`, if the session links it.
+    pub fn link(&self, id: &PullRequestId) -> Option<&LinkedPullRequest> {
+        self.linked.iter().find(|linked| linked.id == *id)
+    }
 }
 
 /// The branch a session's workspace has checked out, and what looking up

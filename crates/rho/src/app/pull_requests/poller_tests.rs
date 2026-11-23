@@ -720,6 +720,49 @@ async fn a_listed_branch_is_looked_up_and_kept_after_its_lease() {
     );
 }
 
+// Covers: linking a PR in the session's repository looks its branch up
+// again on the next tick, though the listed cadence is not due: the agent
+// may have just opened that PR for its branch. Otherwise a client shows the
+// PR as a link beside a branch that says it has none, for up to 5 minutes.
+// Owner: PR service
+#[tokio::test]
+async fn a_link_looks_the_branch_up_again() {
+    let fixture = Fixture::new();
+    let session = SessionId::new();
+    let feature = BranchId {
+        repo: pr(12).repo,
+        branch: "feature".into(),
+    };
+    let on_feature = || Checkout::Branch(feature.clone());
+    fixture.forge.set(open(12, CheckStatus::Passed));
+    fixture.service.list(&session, on_feature(), NOW);
+    fixture.service.tick(NOW).await;
+    let before = fixture.service.view(&session, NOW).branch;
+    fixture.forge.set_branch(&target(12), "feature");
+    fixture
+        .inbox(&session)
+        .link(&target(12), LinkOrigin::Agent, NOW + MINUTE)
+        .await
+        .unwrap();
+
+    fixture.service.tick(NOW + MINUTE).await;
+
+    let lookup = |found| {
+        Some(wire::BranchPullRequest::new(
+            Some("feature".into()),
+            found,
+            None,
+        ))
+    };
+    let found = wire::BranchLookup::Found {
+        pull_request: Box::new((&open(12, CheckStatus::Passed).summary).into()),
+    };
+    assert_eq!(
+        (before, fixture.service.view(&session, NOW + MINUTE).branch),
+        (lookup(wire::BranchLookup::None), lookup(found))
+    );
+}
+
 // Covers: a cached show of a PR a listed tick read only as a summary reads
 // its detail before it answers, though the tick asked for it moments ago.
 // Otherwise a panel opened just after the sidebar's poll shows no detail

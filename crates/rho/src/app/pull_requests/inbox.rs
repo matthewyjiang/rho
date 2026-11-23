@@ -293,6 +293,10 @@ impl PullRequestInbox {
                 // The watch runs in memory; a failed save is logged.
                 let _ = self.shared.save(&self.session, &entry.record);
             }
+            if linked {
+                state.recheck_branch(&self.session, &pr);
+                self.shared.poke_if_leased(state, &self.session, now);
+            }
             Ok::<_, PullRequestError>(started)
         })?;
         if ended {
@@ -347,6 +351,7 @@ impl PullRequestInbox {
                 self.shared
                     .save(&self.session, &entry.record)
                     .map_err(PullRequestError::Store)?;
+                state.recheck_branch(&self.session, &pr);
                 self.shared.poke_if_leased(state, &self.session, now);
             }
             Ok::<_, PullRequestError>(new)
