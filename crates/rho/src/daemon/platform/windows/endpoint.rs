@@ -19,7 +19,7 @@ const RESTART_POLL_INTERVAL: Duration = Duration::from_millis(10);
 /// A client's connection to the daemon. A pipe cannot close one direction
 /// alone, so a client that shuts down its writes stops reading too, and the
 /// daemon sees it leave.
-pub(in crate::daemon) type Stream = CloseOnShutdown<NamedPipeClient>;
+pub(crate) type Stream = CloseOnShutdown<NamedPipeClient>;
 
 /// The daemon's listening pipe.
 pub(in crate::daemon) struct Listener {

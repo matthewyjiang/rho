@@ -8,8 +8,6 @@ use rho_protocol::{ProtocolVersion, RestartCost, VersionFix, VersionMismatch};
 
 use super::report::{DoctorCheck, DoctorCheckId, DoctorStatus};
 
-use crate::daemon::{LAUNCHD_LABEL, SYSTEMD_UNIT};
-
 const SERVICE_DOCS: &str = "https://matthewyjiang.github.io/rho/daemon#running-as-a-service";
 
 const PROCESS_LABEL: &str = "Daemon";
@@ -76,17 +74,22 @@ pub(crate) enum DaemonSocket {
     Unknown(String),
 }
 
-/// Whether the service `docs/daemon.md` documents is installed. The daemon
-/// has no unit of its own: every client starts it on demand.
+/// One installed always-on service documented in `docs/daemon.md`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum InstalledService {
+    /// A systemd user unit; `enabled` when a target wants it.
+    Systemd { unit: &'static str, enabled: bool },
+    /// A LaunchAgent plist. Only `launchctl` knows whether it is loaded.
+    Launchd { label: &'static str },
+}
+
+/// Whether the services `docs/daemon.md` documents are installed. The daemon
+/// itself has no unit of its own: every client starts it on demand.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum DaemonService {
     NotInstalled,
-    /// The systemd user unit exists; `enabled` when a target wants it.
-    Systemd {
-        enabled: bool,
-    },
-    /// The LaunchAgent exists. Only `launchctl` knows whether it is loaded.
-    Launchd,
+    /// One or more documented HTTP services are installed.
+    Installed(Vec<InstalledService>),
     /// It could not be looked for. The text says why.
     Unknown(String),
 }
@@ -216,26 +219,60 @@ pub(crate) fn service_check(service: &DaemonService) -> DoctorCheck {
             DoctorStatus::Info,
             "not installed".into(),
             format!(
-                "the daemon needs none, clients start it on demand; to keep `rho mcp serve --http` always on see {SERVICE_DOCS}"
+                "the daemon needs none, clients start it on demand; to keep `rho mcp serve --http` or `rho daemon serve --http` always on see {SERVICE_DOCS}"
             ),
         ),
-        DaemonService::Systemd { enabled: true } => row(
-            DoctorStatus::Ok,
-            format!("{SYSTEMD_UNIT} installed and enabled"),
-            format!("`systemctl --user status {SYSTEMD_UNIT}` shows whether it runs"),
-        ),
-        DaemonService::Systemd { enabled: false } => row(
-            DoctorStatus::Warn,
-            format!("{SYSTEMD_UNIT} installed, not enabled"),
-            format!("run `systemctl --user enable --now {SYSTEMD_UNIT}` to start it at every login"),
-        ),
-        DaemonService::Launchd => row(
-            DoctorStatus::Ok,
-            format!("{LAUNCHD_LABEL} installed"),
-            format!(
-                "launchd loads it at login; `launchctl print gui/$(id -u)/{LAUNCHD_LABEL}` shows whether it is loaded now"
-            ),
-        ),
+        DaemonService::Installed(services) => {
+            let summaries: Vec<String> = services
+                .iter()
+                .map(|service| match service {
+                    InstalledService::Systemd {
+                        unit,
+                        enabled: true,
+                    } => format!("{unit} installed and enabled"),
+                    InstalledService::Systemd {
+                        unit,
+                        enabled: false,
+                    } => format!("{unit} installed, not enabled"),
+                    InstalledService::Launchd { label } => format!("{label} installed"),
+                })
+                .collect();
+            let disabled: Vec<&str> = services
+                .iter()
+                .filter_map(|service| match service {
+                    InstalledService::Systemd {
+                        unit,
+                        enabled: false,
+                    } => Some(*unit),
+                    InstalledService::Systemd { enabled: true, .. }
+                    | InstalledService::Launchd { .. } => None,
+                })
+                .collect();
+            if !disabled.is_empty() {
+                let enable = disabled
+                    .iter()
+                    .map(|unit| format!("`systemctl --user enable --now {unit}`"))
+                    .collect::<Vec<_>>()
+                    .join(" and ");
+                return row(
+                    DoctorStatus::Warn,
+                    summaries.join("; "),
+                    format!("run {enable} to start it at every login"),
+                );
+            }
+            let hints: Vec<String> = services
+                .iter()
+                .map(|service| match service {
+                    InstalledService::Systemd { unit, .. } => {
+                        format!("`systemctl --user status {unit}` shows whether it runs")
+                    }
+                    InstalledService::Launchd { label } => format!(
+                        "launchd loads it at login; `launchctl print gui/$(id -u)/{label}` shows whether it is loaded now"
+                    ),
+                })
+                .collect();
+            row(DoctorStatus::Ok, summaries.join("; "), hints.join("; "))
+        }
         DaemonService::Unknown(reason) => {
             row(DoctorStatus::Warn, "unknown".into(), reason.clone())
         }

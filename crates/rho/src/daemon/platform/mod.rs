@@ -59,12 +59,12 @@ use windows as imp;
 pub(crate) use imp::{
     account_lock_path, create_private_dir, create_private_file, lock_account_file,
     release_freed_memory, stderr_is_journal_stream, sync_dir, DaemonPathError, FileIdentity,
-    StopRequests, REPLACEABLE_WHILE_RUNNING,
+    StopRequests, Stream, REPLACEABLE_WHILE_RUNNING,
 };
 pub(super) use imp::{
     connect, connect_restarting, inspect_endpoint, is_variable, open_lock_file, open_log_file,
     prepare_private_dir, relaunch, remove_endpoint, request_stop, running_identity, spawn_detached,
-    stop_service, take_handoff, Listener, Stream, MACHINE_VARIABLES,
+    stop_service, take_handoff, Listener, MACHINE_VARIABLES,
 };
 
 // Re-executing in place hands descriptors on only on Unix.

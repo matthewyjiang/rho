@@ -8,13 +8,16 @@
 //! daemon. `restart` re-executes the running daemon in place (#1713), as a
 //! replaced executable does once the daemon is idle.
 
-use crate::cli::{Command, DaemonCommand};
+use crate::cli::{Cli, Command, DaemonCommand, DaemonServeArgs, DaemonTokenCommand};
 
 use {
     super::{
         config_repository::ConfigRepository,
         daemon_host::{DaemonHost, JobRecords, Startup, UNLOAD_IDLE_AFTER},
+        daemon_http::{self, tokens::DaemonTokenSet},
+        mcp_server::token_store,
     },
+    crate::credential_store::UntrackedCredentialStore,
     crate::daemon::{
         self, ConnectAs, DaemonPaths, Ending, Executable, Served, Shutdown, StopRequests,
         DAEMON_RESTART_TIMEOUT,
@@ -22,13 +25,13 @@ use {
     crate::logging::{self, LogSink},
     anyhow::Context,
     rho_protocol::{
-        methods, ClientError, DaemonStatus, JobListParams, JobSummary, PendingUpgrade,
-        RestartParams, StatusParams, StopParams,
+        methods, ClientEnvironment, ClientError, DaemonStatus, JobListParams, JobSummary,
+        PendingUpgrade, RestartParams, StatusParams, StopParams,
     },
     std::{ffi::OsString, sync::Arc, time::Duration},
 };
 
-pub(super) async fn run(command: Option<DaemonCommand>) -> anyhow::Result<()> {
+pub(super) async fn run(command: Option<DaemonCommand>, cli: &Cli) -> anyhow::Result<()> {
     let paths = DaemonPaths::of_this_process()?;
     let run = DaemonCommand::Run {
         unload_idle_after: None,
@@ -46,6 +49,8 @@ pub(super) async fn run(command: Option<DaemonCommand>) -> anyhow::Result<()> {
         DaemonCommand::Status { json } => status(&paths, json).await,
         DaemonCommand::Stop => stop(&paths).await,
         DaemonCommand::Restart => restart(&paths).await,
+        DaemonCommand::Serve(args) => serve(&paths, &args, cli).await,
+        DaemonCommand::Token { command } => token(&command, cli),
     }
 }
 
@@ -76,6 +81,23 @@ pub(crate) enum Reach {
 /// `rho login`, and `rho daemon start`.
 pub(super) async fn connect() -> Result<daemon::Connection, Unreachable> {
     connect_with(Reach::StartIfNeeded, ConnectAs::Command).await
+}
+
+/// Opens a raw stream to this rho home's daemon without performing `rho/hello`,
+/// starting the daemon first if none is running. Used by `rho daemon serve`
+/// so remote WebSocket clients complete the handshake end-to-end with the
+/// daemon.
+pub(super) async fn connect_raw_or_start() -> anyhow::Result<daemon::RawStream> {
+    let paths = DaemonPaths::of_this_process()?;
+    match daemon::connect_raw(&paths).await {
+        Ok(stream) => return Ok(stream),
+        Err(daemon::ConnectError::NotRunning) => {}
+        Err(error) => return Err(error.into()),
+    }
+    // Ensure the daemon is running via the standard serialized spawn path,
+    // then open a fresh unhandshaken stream for the remote client.
+    drop(connect().await?);
+    Ok(daemon::connect_raw(&paths).await?)
 }
 
 /// Connects to this rho home's daemon as `reach` allows, declaring what
@@ -589,6 +611,97 @@ async fn restart(paths: &DaemonPaths) -> anyhow::Result<()> {
             paths.log_file.display()
         ),
     }
+}
+
+/// `rho daemon serve --http`: exposes the local daemon over HTTP WebSockets.
+async fn serve(paths: &DaemonPaths, args: &DaemonServeArgs, cli: &Cli) -> anyhow::Result<()> {
+    // Taken first, before anything this process starts could inherit it.
+    let inherited_listener = args
+        .listener_fd
+        .map(|fd| {
+            super::http_upgrade::inherit_listener(fd)
+                .with_context(|| format!("could not take over the listening socket {fd}"))
+        })
+        .transpose()?;
+    open_cli_credential_store(cli)?;
+    let mut stops = StopRequests::listen(paths)?;
+    let environment = ClientEnvironment::of_this_process();
+    let upgrade = Executable::of_this_process()
+        .inspect_err(|error| {
+            tracing::warn!(%error, "could not find the server's executable; it will not upgrade in place");
+        })
+        .ok()
+        .and_then(|executable| {
+            super::http_upgrade::Upgrade::new(
+                "rho daemon serve",
+                executable,
+                std::env::args_os().skip(1),
+            )
+        });
+    daemon_http::serve_http(
+        daemon_http::HttpOptions {
+            address: args.http,
+            allowed_hosts: args.allow_host.clone(),
+            allowed_origins: args.allow_origin.clone(),
+            inherited_listener,
+            upgrade,
+        },
+        environment,
+        async move {
+            let signal = stops.recv().await;
+            tracing::info!(%signal, "shutting down daemon HTTP server on signal");
+        },
+    )
+    .await
+}
+
+/// `rho daemon token`: manages bearer tokens for `rho daemon serve --http`.
+fn token(command: &DaemonTokenCommand, cli: &Cli) -> anyhow::Result<()> {
+    open_cli_credential_store(cli)?;
+    match command {
+        DaemonTokenCommand::Rotate { name } => {
+            let secret = token_store::update(|tokens: &mut DaemonTokenSet| tokens.rotate(name))?;
+            // The secret alone on stdout, so a script can capture it.
+            println!("{secret}");
+            eprintln!(
+                "saved daemon token {name:?}; this is the only time its secret is shown. Send it as `Authorization: Bearer <secret>`."
+            );
+        }
+        DaemonTokenCommand::List { json } => {
+            let tokens = DaemonTokenSet::load(&UntrackedCredentialStore)?;
+            if *json {
+                let names: Vec<_> = tokens
+                    .tokens
+                    .iter()
+                    .map(|token| serde_json::json!({ "name": token.name }))
+                    .collect();
+                println!("{}", serde_json::to_string_pretty(&names)?);
+            } else if tokens.tokens.is_empty() {
+                println!("no daemon HTTP tokens; create one with `rho daemon token rotate`");
+            } else {
+                for token in &tokens.tokens {
+                    println!("{}", token.name);
+                }
+            }
+        }
+        DaemonTokenCommand::Revoke { name } => {
+            token_store::update(|tokens: &mut DaemonTokenSet| {
+                if !tokens.revoke(name) {
+                    anyhow::bail!("no daemon HTTP token named {name:?}");
+                }
+                Ok(())
+            })?;
+            println!("revoked daemon token {name:?}");
+        }
+    }
+    Ok(())
+}
+
+fn open_cli_credential_store(cli: &Cli) -> anyhow::Result<()> {
+    let repository = ConfigRepository::new(cli.config.clone());
+    let path = repository.configured_path()?;
+    let mut config = repository.load()?;
+    crate::credential_store::initialize_from_config(&mut config, &path)
 }
 
 #[cfg(test)]

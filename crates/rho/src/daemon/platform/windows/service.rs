@@ -7,7 +7,7 @@ use crate::daemon::service::ServiceManager;
 
 /// Fails: neither manager runs here, so a file found under one's name was
 /// brought from another machine and nothing runs it.
-pub(in crate::daemon) fn stop_service(manager: ServiceManager) -> io::Result<()> {
+pub(in crate::daemon) fn stop_service(manager: ServiceManager, _unit: &str) -> io::Result<()> {
     let name = match manager {
         ServiceManager::Systemd => "systemd",
         ServiceManager::Launchd => "launchd",

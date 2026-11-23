@@ -14,10 +14,11 @@ use rho_protocol::ClientEnvironment;
 use crate::{
     app::{
         config_repository::ConfigRepository,
+        http_upgrade::{inherit_listener, Upgrade},
         mcp_server::{
             self, token_store,
             tokens::{Rotation, TokenSet},
-            watch, HttpOptions, Upgrade,
+            watch, HttpOptions,
         },
         session_control::{Limits, Reach, SessionControl},
     },
@@ -32,7 +33,7 @@ pub(in crate::app) async fn serve(args: &McpServeArgs, cli: &Cli) -> anyhow::Res
     let inherited_listener = args
         .listener_fd
         .map(|fd| {
-            mcp_server::inherit_listener(fd)
+            inherit_listener(fd)
                 .with_context(|| format!("could not take over the listening socket {fd}"))
         })
         .transpose()?;
@@ -91,7 +92,7 @@ fn upgrade() -> Option<Upgrade> {
             tracing::warn!(%error, "could not find the server's executable; it will not upgrade in place");
         })
         .ok()?;
-    Upgrade::new(executable, std::env::args_os().skip(1))
+    Upgrade::new("rho mcp serve", executable, std::env::args_os().skip(1))
 }
 
 pub(in crate::app) fn token(command: &McpTokenCommand, cli: &Cli) -> anyhow::Result<()> {

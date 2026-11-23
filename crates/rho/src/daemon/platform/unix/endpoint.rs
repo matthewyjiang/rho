@@ -13,7 +13,7 @@ use super::files::{current_uid, verify_private_dir, DaemonPathError};
 use crate::daemon::paths::{DaemonPaths, SocketFound};
 
 /// A connection between the daemon and one client.
-pub(in crate::daemon) type Stream = UnixStream;
+pub(crate) type Stream = UnixStream;
 
 /// The daemon's listening socket.
 pub(in crate::daemon) struct Listener {

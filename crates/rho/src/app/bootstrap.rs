@@ -207,7 +207,7 @@ async fn dispatch_early_command(cli: &Cli) -> anyhow::Result<EarlyDispatch> {
     }
     if let Some(Command::Daemon { command }) = &cli.command {
         return Ok(EarlyDispatch::Handled(
-            daemon_cli::run(command.clone()).await,
+            daemon_cli::run(command.clone(), cli).await,
         ));
     }
     if let Some(Command::Worktrees { command }) = &cli.command {

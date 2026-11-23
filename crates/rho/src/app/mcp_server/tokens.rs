@@ -11,19 +11,20 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use rho_providers::credentials::CredentialStore;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 use super::token_store::{self, StoredSet};
 use crate::{
-    app::session_control::{Grant, Holder},
+    app::{
+        http_guard::{
+            constant_time_eq, new_secret, sha256_hex, validate_name as guard_validate_name,
+        },
+        session_control::{Grant, Holder},
+    },
     caller_context::{Access, Scope, Workspaces},
 };
 
 /// The credential-store account that holds the token set.
 pub(crate) const ACCOUNT: &str = "mcp-serve-tokens";
-
-/// Random bytes in a secret: 256 bits, as many as the hash keeps.
-const SECRET_BYTES: usize = 32;
 
 /// Prefix of every secret, so one found in a log or a paste is recognizable.
 const SECRET_PREFIX: &str = "rho_mcp_";
@@ -91,8 +92,8 @@ impl TokenSet {
             .iter()
             .map(|path| canonical_dir(path))
             .collect::<anyhow::Result<Vec<_>>>()?;
-        let secret = new_secret();
-        let sha256 = digest(&secret);
+        let secret = new_secret(SECRET_PREFIX);
+        let sha256 = sha256_hex(&secret);
         match self.tokens.iter_mut().find(|token| token.name == name) {
             Some(token) => {
                 token.sha256 = sha256;
@@ -131,7 +132,7 @@ impl TokenSet {
     /// every token, each in constant time, so the time taken does not tell
     /// which matched.
     pub(crate) fn authenticate(&self, presented: &str) -> Option<&TokenRecord> {
-        let presented = digest(presented);
+        let presented = sha256_hex(presented);
         self.tokens.iter().fold(None, |found, token| {
             if constant_time_eq(token.sha256.as_bytes(), presented.as_bytes()) {
                 Some(token)
@@ -145,15 +146,7 @@ impl TokenSet {
 /// Refuses a `kind` name (a token's, a webhook's) that refusals and lists
 /// could not show plainly.
 pub(super) fn validate_name(kind: &str, name: &str) -> anyhow::Result<()> {
-    let valid = !name.is_empty()
-        && name.len() <= 64
-        && name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
-    if !valid {
-        anyhow::bail!("{kind} name {name:?} must be 1 to 64 ASCII letters, digits, '-', or '_'");
-    }
-    Ok(())
+    guard_validate_name(kind, name)
 }
 
 fn canonical_dir(path: &Path) -> anyhow::Result<PathBuf> {
@@ -164,28 +157,6 @@ fn canonical_dir(path: &Path) -> anyhow::Result<PathBuf> {
         anyhow::bail!("workspace {} is not a directory", path.display());
     }
     Ok(resolved)
-}
-
-fn new_secret() -> String {
-    use rand::{rand_core::UnwrapErr, rngs::SysRng, Rng};
-    let mut bytes = [0_u8; SECRET_BYTES];
-    UnwrapErr(SysRng).fill_bytes(&mut bytes);
-    format!("{SECRET_PREFIX}{}", hex::encode(bytes))
-}
-
-fn digest(secret: &str) -> String {
-    hex::encode(Sha256::digest(secret.as_bytes()))
-}
-
-fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
-    left.len() == right.len()
-        && left
-            .iter()
-            .zip(right)
-            .fold(0_u8, |difference, (left, right)| {
-                difference | (left ^ right)
-            })
-            == 0
 }
 
 #[cfg(test)]

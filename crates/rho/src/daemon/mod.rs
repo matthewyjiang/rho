@@ -37,7 +37,8 @@ mod spawn_env;
 pub(crate) mod test_support;
 
 pub(crate) use client::{
-    connect, connect_restarting, ConnectAs, ConnectError, Connection, DAEMON_RESTART_TIMEOUT,
+    connect, connect_raw, connect_restarting, ConnectAs, ConnectError, Connection,
+    DAEMON_RESTART_TIMEOUT,
 };
 pub(crate) use executable::{Executable, ProbeError};
 pub(crate) use lock::{
@@ -45,6 +46,7 @@ pub(crate) use lock::{
     DaemonLock, LockHolder,
 };
 pub(crate) use paths::{real_home, DaemonPaths, SocketFound};
+pub(crate) use platform::Stream as RawStream;
 // Named outside this module only by the Unix tests of what `rho doctor`
 // reports.
 #[cfg(all(test, unix))]
@@ -57,8 +59,10 @@ pub(crate) use platform::{
 #[cfg(unix)]
 pub(crate) use platform::{adopt, reap_exited_children, set_close_on_exec};
 pub(crate) use server::{bind, rebind, take_handoff, Served};
+pub(crate) use service::{find_services, ServiceFiles, ServiceManager};
+#[cfg(test)]
 pub(crate) use service::{
-    find_services, ServiceFiles, ServiceManager, LAUNCHD_LABEL, SYSTEMD_UNIT,
+    DAEMON_HTTP_LAUNCHD_LABEL, DAEMON_HTTP_SYSTEMD_UNIT, LAUNCHD_LABEL, SYSTEMD_UNIT,
 };
 pub(crate) use shutdown::{Ending, Shutdown};
 pub(crate) use spawn::{connect_or_spawn, DaemonSpawner, ProcessSpawner, SpawnFuture};

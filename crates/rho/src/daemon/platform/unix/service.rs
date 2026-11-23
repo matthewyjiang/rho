@@ -7,12 +7,12 @@ use std::{
     process::{Command, Stdio},
 };
 
-use crate::daemon::service::{ServiceManager, LAUNCHD_LABEL, SYSTEMD_UNIT};
+use crate::daemon::service::ServiceManager;
 
-/// Stops the saved service and keeps its manager from starting it again.
+/// Stops the saved service `unit` and keeps its manager from starting it again.
 /// The error carries what the manager printed, as when no user manager
 /// answers in this login or the service was never loaded.
-pub(in crate::daemon) fn stop_service(manager: ServiceManager) -> io::Result<()> {
+pub(in crate::daemon) fn stop_service(manager: ServiceManager, unit: &str) -> io::Result<()> {
     let (program, args) = match manager {
         ServiceManager::Systemd => (
             "systemctl",
@@ -20,7 +20,7 @@ pub(in crate::daemon) fn stop_service(manager: ServiceManager) -> io::Result<()>
                 "--user".to_owned(),
                 "disable".to_owned(),
                 "--now".to_owned(),
-                SYSTEMD_UNIT.to_owned(),
+                unit.to_owned(),
             ],
         ),
         ServiceManager::Launchd => {
@@ -28,7 +28,7 @@ pub(in crate::daemon) fn stop_service(manager: ServiceManager) -> io::Result<()>
             let user = unsafe { libc::geteuid() };
             (
                 "launchctl",
-                vec!["bootout".to_owned(), format!("gui/{user}/{LAUNCHD_LABEL}")],
+                vec!["bootout".to_owned(), format!("gui/{user}/{unit}")],
             )
         }
     };

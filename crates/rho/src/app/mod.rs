@@ -21,12 +21,15 @@ mod daemon_cli;
 // #1667).
 pub(crate) mod daemon_client;
 mod daemon_host;
+mod daemon_http;
 pub(crate) mod daemon_install;
 mod detach;
 mod doctor_cli;
 pub(crate) mod endpoint_login;
 mod headless_host;
 mod host_mcp;
+mod http_guard;
+mod http_upgrade;
 mod interactive;
 pub(crate) mod interactive_presenter;
 mod login;

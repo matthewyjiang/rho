@@ -105,12 +105,39 @@ fn row_severity_follows_what_was_observed() {
         ),
         (socket_check(&DaemonSocket::Unknown("denied".into())), Warn),
         (service_check(&DaemonService::NotInstalled), Info),
-        (service_check(&DaemonService::Systemd { enabled: true }), Ok),
         (
-            service_check(&DaemonService::Systemd { enabled: false }),
+            service_check(&DaemonService::Installed(vec![InstalledService::Systemd {
+                unit: crate::daemon::SYSTEMD_UNIT,
+                enabled: true,
+            }])),
+            Ok,
+        ),
+        (
+            service_check(&DaemonService::Installed(vec![InstalledService::Systemd {
+                unit: crate::daemon::DAEMON_HTTP_SYSTEMD_UNIT,
+                enabled: false,
+            }])),
             Warn,
         ),
-        (service_check(&DaemonService::Launchd), Ok),
+        (
+            service_check(&DaemonService::Installed(vec![
+                InstalledService::Systemd {
+                    unit: crate::daemon::SYSTEMD_UNIT,
+                    enabled: true,
+                },
+                InstalledService::Systemd {
+                    unit: crate::daemon::DAEMON_HTTP_SYSTEMD_UNIT,
+                    enabled: false,
+                },
+            ])),
+            Warn,
+        ),
+        (
+            service_check(&DaemonService::Installed(vec![InstalledService::Launchd {
+                label: crate::daemon::DAEMON_HTTP_LAUNCHD_LABEL,
+            }])),
+            Ok,
+        ),
         (
             service_check(&DaemonService::Unknown("no home".into())),
             Warn,

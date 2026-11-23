@@ -9,10 +9,12 @@ use rho_providers::credentials::CredentialStore;
 use serde::{Deserialize, Serialize};
 use url::{Host, Url};
 
-use crate::app::mcp_server::{
-    private_network::is_private,
-    token_store::{self, StoredSet},
-    tokens::validate_name,
+use crate::app::{
+    http_guard::is_private,
+    mcp_server::{
+        token_store::{self, StoredSet},
+        tokens::validate_name,
+    },
 };
 
 /// The credential-store account that holds the remotes.

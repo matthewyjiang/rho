@@ -37,6 +37,11 @@ pub(crate) trait StoredSet: Default + Serialize + DeserializeOwned {
     const ACCOUNT: &'static str;
     /// What the set is, as errors name it, such as "MCP server tokens".
     const WHAT: &'static str;
+    /// Cross-process lock file in the account's home. Defaults to the MCP
+    /// server's lock file so existing MCP credential sets keep sharing it.
+    const LOCK_FILE: &'static str = LOCK_FILE;
+    /// Human-readable description of what `LOCK_FILE` guards.
+    const GUARDED: &'static str = GUARDED;
 }
 
 /// The set saved in `store`, read past the store's per-process cache so a
@@ -71,7 +76,7 @@ pub(crate) fn update<S: StoredSet, T>(
 ) -> anyhow::Result<T> {
     update_at(
         &UntrackedCredentialStore,
-        &account_lock_path(LOCK_FILE, GUARDED)?,
+        &account_lock_path(S::LOCK_FILE, S::GUARDED)?,
         change,
     )
 }
@@ -81,7 +86,7 @@ fn update_at<S: StoredSet, T>(
     lock_path: &Path,
     change: impl FnOnce(&mut S) -> anyhow::Result<T>,
 ) -> anyhow::Result<T> {
-    let _lock = lock_account_file(lock_path, GUARDED)?;
+    let _lock = lock_account_file(lock_path, S::GUARDED)?;
     let mut set = load::<S>(store)?;
     let result = change(&mut set)?;
     save(&set, store)?;
