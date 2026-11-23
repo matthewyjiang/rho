@@ -1,12 +1,17 @@
 //! The daemon's PR service, [`PullRequests`]: every session's record, the
 //! snapshot of each pull request read (shared by all sessions that link
-//! it), the forge behind its read lock, and the channel that asks the
-//! daemon to wake sessions with news.
+//! it), what clients look at and the branch lookups that serves, the forge
+//! behind its read lock, and the channel that asks the daemon to wake
+//! sessions with news.
 //!
-//! Locks: `state` is a plain mutex, never held across an await, and is
-//! held while a record is saved so saves of one session never reorder.
-//! `reader` is the async lock every forge read takes (see
-//! [`super::poller::Reader`]); it is taken before `state`, never after.
+//! Locks, each taken before the next and never after it:
+//! - `reader`, the async lock every forge read takes (see
+//!   [`super::poller::Reader`]);
+//! - a session's feed lock in the daemon, under which its reporter reads
+//!   the session's view; nothing takes a feed lock while holding `state`;
+//! - `state`, a plain mutex, never held across an await, and held while a
+//!   record is saved so saves of one session never reorder;
+//! - `budgets`, held only to read or keep one host's budget.
 
 use std::{
     collections::HashMap,
@@ -21,10 +26,13 @@ use rho_sdk::SessionId;
 use tokio::sync::{mpsc, Notify};
 
 use super::{
-    gh::Forge,
+    checkout::Checkout,
+    due,
+    gh::{Forge, ReadError},
     inbox::{PullRequestError, PullRequestInbox},
-    model::{PrDetail, PrId, PrSummary},
-    poller::{Reader, WATCH_POLL},
+    interest::{Cadence, Interest, Lease, Shown},
+    model::{BranchId, Found, PrDetail, PrId, PrSummary, RepoId},
+    poller::{Budgets, Reader},
     record::SessionRecord,
     state::News,
     store::PullRequestStore,
@@ -42,6 +50,17 @@ pub(super) struct Shared {
     store: Result<PullRequestStore, String>,
     state: Mutex<State>,
     pub(super) reader: tokio::sync::Mutex<Reader>,
+    /// Each host's budget as `reader` last kept it, readable without
+    /// waiting on a read in flight. `reader` is its one writer.
+    pub(super) budgets: Arc<Budgets>,
+    /// Told whenever a session's view may differ: after a tick that read
+    /// anything, a read outside a tick, a new lease, and a link, unlink,
+    /// watch or unwatch.
+    pub(super) changed: Arc<Notify>,
+    /// Wakes the poll loop before its period ends: told when a lease is
+    /// new, and when a session a client looks at links a PR. A renewal
+    /// never pokes, so clients cannot raise the read rate.
+    pub(super) poke: Notify,
     wakes: mpsc::UnboundedSender<SessionId>,
     wake_requests: Mutex<Option<mpsc::UnboundedReceiver<SessionId>>>,
 }
@@ -50,8 +69,16 @@ pub(super) struct Shared {
 #[derive(Default)]
 pub(super) struct State {
     pub(super) sessions: HashMap<SessionId, Entry>,
-    /// What the last reads found of each linked pull request.
+    /// What the last reads found of each pull request a session links or
+    /// a branch lookup found.
     pub(super) snapshots: HashMap<PrId, Snapshot>,
+    /// What clients look at.
+    pub(super) interest: Interest,
+    /// What the last lookup of each branch a session has checked out found.
+    pub(super) branches: HashMap<BranchId, BranchRead>,
+    /// Each repository's default branch, which has no PR of its own, as
+    /// the last read in it said; `None` when it has none.
+    pub(super) default_branches: HashMap<RepoId, Option<String>>,
 }
 
 impl State {
@@ -60,6 +87,21 @@ impl State {
         self.sessions
             .entry(session.clone())
             .or_insert_with(|| Entry::new(SessionRecord::default()))
+    }
+
+    /// The PR the last lookup of `branch` found.
+    pub(super) fn found(&self, branch: &BranchId) -> Option<&PrId> {
+        match self.branches.get(branch)?.found.as_ref()? {
+            Found::Pr(summary) => Some(&summary.id),
+            Found::None | Found::OnlyForks(_) => None,
+        }
+    }
+
+    /// Whether any session watches `pr`.
+    pub(super) fn watched(&self, pr: &PrId) -> bool {
+        self.sessions
+            .values()
+            .any(|entry| entry.record.watching().any(|(link, _)| link.pr == *pr))
     }
 }
 
@@ -112,17 +154,74 @@ impl Entry {
 pub(super) struct Snapshot {
     /// The newest summary, from a summary or a detail.
     pub(super) summary: Option<PrSummary>,
+    /// Kept while a session watches it or a client shows it.
     pub(super) detail: Option<Detailed>,
     /// When anything was last read of it, in unix milliseconds.
     pub(super) read_at: Option<u64>,
+    /// When it was last asked for, in unix milliseconds, whether or not
+    /// the read succeeded: what its cadence counts from, so a failing read
+    /// is not asked again on every tick.
+    pub(super) asked_at: Option<u64>,
     /// Why the last read failed; `None` once one succeeds.
-    pub(super) trouble: Option<String>,
+    pub(super) trouble: Option<Trouble>,
+}
+
+/// What the last lookup of one branch found.
+#[derive(Debug, Default)]
+pub(super) struct BranchRead {
+    /// `None` until a lookup succeeds.
+    pub(super) found: Option<Found>,
+    /// When it was last looked up, in unix milliseconds, whether or not the
+    /// lookup succeeded.
+    pub(super) asked_at: Option<u64>,
+    /// Why the last lookup failed; `None` once one succeeds.
+    pub(super) trouble: Option<Trouble>,
+}
+
+/// Why the last read of a pull request or branch failed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Trouble {
+    /// The forge answered without it: no such PR, or a repository the
+    /// account can't see, in the forge's words.
+    Refused(String),
+    /// The read got no answer.
+    Failed(ReadError),
+}
+
+impl fmt::Display for Trouble {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Refused(why) => formatter.write_str(why),
+            Self::Failed(error) => write!(formatter, "{error}"),
+        }
+    }
 }
 
 /// A full read and when it was taken, in unix milliseconds.
-pub(super) struct Detailed {
-    pub(super) detail: PrDetail,
-    pub(super) at: u64,
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Detailed {
+    pub(crate) detail: PrDetail,
+    pub(crate) at: u64,
+}
+
+/// Whether a client's show reads the forge before it answers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ShowRead {
+    /// Answer from the last read; the forge is read first only when there
+    /// is no detail to answer with (see [`PullRequests::show`]).
+    Cached,
+    /// Read the forge now, as after the user's own action on the PR.
+    Fresh,
+}
+
+/// What a client shows of a session.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ShowTarget<'a> {
+    /// The pull request of the branch its workspace has checked out.
+    Branch,
+    /// A pull request linked to it, as the client names it: a URL,
+    /// `owner/name#N`, or `#N` in its workspace's origin.
+    Linked(&'a str),
 }
 
 impl Snapshot {
@@ -170,6 +269,18 @@ impl Shared {
             let _ = self.wakes.send(session);
         }
     }
+
+    /// A lease was taken or renewed: a new one wakes the poll loop, and
+    /// may change the session's view.
+    fn leased(&self, lease: Lease) {
+        match lease {
+            Lease::New => {
+                self.poke.notify_one();
+                self.changed.notify_waiters();
+            }
+            Lease::Renewed => {}
+        }
+    }
 }
 
 impl PullRequests {
@@ -194,13 +305,17 @@ impl PullRequests {
             .map(|(session, record)| (session, Entry::new(record)))
             .collect();
         let (wakes, wake_requests) = mpsc::unbounded_channel();
+        let budgets = Arc::new(Budgets::default());
         Self(Arc::new(Shared {
             store,
             state: Mutex::new(State {
                 sessions,
-                snapshots: HashMap::new(),
+                ..State::default()
             }),
-            reader: tokio::sync::Mutex::new(Reader::new(forge)),
+            reader: tokio::sync::Mutex::new(Reader::new(forge, Arc::clone(&budgets))),
+            budgets,
+            changed: Arc::new(Notify::new()),
+            poke: Notify::new(),
             wakes,
             wake_requests: Mutex::new(Some(wake_requests)),
         }))
@@ -212,14 +327,16 @@ impl PullRequests {
         PullRequestInbox::new(Arc::clone(&self.0), session.clone(), cwd.to_owned())
     }
 
-    /// Polls every [`WATCH_POLL`] until `stopping` resolves; a tick under
-    /// way stops with it.
+    /// Polls every [`due::tick_period`], or sooner when a new lease pokes
+    /// it, until `stopping` resolves; a tick under way stops with it.
     pub(crate) async fn run(&self, stopping: impl Future<Output = ()>) {
         tokio::pin!(stopping);
         loop {
+            let period = due::tick_period(&self.0.state(), unix_ms());
             tokio::select! {
                 () = &mut stopping => return,
-                () = tokio::time::sleep(WATCH_POLL) => {}
+                () = tokio::time::sleep(period) => {}
+                () = self.0.poke.notified() => {}
             }
             tokio::select! {
                 () = &mut stopping => return,
@@ -280,16 +397,148 @@ impl PullRequests {
             .is_some_and(|entry| entry.waiting().next().is_some())
     }
 
-    /// `session` was deleted: drops its record, from memory and disk.
+    /// A client lists `session` at `now` (unix milliseconds); `checkout`
+    /// is what its workspace has checked out, `None` when it has none. The
+    /// lease lasts two periods of [`super::interest::LISTED_POLL`], and
+    /// until then the session's linked PRs' summaries and its branch's
+    /// lookup are read at that cadence. A new lease wakes the poller.
+    pub(crate) fn list(&self, session: &SessionId, checkout: Option<Checkout>, now: u64) {
+        let lease = self.0.state().interest.list(session, checkout, now);
+        self.0.leased(lease);
+    }
+
+    /// A client shows `target` of `session` at `now` (unix milliseconds);
+    /// `checkout` is what its workspace has checked out, `None` when it has
+    /// none. Leases the target at [`super::interest::SHOWN_POLL`], and
+    /// answers its detail: the branch's PR's or the linked PR's, `None`
+    /// while there is none to answer with.
+    ///
+    /// It reads the forge first, through the poller's lock and budget
+    /// guard, when `read` is [`ShowRead::Fresh`], when the branch was never
+    /// looked up, or when there is no detail to answer with and the target
+    /// was not asked for within the shown cadence. A read that fails is
+    /// kept as the target's trouble, and a paused host as its budget, for
+    /// the view to show; the answer is then the detail last read.
+    ///
+    /// # Errors
+    ///
+    /// [`PullRequestError::InvalidTarget`] when `target` names no pull
+    /// request, or one not linked to `session`.
+    pub(crate) async fn show(
+        &self,
+        session: &SessionId,
+        checkout: Option<Checkout>,
+        target: ShowTarget<'_>,
+        read: ShowRead,
+        now: u64,
+    ) -> Result<Option<Detailed>, PullRequestError> {
+        let shown =
+            match target {
+                ShowTarget::Branch => Shown::Branch,
+                ShowTarget::Linked(text) => {
+                    let origin = checkout.as_ref().and_then(Checkout::repo);
+                    let pr = PrId::parse(text, origin)
+                        .map_err(|why| PullRequestError::InvalidTarget(why.to_owned()))?;
+                    let linked =
+                        self.0.state().sessions.get(session).is_some_and(|entry| {
+                            entry.record.links().iter().any(|link| link.pr == pr)
+                        });
+                    if !linked {
+                        return Err(PullRequestError::InvalidTarget(format!(
+                            "{pr} is not linked to this session"
+                        )));
+                    }
+                    Shown::Linked(pr)
+                }
+            };
+        let branch = match &checkout {
+            Some(Checkout::Branch(branch)) => Some(branch.clone()),
+            Some(Checkout::NotGit | Checkout::Detached { .. } | Checkout::NoForge { .. })
+            | None => None,
+        };
+        let lease = self
+            .0
+            .state()
+            .interest
+            .show(session, checkout, shown.clone(), now);
+        self.0.leased(lease);
+        let fresh = read == ShowRead::Fresh;
+        match shown {
+            Shown::Linked(pr) => {
+                let (cached, wanted) = {
+                    let state = self.0.state();
+                    let snapshot = state.snapshots.get(&pr);
+                    let cached = snapshot.and_then(|snapshot| snapshot.detail.clone());
+                    let asked_at = snapshot.and_then(|snapshot| snapshot.asked_at);
+                    let wanted = cached.is_none() && Cadence::Shown.due(asked_at, now);
+                    (cached, wanted)
+                };
+                if !(fresh || wanted) {
+                    return Ok(cached);
+                }
+                // A failure is kept as the PR's trouble.
+                Ok(match self.0.read_detail(&pr, now).await {
+                    Ok(detail) => Some(Detailed { detail, at: now }),
+                    Err(_) => cached,
+                })
+            }
+            Shown::Branch => {
+                let Some(branch) = branch else {
+                    return Ok(None);
+                };
+                let wanted = {
+                    let state = self.0.state();
+                    let asked_at = state.branches.get(&branch).and_then(|read| read.asked_at);
+                    // Its PR has no detail, and was not asked for lately.
+                    let lacks_detail = state.found(&branch).is_some_and(|pr| {
+                        state.snapshots.get(pr).is_none_or(|snapshot| {
+                            snapshot.detail.is_none() && Cadence::Shown.due(snapshot.asked_at, now)
+                        })
+                    });
+                    asked_at.is_none() || lacks_detail
+                };
+                if fresh || wanted {
+                    if let Some(read) = self.0.read_branch(&branch, now).await {
+                        return Ok(Some(read));
+                    }
+                }
+                Ok(branch_detail(&self.0.state(), &branch))
+            }
+        }
+    }
+
+    /// Completes the next time any session's view may have changed.
+    /// Subscribe before reading the views, so a change in between is not
+    /// missed.
+    pub(crate) fn changes(&self) -> impl Future<Output = ()> + Send + 'static {
+        Arc::clone(&self.0.changed).notified_owned()
+    }
+
+    /// Runs `read` on the state and the hosts' budgets, never waiting on a
+    /// forge read: what a session's view is built from.
+    pub(super) fn read_view<T>(&self, read: impl FnOnce(&State, &Budgets) -> T) -> T {
+        let state = self.0.state();
+        read(&state, &self.0.budgets)
+    }
+
+    /// `session` was deleted: drops its record, from memory and disk, and
+    /// what clients looked at of it.
     pub(crate) fn forget(&self, session: &SessionId) {
         let mut state = self.0.state();
         state.sessions.remove(session);
+        state.interest.forget(session);
         if let Ok(store) = &self.0.store {
             if let Err(error) = store.forget(session) {
                 tracing::warn!(%session, %error, "could not delete the session's pull request record");
             }
         }
     }
+}
+
+/// The detail kept of the PR `branch`'s last lookup found.
+fn branch_detail(state: &State, branch: &BranchId) -> Option<Detailed> {
+    let pr = state.found(branch)?;
+    state.snapshots.get(pr)?.detail.clone()
 }
 
 impl fmt::Debug for PullRequests {

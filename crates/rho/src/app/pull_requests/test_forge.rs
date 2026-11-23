@@ -10,15 +10,19 @@ use std::{
 use super::{
     gh::{Forge, ReadError},
     model::{
-        Batch, Budget, ChangeKey, CheckRun, CheckStatus, FetchPlan, Found, Mergeable, PrDetail,
-        PrId, PrState, PrSummary, Review, Rollup,
+        Batch, BranchId, Budget, ChangeKey, CheckRun, CheckStatus, FetchPlan, Found, MergeMethod,
+        Mergeable, PrDetail, PrId, PrState, PrSummary, RepoId, Review, Rollup,
     },
 };
 
+/// The default branch of every repository a [`ScriptedForge`] answers for.
+pub(crate) const DEFAULT_BRANCH: &str = "main";
+
 /// A forge that answers every read from the pull requests a test put in it
-/// ([`Self::set`]), the way GitHub would answer that plan, and records each
-/// plan it was asked. A failure queued with [`Self::fail_next`] answers the
-/// next read instead.
+/// ([`Self::set`]) and the branches it gave them ([`Self::set_branch`]),
+/// the way GitHub would answer that plan, and records each plan it was
+/// asked. Every repository's default branch is [`DEFAULT_BRANCH`]. A
+/// failure queued with [`Self::fail_next`] answers the next read instead.
 #[derive(Default)]
 pub(crate) struct ScriptedForge {
     world: Mutex<World>,
@@ -28,6 +32,8 @@ pub(crate) struct ScriptedForge {
 #[derive(Default)]
 struct World {
     prs: HashMap<PrId, PrDetail>,
+    /// The PR each branch has.
+    branches: HashMap<BranchId, PrId>,
     failures: VecDeque<ReadError>,
     budget: Option<Budget>,
 }
@@ -94,10 +100,23 @@ impl ScriptedForge {
             threads: Vec::new(),
             older_threads: 0,
             mergeable: Mergeable::Yes,
+            merge_methods: vec![MergeMethod::Squash],
             viewer: Some("me".into()),
             merged_by: None,
             merge_commit: None,
         });
+    }
+
+    /// Branch `branch` of pull request `target`'s (`owner/name#N`)
+    /// repository now has that PR, which reads as [`Self::set`] or
+    /// [`Self::set_open`] put it.
+    pub(crate) fn set_branch(&self, target: &str, branch: &str) {
+        let id = PrId::parse(target, None).expect("an owner/name#N target");
+        let branch = BranchId {
+            repo: id.repo.clone(),
+            branch: branch.to_owned(),
+        };
+        self.world().branches.insert(branch, id);
     }
 
     /// The next read fails with `error`.
@@ -128,16 +147,39 @@ impl ScriptedForge {
         if let Some(error) = world.failures.pop_front() {
             return Err(error);
         }
+        let summary = |pr: &PrId| {
+            world
+                .prs
+                .get(pr)
+                .map_or(Found::None, |detail| Found::Pr(detail.summary.clone()))
+        };
+        let branches = plan
+            .branches
+            .iter()
+            .map(|branch| {
+                let found = world.branches.get(branch).map_or(Found::None, summary);
+                (branch.clone(), found)
+            })
+            .collect();
+        let mut repos: Vec<&RepoId> = Vec::new();
+        let named = plan
+            .branches
+            .iter()
+            .map(|branch| &branch.repo)
+            .chain(plan.links.iter().chain(&plan.details).map(|pr| &pr.repo));
+        for repo in named {
+            if !repos.contains(&repo) {
+                repos.push(repo);
+            }
+        }
+        let default_branches = repos
+            .into_iter()
+            .map(|repo| (repo.clone(), Some(DEFAULT_BRANCH.to_owned())))
+            .collect();
         let links = plan
             .links
             .iter()
-            .map(|pr| {
-                let found = world
-                    .prs
-                    .get(pr)
-                    .map_or(Found::None, |detail| Found::Pr(detail.summary.clone()));
-                (pr.clone(), found)
-            })
+            .map(|pr| (pr.clone(), summary(pr)))
             .collect();
         let details = plan
             .details
@@ -146,9 +188,11 @@ impl ScriptedForge {
             .collect();
         Ok(Batch {
             budget: world.budget.clone(),
+            default_branches,
+            branches,
             links,
             details,
-            ..Batch::default()
+            missing: Vec::new(),
         })
     }
 }

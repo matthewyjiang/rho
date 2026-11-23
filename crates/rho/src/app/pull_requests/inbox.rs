@@ -4,22 +4,16 @@
 //! for the durable removal); its tool half links and watches pull requests
 //! for the session's agent.
 
-use std::{
-    collections::HashMap,
-    fmt,
-    path::{Path, PathBuf},
-    process::Stdio,
-    sync::Arc,
-    time::Duration,
-};
+use std::{collections::HashMap, fmt, path::PathBuf, sync::Arc, time::Duration};
 
 use rho_sdk::SessionId;
-use tokio::process::Command;
 
 use super::{
-    model::{Mergeable, PrDetail, PrId, PrState, RepoId, Rollup, ThreadState},
+    checkout::origin,
+    gh::ReadError,
+    model::{Mergeable, PrDetail, PrId, PrState, Rollup, ThreadState},
     news,
-    poller::WATCHES_PER_SESSION,
+    poller::{DetailError, BUDGET_FLOOR, WATCHES_PER_SESSION},
     record::LinkOrigin,
     service::{Entry, Shared},
     state::{CheckTally, Gate, News, WatchState},
@@ -28,10 +22,6 @@ use super::{
 
 /// The host every session may read pull requests on.
 const GITHUB: &str = "github.com";
-
-/// How long `git remote get-url origin` may take to resolve `#N`. It reads
-/// local config: 4 ms on 2026-11-22. A tripwire for a hung filesystem.
-const GIT_DEADLINE: Duration = Duration::from_secs(5);
 
 /// One session's handle on the PR service. Cheap to clone.
 #[derive(Clone)]
@@ -275,7 +265,11 @@ impl PullRequestInbox {
         if let Some(Some(detail)) = known {
             return Ok(Watched::of(&detail, /*started*/ false));
         }
-        let detail = self.shared.read_baseline(&pr, now).await?;
+        let detail = self
+            .shared
+            .read_detail(&pr, now)
+            .await
+            .map_err(|error| refusal(error, &pr.repo.host))?;
         let mut state = self.shared.state();
         let watching = self.watching(&state.sessions, &pr)?;
         let entry = state.entry(&self.session);
@@ -295,7 +289,9 @@ impl PullRequestInbox {
         if linked || started {
             // The watch runs in memory; a failed save is logged.
             let _ = self.shared.save(&self.session, &entry.record);
+            self.shared.changed.notify_waiters();
         }
+        drop(state);
         if ended {
             return Err(PullRequestError::AlreadyEnded {
                 state: detail.summary.state,
@@ -323,13 +319,21 @@ impl PullRequestInbox {
         if was_watched {
             // Polling stopped in memory; a failed save is logged.
             let _ = self.shared.save(&self.session, &entry.record);
+            self.shared.changed.notify_waiters();
         }
         Ok(Unwatched { pr, was_watched })
     }
 
-    /// Links `target` to the session, unwatched, at `now` (unix
-    /// milliseconds). Nothing is read until it is watched.
-    pub(crate) async fn link(&self, target: &str, now: u64) -> Result<Linked, PullRequestError> {
+    /// Links `target` to the session as `origin` asked, unwatched, at
+    /// `now` (unix milliseconds). It is read only while it is watched or a
+    /// client looks at the session; a link to a session a client looks at
+    /// wakes the poller to read it.
+    pub(crate) async fn link(
+        &self,
+        target: &str,
+        origin: LinkOrigin,
+        now: u64,
+    ) -> Result<Linked, PullRequestError> {
         self.shared.store()?;
         let pr = self.resolve(target).await?;
         let url = pr.url();
@@ -337,11 +341,15 @@ impl PullRequestInbox {
         let entry = state.entry(&self.session);
         let new = entry
             .record
-            .link(pr.clone(), url.clone(), LinkOrigin::Agent, now / 1000);
+            .link(pr.clone(), url.clone(), origin, now / 1000);
         if new {
             self.shared
                 .save(&self.session, &entry.record)
                 .map_err(PullRequestError::Store)?;
+            if state.interest.leased(&self.session, now) {
+                self.shared.poke.notify_one();
+            }
+            self.shared.changed.notify_waiters();
         }
         Ok(Linked { pr, url, new })
     }
@@ -362,6 +370,7 @@ impl PullRequestInbox {
             self.shared
                 .save(&self.session, &entry.record)
                 .map_err(PullRequestError::Store)?;
+            self.shared.changed.notify_waiters();
         }
         Ok(Unlinked { pr, was_linked })
     }
@@ -393,7 +402,9 @@ impl PullRequestInbox {
                     origin: link.origin,
                     watched: link.watch.is_some(),
                     last_read,
-                    trouble: snapshot.and_then(|snapshot| snapshot.trouble.clone()),
+                    trouble: snapshot
+                        .and_then(|snapshot| snapshot.trouble.as_ref())
+                        .map(ToString::to_string),
                 }
             })
             .collect()
@@ -508,23 +519,22 @@ impl Watched {
     }
 }
 
-/// The repository `cwd`'s `origin` remote names, if git answers in time.
-async fn origin(cwd: &Path) -> Option<RepoId> {
-    let mut command = Command::new("git");
-    command
-        .arg("-C")
-        .arg(cwd)
-        .args(["remote", "get-url", "origin"])
-        .stdin(Stdio::null())
-        .kill_on_drop(true);
-    let output = tokio::time::timeout(GIT_DEADLINE, command.output())
-        .await
-        .ok()?
-        .ok()?;
-    if !output.status.success() {
-        return None;
+/// Why a watch of a PR on `host` could not start, from why its baseline
+/// read has no detail.
+fn refusal(error: DetailError, host: &str) -> PullRequestError {
+    match error {
+        DetailError::Paused(budget) => PullRequestError::Budget {
+            remaining: budget.remaining,
+            floor: BUDGET_FLOOR,
+            resets_at: budget.resets_at,
+        },
+        DetailError::Refused(why) => PullRequestError::NotFound(why),
+        DetailError::Failed(ReadError::NotInstalled(_)) => PullRequestError::NotInstalled,
+        DetailError::Failed(ReadError::SignedOut(_)) => PullRequestError::SignedOut {
+            host: host.to_owned(),
+        },
+        DetailError::Failed(ReadError::Failed(why)) => PullRequestError::Read(why),
     }
-    RepoId::from_url(std::str::from_utf8(&output.stdout).ok()?)
 }
 
 /// `resets_at` (unix seconds) as a UTC time.

@@ -4,8 +4,8 @@ use super::{evaluate, failed_read, refused_read, Report, COMMENT_WAKE_LIMIT, REA
 use crate::app::pull_requests::{
     gh::ReadError,
     model::{
-        ChangeKey, CheckRun, CheckStatus, Mergeable, Post, PrDetail, PrId, PrState, PrSummary,
-        RepoId, Review, Rollup, Thread, ThreadState, Verdict,
+        ChangeKey, CheckRun, CheckStatus, MergeMethod, Mergeable, Post, PrDetail, PrId, PrState,
+        PrSummary, RepoId, Review, Rollup, Thread, ThreadState, Verdict,
     },
     state::{Baseline, Change, CheckRef, End, Failure, Gate, Owed, Remark, Reviewed, WatchState},
 };
@@ -53,6 +53,7 @@ fn read(checks: Vec<CheckRun>) -> PrDetail {
         threads: Vec::new(),
         older_threads: 0,
         mergeable: Mergeable::Yes,
+        merge_methods: vec![MergeMethod::Squash],
         viewer: Some("me".into()),
         merged_by: None,
         merge_commit: None,

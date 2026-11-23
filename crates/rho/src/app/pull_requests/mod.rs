@@ -8,15 +8,22 @@
 //! - [`record`]: what the daemon keeps for one session: links, watches, news.
 //! - [`store`]: the per-session record files, replaced atomically.
 //! - [`service`]: [`PullRequests`], the daemon-wide service.
-//! - [`poller`]: one poll pass, and the one door to the forge.
+//! - [`checkout`]: what a session's workspace has checked out.
+//! - [`interest`]: the leases clients take on what they list and show.
+//! - [`due`]: what a poll pass reads, from the state and the leases.
+//! - [`poller`]: one poll pass, the reads a show or a watch makes itself,
+//!   and the one door to the forge.
 //! - [`inbox`]: [`PullRequestInbox`], one session's side of the service.
 //!
 //! Branch lookups and the parts of [`model::PrDetail`] no watch reads serve
-//! the coming rho-ui protocol step, which shows linked PRs to clients.
+//! clients, which list and show a session's pull requests.
 
+mod checkout;
+mod due;
 mod gh;
 mod gh_query;
 mod inbox;
+mod interest;
 mod model;
 mod news;
 mod poller;

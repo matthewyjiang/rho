@@ -249,6 +249,8 @@ pub(crate) struct PrDetail {
     /// Threads older than `threads`, not read.
     pub(crate) older_threads: u32,
     pub(crate) mergeable: Mergeable,
+    /// How its repository lets it merge, the viewer's default first.
+    pub(crate) merge_methods: Vec<MergeMethod>,
     /// The login of the account that read it, whose own posts are not news
     /// to it; `None` when the read didn't say.
     pub(crate) viewer: Option<String>,
@@ -274,6 +276,15 @@ pub(crate) enum Mergeable {
     Conflicting,
     /// Not worked out yet, or the PR is closed.
     Unknown,
+}
+
+/// A way a repository lets a PR merge.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MergeMethod {
+    /// A merge commit.
+    Merge,
+    Squash,
+    Rebase,
 }
 
 /// What someone said on a PR: a comment, a review, or a comment on a line.

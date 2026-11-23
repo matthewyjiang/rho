@@ -12,8 +12,9 @@ use serde_json::Value;
 use super::{
     gh::{classify, Ended, ReadError},
     model::{
-        Batch, Budget, ChangeKey, CheckRun, CheckStatus, FetchPlan, Found, Mergeable, Post,
-        PrDetail, PrId, PrState, PrSummary, RepoId, Review, Rollup, Thread, ThreadState, Verdict,
+        Batch, Budget, ChangeKey, CheckRun, CheckStatus, FetchPlan, Found, MergeMethod, Mergeable,
+        Post, PrDetail, PrId, PrState, PrSummary, RepoId, Review, Rollup, Thread, ThreadState,
+        Verdict,
     },
 };
 
@@ -82,13 +83,16 @@ const SUMMARY: &str = "fragment Summary on PullRequest {
 /// `viewer` and `isRequired` were measured on 2026-11-22 (see
 /// [`DETAILS_PER_QUERY`]). Comment ids and `publishedAt`, `authorAssociation`, the merge
 /// fields and each thread's `latest` five came after those measurements:
-/// the poller logs each query's `rateLimit.cost`. A new comment updates
-/// the PR's `updatedAt` (cli/cli#10513: comment 20:42:15, update
-/// 20:42:16), so a summary read sees it.
+/// the poller logs each query's `rateLimit.cost`. How the repository lets
+/// it merge cost nothing more (rho-ui measured it on matthewyjiang/rho-ui#35:
+/// still 1 point, 0.46 s). A new comment updates the PR's `updatedAt`
+/// (cli/cli#10513: comment 20:42:15, update 20:42:16), so a summary read
+/// sees it.
 const DETAIL: &str = "fragment Detail on PullRequest {
   ...Summary
   body author { login } headRefName baseRefName additions deletions changedFiles reviewDecision
   mergeable mergedBy { login } mergeCommit { oid }
+  repository { mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed viewerDefaultMergeMethod }
   commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 50) {
     totalCount nodes {
       __typename
@@ -489,6 +493,7 @@ struct GhDetail {
     changed_files: u32,
     review_decision: Option<String>,
     mergeable: String,
+    repository: GhMergeSettings,
     #[serde(default)]
     merged_by: Option<Login>,
     #[serde(default)]
@@ -498,6 +503,40 @@ struct GhDetail {
     review_threads: Connection<GhThread>,
     #[serde(default)]
     gate: Option<Nodes<GateNode>>,
+}
+
+/// How a PR's repository lets PRs merge.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GhMergeSettings {
+    merge_commit_allowed: bool,
+    squash_merge_allowed: bool,
+    rebase_merge_allowed: bool,
+    viewer_default_merge_method: Option<String>,
+}
+
+impl GhMergeSettings {
+    /// The methods allowed, the viewer's default first, else in GitHub's
+    /// order.
+    fn methods(&self) -> Vec<MergeMethod> {
+        let default = match self.viewer_default_merge_method.as_deref() {
+            Some("SQUASH") => Some(MergeMethod::Squash),
+            Some("REBASE") => Some(MergeMethod::Rebase),
+            Some("MERGE") => Some(MergeMethod::Merge),
+            _ => None,
+        };
+        let mut methods: Vec<MergeMethod> = [
+            (MergeMethod::Merge, self.merge_commit_allowed),
+            (MergeMethod::Squash, self.squash_merge_allowed),
+            (MergeMethod::Rebase, self.rebase_merge_allowed),
+        ]
+        .into_iter()
+        .filter_map(|(method, allowed)| allowed.then_some(method))
+        .collect();
+        // Stable: the default first, the rest in GitHub's order.
+        methods.sort_by_key(|method| Some(*method) != default);
+        methods
+    }
 }
 
 #[derive(Deserialize)]
@@ -794,6 +833,7 @@ impl GhDetail {
             checks,
             checks_total,
             mergeable,
+            merge_methods: self.repository.methods(),
             viewer: viewer.map(str::to_owned),
             merged_by: self.merged_by.map(|author| author.login),
             merge_commit: self.merge_commit.map(|commit| commit.oid),
