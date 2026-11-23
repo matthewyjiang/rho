@@ -35,15 +35,20 @@ use crate::{
         SessionMcpCompleteParams, SessionMcpCompleteResponse, SessionMcpInventory,
         SessionMcpParams, SessionMcpResourceParams, SessionMcpResourceResponse, SessionNewParams,
         SessionNewResponse, SessionObserve, SessionObserveParams, SessionProcessesParams,
-        SessionProcessesResponse, SessionPromptParams, SessionPromptResponse, SessionRenameParams,
-        SessionRenameResponse, SessionSteerParams, SessionSteerResponse,
-        SessionSurfaceActionParams, SessionSurfaceActionResponse, SessionUnsteerParams,
-        SessionUnsteerResponse, WorktreePruneParams, WorktreePruneResponse, AUTH_CHOOSE_STORE,
-        AUTH_KEY, AUTH_LIST, AUTH_LOGIN, AUTH_LOGIN_CANCEL, AUTH_LOGOUT, CONFIG_GET, HELLO,
-        SESSION_ANSWER, SESSION_ATTACH, SESSION_BACKGROUND_LIST, SESSION_BACKGROUND_STOP,
-        SESSION_CANCEL, SESSION_CONFIGURE, SESSION_DELETE, SESSION_DETACH, SESSION_HOLD,
-        SESSION_INSPECT, SESSION_LIST, SESSION_MCP, SESSION_MCP_CATALOG, SESSION_MCP_COMPLETE,
-        SESSION_MCP_RESOURCE, SESSION_NEW, SESSION_OBSERVE, SESSION_PROCESSES, SESSION_PROMPT,
+        SessionProcessesResponse, SessionPromptParams, SessionPromptResponse,
+        SessionPullRequestLinkParams, SessionPullRequestLinkResponse, SessionPullRequestListParams,
+        SessionPullRequestListResponse, SessionPullRequestShowParams,
+        SessionPullRequestShowResponse, SessionPullRequestUnlinkParams,
+        SessionPullRequestUnlinkResponse, SessionRenameParams, SessionRenameResponse,
+        SessionSteerParams, SessionSteerResponse, SessionSurfaceActionParams,
+        SessionSurfaceActionResponse, SessionUnsteerParams, SessionUnsteerResponse,
+        WorktreePruneParams, WorktreePruneResponse, AUTH_CHOOSE_STORE, AUTH_KEY, AUTH_LIST,
+        AUTH_LOGIN, AUTH_LOGIN_CANCEL, AUTH_LOGOUT, CONFIG_GET, HELLO, SESSION_ANSWER,
+        SESSION_ATTACH, SESSION_BACKGROUND_LIST, SESSION_BACKGROUND_STOP, SESSION_CANCEL,
+        SESSION_CONFIGURE, SESSION_DELETE, SESSION_DETACH, SESSION_HOLD, SESSION_INSPECT,
+        SESSION_LIST, SESSION_MCP, SESSION_MCP_CATALOG, SESSION_MCP_COMPLETE, SESSION_MCP_RESOURCE,
+        SESSION_NEW, SESSION_OBSERVE, SESSION_PROCESSES, SESSION_PROMPT, SESSION_PULL_REQUEST_LINK,
+        SESSION_PULL_REQUEST_LIST, SESSION_PULL_REQUEST_SHOW, SESSION_PULL_REQUEST_UNLINK,
         SESSION_RENAME, SESSION_STEER, SESSION_SURFACE_ACTION, SESSION_UNSTEER, WORKTREE_PRUNE,
     },
     subscription::Subscription,
@@ -287,6 +292,42 @@ pub trait Service: SettingsService + Send + Sync {
     ) -> impl Future<Output = Result<SessionBackgroundStopResponse, RpcError>> + Send {
         let _ = params;
         unsupported(SESSION_BACKGROUND_STOP)
+    }
+
+    /// Handles `rho/session/pull_request/list`: lease and list the sessions' pull requests.
+    fn list_session_pull_requests(
+        &self,
+        params: SessionPullRequestListParams,
+    ) -> impl Future<Output = Result<SessionPullRequestListResponse, RpcError>> + Send {
+        let _ = params;
+        unsupported(SESSION_PULL_REQUEST_LIST)
+    }
+
+    /// Handles `rho/session/pull_request/show`: lease and show one of a session's pull requests.
+    fn show_session_pull_request(
+        &self,
+        params: SessionPullRequestShowParams,
+    ) -> impl Future<Output = Result<SessionPullRequestShowResponse, RpcError>> + Send {
+        let _ = params;
+        unsupported(SESSION_PULL_REQUEST_SHOW)
+    }
+
+    /// Handles `rho/session/pull_request/link`: link and save a pull request.
+    fn link_session_pull_request(
+        &self,
+        params: SessionPullRequestLinkParams,
+    ) -> impl Future<Output = Result<SessionPullRequestLinkResponse, RpcError>> + Send {
+        let _ = params;
+        unsupported(SESSION_PULL_REQUEST_LINK)
+    }
+
+    /// Handles `rho/session/pull_request/unlink`: unlink a pull request.
+    fn unlink_session_pull_request(
+        &self,
+        params: SessionPullRequestUnlinkParams,
+    ) -> impl Future<Output = Result<SessionPullRequestUnlinkResponse, RpcError>> + Send {
+        let _ = params;
+        unsupported(SESSION_PULL_REQUEST_UNLINK)
     }
 
     /// Handles `rho/session/inspect`: read a report about the loaded

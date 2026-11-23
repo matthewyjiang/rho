@@ -12,14 +12,17 @@ use crate::display::{
 };
 use crate::methods::{
     AnswerStop, Applies, ApprovalSource, Ask, AuthKind, AuthStatus, BackgroundItem,
-    BackgroundStatus, Budget, CardTone, CommandKind, CompactionStatus, CompactionTrigger,
-    ConfigLayer, ConfigNamespace, ContentBlock, CredentialStoreKind, DefaultStyle, DetachReason,
-    InputAsker, IntegerUnit, JobKind, JobState, LoginOutcome, ModelRuntime, Operation, PathScope,
-    PermissionMode, PlanStatus, ProcessState, ProcessStream, PromptAuthor, ReasoningLevel,
-    Resolution, RetryReason, Selection, SessionActivity, SessionControlAction, SessionEvent,
-    SessionMcpMode, SessionMcpResourceContent, SessionMcpStatus, SettingKind, StoreSelectedBy,
-    ToolContent, ToolKind, ToolStatus, TurnErrorKind, TurnOutcome, UncheckedReason, UnsteerOutcome,
-    ValueSource, WorktreeVerdict,
+    BackgroundStatus, BranchLookup, Budget, CardTone, CommandKind, CompactionStatus,
+    CompactionTrigger, ConfigLayer, ConfigNamespace, ContentBlock, CredentialStoreKind,
+    DefaultStyle, DetachReason, InputAsker, IntegerUnit, JobKind, JobState, LoginOutcome,
+    ModelRuntime, Operation, PathScope, PermissionMode, PlanStatus, ProcessState, ProcessStream,
+    PromptAuthor, PullRequestCheckStatus, PullRequestLinkOrigin, PullRequestMergeMethod,
+    PullRequestMergeable, PullRequestReview, PullRequestRollup, PullRequestState,
+    PullRequestThreadState, PullRequestTrouble, PullRequestVerdict, ReasoningLevel, Resolution,
+    RetryReason, Selection, SessionActivity, SessionControlAction, SessionEvent, SessionMcpMode,
+    SessionMcpResourceContent, SessionMcpStatus, SettingKind, StoreSelectedBy, ToolContent,
+    ToolKind, ToolStatus, TurnErrorKind, TurnOutcome, UncheckedReason, UnsteerOutcome, ValueSource,
+    WorktreeVerdict,
 };
 
 // Covers: the committed schema/protocol.json is what the wire types
@@ -59,7 +62,7 @@ fn enums_marked_open_read_unknown_values_as_unknown() {
     let unseen = || json!("from_a_newer_daemon");
     let unseen_tag = || json!({ "type": "from_a_newer_daemon" });
     let unseen_kind = || json!({ "kind": "from_a_newer_daemon" });
-    let cases: [(&str, bool); 63] = [
+    let cases: [(&str, bool); 74] = [
         (
             "SessionMcpResourceContent",
             reads_as(unseen_tag(), SessionMcpResourceContent::Unknown),
@@ -200,6 +203,50 @@ fn enums_marked_open_read_unknown_values_as_unknown() {
         (
             "WorktreeVerdict",
             reads_as(unseen_kind(), WorktreeVerdict::Unknown),
+        ),
+        (
+            "BranchLookup",
+            reads_as(unseen_kind(), BranchLookup::Unknown),
+        ),
+        (
+            "PullRequestLinkOrigin",
+            reads_as(unseen(), PullRequestLinkOrigin::Unknown),
+        ),
+        (
+            "PullRequestState",
+            reads_as(unseen(), PullRequestState::Unknown),
+        ),
+        (
+            "PullRequestRollup",
+            reads_as(unseen(), PullRequestRollup::Unknown),
+        ),
+        (
+            "PullRequestTrouble",
+            reads_as(unseen_kind(), PullRequestTrouble::Unknown),
+        ),
+        (
+            "PullRequestReview",
+            reads_as(unseen(), PullRequestReview::Unknown),
+        ),
+        (
+            "PullRequestMergeable",
+            reads_as(unseen(), PullRequestMergeable::Unknown),
+        ),
+        (
+            "PullRequestMergeMethod",
+            reads_as(unseen(), PullRequestMergeMethod::Unknown),
+        ),
+        (
+            "PullRequestCheckStatus",
+            reads_as(unseen(), PullRequestCheckStatus::Unknown),
+        ),
+        (
+            "PullRequestVerdict",
+            reads_as(unseen(), PullRequestVerdict::Unknown),
+        ),
+        (
+            "PullRequestThreadState",
+            reads_as(unseen(), PullRequestThreadState::Unknown),
         ),
     ];
 

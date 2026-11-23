@@ -163,6 +163,18 @@ pub use methods::{
     SessionBackgroundStopResponse, SESSION_BACKGROUND_LIST, SESSION_BACKGROUND_STOP,
 };
 pub use methods::{
+    BranchLookup, BranchPullRequest, LinkedPullRequest, ListedSessionPullRequests,
+    PullRequestCheck, PullRequestCheckStatus, PullRequestDetail, PullRequestId,
+    PullRequestLinkOrigin, PullRequestMergeMethod, PullRequestMergeable, PullRequestPost,
+    PullRequestRead, PullRequestReview, PullRequestRollup, PullRequestState, PullRequestSummary,
+    PullRequestTarget, PullRequestThread, PullRequestThreadState, PullRequestTrouble,
+    PullRequestVerdict, SessionPullRequestLinkParams, SessionPullRequestLinkResponse,
+    SessionPullRequestListParams, SessionPullRequestListResponse, SessionPullRequestShowParams,
+    SessionPullRequestShowResponse, SessionPullRequestUnlinkParams,
+    SessionPullRequestUnlinkResponse, SessionPullRequests, SESSION_PULL_REQUEST_LINK,
+    SESSION_PULL_REQUEST_LIST, SESSION_PULL_REQUEST_SHOW, SESSION_PULL_REQUEST_UNLINK,
+};
+pub use methods::{
     ChildThreads, IdleWake, McpServer, SecretMap, SessionPart, SessionSetup, SignIn, Surfaces,
 };
 pub use methods::{

@@ -28,6 +28,10 @@
 //! | [`SESSION_PROCESSES`] | [`SessionProcessesParams`] | [`SessionProcessesResponse`] |
 //! | [`SESSION_BACKGROUND_LIST`] | [`SessionBackgroundListParams`] | [`SessionBackgroundListResponse`] |
 //! | [`SESSION_BACKGROUND_STOP`] | [`SessionBackgroundStopParams`] | [`SessionBackgroundStopResponse`] |
+//! | [`SESSION_PULL_REQUEST_LIST`] | [`SessionPullRequestListParams`] | [`SessionPullRequestListResponse`] |
+//! | [`SESSION_PULL_REQUEST_SHOW`] | [`SessionPullRequestShowParams`] | [`SessionPullRequestShowResponse`] |
+//! | [`SESSION_PULL_REQUEST_LINK`] | [`SessionPullRequestLinkParams`] | [`SessionPullRequestLinkResponse`] |
+//! | [`SESSION_PULL_REQUEST_UNLINK`] | [`SessionPullRequestUnlinkParams`] | [`SessionPullRequestUnlinkResponse`] |
 //! | [`SESSION_INSPECT`] | [`SessionInspectParams`] | [`SessionInspectResponse`] |
 //! | [`SESSION_CONFIGURE`] | [`SessionConfigureParams`] | [`SessionConfigureResponse`] |
 //! | [`SESSION_LIST`] | [`SessionListParams`] | [`SessionListResponse`] |
@@ -81,6 +85,8 @@ mod mcp;
 mod options;
 mod outcome;
 mod process;
+mod pull_request;
+mod pull_request_detail;
 mod session;
 mod setup;
 mod store;
@@ -155,6 +161,20 @@ pub use outcome::{AnswerStop, TurnError, TurnErrorKind, TurnOutcome};
 pub use process::{
     ProcessChunk, ProcessOutput, ProcessOutputParams, ProcessState, ProcessStream, SessionProcess,
     SessionProcessesParams, SessionProcessesResponse, SESSION_PROCESSES,
+};
+pub use pull_request::{
+    BranchLookup, BranchPullRequest, LinkedPullRequest, ListedSessionPullRequests, PullRequestId,
+    PullRequestLinkOrigin, PullRequestRead, PullRequestRollup, PullRequestState,
+    PullRequestSummary, PullRequestTarget, PullRequestTrouble, SessionPullRequestLinkParams,
+    SessionPullRequestLinkResponse, SessionPullRequestListParams, SessionPullRequestListResponse,
+    SessionPullRequestShowParams, SessionPullRequestShowResponse, SessionPullRequestUnlinkParams,
+    SessionPullRequestUnlinkResponse, SessionPullRequests, SESSION_PULL_REQUEST_LINK,
+    SESSION_PULL_REQUEST_LIST, SESSION_PULL_REQUEST_SHOW, SESSION_PULL_REQUEST_UNLINK,
+};
+pub use pull_request_detail::{
+    PullRequestCheck, PullRequestCheckStatus, PullRequestDetail, PullRequestMergeMethod,
+    PullRequestMergeable, PullRequestPost, PullRequestReview, PullRequestThread,
+    PullRequestThreadState, PullRequestVerdict,
 };
 pub use session::{
     ClientEnvironment, DetachReason, ProjectTrustMismatch, PromptAuthor, Replay,
@@ -273,6 +293,10 @@ protocol! {
         SessionProcesses = SESSION_PROCESSES: SessionProcessesParams => SessionProcessesResponse,
         SessionBackgroundList = SESSION_BACKGROUND_LIST: SessionBackgroundListParams => SessionBackgroundListResponse,
         SessionBackgroundStop = SESSION_BACKGROUND_STOP: SessionBackgroundStopParams => SessionBackgroundStopResponse,
+        SessionPullRequestList = SESSION_PULL_REQUEST_LIST: SessionPullRequestListParams => SessionPullRequestListResponse,
+        SessionPullRequestShow = SESSION_PULL_REQUEST_SHOW: SessionPullRequestShowParams => SessionPullRequestShowResponse,
+        SessionPullRequestLink = SESSION_PULL_REQUEST_LINK: SessionPullRequestLinkParams => SessionPullRequestLinkResponse,
+        SessionPullRequestUnlink = SESSION_PULL_REQUEST_UNLINK: SessionPullRequestUnlinkParams => SessionPullRequestUnlinkResponse,
         SessionInspect = SESSION_INSPECT: SessionInspectParams => SessionInspectResponse,
         SessionList = SESSION_LIST: SessionListParams => SessionListResponse,
         SessionRename = SESSION_RENAME: SessionRenameParams => SessionRenameResponse,
