@@ -8,7 +8,6 @@ use rho_sdk::SessionId;
 
 use super::{
     checkout::Checkout,
-    due,
     gh::ReadError,
     model::{
         Budget, ChangeKey, CheckRun, CheckStatus, Found, MergeMethod, Mergeable, Post, PrDetail,
@@ -40,8 +39,7 @@ pub(super) fn session(
     let branch = state
         .interest
         .session(session)
-        .and_then(|interest| interest.checkout())
-        .map(|checkout| branch(state, &paused, checkout));
+        .map(|interest| branch(state, &paused, interest.checkout()));
     wire::SessionPullRequests::new(branch, linked)
 }
 
@@ -97,7 +95,7 @@ fn branch(
         Checkout::Branch(branch) => branch,
     };
     let name = Some(branch.branch.clone());
-    if due::is_default(state, branch) {
+    if state.is_default(branch) {
         return wire::BranchPullRequest::new(name, wire::BranchLookup::DefaultBranch, None);
     }
     let read = state.branches.get(branch);
@@ -106,7 +104,7 @@ fn branch(
         None => wire::BranchLookup::Looking,
         Some(Found::None) => wire::BranchLookup::None,
         Some(Found::OnlyForks(forks)) => wire::BranchLookup::OnlyForks {
-            read: u32::try_from(*forks).unwrap_or(u32::MAX),
+            count: u32::try_from(*forks).unwrap_or(u32::MAX),
         },
         Some(Found::Pr(found)) => {
             // A read of the PR since the lookup is newer; the lookup's own

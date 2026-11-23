@@ -24,20 +24,29 @@ const PULL_REQUEST: &str = "cli/cli#14578";
 
 /// A detail read of [`PULL_REQUEST`] as `gh api graphql` printed it, its
 /// one repository aliased `r0` and the pull request `p0`: the query the
-/// daemon builds to read one pull request's detail. Only detail reads
-/// happen here: the link is shown before anything else could read it, and
-/// the show's lease keeps the poller from reading it again while the test
-/// runs, so the script answers every query with it.
+/// daemon builds to read one pull request's detail.
 const CAPTURED: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/src/app/pull_requests/fixtures/gh_conversation.json"
 );
 
-/// Writes an executable `gh` into `bin` that prints [`CAPTURED`].
+/// Writes an executable `gh` into `bin` that answers with [`CAPTURED`]
+/// under the alias it is asked: `p0` for a detail read, else `l0`, which
+/// a summary read of the one linked pull request asks and which the same
+/// object answers, a detail holding every field of a summary. So a poll
+/// that reads the link between the requests below, as one 15 s after the
+/// show's read may, reads it as the show did, however slow the run.
 fn fake_gh(bin: &Path) {
     std::fs::create_dir_all(bin).unwrap();
     let gh = bin.join("gh");
-    std::fs::write(&gh, format!("#!/bin/sh\ncat '{CAPTURED}'\n")).unwrap();
+    let script = format!(
+        "#!/bin/sh\n\
+         case \"$*\" in\n\
+         *'p0: pullRequest'*) cat '{CAPTURED}' ;;\n\
+         *) sed 's/\"p0\":/\"l0\":/' '{CAPTURED}' ;;\n\
+         esac\n"
+    );
+    std::fs::write(&gh, script).unwrap();
     std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
 }
 

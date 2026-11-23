@@ -656,7 +656,7 @@
           "type": "object"
         },
         {
-          "description": "The repository has no `origin` on a forge the daemon reads.",
+          "description": "The repository has no `origin` on github.com, the one host whose\nbranches the daemon looks up.",
           "properties": {
             "kind": {
               "const": "no_forge",
@@ -708,21 +708,21 @@
           "type": "object"
         },
         {
-          "description": "The branch has pull requests only from forks, `read` of them.",
+          "description": "The newest pull requests of the branch, `count` of them, all came\nfrom forks.",
           "properties": {
-            "kind": {
-              "const": "only_forks",
-              "type": "string"
-            },
-            "read": {
+            "count": {
               "format": "uint32",
               "minimum": 0,
               "type": "integer"
+            },
+            "kind": {
+              "const": "only_forks",
+              "type": "string"
             }
           },
           "required": [
             "kind",
-            "read"
+            "count"
           ],
           "type": "object"
         },
@@ -4100,7 +4100,7 @@
       "oneOf": [
         {
           "const": "cached",
-          "description": "Answer from the daemon's last read, reading only a target it never\nread since it started.",
+          "description": "Answer from the daemon's last read, reading first only when it has\nno detail of the target to answer with and its last attempt did not\nfail within the last 15 seconds.",
           "type": "string"
         },
         {
@@ -6886,7 +6886,7 @@
       "description": "Result of [`SESSION_PULL_REQUEST_LIST`].",
       "properties": {
         "sessions": {
-          "description": "In the order asked. A session the daemon has nothing loaded or saved\nunder is left out.",
+          "description": "In the order asked. An id the daemon has nothing loaded or saved\nunder, one that is not a session id, and one it could not look up\nare left out.",
           "items": {
             "$ref": "#/$defs/ListedSessionPullRequests"
           },

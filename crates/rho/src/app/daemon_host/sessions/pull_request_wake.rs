@@ -36,7 +36,7 @@ use super::{open::OpenWith, LoadedSession, Sessions};
 use crate::app::pull_requests::ScriptedForge;
 use crate::app::{
     daemon_host::wire::session_to_wire,
-    pull_requests::{Forge, PullRequestInbox, PullRequests},
+    pull_requests::{unix_ms, Forge, PullRequestInbox, PullRequests},
 };
 
 /// The daemon's pull request service, owned by [`Sessions`], and what it
@@ -130,7 +130,7 @@ impl Sessions {
         tokio::join!(
             self.pull_requests.service.run(self.stopping.cancelled()),
             self.wake_unloaded(),
-            self.report_pull_requests(),
+            self.report_pull_requests(unix_ms),
         );
         self.pull_requests.kept().clear();
     }

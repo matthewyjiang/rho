@@ -3,9 +3,10 @@ use std::{collections::BTreeMap, time::Duration};
 use pretty_assertions::assert_eq;
 use rho_sdk::SessionId;
 
-use super::{due, tick_period, Due};
+use super::{due, show_reads, tick_period, Due, ShowOf};
 use crate::app::pull_requests::{
     checkout::Checkout,
+    gh::ReadError,
     interest::{Shown, SHOWN_POLL},
     model::{
         BranchId, ChangeKey, CheckRun, CheckStatus, FetchPlan, Found, Mergeable, PrDetail, PrId,
@@ -13,7 +14,7 @@ use crate::app::pull_requests::{
     },
     poller::WATCH_POLL,
     record::LinkOrigin,
-    service::{BranchRead, Detailed, Snapshot, State},
+    service::{BranchRead, Detailed, ShowRead, Snapshot, State, Trouble},
     state::{Baseline, WatchState},
 };
 
@@ -142,8 +143,8 @@ fn read_summary(state: &mut State, number: u32, at: u64) {
     );
 }
 
-fn on(name: &str) -> Option<Checkout> {
-    Some(Checkout::Branch(branch(name)))
+fn on(name: &str) -> Checkout {
+    Checkout::Branch(branch(name))
 }
 
 /// What a tick asks github.com.
@@ -186,7 +187,7 @@ fn a_lease_decides_what_a_tick_reads() {
             name: "linked by a listed session, asked within its period",
             given: |state| {
                 link(state, 12);
-                state.interest.list(&session(), None, ago(10));
+                state.interest.list(&session(), Checkout::NotGit, ago(10));
                 read_summary(state, 12, ago(100));
             },
             asked: None,
@@ -196,7 +197,7 @@ fn a_lease_decides_what_a_tick_reads() {
             name: "linked by a listed session, due: its summary, though it has no detail",
             given: |state| {
                 link(state, 12);
-                state.interest.list(&session(), None, ago(10));
+                state.interest.list(&session(), Checkout::NotGit, ago(10));
                 read_summary(state, 12, ago(290));
             },
             asked: asks(&[], &[12], &[], &[]),
@@ -225,7 +226,7 @@ fn a_lease_decides_what_a_tick_reads() {
                 let checkout = Checkout::NoForge {
                     branch: "feature".into(),
                 };
-                state.interest.list(&session(), Some(checkout), NOW);
+                state.interest.list(&session(), checkout, NOW);
             },
             asked: None,
             period: WATCH_POLL,
@@ -245,7 +246,7 @@ fn a_lease_decides_what_a_tick_reads() {
                 link(state, 12);
                 state
                     .interest
-                    .show(&session(), None, Shown::Linked(pr(12)), NOW);
+                    .show(&session(), Checkout::NotGit, Shown::Linked(pr(12)), NOW);
             },
             asked: asks(&[], &[], &[12], &[12]),
             period: SHOWN_POLL,
@@ -256,7 +257,7 @@ fn a_lease_decides_what_a_tick_reads() {
                 link(state, 12);
                 state
                     .interest
-                    .show(&session(), None, Shown::Linked(pr(12)), NOW);
+                    .show(&session(), Checkout::NotGit, Shown::Linked(pr(12)), NOW);
                 read_quiet(state, 12, ago(30));
             },
             asked: asks(&[], &[12], &[], &[12]),
@@ -303,7 +304,7 @@ fn a_lease_decides_what_a_tick_reads() {
                 watch(state, 12);
                 state
                     .interest
-                    .show(&session(), None, Shown::Linked(pr(12)), NOW);
+                    .show(&session(), Checkout::NotGit, Shown::Linked(pr(12)), NOW);
                 read_quiet(state, 12, ago(30));
             },
             asked: asks(&[], &[12], &[], &[12]),
@@ -329,5 +330,153 @@ fn a_lease_decides_what_a_tick_reads() {
             (expected, period),
             "{name}"
         );
+    }
+}
+
+/// PR `number` was last asked for at `at`, and that read failed; nothing
+/// was read of it before.
+fn read_failed(state: &mut State, number: u32, at: u64) {
+    state.snapshots.insert(
+        pr(number),
+        Snapshot {
+            asked_at: Some(at),
+            trouble: Some(Trouble::Failed(ReadError::Failed("timed out".into()))),
+            ..Snapshot::default()
+        },
+    );
+}
+
+/// Branch `feature` was last looked up at `at`, and found `found`.
+fn looked_up(state: &mut State, found: Found, at: u64) {
+    let read = BranchRead {
+        found: Some(found),
+        asked_at: Some(at),
+        trouble: None,
+    };
+    state.branches.insert(branch("feature"), read);
+}
+
+/// What a case's client shows.
+#[derive(Clone, Copy)]
+enum Of {
+    /// PR 12, linked.
+    Linked,
+    /// The session's branch `feature`.
+    Feature,
+}
+
+/// A show case: its name, the state before it, what it shows, how, and
+/// whether it reads first.
+type ShowCase = (&'static str, fn(&mut State), Of, ShowRead, bool);
+
+// Covers: a cached show reads first only when nothing kept answers it: a
+// PR never read, or read only as a summary (as a listed tick reads it),
+// and a branch never looked up or whose PR has no detail; never when the
+// detail is there or the lookup found no PR, nor on the default branch;
+// and after a failed attempt only once the shown cadence is due again. A
+// fresh show always reads. Otherwise a panel opened after the sidebar's
+// tick answers with no detail, or a failing target is read on every show.
+// Owner: pure unit (due.rs)
+#[test]
+fn a_show_reads_only_what_nothing_kept_answers() {
+    let cases: [ShowCase; 11] = [
+        (
+            "a linked PR never read",
+            |_| {},
+            Of::Linked,
+            ShowRead::Cached,
+            true,
+        ),
+        (
+            "a linked PR a listed tick read as a summary 5 s ago",
+            |state| read_summary(state, 12, ago(5)),
+            Of::Linked,
+            ShowRead::Cached,
+            true,
+        ),
+        (
+            "a linked PR read in full 5 s ago",
+            |state| read_quiet(state, 12, ago(5)),
+            Of::Linked,
+            ShowRead::Cached,
+            false,
+        ),
+        (
+            "a linked PR read in full 5 s ago, shown fresh",
+            |state| read_quiet(state, 12, ago(5)),
+            Of::Linked,
+            ShowRead::Fresh,
+            true,
+        ),
+        (
+            "a linked PR whose read failed 5 s ago",
+            |state| read_failed(state, 12, ago(5)),
+            Of::Linked,
+            ShowRead::Cached,
+            false,
+        ),
+        (
+            "a linked PR whose read failed 15 s ago: due within the slack",
+            |state| read_failed(state, 12, ago(15)),
+            Of::Linked,
+            ShowRead::Cached,
+            true,
+        ),
+        (
+            "a branch never looked up",
+            |_| {},
+            Of::Feature,
+            ShowRead::Cached,
+            true,
+        ),
+        (
+            "a branch whose lookup found no PR",
+            |state| looked_up(state, Found::None, ago(5)),
+            Of::Feature,
+            ShowRead::Cached,
+            false,
+        ),
+        (
+            "a branch whose lookup found a PR it read only as a summary",
+            |state| {
+                looked_up(state, Found::Pr(quiet(12).summary), ago(5));
+                read_summary(state, 12, ago(5));
+            },
+            Of::Feature,
+            ShowRead::Cached,
+            true,
+        ),
+        (
+            "a branch whose PR was read in full",
+            |state| {
+                looked_up(state, Found::Pr(quiet(12).summary), ago(5));
+                read_quiet(state, 12, ago(5));
+            },
+            Of::Feature,
+            ShowRead::Cached,
+            false,
+        ),
+        (
+            "the default branch, never looked up",
+            |state| {
+                state
+                    .default_branches
+                    .insert(repo(), Some("feature".into()));
+            },
+            Of::Feature,
+            ShowRead::Cached,
+            false,
+        ),
+    ];
+    let (pr_12, feature) = (pr(12), branch("feature"));
+    for (name, given, of, read, expected) in cases {
+        let mut state = State::default();
+        given(&mut state);
+        let of = match of {
+            Of::Linked => ShowOf::Linked(&pr_12),
+            Of::Feature => ShowOf::Branch(&feature),
+        };
+
+        assert_eq!(show_reads(&state, of, read, NOW), expected, "{name}");
     }
 }

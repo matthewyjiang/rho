@@ -5,6 +5,10 @@
 
 use serde::{Deserialize, Serialize};
 
+/// The host every session may read pull requests on, and the only one a
+/// branch's pull request is looked up on.
+pub(crate) const GITHUB: &str = "github.com";
+
 /// A repository on a forge, named as its origin remote's URL names it.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub(crate) struct RepoId {

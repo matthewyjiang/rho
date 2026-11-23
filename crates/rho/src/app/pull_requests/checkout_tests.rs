@@ -70,9 +70,10 @@ fn make(workspace: &Path, given: &Given) -> Option<String> {
 }
 
 // Covers: a workspace names its checkout: no repository, a branch of a
-// forge's repository, a detached head, and a branch whose origin is missing
-// or on no forge. A detached head is not "no repository", and a branch is
-// looked up only in the repository its origin names.
+// github.com repository, a detached head, and a branch whose origin is
+// missing, on another forge, or on none. A detached head is not "no
+// repository", and a branch is looked up only in the github.com repository
+// its origin names, so `gh` never sends a sign-in to another host.
 // Owner: OS/process (git)
 #[tokio::test]
 async fn a_workspace_names_its_checkout() {
@@ -104,6 +105,13 @@ async fn a_workspace_names_its_checkout() {
         (
             "no origin",
             Given::OnFeature { origin: None },
+            Checkout::NoForge { branch: feature() },
+        ),
+        (
+            "an origin on another forge than github.com",
+            Given::OnFeature {
+                origin: Some("https://gitlab.com/acme/widgets.git"),
+            },
             Checkout::NoForge { branch: feature() },
         ),
         (

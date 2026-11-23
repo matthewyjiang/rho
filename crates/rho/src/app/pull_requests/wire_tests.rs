@@ -104,7 +104,7 @@ fn linked_12(
 
 /// A client listed the session, whose workspace has `checkout`.
 fn list(state: &mut State, checkout: Checkout) {
-    state.interest.list(&listed(), Some(checkout), NOW);
+    state.interest.list(&listed(), checkout, NOW);
 }
 
 /// The branch the session has checked out, as the view says it.

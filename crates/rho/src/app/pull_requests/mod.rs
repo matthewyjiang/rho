@@ -42,8 +42,8 @@ mod wire;
 pub(crate) use self::{
     gh::{Forge, GhCli},
     inbox::{
-        CheckCounts, LastRead, Linked, ListedPullRequest, NewsBatch, PullRequestError,
-        PullRequestInbox, Unlinked, Unwatched, Watched,
+        resolve_pull_request, CheckCounts, LastRead, Linked, ListedPullRequest, NewsBatch,
+        PullRequestError, PullRequestInbox, Unlinked, Unwatched, Watched,
     },
     model::{Mergeable, PrState, Rollup},
     record::LinkOrigin,

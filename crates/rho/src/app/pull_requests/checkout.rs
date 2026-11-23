@@ -1,6 +1,8 @@
 //! What a session's workspace has checked out, asked of `git` when a
 //! client lists or shows the session: the branch whose pull request the
-//! session shows, and the repository `#N` names.
+//! session shows. Only a branch whose `origin` is on github.com is looked
+//! up: a lookup runs `gh` against the origin's host, and `gh` would send
+//! that host the user's sign-in for it.
 
 use std::{
     path::{Path, PathBuf},
@@ -11,7 +13,7 @@ use std::{
 use futures_util::{stream, StreamExt as _};
 use tokio::process::Command;
 
-use super::model::{BranchId, RepoId};
+use super::model::{BranchId, RepoId, GITHUB};
 
 /// How long one `git` command here may take. Each reads local files:
 /// `symbolic-ref` and `remote get-url origin` took 3 to 4 ms on 2026-11-23
@@ -35,18 +37,19 @@ pub(crate) enum Checkout {
     NotGit,
     /// No branch: a commit, abbreviated as `git` abbreviates it.
     Detached { commit: String },
-    /// A branch of a repository with no `origin`, or one on no forge.
+    /// A branch of a repository with no `origin`, or one whose `origin` is
+    /// not on github.com.
     NoForge { branch: String },
-    /// A branch of the repository `origin` names on its forge.
+    /// A branch of the github.com repository `origin` names.
     Branch(BranchId),
 }
 
 impl Checkout {
-    /// The repository `origin` names, which resolves `#N`; `None` when the
-    /// checkout is on no branch of a forge's repository.
-    pub(super) fn repo(&self) -> Option<&RepoId> {
+    /// The branch whose pull request is looked up; `None` when the checkout
+    /// is on no branch of a github.com repository.
+    pub(super) fn branch(&self) -> Option<&BranchId> {
         match self {
-            Self::Branch(branch) => Some(&branch.repo),
+            Self::Branch(branch) => Some(branch),
             Self::NotGit | Self::Detached { .. } | Self::NoForge { .. } => None,
         }
     }
@@ -54,7 +57,8 @@ impl Checkout {
 
 /// What `workspace` has checked out: `git symbolic-ref --short -q HEAD`
 /// names the branch (exit 1 means none, and `rev-parse --short HEAD` names
-/// the commit; anything else, no repository), and `origin` its repository.
+/// the commit; anything else, no repository), and `origin` its repository,
+/// when that is on github.com.
 pub(crate) async fn resolve(workspace: &Path) -> Checkout {
     let Some(head) = git(workspace, &["symbolic-ref", "--short", "-q", "HEAD"]).await else {
         return Checkout::NotGit;
@@ -74,28 +78,23 @@ pub(crate) async fn resolve(workspace: &Path) -> Checkout {
     }
     let branch = stdout(&head);
     match origin(workspace).await {
-        Some(repo) => Checkout::Branch(BranchId { repo, branch }),
-        None => Checkout::NoForge { branch },
+        Some(repo) if repo.host == GITHUB => Checkout::Branch(BranchId { repo, branch }),
+        Some(_) | None => Checkout::NoForge { branch },
     }
 }
 
 /// What each workspace has checked out, in order, [`RESOLVES_AT_ONCE`] at
-/// a time; `None` where there is no workspace.
-pub(crate) async fn resolve_each(workspaces: Vec<Option<PathBuf>>) -> Vec<Option<Checkout>> {
+/// a time.
+pub(crate) async fn resolve_each(workspaces: Vec<PathBuf>) -> Vec<Checkout> {
     stream::iter(workspaces)
-        .map(|workspace| async move {
-            match workspace {
-                Some(workspace) => Some(resolve(&workspace).await),
-                None => None,
-            }
-        })
+        .map(|workspace| async move { resolve(&workspace).await })
         .buffered(RESOLVES_AT_ONCE)
         .collect()
         .await
 }
 
-/// The repository `workspace`'s `origin` remote names on a forge, if git
-/// answers in time.
+/// The repository `workspace`'s `origin` remote names on any forge, if
+/// git answers in time.
 pub(super) async fn origin(workspace: &Path) -> Option<RepoId> {
     let output = git(workspace, &["remote", "get-url", "origin"]).await?;
     if !output.status.success() {

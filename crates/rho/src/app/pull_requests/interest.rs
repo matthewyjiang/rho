@@ -8,7 +8,10 @@
 //! clients on one session share its leases. An entry outlives its leases,
 //! keeping the checkout last resolved, until its session is forgotten.
 
-use std::{collections::HashMap, time::Duration};
+use std::{
+    collections::{hash_map, HashMap},
+    time::Duration,
+};
 
 use rho_sdk::SessionId;
 
@@ -94,7 +97,7 @@ pub(super) struct Interest {
 }
 
 /// What clients look at of one session.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(super) struct SessionInterest {
     /// Until when a client lists the session, in unix milliseconds; 0 for
     /// never.
@@ -103,14 +106,14 @@ pub(super) struct SessionInterest {
     /// milliseconds; those run out are dropped when the next is shown.
     shown: Vec<(Shown, u64)>,
     /// What its workspace had checked out when a client last listed or
-    /// showed it; `None` when it has no workspace.
-    checkout: Option<Checkout>,
+    /// showed it.
+    checkout: Checkout,
 }
 
 impl SessionInterest {
     /// What its workspace had checked out at the last list or show.
-    pub(super) fn checkout(&self) -> Option<&Checkout> {
-        self.checkout.as_ref()
+    pub(super) fn checkout(&self) -> &Checkout {
+        &self.checkout
     }
 
     /// The targets a client shows at `now`.
@@ -120,27 +123,14 @@ impl SessionInterest {
             .filter(move |(_, until)| *until > now)
             .map(|(shown, _)| shown)
     }
-
-    /// Keeps `checkout`; whether it differs from the one kept.
-    fn keep(&mut self, checkout: Option<Checkout>) -> bool {
-        let moved = self.checkout != checkout;
-        self.checkout = checkout;
-        moved
-    }
 }
 
 impl Interest {
-    /// A client lists `session`, whose workspace has `checkout` (`None`:
-    /// it has none), at `now` (unix milliseconds).
-    pub(super) fn list(
-        &mut self,
-        session: &SessionId,
-        checkout: Option<Checkout>,
-        now: u64,
-    ) -> Lease {
-        let entry = self.sessions.entry(session.clone()).or_default();
+    /// A client lists `session`, whose workspace has `checkout`, at `now`
+    /// (unix milliseconds).
+    pub(super) fn list(&mut self, session: &SessionId, checkout: Checkout, now: u64) -> Lease {
+        let (entry, moved) = self.keep(session, checkout);
         let live = entry.listed_until > now;
-        let moved = entry.keep(checkout);
         entry.listed_until = now.saturating_add(lease(LISTED_POLL));
         if live && !moved {
             Lease::Renewed
@@ -154,12 +144,11 @@ impl Interest {
     pub(super) fn show(
         &mut self,
         session: &SessionId,
-        checkout: Option<Checkout>,
+        checkout: Checkout,
         what: Shown,
         now: u64,
     ) -> Lease {
-        let entry = self.sessions.entry(session.clone()).or_default();
-        let moved = entry.keep(checkout);
+        let (entry, moved) = self.keep(session, checkout);
         let lasts_until = now.saturating_add(lease(SHOWN_POLL));
         entry.shown.retain(|(_, until)| *until > now);
         let live = match entry.shown.iter().position(|(shown, _)| *shown == what) {
@@ -217,6 +206,27 @@ impl Interest {
     /// `session` was deleted.
     pub(super) fn forget(&mut self, session: &SessionId) {
         self.sessions.remove(session);
+    }
+
+    /// `session`'s entry, made with no lease when it has none, keeping
+    /// `checkout`; and whether that differs from the checkout it kept.
+    fn keep(&mut self, session: &SessionId, checkout: Checkout) -> (&mut SessionInterest, bool) {
+        match self.sessions.entry(session.clone()) {
+            hash_map::Entry::Occupied(entry) => {
+                let entry = entry.into_mut();
+                let moved = entry.checkout != checkout;
+                entry.checkout = checkout;
+                (entry, moved)
+            }
+            hash_map::Entry::Vacant(entry) => {
+                let entry = entry.insert(SessionInterest {
+                    listed_until: 0,
+                    shown: Vec::new(),
+                    checkout,
+                });
+                (entry, true)
+            }
+        }
     }
 }
 

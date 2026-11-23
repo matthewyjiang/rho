@@ -6,6 +6,9 @@
 //! A listed pull request gets its summary only. A watched or shown one gets
 //! its detail when [`detail_due`] says so, else its summary, and its detail
 //! in the tick's second query when the summary moved.
+//!
+//! Also what a client's show reads itself before it answers
+//! ([`show_reads`]).
 
 use std::{
     cmp::Ordering,
@@ -14,11 +17,10 @@ use std::{
 };
 
 use super::{
-    checkout::Checkout,
     interest::{Cadence, Shown, SHOWN_POLL},
-    model::{BranchId, FetchPlan, PrId, PrSummary, Rollup},
+    model::{BranchId, FetchPlan, Found, PrId, PrSummary, Rollup},
     poller::WATCH_POLL,
-    service::{Snapshot, State},
+    service::{ShowRead, Snapshot, State},
     state::Baseline,
     watch,
 };
@@ -92,13 +94,13 @@ pub(super) fn due(state: &State, now: u64) -> BTreeMap<String, Due> {
     }
     let mut branches: HashMap<&BranchId, Cadence> = HashMap::new();
     for (session, interest) in state.interest.sessions() {
-        let Some(Checkout::Branch(branch)) = interest.checkout() else {
+        let Some(branch) = interest.checkout().branch() else {
             continue;
         };
         let Some(cadence) = state.interest.cadence(session, &Shown::Branch, now) else {
             continue;
         };
-        if is_default(state, branch) {
+        if state.is_default(branch) {
             continue;
         }
         let fastest = branches.entry(branch).or_insert(cadence);
@@ -179,13 +181,10 @@ pub(super) fn shown(state: &State, now: u64) -> HashSet<PrId> {
                     shown.insert(pr.clone());
                 }
                 Shown::Branch => {
-                    let found = match interest.checkout() {
-                        Some(Checkout::Branch(branch)) => state.found(branch),
-                        Some(
-                            Checkout::NotGit | Checkout::Detached { .. } | Checkout::NoForge { .. },
-                        )
-                        | None => None,
-                    };
+                    let found = interest
+                        .checkout()
+                        .branch()
+                        .and_then(|branch| state.found(branch));
                     shown.extend(found.cloned());
                 }
             }
@@ -194,13 +193,71 @@ pub(super) fn shown(state: &State, now: u64) -> HashSet<PrId> {
     shown
 }
 
-/// Whether `branch` is its repository's default branch, which has no PR
-/// of its own, as the last lookup in its repository said.
-pub(super) fn is_default(state: &State, branch: &BranchId) -> bool {
-    state
-        .default_branches
-        .get(&branch.repo)
-        .is_some_and(|default| default.as_deref() == Some(branch.branch.as_str()))
+/// What a client's show reads before it answers, as [`show_reads`] judges
+/// it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ShowOf<'a> {
+    /// A pull request linked to the session.
+    Linked(&'a PrId),
+    /// The pull request a lookup of the session's branch finds.
+    Branch(&'a BranchId),
+}
+
+/// What `state` keeps of a show's target.
+enum Kept {
+    /// Something to answer with: the PR's detail, or a lookup that found
+    /// no PR, or the default branch, which has none.
+    Answer,
+    /// Nothing to answer with, and no attempt to read it failed.
+    Missing,
+    /// Nothing to answer with, since the attempt at this time (unix
+    /// milliseconds) failed.
+    FailedAt(u64),
+}
+
+/// Whether a client's show of `of` reads the forge at `now` (unix
+/// milliseconds) before it answers: always when `read` is fresh; else when
+/// `state` keeps nothing to answer with (a summary a tick read is not a
+/// detail), unless the last attempt failed within the shown cadence, so a
+/// failing target is not read on every show.
+pub(super) fn show_reads(state: &State, of: ShowOf<'_>, read: ShowRead, now: u64) -> bool {
+    let kept = match of {
+        ShowOf::Linked(pr) => kept_detail(state.snapshots.get(pr)),
+        ShowOf::Branch(branch) => kept_lookup(state, branch),
+    };
+    match (read, kept) {
+        (ShowRead::Fresh, _) | (ShowRead::Cached, Kept::Missing) => true,
+        (ShowRead::Cached, Kept::Answer) => false,
+        (ShowRead::Cached, Kept::FailedAt(at)) => Cadence::Shown.due(Some(at), now),
+    }
+}
+
+/// What `snapshot` keeps to answer a show of its PR with.
+fn kept_detail(snapshot: Option<&Snapshot>) -> Kept {
+    let Some(snapshot) = snapshot else {
+        return Kept::Missing;
+    };
+    match (&snapshot.detail, &snapshot.trouble, snapshot.asked_at) {
+        (Some(_), _, _) => Kept::Answer,
+        (None, Some(_), Some(at)) => Kept::FailedAt(at),
+        (None, Some(_), None) | (None, None, _) => Kept::Missing,
+    }
+}
+
+/// What `state` keeps to answer a show of `branch`'s pull request with.
+fn kept_lookup(state: &State, branch: &BranchId) -> Kept {
+    if state.is_default(branch) {
+        return Kept::Answer;
+    }
+    let Some(read) = state.branches.get(branch) else {
+        return Kept::Missing;
+    };
+    match (&read.found, &read.trouble, read.asked_at) {
+        (Some(Found::Pr(summary)), _, _) => kept_detail(state.snapshots.get(&summary.id)),
+        (Some(Found::None | Found::OnlyForks(_)), _, _) => Kept::Answer,
+        (None, Some(_), Some(at)) => Kept::FailedAt(at),
+        (None, Some(_), None) | (None, None, _) => Kept::Missing,
+    }
 }
 
 /// Whether a watched or shown PR needs its detail at `now` whatever its

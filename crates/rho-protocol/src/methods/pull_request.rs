@@ -23,9 +23,10 @@ use super::{PullRequestDetail, SessionId};
 pub const SESSION_PULL_REQUEST_LIST: &str = "rho/session/pull_request/list";
 
 /// Show one of a session's pull requests: its set, and the detail of the
-/// target. Answers from the daemon's last read, unless `read` is
-/// [`PullRequestRead::Fresh`] or the daemon never read the target since it
-/// started: then it reads GitHub first. Leases the target for 30 seconds.
+/// target. Answers from the daemon's last read; it reads GitHub first when
+/// `read` is [`PullRequestRead::Fresh`], or when it has no detail of the
+/// target to answer with, unless its last attempt to read it failed within
+/// the last 15 seconds. Leases the target for 30 seconds.
 /// An unknown session is [`crate::ErrorCode::SessionNotFound`]; a linked
 /// target that is not linked to the session, or names no pull request, is
 /// [`crate::ErrorCode::InvalidParams`].
@@ -33,9 +34,10 @@ pub const SESSION_PULL_REQUEST_SHOW: &str = "rho/session/pull_request/show";
 
 /// Link a pull request to a session, as the agent's `link_pull_request`
 /// tool does, and save it with the session. A pull request already linked
-/// stays linked once. Text that names no pull request, or one on another
-/// host than the session's `origin`, is [`crate::ErrorCode::InvalidParams`];
-/// an unknown session is [`crate::ErrorCode::SessionNotFound`].
+/// stays linked once. Only a pull request on github.com, or on the host of
+/// the session's `origin`, can be linked: text that names no pull request,
+/// or one on another host, is [`crate::ErrorCode::InvalidParams`]; an
+/// unknown session is [`crate::ErrorCode::SessionNotFound`].
 pub const SESSION_PULL_REQUEST_LINK: &str = "rho/session/pull_request/link";
 
 /// Unlink a pull request from a session, ending a watch on it. Unlinking
@@ -62,8 +64,9 @@ impl SessionPullRequestListParams {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[non_exhaustive]
 pub struct SessionPullRequestListResponse {
-    /// In the order asked. A session the daemon has nothing loaded or saved
-    /// under is left out.
+    /// In the order asked. An id the daemon has nothing loaded or saved
+    /// under, one that is not a session id, and one it could not look up
+    /// are left out.
     pub sessions: Vec<ListedSessionPullRequests>,
 }
 
@@ -226,8 +229,9 @@ pub enum PullRequestTarget {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum PullRequestRead {
-    /// Answer from the daemon's last read, reading only a target it never
-    /// read since it started.
+    /// Answer from the daemon's last read, reading first only when it has
+    /// no detail of the target to answer with and its last attempt did not
+    /// fail within the last 15 seconds.
     #[default]
     Cached,
     /// Read now, as after a merge or comment the client made itself.
@@ -303,7 +307,8 @@ pub enum BranchLookup {
     NotGit,
     /// The checkout is on no branch, at `commit` (abbreviated).
     Detached { commit: String },
-    /// The repository has no `origin` on a forge the daemon reads.
+    /// The repository has no `origin` on github.com, the one host whose
+    /// branches the daemon looks up.
     NoForge,
     /// The branch is the repository's default branch, which has no pull
     /// request of its own; nothing is looked up.
@@ -312,8 +317,9 @@ pub enum BranchLookup {
     Looking,
     /// The branch has no pull request.
     None,
-    /// The branch has pull requests only from forks, `read` of them.
-    OnlyForks { read: u32 },
+    /// The newest pull requests of the branch, `count` of them, all came
+    /// from forks.
+    OnlyForks { count: u32 },
     Found {
         pull_request: Box<PullRequestSummary>,
     },

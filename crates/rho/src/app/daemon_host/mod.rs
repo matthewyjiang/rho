@@ -41,7 +41,10 @@ use rho_protocol::{
 };
 use rho_providers::credentials::CredentialStoreBackend;
 
-use crate::daemon::{DaemonLock, Ending, Executable, Shutdown};
+use crate::{
+    app::pull_requests::unix_ms,
+    daemon::{DaemonLock, Ending, Executable, Shutdown},
+};
 
 mod auth;
 mod jobs;
@@ -453,28 +456,28 @@ impl Service for DaemonHost {
         &self,
         params: rho_protocol::SessionPullRequestListParams,
     ) -> Result<rho_protocol::SessionPullRequestListResponse, RpcError> {
-        self.sessions.pull_request_list(params).await
+        self.sessions.pull_request_list(params, unix_ms()).await
     }
 
     async fn show_session_pull_request(
         &self,
         params: rho_protocol::SessionPullRequestShowParams,
     ) -> Result<rho_protocol::SessionPullRequestShowResponse, RpcError> {
-        self.sessions.pull_request_show(params).await
+        self.sessions.pull_request_show(params, unix_ms()).await
     }
 
     async fn link_session_pull_request(
         &self,
         params: rho_protocol::SessionPullRequestLinkParams,
     ) -> Result<rho_protocol::SessionPullRequestLinkResponse, RpcError> {
-        self.sessions.pull_request_link(params).await
+        self.sessions.pull_request_link(params, unix_ms()).await
     }
 
     async fn unlink_session_pull_request(
         &self,
         params: rho_protocol::SessionPullRequestUnlinkParams,
     ) -> Result<rho_protocol::SessionPullRequestUnlinkResponse, RpcError> {
-        self.sessions.pull_request_unlink(params).await
+        self.sessions.pull_request_unlink(params, unix_ms()).await
     }
 
     async fn session_mcp(

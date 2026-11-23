@@ -108,8 +108,9 @@ impl Sessions {
         self.refuse_when_stopping()?;
         let id = parse_session(&params.session)?;
         // Both held until the files are gone: the stop waits for the first,
-        // and a request that would reopen the session waits for the second,
-        // then finds nothing saved.
+        // and a request that would reopen the session, or link or unlink a
+        // pull request for it, waits for the second, then finds nothing
+        // saved.
         let _unloading = self.unloading.read().await;
         let _reopening = self.reopening.lock(&id).await;
         let loaded = self.loaded().get(&id).cloned();

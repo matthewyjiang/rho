@@ -24,7 +24,6 @@ use rho_sdk::SessionId;
 use tokio::sync::Notify;
 
 use super::{
-    checkout::Checkout,
     due::{self, Due},
     gh::{Forge, ReadError},
     gh_query,
@@ -234,11 +233,8 @@ impl Shared {
             read_into(&mut reader, &host, plan, now, &mut reads).await;
         }
         drop(reader);
-        let told = self.apply(&reads, now);
+        let told = self.update(|state| self.apply(state, &reads, now));
         self.tell(told);
-        if !reads.prs.is_empty() || !reads.branches.is_empty() {
-            self.changed.notify_waiters();
-        }
     }
 
     /// Reads `pr` in full at `now`, through the same lock and budget guard
@@ -315,34 +311,43 @@ impl Shared {
     /// news by comparing the summary it reads with the last detail; a
     /// detail read here was never evaluated against the PR's watches, and
     /// kept, it would hide what changed since. So of a watched PR only the
-    /// summary is kept, and the next tick still reads the detail.
+    /// summary is kept, and it is not counted as asked: the next tick due
+    /// for the watch still reads the detail and evaluates it, however
+    /// often clients read it fresh.
     fn keep_unjudged(&self, mut reads: Reads, now: u64) {
-        let mut state = self.state();
-        for (pr, read) in &mut reads.prs {
-            let summary = match read {
-                Read::Detail(detail) if state.watched(pr) => detail.summary.clone(),
-                Read::Detail(_) | Read::Summary(_) | Read::Refused(_) | Read::Failed(_) => continue,
-            };
-            *read = Read::Summary(summary);
-        }
-        keep(&mut state, &reads, now);
-        drop(state);
-        self.changed.notify_waiters();
+        self.update(|state| {
+            let unjudged: Vec<PrId> = reads
+                .prs
+                .iter()
+                .filter(|(pr, read)| match read {
+                    Read::Detail(_) => state.watched(pr),
+                    Read::Summary(_) | Read::Refused(_) | Read::Failed(_) => false,
+                })
+                .map(|(pr, _)| pr.clone())
+                .collect();
+            for pr in unjudged {
+                if let Some(Read::Detail(detail)) = reads.prs.remove(&pr) {
+                    let snapshot = state.snapshots.entry(pr).or_default();
+                    snapshot.saw_summary(detail.summary, now);
+                }
+            }
+            keep(state, &reads, now);
+        });
     }
 
-    /// Keeps what the tick read, evaluates every watch against it, and
-    /// queues and saves each session's news. Returns the sessions to tell.
-    fn apply(&self, reads: &Reads, now: u64) -> Vec<(SessionId, Arc<Notify>)> {
-        let mut state = self.state();
-        keep(&mut state, reads, now);
-        let shown = due::shown(&state, now);
+    /// Keeps what the tick read in `state`, evaluates every watch against
+    /// it, and queues and saves each session's news. Returns the sessions
+    /// to tell.
+    fn apply(&self, state: &mut State, reads: &Reads, now: u64) -> Vec<(SessionId, Arc<Notify>)> {
+        keep(state, reads, now);
+        let shown = due::shown(state, now);
         let State {
             sessions,
             snapshots,
             interest,
             branches,
             default_branches: _,
-        } = &mut *state;
+        } = state;
         let mut told = Vec::new();
         for (session, entry) in sessions.iter_mut() {
             let (changed, news) = evaluate(&mut entry.record, &reads.prs, now);
@@ -365,9 +370,9 @@ impl Shared {
         // found, and the details no session watches and no client shows.
         sessions.retain(|_, entry| !entry.disposable());
         branches.retain(|branch, _| {
-            interest.sessions().any(|(_, looked)| {
-                matches!(looked.checkout(), Some(Checkout::Branch(checked)) if checked == branch)
-            })
+            interest
+                .sessions()
+                .any(|(_, looked)| looked.checkout().branch() == Some(branch))
         });
         let found: HashSet<&PrId> = branches
             .values()
