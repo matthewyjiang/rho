@@ -73,6 +73,8 @@ rho mcp token rotate grok --scope write --workspace ~/src/app
 
 `--workspace` limits the Bot on the hub. On the other machines, the token each one issues the hub limits it (step 4). Keep the printed secret for step 5.
 
+A session the Bot starts with `worktree: true` runs in a [worktree](/daemon#sessions-in-worktrees) under `~/.rho/worktrees`, outside the workspace. It still counts as in the workspace it was started in, so the token reaches it with no grant of its own. The same holds on the other machines.
+
 ## On each other machine
 
 ### 4. Serve it to the hub

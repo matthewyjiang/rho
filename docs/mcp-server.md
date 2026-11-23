@@ -151,7 +151,7 @@ rho mcp token rotate laptop --scope write --workspace ~/src/app --workspace ~/sr
 `rotate` prints the secret once on stdout. Rho keeps only a hash of it, in your [credential store](/authentication-and-models#where-credentials-live). Clients send it as `Authorization: Bearer <secret>`.
 
 - `--scope read`, the default, allows `list`, `read`, and `wait`. `--scope write` also allows `new`, `prompt`, `steer`, and `cancel`.
-- `--workspace` grants a directory and everything under it. A new token needs at least one. The token cannot see or touch sessions anywhere else.
+- `--workspace` grants a directory and everything under it. A new token needs at least one. The token cannot see or touch sessions anywhere else. A session in a [worktree](/daemon#sessions-in-worktrees) counts as in the workspace it was started in, so a token that reaches that workspace reaches the session too, though its worktree is under `~/.rho/worktrees`.
 - Running `rotate` on an existing token issues a new secret. It keeps the token's scope and workspaces unless you pass new ones.
 
 ```bash
