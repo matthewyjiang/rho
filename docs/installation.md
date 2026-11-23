@@ -39,6 +39,8 @@ scoop install https://raw.githubusercontent.com/matthewyjiang/rho/main/bucket/rh
 
 `rho update` recognizes custom Scoop roots from `SCOOP` and `SCOOP_GLOBAL`, as well as the default Scoop layout. It prints the Scoop update command, including `-g` for global installs, rather than replacing a Scoop-managed binary with the standalone installer.
 
+Run `rho daemon stop` before `scoop uninstall rho`. A Scoop install's [daemon](#the-daemon-and-services) runs from a copy under `~/.rho/daemon/bin`, so Scoop does not see it and leaves it running. `rho uninstall` stops it for you.
+
 To use a different directory, set `RHO_INSTALL_DIR`:
 
 ```bash
@@ -101,7 +103,8 @@ What an update does to a running daemon depends on how you installed Rho:
 | --- | --- |
 | `install.sh`, a release archive on macOS or Linux, `cargo install`, or the Arch `PKGBUILD` | The daemon [restarts on the new binary](/daemon#upgrading-in-place) once no work would be cut short. `rho update` reports the restart or what the daemon waits for. |
 | mise | `rho update` stops an idle daemon, and the next `rho` command starts the new one. If work is in progress, run `rho daemon restart` when it finishes. |
-| Scoop, `install.ps1`, or a release archive on Windows | `rho update` stops an idle daemon and prints the update command to run. If work is in progress, run `rho daemon stop` when it finishes, then the command. |
+| Scoop | `rho update` stops an idle daemon and prints the update command to run. The daemon runs from a copy under `~/.rho/daemon/bin`, so `scoop update` works while it runs, and the next `rho` command replaces the old daemon once it is idle. Scoop still skips Rho while a `rho` session or other `rho` command runs, so close those first. Updating from 3.3.0 or earlier also needs `rho daemon stop` first, because those daemons run from Scoop's app directory. |
+| `install.ps1` or a release archive on Windows | `rho update` stops an idle daemon and prints the update command to run. If work is in progress, run `rho daemon stop` when it finishes, then the command. |
 
 An idle daemon has no queued, running, or waiting job, no login under way, and no session with its own background process, subagent, or workflow. The table applies too when you update with a package manager or the install script.
 

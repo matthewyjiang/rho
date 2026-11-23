@@ -9,6 +9,7 @@ use std::{
     path::{Path, PathBuf},
     pin::Pin,
     process::{Command, Stdio},
+    sync::PoisonError,
     time::{Duration, Instant},
 };
 
@@ -16,6 +17,7 @@ use rho_protocol::{ClientError, ClientHello};
 
 use super::{
     client::{connect, ConnectError, Connection},
+    executable_copy,
     lock::{self, LockError},
     paths::DaemonPaths,
     platform::{self, DaemonPathError},
@@ -56,11 +58,14 @@ const DRAIN_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
 /// lock, so at most one `spawn` runs per runtime directory at a time.
 pub(crate) trait DaemonSpawner: Send + Sync {
     /// Whether a daemon `spawn` starts could start, as far as the caller's
-    /// side can tell. `connect_or_spawn` asks before every `spawn`, and
-    /// before it stops an older daemon to start this one in its place, so a
-    /// daemon that works is never stopped for one that cannot start.
-    fn check(&self) -> io::Result<()> {
-        Ok(())
+    /// side can tell, preparing everything `spawn` needs, so `spawn` has
+    /// nothing left to fail on but starting the process. `connect_or_spawn`
+    /// awaits it before every `spawn`, and before it stops an older daemon to
+    /// start this one in its place, so a daemon that works is never stopped
+    /// for one that cannot start. Like `spawn`, it must not block the async
+    /// runtime.
+    fn check<'a>(&'a self, _paths: &'a DaemonPaths) -> SpawnFuture<'a> {
+        Box::pin(std::future::ready(Ok(())))
     }
 
     fn spawn<'a>(&'a self, paths: &'a DaemonPaths) -> SpawnFuture<'a>;
@@ -69,7 +74,8 @@ pub(crate) trait DaemonSpawner: Send + Sync {
 /// What [`DaemonSpawner::spawn`] returns.
 pub(crate) type SpawnFuture<'a> = Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>>;
 
-/// Starts `rho daemon run` from the current executable, detached from the
+/// Starts `rho daemon run` from an executable, or from a copy of it (see
+/// [`RunFrom`]), detached from the
 /// caller's terminal and, where the platform can, from the caller's
 /// service-manager unit.
 ///
@@ -89,32 +95,76 @@ pub(crate) type SpawnFuture<'a> = Pin<Box<dyn Future<Output = io::Result<()>> + 
 /// another directory there.
 pub(crate) struct ProcessSpawner {
     executable: PathBuf,
+    run_from: RunFrom,
+    /// The file `check` prepared for the daemon, which `spawn` runs, so
+    /// nothing that could fail is left between stopping an older daemon and
+    /// starting this one.
+    program: std::sync::Mutex<Option<PathBuf>>,
+}
+
+/// Which file a [`ProcessSpawner`] runs the daemon from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RunFrom {
+    /// The executable where it is installed.
+    Installed,
+    /// A copy of the executable under `<state dir>/bin`, so no process runs
+    /// from the installation directory (see [`super::executable_copy`]).
+    Copy,
 }
 
 impl ProcessSpawner {
-    pub(crate) fn current_exe() -> io::Result<Self> {
-        Ok(Self {
-            executable: std::env::current_exe()?,
-        })
+    pub(crate) fn new(executable: PathBuf, run_from: RunFrom) -> Self {
+        Self {
+            executable,
+            run_from,
+            program: std::sync::Mutex::default(),
+        }
     }
 }
 
 impl DaemonSpawner for ProcessSpawner {
-    /// Spawns off the async runtime: placing the daemon waits on the
-    /// service manager.
+    /// Prepares the file the daemon runs, copying the executable for
+    /// [`RunFrom::Copy`] off the async runtime, so a copy that fails stops
+    /// no older daemon.
+    fn check<'a>(&'a self, paths: &'a DaemonPaths) -> SpawnFuture<'a> {
+        let (executable, dir) = (self.executable.clone(), paths.state_dir.join("bin"));
+        Box::pin(async move {
+            let program = match self.run_from {
+                RunFrom::Installed => executable,
+                RunFrom::Copy => {
+                    tokio::task::spawn_blocking(move || executable_copy::stage(&executable, &dir))
+                        .await
+                        .unwrap_or_else(|error| Err(io::Error::other(error)))?
+                }
+            };
+            *self.program.lock().unwrap_or_else(PoisonError::into_inner) = Some(program);
+            Ok(())
+        })
+    }
+
+    /// Runs the file `check` prepared, off the async runtime: placing the
+    /// daemon waits on the service manager.
     fn spawn<'a>(&'a self, paths: &'a DaemonPaths) -> SpawnFuture<'a> {
-        let mut command = Command::new(&self.executable);
-        command
-            .args(["daemon", "run"])
-            .env_clear()
-            .envs(daemon_environment(std::env::vars_os()))
-            .env("RHO_HOME", &paths.home)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
+        let program = self
+            .program
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
         let paths = paths.clone();
         Box::pin(async move {
+            let program = program.ok_or_else(|| {
+                io::Error::other("the rho daemon was started before its executable was prepared")
+            })?;
             tokio::task::spawn_blocking(move || {
+                let mut command = Command::new(program);
+                command
+                    .args(["daemon", "run"])
+                    .env_clear()
+                    .envs(daemon_environment(std::env::vars_os()))
+                    .env("RHO_HOME", &paths.home)
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null());
                 let mut child = platform::spawn_detached(&mut command, &paths)?;
                 // Reap the daemon if it exits while this process is still
                 // running.
@@ -219,7 +269,7 @@ async fn connect_or_spawn_observing(
         Err(SpawnError::Connect(refusal)) if is_unused_older_daemon(&refusal) => Some(refusal),
         Err(error) => return Err(error),
     };
-    spawner.check().map_err(SpawnError::Spawn)?;
+    spawner.check(paths).await.map_err(SpawnError::Spawn)?;
     if let Some(refusal) = unused_older {
         tracing::info!(%refusal, "replacing the unused rho daemon with this rho");
         stop_older(paths).await?;

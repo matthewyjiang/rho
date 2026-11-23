@@ -298,8 +298,10 @@ async fn an_unused_older_daemon_is_replaced_by_the_clients_own() {
 struct CannotStart;
 
 impl DaemonSpawner for CannotStart {
-    fn check(&self) -> io::Result<()> {
-        Err(io::Error::other("its environment is invalid"))
+    fn check<'a>(&'a self, _: &'a DaemonPaths) -> SpawnFuture<'a> {
+        Box::pin(std::future::ready(Err(io::Error::other(
+            "its environment is invalid",
+        ))))
     }
 
     fn spawn<'a>(&'a self, _: &'a DaemonPaths) -> SpawnFuture<'a> {
