@@ -4,7 +4,7 @@ mod agent_output;
 pub(crate) mod code_mode;
 mod coding;
 pub(crate) mod mcp;
-mod notification_format;
+pub(crate) mod notification_format;
 #[cfg(test)]
 #[path = "notification_format_tests.rs"]
 mod notification_format_tests;
@@ -14,6 +14,7 @@ pub(crate) mod openapi;
 mod output_contract_tests;
 pub(crate) mod plan_exit;
 pub(crate) mod process;
+pub(crate) mod pull_request;
 pub mod rho;
 mod sdk_features;
 mod sessions;

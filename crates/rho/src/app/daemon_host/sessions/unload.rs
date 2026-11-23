@@ -4,7 +4,10 @@
 //! down; the next prompt or attach reopens it from its file. A session that
 //! has saved nothing yet has no file to reopen from, so it is discarded
 //! instead: torn down the same way, and its job forgotten, so the daemon
-//! lists it no more and a request for it finds nothing saved.
+//! lists it no more and a request for it finds nothing saved. An unloaded
+//! session that watches a pull request, whose client asked for daemon
+//! turns, leaves its opening in memory, so news can reopen it (see
+//! `pull_request_wake`).
 //!
 //! A session is busy, never idle, while a turn or a subagent writes it, a
 //! settings change is queued on it or applying, a delete holds it, a client
@@ -155,6 +158,8 @@ impl Sessions {
         }
         let idle_for = idle_since.elapsed();
         if saved {
+            // Under the reopen lock still, so no reopen runs before it.
+            self.retain_opening(id, session);
             tracing::info!(
                 session = %id,
                 job = %session.job,
@@ -168,6 +173,7 @@ impl Sessions {
             // remove it: nothing would remember it after.
             let record = self.jobs.get(&session.job);
             self.jobs.remove(&session.job);
+            self.pull_requests.forget(id);
             let kept = match record {
                 Some(record) => self.prune_worktree(&record, Prune::Now).await,
                 None => None,

@@ -10,7 +10,10 @@
 use std::future::Future;
 
 use crate::{
-    app::{session_runtime::BackgroundWait, subagent_manager::SubagentManager},
+    app::{
+        pull_requests::PullRequestInbox, session_runtime::BackgroundWait,
+        subagent_manager::SubagentManager,
+    },
     tools::{
         process::{LiveProcessSummary, ProcessManager},
         ui::SurfaceHost,
@@ -31,6 +34,10 @@ pub(super) struct AwaitedWork {
     /// The session's A2UI surfaces, where the daemon starts a turn for what
     /// the user does on one.
     surfaces: Option<SurfaceHost>,
+    /// The session's watched pull requests, whose news is a result. A quiet
+    /// watch is neither running work nor a result: it never keeps the
+    /// session active or loaded.
+    pull_requests: Option<PullRequestInbox>,
 }
 
 impl AwaitedWork {
@@ -43,13 +50,14 @@ impl AwaitedWork {
         workflows: WorkflowRunTracker,
         subagents: Option<SubagentManager>,
         surfaces: Option<SurfaceHost>,
+        pull_requests: Option<PullRequestInbox>,
     ) -> Option<Self> {
-        let (subagents, surfaces) = match wait {
+        let (subagents, surfaces, pull_requests) = match wait {
             BackgroundWait::HoldPrompt => return None,
             // The host runs the session's children as its own threads and
             // reports them itself, and its client draws no surfaces.
-            BackgroundWait::HostWakes => (None, None),
-            BackgroundWait::HostTurns => (subagents, surfaces),
+            BackgroundWait::HostWakes => (None, None, None),
+            BackgroundWait::HostTurns => (subagents, surfaces, pull_requests),
         };
         Some(Self {
             session_id,
@@ -57,6 +65,7 @@ impl AwaitedWork {
             workflows,
             subagents,
             surfaces,
+            pull_requests,
         })
     }
 
@@ -70,6 +79,7 @@ impl AwaitedWork {
         let workflow_finish = self.workflows.notified_owned();
         let subagent = self.subagents.as_ref().map(SubagentManager::parent_wake);
         let surface_action = self.surfaces.as_ref().map(SurfaceHost::acted_owned);
+        let news = self.outside_news();
         async move {
             let surface_action = async move {
                 match surface_action {
@@ -94,6 +104,22 @@ impl AwaitedWork {
                 () = workflow_finish => {}
                 () = subagent => {}
                 () = surface_action => {}
+                () = news => {}
+            }
+        }
+    }
+
+    /// Resolves once pull request news may have arrived, which, unlike every
+    /// other result, needs no turn of the session's to start it.
+    pub(super) fn outside_news(&self) -> impl Future<Output = ()> + Send + 'static {
+        let news = self
+            .pull_requests
+            .as_ref()
+            .map(PullRequestInbox::news_owned);
+        async move {
+            match news {
+                Some(news) => news.await,
+                None => std::future::pending().await,
             }
         }
     }
@@ -160,6 +186,10 @@ impl AwaitedWork {
                         .any(|notice| notice.delivery.requires_parent_action())
             })
             || self.surfaces.as_ref().is_some_and(SurfaceHost::has_action)
+            || self
+                .pull_requests
+                .as_ref()
+                .is_some_and(PullRequestInbox::has_news)
     }
 
     /// Resolves once a result is waiting.

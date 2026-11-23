@@ -9,7 +9,8 @@ use crate::{
     app::{
         daemon_host::jobs::{JobId, JobRecord, TurnRecord},
         session_runtime::{
-            unattended_runtime_on, unsaved_unattended_runtime_on, HangUntilCancel, QuestionSupport,
+            idle_woken_runtime_on, unattended_runtime_on, unsaved_unattended_runtime_on,
+            HangUntilCancel, QuestionSupport,
         },
     },
     config::Config,
@@ -21,6 +22,10 @@ use crate::{
 pub(super) enum Load {
     /// Saved, with no turn under way.
     Saved,
+    /// As [`Self::Saved`], its client having asked the daemon to start a
+    /// turn when its background work finishes idle (`idle_wake: turn`), so
+    /// its tools hold its pull request inbox, as the daemon opens it.
+    Waking,
     /// Saved, with its turn under way.
     Busy,
     /// Never saved, as a new session before its first prompt.
@@ -72,6 +77,11 @@ async fn opened(sessions: &Sessions, root: &TempDir, load: Load) -> LoadedSessio
             let questions = QuestionSupport::Unavailable;
             unattended_runtime_on(root.path(), &config, questions, sdk, provider).await
         }
+        Load::Waking => {
+            let inbox =
+                |id: &rho_sdk::SessionId| Some(sessions.pull_requests.inbox(id, root.path()));
+            idle_woken_runtime_on(root.path(), &config, sdk, provider, inbox).await
+        }
         Load::Unsaved => unsaved_unattended_runtime_on(root.path(), &config, sdk, provider).await,
     };
     let id = runtime.session_id().clone();
@@ -89,7 +99,7 @@ async fn opened(sessions: &Sessions, root: &TempDir, load: Load) -> LoadedSessio
                 )
                 .unwrap();
         }
-        Load::Saved | Load::Unsaved => {}
+        Load::Saved | Load::Waking | Load::Unsaved => {}
     }
     LoadedSession::new(
         &sessions.jobs.get(&job).unwrap(),
@@ -99,6 +109,7 @@ async fn opened(sessions: &Sessions, root: &TempDir, load: Load) -> LoadedSessio
             config,
             global: Arc::new(Config::default()),
             environment: SessionEnvironment::default(),
+            setup: rho_protocol::SessionSetup::default(),
         },
         /*auths*/ &[],
         &sessions.wakes,

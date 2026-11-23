@@ -153,6 +153,7 @@ async fn loaded_session_under(
             config,
             global: Arc::new(Config::default()),
             environment: SessionEnvironment::default(),
+            setup: rho_protocol::SessionSetup::default(),
         },
         /*auths*/ &[],
         &WakeDir::in_home(root),

@@ -3,12 +3,16 @@ use std::{collections::BTreeSet, sync::Arc, time::Duration};
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 
-use crate::app::daemon_host::{
-    jobs::{JobRecord, JobRegistry, JobStore},
-    sessions::{
-        test_sessions::{load, Load},
-        LoadedSession, Sessions,
+use crate::app::{
+    daemon_host::{
+        jobs::{JobRecord, JobRegistry, JobStore},
+        sessions::{
+            pull_request_wake::watch_for_tests,
+            test_sessions::{load, Load},
+            LoadedSession, Sessions,
+        },
     },
+    pull_requests::ScriptedForge,
 };
 
 const GRACE: Duration = Duration::from_secs(60);
@@ -40,7 +44,7 @@ fn ids(records: Vec<JobRecord>) -> BTreeSet<String> {
 async fn a_session_idle_for_the_grace_leaves_and_no_other() {
     let (root, home) = (TempDir::new().unwrap(), TempDir::new().unwrap());
     let jobs = Arc::new(JobRegistry::open(JobStore::open(home.path()).unwrap()));
-    let sessions = Sessions::new(jobs, home.path());
+    let sessions = Sessions::new(jobs, home.path(), ScriptedForge::new());
     let busy = load(&sessions, &root, Load::Busy).await;
     let followed = load(&sessions, &root, Load::Saved).await;
     let _follower = followed.feed.attach(None);
@@ -78,4 +82,44 @@ async fn a_session_idle_for_the_grace_leaves_and_no_other() {
         ),
         (everything, kept, vec![(true, true); 2], recorded)
     );
+}
+
+// Covers: the idle unload keeps the opening of a saved session, so pull
+// request news can reopen it, only when it watches a pull request and its
+// client asked for daemon turns: otherwise nothing could wake it, and the
+// client's credentials would sit in memory for nothing.
+// Owner: daemon idle session unload.
+#[tokio::test]
+async fn an_unloaded_session_keeps_its_opening_only_while_a_watch_can_wake_it() {
+    // (how it is loaded, whether it watches a pull request, whether its
+    // opening is kept)
+    let cases = [
+        (Load::Waking, true, true),
+        (Load::Waking, false, false),
+        (Load::Saved, true, false),
+    ];
+    let mut unloaded = Vec::new();
+    for (loaded_as, watches, _) in cases {
+        let (root, home) = (TempDir::new().unwrap(), TempDir::new().unwrap());
+        let jobs = Arc::new(JobRegistry::open(JobStore::open(home.path()).unwrap()));
+        let forge = ScriptedForge::new();
+        let sessions = Sessions::new(jobs, home.path(), forge.clone());
+        let session = load(&sessions, &root, loaded_as).await;
+        if watches {
+            let inbox = sessions.pull_requests.inbox(&session.id, root.path());
+            watch_for_tests(&forge, &inbox).await;
+        }
+
+        sessions.sweep(GRACE).await;
+        tokio::time::pause();
+        tokio::time::advance(GRACE).await;
+        tokio::time::resume();
+        sessions.sweep(GRACE).await;
+        unloaded.push((
+            sessions.loaded().is_empty(),
+            sessions.pull_requests.keeps_opening(&session.id),
+        ));
+    }
+
+    assert_eq!(unloaded, cases.map(|(_, _, kept)| (true, kept)).to_vec());
 }

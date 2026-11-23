@@ -162,7 +162,8 @@ impl DaemonHost {
         shutdown: Shutdown,
         store_environment: Option<CredentialStoreBackend>,
     ) -> Self {
-        let sessions = Sessions::new(Arc::clone(&jobs), rho_home);
+        let forge = Arc::new(crate::app::pull_requests::GhCli::default());
+        let sessions = Sessions::new(Arc::clone(&jobs), rho_home, forge);
         sessions.resume_after_restart(interrupted_by_restart);
         Self {
             socket,
@@ -275,6 +276,12 @@ impl DaemonHost {
     /// when it saved nothing, until the daemon starts stopping (#1661).
     pub(super) async fn unload_idle_sessions(&self, grace: Duration) {
         self.sessions.unload_idle(grace).await;
+    }
+
+    /// Polls the sessions' watched pull requests until the daemon starts
+    /// stopping.
+    pub(super) async fn poll_pull_requests(&self) {
+        self.sessions.poll_pull_requests().await;
     }
 
     /// Prunes the worktrees [`WORKTREE_PRUNE_AFTER_START`] after

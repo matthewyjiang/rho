@@ -56,8 +56,9 @@ fn executable_path(directory: &Path, program: &str) -> PathBuf {
     directory.join(program)
 }
 
+/// Whether `path` is a file this process may run.
 #[cfg(unix)]
-fn is_executable_file(path: &Path) -> bool {
+pub(crate) fn is_executable_file(path: &Path) -> bool {
     use std::{ffi::CString, os::unix::ffi::OsStrExt};
 
     if !path.is_file() {
@@ -72,7 +73,7 @@ fn is_executable_file(path: &Path) -> bool {
 }
 
 #[cfg(not(unix))]
-fn is_executable_file(path: &Path) -> bool {
+pub(crate) fn is_executable_file(path: &Path) -> bool {
     path.is_file()
 }
 

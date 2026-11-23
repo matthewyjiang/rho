@@ -1,0 +1,473 @@
+{
+ "data": {
+  "rateLimit": {
+   "remaining": 4937,
+   "resetAt": "2026-11-15T06:11:51Z"
+  },
+  "r0": {
+   "defaultBranchRef": {
+    "name": "trunk"
+   },
+   "p0": {
+    "number": 14578,
+    "title": "Replace extension browse with Bubble Tea",
+    "url": "https://github.com/cli/cli/pull/14578",
+    "state": "MERGED",
+    "isDraft": false,
+    "isCrossRepository": false,
+    "updatedAt": "2026-10-08T08:05:14Z",
+    "headRefOid": "7cb1cfff701d4d9ae4963327686c09a71b8faba8",
+    "commits": {
+     "nodes": [
+      {
+       "commit": {
+        "statusCheckRollup": {
+         "state": "SUCCESS",
+         "contexts": {
+          "totalCount": 11,
+          "nodes": [
+           {
+            "__typename": "CheckRun",
+            "name": "CodeQL-Build (go, manual, ./.github/codeql/codeql-config.yml)",
+            "status": "COMPLETED",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/cli/cli/actions/runs/37728841987/job/113153112470",
+            "checkSuite": {
+             "workflowRun": {
+              "workflow": {
+               "name": "Code Scanning"
+              }
+             }
+            }
+           },
+           {
+            "__typename": "CheckRun",
+            "name": "lint",
+            "status": "COMPLETED",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/cli/cli/actions/runs/37728842012/job/113153111890",
+            "checkSuite": {
+             "workflowRun": {
+              "workflow": {
+               "name": "Lint"
+              }
+             }
+            }
+           },
+           {
+            "__typename": "CheckRun",
+            "name": "build (ubuntu-latest)",
+            "status": "COMPLETED",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/cli/cli/actions/runs/37728841990/job/113153112043",
+            "checkSuite": {
+             "workflowRun": {
+              "workflow": {
+               "name": "Unit and Integration Tests"
+              }
+             }
+            }
+           },
+           {
+            "__typename": "CheckRun",
+            "name": "CodeQL-Build (actions, none, security-and-quality)",
+            "status": "COMPLETED",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/cli/cli/actions/runs/37728841987/job/113153112276",
+            "checkSuite": {
+             "workflowRun": {
+              "workflow": {
+               "name": "Code Scanning"
+              }
+             }
+            }
+           },
+           {
+            "__typename": "CheckRun",
+            "name": "build (windows-latest)",
+            "status": "COMPLETED",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/cli/cli/actions/runs/37728841990/job/113153112092",
+            "checkSuite": {
+             "workflowRun": {
+              "workflow": {
+               "name": "Unit and Integration Tests"
+              }
+             }
+            }
+           },
+           {
+            "__typename": "CheckRun",
+            "name": "build (macos-latest)",
+            "status": "COMPLETED",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/cli/cli/actions/runs/37728841990/job/113153112126",
+            "checkSuite": {
+             "workflowRun": {
+              "workflow": {
+               "name": "Unit and Integration Tests"
+              }
+             }
+            }
+           },
+           {
+            "__typename": "CheckRun",
+            "name": "govulncheck",
+            "status": "COMPLETED",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/cli/cli/actions/runs/37728842012/job/113153112141",
+            "checkSuite": {
+             "workflowRun": {
+              "workflow": {
+               "name": "Lint"
+              }
+             }
+            }
+           },
+           {
+            "__typename": "CheckRun",
+            "name": "integration-tests (ubuntu-latest)",
+            "status": "COMPLETED",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/cli/cli/actions/runs/37728841990/job/113153112136",
+            "checkSuite": {
+             "workflowRun": {
+              "workflow": {
+               "name": "Unit and Integration Tests"
+              }
+             }
+            }
+           },
+           {
+            "__typename": "CheckRun",
+            "name": "integration-tests (windows-latest)",
+            "status": "COMPLETED",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/cli/cli/actions/runs/37728841990/job/113153111897",
+            "checkSuite": {
+             "workflowRun": {
+              "workflow": {
+               "name": "Unit and Integration Tests"
+              }
+             }
+            }
+           },
+           {
+            "__typename": "CheckRun",
+            "name": "integration-tests (macos-latest)",
+            "status": "COMPLETED",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/cli/cli/actions/runs/37728841990/job/113153112157",
+            "checkSuite": {
+             "workflowRun": {
+              "workflow": {
+               "name": "Unit and Integration Tests"
+              }
+             }
+            }
+           },
+           {
+            "__typename": "CheckRun",
+            "name": "CodeQL",
+            "status": "COMPLETED",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/cli/cli/runs/113153267782",
+            "checkSuite": {
+             "workflowRun": null
+            }
+           }
+          ]
+         }
+        }
+       }
+      }
+     ]
+    },
+    "body": "<!--\nThank you for contributing to GitHub CLI!\n\nIf you are proposing a fix for a security issue, STOP and follow .github/SECURITY.md instead.\n\nKeep the entire p",
+    "author": {
+     "login": "williammartin"
+    },
+    "headRefName": "williammartin-extension-browse-bubbletea",
+    "baseRefName": "trunk",
+    "additions": 1781,
+    "deletions": 867,
+    "changedFiles": 8,
+    "reviewDecision": "APPROVED",
+    "comments": {
+     "totalCount": 5,
+     "nodes": [
+      {
+       "author": {
+        "login": "BagToad"
+       },
+       "body": "> [!NOTE]\n> Copilot generated this recording and comment.\n\n### Exercising `gh extension browse` at e15e40d\n\nThis recording exercises this PR's build ([`e15e40d`",
+       "createdAt": "2026-10-02T19:08:19Z",
+       "url": "https://github.com/cli/cli/pull/14578#issuecomment-5959551325"
+      },
+      {
+       "author": {
+        "login": "BagToad"
+       },
+       "body": "> [!NOTE]\n> Copilot generated this screenshot and comment.\n\n\ud83d\udc1b potential bug, minor, non-blocking, \ud83e\udd16 copilot found: README lines that can't wrap push the footer ",
+       "createdAt": "2026-10-06T19:12:00Z",
+       "url": "https://github.com/cli/cli/pull/14578#issuecomment-6023586835"
+      },
+      {
+       "author": {
+        "login": "williammartin"
+       },
+       "body": "> [!NOTE]\r\n> Copilot generated this screenshot and comment.\r\n\r\nFixed in c12892961. Lipgloss v2 includes the border in the styled width and height, so the frame ",
+       "createdAt": "2026-10-07T04:42:46Z",
+       "url": "https://github.com/cli/cli/pull/14578#issuecomment-6031083311"
+      },
+      {
+       "author": {
+        "login": "BagToad"
+       },
+       "body": "> [!NOTE]\n> Copilot generated this screenshot and comment.\n\nTwo more findings. Neither should block merging.\n\n\ud83d\udc1b potential bug, minor, non-blocking, \ud83e\udd16 copilot fo",
+       "createdAt": "2026-10-07T19:31:48Z",
+       "url": "https://github.com/cli/cli/pull/14578#issuecomment-6045313111"
+      },
+      {
+       "author": {
+        "login": "williammartin"
+       },
+       "body": "Fixed the multi-line error display in 7dca83938 and polished wrapped command indentation in 7cb1cfff7. Status text now wraps at terminal width, the catalog/READ",
+       "createdAt": "2026-10-08T04:40:32Z",
+       "url": "https://github.com/cli/cli/pull/14578#issuecomment-6052389212"
+      }
+     ]
+    },
+    "reviews": {
+     "totalCount": 8,
+     "nodes": [
+      {
+       "author": {
+        "login": "copilot-pull-request-reviewer"
+       },
+       "body": "<!-- ccr-overview-v2 -->\n\n## Copilot review overview\n\n### \ud83d\udfe1 Changes recommended\n\nFiltering regressions, hidden action failures, and short-terminal overflow rema",
+       "state": "COMMENTED",
+       "submittedAt": "2026-10-02T16:20:58Z",
+       "url": "https://github.com/cli/cli/pull/14578#pullrequestreview-5394153842"
+      },
+      {
+       "author": {
+        "login": "copilot-pull-request-reviewer"
+       },
+       "body": "<!-- ccr-overview-v2 -->\n\n## Copilot review overview\n\n### \ud83d\udfe1 Changes recommended\n\nPrintable-key handling and quitting during extension mutations can cause broken",
+       "state": "COMMENTED",
+       "submittedAt": "2026-10-06T15:22:31Z",
+       "url": "https://github.com/cli/cli/pull/14578#pullrequestreview-5430703973"
+      },
+      {
+       "author": {
+        "login": "williammartin"
+       },
+       "body": "",
+       "state": "COMMENTED",
+       "submittedAt": "2026-10-06T16:06:23Z",
+       "url": "https://github.com/cli/cli/pull/14578#pullrequestreview-5431300881"
+      },
+      {
+       "author": {
+        "login": "williammartin"
+       },
+       "body": "",
+       "state": "COMMENTED",
+       "submittedAt": "2026-10-06T16:06:23Z",
+       "url": "https://github.com/cli/cli/pull/14578#pullrequestreview-5431300898"
+      },
+      {
+       "author": {
+        "login": "williammartin"
+       },
+       "body": "",
+       "state": "COMMENTED",
+       "submittedAt": "2026-10-06T16:06:23Z",
+       "url": "https://github.com/cli/cli/pull/14578#pullrequestreview-5431300907"
+      },
+      {
+       "author": {
+        "login": "williammartin"
+       },
+       "body": "",
+       "state": "COMMENTED",
+       "submittedAt": "2026-10-06T16:06:23Z",
+       "url": "https://github.com/cli/cli/pull/14578#pullrequestreview-5431300921"
+      },
+      {
+       "author": {
+        "login": "williammartin"
+       },
+       "body": "",
+       "state": "COMMENTED",
+       "submittedAt": "2026-10-06T16:06:23Z",
+       "url": "https://github.com/cli/cli/pull/14578#pullrequestreview-5431300966"
+      },
+      {
+       "author": {
+        "login": "BagToad"
+       },
+       "body": "",
+       "state": "APPROVED",
+       "submittedAt": "2026-10-07T19:31:56Z",
+       "url": "https://github.com/cli/cli/pull/14578#pullrequestreview-5447333111"
+      }
+     ]
+    },
+    "reviewThreads": {
+     "totalCount": 5,
+     "nodes": [
+      {
+       "id": "PRRT_kwDODKw3uc6oaK0g",
+       "isResolved": true,
+       "isOutdated": true,
+       "path": "pkg/cmd/extension/browse/model.go",
+       "line": null,
+       "comments": {
+        "totalCount": 2,
+        "nodes": [
+         {
+          "author": {
+           "login": "copilot-pull-request-reviewer"
+          },
+          "body": "\ud83d\uded1 Requirement: Do not clear unseen action failures when leaving an overlay\n\nIf an install or removal finishes while the help or full-screen README page is open,",
+          "createdAt": "2026-10-02T16:20:57Z",
+          "url": "https://github.com/cli/cli/pull/14578#discussion_r4167638739"
+         },
+         {
+          "author": {
+           "login": "williammartin"
+          },
+          "body": "Fixed in f3adaae4d. Completed action status is now cleared only by interactions that begin on the catalog page, so leaving help or the full-screen README preser",
+          "createdAt": "2026-10-06T16:06:23Z",
+          "url": "https://github.com/cli/cli/pull/14578#discussion_r4197654276"
+         }
+        ]
+       }
+      },
+      {
+       "id": "PRRT_kwDODKw3uc6oaK1C",
+       "isResolved": true,
+       "isOutdated": true,
+       "path": "pkg/cmd/extension/browse/model.go",
+       "line": 423,
+       "comments": {
+        "totalCount": 2,
+        "nodes": [
+         {
+          "author": {
+           "login": "copilot-pull-request-reviewer"
+          },
+          "body": "\ud83d\uded1 Requirement: Preserve filtering by extension status\n\nThe previous filter searched the displayed title, so users could filter the catalog by `official` or `ins",
+          "createdAt": "2026-10-02T16:20:58Z",
+          "url": "https://github.com/cli/cli/pull/14578#discussion_r4167638794"
+         },
+         {
+          "author": {
+           "login": "williammartin"
+          },
+          "body": "Fixed in f3adaae4d. The filter haystack now includes the displayed `official` and `installed` labels, with table-driven coverage for both.",
+          "createdAt": "2026-10-06T16:06:23Z",
+          "url": "https://github.com/cli/cli/pull/14578#discussion_r4197654312"
+         }
+        ]
+       }
+      },
+      {
+       "id": "PRRT_kwDODKw3uc6oaK1U",
+       "isResolved": true,
+       "isOutdated": true,
+       "path": "pkg/cmd/extension/browse/model.go",
+       "line": null,
+       "comments": {
+        "totalCount": 2,
+        "nodes": [
+         {
+          "author": {
+           "login": "copilot-pull-request-reviewer"
+          },
+          "body": "\ud83d\uded1 Requirement: Handle terminals shorter than six rows\n\nFor `height <= 5`, this still renders one extension as two rows, while the header, filter, separator, and",
+          "createdAt": "2026-10-02T16:20:58Z",
+          "url": "https://github.com/cli/cli/pull/14578#discussion_r4167638823"
+         },
+         {
+          "author": {
+           "login": "williammartin"
+          },
+          "body": "Fixed in f3adaae4d. Terminals shorter than six rows now render a width-constrained one-line fallback, with coverage for a five-row terminal.",
+          "createdAt": "2026-10-06T16:06:23Z",
+          "url": "https://github.com/cli/cli/pull/14578#discussion_r4197654272"
+         }
+        ]
+       }
+      },
+      {
+       "id": "PRRT_kwDODKw3uc6piNV-",
+       "isResolved": true,
+       "isOutdated": false,
+       "path": "pkg/cmd/extension/browse/model.go",
+       "line": 283,
+       "comments": {
+        "totalCount": 2,
+        "nodes": [
+         {
+          "author": {
+           "login": "copilot-pull-request-reviewer"
+          },
+          "body": "\ud83d\uded1 Requirement: Prevent `q` from exiting while an install or removal is running.\n\nBubble Tea runs commands in detached goroutines and explicitly does not wait fo",
+          "createdAt": "2026-10-06T15:22:30Z",
+          "url": "https://github.com/cli/cli/pull/14578#discussion_r4197152952"
+         },
+         {
+          "author": {
+           "login": "williammartin"
+          },
+          "body": "Fixed in f3adaae4d. Normal `q` is ignored while an extension action is running; Ctrl+C remains available as the explicit forced exit. Added regression coverage ",
+          "createdAt": "2026-10-06T16:06:23Z",
+          "url": "https://github.com/cli/cli/pull/14578#discussion_r4197654254"
+         }
+        ]
+       }
+      },
+      {
+       "id": "PRRT_kwDODKw3uc6piNWv",
+       "isResolved": true,
+       "isOutdated": false,
+       "path": "pkg/cmd/extension/browse/model.go",
+       "line": 230,
+       "comments": {
+        "totalCount": 2,
+        "nodes": [
+         {
+          "author": {
+           "login": "copilot-pull-request-reviewer"
+          },
+          "body": "\ud83d\uded1 Requirement: Cover returning from the full-screen README.\n\nThe new tests verify rerendering at full-screen width, but none exercise this exit branch or the pr",
+          "createdAt": "2026-10-06T15:22:31Z",
+          "url": "https://github.com/cli/cli/pull/14578#discussion_r4197153031"
+         },
+         {
+          "author": {
+           "login": "williammartin"
+          },
+          "body": "Covered in f3adaae4d. The existing exit path already resized and rerendered the README; the new test opens the full-screen README at width 118, exits with `q`, ",
+          "createdAt": "2026-10-06T16:06:23Z",
+          "url": "https://github.com/cli/cli/pull/14578#discussion_r4197654262"
+         }
+        ]
+       }
+      }
+     ]
+    },
+    "mergeable": "UNKNOWN",
+    "repository": {
+     "mergeCommitAllowed": true,
+     "squashMergeAllowed": true,
+     "rebaseMergeAllowed": true,
+     "viewerDefaultMergeMethod": "MERGE"
+    }
+   }
+  }
+ }
+}

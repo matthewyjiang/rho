@@ -7,7 +7,10 @@
 //! the input the model received, whichever host delivered it.
 
 use crate::{
-    app::subagent_messaging::{NoticeDelivery, SubagentNotice},
+    app::{
+        pull_requests::NewsBatch,
+        subagent_messaging::{NoticeDelivery, SubagentNotice},
+    },
     display_transcript::{DisplayRow, DisplayTranscript},
     subagent::RunState,
     tools::{
@@ -30,6 +33,8 @@ pub(crate) struct BoundaryResults<'a> {
     pub(crate) processes: &'a [ProcessNotification],
     /// What the user did on A2UI surfaces while no `ui` call waited.
     pub(crate) surface_actions: &'a [SurfaceAction],
+    /// What changed on the session's watched pull requests.
+    pub(crate) pull_requests: &'a NewsBatch,
 }
 
 /// Model input sections and display rows for one boundary, in delivery order.
@@ -104,6 +109,15 @@ impl BoundaryResults<'_> {
                 "surface action\n{} on surface {surface}",
                 name.unwrap_or("action")
             )));
+        }
+        if !self.pull_requests.is_empty() {
+            model.push(self.pull_requests.prompt());
+            rows.extend(
+                self.pull_requests
+                    .news
+                    .iter()
+                    .map(|news| DisplayRow::Notification(Box::new(news.card()))),
+            );
         }
         BoundaryMessage { model, rows }
     }

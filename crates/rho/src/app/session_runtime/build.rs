@@ -71,6 +71,10 @@ pub(crate) struct HostCapabilities {
     /// `None` leaves the session without the `ui` tool. One host serves
     /// every tool set the session builds.
     pub(crate) surfaces: Option<crate::tools::ui::SurfaceHost>,
+    /// The session's side of the daemon's pull request service, for a
+    /// daemon root session whose host starts its turns; `None` leaves the
+    /// session without the pull request tools.
+    pub(crate) pull_requests: Option<crate::app::pull_requests::PullRequestInbox>,
     /// Who runs the `agent` tool's children.
     pub(crate) children: ChildAgents,
     /// Whether the host starts a turn when background work finishes idle.
@@ -121,6 +125,7 @@ impl HostCapabilities {
         Self {
             questions: QuestionSupport::Unavailable,
             surfaces: None,
+            pull_requests: None,
             children: ChildAgents::InProcess,
             idle_turns: IdleTurns::Never,
             subagent_pool: SubagentPool::Own,
@@ -376,6 +381,7 @@ pub(super) async fn build_session(
         no_subagents: build.launch.left_out.subagents,
         questionnaire_enabled: questions,
         surfaces: build.host.surfaces.clone(),
+        pull_requests: build.host.pull_requests.clone(),
         mcp_elicitation: if questions {
             crate::tools::mcp::McpElicitationSupport::Available
         } else {

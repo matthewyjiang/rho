@@ -1,18 +1,22 @@
-use std::{path::Path, sync::Arc};
+use std::{path::Path, sync::Arc, time::Duration};
 
 use pretty_assertions::assert_eq;
 use rho_protocol::{self as wire, SessionSetup, TurnId};
 use tempfile::TempDir;
-use tokio::sync::watch;
+use tokio::{sync::watch, time::timeout};
 
 use super::super::{
-    background::SessionBackground, idle_wake::try_give_up, test_sessions::load_waiting_on, Entered,
-    LoadedSession, OpenWith, Sessions,
+    background::SessionBackground,
+    idle_wake::try_give_up,
+    pull_request_wake::watch_for_tests,
+    test_sessions::{load, load_waiting_on, Load},
+    Entered, LoadedSession, OpenWith, Sessions,
 };
 use crate::{
     app::{
         agent_executor::AgentRunHandle,
         daemon_host::jobs::{JobRegistry, JobStore, TurnEnd},
+        pull_requests::ScriptedForge,
         session_runtime::BackgroundWait,
         subagent_manager::SubagentManager,
         subagent_pool::SubagentPool,
@@ -25,6 +29,9 @@ use crate::{
 const LONG_RUNNING_COMMAND: &str = "sleep 300";
 
 const SUBAGENT: &str = "abc123";
+
+/// Bounds each wait on the daemon's own tasks; never the way a test syncs.
+const TEST_BUDGET: Duration = Duration::from_secs(10);
 
 /// A session's job state or activity, as its clients hear them, in order.
 #[derive(Debug, PartialEq)]
@@ -58,11 +65,59 @@ fn activity(session: &LoadedSession) -> Option<wire::SessionActivity> {
         })
 }
 
-/// A session loaded in its own daemon whose work waits as `wait`, from
-/// these managers.
+/// What a session's clients heard of its activity and its turns, each
+/// change once.
+#[derive(Debug, PartialEq)]
+enum Seen {
+    Activity(wire::SessionActivity),
+    TurnRunning,
+    TurnEnded,
+}
+
+fn seen(session: &LoadedSession) -> Vec<Seen> {
+    let mut seen: Vec<Seen> = heard(session)
+        .into_iter()
+        .map(|heard| match heard {
+            Heard::Activity(state) => Seen::Activity(state),
+            Heard::State(state) if state.in_progress() => Seen::TurnRunning,
+            Heard::State(_) => Seen::TurnEnded,
+        })
+        .collect();
+    seen.dedup();
+    seen
+}
+
+/// Runs the daemon's tasks until `done` holds. Nothing announces an idle
+/// watcher's give-up but the activity it publishes, so this looks again
+/// after each yield; [`TEST_BUDGET`] bounds a hang.
+async fn until(done: impl Fn() -> bool, what: &str) {
+    let wait = async {
+        while !done() {
+            tokio::task::yield_now().await;
+        }
+    };
+    timeout(TEST_BUDGET, wait)
+        .await
+        .unwrap_or_else(|_| panic!("{what}"));
+}
+
+/// Where a fixture session's background work is read from.
+#[derive(Clone, Copy)]
+enum Work {
+    /// The fixture's managers, waited for as `wait`.
+    Managers(BackgroundWait),
+    /// The session's runtime's tools, as the daemon reads them. Its client
+    /// asked the daemon to wake it idle (`idle_wake: turn`), so they hold
+    /// its pull request inbox.
+    Tools,
+}
+
+/// A session loaded in its own daemon, whose pull requests `forge`
+/// scripts.
 struct Fixture {
-    _root: TempDir,
+    root: TempDir,
     _home: TempDir,
+    forge: Arc<ScriptedForge>,
     sessions: Arc<Sessions>,
     session: Arc<LoadedSession>,
     processes: ProcessManager,
@@ -70,11 +125,24 @@ struct Fixture {
 }
 
 impl Fixture {
+    /// A session whose work waits as `wait`, from the fixture's managers.
     async fn new(wait: BackgroundWait) -> Self {
+        Self::build(Work::Managers(wait)).await
+    }
+
+    /// A session whose work is its runtime's tools', its pull requests
+    /// among them.
+    async fn watching() -> Self {
+        Self::build(Work::Tools).await
+    }
+
+    async fn build(work: Work) -> Self {
         let (root, home) = (TempDir::new().unwrap(), TempDir::new().unwrap());
+        let forge = ScriptedForge::new();
         let sessions = Sessions::new(
             Arc::new(JobRegistry::open(JobStore::open(home.path()).unwrap())),
             home.path(),
+            forge.clone(),
         );
         let processes = ProcessManager::new(ProcessLimits::default());
         let subagents = SubagentManager::new(
@@ -83,20 +151,67 @@ impl Fixture {
             home.path().to_path_buf(),
             SubagentPool::Own,
         );
-        let session = load_waiting_on(&sessions, &root, |id| {
-            SessionBackground::for_tests(id, wait, Some(processes.clone()), Some(subagents.clone()))
-        })
-        .await;
+        let session = match work {
+            Work::Managers(wait) => {
+                load_waiting_on(&sessions, &root, |id| {
+                    let (processes, subagents) = (Some(processes.clone()), Some(subagents.clone()));
+                    SessionBackground::for_tests(id, wait, processes, subagents)
+                })
+                .await
+            }
+            Work::Tools => load(&sessions, &root, Load::Waking).await,
+        };
         // As the session is added.
         session.report_activity();
         Self {
-            _root: root,
+            root,
             _home: home,
+            forge,
             sessions,
             session,
             processes,
             subagents,
         }
+    }
+
+    /// Waits until the session's clients heard `turns` of its turns start.
+    async fn turns_started(&self, turns: usize) {
+        let jobs = &self.sessions.jobs;
+        let wait = async {
+            loop {
+                // Enabled before the look, so a start after it wakes this.
+                let changed = jobs.changed();
+                tokio::pin!(changed);
+                changed.as_mut().enable();
+                let started = seen(&self.session)
+                    .into_iter()
+                    .filter(|seen| *seen == Seen::TurnRunning)
+                    .count();
+                if started >= turns {
+                    return;
+                }
+                changed.await;
+            }
+        };
+        timeout(TEST_BUDGET, wait)
+            .await
+            .expect("the daemon starts a delivery turn");
+    }
+
+    /// Queues news of the watched pull request's checks `failed`, as the
+    /// poll `minutes` after the watch reads them, and cancels the delivery
+    /// turn it starts, the session's `turn`th, while that turn waits for the
+    /// runtime held here: it ends before it begins its prompt and leaves the
+    /// news, as a delivery turn that fails first does.
+    async fn news_left_by_delivery(&self, failed: &[&str], minutes: u64, turn: usize) {
+        let held = self.session.runtime.lock().await;
+        self.sessions
+            .pull_requests
+            .fail_checks_for_tests(&self.forge, failed, minutes)
+            .await;
+        self.turns_started(turn).await;
+        self.session.cancel_turn();
+        drop(held);
     }
 
     /// Starts a turn, as a prompt or the daemon's delivery does, without
@@ -303,6 +418,56 @@ async fn a_delivery_that_left_its_result_settles_once_the_watcher_gives_up() {
                 (true, Some(Settled))
             ],
             Some(Active)
+        )
+    );
+    fixture.shutdown().await;
+}
+
+// Covers: news on a watched pull request, read through the inbox the
+// session's tools hold, starts a delivery turn on the idle session, though
+// no turn of its own started the watch's work; a quiet watch keeps nothing
+// active; a delivery turn that left the news settles the session rather
+// than loop, though every turn's end refreshes the session's tools; and
+// later news wakes it again although its watcher gave up, which only the
+// pull request inbox can do. A miss leaves the news unread until the user
+// prompts, or starts delivery turns without end.
+// Owner: daemon idle wake.
+#[tokio::test]
+async fn a_watched_pull_requests_news_starts_a_delivery_turn_on_the_idle_session() {
+    use wire::SessionActivity::{Active, Settled};
+    let fixture = Fixture::watching().await;
+    let (sessions, session) = (&fixture.sessions, &fixture.session);
+    let inbox = sessions
+        .pull_requests
+        .inbox(&session.id, fixture.root.path());
+    watch_for_tests(&fixture.forge, &inbox).await;
+    session.report_activity();
+    let quiet = seen(session);
+    sessions.watch_idle_results(session);
+
+    let settled = || seen(session).last() == Some(&Seen::Activity(Settled));
+    fixture.news_left_by_delivery(&["ci"], 1, 1).await;
+    until(settled, "the watcher gives up on the news the turn left").await;
+    let left = inbox.has_news();
+    fixture.news_left_by_delivery(&["ci", "lint"], 2, 2).await;
+    until(settled, "the watcher gives up again").await;
+
+    assert_eq!(
+        (quiet, left, seen(session)),
+        (
+            vec![Seen::Activity(Settled)],
+            true,
+            vec![
+                Seen::Activity(Settled),
+                Seen::Activity(Active),
+                Seen::TurnRunning,
+                Seen::TurnEnded,
+                Seen::Activity(Settled),
+                Seen::Activity(Active),
+                Seen::TurnRunning,
+                Seen::TurnEnded,
+                Seen::Activity(Settled),
+            ]
         )
     );
     fixture.shutdown().await;

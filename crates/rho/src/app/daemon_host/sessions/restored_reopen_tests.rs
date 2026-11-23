@@ -13,9 +13,12 @@ use super::{
     Sessions,
 };
 use crate::{
-    app::daemon_host::{
-        jobs::{JobRegistry, JobStore, TurnEnd, TurnRecord},
-        wire::session_to_wire,
+    app::{
+        daemon_host::{
+            jobs::{JobRegistry, JobStore, TurnEnd, TurnRecord},
+            wire::session_to_wire,
+        },
+        pull_requests::ScriptedForge,
     },
     caller_context::CallerContext,
     config::Config,
@@ -49,7 +52,7 @@ struct Reopened {
 async fn a_reopened_session_attaches_to_the_conversation_its_restore_left() {
     let (root, home) = (TempDir::new().unwrap(), TempDir::new().unwrap());
     let jobs = Arc::new(JobRegistry::open(JobStore::open(home.path()).unwrap()));
-    let sessions = Sessions::new(jobs, home.path());
+    let sessions = Sessions::new(jobs, home.path(), ScriptedForge::new());
     let session = load(&sessions, &root, Load::Saved).await;
     let first = {
         let mut runtime = session.runtime.lock().await;

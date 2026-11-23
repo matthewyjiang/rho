@@ -3,9 +3,14 @@ use std::{path::Path, time::Duration};
 use pretty_assertions::assert_eq;
 use tokio::sync::watch;
 
-use super::*;
+use super::{
+    super::pull_request_wake::{watch_for_tests, PullRequestWake},
+    *,
+};
 use crate::{
-    app::{agent_executor::AgentRunHandle, subagent_pool::SubagentPool},
+    app::{
+        agent_executor::AgentRunHandle, pull_requests::ScriptedForge, subagent_pool::SubagentPool,
+    },
     subagent::{RunState, RunStatus},
     tools::process::{KeepWarm, ProcessLimits, ProcessRole},
 };
@@ -28,6 +33,10 @@ enum Work {
     ExitedService,
     RunningSubagent,
     FinishedSubagent,
+    /// A watched pull request, with no news yet.
+    QuietWatch,
+    /// A watched pull request whose check failed since.
+    PullRequestNews,
 }
 
 const TASK: ProcessRole = ProcessRole::Task {
@@ -57,8 +66,18 @@ async fn started(
         SubagentPool::Own,
     );
     let mut running = None;
+    let forge = ScriptedForge::new();
+    let pull_requests = PullRequestWake::open(root, forge.clone());
+    let inbox = pull_requests.inbox(&rho_sdk::SessionId::from_string(SESSION).unwrap(), root);
     match work {
         Work::Nothing => {}
+        Work::QuietWatch => watch_for_tests(&forge, &inbox).await,
+        Work::PullRequestNews => {
+            watch_for_tests(&forge, &inbox).await;
+            pull_requests
+                .fail_checks_for_tests(&forge, &["ci"], 1)
+                .await;
+        }
         Work::LiveTask => {
             start(&processes, root, TASK).await;
         }
@@ -103,6 +122,7 @@ async fn started(
         WorkflowRunTracker::new(),
         Some(subagents),
         /*surfaces*/ None,
+        Some(inbox),
     )
     .unwrap();
     (awaited, processes, running)
@@ -128,7 +148,9 @@ async fn exit(processes: &ProcessManager, id: &str) {
 // takes its result, and is a result once it finished; a service, live or
 // exited, is neither, so it never wakes the idle session nor keeps it from
 // settling; and work counts as running exactly while it may still give a
-// result, which a waker that gave up relies on. Owner: daemon awaited work.
+// result, which a waker that gave up relies on. A watched pull request is
+// never running work, so a quiet watch keeps nothing active, and its news
+// is a result until a turn takes it. Owner: daemon awaited work.
 #[tokio::test]
 async fn tasks_and_subagents_are_awaited_and_services_are_not() {
     let awaited = |outstanding, has_result, running| Awaited {
@@ -144,6 +166,8 @@ async fn tasks_and_subagents_are_awaited_and_services_are_not() {
         (Work::ExitedService, awaited(false, false, false)),
         (Work::RunningSubagent, awaited(true, false, true)),
         (Work::FinishedSubagent, awaited(true, true, false)),
+        (Work::QuietWatch, awaited(false, false, false)),
+        (Work::PullRequestNews, awaited(true, true, false)),
     ];
     for (work, expected) in cases {
         let root = tempfile::tempdir().unwrap();

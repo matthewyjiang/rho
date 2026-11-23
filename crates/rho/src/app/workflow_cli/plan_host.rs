@@ -436,6 +436,7 @@ fn frozen_capabilities(capabilities: &crate::agent::AgentCapabilities) -> BTreeS
                 ToolCapability::Advisor
                     | ToolCapability::Agent
                     | ToolCapability::Agents
+                    | ToolCapability::PullRequests
                     | ToolCapability::Questionnaire
                     | ToolCapability::Rho
                     | ToolCapability::Workflow

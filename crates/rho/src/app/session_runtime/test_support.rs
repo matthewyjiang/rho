@@ -21,6 +21,7 @@ use crate::{
     },
     app::{
         agent_binding::{AgentBinder, AgentInvocation, AgentRole, BoundAgent},
+        pull_requests::PullRequestInbox,
         session_assembly::BuiltSession,
     },
     config::Config,
@@ -153,10 +154,11 @@ pub(in crate::app) async fn unattended_runtime_on(
 ) -> SessionRuntime {
     let host = HostCapabilities {
         surfaces: None,
+        pull_requests: None,
         questions,
         ..HostCapabilities::unattended(UnattendedApprovals::Alone)
     };
-    saved_runtime_on(root, config, host, runtime, provider).await
+    saved_runtime_on(root, config, host, runtime, provider, |_| None).await
 }
 
 /// [`unattended_runtime_on`] for a host that runs the session's children
@@ -170,24 +172,51 @@ pub(in crate::app) async fn host_woken_runtime_on(
 ) -> SessionRuntime {
     let host = HostCapabilities {
         surfaces: None,
+        pull_requests: None,
         children: ChildAgents::HostThreads,
         ..HostCapabilities::unattended(UnattendedApprovals::Alone)
     };
-    saved_runtime_on(root, config, host, runtime, provider).await
+    saved_runtime_on(root, config, host, runtime, provider, |_| None).await
+}
+
+/// [`unattended_runtime_on`] for a client that asked the daemon to start a
+/// turn when the idle session's background work finishes, as
+/// `idle_wake: turn` does. Its tools hold the pull request inbox
+/// `pull_requests` gives for its id, as a daemon session's do.
+pub(in crate::app) async fn idle_woken_runtime_on(
+    root: &Path,
+    config: &Config,
+    runtime: rho_sdk::Rho,
+    provider: Arc<dyn ModelProvider>,
+    pull_requests: impl FnOnce(&rho_sdk::SessionId) -> Option<PullRequestInbox>,
+) -> SessionRuntime {
+    let host = HostCapabilities {
+        surfaces: None,
+        pull_requests: None,
+        idle_turns: super::IdleTurns::Host,
+        ..HostCapabilities::unattended(UnattendedApprovals::Alone)
+    };
+    saved_runtime_on(root, config, host, runtime, provider, pull_requests).await
 }
 
 /// A runtime around a [`built_with`] session on the SDK `runtime`, saved in
-/// a new file under `root`, which is also its workspace, for `host`.
+/// a new file under `root`, which is also its workspace, for `host`, its
+/// tools holding the inbox `pull_requests` gives for its id, if any.
 async fn saved_runtime_on(
     root: &Path,
     config: &Config,
     host: HostCapabilities,
     runtime: rho_sdk::Rho,
     provider: Arc<dyn ModelProvider>,
+    pull_requests: impl FnOnce(&rho_sdk::SessionId) -> Option<PullRequestInbox>,
 ) -> SessionRuntime {
     let stored = StoredSession::create_in_root(root, root).expect("test session file");
     let id = rho_sdk::SessionId::from_string(stored.id()).expect("stored ids are session ids");
-    let built = built_with(config, id, runtime, provider).await;
+    let inbox = pull_requests(&id);
+    let mut built = built_with(config, id, runtime, provider).await;
+    if let Some(inbox) = inbox {
+        built.tools.set_pull_requests_for_tests(inbox);
+    }
     let mut build = test_build(config, root);
     build.host = host;
     SessionRuntime::for_tests_with(build, built, SessionStorage::saved(stored), config)
@@ -229,6 +258,7 @@ pub(in crate::app) fn test_build(config: &Config, workspace_root: &Path) -> Sess
         },
         host: HostCapabilities {
             surfaces: None,
+            pull_requests: None,
             questions: QuestionSupport::Unavailable,
             children: ChildAgents::InProcess,
             idle_turns: super::IdleTurns::Never,

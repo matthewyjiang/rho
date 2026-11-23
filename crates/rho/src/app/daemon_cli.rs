@@ -312,6 +312,10 @@ async fn run_foreground(
         let host = Arc::clone(&host);
         tokio::spawn(async move { host.unload_idle_sessions(unload_idle_after).await })
     };
+    let pull_request_polls = {
+        let host = Arc::clone(&host);
+        tokio::spawn(async move { host.poll_pull_requests().await })
+    };
     let worktree_prunes = {
         let host = Arc::clone(&host);
         tokio::spawn(async move { host.prune_worktrees_daily().await })
@@ -360,6 +364,7 @@ async fn run_foreground(
     // Also waits for a session the idle unload is tearing down.
     let drained = host.stop_sessions(stop_requested).await;
     unloads.abort();
+    pull_request_polls.abort();
     worktree_prunes.abort();
     if let Some(upgrades) = upgrades {
         upgrades.abort();

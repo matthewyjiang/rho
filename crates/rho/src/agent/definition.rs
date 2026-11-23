@@ -69,6 +69,7 @@ define_tool_capabilities! {
     ListDir => "list_dir" : "List a directory.",
     Powershell => "powershell" : "Run PowerShell commands.",
     Process => "process" : "Start, poll, and stop background processes.",
+    PullRequests => "pull_requests" : "Link and watch GitHub pull requests; rho wakes the session on changes.",
     Questionnaire => "questionnaire" : "Ask the user structured questions.",
     ReadFile => "read_file" : "Read files, documents, and images.",
     Rho => "rho" : "Inspect the running Rho harness.",
