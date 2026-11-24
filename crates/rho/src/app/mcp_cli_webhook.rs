@@ -72,13 +72,17 @@ pub(in crate::app) fn webhook(command: &McpWebhookCommand, cli: &Cli) -> anyhow:
 }
 
 /// The secret piped on stdin: one line, its line ending dropped. On a
-/// terminal, fails with `hint`, which says how to pipe it.
+/// terminal, or when stdin holds nothing but whitespace, as when the
+/// command piping it failed, fails with `hint`, which says how to pipe it.
 pub(super) fn read_secret(hint: &str) -> anyhow::Result<String> {
     if crate::stdio::stdin_is_terminal() {
         anyhow::bail!("{hint}");
     }
     let mut secret = String::new();
     std::io::stdin().read_to_string(&mut secret)?;
+    if secret.trim().is_empty() {
+        anyhow::bail!("stdin was empty, so nothing was saved: {hint}");
+    }
     Ok(secret.trim_end_matches(['\r', '\n']).to_owned())
 }
 

@@ -24,6 +24,7 @@ use super::{
     progress::McpProgressRouter,
     roots::McpRoots,
 };
+use crate::error_causes::with_causes;
 
 /// An initialized connection; `cancel` it to close.
 pub(crate) type BearerConnection = RunningService<RoleClient, McpClientHandler>;
@@ -99,7 +100,9 @@ fn describe(error: ClientInitializeError) -> BearerError {
         .downcast_ref::<StreamableHttpError<reqwest::Error>>()
     {
         Some(StreamableHttpError::AuthRequired(_)) => BearerError::Unauthorized,
-        Some(other) => BearerError::Failed(other.to_string()),
-        None => BearerError::Failed(error.error.to_string()),
+        // Not a `source` of its wrapper, so its causes are reached from it.
+        Some(StreamableHttpError::Client(client)) => BearerError::Failed(with_causes(client)),
+        Some(other) => BearerError::Failed(with_causes(other)),
+        None => BearerError::Failed(with_causes(error.error.as_ref())),
     }
 }

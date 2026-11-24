@@ -14,7 +14,7 @@ use std::{fmt, time::Duration};
 
 use serde_json::Value;
 
-use crate::app::mcp_server::webhooks::WebhookTarget;
+use crate::{app::mcp_server::webhooks::WebhookTarget, error_causes::with_causes};
 
 /// How long one POST may take, connecting included.
 //
@@ -156,21 +156,10 @@ impl HttpPoster {
         match sent {
             // Dropped unread: the status is the whole answer.
             Ok(response) => Answer::Status(response.status().as_u16()),
-            Err(error) => Answer::Error(describe(error.without_url())),
+            // Without the URL: its causes name hosts at most.
+            Err(error) => Answer::Error(with_causes(&error.without_url())),
         }
     }
-}
-
-/// `error` with its causes, which name hosts at most, never the URL.
-fn describe(error: reqwest::Error) -> String {
-    let mut text = error.to_string();
-    let mut source = std::error::Error::source(&error);
-    while let Some(cause) = source {
-        text.push_str(": ");
-        text.push_str(&cause.to_string());
-        source = cause.source();
-    }
-    text
 }
 
 #[cfg(test)]

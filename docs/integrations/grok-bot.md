@@ -16,19 +16,44 @@ sequenceDiagram
     B->>H: prompt {server: "lab-box", session, text, notify: "grok"}
 ```
 
-Grok Bot runs in the cloud, so the hub needs an HTTPS URL the Bot can reach. The other machines only need to be reachable from the hub, for example over a private network such as NetBird or Tailscale. Every webhook delivery is a billed routine run.
+Grok Bot runs in the cloud, so the hub needs an HTTPS URL the Bot can reach, unless the Bot's computer is on your private network ([A hub that isn't public](#private-hub)). The other machines only need to be reachable from the hub, for example over a private network such as NetBird or Tailscale. Every webhook delivery is a billed routine run.
 
 ## On the hub
 
 Pick the machine the Bot connects to. It can run sessions of its own too.
 
-### 1. Run the MCP server as a service
+### 1. Run the MCP server as a service {#hub-service}
 
-Use the [systemd unit or launchd agent](/daemon#running-as-a-service), with a name for the hub and the public hostname of your tunnel:
+On Linux, save this user unit as `~/.config/systemd/user/rho-mcp.service`. It names the hub and allows the public hostname of your tunnel. Change `ExecStart` to where `rho` is installed and `PATH` to the directories your sessions' tools live in:
+
+```ini
+[Unit]
+Description=rho MCP server
+After=network.target
+
+[Service]
+ExecStart=%h/.local/bin/rho mcp serve --http 127.0.0.1:8765 --name hub --allow-host hub.tail1234.ts.net
+# The sessions this server starts look up executables on this PATH,
+# including mise's shims and bun's global bin.
+Environment=PATH=%h/.local/bin:%h/.local/share/mise/shims:%h/.bun/bin:/usr/local/bin:/usr/bin:/bin
+# Stop only the server. The daemon keeps running its turns.
+KillMode=process
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target
+```
+
+Start it, and keep it running while you are logged out, which a machine you reach over SSH needs:
 
 ```bash
-rho mcp serve --http 127.0.0.1:8765 --name hub --allow-host hub.tail1234.ts.net
+systemctl --user daemon-reload
+systemctl --user enable --now rho-mcp
+loginctl enable-linger "$USER"
 ```
+
+On macOS, use the [launchd agent](/daemon#launchd) with the same arguments.
 
 ### 2. Give it an HTTPS URL
 
@@ -48,24 +73,77 @@ rho mcp token rotate grok --scope write --workspace ~/src/app
 
 `--workspace` limits the Bot on the hub. On the other machines, the token each one issues the hub limits it (step 4). Keep the printed secret for step 5.
 
+A session the Bot starts with `worktree: true` runs in a [worktree](/daemon#sessions-in-worktrees) under `~/.rho/worktrees`, outside the workspace. It still counts as in the workspace it was started in, so the token reaches it with no grant of its own. The same holds on the other machines.
+
 ## On each other machine
 
 ### 4. Serve it to the hub
 
-Run the MCP server as a [service](/daemon#running-as-a-service) on the machine's private network address, the one the hub reaches it at, such as its NetBird address:
+Run the MCP server as a service on the machine's private network address, the one the hub reaches it at, such as its NetBird address. The unit is the hub's with another `ExecStart`, saved as `~/.config/systemd/user/rho-mcp.service` on that machine:
 
-```bash
-rho mcp serve --http 100.92.10.4:8765 --name lab-box
+```ini
+[Unit]
+Description=rho MCP server
+After=network.target
+
+[Service]
+ExecStart=%h/.local/bin/rho mcp serve --http 100.92.10.4:8765 --name lab-box
+# The sessions this server starts look up executables on this PATH,
+# including mise's shims and bun's global bin.
+Environment=PATH=%h/.local/bin:%h/.local/share/mise/shims:%h/.bun/bin:/usr/local/bin:/usr/bin:/bin
+# Stop only the server. The daemon keeps running its turns.
+KillMode=process
+# The private address can come up after network.target, and listening on it
+# fails until then. Try again every 10 seconds rather than give up.
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target
 ```
 
-Then, from the hub, give the hub a token for that machine's workspaces and add the machine as a remote, in one line:
+Enable it and the linger as on the hub (step 1). Give it the same `--name` you give the remote below.
+
+#### Let the hub reach it {#let-the-hub-reach-it}
+
+The hub connects to the machine on the MCP port, here TCP 8765. Allow that from the hub:
+
+- In NetBird, an access control policy from the hub's peer or group to this one on TCP 8765. The default policy that allows everything already does.
+- In Tailscale, an ACL or grant from the hub to `lab-box:8765`.
+- In a host firewall such as `ufw`, the port on the overlay interface, for example `ufw allow in on wt0 to any port 8765 proto tcp` for NetBird.
+
+Check from the hub before you go on:
 
 ```bash
-ssh lab-box 'rho mcp token rotate hub --scope write --workspace ~/src' \
+curl -sS --noproxy '*' -o /dev/null -w '%{http_code}\n' http://100.92.10.4:8765/mcp
+```
+
+`401` means the server is reachable and wants a token. A timeout or `connection refused` means it isn't: see [If `remote add` can't reach it](#remote-unreachable).
+
+If you can't open the port, forward it over SSH instead. Keep `ssh -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -L 18765:100.92.10.4:8765 lab-box` running on the hub, for example in a user unit with `Restart=always`, and use `http://127.0.0.1:18765/mcp` as the URL below. The hub accepts a loopback URL, and the server accepts the forwarded request's loopback `Host`. Give each machine its own local port. Use this only on a hub no one else logs into: while the forward is down, another local user could listen on that port and receive the hub's secret for the remote.
+
+#### Add it as a remote
+
+From the hub, give the hub a token for that machine's workspaces and add the machine as a remote, in one line:
+
+```bash
+ssh lab-box '~/.local/bin/rho mcp token rotate hub --scope write --workspace ~/src' \
   | rho mcp remote add lab-box --url http://100.92.10.4:8765/mcp
 ```
 
+Use the full path of `rho` on that machine: a non-interactive SSH shell often doesn't have `~/.local/bin` or mise's shims on its `PATH`, so a bare `rho` is not found. If the rotate fails, `rho mcp remote add` gets an empty stdin and refuses it, so the line fails.
+
 The token's secret goes from one machine to the other without reaching your terminal. `rho mcp remote add` checks the machine answers before it saves it. These steps need no interaction, so an agent with SSH access to your machines can run them. Plain `http` is allowed only to a private network address: the network keeps the traffic private. Over the internet, use `https`.
+
+#### If `remote add` can't reach it {#remote-unreachable}
+
+`could not reach server "lab-box"` includes the cause, such as `Connection refused` or `Connection timed out`. Usually:
+
+- A firewall or network policy blocks the hub from the port ([Let the hub reach it](#let-the-hub-reach-it)). A timeout often means this.
+- The address, port, or path is wrong. The URL ends in `/mcp`.
+- The server isn't running on that machine, or listens on another address. `systemctl --user status rho-mcp` and `journalctl --user -u rho-mcp` there say which.
+
+The `curl` above tells you when it's fixed; with the SSH forward, run it against `http://127.0.0.1:18765/mcp` instead. Then run the same line again. That is safe: the secret the failed line rotated was not saved on the hub, and the new rotate replaces it. If the hub already had this remote, it is refused until the line succeeds, since the rotate replaced its secret. A webhook watch of that remote's sessions stops after an hour of refusals; once the line succeeds, look for stopped watches in `rho mcp webhook list` and restart the hub or watch those sessions again.
 
 ## Once, in Grok Bot
 
@@ -81,6 +159,8 @@ In the Grok Bot desktop app, open **Connect apps**, then **Add a custom connecto
 | HTTP headers | `Authorization: Bearer <secret from step 3>` |
 
 Type the secret into the form. Don't paste it into a chat, where the Bot would see it.
+
+When the hub restarts or [updates](/mcp-server#http-updates), the Bot's MCP session ends with it, and a request with the old `Mcp-Session-Id` gets `404 Not Found`. MCP clients answer that by initializing a new session, as the protocol has them do; nothing changes on the hub. If the Bot's calls keep failing after a restart, reconnect the connector.
 
 ### 6. Create the routine that hears from Rho
 
@@ -107,7 +187,7 @@ The key is read from stdin and kept in your [credential store](/authentication-a
 
 ### 8. Teach the Bot the loop
 
-Ask the Bot to save the prompt below as a skill called "Rho orchestration". Replace the machines and workspaces with your own.
+Ask the Bot to save the prompt below as a skill called "Rho orchestration". Replace the machines and workspaces with your own. [Following a turn](/mcp-server#following-a-turn) describes `inputs` and the rest of the body, and [Webhooks](/mcp-server#webhooks) describes `watch_error`.
 
 ````text
 You orchestrate Rho coding agents on my machines through the rho connector.
@@ -129,7 +209,7 @@ Starting work
 
 When "Rho session updates" runs, the JSON body has `server` (the machine),
 `session`, `turn`, `state`, `done`, and `outcome` (with the final answer in
-`outcome.text`) or `inputs`.
+`outcome.text`) or `inputs` (the approvals or questions it waits on).
 - Deliveries can repeat. If you already handled this session's `turn` in this
   same `state` with the same `inputs`, stop. A turn that asked me something
   and then finished arrives twice, once per state; handle both.
@@ -152,6 +232,22 @@ Boundaries
   in this chat.
 ````
 
+## A hub that isn't public {#private-hub}
+
+The public HTTPS URL is for a Bot that reaches the hub from the cloud. If the computer the Bot runs its tools on is on your private network, such as a NetBird peer, it can reach the hub's private address directly, and the hub needs no tunnel:
+
+1. Run the hub as the other machines run (step 4): on its private address, with `--name hub` and no `--allow-host`. Skip step 2.
+2. Instead of the remote connector in step 5, ask the Bot to add a custom stdio MCP server that bridges to the hub, with a `Bearer` header from an environment variable:
+
+   ```text
+   Add a custom MCP server called rho that runs:
+   npx -y mcp-remote http://100.92.10.1:8765/mcp --allow-http --transport http-only --header Authorization:${RHO_AUTH}
+   ```
+
+   Give it the environment variable `RHO_AUTH` with the value `Bearer <secret from step 3>`. The Bot keeps it on the server entry. If you give it the value in the chat, the Bot sees the secret, which the remote connector's form avoids, so keep that token's workspaces narrow.
+
+The Bot starts the bridge on its own computer, and the bridge speaks to the hub over the private network. Webhooks still work: the hub posts to the routine's URL from its side, which needs only outbound internet access. The rest of the steps stay the same.
+
 ## Approvals stay with you
 
 A session that needs an approval or an answer waits. The Bot tells you, and you answer from `rho attach <session>` or the TUI on that machine. To let sessions work without asking, configure a [permission mode](/configuration/permissions) that doesn't ask for those workspaces, as you would for `rho run`.
@@ -165,7 +261,7 @@ A session that needs an approval or an answer waits. The Bot tells you, and you 
 
 ## Security
 
-- The hub is on the internet behind a bearer token that can start agents on every machine it reaches. The Bot's token's workspaces limit it on the hub only; on each other machine, the token that machine issued the hub limits it, so keep those narrow too. Revoke the Bot's with `rho mcp token revoke grok` on the hub when you stop using it. `rho mcp token revoke hub` on another machine cuts the hub off from it.
+- A hub with a public URL is on the internet behind a bearer token that can start agents on every machine it reaches. The Bot's token's workspaces limit it on the hub only; on each other machine, the token that machine issued the hub limits it, so keep those narrow too. Revoke the Bot's with `rho mcp token revoke grok` on the hub when you stop using it. `rho mcp token revoke hub` on another machine cuts the hub off from it.
 - The other machines speak plain HTTP to the hub on your private network. Anyone who can read that network's traffic can read their requests, tokens included, so use a network that encrypts it, such as NetBird or Tailscale.
 - The Bot only names a webhook target. The URL and key come from `rho mcp webhook add` on the hub, so a token holder cannot make it post anywhere else.
 - Webhook bodies carry final answers and approval summaries, including paths and commands, to Grok Bot.
