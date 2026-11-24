@@ -1,4 +1,5 @@
-//! Opening a session's runtime: a new session, or a saved one reopened.
+//! Opening a session's runtime: a new session, a fork of a saved one, or a
+//! saved one reopened.
 //!
 //! A new session writes no file until its first save (see `persist.rs`), so
 //! a session nobody prompts leaves none. A reopened session runs as the
@@ -25,7 +26,11 @@ use crate::{
     app::agent_binding::BoundAgent,
     config::Config,
     credential_store::AppCredentialStore,
-    session::{tree::ProjectedMessage, Session as StoredSession, SessionPersistence},
+    permission::PermissionMode,
+    session::{
+        tree::ProjectedMessage, Session as StoredSession, SessionOrigin, SessionPersistence,
+        SessionProvenance, SessionTarget,
+    },
     tools::mcp::config::McpConfig,
 };
 
@@ -136,6 +141,63 @@ impl SessionRuntime {
         id: SessionId,
         persistence: SessionPersistence,
     ) -> anyhow::Result<Self> {
+        let provenance = opening.build.run.role.provenance();
+        Self::open_fresh(opening, id.clone(), persistence, provenance, |_| {
+            Ok(session_options_for_id(id))
+        })
+        .await
+    }
+
+    /// Opens new session `id` as a fork of `parent`, as the build's launch
+    /// agent, which the host bound as the agent `parent` was saved as: with
+    /// `parent`'s conversation as last saved, its prompt cache key, and the
+    /// settings its file keeps. `parent` may still be working in the same
+    /// workspace, so the fork then opens supervised, or stays in plan mode,
+    /// which edits nothing either and keeps `parent`'s tools. It keeps its
+    /// settings with its own file, so a reopen keeps that mode. That file is
+    /// created by its first save, unless `persistence` says it is never
+    /// written, and records `parent` as the session that started it.
+    pub(crate) async fn open_fork(
+        opening: SessionOpening<'_>,
+        id: SessionId,
+        parent: &StoredSession,
+        persistence: SessionPersistence,
+    ) -> anyhow::Result<Self> {
+        let process_config = opening.process_config;
+        let provenance = SessionProvenance {
+            origin: SessionOrigin::Fork,
+            parent: Some(SessionTarget::new(parent.id(), parent.cwd())),
+        };
+        let mut runtime =
+            Self::open_fresh(opening, id.clone(), persistence, provenance, |provider| {
+                let key = prompt_cache_key(parent.id());
+                let conversation = parent.snapshot_for_fork(provider.identity(), key, id)?;
+                Ok(SessionOptions::from_snapshot(conversation))
+            })
+            .await?;
+        Box::pin(runtime.restore_settings_of(parent, process_config)).await;
+        if runtime.permission_mode() != PermissionMode::Plan {
+            runtime
+                .set_permission_mode(PermissionMode::Supervised, process_config)
+                .await
+                .map_err(|error| anyhow::anyhow!("could not open the fork supervised: {error}"))?;
+        }
+        runtime.keep_settings()?;
+        Ok(runtime)
+    }
+
+    /// Opens new session `id` as the build's launch agent, recording
+    /// `provenance`, with the options `session_options` gives for its
+    /// provider: the body of [`Self::open_new`] and [`Self::open_fork`].
+    async fn open_fresh(
+        opening: SessionOpening<'_>,
+        id: SessionId,
+        persistence: SessionPersistence,
+        provenance: SessionProvenance,
+        session_options: impl FnOnce(
+            std::sync::Arc<dyn rho_sdk::provider::ModelProvider>,
+        ) -> anyhow::Result<SessionOptions>,
+    ) -> anyhow::Result<Self> {
         let SessionOpening {
             build,
             process_config,
@@ -153,17 +215,17 @@ impl SessionRuntime {
             cwd,
             &added_dirs,
             build.host.tool_sources,
-            |_| Ok(session_options_for_id(id)),
+            session_options,
         )
         .await?;
         let credentials = SessionCredentials::opened(read, built.provider_credentials);
         let storage = match persistence {
             SessionPersistence::Saved => SessionStorage::deferred(
                 cwd.to_path_buf(),
-                built.session.id().to_string(),
+                id.to_string(),
                 agent.id().to_string(),
                 agent.fingerprint().to_string(),
-                build.run.role.provenance(),
+                provenance,
             ),
             SessionPersistence::Ephemeral => SessionStorage::ephemeral(cwd.to_path_buf()),
         };

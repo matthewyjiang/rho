@@ -34,12 +34,12 @@ use rho_protocol::{
     RestartCost, RpcError, Service, SessionAnswerParams, SessionAnswerResponse,
     SessionAttachParams, SessionAttachResponse, SessionCancelParams, SessionCancelResponse,
     SessionConfigureParams, SessionConfigureResponse, SessionDeleteParams, SessionDeleteResponse,
-    SessionHoldParams, SessionHoldResponse, SessionListParams, SessionListResponse,
-    SessionNewParams, SessionNewResponse, SessionObserveParams, SessionPromptParams,
-    SessionPromptResponse, SessionRenameParams, SessionRenameResponse, SessionSteerParams,
-    SessionSteerResponse, SessionSurfaceActionParams, SessionSurfaceActionResponse,
-    SessionUnsteerParams, SessionUnsteerResponse, SettingsService, Subscription,
-    WorktreePruneParams, WorktreePruneResponse, PROTOCOL_VERSION,
+    SessionForkParams, SessionForkResponse, SessionHoldParams, SessionHoldResponse,
+    SessionListParams, SessionListResponse, SessionNewParams, SessionNewResponse,
+    SessionObserveParams, SessionPromptParams, SessionPromptResponse, SessionRenameParams,
+    SessionRenameResponse, SessionSteerParams, SessionSteerResponse, SessionSurfaceActionParams,
+    SessionSurfaceActionResponse, SessionUnsteerParams, SessionUnsteerResponse, SettingsService,
+    Subscription, WorktreePruneParams, WorktreePruneResponse, PROTOCOL_VERSION,
 };
 use rho_providers::credentials::CredentialStoreBackend;
 
@@ -384,6 +384,13 @@ impl Service for DaemonHost {
 
     async fn new_session(&self, params: SessionNewParams) -> Result<SessionNewResponse, RpcError> {
         self.sessions.open_new(params).await
+    }
+
+    async fn fork_session(
+        &self,
+        params: SessionForkParams,
+    ) -> Result<SessionForkResponse, RpcError> {
+        self.sessions.fork(params).await
     }
 
     async fn prompt_session(

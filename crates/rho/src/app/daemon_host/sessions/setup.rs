@@ -10,7 +10,9 @@
 //! but does not record its own `--no-*` flags, until it becomes a daemon
 //! client (#1667).
 //! A new session opened without saving has no file, so none of this is kept
-//! and no request can reopen it.
+//! and no request can reopen it. A fork starts from what the file of the
+//! session it forks keeps, so it has the same tools, and adds to it as a
+//! new session does.
 //! The opening client owns its MCP servers, whose `env` and `headers` may
 //! hold secrets, whether it shows questions and draws surfaces, and whether
 //! its own threads run the session's children, which goes with the MCP server they go
@@ -60,16 +62,36 @@ pub(super) struct Setup {
     pub(super) adds_to_saved: bool,
 }
 
+/// The saved session a setup builds on, if any.
+#[derive(Clone, Copy)]
+pub(super) enum Base<'a> {
+    /// None: a new session.
+    New,
+    /// The session the request reopens, whose file it adds to.
+    Reopened(&'a StoredSession),
+    /// The session a new fork starts from: the fork leaves out the parts
+    /// and adds the directories it does, so it has the same tools.
+    Forked(&'a StoredSession),
+}
+
+impl<'a> Base<'a> {
+    fn file(self) -> Option<&'a StoredSession> {
+        match self {
+            Self::New => None,
+            Self::Reopened(stored) | Self::Forked(stored) => Some(stored),
+        }
+    }
+}
+
 impl Setup {
     /// The setup of the session in workspace `cwd` that `requested` opens,
-    /// on top of what `saved`, the session's file, keeps when the request
-    /// reopens one. A directory the session cannot grant and a part this
-    /// daemon does not know are invalid params; a workspace or saved record
-    /// that cannot be read fails the open.
+    /// on top of what `base`'s file keeps. A directory the session cannot
+    /// grant and a part this daemon does not know are invalid params; a
+    /// workspace or saved record that cannot be read fails the open.
     pub(super) fn resolve(
         requested: &SessionSetup,
         cwd: &Path,
-        saved: Option<&StoredSession>,
+        base: Base<'_>,
     ) -> Result<Self, RpcError> {
         let root = std::fs::canonicalize(cwd).map_err(|error| {
             open_failed(anyhow::anyhow!(
@@ -77,7 +99,7 @@ impl Setup {
                 cwd.display()
             ))
         })?;
-        let (saved_left_out, saved_dirs) = match saved {
+        let (saved_left_out, saved_dirs) = match base.file() {
             Some(stored) => {
                 let restored = AddedDirs::from_storage(stored, &root);
                 for dir in &restored.missing {
@@ -100,7 +122,7 @@ impl Setup {
                 SessionPart::SystemPrompt => asked.system_prompt = true,
                 SessionPart::Subagents => asked.subagents = true,
                 SessionPart::Questions => questions = QuestionSupport::Unavailable,
-                SessionPart::Saving if saved.is_some() => {
+                SessionPart::Saving if matches!(base, Base::Reopened(_)) => {
                     return Err(invalid(
                         "a saved session cannot be reopened without saving; open a new one",
                     ))
@@ -129,7 +151,7 @@ impl Setup {
         let left_out = saved_left_out.union(asked);
         let added_dirs = saved_dirs.union(&root, &asked_dirs);
         Ok(Self {
-            adds_to_saved: saved.is_some()
+            adds_to_saved: matches!(base, Base::Reopened(_))
                 && (left_out != saved_left_out || added_dirs != saved_dirs),
             left_out,
             questions,

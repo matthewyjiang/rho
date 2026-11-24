@@ -55,6 +55,11 @@ pub(crate) struct Prompt {
 pub(crate) struct PromptContext(Vec<String>);
 
 impl PromptContext {
+    /// Context of one block, `text`, which the daemon adds itself.
+    pub(crate) fn of(text: impl Into<String>) -> Self {
+        Self(vec![text.into()])
+    }
+
     /// This context after `earlier`'s, which no turn sent yet, leaving out
     /// the blocks of `earlier` this one repeats.
     pub(crate) fn after(self, mut earlier: Self) -> Self {

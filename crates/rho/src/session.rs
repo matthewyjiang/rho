@@ -121,6 +121,9 @@ pub(crate) enum SessionOrigin {
     Subagent,
     /// An agent node of a workflow run.
     WorkflowNode,
+    /// A fork of a saved session, a side conversation a client opened
+    /// beside it (`rho/session/fork`).
+    Fork,
     /// A host a later Rho records that this one does not know. Reading it
     /// leniently keeps such sessions listable and resumable; this binary
     /// never creates it.
@@ -140,12 +143,14 @@ impl SessionOrigin {
     /// Whether a person had the session, so person-facing listings show
     /// it. A script's `rho run` and a parent's subagents and workflow nodes
     /// are left out: whoever ran one already holds what it returned, and
-    /// opening it by id still works. An origin this Rho does not know stays
-    /// listed, like a file written before origins were recorded.
+    /// opening it by id still works. A fork is left out too: it belongs to
+    /// the session it forks, and the client that opened it keeps its id. An
+    /// origin this Rho does not know stays listed, like a file written
+    /// before origins were recorded.
     pub(crate) fn is_person_facing(self) -> bool {
         match self {
             Self::Interactive | Self::Acp | Self::Daemon | Self::Unknown => true,
-            Self::Run | Self::Subagent | Self::WorkflowNode => false,
+            Self::Run | Self::Subagent | Self::WorkflowNode | Self::Fork => false,
         }
     }
 }
@@ -477,6 +482,11 @@ impl Session {
     /// before origins were recorded.
     pub(crate) fn origin(&self) -> anyhow::Result<Option<SessionOrigin>> {
         agent_identity::read_origin(&self.path)
+    }
+
+    /// The session this one forks, or `None` when it is not a fork.
+    pub(crate) fn forked_from(&self) -> anyhow::Result<Option<SessionTarget>> {
+        agent_identity::read_forked_from(&self.path)
     }
 
     /// The child agent id when the session was rebound as a delegated agent.

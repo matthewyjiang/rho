@@ -25,6 +25,11 @@
 //! setup's `sign_in` is `later`, signed out as the TUI starts; otherwise
 //! the open fails with `SignInRequired`.
 //!
+//! A fork (`rho/session/fork`) opens new, from the saved session it forks:
+//! as the agent that session was saved as, with the parts it leaves out and
+//! the directories it adds, its conversation as last saved, and its
+//! settings, then in supervised mode (see `fork.rs`).
+//!
 //! The session's processes, MCP servers, hooks, OpenAPI sources, CLI agents,
 //! and workflow runs use its client's environment, not the daemon's (#1659):
 //! the opening client's, then each prompting client's (see
@@ -41,7 +46,7 @@ use rho_protocol::{ClientEnvironment, ErrorCode, RpcError, SessionSetup};
 use super::{
     super::{jobs::JobId, settings::ConfigStore, subagents::Subagents},
     pull_request_wake::PullRequestWake,
-    setup::Setup,
+    setup::{Base, Setup},
 };
 use crate::{
     agent::{AgentCapabilities, AgentCatalog, AgentDefinition, DEFAULT_AGENT_ID},
@@ -108,6 +113,9 @@ pub(super) enum Opening {
     /// The session saved here, opened in its own workspace as the agent it
     /// was saved as.
     Saved(StoredSession),
+    /// A new fork of the session saved here, in that session's workspace
+    /// as the agent it was saved as (see `fork.rs`).
+    Fork(StoredSession),
 }
 
 impl Opening {
@@ -117,7 +125,7 @@ impl Opening {
                 workspace: Workspace(cwd),
                 ..
             } => cwd,
-            Self::Saved(stored) => stored.cwd(),
+            Self::Saved(stored) | Self::Fork(stored) => stored.cwd(),
         }
     }
 }
@@ -150,6 +158,8 @@ pub(super) struct OpenedSession {
     /// session reopens with when pull request news wakes it unloaded (see
     /// `pull_request_wake.rs`).
     pub(super) setup: SessionSetup,
+    /// The session it forks, for a fork, new or reopened.
+    pub(super) fork_of: Option<rho_sdk::SessionId>,
 }
 
 /// What a session is opened for.
@@ -227,11 +237,12 @@ pub(super) async fn open_session(
     global: Arc<Config>,
     job: &JobId,
 ) -> Result<OpenedSession, RpcError> {
-    let saved = match &opening {
-        Opening::New { .. } => None,
-        Opening::Saved(stored) => Some(stored),
+    let base = match &opening {
+        Opening::New { .. } => Base::New,
+        Opening::Saved(stored) => Base::Reopened(stored),
+        Opening::Fork(parent) => Base::Forked(parent),
     };
-    let setup = Setup::resolve(&with.setup, opening.cwd(), saved)?;
+    let setup = Setup::resolve(&with.setup, opening.cwd(), base)?;
     let sign_in = match with.setup.sign_in {
         rho_protocol::SignIn::Required => SignIn::Required,
         rho_protocol::SignIn::Later => SignIn::Optional,
@@ -321,7 +332,11 @@ pub(super) async fn open_to_read(
     job: &JobId,
 ) -> Result<OpenedSession, RpcError> {
     let project_trust = reading_trust(&stored).map_err(open_failed)?;
-    let setup = Setup::resolve(&SessionSetup::default(), stored.cwd(), Some(&stored))?;
+    let setup = Setup::resolve(
+        &SessionSetup::default(),
+        stored.cwd(),
+        Base::Reopened(&stored),
+    )?;
     let global = config_for_saved(settings).await?;
     open_runtime(
         Opening::Saved(stored),
@@ -394,7 +409,7 @@ async fn open_runtime(
             available_tools,
             &environment,
         )?,
-        Opening::Saved(stored) => {
+        Opening::Saved(stored) | Opening::Fork(stored) => {
             bind_saved_agent(cwd, &config, stored, available_tools, &environment)?
         }
     };
@@ -423,7 +438,7 @@ async fn open_runtime(
     // Bound before the tools are built, so the session's pull request inbox
     // is keyed by the id it opens with.
     let id = match &opening {
-        Opening::New { .. } => rho_sdk::SessionId::new(),
+        Opening::New { .. } | Opening::Fork(_) => rho_sdk::SessionId::new(),
         Opening::Saved(stored) => rho_sdk::SessionId::from_string(stored.id())?,
     };
     // Only a session whose idle turns the daemon starts links and watches
@@ -478,9 +493,20 @@ async fn open_runtime(
         cwd,
         added_dirs,
     };
+    let fork_of = match &opening {
+        Opening::Fork(parent) => Some(rho_sdk::SessionId::from_string(parent.id())?),
+        Opening::Saved(stored) => stored
+            .forked_from()?
+            .map(|parent| rho_sdk::SessionId::from_string(&parent.id))
+            .transpose()?,
+        Opening::New { .. } => None,
+    };
     // Opening a session builds a large future; keep it on the heap.
     let runtime = match opening {
         Opening::New { .. } => Box::pin(SessionRuntime::open_new(session, id, persistence)).await?,
+        Opening::Fork(parent) => {
+            Box::pin(SessionRuntime::open_fork(session, id, &parent, persistence)).await?
+        }
         Opening::Saved(stored) => {
             let mut runtime = Box::pin(SessionRuntime::open_saved(session, stored)).await?;
             debug_assert_eq!(
@@ -507,6 +533,7 @@ async fn open_runtime(
         global,
         environment,
         setup: requested,
+        fork_of,
     })
 }
 

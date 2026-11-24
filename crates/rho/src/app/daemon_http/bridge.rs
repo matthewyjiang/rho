@@ -27,7 +27,7 @@ use futures_util::{
 use rho_protocol::{
     methods::{
         AUTH_CHOOSE_STORE, AUTH_KEY, AUTH_LIST, AUTH_LOGIN, AUTH_LOGOUT, MODEL_LIST, MODEL_REFRESH,
-        SESSION_ATTACH, SESSION_NEW, SESSION_PROMPT,
+        SESSION_ATTACH, SESSION_FORK, SESSION_NEW, SESSION_PROMPT,
     },
     FrameError, MessageReader, MAX_LINE_BYTES,
 };
@@ -72,8 +72,9 @@ const IDLE_TIMEOUT: Duration = PING_INTERVAL.saturating_mul(2);
 
 /// Protocol methods whose `params` include `environment: ClientEnvironment`.
 /// A test holds this to the protocol schema.
-const ENVIRONMENT_METHODS: [&str; 10] = [
+const ENVIRONMENT_METHODS: [&str; 11] = [
     SESSION_NEW,
+    SESSION_FORK,
     SESSION_PROMPT,
     SESSION_ATTACH,
     AUTH_LIST,

@@ -6136,6 +6136,45 @@
       ],
       "type": "object"
     },
+    "SessionForkParams": {
+      "description": "Params of [`SESSION_FORK`]. The fork starts from the session's\nconversation as last saved and never writes back to it. It works in\nthe session's workspace as the agent the session was saved as, with its\nmodel, tools, and added directories, so a provider's prompt cache can\nserve the shared conversation. It opens in\n[`crate::PermissionMode::Supervised`], or in\n[`crate::PermissionMode::Plan`] when the session was saved in plan mode,\nand its first turn tells the model it works beside the session.\n\nA session that saved nothing is [`crate::ErrorCode::SessionNotFound`];\na fork, a subagent's or workflow node's session, or one rebound to\nanother agent is [`crate::ErrorCode::SessionOpenFailed`]; one another\nprocess has open is [`crate::ErrorCode::SessionInUse`]. The fork is\nsaved as the session's: [`super::SESSION_LIST`] leaves it out, and\n[`super::SESSION_DELETE`] of the session deletes it.",
+      "properties": {
+        "environment": {
+          "$ref": "#/$defs/ClientEnvironment",
+          "description": "The client's environment, as [`SessionNewParams::environment`]."
+        },
+        "session": {
+          "$ref": "#/$defs/SessionId",
+          "description": "The saved session to fork."
+        },
+        "setup": {
+          "$ref": "#/$defs/SessionSetup",
+          "description": "The client's choices for the fork, as [`SessionNewParams::setup`]."
+        }
+      },
+      "required": [
+        "session",
+        "environment"
+      ],
+      "type": "object"
+    },
+    "SessionForkResponse": {
+      "description": "Result of [`SESSION_FORK`]: the fork is loaded and its job is\n[`crate::JobState::Idle`].",
+      "properties": {
+        "options": {
+          "$ref": "#/$defs/SessionOptions",
+          "description": "The fork's settings and the choices it offers, which\n[`super::SESSION_CONFIGURE`] changes."
+        },
+        "session": {
+          "$ref": "#/$defs/SessionId"
+        }
+      },
+      "required": [
+        "session",
+        "options"
+      ],
+      "type": "object"
+    },
     "SessionGrant": {
       "additionalProperties": false,
       "description": "What the turn a request starts may do through session control, the\n`sessions` tool and `rho mcp serve`: how deep the session sits among the\nsessions that started it, and the most it may do to others.\n\nThe request that opens or prompts a session names it\n([`super::SessionNewParams::grant`], [`super::SessionPromptParams::grant`]),\nand the daemon keeps it on the session's job\n([`super::JobSummary::grant`]), so it is the daemon's record, not the\ncaller's environment, that says what a session may do. The daemon sets\n`RHO_SESSION_DEPTH` and `RHO_SESSION_SCOPE` in the session's environment\nfrom it, replacing any the client's environment carries.\n\nIt bounds session control, not the session: the depth stops a runaway\nrecursion and the scope keeps a caller's limits on the sessions it\nstarts. Neither is a sandbox for a session that can run commands.\n\nUnknown fields are refused: a newer client's narrowing field must fail at\nan older daemon rather than be dropped and record a wider grant.",
@@ -9372,6 +9411,14 @@
       },
       "result": {
         "$ref": "#/$defs/SessionDetachResponse"
+      }
+    },
+    "rho/session/fork": {
+      "params": {
+        "$ref": "#/$defs/SessionForkParams"
+      },
+      "result": {
+        "$ref": "#/$defs/SessionForkResponse"
       }
     },
     "rho/session/hold": {

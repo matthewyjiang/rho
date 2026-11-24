@@ -290,18 +290,24 @@ pub(super) fn delete_in_roots(
 
 /// Refuses as deleting `target` would, but deletes nothing: for a linked run
 /// of it or of a session it started that has not finished, or for a session
-/// it started that something holds. `target`'s own lease is not checked,
-/// since the caller holds it open; it checks before it lets the session go
-/// to delete it, as the daemon does (#1670).
+/// it started that something holds. The leases of the sessions `open` names,
+/// `target` or sessions it started, are not checked, since the caller holds
+/// them open; it checks before it lets them go to delete them, as the
+/// daemon does (#1670).
 fn check_target_in_roots(
     session_root: &Path,
     subagents_root: &Path,
     target: &SessionTarget,
     options: &DeleteOptions,
+    open: &[String],
 ) -> anyhow::Result<()> {
     let resolved = SessionStore::new(session_root, &target.cwd).resolve_in_workspace(&target.id)?;
     let mut batch = BatchDelete::open(session_root, subagents_root, options)?;
-    batch.check_resolved(resolved, OwnLease::Skip)
+    let lease = match open.contains(&resolved.id) {
+        true => OwnLease::Skip,
+        false => OwnLease::Take,
+    };
+    batch.check_resolved(resolved, lease, open)
 }
 
 pub(super) fn delete_target_in_roots(
@@ -473,17 +479,19 @@ impl<'a> BatchDelete<'a> {
 
     /// Refuses as [`Self::delete_resolved`] would, through the same checks,
     /// but deletes nothing: each session the delete would reach is leased
-    /// for its delete, its own unless `own_lease` skips it, and its linked
-    /// runs are checked. A parent's lease is held while its children are
-    /// checked, as the delete holds it.
+    /// for its delete, its own unless `own_lease` skips it and a child's
+    /// unless `open` names it, and its linked runs are checked. A parent's
+    /// lease is held while its children are checked, as the delete holds
+    /// it.
     fn check_resolved(
         &mut self,
         resolved: ResolvedSession,
         own_lease: OwnLease,
+        open: &[String],
     ) -> anyhow::Result<()> {
         let key = (workspace_key(&resolved.cwd), resolved.id.clone());
         self.deleting.insert(key.clone());
-        let checked = self.check_marked(&resolved, own_lease);
+        let checked = self.check_marked(&resolved, own_lease, open);
         self.deleting.remove(&key);
         checked
     }
@@ -492,6 +500,7 @@ impl<'a> BatchDelete<'a> {
         &mut self,
         resolved: &ResolvedSession,
         own_lease: OwnLease,
+        open: &[String],
     ) -> anyhow::Result<()> {
         self.refuse_protected(resolved)?;
         let unit = session_unit(resolved)?;
@@ -503,7 +512,13 @@ impl<'a> BatchDelete<'a> {
         for child in self.child_sessions(resolved)? {
             let checked =
                 match SessionStore::new(self.session_root, &child.cwd).resolve_local(&child.id) {
-                    Ok(Some(found)) => self.check_resolved(found, OwnLease::Take),
+                    Ok(Some(found)) => {
+                        let lease = match open.contains(&found.id) {
+                            true => OwnLease::Skip,
+                            false => OwnLease::Take,
+                        };
+                        self.check_resolved(found, lease, open)
+                    }
                     // Gone since the index named it.
                     Ok(None) => Ok(()),
                     Err(error) => Err(error),
@@ -728,9 +743,10 @@ impl super::Session {
     }
 
     /// Refuses as [`Self::delete_exact`] would, but deletes nothing and
-    /// skips the session's own lease, which the caller holds open: see
-    /// [`check_target_in_roots`]. Nothing saved under `id` passes.
-    pub(crate) fn check_delete_exact(id: &str) -> anyhow::Result<()> {
+    /// skips the leases of the sessions `open` names, the session or ones it
+    /// started, which the caller holds open: see [`check_target_in_roots`].
+    /// Nothing saved under `id` passes.
+    pub(crate) fn check_delete_exact(id: &str, open: &[String]) -> anyhow::Result<()> {
         let Some(target) = saved_target(id)? else {
             return Ok(());
         };
@@ -739,6 +755,7 @@ impl super::Session {
             &crate::paths::rho_dir()?.join("subagents"),
             &target,
             &DeleteOptions::default(),
+            open,
         )
     }
 }

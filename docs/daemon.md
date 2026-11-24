@@ -89,6 +89,14 @@ The daemon removes a worktree once its session has sat unused for a day, the wor
 
 To open a worktree session from a TUI started anywhere, select it in `/jobs` and press `Enter`. The TUI moves into the worktree. You can also run `rho attach <id>`.
 
+### Forks {#forks}
+
+A client can fork a saved session to ask about it on the side, with [`rho/session/fork`](/protocol#methods). The fork starts from the session's conversation as last saved, which a turn under way saves at every step, and nothing it does reaches the session. It runs as the session's agent with its model, tools, and added directories, so its requests start the way the session's do and a provider's prompt cache can serve the shared part.
+
+The session may still be working in the same workspace, so a fork opens in `supervised` mode: it reads freely, and asks before it edits a file or runs a command. A session in `plan` mode forks in `plan` mode, which edits nothing either and keeps the session's tools the same. The fork's first turn also tells the model it's a side chat that must leave the workspace alone. Switch the fork to another mode if you want it to act.
+
+Forks don't show in `rho sessions` or `/resume`, and deleting a session deletes its forks. A fork can't be forked again, and neither can a subagent's session, a workflow node's, or one switched to another agent with `/agent:`. A session whose worktree the daemon removed forks again once you reopen it, which restores the worktree.
+
 ### Subagents {#subagents}
 
 Subagents run in the daemon as jobs of their own. Follow one with `rho attach <job id>`. Its questions go to the session that started it.

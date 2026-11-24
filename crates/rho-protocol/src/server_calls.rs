@@ -14,10 +14,10 @@ use crate::{
         RestartResponse, SessionAnswer, SessionAnswerParams, SessionBackgroundList,
         SessionBackgroundListParams, SessionBackgroundStop, SessionBackgroundStopParams,
         SessionCancel, SessionCancelParams, SessionConfigure, SessionConfigureParams,
-        SessionDelete, SessionDeleteParams, SessionHold, SessionHoldParams, SessionId,
-        SessionInspect, SessionInspectParams, SessionList, SessionListParams, SessionMcp,
-        SessionMcpCatalogParams, SessionMcpCatalogRead, SessionMcpComplete,
-        SessionMcpCompleteParams, SessionMcpParams, SessionMcpResourceParams,
+        SessionDelete, SessionDeleteParams, SessionFork, SessionForkParams, SessionHold,
+        SessionHoldParams, SessionId, SessionInspect, SessionInspectParams, SessionList,
+        SessionListParams, SessionMcp, SessionMcpCatalogParams, SessionMcpCatalogRead,
+        SessionMcpComplete, SessionMcpCompleteParams, SessionMcpParams, SessionMcpResourceParams,
         SessionMcpResourceRead, SessionNew, SessionNewParams, SessionProcesses,
         SessionProcessesParams, SessionPrompt, SessionPromptParams, SessionPullRequestLink,
         SessionPullRequestLinkParams, SessionPullRequestList, SessionPullRequestListParams,
@@ -28,11 +28,11 @@ use crate::{
         AUTH_KEY, AUTH_LIST, AUTH_LOGIN_CANCEL, AUTH_LOGOUT, CONFIG_REGISTER, CONFIG_SCHEMA,
         CONFIG_SET, DAEMON_RESTART, DAEMON_STATUS, DAEMON_STOP, JOB_LIST, MODEL_REFRESH,
         SESSION_ANSWER, SESSION_BACKGROUND_LIST, SESSION_BACKGROUND_STOP, SESSION_CANCEL,
-        SESSION_CONFIGURE, SESSION_DELETE, SESSION_HOLD, SESSION_INSPECT, SESSION_LIST,
-        SESSION_MCP, SESSION_MCP_CATALOG, SESSION_MCP_COMPLETE, SESSION_MCP_RESOURCE, SESSION_NEW,
-        SESSION_PROCESSES, SESSION_PROMPT, SESSION_PULL_REQUEST_LINK, SESSION_PULL_REQUEST_LIST,
-        SESSION_PULL_REQUEST_SHOW, SESSION_PULL_REQUEST_UNLINK, SESSION_RENAME, SESSION_STEER,
-        SESSION_SURFACE_ACTION, SESSION_UNSTEER, WORKTREE_PRUNE,
+        SESSION_CONFIGURE, SESSION_DELETE, SESSION_FORK, SESSION_HOLD, SESSION_INSPECT,
+        SESSION_LIST, SESSION_MCP, SESSION_MCP_CATALOG, SESSION_MCP_COMPLETE, SESSION_MCP_RESOURCE,
+        SESSION_NEW, SESSION_PROCESSES, SESSION_PROMPT, SESSION_PULL_REQUEST_LINK,
+        SESSION_PULL_REQUEST_LIST, SESSION_PULL_REQUEST_SHOW, SESSION_PULL_REQUEST_UNLINK,
+        SESSION_RENAME, SESSION_STEER, SESSION_SURFACE_ACTION, SESSION_UNSTEER, WORKTREE_PRUNE,
     },
     server::{decode_params, encode_result, Service},
     ErrorCode, RpcError, StatusParams, StopParams, StopResponse,
@@ -44,6 +44,7 @@ pub(crate) enum ServiceCall {
     Stop,
     Restart,
     NewSession(SessionNewParams),
+    ForkSession(SessionForkParams),
     PromptSession(SessionPromptParams),
     CancelSession(SessionCancelParams),
     SteerSession(SessionSteerParams),
@@ -91,6 +92,7 @@ impl ServiceCall {
                 decode_params::<Restart>(params).map(|RestartParams {}| Self::Restart)
             }
             SESSION_NEW => decode_params::<SessionNew>(params).map(Self::NewSession),
+            SESSION_FORK => decode_params::<SessionFork>(params).map(Self::ForkSession),
             SESSION_PROMPT => decode_params::<SessionPrompt>(params).map(Self::PromptSession),
             SESSION_CANCEL => decode_params::<SessionCancel>(params).map(Self::CancelSession),
             SESSION_STEER => decode_params::<SessionSteer>(params).map(Self::SteerSession),
@@ -182,6 +184,9 @@ impl ServiceCall {
             | Self::Stop
             | Self::Restart
             | Self::NewSession(_)
+            // Names the session it forks, whose events the fork has no use
+            // for.
+            | Self::ForkSession(_)
             | Self::ListSessions(_)
             | Self::DeleteSession(_)
             | Self::ListJobs
@@ -214,6 +219,9 @@ impl ServiceCall {
             }
             Self::NewSession(params) => {
                 encode_result::<SessionNew>(&service.new_session(params).await?)
+            }
+            Self::ForkSession(params) => {
+                encode_result::<SessionFork>(&service.fork_session(params).await?)
             }
             Self::PromptSession(params) => {
                 encode_result::<SessionPrompt>(&service.prompt_session(params).await?)

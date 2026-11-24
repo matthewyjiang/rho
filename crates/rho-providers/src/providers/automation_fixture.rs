@@ -321,6 +321,7 @@ fn inspect_request(identity: &ModelIdentity, request: &ModelRequest<'_>) -> Stri
         "messages": request.messages,
         "tools": request.tools,
         "reasoning": request.reasoning_level.to_string(),
+        "prompt_cache_key": request.prompt_cache_key,
     })
     .to_string()
 }

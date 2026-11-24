@@ -4,7 +4,8 @@
 //! `/workflow:` start, or that ends before its turn runs, leaves its
 //! context with the session for its next model turn. T3 Code states its
 //! instructions on a thread's first prompt alone, so a thread that opens
-//! with a command still gets them. The session holds it in memory only: a
+//! with a command still gets them. A new fork holds its word to the model
+//! that it is one (see `fork.rs`). The session holds it in memory only: a
 //! session the daemon unloads drops it.
 
 use std::sync::{Arc, PoisonError};
@@ -44,6 +45,13 @@ impl Drop for UnsentContext {
 }
 
 impl LoadedSession {
+    /// Holds `context` for the session's next model turn, after what it
+    /// holds already.
+    pub(super) fn hold_context(&self, context: PromptContext) {
+        let mut held = self.lock_held_context();
+        *held = context.after(std::mem::take(&mut *held));
+    }
+
     fn lock_held_context(&self) -> std::sync::MutexGuard<'_, PromptContext> {
         self.held_context
             .lock()

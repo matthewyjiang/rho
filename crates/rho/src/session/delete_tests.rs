@@ -217,7 +217,8 @@ fn refused_child_session_keeps_its_parent() {
 // delete it refuses as the delete would, for a child session something
 // holds or a child's unfinished run, but deletes nothing, not even the
 // children before the refused one that the delete itself would take; it
-// skips the session's own lease, which that host holds (#1670).
+// skips the leases of the sessions that host holds and names, the session's
+// own or a child's, and only those (#1670).
 // Owner: session deletion
 #[test]
 fn delete_check_refuses_as_the_delete_would_and_deletes_nothing() {
@@ -225,26 +226,44 @@ fn delete_check_refuses_as_the_delete_would_and_deletes_nothing() {
     /// error is.
     #[derive(Debug, PartialEq, Eq)]
     enum Refusal {
+        InUse,
         ChildInUse(String),
         ChildRunNotFinished(String),
     }
-    // (label, child session held open, child whose run is unfinished, expected)
-    let cases = [
-        ("clear", None, None, Ok(())),
+    // (label, child session held open, child whose run is unfinished,
+    // sessions the host names as its own, expected)
+    let cases: [(_, _, _, &[&str], _); 5] = [
+        ("clear", None, None, &["parent"], Ok(())),
         (
             "child held",
             Some("child-b"),
             None,
+            &["parent"],
             Err(Refusal::ChildInUse("child-b".into())),
         ),
         (
             "child's run unfinished",
             None,
             Some("child-b"),
+            &["parent"],
             Err(Refusal::ChildRunNotFinished("child-b".into())),
         ),
+        (
+            "child the host holds",
+            Some("child-b"),
+            None,
+            &["parent", "child-b"],
+            Ok(()),
+        ),
+        (
+            "session held, but not named",
+            None,
+            None,
+            &[],
+            Err(Refusal::InUse),
+        ),
     ];
-    for (label, held_child, running_child, expected) in cases {
+    for (label, held_child, running_child, named, expected) in cases {
         let sessions = tempfile::tempdir().unwrap();
         let subagents = tempfile::tempdir().unwrap();
         let workspace = tempfile::tempdir().unwrap();
@@ -277,16 +296,19 @@ fn delete_check_refuses_as_the_delete_would_and_deletes_nothing() {
             subagents.path(),
             &parent,
             &DeleteOptions::default(),
+            &named.iter().map(|id| (*id).to_owned()).collect::<Vec<_>>(),
         )
         .map_err(|error| {
             let child = error
                 .downcast_ref::<ChildSessionNotDeleted>()
-                .map(|refused| refused.child.id.clone())
-                .unwrap_or_default();
-            if error.chain().any(|cause| cause.is::<SessionInUse>()) {
-                Refusal::ChildInUse(child)
+                .map(|refused| refused.child.id.clone());
+            let in_use = error.chain().any(|cause| cause.is::<SessionInUse>());
+            if let (true, None) = (in_use, &child) {
+                Refusal::InUse
+            } else if in_use {
+                Refusal::ChildInUse(child.unwrap_or_default())
             } else if error.chain().any(|cause| cause.is::<RunNotFinished>()) {
-                Refusal::ChildRunNotFinished(child)
+                Refusal::ChildRunNotFinished(child.unwrap_or_default())
             } else {
                 panic!("{label}: unexpected refusal: {error:#}")
             }
