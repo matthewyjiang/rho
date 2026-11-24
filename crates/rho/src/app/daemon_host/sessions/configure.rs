@@ -437,11 +437,11 @@ impl Change {
 /// unless its agent names its own, then its permission mode, and the choice
 /// itself, which the session keeps, so the sessions it starts in turn open
 /// with it too. A model its agent replaces is kept for those sessions
-/// without resolving it here. It keeps its settings, so a reopen restores
-/// them. A part it
-/// cannot take fails the open, naming it, rather than leave the session on
-/// the config's: the mode a person chose may be stricter. With nothing
-/// chosen, it changes and keeps nothing, as any new session.
+/// without resolving it here. When a part changed its own settings, it
+/// keeps them, so a reopen restores them. A part it cannot take fails the
+/// open, naming it, rather than leave the session on the config's: the mode
+/// a person chose may be stricter. With nothing chosen, it changes and keeps
+/// nothing, as any new session.
 pub(super) async fn set_up_started_session(
     runtime: &mut SessionRuntime,
     config: &Config,
@@ -502,6 +502,11 @@ pub(super) async fn set_up_started_session(
         let part = format!("in the permission mode {}", mode.as_str());
         changes.push((part.clone(), Change::PermissionMode(mode)));
         changes.push((part, Change::StartedSessionPermissionMode(Some(mode))));
+    }
+    if changes.is_empty() {
+        // Only a model its agent replaces was chosen: none of the session's
+        // own settings changed, so it goes on following the config.
+        return Ok(());
     }
     let auths = available_auths(runtime.credentials()).await;
     for (part, change) in changes {
