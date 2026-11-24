@@ -214,7 +214,10 @@ pub struct ModelRef {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct StartedSessionDefaults {
     /// `Unknown` for a mode a newer rho saved, or a saved choice this daemon
-    /// cannot read, under which it refuses to open a session.
+    /// cannot read, under which it refuses to open a session. A client that
+    /// sees it should offer to set the mode again, which replaces the saved
+    /// choice. While the choice does not read, `model` is absent even when
+    /// the saved choice names one, which the daemon keeps as saved.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub permission_mode: Option<PermissionMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

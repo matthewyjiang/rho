@@ -70,7 +70,7 @@ async fn a_session_a_subagent_starts_takes_its_leads_choice() {
             .await
             .unwrap();
         let choice = sessions.chosen_by(&choosing).await.unwrap();
-        chosen.push((choosing, choice));
+        chosen.push((choosing.id, choice));
     }
 
     let leads = (
@@ -84,16 +84,18 @@ async fn a_session_a_subagent_starts_takes_its_leads_choice() {
 }
 
 // Covers: a choice for the sessions a session starts that this rho cannot
-// use, a mode a newer rho named or a record it cannot read at all, fails
-// every session started under it rather than open it on the config's,
-// which may be looser, and a save keeps the record byte for byte, model
-// included, so a rho that reads it still finds it.
+// use, a mode a newer rho named, a field it added, or a record it cannot
+// read at all, fails every session started under it rather than open it on
+// the config's, which may be looser, and a save keeps the record byte for
+// byte, model included, so a rho that reads it still finds it.
 // Owner: daemon session new.
 #[tokio::test]
 async fn a_saved_choice_this_rho_cannot_use_refuses_new_and_survives_a_save() {
     let saved = [
         r#"{"permission_mode":"paranoid"}"#,
         r#"{"permission_mode":{"name":"plan"},"model":{"provider":"openai","model":"gpt-5"}}"#,
+        r#"{"permission_mode":"plan","sandbox":"strict"}"#,
+        "[]",
     ];
     let mut outcomes = Vec::new();
     for record in saved {

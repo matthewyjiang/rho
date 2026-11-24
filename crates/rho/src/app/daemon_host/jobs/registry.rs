@@ -333,6 +333,27 @@ impl JobRegistry {
         nearest_session_job(&jobs, id).map(|(_, session)| session.clone())
     }
 
+    /// The latest subagent run, a workflow node's included, that wrote
+    /// `session` and has ended, whose [`Self::nearest_session`] owns
+    /// `session` once no job writes it any more. `None` when no such run
+    /// is known.
+    pub(in crate::app::daemon_host) fn last_run_writing(
+        &self,
+        session: &rho_sdk::SessionId,
+    ) -> Option<JobId> {
+        let jobs = self.lock();
+        jobs.values()
+            .filter(|record| {
+                !record.state.in_progress()
+                    && matches!(
+                        &record.subject,
+                        JobSubject::Subagent { session: Some(written), .. } if written == session
+                    )
+            })
+            .max_by(|a, b| (a.created_at, &a.id).cmp(&(b.created_at, &b.id)))
+            .map(|record| record.id.clone())
+    }
+
     /// The grant job `id`'s record holds, if the job is known.
     pub(in crate::app::daemon_host) fn grant_of(&self, id: &JobId) -> Option<CallerContext> {
         self.lock().get(id).map(|record| record.grant.clone())

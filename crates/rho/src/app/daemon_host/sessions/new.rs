@@ -8,19 +8,21 @@
 //! the sessions it starts take it too. The choosing session is the nearest
 //! session a person or session control opened: the parent itself, or, for
 //! a subagent's or workflow node's session, the session whose turn runs
-//! that, found as the grant of a session it starts is. A parent no job of
-//! this daemon writes, such as a subagent whose run ended or whose job was
-//! never recorded, or one an in-process rho runs, is found through its
+//! that, found as the grant of a session it starts is, through the job
+//! writing it or, once that run ended, the latest run that wrote it. A
+//! parent this daemon has no job record of, such as a subagent whose job
+//! was never recorded or one an in-process rho runs, is found through its
 //! file instead: a subagent's session records the session that started it,
-//! followed up to the first session that is no subagent's. Its choice is
-//! read just before it applies: from its feed while it is loaded, as it is
-//! while its turn runs, else from its file. A choice that cannot be read or
-//! taken, or a recorded owner whose file cannot be read, fails the `new`
-//! rather than open the session on the config's, which may be looser.
+//! with that session's workspace, followed up to the first session that is
+//! no subagent's. Its choice is read just before it applies: from its feed
+//! while it is loaded, as it is while its turn runs, else from its file. A
+//! choice that cannot be read or taken, or a recorded owner whose file
+//! cannot be read, fails the `new` rather than open the session on the
+//! config's, which may be looser.
 //!
-//! One gap remains, reached only when no job of this daemon writes the
+//! One gap remains, reached only when this daemon has no job record of the
 //! parent: a parent whose file records no owner to follow, a workflow
-//! node's session or a subagent that started before its parent had a file,
+//! node's session or a subagent of a session that had saved nothing yet,
 //! is its own choosing session, and chose nothing, so the session takes
 //! the config's. So does a session started without a parent, or under one
 //! nothing is saved under, as any new session does.
@@ -39,8 +41,20 @@ use super::{
 };
 use crate::{
     app::{daemon_host::wire::session_to_wire, session_runtime::StartedSessions},
-    session::Session as StoredSession,
+    session::{Session as StoredSession, SessionTarget},
 };
+
+/// The session whose choice applies to the sessions a parent starts, as
+/// [`Sessions::choosing_session`] finds it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Choosing {
+    id: SessionId,
+    /// The workspace its file is in, when the walk of saved files found it
+    /// there, so its choice is read there and not from another workspace's
+    /// session of the same id. `None` for one found through this daemon's
+    /// jobs, or one nothing is saved under, whose file is found by id.
+    saved_in: Option<std::path::PathBuf>,
+}
 
 impl Sessions {
     /// Opens a new session in `cwd`, or in a worktree added for it, as
@@ -111,8 +125,13 @@ impl Sessions {
         let set_up = match &choosing {
             Some(choosing) => match self.chosen_by(choosing).await {
                 Ok(chosen) => {
-                    set_up_started_session(&mut opened.runtime, &opened.config, choosing, chosen)
-                        .await
+                    set_up_started_session(
+                        &mut opened.runtime,
+                        &opened.config,
+                        &choosing.id,
+                        chosen,
+                    )
+                    .await
                 }
                 Err(error) => Err(error),
             },
@@ -176,46 +195,57 @@ impl Sessions {
     /// or above `writer`, as a session `parent` starts takes that one's
     /// grant, so a subagent or workflow node of a session starts sessions
     /// under that session's choice. When no job of this daemon writes
-    /// `parent`, the session that owns it as its file records it (see
-    /// [`owning_session`]). A writer whose session job is gone is
+    /// `parent`, the same of the latest run that wrote it and has ended
+    /// (`JobRegistry::last_run_writing`); when no job of this daemon ever
+    /// wrote it, the session that owns it as its file records it (see
+    /// [`owning_session`]). A run whose session job is gone is
     /// `SessionOpenFailed`: the choice that applies cannot be found.
     async fn choosing_session(
         &self,
         parent: &SessionId,
         writer: Option<&JobId>,
-    ) -> Result<SessionId, RpcError> {
-        let Some(writer) = writer else {
+    ) -> Result<Choosing, RpcError> {
+        let Some(writer) = writer
+            .cloned()
+            .or_else(|| self.jobs.last_run_writing(parent))
+        else {
             let parent = parent.clone();
             return store_blocking(FIND_OWNER, move || owning_session(parent)).await;
         };
-        self.jobs.nearest_session(writer).ok_or_else(|| {
+        let id = self.jobs.nearest_session(&writer).ok_or_else(|| {
             RpcError::new(
                 ErrorCode::SessionOpenFailed,
                 format!(
-                    "could not find the session whose turn runs job {writer}, which writes {parent}, so not what it chose for the sessions it starts"
+                    "could not find the session whose turn runs job {writer}, which writes or wrote {parent}, so not what it chose for the sessions it starts"
                 ),
             )
-        })
+        })?;
+        Ok(Choosing { id, saved_in: None })
     }
 
     /// What `choosing` chose for the sessions it starts, as it is now: from
     /// its feed while it is loaded, as it is while its turn or that of one
-    /// of its subagents runs, else from its file. A session nothing is
-    /// saved under chose nothing. A choice its file keeps but this rho
-    /// cannot read is a mode this rho does not know, which the new session
-    /// refuses to open in: it may be stricter than the config.
+    /// of its subagents runs, else from its file, in the workspace the walk
+    /// found it in, if it did. A session nothing is saved under chose
+    /// nothing. A choice its file keeps but this rho cannot read is a mode
+    /// this rho does not know, which the new session refuses to open in: it
+    /// may be stricter than the config.
     async fn chosen_by(
         &self,
-        choosing: &SessionId,
+        choosing: &Choosing,
     ) -> Result<wire::StartedSessionDefaults, RpcError> {
-        let loaded = self.loaded().get(choosing).cloned();
+        let loaded = self.loaded().get(&choosing.id).cloned();
         if let Some(session) = loaded {
             return Ok(session.feed.started_session_defaults());
         }
-        let id = choosing.clone();
+        let Choosing { id, saved_in } = choosing.clone();
         let saved = store_blocking(READ_CHOICE, move || {
-            let Some(cwd) = StoredSession::workspace_of(id.as_str())? else {
-                return Ok(None);
+            let cwd = match saved_in {
+                Some(cwd) => cwd,
+                None => match StoredSession::workspace_of(id.as_str())? {
+                    Some(cwd) => cwd,
+                    None => return Ok(None),
+                },
             };
             StartedSessions::saved_by_id(&cwd, id.as_str()).map(Some)
         })
@@ -235,32 +265,39 @@ const READ_CHOICE: &str =
 const FIND_OWNER: &str = "find the session that owns the subagent that starts this one";
 
 /// The session whose choice applies to a session `parent` starts when no
-/// job of this daemon writes `parent`: `parent` itself, unless its file
-/// records it as a subagent's session, whose parent the file names (the
-/// one a delete cascades over), followed up to the first session that is
-/// no subagent's. That one a person or session control opened. A parent
-/// nothing is saved under, or whose file records no owner (a workflow
-/// node's session, a subagent that started before its parent had a file),
-/// is its own. An owner a file names but that cannot be read fails, so the
-/// `new` fails rather than open the session on the config's. Blocking.
-fn owning_session(parent: SessionId) -> anyhow::Result<SessionId> {
-    let Some(mut cwd) = StoredSession::workspace_of(parent.as_str())? else {
-        return Ok(parent);
+/// job of this daemon ever wrote `parent`: `parent` itself, unless its file
+/// records it as a subagent's session, whose parent the file names, with
+/// its workspace (the one a delete cascades over), followed up to the first
+/// session that is no subagent's. That one a person or session control
+/// opened. A parent nothing is saved under, or whose file records no owner
+/// (a workflow node's session, a subagent of a session that had saved
+/// nothing yet), is its own. An owner a file names but that cannot be read
+/// fails, so the `new` fails rather than open the session on the config's.
+/// Blocking.
+fn owning_session(parent: SessionId) -> anyhow::Result<Choosing> {
+    let Some(cwd) = StoredSession::workspace_of(parent.as_str())? else {
+        return Ok(Choosing {
+            id: parent,
+            saved_in: None,
+        });
     };
-    let mut session = parent;
+    let mut session = SessionTarget::new(parent.as_str(), cwd);
     let mut seen = std::collections::HashSet::new();
     loop {
-        let Some(owner) = StoredSession::subagent_parent_by_id(&cwd, session.as_str())
-            .with_context(|| format!("could not read which session owns {session}"))?
+        let Some(owner) = StoredSession::subagent_parent_by_id(&session.cwd, &session.id)
+            .with_context(|| format!("could not read which session owns {}", session.id))?
         else {
-            return Ok(session);
+            return Ok(Choosing {
+                id: SessionId::from_string(session.id)?,
+                saved_in: Some(session.cwd),
+            });
         };
         anyhow::ensure!(
-            seen.insert(session.clone()),
-            "the subagent sessions above {session} name each other as their parent"
+            seen.insert(session.id.clone()),
+            "the subagent sessions above {} name each other as their parent",
+            session.id
         );
-        session = SessionId::from_string(owner.id)?;
-        cwd = owner.cwd;
+        session = owner;
     }
 }
 

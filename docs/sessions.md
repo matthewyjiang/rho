@@ -288,12 +288,14 @@ rules. Know these before you approve one:
   agent's turn runs waits for that turn to end, so sessions the turn starts
   meanwhile get the earlier choice. The tool's `model` still applies to the
   session it starts, and an agent that names its own model, preferred or
-  required, keeps it.
-- One gap remains: when the daemon no longer tracks the run that starts a
-  session, it finds the choice through the session files, following each
-  subagent's recorded parent. A workflow node's session, or a subagent that
-  started before its parent was first saved, records no parent, so a session
-  it starts then opens in the workspace's permission mode.
+  required, keeps it. Such a session hands the chosen model on without
+  resolving it, so a chosen model that no longer resolves fails the `new` of
+  the first session down the line that would run it.
+- One gap remains: when the daemon has no record of any job that ran the
+  session that starts one, it finds the choice through the session files,
+  following each subagent's recorded parent. A workflow node's session, or a
+  subagent of a session that had saved nothing yet, records no parent, so a
+  session it starts then opens in the workspace's permission mode.
 - A new session gets the agent session's environment, including its
   `RHO_TRUST_PROJECT_*` variables. The target workspace's project agents,
   plugins, and hooks load only if those allow it. Starting a session there

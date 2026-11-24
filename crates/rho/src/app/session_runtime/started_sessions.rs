@@ -30,8 +30,10 @@ pub(super) const STARTED_SESSION_DEFAULTS_METADATA: &str = "rho.session.started_
 
 /// The permission mode and model the sessions a session starts open with,
 /// as its file keeps them. A part left `None` leaves it to the config those
-/// sessions open with.
+/// sessions open with. A record with a field this rho does not know, as a
+/// newer one may save, does not read: reading it would drop that field.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct StartedSessionDefaults {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) permission_mode: Option<StartedMode>,
@@ -71,6 +73,7 @@ impl From<StartedMode> for String {
 /// A model by its provider and the provider's model id. Each started
 /// session runs it on an auth that has credentials.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct StartedModel {
     pub(crate) provider: String,
     pub(crate) model: String,
@@ -122,12 +125,16 @@ impl StartedSessions {
     }
 
     /// The choice `record` holds: none without a record, and
-    /// [`Self::Unreadable`], keeping it, for one this rho cannot read.
+    /// [`Self::Unreadable`], keeping it, for one this rho cannot read,
+    /// such as one with a field it does not know or one that is not a JSON
+    /// object (serde would read `[]` as a struct with nothing chosen).
     fn read(record: Option<String>) -> Self {
         let Some(record) = record else {
             return Self::default();
         };
-        match serde_json::from_str(&record) {
+        let decoded = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&record)
+            .and_then(|object| serde_json::from_value(serde_json::Value::Object(object)));
+        match decoded {
             Ok(defaults) => Self::Chosen(defaults),
             Err(error) => {
                 tracing::warn!(

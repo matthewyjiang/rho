@@ -538,7 +538,9 @@ fn a_jobs_grant_never_exceeds_its_limit() {
 
 // Covers: the grant a session started from a subagent's or a workflow
 // node's session is held under is that of the session whose turn runs
-// them, not the unlimited one their own jobs keep (#1796).
+// them, not the unlimited one their own jobs keep (#1796), and a node's
+// session whose run ended is still found under that session, so a session
+// it starts takes that session's choice, not the config's.
 // Owner: daemon job registry, session grants.
 #[test]
 fn a_run_a_session_started_is_under_that_sessions_grant() {
@@ -552,13 +554,10 @@ fn a_run_a_session_started_is_under_that_sessions_grant() {
             workspaces: Workspaces::Any,
         },
     };
+    let lead = rho_sdk::SessionId::new();
     let session = JobRecord {
         grant: limited.clone(),
-        ..JobRecord::new_session(
-            JobId::generate(),
-            PathBuf::from("/work"),
-            rho_sdk::SessionId::new(),
-        )
+        ..JobRecord::new_session(JobId::generate(), PathBuf::from("/work"), lead.clone())
     };
     let workflow = JobRecord::new_workflow(
         session.id.clone(),
@@ -569,18 +568,35 @@ fn a_run_a_session_started_is_under_that_sessions_grant() {
         |parent: JobId| JobRecord::new_subagent(parent, PathBuf::from("/work"), None, "run".into());
     let node = subagent(workflow.id.clone());
     let orphan = subagent(JobId::generate());
+    // A node of the same drive that wrote a session of its own and ended.
+    let written = rho_sdk::SessionId::new();
+    let ended = JobRecord {
+        state: JobState::Ended(TurnEnd::Completed),
+        ..JobRecord::new_subagent(
+            workflow.id.clone(),
+            PathBuf::from("/work"),
+            Some(written.clone()),
+            "run".into(),
+        )
+    };
     let ids = [&session, &workflow, &node, &orphan].map(|record| record.id.clone());
-    for record in [session, workflow, node, orphan] {
+    for record in [session, workflow, node, orphan, ended] {
         registry.register(record).unwrap();
     }
 
+    let ended_run_owner = registry
+        .last_run_writing(&written)
+        .and_then(|run| registry.nearest_session(&run));
     assert_eq!(
-        ids.map(|id| registry.session_grant(&id)),
-        [
-            Some(limited.clone()),
-            Some(limited.clone()),
-            Some(limited),
-            None
-        ]
+        (ids.map(|id| registry.session_grant(&id)), ended_run_owner),
+        (
+            [
+                Some(limited.clone()),
+                Some(limited.clone()),
+                Some(limited),
+                None
+            ],
+            Some(lead)
+        )
     );
 }

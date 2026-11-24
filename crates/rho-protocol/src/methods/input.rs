@@ -270,7 +270,9 @@ pub enum PermissionMode {
     AllowEdits,
     Plan,
     Supervised,
-    /// A value a newer daemon sends that this crate does not know.
+    /// A value a newer daemon sends that this crate does not know, or, in
+    /// [`super::StartedSessionDefaults::permission_mode`], a saved choice
+    /// the daemon could not read, as when a newer rho saved it.
     #[serde(other)]
     #[schemars(extend("x-rho-other" = true))]
     Unknown,
