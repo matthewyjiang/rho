@@ -147,8 +147,11 @@ impl<S: Default + 'static, T: SettingType> AnySetting<S> for Setting<S, T> {
         (self.get)(store).to_wire()
     }
 
+    // A value the setting can't read still sits in the file, so a reset
+    // has something to remove: an `[internal_agents]` entry on a runtime
+    // its agent refuses loads with a warning, not an error.
     fn is_set(&self, doc: &ConfigDocument) -> bool {
-        T::read(doc, self.key, &self.spec).is_ok_and(|value| value.is_some())
+        !matches!(T::read(doc, self.key, &self.spec), Ok(None))
     }
 
     fn remove(&self, doc: &mut ConfigDocument) {
