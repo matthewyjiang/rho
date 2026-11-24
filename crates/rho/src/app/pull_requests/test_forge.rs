@@ -107,6 +107,20 @@ impl ScriptedForge {
         });
     }
 
+    /// Pull request `target` (`owner/name#N`), which [`Self::set_open`] put
+    /// here, now reads merged into its base.
+    pub(crate) fn set_merged(&self, target: &str) {
+        let id = PrId::parse(target, None).expect("an owner/name#N target");
+        let mut world = self.world();
+        let detail = world
+            .prs
+            .get_mut(&id)
+            .expect("the pull request was set open");
+        detail.summary.state = PrState::Merged;
+        detail.summary.change.updated_at = "2026-11-22T01:00:00Z".into();
+        detail.mergeable = Mergeable::Unknown;
+    }
+
     /// Branch `branch` of pull request `target`'s (`owner/name#N`)
     /// repository now has that PR, which reads as [`Self::set`] or
     /// [`Self::set_open`] put it.

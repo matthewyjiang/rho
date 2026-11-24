@@ -52,3 +52,51 @@ fn a_session_list_page_round_trips_through_its_wire_form() {
         page
     );
 }
+
+// Covers: a detailed row is its summary's fields with the agent, parent
+// and mark beside them, each left out when absent, so folding them into
+// the summary at the next major changes no row a client reads.
+// Owner: protocol wire contract.
+#[test]
+fn a_detailed_row_holds_its_details_beside_its_summary() {
+    let summary = |session: &str| SessionSummary {
+        session: SessionId::new(session),
+        cwd: "/w/app".into(),
+        added_dirs: Vec::new(),
+        title: None,
+        first_user_message: None,
+        last_user_message: None,
+        updated_at: 1_792_133_984,
+    };
+    let page = SessionListDetailedResponse::new(
+        vec![
+            DetailedSessionSummary::new(
+                summary("s2"),
+                Some("worker".into()),
+                Some(SessionId::new("s1")),
+                Some(SessionMark::Done { at: 1_792_133_990 }),
+            ),
+            DetailedSessionSummary::new(summary("s1"), None, None, None),
+        ],
+        None,
+    );
+    let wire = json!({
+        "sessions": [
+            {
+                "session": "s2",
+                "cwd": "/w/app",
+                "added_dirs": [],
+                "updated_at": 1_792_133_984,
+                "agent": "worker",
+                "parent": "s1",
+                "mark": {"kind": "done", "at": 1_792_133_990},
+            },
+            {"session": "s1", "cwd": "/w/app", "added_dirs": [], "updated_at": 1_792_133_984},
+        ],
+    });
+    assert_eq!(serde_json::to_value(&page).unwrap(), wire);
+    assert_eq!(
+        serde_json::from_value::<SessionListDetailedResponse>(wire).unwrap(),
+        page
+    );
+}

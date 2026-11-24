@@ -12,7 +12,8 @@ use super::persistence::{
     session_id_from_path, summarize_session_file, workspace_key, SessionUnit,
 };
 use super::{
-    Session, SessionIndexRecord, SessionOrigin, SessionProvenance, SessionSummary, SessionTarget,
+    Session, SessionIndexRecord, SessionMark, SessionOrigin, SessionProvenance, SessionSummary,
+    SessionTarget,
 };
 
 #[path = "index_connection.rs"]
@@ -452,6 +453,7 @@ pub(super) fn record_created(
             origin: Some(provenance.origin),
             agent: agent.map(str::to_owned),
             started_by: provenance.started_by,
+            mark: None,
         },
         file_size,
         file_mtime,
@@ -909,7 +911,7 @@ pub(super) fn remove_sessions(session_root: &Path, sessions: &[IndexKey]) -> any
 
 /// The columns [`summary_from_row`] reads, in its order.
 const SUMMARY_COLUMNS: &str = "id, path, cwd, created_at, updated_at, message_count, title,
-    first_user_message, last_user_message, added_dirs, origin, agent_starter";
+    first_user_message, last_user_message, added_dirs, origin, agent_starter, mark";
 
 fn summary_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSummary> {
     let (agent, started_by) = StampedAgentStarter::decode(row.get(11)?)
@@ -931,6 +933,7 @@ fn summary_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSummary>
         origin: row.get::<_, Option<String>>(10)?.and_then(decode_origin),
         agent,
         started_by,
+        mark: SessionMark::decode(row.get(12)?),
     })
 }
 

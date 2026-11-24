@@ -35,12 +35,12 @@ use rho_protocol::{
     SessionAttachParams, SessionAttachResponse, SessionCancelParams, SessionCancelResponse,
     SessionConfigureParams, SessionConfigureResponse, SessionDeleteParams, SessionDeleteResponse,
     SessionForkParams, SessionForkResponse, SessionHoldParams, SessionHoldResponse,
-    SessionListDetailedResponse, SessionListParams, SessionListResponse, SessionNewParams,
-    SessionNewResponse, SessionObserveParams, SessionPromptParams, SessionPromptResponse,
-    SessionRenameParams, SessionRenameResponse, SessionSteerParams, SessionSteerResponse,
-    SessionSurfaceActionParams, SessionSurfaceActionResponse, SessionUnsteerParams,
-    SessionUnsteerResponse, SettingsService, Subscription, WorktreePruneParams,
-    WorktreePruneResponse, PROTOCOL_VERSION,
+    SessionListDetailedResponse, SessionListParams, SessionListResponse, SessionMarkParams,
+    SessionMarkResponse, SessionNewParams, SessionNewResponse, SessionObserveParams,
+    SessionPromptParams, SessionPromptResponse, SessionRenameParams, SessionRenameResponse,
+    SessionSteerParams, SessionSteerResponse, SessionSurfaceActionParams,
+    SessionSurfaceActionResponse, SessionUnsteerParams, SessionUnsteerResponse, SettingsService,
+    Subscription, WorktreePruneParams, WorktreePruneResponse, PROTOCOL_VERSION,
 };
 use rho_providers::credentials::CredentialStoreBackend;
 
@@ -282,8 +282,9 @@ impl DaemonHost {
         self.sessions.unload_idle(grace).await;
     }
 
-    /// Polls the sessions' pull requests, and tells their clients when they
-    /// change, until the daemon starts stopping.
+    /// Polls the sessions' pull requests, tells their clients when they
+    /// change, and marks a session done when one it watched merges, until
+    /// the daemon starts stopping.
     pub(super) async fn poll_pull_requests(&self) {
         self.sessions.poll_pull_requests().await;
     }
@@ -573,6 +574,13 @@ impl Service for DaemonHost {
         params: SessionRenameParams,
     ) -> Result<SessionRenameResponse, RpcError> {
         self.sessions.rename(params).await
+    }
+
+    async fn mark_session(
+        &self,
+        params: SessionMarkParams,
+    ) -> Result<SessionMarkResponse, RpcError> {
+        self.sessions.mark(params).await
     }
 
     async fn delete_session(

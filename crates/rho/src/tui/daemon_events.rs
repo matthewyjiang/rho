@@ -559,6 +559,8 @@ impl DaemonEvents {
             // The TUI does not show a session's pull requests; the agent's
             // tools report them.
             SessionEvent::PullRequests { .. } => Vec::new(),
+            // The TUI shows no marks.
+            SessionEvent::MarkChanged { .. } => Vec::new(),
             // `Unknown`, or an event a newer daemon sends.
             _ => Vec::new(),
         }

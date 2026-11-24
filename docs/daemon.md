@@ -131,6 +131,8 @@ Clients such as rho-ui also [list and show a session's pull requests](/protocol#
 
 Every read, watched or asked for, spends the signed-in account's GitHub API points from one budget per host. When an account has 50 points or fewer left, the daemon stops all reads of that host until GitHub resets the budget, logs one warning, and `watch_pull_request` refuses with the points left and the reset time. Clients see the pause beside each pull request on that host.
 
+When a watched pull request merges, the watch ends, and if the session watches no other pull request the daemon marks it done, so clients that sort sessions by their [marks](/protocol#session-marks), such as rho-ui, show it as finished once the turn that tells the agent of the merge is over. A session you pinned stays pinned, and one you snoozed stays snoozed until its snooze ends. Sending the session another prompt makes it active again. A session that still watches another pull request is not marked, and neither is one whose pull request closes without merging or whose watch ends for another reason.
+
 The daemon keeps each session's links, watches, and undelivered news in `<rho home>/daemon/pull-requests/` (`~/.rho/daemon/pull-requests/` by default), one file per session, so they survive a restart. News for a session the daemon unloaded reopens it for a turn, once per batch of news: if that turn fails before it takes the news, the news waits for the session's next turn. After a daemon restart, news for an unloaded session waits for its next prompt or attach.
 
 ### Unloading idle sessions

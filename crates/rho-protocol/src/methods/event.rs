@@ -352,6 +352,14 @@ pub enum SessionEvent {
         // Boxed so the largest event stays small on every queue.
         pull_requests: Box<super::SessionPullRequests>,
     },
+    /// The session's mark changed, as when a client set or cleared it
+    /// ([`super::SESSION_MARK`]) or the daemon marked the session done for
+    /// a merged pull request; absent once cleared. Saved conversations hold
+    /// none: [`super::SESSION_LIST_DETAILED`] reports the mark a session has.
+    MarkChanged {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        mark: Option<super::SessionMark>,
+    },
     /// A value a newer daemon sends that this crate does not know; daemons
     /// never send it.
     #[serde(other)]

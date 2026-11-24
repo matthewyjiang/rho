@@ -578,6 +578,7 @@ impl SessionTree {
                 origin: self.origin,
                 agent: self.agent.clone(),
                 started_by: self.started_by.clone(),
+                mark: None,
             },
             file_size,
             file_mtime,

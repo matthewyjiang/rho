@@ -24,7 +24,7 @@ use rho_sdk::SessionId;
 use tokio::sync::OwnedMutexGuard;
 
 use super::{
-    being_deleted,
+    being_deleted, marks,
     reopen::{not_found, parse_session},
     stopping,
     store::{store_blocking, store_failed},
@@ -65,7 +65,8 @@ impl Sessions {
     }
 
     /// One page of the saved sessions a person can resume, newest first,
-    /// each with the agent it runs as and the session that started it.
+    /// each with the agent it runs as, the session that started it, and its
+    /// mark.
     pub(in crate::app::daemon_host) async fn list_detailed(
         &self,
         params: SessionListParams,
@@ -392,6 +393,7 @@ fn summary_to_wire(summary: SessionSummary) -> wire::DetailedSessionSummary {
         origin: _,
         agent,
         started_by,
+        mark,
     } = summary;
     let summary = wire::SessionSummary {
         session: wire::SessionId::new(id),
@@ -405,7 +407,7 @@ fn summary_to_wire(summary: SessionSummary) -> wire::DetailedSessionSummary {
     // `parent` on the wire, as `rho/session/new` names the session that
     // starts another.
     let parent = started_by.map(wire::SessionId::new);
-    wire::DetailedSessionSummary::new(summary, agent, parent)
+    wire::DetailedSessionSummary::new(summary, agent, parent, mark.map(marks::mark_to_wire))
 }
 
 fn invalid(message: impl Into<String>) -> RpcError {

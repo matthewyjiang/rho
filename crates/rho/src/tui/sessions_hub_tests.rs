@@ -23,6 +23,7 @@ fn summary(id: &str, cwd: &str, updated_at: u64) -> SessionSummary {
         origin: None,
         agent: None,
         started_by: None,
+        mark: None,
     }
 }
 

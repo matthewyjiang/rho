@@ -3,6 +3,7 @@
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use rho_protocol as wire;
+use rho_sdk::provider::ModelProvider;
 use tempfile::TempDir;
 use tokio::time::timeout;
 
@@ -38,7 +39,18 @@ pub(super) enum Load {
 /// A session loaded in `sessions` as `load` says, on a new job, with a
 /// provider that never answers, so nothing but the test ends its turns.
 pub(super) async fn load(sessions: &Sessions, root: &TempDir, load: Load) -> Arc<LoadedSession> {
-    insert(sessions, opened(sessions, root, load).await)
+    load_on(sessions, root, load, Arc::new(HangUntilCancel)).await
+}
+
+/// A session loaded in `sessions` as `load` says, on a new job, whose
+/// turns `provider` answers.
+pub(super) async fn load_on(
+    sessions: &Sessions,
+    root: &TempDir,
+    load: Load,
+    provider: Arc<dyn ModelProvider>,
+) -> Arc<LoadedSession> {
+    insert(sessions, opened(sessions, root, load, provider).await)
 }
 
 /// A saved session loaded in `sessions` as [`load`] loads it, whose
@@ -49,7 +61,7 @@ pub(super) async fn load_waiting_on(
     root: &TempDir,
     background: impl FnOnce(&str) -> SessionBackground,
 ) -> Arc<LoadedSession> {
-    let session = opened(sessions, root, Load::Saved).await;
+    let session = opened(sessions, root, Load::Saved, Arc::new(HangUntilCancel)).await;
     let background = background(session.id.as_str());
     insert(
         sessions,
@@ -68,9 +80,13 @@ fn insert(sessions: &Sessions, session: LoadedSession) -> Arc<LoadedSession> {
     session
 }
 
-async fn opened(sessions: &Sessions, root: &TempDir, load: Load) -> LoadedSession {
+async fn opened(
+    sessions: &Sessions,
+    root: &TempDir,
+    load: Load,
+    provider: Arc<dyn ModelProvider>,
+) -> LoadedSession {
     let config = Config::default();
-    let provider: Arc<dyn rho_sdk::provider::ModelProvider> = Arc::new(HangUntilCancel);
     let sdk = rho_sdk::Rho::builder()
         .provider_shared(Arc::clone(&provider))
         .build()

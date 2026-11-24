@@ -178,6 +178,33 @@ pub(crate) enum End {
     Unreadable(String),
 }
 
+/// The news of the newest merge `news` tells of: `None` when it tells of
+/// none, and when a watch ended some other way then or since, so a pull
+/// request closed unmerged beside a merged one does not read as work that
+/// all merged.
+pub(super) fn merged_last<'a>(
+    news: impl IntoIterator<Item = &'a News> + Clone,
+) -> Option<&'a News> {
+    let merged = news
+        .clone()
+        .into_iter()
+        .filter(|news| matches!(news.end, Some(End::Merged { .. })))
+        .max_by_key(|news| news.at)?;
+    (!ended_otherwise_since(news, merged.at)).then_some(merged)
+}
+
+/// Whether `news` tells of a watch that ended some other way than merged,
+/// found at `since` (unix milliseconds) or later.
+pub(super) fn ended_otherwise_since<'a>(
+    news: impl IntoIterator<Item = &'a News>,
+    since: u64,
+) -> bool {
+    news.into_iter().any(|news| match news.end {
+        Some(End::Closed | End::CommentLoop | End::Unreadable(_)) => news.at >= since,
+        Some(End::Merged { .. }) | None => false,
+    })
+}
+
 /// One evaluation's news on one pull request, queued for the session until
 /// a turn takes it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

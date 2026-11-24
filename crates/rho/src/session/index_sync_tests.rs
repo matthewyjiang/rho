@@ -728,6 +728,7 @@ fn test_index_record(id: &str, path: &str, first_user: &str) -> SessionIndexReco
             origin: None,
             agent: None,
             started_by: None,
+            mark: None,
         },
         file_size: Some(10),
         file_mtime: Some(10),

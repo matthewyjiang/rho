@@ -142,6 +142,8 @@ impl Updates {
             | SessionEvent::StartedSessionDefaults(_)
             // Nor for a session's pull requests.
             | SessionEvent::PullRequests { .. }
+            // Nor for how a person marked the session.
+            | SessionEvent::MarkChanged { .. }
             // ACP has no update for what the turn is doing.
             | SessionEvent::ProviderRequest
             | SessionEvent::ProviderRetry { .. }

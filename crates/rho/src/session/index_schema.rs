@@ -61,6 +61,9 @@ pub(super) fn migrate_index_with_hook(
     // Added without a version bump too, for the same reason; see
     // `StampedAgentStarter`.
     ensure_column(&transaction, "agent_starter text")?;
+    // Unversioned too: an older Rho neither reads nor writes a session's
+    // mark (see `super::super::mark`), and its upserts leave the column be.
+    ensure_column(&transaction, "mark text")?;
     ensure_column(&transaction, "node_count integer not null default 0")?;
     ensure_column(&transaction, "branch_count integer not null default 0")?;
     ensure_column(&transaction, "active_leaf_id text")?;
@@ -136,6 +139,7 @@ pub(super) fn validate_index_columns(connection: &Connection) -> anyhow::Result<
         "parent_workspace_key",
         "parent_id",
         "agent_starter",
+        "mark",
     ];
     validate_columns(connection, REQUIRED_COLUMNS)
 }

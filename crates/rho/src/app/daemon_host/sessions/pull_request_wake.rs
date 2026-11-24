@@ -123,13 +123,15 @@ impl PullRequestWake {
 
 impl Sessions {
     /// Polls the pull requests that are watched or that clients look at,
-    /// wakes the unloaded sessions that get news, and tells loaded sessions'
-    /// clients their pull requests as they change, until the daemon starts
-    /// stopping; then drops every kept opening.
+    /// wakes the unloaded sessions that get news, marks done the sessions
+    /// whose watched pull request merged (see `marks`), and tells loaded
+    /// sessions' clients their pull requests as they change, until the
+    /// daemon starts stopping; then drops every kept opening.
     pub(in crate::app::daemon_host) async fn poll_pull_requests(&self) {
         tokio::join!(
             self.pull_requests.service.run(self.stopping.cancelled()),
             self.wake_unloaded(),
+            self.mark_merged_done(),
             self.report_pull_requests(unix_ms),
         );
         self.pull_requests.kept().clear();
@@ -247,6 +249,13 @@ impl PullRequestWake {
             .filter(|check| !failed.contains(check))
             .collect();
         forge.set_open(TEST_PULL_REQUEST, &running, failed);
+        self.service.tick(TEST_WATCHED_AT + minutes * 60_000).await;
+    }
+
+    /// [`TEST_PULL_REQUEST`] merged on `forge`, as the poll `minutes` after
+    /// the watch reads it.
+    pub(super) async fn merge_for_tests(&self, forge: &ScriptedForge, minutes: u64) {
+        forge.set_merged(TEST_PULL_REQUEST);
         self.service.tick(TEST_WATCHED_AT + minutes * 60_000).await;
     }
 

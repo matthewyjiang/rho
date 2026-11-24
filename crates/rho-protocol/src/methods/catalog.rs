@@ -9,19 +9,19 @@ use std::{num::NonZeroU32, path::PathBuf};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::SessionId;
+use super::{SessionId, SessionMark};
 
 /// List the sessions a person can resume, newest first, a page at a time.
 pub const SESSION_LIST: &str = "rho/session/list";
 /// List the sessions [`SESSION_LIST`] lists, with the same params and
-/// paging, each with the agent it runs as and the session that started it:
-/// what a client that groups sessions under the one that started them
-/// reads. A daemon from before this method answers
-/// [`crate::ErrorCode::MethodNotFound`].
+/// paging, each with the agent it runs as, the session that started it,
+/// and its mark: what a client that groups sessions under the one that
+/// started them, or sorts them by their marks, reads. A daemon from before
+/// this method answers [`crate::ErrorCode::MethodNotFound`].
 ///
 /// # Next major
 ///
-/// NEXT_MAJOR(rho-protocol): fold agent and parent into SessionSummary and remove rho/session/list_detailed.
+/// NEXT_MAJOR(rho-protocol): fold agent, parent and mark into SessionSummary and remove rho/session/list_detailed.
 ///
 /// [`SessionSummary`] is not `#[non_exhaustive]`, so a field is a major
 /// change; until then this method sends its rows with those fields beside
@@ -113,11 +113,12 @@ impl SessionListDetailedResponse {
 }
 
 /// One session, as [`SESSION_LIST_DETAILED`] reports it: its
-/// [`SessionSummary`]'s fields, then the agent it runs as and the session
-/// that started it. Goes at the next major with [`SESSION_LIST_DETAILED`].
+/// [`SessionSummary`]'s fields, then the agent it runs as, the session that
+/// started it, and its mark. Goes at the next major with
+/// [`SESSION_LIST_DETAILED`].
 ///
-/// On the wire it is a [`SessionSummary`] with two more optional fields, so
-/// folding them into it changes no row a client reads.
+/// On the wire it is a [`SessionSummary`] with three more optional fields,
+/// so folding them into it changes no row a client reads.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[non_exhaustive]
 pub struct DetailedSessionSummary {
@@ -140,15 +141,25 @@ pub struct DetailedSessionSummary {
     /// A client treats a parent it cannot find as none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<SessionId>,
+    /// How the person has marked the session ([`super::SESSION_MARK`]);
+    /// absent while it has no mark, and from a daemon that keeps none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mark: Option<SessionMark>,
 }
 
 impl DetailedSessionSummary {
     /// Builds it from each of its fields.
-    pub fn new(summary: SessionSummary, agent: Option<String>, parent: Option<SessionId>) -> Self {
+    pub fn new(
+        summary: SessionSummary,
+        agent: Option<String>,
+        parent: Option<SessionId>,
+        mark: Option<SessionMark>,
+    ) -> Self {
         Self {
             summary,
             agent,
             parent,
+            mark,
         }
     }
 }

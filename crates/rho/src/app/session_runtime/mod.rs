@@ -360,6 +360,23 @@ impl SessionRuntime {
         self.storage.file().is_some()
     }
 
+    /// Replaces the saved session's mark with what `change` makes of the
+    /// one it has and of the time now, as
+    /// [`crate::session::Session::change_mark`] does; `None`, and nothing
+    /// changes, for a session with no file.
+    pub(crate) fn change_mark(
+        &self,
+        change: impl FnOnce(
+            Option<crate::session::SessionMark>,
+            u64,
+        ) -> Option<crate::session::SessionMark>,
+    ) -> anyhow::Result<Option<crate::session::MarkChange>> {
+        self.storage
+            .file()
+            .map(|stored| stored.change_mark(change))
+            .transpose()
+    }
+
     /// Tells the session's hooks what it does, for a host that reports
     /// what happens outside a prompt.
     pub(crate) fn hooks(&self) -> rho_sdk::hooks::HookDispatcher {

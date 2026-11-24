@@ -21,6 +21,7 @@ fn summary(id: &str, cwd: &Path, updated_at: u64, message_count: u64) -> Session
         origin: None,
         agent: None,
         started_by: None,
+        mark: None,
     }
 }
 

@@ -11,8 +11,8 @@ use crate::{
     methods::{
         AnswerStop, BranchLookup, BranchPullRequest, LinkedPullRequest, ModelRef, PermissionMode,
         PullRequestId, PullRequestLinkOrigin, PullRequestRollup, PullRequestState,
-        PullRequestSummary, SessionPullRequests, StartedSessionDefaults, TurnError, TurnErrorKind,
-        TurnOutcome,
+        PullRequestSummary, SessionMark, SessionPullRequests, StartedSessionDefaults, TurnError,
+        TurnErrorKind, TurnOutcome,
     },
 };
 
@@ -339,6 +339,16 @@ fn every_session_event_round_trips_through_its_wire_form() {
                 title: "Fix the parser".into(),
             },
             json!({"type": "title_changed", "title": "Fix the parser"}),
+        ),
+        (
+            SessionEvent::MarkChanged {
+                mark: Some(SessionMark::Pinned { at: 1_792_133_984 }),
+            },
+            json!({"type": "mark_changed", "mark": {"kind": "pinned", "at": 1_792_133_984}}),
+        ),
+        (
+            SessionEvent::MarkChanged { mark: None },
+            json!({"type": "mark_changed"}),
         ),
         (
             SessionEvent::Compaction {

@@ -21,17 +21,14 @@ use std::{
     time::Duration,
 };
 
-use rho_sdk::SessionId;
-use tokio::sync::Notify;
-
 use super::{
     due::{self, Due},
     gh::{Forge, ReadError},
     model::{Batch, BranchId, Budget, FetchPlan, Found, PrDetail, PrId},
     reads::{keep, read_into, Read, Reads},
     record::{SessionRecord, NEWS_PER_SESSION},
-    service::{Detailed, Shared, State, Trouble},
-    state::{CheckTally, News},
+    service::{Detailed, Shared, State, Told, Trouble},
+    state::{merged_last, CheckTally, News},
     watch::{self, Report},
 };
 
@@ -332,7 +329,7 @@ impl Shared {
     /// Keeps what the tick read in `state`, evaluates every watch against
     /// it, and queues and saves each session's news. Returns the sessions
     /// to tell.
-    fn apply(&self, state: &mut State, reads: &Reads, now: u64) -> Vec<(SessionId, Arc<Notify>)> {
+    fn apply(&self, state: &mut State, reads: &Reads, now: u64) -> Vec<Told> {
         keep(state, reads, now);
         let shown = due::shown(state, now);
         let State {
@@ -346,6 +343,7 @@ impl Shared {
         for (session, entry) in sessions.iter_mut() {
             let (changed, news) = evaluate(&mut entry.record, &reads.prs, now);
             let has_news = !news.is_empty();
+            let merged = merged_last(&news).is_some();
             for item in news {
                 entry
                     .record
@@ -356,7 +354,14 @@ impl Shared {
                 let _ = self.save(session, &entry.record);
             }
             if has_news {
-                told.push((session.clone(), Arc::clone(&entry.notify)));
+                // A session that watches another pull request still has
+                // work under way, so its merge is not told as one.
+                let watches = entry.record.watching().next().is_some();
+                told.push(Told {
+                    session: session.clone(),
+                    notify: Arc::clone(&entry.notify),
+                    merged_at: (merged && !watches).then_some(now),
+                });
             }
         }
         // Forget the sessions that only ever asked for news, the branches

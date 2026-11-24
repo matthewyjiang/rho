@@ -20,6 +20,7 @@ fn summary(id: &str, cwd: &str, updated_at: u64) -> SessionSummary {
         origin: None,
         agent: None,
         started_by: None,
+        mark: None,
     }
 }
 
@@ -93,6 +94,7 @@ fn place(cwd: &Path) -> Placement {
 fn hub_groups_merge_worktrees_and_collect_missing_directories() {
     let run = |id: &str, cwd: &str, updated_at: u64| SessionSummary {
         origin: Some(SessionOrigin::Run),
+        mark: None,
         ..summary(id, cwd, updated_at)
     };
     let sessions = vec![
