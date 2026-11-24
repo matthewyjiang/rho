@@ -220,6 +220,9 @@ Picking up a session I started
   you pick one: a better match may be further down. If it still says
   `more: true`, tell me the list was cut off when you show me what you
   found.
+- A machine that could not list its sessions has `error` in place of
+  `sessions`. Tell me which machines those are and what they said before
+  you pick a session: mine may be on one of them.
 - Call `read` before you act on it. To follow it, call `watch` with
   `webhook: "grok"`. Add it to the ledger.
 - `watch` can answer with the news itself. If it returns `watching: false`,
