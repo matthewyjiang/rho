@@ -272,7 +272,8 @@ pub(super) enum SessionEntry {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         parent_session: Option<SessionTarget>,
         /// The session that started this one through session control, by
-        /// id (see `SessionProvenance::started_by`); `None` for one
+        /// id alone, as the wire names it (see
+        /// `SessionProvenance::started_by`); `None` for one
         /// nothing started that way, or in a file written before it was
         /// recorded.
         #[serde(default, skip_serializing_if = "Option::is_none")]

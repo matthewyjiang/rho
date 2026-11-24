@@ -120,8 +120,8 @@ impl Sessions {
         Ok(SessionRenameResponse {})
     }
 
-    /// Deletes a saved session and the sessions it owns, its subagents',
-    /// workflow nodes', and forks', unloading it and its loaded forks first.
+    /// Deletes a saved session and the sessions it owns, its subagents' and
+    /// forks', unloading it and its loaded forks first.
     /// The sessions it started through session control stay.
     pub(in crate::app::daemon_host) async fn delete(
         &self,

@@ -21,7 +21,7 @@ pub const SESSION_LIST: &str = "rho/session/list";
 ///
 /// # Next major
 ///
-/// NEXT_MAJOR(rho-protocol): fold `agent` and `parent` into SessionSummary and remove rho/session/list_detailed (SESSION_LIST_DETAILED, SessionListDetailedResponse, DetailedSessionSummary).
+/// NEXT_MAJOR(rho-protocol): fold agent and parent into SessionSummary and remove rho/session/list_detailed.
 ///
 /// [`SessionSummary`] is not `#[non_exhaustive]`, so a field is a major
 /// change; until then this method sends its rows with those fields beside
@@ -29,8 +29,7 @@ pub const SESSION_LIST: &str = "rho/session/list";
 pub const SESSION_LIST_DETAILED: &str = "rho/session/list_detailed";
 /// Set a saved session's title.
 pub const SESSION_RENAME: &str = "rho/session/rename";
-/// Delete a saved session, with its subagents', workflow nodes', and forks'
-/// sessions. Sessions it started through session control stay.
+/// Delete a saved session, with its subagents' and forks' sessions. Sessions it started through session control stay.
 pub const SESSION_DELETE: &str = "rho/session/delete";
 
 /// Params of [`SESSION_LIST`].
@@ -135,9 +134,10 @@ pub struct DetailedSessionSummary {
     /// or, when that names a subagent's or workflow node's session, the
     /// session whose turn runs that subagent or workflow. Absent for a
     /// session nothing started that way, one whose `parent` no job of the
-    /// daemon writes, and one started before the daemon saved it. Deleting
-    /// the parent leaves this session listed, still naming it: an id
-    /// [`SESSION_LIST`] no longer lists.
+    /// daemon writes, and one started before the daemon saved it. The id
+    /// alone names the parent, and a list may not hold it: the parent may be
+    /// deleted, a fork, unsaved, in another workspace or on another page.
+    /// A client treats a parent it cannot find as none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<SessionId>,
 }
@@ -183,7 +183,7 @@ pub struct SessionDeleteParams {
 }
 
 /// Result of [`SESSION_DELETE`]: the session's files are gone, with those
-/// of the sessions it owns, its subagents', workflow nodes', and forks',
+/// of the sessions it owns, its subagents' and forks',
 /// and the daemon has unloaded it, detaching its clients as
 /// [`super::DetachReason::Deleted`]. Its job stays in [`super::JOB_LIST`].
 /// The sessions it started through session control

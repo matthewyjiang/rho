@@ -622,7 +622,9 @@ impl StampedDirs {
 /// without a schema version: older Rho writes rows without touching this
 /// column, leaving it unset on a row it inserts and at an older stamp on one
 /// it updates, so a row is current only while these were read at the row's
-/// own stamp; otherwise the next sync re-summarizes it.
+/// own stamp; otherwise the next sync re-summarizes it. A header fact added
+/// later needs a column of its own: a new key here would read as current
+/// on every row this build stamped.
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 struct StampedAgentStarter {
     read_at: FileStamp,

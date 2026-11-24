@@ -731,8 +731,7 @@ fn find_parent_linked_runs(
 
 impl super::Session {
     /// Deletes the session saved under exactly `id`, in whichever workspace
-    /// it is, with the sessions it owns (its subagents', workflow nodes', and
-    /// forks'), as `rho sessions rm` does; the sessions it started through
+    /// it is, with the sessions it owns (its subagents' and forks'), as `rho sessions rm` does; the sessions it started through
     /// session control stay (see `SessionProvenance::started_by`). Hosts
     /// name whole ids, and ids need not be UUIDs, so `id` is never read as a
     /// prefix; one id saved in two workspaces is refused as
