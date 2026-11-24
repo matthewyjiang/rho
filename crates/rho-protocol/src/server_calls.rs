@@ -34,7 +34,8 @@ use crate::{
         SESSION_PULL_REQUEST_LIST, SESSION_PULL_REQUEST_SHOW, SESSION_PULL_REQUEST_UNLINK,
         SESSION_RENAME, SESSION_STEER, SESSION_SURFACE_ACTION, SESSION_UNSTEER, WORKTREE_PRUNE,
     },
-    server::{decode_params, encode_result, Service},
+    server::Service,
+    server_codec::{decode_params, encode_result},
     ErrorCode, RpcError, StatusParams, StopParams, StopResponse,
 };
 

@@ -10,7 +10,8 @@ use crate::{
     methods::{
         AuthLogin, AuthLoginParams, SessionAttach, SessionAttachParams, SessionObserveParams,
     },
-    server::{encode_result, Responder, Service},
+    server::{Responder, Service},
+    server_codec::encode_result,
 };
 
 /// A request that subscribes the connection to a session's events.
