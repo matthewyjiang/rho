@@ -263,7 +263,7 @@ into the current turn, use [subagents](/subagents) instead.
 | `prompt` | Starts the session's next turn with `text`. |
 | `steer` | Adds `text` to the running turn's next model request. |
 | `cancel` | Cancels the turn in progress. |
-| `wait` | Waits for the session to settle, with no turn running and none rho will start for its background work, or to need a person, a subagent's question included, for up to `timeout_secs`, at most 50. Returns the state, the last turn's final answer once it ended (final once `done` is true), and a `cursor` for the next `wait`. |
+| `wait` | Waits for the session to settle, with no turn running and none rho will start for its background work, or to need a person, for up to `timeout_secs`, at most 50. A subagent's question asked while the session is at rest ends the wait; one asked while a turn runs is listed in `inputs` but does not end it. Returns the state, the last turn's final answer once it ended (final once `done` is true), and a `cursor` for the next `wait`. |
 | `read` | Without an `anchor`, pages through a session's transcript, including the turn in progress. |
 | `answer` | Answers a question that `session`, a session this one started, asks: `request` from `wait`'s `inputs`, and `answers` by question id, or `decline: true`. |
 

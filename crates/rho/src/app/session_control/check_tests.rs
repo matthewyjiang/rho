@@ -29,7 +29,9 @@ fn ask(prompt: &str) -> QuestionAsk {
 // Covers: an answer's approval text names each question's prompt, so an
 // approval of `q1: Yes` to one question does not cover the same answer to
 // another, as one a reloaded session asks under the same request id and
-// the default title; a decline names the prompts it declines.
+// the default title; a decline names the prompts it declines; two values
+// read apart from one value that holds a comma, so an approval of one does
+// not cover the other.
 // Owner: session-control check, where the approval text is built.
 #[test]
 fn an_answers_approval_text_names_the_questions_prompts() {
@@ -52,6 +54,14 @@ fn an_answers_approval_text_names_the_questions_prompts() {
             "{answer:?}"
         );
     }
+    let [two, one] = [vec!["A", "B"], vec!["A, B"]].map(|values| {
+        let values = values.into_iter().map(str::to_owned).collect();
+        let answer = QuestionAnswer::Answers {
+            answers: BTreeMap::from([("q1".to_owned(), values)]),
+        };
+        answer_text(&params, &ask("Which?"), &answer)
+    });
+    assert_ne!(two, one);
 }
 
 // Covers: the check refuses, before anyone is asked to approve it, an

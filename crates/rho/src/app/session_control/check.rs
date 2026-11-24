@@ -240,9 +240,11 @@ fn find_question(
 
 /// What an answer sends, for an approval to show and remember: the request
 /// and session it answers with the `question`'s title, then each question
-/// it answers by id and prompt with its answers, as
-/// `color ("Which color?"): Blue; size ("Which sizes?"): S, M`, or the
-/// questions it declines. Request ids restart when the daemon reloads the
+/// it answers by id and prompt with its answers, each quoted, as
+/// `color ("Which color?"): ["Blue"]; size ("Which sizes?"): ["S", "M"]`,
+/// or the questions it declines. The quoting keeps two answers apart from
+/// one answer that holds a comma, since an approval is remembered by this
+/// text. Request ids restart when the daemon reloads the
 /// session, and titles default to the same text, so the prompts are what
 /// keep an approval for this answer from covering the same answers to
 /// another question.
@@ -255,7 +257,7 @@ fn answer_text(params: &AnswerParams, question: &QuestionAsk, answer: &QuestionA
     let answers = match answer {
         QuestionAnswer::Answers { answers } => answers
             .iter()
-            .map(|(id, values)| format!("{}: {}", named(id), values.join(", ")))
+            .map(|(id, values)| format!("{}: {values:?}", named(id)))
             .collect::<Vec<_>>()
             .join("; "),
         QuestionAnswer::Decline => format!(
