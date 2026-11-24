@@ -22,7 +22,7 @@ use super::{
     poller::{DetailError, BUDGET_FLOOR, WATCHES_PER_SESSION},
     record::LinkOrigin,
     service::{Entry, Shared},
-    state::{merged_last, CheckTally, Gate, News, WatchState},
+    state::{ended_otherwise_since, merged_last, CheckTally, Gate, News, WatchState},
     watch,
 };
 
@@ -260,14 +260,18 @@ impl PullRequestInbox {
     /// session's agent of, in unix milliseconds, taken: `None` until a turn
     /// delivers news that a watch ended merged, and again once taken. Also
     /// `None` when news acknowledged with it or since told of a watch that
-    /// ended some other way (see [`merged_last`]), and, still taken, while
-    /// the session watches a pull request, as one its agent began to watch
-    /// in that turn: its work is not over.
+    /// ended some other way (see [`merged_last`]), or news still queued
+    /// does, as of a pull request closed while the turn ran; and, still
+    /// taken, while the session watches a pull request, as one its agent
+    /// began to watch in that turn: its work is not over.
     pub(crate) fn take_merge_told(&self) -> Option<u64> {
         let mut state = self.shared.state();
         let entry = state.sessions.get_mut(&self.session)?;
-        let told = entry.merge_told.take();
-        told.filter(|_| entry.record.watching().next().is_none())
+        let told = entry.merge_told.take()?;
+        let record = &entry.record;
+        let all_merged =
+            record.watching().next().is_none() && !ended_otherwise_since(record.news(), told);
+        all_merged.then_some(told)
     }
 
     /// Watches `target` for the session, linking it first, at `now` (unix

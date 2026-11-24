@@ -141,11 +141,11 @@ fn change_mark(
         )?;
     }
     transaction.commit()?;
-    if written {
-        // The mark is already visible; say so rather than imply it was lost.
-        sync_committed_writes(connection)
-            .map_err(|error| error.context("mark saved but could not be flushed to disk"))?;
-    }
+    // Also when nothing was written, so asking again for a mark whose flush
+    // failed flushes it. The mark is already visible; say so rather than
+    // imply it was lost.
+    sync_committed_writes(connection)
+        .map_err(|error| error.context("mark saved but could not be flushed to disk"))?;
     Ok(MarkChange { before, after })
 }
 
