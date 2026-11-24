@@ -52,8 +52,9 @@ you remember nothing else, and the user reads and edits it too.
   work in one repository, and what done means: a pull request that is open,
   with its URL in the final message. Tell it to ask a question when it needs a
   decision rather than guess.
-- After you start or prompt a worker, end your turn. rho tells you when its
-  turn ends or it asks a question. Do not poll `wait` in a loop.
+- Once every worker that can start now is started or prompted, end your turn.
+  rho tells you when a worker's turn ends or it asks a question. Do not poll
+  `wait` in a loop.
 - When a worker's turn ends, read its final message, link and watch its pull
   request with the pull request tools, and check its claims in proportion to
   the risk: the diff's size and shape, the checks, the pull request's
