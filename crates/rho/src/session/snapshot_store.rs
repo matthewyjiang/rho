@@ -264,7 +264,7 @@ impl Session {
     ) -> anyhow::Result<SessionSnapshot> {
         self.with_session_tree(|tree| {
             let state = tree.state_for(target_id)?;
-            self.snapshot_from_state(state, provider, prompt_cache_key)
+            self.snapshot_from_state(state, provider, prompt_cache_key, None)
         })
     }
 
@@ -317,7 +317,20 @@ impl Session {
         prompt_cache_key: String,
     ) -> anyhow::Result<SessionSnapshot> {
         let state = self.active_persisted_state()?;
-        self.snapshot_from_state(state, provider, prompt_cache_key)
+        self.snapshot_from_state(state, provider, prompt_cache_key, None)
+    }
+
+    /// The session's conversation as [`Self::snapshot_for_resume`] gives
+    /// it, as that of new session `fork`, which forks it: the same history,
+    /// compaction, metadata, and prompt cache key.
+    pub(crate) fn snapshot_for_fork(
+        &self,
+        provider: ModelIdentity,
+        prompt_cache_key: String,
+        fork: SessionId,
+    ) -> anyhow::Result<SessionSnapshot> {
+        let state = self.active_persisted_state()?;
+        self.snapshot_from_state(state, provider, prompt_cache_key, Some(fork))
     }
 
     fn active_persisted_state(&self) -> anyhow::Result<PersistedSessionState> {
@@ -360,11 +373,14 @@ impl Session {
         }
     }
 
+    /// The snapshot of `state`, read from this file, as session `fork`'s
+    /// when given, else as its own.
     fn snapshot_from_state(
         &self,
         state: super::persistence::PersistedSessionState,
         provider: ModelIdentity,
         prompt_cache_key: String,
+        fork: Option<SessionId>,
     ) -> anyhow::Result<SessionSnapshot> {
         let history = insert_interrupted_tool_placeholders(state.model);
         let mut snapshot = if let Some(snapshot) = state.snapshot {
@@ -376,7 +392,7 @@ impl Session {
                 );
             }
             let mut migrated = SessionSnapshot::new(
-                snapshot.session_id().clone(),
+                fork.unwrap_or_else(|| snapshot.session_id().clone()),
                 state.revision,
                 history,
                 snapshot.provider().clone(),
@@ -392,7 +408,10 @@ impl Session {
             }
         } else {
             SessionSnapshot::new(
-                SessionId::from_string(self.id.clone())?,
+                match fork {
+                    Some(fork) => fork,
+                    None => SessionId::from_string(self.id.clone())?,
+                },
                 state.revision,
                 history,
                 provider,
@@ -425,7 +444,7 @@ impl rho_sdk::SessionStore for Session {
                 .map(str::to_owned)
                 .unwrap_or_else(|| format!("rho:{}", self.id));
             let provider = stored.provider().clone();
-            self.snapshot_from_state(state, provider, cache_key)
+            self.snapshot_from_state(state, provider, cache_key, None)
                 .map(Some)
                 .map_err(persistence_error)
         })

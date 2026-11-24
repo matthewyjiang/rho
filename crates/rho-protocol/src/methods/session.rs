@@ -17,6 +17,9 @@ use super::{
 
 /// Open a new session in a workspace, before its first prompt.
 pub const SESSION_NEW: &str = "rho/session/new";
+/// Open a new session that forks a saved one: a side conversation that
+/// starts from its conversation.
+pub const SESSION_FORK: &str = "rho/session/fork";
 /// Start a turn on a session that has none in progress.
 pub const SESSION_PROMPT: &str = "rho/session/prompt";
 /// Cancel a session's turn in progress, if any.
@@ -202,6 +205,42 @@ pub struct SessionNewResponse {
     /// [`SessionNewParams::worktree`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub worktree: Option<SessionWorktree>,
+}
+
+/// Params of [`SESSION_FORK`]. The fork starts from the session's
+/// conversation as last saved and never writes back to it. It works in
+/// the session's workspace as the agent the session was saved as, with its
+/// model, tools, and added directories, so a provider's prompt cache can
+/// serve the shared conversation. It opens in
+/// [`crate::PermissionMode::Supervised`], or in
+/// [`crate::PermissionMode::Plan`] when the session was saved in plan mode,
+/// and its first turn tells the model it works beside the session.
+///
+/// A session that saved nothing is [`crate::ErrorCode::SessionNotFound`];
+/// a fork, a subagent's or workflow node's session, or one rebound to
+/// another agent is [`crate::ErrorCode::SessionOpenFailed`]; one another
+/// process has open is [`crate::ErrorCode::SessionInUse`]. The fork is
+/// saved as the session's: [`super::SESSION_LIST`] leaves it out, and
+/// [`super::SESSION_DELETE`] of the session deletes it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SessionForkParams {
+    /// The saved session to fork.
+    pub session: SessionId,
+    /// The client's environment, as [`SessionNewParams::environment`].
+    pub environment: ClientEnvironment,
+    /// The client's choices for the fork, as [`SessionNewParams::setup`].
+    #[serde(default, skip_serializing_if = "SessionSetup::is_default")]
+    pub setup: SessionSetup,
+}
+
+/// Result of [`SESSION_FORK`]: the fork is loaded and its job is
+/// [`crate::JobState::Idle`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SessionForkResponse {
+    pub session: SessionId,
+    /// The fork's settings and the choices it offers, which
+    /// [`super::SESSION_CONFIGURE`] changes.
+    pub options: super::SessionOptions,
 }
 
 /// A git worktree the daemon added for a session to work in (#1673).

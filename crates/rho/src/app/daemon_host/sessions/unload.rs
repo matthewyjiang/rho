@@ -144,7 +144,7 @@ impl Sessions {
             };
             // A session the stop did not drain is torn down before the
             // stop's wait on `unloading`.
-            if !self.evict(id, session, &mut turn) {
+            if !self.evict(&mut [(id, session, &mut *turn)]) {
                 return false;
             }
             idle_since

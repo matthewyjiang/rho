@@ -47,8 +47,8 @@ use std::{
 use rho_protocol::{
     DetachReason, ErrorCode, RpcError, SessionAnswerParams, SessionAnswerResponse,
     SessionAttachParams, SessionAttachResponse, SessionCancelParams, SessionCancelResponse,
-    SessionHoldParams, SessionHoldResponse, SessionNewParams, SessionNewResponse,
-    SessionSurfaceActionParams, SessionSurfaceActionResponse, Subscription, Surfaces, TurnOutcome,
+    SessionHoldParams, SessionHoldResponse, SessionSurfaceActionParams,
+    SessionSurfaceActionResponse, Subscription, Surfaces, TurnOutcome,
 };
 use rho_sdk::{CancellationToken, SessionId};
 
@@ -58,7 +58,7 @@ use super::{
         TurnEnd,
     },
     subagents::Subagents,
-    wire::{session_to_wire, state_event},
+    wire::state_event,
 };
 use crate::{
     app::{
@@ -79,6 +79,7 @@ mod child_questions;
 mod configure;
 mod cost;
 mod feed;
+mod fork;
 mod grant;
 mod held_context;
 mod hold;
@@ -86,6 +87,7 @@ mod idle_wake;
 mod inputs;
 mod inspect;
 mod mcp;
+mod new;
 mod next_turn;
 mod observe;
 mod open;
@@ -123,7 +125,7 @@ use idle_wake::IdleWatch;
 use inputs::Inputs;
 use open::open_failed;
 pub(super) use open::session_environment;
-use open::{config_for_new, open_session, OpenWith, OpenedSession, Opening, Workspace};
+use open::{OpenWith, OpenedSession};
 use queued::Queued;
 use reopen::ReopenLocks;
 use restart_resume::RestartResumes;
@@ -211,6 +213,9 @@ struct LoadedSession {
     workspace: PathBuf,
     /// The setup it opened with, kept to reopen it (see [`pull_request_wake`]).
     setup: rho_protocol::SessionSetup,
+    /// The session it forks, for a fork (see [`fork`]), whose delete
+    /// unloads it first, so the store can delete its file too.
+    fork_of: Option<SessionId>,
     /// The turn's cancel and the session's residency. A prompt's start, an
     /// attach, a turn's end, a cancel, and the idle unload are ordered by
     /// this lock.
@@ -383,6 +388,8 @@ impl LoadedSession {
             global,
             environment,
             setup,
+            fork_of,
+            held_context,
         } = opened;
         let (feed, live) = opening_feed(job, &runtime, &config, auths);
         let keyed = KeyedTurn::recorded(job);
@@ -393,7 +400,7 @@ impl LoadedSession {
             idle_wake: IdleWatch::of(&runtime),
             wake_gave_up: AtomicBool::new(false),
             cache_warm: KeepWarm::of(&runtime),
-            held_context: Mutex::default(),
+            held_context: Mutex::new(held_context),
             child_questions: ChildQuestions::of(&mut runtime),
             handle: runtime.handle(),
             workspace: runtime.workspace_root().to_path_buf(),
@@ -414,6 +421,7 @@ impl LoadedSession {
             settings: Arc::clone(settings),
             environment,
             setup,
+            fork_of,
             turn: Mutex::new(TurnSlot {
                 cancel: CancellationToken::new(),
                 kind: TurnKind::Prompt,
@@ -562,110 +570,6 @@ impl Sessions {
         for session in loaded.values() {
             session.feed.close(told);
         }
-    }
-
-    /// Opens a new session in `cwd`, or in a worktree added for it, as
-    /// `agent`, with the client's `setup`, and registers the job of its
-    /// turns.
-    pub(super) async fn open_new(
-        &self,
-        params: SessionNewParams,
-    ) -> Result<SessionNewResponse, RpcError> {
-        let SessionNewParams {
-            cwd,
-            environment,
-            agent,
-            setup,
-            parent,
-            grant,
-            worktree,
-        } = params;
-        self.refuse_when_stopping()?;
-        let workspace = Workspace::parse(&cwd)?;
-        // Resolved before the session opens, so a malformed parent opens
-        // nothing.
-        let started_by = parent.map(|parent| self.job_writing(&parent)).transpose()?;
-        // A session another one starts opens with no more than its
-        // parent's turn could give. A subagent run writing the parent runs
-        // under its session's grant.
-        let parents = started_by
-            .as_ref()
-            .and_then(Option::as_ref)
-            .and_then(|job| self.jobs.session_grant(job));
-        let opening = grant::opening(grant::asked(grant, &environment)?, parents.as_ref());
-        let with = OpenWith::under(opening, &environment, setup)?;
-        let global = config_for_new(&self.settings).await?;
-        // Added last, once the request is otherwise sound, since nothing
-        // removes it.
-        let (workspace, worktree) = match worktree {
-            false => (workspace, None),
-            true => {
-                let start = crate::worktree::Start::of(&global);
-                let (workspace, added) =
-                    worktree::add_for_session(&self.worktrees, &workspace, start).await?;
-                (workspace, Some(added))
-            }
-        };
-        let job = JobId::generate();
-        let opened = open_session(
-            Opening::New { workspace, agent },
-            &with,
-            &self.subagents,
-            &self.pull_requests,
-            &self.settings,
-            global,
-            &job,
-        )
-        .await
-        .map_err(|error| worktree::kept(error, worktree.as_ref()))?;
-        let session = opened.runtime.session_id().clone();
-        let record = JobRecord {
-            // A session started from one no daemon job writes still shares
-            // the budget, with no parent to show.
-            admission: match started_by {
-                Some(_) => Admission::SharedBudget,
-                None => Admission::Immediate,
-            },
-            parent: started_by.flatten(),
-            keeping: match opened.runtime.persistence() {
-                crate::session::SessionPersistence::Saved => Keeping::Stored,
-                crate::session::SessionPersistence::Ephemeral => Keeping::MemoryOnly,
-            },
-            // A session that opens under a limit keeps it: no later
-            // prompt widens it (#1796).
-            grant_limit: (!with.grant.is_root()).then(|| with.grant.clone()),
-            grant: with.grant,
-            worktree: worktree.clone(),
-            ..JobRecord::new_session(
-                job.clone(),
-                opened.runtime.workspace_root().to_path_buf(),
-                session.clone(),
-            )
-        };
-        let added = self
-            .add(SessionJobRecord::Register(record), opened)
-            .await
-            .map_err(|error| worktree::kept(error, worktree.as_ref()))?;
-        tracing::info!(%session, %job, "opened session");
-        Ok(SessionNewResponse {
-            session: session_to_wire(session),
-            options: added.feed.options(),
-            worktree,
-        })
-    }
-
-    /// The job writing `session`, a new session's parent (#1714): the one
-    /// under way, as the turn of a session that starts another is, else the
-    /// latest job of its turns. `None` for a session no job of this daemon
-    /// writes, such as one an in-process rho runs.
-    fn job_writing(&self, session: &rho_protocol::SessionId) -> Result<Option<JobId>, RpcError> {
-        Ok(
-            match self.jobs.session_job(&reopen::parse_session(session)?) {
-                SessionJob::Busy(job) => Some(job),
-                SessionJob::Last(record) => Some(record.id),
-                SessionJob::New => None,
-            },
-        )
     }
 
     /// Adds `opened`, whose turns are recorded as `job` says. Checked,
@@ -882,23 +786,27 @@ impl Sessions {
         }
     }
 
-    /// Takes `session`, loaded as `id`, out of `loaded` and marks it
-    /// unloaded, unless the daemon is stopping or `id` now names another
-    /// session; whether it did. `turn` is `session`'s turn lock, held, so a
-    /// request either used the session before this or finds it gone and
-    /// looks it up again. Under the lock `begin_stop` takes, so a stop either
-    /// drains the session first or finds it gone. Lock order: the turn
-    /// lock, then `loaded`.
-    fn evict(&self, id: &SessionId, session: &Arc<LoadedSession>, turn: &mut TurnSlot) -> bool {
+    /// Takes each session, loaded as its id, out of `loaded` and marks it
+    /// unloaded, all or none: none when the daemon is stopping or an id now
+    /// names another session; whether it did. Each comes with its turn
+    /// lock, held, so a request either used the session before this or
+    /// finds it gone and looks it up again. Under the lock `begin_stop`
+    /// takes, so a stop either drains the sessions first or finds them gone.
+    /// Lock order: the turn locks, then `loaded`.
+    fn evict(&self, sessions: &mut [(&SessionId, &Arc<LoadedSession>, &mut TurnSlot)]) -> bool {
         let mut loaded = self.loaded();
-        let current = loaded
-            .get(id)
-            .is_some_and(|loaded| Arc::ptr_eq(loaded, session));
+        let current = sessions.iter().all(|(id, session, _)| {
+            loaded
+                .get(*id)
+                .is_some_and(|loaded| Arc::ptr_eq(loaded, session))
+        });
         if self.stopping.is_cancelled() || !current {
             return false;
         }
-        loaded.remove(id);
-        turn.residency = Residency::Unloaded;
+        for (id, _, turn) in sessions {
+            loaded.remove(*id);
+            turn.residency = Residency::Unloaded;
+        }
         true
     }
 

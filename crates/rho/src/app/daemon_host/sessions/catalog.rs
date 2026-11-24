@@ -8,7 +8,9 @@
 //! file's lease: it refuses one with a turn or background work under way,
 //! or a settings change queued or applying, or whose delete the store would
 //! refuse, holds it from prompts and changes while it tears it down, and
-//! then detaches its clients as `deleted`.
+//! then detaches its clients as `deleted`. The session's loaded forks, whose
+//! files the store deletes with it, are checked and unloaded with it: one
+//! that refuses refuses the delete, and leaves them all loaded.
 
 use std::{num::NonZeroU32, num::NonZeroUsize, sync::Arc};
 
@@ -17,6 +19,7 @@ use rho_protocol::{
     SessionListParams, SessionListResponse, SessionRenameParams, SessionRenameResponse,
 };
 use rho_sdk::SessionId;
+use tokio::sync::OwnedMutexGuard;
 
 use super::{
     being_deleted,
@@ -27,7 +30,7 @@ use super::{
     writing, Held, Hold, LoadedSession, Sessions,
 };
 use crate::{
-    app::daemon_host::jobs::SessionJob,
+    app::{daemon_host::jobs::SessionJob, session_runtime::SessionRuntime},
     session::{
         catalog::{self, CatalogError},
         ExactDelete, NoSessionFound, Session as StoredSession, SessionSummary,
@@ -100,7 +103,7 @@ impl Sessions {
     }
 
     /// Deletes a saved session and the sessions it started, unloading it
-    /// first when the daemon has it loaded.
+    /// and its loaded forks first.
     pub(in crate::app::daemon_host) async fn delete(
         &self,
         params: SessionDeleteParams,
@@ -110,21 +113,56 @@ impl Sessions {
         // Both held until the files are gone: the stop waits for the first,
         // and a request that would reopen the session, or link or unlink a
         // pull request for it, waits for the second, then finds nothing
-        // saved.
+        // saved. A new fork holds the session's reopen lock until it is
+        // loaded, so it is found here; an unloaded fork reopened meanwhile
+        // is not, and the store refuses the delete while it holds its file.
         let _unloading = self.unloading.read().await;
         let _reopening = self.reopening.lock(&id).await;
+        let forks: Vec<SessionId> = self
+            .loaded()
+            .values()
+            .filter(|session| session.fork_of.as_ref() == Some(&id))
+            .map(|session| session.id.clone())
+            .collect();
+        let mut _reopening_forks = Vec::with_capacity(forks.len());
+        for fork in &forks {
+            _reopening_forks.push(self.reopening.lock(fork).await);
+        }
         let loaded = self.loaded().get(&id).cloned();
-        match &loaded {
-            Some(session) => {
-                self.unload_to_delete(&id, session, params.unless_attached)
-                    .await?;
-            }
-            None => {
-                if let SessionJob::Busy(job) = self.jobs.session_job(&id) {
-                    return Err(writing(&job, &id));
-                }
+        if loaded.is_none() {
+            if let SessionJob::Busy(job) = self.jobs.session_job(&id) {
+                return Err(writing(&job, &id));
             }
         }
+        // Each loaded session the delete reaches, its forks first, is held
+        // and checked before any is let go, so a refused delete leaves them
+        // all loaded.
+        let mut taken = Vec::with_capacity(forks.len() + 1);
+        for fork in forks {
+            // Unloaded meanwhile, as by its idle unload.
+            let Some(session) = self.loaded().get(&fork).cloned() else {
+                continue;
+            };
+            let held = self.hold_to_delete(fork, session, params.unless_attached);
+            taken.push(held.await.map_err(|error| in_fork(error, &id))?);
+        }
+        if let Some(session) = &loaded {
+            let held = self.hold_to_delete(id.clone(), Arc::clone(session), params.unless_attached);
+            taken.push(held.await?);
+        }
+        // The store's refusals, checked while the sessions are still loaded,
+        // whose leases on their files it skips: only those, since another
+        // process may hold the session's file while the daemon has it
+        // unloaded.
+        {
+            let id = id.clone();
+            let open: Vec<String> = taken.iter().map(|held| held.id.to_string()).collect();
+            store_blocking("check the session's delete", move || {
+                StoredSession::check_delete_exact(id.as_str(), &open)
+            })
+            .await?;
+        }
+        let unloaded = self.unload_to_delete(taken, params.unless_attached).await?;
         let deleted = {
             let id = id.clone();
             store_blocking("delete the session", move || {
@@ -132,48 +170,49 @@ impl Sessions {
             })
             .await
         };
-        if deleted.is_ok() {
-            // A T3 wake watcher's recorded wait goes with its session.
-            WakeSignal::forget(&self.wakes, id.as_str());
-            self.pull_requests.forget(&id);
+        // The store refused after its check passed, as on an I/O error, with
+        // the sessions unloaded: their clients attach again to reopen those
+        // that saved anything.
+        let detached = match deleted {
+            Ok(_) => DetachReason::Deleted,
+            Err(_) => DetachReason::Lagged,
+        };
+        for session in &unloaded {
+            session.feed.close(detached);
         }
-        let child_sessions = match (loaded, deleted) {
-            (Some(session), Ok(ExactDelete::Deleted(outcome))) => {
-                session.feed.close(DetachReason::Deleted);
-                outcome.deleted_child_session_count
-            }
+        let child_sessions = match deleted? {
+            ExactDelete::Deleted(outcome) => outcome.deleted_child_session_count,
             // A session loaded before it saved anything has no files: it is
             // gone once unloaded.
-            (Some(session), Ok(ExactDelete::NothingSaved)) => {
-                session.feed.close(DetachReason::Deleted);
-                0
-            }
-            // The store refused after its check passed, as on an I/O error,
-            // with the session unloaded: its clients attach again to reopen
-            // it.
-            (Some(session), Err(error)) => {
-                session.feed.close(DetachReason::Lagged);
-                return Err(error);
-            }
-            (None, Ok(ExactDelete::Deleted(outcome))) => outcome.deleted_child_session_count,
-            (None, Ok(ExactDelete::NothingSaved)) => return Err(not_found(&id)),
-            (None, Err(error)) => return Err(error),
+            ExactDelete::NothingSaved if loaded.is_some() => 0,
+            ExactDelete::NothingSaved => return Err(not_found(&id)),
         };
+        // A T3 wake watcher's recorded wait, and the pull requests a session
+        // linked, go with it and its forks.
+        let forks = unloaded
+            .iter()
+            .map(|session| &session.id)
+            .filter(|fork| **fork != id);
+        for gone in std::iter::once(&id).chain(forks) {
+            WakeSignal::forget(&self.wakes, gone.as_str());
+            self.pull_requests.forget(gone);
+        }
         tracing::info!(session = %id, child_sessions, "deleted session");
         Ok(SessionDeleteResponse {})
     }
 
-    /// Unloads `session`, loaded as `id`, for its delete, unless a settings
-    /// change is queued or applying, its turn or background work is under
-    /// way, or the store would refuse the delete. Held from prompts and
-    /// settings changes meanwhile; once this returns, the session is out of
-    /// `loaded` and its runtime, which held its file, torn down.
-    async fn unload_to_delete(
+    /// Holds `session`, loaded as `id`, for its delete and takes its
+    /// runtime, unless a settings change is queued or applying, its turn or
+    /// background work is under way, or `unless_attached` and a client
+    /// follows it. Held from prompts and settings changes until the
+    /// returned hold is dropped, which puts the runtime back unless the
+    /// delete unloaded the session.
+    async fn hold_to_delete(
         &self,
-        id: &SessionId,
-        session: &Arc<LoadedSession>,
+        id: SessionId,
+        session: Arc<LoadedSession>,
         unless_attached: bool,
-    ) -> Result<(), RpcError> {
+    ) -> Result<HeldToDelete, RpcError> {
         let held = {
             // Under the turn lock a prompt starts its turn under, so this
             // sees every turn started before it, and a prompt after it sees
@@ -187,17 +226,17 @@ impl Sessions {
                 None => {}
             }
             if unless_attached && session.feed.followed() {
-                return Err(open_in_a_client(id));
+                return Err(open_in_a_client(&id));
             }
-            match self.jobs.session_job(id) {
+            match self.jobs.session_job(&id) {
                 SessionJob::Busy(job) if job == session.job => return Err(busy(TURN_UNDER_WAY)),
-                SessionJob::Busy(job) => return Err(writing(&job, id)),
+                SessionJob::Busy(job) => return Err(writing(&job, &id)),
                 SessionJob::New | SessionJob::Last(_) => {}
             }
-            Held::delete(session, &mut turn)
+            Held::delete(&session, &mut turn)
         };
         // Free once a turn that just recorded its end released it.
-        let mut slot = session.runtime.lock().await;
+        let mut slot = Arc::clone(&session.runtime).lock_owned().await;
         // Only the daemon's stop takes the runtime of a session in use.
         let Some(runtime) = slot.take() else {
             return Err(stopping());
@@ -206,39 +245,92 @@ impl Sessions {
             *slot = Some(runtime);
             return Err(busy(BACKGROUND_WORK));
         }
-        // The store's refusals, checked while the session is still loaded:
-        // a delete it refuses leaves the session as it was.
-        let checked = {
-            let id = id.clone();
-            store_blocking("check the session's delete", move || {
-                StoredSession::check_delete_exact(id.as_str())
-            })
-            .await
-        };
-        if let Err(error) = checked {
-            *slot = Some(runtime);
-            return Err(error);
-        }
+        Ok(HeldToDelete {
+            id,
+            session,
+            slot,
+            runtime: Some(runtime),
+            held: Some(held),
+        })
+    }
+
+    /// Unloads the sessions in `taken`, held for a delete whose checks
+    /// passed, all or none: takes them out of `loaded` and tears their
+    /// runtimes, which held their files, down. None when a client attached
+    /// to one meanwhile and `unless_attached`, or the daemon began to stop.
+    async fn unload_to_delete(
+        &self,
+        mut taken: Vec<HeldToDelete>,
+        unless_attached: bool,
+    ) -> Result<Vec<Arc<LoadedSession>>, RpcError> {
         {
-            let mut turn = session.turn();
-            // Again, under the lock that evicts: a client that attached
-            // while the checks above waited is not detached by the delete,
-            // and one that attaches from here finds the session gone.
-            if unless_attached && session.feed.followed() {
-                *slot = Some(runtime);
-                return Err(open_in_a_client(id));
+            // Again, under the locks that evict: a client that attached
+            // while the checks waited is not detached by the delete, and one
+            // that attaches from here finds the session gone. No other
+            // request holds two turn locks, so taking them all cannot
+            // deadlock.
+            let mut turns: Vec<_> = taken.iter().map(|held| held.session.turn()).collect();
+            if unless_attached {
+                if let Some(held) = taken.iter().find(|held| held.session.feed.followed()) {
+                    return Err(open_in_a_client(&held.id));
+                }
             }
+            let mut evicting: Vec<_> = taken
+                .iter()
+                .zip(turns.iter_mut())
+                .map(|(held, turn)| (&held.id, &held.session, &mut **turn))
+                .collect();
             // Only the stop takes a session out of `loaded` while its
-            // reopen lock is held, as it is here.
-            if !self.evict(id, session, &mut turn) {
-                *slot = Some(runtime);
+            // reopen lock is held, as each is here.
+            if !self.evict(&mut evicting) {
                 return Err(stopping());
             }
         }
-        drop(slot);
-        runtime.shutdown().await;
-        drop(held);
-        Ok(())
+        let mut sessions = Vec::with_capacity(taken.len());
+        for held in &mut taken {
+            let (session, runtime, hold) = held.unloaded();
+            runtime.shutdown().await;
+            drop(hold);
+            sessions.push(session);
+        }
+        Ok(sessions)
+    }
+}
+
+/// A loaded session held for its delete, with its runtime taken: put back
+/// when dropped, unless the delete unloaded the session.
+struct HeldToDelete {
+    id: SessionId,
+    session: Arc<LoadedSession>,
+    slot: OwnedMutexGuard<Option<SessionRuntime>>,
+    runtime: Option<SessionRuntime>,
+    held: Option<Held>,
+}
+
+impl HeldToDelete {
+    /// The session, evicted, with its runtime and its hold, which its
+    /// delete drops once the runtime is torn down.
+    fn unloaded(&mut self) -> (Arc<LoadedSession>, SessionRuntime, Held) {
+        let runtime = self.runtime.take().expect("taken until unloaded");
+        let held = self.held.take().expect("held until unloaded");
+        (Arc::clone(&self.session), runtime, held)
+    }
+}
+
+impl Drop for HeldToDelete {
+    fn drop(&mut self) {
+        if let Some(runtime) = self.runtime.take() {
+            *self.slot = Some(runtime);
+        }
+    }
+}
+
+/// `error`, which a fork of session `id` refused its delete with, said of
+/// that fork: forks are not listed, so the person knows it as a side chat.
+fn in_fork(error: RpcError, id: &SessionId) -> RpcError {
+    RpcError {
+        message: format!("a side chat forked from session {id}: {}", error.message),
+        ..error
     }
 }
 

@@ -139,7 +139,30 @@ impl SessionRuntime {
     /// gone, is logged and left as the config has it; the session's next
     /// save then records what it runs with.
     pub(crate) async fn restore_settings(&mut self, process_config: &Config) {
-        let saved = match self.saved_settings() {
+        let Some(stored) = self.storage.file() else {
+            return;
+        };
+        let saved = saved_settings(stored);
+        self.apply_saved_settings(saved, process_config).await;
+    }
+
+    /// [`Self::restore_settings`] from the file of `source`, the session a
+    /// fork starts from.
+    pub(super) async fn restore_settings_of(
+        &mut self,
+        source: &StoredSession,
+        process_config: &Config,
+    ) {
+        self.apply_saved_settings(saved_settings(source), process_config)
+            .await;
+    }
+
+    async fn apply_saved_settings(
+        &mut self,
+        saved: anyhow::Result<Option<SavedSettings>>,
+        process_config: &Config,
+    ) {
+        let saved = match saved {
             Ok(Some(saved)) => saved,
             Ok(None) => return,
             Err(error) => {
@@ -188,17 +211,14 @@ impl SessionRuntime {
         };
         warn_unrestored("permission mode", mode);
     }
+}
 
-    /// The settings the session's file keeps, or `None` when it keeps none.
-    fn saved_settings(&self) -> anyhow::Result<Option<SavedSettings>> {
-        let Some(stored) = self.storage.file() else {
-            return Ok(None);
-        };
-        let Some(encoded) = stored.session_metadata(SETTINGS_METADATA)? else {
-            return Ok(None);
-        };
-        Ok(Some(serde_json::from_str(&encoded)?))
-    }
+/// The settings `stored`'s file keeps, or `None` when it keeps none.
+fn saved_settings(stored: &StoredSession) -> anyhow::Result<Option<SavedSettings>> {
+    let Some(encoded) = stored.session_metadata(SETTINGS_METADATA)? else {
+        return Ok(None);
+    };
+    Ok(Some(serde_json::from_str(&encoded)?))
 }
 
 fn warn_unrestored(setting: &str, restored: Result<(), SettingChangeError>) {

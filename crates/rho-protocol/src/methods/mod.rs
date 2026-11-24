@@ -11,6 +11,7 @@
 //! | [`DAEMON_STOP`] | [`StopParams`] | [`StopResponse`] |
 //! | [`DAEMON_RESTART`] | [`RestartParams`] | [`RestartResponse`] |
 //! | [`SESSION_NEW`] | [`SessionNewParams`] | [`SessionNewResponse`] |
+//! | [`SESSION_FORK`] | [`SessionForkParams`] | [`SessionForkResponse`] |
 //! | [`SESSION_PROMPT`] | [`SessionPromptParams`] | [`SessionPromptResponse`] |
 //! | [`SESSION_CANCEL`] | [`SessionCancelParams`] | [`SessionCancelResponse`] |
 //! | [`SESSION_STEER`] | [`SessionSteerParams`] | [`SessionSteerResponse`] |
@@ -189,11 +190,12 @@ pub use session::{
     ClientEnvironment, DetachReason, ProjectTrustMismatch, PromptAuthor, Replay,
     SessionAttachParams, SessionAttachResponse, SessionCancelParams, SessionCancelResponse,
     SessionDetachParams, SessionDetachResponse, SessionDetachedParams, SessionEventParams,
-    SessionId, SessionNewParams, SessionNewResponse, SessionObserveParams, SessionPromptParams,
-    SessionPromptResponse, SessionSteerParams, SessionSteerResponse, SessionUnsteerParams,
-    SessionUnsteerResponse, SessionWorktree, UnsteerOutcome, SESSION_ATTACH, SESSION_CANCEL,
-    SESSION_DETACH, SESSION_DETACHED, SESSION_EVENT, SESSION_NEW, SESSION_OBSERVE, SESSION_PROMPT,
-    SESSION_STEER, SESSION_UNSTEER,
+    SessionForkParams, SessionForkResponse, SessionId, SessionNewParams, SessionNewResponse,
+    SessionObserveParams, SessionPromptParams, SessionPromptResponse, SessionSteerParams,
+    SessionSteerResponse, SessionUnsteerParams, SessionUnsteerResponse, SessionWorktree,
+    UnsteerOutcome, SESSION_ATTACH, SESSION_CANCEL, SESSION_DETACH, SESSION_DETACHED,
+    SESSION_EVENT, SESSION_FORK, SESSION_NEW, SESSION_OBSERVE, SESSION_PROMPT, SESSION_STEER,
+    SESSION_UNSTEER,
 };
 pub use setup::{
     ChildThreads, IdleWake, McpServer, SecretMap, SessionPart, SessionSetup, SignIn, Surfaces,
@@ -284,6 +286,7 @@ protocol! {
         Stop = DAEMON_STOP: StopParams => StopResponse,
         Restart = DAEMON_RESTART: RestartParams => RestartResponse,
         SessionNew = SESSION_NEW: SessionNewParams => SessionNewResponse,
+        SessionFork = SESSION_FORK: SessionForkParams => SessionForkResponse,
         SessionPrompt = SESSION_PROMPT: SessionPromptParams => SessionPromptResponse,
         SessionCancel = SESSION_CANCEL: SessionCancelParams => SessionCancelResponse,
         SessionSteer = SESSION_STEER: SessionSteerParams => SessionSteerResponse,

@@ -2,7 +2,8 @@
 //! single instance, and stop), and a dropped test sandbox stopping the
 //! daemon a client in it started. The sessions it hosts are in
 //! [`sessions`], the agent and setup a client opens one with in
-//! [`setup`], changing their settings in [`configure`], and listing,
+//! [`setup`], forks of them in [`forks`], changing their settings in
+//! [`configure`], and listing,
 //! renaming, and deleting them in [`catalog`],
 //! `rho attach` following them in [`attach`], and `rho run --detach`
 //! starting them in [`detach`], and cleaning up the git worktrees they
@@ -38,6 +39,9 @@ mod sessions;
 
 #[path = "support/daemon_setup.rs"]
 mod setup;
+
+#[path = "support/daemon_forks.rs"]
+mod forks;
 
 #[path = "support/daemon_surfaces.rs"]
 mod surfaces;

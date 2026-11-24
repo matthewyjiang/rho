@@ -227,6 +227,9 @@ pub(super) enum SavedFor {
     Turns,
     /// Reading what it saved, as an observe does, a child session's too.
     Reading,
+    /// Forking it, which a child session refuses as for turns, and a fork
+    /// or a session rebound to another agent too (see `fork.rs`).
+    Fork,
 }
 
 /// The session saved under `id`, opened in its own workspace for `purpose`.
@@ -245,8 +248,8 @@ pub(super) async fn saved_session(
 const LOOK_UP: &str = "look the session up";
 
 /// Opens the session saved under `id` in `cwd`'s workspace for `purpose`,
-/// unless another process has it open or it is a child session opened for
-/// turns (see [`SavedFor`]). Blocking.
+/// unless another process has it open or `purpose` refuses it (see
+/// [`SavedFor`]). Blocking.
 fn open_saved(cwd: &Path, id: &SessionId, purpose: SavedFor) -> Result<StoredSession, RpcError> {
     let stored = match StoredSession::open_exact_in_workspace(cwd, id.as_str()) {
         Ok(Some((stored, _history))) => stored,
@@ -260,7 +263,8 @@ fn open_saved(cwd: &Path, id: &SessionId, purpose: SavedFor) -> Result<StoredSes
     if purpose == SavedFor::Reading {
         return Ok(stored);
     }
-    let child = match stored.origin().map_err(open_failed)? {
+    let origin = stored.origin().map_err(open_failed)?;
+    let child = match origin {
         Some(SessionOrigin::Subagent) => Some("a subagent run"),
         Some(SessionOrigin::WorkflowNode) => Some("a workflow node"),
         Some(
@@ -268,17 +272,21 @@ fn open_saved(cwd: &Path, id: &SessionId, purpose: SavedFor) -> Result<StoredSes
             | SessionOrigin::Acp
             | SessionOrigin::Daemon
             | SessionOrigin::Run
+            | SessionOrigin::Fork
             | SessionOrigin::Unknown,
         )
         | None => None,
     };
-    match child {
-        Some(child) => Err(RpcError::new(
+    if let Some(child) = child {
+        return Err(RpcError::new(
             ErrorCode::SessionOpenFailed,
             format!("session {id} is {child}'s; only the session that started it continues it"),
-        )),
-        None => Ok(stored),
+        ));
     }
+    if purpose == SavedFor::Fork {
+        super::fork::refuse_unforkable(&stored, origin)?;
+    }
+    Ok(stored)
 }
 
 pub(super) fn parse_session(id: &rho_protocol::SessionId) -> Result<SessionId, RpcError> {

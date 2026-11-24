@@ -16,7 +16,7 @@ use super::{
     layout::{set_private_file_permissions, timestamp},
     persistence::{SessionEntry, SESSION_VERSION},
     tree::{NodeId, SessionNode, SessionNodeKind, StoredStateTransition},
-    Session, SessionOrigin,
+    Session, SessionOrigin, SessionTarget,
 };
 
 /// How the session's agent was bound. Absent from the header means `Root`:
@@ -132,6 +132,19 @@ pub(super) fn read_root_agent(path: &Path) -> anyhow::Result<Option<SavedAgent>>
 pub(super) fn read_origin(path: &Path) -> anyhow::Result<Option<SessionOrigin>> {
     match read_header(path)? {
         SessionEntry::Session { origin, .. } => Ok(origin),
+        _ => anyhow::bail!("session file does not start with session metadata"),
+    }
+}
+
+/// The session a fork forks, or `None` for a session that is not a fork.
+pub(super) fn read_forked_from(path: &Path) -> anyhow::Result<Option<SessionTarget>> {
+    match read_header(path)? {
+        SessionEntry::Session {
+            origin: Some(SessionOrigin::Fork),
+            parent_session,
+            ..
+        } => Ok(parent_session),
+        SessionEntry::Session { .. } => Ok(None),
         _ => anyhow::bail!("session file does not start with session metadata"),
     }
 }

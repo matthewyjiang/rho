@@ -100,7 +100,7 @@ async fn inspected_request(sandbox: &Sandbox, client: &Client, session: &Session
 
 /// The model request of `session`'s turn of `text`, as [`inspected_request`]
 /// gets it, with the events the turn sent before it ended.
-async fn inspected_turn(
+pub(super) async fn inspected_turn(
     sandbox: &Sandbox,
     client: &Client,
     session: &SessionId,
@@ -117,7 +117,7 @@ async fn inspected_turn(
 /// How `session`'s turn of `text` ended, with the events it sent before.
 /// It attaches first with no setup, so it reopens a session the daemon
 /// unloaded as a prompt would.
-async fn turn(
+pub(super) async fn turn(
     sandbox: &Sandbox,
     client: &Client,
     session: &SessionId,

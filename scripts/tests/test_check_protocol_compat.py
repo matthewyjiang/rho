@@ -79,7 +79,7 @@ def remove_method(document: dict) -> None:
 
 
 def add_method(document: dict) -> None:
-    document["methods"]["rho/session/fork"] = copy.deepcopy(
+    document["methods"]["rho/session/example"] = copy.deepcopy(
         document["methods"]["rho/session/cancel"]
     )
 
