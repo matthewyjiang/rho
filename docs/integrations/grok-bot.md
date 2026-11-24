@@ -216,9 +216,10 @@ Picking up a session I started
 - A session can have no `title`. If nothing matches by title, show me the
   candidates by `workspace`, `state`, and session id and ask me which.
 - `list` returns 20 sessions unless you ask for more. If the answer says
-  `more: true` and you have no match, call it again with a larger `limit`,
-  up to 1000. If it still says `more: true`, tell me the list was cut off
-  instead of picking one.
+  `more: true`, call it again with a larger `limit`, up to 1000, before
+  you pick one: a better match may be further down. If it still says
+  `more: true`, tell me the list was cut off when you show me what you
+  found.
 - Call `read` before you act on it. To follow it, call `watch` with
   `webhook: "grok"`. Add it to the ledger.
 - `watch` can answer with the news itself. If it returns `watching: false`,
