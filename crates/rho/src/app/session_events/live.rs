@@ -370,6 +370,9 @@ impl LiveEvents {
             // The daemon reports the job's state itself: a turn's start, its
             // waits for input, and its end.
             SessionEvent::RunStarted => Vec::new(),
+            // Clients hear of the title once the host has it, not of the
+            // request.
+            SessionEvent::TitleRequested(_) => Vec::new(),
             // The host opens these as input requests with ids of its own
             // (the daemon's `sessions::inputs`, #1660).
             SessionEvent::ApprovalRequested { .. }

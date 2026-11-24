@@ -49,6 +49,7 @@ pub(crate) mod provider_context_report;
 pub(crate) mod pull_requests;
 #[cfg(debug_assertions)]
 pub(crate) mod quiet_notice_signal;
+mod read_only_session;
 mod runtime_builder;
 pub(crate) mod sdk_config;
 mod session_assembly;
@@ -67,6 +68,7 @@ pub(crate) mod subagent_host_input;
 pub(crate) mod subagent_manager;
 pub(crate) mod subagent_messaging;
 pub(crate) mod subagent_pool;
+mod title_agent;
 mod tools_prompt;
 pub(crate) mod workflow_cli;
 pub(crate) mod workflow_runtime;

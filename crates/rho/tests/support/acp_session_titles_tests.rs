@@ -6,7 +6,7 @@ use serde_json::json;
 
 use super::AcpServer;
 
-// Covers: the title Rho generates after a session's first turn must reach
+// Covers: the title Rho generates for a session's first prompt must reach
 // the host as `session_info_update` for that session (Zed names threads
 // from it, T3 Code records it), matching what `session/list` reports.
 // Owner: ACP session titles, over the real stdio server
@@ -27,8 +27,8 @@ mode = "off"
     .unwrap();
     let project = home.workspace.canonicalize().unwrap();
     let mut command = AcpServer::command(&home, "fixed", &project);
-    // The title agent's one-shot provider skips the automation fixture; the
-    // TUI fixture answers its request instead.
+    // The title agent's provider skips the automation fixture; the TUI
+    // fixture answers its request instead.
     command.env("RHO_TUI_TEST_MODE", "matrix");
     let mut server = AcpServer::from_command(&mut command);
     server
@@ -46,7 +46,7 @@ mode = "off"
     );
     assert_eq!(replied.unwrap()["stopReason"], "end_turn");
 
-    // The title is generated after the turn, so it usually follows the reply.
+    // The title is generated beside the turn, and lands during it or after.
     let titled = during_turn
         .into_iter()
         .chain(std::iter::repeat_with(|| server.next_notification()))

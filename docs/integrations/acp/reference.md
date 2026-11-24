@@ -189,7 +189,7 @@ A `compaction_update` card opens `in_progress` and ends `completed`, `failed` wi
 
 ### Titles
 
-As in the TUI, Rho asks its title model for a short title after the first turn a session completes, unless the session already has one, and saves it for `session/list`, `/resume`, and `rho sessions`. `session_info_update` goes out once the title model answers, usually after that prompt's response. A failed title sends nothing, and the session stays listed by its first message.
+As in the TUI, Rho asks its [title agent](/configuration#internal-agent-models) for a short title as a session's first prompt starts, unless the session already has one, and saves it for `session/list`, `/resume`, and `rho sessions`. The title is made beside the turn, from the first message and its images, so `session_info_update` usually goes out seconds into that prompt, well before its response, and a first turn that is cancelled or fails is still titled. A failed title sends nothing, and the session stays listed by its first message.
 
 A title that lands after this host closed the session is saved but not sent; `session/load` sends it at the end of its replay. Rho does not send `updatedAt`; `session/list` reports it.
 

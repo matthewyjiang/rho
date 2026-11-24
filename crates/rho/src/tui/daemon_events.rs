@@ -279,6 +279,12 @@ pub(super) struct DaemonEvents {
     /// Whether the last replay is a reset: history, where a tail holds
     /// only events the TUI has yet to see.
     reset: bool,
+    /// Whether the job's state, as last shown, has a turn under way.
+    turn_under_way: bool,
+    /// The live title a turn under way holds back. The daemon names a
+    /// session seconds into its first turn; saying so then would put the
+    /// notice amid the turn's rows, so it follows the turn's rest.
+    held_title: Option<String>,
     inputs: OpenInputs,
 }
 
@@ -477,10 +483,13 @@ impl DaemonEvents {
             SessionEvent::TitleChanged { title } if self.inputs.replaying() => {
                 vec![DaemonView::Title(title)]
             }
-            SessionEvent::TitleChanged { title } => vec![
-                DaemonView::Notice(format!("session titled: {title}")),
-                DaemonView::Title(title),
-            ],
+            SessionEvent::TitleChanged { title } if self.turn_under_way => {
+                self.held_title = Some(title.clone());
+                vec![DaemonView::Title(title)]
+            }
+            SessionEvent::TitleChanged { title } => {
+                vec![title_notice(&title), DaemonView::Title(title)]
+            }
             SessionEvent::State { state, turn } => {
                 let mut views = match &self.replay_end {
                     // A reset's is history, unless it is of the turn the
@@ -505,6 +514,9 @@ impl DaemonEvents {
                         // as its compaction ended.
                         views.extend(self.compact_turn_over());
                     }
+                }
+                if !self.turn_under_way {
+                    views.extend(self.held_title.take().as_deref().map(title_notice));
                 }
                 views
             }
@@ -568,6 +580,10 @@ impl DaemonEvents {
             // `Unknown`, or a state a newer daemon sends: shown at rest
             // rather than as a turn that never ends.
             _ => TurnState::Resting(Rest::Ready),
+        };
+        self.turn_under_way = match turn {
+            TurnState::Running | TurnState::WaitingForInput => true,
+            TurnState::Resting(_) => false,
         };
         DaemonView::Turn(turn)
     }
@@ -817,6 +833,11 @@ fn retry_hint(reason: RetryReason, retry_after_ms: Option<u64>) -> Option<Provid
         _ => return None,
     };
     Some(ProviderRetryHint { reason })
+}
+
+/// Says the session's live title changed.
+fn title_notice(title: &str) -> DaemonView {
+    DaemonView::Notice(format!("session titled: {title}"))
 }
 
 /// A card shown outside the conversation, as a notice: its title, then its

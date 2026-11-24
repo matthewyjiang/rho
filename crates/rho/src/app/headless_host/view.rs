@@ -214,7 +214,9 @@ impl<'a> HeadlessView<'a> {
                     token.cancel();
                 }
             }
-            SessionEvent::MessageInserted(_)
+            // A headless run is not named: the job is dropped unrun.
+            SessionEvent::TitleRequested(_)
+            | SessionEvent::MessageInserted(_)
             | SessionEvent::RunStarted
             | SessionEvent::BoundaryApplied { .. }
             | SessionEvent::ApprovalWithdrawn { .. }

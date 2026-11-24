@@ -20,8 +20,9 @@
 //! [`TurnView`], which opens each turn's [`TurnIo`] and, while the turn runs,
 //! shows the [`SessionEvent`]s it sends and answers its requests with
 //! [`TurnControl`]s (see `events.rs`). The turn saves itself, runs the
-//! session hooks, keeps background work going across prompts, and asks to
-//! name the session; `run_prompt_turn` then hands off a plan the turn
+//! session hooks, keeps background work going across prompts, and, on the
+//! session's first prompt, asks the host to name the session (see
+//! `title.rs`); `run_prompt_turn` then hands off a plan the turn
 //! answered and runs the implementation turn it may ask for. The host maps
 //! the prompt's end to its own reply.
 //!

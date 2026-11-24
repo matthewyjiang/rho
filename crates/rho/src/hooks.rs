@@ -143,6 +143,32 @@ impl HookPipeline {
         })
     }
 
+    /// [`Self::start`] with the blocking gate alone, for a session Rho runs
+    /// for itself, such as the title agent's: its tool calls obey the
+    /// user's `before_tool_use` hooks, and no observational hook hears of a
+    /// session the user never started. `None` without a blocking hook.
+    pub(crate) fn start_gate(
+        catalog: HookCatalog,
+        environment: SessionEnvironment,
+    ) -> Option<Self> {
+        if !catalog.has_blocking_hooks() || running_inside_hook(&environment.current()) {
+            return None;
+        }
+        let engine = Arc::new(HookEngine::new(
+            catalog,
+            rho_sdk::hooks::HookPayloadBounds::default(),
+            environment,
+        ));
+        Some(Self {
+            gate: Some(Arc::new(dispatch::CommandHookGate::new(Arc::clone(
+                &engine,
+            )))),
+            observer: None,
+            engine,
+            worker: None,
+        })
+    }
+
     /// Installs this pipeline's gate and observer on an SDK builder.
     pub fn attach(&self, mut builder: rho_sdk::RhoBuilder) -> rho_sdk::RhoBuilder {
         if let Some(gate) = &self.gate {
@@ -285,9 +311,26 @@ pub fn start_for_cwd(
     cwd: &std::path::Path,
     environment: SessionEnvironment,
 ) -> Option<HookPipeline> {
+    let catalog = catalog_for_cwd(cwd, &environment)?;
+    HookPipeline::start(catalog, environment, rho_sdk::CancellationToken::new())
+}
+
+/// [`start_for_cwd`] with the blocking gate alone (see
+/// [`HookPipeline::start_gate`]).
+pub(crate) fn start_gate_for_cwd(
+    cwd: &std::path::Path,
+    environment: SessionEnvironment,
+) -> Option<HookPipeline> {
+    let catalog = catalog_for_cwd(cwd, &environment)?;
+    HookPipeline::start_gate(catalog, environment)
+}
+
+/// The hooks a session in `environment` starts for the workspace containing
+/// `cwd`, or `None`, logged, when its hooks files do not load.
+fn catalog_for_cwd(cwd: &std::path::Path, environment: &SessionEnvironment) -> Option<HookCatalog> {
     let mut report = |message: String| tracing::info!(target: "rho::hooks", "{message}");
     match discover_for_cwd(cwd, environment.project_trust(), &mut report) {
-        Ok(catalog) => HookPipeline::start(catalog, environment, rho_sdk::CancellationToken::new()),
+        Ok(catalog) => Some(catalog),
         Err(error) => {
             tracing::warn!(target: "rho::hooks", "hooks are disabled: {error}");
             None

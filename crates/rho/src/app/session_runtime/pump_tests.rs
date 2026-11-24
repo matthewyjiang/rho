@@ -49,8 +49,8 @@ enum Seen {
 
 fn seen(event: SessionEvent) -> Seen {
     match event {
-        SessionEvent::MessageInserted(_) => {
-            unreachable!("the turn inserts the message, not the pump")
+        SessionEvent::MessageInserted(_) | SessionEvent::TitleRequested(_) => {
+            unreachable!("the turn inserts the message and asks for a title, not the pump")
         }
         SessionEvent::RunStarted => Seen::RunStarted,
         SessionEvent::Run(_) => Seen::Run,

@@ -76,6 +76,36 @@ fn usage_and_title_updates_keep_their_independent_values() {
     );
 }
 
+// Covers: the daemon names a session seconds into its first turn. The TUI
+// takes the title at once but says so only once the turn rests: a notice
+// amid the turn's rows would land wherever the title model's answer raced
+// the turn to.
+// Owner: pure daemon event mapper
+#[test]
+fn a_title_that_lands_mid_turn_is_said_once_the_turn_rests() {
+    let views = map(vec![
+        state(JobState::Running),
+        Step::Event(SessionEvent::TitleChanged {
+            title: "Named mid-turn".into(),
+        }),
+        reply("m1", "answer"),
+        answered("answer"),
+        state(JobState::Idle),
+    ]);
+    let order: Vec<_> = views
+        .iter()
+        .map(|view| match view {
+            DaemonView::Turn(TurnState::Running) => "running",
+            DaemonView::Title(_) => "title",
+            DaemonView::Text { .. } => "text",
+            DaemonView::Turn(TurnState::Resting(_)) => "rest",
+            DaemonView::Notice(_) => "notice",
+            _ => "other",
+        })
+        .collect();
+    assert_eq!(order, ["running", "title", "text", "rest", "notice"]);
+}
+
 /// What the session hands the mapper: an event, a reset replay's start, an
 /// attach's open requests and its replay's end, or what came of an answer
 /// the TUI sent.

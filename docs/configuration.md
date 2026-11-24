@@ -330,6 +330,8 @@ auth = "api-key"
 
 Model aliases work here.
 
+The `session-title` agent names a session from its first message, images included, as that prompt starts, and names each delegated run from its task. It is given the read-only file tools (`read_file`, `grep`, `glob`, `list_dir`) so that a message such as `implement docs/plan.md` is named after the plan rather than the file name; a message that says what the work is gets its title in one request. The title model therefore sees the first message's images and may see workspace files, and each title costs a small agent request rather than a bare completion, so pick a fast, cheap model that accepts images. Its reads follow the workspace's read policy and your [`before_tool_use` hooks](/hooks#events), with nobody to approve a read the policy would ask about, which is denied. When the title model cannot be signed in to or reached, the session keeps its first message as its name and the failure is logged as a warning (`could not title session`).
+
 The same table sets the model of a read-only [plugin agent](/integrations/plugins#plugin-agent-models); `/agents` writes it when you pick one. An entry applies by ID to any Rho agent Rho does not reserve, so it also reaches an agent file of your own with that ID.
 
 ## Edit tool

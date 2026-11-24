@@ -116,9 +116,9 @@ impl SessionRuntime {
     /// Failures are saved with what the turn showed and reported to the
     /// session's hooks before they return; one on the provider's
     /// credentials has the next prompt renew them.
-    /// The first turn this runtime completes with the model's answer asks
-    /// the title agent `process_config` configures to name the session, for
-    /// the host to take with [`Self::take_title`]. Hosts run turns through
+    /// The first prompt this runtime saves asks the host, through `io`, to
+    /// name the session with the title agent `process_config` configures
+    /// (see `title.rs`). Hosts run turns through
     /// [`Self::run_prompt_turn`], so none skips the plan handoff.
     pub(super) async fn run_turn(
         &mut self,
@@ -127,17 +127,15 @@ impl SessionRuntime {
         io: TurnIo,
         process_config: &Config,
     ) -> anyhow::Result<TurnOutcome> {
-        let start = start.into();
-        let title_input = match (&self.title, &start) {
-            (TitleState::Unasked, TurnStart::Prompt(turn)) => Some(turn.display.clone()),
-            (TitleState::Unasked, TurnStart::Continue)
-            | (TitleState::Pending(_) | TitleState::Asked, _) => None,
-        };
-        let result = self.run_delegated(prompt, start, io).await;
+        let result = self
+            .run_delegated(prompt, start.into(), io, process_config)
+            .await;
         self.note_credential_failure(&result);
-        if let Some(user) = title_input.filter(|_| result.as_ref().is_ok_and(TurnOutcome::answered))
-        {
-            self.request_title(process_config, &user);
+        if result.is_err() {
+            // The title model may share what failed the turn, such as an
+            // outage or an expired sign-in, so the next prompt asks again;
+            // a title saved meanwhile costs that request no model call.
+            self.title = TitleState::Unasked;
         }
         result
     }
@@ -148,6 +146,7 @@ impl SessionRuntime {
         prompt: &PromptScope,
         start: TurnStart,
         mut io: TurnIo,
+        process_config: &Config,
     ) -> anyhow::Result<TurnOutcome> {
         let stored = self.stored()?.cloned();
         let mut delegation = Delegation::attach(
@@ -166,7 +165,7 @@ impl SessionRuntime {
         // them.
         let result = Delegation::drive(
             &mut delegation,
-            self.drive_prompt(prompt, start, displays, &mut io),
+            self.drive_prompt(prompt, start, displays, &mut io, process_config),
         )
         .await;
         self.held_notices = delegation.hold_notices();
@@ -179,8 +178,9 @@ impl SessionRuntime {
         start: TurnStart,
         displays: OfferedDisplays,
         io: &mut TurnIo,
+        process_config: &Config,
     ) -> anyhow::Result<TurnOutcome> {
-        let (checkpoint, input) = match start {
+        let (checkpoint, input, prompted) = match start {
             TurnStart::Prompt(Turn {
                 display,
                 model,
@@ -192,9 +192,14 @@ impl SessionRuntime {
                 (
                     self.install_turn_checkpoint(&display, &model),
                     RunInput::Prompt { model, calls },
+                    Some(display),
                 )
             }
-            TurnStart::Continue => (self.install_continuation_checkpoint(), RunInput::Continue),
+            TurnStart::Continue => (
+                self.install_continuation_checkpoint(),
+                RunInput::Continue,
+                None,
+            ),
         };
         let checkpoint = checkpoint?;
         let result = async {
@@ -205,6 +210,13 @@ impl SessionRuntime {
             // dies mid-turn still replays it.
             let inserted = self.insert_user_message(&checkpoint)?;
             io.emit(SessionEvent::MessageInserted(inserted));
+            // Named from the prompt as the user sent it, beside the run, so
+            // a long first turn does not hold the title up.
+            if let Some(job) =
+                prompted.and_then(|prompt| self.request_title(process_config, &prompt))
+            {
+                io.emit(SessionEvent::TitleRequested(Box::new(job)));
+            }
             for text in self.reopen_notice.take().into_iter().chain(paused) {
                 io.emit(SessionEvent::Notice { text });
             }

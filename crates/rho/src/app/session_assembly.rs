@@ -15,7 +15,7 @@ use std::{
 use rho_providers::{
     auth::provider_credentials::ApplicationCredentialSource,
     model::ModelError,
-    providers::{build_automation_provider, UnavailableProvider},
+    providers::{build_automation_provider, build_sdk_provider_with_source, UnavailableProvider},
 };
 use rho_sdk::{
     model::ModelIdentity, provider::ModelProvider, ApprovalRequestReceiver, ApprovalSession,
@@ -57,6 +57,8 @@ pub(super) struct SessionAssemblyOptions<'a, ExtendTools, Approval, Options> {
     pub hook_start: HookStart,
     /// Whether the session must sign in to its model.
     pub sign_in: SignIn,
+    /// Whose model the session runs on.
+    pub model_owner: ModelOwner,
     pub mcp_authorization: crate::tools::mcp::McpAuthorizationMode,
     pub diagnostics: &'a RuntimeDiagnostics,
     pub agent: &'a BoundAgent,
@@ -94,11 +96,29 @@ pub(crate) enum SignIn {
     Optional,
 }
 
+/// Whose model an assembled session runs on, which decides what answers its
+/// requests under the automation test fixture. Release builds have no
+/// fixture, so there both build the configured model.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ModelOwner {
+    /// A session a host runs: the automation fixture stands in for its
+    /// model when a test sets one.
+    Host,
+    /// An internal agent's own session, such as the title agent's: always
+    /// the configured model, so a test's fixture answers only the turns of
+    /// the session it scripts.
+    InternalAgent,
+}
+
 /// Whether an assembled session starts its workspace's hooks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum HookStart {
     /// Starts them, so they hear the session's events from its start.
     Start,
+    /// Starts the blocking `before_tool_use` gate alone: the session is
+    /// Rho's own bookkeeping, such as the title agent's, so its tool calls
+    /// obey the user's denials and no observational hook hears of it.
+    Gate,
     /// Starts none: the session is only read, so nothing of it runs.
     Skip,
 }
@@ -203,6 +223,7 @@ where
         tool_source_load,
         hook_start,
         sign_in,
+        model_owner,
         mcp_authorization,
         diagnostics,
         agent,
@@ -242,7 +263,21 @@ where
             // catalog-constructed providers need the hydrate before build; a
             // no-op for the rest.
             sdk_options.provider.ensure_catalog_for_construction().await;
-            build_automation_provider(sdk_options.provider, &credentials)
+            // Scoped again for the build alone, which is synchronous: the
+            // credential lookup resolves the provider by name, and a custom
+            // one need not be in the process-wide set.
+            login_config
+                .providers
+                .thread_scope()
+                .map_err(|error| ModelError::InvalidResponse(error.to_string()))
+                .and_then(|_scope| match model_owner {
+                    ModelOwner::Host => {
+                        build_automation_provider(sdk_options.provider, &credentials)
+                    }
+                    ModelOwner::InternalAgent => {
+                        build_sdk_provider_with_source(sdk_options.provider, &credentials)
+                    }
+                })
         }
     };
     let (provider, provider_credentials) = match (built, sign_in) {
@@ -327,6 +362,7 @@ where
     let search_path = environment.current().path();
     let hooks = match hook_start {
         HookStart::Start => crate::hooks::start_for_cwd(&workspace_root, environment),
+        HookStart::Gate => crate::hooks::start_gate_for_cwd(&workspace_root, environment),
         HookStart::Skip => None,
     };
     if let Some(hooks) = hooks.as_ref() {

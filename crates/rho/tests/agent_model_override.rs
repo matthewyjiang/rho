@@ -192,7 +192,10 @@ credential_store = "file"
                 .iter()
                 .map(|tool| tool["function"]["name"].as_str().unwrap())
                 .collect::<Vec<_>>();
-            if !tools.contains(&"read_file") || tools.contains(&"agent") {
+            // Only a delegated child can message its parent: neither the
+            // parent's own requests nor the title agent's, which names each
+            // run on its read tools, are a reviewer's.
+            if !tools.contains(&"message_parent") {
                 return None;
             }
             tools.sort_unstable();

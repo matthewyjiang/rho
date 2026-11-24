@@ -204,10 +204,6 @@ mod syntax;
 mod syntax_warmup;
 mod todo_overlay;
 pub(crate) use syntax_warmup::spawn_syntax_warmup;
-pub(in crate::tui) mod terminal_graph;
-mod transcript_events;
-mod transcript_search;
-pub(crate) use session_title::SESSION_TITLE_PROMPT;
 mod app_loop;
 mod idle_input;
 mod reasoning_phase;
@@ -216,6 +212,9 @@ mod skill_actions;
 mod skill_mention_completion;
 mod skill_picker;
 mod startup_prompt;
+pub(in crate::tui) mod terminal_graph;
+mod transcript_events;
+mod transcript_search;
 // Always compiled: display_version() is used in release TUI chrome.
 // Matrix/herdr injection paths stay no-ops outside debug builds.
 mod github_pr;

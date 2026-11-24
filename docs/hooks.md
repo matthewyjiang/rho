@@ -132,6 +132,11 @@ capability that call passed to authorize, and `null` when it never did.
 Multi-capability calls still emit one `before_tool_use` per request; the after
 payload reports only the first. Policy denials still include the request.
 
+The [title agent](/configuration#internal-agent-models) reads the workspace in
+a session of its own to name a session or a delegated run. Its reads go through
+`before_tool_use` like any other, so a hook that denies a read denies it there
+too. No observational event fires for that session.
+
 ### Canonical tool names
 
 The `tools` matcher accepts only these names. They are part of the hook

@@ -39,8 +39,8 @@ printf '%s\\n' \\
   'test result: ok. 28 passed; 0 failed; 0 ignored'
 ";
 
-/// Session-title one-shot payload includes the first user turn under this prefix.
-const TITLE_PREFIX: &str = "First turn:\n\nUser:\n";
+/// The title agent's payload holds the session's first message under this prefix.
+const TITLE_PREFIX: &str = "First message:\n\n";
 
 /// Stable session title for the docs proof plate.
 const SESSION_TITLE: &str = "Request ID middleware";

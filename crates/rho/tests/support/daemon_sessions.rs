@@ -149,8 +149,8 @@ impl Sandbox {
     }
 
     /// [`Self::start_daemon`], with the TUI fixture answering the title
-    /// agent, whose one-shot provider skips the automation fixture: it
-    /// names a session "Fixture session title".
+    /// agent, whose provider skips the automation fixture: it names a
+    /// session "Fixture session title".
     async fn start_titling_daemon(&self, mode: &str) -> Client {
         let mut command = self.rho(mode);
         command.env("RHO_TUI_TEST_MODE", "matrix");
@@ -939,14 +939,14 @@ async fn a_prompts_image_and_resource_reach_the_model() {
     );
 }
 
-// Covers: after a session's first answered turn, the daemon titles it in
-// the background, saves the title where session lists read it, and tells
+// Covers: at a session's first prompt, the daemon titles it in the
+// background, saves the title where session lists read it, and tells
 // attached clients with `title_changed`; a client that attaches later,
 // whose replay need not hold that event, gets it in the attach response
 // (#1670).
 // Owner: daemon session titles.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn an_answered_session_is_titled_for_its_clients() {
+async fn a_prompted_session_is_titled_for_its_clients() {
     let sandbox = Sandbox::new();
     let client = sandbox.start_titling_daemon("fixed").await;
     let session = sandbox.new_session(&client).await;
