@@ -42,6 +42,7 @@ pub(crate) mod model_refresh;
 pub(crate) mod notification_delivery;
 mod parent_bridge;
 mod parent_steering;
+pub(crate) mod peer_sessions;
 mod plugins_cli;
 mod policy;
 mod prompt_content;

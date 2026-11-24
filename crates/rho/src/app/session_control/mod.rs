@@ -69,7 +69,10 @@ use super::{
     daemon_cli::Unreachable,
     daemon_client::{Daemon, DaemonError},
 };
-use crate::{app::session_options::OfferedModels, daemon::ConnectAs};
+use crate::{
+    app::{peer_sessions::Registration, session_options::OfferedModels},
+    daemon::ConnectAs,
+};
 
 mod answer;
 mod catalog;
@@ -407,13 +410,21 @@ impl SessionControl {
         self.reach
     }
 
-    /// Prompts `session` and counts it toward the holder's session cap.
+    /// Prompts `session` and counts it toward the holder's session cap. A
+    /// caller the daemon tells of its turns registers the prompt first, so
+    /// the turn it starts, and only that turn, tells the caller; the
+    /// registration goes once the daemon answered, so a refused prompt
+    /// leaves nothing behind (see `app::peer_sessions`).
     async fn start_turn(
         &self,
         caller: &Caller,
         session: &SessionId,
         content: Vec<ContentBlock>,
     ) -> Result<(), ControlError> {
+        let registration = caller
+            .told
+            .as_ref()
+            .map(|inbox| inbox.register(session.as_str()));
         self.daemon
             .request::<SessionPrompt>(&SessionPromptParams {
                 author: rho_protocol::PromptAuthor::Person,
@@ -422,9 +433,10 @@ impl SessionControl {
                 timeout_ms: None,
                 environment: Self::child_environment(caller),
                 grant: Some(caller.child_context().into()),
-                idempotency_key: None,
+                idempotency_key: registration.as_ref().map(Registration::key),
             })
             .await?;
+        drop(registration);
         self.driven
             .lock()
             .unwrap_or_else(PoisonError::into_inner)

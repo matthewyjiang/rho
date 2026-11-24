@@ -1,15 +1,15 @@
-use rho_sdk::{floor_char_boundary, TRUNCATION_MARKER};
 use rho_tools::tool::truncate;
 
 use {
-    super::agent::{SubagentNotification, SubagentSnapshot},
+    super::{
+        agent::{SubagentNotification, SubagentSnapshot},
+        notification_format::{bounded_notification, Excerpt, RESULT_EXCERPT_BYTES},
+    },
     crate::subagent::{self, RunState},
 };
 
 const DETAIL_BYTES: usize = 160;
 const SUMMARY_DETAIL_BYTES: usize = 256;
-const RESULT_EXCERPT_BYTES: usize = 16 * 1024;
-pub(crate) const MODEL_NOTIFICATION_BYTES: usize = 16 * 1024;
 
 const NOTIFICATION_HEADER: &str = "[agent notification]\n\nRun status:\n";
 const NOTIFICATION_FOOTER: &str = "\n\nAny omitted or truncated result details remain available through `agents list` or `agents status`.\n\nThis is an automated notification, not a user message. Fold the results into your ongoing work; use the agents tool for details.";
@@ -155,46 +155,27 @@ pub(super) fn format_snapshot(snapshot: &SubagentSnapshot, format: SnapshotForma
 /// Formats one bounded model notification. Run summaries take priority over
 /// result excerpts so a large result cannot hide the state of later runs.
 pub(super) fn format_notification(snapshots: &[&SubagentSnapshot]) -> String {
-    let body_bytes = MODEL_NOTIFICATION_BYTES
-        .saturating_sub(NOTIFICATION_HEADER.len() + NOTIFICATION_FOOTER.len());
-    let mut body = super::notification_format::join_budgeted_sections(
+    let excerpts = snapshots
+        .iter()
+        .filter_map(|snapshot| {
+            let result = snapshot.status.result.as_deref()?;
+            (!result.is_empty()).then(|| Excerpt {
+                label: format!("\n\nagent {}:\n", snapshot.id),
+                text: result,
+                close: String::new(),
+            })
+        })
+        .collect();
+    bounded_notification(
+        NOTIFICATION_HEADER,
+        NOTIFICATION_FOOTER,
         snapshots
             .iter()
             .map(|snapshot| completion_summary(snapshot).join("\n")),
-        "\n",
-        body_bytes,
         |remaining| format!("... {remaining} run status section(s) omitted; use `agents status`"),
-    );
-
-    let results = snapshots
-        .iter()
-        .filter_map(|snapshot| {
-            snapshot
-                .status
-                .result
-                .as_deref()
-                .filter(|result| !result.is_empty())
-                .map(|result| (*snapshot, result))
-        })
-        .collect::<Vec<_>>();
-    if !results.is_empty() {
-        let heading = "\n\nResult excerpts:";
-        if body.len() + heading.len() > body_bytes {
-            return format!("{NOTIFICATION_HEADER}{body}{NOTIFICATION_FOOTER}");
-        }
-        body.push_str(heading);
-    }
-    for (snapshot, result) in results {
-        let label = format!("\n\nagent {}:\n", snapshot.id);
-        if body.len() + label.len() >= body_bytes {
-            break;
-        }
-        body.push_str(&label);
-        let available = (body_bytes - body.len()).min(RESULT_EXCERPT_BYTES);
-        push_excerpt(&mut body, result, available);
-    }
-
-    format!("{NOTIFICATION_HEADER}{body}{NOTIFICATION_FOOTER}")
+        "\n\nResult excerpts:",
+        excerpts,
+    )
 }
 
 /// Formats a drained batch of terminal runs as one bounded notification. The
@@ -280,20 +261,6 @@ fn push_cli_metadata(lines: &mut Vec<String>, snapshot: &SubagentSnapshot) {
     }
     if let Some(cost) = snapshot.status.total_cost_usd {
         lines.push(format!("{}: ${cost:.4}", label.cost_label));
-    }
-}
-
-fn push_excerpt(output: &mut String, result: &str, max_bytes: usize) {
-    if result.len() <= max_bytes {
-        output.push_str(result);
-        return;
-    }
-
-    let prefix_bytes = max_bytes.saturating_sub(TRUNCATION_MARKER.len());
-    let boundary = floor_char_boundary(result, prefix_bytes);
-    output.push_str(&result[..boundary]);
-    if max_bytes >= TRUNCATION_MARKER.len() {
-        output.push_str(TRUNCATION_MARKER);
     }
 }
 

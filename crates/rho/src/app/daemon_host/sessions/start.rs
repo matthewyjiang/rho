@@ -139,7 +139,11 @@ impl Sessions {
             let (session, entered) = self
                 .enter_session(&params.session, &with, |session, turn| {
                     let limit = params.timeout_ms.map(TurnLimit::starting_now);
-                    self.start_turn(session, turn, &with, key.clone(), limit)
+                    let entered = self.start_turn(session, turn, &with, key.clone(), limit)?;
+                    if matches!(entered, Entered::Started(_)) {
+                        self.claim_starter(session, key.as_ref());
+                    }
+                    Ok(entered)
                 })
                 .await?;
             match entered {
@@ -239,6 +243,9 @@ impl Sessions {
                 // A turn takes the session's results, so whatever gave up
                 // waking it for them looks again once this turn ends.
                 session.rearm_wake();
+                // Only the prompt that started it says whether it owes a
+                // session a notice (see `peer_wake`).
+                session.peer_wake.forget();
                 // A turn the daemon starts to deliver finished work has yet
                 // to take it, so clients hear how that work ended before
                 // they hear the turn begin.

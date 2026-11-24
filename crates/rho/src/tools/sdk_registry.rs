@@ -481,6 +481,12 @@ impl AppToolSet {
         self.session_search.bind(id);
     }
 
+    /// Gives the `sessions` tool the inbox where the daemon tells this
+    /// session of the turns it starts (see `app::peer_sessions`).
+    pub(crate) fn bind_peer_sessions(&self, inbox: crate::app::peer_sessions::PeerInbox) {
+        self.session_search.bind_peers(inbox);
+    }
+
     /// Binds where elided tool results are saved, for hosts without an
     /// interactive session controller. No-op when recall is unavailable.
     pub(crate) fn bind_recall(&self, storage: Option<&crate::session::Session>) {

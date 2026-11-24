@@ -405,6 +405,12 @@ impl SessionRuntime {
         BackgroundWait::of(self.build.host.children, self.build.host.idle_turns)
     }
 
+    /// Where notices of the sessions this one started through session
+    /// control arrive, when its host delivers them.
+    pub(crate) fn peer_sessions(&self) -> Option<&crate::app::peer_sessions::PeerInbox> {
+        self.build.host.peer_sessions.as_ref()
+    }
+
     /// Whether background work the session's prompts started still runs or
     /// holds a result for the next prompt, which [`Self::shutdown`] would
     /// stop or drop (#1661). A finished service's result is not counted;

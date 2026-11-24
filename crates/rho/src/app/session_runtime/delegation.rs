@@ -11,6 +11,9 @@
 //! still delivers at the next boundary of any prompt. The wait stays inside
 //! the original run, so cancellation and the SDK step budget still govern
 //! parent continuations.
+//! Notices of turns the session started in other sessions through session
+//! control (see `app::peer_sessions`) deliver like finished work and never
+//! hold completion; only a session whose host starts its turns has them.
 //! Hosts that show a transcript take [`Delegation::offered_displays`] to
 //! render what the model was given. Children the host runs as its own threads
 //! ([`super::ChildAgents::HostThreads`]) are not registered here: they
@@ -39,6 +42,7 @@ use tokio::sync::mpsc;
 use crate::{
     app::{
         boundary_results::BoundaryResults,
+        peer_sessions::{PeerBatch, PeerInbox},
         pull_requests::{NewsBatch, PullRequestInbox},
         subagent_manager::{SubagentManager, SubagentNotification},
         subagent_messaging::{NoticePermits, SubagentNotice},
@@ -65,6 +69,9 @@ pub(super) struct Delegation {
     /// The session's watched pull requests, whose news is delivered like
     /// finished work.
     pull_requests: Option<PullRequestInbox>,
+    /// Notices of turns the session started in other sessions, delivered
+    /// like finished work.
+    peer_sessions: Option<PeerInbox>,
     /// Workflows and process tasks started from here on hold natural
     /// completion; older ones, and services, only deliver.
     prompt_started: Instant,
@@ -119,9 +126,12 @@ pub(super) struct BackgroundSources<'a> {
     pub(super) workflows: &'a WorkflowRunTracker,
     pub(super) surfaces: Option<&'a SurfaceHost>,
     pub(super) pull_requests: Option<&'a PullRequestInbox>,
+    pub(super) peer_sessions: Option<&'a PeerInbox>,
 }
 
 impl<'a> BackgroundSources<'a> {
+    /// The work of the session's `tools`; a turn adds its host's notices of
+    /// the turns it started in other sessions.
     pub(super) fn of(tools: &'a AppToolSet) -> Self {
         Self {
             subagents: tools.subagents(),
@@ -129,6 +139,7 @@ impl<'a> BackgroundSources<'a> {
             workflows: tools.workflow_tracker(),
             surfaces: tools.surfaces(),
             pull_requests: tools.pull_requests(),
+            peer_sessions: None,
         }
     }
 
@@ -204,6 +215,7 @@ impl Delegation {
             workflows,
             surfaces: sources.surfaces.cloned(),
             pull_requests: sources.pull_requests.cloned(),
+            peer_sessions: sources.peer_sessions.cloned(),
             prompt_started: Instant::now(),
             background_wait: wait,
             displays: None,
@@ -259,6 +271,7 @@ impl Delegation {
                 .pull_requests
                 .as_ref()
                 .map(PullRequestInbox::news_owned);
+            let peers = self.peer_sessions.as_ref().map(PeerInbox::arrived_owned);
             {
                 let _delivery = crate::app::notification_delivery::lock();
                 let batch = self.collect();
@@ -313,6 +326,12 @@ impl Delegation {
                     None => std::future::pending().await,
                 }
             };
+            let peers = async move {
+                match peers {
+                    Some(arrived) => arrived.await,
+                    None => std::future::pending().await,
+                }
+            };
             match &mut self.subagents {
                 Some(subagents) => tokio::select! {
                     notice = subagents.notices.recv(), if notices_open => {
@@ -327,12 +346,14 @@ impl Delegation {
                     () = workflow_finish => {}
                     () = surface_action => {}
                     () = news => {}
+                    () = peers => {}
                 },
                 None => tokio::select! {
                     () = process_exit => {}
                     () = workflow_finish => {}
                     () = surface_action => {}
                     () = news => {}
+                    () = peers => {}
                 },
             }
         };
@@ -395,6 +416,12 @@ impl Delegation {
                 .as_ref()
                 .map(PullRequestInbox::take_news)
                 .unwrap_or_default(),
+            peer_sessions: self.peer_sessions.clone(),
+            peer_notices: self
+                .peer_sessions
+                .as_ref()
+                .map(PeerInbox::take)
+                .unwrap_or_default(),
         }
     }
 
@@ -411,6 +438,7 @@ impl Delegation {
             processes: &batch.process_results,
             surface_actions: &batch.surface_actions,
             pull_requests: &batch.pull_request_news,
+            peer_sessions: &batch.peer_notices,
         }
         .render(self.subagents.as_ref().map(|subagents| &subagents.manager))
         .finish()
@@ -437,7 +465,11 @@ impl Delegation {
             || self
                 .pull_requests
                 .as_ref()
-                .is_some_and(PullRequestInbox::has_news);
+                .is_some_and(PullRequestInbox::has_news)
+            || self
+                .peer_sessions
+                .as_ref()
+                .is_some_and(PeerInbox::has_notices);
         let running = match self.background_wait {
             BackgroundWait::HoldPrompt => {
                 self.workflows
@@ -504,6 +536,8 @@ struct DeliveryReservation {
     surface_actions: Vec<SurfaceAction>,
     pull_requests: Option<PullRequestInbox>,
     pull_request_news: NewsBatch,
+    peer_sessions: Option<PeerInbox>,
+    peer_notices: PeerBatch,
 }
 
 impl DeliveryReservation {
@@ -513,6 +547,7 @@ impl DeliveryReservation {
             || !self.process_results.is_empty()
             || !self.surface_actions.is_empty()
             || !self.pull_request_news.is_empty()
+            || !self.peer_notices.is_empty()
     }
 
     /// The SDK applied the input: the results are delivered. Pull request
@@ -523,6 +558,7 @@ impl DeliveryReservation {
             inbox.acknowledge(&self.pull_request_news);
         }
         self.pull_request_news = NewsBatch::default();
+        self.peer_notices = PeerBatch::default();
         self.subagent_results.clear();
         self.workflow_results.clear();
         self.process_results.clear();
@@ -544,6 +580,9 @@ impl Drop for DeliveryReservation {
         }
         if let Some(inbox) = &self.pull_requests {
             inbox.restore_news(&self.pull_request_news);
+        }
+        if let Some(inbox) = &self.peer_sessions {
+            inbox.restore(&self.peer_notices);
         }
     }
 }

@@ -147,7 +147,10 @@ impl SessionRuntime {
         let stored = self.stored()?.cloned();
         let mut delegation = Delegation::attach(
             &self.built.session,
-            BackgroundSources::of(&self.built.tools),
+            BackgroundSources {
+                peer_sessions: self.build.host.peer_sessions.as_ref(),
+                ..BackgroundSources::of(&self.built.tools)
+            },
             self.background_wait(),
             stored.as_ref(),
             self.storage.persistence(),

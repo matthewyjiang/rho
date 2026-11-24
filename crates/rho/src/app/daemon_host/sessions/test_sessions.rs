@@ -1,8 +1,10 @@
 //! Sessions loaded into a [`Sessions`] as session tests use them.
 
-use std::{path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
+use rho_protocol as wire;
 use tempfile::TempDir;
+use tokio::time::timeout;
 
 use super::{background::SessionBackground, open::OpenedSession, LoadedSession, Sessions};
 use crate::{
@@ -24,7 +26,8 @@ pub(super) enum Load {
     Saved,
     /// As [`Self::Saved`], its client having asked the daemon to start a
     /// turn when its background work finishes idle (`idle_wake: turn`), so
-    /// its tools hold its pull request inbox, as the daemon opens it.
+    /// its tools hold its pull request inbox, and it has an inbox for the
+    /// turns it starts in other sessions, as the daemon opens it.
     Waking,
     /// Saved, with its turn under way.
     Busy,
@@ -117,4 +120,59 @@ async fn opened(sessions: &Sessions, root: &TempDir, load: Load) -> LoadedSessio
         &sessions.wakes,
         &sessions.settings,
     )
+}
+
+/// Bounds each wait on the daemon's own tasks; never the way a test syncs.
+pub(super) const TEST_BUDGET: Duration = Duration::from_secs(10);
+
+/// Runs the daemon's tasks until `done` holds. Nothing announces some of
+/// what tests wait for, as an idle watcher's give-up, but what the session
+/// publishes, so this looks again after each yield; [`TEST_BUDGET`] bounds
+/// a hang.
+pub(super) async fn until(done: impl Fn() -> bool, what: &str) {
+    let wait = async {
+        while !done() {
+            tokio::task::yield_now().await;
+        }
+    };
+    timeout(TEST_BUDGET, wait)
+        .await
+        .unwrap_or_else(|_| panic!("{what}"));
+}
+
+/// What a session's clients heard of its activity and its turns, each
+/// change once.
+#[derive(Debug, PartialEq)]
+pub(super) enum Seen {
+    Activity(wire::SessionActivity),
+    TurnRunning,
+    TurnEnded,
+}
+
+pub(super) fn seen(session: &LoadedSession) -> Vec<Seen> {
+    let mut seen: Vec<Seen> = session
+        .feed
+        .buffered_for_tests()
+        .into_iter()
+        .filter_map(|event| match event {
+            wire::SessionEvent::Activity { state } => Some(Seen::Activity(state)),
+            wire::SessionEvent::State { state, .. } if state.in_progress() => {
+                Some(Seen::TurnRunning)
+            }
+            wire::SessionEvent::State { .. } => Some(Seen::TurnEnded),
+            _ => None,
+        })
+        .collect();
+    seen.dedup();
+    seen
+}
+
+/// How many prompts `session`'s clients were shown.
+pub(super) fn prompts_shown(session: &LoadedSession) -> usize {
+    session
+        .feed
+        .buffered_for_tests()
+        .iter()
+        .filter(|event| matches!(event, wire::SessionEvent::UserMessage { .. }))
+        .count()
 }

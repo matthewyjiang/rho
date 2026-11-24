@@ -11,9 +11,9 @@
 use pretty_assertions::assert_eq;
 use rho_protocol::{
     methods::{JobList, SessionAnswer, SessionAnswerQuestion},
-    Client, ErrorCode, InputAnswer, InputRequestId, JobListParams, JobState, JobSummary,
+    Client, ErrorCode, IdleWake, InputAnswer, InputRequestId, JobListParams, JobState, JobSummary,
     QuestionAnswer, Resolution, SessionAnswerParams, SessionAnswerQuestionParams, SessionEvent,
-    SessionId,
+    SessionId, SessionSetup,
 };
 use serde_json::{json, Value};
 
@@ -522,6 +522,89 @@ async fn watching_without_a_daemon_starts_none() {
                 .to_owned(),
             None,
         ),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
+/// The texts of the boundary inputs `session` saved, in order.
+fn boundary_inputs(sandbox: &Sandbox, session: &SessionId) -> Vec<String> {
+    sandbox
+        .session_records(session)
+        .iter()
+        .flat_map(|record| {
+            record["transition"]["delta"]["appended_history"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+        })
+        .flat_map(|message| {
+            message["BoundaryInput"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+        })
+        .filter_map(|block| block["Text"].as_str().map(str::to_owned))
+        .collect()
+}
+
+// Covers: an agent in a daemon session that no client follows, and whose
+// client asked for daemon turns, starts a session elsewhere and ends its own
+// turn; once the started session's turn ends, the daemon wakes the agent with
+// one turn whose one notification names that session and quotes its answer,
+// so the agent never has to poll `sessions wait`.
+// Owner: daemon wake for started sessions, through the native tool.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_started_sessions_end_wakes_its_idle_starter() {
+    let sandbox = Sandbox::new();
+    sandbox.set_permission_mode("bypass");
+    let workspace = elsewhere(&sandbox);
+    let client = sandbox.start_daemon("tool-call").await;
+    let host = stdio_server(&sandbox, "tool-call", &[], &[]).await;
+    // Opened and prompted, never attached: no client follows the agent.
+    let agent = sandbox
+        .new_session_with_setup(
+            &client,
+            SessionSetup {
+                idle_wake: IdleWake::Turn,
+                ..SessionSetup::default()
+            },
+        )
+        .await;
+    let start = native(json!({"action": "new", "workspace": workspace, "prompt": bash(BLOCKED)}));
+
+    sandbox.prompt_tool_call(&client, &agent, &start).await;
+    let agent_job = job_of(&client, &agent).await.id;
+    // The agent's turn ended while the session it started still runs.
+    let child = sandbox
+        .poll_until("the agent's turn to end", async || {
+            let jobs = client.request::<JobList>(&JobListParams {}).await.unwrap();
+            let agent_ended = jobs
+                .jobs
+                .iter()
+                .any(|job| job.id == agent_job && job.state == JobState::Completed);
+            let child = jobs
+                .jobs
+                .into_iter()
+                .find(|job| job.parent.as_ref() == Some(&agent_job))?;
+            agent_ended.then_some(child.session?)
+        })
+        .await;
+    std::fs::write(workspace.join("go"), "").unwrap();
+    let child_answer = answer(&host, &child).await;
+    // Settled again: the turn the daemon started took the notice. The
+    // fixture answers a turn with no prompt with its last tool result, so
+    // the turn's own answer says nothing here.
+    stopped(&host, &agent).await;
+    let notices: Vec<String> = boundary_inputs(&sandbox, &agent)
+        .into_iter()
+        .filter(|text| text.lines().next() == Some("[session notification]"))
+        .collect();
+    let names = |text: &String| (text.contains(child.as_str()), text.contains(&child_answer));
+
+    assert_eq!(
+        notices.iter().map(names).collect::<Vec<_>>(),
+        vec![(true, true)],
         "log:\n{}",
         sandbox.isolated.daemon_log()
     );

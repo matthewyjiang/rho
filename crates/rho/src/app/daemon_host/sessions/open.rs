@@ -57,6 +57,7 @@ use crate::{
             root_host_tools, AgentBinder, AgentInvocation, AgentRole, BoundAgent, LaunchTools,
         },
         cli_config::{settle_bound_config, ProviderRefreshStatus, SettledConfig},
+        peer_sessions::PeerInbox,
         prompt_content::PromptContext,
         session_assembly::SignIn,
         session_runtime::{
@@ -456,9 +457,14 @@ async fn open_runtime(
     // A T3 Code session has T3's own. A client that takes no daemon turns
     // (`rho run --detach`, ACP, `idle_wake: never`) gets no tools, so its
     // agent waits as a headless run does.
-    let pull_requests = match (pull_requests, children, idle_turns) {
-        (Some(service), ChildAgents::InProcess, IdleTurns::Host) => Some(service.inbox(&id, cwd)),
-        _ => None,
+    // Likewise, only such a session hears of the turns it starts in other
+    // sessions through session control (see `peer_wake`).
+    let (pull_requests, peer_sessions) = match (children, idle_turns) {
+        (ChildAgents::InProcess, IdleTurns::Host) => (
+            pull_requests.map(|service| service.inbox(&id, cwd)),
+            Some(PeerInbox::default()),
+        ),
+        (ChildAgents::InProcess, IdleTurns::Never) | (ChildAgents::HostThreads, _) => (None, None),
     };
     let build = SessionBuild {
         launch: SessionLaunch {
@@ -472,6 +478,7 @@ async fn open_runtime(
             questions,
             surfaces,
             pull_requests,
+            peer_sessions,
             children,
             idle_turns,
             subagent_pool,

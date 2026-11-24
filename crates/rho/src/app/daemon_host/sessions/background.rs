@@ -21,6 +21,7 @@ use tokio::sync::watch;
 use super::{awaited::AwaitedWork, LoadedSession, Sessions};
 use crate::{
     app::{
+        peer_sessions::PeerInbox,
         pull_requests::PullRequestInbox,
         session_runtime::{BackgroundWait, SessionRuntime},
         subagent_manager::{BackgroundChild, SubagentManager},
@@ -52,12 +53,14 @@ pub(super) struct SessionBackground {
 
 /// The session's tools that run work of their own, when it has them. A
 /// reconfigured tool set may replace them.
-#[derive(Clone)]
-struct Sources {
-    processes: Option<ProcessManager>,
-    subagents: Option<SubagentManager>,
-    surfaces: Option<SurfaceHost>,
-    pull_requests: Option<PullRequestInbox>,
+#[derive(Clone, Default)]
+pub(super) struct Sources {
+    pub(super) processes: Option<ProcessManager>,
+    pub(super) subagents: Option<SubagentManager>,
+    pub(super) surfaces: Option<SurfaceHost>,
+    pub(super) pull_requests: Option<PullRequestInbox>,
+    /// Notices of the turns it started in other sessions (see `peer_wake`).
+    pub(super) peers: Option<PeerInbox>,
 }
 
 impl Sources {
@@ -67,6 +70,7 @@ impl Sources {
             subagents: runtime.tools().subagents().cloned(),
             surfaces: runtime.tools().surfaces().cloned(),
             pull_requests: runtime.tools().pull_requests().cloned(),
+            peers: runtime.peer_sessions().cloned(),
         }
     }
 }
@@ -98,8 +102,7 @@ impl SessionBackground {
             sources: Mutex::new(Sources {
                 processes,
                 subagents,
-                surfaces: None,
-                pull_requests: None,
+                ..Sources::default()
             }),
             workflows: WorkflowRunTracker::new(),
             replaced: watch::Sender::new(0),
@@ -138,20 +141,11 @@ impl SessionBackground {
     /// for, from the session's tools now; `None` for a session nothing
     /// wakes, whose prompts hold until their work finishes.
     pub(super) fn awaited(&self) -> Option<AwaitedWork> {
-        let Sources {
-            processes,
-            subagents,
-            surfaces,
-            pull_requests,
-        } = self.sources();
         AwaitedWork::new(
             self.wait,
             self.session_id.clone(),
-            processes,
             self.workflows.clone(),
-            subagents,
-            surfaces,
-            pull_requests,
+            self.sources(),
         )
     }
 

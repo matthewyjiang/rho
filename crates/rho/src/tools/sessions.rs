@@ -4,7 +4,7 @@
 //! Host session history is outside the workspace. Authorize its read explicitly;
 //! only the derived SQLite cache is written, never a source session or its state.
 
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, OnceLock, RwLock};
 
 use rho_sdk::{
     tool::{
@@ -16,6 +16,7 @@ use rho_sdk::{
 };
 
 use crate::{
+    app::peer_sessions::PeerInbox,
     session::{
         recall::{self, RecallRequest, RecallStore},
         search::Request,
@@ -57,11 +58,21 @@ impl Action {
 }
 
 #[derive(Clone, Default)]
-pub(crate) struct SessionBinding(Arc<RwLock<Option<String>>>);
+pub(crate) struct SessionBinding {
+    id: Arc<RwLock<Option<String>>>,
+    /// Where the daemon tells the session of the turns its `new` and
+    /// `prompt` start, when it is told (see `app::peer_sessions`).
+    peers: Arc<OnceLock<PeerInbox>>,
+}
 
 impl SessionBinding {
     pub(crate) fn bind(&self, id: &str) {
-        *self.0.write().expect("session search binding poisoned") = Some(id.to_owned());
+        *self.id.write().expect("session search binding poisoned") = Some(id.to_owned());
+    }
+
+    pub(crate) fn bind_peers(&self, inbox: PeerInbox) {
+        // A session's tools are bound to one inbox, once.
+        let _ = self.peers.set(inbox);
     }
 }
 
@@ -96,7 +107,10 @@ impl Tool for Sessions {
     fn spec(&self) -> rho_sdk::model::ToolSpec {
         rho_sdk::model::ToolSpec {
             name: crate::session::search::TOOL_NAME.into(),
-            description: format!("{HISTORY}{CONTROL}"),
+            description: match self.binding.peers.get() {
+                Some(_) => format!("{HISTORY}{CONTROL}{TOLD}"),
+                None => format!("{HISTORY}{CONTROL}"),
+            },
             input_schema: input_schema(),
         }
     }
@@ -130,8 +144,15 @@ impl Tool for Sessions {
                     return Ok(self.prepare_recall(request));
                 }
                 Action::Control(call) => {
-                    return control::prepare(call, &self.current()?, &self.environment, &self.root)
-                        .await;
+                    let peers = self.binding.peers.get().cloned();
+                    return control::prepare(
+                        call,
+                        &self.current()?,
+                        peers,
+                        &self.environment,
+                        &self.root,
+                    )
+                    .await;
                 }
             };
             request
@@ -192,7 +213,7 @@ impl Sessions {
     /// The id of the session the tool serves.
     fn current(&self) -> Result<String, ToolError> {
         self.binding
-            .0
+            .id
             .read()
             .expect("session search binding poisoned")
             .clone()
@@ -246,6 +267,9 @@ const HISTORY: &str = "Search or read prior Rho sessions without resuming or cha
 
 /// What the control actions do, where the daemon hosts sessions.
 const CONTROL: &str = " Through a running rho daemon, also start and drive peer sessions, which keep running after this turn and can be picked up later: list the daemon's sessions (filter by workspace or state); new starts a session in a workspace (absolute path) with a first prompt, optionally as an agent or model, and returns its id at once; prompt starts a turn on a session whose last turn ended; steer sends text to a running turn; cancel cancels the turn in progress; wait waits up to timeout_secs (30 by default, at most 50) for the session to settle (no turn running and none rho will start for its background work) or to stop for a person's input, a subagent's question included, and returns its state, the last turn's outcome with the final answer once it ended (final once done), and a cursor to pass back while done is false; read without an anchor pages a daemon session's transcript, its turn in progress included. A session you start runs one level deeper and shares the agent budget, so it may wait as queued; started from a daemon session, it records this one as its parent. Its approvals and plan approvals wait for a person (state waiting_for_input); no action answers them. A question a session you started asks, its own or its subagent's, is in wait's inputs: answer takes its id as request and either answers (each question's id to the values of the choices picked, or your own text where allowed) or decline: true; answer only what your instructions already settle, and leave the rest to the person, whose answer may come first; an MCP server's question waits for the person. A person may have chosen the permission mode and model the sessions this one starts run with; a model you name still applies to that session. Prefer the agent tool for work whose result returns into this turn; use sessions for work that should outlive it, run in another workspace, or be handed to a person.";
+
+/// What a session the daemon tells of its turns learns of it.
+const TOLD: &str = " rho tells you in a [session notification] when a turn you start with new or prompt ends or asks a question, so end your turn rather than poll wait.";
 
 /// The tool's arguments: every action's, flat, as models fill them in.
 fn input_schema() -> serde_json::Value {

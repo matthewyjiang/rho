@@ -7,7 +7,7 @@ use rho_sdk::{
 };
 use serde_json::{json, Value};
 
-use super::{signal::PARENT_ENDED, *};
+use super::{super::background::Sources, signal::PARENT_ENDED, *};
 use crate::tools::{
     mcp::exported_name::namespaced_tool_name,
     process::{ProcessLimits, ProcessManager, ProcessRole},
@@ -141,11 +141,11 @@ impl Fixture {
         AwaitedWork::new(
             BackgroundWait::HostWakes,
             "parent".into(),
-            Some(self.processes.clone()),
             self.workflows.clone(),
-            /*subagents*/ None,
-            /*surfaces*/ None,
-            /*pull_requests*/ None,
+            Sources {
+                processes: Some(self.processes.clone()),
+                ..Sources::default()
+            },
         )
         .expect("a host that wakes its session waits on its work")
     }

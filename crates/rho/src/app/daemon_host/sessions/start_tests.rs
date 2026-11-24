@@ -1,16 +1,14 @@
 use std::{sync::Arc, time::Duration};
 
 use pretty_assertions::assert_eq;
-use rho_protocol::{
-    self as wire, ContentBlock, ErrorCode, IdempotencyKey, SessionPromptParams, TurnId,
-};
+use rho_protocol::{ContentBlock, ErrorCode, IdempotencyKey, SessionPromptParams, TurnId};
 use tempfile::TempDir;
 use tokio::time::timeout;
 
 use crate::app::daemon_host::{
     jobs::{JobRegistry, JobStore},
     sessions::{
-        test_sessions::{load, Load},
+        test_sessions::{load, prompts_shown, Load},
         LoadedSession, Sessions,
     },
     wire::session_to_wire,
@@ -43,16 +41,6 @@ async fn prompt(
         .expect("the daemon answers the prompt")
         .map(|prompted| prompted.turn)
         .map_err(|error| error.error_code())
-}
-
-/// How many prompts `session`'s clients were shown.
-fn prompts_shown(session: &LoadedSession) -> usize {
-    session
-        .feed
-        .buffered_for_tests()
-        .iter()
-        .filter(|event| matches!(event, wire::SessionEvent::UserMessage { .. }))
-        .count()
 }
 
 /// Cancels `session`'s turn and returns once it recorded its end.

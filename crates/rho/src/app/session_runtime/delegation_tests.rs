@@ -11,6 +11,7 @@ use super::{BackgroundSources, BackgroundWait, Delegation};
 use crate::{
     app::{
         agent_executor::AgentRunHandle,
+        peer_sessions::{PeerInbox, PeerTurnEnd},
         pull_requests::{PullRequestInbox, PullRequests, ScriptedForge},
         subagent_manager::SubagentManager,
     },
@@ -88,6 +89,8 @@ struct Fixture {
     manager: SubagentManager,
     processes: ProcessManager,
     workflows: WorkflowRunTracker,
+    /// Notices of turns the session started in other sessions.
+    peers: PeerInbox,
     host: Delegation,
     run: rho_sdk::Run,
     status: tokio::sync::watch::Sender<RunStatus>,
@@ -138,6 +141,7 @@ impl Fixture {
             .session(SessionOptions::new().id(rho_sdk::SessionId::from_string(SESSION_ID).unwrap()))
             .await
             .unwrap();
+        let peers = PeerInbox::default();
         let host = Delegation::attach(
             &session,
             BackgroundSources {
@@ -146,6 +150,7 @@ impl Fixture {
                 subagents: Some(&manager),
                 processes: Some(&processes),
                 workflows: &workflows,
+                peer_sessions: Some(&peers),
             },
             wait,
             None,
@@ -177,6 +182,7 @@ impl Fixture {
             manager,
             processes,
             workflows,
+            peers,
             host,
             run,
             status,
@@ -479,6 +485,10 @@ async fn rejected_boundary_restores_terminal_results() {
         .workflows
         .register_start("wf-run", "fixture", "digest", None));
     Fixture::finish_workflow(&fixture.workflows, "wf-run");
+    fixture
+        .peers
+        .expect_for_tests("started")
+        .tell_ended(/*title*/ None, PeerTurnEnd::Cancelled);
     fixture.run.cancel();
     while fixture.run.next_event().await.is_some() {}
     assert!(matches!(
@@ -506,13 +516,21 @@ async fn rejected_boundary_restores_terminal_results() {
             .into_iter()
             .map(|notification| notification.run_id)
             .collect::<Vec<_>>(),
+        fixture
+            .peers
+            .take()
+            .notices
+            .into_iter()
+            .map(|notice| notice.session)
+            .collect::<Vec<_>>(),
     );
     assert_eq!(
         restored,
         (
             vec!["abc123".to_owned()],
             vec![process_id],
-            vec!["wf-run".to_owned()]
+            vec!["wf-run".to_owned()],
+            vec!["started".to_owned()]
         )
     );
 }
@@ -674,6 +692,7 @@ async fn failed_attach_keeps_held_notices() {
             subagents: Some(&manager),
             processes: Some(&processes),
             workflows: &workflows,
+            peer_sessions: None,
         },
         BackgroundWait::HoldPrompt,
         None,
@@ -746,6 +765,7 @@ async fn only_live_processes_and_task_results_are_background_work() {
             subagents: None,
             processes: Some(&processes),
             workflows: &workflows,
+            peer_sessions: None,
         };
         assert_eq!(sources.has_work(SESSION_ID), expected, "{name}");
     }

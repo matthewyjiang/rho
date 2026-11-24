@@ -743,6 +743,13 @@ impl DaemonView {
         {
             // See `prompt`: the next turn's `running` cannot come before this.
             let _turn = self.session.turn();
+            // A turn that ends before it began answers its prompt with that
+            // end, so the session whose call sent it hears it there alone.
+            if matches!(start, Some(PromptStart::Ended(_)))
+                && *self.start.borrow() == PromptStart::Pending
+            {
+                self.session.peer_wake.forget();
+            }
             self.session.end_turn(self.turn.clone(), outcome, end);
         }
         self.ended = true;

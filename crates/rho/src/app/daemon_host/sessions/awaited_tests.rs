@@ -118,11 +118,13 @@ async fn started(
     let awaited = AwaitedWork::new(
         BackgroundWait::HostTurns,
         SESSION.into(),
-        Some(processes.clone()),
         WorkflowRunTracker::new(),
-        Some(subagents),
-        /*surfaces*/ None,
-        Some(inbox),
+        Sources {
+            processes: Some(processes.clone()),
+            subagents: Some(subagents),
+            pull_requests: Some(inbox),
+            ..Sources::default()
+        },
     )
     .unwrap();
     (awaited, processes, running)

@@ -95,6 +95,7 @@ mod next_turn;
 mod observe;
 mod open;
 mod options;
+mod peer_wake;
 mod processes;
 mod pull_request_wake;
 mod pull_requests;
@@ -258,6 +259,10 @@ struct LoadedSession {
     cache_warm: Option<KeepWarm>,
     /// Prompt context no model turn has sent yet (see [`held_context`]).
     held_context: Mutex<crate::app::prompt_content::PromptContext>,
+    /// The notices of the turns this session starts in other sessions, and
+    /// what its turn under way owes the session that started it (see
+    /// [`peer_wake`]).
+    peer_wake: peer_wake::PeerWake,
 }
 
 /// The state a session's turn lock guards.
@@ -407,6 +412,7 @@ impl LoadedSession {
             wake_gave_up: AtomicBool::new(false),
             cache_warm: KeepWarm::of(&runtime),
             held_context: Mutex::new(held_context),
+            peer_wake: peer_wake::PeerWake::of(&runtime),
             child_questions: ChildQuestions::of(&mut runtime),
             handle: runtime.handle(),
             workspace: runtime.workspace_root().to_path_buf(),
@@ -466,9 +472,11 @@ impl LoadedSession {
     /// client's replay holds one without the other (#1669). Any change to
     /// its background work goes first, so a client hears what the turn left
     /// running before it hears the turn end, and whether the session settled
-    /// follows.
+    /// follows. A turn that owes the session that started this one a notice
+    /// tells it then (see [`peer_wake`]).
     fn end_turn(&self, turn: rho_protocol::TurnId, outcome: Option<TurnOutcome>, end: TurnEnd) {
         self.report_background();
+        let told = self.peer_wake.ended(&end, outcome.as_ref());
         let ended = outcome
             .clone()
             .map(|outcome| rho_protocol::SessionEvent::TurnEnded { turn, outcome });
@@ -480,6 +488,11 @@ impl LoadedSession {
                 tracing::warn!(job = %self.job, %error, "could not record a turn's end");
                 self.feed.publish(ended);
             }
+        }
+        // Once the job records the end, so a starter that looks once told
+        // finds the turn ended.
+        if let Some((owed, end)) = told {
+            owed.tell_ended(self.feed.title(), end);
         }
         self.report_activity();
     }

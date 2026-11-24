@@ -8,6 +8,7 @@
 
 use crate::{
     app::{
+        peer_sessions::PeerBatch,
         pull_requests::NewsBatch,
         subagent_messaging::{NoticeDelivery, SubagentNotice},
     },
@@ -35,6 +36,9 @@ pub(crate) struct BoundaryResults<'a> {
     pub(crate) surface_actions: &'a [SurfaceAction],
     /// What changed on the session's watched pull requests.
     pub(crate) pull_requests: &'a NewsBatch,
+    /// How turns the session started in other sessions ended, or the
+    /// questions they ask.
+    pub(crate) peer_sessions: &'a PeerBatch,
 }
 
 /// Model input sections and display rows for one boundary, in delivery order.
@@ -117,6 +121,15 @@ impl BoundaryResults<'_> {
                     .news
                     .iter()
                     .map(|news| DisplayRow::Notification(Box::new(news.card()))),
+            );
+        }
+        if !self.peer_sessions.is_empty() {
+            model.push(self.peer_sessions.prompt());
+            rows.extend(
+                self.peer_sessions
+                    .cards()
+                    .into_iter()
+                    .map(|card| DisplayRow::Notification(Box::new(card))),
             );
         }
         BoundaryMessage { model, rows }

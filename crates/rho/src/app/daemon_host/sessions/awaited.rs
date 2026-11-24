@@ -6,12 +6,17 @@
 //! service neither wakes the session nor keeps it from settling (see
 //! `settle`). A session whose prompts hold until their work finishes
 //! (`BackgroundWait::HoldPrompt`) waits on nothing between turns.
+//!
+//! A turn the session started in another session through session control
+//! counts too (see `peer_wake`): it runs until it ends, and its notice is a
+//! result.
 
 use std::future::Future;
 
+use super::background::Sources;
 use crate::{
     app::{
-        pull_requests::PullRequestInbox, session_runtime::BackgroundWait,
+        peer_sessions::PeerInbox, pull_requests::PullRequestInbox, session_runtime::BackgroundWait,
         subagent_manager::SubagentManager,
     },
     tools::{
@@ -38,6 +43,9 @@ pub(super) struct AwaitedWork {
     /// watch is neither running work nor a result: it never keeps the
     /// session active or loaded.
     pull_requests: Option<PullRequestInbox>,
+    /// Notices of turns the session started in other sessions, which are
+    /// results; such a turn still under way is running work.
+    peers: Option<PeerInbox>,
 }
 
 impl AwaitedWork {
@@ -46,18 +54,22 @@ impl AwaitedWork {
     pub(super) fn new(
         wait: BackgroundWait,
         session_id: String,
-        processes: Option<ProcessManager>,
         workflows: WorkflowRunTracker,
-        subagents: Option<SubagentManager>,
-        surfaces: Option<SurfaceHost>,
-        pull_requests: Option<PullRequestInbox>,
+        sources: Sources,
     ) -> Option<Self> {
-        let (subagents, surfaces, pull_requests) = match wait {
+        let Sources {
+            processes,
+            subagents,
+            surfaces,
+            pull_requests,
+            peers,
+        } = sources;
+        let (subagents, surfaces, pull_requests, peers) = match wait {
             BackgroundWait::HoldPrompt => return None,
             // The host runs the session's children as its own threads and
             // reports them itself, and its client draws no surfaces.
-            BackgroundWait::HostWakes => (None, None, None),
-            BackgroundWait::HostTurns => (subagents, surfaces, pull_requests),
+            BackgroundWait::HostWakes => (None, None, None, None),
+            BackgroundWait::HostTurns => (subagents, surfaces, pull_requests, peers),
         };
         Some(Self {
             session_id,
@@ -66,6 +78,7 @@ impl AwaitedWork {
             subagents,
             surfaces,
             pull_requests,
+            peers,
         })
     }
 
@@ -79,31 +92,15 @@ impl AwaitedWork {
         let workflow_finish = self.workflows.notified_owned();
         let subagent = self.subagents.as_ref().map(SubagentManager::parent_wake);
         let surface_action = self.surfaces.as_ref().map(SurfaceHost::acted_owned);
+        let peer = self.peers.as_ref().map(PeerInbox::arrived_owned);
         let news = self.outside_news();
         async move {
-            let surface_action = async move {
-                match surface_action {
-                    Some(acted) => acted.await,
-                    None => std::future::pending().await,
-                }
-            };
-            let process_exit = async move {
-                match process_exit {
-                    Some(exit) => exit.await,
-                    None => std::future::pending().await,
-                }
-            };
-            let subagent = async move {
-                match subagent {
-                    Some(wake) => wake.await,
-                    None => std::future::pending().await,
-                }
-            };
             tokio::select! {
-                () = process_exit => {}
+                () = or_pending(process_exit) => {}
                 () = workflow_finish => {}
-                () = subagent => {}
-                () = surface_action => {}
+                () = or_pending(subagent) => {}
+                () = or_pending(surface_action) => {}
+                () = or_pending(peer) => {}
                 () = news => {}
             }
         }
@@ -116,12 +113,7 @@ impl AwaitedWork {
             .pull_requests
             .as_ref()
             .map(PullRequestInbox::news_owned);
-        async move {
-            match news {
-                Some(news) => news.await,
-                None => std::future::pending().await,
-            }
-        }
+        or_pending(news)
     }
 
     /// Whether a result is waiting or could still arrive. A workflow counts
@@ -141,6 +133,7 @@ impl AwaitedWork {
             || self.subagents.as_ref().is_some_and(|subagents| {
                 subagents.has_active_or_pending_notification(&self.session_id)
             })
+            || self.peers.as_ref().is_some_and(PeerInbox::expecting)
             || self.has_result()
     }
 
@@ -155,6 +148,7 @@ impl AwaitedWork {
                 .subagents
                 .as_ref()
                 .is_some_and(|subagents| subagents.has_running(&self.session_id))
+            || self.peers.as_ref().is_some_and(PeerInbox::expecting)
     }
 
     /// The session's tasks still running or holding a result not yet
@@ -190,6 +184,7 @@ impl AwaitedWork {
                 .pull_requests
                 .as_ref()
                 .is_some_and(PullRequestInbox::has_news)
+            || self.peers.as_ref().is_some_and(PeerInbox::has_notices)
     }
 
     /// Resolves once a result is waiting.
@@ -208,6 +203,14 @@ impl AwaitedWork {
             }
             another.await;
         }
+    }
+}
+
+/// Resolves as `wake` does, or never without one.
+async fn or_pending(wake: Option<impl Future<Output = ()>>) {
+    match wake {
+        Some(wake) => wake.await,
+        None => std::future::pending().await,
     }
 }
 
