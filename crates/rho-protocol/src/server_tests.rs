@@ -424,30 +424,12 @@ async fn dispatch_enforces_the_handshake_and_rejects_unknown_requests() {
         ),
         (
             "an agent's connection reaches the service with a question's answer, never an approval's",
+            // The refused answers go first: a request that fails to decode is
+            // answered before the service's answer to an earlier one.
             vec![
                 hello_as(1, PROTOCOL_VERSION, "agent", &[]),
                 request_with_params(
                     2,
-                    SESSION_ANSWER_QUESTION,
-                    serde_json::json!({
-                        "session": "s",
-                        "request": 1,
-                        "answer": {"kind": "answers", "answers": {"q": ["yes"]}},
-                        "by": "p",
-                    }),
-                ),
-                request_with_params(
-                    3,
-                    SESSION_ANSWER_QUESTION,
-                    serde_json::json!({
-                        "session": "s",
-                        "request": 1,
-                        "answer": {"kind": "decline"},
-                        "by": "p",
-                    }),
-                ),
-                request_with_params(
-                    4,
                     SESSION_ANSWER_QUESTION,
                     serde_json::json!({
                         "session": "s",
@@ -457,7 +439,7 @@ async fn dispatch_enforces_the_handshake_and_rejects_unknown_requests() {
                     }),
                 ),
                 request_with_params(
-                    5,
+                    3,
                     SESSION_ANSWER_QUESTION,
                     serde_json::json!({
                         "session": "s",
@@ -466,13 +448,22 @@ async fn dispatch_enforces_the_handshake_and_rejects_unknown_requests() {
                         "by": "p",
                     }),
                 ),
+                request_with_params(
+                    4,
+                    SESSION_ANSWER_QUESTION,
+                    serde_json::json!({
+                        "session": "s",
+                        "request": 1,
+                        "answer": {"kind": "answers", "answers": {"q": ["yes"]}},
+                        "by": "p",
+                    }),
+                ),
             ],
             vec![
                 (id(1), Ok(())),
-                (id(2), Err(Some(ErrorCode::SessionNotFound))),
-                (id(3), Err(Some(ErrorCode::SessionNotFound))),
-                (id(4), Err(Some(ErrorCode::InvalidParams))),
-                (id(5), Err(Some(ErrorCode::InvalidParams))),
+                (id(2), Err(Some(ErrorCode::InvalidParams))),
+                (id(3), Err(Some(ErrorCode::InvalidParams))),
+                (id(4), Err(Some(ErrorCode::SessionNotFound))),
             ],
         ),
         (

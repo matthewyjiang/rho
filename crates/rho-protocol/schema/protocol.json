@@ -1973,7 +1973,7 @@
         },
         {
           "const": "write",
-          "description": "Also start, prompt, steer, and cancel them.",
+          "description": "Also start, prompt, steer, and cancel them, and answer the questions\nof sessions they started.",
           "type": "string"
         }
       ]
@@ -4758,6 +4758,47 @@
       ],
       "type": "object"
     },
+    "QuestionAnswer": {
+      "description": "An answer to a question, as [`SESSION_ANSWER_QUESTION`] takes it: the\nanswers a question takes from [`InputAnswer`], and nothing an approval\ntakes. On the wire each is the same as its [`InputAnswer`].",
+      "oneOf": [
+        {
+          "description": "Answers keyed by question id, as [`InputAnswer::Answers`].",
+          "properties": {
+            "answers": {
+              "additionalProperties": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "type": "object"
+            },
+            "kind": {
+              "const": "answers",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "answers"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Decline to answer the questions, as [`InputAnswer::Decline`].",
+          "properties": {
+            "kind": {
+              "const": "decline",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "QuestionAsk": {
       "description": "Questions the agent asks the user, answered together.",
       "properties": {
@@ -4875,6 +4916,11 @@
         {
           "const": "timed_out",
           "description": "Nobody answered or held it by its timeout's deadline, so the daemon\nanswered it with the timeout's answer.",
+          "type": "string"
+        },
+        {
+          "const": "answered_by_session",
+          "description": "The session that started the asking session answered the question\n([`SESSION_ANSWER_QUESTION`]); a [`super::SessionEvent::Notice`]\nnaming that session follows. Only a question closes this way. It\nnames no session: only the asker's parent may answer, which a client\nalready knows from [`super::JobSummary::parent`].",
           "type": "string"
         },
         {
@@ -5019,6 +5065,35 @@
         "request",
         "answer"
       ],
+      "type": "object"
+    },
+    "SessionAnswerQuestionParams": {
+      "description": "Params of [`SESSION_ANSWER_QUESTION`]: `by` answers question `request`\nof `session`, a session `by` started.\n\nThe daemon answers only a question ([`Ask::Question`], a subagent's\nincluded), only for the session whose job started `session`'s job\n([`super::JobSummary::parent`]), and only while that session's grant\nhas write access ([`super::GrantAccess::Write`]). Anything else is\nrefused: an approval or a plan approval with\n[`crate::ErrorCode::InvalidParams`], any other session with\n[`crate::ErrorCode::InvalidParams`], and a request that is not open with\n[`crate::ErrorCode::InputNotOpen`]. The first answer wins, whoever\nsends it.\n\n`by` is what the caller declares, as [`super::SessionNewParams::parent`]\nand the connection's role are: the daemon checks it against its job\nrecords, but cannot tell who sends it. The method asks for no\ncapability, so an agent's connection may call it.",
+      "properties": {
+        "answer": {
+          "$ref": "#/$defs/QuestionAnswer"
+        },
+        "by": {
+          "$ref": "#/$defs/SessionId",
+          "description": "The answering session, which started `session`."
+        },
+        "request": {
+          "$ref": "#/$defs/InputRequestId"
+        },
+        "session": {
+          "$ref": "#/$defs/SessionId"
+        }
+      },
+      "required": [
+        "session",
+        "request",
+        "answer",
+        "by"
+      ],
+      "type": "object"
+    },
+    "SessionAnswerQuestionResponse": {
+      "description": "Result of [`SESSION_ANSWER_QUESTION`]: the answer won, and the daemon\nhanded it to whoever asked. Every attached client of the asking session\nsaw the request close as [`Resolution::AnsweredBySession`].",
       "type": "object"
     },
     "SessionAnswerResponse": {
@@ -5500,6 +5575,11 @@
           "type": "string"
         },
         {
+          "const": "answer",
+          "description": "Answer a question the session, one the caller started, asks\n([`SESSION_ANSWER_QUESTION`]).",
+          "type": "string"
+        },
+        {
           "description": "Any other value: one a later protocol minor adds.",
           "type": "string",
           "x-rho-other": true
@@ -5903,7 +5983,7 @@
           "type": "object"
         },
         {
-          "description": "Input request `id` closed: a client answered it, the turn withdrew\nit, or it timed out. Clients that show it stop.",
+          "description": "Input request `id` closed: a client answered it, the session that\nstarted this one answered its question, the turn withdrew it, or it\ntimed out. Clients that show it stop.",
           "properties": {
             "id": {
               "$ref": "#/$defs/InputRequestId"
@@ -9355,6 +9435,14 @@
       },
       "result": {
         "$ref": "#/$defs/SessionAnswerResponse"
+      }
+    },
+    "rho/session/answer_question": {
+      "params": {
+        "$ref": "#/$defs/SessionAnswerQuestionParams"
+      },
+      "result": {
+        "$ref": "#/$defs/SessionAnswerQuestionResponse"
       }
     },
     "rho/session/attach": {
