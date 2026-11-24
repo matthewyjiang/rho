@@ -1,6 +1,8 @@
 use serde_json::Value;
 
-use crate::protocol::openai_chat::{ChatToolCallPolicy, OpenAiMessage, OpenAiTool};
+use crate::protocol::openai_chat::{
+    ChatReasoningReplay, ChatToolCallPolicy, OpenAiMessage, OpenAiTool,
+};
 
 #[path = "mistral_history.rs"]
 mod mistral_history;
@@ -36,6 +38,43 @@ impl OpenAiCompatibleDialect {
             | Self::Moonshot
             | Self::KimiCode
             | Self::Mistral => ChatToolCallPolicy::Strict,
+        }
+    }
+
+    /// Whether chat requests carry OpenAI's `prompt_cache_key` extension.
+    ///
+    /// Config-defined hosts can be strict schema validators (Groq returns 400
+    /// for any undeclared field), so they do not get it. Custom hosts that
+    /// need a session cache key can speak Responses, where the field is part
+    /// of the request shape.
+    pub(crate) fn sends_prompt_cache_key(self) -> bool {
+        match self {
+            Self::Custom => false,
+            Self::Standard
+            | Self::QwenTokenPlan
+            | Self::Poolside
+            | Self::OpenRouter
+            | Self::Moonshot
+            | Self::KimiCode
+            | Self::Mistral => true,
+        }
+    }
+
+    /// Which field replayed reasoning goes back in.
+    ///
+    /// Config-defined hosts can be strict validators (Groq streams `reasoning`
+    /// and rejects `reasoning_content`), so they get the field they streamed.
+    /// Built-in hosts keep the `reasoning_content` they have always been sent.
+    pub(crate) fn reasoning_replay(self) -> ChatReasoningReplay {
+        match self {
+            Self::Custom => ChatReasoningReplay::AsStreamed,
+            Self::Standard
+            | Self::QwenTokenPlan
+            | Self::Poolside
+            | Self::OpenRouter
+            | Self::Moonshot
+            | Self::KimiCode
+            | Self::Mistral => ChatReasoningReplay::ReasoningContent,
         }
     }
 

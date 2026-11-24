@@ -1,6 +1,7 @@
 use rho_sdk::model::ModelStopReason;
 
 use crate::model::{ModelError, ModelEvent, ModelResponse, ProviderReportedErrorKind};
+use crate::protocol::openai_chat::{ChatReasoning, ChatReasoningField};
 
 use super::{
     content_chunks::{content_parts, ContentPart},
@@ -25,12 +26,13 @@ const MAX_STREAM_BLOCK_INDEX: usize = 4096;
 /// `handle_line`, then call `into_finish` once to normalize the accumulated
 /// state without emitting side effects.
 ///
-/// Reasoning deltas (Qwen/DeepSeek-style `reasoning_content`, or Mistral-style
-/// `thinking` content chunks) are retained and replayed to later turns as
-/// `openai_chat_reasoning_content` provider context. History conversion only
-/// replays that context to the exact model that produced it. Most hosts ignore
-/// an unknown `reasoning_content` field; a dialect whose host rejects it
-/// rewrites the field in `OpenAiCompatibleDialect::normalize_messages`.
+/// Reasoning deltas (Qwen/DeepSeek-style `reasoning_content`, Groq-style
+/// `reasoning`, or Mistral-style `thinking` content chunks) are retained and
+/// replayed to later turns as provider context that remembers the field they
+/// streamed in. History conversion only replays that context to the exact
+/// model that produced it, under the same field. Thinking chunks replay as
+/// `reasoning_content`; a dialect whose host rejects that rewrites the field
+/// in `OpenAiCompatibleDialect::normalize_messages`.
 ///
 /// Usage is not forwarded per chunk: hosts restate usage as running or final
 /// snapshots (sometimes on several chunks, with non-monotonic input totals),
@@ -38,7 +40,7 @@ const MAX_STREAM_BLOCK_INDEX: usize = 4096;
 /// the stream ends.
 pub(crate) struct ChatStreamAccumulator {
     text: String,
-    reasoning: String,
+    reasoning: ChatReasoning,
     /// Set only when a reasoning delta streamed; a completed message snapshot
     /// can fill `reasoning` without any reasoning wall time inside the
     /// measured generation window.
@@ -67,7 +69,10 @@ impl ChatStreamAccumulator {
     ) -> Self {
         Self {
             text: String::new(),
-            reasoning: String::new(),
+            reasoning: ChatReasoning {
+                field: ChatReasoningField::default(),
+                text: String::new(),
+            },
             reasoning_delta_streamed: false,
             tool_calls: Vec::new(),
             policy,
@@ -124,17 +129,10 @@ impl ChatStreamAccumulator {
             on_event(ModelEvent::Stopped(reason))?;
         }
         let delta = choice.get("delta");
-        if let Some(reasoning_delta) = delta
-            .and_then(|v| {
-                v.get("reasoning_content")
-                    .or_else(|| v.get("reasoning"))
-                    .or_else(|| v.get("reasoning_text"))
-            })
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty())
-        {
+        if let Some((field, reasoning_delta)) = delta.and_then(ChatReasoningField::find_in) {
             self.reasoning_delta_streamed = true;
-            self.reasoning.push_str(reasoning_delta);
+            self.reasoning.field = field;
+            self.reasoning.text.push_str(reasoning_delta);
             on_event(ModelEvent::ReasoningDelta(reasoning_delta.to_string()))?;
         }
         for part in delta
@@ -149,7 +147,7 @@ impl ChatStreamAccumulator {
                 }
                 ContentPart::Thinking(thinking) => {
                     self.reasoning_delta_streamed = true;
-                    self.reasoning.push_str(&thinking);
+                    self.reasoning.text.push_str(&thinking);
                     on_event(ModelEvent::ReasoningDelta(thinking))?;
                 }
             }
@@ -256,25 +254,20 @@ impl ChatStreamAccumulator {
             on_event(ModelEvent::Usage(usage.into_model_usage()))?;
         }
         let finish = self.into_finish()?;
-        emit_chat_reasoning_context(finish.reasoning_content, on_event)?;
+        emit_chat_reasoning_context(finish.reasoning, on_event)?;
         Ok(finish.response)
     }
 
     /// Fills gaps in the accumulated state from a completed message snapshot.
     fn merge_completed_message(&mut self, message: &serde_json::Value) {
         let fill_text = self.text.is_empty();
-        if self.reasoning.is_empty() {
-            if let Some(reasoning) = message
-                .get("reasoning_content")
-                .or_else(|| message.get("reasoning"))
-                .or_else(|| message.get("reasoning_text"))
-                .and_then(|v| v.as_str())
-                .filter(|text| !text.is_empty())
-            {
-                self.reasoning.push_str(reasoning);
+        if self.reasoning.text.is_empty() {
+            if let Some((field, reasoning)) = ChatReasoningField::find_in(message) {
+                self.reasoning.field = field;
+                self.reasoning.text.push_str(reasoning);
             }
         }
-        let fill_reasoning = self.reasoning.is_empty();
+        let fill_reasoning = self.reasoning.text.is_empty();
         for part in message
             .get("content")
             .map(content_parts)
@@ -283,7 +276,7 @@ impl ChatStreamAccumulator {
             match part {
                 ContentPart::Text(text) if fill_text => self.text.push_str(text),
                 ContentPart::Thinking(thinking) if fill_reasoning => {
-                    self.reasoning.push_str(&thinking);
+                    self.reasoning.text.push_str(&thinking);
                 }
                 ContentPart::Text(_) | ContentPart::Thinking(_) => {}
             }

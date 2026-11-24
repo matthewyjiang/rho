@@ -1,13 +1,16 @@
 use pretty_assertions::assert_eq;
 use serde_json::{json, Value};
 
-use crate::protocol::openai_chat::OpenAiMessage;
+use crate::protocol::openai_chat::{ChatReasoning, ChatReasoningField, OpenAiMessage};
 
 fn assistant(content: Option<Value>, reasoning: Option<&str>) -> OpenAiMessage {
     OpenAiMessage {
         role: "assistant".into(),
         content,
-        reasoning_content: reasoning.map(str::to_owned),
+        reasoning: reasoning.map(|text| ChatReasoning {
+            field: ChatReasoningField::ReasoningContent,
+            text: text.to_owned(),
+        }),
         tool_calls: None,
         tool_call_id: None,
     }

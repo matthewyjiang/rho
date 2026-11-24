@@ -6,7 +6,10 @@ use super::*;
 fn empty_chat_assistant_is_retryable() {
     let error = finalize_chat_assistant(
         String::new(),
-        "thoughts only".into(),
+        ChatReasoning {
+            field: ChatReasoningField::ReasoningContent,
+            text: "thoughts only".into(),
+        },
         Vec::new(),
         ChatToolCallPolicy::Strict,
     )

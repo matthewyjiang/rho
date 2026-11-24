@@ -135,7 +135,11 @@ impl OpenAiCompatibleProvider {
         stream: bool,
     ) -> Result<PreparedChatRequest<'a>, ModelError> {
         let target = self.model_identity();
-        let mut messages = to_openai_messages_for_target(request.messages, Some(&target))?;
+        let mut messages = to_openai_messages_for_target(
+            request.messages,
+            Some(&target),
+            self.dialect.reasoning_replay(),
+        )?;
         self.dialect.normalize_messages(&mut messages);
         let tools = request
             .tools
@@ -158,7 +162,10 @@ impl OpenAiCompatibleProvider {
             stream_options: stream.then_some(ChatStreamOptions {
                 include_usage: true,
             }),
-            prompt_cache_key: request.prompt_cache_key.map(str::to_owned),
+            prompt_cache_key: request
+                .prompt_cache_key
+                .filter(|_| self.dialect.sends_prompt_cache_key())
+                .map(str::to_owned),
             reasoning: decision.reasoning,
             reasoning_effort: decision.reasoning_effort,
             thinking: decision.thinking,

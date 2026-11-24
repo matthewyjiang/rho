@@ -15,9 +15,13 @@ fn chat_handoff_keeps_foreign_reasoning_summary_as_tagged_text() {
         provider_context: Vec::new(),
     });
 
-    let converted = to_openai_message_for_target(&message, Some(&target))
-        .unwrap()
-        .unwrap();
+    let converted = to_openai_message_for_target(
+        &message,
+        Some(&target),
+        ChatReasoningReplay::ReasoningContent,
+    )
+    .unwrap()
+    .unwrap();
     let content = converted.content.unwrap().as_str().unwrap().to_string();
 
     assert!(content.contains("answer"));
@@ -51,11 +55,18 @@ fn chat_handoff_replays_reasoning_content_for_exact_model() {
         }],
     });
 
-    let converted = to_openai_message_for_target(&message, Some(&identity))
-        .unwrap()
-        .unwrap();
+    let converted = to_openai_message_for_target(
+        &message,
+        Some(&identity),
+        ChatReasoningReplay::ReasoningContent,
+    )
+    .unwrap()
+    .unwrap();
     assert_eq!(
-        converted.reasoning_content.as_deref(),
+        converted
+            .reasoning
+            .map(|reasoning| reasoning.text)
+            .as_deref(),
         Some("need to inspect the workspace first")
     );
     assert!(converted.content.is_none());
@@ -88,10 +99,14 @@ fn chat_handoff_omits_reasoning_content_for_foreign_model() {
         }],
     });
 
-    let converted = to_openai_message_for_target(&message, Some(&target))
-        .unwrap()
-        .unwrap();
-    assert!(converted.reasoning_content.is_none());
+    let converted = to_openai_message_for_target(
+        &message,
+        Some(&target),
+        ChatReasoningReplay::ReasoningContent,
+    )
+    .unwrap()
+    .unwrap();
+    assert!(converted.reasoning.is_none());
     assert_eq!(converted.content.unwrap().as_str().unwrap(), "answer");
 }
 
@@ -117,7 +132,11 @@ fn chat_handoff_rejects_unknown_replay_context_kinds() {
         }],
     });
 
-    let err = match to_openai_message_for_target(&message, Some(&identity)) {
+    let err = match to_openai_message_for_target(
+        &message,
+        Some(&identity),
+        ChatReasoningReplay::ReasoningContent,
+    ) {
         Ok(_) => panic!("expected unknown replay kind to fail"),
         Err(error) => error,
     };
@@ -153,10 +172,20 @@ fn chat_handoff_injects_empty_reasoning_content_for_same_model_tool_turns() {
         reasoning_summary: None,
         provider_context: Vec::new(),
     });
-    let converted = to_openai_message_for_target(&same_model_tool_turn, Some(&identity))
-        .unwrap()
-        .unwrap();
-    assert_eq!(converted.reasoning_content.as_deref(), Some(""));
+    let converted = to_openai_message_for_target(
+        &same_model_tool_turn,
+        Some(&identity),
+        ChatReasoningReplay::ReasoningContent,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        converted
+            .reasoning
+            .map(|reasoning| reasoning.text)
+            .as_deref(),
+        Some("")
+    );
 
     let same_model_text_turn = Message::assistant(crate::model::AssistantMessage {
         content: vec![ContentBlock::Text("answer".into())],
@@ -164,10 +193,14 @@ fn chat_handoff_injects_empty_reasoning_content_for_same_model_tool_turns() {
         reasoning_summary: None,
         provider_context: Vec::new(),
     });
-    let converted = to_openai_message_for_target(&same_model_text_turn, Some(&identity))
-        .unwrap()
-        .unwrap();
-    assert!(converted.reasoning_content.is_none());
+    let converted = to_openai_message_for_target(
+        &same_model_text_turn,
+        Some(&identity),
+        ChatReasoningReplay::ReasoningContent,
+    )
+    .unwrap()
+    .unwrap();
+    assert!(converted.reasoning.is_none());
 
     let non_deepseek =
         crate::model::ModelIdentity::new("opencode-go", "openai-chat-completions", "kimi-k2.7");
@@ -177,10 +210,14 @@ fn chat_handoff_injects_empty_reasoning_content_for_same_model_tool_turns() {
         reasoning_summary: None,
         provider_context: Vec::new(),
     });
-    let converted = to_openai_message_for_target(&non_deepseek_tool_turn, Some(&non_deepseek))
-        .unwrap()
-        .unwrap();
-    assert!(converted.reasoning_content.is_none());
+    let converted = to_openai_message_for_target(
+        &non_deepseek_tool_turn,
+        Some(&non_deepseek),
+        ChatReasoningReplay::ReasoningContent,
+    )
+    .unwrap()
+    .unwrap();
+    assert!(converted.reasoning.is_none());
 
     let foreign_target =
         crate::model::ModelIdentity::new("openrouter", "openai-chat-completions", "other");
@@ -190,10 +227,14 @@ fn chat_handoff_injects_empty_reasoning_content_for_same_model_tool_turns() {
         reasoning_summary: None,
         provider_context: Vec::new(),
     });
-    let converted = to_openai_message_for_target(&foreign_tool_turn, Some(&foreign_target))
-        .unwrap()
-        .unwrap();
-    assert!(converted.reasoning_content.is_none());
+    let converted = to_openai_message_for_target(
+        &foreign_tool_turn,
+        Some(&foreign_target),
+        ChatReasoningReplay::ReasoningContent,
+    )
+    .unwrap()
+    .unwrap();
+    assert!(converted.reasoning.is_none());
 }
 
 // Covers: non-stream completions must capture reasoning for replay, whether it
@@ -211,7 +252,10 @@ fn convert_openai_response_captures_reasoning_content() {
         let response: ChatResponse =
             serde_json::from_value(json!({"choices": [{"message": message}]})).unwrap();
         let finish = convert_openai_response(response, ChatToolCallPolicy::Strict).unwrap();
-        assert_eq!(finish.reasoning_content.as_deref(), Some("think first"));
+        assert_eq!(
+            finish.reasoning.map(|reasoning| reasoning.text).as_deref(),
+            Some("think first")
+        );
         assert_eq!(
             finish.response,
             ModelResponse::Assistant(vec![ContentBlock::Text("done".into())])

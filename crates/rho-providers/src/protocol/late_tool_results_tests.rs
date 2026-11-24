@@ -244,7 +244,12 @@ fn tool_result_images_allow_late_results_in_every_provider_protocol() {
             json!({"role":"user", "parts":expected})
         );
 
-        let chat = convert::to_openai_messages_for_target(&history, None).unwrap();
+        let chat = convert::to_openai_messages_for_target(
+            &history,
+            None,
+            crate::protocol::openai_chat::ChatReasoningReplay::ReasoningContent,
+        )
+        .unwrap();
         let chat = serde_json::to_value(chat).unwrap();
         let mut expected = vec![
             json!({"role":"tool", "tool_call_id":"a", "content":"captured"}),

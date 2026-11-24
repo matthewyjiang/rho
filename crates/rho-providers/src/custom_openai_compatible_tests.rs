@@ -65,7 +65,7 @@ fn install_custom_providers_makes_openai_compatible_hosts() {
     );
     assert_eq!(
         composer.catalog_reasoning,
-        CatalogReasoningPolicy::OffAsNone
+        CatalogReasoningPolicy::ExactAdvertised
     );
     assert!(composer.is_custom_openai_compatible());
     assert!(matches!(

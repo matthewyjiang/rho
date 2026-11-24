@@ -57,6 +57,7 @@ fn aborted_turns_never_replay_reasoning_summary_as_text() {
                 let messages = crate::protocol::openai_chat::to_openai_messages_for_target(
                     history,
                     Some(target),
+                    crate::protocol::openai_chat::ChatReasoningReplay::ReasoningContent,
                 )
                 .unwrap();
                 serde_json::to_string(&messages).unwrap()
