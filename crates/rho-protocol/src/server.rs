@@ -4,8 +4,7 @@
 
 use std::{future::Future, sync::Arc, time::Duration};
 
-use serde::Serialize;
-use serde_json::{Map, Value};
+use serde_json::Value;
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::{mpsc, watch, OwnedSemaphorePermit},
@@ -13,6 +12,7 @@ use tokio::{
 };
 
 use crate::server_calls::ServiceCall;
+use crate::server_codec::{decode_params, encode, encode_result, unsupported};
 use crate::server_settings::{self, SettingsService, WatchRequest};
 use crate::server_streams::{attach, login, AttachRequest};
 use crate::{
@@ -24,7 +24,7 @@ use crate::{
         AuthChooseStoreParams, AuthChooseStoreResponse, AuthKeyParams, AuthKeyResponse,
         AuthListParams, AuthListResponse, AuthLogin, AuthLoginCancelParams,
         AuthLoginCancelResponse, AuthLoginParams, AuthLoginResponse, AuthLogoutParams,
-        AuthLogoutResponse, ClientInfo, ConfigGet, Hello, JobListResponse, Method, ModelListMethod,
+        AuthLogoutResponse, ClientInfo, ConfigGet, Hello, JobListResponse, ModelListMethod,
         SessionAnswerParams, SessionAnswerQuestionParams, SessionAnswerQuestionResponse,
         SessionAnswerResponse, SessionAttach, SessionAttachParams, SessionAttachResponse,
         SessionBackgroundListResponse, SessionBackgroundStopParams, SessionBackgroundStopResponse,
@@ -956,34 +956,6 @@ impl Drop for Responder {
             "the daemon failed while handling this request",
         )));
     }
-}
-
-/// Decodes `M`'s params. Absent params decode like `{}`, so params-less
-/// methods accept both. Typing by [`Method`] keeps the server on the same
-/// params type the client sends.
-pub(crate) fn decode_params<M: Method>(params: Option<Value>) -> Result<M::Params, RpcError> {
-    serde_json::from_value(params.unwrap_or_else(|| Value::Object(Map::new())))
-        .map_err(|error| RpcError::new(ErrorCode::InvalidParams, error.to_string()))
-}
-
-/// Encodes `M`'s result, the type [`crate::Client::request`] decodes.
-pub(crate) fn encode_result<M: Method>(result: &M::Result) -> Result<Value, RpcError> {
-    encode(result)
-}
-
-/// What a [`Service`] or [`SettingsService`] method that is not overridden
-/// answers: this daemon does not serve `method`.
-pub(crate) fn unsupported<T>(method: &str) -> std::future::Ready<Result<T, RpcError>> {
-    std::future::ready(Err(RpcError::new(
-        ErrorCode::MethodNotFound,
-        format!("this rho daemon does not serve {method}"),
-    )))
-}
-
-/// Fails only for values JSON cannot hold, such as a non-UTF-8 path.
-fn encode<T: Serialize>(value: &T) -> Result<Value, RpcError> {
-    serde_json::to_value(value)
-        .map_err(|error| RpcError::new(ErrorCode::InternalError, error.to_string()))
 }
 
 #[cfg(test)]
