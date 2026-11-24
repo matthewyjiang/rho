@@ -1,11 +1,11 @@
 use pretty_assertions::assert_eq;
 use rho_protocol::{
-    ModelSelection, SettingChange, SettingChoice, SettingKey, SettingKind, SettingSpec,
-    SettingValue, ValueSource,
+    ModelRuntime, ModelSelection, SettingChange, SettingChoice, SettingKey, SettingKind,
+    SettingSpec, SettingValue, ValueSource,
 };
 
 use super::{agent_values, apply_agent_changes, client_specs_problem, AgentChangeError};
-use crate::config::{document::ConfigDocument, load::resolve};
+use crate::config::{document::ConfigDocument, load::resolve, registry::AGENT_SETTINGS};
 
 fn set(key: &str, value: SettingValue) -> SettingChange {
     SettingChange::Set {
@@ -211,11 +211,16 @@ fn agent_changes_touch_only_their_keys_and_can_repair_the_file() {
 }
 
 // Covers: `get` marks a value the file sets as global and one it leaves
-// out as the default, which a settings screen shows as a reset target.
+// out as the default, which a settings screen shows as a reset target;
+// an internal agent's entry on a runtime the agent refuses still counts
+// as set, so it can be reset.
 // Owner: config wire codec.
 #[test]
 fn agent_values_say_which_values_the_file_sets() {
-    let doc = ConfigDocument::parse("[behavior]\nrtk = false\n").unwrap();
+    let doc = ConfigDocument::parse(
+        "[behavior]\nrtk = false\n\n[internal_agents.permission-classifier]\nruntime = \"claude-cli\"\nmodel = \"haiku\"\n",
+    )
+    .unwrap();
     let (config, _) = resolve(&doc).unwrap();
     let values = agent_values(&doc, &config);
     let entry = |key: &str| {
@@ -223,12 +228,56 @@ fn agent_values_say_which_values_the_file_sets() {
         (entry.value.clone(), entry.source)
     };
     assert_eq!(
-        [entry("behavior.rtk"), entry("behavior.enable_subagents")],
+        [
+            entry("behavior.rtk"),
+            entry("behavior.enable_subagents"),
+            entry("internal_agents.permission-classifier"),
+        ],
         [
             (Some(SettingValue::Bool(false)), ValueSource::Global),
             (Some(SettingValue::Bool(true)), ValueSource::Default),
+            // The loader runs the classifier on the conversation model.
+            (Some(rho_model("openai", "gpt-5.5")), ValueSource::Global),
         ]
     );
+}
+
+// Covers: an internal agent's model setting offers a runtime the loader
+// refuses for that agent, so a client's pick saves and then loads back as
+// the conversation model.
+// Owner: config wire changes.
+#[test]
+fn every_internal_agent_model_loads_back_as_picked() {
+    let mut picked = Vec::new();
+    let mut mismatched = Vec::new();
+    for spec in AGENT_SETTINGS.iter().map(|setting| setting.spec()) {
+        let SettingKind::Model { runtimes } = &spec.kind else {
+            continue;
+        };
+        if !spec.key.as_str().starts_with("internal_agents.") {
+            continue;
+        }
+        for runtime in runtimes {
+            let pick = match runtime {
+                ModelRuntime::Rho => rho_model("anthropic", "claude-sonnet-4-5"),
+                ModelRuntime::ClaudeCli => SettingValue::Model(ModelSelection::ClaudeCli {
+                    model: Some("haiku".into()),
+                }),
+                other => panic!("{}: no model to pick on {other:?}", spec.key),
+            };
+            let mut doc = ConfigDocument::parse("").unwrap();
+            apply_agent_changes(&mut doc, &[set(spec.key.as_str(), pick.clone())]).unwrap();
+            let (config, _) = resolve(&doc).unwrap();
+            let read = agent_values(&doc, &config)[&spec.key].value.clone();
+            if read != Some(pick) {
+                mismatched.push(format!("{} on {runtime:?} read back {read:?}", spec.key));
+            }
+            picked.push((spec.key.to_string(), *runtime));
+        }
+    }
+    assert_eq!(mismatched, Vec::<String>::new());
+    // The advisor runs on Claude Code, so the check above saw that runtime.
+    assert!(picked.contains(&("internal_agents.advisor".into(), ModelRuntime::ClaudeCli)));
 }
 
 fn spec(key: &str, kind: SettingKind, default: Option<SettingValue>) -> SettingSpec {
