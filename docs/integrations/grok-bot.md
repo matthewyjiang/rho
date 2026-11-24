@@ -73,6 +73,8 @@ rho mcp token rotate grok --scope write --workspace ~/src/app
 
 `--workspace` limits the Bot on the hub. On the other machines, the token each one issues the hub limits it (step 4). Keep the printed secret for step 5.
 
+The token reaches every session in those workspaces, including the ones you open yourself in the TUI or a web UI, so the Bot can [pick them up](#pick-up-your-sessions). It reaches none outside them. To let the Bot find and drive every session on the hub, grant the whole machine with `--workspace /`; it can then start sessions anywhere too. `rotate` on an existing token issues a new secret, so update the connector (step 5) after you change its workspaces.
+
 A session the Bot starts with `worktree: true` runs in a [worktree](/daemon#sessions-in-worktrees) under `~/.rho/worktrees`, outside the workspace. It still counts as in the workspace it was started in, so the token reaches it with no grant of its own. The same holds on the other machines.
 
 ## On each other machine
@@ -207,6 +209,30 @@ Starting work
 - Do not call `wait` in a loop. The routine "Rho session updates" runs when a
   session you started settles or needs me.
 
+Picking up a session I started
+- When I ask about work I started myself, call `list` with
+  `opened_by: "person"`, and `server` when I named the machine. Match what
+  I said against `title` and `workspace`; if several fit, ask me which.
+- A session can have no `title`. If nothing matches by title, show me the
+  candidates by `workspace`, `state`, and session id and ask me which.
+- `list` returns 20 sessions unless you ask for more. If the answer says
+  `more: true`, call it again with a larger `limit`, up to 1000, before
+  you pick one: a better match may be further down. If it still says
+  `more: true`, tell me the list was cut off when you show me what you
+  found.
+- A machine that could not list its sessions has `error` in place of
+  `sessions`. Tell me which machines those are and what they said before
+  you pick a session: mine may be on one of them.
+- Call `read` before you act on it. To follow it, call `watch` with
+  `webhook: "grok"`. Add it to the ledger.
+- `watch` can answer with the news itself. If it returns `watching: false`,
+  the session already settled and no webhook follows: tell me its outcome
+  now. If it returns `inputs`, the session is waiting on me and that is not
+  sent again: tell me now. If it returns `watch_error`, the watch was not
+  saved and the webhook may never fire: tell me, and follow the session
+  with `wait` until it is done. Otherwise the webhook brings the news.
+- Call `steer`, `prompt`, or `cancel` on it only when I asked for that.
+
 When "Rho session updates" runs, the JSON body has `server` (the machine),
 `session`, `turn`, `state`, `done`, and `outcome` (with the final answer in
 `outcome.text`) or `inputs` (the approvals or questions it waits on).
@@ -232,6 +258,16 @@ Boundaries
   in this chat.
 ````
 
+## Picking up sessions you started {#pick-up-your-sessions}
+
+The Bot can take over a session you opened yourself, on any machine, as long as the session's workspace is one its token reaches there: the Bot's token on the hub (step 3), the hub's token on each other machine (step 4).
+
+- `list` with `opened_by: "person"` shows your sessions, each with its `workspace`, `state`, and `title`. `hide_idle: true` leaves out the ones in state `idle`, which also hides an older session you reopened and have not prompted since.
+- `read` shows what a session did. `watch` with `webhook: "grok"` has the hub tell the routine when it settles or needs you; `wait` follows it without a webhook.
+- `steer` adds to its running turn, `cancel` stops it, and `prompt` starts its next turn.
+
+A session you opened and a session the Bot started look the same to these tools. `opened_by` is how the Bot tells them apart. It sorts sessions by how they opened, not by who was at the keyboard: `person` is every session that was not opened through an MCP server or an agent's `sessions` tool, so one that an agent in your own session starts from its shell with `rho run --detach` is listed as `person` too. See [Sessions you opened yourself](/mcp-server#sessions-you-opened-yourself).
+
 ## A hub that isn't public {#private-hub}
 
 The public HTTPS URL is for a Bot that reaches the hub from the cloud. If the computer the Bot runs its tools on is on your private network, such as a NetBird peer, it can reach the hub's private address directly, and the hub needs no tunnel:
@@ -255,13 +291,13 @@ A session that needs an approval or an answer waits. The Bot tells you, and you 
 ## Costs and limits
 
 - Each webhook delivery starts one billed routine run. Grok Bot allows 200 runs an hour per routine and 300 across your routines.
-- Only sessions the Bot started or prompted with `notify` send webhooks. Turns you start yourself from the TUI do not.
+- Only sessions the Bot watches send webhooks: the ones it started or prompted with `notify`, and the ones it called `watch` on, such as [a session you started](#pick-up-your-sessions). Turns you start yourself from the TUI on a session nobody watches do not.
 - A session sends one webhook when it settles and one each time it asks for input. It doesn't settle while subagents, workflows, or background [tasks](/tools-workspace/background-processes) it waits on still run, so the Bot hears about the end of the work, not each turn.
 - The [MCP server's limits](/mcp-server#limits) on session depth, concurrent sessions, and watches apply to the Bot's token on the hub, and to the hub's token on each other machine.
 
 ## Security
 
-- A hub with a public URL is on the internet behind a bearer token that can start agents on every machine it reaches. The Bot's token's workspaces limit it on the hub only; on each other machine, the token that machine issued the hub limits it, so keep those narrow too. Revoke the Bot's with `rho mcp token revoke grok` on the hub when you stop using it. `rho mcp token revoke hub` on another machine cuts the hub off from it.
+- A hub with a public URL is on the internet behind a bearer token that can start agents on every machine it reaches, and read and drive the sessions you opened yourself in the workspaces it reaches. The Bot's token's workspaces limit it on the hub only; on each other machine, the token that machine issued the hub limits it, so keep those narrow too. Revoke the Bot's with `rho mcp token revoke grok` on the hub when you stop using it. `rho mcp token revoke hub` on another machine cuts the hub off from it.
 - The other machines speak plain HTTP to the hub on your private network. Anyone who can read that network's traffic can read their requests, tokens included, so use a network that encrypts it, such as NetBird or Tailscale.
 - The Bot only names a webhook target. The URL and key come from `rho mcp webhook add` on the hub, so a token holder cannot make it post anywhere else.
 - Webhook bodies carry final answers and approval summaries, including paths and commands, to Grok Bot.

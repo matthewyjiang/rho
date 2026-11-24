@@ -63,7 +63,6 @@ mod session_options;
 mod session_runtime;
 mod sessions_cli;
 mod shutdown_signal;
-pub(crate) mod side_chat;
 pub(crate) mod subagent_host_input;
 pub(crate) mod subagent_manager;
 pub(crate) mod subagent_messaging;

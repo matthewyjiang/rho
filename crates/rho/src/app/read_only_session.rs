@@ -1,7 +1,7 @@
-//! Sessions that read the workspace and change nothing: `/side`'s aside and
-//! the title agent's run.
+//! The session that reads the workspace and changes nothing, which the title
+//! agent runs.
 //!
-//! Each runs a Rho agent bound to [`read_only_tools`] in plan mode, with no
+//! It runs a Rho agent bound to [`read_only_tools`] in plan mode, with no
 //! MCP servers, no subagents, and nobody to answer an approval, so a read
 //! the workspace policy would ask about is denied instead.
 
@@ -10,7 +10,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use rho_sdk::{model::Message, SessionId, SessionOptions};
+use rho_sdk::{SessionId, SessionOptions};
 
 use super::{
     agent_binding::{AgentInvocation, AgentRole, BoundAgent},
@@ -45,10 +45,6 @@ pub(super) struct ReadOnlySession<'a> {
     pub(super) usage_purpose: &'static str,
     /// The session this one works for, which its usage names.
     pub(super) parent: SessionId,
-    pub(super) hook_start: HookStart,
-    pub(super) model_owner: ModelOwner,
-    /// What the session's history starts with.
-    pub(super) history: Vec<Message>,
 }
 
 /// How a read-only session's agent is bound: delegated, on the read-only
@@ -71,9 +67,6 @@ pub(super) async fn assemble(session: ReadOnlySession<'_>) -> anyhow::Result<Bui
         max_steps,
         usage_purpose,
         parent,
-        hook_start,
-        model_owner,
-        history,
     } = session;
     let mut config = agent
         .rho_config()
@@ -95,9 +88,12 @@ pub(super) async fn assemble(session: ReadOnlySession<'_>) -> anyhow::Result<Bui
         mcp_elicitation: McpElicitationSupport::Unavailable,
         tool_source_attach: ToolSourceAttach::None,
         tool_source_load: ToolSourceLoad::Inline,
-        hook_start,
+        // A read-only run is the host's own bookkeeping, not work the user's
+        // hooks asked to hear about; its reads still obey their
+        // `before_tool_use` denials.
+        hook_start: HookStart::Gate,
         sign_in: SignIn::Required,
-        model_owner,
+        model_owner: ModelOwner::InternalAgent,
         mcp_authorization: McpAuthorizationMode::NonInteractive,
         diagnostics: &diagnostics,
         agent,
@@ -118,7 +114,7 @@ pub(super) async fn assemble(session: ReadOnlySession<'_>) -> anyhow::Result<Bui
                 receiver: None,
             })
         },
-        session_options: move |_| Ok(SessionOptions::new().id(SessionId::new()).history(history)),
+        session_options: move |_| Ok(SessionOptions::new().id(SessionId::new())),
     })
     .await?;
     Ok(assembled.built)
