@@ -184,7 +184,8 @@ pub(crate) struct NewParams {
     #[serde(default)]
     pub(crate) agent: Option<String>,
     /// The model, as `provider/model` or a model id one provider alone
-    /// offers; the workspace's default when absent.
+    /// offers; when absent, the one a person chose for the sessions the
+    /// calling session starts, else the workspace's default.
     #[serde(default)]
     pub(crate) model: Option<String>,
     /// Work in a new git worktree of the workspace's repository, on a new

@@ -1644,6 +1644,7 @@ fn conversation(events: &[(Seq, SessionEvent)]) -> Vec<SessionEvent> {
                     | SessionEvent::Background { .. }
                     | SessionEvent::Activity { .. }
                     | SessionEvent::Agent { .. }
+                    | SessionEvent::StartedSessions { .. }
                     | SessionEvent::PullRequests { .. }
             )
         })

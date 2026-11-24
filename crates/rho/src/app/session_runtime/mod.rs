@@ -70,6 +70,7 @@ mod pump;
 mod saved_settings;
 mod session_tools;
 mod settings;
+mod started_sessions;
 mod switch;
 #[cfg(test)]
 mod test_support;
@@ -109,6 +110,7 @@ pub(crate) use prompt_turn::{PlanReport, TurnView};
 use saved_settings::SettingsPolicy;
 pub(crate) use session_tools::SessionTools;
 pub(crate) use settings::SettingChangeError;
+pub(crate) use started_sessions::{StartedModel, StartedSessionDefaults};
 pub(crate) use switch::resolve_switch_reasoning;
 #[cfg(test)]
 pub(in crate::app) use test_support::{
@@ -212,6 +214,9 @@ pub(crate) struct SessionRuntime {
     >,
     /// Whether the session's saves record its settings for a reopen.
     settings: SettingsPolicy,
+    /// What the sessions this one starts through session control open
+    /// with; saved with its settings.
+    started_sessions: StartedSessionDefaults,
     /// Set once checkpoint storage failed or filled: later turns take no
     /// workspace checkpoint.
     checkpoints_paused: bool,
@@ -254,6 +259,8 @@ impl SessionRuntime {
             held_notices: None,
             child_questions: None,
             settings,
+            // Restored with the settings a file keeps.
+            started_sessions: StartedSessionDefaults::default(),
             checkpoints_paused: false,
         }
     }

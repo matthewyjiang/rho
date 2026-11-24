@@ -83,6 +83,30 @@ pub enum SessionChange {
     FastMode { enabled: bool },
     /// Gate later turns' tool calls with `mode`.
     PermissionMode { mode: PermissionMode },
+    /// Open the sessions this session starts through session control (the
+    /// `sessions` tool's `new`, which names it as
+    /// [`super::SessionNewParams::parent`]) in `mode`, as if a person had
+    /// set it on each before its first turn; absent, they take the
+    /// config's. A person's client sets it; no tool rho gives the model does. A
+    /// session started so has no choice of its own, so the sessions it
+    /// starts take the config's. `Unknown`, or `auto` while the config has
+    /// no permission-classifier model, is
+    /// [`crate::ErrorCode::InvalidParams`]. The session reports its choice as
+    /// [`super::SessionEvent::StartedSessions`].
+    StartedSessionPermissionMode {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        mode: Option<PermissionMode>,
+    },
+    /// Open the sessions this session starts through session control on
+    /// `model`, one of [`ModelOptions::available`], as
+    /// [`Self::StartedSessionPermissionMode`] sets their mode; absent, they
+    /// take the config's. A model the `new` call names itself still wins
+    /// for that session. Each started session runs `model` on an auth that
+    /// has credentials, as a [`Self::Model`] with no `auth` picks.
+    StartedSessionModel {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model: Option<ModelRef>,
+    },
     /// Add `text` to what the model reads from its next turn on, without a
     /// turn of its own, and save it with the session as a user row that
     /// reads `display`. Clients attached now see no event for it: the one

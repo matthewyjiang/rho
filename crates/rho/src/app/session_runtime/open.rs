@@ -19,6 +19,7 @@ use super::{
     build::{build_session, session_config},
     credentials::SessionCredentials,
     OpenedSession, SessionBuild, SessionRuntime, SessionStorage, SessionTools,
+    StartedSessionDefaults,
 };
 use crate::{
     added_dirs::AddedDirs,
@@ -176,6 +177,9 @@ impl SessionRuntime {
             })
             .await?;
         Box::pin(runtime.restore_settings_of(parent, process_config)).await;
+        // A side chat is not the session a person set up to start others:
+        // the sessions a fork starts take the config's mode and model.
+        runtime.started_sessions = StartedSessionDefaults::default();
         if runtime.permission_mode() != PermissionMode::Plan {
             runtime
                 .set_permission_mode(PermissionMode::Supervised, process_config)

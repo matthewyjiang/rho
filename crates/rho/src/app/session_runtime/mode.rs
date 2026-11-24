@@ -82,11 +82,7 @@ impl SessionRuntime {
         if self.permission.mode == mode && !rebuild_same {
             return Ok(());
         }
-        let mut config = model_scoped_config(&self.current_model(), process_config);
-        config.permission_mode = mode;
-        let credentials = self.build.host.environment.credentials();
-        ensure_auto_classifier_model(&config, credentials.as_ref())
-            .map_err(|error| SettingChangeError::Unsupported(error.to_string()))?;
+        let config = self.config_for_mode(mode, process_config)?;
 
         let writes = self
             .permission
@@ -111,6 +107,22 @@ impl SessionRuntime {
             workspace_root: std::mem::take(&mut self.permission.workspace_root),
         };
         Ok(())
+    }
+
+    /// `process_config` scoped to the session's model, in `mode`, or
+    /// [`SettingChangeError::Unsupported`] when that config cannot run
+    /// `mode`: auto without a classifier model.
+    pub(super) fn config_for_mode(
+        &self,
+        mode: PermissionMode,
+        process_config: &Config,
+    ) -> Result<Config, SettingChangeError> {
+        let mut config = model_scoped_config(&self.current_model(), process_config);
+        config.permission_mode = mode;
+        let credentials = self.build.host.environment.credentials();
+        ensure_auto_classifier_model(&config, credentials.as_ref())
+            .map_err(|error| SettingChangeError::Unsupported(error.to_string()))?;
+        Ok(config)
     }
 
     /// Rebuilds the SDK runtime around the live conversation and the tool

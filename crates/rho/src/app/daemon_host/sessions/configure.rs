@@ -19,6 +19,10 @@
 //! Only a loaded session takes a change: a client attaches first, which
 //! loads it. A change that applies is kept with the session's file, so a
 //! session the daemon unloads while idle reopens with it.
+//!
+//! What the sessions a session starts open with is a setting of the
+//! starting session, kept with its others; `new.rs` applies it to each one
+//! it starts, with [`set_up_started_session`], as these changes would.
 
 use std::path::PathBuf;
 
@@ -28,13 +32,16 @@ use rho_protocol::{
 use rho_providers::model::catalog::ModelSelection;
 use rho_sdk::{model::Message, ReasoningLevel};
 
-use super::{being_deleted, options::available_auths, queued::Queued, stopping, Held, Sessions};
+use super::{
+    being_deleted, feed::StartedSessions, options::available_auths, queued::Queued, stopping, Held,
+    Sessions,
+};
 use crate::{
     app::{
         session_options::{reasoning_from_wire, resolve_model, AuthPick},
         session_runtime::{
             AddDirError, RewindError, RewoundConversation, SelectNodeError, SessionRuntime,
-            SettingChangeError,
+            SettingChangeError, StartedModel,
         },
         workspace_rewind::rewind_audit_text,
     },
@@ -55,6 +62,10 @@ enum Change {
         enabled: bool,
     },
     PermissionMode(PermissionMode),
+    /// What the sessions this one starts open in; `None` clears it.
+    StartedSessionPermissionMode(Option<PermissionMode>),
+    /// What the sessions this one starts open on; `None` clears it.
+    StartedSessionModel(Option<wire::ModelRef>),
     Context {
         text: String,
         display: String,
@@ -137,6 +148,13 @@ impl Sessions {
             Ok(Applied::Superseded)
         } else {
             match change {
+                // The started sessions' mode is checked against the
+                // classifier models as they are now, as a mode change is;
+                // the session's own config does not change.
+                Change::StartedSessionPermissionMode(_) => {
+                    let config = session.config_for_permission_change().await;
+                    change.apply(runtime, &config, &auths).await
+                }
                 Change::PermissionMode(_) => {
                     let config = session.config_for_permission_change().await;
                     let applied = change.apply(runtime, &config, &auths).await;
@@ -237,6 +255,14 @@ impl Change {
             wire::SessionChange::PermissionMode { mode } => PermissionMode::try_from(mode)
                 .map(Self::PermissionMode)
                 .map_err(|_| invalid("unknown permission mode")),
+            wire::SessionChange::StartedSessionPermissionMode { mode } => mode
+                .map(PermissionMode::try_from)
+                .transpose()
+                .map(Self::StartedSessionPermissionMode)
+                .map_err(|_| invalid("unknown permission mode")),
+            wire::SessionChange::StartedSessionModel { model } => {
+                Ok(Self::StartedSessionModel(model))
+            }
             wire::SessionChange::Context { text, .. } if text.trim().is_empty() => {
                 Err(invalid("context to add must not be empty"))
             }
@@ -369,11 +395,83 @@ impl Change {
             Self::Reasoning(level) => runtime.set_reasoning_level(level, config),
             Self::FastMode { enabled } => runtime.set_fast_mode(enabled),
             Self::PermissionMode(mode) => runtime.reapply_permission_mode(mode, config).await,
+            Self::StartedSessionPermissionMode(mode) => {
+                runtime.set_started_session_permission_mode(mode, config)
+            }
+            Self::StartedSessionModel(model) => {
+                // As this session would switch to it: a model it cannot
+                // run is refused now rather than in each session it starts.
+                let model = match model {
+                    Some(model) => {
+                        let selection = model_selection(runtime, &model, None, auths)?;
+                        Some(StartedModel {
+                            provider: selection.provider,
+                            model: selection.model,
+                        })
+                    }
+                    None => None,
+                };
+                runtime.set_started_session_model(model);
+                Ok(())
+            }
         };
         applied
             .map(|()| Applied::Setting { notice: None })
             .map_err(setting_error)
     }
+}
+
+/// Sets up `runtime`, a session opening for `rho/session/new`, with
+/// `started`, what the session that starts it chose for the sessions it
+/// starts, as a person's setup changes would before its first turn, and
+/// keeps them with it, so a reopen restores them. The model first, so the
+/// mode's config is scoped to it, as a reopen restores them. A part it
+/// cannot take fails the open, naming it, rather than leave the session on
+/// the config's: the mode a person chose may be stricter. The session
+/// keeps no choice for the sessions it starts in turn.
+pub(super) async fn set_up_started_session(
+    runtime: &mut SessionRuntime,
+    config: &Config,
+    started: StartedSessions,
+) -> Result<(), RpcError> {
+    let StartedSessions {
+        permission_mode,
+        model,
+    } = started;
+    if permission_mode.is_none() && model.is_none() {
+        return Ok(());
+    }
+    let refused = |part: &str, message: &str| {
+        RpcError::new(
+            ErrorCode::SessionOpenFailed,
+            format!(
+                "could not open session on the {part} chosen for the sessions its parent starts: {message}"
+            ),
+        )
+    };
+    if let Some(model) = model {
+        let auths = available_auths(runtime.credentials()).await;
+        let selection = model_selection(runtime, &model, None, &auths)
+            .map_err(|error| refused("model", error.message.as_str()))?;
+        runtime
+            .switch_model(&selection, config)
+            .await
+            .map_err(|error| refused("model", error.to_string().as_str()))?;
+    }
+    if let Some(mode) = permission_mode {
+        let mode = PermissionMode::try_from(mode)
+            .map_err(|_| refused("permission mode", "unknown permission mode"))?;
+        runtime
+            .set_permission_mode(mode, config)
+            .await
+            .map_err(|error| refused("permission mode", error.to_string().as_str()))?;
+    }
+    runtime.keep_settings().map_err(|error| {
+        RpcError::new(
+            ErrorCode::InternalError,
+            format!("could not save the session's settings: {error:#}"),
+        )
+    })
 }
 
 /// The selection `model` names for `runtime`'s session, on `auth` when the

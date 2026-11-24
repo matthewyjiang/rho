@@ -1,9 +1,16 @@
 //! Opening a new session for `rho/session/new`, in its workspace or in a
 //! worktree added for it, and registering the job of its turns.
+//!
+//! A session another loaded session starts, which names it as its parent,
+//! opens with the permission mode and model a person chose for the sessions
+//! that one starts (see `configure.rs`), before anything else can reach it,
+//! and keeps them as its own settings. Without a choice, it takes the
+//! config's, as any new session does.
 
 use rho_protocol::{RpcError, SessionNewParams, SessionNewResponse};
 
 use super::{
+    configure::set_up_started_session,
     grant,
     open::{config_for_new, open_session, OpenWith, Opening, Workspace},
     reopen, worktree, Admission, JobId, JobRecord, Keeping, SessionJob, SessionJobRecord, Sessions,
@@ -31,7 +38,23 @@ impl Sessions {
         let workspace = Workspace::parse(&cwd)?;
         // Resolved before the session opens, so a malformed parent opens
         // nothing.
-        let started_by = parent.map(|parent| self.job_writing(&parent)).transpose()?;
+        let started_by = parent
+            .as_ref()
+            .map(|parent| self.job_writing(parent))
+            .transpose()?;
+        // The parent's turn, which starts this session, holds its runtime,
+        // so its feed says what it chose. A parent this daemon has not
+        // loaded chose nothing it knows of.
+        let parent_session = match &parent {
+            Some(parent) => {
+                let id = reopen::parse_session(parent)?;
+                self.loaded().get(&id).cloned()
+            }
+            None => None,
+        };
+        let started = parent_session
+            .map(|session| session.feed.started_sessions())
+            .unwrap_or_default();
         // A session another one starts opens with no more than its
         // parent's turn could give. A subagent run writing the parent runs
         // under its session's grant.
@@ -54,7 +77,7 @@ impl Sessions {
             }
         };
         let job = JobId::generate();
-        let opened = open_session(
+        let mut opened = open_session(
             Opening::New { workspace, agent },
             &with,
             &self.subagents,
@@ -65,6 +88,10 @@ impl Sessions {
         )
         .await
         .map_err(|error| worktree::kept(error, worktree.as_ref()))?;
+        // Before it is added, so no prompt finds it on the config's.
+        set_up_started_session(&mut opened.runtime, &opened.config, started)
+            .await
+            .map_err(|error| worktree::kept(error, worktree.as_ref()))?;
         let session = opened.runtime.session_id().clone();
         let record = JobRecord {
             // A session started from one no daemon job writes still shares

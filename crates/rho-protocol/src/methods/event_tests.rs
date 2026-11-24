@@ -9,9 +9,9 @@ use crate::{
         ToolFact, ToolFamily, ToolHeader,
     },
     methods::{
-        AnswerStop, BranchLookup, BranchPullRequest, LinkedPullRequest, PullRequestId,
-        PullRequestLinkOrigin, PullRequestRollup, PullRequestState, PullRequestSummary,
-        SessionPullRequests, TurnError, TurnErrorKind, TurnOutcome,
+        AnswerStop, BranchLookup, BranchPullRequest, LinkedPullRequest, ModelRef, PermissionMode,
+        PullRequestId, PullRequestLinkOrigin, PullRequestRollup, PullRequestState,
+        PullRequestSummary, SessionPullRequests, TurnError, TurnErrorKind, TurnOutcome,
     },
 };
 
@@ -54,6 +54,27 @@ fn every_session_event_round_trips_through_its_wire_form() {
                 id: "worker".into(),
             },
             json!({"type": "agent", "id": "worker"}),
+        ),
+        (
+            SessionEvent::StartedSessions {
+                permission_mode: Some(PermissionMode::Auto),
+                model: Some(ModelRef {
+                    provider: "openai".into(),
+                    model: "gpt-5".into(),
+                }),
+            },
+            json!({
+                "type": "started_sessions",
+                "permission_mode": "auto",
+                "model": {"provider": "openai", "model": "gpt-5"},
+            }),
+        ),
+        (
+            SessionEvent::StartedSessions {
+                permission_mode: None,
+                model: None,
+            },
+            json!({"type": "started_sessions"}),
         ),
         (
             SessionEvent::TurnEnded {

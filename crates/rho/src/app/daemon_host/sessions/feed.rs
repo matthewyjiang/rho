@@ -21,9 +21,13 @@
 //! and `rho/session/background/list`, report them without waiting for the
 //! runtime either. It keeps the agent the session runs as, as the last
 //! [`wire::SessionEvent::Agent`] said it, which every reset replays first:
-//! no saved row holds it. It keeps the session's pull requests, as the
-//! last [`wire::SessionEvent::PullRequests`] sent them, so it sends them
-//! again only when they change (see `pull_requests`).
+//! no saved row holds it. It keeps what the sessions this one starts open
+//! with, as the last [`wire::SessionEvent::StartedSessions`] said it, which
+//! a reset replays next while anything is chosen, and which
+//! `rho/session/new` reads while this session's turn holds its runtime. It
+//! keeps the session's pull requests, as the last
+//! [`wire::SessionEvent::PullRequests`] sent them, so it sends them again
+//! only when they change (see `pull_requests`).
 //!
 //! A loaded session's feed reports whether the session is settled (see
 //! `settle`) as [`wire::SessionEvent::Activity`]: `active` goes out just
@@ -113,6 +117,10 @@ struct FeedState {
     /// The id of the agent the session runs as: the one it opened as,
     /// then the last agent event sent.
     agent: String,
+    /// What the sessions this one starts open with: what it opened with
+    /// (see [`Feed::seed_started_sessions`]), then the last started
+    /// sessions event sent.
+    started_sessions: StartedSessions,
     /// The session's background work, as the last background event sent
     /// it.
     background: Vec<wire::BackgroundWork>,
@@ -132,6 +140,28 @@ struct FeedState {
     subscribers: Vec<Subscriber>,
     /// Set by [`Feed::close`]: a client attaching later is detached at once.
     closed: Option<DetachReason>,
+}
+
+/// What the sessions a session starts through session control open with,
+/// as [`wire::SessionEvent::StartedSessions`] carries it. A part left `None`
+/// is not chosen.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct StartedSessions {
+    pub(super) permission_mode: Option<wire::PermissionMode>,
+    pub(super) model: Option<wire::ModelRef>,
+}
+
+impl StartedSessions {
+    fn is_chosen(&self) -> bool {
+        self.permission_mode.is_some() || self.model.is_some()
+    }
+
+    fn event(&self) -> wire::SessionEvent {
+        wire::SessionEvent::StartedSessions {
+            permission_mode: self.permission_mode,
+            model: self.model.clone(),
+        }
+    }
 }
 
 /// One attached client.
@@ -254,6 +284,7 @@ impl Feed {
                 title,
                 options,
                 agent,
+                started_sessions: StartedSessions::default(),
                 background: Vec::new(),
                 pull_requests: wire::SessionPullRequests::default(),
                 usage: None,
@@ -291,6 +322,20 @@ impl Feed {
         if state.agent != id {
             state.push(wire::SessionEvent::Agent { id: id.to_owned() });
         }
+    }
+
+    /// Tells attached clients the sessions this one starts open with
+    /// `started` now, unless they already do.
+    pub(super) fn update_started_sessions(&self, started: StartedSessions) {
+        let mut state = self.state();
+        if state.started_sessions != started {
+            state.push(started.event());
+        }
+    }
+
+    /// What the sessions this one starts open with.
+    pub(super) fn started_sessions(&self) -> StartedSessions {
+        self.state().started_sessions.clone()
     }
 
     /// Tells attached clients the session's background work is now what
@@ -463,6 +508,13 @@ impl Feed {
         state.saved_usage = state.usage;
     }
 
+    /// Starts the session with `started`, what the sessions it starts open
+    /// with as its file kept it. Sent to no live client; a reset replays
+    /// it.
+    pub(super) fn seed_started_sessions(&self, started: StartedSessions) {
+        self.state().started_sessions = started;
+    }
+
     /// The session's title, if it has one.
     pub(super) fn title(&self) -> Option<String> {
         self.state().title.clone()
@@ -550,6 +602,15 @@ impl FeedState {
             wire::SessionEvent::Usage { .. } => self.usage = usage_of(&event),
             wire::SessionEvent::OptionsChanged { options } => self.options = (**options).clone(),
             wire::SessionEvent::Agent { id } => self.agent.clone_from(id),
+            wire::SessionEvent::StartedSessions {
+                permission_mode,
+                model,
+            } => {
+                self.started_sessions = StartedSessions {
+                    permission_mode: *permission_mode,
+                    model: model.clone(),
+                };
+            }
             wire::SessionEvent::Background { work } => self.background.clone_from(work),
             wire::SessionEvent::PullRequests { pull_requests } => {
                 self.pull_requests = (**pull_requests).clone();
@@ -641,11 +702,13 @@ impl FeedState {
             .collect()
     }
 
-    /// The agent, the transcript, and the usage as of its last save at seq
+    /// The agent, what the sessions this one starts open with when anything
+    /// is chosen, the transcript, and the usage as of its last save at seq
     /// 0 but the last event, which carries the point the turn in progress
     /// began after, then the turn's buffered events. No saved row holds the
-    /// agent or usage, so without them a client that resets would not know
-    /// the agent, and would show no context or spend until the next turn.
+    /// agent, that choice, or usage, so without them a client that resets
+    /// would not know the agent or the choice, and would show no context or
+    /// spend until the next turn.
     /// The transcript renders as the client takes it, so a reset never
     /// holds a long session's events at once.
     fn reset_events(&self) -> ReplayEvents {
@@ -655,8 +718,13 @@ impl FeedState {
         let evicted = self.turn_start_evicted.then(|| wire::SessionEvent::Notice {
             text: TURN_START_EVICTED.to_owned(),
         });
+        let started = self
+            .started_sessions
+            .is_chosen()
+            .then(|| self.started_sessions.event());
         let usage = self.saved_usage.map(usage_event);
         let saved = 1
+            + usize::from(started.is_some())
             + self.transcript.len()
             + usize::from(evicted.is_some())
             + usize::from(usage.is_some());
@@ -664,6 +732,7 @@ impl FeedState {
         let tail = self.events_after(turn_start);
         let len = saved + tail.len();
         let events = std::iter::once(agent)
+            .chain(started)
             .chain(self.transcript.events())
             .chain(evicted)
             .chain(usage)

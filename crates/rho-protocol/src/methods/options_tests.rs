@@ -54,6 +54,32 @@ fn every_session_change_round_trips_through_its_wire_form() {
             },
             json!({"kind": "permission_mode", "mode": "allow_edits"}),
         ),
+        (
+            SessionChange::StartedSessionPermissionMode {
+                mode: Some(PermissionMode::Auto),
+            },
+            json!({"kind": "started_session_permission_mode", "mode": "auto"}),
+        ),
+        (
+            SessionChange::StartedSessionPermissionMode { mode: None },
+            json!({"kind": "started_session_permission_mode"}),
+        ),
+        (
+            SessionChange::StartedSessionModel {
+                model: Some(ModelRef {
+                    provider: "openai".into(),
+                    model: "gpt-5.5".into(),
+                }),
+            },
+            json!({
+                "kind": "started_session_model",
+                "model": {"provider": "openai", "model": "gpt-5.5"},
+            }),
+        ),
+        (
+            SessionChange::StartedSessionModel { model: None },
+            json!({"kind": "started_session_model"}),
+        ),
     ];
     for (change, wire) in cases {
         assert_eq!(serde_json::to_value(&change).unwrap(), wire);

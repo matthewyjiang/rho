@@ -278,7 +278,10 @@ rules. Know these before you approve one:
   refuses them. `list`, `read`, and `wait` ask for read access to session
   storage.
 - A new session runs in its workspace's permission mode, which can be looser
-  than the agent's.
+  than the agent's, unless a person chose the permission mode and model of the
+  sessions this agent's session starts. A Rho frontend sets that choice with
+  [`rho/session/configure`](/protocol#what-started-sessions-run-with); the
+  agent cannot. The tool's `model` still applies to the session it starts.
 - A new session gets the agent session's environment, including its
   `RHO_TRUST_PROJECT_*` variables. The target workspace's project agents,
   plugins, and hooks load only if those allow it. Starting a session there

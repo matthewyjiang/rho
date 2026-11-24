@@ -1,7 +1,8 @@
 //! The settings a host chose for a session (model, reasoning level, fast
-//! mode, permission mode), kept in its file so every host that reopens it
-//! restores them: the daemon reopens a session it unloaded while idle, and
-//! without them the session would fall back to the config's.
+//! mode, permission mode, and what the sessions it starts open with), kept
+//! in its file so every host that reopens it restores them: the daemon
+//! reopens a session it unloaded while idle, and without them the session
+//! would fall back to the config's.
 //!
 //! Like a delegated agent's model override (`agent.rs`), the record rides
 //! in snapshot metadata and every durable save rewrites it. It is a separate
@@ -18,7 +19,9 @@ use rho_providers::model::catalog::ModelSelection;
 use rho_sdk::{model::ServiceTier, ReasoningLevel, SessionSnapshot};
 use serde::{Deserialize, Serialize};
 
-use super::{CurrentModel, SessionRuntime, SettingChangeError};
+use super::{
+    CurrentModel, SessionRuntime, SettingChangeError, StartedModel, StartedSessionDefaults,
+};
 use crate::{config::Config, permission::PermissionMode, session::Session as StoredSession};
 
 /// The snapshot metadata key of a session's [`SavedSettings`].
@@ -85,6 +88,76 @@ pub(super) struct SavedSettings {
     fast_mode: bool,
     /// [`PermissionMode::as_str`].
     permission_mode: String,
+    /// Absent from a file that keeps no choice, as every file an older rho
+    /// saved.
+    #[serde(default, skip_serializing_if = "SavedStartedSessions::is_empty")]
+    started_sessions: SavedStartedSessions,
+}
+
+/// [`StartedSessionDefaults`] as a session's file keeps them.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+struct SavedStartedSessions {
+    /// [`PermissionMode::as_str`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    permission_mode: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    model: Option<SavedModel>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct SavedModel {
+    provider: String,
+    model: String,
+}
+
+impl SavedStartedSessions {
+    fn of(defaults: &StartedSessionDefaults) -> Self {
+        let StartedSessionDefaults {
+            permission_mode,
+            model,
+        } = defaults;
+        Self {
+            permission_mode: permission_mode.map(|mode| mode.as_str().to_owned()),
+            model: model.as_ref().map(|model| SavedModel {
+                provider: model.provider.clone(),
+                model: model.model.clone(),
+            }),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.permission_mode.is_none() && self.model.is_none()
+    }
+
+    /// The choice this record keeps. A mode this rho does not know, as a
+    /// newer one may have saved, is logged and left unchosen.
+    fn restore(self) -> StartedSessionDefaults {
+        let Self {
+            permission_mode,
+            model,
+        } = self;
+        let permission_mode = permission_mode.and_then(|saved| {
+            let mode = permission_mode_named(&saved);
+            if mode.is_none() {
+                tracing::warn!(
+                    permission_mode = %saved,
+                    "could not restore the permission mode of the sessions this one starts; they take the config's"
+                );
+            }
+            mode
+        });
+        StartedSessionDefaults {
+            permission_mode,
+            model: model.map(|SavedModel { provider, model }| StartedModel { provider, model }),
+        }
+    }
+}
+
+/// The mode [`PermissionMode::as_str`] names `name`.
+fn permission_mode_named(name: &str) -> Option<PermissionMode> {
+    PermissionMode::ALL
+        .into_iter()
+        .find(|mode| mode.as_str() == name)
 }
 
 impl SavedSettings {
@@ -101,6 +174,7 @@ impl SavedSettings {
             reasoning: runtime.reasoning_level(),
             fast_mode: runtime.fast_mode(),
             permission_mode: runtime.permission_mode().as_str().to_owned(),
+            started_sessions: SavedStartedSessions::of(runtime.started_session_defaults()),
         }
     }
 }
@@ -180,6 +254,7 @@ impl SessionRuntime {
             reasoning,
             fast_mode,
             permission_mode,
+            started_sessions,
         } = saved;
         let selection = ModelSelection {
             provider,
@@ -200,16 +275,16 @@ impl SessionRuntime {
             .session
             .set_service_tier(fast_mode.then_some(ServiceTier::Priority));
         warn_unrestored("fast mode", tier.map_err(Into::into));
-        let mode = match PermissionMode::ALL
-            .into_iter()
-            .find(|mode| mode.as_str() == permission_mode)
-        {
+        let mode = match permission_mode_named(&permission_mode) {
             Some(mode) => self.set_permission_mode(mode, process_config).await,
             None => Err(SettingChangeError::Unsupported(format!(
                 "unknown permission mode '{permission_mode}'"
             ))),
         };
         warn_unrestored("permission mode", mode);
+        // Not checked against this config: a session opened in a mode its
+        // config cannot run fails to open, naming why.
+        self.started_sessions = started_sessions.restore();
     }
 }
 

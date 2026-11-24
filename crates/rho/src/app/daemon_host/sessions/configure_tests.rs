@@ -307,3 +307,70 @@ async fn a_model_change_after_compaction_waits_for_the_last_turn_to_compact() {
         assert_eq!(answered, expected, "{name}");
     }
 }
+
+// Covers: each part of what a person chooses for the sessions a session
+// starts is set and cleared on its own, each change told to clients; an
+// unknown mode, and auto while the config has no classifier model, which
+// every session started in it would fail to open with, are refused and
+// leave the choice as it was.
+// Owner: daemon session settings.
+#[tokio::test]
+async fn each_part_of_the_started_sessions_choice_changes_on_its_own() {
+    let (root, home) = (TempDir::new().unwrap(), TempDir::new().unwrap());
+    let sessions = new_sessions(&home);
+    let session = load(&sessions, &root, Load::Saved).await;
+    // The one model the session surely runs: its own.
+    let model = {
+        let runtime = session.runtime.try_lock().unwrap();
+        let current = runtime.as_ref().unwrap().current_model();
+        wire::ModelRef {
+            provider: current.provider,
+            model: current.model,
+        }
+    };
+    let configure = |change| SessionConfigureParams {
+        session: session_to_wire(session.id.clone()),
+        change,
+    };
+    let mode = |mode| configure(SessionChange::StartedSessionPermissionMode { mode });
+    let changes = [
+        mode(Some(wire::PermissionMode::Plan)),
+        configure(SessionChange::StartedSessionModel {
+            model: Some(model.clone()),
+        }),
+        mode(Some(wire::PermissionMode::Unknown)),
+        mode(Some(wire::PermissionMode::Auto)),
+        mode(None),
+    ];
+
+    let mut answered = Vec::new();
+    for change in changes {
+        let answer = sessions.configure(change).await;
+        answered.push(answer.map(|_| ()).map_err(|error| error.code));
+    }
+    let told: Vec<_> = session
+        .feed
+        .buffered_for_tests()
+        .into_iter()
+        .filter_map(|event| match event {
+            wire::SessionEvent::StartedSessions {
+                permission_mode,
+                model,
+            } => Some((permission_mode, model)),
+            _ => None,
+        })
+        .collect();
+    let invalid = Err(wire::ErrorCode::InvalidParams.code());
+    let plan = Some(wire::PermissionMode::Plan);
+    assert_eq!(
+        (answered, told),
+        (
+            vec![Ok(()), Ok(()), invalid, invalid, Ok(())],
+            vec![
+                (plan, None),
+                (plan, Some(model.clone())),
+                (None, Some(model)),
+            ],
+        )
+    );
+}

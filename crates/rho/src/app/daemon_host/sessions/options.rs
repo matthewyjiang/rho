@@ -7,17 +7,21 @@ use std::sync::Arc;
 
 use rho_protocol as wire;
 
-use super::{turn::DAEMON_COMMANDS, LoadedSession, Sessions};
+use super::{feed::StartedSessions, turn::DAEMON_COMMANDS, LoadedSession, Sessions};
 pub(super) use crate::app::session_options::available_auths;
 use crate::{
-    app::{session_options, session_runtime::SessionRuntime},
+    app::{
+        session_options,
+        session_runtime::{SessionRuntime, StartedModel, StartedSessionDefaults},
+    },
     config::Config,
 };
 
 impl LoadedSession {
     /// Rebuilds the session's options from `runtime` and `auths` (see
-    /// [`available_auths`]), tells attached clients when they or the agent
-    /// the session runs as changed, and returns the options. Call after
+    /// [`available_auths`]), tells attached clients when they, the agent
+    /// the session runs as, or what the sessions it starts open with
+    /// changed, and returns the options. Call after
     /// anything that may change them: a configure, a plan approval's mode
     /// switch, a credential write, an `/agent:` rebind, or a turn, which may
     /// leave new skills, prompts, or MCP prompts behind.
@@ -34,6 +38,8 @@ impl LoadedSession {
         self.background.refresh(runtime);
         // Before the options, so a client knows whose they are.
         self.feed.update_agent(runtime.agent_id().as_str());
+        self.feed
+            .update_started_sessions(started_sessions(runtime.started_session_defaults()));
         let options = daemon_options(runtime, &self.config(), auths);
         self.feed.update_options(options.clone());
         self.feed.options()
@@ -79,4 +85,21 @@ pub(super) fn daemon_options(
     auths: &[String],
 ) -> wire::SessionOptions {
     session_options::of(runtime, process_config, auths, DAEMON_COMMANDS)
+}
+
+/// `defaults`, what the sessions a session starts open with, on the wire.
+pub(super) fn started_sessions(defaults: &StartedSessionDefaults) -> StartedSessions {
+    let StartedSessionDefaults {
+        permission_mode,
+        model,
+    } = defaults;
+    StartedSessions {
+        permission_mode: permission_mode.map(Into::into),
+        model: model
+            .as_ref()
+            .map(|StartedModel { provider, model }| wire::ModelRef {
+                provider: provider.clone(),
+                model: model.clone(),
+            }),
+    }
 }
