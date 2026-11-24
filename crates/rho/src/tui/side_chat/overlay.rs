@@ -14,7 +14,7 @@ use super::super::{
     theme::Theme,
     Entry,
 };
-use super::composer::SideComposer;
+use super::{composer::SideComposer, fork::READ_ONLY};
 
 pub(super) const TITLE: &str = "Side chat";
 const FOOTER_IDLE: &str = "Enter send   Esc close";
@@ -103,7 +103,6 @@ pub(super) struct SideOverlay {
     pub(super) composer: SideComposer,
     pub(super) scroll: usize,
     pub(super) busy: bool,
-    pub(super) snapshot: String,
     streaming_assistant: Option<String>,
     /// Transcript selection, scrollbar drag, and hover. Body lines only grow
     /// at the end, so a selection anchored by line survives streaming.
@@ -111,13 +110,12 @@ pub(super) struct SideOverlay {
 }
 
 impl SideOverlay {
-    pub(super) fn new(snapshot: String) -> Self {
+    pub(super) fn new() -> Self {
         Self {
             entries: Vec::new(),
             composer: SideComposer::default(),
             scroll: 0,
             busy: false,
-            snapshot,
             streaming_assistant: None,
             pointer: PanelPointer::default(),
         }
@@ -128,7 +126,7 @@ impl SideOverlay {
         self.follow_end();
     }
 
-    pub(super) fn push_notice(&mut self, text: String) {
+    pub(super) fn push_error(&mut self, text: String) {
         self.entries.push(Entry::Error(text));
         self.follow_end();
     }
@@ -136,7 +134,7 @@ impl SideOverlay {
     pub(super) fn fail_run(&mut self, text: String) {
         self.commit_stream();
         self.busy = false;
-        self.push_notice(text);
+        self.push_error(text);
     }
 
     pub(super) fn append_assistant_delta(&mut self, delta: &str) {
@@ -156,6 +154,18 @@ impl SideOverlay {
         // Side-chat events expose only the tool name, not a tool card or result.
         self.entries.push(Entry::Notice(format!("tool {name}")));
         self.follow_end();
+    }
+
+    /// Something to tell the user that ends no turn, such as a daemon notice.
+    pub(super) fn push_notice(&mut self, text: String) {
+        self.commit_stream();
+        self.entries.push(Entry::Notice(text));
+        self.follow_end();
+    }
+
+    /// An approval the fork asked for, which the aside denied.
+    pub(super) fn push_denied(&mut self, summary: &str) {
+        self.push_notice(format!("denied {summary}: {READ_ONLY}"));
     }
 
     pub(super) fn finish_assistant(&mut self) {
