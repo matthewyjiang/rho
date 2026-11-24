@@ -255,51 +255,6 @@ fn chat_completions_forwards_prompt_cache_key_when_present() {
     assert!(without_key.get("prompt_cache_key").is_none());
 }
 
-// Covers: Groq rejects OpenAI's prompt_cache_key extension as an undeclared
-// field, so requests bound for Groq omit it while other custom hosts keep
-// receiving it. Groq is reachable only as a user-configured custom host, so
-// both the configured provider name and the API host must trigger the
-// exclusion.
-// Owner: openai compatible chat request
-#[test]
-fn groq_chat_completions_omit_prompt_cache_key() {
-    let messages = [Message::user_text("hello")];
-    for (name, api_base) in [
-        ("groq", "https://api.groq.com/openai/v1"),
-        ("custom-groq", "https://api.groq.com/openai/v1"),
-        ("groq", "https://groq-proxy.example.com/v1"),
-    ] {
-        let provider = OpenAiCompatibleProvider::new(
-            crate::reqwest_client(),
-            name,
-            "openai/gpt-oss-120b".into(),
-            OpenAiCompatibleDialect::Custom,
-            CompatibleAuth::ApiKey("secret".into()),
-            api_base.into(),
-        );
-        let body = serde_json::to_value(
-            provider
-                .request_body(
-                    ModelRequest {
-                        messages: &messages,
-                        tools: &[],
-                        cancellation: Default::default(),
-                        reasoning_level: crate::reasoning::ReasoningLevel::Off,
-                        prompt_cache_key: Some("rho:session-1"),
-                    },
-                    /*stream*/ false,
-                )
-                .unwrap()
-                .body,
-        )
-        .unwrap();
-        assert!(
-            body.get("prompt_cache_key").is_none(),
-            "provider {name} at {api_base} must omit prompt_cache_key: {body}"
-        );
-    }
-}
-
 #[test]
 fn authenticated_capabilities_normalize_before_kimi_request_serialization() {
     let cache_dir = std::env::temp_dir().join(format!(

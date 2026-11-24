@@ -158,11 +158,7 @@ impl OpenAiCompatibleProvider {
             stream_options: stream.then_some(ChatStreamOptions {
                 include_usage: true,
             }),
-            prompt_cache_key: if self.omits_prompt_cache_key() {
-                None
-            } else {
-                request.prompt_cache_key.map(str::to_owned)
-            },
+            prompt_cache_key: request.prompt_cache_key.map(str::to_owned),
             reasoning: decision.reasoning,
             reasoning_effort: decision.reasoning_effort,
             thinking: decision.thinking,
@@ -172,21 +168,6 @@ impl OpenAiCompatibleProvider {
             body,
             hidden_reasoning_risk: decision.hidden_reasoning_risk,
         })
-    }
-
-    /// Whether this host rejects OpenAI's `prompt_cache_key` extension.
-    ///
-    /// Groq returns 400 for the undeclared field, so requests bound for Groq
-    /// omit it. Groq is reachable only as a user-configured custom host, whose
-    /// name is user-chosen: the provider name covers hosts configured as
-    /// `groq`, and the API host covers any other name pointed at Groq.
-    fn omits_prompt_cache_key(&self) -> bool {
-        if self.provider == "groq" {
-            return true;
-        }
-        url::Url::parse(&self.api_base)
-            .ok()
-            .is_some_and(|url| url.host_str() == Some("api.groq.com"))
     }
 
     async fn send(
