@@ -5321,6 +5321,52 @@
           "type": "object"
         },
         {
+          "description": "Open the sessions this session starts through session control (the\n`sessions` tool's `new`, which names it as\n[`super::SessionNewParams::parent`]) in `mode`, as if a person had\nset it on each before its first turn; absent, they take the\nconfig's. A person's client sets it; no tool rho gives the model does. A\nsession started so has no choice of its own, so the sessions it\nstarts take the config's. `Unknown`, or `auto` while the config has\nno permission-classifier model, is\n[`crate::ErrorCode::InvalidParams`]. The session reports its choice as\n[`super::SessionEvent::StartedSessions`].",
+          "properties": {
+            "kind": {
+              "const": "started_session_permission_mode",
+              "type": "string"
+            },
+            "mode": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/PermissionMode"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Open the sessions this session starts through session control on\n`model`, one of [`ModelOptions::available`], as\n[`Self::StartedSessionPermissionMode`] sets their mode; absent, they\ntake the config's. A model the `new` call names itself still wins\nfor that session. Each started session runs `model` on an auth that\nhas credentials, as a [`Self::Model`] with no `auth` picks.",
+          "properties": {
+            "kind": {
+              "const": "started_session_model",
+              "type": "string"
+            },
+            "model": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ModelRef"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Add `text` to what the model reads from its next turn on, without a\nturn of its own, and save it with the session as a user row that\nreads `display`. Clients attached now see no event for it: the one\nthat sent it shows its own notice, and a later reset replays the\nrow. An empty `text` is [`crate::ErrorCode::InvalidParams`].",
           "properties": {
             "display": {
@@ -6079,6 +6125,39 @@
           "required": [
             "type",
             "id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "What a person chose, with\n[`super::SessionChange::StartedSessionPermissionMode`] and\n[`super::SessionChange::StartedSessionModel`], for the sessions this\nsession starts through session control (the `sessions` tool's `new`):\nthe permission mode and the model they open with. An absent part was\nnot chosen, and such a session takes the config's. Every reset replay\nsends it right after [`Self::Agent`] while either part is chosen, and\nevery change to the choice sends it again, so a client that saw a\nchoice sees it cleared. A stream that never sent it has no choice.\n\n# Next major\n\nNEXT_MAJOR(rho-protocol): report the started sessions' permission mode and model in SessionOptions::started_sessions and remove SessionEvent::StartedSessions.\n\n`SessionOptions` is not `#[non_exhaustive]`, so a field is a major\nchange; until then a reset replay carries the choice as this event.",
+          "properties": {
+            "model": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ModelRef"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "permission_mode": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/PermissionMode"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": {
+              "const": "started_sessions",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
           ],
           "type": "object"
         },
