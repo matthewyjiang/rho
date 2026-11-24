@@ -343,7 +343,7 @@ impl Shared {
         for (session, entry) in sessions.iter_mut() {
             let (changed, news) = evaluate(&mut entry.record, &reads.prs, now);
             let has_news = !news.is_empty();
-            let merged = merged_last(&news);
+            let merged = merged_last(&news).is_some();
             for item in news {
                 entry
                     .record
@@ -360,7 +360,7 @@ impl Shared {
                 told.push(Told {
                     session: session.clone(),
                     notify: Arc::clone(&entry.notify),
-                    merged_at: merged.filter(|_| !watches),
+                    merged_at: (merged && !watches).then_some(now),
                 });
             }
         }

@@ -701,6 +701,61 @@ async fn a_merge_is_told_only_once_the_session_watches_nothing_else() {
     );
 }
 
+// Covers: a merge is not told as one once the session itself stopped
+// watching another pull request after it, by an unwatch or an unlink,
+// which queue no news: that pull request did not merge. A watch dropped
+// before the merge leaves it the merge that ended the session's last
+// watch, told to both. Owner: PR service
+#[tokio::test]
+async fn a_merge_is_not_told_once_the_session_dropped_another_watch_after_it() {
+    let fixture = Fixture::new();
+    let mut merges = fixture.service.take_merged_watches().unwrap();
+    let before = SessionId::new();
+    let [dropped_before, unwatched_after, unlinked_after] =
+        [&before, &SessionId::new(), &SessionId::new()].map(|session| fixture.inbox(session));
+    for (inbox, numbers) in [
+        (&dropped_before, [12, 13]),
+        (&unwatched_after, [14, 15]),
+        (&unlinked_after, [16, 17]),
+    ] {
+        for number in numbers {
+            fixture.forge.set(open(number, CheckStatus::Passed));
+            inbox.watch(&target(number), NOW).await.unwrap();
+        }
+    }
+
+    dropped_before.unwatch(&target(13)).await.unwrap();
+    for number in [12, 14, 16] {
+        fixture.forge.set(merged(open(number, CheckStatus::Passed)));
+    }
+    fixture.service.tick(TICK).await;
+    let told_at_once = merges.try_recv().ok();
+    let also_told = merges.try_recv().ok();
+    // One drops its other watch before the turn takes the merge's news,
+    // one while that turn runs.
+    unwatched_after.unwatch(&target(15)).await.unwrap();
+    let taken = unlinked_after.take_news();
+    unlinked_after.unlink(&target(17)).await.unwrap();
+    unlinked_after.acknowledge(&taken);
+    for inbox in [&dropped_before, &unwatched_after] {
+        inbox.acknowledge(&inbox.take_news());
+    }
+    let told =
+        [&dropped_before, &unwatched_after, &unlinked_after].map(|inbox| inbox.take_merge_told());
+
+    assert_eq!(
+        (told_at_once, also_told, told),
+        (
+            Some(MergedWatch {
+                session: before,
+                at: TICK,
+            }),
+            None,
+            [Some(TICK), None, None],
+        )
+    );
+}
+
 // Covers: a merge beside a watch that ended unmerged, in the same read or
 // after it, is told to neither the daemon nor, once acknowledged, as a
 // merge told to the agent, also when the turn that tells of the merge took

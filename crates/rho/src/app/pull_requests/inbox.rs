@@ -21,7 +21,7 @@ use super::{
     news,
     poller::{DetailError, BUDGET_FLOOR, WATCHES_PER_SESSION},
     record::LinkOrigin,
-    service::{Entry, Shared},
+    service::{Entry, Shared, ToldMerge},
     state::{ended_otherwise_since, merged_last, CheckTally, Gate, News, WatchState},
     watch,
 };
@@ -251,7 +251,10 @@ impl PullRequestInbox {
         entry.release(&seqs);
         entry.record.acknowledge(&seqs);
         if batch.news.iter().any(|news| news.end.is_some()) {
-            entry.merge_told = merged_last(&batch.news);
+            entry.merge_told = merged_last(&batch.news).map(|news| ToldMerge {
+                at: news.at,
+                seq: news.seq,
+            });
         }
         let _ = self.shared.save(&self.session, &entry.record);
     }
@@ -259,19 +262,23 @@ impl PullRequestInbox {
     /// When rho found the newest merge that acknowledged news told the
     /// session's agent of, in unix milliseconds, taken: `None` until a turn
     /// delivers news that a watch ended merged, and again once taken. Also
-    /// `None` when news acknowledged with it or since told of a watch that
-    /// ended some other way (see [`merged_last`]), or news still queued
-    /// does, as of a pull request closed while the turn ran; and, still
-    /// taken, while the session watches a pull request, as one its agent
-    /// began to watch in that turn: its work is not over.
+    /// `None`, and still taken, unless that merge ended the session's last
+    /// watch: not while it watches a pull request, as one its agent began
+    /// to watch in that turn, and not when another watch ended some other
+    /// way with the merge or since, by news acknowledged with it or still
+    /// queued, as of a pull request closed while the turn ran, or by an
+    /// unwatch or an unlink.
     pub(crate) fn take_merge_told(&self) -> Option<u64> {
         let mut state = self.shared.state();
         let entry = state.sessions.get_mut(&self.session)?;
         let told = entry.merge_told.take()?;
         let record = &entry.record;
-        let all_merged =
-            record.watching().next().is_none() && !ended_otherwise_since(record.news(), told);
-        all_merged.then_some(told)
+        let ended_last = record.watching().next().is_none()
+            && !ended_otherwise_since(record.news(), told.at)
+            && entry
+                .watch_dropped_at
+                .is_none_or(|dropped| dropped <= told.seq);
+        ended_last.then_some(told.at)
     }
 
     /// Watches `target` for the session, linking it first, at `now` (unix
@@ -342,6 +349,7 @@ impl PullRequestInbox {
                 .and_then(|link| link.watch.take())
                 .is_some();
             if was_watched {
+                entry.watch_dropped_at = Some(entry.record.news_generation());
                 // Polling stopped in memory; a failed save is logged.
                 let _ = self.shared.save(&self.session, &entry.record);
             }
@@ -392,12 +400,18 @@ impl PullRequestInbox {
             };
             // Changed in a copy until it is saved, as in `link`.
             let mut record = entry.record.clone();
+            let was_watched = record
+                .link_mut(&pr)
+                .is_some_and(|link| link.watch.is_some());
             let was_linked = record.unlink(&pr);
             if was_linked {
                 self.shared
                     .save(&self.session, &record)
                     .map_err(PullRequestError::Store)?;
                 entry.record = record;
+            }
+            if was_linked && was_watched {
+                entry.watch_dropped_at = Some(entry.record.news_generation());
             }
             Ok::<_, PullRequestError>(was_linked)
         })?;

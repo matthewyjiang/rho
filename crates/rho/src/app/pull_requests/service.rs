@@ -183,12 +183,25 @@ pub(super) struct Entry {
     pub(super) in_flight: Vec<u64>,
     /// Told when news arrives or is put back.
     pub(super) notify: Arc<Notify>,
-    /// When rho found the newest merge a turn has told the session's agent
-    /// of, no watch having ended another way since, in unix milliseconds,
-    /// until
+    /// The newest merge a turn has told the session's agent of, no watch
+    /// having ended another way since, until
     /// [`PullRequestInbox::take_merge_told`] takes it. In memory only: a
     /// daemon that stops first forgets it.
-    pub(super) merge_told: Option<u64>,
+    pub(super) merge_told: Option<ToldMerge>,
+    /// The record's [`SessionRecord::news_generation`] when the session
+    /// last stopped watching a pull request itself, by an unwatch or an
+    /// unlink, which queue no news: a merge queued before it did not end
+    /// the session's last watch. In memory only, as `merge_told` is.
+    pub(super) watch_dropped_at: Option<u64>,
+}
+
+/// A merge a turn told a session's agent of.
+#[derive(Clone, Copy)]
+pub(super) struct ToldMerge {
+    /// When rho found it, in unix milliseconds.
+    pub(super) at: u64,
+    /// Its news's [`News::seq`].
+    pub(super) seq: u64,
 }
 
 impl Entry {
@@ -198,6 +211,7 @@ impl Entry {
             in_flight: Vec::new(),
             notify: Arc::new(Notify::new()),
             merge_told: None,
+            watch_dropped_at: None,
         }
     }
 
