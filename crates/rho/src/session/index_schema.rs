@@ -5,7 +5,7 @@ use std::collections::HashSet;
 
 use rusqlite::{Connection, Transaction, TransactionBehavior};
 
-pub(super) const INDEX_SCHEMA_VERSION: u32 = 3;
+pub(super) const INDEX_SCHEMA_VERSION: u32 = 4;
 
 pub(super) fn migrate_index(connection: &mut Connection) -> anyhow::Result<()> {
     migrate_index_with_hook(connection, |_| Ok(()))
@@ -72,10 +72,16 @@ pub(super) fn migrate_index_with_hook(
     ensure_column(&transaction, "origin text")?;
     ensure_column(&transaction, "parent_workspace_key text")?;
     ensure_column(&transaction, "parent_id text")?;
-    if version < 3 {
+    // Versioned too (version 4): an older Rho would index a new session
+    // without its agent. `started_by` names a session by id alone, as
+    // `rho/session/new`'s `parent` does; deletes never follow it, so it
+    // needs no workspace.
+    ensure_column(&transaction, "agent_id text")?;
+    ensure_column(&transaction, "started_by text")?;
+    if version < 4 {
         // Force the next workspace sync to re-summarize existing rows,
-        // backfilling tree facts (version 2) and header origins and parents
-        // (version 3).
+        // backfilling tree facts (version 2), header origins and parents
+        // (version 3), and header agents and starters (version 4).
         transaction.execute("update sessions set file_size = null", [])?;
     }
     validate_index_columns(&transaction)?;
@@ -132,6 +138,8 @@ pub(super) fn validate_index_columns(connection: &Connection) -> anyhow::Result<
         "origin",
         "parent_workspace_key",
         "parent_id",
+        "agent_id",
+        "started_by",
     ];
     validate_columns(connection, REQUIRED_COLUMNS)
 }

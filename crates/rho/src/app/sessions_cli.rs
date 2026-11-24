@@ -447,6 +447,8 @@ mod tests {
             last_user_message: Some("retry".into()),
             added_dirs: Vec::new(),
             origin: None,
+            agent: None,
+            started_by: None,
         };
         assert!(session_matches(&session, "aaaa"));
         assert!(session_matches(&session, "LOGIN"));

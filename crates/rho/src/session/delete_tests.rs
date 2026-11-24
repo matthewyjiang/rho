@@ -8,7 +8,8 @@ use super::{
 };
 use crate::{
     session::{
-        DeleteOptions, Session, SessionInUse, SessionOrigin, SessionProvenance, SessionTarget,
+        DeleteOptions, Session, SessionInUse, SessionListing, SessionOrigin, SessionProvenance,
+        SessionTarget,
     },
     subagent::RunState,
 };
@@ -105,6 +106,7 @@ fn delete_takes_child_sessions_recursively() {
                 Some(parent) => SessionProvenance {
                     origin: SessionOrigin::Subagent,
                     parent: Some(target(parent)),
+                    started_by: None,
                 },
                 None => SessionOrigin::Interactive.into(),
             };
@@ -146,6 +148,47 @@ fn delete_takes_child_sessions_recursively() {
     }
 }
 
+// Covers: deleting the session that started another through session control
+// leaves the one it started, still listed and still naming it as its
+// starter, unlike a subagent's parent, whose delete takes its children.
+// Owner: session deletion
+#[test]
+fn deleting_a_starter_leaves_the_sessions_it_started() {
+    let sessions = tempfile::tempdir().unwrap();
+    let subagents = tempfile::tempdir().unwrap();
+    let workspace = tempfile::tempdir().unwrap();
+    create_session(sessions.path(), workspace.path(), "lead");
+    let started = SessionProvenance {
+        origin: SessionOrigin::Daemon,
+        parent: None,
+        started_by: Some("lead".into()),
+    };
+    Session::create_with_id_in_root(sessions.path(), workspace.path(), "worker", None, started)
+        .unwrap();
+
+    let outcome = delete_target_in_roots(
+        sessions.path(),
+        subagents.path(),
+        &SessionTarget::new("lead", workspace.path()),
+        &DeleteOptions::default(),
+    )
+    .unwrap();
+
+    let listed = Session::list_in_root(
+        sessions.path(),
+        workspace.path(),
+        SessionListing::PersonFacing,
+    )
+    .unwrap()
+    .into_iter()
+    .map(|summary| (summary.id, summary.started_by))
+    .collect::<Vec<_>>();
+    assert_eq!(
+        (outcome.deleted_child_session_count, listed),
+        (0, vec![("worker".to_owned(), Some("lead".to_owned()))])
+    );
+}
+
 // Covers: a child session that refuses its delete stops its parent's: the
 // parent and the children after the refused one stay, the error names the
 // child and its parent, and the children deleted before it leave the index
@@ -165,6 +208,7 @@ fn refused_child_session_keeps_its_parent() {
             _ => SessionProvenance {
                 origin: SessionOrigin::Subagent,
                 parent: Some(parent.clone()),
+                started_by: None,
             },
         };
         Session::create_with_id_in_root(sessions.path(), workspace.path(), id, None, provenance)
@@ -275,6 +319,7 @@ fn delete_check_refuses_as_the_delete_would_and_deletes_nothing() {
                 _ => SessionProvenance {
                     origin: SessionOrigin::Subagent,
                     parent: Some(parent.clone()),
+                    started_by: None,
                 },
             };
             Session::create_with_id_in_root(sessions.path(), workspace.path(), id, None, provenance)

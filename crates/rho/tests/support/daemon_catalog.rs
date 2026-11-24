@@ -1,10 +1,12 @@
 //! The session catalog over the daemon's socket (`rho/session/list`,
-//! `rho/session/rename`, `rho/session/delete`), through the real binary: a
-//! list holds every workspace's sessions or one workspace's, a rename
-//! reaches attached clients and the list, and a delete detaches a loaded
-//! session's clients and removes it, removes one the daemon has not loaded,
-//! but never runs under a running turn (#1670, #1667). Paging itself is the
-//! session catalog's, covered in its unit tests.
+//! `rho/session/list_detailed`, `rho/session/rename`,
+//! `rho/session/delete`), through the real binary: a list holds every
+//! workspace's sessions or one workspace's, a detailed list names each
+//! session's agent and starter across a restart, a rename reaches attached
+//! clients and the list, and a delete detaches a loaded session's clients
+//! and removes it, removes one the daemon has not loaded, but never runs
+//! under a running turn (#1670, #1667). Paging itself is the session
+//! catalog's, covered in its unit tests.
 
 use std::{
     num::NonZeroU32,
@@ -14,15 +16,16 @@ use std::{
 use pretty_assertions::assert_eq;
 use rho_protocol::{
     methods::{
-        Method, SessionAttach, SessionCancel, SessionDelete, SessionList, SessionNew, SessionRename,
+        Method, SessionAttach, SessionCancel, SessionDelete, SessionList, SessionListDetailed,
+        SessionNew, SessionRename,
     },
-    Client, ClientError, DaemonNotification, DetachReason, ErrorCode, Notifications, RpcError,
-    SessionAttachParams, SessionCancelParams, SessionDeleteParams, SessionDetachedParams,
-    SessionEvent, SessionId, SessionListParams, SessionListResponse, SessionNewParams,
-    SessionRenameParams, SessionRenameResponse, SessionSetup, SessionSummary,
+    Client, ClientError, DaemonNotification, DetachReason, DetailedSessionSummary, ErrorCode,
+    Notifications, RpcError, SessionAttachParams, SessionCancelParams, SessionDeleteParams,
+    SessionDetachedParams, SessionEvent, SessionId, SessionListParams, SessionListResponse,
+    SessionNewParams, SessionRenameParams, SessionRenameResponse, SessionSetup, SessionSummary,
 };
 
-use super::sessions::{settled_job, Sandbox, DEADLINE};
+use super::sessions::{settled_job, Sandbox, ARCHIVIST_AGENT, DEADLINE};
 
 /// Sends `M` with `params`; its result, or the error the daemon answered.
 async fn call<M: Method>(client: &Client, params: &M::Params) -> Result<M::Result, RpcError> {
@@ -204,6 +207,79 @@ async fn the_list_holds_every_workspace_or_one() {
             ErrorCode::InvalidParams,
             "limit 1001 is over the session list's page limit (MAX_PAGE_SIZE = 1000)",
         ))
+    );
+}
+
+/// Every workspace's sessions as `rho/session/list_detailed` lists them, in
+/// id order, their save times cleared, for whole-object comparison.
+async fn list_detailed(client: &Client) -> Vec<DetailedSessionSummary> {
+    let mut sessions = call::<SessionListDetailed>(client, &SessionListParams::default())
+        .await
+        .unwrap()
+        .sessions;
+    for row in &mut sessions {
+        row.summary.updated_at = 0;
+    }
+    sessions.sort_by(|left, right| left.summary.session.cmp(&right.summary.session));
+    sessions
+}
+
+// Covers: the detailed list names the agent a session runs as, leaving out
+// the default agent, and the session that started it through session
+// control, from what the sessions saved: a restarted daemon, which has no
+// job of either, lists them the same.
+// Owner: daemon session catalog.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_detailed_list_names_agents_and_starters_across_a_restart() {
+    let sandbox = Sandbox::new();
+    let archivist = sandbox.isolated.home.join(".agents/agents/archivist.md");
+    std::fs::create_dir_all(archivist.parent().unwrap()).unwrap();
+    std::fs::write(&archivist, ARCHIVIST_AGENT).unwrap();
+    let (mut daemon, client) = sandbox.spawn_daemon(sandbox.rho("fixed"), &[]).await;
+    let lead = saved_session(&sandbox, &client, sandbox.workspace.clone()).await;
+    let worker = call::<SessionNew>(
+        &client,
+        &SessionNewParams {
+            cwd: sandbox.workspace.clone(),
+            environment: sandbox.client_environment(),
+            agent: Some("archivist".into()),
+            setup: SessionSetup::default(),
+            parent: Some(lead.clone()),
+            grant: None,
+            worktree: false,
+        },
+    )
+    .await
+    .unwrap()
+    .session;
+    answer(&sandbox, &client, &worker).await;
+
+    let before = list_detailed(&client).await;
+    drop(client);
+    let stop = sandbox
+        .rho("fixed")
+        .args(["daemon", "stop"])
+        .status()
+        .unwrap();
+    assert!(stop.success(), "log:\n{}", sandbox.isolated.daemon_log());
+    daemon.wait().unwrap();
+    let client = sandbox.start_daemon("fixed").await;
+    let after = list_detailed(&client).await;
+
+    let mut expected = vec![
+        DetailedSessionSummary::new(prompted_once(&lead, &sandbox.workspace), None, None),
+        DetailedSessionSummary::new(
+            prompted_once(&worker, &sandbox.workspace),
+            Some("archivist".into()),
+            Some(lead.clone()),
+        ),
+    ];
+    expected.sort_by(|left, right| left.summary.session.cmp(&right.summary.session));
+    assert_eq!(
+        (before, after),
+        (expected.clone(), expected),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
     );
 }
 

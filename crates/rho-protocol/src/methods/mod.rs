@@ -36,6 +36,7 @@
 //! | [`SESSION_INSPECT`] | [`SessionInspectParams`] | [`SessionInspectResponse`] |
 //! | [`SESSION_CONFIGURE`] | [`SessionConfigureParams`] | [`SessionConfigureResponse`] |
 //! | [`SESSION_LIST`] | [`SessionListParams`] | [`SessionListResponse`] |
+//! | [`SESSION_LIST_DETAILED`] | [`SessionListParams`] | [`SessionListDetailedResponse`] |
 //! | [`SESSION_RENAME`] | [`SessionRenameParams`] | [`SessionRenameResponse`] |
 //! | [`SESSION_DELETE`] | [`SessionDeleteParams`] | [`SessionDeleteResponse`] |
 //! | [`JOB_LIST`] | [`JobListParams`] | [`JobListResponse`] |
@@ -109,8 +110,9 @@ pub use background::{
     SessionBackgroundStopResponse, SESSION_BACKGROUND_LIST, SESSION_BACKGROUND_STOP,
 };
 pub use catalog::{
-    SessionDeleteParams, SessionDeleteResponse, SessionListParams, SessionListResponse,
-    SessionRenameParams, SessionRenameResponse, SessionSummary, SESSION_DELETE, SESSION_LIST,
+    DetailedSessionSummary, SessionDeleteParams, SessionDeleteResponse,
+    SessionListDetailedResponse, SessionListParams, SessionListResponse, SessionRenameParams,
+    SessionRenameResponse, SessionSummary, SESSION_DELETE, SESSION_LIST, SESSION_LIST_DETAILED,
     SESSION_RENAME,
 };
 pub use config::{
@@ -311,6 +313,7 @@ protocol! {
         SessionPullRequestUnlink = SESSION_PULL_REQUEST_UNLINK: SessionPullRequestUnlinkParams => SessionPullRequestUnlinkResponse,
         SessionInspect = SESSION_INSPECT: SessionInspectParams => SessionInspectResponse,
         SessionList = SESSION_LIST: SessionListParams => SessionListResponse,
+        SessionListDetailed = SESSION_LIST_DETAILED: SessionListParams => SessionListDetailedResponse,
         SessionRename = SESSION_RENAME: SessionRenameParams => SessionRenameResponse,
         SessionDelete = SESSION_DELETE: SessionDeleteParams => SessionDeleteResponse,
         JobList = JOB_LIST: JobListParams => JobListResponse,

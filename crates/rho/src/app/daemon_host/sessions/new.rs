@@ -30,12 +30,15 @@ impl Sessions {
         self.refuse_when_stopping()?;
         let workspace = Workspace::parse(&cwd)?;
         // Resolved before the session opens, so a malformed parent opens
-        // nothing.
-        let started_by = parent.map(|parent| self.job_writing(&parent)).transpose()?;
+        // nothing. The new session's file records the parent whether or not
+        // a job of this daemon writes it, so listings fold it under that
+        // session after its job is gone.
+        let started_by = parent.as_ref().map(reopen::parse_session).transpose()?;
+        let parent_job = started_by.as_ref().map(|parent| self.job_writing(parent));
         // A session another one starts opens with no more than its
         // parent's turn could give. A subagent run writing the parent runs
         // under its session's grant.
-        let parents = started_by
+        let parents = parent_job
             .as_ref()
             .and_then(Option::as_ref)
             .and_then(|job| self.jobs.session_grant(job));
@@ -55,7 +58,11 @@ impl Sessions {
         };
         let job = JobId::generate();
         let opened = open_session(
-            Opening::New { workspace, agent },
+            Opening::New {
+                workspace,
+                agent,
+                started_by,
+            },
             &with,
             &self.subagents,
             &self.pull_requests,
@@ -69,11 +76,11 @@ impl Sessions {
         let record = JobRecord {
             // A session started from one no daemon job writes still shares
             // the budget, with no parent to show.
-            admission: match started_by {
+            admission: match parent_job {
                 Some(_) => Admission::SharedBudget,
                 None => Admission::Immediate,
             },
-            parent: started_by.flatten(),
+            parent: parent_job.flatten(),
             keeping: match opened.runtime.persistence() {
                 crate::session::SessionPersistence::Saved => Keeping::Stored,
                 crate::session::SessionPersistence::Ephemeral => Keeping::MemoryOnly,
@@ -105,13 +112,11 @@ impl Sessions {
     /// under way, as the turn of a session that starts another is, else the
     /// latest job of its turns. `None` for a session no job of this daemon
     /// writes, such as one an in-process rho runs.
-    fn job_writing(&self, session: &rho_protocol::SessionId) -> Result<Option<JobId>, RpcError> {
-        Ok(
-            match self.jobs.session_job(&reopen::parse_session(session)?) {
-                SessionJob::Busy(job) => Some(job),
-                SessionJob::Last(record) => Some(record.id),
-                SessionJob::New => None,
-            },
-        )
+    fn job_writing(&self, session: &rho_sdk::SessionId) -> Option<JobId> {
+        match self.jobs.session_job(session) {
+            SessionJob::Busy(job) => Some(job),
+            SessionJob::Last(record) => Some(record.id),
+            SessionJob::New => None,
+        }
     }
 }

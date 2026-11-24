@@ -13,9 +13,24 @@ use super::SessionId;
 
 /// List the sessions a person can resume, newest first, a page at a time.
 pub const SESSION_LIST: &str = "rho/session/list";
+/// List the sessions [`SESSION_LIST`] lists, with the same params and
+/// paging, each with the agent it runs as and the session that started it:
+/// what a client that groups sessions under the one that started them
+/// reads. A daemon from before this method answers
+/// [`crate::ErrorCode::MethodNotFound`].
+///
+/// # Next major
+///
+/// NEXT_MAJOR(rho-protocol): fold `agent` and `parent` into SessionSummary and remove rho/session/list_detailed (SESSION_LIST_DETAILED, SessionListDetailedResponse, DetailedSessionSummary).
+///
+/// [`SessionSummary`] is not `#[non_exhaustive]`, so a field is a major
+/// change; until then this method sends its rows with those fields beside
+/// them.
+pub const SESSION_LIST_DETAILED: &str = "rho/session/list_detailed";
 /// Set a saved session's title.
 pub const SESSION_RENAME: &str = "rho/session/rename";
-/// Delete a saved session, with the sessions it started.
+/// Delete a saved session, with its subagents', workflow nodes', and forks'
+/// sessions. Sessions it started through session control stay.
 pub const SESSION_DELETE: &str = "rho/session/delete";
 
 /// Params of [`SESSION_LIST`].
@@ -76,6 +91,73 @@ pub struct SessionSummary {
     pub updated_at: u64,
 }
 
+/// Result of [`SESSION_LIST_DETAILED`]: a page of [`SESSION_LIST`]'s, its
+/// rows detailed.
+///
+/// # Next major
+///
+/// NEXT_MAJOR(rho-protocol): fold `agent` and `parent` into SessionSummary and remove rho/session/list_detailed (SESSION_LIST_DETAILED, SessionListDetailedResponse, DetailedSessionSummary).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[non_exhaustive]
+pub struct SessionListDetailedResponse {
+    pub sessions: Vec<DetailedSessionSummary>,
+    /// The cursor of the next page, as [`SessionListResponse::next_cursor`];
+    /// absent on the last.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+}
+
+impl SessionListDetailedResponse {
+    /// Builds it from each of its fields.
+    pub fn new(sessions: Vec<DetailedSessionSummary>, next_cursor: Option<String>) -> Self {
+        Self {
+            sessions,
+            next_cursor,
+        }
+    }
+}
+
+/// One session, as [`SESSION_LIST_DETAILED`] reports it: its
+/// [`SessionSummary`]'s fields, then the agent it runs as and the session
+/// that started it.
+///
+/// # Next major
+///
+/// NEXT_MAJOR(rho-protocol): fold `agent` and `parent` into SessionSummary and remove rho/session/list_detailed (SESSION_LIST_DETAILED, SessionListDetailedResponse, DetailedSessionSummary).
+///
+/// On the wire it is a [`SessionSummary`] with two more optional fields, so
+/// folding them into it changes no row a client reads.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[non_exhaustive]
+pub struct DetailedSessionSummary {
+    #[serde(flatten)]
+    pub summary: SessionSummary,
+    /// The agent the session runs as, by id, as
+    /// [`super::SessionNewParams::agent`] takes it: the one a `/agent:` first
+    /// prompt rebound it to, if one did. Absent for the default agent, and
+    /// for a session saved before agents were recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+    /// The session that started this one through session control, as
+    /// [`super::SessionNewParams::parent`] named it, saved with the session.
+    /// Absent for a session nothing started that way, or one started before
+    /// the daemon saved it. Deleting the parent leaves this session listed,
+    /// still naming it: an id [`SESSION_LIST`] no longer lists.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<SessionId>,
+}
+
+impl DetailedSessionSummary {
+    /// Builds it from each of its fields.
+    pub fn new(summary: SessionSummary, agent: Option<String>, parent: Option<SessionId>) -> Self {
+        Self {
+            summary,
+            agent,
+            parent,
+        }
+    }
+}
+
 /// Params of [`SESSION_RENAME`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SessionRenameParams {
@@ -109,6 +191,9 @@ pub struct SessionDeleteParams {
 /// of the sessions it started, such as its subagents', and the daemon has
 /// unloaded it, detaching its clients as
 /// [`super::DetachReason::Deleted`]. Its job stays in [`super::JOB_LIST`].
+/// The sessions it started through session control
+/// ([`super::SessionNewParams::parent`]) stay, still naming it as
+/// [`DetailedSessionSummary::parent`].
 ///
 /// A session whose turn is under way, a settings change waiting or
 /// applying, background work running, such as a subagent, or a run it started not yet

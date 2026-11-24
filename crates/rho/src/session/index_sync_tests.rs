@@ -11,7 +11,7 @@ use tempfile::TempDir;
 use super::super::persistence::{
     session_dir_in_root, session_file_stats, workspace_key, SessionStore,
 };
-use super::super::{SessionIndexRecord, SessionSummary};
+use super::super::{SessionIndexRecord, SessionOrigin, SessionProvenance, SessionSummary};
 use super::{
     apply_reconciliation_updates, list_all_sessions, list_workspace_sessions, migrate_index,
     open_index, reconcile_sessions_with_hook, stale_index_keys, sync_workspace, IndexedFile,
@@ -441,6 +441,55 @@ fn listed_roots_survive_older_writers() {
     }
 }
 
+// Covers: a listing reports the agent a session runs as and the session
+// that started it, from the index row its creation writes, and again after
+// an index from before those columns (version 3) migrates: its rows must
+// re-read their headers rather than list every session as the default
+// agent's, started by none.
+// Owner: session index
+#[test]
+fn listed_agent_and_starter_survive_an_older_index() {
+    let root = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+    let cwd = workspace.path().canonicalize().unwrap();
+    let provenance = SessionProvenance {
+        origin: SessionOrigin::Daemon,
+        parent: None,
+        started_by: Some("lead".into()),
+    };
+    crate::session::Session::create_with_id_in_root(
+        root.path(),
+        &cwd,
+        "worker",
+        Some(("worker", "fingerprint")),
+        provenance,
+    )
+    .unwrap();
+    let listed = || {
+        list_workspace_sessions(root.path(), &cwd)
+            .unwrap()
+            .into_iter()
+            .map(|summary| (summary.agent, summary.started_by))
+            .collect::<Vec<_>>()
+    };
+    let created = listed();
+
+    {
+        let connection = open_index(root.path()).unwrap();
+        let mut connection = connection.lock().unwrap();
+        connection
+            .execute_batch(
+                "update sessions set agent_id = null, started_by = null;
+                 pragma user_version = 3;",
+            )
+            .unwrap();
+        migrate_index(&mut connection).unwrap();
+    }
+
+    let expected = vec![(Some("worker".to_owned()), Some("lead".to_owned()))];
+    assert_eq!((created, listed()), (expected.clone(), expected));
+}
+
 // Covers: cross-project list must index never-synced workspace dirs
 // Owner: session index
 #[test]
@@ -624,6 +673,8 @@ fn test_index_record(id: &str, path: &str, first_user: &str) -> SessionIndexReco
             last_user_message: Some(first_user.into()),
             added_dirs: Vec::new(),
             origin: None,
+            agent: None,
+            started_by: None,
         },
         file_size: Some(10),
         file_mtime: Some(10),

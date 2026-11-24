@@ -106,10 +106,12 @@ impl Workspace {
 /// What a session opens from.
 pub(super) enum Opening {
     /// Nothing yet: a new session in `workspace`, running as agent `agent`,
-    /// the default agent when `None`.
+    /// the default agent when `None`, which session `started_by` started
+    /// through session control, if one did.
     New {
         workspace: Workspace,
         agent: Option<String>,
+        started_by: Option<rho_sdk::SessionId>,
     },
     /// The session saved here, opened in its own workspace as the agent it
     /// was saved as.
@@ -456,6 +458,12 @@ async fn open_runtime(
         (Some(service), ChildAgents::InProcess, IdleTurns::Host) => Some(service.inbox(&id, cwd)),
         _ => None,
     };
+    // Only a new session's file records who started it; a reopened one's
+    // already holds it.
+    let started_by = match &opening {
+        Opening::New { started_by, .. } => started_by.clone(),
+        Opening::Saved(_) | Opening::Fork(_) => None,
+    };
     let build = SessionBuild {
         launch: SessionLaunch {
             config_path,
@@ -486,7 +494,7 @@ async fn open_runtime(
             cache_warming,
         },
         run: RunShape {
-            role: SessionRole::Daemon,
+            role: SessionRole::Daemon { started_by },
             max_steps: None,
             hook_labels: Default::default(),
         },

@@ -39,7 +39,8 @@ pub(super) fn list_workspace_sessions(
     let workspace_key = workspace_key(cwd);
     let mut statement = connection.prepare(
         "select id, path, cwd, created_at, updated_at, message_count,
-                title, first_user_message, last_user_message, added_dirs, origin
+                title, first_user_message, last_user_message, added_dirs, origin,
+                agent_id, started_by
          from sessions
          where workspace_key = ?1
          order by updated_at desc, created_at desc, id asc",
@@ -426,9 +427,11 @@ pub(super) fn sync_session_file(
     Ok(())
 }
 
+/// Records a session whose header was just written, running as `agent`.
 pub(super) fn record_created(
     session: &Session,
     created_at: u64,
+    agent: Option<&str>,
     provenance: SessionProvenance,
 ) -> anyhow::Result<()> {
     let connection = open_index(&session.session_root)?;
@@ -449,6 +452,8 @@ pub(super) fn record_created(
             last_user_message: None,
             added_dirs: Vec::new(),
             origin: Some(provenance.origin),
+            agent: agent.map(str::to_owned),
+            started_by: provenance.started_by,
         },
         file_size,
         file_mtime,
@@ -716,9 +721,11 @@ fn upsert_record(
             effective_format_version,
             origin,
             parent_workspace_key,
-            parent_id
+            parent_id,
+            agent_id,
+            started_by
          ) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18,
-                   ?19, ?20)
+                   ?19, ?20, ?21, ?22)
          on conflict(workspace_key, id) do update set
             cwd = excluded.cwd,
             path = excluded.path,
@@ -737,7 +744,9 @@ fn upsert_record(
             effective_format_version = excluded.effective_format_version,
             origin = excluded.origin,
             parent_workspace_key = excluded.parent_workspace_key,
-            parent_id = excluded.parent_id",
+            parent_id = excluded.parent_id,
+            agent_id = excluded.agent_id,
+            started_by = excluded.started_by",
         params![
             workspace_key,
             cwd,
@@ -762,6 +771,8 @@ fn upsert_record(
                 .parent_session
                 .as_ref()
                 .map(|parent| parent.id.as_str()),
+            record.summary.agent.as_deref(),
+            record.summary.started_by.as_deref(),
         ],
     )?;
     Ok(())
@@ -872,6 +883,8 @@ fn summary_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSummary>
             .map(|stamped| stamped.dirs)
             .unwrap_or_default(),
         origin: row.get::<_, Option<String>>(10)?.and_then(decode_origin),
+        agent: row.get(11)?,
+        started_by: row.get(12)?,
     })
 }
 

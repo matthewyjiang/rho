@@ -16,23 +16,25 @@ use crate::{
         SessionCancel, SessionCancelParams, SessionConfigure, SessionConfigureParams,
         SessionDelete, SessionDeleteParams, SessionFork, SessionForkParams, SessionHold,
         SessionHoldParams, SessionId, SessionInspect, SessionInspectParams, SessionList,
-        SessionListParams, SessionMcp, SessionMcpCatalogParams, SessionMcpCatalogRead,
-        SessionMcpComplete, SessionMcpCompleteParams, SessionMcpParams, SessionMcpResourceParams,
-        SessionMcpResourceRead, SessionNew, SessionNewParams, SessionProcesses,
-        SessionProcessesParams, SessionPrompt, SessionPromptParams, SessionPullRequestLink,
-        SessionPullRequestLinkParams, SessionPullRequestList, SessionPullRequestListParams,
-        SessionPullRequestShow, SessionPullRequestShowParams, SessionPullRequestUnlink,
-        SessionPullRequestUnlinkParams, SessionRename, SessionRenameParams, SessionSteer,
-        SessionSteerParams, SessionSurfaceAction, SessionSurfaceActionParams, SessionUnsteer,
-        SessionUnsteerParams, Status, Stop, WorktreePrune, WorktreePruneParams, AUTH_CHOOSE_STORE,
-        AUTH_KEY, AUTH_LIST, AUTH_LOGIN_CANCEL, AUTH_LOGOUT, CONFIG_REGISTER, CONFIG_SCHEMA,
-        CONFIG_SET, DAEMON_RESTART, DAEMON_STATUS, DAEMON_STOP, JOB_LIST, MODEL_REFRESH,
-        SESSION_ANSWER, SESSION_BACKGROUND_LIST, SESSION_BACKGROUND_STOP, SESSION_CANCEL,
-        SESSION_CONFIGURE, SESSION_DELETE, SESSION_FORK, SESSION_HOLD, SESSION_INSPECT,
-        SESSION_LIST, SESSION_MCP, SESSION_MCP_CATALOG, SESSION_MCP_COMPLETE, SESSION_MCP_RESOURCE,
-        SESSION_NEW, SESSION_PROCESSES, SESSION_PROMPT, SESSION_PULL_REQUEST_LINK,
-        SESSION_PULL_REQUEST_LIST, SESSION_PULL_REQUEST_SHOW, SESSION_PULL_REQUEST_UNLINK,
-        SESSION_RENAME, SESSION_STEER, SESSION_SURFACE_ACTION, SESSION_UNSTEER, WORKTREE_PRUNE,
+        SessionListDetailed, SessionListParams, SessionMcp, SessionMcpCatalogParams,
+        SessionMcpCatalogRead, SessionMcpComplete, SessionMcpCompleteParams, SessionMcpParams,
+        SessionMcpResourceParams, SessionMcpResourceRead, SessionNew, SessionNewParams,
+        SessionProcesses, SessionProcessesParams, SessionPrompt, SessionPromptParams,
+        SessionPullRequestLink, SessionPullRequestLinkParams, SessionPullRequestList,
+        SessionPullRequestListParams, SessionPullRequestShow, SessionPullRequestShowParams,
+        SessionPullRequestUnlink, SessionPullRequestUnlinkParams, SessionRename,
+        SessionRenameParams, SessionSteer, SessionSteerParams, SessionSurfaceAction,
+        SessionSurfaceActionParams, SessionUnsteer, SessionUnsteerParams, Status, Stop,
+        WorktreePrune, WorktreePruneParams, AUTH_CHOOSE_STORE, AUTH_KEY, AUTH_LIST,
+        AUTH_LOGIN_CANCEL, AUTH_LOGOUT, CONFIG_REGISTER, CONFIG_SCHEMA, CONFIG_SET, DAEMON_RESTART,
+        DAEMON_STATUS, DAEMON_STOP, JOB_LIST, MODEL_REFRESH, SESSION_ANSWER,
+        SESSION_BACKGROUND_LIST, SESSION_BACKGROUND_STOP, SESSION_CANCEL, SESSION_CONFIGURE,
+        SESSION_DELETE, SESSION_FORK, SESSION_HOLD, SESSION_INSPECT, SESSION_LIST,
+        SESSION_LIST_DETAILED, SESSION_MCP, SESSION_MCP_CATALOG, SESSION_MCP_COMPLETE,
+        SESSION_MCP_RESOURCE, SESSION_NEW, SESSION_PROCESSES, SESSION_PROMPT,
+        SESSION_PULL_REQUEST_LINK, SESSION_PULL_REQUEST_LIST, SESSION_PULL_REQUEST_SHOW,
+        SESSION_PULL_REQUEST_UNLINK, SESSION_RENAME, SESSION_STEER, SESSION_SURFACE_ACTION,
+        SESSION_UNSTEER, WORKTREE_PRUNE,
     },
     server::{decode_params, encode_result, Service},
     ErrorCode, RpcError, StatusParams, StopParams, StopResponse,
@@ -66,6 +68,7 @@ pub(crate) enum ServiceCall {
     UnlinkSessionPullRequest(SessionPullRequestUnlinkParams),
     InspectSession(SessionInspectParams),
     ListSessions(SessionListParams),
+    ListSessionsDetailed(SessionListParams),
     RenameSession(SessionRenameParams),
     DeleteSession(SessionDeleteParams),
     ListJobs,
@@ -136,6 +139,9 @@ impl ServiceCall {
                 .map(Self::UnlinkSessionPullRequest),
             SESSION_INSPECT => decode_params::<SessionInspect>(params).map(Self::InspectSession),
             SESSION_LIST => decode_params::<SessionList>(params).map(Self::ListSessions),
+            SESSION_LIST_DETAILED => {
+                decode_params::<SessionListDetailed>(params).map(Self::ListSessionsDetailed)
+            }
             SESSION_RENAME => decode_params::<SessionRename>(params).map(Self::RenameSession),
             SESSION_DELETE => decode_params::<SessionDelete>(params).map(Self::DeleteSession),
             JOB_LIST => decode_params::<JobList>(params).map(|JobListParams {}| Self::ListJobs),
@@ -188,6 +194,7 @@ impl ServiceCall {
             // for.
             | Self::ForkSession(_)
             | Self::ListSessions(_)
+            | Self::ListSessionsDetailed(_)
             | Self::DeleteSession(_)
             | Self::ListJobs
             | Self::ListSessionBackground
@@ -285,6 +292,9 @@ impl ServiceCall {
             }
             Self::ListSessions(params) => {
                 encode_result::<SessionList>(&service.list_sessions(params).await?)
+            }
+            Self::ListSessionsDetailed(params) => {
+                encode_result::<SessionListDetailed>(&service.list_sessions_detailed(params).await?)
             }
             Self::RenameSession(params) => {
                 encode_result::<SessionRename>(&service.rename_session(params).await?)

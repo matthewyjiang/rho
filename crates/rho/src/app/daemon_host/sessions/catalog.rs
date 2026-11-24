@@ -1,7 +1,8 @@
-//! The session catalog over the socket (#1670, #1667): `rho/session/list`,
-//! `rho/session/rename`, and `rho/session/delete`, over the session store's
-//! catalog, titles, and delete, which ACP's `session/list` and
-//! `session/delete` and `rho sessions` use too.
+//! The session catalog over the socket (#1670, #1667): `rho/session/list`
+//! and `rho/session/list_detailed`, `rho/session/rename`, and
+//! `rho/session/delete`, over the session store's catalog, titles, and
+//! delete, which ACP's `session/list` and `session/delete` and `rho
+//! sessions` use too.
 //!
 //! A rename tells a loaded session's attached clients the new title. A
 //! delete must unload a loaded session first, since its runtime holds the
@@ -16,7 +17,8 @@ use std::{num::NonZeroU32, num::NonZeroUsize, sync::Arc};
 
 use rho_protocol::{
     self as wire, DetachReason, ErrorCode, RpcError, SessionDeleteParams, SessionDeleteResponse,
-    SessionListParams, SessionListResponse, SessionRenameParams, SessionRenameResponse,
+    SessionListDetailedResponse, SessionListParams, SessionListResponse, SessionRenameParams,
+    SessionRenameResponse,
 };
 use rho_sdk::SessionId;
 use tokio::sync::OwnedMutexGuard;
@@ -30,9 +32,10 @@ use super::{
     writing, Held, Hold, LoadedSession, Sessions,
 };
 use crate::{
+    agent::DEFAULT_AGENT_ID,
     app::{daemon_host::jobs::SessionJob, session_runtime::SessionRuntime},
     session::{
-        catalog::{self, CatalogError},
+        catalog::{self, CatalogError, CatalogPage},
         ExactDelete, NoSessionFound, Session as StoredSession, SessionSummary,
     },
 };
@@ -52,22 +55,27 @@ impl Sessions {
         &self,
         params: SessionListParams,
     ) -> Result<SessionListResponse, RpcError> {
-        let SessionListParams { cwd, cursor, limit } = params;
-        let limit = page_size(limit)?;
-        let page = store_blocking("list the sessions", move || {
-            Ok(catalog::list(cwd.as_deref(), cursor.as_deref(), limit))
-        })
-        .await?
-        .map_err(|error| match error {
-            CatalogError::RelativeCwd | CatalogError::UnknownCursor(_) => {
-                invalid(error.to_string())
-            }
-            CatalogError::Store(error) => store_failed("list the sessions", &error),
-        })?;
+        let page = list_page(params).await?;
         Ok(SessionListResponse {
             sessions: page.sessions.into_iter().map(summary_to_wire).collect(),
             next_cursor: page.next_cursor,
         })
+    }
+
+    /// The page [`Self::list`] lists, each session with the agent it runs as
+    /// and the session that started it.
+    pub(in crate::app::daemon_host) async fn list_detailed(
+        &self,
+        params: SessionListParams,
+    ) -> Result<SessionListDetailedResponse, RpcError> {
+        let page = list_page(params).await?;
+        Ok(SessionListDetailedResponse::new(
+            page.sessions
+                .into_iter()
+                .map(detailed_summary_to_wire)
+                .collect(),
+            page.next_cursor,
+        ))
     }
 
     /// Saves a session's title, then tells the clients attached to it, if
@@ -356,6 +364,32 @@ fn page_size(limit: Option<NonZeroU32>) -> Result<NonZeroUsize, RpcError> {
         })
 }
 
+/// The page of the catalog `params` asks for, as both listings list it.
+async fn list_page(params: SessionListParams) -> Result<CatalogPage, RpcError> {
+    let SessionListParams { cwd, cursor, limit } = params;
+    let limit = page_size(limit)?;
+    store_blocking("list the sessions", move || {
+        Ok(catalog::list(cwd.as_deref(), cursor.as_deref(), limit))
+    })
+    .await?
+    .map_err(|error| match error {
+        CatalogError::RelativeCwd | CatalogError::UnknownCursor(_) => invalid(error.to_string()),
+        CatalogError::Store(error) => store_failed("list the sessions", &error),
+    })
+}
+
+/// `summary` as `rho/session/list_detailed` sends it: the default agent is
+/// left out, as `rho/session/new` takes it, and the session that started it
+/// is named even once deleted.
+fn detailed_summary_to_wire(mut summary: SessionSummary) -> wire::DetailedSessionSummary {
+    let agent = summary
+        .agent
+        .take()
+        .filter(|agent| agent != DEFAULT_AGENT_ID);
+    let parent = summary.started_by.take().map(wire::SessionId::new);
+    wire::DetailedSessionSummary::new(summary_to_wire(summary), agent, parent)
+}
+
 /// `summary` as `rho/session/list` sends it.
 fn summary_to_wire(summary: SessionSummary) -> wire::SessionSummary {
     let SessionSummary {
@@ -370,6 +404,9 @@ fn summary_to_wire(summary: SessionSummary) -> wire::SessionSummary {
         last_user_message,
         added_dirs,
         origin: _,
+        // Only `rho/session/list_detailed` sends these.
+        agent: _,
+        started_by: _,
     } = summary;
     wire::SessionSummary {
         session: wire::SessionId::new(id),

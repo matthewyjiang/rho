@@ -167,6 +167,7 @@ impl SessionRuntime {
         let provenance = SessionProvenance {
             origin: SessionOrigin::Fork,
             parent: Some(SessionTarget::new(parent.id(), parent.cwd())),
+            started_by: None,
         };
         let mut runtime =
             Self::open_fresh(opening, id.clone(), persistence, provenance, |provider| {
