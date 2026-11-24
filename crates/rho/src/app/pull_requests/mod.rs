@@ -8,18 +8,29 @@
 //! - [`record`]: what the daemon keeps for one session: links, watches, news.
 //! - [`store`]: the per-session record files, replaced atomically.
 //! - [`service`]: [`PullRequests`], the daemon-wide service.
-//! - [`poller`]: one poll pass, and the one door to the forge.
+//! - [`checkout`]: what a session's workspace has checked out.
+//! - [`interest`]: the leases clients take on what they list and show.
+//! - [`due`]: what a poll pass reads, from the state and the leases.
+//! - [`poller`]: one poll pass, the reads a show or a watch makes itself,
+//!   and the one door to the forge.
+//! - [`reads`]: what reads of the forge learned, and how it is kept.
 //! - [`inbox`]: [`PullRequestInbox`], one session's side of the service.
+//! - [`wire`]: a session's pull requests as `rho-protocol` sends them.
 //!
 //! Branch lookups and the parts of [`model::PrDetail`] no watch reads serve
-//! the coming rho-ui protocol step, which shows linked PRs to clients.
+//! clients, which list and show a session's pull requests.
 
+// The daemon resolves each session's checkout as a client asks.
+pub(crate) mod checkout;
+mod due;
 mod gh;
 mod gh_query;
 mod inbox;
+mod interest;
 mod model;
 mod news;
 mod poller;
+mod reads;
 mod record;
 mod service;
 mod state;
@@ -27,17 +38,18 @@ mod store;
 #[cfg(test)]
 mod test_forge;
 mod watch;
+mod wire;
 
 // The surface the daemon's wiring and the PR tools consume.
 pub(crate) use self::{
     gh::{Forge, GhCli},
     inbox::{
-        CheckCounts, LastRead, Linked, ListedPullRequest, NewsBatch, PullRequestError,
-        PullRequestInbox, Unlinked, Unwatched, Watched,
+        resolve_pull_request, CheckCounts, LastRead, Linked, ListedPullRequest, NewsBatch,
+        PullRequestError, PullRequestInbox, Unlinked, Unwatched, Watched,
     },
     model::{Mergeable, PrState, Rollup},
     record::LinkOrigin,
-    service::{unix_ms, PullRequests},
+    service::{unix_ms, PullRequests, ShowRead, ShowTarget},
     state::Gate,
 };
 #[cfg(test)]

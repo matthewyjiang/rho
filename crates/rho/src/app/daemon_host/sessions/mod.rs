@@ -92,6 +92,7 @@ mod open;
 mod options;
 mod processes;
 mod pull_request_wake;
+mod pull_requests;
 mod queued;
 mod reopen;
 mod restart_resume;

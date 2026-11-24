@@ -8,7 +8,11 @@ use crate::{
         NotificationTone, NotificationVisibility, Presentation, ToolBody, ToolCard, ToolCardStatus,
         ToolFact, ToolFamily, ToolHeader,
     },
-    methods::{AnswerStop, TurnError, TurnErrorKind, TurnOutcome},
+    methods::{
+        AnswerStop, BranchLookup, BranchPullRequest, LinkedPullRequest, PullRequestId,
+        PullRequestLinkOrigin, PullRequestRollup, PullRequestState, PullRequestSummary,
+        SessionPullRequests, TurnError, TurnErrorKind, TurnOutcome,
+    },
 };
 
 // Covers: every event's wire form (the `type` tag, snake_case names, and
@@ -416,6 +420,70 @@ fn every_session_event_round_trips_through_its_wire_form() {
                 text: "saved".into(),
             },
             json!({"type": "notice", "text": "saved"}),
+        ),
+        (
+            SessionEvent::PullRequests {
+                pull_requests: Box::new(SessionPullRequests::new(
+                    Some(BranchPullRequest::new(
+                        Some("feature".into()),
+                        BranchLookup::Found {
+                            pull_request: Box::new(PullRequestSummary::new(
+                                PullRequestId::new("github.com", "acme", "widgets", 7),
+                                "Add widgets",
+                                "https://github.com/acme/widgets/pull/7",
+                                PullRequestState::Open,
+                                PullRequestRollup::Failing,
+                                "abc123",
+                                "2026-11-23T10:00:00Z",
+                            )),
+                        },
+                        None,
+                    )),
+                    vec![LinkedPullRequest::new(
+                        PullRequestId::new("github.com", "acme", "widgets", 12),
+                        "https://github.com/acme/widgets/pull/12",
+                        PullRequestLinkOrigin::User,
+                        1_700_000_000,
+                    )],
+                )),
+            },
+            json!({
+                "type": "pull_requests",
+                "pull_requests": {
+                    "branch": {
+                        "branch": "feature",
+                        "lookup": {
+                            "kind": "found",
+                            "pull_request": {
+                                "id": {
+                                    "host": "github.com",
+                                    "owner": "acme",
+                                    "name": "widgets",
+                                    "number": 7,
+                                },
+                                "title": "Add widgets",
+                                "url": "https://github.com/acme/widgets/pull/7",
+                                "state": "open",
+                                "rollup": "failing",
+                                "head_oid": "abc123",
+                                "updated_at": "2026-11-23T10:00:00Z",
+                            },
+                        },
+                    },
+                    "linked": [{
+                        "id": {
+                            "host": "github.com",
+                            "owner": "acme",
+                            "name": "widgets",
+                            "number": 12,
+                        },
+                        "url": "https://github.com/acme/widgets/pull/12",
+                        "origin": "user",
+                        "linked_at": 1_700_000_000,
+                        "watched": false,
+                    }],
+                },
+            }),
         ),
     ];
     for (event, wire) in cases {

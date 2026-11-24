@@ -224,6 +224,37 @@ fn a_real_conversation_reads_oldest_first() {
         .all(|(state, _, comments)| *state == ThreadState::Resolved && *comments == 2));
     assert_eq!(threads[0].1, None, "outdated past its line");
     assert_eq!(threads[1].1, Some(423));
+    assert_eq!(
+        detail.merge_methods,
+        [MergeMethod::Merge, MergeMethod::Squash, MergeMethod::Rebase]
+    );
+}
+
+// Covers: a PR offers the merge methods its repository allows, the
+// viewer's default first, else in GitHub's order, so a merge menu never
+// offers one the repository forbids.
+// Owner: pure unit (parser)
+#[test]
+fn merges_offer_what_the_repository_allows() {
+    use MergeMethod::{Merge, Rebase, Squash};
+    let settings = |allowed: [bool; 3], default: Option<&str>| GhMergeSettings {
+        merge_commit_allowed: allowed[0],
+        squash_merge_allowed: allowed[1],
+        rebase_merge_allowed: allowed[2],
+        viewer_default_merge_method: default.map(str::to_owned),
+    };
+    let cases = [
+        ([true; 3], Some("REBASE"), vec![Rebase, Merge, Squash]),
+        ([true; 3], None, vec![Merge, Squash, Rebase]),
+        ([false, true, false], Some("MERGE"), vec![Squash]),
+    ];
+    for (allowed, default, expected) in cases {
+        assert_eq!(
+            settings(allowed, default).methods(),
+            expected,
+            "{allowed:?} {default:?}"
+        );
+    }
 }
 
 // Covers: comments and reviews cut short at their newest: posts older than
@@ -324,9 +355,10 @@ fn a_branch_takes_its_own_open_pr() {
 // required (from the `gate` alias, a gate GitHub failed reading as unknown
 // rather than failing the read), the viewer, post ids and author
 // associations, a post's time as published (a comment of a review sent
-// later) else as created, a thread's newest comments past its first, who merged it
-// and as what commit, and the query's cost. The answer mirrors GitHub's
-// shape for the query `query` builds.
+// later) else as created, a thread's newest comments past its first, who
+// merged it and as what commit, how its repository lets it merge, and the
+// query's cost. The answer mirrors GitHub's shape for the query `query`
+// builds.
 // Owner: pure unit (wire contract)
 #[test]
 fn a_full_read_takes_what_the_watch_needs() {
@@ -387,6 +419,10 @@ fn a_full_read_takes_what_the_watch_needs() {
                     "baseRefName": "main", "additions": 1, "deletions": 0, "changedFiles": 1,
                     "reviewDecision": "APPROVED", "mergeable": "UNKNOWN",
                     "mergedBy": { "login": "bob" }, "mergeCommit": { "oid": "9f8e7d6" },
+                    "repository": {
+                        "mergeCommitAllowed": false, "squashMergeAllowed": true,
+                        "rebaseMergeAllowed": true, "viewerDefaultMergeMethod": "REBASE"
+                    },
                     "comments": { "totalCount": 1, "nodes": [{
                         "id": "IC_1", "author": { "login": "carol" },
                         "authorAssociation": "NONE", "body": "nice",
@@ -394,7 +430,8 @@ fn a_full_read_takes_what_the_watch_needs() {
                         "url": format!("{url}#issuecomment-1")
                     }] },
                     "reviews": { "totalCount": 1, "nodes": [{
-                        "id": "PRR_1", "author": { "login": "bob" },
+                        "id": "PRR_1",
+                        "author": { "login": "bob", "avatarUrl": "https://avatars.githubusercontent.com/u/2?s=72" },
                         "authorAssociation": "OWNER", "body": "", "state": "APPROVED",
                         "submittedAt": "2026-11-22T00:45:00Z",
                         "url": format!("{url}#pullrequestreview-1")
@@ -442,6 +479,7 @@ fn a_full_read_takes_what_the_watch_needs() {
         id: format!("PRRC_{n}"),
         author: "carol".to_owned(),
         author_association: Some("CONTRIBUTOR".to_owned()),
+        avatar_url: None,
         at: MIDNIGHT + 3_600 + n * 60,
         body: format!("reply {n}"),
         verdict: None,
@@ -484,6 +522,7 @@ fn a_full_read_takes_what_the_watch_needs() {
                 id: "IC_1".to_owned(),
                 author: "carol".to_owned(),
                 author_association: Some("NONE".to_owned()),
+                avatar_url: None,
                 at: MIDNIGHT + 30 * 60,
                 body: "nice".to_owned(),
                 verdict: None,
@@ -493,6 +532,7 @@ fn a_full_read_takes_what_the_watch_needs() {
                 id: "PRR_1".to_owned(),
                 author: "bob".to_owned(),
                 author_association: Some("OWNER".to_owned()),
+                avatar_url: Some("https://avatars.githubusercontent.com/u/2?s=72".to_owned()),
                 at: MIDNIGHT + 45 * 60,
                 body: String::new(),
                 verdict: Some(Verdict::Approved),
@@ -510,6 +550,7 @@ fn a_full_read_takes_what_the_watch_needs() {
         }],
         older_threads: 0,
         mergeable: Mergeable::Unknown,
+        merge_methods: vec![MergeMethod::Rebase, MergeMethod::Squash],
         viewer: Some("rho-bot".to_owned()),
         merged_by: Some("bob".to_owned()),
         merge_commit: Some("9f8e7d6".to_owned()),

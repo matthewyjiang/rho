@@ -8,30 +8,23 @@ use std::{
     collections::HashMap,
     fmt,
     path::{Path, PathBuf},
-    process::Stdio,
     sync::Arc,
     time::Duration,
 };
 
 use rho_sdk::SessionId;
-use tokio::process::Command;
 
 use super::{
-    model::{Mergeable, PrDetail, PrId, PrState, RepoId, Rollup, ThreadState},
+    checkout::origin,
+    gh::ReadError,
+    model::{Mergeable, PrDetail, PrId, PrState, Rollup, ThreadState, GITHUB},
     news,
-    poller::WATCHES_PER_SESSION,
+    poller::{DetailError, BUDGET_FLOOR, WATCHES_PER_SESSION},
     record::LinkOrigin,
     service::{Entry, Shared},
     state::{CheckTally, Gate, News, WatchState},
     watch,
 };
-
-/// The host every session may read pull requests on.
-const GITHUB: &str = "github.com";
-
-/// How long `git remote get-url origin` may take to resolve `#N`. It reads
-/// local config: 4 ms on 2026-11-22. A tripwire for a hung filesystem.
-const GIT_DEADLINE: Duration = Duration::from_secs(5);
 
 /// One session's handle on the PR service. Cheap to clone.
 #[derive(Clone)]
@@ -265,37 +258,47 @@ impl PullRequestInbox {
     /// not news. A PR watched already keeps its watch as it is.
     pub(crate) async fn watch(&self, target: &str, now: u64) -> Result<Watched, PullRequestError> {
         self.shared.store()?;
-        let pr = self.resolve(target).await?;
+        let pr = resolve_pull_request(target, &self.cwd).await?;
         let known = {
             let state = self.shared.state();
             let watching = self.watching(&state.sessions, &pr)?;
             let snapshot = state.snapshots.get(&pr);
-            watching.then(|| snapshot.and_then(|s| s.detail.as_ref().map(|d| d.detail.clone())))
+            watching.then(|| snapshot.and_then(|s| s.newest_detail().map(|d| d.detail.clone())))
         };
         if let Some(Some(detail)) = known {
             return Ok(Watched::of(&detail, /*started*/ false));
         }
-        let detail = self.shared.read_baseline(&pr, now).await?;
-        let mut state = self.shared.state();
-        let watching = self.watching(&state.sessions, &pr)?;
-        let entry = state.entry(&self.session);
-        let url = detail.summary.url.clone();
-        let linked = entry
-            .record
-            .link(pr.clone(), url, LinkOrigin::Agent, now / 1000);
+        let detail = self
+            .shared
+            .read_detail(&pr, now)
+            .await
+            .map_err(|error| refusal(error, &pr.repo.host))?;
         let ended = matches!(detail.summary.state, PrState::Merged | PrState::Closed);
-        let started = !watching && !ended;
-        if started {
-            if let Some(link) = entry.record.link_mut(&pr) {
-                let baseline = watch::evaluate(&WatchState::new(now), &detail, now);
-                link.watch = Some(baseline.next);
-                link.told_head = Some(detail.summary.change.head_oid.clone());
+        let started = self.shared.update(|state| {
+            let watching = self.watching(&state.sessions, &pr)?;
+            let entry = state.entry(&self.session);
+            let url = detail.summary.url.clone();
+            let linked = entry
+                .record
+                .link(pr.clone(), url, LinkOrigin::Agent, now / 1000);
+            let started = !watching && !ended;
+            if started {
+                if let Some(link) = entry.record.link_mut(&pr) {
+                    let baseline = watch::evaluate(&WatchState::new(now), &detail, now);
+                    link.watch = Some(baseline.next);
+                    link.told_head = Some(detail.summary.change.head_oid.clone());
+                }
             }
-        }
-        if linked || started {
-            // The watch runs in memory; a failed save is logged.
-            let _ = self.shared.save(&self.session, &entry.record);
-        }
+            if linked || started {
+                // The watch runs in memory; a failed save is logged.
+                let _ = self.shared.save(&self.session, &entry.record);
+                // A new watch, of a PR linked already too, may be of the PR
+                // the session's agent just opened for its branch.
+                state.recheck_branch(&self.session, &pr);
+                self.shared.poke_if_leased(state, &self.session, now);
+            }
+            Ok::<_, PullRequestError>(started)
+        })?;
         if ended {
             return Err(PullRequestError::AlreadyEnded {
                 state: detail.summary.state,
@@ -307,62 +310,76 @@ impl PullRequestInbox {
     /// Stops watching `target`; it stays linked.
     pub(crate) async fn unwatch(&self, target: &str) -> Result<Unwatched, PullRequestError> {
         self.shared.store()?;
-        let pr = self.resolve(target).await?;
-        let mut state = self.shared.state();
-        let Some(entry) = state.sessions.get_mut(&self.session) else {
-            return Ok(Unwatched {
-                pr,
-                was_watched: false,
-            });
-        };
-        let was_watched = entry
-            .record
-            .link_mut(&pr)
-            .and_then(|link| link.watch.take())
-            .is_some();
-        if was_watched {
-            // Polling stopped in memory; a failed save is logged.
-            let _ = self.shared.save(&self.session, &entry.record);
-        }
+        let pr = resolve_pull_request(target, &self.cwd).await?;
+        let was_watched = self.shared.update(|state| {
+            let Some(entry) = state.sessions.get_mut(&self.session) else {
+                return false;
+            };
+            let was_watched = entry
+                .record
+                .link_mut(&pr)
+                .and_then(|link| link.watch.take())
+                .is_some();
+            if was_watched {
+                // Polling stopped in memory; a failed save is logged.
+                let _ = self.shared.save(&self.session, &entry.record);
+            }
+            was_watched
+        });
         Ok(Unwatched { pr, was_watched })
     }
 
-    /// Links `target` to the session, unwatched, at `now` (unix
-    /// milliseconds). Nothing is read until it is watched.
-    pub(crate) async fn link(&self, target: &str, now: u64) -> Result<Linked, PullRequestError> {
+    /// Links `target` to the session as `origin` asked, unwatched, at
+    /// `now` (unix milliseconds). It is read only while it is watched or a
+    /// client looks at the session; a link to a session a client looks at
+    /// wakes the poller to read it.
+    pub(crate) async fn link(
+        &self,
+        target: &str,
+        origin: LinkOrigin,
+        now: u64,
+    ) -> Result<Linked, PullRequestError> {
         self.shared.store()?;
-        let pr = self.resolve(target).await?;
+        let pr = resolve_pull_request(target, &self.cwd).await?;
         let url = pr.url();
-        let mut state = self.shared.state();
-        let entry = state.entry(&self.session);
-        let new = entry
-            .record
-            .link(pr.clone(), url.clone(), LinkOrigin::Agent, now / 1000);
-        if new {
-            self.shared
-                .save(&self.session, &entry.record)
-                .map_err(PullRequestError::Store)?;
-        }
+        let new = self.shared.update(|state| {
+            let entry = state.entry(&self.session);
+            // Changed in a copy until it is saved, so a retry after a failed
+            // save finds the change still to make.
+            let mut record = entry.record.clone();
+            let new = record.link(pr.clone(), url.clone(), origin, now / 1000);
+            if new {
+                self.shared
+                    .save(&self.session, &record)
+                    .map_err(PullRequestError::Store)?;
+                entry.record = record;
+                state.recheck_branch(&self.session, &pr);
+                self.shared.poke_if_leased(state, &self.session, now);
+            }
+            Ok::<_, PullRequestError>(new)
+        })?;
         Ok(Linked { pr, url, new })
     }
 
     /// Unlinks `target` from the session, ending its watch if it has one.
     pub(crate) async fn unlink(&self, target: &str) -> Result<Unlinked, PullRequestError> {
         self.shared.store()?;
-        let pr = self.resolve(target).await?;
-        let mut state = self.shared.state();
-        let Some(entry) = state.sessions.get_mut(&self.session) else {
-            return Ok(Unlinked {
-                pr,
-                was_linked: false,
-            });
-        };
-        let was_linked = entry.record.unlink(&pr);
-        if was_linked {
-            self.shared
-                .save(&self.session, &entry.record)
-                .map_err(PullRequestError::Store)?;
-        }
+        let pr = resolve_pull_request(target, &self.cwd).await?;
+        let was_linked = self.shared.update(|state| {
+            let Some(entry) = state.sessions.get_mut(&self.session) else {
+                return Ok(false);
+            };
+            // Changed in a copy until it is saved, as in `link`.
+            let mut record = entry.record.clone();
+            let was_linked = record.unlink(&pr);
+            if was_linked {
+                self.shared
+                    .save(&self.session, &record)
+                    .map_err(PullRequestError::Store)?;
+                entry.record = record;
+            }
+            Ok::<_, PullRequestError>(was_linked)
+        })?;
         Ok(Unlinked { pr, was_linked })
     }
 
@@ -393,7 +410,9 @@ impl PullRequestInbox {
                     origin: link.origin,
                     watched: link.watch.is_some(),
                     last_read,
-                    trouble: snapshot.and_then(|snapshot| snapshot.trouble.clone()),
+                    trouble: snapshot
+                        .and_then(|snapshot| snapshot.trouble.as_ref())
+                        .map(ToString::to_string),
                 }
             })
             .collect()
@@ -421,33 +440,39 @@ impl PullRequestInbox {
         }
         Ok(false)
     }
+}
 
-    /// The PR `target` names: a URL or `owner/name#N` as it is, and `#N`
-    /// in the session's `origin` repository. Only a PR on github.com or on
-    /// the host of the session's `origin` is read: `gh` would send that
-    /// host the user's sign-in for it, so the agent can't pick the host.
-    /// Git is asked for `origin` only when github.com does not settle it.
-    async fn resolve(&self, target: &str) -> Result<PrId, PullRequestError> {
-        let pr = match PrId::parse(target, None) {
-            Ok(pr) if pr.repo.host == GITHUB => return Ok(pr),
-            Ok(pr) => pr,
-            Err(_) => {
-                let origin = origin(&self.cwd).await;
-                return PrId::parse(target, origin.as_ref())
-                    .map_err(|why| PullRequestError::InvalidTarget(why.to_owned()));
-            }
-        };
-        if origin(&self.cwd)
-            .await
-            .is_some_and(|origin| origin.host == pr.repo.host)
-        {
-            return Ok(pr);
+/// The PR `target` names in `workspace`: a URL or `owner/name#N` as it is,
+/// and `#N` in the repository of the workspace's `origin`, whatever its
+/// checkout. Only a PR on github.com or on the host of the workspace's
+/// `origin` is read: `gh` would send that host the user's sign-in for it,
+/// so neither the agent nor a client can pick the host. Git is asked for
+/// `origin` only when github.com does not settle it. The agent's tools and
+/// every client request resolve their text here, so text that linked a PR
+/// names the same PR again.
+pub(crate) async fn resolve_pull_request(
+    target: &str,
+    workspace: &Path,
+) -> Result<PrId, PullRequestError> {
+    let pr = match PrId::parse(target, None) {
+        Ok(pr) if pr.repo.host == GITHUB => return Ok(pr),
+        Ok(pr) => pr,
+        Err(_) => {
+            let origin = origin(workspace).await;
+            return PrId::parse(target, origin.as_ref())
+                .map_err(|why| PullRequestError::InvalidTarget(why.to_owned()));
         }
-        Err(PullRequestError::InvalidTarget(format!(
-            "rho only reads pull requests on {GITHUB} or this workspace's origin host, not {}",
-            pr.repo.host
-        )))
+    };
+    if origin(workspace)
+        .await
+        .is_some_and(|origin| origin.host == pr.repo.host)
+    {
+        return Ok(pr);
     }
+    Err(PullRequestError::InvalidTarget(format!(
+        "rho only reads pull requests on {GITHUB} or this workspace's origin host, not {}",
+        pr.repo.host
+    )))
 }
 
 impl fmt::Debug for PullRequestInbox {
@@ -508,23 +533,22 @@ impl Watched {
     }
 }
 
-/// The repository `cwd`'s `origin` remote names, if git answers in time.
-async fn origin(cwd: &Path) -> Option<RepoId> {
-    let mut command = Command::new("git");
-    command
-        .arg("-C")
-        .arg(cwd)
-        .args(["remote", "get-url", "origin"])
-        .stdin(Stdio::null())
-        .kill_on_drop(true);
-    let output = tokio::time::timeout(GIT_DEADLINE, command.output())
-        .await
-        .ok()?
-        .ok()?;
-    if !output.status.success() {
-        return None;
+/// Why a watch of a PR on `host` could not start, from why its baseline
+/// read has no detail.
+fn refusal(error: DetailError, host: &str) -> PullRequestError {
+    match error {
+        DetailError::Paused(budget) => PullRequestError::Budget {
+            remaining: budget.remaining,
+            floor: BUDGET_FLOOR,
+            resets_at: budget.resets_at,
+        },
+        DetailError::Refused(why) => PullRequestError::NotFound(why),
+        DetailError::Failed(ReadError::NotInstalled(_)) => PullRequestError::NotInstalled,
+        DetailError::Failed(ReadError::SignedOut(_)) => PullRequestError::SignedOut {
+            host: host.to_owned(),
+        },
+        DetailError::Failed(ReadError::Failed(why)) => PullRequestError::Read(why),
     }
-    RepoId::from_url(std::str::from_utf8(&output.stdout).ok()?)
 }
 
 /// `resets_at` (unix seconds) as a UTC time.

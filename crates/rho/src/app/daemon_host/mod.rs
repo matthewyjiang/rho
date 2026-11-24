@@ -43,7 +43,10 @@ use rho_protocol::{
 };
 use rho_providers::credentials::CredentialStoreBackend;
 
-use crate::daemon::{DaemonLock, Ending, Executable, Shutdown};
+use crate::{
+    app::pull_requests::unix_ms,
+    daemon::{DaemonLock, Ending, Executable, Shutdown},
+};
 
 mod auth;
 mod jobs;
@@ -278,8 +281,8 @@ impl DaemonHost {
         self.sessions.unload_idle(grace).await;
     }
 
-    /// Polls the sessions' watched pull requests until the daemon starts
-    /// stopping.
+    /// Polls the sessions' pull requests, and tells their clients when they
+    /// change, until the daemon starts stopping.
     pub(super) async fn poll_pull_requests(&self) {
         self.sessions.poll_pull_requests().await;
     }
@@ -450,6 +453,34 @@ impl Service for DaemonHost {
         params: rho_protocol::SessionBackgroundStopParams,
     ) -> Result<rho_protocol::SessionBackgroundStopResponse, RpcError> {
         self.sessions.background_stop(params).await
+    }
+
+    async fn list_session_pull_requests(
+        &self,
+        params: rho_protocol::SessionPullRequestListParams,
+    ) -> Result<rho_protocol::SessionPullRequestListResponse, RpcError> {
+        self.sessions.pull_request_list(params, unix_ms()).await
+    }
+
+    async fn show_session_pull_request(
+        &self,
+        params: rho_protocol::SessionPullRequestShowParams,
+    ) -> Result<rho_protocol::SessionPullRequestShowResponse, RpcError> {
+        self.sessions.pull_request_show(params, unix_ms()).await
+    }
+
+    async fn link_session_pull_request(
+        &self,
+        params: rho_protocol::SessionPullRequestLinkParams,
+    ) -> Result<rho_protocol::SessionPullRequestLinkResponse, RpcError> {
+        self.sessions.pull_request_link(params, unix_ms()).await
+    }
+
+    async fn unlink_session_pull_request(
+        &self,
+        params: rho_protocol::SessionPullRequestUnlinkParams,
+    ) -> Result<rho_protocol::SessionPullRequestUnlinkResponse, RpcError> {
+        self.sessions.pull_request_unlink(params, unix_ms()).await
     }
 
     async fn session_mcp(

@@ -637,6 +637,171 @@
       ],
       "type": "object"
     },
+    "BranchLookup": {
+      "anyOf": [
+        {
+          "description": "The workspace is in no git repository.",
+          "properties": {
+            "kind": {
+              "const": "not_git",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The checkout is on no branch, at `commit` (abbreviated).",
+          "properties": {
+            "commit": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "detached",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "commit"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The repository has no `origin` on github.com, the one host whose\nbranches the daemon looks up.",
+          "properties": {
+            "kind": {
+              "const": "no_forge",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The branch is the repository's default branch, which has no pull\nrequest of its own; nothing is looked up.",
+          "properties": {
+            "kind": {
+              "const": "default_branch",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Not answered yet.",
+          "properties": {
+            "kind": {
+              "const": "looking",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The branch has no pull request.",
+          "properties": {
+            "kind": {
+              "const": "none",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The newest pull requests of the branch, `count` of them, all came\nfrom forks.",
+          "properties": {
+            "count": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "only_forks",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "count"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "found",
+              "type": "string"
+            },
+            "pull_request": {
+              "$ref": "#/$defs/PullRequestSummary"
+            }
+          },
+          "required": [
+            "kind",
+            "pull_request"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "properties": {
+            "kind": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object",
+          "x-rho-other": true
+        }
+      ],
+      "description": "What looking up a branch's pull request found. Protocol minors may add\nkinds."
+    },
+    "BranchPullRequest": {
+      "description": "The branch a session's workspace has checked out, and what looking up\nits pull request found.",
+      "properties": {
+        "branch": {
+          "description": "Absent when the checkout is on no branch.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lookup": {
+          "$ref": "#/$defs/BranchLookup"
+        },
+        "trouble": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PullRequestTrouble"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Why `lookup` may be out of date, or still `looking`."
+        }
+      },
+      "required": [
+        "lookup"
+      ],
+      "type": "object"
+    },
     "Budget": {
       "anyOf": [
         {
@@ -2501,6 +2666,76 @@
       ],
       "type": "object"
     },
+    "LinkedPullRequest": {
+      "description": "A pull request linked to a session.",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/PullRequestId"
+        },
+        "linked_at": {
+          "description": "When it was linked, in unix seconds.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "origin": {
+          "$ref": "#/$defs/PullRequestLinkOrigin"
+        },
+        "summary": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PullRequestSummary"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Absent before the daemon first read it."
+        },
+        "trouble": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PullRequestTrouble"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Why `summary` may be out of date, or absent."
+        },
+        "url": {
+          "type": "string"
+        },
+        "watched": {
+          "description": "Whether the session's agent watches it: the daemon wakes the agent\nwhen it changes.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "url",
+        "origin",
+        "linked_at",
+        "watched"
+      ],
+      "type": "object"
+    },
+    "ListedSessionPullRequests": {
+      "description": "One session's pull requests in a [`SessionPullRequestListResponse`].",
+      "properties": {
+        "pull_requests": {
+          "$ref": "#/$defs/SessionPullRequests"
+        },
+        "session": {
+          "$ref": "#/$defs/SessionId"
+        }
+      },
+      "required": [
+        "session",
+        "pull_requests"
+      ],
+      "type": "object"
+    },
     "Location": {
       "description": "A file a tool call touches, and the line when one applies.",
       "properties": {
@@ -3762,6 +3997,703 @@
         "minor"
       ],
       "type": "object"
+    },
+    "PullRequestCheck": {
+      "description": "One check run on a pull request's head.",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "required": {
+          "description": "Whether the base branch requires it; absent when the read did not\nsay.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/PullRequestCheckStatus"
+        },
+        "url": {
+          "description": "Its log.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "workflow": {
+          "description": "The workflow it belongs to, when it has one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "status"
+      ],
+      "type": "object"
+    },
+    "PullRequestCheckStatus": {
+      "anyOf": [
+        {
+          "enum": [
+            "failed",
+            "running",
+            "pending",
+            "cancelled",
+            "passed",
+            "neutral",
+            "skipped"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "Where a check is. Protocol minors may add statuses."
+    },
+    "PullRequestDetail": {
+      "description": "One pull request as the daemon last read it whole.",
+      "properties": {
+        "additions": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "author": {
+          "description": "The login that opened it.",
+          "type": "string"
+        },
+        "base": {
+          "description": "The branch it merges into.",
+          "type": "string"
+        },
+        "body": {
+          "description": "Its description, in Markdown.",
+          "type": "string"
+        },
+        "changed_files": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "checks": {
+          "description": "Its first checks, those that need a look first: failed, running,\npending, cancelled, passed, neutral, skipped. `checks_total` counts\nthem all, which may be more.",
+          "items": {
+            "$ref": "#/$defs/PullRequestCheck"
+          },
+          "type": "array"
+        },
+        "checks_total": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "deletions": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "head": {
+          "description": "The branch it merges from.",
+          "type": "string"
+        },
+        "merge_commit": {
+          "description": "The commit it merged as, once merged.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "merge_methods": {
+          "description": "How the repository lets the reader merge it, the reader's default\nfirst. Empty when the read did not say.",
+          "items": {
+            "$ref": "#/$defs/PullRequestMergeMethod"
+          },
+          "type": "array"
+        },
+        "mergeable": {
+          "$ref": "#/$defs/PullRequestMergeable"
+        },
+        "merged_by": {
+          "description": "Who merged it, once merged.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "older_posts": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "older_threads": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "posts": {
+          "description": "Its newest comments and reviews, oldest first; `older_posts` older\nones were not read.",
+          "items": {
+            "$ref": "#/$defs/PullRequestPost"
+          },
+          "type": "array"
+        },
+        "read_at": {
+          "description": "When the daemon read it, in unix seconds.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "review": {
+          "$ref": "#/$defs/PullRequestReview"
+        },
+        "summary": {
+          "$ref": "#/$defs/PullRequestSummary"
+        },
+        "threads": {
+          "description": "Its newest threads on lines of the code; `older_threads` older ones\nwere not read.",
+          "items": {
+            "$ref": "#/$defs/PullRequestThread"
+          },
+          "type": "array"
+        },
+        "viewer": {
+          "description": "The login the daemon read it as.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "summary",
+        "read_at",
+        "author",
+        "head",
+        "base",
+        "body",
+        "additions",
+        "deletions",
+        "changed_files",
+        "review",
+        "mergeable",
+        "merge_methods",
+        "checks",
+        "checks_total",
+        "posts",
+        "older_posts",
+        "threads",
+        "older_threads"
+      ],
+      "type": "object"
+    },
+    "PullRequestId": {
+      "description": "A pull request's identity. Shown as `owner/name#12`.",
+      "properties": {
+        "host": {
+          "description": "The forge's host, such as `github.com`.",
+          "type": "string"
+        },
+        "name": {
+          "description": "The repository's name.",
+          "type": "string"
+        },
+        "number": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "owner": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "host",
+        "owner",
+        "name",
+        "number"
+      ],
+      "type": "object"
+    },
+    "PullRequestLinkOrigin": {
+      "anyOf": [
+        {
+          "const": "user",
+          "description": "A person, through a client.",
+          "type": "string"
+        },
+        {
+          "const": "agent",
+          "description": "The session's agent, through its tools.",
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "Who linked a pull request. Protocol minors may add origins."
+    },
+    "PullRequestMergeMethod": {
+      "anyOf": [
+        {
+          "enum": [
+            "merge",
+            "squash",
+            "rebase"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "A way to merge a pull request. Protocol minors may add methods."
+    },
+    "PullRequestMergeable": {
+      "anyOf": [
+        {
+          "enum": [
+            "clean",
+            "conflicting"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "undetermined",
+          "description": "The forge has not worked it out yet, or the pull request is closed.",
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "Whether a pull request merges into its base. Protocol minors may add\nvalues."
+    },
+    "PullRequestPost": {
+      "description": "A comment or review on a pull request, or a comment in one of its\nthreads.",
+      "properties": {
+        "at": {
+          "description": "When it was written, in unix seconds.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "author": {
+          "description": "The login that wrote it.",
+          "type": "string"
+        },
+        "author_association": {
+          "description": "The author's tie to the repository, as the forge names it, such as\n`MEMBER`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "avatar_url": {
+          "description": "Where the forge serves the author's picture, 72 pixels square;\nabsent for a deleted account.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "body": {
+          "description": "In Markdown; a review may have none.",
+          "type": "string"
+        },
+        "id": {
+          "description": "The forge's id of it; empty when the read did not ask.",
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "verdict": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PullRequestVerdict"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "A review's verdict; absent for a comment."
+        }
+      },
+      "required": [
+        "id",
+        "author",
+        "at",
+        "body",
+        "url"
+      ],
+      "type": "object"
+    },
+    "PullRequestRead": {
+      "description": "Whether [`SESSION_PULL_REQUEST_SHOW`] reads GitHub before answering.",
+      "oneOf": [
+        {
+          "const": "cached",
+          "description": "Answer from the daemon's last read, reading first only when it has\nno detail of the target to answer with and its last attempt did not\nfail within the last 15 seconds.",
+          "type": "string"
+        },
+        {
+          "const": "fresh",
+          "description": "Read now, as after a merge or comment the client made itself.",
+          "type": "string"
+        }
+      ]
+    },
+    "PullRequestReview": {
+      "anyOf": [
+        {
+          "enum": [
+            "required",
+            "changes_requested",
+            "approved"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "none",
+          "description": "No review is required or given.",
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "Where a pull request's review is. Protocol minors may add values."
+    },
+    "PullRequestRollup": {
+      "anyOf": [
+        {
+          "enum": [
+            "pending",
+            "passing",
+            "failing"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "none",
+          "description": "It has no checks.",
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "A pull request's checks, rolled up. Protocol minors may add values."
+    },
+    "PullRequestState": {
+      "anyOf": [
+        {
+          "enum": [
+            "open",
+            "draft",
+            "merged",
+            "closed"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "Where a pull request is. Protocol minors may add states."
+    },
+    "PullRequestSummary": {
+      "description": "Enough of a pull request for a sidebar row or a tab title, and to tell\nthat its detail changed.",
+      "properties": {
+        "head_oid": {
+          "description": "The commit its head branch is at.",
+          "type": "string"
+        },
+        "id": {
+          "$ref": "#/$defs/PullRequestId"
+        },
+        "rollup": {
+          "$ref": "#/$defs/PullRequestRollup",
+          "description": "Its checks, rolled up."
+        },
+        "state": {
+          "$ref": "#/$defs/PullRequestState"
+        },
+        "title": {
+          "type": "string"
+        },
+        "updated_at": {
+          "description": "The forge's timestamp of its last update. When it, `head_oid`, or\n`rollup` moved, a [`SESSION_PULL_REQUEST_SHOW`] returns a newer\ndetail.",
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "url",
+        "state",
+        "rollup",
+        "head_oid",
+        "updated_at"
+      ],
+      "type": "object"
+    },
+    "PullRequestTarget": {
+      "description": "Which of a session's pull requests [`SESSION_PULL_REQUEST_SHOW`] shows.",
+      "oneOf": [
+        {
+          "description": "The pull request of the branch the session's workspace has checked\nout, if it has one.",
+          "properties": {
+            "kind": {
+              "const": "branch",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "One linked to the session, written as [`SessionPullRequestLinkParams`]\ntakes it.",
+          "properties": {
+            "kind": {
+              "const": "linked",
+              "type": "string"
+            },
+            "pull_request": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "pull_request"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "PullRequestThread": {
+      "description": "A review thread on a line of a pull request's diff.",
+      "properties": {
+        "comments": {
+          "description": "The comments that start it and its newest, oldest first and each\nonce; `more_comments` between those were not read.",
+          "items": {
+            "$ref": "#/$defs/PullRequestPost"
+          },
+          "type": "array"
+        },
+        "id": {
+          "description": "The forge's id of it.",
+          "type": "string"
+        },
+        "line": {
+          "description": "The line it is on, which an outdated thread no longer has.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "more_comments": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "path": {
+          "description": "The file it is on.",
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/PullRequestThreadState"
+        }
+      },
+      "required": [
+        "id",
+        "path",
+        "state",
+        "comments",
+        "more_comments"
+      ],
+      "type": "object"
+    },
+    "PullRequestThreadState": {
+      "anyOf": [
+        {
+          "enum": [
+            "open",
+            "resolved"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "outdated",
+          "description": "Open, on code that has changed since.",
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "Where a review thread is. Protocol minors may add states."
+    },
+    "PullRequestTrouble": {
+      "anyOf": [
+        {
+          "description": "The daemon's machine has no `gh`.",
+          "properties": {
+            "kind": {
+              "const": "not_installed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "`gh` on the daemon's machine is not signed in to `host`.",
+          "properties": {
+            "host": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "signed_out",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "host"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Reads of `host` are paused to keep its API budget: `remaining`\npoints are left, under the daemon's `floor`, until `resets_at`\n(unix seconds).",
+          "properties": {
+            "floor": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "host": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "paused",
+              "type": "string"
+            },
+            "remaining": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "resets_at": {
+              "format": "int64",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "host",
+            "remaining",
+            "floor",
+            "resets_at"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The forge answered without it, as its `message` says.",
+          "properties": {
+            "kind": {
+              "const": "not_found",
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "message"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Any other failure.",
+          "properties": {
+            "kind": {
+              "const": "failed",
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "message"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "properties": {
+            "kind": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object",
+          "x-rho-other": true
+        }
+      ],
+      "description": "Why the daemon could not read a pull request or a branch: what it holds\nis its last good read, if any. Protocol minors may add kinds."
+    },
+    "PullRequestVerdict": {
+      "anyOf": [
+        {
+          "enum": [
+            "approved",
+            "changes_requested",
+            "commented",
+            "dismissed"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "What a review said. Protocol minors may add verdicts."
     },
     "Question": {
       "description": "One question, with the choices it offers.",
@@ -5151,6 +6083,23 @@
           "type": "object"
         },
         {
+          "description": "The session's pull requests changed: one was linked, unlinked,\nwatched, or read with a change. All of them, replacing what\n[`super::SESSION_PULL_REQUEST_LIST`] or the last of these gave. Sent\nonly once they differ from what this stream last sent, so a quiet\nread sends nothing; a client showing a pull request whose summary\nmoved reissues [`super::SESSION_PULL_REQUEST_SHOW`] for its detail.",
+          "properties": {
+            "pull_requests": {
+              "$ref": "#/$defs/SessionPullRequests"
+            },
+            "type": {
+              "const": "pull_requests",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "pull_requests"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Any other value: one a later protocol minor adds.",
           "properties": {
             "type": {
@@ -6124,6 +7073,172 @@
       },
       "required": [
         "turn"
+      ],
+      "type": "object"
+    },
+    "SessionPullRequestLinkParams": {
+      "description": "Params of [`SESSION_PULL_REQUEST_LINK`].",
+      "properties": {
+        "pull_request": {
+          "description": "The pull request as a person typed it: a URL, `owner/name#12`, or\n`#12` in the repository of the session's `origin`.",
+          "type": "string"
+        },
+        "session": {
+          "$ref": "#/$defs/SessionId"
+        }
+      },
+      "required": [
+        "session",
+        "pull_request"
+      ],
+      "type": "object"
+    },
+    "SessionPullRequestLinkResponse": {
+      "description": "Result of [`SESSION_PULL_REQUEST_LINK`].",
+      "properties": {
+        "pull_request": {
+          "$ref": "#/$defs/PullRequestId",
+          "description": "The pull request the text named."
+        },
+        "pull_requests": {
+          "$ref": "#/$defs/SessionPullRequests"
+        }
+      },
+      "required": [
+        "pull_request",
+        "pull_requests"
+      ],
+      "type": "object"
+    },
+    "SessionPullRequestListParams": {
+      "description": "Params of [`SESSION_PULL_REQUEST_LIST`].",
+      "properties": {
+        "sessions": {
+          "description": "The sessions to list and lease, at most 1,000.",
+          "items": {
+            "$ref": "#/$defs/SessionId"
+          },
+          "maxItems": 1000,
+          "type": "array"
+        }
+      },
+      "required": [
+        "sessions"
+      ],
+      "type": "object"
+    },
+    "SessionPullRequestListResponse": {
+      "description": "Result of [`SESSION_PULL_REQUEST_LIST`].",
+      "properties": {
+        "sessions": {
+          "description": "In the order asked. An id the daemon has nothing loaded or saved\nunder, one that is not a session id, and one it could not look up\nare left out.",
+          "items": {
+            "$ref": "#/$defs/ListedSessionPullRequests"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "sessions"
+      ],
+      "type": "object"
+    },
+    "SessionPullRequestShowParams": {
+      "description": "Params of [`SESSION_PULL_REQUEST_SHOW`].",
+      "properties": {
+        "read": {
+          "$ref": "#/$defs/PullRequestRead",
+          "description": "Whether to read GitHub before answering; absent, `cached`."
+        },
+        "session": {
+          "$ref": "#/$defs/SessionId"
+        },
+        "target": {
+          "$ref": "#/$defs/PullRequestTarget"
+        }
+      },
+      "required": [
+        "session",
+        "target"
+      ],
+      "type": "object"
+    },
+    "SessionPullRequestShowResponse": {
+      "description": "Result of [`SESSION_PULL_REQUEST_SHOW`].",
+      "properties": {
+        "detail": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PullRequestDetail"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The target's detail: absent while the daemon has none, as for a\nbranch with no pull request or a read that failed (see the target's\n[`PullRequestTrouble`])."
+        },
+        "pull_requests": {
+          "$ref": "#/$defs/SessionPullRequests"
+        }
+      },
+      "required": [
+        "pull_requests"
+      ],
+      "type": "object"
+    },
+    "SessionPullRequestUnlinkParams": {
+      "description": "Params of [`SESSION_PULL_REQUEST_UNLINK`].",
+      "properties": {
+        "pull_request": {
+          "description": "The pull request, written as [`SessionPullRequestLinkParams`] takes it.",
+          "type": "string"
+        },
+        "session": {
+          "$ref": "#/$defs/SessionId"
+        }
+      },
+      "required": [
+        "session",
+        "pull_request"
+      ],
+      "type": "object"
+    },
+    "SessionPullRequestUnlinkResponse": {
+      "description": "Result of [`SESSION_PULL_REQUEST_UNLINK`].",
+      "properties": {
+        "pull_requests": {
+          "$ref": "#/$defs/SessionPullRequests"
+        }
+      },
+      "required": [
+        "pull_requests"
+      ],
+      "type": "object"
+    },
+    "SessionPullRequests": {
+      "description": "A session's pull requests: its branch's, and those linked to it. What\n[`SESSION_PULL_REQUEST_LIST`] gives per session, what the other methods\nanswer with, and what [`super::SessionEvent::PullRequests`] carries: a\nclient replaces what it holds with it, never merges.",
+      "properties": {
+        "branch": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BranchPullRequest"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The branch the session's workspace has checked out, and its pull\nrequest. Absent until a client listed or showed the session since\nthe daemon started; kept as last read once no client asks."
+        },
+        "linked": {
+          "description": "In the order linked, each once. The branch's own pull request is here\ntoo when it is linked, as a watch links it: match by `id`.",
+          "items": {
+            "$ref": "#/$defs/LinkedPullRequest"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "linked"
       ],
       "type": "object"
     },
@@ -8345,6 +9460,38 @@
       },
       "result": {
         "$ref": "#/$defs/SessionPromptResponse"
+      }
+    },
+    "rho/session/pull_request/link": {
+      "params": {
+        "$ref": "#/$defs/SessionPullRequestLinkParams"
+      },
+      "result": {
+        "$ref": "#/$defs/SessionPullRequestLinkResponse"
+      }
+    },
+    "rho/session/pull_request/list": {
+      "params": {
+        "$ref": "#/$defs/SessionPullRequestListParams"
+      },
+      "result": {
+        "$ref": "#/$defs/SessionPullRequestListResponse"
+      }
+    },
+    "rho/session/pull_request/show": {
+      "params": {
+        "$ref": "#/$defs/SessionPullRequestShowParams"
+      },
+      "result": {
+        "$ref": "#/$defs/SessionPullRequestShowResponse"
+      }
+    },
+    "rho/session/pull_request/unlink": {
+      "params": {
+        "$ref": "#/$defs/SessionPullRequestUnlinkParams"
+      },
+      "result": {
+        "$ref": "#/$defs/SessionPullRequestUnlinkResponse"
       }
     },
     "rho/session/rename": {

@@ -297,6 +297,14 @@ impl Session {
         SessionStore::workspace_of(&session_root()?, id)
     }
 
+    /// [`Self::workspace_of`] of each of `ids`, in order, each with its own
+    /// failure, reconciling the index at most once for all of them.
+    pub(crate) fn workspaces_of(
+        ids: &[String],
+    ) -> anyhow::Result<Vec<anyhow::Result<Option<PathBuf>>>> {
+        Ok(SessionStore::workspaces_of(&session_root()?, ids))
+    }
+
     /// Opens the session saved under exactly `id` in `cwd`'s workspace, with
     /// its model history, or `None` when nothing is. `id` is never read as a
     /// prefix and no other workspace is searched.

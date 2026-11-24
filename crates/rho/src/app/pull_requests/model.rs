@@ -5,6 +5,10 @@
 
 use serde::{Deserialize, Serialize};
 
+/// The host every session may read pull requests on, and the only one a
+/// branch's pull request is looked up on.
+pub(crate) const GITHUB: &str = "github.com";
+
 /// A repository on a forge, named as its origin remote's URL names it.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub(crate) struct RepoId {
@@ -90,6 +94,10 @@ impl PrId {
     /// When `text` names no PR, or only a number with no `repo`: why.
     pub(crate) fn parse(text: &str, repo: Option<&RepoId>) -> Result<Self, &'static str> {
         const FORMS: &str = "Give the pull request's URL, owner/name#number, or #number.";
+        // Such as a GitLab merge request's or a GitHub issue's URL.
+        const NOT_A_PR_URL: &str = "That URL is not a GitHub pull request's; rho reads GitHub \
+                                    pull requests only, by a URL such as \
+                                    https://github.com/owner/name/pull/12.";
         let text = text.trim();
         let number = |text: &str| text.parse::<u32>().ok().filter(|&number| number > 0);
         if let Some((_, rest)) = text.split_once("://") {
@@ -101,9 +109,9 @@ impl PrId {
                 parts.next(),
                 parts.next(),
             ) else {
-                return Err(FORMS);
+                return Err(NOT_A_PR_URL);
             };
-            let number = number(n.split(['#', '?']).next().unwrap_or(n)).ok_or(FORMS)?;
+            let number = number(n.split(['#', '?']).next().unwrap_or(n)).ok_or(NOT_A_PR_URL)?;
             let repo = RepoId {
                 host: without_user(host).to_ascii_lowercase(),
                 owner: owner.to_owned(),
@@ -249,6 +257,8 @@ pub(crate) struct PrDetail {
     /// Threads older than `threads`, not read.
     pub(crate) older_threads: u32,
     pub(crate) mergeable: Mergeable,
+    /// How its repository lets it merge, the viewer's default first.
+    pub(crate) merge_methods: Vec<MergeMethod>,
     /// The login of the account that read it, whose own posts are not news
     /// to it; `None` when the read didn't say.
     pub(crate) viewer: Option<String>,
@@ -276,6 +286,15 @@ pub(crate) enum Mergeable {
     Unknown,
 }
 
+/// A way a repository lets a PR merge.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MergeMethod {
+    /// A merge commit.
+    Merge,
+    Squash,
+    Rebase,
+}
+
 /// What someone said on a PR: a comment, a review, or a comment on a line.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Post {
@@ -285,6 +304,9 @@ pub(crate) struct Post {
     /// The author's standing in the repository, as GitHub names it (such as
     /// `OWNER`, `MEMBER` or `NONE`); `None` when the read didn't say.
     pub(crate) author_association: Option<String>,
+    /// Where the forge serves the author's picture; `None` for a deleted
+    /// account.
+    pub(crate) avatar_url: Option<String>,
     /// Unix seconds.
     pub(crate) at: i64,
     /// Markdown; a review may have none.

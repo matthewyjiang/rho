@@ -19,17 +19,20 @@ use crate::{
         SessionMcpCatalogParams, SessionMcpCatalogRead, SessionMcpComplete,
         SessionMcpCompleteParams, SessionMcpParams, SessionMcpResourceParams,
         SessionMcpResourceRead, SessionNew, SessionNewParams, SessionProcesses,
-        SessionProcessesParams, SessionPrompt, SessionPromptParams, SessionRename,
-        SessionRenameParams, SessionSteer, SessionSteerParams, SessionSurfaceAction,
-        SessionSurfaceActionParams, SessionUnsteer, SessionUnsteerParams, Status, Stop,
-        WorktreePrune, WorktreePruneParams, AUTH_CHOOSE_STORE, AUTH_KEY, AUTH_LIST,
-        AUTH_LOGIN_CANCEL, AUTH_LOGOUT, CONFIG_REGISTER, CONFIG_SCHEMA, CONFIG_SET, DAEMON_RESTART,
-        DAEMON_STATUS, DAEMON_STOP, JOB_LIST, MODEL_REFRESH, SESSION_ANSWER,
-        SESSION_BACKGROUND_LIST, SESSION_BACKGROUND_STOP, SESSION_CANCEL, SESSION_CONFIGURE,
-        SESSION_DELETE, SESSION_HOLD, SESSION_INSPECT, SESSION_LIST, SESSION_MCP,
-        SESSION_MCP_CATALOG, SESSION_MCP_COMPLETE, SESSION_MCP_RESOURCE, SESSION_NEW,
-        SESSION_PROCESSES, SESSION_PROMPT, SESSION_RENAME, SESSION_STEER, SESSION_SURFACE_ACTION,
-        SESSION_UNSTEER, WORKTREE_PRUNE,
+        SessionProcessesParams, SessionPrompt, SessionPromptParams, SessionPullRequestLink,
+        SessionPullRequestLinkParams, SessionPullRequestList, SessionPullRequestListParams,
+        SessionPullRequestShow, SessionPullRequestShowParams, SessionPullRequestUnlink,
+        SessionPullRequestUnlinkParams, SessionRename, SessionRenameParams, SessionSteer,
+        SessionSteerParams, SessionSurfaceAction, SessionSurfaceActionParams, SessionUnsteer,
+        SessionUnsteerParams, Status, Stop, WorktreePrune, WorktreePruneParams, AUTH_CHOOSE_STORE,
+        AUTH_KEY, AUTH_LIST, AUTH_LOGIN_CANCEL, AUTH_LOGOUT, CONFIG_REGISTER, CONFIG_SCHEMA,
+        CONFIG_SET, DAEMON_RESTART, DAEMON_STATUS, DAEMON_STOP, JOB_LIST, MODEL_REFRESH,
+        SESSION_ANSWER, SESSION_BACKGROUND_LIST, SESSION_BACKGROUND_STOP, SESSION_CANCEL,
+        SESSION_CONFIGURE, SESSION_DELETE, SESSION_HOLD, SESSION_INSPECT, SESSION_LIST,
+        SESSION_MCP, SESSION_MCP_CATALOG, SESSION_MCP_COMPLETE, SESSION_MCP_RESOURCE, SESSION_NEW,
+        SESSION_PROCESSES, SESSION_PROMPT, SESSION_PULL_REQUEST_LINK, SESSION_PULL_REQUEST_LIST,
+        SESSION_PULL_REQUEST_SHOW, SESSION_PULL_REQUEST_UNLINK, SESSION_RENAME, SESSION_STEER,
+        SESSION_SURFACE_ACTION, SESSION_UNSTEER, WORKTREE_PRUNE,
     },
     server::{decode_params, encode_result, Service},
     ErrorCode, RpcError, StatusParams, StopParams, StopResponse,
@@ -56,6 +59,10 @@ pub(crate) enum ServiceCall {
     SessionProcesses(SessionProcessesParams),
     ListSessionBackground,
     SessionBackgroundStop(SessionBackgroundStopParams),
+    ListSessionPullRequests(SessionPullRequestListParams),
+    ShowSessionPullRequest(SessionPullRequestShowParams),
+    LinkSessionPullRequest(SessionPullRequestLinkParams),
+    UnlinkSessionPullRequest(SessionPullRequestUnlinkParams),
     InspectSession(SessionInspectParams),
     ListSessions(SessionListParams),
     RenameSession(SessionRenameParams),
@@ -114,6 +121,17 @@ impl ServiceCall {
             SESSION_BACKGROUND_STOP => {
                 decode_params::<SessionBackgroundStop>(params).map(Self::SessionBackgroundStop)
             }
+            SESSION_PULL_REQUEST_LIST => {
+                decode_params::<SessionPullRequestList>(params).map(Self::ListSessionPullRequests)
+            }
+            SESSION_PULL_REQUEST_SHOW => {
+                decode_params::<SessionPullRequestShow>(params).map(Self::ShowSessionPullRequest)
+            }
+            SESSION_PULL_REQUEST_LINK => {
+                decode_params::<SessionPullRequestLink>(params).map(Self::LinkSessionPullRequest)
+            }
+            SESSION_PULL_REQUEST_UNLINK => decode_params::<SessionPullRequestUnlink>(params)
+                .map(Self::UnlinkSessionPullRequest),
             SESSION_INSPECT => decode_params::<SessionInspect>(params).map(Self::InspectSession),
             SESSION_LIST => decode_params::<SessionList>(params).map(Self::ListSessions),
             SESSION_RENAME => decode_params::<SessionRename>(params).map(Self::RenameSession),
@@ -154,6 +172,9 @@ impl ServiceCall {
             | Self::SessionMcpComplete(SessionMcpCompleteParams { session, .. })
             | Self::SessionProcesses(SessionProcessesParams { session, .. })
             | Self::SessionBackgroundStop(SessionBackgroundStopParams { session, .. })
+            | Self::ShowSessionPullRequest(SessionPullRequestShowParams { session, .. })
+            | Self::LinkSessionPullRequest(SessionPullRequestLinkParams { session, .. })
+            | Self::UnlinkSessionPullRequest(SessionPullRequestUnlinkParams { session, .. })
             | Self::InspectSession(SessionInspectParams { session, .. })
             | Self::ConfigureSession(SessionConfigureParams { session, .. })
             | Self::RenameSession(SessionRenameParams { session, .. }) => Some(session),
@@ -165,6 +186,7 @@ impl ServiceCall {
             | Self::DeleteSession(_)
             | Self::ListJobs
             | Self::ListSessionBackground
+            | Self::ListSessionPullRequests(_)
             | Self::PruneWorktrees(_)
             | Self::SaveAuthKey(_)
             | Self::LogoutAuth(_)
@@ -237,6 +259,18 @@ impl ServiceCall {
             }
             Self::SessionBackgroundStop(params) => encode_result::<SessionBackgroundStop>(
                 &service.session_background_stop(params).await?,
+            ),
+            Self::ListSessionPullRequests(params) => encode_result::<SessionPullRequestList>(
+                &service.list_session_pull_requests(params).await?,
+            ),
+            Self::ShowSessionPullRequest(params) => encode_result::<SessionPullRequestShow>(
+                &service.show_session_pull_request(params).await?,
+            ),
+            Self::LinkSessionPullRequest(params) => encode_result::<SessionPullRequestLink>(
+                &service.link_session_pull_request(params).await?,
+            ),
+            Self::UnlinkSessionPullRequest(params) => encode_result::<SessionPullRequestUnlink>(
+                &service.unlink_session_pull_request(params).await?,
             ),
             Self::InspectSession(params) => {
                 encode_result::<SessionInspect>(&service.inspect_session(params).await?)

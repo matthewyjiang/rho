@@ -323,6 +323,16 @@ pub enum SessionEvent {
     /// `SessionOptions` is not `#[non_exhaustive]`, so a field is a major
     /// change; until then a reset replay carries the agent as this event.
     Agent { id: String },
+    /// The session's pull requests changed: one was linked, unlinked,
+    /// watched, or read with a change. All of them, replacing what
+    /// [`super::SESSION_PULL_REQUEST_LIST`] or the last of these gave. Sent
+    /// only once they differ from what this stream last sent, so a quiet
+    /// read sends nothing; a client showing a pull request whose summary
+    /// moved reissues [`super::SESSION_PULL_REQUEST_SHOW`] for its detail.
+    PullRequests {
+        // Boxed so the largest event stays small on every queue.
+        pull_requests: Box<super::SessionPullRequests>,
+    },
     /// A value a newer daemon sends that this crate does not know; daemons
     /// never send it.
     #[serde(other)]

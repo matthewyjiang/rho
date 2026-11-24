@@ -36,7 +36,7 @@ use super::{open::OpenWith, LoadedSession, Sessions};
 use crate::app::pull_requests::ScriptedForge;
 use crate::app::{
     daemon_host::wire::session_to_wire,
-    pull_requests::{Forge, PullRequestInbox, PullRequests},
+    pull_requests::{unix_ms, Forge, PullRequestInbox, PullRequests},
 };
 
 /// The daemon's pull request service, owned by [`Sessions`], and what it
@@ -70,6 +70,12 @@ impl PullRequestWake {
     /// The inbox of session `id`, which works in `cwd`.
     pub(super) fn inbox(&self, id: &SessionId, cwd: &Path) -> PullRequestInbox {
         self.service.inbox(id, cwd)
+    }
+
+    /// The service itself, which clients list and show sessions' pull
+    /// requests through (see `pull_requests`).
+    pub(super) fn service(&self) -> &PullRequests {
+        &self.service
     }
 
     /// Session `id` was deleted: its links, watches, news and kept opening
@@ -116,13 +122,15 @@ impl PullRequestWake {
 }
 
 impl Sessions {
-    /// Polls the watched pull requests, and wakes the unloaded sessions that
-    /// get news, until the daemon starts stopping; then drops every kept
-    /// opening.
+    /// Polls the pull requests that are watched or that clients look at,
+    /// wakes the unloaded sessions that get news, and tells loaded sessions'
+    /// clients their pull requests as they change, until the daemon starts
+    /// stopping; then drops every kept opening.
     pub(in crate::app::daemon_host) async fn poll_pull_requests(&self) {
         tokio::join!(
             self.pull_requests.service.run(self.stopping.cancelled()),
             self.wake_unloaded(),
+            self.report_pull_requests(unix_ms),
         );
         self.pull_requests.kept().clear();
     }

@@ -1,12 +1,23 @@
 //! The daemon's PR service, [`PullRequests`]: every session's record, the
 //! snapshot of each pull request read (shared by all sessions that link
-//! it), the forge behind its read lock, and the channel that asks the
-//! daemon to wake sessions with news.
+//! it), what clients look at and the branch lookups that serves, the forge
+//! behind its read lock, and the channel that asks the daemon to wake
+//! sessions with news.
 //!
-//! Locks: `state` is a plain mutex, never held across an await, and is
-//! held while a record is saved so saves of one session never reorder.
-//! `reader` is the async lock every forge read takes (see
-//! [`super::poller::Reader`]); it is taken before `state`, never after.
+//! Locks, each taken before the next and never after it:
+//! - `reader`, the async lock every forge read takes (see
+//!   [`super::poller::Reader`]), held until what the read learned is kept
+//!   in `state`, so a read that started later is never overwritten by an
+//!   older one; a tick tells sessions their news only once it is released;
+//! - a session's feed lock in the daemon, under which its reporter reads
+//!   the session's view; nothing takes a feed lock while holding `state`;
+//! - `state`, a plain mutex, never held across an await, and held while a
+//!   record is saved so saves of one session never reorder;
+//! - `budgets`, held only to read or keep one host's budget.
+//!
+//! Every change to what a session's view shows goes through
+//! [`Shared::update`], which tells the daemon's reporter once `state` is
+//! released.
 
 use std::{
     collections::HashMap,
@@ -21,13 +32,17 @@ use rho_sdk::SessionId;
 use tokio::sync::{mpsc, Notify};
 
 use super::{
-    gh::Forge,
+    checkout::Checkout,
+    due::{self, ShowOf},
+    gh::{Forge, ReadError},
     inbox::{PullRequestError, PullRequestInbox},
-    model::{PrDetail, PrId, PrSummary},
-    poller::{Reader, WATCH_POLL},
+    interest::{Interest, Lease, Shown},
+    model::{BranchId, Found, PrDetail, PrId, PrSummary, RepoId},
+    poller::{Budgets, Reader},
     record::SessionRecord,
     state::News,
     store::PullRequestStore,
+    wire,
 };
 
 /// The daemon-wide PR service. Cheap to clone; every clone is the same
@@ -42,6 +57,14 @@ pub(super) struct Shared {
     store: Result<PullRequestStore, String>,
     state: Mutex<State>,
     pub(super) reader: tokio::sync::Mutex<Reader>,
+    /// Each host's budget as `reader` last kept it, readable without
+    /// waiting on a read in flight. `reader` is its one writer.
+    pub(super) budgets: Arc<Budgets>,
+    /// Told after every [`Self::update`]: a session's view may differ.
+    changed: Arc<Notify>,
+    /// Wakes the poll loop before its period ends; see [`Self::leased`]
+    /// and [`Self::poke_if_leased`].
+    poke: Notify,
     wakes: mpsc::UnboundedSender<SessionId>,
     wake_requests: Mutex<Option<mpsc::UnboundedReceiver<SessionId>>>,
 }
@@ -50,8 +73,25 @@ pub(super) struct Shared {
 #[derive(Default)]
 pub(super) struct State {
     pub(super) sessions: HashMap<SessionId, Entry>,
-    /// What the last reads found of each linked pull request.
+    /// What the last reads found of each pull request a session links or
+    /// a branch lookup found.
     pub(super) snapshots: HashMap<PrId, Snapshot>,
+    /// What clients look at.
+    pub(super) interest: Interest,
+    /// What the last lookup of each branch a session has checked out found.
+    pub(super) branches: HashMap<BranchId, BranchRead>,
+    /// Each repository's default branch, which has no PR of its own, as
+    /// the last read in it said.
+    pub(super) default_branches: HashMap<RepoId, DefaultBranch>,
+}
+
+/// A repository's default branch as one read saw it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct DefaultBranch {
+    /// `None` when the repository has none.
+    pub(super) name: Option<String>,
+    /// When the read saw it, in unix milliseconds.
+    pub(super) at: u64,
 }
 
 impl State {
@@ -60,6 +100,55 @@ impl State {
         self.sessions
             .entry(session.clone())
             .or_insert_with(|| Entry::new(SessionRecord::default()))
+    }
+
+    /// The PR the last lookup of `branch` found.
+    pub(super) fn found(&self, branch: &BranchId) -> Option<&PrId> {
+        match self.branches.get(branch)?.found.as_ref()? {
+            Found::Pr(summary) => Some(&summary.id),
+            Found::None | Found::OnlyForks(_) => None,
+        }
+    }
+
+    /// Makes `session`'s branch lookup due again when `pr`, just linked or
+    /// watched, is in its repository and the last lookup did not find it:
+    /// it may be the PR the session's agent has just opened for its branch.
+    /// Otherwise clients would show it beside a branch that says it has
+    /// none until the lookup's next period.
+    pub(super) fn recheck_branch(&mut self, session: &SessionId, pr: &PrId) {
+        let Some(branch) = self
+            .interest
+            .session(session)
+            .and_then(|interest| interest.checkout().branch())
+        else {
+            return;
+        };
+        if branch.repo != pr.repo || self.found(branch) == Some(pr) {
+            return;
+        }
+        if let Some(read) = self.branches.get_mut(branch) {
+            read.asked_at = None;
+        }
+    }
+
+    /// Whether `branch` is its repository's default branch, which has no
+    /// PR of its own, as the last read in its repository said.
+    pub(super) fn is_default(&self, branch: &BranchId) -> bool {
+        self.default_seen_at(branch).is_some()
+    }
+
+    /// When the last read in `branch`'s repository saw it as the default
+    /// branch, in unix milliseconds; `None` when it did not.
+    pub(super) fn default_seen_at(&self, branch: &BranchId) -> Option<u64> {
+        let default = self.default_branches.get(&branch.repo)?;
+        (default.name.as_deref() == Some(branch.branch.as_str())).then_some(default.at)
+    }
+
+    /// Whether any session watches `pr`.
+    pub(super) fn watched(&self, pr: &PrId) -> bool {
+        self.sessions
+            .values()
+            .any(|entry| entry.record.watching().any(|(link, _)| link.pr == *pr))
     }
 }
 
@@ -112,17 +201,88 @@ impl Entry {
 pub(super) struct Snapshot {
     /// The newest summary, from a summary or a detail.
     pub(super) summary: Option<PrSummary>,
+    /// The last detail a tick read, against which its watches were
+    /// evaluated, or one read before any session watched it. Kept while a
+    /// session watches it or a client shows it.
     pub(super) detail: Option<Detailed>,
+    /// A detail of a watched PR a client's show read outside a tick, which
+    /// no watch has been evaluated against: it answers shows only, while
+    /// it is as new as [`Self::detail`] or newer (see
+    /// [`Self::newest_detail`]). See `Shared::keep_unjudged`.
+    pub(super) unjudged: Option<Detailed>,
     /// When anything was last read of it, in unix milliseconds.
     pub(super) read_at: Option<u64>,
+    /// When a tick last asked for it, or a read outside a tick of a PR no
+    /// session watches, in unix milliseconds, whether or not the read
+    /// succeeded: what its cadence counts from, so a failing read is not
+    /// asked again on every tick.
+    pub(super) asked_at: Option<u64>,
+    /// When a read of it outside a tick last failed, in unix milliseconds:
+    /// a cached show retries it only once the shown cadence allows since
+    /// then (see [`due::show_reads`]). Kept apart from [`Self::asked_at`],
+    /// which shows never move for a watched PR, so they cannot postpone
+    /// its watch.
+    pub(super) show_failed_at: Option<u64>,
     /// Why the last read failed; `None` once one succeeds.
-    pub(super) trouble: Option<String>,
+    pub(super) trouble: Option<Trouble>,
+}
+
+/// What the last lookup of one branch found.
+#[derive(Debug, Default)]
+pub(super) struct BranchRead {
+    /// `None` until a lookup succeeds.
+    pub(super) found: Option<Found>,
+    /// When it was last looked up, in unix milliseconds, whether or not the
+    /// lookup succeeded.
+    pub(super) asked_at: Option<u64>,
+    /// Why the last lookup failed; `None` once one succeeds.
+    pub(super) trouble: Option<Trouble>,
+}
+
+/// Why the last read of a pull request or branch failed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Trouble {
+    /// The forge answered without it: no such PR, or a repository the
+    /// account can't see, in the forge's words.
+    Refused(String),
+    /// The read got no answer.
+    Failed(ReadError),
+}
+
+impl fmt::Display for Trouble {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Refused(why) => formatter.write_str(why),
+            Self::Failed(error) => write!(formatter, "{error}"),
+        }
+    }
 }
 
 /// A full read and when it was taken, in unix milliseconds.
-pub(super) struct Detailed {
-    pub(super) detail: PrDetail,
-    pub(super) at: u64,
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Detailed {
+    pub(crate) detail: PrDetail,
+    pub(crate) at: u64,
+}
+
+/// Whether a client's show reads the forge before it answers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ShowRead {
+    /// Answer from the last read; the forge is read first only when there
+    /// is no detail to answer with (see [`PullRequests::show`]).
+    Cached,
+    /// Read the forge now, as after the user's own action on the PR.
+    Fresh,
+}
+
+/// What a client shows of a session.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ShowTarget {
+    /// The pull request of the branch its workspace has checked out.
+    Branch,
+    /// A pull request linked to it, as `inbox::resolve_pull_request`
+    /// resolved the client's text.
+    Linked(PrId),
 }
 
 impl Snapshot {
@@ -135,12 +295,69 @@ impl Snapshot {
     pub(super) fn saw_detail(&mut self, detail: PrDetail, now: u64) {
         self.saw_summary(detail.summary.clone(), now);
         self.detail = Some(Detailed { detail, at: now });
+        if self
+            .unjudged
+            .as_ref()
+            .is_some_and(|unjudged| unjudged.at <= now)
+        {
+            self.unjudged = None;
+        }
+    }
+
+    /// A show read `detail` of a watched PR at `now`, outside a tick: its
+    /// summary is the newest, and its detail answers shows only.
+    pub(super) fn saw_unjudged(&mut self, detail: PrDetail, now: u64) {
+        self.saw_summary(detail.summary.clone(), now);
+        self.unjudged = Some(Detailed { detail, at: now });
+    }
+
+    /// The newest detail kept. On equal times the unjudged one wins: a
+    /// show stores it after the tick that read at the same time.
+    pub(super) fn newest_detail(&self) -> Option<&Detailed> {
+        match (&self.detail, &self.unjudged) {
+            (Some(judged), Some(unjudged)) if unjudged.at >= judged.at => Some(unjudged),
+            (Some(judged), _) => Some(judged),
+            (None, unjudged) => unjudged.as_ref(),
+        }
+    }
+
+    /// What a show answers with: the newest detail kept, while it reads
+    /// as [`Self::summary`] does (see [`due::reads_as`]); a detail older
+    /// than the summary sent beside it is no answer.
+    pub(super) fn answer(&self) -> Option<&Detailed> {
+        self.newest_detail().filter(|detailed| {
+            self.summary
+                .as_ref()
+                .is_none_or(|summary| due::reads_as(&detailed.detail.summary, summary))
+        })
+    }
+
+    /// A read of it outside a tick failed at `now` for `trouble`.
+    pub(super) fn show_failed(&mut self, trouble: Trouble, now: u64) {
+        self.trouble = Some(trouble);
+        self.show_failed_at = Some(now);
+    }
+
+    /// Drops both details: no session watches the PR and no client shows it.
+    pub(super) fn forget_details(&mut self) {
+        self.detail = None;
+        self.unjudged = None;
     }
 }
 
 impl Shared {
     pub(super) fn state(&self) -> MutexGuard<'_, State> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Runs `change` on the state, then tells the daemon's reporter, once
+    /// the state is released, that a session's view may differ. The one
+    /// way to change what a view shows. Telling when nothing changed is
+    /// free: a session's feed sends only a set that differs.
+    pub(super) fn update<T>(&self, change: impl FnOnce(&mut State) -> T) -> T {
+        let changed = change(&mut self.state());
+        self.changed.notify_waiters();
+        changed
     }
 
     /// The store, or [`PullRequestError::Store`] with why it is missing.
@@ -170,6 +387,25 @@ impl Shared {
             let _ = self.wakes.send(session);
         }
     }
+
+    /// A lease was taken or renewed: a new one wakes the poll loop, which
+    /// reads what it made due. A renewal never pokes, so clients cannot
+    /// raise the read rate.
+    fn leased(&self, lease: Lease) {
+        match lease {
+            Lease::New => self.poke.notify_one(),
+            Lease::Renewed => {}
+        }
+    }
+
+    /// `session` linked a PR at `now`: when a lease on it lives, the PR is
+    /// due at once, so the poll loop wakes. A link to a session no client
+    /// looks at is not read until one does, or a watch asks.
+    pub(super) fn poke_if_leased(&self, state: &State, session: &SessionId, now: u64) {
+        if state.interest.leased(session, now) {
+            self.poke.notify_one();
+        }
+    }
 }
 
 impl PullRequests {
@@ -194,13 +430,17 @@ impl PullRequests {
             .map(|(session, record)| (session, Entry::new(record)))
             .collect();
         let (wakes, wake_requests) = mpsc::unbounded_channel();
+        let budgets = Arc::new(Budgets::default());
         Self(Arc::new(Shared {
             store,
             state: Mutex::new(State {
                 sessions,
-                snapshots: HashMap::new(),
+                ..State::default()
             }),
-            reader: tokio::sync::Mutex::new(Reader::new(forge)),
+            reader: tokio::sync::Mutex::new(Reader::new(forge, Arc::clone(&budgets))),
+            budgets,
+            changed: Arc::new(Notify::new()),
+            poke: Notify::new(),
             wakes,
             wake_requests: Mutex::new(Some(wake_requests)),
         }))
@@ -212,14 +452,16 @@ impl PullRequests {
         PullRequestInbox::new(Arc::clone(&self.0), session.clone(), cwd.to_owned())
     }
 
-    /// Polls every [`WATCH_POLL`] until `stopping` resolves; a tick under
-    /// way stops with it.
+    /// Polls every [`due::tick_period`], or sooner when a new lease pokes
+    /// it, until `stopping` resolves; a tick under way stops with it.
     pub(crate) async fn run(&self, stopping: impl Future<Output = ()>) {
         tokio::pin!(stopping);
         loop {
+            let period = due::tick_period(&self.0.state(), unix_ms());
             tokio::select! {
                 () = &mut stopping => return,
-                () = tokio::time::sleep(WATCH_POLL) => {}
+                () = tokio::time::sleep(period) => {}
+                () = self.0.poke.notified() => {}
             }
             tokio::select! {
                 () = &mut stopping => return,
@@ -280,16 +522,128 @@ impl PullRequests {
             .is_some_and(|entry| entry.waiting().next().is_some())
     }
 
-    /// `session` was deleted: drops its record, from memory and disk.
+    /// A client lists `session` at `now` (unix milliseconds); `checkout`
+    /// is what its workspace has checked out. The lease lasts two periods
+    /// of [`super::interest::LISTED_POLL`], and until then the session's
+    /// linked PRs' summaries and its branch's lookup are read at that
+    /// cadence. A new lease wakes the poller.
+    pub(crate) fn list(&self, session: &SessionId, checkout: Checkout, now: u64) {
+        let lease = self
+            .0
+            .update(|state| state.interest.list(session, checkout, now));
+        self.0.leased(lease);
+    }
+
+    /// A client shows `target` of `session` at `now` (unix milliseconds);
+    /// `checkout` is what its workspace has checked out. Answers the
+    /// target's detail: the branch's PR's or the linked PR's, `None` while
+    /// there is none to answer with (see [`Snapshot::answer`]). Then leases
+    /// the target at
+    /// [`super::interest::SHOWN_POLL`]: after the read, so the tick a new
+    /// lease wakes finds the target just asked rather than reading it again.
+    ///
+    /// It reads the forge first, through the poller's lock and budget
+    /// guard, when [`due::show_reads`] says so: when `read` is
+    /// [`ShowRead::Fresh`], or there is no detail to answer with and the
+    /// last attempt did not fail within the shown cadence. A read that
+    /// fails is kept as the target's trouble, and a paused host as its
+    /// budget, for the view to show; the answer is then the detail kept,
+    /// if it still reads as the PR's summary.
+    ///
+    /// # Errors
+    ///
+    /// [`PullRequestError::InvalidTarget`] when `target` is a PR not linked
+    /// to `session`.
+    pub(crate) async fn show(
+        &self,
+        session: &SessionId,
+        checkout: Checkout,
+        target: ShowTarget,
+        read: ShowRead,
+        now: u64,
+    ) -> Result<Option<Detailed>, PullRequestError> {
+        let shown =
+            match target {
+                ShowTarget::Branch => Shown::Branch,
+                ShowTarget::Linked(pr) => {
+                    let linked =
+                        self.0.state().sessions.get(session).is_some_and(|entry| {
+                            entry.record.links().iter().any(|link| link.pr == pr)
+                        });
+                    if !linked {
+                        return Err(PullRequestError::InvalidTarget(format!(
+                            "{pr} is not linked to this session"
+                        )));
+                    }
+                    Shown::Linked(pr)
+                }
+            };
+        let of = match (&shown, checkout.branch()) {
+            (Shown::Linked(pr), _) => Some(ShowOf::Linked(pr)),
+            (Shown::Branch, Some(branch)) => Some(ShowOf::Branch(branch)),
+            // On no branch of a github.com repository: nothing to look up.
+            (Shown::Branch, None) => None,
+        };
+        let reads = of.is_some_and(|of| due::show_reads(&self.0.state(), of, read, now));
+        let fresh = match of {
+            Some(ShowOf::Linked(pr)) if reads => self
+                .0
+                .read_detail(pr, now)
+                .await
+                .ok()
+                .map(|detail| Detailed { detail, at: now }),
+            Some(ShowOf::Branch(branch)) if reads => self.0.read_branch(branch, now).await,
+            Some(ShowOf::Linked(_) | ShowOf::Branch(_)) | None => None,
+        };
+        let detail = match (fresh, of) {
+            (Some(fresh), _) => Some(fresh),
+            (None, Some(of)) => kept_detail(&self.0.state(), of),
+            (None, None) => None,
+        };
+        let lease = self
+            .0
+            .update(|state| state.interest.show(session, checkout, shown, now));
+        self.0.leased(lease);
+        Ok(detail)
+    }
+
+    /// Completes the next time any session's view may have changed.
+    /// Subscribe before reading the views, so a change in between is not
+    /// missed.
+    pub(crate) fn changes(&self) -> impl Future<Output = ()> + Send + 'static {
+        Arc::clone(&self.0.changed).notified_owned()
+    }
+
+    /// `session`'s pull requests as clients see them at `now` (unix
+    /// milliseconds), from what was last read; see [`wire::session`].
+    /// Never waits on a forge read.
+    pub(crate) fn view(&self, session: &SessionId, now: u64) -> rho_protocol::SessionPullRequests {
+        let budgets = &self.0.budgets;
+        wire::session(&self.0.state(), |host| budgets.paused(host, now), session)
+    }
+
+    /// `session` was deleted: drops its record, from memory and disk, and
+    /// what clients looked at of it.
     pub(crate) fn forget(&self, session: &SessionId) {
         let mut state = self.0.state();
         state.sessions.remove(session);
+        state.interest.forget(session);
         if let Ok(store) = &self.0.store {
             if let Err(error) = store.forget(session) {
                 tracing::warn!(%session, %error, "could not delete the session's pull request record");
             }
         }
     }
+}
+
+/// The detail kept of what `of` names: the linked PR's, or that of the PR
+/// the branch's last lookup found.
+fn kept_detail(state: &State, of: ShowOf<'_>) -> Option<Detailed> {
+    let pr = match of {
+        ShowOf::Linked(pr) => pr,
+        ShowOf::Branch(branch) => state.found(branch)?,
+    };
+    state.snapshots.get(pr)?.answer().cloned()
 }
 
 impl fmt::Debug for PullRequests {
@@ -300,8 +654,11 @@ impl fmt::Debug for PullRequests {
     }
 }
 
-/// The wall clock in unix milliseconds: the poller's only clock.
 /// Now, in unix milliseconds, as every PR time is kept.
+///
+/// Read only at the edges: the poll loop, the daemon's request handlers
+/// and reporter, and the agent's PR tools. Everything below them takes
+/// `now`, so tests pass their own.
 pub(crate) fn unix_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

@@ -116,18 +116,40 @@ impl SessionStore {
     /// once on a miss, so a session another process saved before indexing it
     /// is still found.
     pub(super) fn workspace_of(root: &Path, id: &str) -> anyhow::Result<Option<PathBuf>> {
-        let find = || -> anyhow::Result<Option<PathBuf>> {
-            let exact: Vec<_> = index::matching_sessions_any_workspace(root, id)?
-                .into_iter()
-                .filter(|(path, _)| session_id_from_path(path).as_deref() == Some(id))
-                .collect();
-            Ok(single_workspace(&exact, id)?.map(|(_, cwd)| cwd.clone()))
-        };
-        if let Some(cwd) = find()? {
+        if let Some(cwd) = indexed_workspace(root, id)? {
             return Ok(Some(cwd));
         }
         index::reconcile_all_workspaces(root)?;
-        find()
+        indexed_workspace(root, id)
+    }
+
+    /// [`Self::workspace_of`] of each of `ids`, in order, each with its own
+    /// failure. The index is reconciled at most once, when any id is
+    /// missing, and then only the missing ids are looked up again; when
+    /// the reconcile fails, each of those fails with its cause.
+    pub(super) fn workspaces_of(
+        root: &Path,
+        ids: &[String],
+    ) -> Vec<anyhow::Result<Option<PathBuf>>> {
+        let mut found: Vec<_> = ids.iter().map(|id| indexed_workspace(root, id)).collect();
+        let missing = |found: &anyhow::Result<Option<PathBuf>>| matches!(found, Ok(None));
+        if !found.iter().any(missing) {
+            return found;
+        }
+        let reconciled =
+            index::reconcile_all_workspaces(root).map_err(|error| format!("{error:#}"));
+        for (id, found) in ids.iter().zip(&mut found) {
+            if !missing(found) {
+                continue;
+            }
+            *found = match &reconciled {
+                Ok(()) => indexed_workspace(root, id),
+                Err(why) => Err(anyhow::anyhow!(
+                    "could not reconcile the session index: {why}"
+                )),
+            };
+        }
+        found
     }
 
     /// The session saved under exactly `id` in this workspace, if any. Unlike
@@ -441,6 +463,16 @@ impl Session {
         );
         self.save_snapshot(&snapshot, &[])
     }
+}
+
+/// The workspace the index names for the session saved under exactly `id`,
+/// without reconciling it; `None` when it names none.
+fn indexed_workspace(root: &Path, id: &str) -> anyhow::Result<Option<PathBuf>> {
+    let exact: Vec<_> = index::matching_sessions_any_workspace(root, id)?
+        .into_iter()
+        .filter(|(path, _)| session_id_from_path(path).as_deref() == Some(id))
+        .collect();
+    Ok(single_workspace(&exact, id)?.map(|(_, cwd)| cwd.clone()))
 }
 
 /// Workspace directory recorded on the session header line.

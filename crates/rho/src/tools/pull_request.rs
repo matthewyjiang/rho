@@ -145,7 +145,7 @@ impl Tool for PullRequestTool {
                 Action::Link => linked_text(
                     &self
                         .inbox
-                        .link(target(arguments)?, now)
+                        .link(target(arguments)?, LinkOrigin::Agent, now)
                         .await
                         .map_err(refused)?,
                 ),
