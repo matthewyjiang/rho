@@ -189,6 +189,19 @@ impl Daemon {
         lock(&self.routes).sessions.insert(session.clone(), route);
     }
 
+    /// Routes session `session`'s notifications to the receiver this
+    /// returns, replacing any earlier route.
+    pub(crate) fn route_channel(&self, session: &SessionId) -> mpsc::UnboundedReceiver<Routed> {
+        let (sender, routed) = mpsc::unbounded_channel();
+        self.route(
+            session,
+            Box::new(move |routed| {
+                let _ = sender.send(routed);
+            }),
+        );
+        routed
+    }
+
     /// Drops session `session`'s route; what the daemon still sends for it
     /// is discarded.
     pub(crate) fn unroute(&self, session: &SessionId) {

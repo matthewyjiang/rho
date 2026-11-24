@@ -17,8 +17,10 @@ const SIZE: PtySize = PtySize {
 };
 
 // Covers: /side opens the aside overlay and Esc returns to the session
-// without writing the aside into the parent transcript. Idle Ctrl+C belongs
-// to the aside, even when its composer is empty, and must not quit the parent.
+// without writing the aside into the parent transcript. Before the session's
+// first message there is nothing to fork: the question stays in the composer.
+// Idle Ctrl+C belongs to the aside, even when its composer is empty, and must
+// not quit the parent.
 // Owner: interactive TUI
 const SIDE_OVERLAY_STEPS: &[Step] = &[
     Step::Phase("startup"),
@@ -33,6 +35,16 @@ const SIDE_OVERLAY_STEPS: &[Step] = &[
         timeout: SETTLE,
     },
     Step::Custom(assert_side_overlay_open),
+    Step::Phase("nothing_to_fork"),
+    Step::SubmitText("too early"),
+    Step::WaitText {
+        text: "send the session a message first",
+        timeout: SETTLE,
+    },
+    Step::WaitText {
+        text: "> too early",
+        timeout: SETTLE,
+    },
     Step::Phase("type_j_inserts"),
     Step::TypeText("just"),
     Step::WaitText {
@@ -110,6 +122,13 @@ const SIDE_BTW_STEPS: &[Step] = &[
         text: "gpt-5.5",
         timeout: STARTUP,
     },
+    // The daemon forks only a session that saved something.
+    Step::Phase("parent_message"),
+    Step::SubmitText("parent before the aside"),
+    Step::WaitText {
+        text: "fixture response: parent before the aside",
+        timeout: STREAM,
+    },
     Step::Phase("open_btw"),
     Step::SubmitText("/btw **hello from aside** and `code`"),
     Step::WaitText {
@@ -129,6 +148,17 @@ const SIDE_BTW_STEPS: &[Step] = &[
         timeout: SETTLE,
     },
     Step::Custom(assert_side_transcript_rendered),
+    // The fork asks before it writes; the aside denies it and goes on.
+    Step::Phase("deny_side_edit"),
+    Step::SubmitText("fixture edit"),
+    Step::WaitText {
+        text: "side chats are read-only",
+        timeout: STREAM,
+    },
+    Step::WaitText {
+        text: "Enter send   Esc close",
+        timeout: STREAM,
+    },
     Step::Phase("copy_side_code"),
     Step::SubmitText("fixture code block"),
     Step::WaitText {
@@ -263,6 +293,13 @@ const SIDE_COMPOSER_STEPS: &[Step] = &[
     Step::WaitText {
         text: "gpt-5.5",
         timeout: STARTUP,
+    },
+    // The daemon forks only a session that saved something.
+    Step::Phase("parent_message"),
+    Step::SubmitText("parent before the aside"),
+    Step::WaitText {
+        text: "fixture response: parent before the aside",
+        timeout: STREAM,
     },
     Step::SubmitText("/side"),
     Step::WaitText {

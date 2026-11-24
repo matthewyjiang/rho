@@ -12,7 +12,6 @@ use tokio::sync::mpsc;
 
 use super::{
     initial_settings::{carry, changes_between, ModelChange},
-    route,
     tool_sources::ToolSources,
     DaemonSettings,
 };
@@ -71,7 +70,7 @@ impl Relink {
         if let Some(old) = old {
             old.closed().await;
         }
-        let routed = route(&daemon, &params.session);
+        let routed = daemon.route_channel(&params.session);
         let settings_changes = route_settings(&daemon);
         // A daemon that failed to come back resets the connections that
         // waited for it; the second try starts a new daemon.
@@ -108,7 +107,7 @@ impl Relink {
                         })
                         .unwrap_or_default();
                     carry(&link, &session, changes).await;
-                    let routed = route(&daemon, &session);
+                    let routed = daemon.route_channel(&session);
                     let attach = SessionAttachParams {
                         session: session.clone(),
                         after: None,

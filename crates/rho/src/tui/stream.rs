@@ -93,6 +93,7 @@ impl AppendOnlyStream {
         Some(self.take_pending_prefix(self.pending.len(), skip_leading_newline, false))
     }
 
+    #[cfg(test)]
     pub(super) fn emitted_text(&self) -> &str {
         &self.emitted_text
     }

@@ -1225,47 +1225,6 @@ fn delegated_fast_mode_follows_definition_not_parent() {
     }
 }
 
-// Covers: `/side`-style host asides keep the session's /fast across a
-// delegated bind, but only when the inherited selection can serve it.
-// Owner: agent binding policy
-#[test]
-fn keep_host_fast_mode_restores_session_fast_when_servable() {
-    let store = credentials(&["codex", "xai-api-key"]);
-    // (host provider, model, auth, host fast_mode, expected bound fast_mode)
-    for (provider, model, auth, host_fast, expected) in [
-        ("openai-codex", "gpt-5.6-sol", "codex", true, true),
-        ("openai-codex", "gpt-5.6-sol", "codex", false, false),
-        ("openai-codex", "gpt-5.3-codex", "codex", true, false),
-        ("xai", "grok-4.7", "xai-api-key", true, false),
-    ] {
-        let host = Config {
-            provider: provider.into(),
-            model: model.into(),
-            auth: auth.into(),
-            fast_mode: host_fast,
-            ..Config::default()
-        };
-        let mut bound = AgentBinder::bind_with_credentials(
-            definition(ToolPolicy::All),
-            AgentInvocation {
-                role: AgentRole::Delegated,
-                available_tools: capabilities(),
-            },
-            &host,
-            /*model_override*/ None,
-            &store,
-        )
-        .expect("bind");
-        assert!(!bound.rho_config().expect("rho config").fast_mode);
-        bound.keep_host_fast_mode(&host);
-        assert_eq!(
-            bound.rho_config().expect("rho config").fast_mode,
-            expected,
-            "{provider}/{model} {auth} fast={host_fast}"
-        );
-    }
-}
-
 // Covers: a model picked in `/agents` for a read-only (plugin) agent replaces
 // the file's pinned model and fast flag, and its reasoning wins only when set;
 // an explicit per-call selection still wins over the configured entry.

@@ -13,7 +13,6 @@ use tokio::sync::mpsc;
 use super::{
     begin_replay,
     initial_settings::{configure_all, Refused},
-    route,
     tool_sources::{self, ToolSources},
     Attachment, DaemonSession, LOST,
 };
@@ -84,7 +83,7 @@ impl DaemonSession {
     ) -> anyhow::Result<Attached> {
         // Routed before the attach, so the replay that follows its
         // response is not dropped.
-        let routed = route(daemon, &id);
+        let routed = daemon.route_channel(&id);
         let params = SessionAttachParams {
             session: id.clone(),
             after: None,
