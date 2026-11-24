@@ -114,6 +114,14 @@ impl Inputs {
         }
     }
 
+    /// Whether open request `id` is a question only the user may answer
+    /// ([`rho_sdk::HostInputRequest::is_user_only`]).
+    fn is_user_only(&self, id: InputRequestId) -> bool {
+        self.open.get(&id).is_some_and(|open| {
+            matches!(&open.waiting, Waiting::Question { request, .. } if request.is_user_only())
+        })
+    }
+
     /// Whether the turn waits on a person.
     pub(super) fn waiting(&self) -> bool {
         self.open.values().any(|open| open.asker == Asker::Turn)
@@ -388,7 +396,10 @@ impl LoadedSession {
         let was_waiting = inputs.waiting();
         let result = change(&mut inputs);
         let events = inputs.take_events();
-        let questions = super::peer_wake::asked_questions(&events);
+        let mut questions = super::peer_wake::asked_questions(&events);
+        // The starter could not answer a question for the user alone, so
+        // it is told of none, as of no approval.
+        questions.retain(|(id, _)| !inputs.is_user_only(*id));
         self.feed.publish(events);
         match (was_waiting, inputs.waiting()) {
             (false, true) => self.record(JobEvent::InputOpened),

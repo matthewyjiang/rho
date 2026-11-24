@@ -10,7 +10,7 @@ use tokio::{sync::mpsc, time::timeout};
 
 use super::super::{
     inputs::Asker,
-    test_events::{approval, plan, question},
+    test_events::{approval, elicitation, plan, question},
     test_sessions::{load, prompts_shown, seen, until, Load, Seen, TEST_BUDGET},
     LoadedSession, Sessions,
 };
@@ -365,8 +365,9 @@ async fn a_turn_tells_only_the_caller_whose_prompt_started_it() {
 
 // Covers: a started turn tells its starter of each question once, as it
 // opens, naming the request and what it asks, though it closes before a
-// boundary takes the notice, and its close tells nothing; an approval or a
-// plan approval tells nothing, since only a person answers it; the turn's
+// boundary takes the notice, and its close tells nothing; an approval, a
+// plan approval or a question for the user alone, as an MCP server's
+// elicitation is, tells nothing, since only a person answers it; the turn's
 // end follows. A miss leaves the starter waiting on a session that waits
 // on a person, or tells it of one question twice.
 // Owner: daemon wake for started sessions.
@@ -399,6 +400,8 @@ async fn a_started_turn_tells_its_starter_of_each_question_once() {
     let opened = taken();
     answer(3);
     let closed_once_taken = taken();
+    ask(&elicitation("server"));
+    let user_only_opened = taken();
     cancel(&fixture.sessions, &child).await;
     let turn_ended = taken();
 
@@ -409,6 +412,7 @@ async fn a_started_turn_tells_its_starter_of_each_question_once() {
             closed_before_taken,
             opened,
             closed_once_taken,
+            user_only_opened,
             turn_ended
         ],
         [
@@ -416,6 +420,7 @@ async fn a_started_turn_tells_its_starter_of_each_question_once() {
             Vec::new(),
             vec![asking(&child, 2)],
             vec![asking(&child, 3)],
+            Vec::new(),
             Vec::new(),
             vec![ended(&child)],
         ]

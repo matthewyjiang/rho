@@ -18,9 +18,10 @@
 //! and tells nobody. A turn that owes a notice keeps its starter loaded and
 //! active (see `unload` and `settle`), so the notice finds it.
 //!
-//! Of what a turn waits for, only questions are told, as each opens and
-//! never again: only a person can answer an approval, and the person's
-//! client shows it. A question's notice stays until a turn takes it, though
+//! Of what a turn waits for, only questions the starter may answer are
+//! told, as each opens and never again: only a person can answer an
+//! approval, or a question for the user alone, as an MCP server's
+//! elicitation is, and the person's client shows it. A question's notice stays until a turn takes it, though
 //! the question may close first; the notice says it may have been answered.
 //!
 //! The starter is told even while its turn waits on the same session with
@@ -125,6 +126,8 @@ impl Sessions {
 
 /// The questions `events`, those of one change of the session's input
 /// requests, asked: each request and what it asks. Each request opens once.
+/// The caller leaves out those for the user alone, which the wire does not
+/// mark.
 pub(super) fn asked_questions(
     events: &[wire::SessionEvent],
 ) -> Vec<(wire::InputRequestId, String)> {
