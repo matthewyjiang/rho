@@ -213,12 +213,20 @@ Picking up a session I started
 - When I ask about work I started myself, call `list` with
   `opened_by: "person"`, and `server` when I named the machine. Match what
   I said against `title` and `workspace`; if several fit, ask me which.
+- A session can have no `title`. If nothing matches by title, show me the
+  candidates by `workspace`, `state`, and session id and ask me which.
+- `list` returns 20 sessions unless you ask for more. If the answer says
+  `more: true` and you have no match, call it again with a larger `limit`,
+  up to 1000. If it still says `more: true`, tell me the list was cut off
+  instead of picking one.
 - Call `read` before you act on it. To follow it, call `watch` with
   `webhook: "grok"`. Add it to the ledger.
 - `watch` can answer with the news itself. If it returns `watching: false`,
   the session already settled and no webhook follows: tell me its outcome
   now. If it returns `inputs`, the session is waiting on me and that is not
-  sent again: tell me now. Otherwise the webhook brings the news.
+  sent again: tell me now. If it returns `watch_error`, the watch was not
+  saved and the webhook may never fire: tell me, and follow the session
+  with `wait` until it is done. Otherwise the webhook brings the news.
 - Call `steer`, `prompt`, or `cancel` on it only when I asked for that.
 
 When "Rho session updates" runs, the JSON body has `server` (the machine),
@@ -254,7 +262,7 @@ The Bot can take over a session you opened yourself, on any machine, as long as 
 - `read` shows what a session did. `watch` with `webhook: "grok"` has the hub tell the routine when it settles or needs you; `wait` follows it without a webhook.
 - `steer` adds to its running turn, `cancel` stops it, and `prompt` starts its next turn.
 
-A session you opened and a session the Bot started look the same to these tools. `opened_by` is how the Bot tells them apart. See [Sessions you opened yourself](/mcp-server#sessions-you-opened-yourself).
+A session you opened and a session the Bot started look the same to these tools. `opened_by` is how the Bot tells them apart. It sorts sessions by how they opened, not by who was at the keyboard: `person` is every session that was not opened through an MCP server or an agent's `sessions` tool, so one that an agent in your own session starts from its shell with `rho run --detach` is listed as `person` too. See [Sessions you opened yourself](/mcp-server#sessions-you-opened-yourself).
 
 ## A hub that isn't public {#private-hub}
 
