@@ -265,11 +265,19 @@ pub(super) enum SessionEntry {
         /// before origins were recorded.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         origin: Option<SessionOrigin>,
-        /// The saved session that started this one, such as a subagent's
-        /// parent, by id and workspace; `None` for one nothing saved
-        /// started, or in a file written before parents were recorded.
+        /// The saved session that owns this one, such as a subagent's
+        /// parent, by id and workspace, which deleting deletes it with;
+        /// `None` for one no saved session owns, or in a file written before
+        /// parents were recorded.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         parent_session: Option<SessionTarget>,
+        /// The session that started this one through session control, by
+        /// id alone, as the wire names it (see
+        /// `SessionProvenance::started_by`); `None` for one
+        /// nothing started that way, or in a file written before it was
+        /// recorded.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        started_by: Option<String>,
     },
     Node {
         #[serde(flatten)]
@@ -411,8 +419,9 @@ impl Session {
             launch_agent: None,
             origin: Some(provenance.origin),
             parent_session: provenance.parent.clone(),
+            started_by: provenance.started_by.clone(),
         })?;
-        let _ = index::record_created(self, created_at, provenance);
+        let _ = index::record_created(self, created_at, agent.map(|(id, _)| id), provenance);
         Ok(())
     }
 
@@ -671,6 +680,7 @@ pub(super) fn test_transcript(cwd: &Path, id: &str, created_at: u64, prompts: &[
         launch_agent: None,
         origin: None,
         parent_session: None,
+        started_by: None,
     };
     let mut entries = vec![header];
     if !prompts.is_empty() {

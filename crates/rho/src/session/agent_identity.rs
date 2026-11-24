@@ -272,8 +272,9 @@ impl Session {
         temporary.persist(&self.path)?;
         cursor.valid_len = None;
         cursor.invalidate_tree();
-        // The index records transcript stats, not agent identity. Refresh them
-        // best-effort, like every other persistence operation.
+        // The index records the agent the session now runs as, with its
+        // transcript stats. Refresh them best-effort, like every other
+        // persistence operation.
         let _ = index::sync_session_file(&self.session_root, &self.cwd, &self.path);
         Ok(())
     }

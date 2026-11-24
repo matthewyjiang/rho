@@ -347,8 +347,9 @@ impl Watch {
     /// Whether the session is done: it waits for a person, or no turn runs
     /// and the session settled, so none starts but a prompt, or a subagent
     /// asks a person something. A stream that does not report activity is
-    /// done once its turn stops running. Only a person moves a session that
-    /// waits for input on.
+    /// done once its turn stops running. A session that waits for input
+    /// moves on only once someone answers: a person, or for a question, the
+    /// session that started it.
     fn done(&self) -> bool {
         match self.state {
             JobState::WaitingForInput => true,
@@ -433,11 +434,10 @@ impl Watch {
             done,
             outcome: end.filter(|_| turn_over).map(|end| end.outcome.clone()),
             turn: self.turn.clone(),
-            inputs: if done {
-                self.inputs.clone()
-            } else {
-                Vec::new()
-            },
+            // Whether or not it is done: a subagent's question is open while
+            // a turn runs, and the session that started this one may answer
+            // it then.
+            inputs: self.inputs.clone(),
             // Seq 0 is no position: a cursor at it always resets.
             cursor: (checkpoint > Seq(0)).then(|| {
                 format_cursor(&Cursor {

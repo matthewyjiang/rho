@@ -108,10 +108,12 @@ impl Workspace {
 /// What a session opens from.
 pub(super) enum Opening {
     /// Nothing yet: a new session in `workspace`, running as agent `agent`,
-    /// the default agent when `None`.
+    /// the default agent when `None`, which session `started_by` started
+    /// through session control, if one did.
     New {
         workspace: Workspace,
         agent: Option<String>,
+        started_by: Option<rho_sdk::SessionId>,
     },
     /// The session saved here, opened in its own workspace as the agent it
     /// was saved as.
@@ -510,7 +512,15 @@ async fn open_runtime(
     };
     // Opening a session builds a large future; keep it on the heap.
     let runtime = match opening {
-        Opening::New { .. } => Box::pin(SessionRuntime::open_new(session, id, persistence)).await?,
+        Opening::New { started_by, .. } => {
+            Box::pin(SessionRuntime::open_new(
+                session,
+                id,
+                persistence,
+                started_by,
+            ))
+            .await?
+        }
         Opening::Fork(parent) => {
             Box::pin(SessionRuntime::open_fork(session, id, &parent, persistence)).await?
         }

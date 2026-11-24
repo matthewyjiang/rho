@@ -202,6 +202,7 @@ pub struct HostInputRequest {
     title: String,
     questions: Vec<HostQuestion>,
     timeout_fallback: Option<(HostInputResponse, String)>,
+    user_only: bool,
 }
 
 impl HostInputRequest {
@@ -231,7 +232,24 @@ impl HostInputRequest {
             title: title.into(),
             questions,
             timeout_fallback: None,
+            user_only: false,
         })
+    }
+
+    /// Marks the request as one only the user may answer. A host must not
+    /// let anything else answer it on the user's behalf, such as another
+    /// agent or session that may answer the host's other questions: use it
+    /// when the asker takes any answer as the user's consent, as an MCP
+    /// server's elicitation does.
+    #[must_use]
+    pub fn user_only(mut self) -> Self {
+        self.user_only = true;
+        self
+    }
+
+    /// Whether only the user may answer the request ([`Self::user_only`]).
+    pub fn is_user_only(&self) -> bool {
+        self.user_only
     }
 
     /// Offer explicit fallback answers for a safe, reversible decision. Hosts
@@ -349,7 +367,8 @@ impl HostInputRequest {
     }
 }
 
-/// Origin of host answers. A timeout fallback is not user authorization.
+/// Origin of host answers. Only [`Self::User`] is the user's: neither a
+/// timeout fallback nor another session's answer is user authorization.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
@@ -357,6 +376,10 @@ pub enum HostInputSource {
     #[default]
     User,
     TimeoutFallback,
+    /// Another agent session answered, as the session that started the
+    /// asking one may answer its questions. Never answers a request that is
+    /// [`HostInputRequest::is_user_only`].
+    Session,
 }
 
 /// Why a host answered a host input request without answers.

@@ -9,7 +9,7 @@
 //! Declining is a first-class MCP answer and lets the server carry on without
 //! the information; inventing an answer would not.
 
-use rho_sdk::HostInputRequest;
+use rho_sdk::{HostInputRequest, HostInputSource};
 use rmcp::{
     model::{ElicitRequestParams, ElicitResult, ElicitationAction},
     ErrorData as McpError,
@@ -105,11 +105,21 @@ impl McpElicitationService {
             Err(error) => return Ok(self.decline(error.reason())),
         };
         let title = elicitation_title(&self.identity, &message);
+        // The server takes any answer as the user's, so nothing but the user
+        // may give one: a host that lets another session answer its
+        // questions leaves this one for a person.
         let host_request = match HostInputRequest::questionnaire(title, form.questions().to_vec()) {
-            Ok(request) => request,
+            Ok(request) => request.user_only(),
             Err(error) => return Ok(self.decline(error.to_string())),
         };
         match caller.ask(host_request).await {
+            // An answer from anyone but the user, which a host should never
+            // give to a user-only request, accepts nothing on the user's
+            // behalf.
+            Ok(response) if response.source() != HostInputSource::User => {
+                Ok(self
+                    .decline("the answer did not come from the user, and only the user may accept"))
+            }
             Ok(response) => match form.content(&response) {
                 Ok(content) => {
                     Ok(ElicitResult::new(ElicitationAction::Accept).with_content(content))

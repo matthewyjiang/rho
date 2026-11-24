@@ -1,7 +1,8 @@
 //! The native `sessions` tool's control actions through the real binary
 //! (#1714): an agent in a daemon session starts a session in another
-//! workspace, follows it, cancels it, and finds it waiting for a person,
-//! under the same core, and so the same answers, as `rho mcp serve`.
+//! workspace, follows it, cancels it, finds it waiting for a person, and
+//! answers its questions, under the same core, and so the same answers, as
+//! `rho mcp serve`.
 //!
 //! Each step is one turn of the calling session: the `tool-call` fixture
 //! makes the `sessions` call its prompt spells out, and its answer is the
@@ -9,14 +10,15 @@
 
 use pretty_assertions::assert_eq;
 use rho_protocol::{
-    methods::{JobList, SessionAnswer},
-    Client, InputAnswer, InputRequestId, JobListParams, JobState, JobSummary, SessionAnswerParams,
+    methods::{JobList, SessionAnswer, SessionAnswerQuestion},
+    Client, ErrorCode, InputAnswer, InputRequestId, JobListParams, JobState, JobSummary,
+    QuestionAnswer, Resolution, SessionAnswerParams, SessionAnswerQuestionParams, SessionEvent,
     SessionId,
 };
 use serde_json::{json, Value};
 
 use super::{bash, call, elsewhere, stdio_server, McpClient, Sandbox, BLOCKED, DEADLINE};
-use crate::sessions::REPLY;
+use crate::sessions::{Follower, REPLY};
 
 /// A `tool-call` fixture prompt that calls the native `sessions` tool with
 /// `arguments`.
@@ -351,6 +353,113 @@ async fn a_started_session_that_asks_waits_for_a_person() {
             json!("approval"),
             JobState::WaitingForInput,
             false,
+        ),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
+// Covers: a session's question reaches the session that started it, whose
+// `answer` hands the asker's tool the answers as a questionnaire result
+// whose source says a session answered; clients see the request closed by a
+// session; a session that did not start the asker is refused by the tool and
+// by the daemon alike; a second answer finds the question closed (#1714).
+// Owner: session-control answer, daemon `rho/session/answer_question`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_session_that_started_another_answers_its_question() {
+    let sandbox = Sandbox::new();
+    sandbox.set_permission_mode("bypass");
+    let workspace = elsewhere(&sandbox);
+    let client = sandbox.start_daemon("tool-call").await;
+    let host = stdio_server(&sandbox, "tool-call", &[], &[]).await;
+    let agent = sandbox.new_session(&client).await;
+    let outsider = sandbox.new_session(&client).await;
+    let question = json!({
+        "id": "ask",
+        "name": "questionnaire",
+        "arguments": {
+            "questions": [{"id": "color", "question": "Which color?", "choices": ["Red", "Blue"]}],
+        },
+    })
+    .to_string();
+    let worker = started(
+        &ask(
+            &sandbox,
+            &client,
+            &host,
+            &agent,
+            json!({"action": "new", "workspace": workspace, "prompt": question}),
+        )
+        .await,
+    );
+    let asked = stopped(&host, &worker).await;
+    let request: InputRequestId = serde_json::from_value(asked["inputs"][0]["id"].clone())
+        .unwrap_or_else(|_| panic!("the worker to ask, not {asked}"));
+    let (mut watcher, _) = Follower::attach(&sandbox, &worker, Vec::new(), None).await;
+    let answer_with = |answers| json!({"action": "answer", "session": worker, "request": request, "answers": answers});
+
+    let outsiders = ask(
+        &sandbox,
+        &client,
+        &host,
+        &outsider,
+        answer_with(json!({"color": ["Red"]})),
+    )
+    .await;
+    let declared = client
+        .request::<SessionAnswerQuestion>(&SessionAnswerQuestionParams {
+            session: worker.clone(),
+            request,
+            answer: QuestionAnswer::Decline,
+            by: outsider.clone(),
+        })
+        .await
+        .map_err(|error| error.error_code());
+    let answered = ask(
+        &sandbox,
+        &client,
+        &host,
+        &agent,
+        answer_with(json!({"color": ["Blue"]})),
+    )
+    .await;
+    watcher
+        .read_until(
+            |event| matches!(event, SessionEvent::InputResolved { id, .. } if *id == request),
+        )
+        .await;
+    let again = client
+        .request::<SessionAnswerQuestion>(&SessionAnswerQuestionParams {
+            session: worker.clone(),
+            request,
+            answer: QuestionAnswer::Decline,
+            by: agent.clone(),
+        })
+        .await
+        .map_err(|error| error.error_code());
+    let result: Value = serde_json::from_str(&answer(&host, &worker).await).unwrap();
+    let closed = watcher.events.last().map(|(_, event)| event.clone());
+
+    assert_eq!(
+        (
+            outsiders.map_err(drop),
+            declared,
+            answered,
+            closed,
+            again,
+            result
+        ),
+        (
+            // The tool hands the model the daemon's refusal.
+            Err(()),
+            Err(Some(ErrorCode::InvalidParams)),
+            Ok(json!({})),
+            Some(SessionEvent::InputResolved {
+                id: request,
+                resolution: Resolution::AnsweredBySession,
+            }),
+            Err(Some(ErrorCode::InputNotOpen)),
+            json!({"answers": [{"id": "color", "answer": "Blue"}], "source": "session"}),
         ),
         "log:\n{}",
         sandbox.isolated.daemon_log()

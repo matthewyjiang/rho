@@ -19,6 +19,8 @@ fn summary(id: &str, cwd: &Path, updated_at: u64, message_count: u64) -> Session
         last_user_message: None,
         added_dirs: Vec::new(),
         origin: None,
+        agent: None,
+        started_by: None,
     }
 }
 

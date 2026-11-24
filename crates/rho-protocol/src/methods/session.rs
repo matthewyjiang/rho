@@ -164,13 +164,17 @@ pub struct SessionNewParams {
     /// records the job writing that session as the new session's job's
     /// [`super::JobSummary::parent`], and the new session's turns then wait
     /// for capacity in the daemon-wide agent budget, as subagent runs do
-    /// ([`super::JobState::Queued`]). A session no job of the daemon writes,
-    /// such as one an in-process rho runs, records no parent, but the new
-    /// session's turns still share the budget. The new session also opens
-    /// in the permission mode and on the model a person chose for the
-    /// sessions the nearest session a person or session control opened
-    /// starts: `parent` itself, or the session whose turn runs the subagent
-    /// or workflow node writing it ([`super::SessionChange::StartedSessionPermissionMode`],
+    /// ([`super::JobState::Queued`]). The new session saves, as
+    /// [`super::DetailedSessionSummary::parent`], that session, or, when a
+    /// subagent run or workflow node writes it, the session whose turn runs
+    /// that run or workflow. A session no job of the daemon writes, such as
+    /// one an in-process rho runs, records no parent, in the job or the
+    /// saved session, but the new session's turns still share the budget.
+    /// The new session also opens in the permission mode and on the model a
+    /// person chose for the sessions the nearest session a person or
+    /// session control opened starts: `parent` itself, or the session whose
+    /// turn runs the subagent or workflow node writing it
+    /// ([`super::SessionChange::StartedSessionPermissionMode`],
     /// [`super::SessionChange::StartedSessionModel`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<SessionId>,

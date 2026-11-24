@@ -14,8 +14,9 @@ fn token(access: Access, allowed: &[&str]) -> Grant {
     }
 }
 
-// Covers: a read-only grant may watch but not act, and its refusal names
-// the holder, the action, and the access it needs.
+// Covers: a read-only grant may watch but not act, answering a started
+// session's question included, and its refusal names the holder, the
+// action, and the access it needs.
 // Owner: session-control policy.
 #[test]
 fn access_covers_watching_and_acting() {
@@ -42,6 +43,7 @@ fn access_covers_watching_and_acting() {
             (Action::Steer, false, true),
             (Action::Cancel, false, true),
             (Action::Wait, true, true),
+            (Action::Answer, false, true),
         ]
     );
     assert_eq!(

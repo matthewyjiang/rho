@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 
-use super::{JobRegistry, RegisterError, SessionJob, StartTurnError};
+use super::{JobRegistry, RegisterError, RunsUnder, SessionJob, StartTurnError};
 use crate::app::daemon_host::jobs::{
     Admission, JobEvent, JobId, JobRecord, JobState, JobStore, TurnEnd, TurnRecord,
 };
@@ -536,14 +536,16 @@ fn a_jobs_grant_never_exceeds_its_limit() {
     );
 }
 
-// Covers: the grant a session started from a subagent's or a workflow
-// node's session is held under is that of the session whose turn runs
-// them, not the unlimited one their own jobs keep (#1796), and a node's
-// session whose run ended is still found under that session, so a session
-// it starts takes that session's choice, not the config's.
-// Owner: daemon job registry, session grants.
+// Covers: a session started from a subagent's or a workflow node's session
+// runs under the session whose turn runs them: it is held under that
+// session's grant, not the unlimited one their own jobs keep (#1796), and
+// lists that session as the one that started it; a node's session whose
+// run ended is still found under that session, so a session it starts
+// takes that session's choice, not the config's; a run whose session job
+// the daemon does not know runs under none.
+// Owner: daemon job registry, session grants and starters.
 #[test]
-fn a_run_a_session_started_is_under_that_sessions_grant() {
+fn a_run_runs_under_the_session_whose_turn_runs_it() {
     use crate::caller_context::{Access, CallerContext, Scope, Workspaces};
     let home = TempDir::new().unwrap();
     let registry = JobRegistry::open(JobStore::open(home.path()).unwrap());
@@ -566,6 +568,7 @@ fn a_run_a_session_started_is_under_that_sessions_grant() {
     );
     let subagent =
         |parent: JobId| JobRecord::new_subagent(parent, PathBuf::from("/work"), None, "run".into());
+    let run = subagent(session.id.clone());
     let node = subagent(workflow.id.clone());
     let orphan = subagent(JobId::generate());
     // A node of the same drive that wrote a session of its own and ended.
@@ -579,24 +582,152 @@ fn a_run_a_session_started_is_under_that_sessions_grant() {
             "run".into(),
         )
     };
-    let ids = [&session, &workflow, &node, &orphan].map(|record| record.id.clone());
-    for record in [session, workflow, node, orphan, ended] {
+    let ids = [&session, &workflow, &run, &node, &orphan].map(|record| record.id.clone());
+    for record in [session, workflow, run, node, orphan, ended] {
         registry.register(record).unwrap();
     }
 
-    let ended_run_owner = registry
+    let under_lead = Some(RunsUnder {
+        session: lead,
+        grant: limited,
+    });
+    let ended_run = registry
         .last_run_writing(&written)
-        .and_then(|run| registry.nearest_session(&run));
+        .and_then(|run| registry.runs_under(&run));
     assert_eq!(
-        (ids.map(|id| registry.session_grant(&id)), ended_run_owner),
+        (ids.map(|id| registry.runs_under(&id)), ended_run),
         (
             [
-                Some(limited.clone()),
-                Some(limited.clone()),
-                Some(limited),
+                under_lead.clone(),
+                under_lead.clone(),
+                under_lead.clone(),
+                under_lead.clone(),
                 None
             ],
-            Some(lead)
+            under_lead
         )
     );
+}
+
+// Covers: only the session whose job started the asking session's job may
+// answer its questions, and only under a grant that acts on sessions; a
+// sibling, a grandparent, a session whose job is gone, and any session
+// answering a session nobody started are refused. A subagent run's session
+// that started one may answer, under the grant of the session running it,
+// and is refused once that session's job is gone; another session's
+// subagent run, and the starter's own subagent run, are not the starter.
+// Owner: daemon job registry, the rule `rho/session/answer_question` checks.
+#[test]
+fn only_the_starting_session_may_answer_with_write_access() {
+    use super::AnswerRefused::{NoGrant, NotStarter, ReadOnly};
+    use crate::caller_context::{Access, CallerContext, Scope, Workspaces};
+    let home = TempDir::new().unwrap();
+    let registry = JobRegistry::open(JobStore::open(home.path()).unwrap());
+    let grant = |access| CallerContext {
+        depth: 1,
+        scope: Scope {
+            access,
+            workspaces: Workspaces::Any,
+        },
+    };
+    let session = |parent: Option<&JobId>, access| JobRecord {
+        parent: parent.cloned(),
+        grant: grant(access),
+        ..JobRecord::new_session(
+            JobId::generate(),
+            PathBuf::from("/work"),
+            rho_sdk::SessionId::new(),
+        )
+    };
+    let lead = session(None, Access::Write);
+    let watcher = session(None, Access::Read);
+    let worker = session(Some(&lead.id), Access::Write);
+    let watched = session(Some(&watcher.id), Access::Write);
+    let sibling = session(Some(&lead.id), Access::Write);
+    let grandchild = session(Some(&worker.id), Access::Write);
+    let orphan = session(Some(&JobId::generate()), Access::Write);
+    let subagent = JobRecord::new_subagent(
+        lead.id.clone(),
+        PathBuf::from("/work"),
+        Some(rho_sdk::SessionId::new()),
+        "run".into(),
+    );
+    let subagents_worker = session(Some(&subagent.id), Access::Write);
+    let siblings_subagent = JobRecord::new_subagent(
+        sibling.id.clone(),
+        PathBuf::from("/work"),
+        Some(rho_sdk::SessionId::new()),
+        "run".into(),
+    );
+    let orphan_subagent = JobRecord::new_subagent(
+        JobId::generate(),
+        PathBuf::from("/work"),
+        Some(rho_sdk::SessionId::new()),
+        "run".into(),
+    );
+    let orphan_subagents_worker = session(Some(&orphan_subagent.id), Access::Write);
+    let cases = [
+        ("the starter", &worker, &lead, Ok(())),
+        ("a read-only starter", &watched, &watcher, Err(ReadOnly)),
+        ("a sibling", &worker, &sibling, Err(NotStarter)),
+        ("a grandparent", &grandchild, &lead, Err(NotStarter)),
+        ("a subagent run", &subagents_worker, &subagent, Ok(())),
+        (
+            "a subagent run whose session's job is gone",
+            &orphan_subagents_worker,
+            &orphan_subagent,
+            Err(NoGrant),
+        ),
+        (
+            "another session's subagent run",
+            &worker,
+            &siblings_subagent,
+            Err(NotStarter),
+        ),
+        (
+            "the starter's subagent run",
+            &worker,
+            &subagent,
+            Err(NotStarter),
+        ),
+        (
+            "a starter whose job is gone",
+            &orphan,
+            &lead,
+            Err(NotStarter),
+        ),
+        ("nobody started it", &lead, &worker, Err(NotStarter)),
+    ];
+    for record in [
+        &lead,
+        &watcher,
+        &worker,
+        &watched,
+        &sibling,
+        &grandchild,
+        &orphan,
+        &subagent,
+        &subagents_worker,
+        &siblings_subagent,
+        &orphan_subagent,
+        &orphan_subagents_worker,
+    ] {
+        registry.register(record.clone()).unwrap();
+    }
+
+    let decided: Vec<_> = cases
+        .iter()
+        .map(|(case, asking, by, _)| {
+            let by = by
+                .subject
+                .session()
+                .expect("each answering job writes a session");
+            (*case, registry.may_answer(&asking.id, by))
+        })
+        .collect();
+    let expected: Vec<_> = cases
+        .iter()
+        .map(|(case, _, _, expected)| (*case, *expected))
+        .collect();
+    assert_eq!(decided, expected);
 }

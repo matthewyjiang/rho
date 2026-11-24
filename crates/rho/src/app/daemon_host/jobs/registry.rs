@@ -13,7 +13,10 @@ use super::{
     state::TransitionRefused, unix_now, Admission, JobEvent, JobId, JobRecord, JobState, JobStore,
     JobSubject, Keeping, TurnEnd, TurnRecord,
 };
-use crate::{caller_context::CallerContext, daemon::Ending};
+use crate::{
+    caller_context::{Access, CallerContext},
+    daemon::Ending,
+};
 
 /// The daemon's jobs: the ones it runs and the records it loaded at
 /// startup. Shared by every request and turn task.
@@ -81,6 +84,22 @@ pub(in crate::app::daemon_host) enum StartTurnError {
     Closed,
 }
 
+/// Why a session may not answer another session's question
+/// ([`JobRegistry::may_answer`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::app::daemon_host) enum AnswerRefused {
+    /// The answering session did not start the asking one: the asking job
+    /// has no parent, its parent is gone, or it writes another session.
+    NotStarter,
+    /// The answering session started the asking one, but the grant it runs
+    /// under may only watch sessions.
+    ReadOnly,
+    /// The answering session started the asking one, but the daemon knows
+    /// no grant it runs under: it is a subagent run whose session's job is
+    /// gone.
+    NoGrant,
+}
+
 /// What the registry knows of a session, for reopening it (#1661).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::app::daemon_host) enum SessionJob {
@@ -93,6 +112,16 @@ pub(in crate::app::daemon_host) enum SessionJob {
     /// This job writes the session right now, as a subagent run does, so
     /// the daemon must not open it a second time.
     Busy(JobId),
+}
+
+/// The session job a job runs under, as [`JobRegistry::runs_under`] finds
+/// it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::app::daemon_host) struct RunsUnder {
+    /// The session whose turns that job runs.
+    pub(in crate::app::daemon_host) session: rho_sdk::SessionId,
+    /// The grant of that job's turn under way, or of its last one.
+    pub(in crate::app::daemon_host) grant: CallerContext,
 }
 
 /// Where a change left a job: its state, and the turn the state is of,
@@ -244,17 +273,14 @@ impl JobRegistry {
         let jobs = self.lock();
         let mut last: Option<&JobRecord> = None;
         for record in jobs.values() {
+            if record.subject.session() != Some(session) {
+                continue;
+            }
             // Whether the job runs the session's turns, of the jobs that
             // write it at all.
-            let turns = match &record.subject {
-                JobSubject::Session { session: written } if written == session => true,
-                JobSubject::Subagent {
-                    session: Some(written),
-                    run: _,
-                } if written == session => false,
-                JobSubject::Session { .. }
-                | JobSubject::Subagent { .. }
-                | JobSubject::Workflow { .. } => continue,
+            let turns = match record.subject {
+                JobSubject::Session { .. } => true,
+                JobSubject::Subagent { .. } | JobSubject::Workflow { .. } => false,
             };
             if record.state.in_progress() {
                 return SessionJob::Busy(record.id.clone());
@@ -311,32 +337,49 @@ impl JobRegistry {
         }
     }
 
-    /// The grant of the session turn job `id` runs under: its own, for a
-    /// session job, else that of the nearest session job that started it,
-    /// as a subagent run's or a workflow drive's is. `None` when no known
-    /// session job is found.
-    pub(in crate::app::daemon_host) fn session_grant(&self, id: &JobId) -> Option<CallerContext> {
+    /// The session job whose turn job `id` runs under: itself, for a
+    /// session job, else the nearest session job that started it, as a
+    /// subagent run's or a workflow drive's is, and so a workflow node's,
+    /// whose subagent job the drive started. `None` when no known session
+    /// job is found.
+    pub(in crate::app::daemon_host) fn runs_under(&self, id: &JobId) -> Option<RunsUnder> {
         let jobs = self.lock();
-        nearest_session_job(&jobs, id).map(|(record, _)| record.grant.clone())
+        let (session, grant) = runs_under(&jobs, id)?;
+        Some(RunsUnder {
+            session: session.clone(),
+            grant: grant.clone(),
+        })
     }
 
-    /// The session whose turns job `id` runs in, found as
-    /// [`Self::session_grant`] finds its grant: `id`'s own, for a session
-    /// job, which a person or session control opened, else that of the
-    /// nearest session job that started it. `None` when no known session
-    /// job is found.
-    pub(in crate::app::daemon_host) fn nearest_session(
+    /// Refuses session `by`'s answer to a question of the session whose
+    /// turns job `asking` runs, unless the job that started `asking` writes
+    /// `by`, as a session job or a subagent run does, and the grant that
+    /// job runs under ([`Self::runs_under`]) may act on sessions. Only
+    /// the grant's access counts, not the workspaces it reaches: starting
+    /// the asking session already took reaching its workspace.
+    pub(in crate::app::daemon_host) fn may_answer(
         &self,
-        id: &JobId,
-    ) -> Option<rho_sdk::SessionId> {
+        asking: &JobId,
+        by: &rho_sdk::SessionId,
+    ) -> Result<(), AnswerRefused> {
         let jobs = self.lock();
-        nearest_session_job(&jobs, id).map(|(_, session)| session.clone())
+        let starter = jobs
+            .get(asking)
+            .and_then(|record| record.parent.as_ref())
+            .and_then(|parent| jobs.get(parent))
+            .filter(|parent| parent.subject.session() == Some(by))
+            .ok_or(AnswerRefused::NotStarter)?;
+        match runs_under(&jobs, &starter.id).map(|(_, grant)| grant.scope.access) {
+            Some(Access::Write) => Ok(()),
+            Some(Access::Read) => Err(AnswerRefused::ReadOnly),
+            None => Err(AnswerRefused::NoGrant),
+        }
     }
 
     /// The latest subagent run, a workflow node's included, that wrote
-    /// `session` and has ended, whose [`Self::nearest_session`] owns
-    /// `session` once no job writes it any more. `None` when no such run
-    /// is known.
+    /// `session` and has ended: the session it ran under
+    /// ([`Self::runs_under`]) owns `session` once no job writes it any
+    /// more. `None` when no such run is known.
     pub(in crate::app::daemon_host) fn last_run_writing(
         &self,
         session: &rho_sdk::SessionId,
@@ -599,25 +642,6 @@ impl JobRegistry {
     }
 }
 
-/// The nearest session job of job `id` in `jobs`, with the session whose
-/// turns it runs: `id` itself for a session job, else the job that started
-/// it, walking up through subagent runs and workflow drives. `None` when
-/// the walk reaches a job `jobs` does not hold.
-fn nearest_session_job<'a>(
-    jobs: &'a BTreeMap<JobId, JobRecord>,
-    id: &JobId,
-) -> Option<(&'a JobRecord, &'a rho_sdk::SessionId)> {
-    let mut record = jobs.get(id)?;
-    loop {
-        match &record.subject {
-            JobSubject::Session { session } => return Some((record, session)),
-            JobSubject::Subagent { .. } | JobSubject::Workflow { .. } => {
-                record = jobs.get(record.parent.as_ref()?)?;
-            }
-        }
-    }
-}
-
 /// Moves `record` on by `event`. An ended turn forgets the last one's
 /// outcome; [`JobRegistry::end_turn`] then records its own.
 fn apply(record: &mut JobRecord, event: JobEvent) -> Result<(), TransitionRefused> {
@@ -639,6 +663,23 @@ fn persist(store: &JobStore, record: &JobRecord) {
     }
     if let Err(error) = store.write(record) {
         tracing::error!(job = %record.id, state = %record.state, %error, "could not write job record");
+    }
+}
+
+/// The session and the grant of the session job that job `id` runs under,
+/// in `jobs`: see [`JobRegistry::runs_under`].
+fn runs_under<'a>(
+    jobs: &'a BTreeMap<JobId, JobRecord>,
+    id: &JobId,
+) -> Option<(&'a rho_sdk::SessionId, &'a CallerContext)> {
+    let mut record = jobs.get(id)?;
+    loop {
+        match &record.subject {
+            JobSubject::Session { session } => return Some((session, &record.grant)),
+            JobSubject::Subagent { .. } | JobSubject::Workflow { .. } => {
+                record = jobs.get(record.parent.as_ref()?)?;
+            }
+        }
     }
 }
 

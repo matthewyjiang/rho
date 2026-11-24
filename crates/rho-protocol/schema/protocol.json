@@ -1833,6 +1833,77 @@
       ],
       "description": "Why the daemon dropped an attachment."
     },
+    "DetailedSessionSummary": {
+      "description": "One session, as [`SESSION_LIST_DETAILED`] reports it: its\n[`SessionSummary`]'s fields, then the agent it runs as and the session\nthat started it. Goes at the next major with [`SESSION_LIST_DETAILED`].\n\nOn the wire it is a [`SessionSummary`] with two more optional fields, so\nfolding them into it changes no row a client reads.",
+      "properties": {
+        "added_dirs": {
+          "description": "The directories the session added beside its workspace, as last\nsaved, those since removed left out.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "agent": {
+          "description": "The agent the session runs as, by id, as\n[`super::SessionNewParams::agent`] takes it: the one a `/agent:` first\nprompt rebound it to, if one did, and `default` for the default\nagent. Absent for a session saved before agents were recorded.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cwd": {
+          "description": "The workspace the session was saved in, which an attach reopens it\nin.",
+          "type": "string"
+        },
+        "first_user_message": {
+          "description": "The session's first user message on one line, cut to 80 characters,\nwhich an untitled session is labelled with.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "last_user_message": {
+          "description": "The session's last user message, cut like `first_user_message`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The session that started this one through session control, saved\nwith the session: the one [`super::SessionNewParams::parent`] named,\nor, when that names a subagent's or workflow node's session, the\nsession whose turn runs that subagent or workflow. Absent for a\nsession nothing started that way, one whose `parent` no job of the\ndaemon writes, and one started before the daemon saved it. The id\nalone names the parent, and a list may not hold it: the parent may be\ndeleted, a fork, unsaved, in another workspace or on another page.\nA client treats a parent it cannot find as none."
+        },
+        "session": {
+          "$ref": "#/$defs/SessionId"
+        },
+        "title": {
+          "description": "The session's title; absent until it has one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "updated_at": {
+          "description": "Unix time, in seconds, of the session's last save.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "session",
+        "cwd",
+        "added_dirs",
+        "updated_at"
+      ],
+      "type": "object"
+    },
     "DiffRow": {
       "description": "One row of a compact diff body, with the line numbers for its gutter.",
       "properties": {
@@ -1973,7 +2044,7 @@
         },
         {
           "const": "write",
-          "description": "Also start, prompt, steer, and cancel them.",
+          "description": "Also start, prompt, steer, and cancel them, and answer the questions\nof sessions they started.",
           "type": "string"
         }
       ]
@@ -4758,6 +4829,47 @@
       ],
       "type": "object"
     },
+    "QuestionAnswer": {
+      "description": "An answer to a question, as [`SESSION_ANSWER_QUESTION`] takes it: the\nanswers a question takes from [`InputAnswer`], and nothing an approval\ntakes. On the wire each is the same as its [`InputAnswer`].",
+      "oneOf": [
+        {
+          "description": "Answers keyed by question id, as [`InputAnswer::Answers`].",
+          "properties": {
+            "answers": {
+              "additionalProperties": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "type": "object"
+            },
+            "kind": {
+              "const": "answers",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "answers"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Decline to answer the questions, as [`InputAnswer::Decline`].",
+          "properties": {
+            "kind": {
+              "const": "decline",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "QuestionAsk": {
       "description": "Questions the agent asks the user, answered together.",
       "properties": {
@@ -4875,6 +4987,11 @@
         {
           "const": "timed_out",
           "description": "Nobody answered or held it by its timeout's deadline, so the daemon\nanswered it with the timeout's answer.",
+          "type": "string"
+        },
+        {
+          "const": "answered_by_session",
+          "description": "An answer through [`SESSION_ANSWER_QUESTION`] closed the question.\nOnly a question closes this way. The daemon checked that the\ndeclared answering session started the asking one, but it does not\nprove who sent the answer. It names no session: the daemon accepts\nonly the asker's parent, which a client already knows from\n[`super::JobSummary::parent`].",
           "type": "string"
         },
         {
@@ -5019,6 +5136,35 @@
         "request",
         "answer"
       ],
+      "type": "object"
+    },
+    "SessionAnswerQuestionParams": {
+      "description": "Params of [`SESSION_ANSWER_QUESTION`]: `by` answers question `request`\nof `session`, a session `by` started.\n\nThe daemon answers only a question ([`Ask::Question`], a subagent's\nincluded), only for the session whose job started `session`'s job\n([`super::JobSummary::parent`]), and only while that session's grant\nhas write access ([`super::GrantAccess::Write`]); it checks the\ngrant's access only, not its workspaces, since starting `session`\nalready took reaching its workspace. Anything else is refused: an\napproval, a plan approval, or a question only the user may answer with\n[`crate::ErrorCode::InvalidParams`], any other session with\n[`crate::ErrorCode::InvalidParams`], and a request that is not open with\n[`crate::ErrorCode::InputNotOpen`]. The first answer wins, whoever\nsends it.\n\n`by` is what the caller declares, as [`super::SessionNewParams::parent`]\nand the connection's role are: the daemon checks it against its job\nrecords, but cannot tell who sends it. A caller that lies about `by` can\nanswer or decline the open question of any session started through\nsession control, by naming that session's real parent: this is the\ntrust the daemon gives a connection's declared role. It never reaches an\napproval, a plan approval, or a question only the user may answer, as\nan MCP server's elicitation is. The method asks for no capability, so an\nagent's connection may call it.",
+      "properties": {
+        "answer": {
+          "$ref": "#/$defs/QuestionAnswer"
+        },
+        "by": {
+          "$ref": "#/$defs/SessionId",
+          "description": "The answering session, which started `session`."
+        },
+        "request": {
+          "$ref": "#/$defs/InputRequestId"
+        },
+        "session": {
+          "$ref": "#/$defs/SessionId"
+        }
+      },
+      "required": [
+        "session",
+        "request",
+        "answer",
+        "by"
+      ],
+      "type": "object"
+    },
+    "SessionAnswerQuestionResponse": {
+      "description": "Result of [`SESSION_ANSWER_QUESTION`]: the answer won, and the daemon\nhanded it to whoever asked. Every attached client of the asking session\nsaw the request close as [`Resolution::AnsweredBySession`].",
       "type": "object"
     },
     "SessionAnswerResponse": {
@@ -5546,6 +5692,11 @@
           "type": "string"
         },
         {
+          "const": "answer",
+          "description": "Answer a question the session, one the caller started, asks\n([`SESSION_ANSWER_QUESTION`]).",
+          "type": "string"
+        },
+        {
           "description": "Any other value: one a later protocol minor adds.",
           "type": "string",
           "x-rho-other": true
@@ -5570,7 +5721,7 @@
       "type": "object"
     },
     "SessionDeleteResponse": {
-      "description": "Result of [`SESSION_DELETE`]: the session's files are gone, with those\nof the sessions it started, such as its subagents', and the daemon has\nunloaded it, detaching its clients as\n[`super::DetachReason::Deleted`]. Its job stays in [`super::JOB_LIST`].\n\nA session whose turn is under way, a settings change waiting or\napplying, background work running, such as a subagent, or a run it started not yet\nfinished is refused as [`crate::ErrorCode::SessionBusy`]; one another\nprocess has open, or one a session it started is open in, as\n[`crate::ErrorCode::SessionInUse`]. Either refusal leaves a loaded\nsession loaded. A session the daemon loaded but that has saved nothing\nyet is unloaded all the same. An id the daemon has not loaded and nothing\nis saved under is [`crate::ErrorCode::SessionNotFound`].",
+      "description": "Result of [`SESSION_DELETE`]: the session's files are gone, with those\nof the sessions it owns, its subagents' and forks',\nand the daemon has unloaded it, detaching its clients as\n[`super::DetachReason::Deleted`]. Its job stays in [`super::JOB_LIST`].\nThe sessions it started through session control\n([`super::SessionNewParams::parent`]) stay, still naming it as\n[`DetailedSessionSummary::parent`].\n\nA session whose turn is under way, a settings change waiting or\napplying, background work running, such as a subagent, or a run it started not yet\nfinished is refused as [`crate::ErrorCode::SessionBusy`]; one another\nprocess has open, or one a session it started is open in, as\n[`crate::ErrorCode::SessionInUse`]. Either refusal leaves a loaded\nsession loaded. A session the daemon loaded but that has saved nothing\nyet is unloaded all the same. An id the daemon has not loaded and nothing\nis saved under is [`crate::ErrorCode::SessionNotFound`].",
       "type": "object"
     },
     "SessionDetachParams": {
@@ -5932,7 +6083,7 @@
           "type": "object"
         },
         {
-          "description": "The turn waits for a person to answer `request` with\n[`super::SESSION_ANSWER`] (#1660).",
+          "description": "The turn waits for an answer to `request`: a person's, with\n[`super::SESSION_ANSWER`] (#1660), or for a question anyone but the\nuser may answer, the starting session's, with\n[`super::SESSION_ANSWER_QUESTION`].",
           "properties": {
             "request": {
               "$ref": "#/$defs/InputRequest"
@@ -5949,7 +6100,7 @@
           "type": "object"
         },
         {
-          "description": "Input request `id` closed: a client answered it, the turn withdrew\nit, or it timed out. Clients that show it stop.",
+          "description": "Input request `id` closed: a client answered it, the session that\nstarted this one answered its question, the turn withdrew it, or it\ntimed out. Clients that show it stop.",
           "properties": {
             "id": {
               "$ref": "#/$defs/InputRequestId"
@@ -6308,6 +6459,28 @@
       },
       "required": [
         "report"
+      ],
+      "type": "object"
+    },
+    "SessionListDetailedResponse": {
+      "description": "Result of [`SESSION_LIST_DETAILED`]: a page of [`SESSION_LIST`]'s, its\nrows detailed. Goes at the next major with [`SESSION_LIST_DETAILED`].",
+      "properties": {
+        "next_cursor": {
+          "description": "The cursor of the next page, as [`SessionListResponse::next_cursor`];\nabsent on the last.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sessions": {
+          "items": {
+            "$ref": "#/$defs/DetailedSessionSummary"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "sessions"
       ],
       "type": "object"
     },
@@ -9444,6 +9617,14 @@
         "$ref": "#/$defs/SessionAnswerResponse"
       }
     },
+    "rho/session/answer_question": {
+      "params": {
+        "$ref": "#/$defs/SessionAnswerQuestionParams"
+      },
+      "result": {
+        "$ref": "#/$defs/SessionAnswerQuestionResponse"
+      }
+    },
     "rho/session/attach": {
       "params": {
         "$ref": "#/$defs/SessionAttachParams"
@@ -9530,6 +9711,14 @@
       },
       "result": {
         "$ref": "#/$defs/SessionListResponse"
+      }
+    },
+    "rho/session/list_detailed": {
+      "params": {
+        "$ref": "#/$defs/SessionListParams"
+      },
+      "result": {
+        "$ref": "#/$defs/SessionListDetailedResponse"
       }
     },
     "rho/session/mcp": {
