@@ -483,7 +483,10 @@ async fn a_started_sessions_end_wakes_its_idle_starter() {
         .await;
     std::fs::write(workspace.join("go"), "").unwrap();
     let child_answer = answer(&host, &child).await;
-    let woken = stopped(&host, &agent).await;
+    // Settled again: the turn the daemon started took the notice. The
+    // fixture answers a turn with no prompt with its last tool result, so
+    // the turn's own answer says nothing here.
+    stopped(&host, &agent).await;
     let notices: Vec<String> = boundary_inputs(&sandbox, &agent)
         .into_iter()
         .filter(|text| text.lines().next() == Some("[session notification]"))
@@ -491,11 +494,8 @@ async fn a_started_sessions_end_wakes_its_idle_starter() {
     let names = |text: &String| (text.contains(child.as_str()), text.contains(&child_answer));
 
     assert_eq!(
-        (
-            woken["outcome"]["text"].clone(),
-            notices.iter().map(names).collect::<Vec<_>>()
-        ),
-        (json!(REPLY), vec![(true, true)]),
+        notices.iter().map(names).collect::<Vec<_>>(),
+        vec![(true, true)],
         "log:\n{}",
         sandbox.isolated.daemon_log()
     );
