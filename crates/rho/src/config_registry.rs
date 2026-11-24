@@ -193,7 +193,9 @@ static PERMISSION_CLASSIFIER_MODEL: Setting<Config, Option<ModelSetting>> = Sett
         "Model Auto permission mode uses to review writes, processes, and reads outside the workspace.",
         Apply::NextSession,
     ),
-    spec: RHO_OR_CLAUDE_CLI,
+    // The classifier needs a structured verdict, which Claude Code doesn't
+    // give (`accepts_claude_runtime` in `agent/internal.rs`).
+    spec: RHO_ONLY,
     get: |config| internal_agent_model(config, PERMISSION_CLASSIFIER_AGENT_ID),
     set: |config, model| set_internal_agent_model(config, PERMISSION_CLASSIFIER_AGENT_ID, model),
     validate: any_value,
