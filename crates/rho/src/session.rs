@@ -246,6 +246,14 @@ pub(crate) fn workspace_key(cwd: &Path) -> String {
     layout::workspace_key(cwd)
 }
 
+/// The session saved under exactly `id` in `cwd`'s workspace; an error
+/// when nothing is.
+fn resolve_saved(cwd: &Path, id: &str) -> anyhow::Result<persistence::ResolvedSession> {
+    SessionStore::new(&session_root()?, cwd)
+        .resolve_exact_local(id)?
+        .ok_or_else(|| anyhow::anyhow!("no session is saved under {id} in {}", cwd.display()))
+}
+
 impl SessionSummary {
     pub fn target(&self) -> SessionTarget {
         SessionTarget::new(self.id.clone(), self.cwd.clone())
@@ -387,6 +395,34 @@ impl Session {
         let store = SessionStore::new(&session_root()?, cwd);
         let resolved = store.resolve(id_prefix)?;
         Ok(resolved.tree()?.facts())
+    }
+
+    /// Metadata `key` of the session saved under exactly `id` in `cwd`'s
+    /// workspace, as [`Self::session_metadata`] reads it, read without
+    /// opening the session, which another process may hold. `None` when the
+    /// session's last save did not record `key`; an error when nothing is
+    /// saved under `id` there.
+    pub(crate) fn session_metadata_by_id(
+        cwd: &Path,
+        id: &str,
+        key: &str,
+    ) -> anyhow::Result<Option<String>> {
+        Ok(resolve_saved(cwd, id)?
+            .tree()?
+            .newest_node_metadata(key)
+            .map(str::to_owned))
+    }
+
+    /// The session that started the subagent saved under exactly `id` in
+    /// `cwd`'s workspace, as its header records it, read without opening
+    /// it, which another process may hold. `None` when it is no subagent's
+    /// session, or its parent had no file when it started; an error when
+    /// nothing is saved under `id` there.
+    pub(crate) fn subagent_parent_by_id(
+        cwd: &Path,
+        id: &str,
+    ) -> anyhow::Result<Option<SessionTarget>> {
+        agent_identity::read_subagent_parent(&resolve_saved(cwd, id)?.path)
     }
 
     /// Session `id_prefix`'s tree as `/tree` lists it, read without opening

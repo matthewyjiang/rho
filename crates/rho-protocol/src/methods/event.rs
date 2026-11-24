@@ -326,6 +326,22 @@ pub enum SessionEvent {
     /// `SessionOptions` is not `#[non_exhaustive]`, so a field is a major
     /// change; until then a reset replay carries the agent as this event.
     Agent { id: String },
+    /// What a person chose, with
+    /// [`super::SessionChange::StartedSessionPermissionMode`] and
+    /// [`super::SessionChange::StartedSessionModel`], for the sessions this
+    /// session starts through session control (the `sessions` tool's `new`):
+    /// the permission mode and the model they open with, as a flat object
+    /// beside `type`. An absent part was not chosen, and such a session takes
+    /// the config's. Every reset replay sends it right after [`Self::Agent`],
+    /// and every change to the choice sends it again.
+    ///
+    /// # Next major
+    ///
+    /// NEXT_MAJOR(rho-protocol): report the started sessions' permission mode and model in SessionOptions::started_session_defaults and remove SessionEvent::StartedSessionDefaults.
+    ///
+    /// `SessionOptions` is not `#[non_exhaustive]`, so a field is a major
+    /// change; until then a reset replay carries the choice as this event.
+    StartedSessionDefaults(super::StartedSessionDefaults),
     /// The session's pull requests changed: one was linked, unlinked,
     /// watched, or read with a change. All of them, replacing what
     /// [`super::SESSION_PULL_REQUEST_LIST`] or the last of these gave. Sent

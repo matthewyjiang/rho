@@ -11,7 +11,9 @@
 //!
 //! A new session runs as the agent its client names, else the default
 //! agent, with the configured model, reasoning, fast mode, and permission
-//! mode. A reopened one runs as the agent it was saved as, which must still
+//! mode; one opened under a `parent` then takes the permission mode and
+//! model a person chose for the sessions its choosing session starts (see
+//! `new.rs`). A reopened one runs as the agent it was saved as, which must still
 //! be defined as it was, and with the settings a client last chose for it
 //! (`rho/session/configure`), else the configured ones. Either way it takes
 //! the setup of the request that opens it, on top of the directories and

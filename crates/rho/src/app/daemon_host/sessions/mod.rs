@@ -358,6 +358,9 @@ fn opening_feed(
         options::daemon_options(runtime, config, auths),
         runtime.agent_id().to_string(),
     );
+    feed.seed_started_session_defaults(options::started_session_defaults(
+        runtime.started_session_defaults(),
+    ));
     if let Some(saved) = saved_replay(&mut live, runtime, &job.id) {
         feed.end_turn(saved);
         feed.seed_usage(&live.context_usage(runtime.context_estimate()));

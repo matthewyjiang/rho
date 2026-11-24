@@ -109,6 +109,8 @@ An agent can start other sessions with its `sessions` tool. Each started session
 
 The starting session can answer a started session's questions with the tool's `answer`. It can't answer that session's approvals, plan approvals, or MCP servers' requests for input, which wait for a person. You can still answer a question first from any client, and the first answer wins.
 
+A frontend can choose the permission mode and model the sessions a session starts open in, for example auto mode for one lead session's workers. It also applies to sessions that session's subagents and workflow nodes start, and each started session keeps it, so the sessions it starts open the same way. The choice is saved with the starting session, so it survives the daemon restarting; without one, started sessions use your config. See [What started sessions run with](/protocol#what-started-sessions-run-with).
+
 A turn that waits for a person, or for sessions it started, gives its slot back while it waits. This prevents deadlocks, but it means the number of running agents can go somewhat above `agent_concurrency`. [MCP server limits](/mcp-server#limits) cap how many sessions an agent can start.
 
 ### Workflow runs

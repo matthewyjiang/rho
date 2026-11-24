@@ -169,7 +169,7 @@ pub use models::{
 pub use options::{
     CommandKind, FastModeOptions, ModelChoice, ModelOptions, ModelRef, PermissionModeOptions,
     ReasoningLevel, ReasoningOptions, SessionChange, SessionCommand, SessionConfigureParams,
-    SessionConfigureResponse, SessionOptions, SESSION_CONFIGURE,
+    SessionConfigureResponse, SessionOptions, StartedSessionDefaults, SESSION_CONFIGURE,
 };
 pub use outcome::{AnswerStop, TurnError, TurnErrorKind, TurnOutcome};
 pub use process::{

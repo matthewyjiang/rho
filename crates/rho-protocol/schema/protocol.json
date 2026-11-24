@@ -5467,6 +5467,52 @@
           "type": "object"
         },
         {
+          "description": "Open the sessions this session starts through session control (the\n`sessions` tool's `new`, which names it as\n[`super::SessionNewParams::parent`]) in `mode`, as if a person had\nset it on each before its first turn; absent, they take the\nconfig's. A person's client sets it; no tool rho gives the model\ndoes. The sessions this session's subagents and workflow nodes start\ntake it too, and each session started under it keeps a copy as its\nown choice, so the sessions that one starts open in `mode` as well,\nuntil a person changes it there: changing it here later does not\nchange what sessions already started hand to the sessions they\nstart. `Unknown`, or `auto` while the config has\nno permission-classifier model, is\n[`crate::ErrorCode::InvalidParams`]. The session reports its choice as\n[`super::SessionEvent::StartedSessionDefaults`]. It is kept with the\nsession apart from the session's own settings: setting it leaves the\nsession following the config, or keeping its settings, as before.\nSent while the session's turn runs, it waits for that turn's end, as\nevery change does, so the sessions that turn starts meanwhile open\nwith the choice as it was.",
+          "properties": {
+            "kind": {
+              "const": "started_session_permission_mode",
+              "type": "string"
+            },
+            "mode": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/PermissionMode"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Open the sessions this session starts through session control on\n`model`, one of [`ModelOptions::available`], as\n[`Self::StartedSessionPermissionMode`] sets their mode, and carried\ndown and kept as that one is; absent, they take the config's. A\nmodel the `new` call names itself still wins for that session, and\na session whose agent names its own model, preferred or required,\nruns that one, and does not need `model` to resolve. Each\nstarted session runs `model` on an auth that has credentials, as a\n[`Self::Model`] with no `auth` picks; one it no longer resolves to\nfails the `new`. While the session keeps a saved choice this daemon\ncannot read, it is [`crate::ErrorCode::InvalidParams`]: a\n[`Self::StartedSessionPermissionMode`] replaces that choice first.\nSent while the session's turn runs, it waits for that turn's end, as\n[`Self::StartedSessionPermissionMode`] does.",
+          "properties": {
+            "kind": {
+              "const": "started_session_model",
+              "type": "string"
+            },
+            "model": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ModelRef"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Add `text` to what the model reads from its next turn on, without a\nturn of its own, and save it with the session as a user row that\nreads `display`. Clients attached now see no event for it: the one\nthat sent it shows its own notice, and a later reset replays the\nrow. An empty `text` is [`crate::ErrorCode::InvalidParams`].",
           "properties": {
             "display": {
@@ -6234,6 +6280,20 @@
           "type": "object"
         },
         {
+          "$ref": "#/$defs/StartedSessionDefaults",
+          "description": "What a person chose, with\n[`super::SessionChange::StartedSessionPermissionMode`] and\n[`super::SessionChange::StartedSessionModel`], for the sessions this\nsession starts through session control (the `sessions` tool's `new`):\nthe permission mode and the model they open with, as a flat object\nbeside `type`. An absent part was not chosen, and such a session takes\nthe config's. Every reset replay sends it right after [`Self::Agent`],\nand every change to the choice sends it again.\n\n# Next major\n\nNEXT_MAJOR(rho-protocol): report the started sessions' permission mode and model in SessionOptions::started_session_defaults and remove SessionEvent::StartedSessionDefaults.\n\n`SessionOptions` is not `#[non_exhaustive]`, so a field is a major\nchange; until then a reset replay carries the choice as this event.",
+          "properties": {
+            "type": {
+              "const": "started_session_defaults",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
           "description": "The session's pull requests changed: one was linked, unlinked,\nwatched, or read with a change. All of them, replacing what\n[`super::SESSION_PULL_REQUEST_LIST`] or the last of these gave. Sent\nonly once they differ from what this stream last sent, so a quiet\nread sends nothing; a client showing a pull request whose summary\nmoved reissues [`super::SESSION_PULL_REQUEST_SHOW`] for its detail.",
           "properties": {
             "pull_requests": {
@@ -6967,7 +7027,7 @@
               "type": "null"
             }
           ],
-          "description": "The session whose turn starts this one, such as the session of an\nagent that starts a peer through session control (#1714). The daemon\nrecords the job writing that session as the new session's job's\n[`super::JobSummary::parent`], and the new session's turns then wait\nfor capacity in the daemon-wide agent budget, as subagent runs do\n([`super::JobState::Queued`]). The new session saves, as\n[`super::DetailedSessionSummary::parent`], that session, or, when a\nsubagent run or workflow node writes it, the session whose turn runs\nthat run or workflow. A session no job of the daemon writes, such as\none an in-process rho runs, records no parent, in the job or the\nsaved session, but the new session's turns still share the budget."
+          "description": "The session whose turn starts this one, such as the session of an\nagent that starts a peer through session control (#1714). The daemon\nrecords the job writing that session as the new session's job's\n[`super::JobSummary::parent`], and the new session's turns then wait\nfor capacity in the daemon-wide agent budget, as subagent runs do\n([`super::JobState::Queued`]). The new session saves, as\n[`super::DetailedSessionSummary::parent`], that session, or, when a\nsubagent run or workflow node writes it, the session whose turn runs\nthat run or workflow. A session no job of the daemon writes, such as\none an in-process rho runs, records no parent, in the job or the\nsaved session, but the new session's turns still share the budget.\nThe new session also opens in the permission mode and on the model a\nperson chose for the sessions the nearest session a person or\nsession control opened starts: `parent` itself, or the session whose\nturn runs the subagent or workflow node writing it\n([`super::SessionChange::StartedSessionPermissionMode`],\n[`super::SessionChange::StartedSessionModel`])."
         },
         "setup": {
           "$ref": "#/$defs/SessionSetup",
@@ -8008,6 +8068,33 @@
           "type": "string"
         }
       ]
+    },
+    "StartedSessionDefaults": {
+      "description": "What a person chose for the sessions a session starts through session\ncontrol ([`SessionChange::StartedSessionPermissionMode`] and\n[`SessionChange::StartedSessionModel`]): the permission mode and the\nmodel they open with. A part left `None` is not chosen, and those\nsessions take the config's. [`super::SessionEvent::StartedSessionDefaults`]\ncarries it.",
+      "properties": {
+        "model": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "permission_mode": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PermissionMode"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "`Unknown` for a mode a newer rho saved, or a saved choice this daemon\ncannot read, under which it refuses to open a session. A client that\nsees it should offer to set the mode again, which replaces the saved\nchoice. While the choice does not read, `model` is absent even when\nthe saved choice names one, which the daemon keeps as saved."
+        }
+      },
+      "type": "object"
     },
     "StatusParams": {
       "description": "Params of [`DAEMON_STATUS`].",

@@ -83,6 +83,47 @@ pub enum SessionChange {
     FastMode { enabled: bool },
     /// Gate later turns' tool calls with `mode`.
     PermissionMode { mode: PermissionMode },
+    /// Open the sessions this session starts through session control (the
+    /// `sessions` tool's `new`, which names it as
+    /// [`super::SessionNewParams::parent`]) in `mode`, as if a person had
+    /// set it on each before its first turn; absent, they take the
+    /// config's. A person's client sets it; no tool rho gives the model
+    /// does. The sessions this session's subagents and workflow nodes start
+    /// take it too, and each session started under it keeps a copy as its
+    /// own choice, so the sessions that one starts open in `mode` as well,
+    /// until a person changes it there: changing it here later does not
+    /// change what sessions already started hand to the sessions they
+    /// start. `Unknown`, or `auto` while the config has
+    /// no permission-classifier model, is
+    /// [`crate::ErrorCode::InvalidParams`]. The session reports its choice as
+    /// [`super::SessionEvent::StartedSessionDefaults`]. It is kept with the
+    /// session apart from the session's own settings: setting it leaves the
+    /// session following the config, or keeping its settings, as before.
+    /// Sent while the session's turn runs, it waits for that turn's end, as
+    /// every change does, so the sessions that turn starts meanwhile open
+    /// with the choice as it was.
+    StartedSessionPermissionMode {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        mode: Option<PermissionMode>,
+    },
+    /// Open the sessions this session starts through session control on
+    /// `model`, one of [`ModelOptions::available`], as
+    /// [`Self::StartedSessionPermissionMode`] sets their mode, and carried
+    /// down and kept as that one is; absent, they take the config's. A
+    /// model the `new` call names itself still wins for that session, and
+    /// a session whose agent names its own model, preferred or required,
+    /// runs that one, and does not need `model` to resolve. Each
+    /// started session runs `model` on an auth that has credentials, as a
+    /// [`Self::Model`] with no `auth` picks; one it no longer resolves to
+    /// fails the `new`. While the session keeps a saved choice this daemon
+    /// cannot read, it is [`crate::ErrorCode::InvalidParams`]: a
+    /// [`Self::StartedSessionPermissionMode`] replaces that choice first.
+    /// Sent while the session's turn runs, it waits for that turn's end, as
+    /// [`Self::StartedSessionPermissionMode`] does.
+    StartedSessionModel {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model: Option<ModelRef>,
+    },
     /// Add `text` to what the model reads from its next turn on, without a
     /// turn of its own, and save it with the session as a user row that
     /// reads `display`. Clients attached now see no event for it: the one
@@ -162,6 +203,25 @@ pub struct SessionOptions {
 pub struct ModelRef {
     pub provider: String,
     pub model: String,
+}
+
+/// What a person chose for the sessions a session starts through session
+/// control ([`SessionChange::StartedSessionPermissionMode`] and
+/// [`SessionChange::StartedSessionModel`]): the permission mode and the
+/// model they open with. A part left `None` is not chosen, and those
+/// sessions take the config's. [`super::SessionEvent::StartedSessionDefaults`]
+/// carries it.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct StartedSessionDefaults {
+    /// `Unknown` for a mode a newer rho saved, or a saved choice this daemon
+    /// cannot read, under which it refuses to open a session. A client that
+    /// sees it should offer to set the mode again, which replaces the saved
+    /// choice. While the choice does not read, `model` is absent even when
+    /// the saved choice names one, which the daemon keeps as saved.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission_mode: Option<PermissionMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<ModelRef>,
 }
 
 /// The session's model and the models it may switch to.

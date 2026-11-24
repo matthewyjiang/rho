@@ -539,7 +539,9 @@ fn a_jobs_grant_never_exceeds_its_limit() {
 // Covers: a session started from a subagent's or a workflow node's session
 // runs under the session whose turn runs them: it is held under that
 // session's grant, not the unlimited one their own jobs keep (#1796), and
-// lists that session as the one that started it; a run whose session job
+// lists that session as the one that started it; a node's session whose
+// run ended is still found under that session, so a session it starts
+// takes that session's choice, not the config's; a run whose session job
 // the daemon does not know runs under none.
 // Owner: daemon job registry, session grants and starters.
 #[test]
@@ -569,8 +571,19 @@ fn a_run_runs_under_the_session_whose_turn_runs_it() {
     let run = subagent(session.id.clone());
     let node = subagent(workflow.id.clone());
     let orphan = subagent(JobId::generate());
+    // A node of the same drive that wrote a session of its own and ended.
+    let written = rho_sdk::SessionId::new();
+    let ended = JobRecord {
+        state: JobState::Ended(TurnEnd::Completed),
+        ..JobRecord::new_subagent(
+            workflow.id.clone(),
+            PathBuf::from("/work"),
+            Some(written.clone()),
+            "run".into(),
+        )
+    };
     let ids = [&session, &workflow, &run, &node, &orphan].map(|record| record.id.clone());
-    for record in [session, workflow, run, node, orphan] {
+    for record in [session, workflow, run, node, orphan, ended] {
         registry.register(record).unwrap();
     }
 
@@ -578,15 +591,21 @@ fn a_run_runs_under_the_session_whose_turn_runs_it() {
         session: lead,
         grant: limited,
     });
+    let ended_run = registry
+        .last_run_writing(&written)
+        .and_then(|run| registry.runs_under(&run));
     assert_eq!(
-        ids.map(|id| registry.runs_under(&id)),
-        [
-            under_lead.clone(),
-            under_lead.clone(),
-            under_lead.clone(),
-            under_lead,
-            None
-        ]
+        (ids.map(|id| registry.runs_under(&id)), ended_run),
+        (
+            [
+                under_lead.clone(),
+                under_lead.clone(),
+                under_lead.clone(),
+                under_lead.clone(),
+                None
+            ],
+            under_lead
+        )
     );
 }
 

@@ -157,7 +157,8 @@ impl SessionRuntime {
     /// Opens new session `id` as a fork of `parent`, as the build's launch
     /// agent, which the host bound as the agent `parent` was saved as: with
     /// `parent`'s conversation as last saved, its prompt cache key, and the
-    /// settings its file keeps. `parent` may still be working in the same
+    /// settings its file keeps, what the sessions it starts open with
+    /// included. `parent` may still be working in the same
     /// workspace, so the fork then opens supervised, or stays in plan mode,
     /// which edits nothing either and keeps `parent`'s tools. It keeps its
     /// settings with its own file, so a reopen keeps that mode. That file is
