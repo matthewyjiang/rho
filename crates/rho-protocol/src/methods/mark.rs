@@ -28,9 +28,10 @@ pub const SESSION_MARK: &str = "rho/session/mark";
 #[non_exhaustive]
 pub enum SessionMark {
     /// The person is finished with the session, as of `at`. The daemon
-    /// marks a session done itself when a pull request its agent watched
-    /// merges and it watches no other, at or after the last save of the
-    /// turn that told the agent.
+    /// marks a session done itself when the last of the pull requests
+    /// linked to it merges: as it reads the merge, and, when the agent
+    /// watched that pull request, again at or after the last save of the
+    /// turn that told it.
     Done { at: u64 },
     /// Hide the session until `until`, which the client chose.
     Snoozed { until: u64 },

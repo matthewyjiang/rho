@@ -2,8 +2,10 @@
 //! linked to it, which a client lists for many sessions at once, shows one
 //! of, and links or unlinks. The daemon reads GitHub; clients only ask.
 //!
-//! The daemon reads a pull request only while something wants it: a session
-//! that watches it, or a client that listed or showed it recently. Each
+//! The daemon reads a pull request while something wants it: a session
+//! that watches it, or a client that listed or showed it recently. One
+//! that is only linked it reads every 5 minutes until it merges or closes.
+//! Each
 //! `list` and `show` takes a lease on what it names, which runs out unless
 //! renewed: a `list` lease lasts 10 minutes and a `show` lease 60 seconds,
 //! two periods of the cadence each is read at (5 minutes and 30 seconds).

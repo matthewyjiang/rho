@@ -1,32 +1,31 @@
 //! Session marks over the socket (`rho/session/mark`), and the one the
-//! daemon sets itself: a session is marked done when a pull request its
-//! agent watched merges and it watches no other.
+//! daemon sets itself: a session is marked done when the last of the pull
+//! requests linked to it merges, watched or not.
 //!
 //! A mark is saved with the session, beside its title (see
 //! `crate::session`'s `mark`), so it needs no loaded session, and
 //! `rho/session/list_detailed` reports it. A change tells a loaded session's
 //! attached clients, as a rename does.
 //!
-//! Only the daemon sees a merge: the watch ends with it, and clients then
-//! see a linked pull request nobody watches. The session is marked done
-//! twice. Once at once, as the poll that read the merge queues its news
-//! ([`Sessions::mark_merged_done`]), which stands while no turn tells the
-//! agent; a daemon that stops between the two never makes this mark. And
-//! again as the turn that told the agent ends ([`turn_ended`]): that
-//! turn's saves moved the session's `updated_at` past the first mark, and
-//! clients read a session as done only while `updated_at` is not after
-//! it. A prompt the person sends later moves `updated_at` past the mark
-//! again, which clients read as active; the mark stays, and the turn of
-//! such a prompt marks nothing, also when it is the one to tell the agent
-//! news that waited.
+//! Only the daemon reads a session's linked pull requests with no one
+//! asking. The session is marked done at once, as the poll that read the
+//! last merge ends ([`Sessions::mark_merged_done`]), which stands while
+//! no turn follows; a daemon that stops between the read and the mark
+//! never makes it. When the pull request was watched, a turn then tells
+//! the agent of the merge, and the session is marked again as that turn
+//! ends ([`turn_ended`]): its saves moved the session's `updated_at` past
+//! the first mark, and clients read a session as done only while
+//! `updated_at` is not after it. A prompt the person sends later moves
+//! `updated_at` past the mark again, which clients read as active; the
+//! mark stays, and the turn of such a prompt marks nothing, also when it
+//! is the one to tell the agent news that waited.
 //!
-//! A merge that leaves the session watching another pull request marks
-//! nothing either time: its work is not over, and a session marked done
-//! by mistake is hidden, which is worse than one left listed. Neither
-//! does a merge beside a watch that ended some other way, in the same
-//! read or since. Past that,
-//! [`after_merge`] is the whole rule; a watch that ends any other way
-//! marks nothing.
+//! A merge that leaves another linked pull request unmerged, open or
+//! closed, marks nothing either time: the session's work is not over, and
+//! a session marked done by mistake is hidden, which is worse than one
+//! left listed. Neither does a pull request first read after it merged,
+//! as one linked for reference. Past that, [`after_merge`] is the whole
+//! rule.
 
 use rho_protocol::{self as wire, ErrorCode, RpcError};
 use rho_sdk::SessionId;
@@ -38,7 +37,7 @@ use super::{
 };
 use crate::{
     app::{
-        pull_requests::{MergedWatch, PullRequestInbox},
+        pull_requests::{AllMerged, PullRequestInbox},
         session_runtime::SessionRuntime,
     },
     session::{MarkChange, NewMark, Session as StoredSession, SessionMark},
@@ -63,15 +62,15 @@ impl Sessions {
         ))
     }
 
-    /// Marks done each session whose last watch ended because its pull
-    /// request merged, as [`after_merge`] says, until the daemon starts
-    /// stopping: a merge it read before that is marked first.
+    /// Marks done each session whose linked pull requests have all merged,
+    /// as [`after_merge`] says, until the daemon starts stopping: a merge
+    /// it read before that is marked first.
     pub(super) async fn mark_merged_done(&self) {
-        let Some(mut merged) = self.pull_requests.service().take_merged_watches() else {
+        let Some(mut merged) = self.pull_requests.service().take_all_merged() else {
             return;
         };
         loop {
-            let MergedWatch { session, at } = tokio::select! {
+            let AllMerged { session, at } = tokio::select! {
                 biased;
                 Some(merged) = merged.recv() => merged,
                 () = self.stopping.cancelled() => return,
@@ -130,12 +129,12 @@ pub(super) enum TurnOrigin {
 
 /// Call as `session`'s turn on `runtime`, which `origin` started, ended,
 /// after its last save and before its end is told. A turn that told the
-/// agent a watched pull request merged, and leaves the session watching
-/// none, marks the session done again, as [`after_merge`] says: at or
-/// after the `updated_at` the turn leaves, so clients read the session as
-/// done once the turn is over. Not the turn of
-/// a prompt sent since rho found the merge, as when the news waited for
-/// one: the person turned to the session again, so it stays active.
+/// agent a watched pull request merged, and leaves the session with every
+/// linked pull request merged, marks it done again, as [`after_merge`]
+/// says: at or after the `updated_at` the turn leaves, so clients read the
+/// session as done once the turn is over. Not the turn of a prompt sent
+/// since rho found the merge, as when the news waited for one: the person
+/// turned to the session again, so it stays active.
 pub(super) fn turn_ended(session: &LoadedSession, runtime: &SessionRuntime, origin: TurnOrigin) {
     let told = runtime
         .tools()
@@ -163,7 +162,7 @@ pub(super) fn turn_ended(session: &LoadedSession, runtime: &SessionRuntime, orig
     }
 }
 
-/// The mark of a session whose watched pull request rho found merged at
+/// The mark of a session whose last unmerged pull request rho found merged at
 /// `merged_at`, as of `now`, both unix seconds, given the `mark` it has:
 /// done as of `now`, unless the person set it apart. A pinned session
 /// stays pinned, and a snoozed one snoozed until its snooze ends. One the

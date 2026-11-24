@@ -49,7 +49,7 @@ pub(crate) use self::{
     },
     model::{Mergeable, PrState, Rollup},
     record::LinkOrigin,
-    service::{unix_ms, MergedWatch, PullRequests, ShowRead, ShowTarget},
+    service::{unix_ms, AllMerged, PullRequests, ShowRead, ShowTarget},
     state::Gate,
 };
 #[cfg(test)]

@@ -67,17 +67,27 @@ pub(super) struct Shared {
     poke: Notify,
     wakes: mpsc::UnboundedSender<SessionId>,
     wake_requests: Mutex<Option<mpsc::UnboundedReceiver<SessionId>>>,
-    merges: mpsc::UnboundedSender<MergedWatch>,
-    merged_watches: Mutex<Option<mpsc::UnboundedReceiver<MergedWatch>>>,
+    merges: mpsc::UnboundedSender<AllMerged>,
+    merge_requests: Mutex<Option<mpsc::UnboundedReceiver<AllMerged>>>,
 }
 
-/// A session's last watch ended because its pull request merged: it
-/// watches no other, and none ended another way in the same read.
+/// A read found the last of a session's linked pull requests merged:
+/// every one linked to it has now, watched or not.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct MergedWatch {
+pub(crate) struct AllMerged {
     pub(crate) session: SessionId,
     /// When rho found the merge, in unix milliseconds.
     pub(crate) at: u64,
+}
+
+/// What a tick has to tell.
+#[derive(Default)]
+pub(super) struct Applied {
+    /// The sessions it queued news for.
+    pub(super) told: Vec<Told>,
+    /// The sessions whose last unmerged linked pull request it found
+    /// merged.
+    pub(super) all_merged: Vec<AllMerged>,
 }
 
 /// A session a tick queued news for.
@@ -85,10 +95,6 @@ pub(super) struct Told {
     pub(super) session: SessionId,
     /// The session's [`Entry::notify`].
     pub(super) notify: Arc<Notify>,
-    /// When the tick ran, in unix milliseconds, if the news tells that a
-    /// watch ended merged, and of no watch that ended another way, and the
-    /// session watches nothing else.
-    pub(super) merged_at: Option<u64>,
 }
 
 /// What the service holds in memory.
@@ -183,25 +189,11 @@ pub(super) struct Entry {
     pub(super) in_flight: Vec<u64>,
     /// Told when news arrives or is put back.
     pub(super) notify: Arc<Notify>,
-    /// The newest merge a turn has told the session's agent of, no watch
-    /// having ended another way since, until
+    /// When rho found the newest merge a turn has told the session's agent
+    /// of, in unix milliseconds, until
     /// [`PullRequestInbox::take_merge_told`] takes it. In memory only: a
     /// daemon that stops first forgets it.
-    pub(super) merge_told: Option<ToldMerge>,
-    /// The record's [`SessionRecord::news_generation`] when the session
-    /// last stopped watching a pull request itself, by an unwatch or an
-    /// unlink, which queue no news: a merge queued before it did not end
-    /// the session's last watch. In memory only, as `merge_told` is.
-    pub(super) watch_dropped_at: Option<u64>,
-}
-
-/// A merge a turn told a session's agent of.
-#[derive(Clone, Copy)]
-pub(super) struct ToldMerge {
-    /// When rho found it, in unix milliseconds.
-    pub(super) at: u64,
-    /// Its news's [`News::seq`].
-    pub(super) seq: u64,
+    pub(super) merge_told: Option<u64>,
 }
 
 impl Entry {
@@ -211,7 +203,6 @@ impl Entry {
             in_flight: Vec::new(),
             notify: Arc::new(Notify::new()),
             merge_told: None,
-            watch_dropped_at: None,
         }
     }
 
@@ -420,25 +411,18 @@ impl Shared {
         })
     }
 
-    /// Tells each session in `told` that news arrived: its inbox's waiters,
-    /// and the daemon's waker for unloaded sessions. A session's last
-    /// watch that ended merged is told to the daemon as well, which marks
-    /// the session on its own task: before, during or after the turn the
-    /// news starts.
-    pub(super) fn tell(&self, told: Vec<Told>) {
-        for Told {
-            session,
-            notify,
-            merged_at,
-        } in told
-        {
-            if let Some(at) = merged_at {
-                // A closed channel means the daemon takes no merges.
-                let _ = self.merges.send(MergedWatch {
-                    session: session.clone(),
-                    at,
-                });
-            }
+    /// Tells what a tick `applied`. Each session whose linked pull requests
+    /// have all merged is told to the daemon, which marks the session on
+    /// its own task: before, during or after the turn its news starts, if
+    /// it has any. Each session with news is told it arrived: its inbox's
+    /// waiters, and the daemon's waker for unloaded sessions.
+    pub(super) fn tell(&self, applied: Applied) {
+        let Applied { told, all_merged } = applied;
+        for merged in all_merged {
+            // A closed channel means the daemon takes no merges.
+            let _ = self.merges.send(merged);
+        }
+        for Told { session, notify } in told {
             notify.notify_waiters();
             // A closed channel means no waker runs: the news waits, queued,
             // for the session's next turn.
@@ -458,7 +442,7 @@ impl Shared {
 
     /// `session` linked a PR at `now`: when a lease on it lives, the PR is
     /// due at once, so the poll loop wakes. A link to a session no client
-    /// looks at is not read until one does, or a watch asks.
+    /// looks at waits for the loop's next tick.
     pub(super) fn poke_if_leased(&self, state: &State, session: &SessionId, now: u64) {
         if state.interest.leased(session, now) {
             self.poke.notify_one();
@@ -488,7 +472,7 @@ impl PullRequests {
             .map(|(session, record)| (session, Entry::new(record)))
             .collect();
         let (wakes, wake_requests) = mpsc::unbounded_channel();
-        let (merges, merged_watches) = mpsc::unbounded_channel();
+        let (merges, merge_requests) = mpsc::unbounded_channel();
         let budgets = Arc::new(Budgets::default());
         Self(Arc::new(Shared {
             store,
@@ -503,7 +487,7 @@ impl PullRequests {
             wakes,
             wake_requests: Mutex::new(Some(wake_requests)),
             merges,
-            merged_watches: Mutex::new(Some(merged_watches)),
+            merge_requests: Mutex::new(Some(merge_requests)),
         }))
     }
 
@@ -547,13 +531,14 @@ impl PullRequests {
             .take()
     }
 
-    /// Each session whose last watch ended because its pull request merged,
-    /// once, as the tick that read the merge queues its news; no other end
-    /// of a watch is told here, nor a merge that leaves the session
-    /// watching another pull request. `Some` only the first time.
-    pub(crate) fn take_merged_watches(&self) -> Option<mpsc::UnboundedReceiver<MergedWatch>> {
+    /// Each session a tick found the last unmerged linked pull request of
+    /// merged, watched or not, once, as that tick ends. A merge that leaves
+    /// another of the session's linked pull requests unmerged is not told,
+    /// nor a pull request first read after it merged. `Some` only the
+    /// first time.
+    pub(crate) fn take_all_merged(&self) -> Option<mpsc::UnboundedReceiver<AllMerged>> {
         self.0
-            .merged_watches
+            .merge_requests
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .take()

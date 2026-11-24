@@ -347,6 +347,7 @@ fn links_are_idempotent_and_unlinking_ends_the_watch() {
         linked_at: 1,
         watch: None,
         told_head: None,
+        stood: None,
     };
     let watched = Link {
         pr: pr(9),
@@ -355,6 +356,7 @@ fn links_are_idempotent_and_unlinking_ends_the_watch() {
         linked_at: 3,
         watch: Some(WatchState::new(3)),
         told_head: None,
+        stood: None,
     };
     assert_eq!(linked, [true, false, true]);
     assert_eq!(record.links(), [unwatched.clone(), watched.clone()]);

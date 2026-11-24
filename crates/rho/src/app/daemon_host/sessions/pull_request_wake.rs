@@ -122,11 +122,12 @@ impl PullRequestWake {
 }
 
 impl Sessions {
-    /// Polls the pull requests that are watched or that clients look at,
-    /// wakes the unloaded sessions that get news, marks done the sessions
-    /// whose watched pull request merged (see `marks`), and tells loaded
-    /// sessions' clients their pull requests as they change, until the
-    /// daemon starts stopping; then drops every kept opening.
+    /// Polls the pull requests that are linked to sessions or that clients
+    /// look at, wakes the unloaded sessions that get news, marks done the
+    /// sessions whose linked pull requests have all merged (see `marks`),
+    /// and tells loaded sessions' clients their pull requests as they
+    /// change, until the daemon starts stopping; then drops every kept
+    /// opening.
     pub(in crate::app::daemon_host) async fn poll_pull_requests(&self) {
         tokio::join!(
             self.pull_requests.service.run(self.stopping.cancelled()),

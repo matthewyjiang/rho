@@ -6632,7 +6632,7 @@
     "SessionMark": {
       "anyOf": [
         {
-          "description": "The person is finished with the session, as of `at`. The daemon\nmarks a session done itself when a pull request its agent watched\nmerges and it watches no other, at or after the last save of the\nturn that told the agent.",
+          "description": "The person is finished with the session, as of `at`. The daemon\nmarks a session done itself when the last of the pull requests\nlinked to it merges: as it reads the merge, and, when the agent\nwatched that pull request, again at or after the last save of the\nturn that told it.",
           "properties": {
             "at": {
               "format": "uint64",

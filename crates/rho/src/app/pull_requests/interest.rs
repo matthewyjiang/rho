@@ -1,8 +1,8 @@
 //! What clients look at: a lease on each session a client lists, and on
 //! each target it shows. A lease is a time it lasts until, compared with
 //! `now`; nothing sweeps them, and a client never releases one. It only
-//! adds reads: with no lease, the poller reads watched pull requests and
-//! nothing else, as before clients could ask.
+//! adds reads: with no lease, the poller reads watched pull requests, and
+//! linked ones that have not ended at its own slower cadence.
 //!
 //! In memory only, and keyed by session with no client identity: two
 //! clients on one session share its leases. An entry outlives its leases,
@@ -15,7 +15,11 @@ use std::{
 
 use rho_sdk::SessionId;
 
-use super::{checkout::Checkout, model::PrId, poller::WATCH_POLL};
+use super::{
+    checkout::Checkout,
+    model::PrId,
+    poller::{LINKED_POLL, WATCH_POLL},
+};
 
 /// How often a pull request on a client's screen is read.
 ///
@@ -51,6 +55,9 @@ pub(super) enum Cadence {
     Watched,
     /// In a client's list of sessions: [`LISTED_POLL`].
     Listed,
+    /// Linked to a session and not ended, with no one asking:
+    /// [`LINKED_POLL`].
+    Linked,
 }
 
 impl Cadence {
@@ -59,6 +66,7 @@ impl Cadence {
             Self::Shown => SHOWN_POLL,
             Self::Watched => WATCH_POLL,
             Self::Listed => LISTED_POLL,
+            Self::Linked => LINKED_POLL,
         }
     }
 

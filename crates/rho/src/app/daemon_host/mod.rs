@@ -283,8 +283,8 @@ impl DaemonHost {
     }
 
     /// Polls the sessions' pull requests, tells their clients when they
-    /// change, and marks a session done when one it watched merges, until
-    /// the daemon starts stopping.
+    /// change, and marks a session done when the last of those linked to it
+    /// merges, until the daemon starts stopping.
     pub(super) async fn poll_pull_requests(&self) {
         self.sessions.poll_pull_requests().await;
     }
