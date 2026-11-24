@@ -22,7 +22,7 @@ use super::{
     poller::{DetailError, BUDGET_FLOOR, WATCHES_PER_SESSION},
     record::LinkOrigin,
     service::{Entry, Shared},
-    state::{CheckTally, Gate, News, WatchState},
+    state::{merged_last, CheckTally, Gate, News, WatchState},
     watch,
 };
 
@@ -250,7 +250,24 @@ impl PullRequestInbox {
         let seqs = batch.seqs();
         entry.release(&seqs);
         entry.record.acknowledge(&seqs);
+        if batch.news.iter().any(|news| news.end.is_some()) {
+            entry.merge_told = merged_last(&batch.news);
+        }
         let _ = self.shared.save(&self.session, &entry.record);
+    }
+
+    /// When rho found the newest merge that acknowledged news told the
+    /// session's agent of, in unix milliseconds, taken: `None` until a turn
+    /// delivers news that a watch ended merged, and again once taken. Also
+    /// `None` when news acknowledged with it or since told of a watch that
+    /// ended some other way (see [`merged_last`]), and, still taken, while
+    /// the session watches a pull request, as one its agent began to watch
+    /// in that turn: its work is not over.
+    pub(crate) fn take_merge_told(&self) -> Option<u64> {
+        let mut state = self.shared.state();
+        let entry = state.sessions.get_mut(&self.session)?;
+        let told = entry.merge_told.take();
+        told.filter(|_| entry.record.watching().next().is_none())
     }
 
     /// Watches `target` for the session, linking it first, at `now` (unix

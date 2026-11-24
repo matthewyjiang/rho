@@ -20,7 +20,7 @@ use crate::methods::{
     PullRequestLinkOrigin, PullRequestMergeMethod, PullRequestMergeable, PullRequestReview,
     PullRequestRollup, PullRequestState, PullRequestThreadState, PullRequestTrouble,
     PullRequestVerdict, ReasoningLevel, Resolution, RetryReason, Selection, SessionActivity,
-    SessionControlAction, SessionEvent, SessionMcpMode, SessionMcpResourceContent,
+    SessionControlAction, SessionEvent, SessionMark, SessionMcpMode, SessionMcpResourceContent,
     SessionMcpStatus, SettingKind, StoreSelectedBy, ToolContent, ToolKind, ToolStatus,
     TurnErrorKind, TurnOutcome, UncheckedReason, UnsteerOutcome, ValueSource, WorktreeVerdict,
 };
@@ -62,7 +62,7 @@ fn enums_marked_open_read_unknown_values_as_unknown() {
     let unseen = || json!("from_a_newer_daemon");
     let unseen_tag = || json!({ "type": "from_a_newer_daemon" });
     let unseen_kind = || json!({ "kind": "from_a_newer_daemon" });
-    let cases: [(&str, bool); 76] = [
+    let cases: [(&str, bool); 77] = [
         (
             "SessionMcpResourceContent",
             reads_as(unseen_tag(), SessionMcpResourceContent::Unknown),
@@ -249,6 +249,7 @@ fn enums_marked_open_read_unknown_values_as_unknown() {
             reads_as(unseen(), PullRequestThreadState::Unknown),
         ),
         ("ModelListKind", reads_as(unseen(), ModelListKind::Unknown)),
+        ("SessionMark", reads_as(unseen_kind(), SessionMark::Unknown)),
         (
             "ModelRefreshOutcome",
             reads_as(unseen_tag(), ModelRefreshOutcome::Unknown),

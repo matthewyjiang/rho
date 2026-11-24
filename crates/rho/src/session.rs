@@ -24,6 +24,7 @@ mod id_match;
 mod index;
 mod layout;
 mod lease;
+mod mark;
 mod persistence;
 pub(crate) mod recall;
 pub(crate) mod search;
@@ -67,6 +68,7 @@ pub(crate) use delete::{
 pub(crate) use id_match::SavedInManyWorkspaces;
 pub(crate) use lease::SessionInUse;
 use lease::{LeasePurpose, SessionLease};
+pub(crate) use mark::{MarkChange, NewMark, SessionMark};
 pub(crate) use persistence::NoSessionFound;
 pub(crate) use title::TitleRejected;
 pub(crate) use workspace_scope::Workspace;
@@ -105,6 +107,9 @@ pub struct SessionSummary {
     /// The session that started this one through session control, by id:
     /// see `SessionProvenance::started_by`.
     pub started_by: Option<String>,
+    /// How a person has marked the session, if they have. Kept in the
+    /// index alone: a summary read from the transcript has none.
+    pub(crate) mark: Option<SessionMark>,
 }
 
 /// Which host created a session, recorded on its header when its file is

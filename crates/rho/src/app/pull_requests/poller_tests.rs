@@ -21,7 +21,7 @@ use crate::app::pull_requests::{
         PrDetail, PrId, PrState, PrSummary, RepoId, Review, Rollup,
     },
     record::LinkOrigin,
-    service::{Detailed, PullRequests, ShowRead, ShowTarget},
+    service::{Detailed, MergedWatch, PullRequests, ShowRead, ShowTarget},
     state::{Change, CheckRef, CheckTally, End, Failure, Gate, News},
     test_forge::ScriptedForge,
 };
@@ -614,6 +614,135 @@ async fn an_end_drops_the_watch_and_keeps_the_link() {
             }]),
         )
     );
+}
+
+// Covers: of the ways a watch ends, only a merge is told to the daemon,
+// once, with when rho found it; and the merge counts as told to the
+// session's agent only once a turn acknowledges its news, and is taken
+// once. A closed PR ends its watch and tells neither, so the daemon marks
+// no session done for it.
+// Owner: PR service
+#[tokio::test]
+async fn only_a_merge_is_told_to_the_daemon_and_then_counts_as_told_to_the_agent() {
+    let fixture = Fixture::new();
+    let mut merges = fixture.service.take_merged_watches().unwrap();
+    let (merging, closing) = (SessionId::new(), SessionId::new());
+    let (merging_inbox, closing_inbox) = (fixture.inbox(&merging), fixture.inbox(&closing));
+    for (inbox, number) in [(&merging_inbox, 12), (&closing_inbox, 13)] {
+        fixture.forge.set(open(number, CheckStatus::Passed));
+        inbox.watch(&target(number), NOW).await.unwrap();
+    }
+    fixture.forge.set(merged(open(12, CheckStatus::Passed)));
+    let mut closed = edited(open(13, CheckStatus::Passed));
+    closed.summary.state = PrState::Closed;
+    fixture.forge.set(closed);
+
+    fixture.service.tick(TICK).await;
+
+    let mut told = Vec::new();
+    while let Ok(merged) = merges.try_recv() {
+        told.push(merged);
+    }
+    let news = merging_inbox.take_news();
+    let while_in_flight = merging_inbox.take_merge_told();
+    merging_inbox.acknowledge(&news);
+    closing_inbox.acknowledge(&closing_inbox.take_news());
+    assert_eq!(
+        (
+            told,
+            while_in_flight,
+            merging_inbox.take_merge_told(),
+            merging_inbox.take_merge_told(),
+            closing_inbox.take_merge_told(),
+        ),
+        (
+            vec![MergedWatch {
+                session: merging,
+                at: TICK,
+            }],
+            None,
+            Some(TICK),
+            None,
+            None,
+        )
+    );
+}
+
+// Covers: a merge that leaves the session watching another pull request
+// is told to neither the daemon nor, once acknowledged, as a merge told to
+// the agent, so a session with work still under way is not marked done;
+// the merge that ends its last watch is told to both.
+// Owner: PR service
+#[tokio::test]
+async fn a_merge_is_told_only_once_the_session_watches_nothing_else() {
+    let fixture = Fixture::new();
+    let mut merges = fixture.service.take_merged_watches().unwrap();
+    let session = SessionId::new();
+    let inbox = fixture.inbox(&session);
+    for number in [12, 13] {
+        fixture.forge.set(open(number, CheckStatus::Passed));
+        inbox.watch(&target(number), NOW).await.unwrap();
+    }
+    let mut told = Vec::new();
+    for (number, at) in [(12, TICK), (13, TICK + MINUTE)] {
+        fixture.forge.set(merged(open(number, CheckStatus::Passed)));
+        fixture.service.tick(at).await;
+        inbox.acknowledge(&inbox.take_news());
+        told.push((merges.try_recv().ok(), inbox.take_merge_told()));
+    }
+
+    let last = TICK + MINUTE;
+    assert_eq!(
+        told,
+        vec![
+            (None, None),
+            (Some(MergedWatch { session, at: last }), Some(last)),
+        ]
+    );
+}
+
+// Covers: a merge beside a watch that ended unmerged, in the same read or
+// after it, is told to neither the daemon nor, once acknowledged, as a
+// merge told to the agent: the session's work did not all merge, so it is
+// not marked done. Owner: PR service
+#[tokio::test]
+async fn a_merge_is_not_told_once_another_watch_ended_unmerged() {
+    let fixture = Fixture::new();
+    let mut merges = fixture.service.take_merged_watches().unwrap();
+    let (together, after) = (SessionId::new(), SessionId::new());
+    let (together_inbox, after_inbox) = (fixture.inbox(&together), fixture.inbox(&after));
+    for (inbox, number) in [
+        (&together_inbox, 12),
+        (&together_inbox, 13),
+        (&after_inbox, 14),
+        (&after_inbox, 15),
+    ] {
+        fixture.forge.set(open(number, CheckStatus::Passed));
+        inbox.watch(&target(number), NOW).await.unwrap();
+    }
+    let close = |number| {
+        let mut closed = edited(open(number, CheckStatus::Passed));
+        closed.summary.state = PrState::Closed;
+        fixture.forge.set(closed);
+    };
+
+    // One read finds 12 merged and 13 closed; 14 merges a read before 15
+    // closes, and one turn tells of both.
+    for number in [12, 14] {
+        fixture.forge.set(merged(open(number, CheckStatus::Passed)));
+    }
+    close(13);
+    fixture.service.tick(TICK).await;
+    close(15);
+    fixture.service.tick(TICK + MINUTE).await;
+    let told: Vec<_> = [&together_inbox, &after_inbox]
+        .map(|inbox| {
+            inbox.acknowledge(&inbox.take_news());
+            inbox.take_merge_told()
+        })
+        .into();
+
+    assert_eq!((merges.try_recv().ok(), told), (None, vec![None, None]));
 }
 
 // Covers: watching a watched PR again reports it and keeps its watch, so

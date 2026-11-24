@@ -195,6 +195,9 @@ pub use methods::{
     SESSION_RENAME,
 };
 pub use methods::{
+    NewSessionMark, SessionMark, SessionMarkParams, SessionMarkResponse, SESSION_MARK,
+};
+pub use methods::{
     ProcessChunk, ProcessOutput, ProcessOutputParams, ProcessState, ProcessStream, SessionProcess,
     SessionProcessesParams, SessionProcessesResponse, SESSION_PROCESSES,
 };

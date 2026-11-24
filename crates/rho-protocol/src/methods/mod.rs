@@ -39,6 +39,7 @@
 //! | [`SESSION_LIST`] | [`SessionListParams`] | [`SessionListResponse`] |
 //! | [`SESSION_LIST_DETAILED`] | [`SessionListParams`] | [`SessionListDetailedResponse`] |
 //! | [`SESSION_RENAME`] | [`SessionRenameParams`] | [`SessionRenameResponse`] |
+//! | [`SESSION_MARK`] | [`SessionMarkParams`] | [`SessionMarkResponse`] |
 //! | [`SESSION_DELETE`] | [`SessionDeleteParams`] | [`SessionDeleteResponse`] |
 //! | [`JOB_LIST`] | [`JobListParams`] | [`JobListResponse`] |
 //! | [`WORKTREE_PRUNE`] | [`WorktreePruneParams`] | [`WorktreePruneResponse`] |
@@ -87,6 +88,7 @@ mod input;
 mod inspect;
 mod job;
 mod login;
+mod mark;
 mod mcp;
 mod models;
 mod options;
@@ -154,6 +156,7 @@ pub use login::{
     AuthLoginPromptParams, AuthLoginResponse, LoginFlow, LoginId, LoginOutcome, LoginPrompt,
     AUTH_LOGIN, AUTH_LOGIN_CANCEL, AUTH_LOGIN_FINISHED, AUTH_LOGIN_PROMPT,
 };
+pub use mark::{NewSessionMark, SessionMark, SessionMarkParams, SessionMarkResponse, SESSION_MARK};
 pub use mcp::{
     SessionMcpCatalog, SessionMcpCatalogParams, SessionMcpCompleteParams,
     SessionMcpCompleteResponse, SessionMcpInventory, SessionMcpMode, SessionMcpParams,
@@ -318,6 +321,7 @@ protocol! {
         SessionList = SESSION_LIST: SessionListParams => SessionListResponse,
         SessionListDetailed = SESSION_LIST_DETAILED: SessionListParams => SessionListDetailedResponse,
         SessionRename = SESSION_RENAME: SessionRenameParams => SessionRenameResponse,
+        SessionMarkMethod = SESSION_MARK: SessionMarkParams => SessionMarkResponse,
         SessionDelete = SESSION_DELETE: SessionDeleteParams => SessionDeleteResponse,
         JobList = JOB_LIST: JobListParams => JobListResponse,
         WorktreePrune = WORKTREE_PRUNE: WorktreePruneParams => WorktreePruneResponse,

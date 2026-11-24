@@ -1834,7 +1834,7 @@
       "description": "Why the daemon dropped an attachment."
     },
     "DetailedSessionSummary": {
-      "description": "One session, as [`SESSION_LIST_DETAILED`] reports it: its\n[`SessionSummary`]'s fields, then the agent it runs as and the session\nthat started it. Goes at the next major with [`SESSION_LIST_DETAILED`].\n\nOn the wire it is a [`SessionSummary`] with two more optional fields, so\nfolding them into it changes no row a client reads.",
+      "description": "One session, as [`SESSION_LIST_DETAILED`] reports it: its\n[`SessionSummary`]'s fields, then the agent it runs as, the session that\nstarted it, and its mark. Goes at the next major with\n[`SESSION_LIST_DETAILED`].\n\nOn the wire it is a [`SessionSummary`] with three more optional fields,\nso folding them into it changes no row a client reads.",
       "properties": {
         "added_dirs": {
           "description": "The directories the session added beside its workspace, as last\nsaved, those since removed left out.",
@@ -1867,6 +1867,17 @@
             "string",
             "null"
           ]
+        },
+        "mark": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionMark"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How the person has marked the session ([`super::SESSION_MARK`]);\nabsent while it has no mark, and from a daemon that keeps none."
         },
         "parent": {
           "anyOf": [
@@ -3325,6 +3336,66 @@
           },
           "required": [
             "runtime"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "NewSessionMark": {
+      "description": "The mark [`SESSION_MARK`] sets, each kind as [`SessionMark`]'s of the\nsame name. The daemon stamps the time a mark is `at`; only a snooze's\nend is the client's.",
+      "oneOf": [
+        {
+          "properties": {
+            "kind": {
+              "const": "done",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Until `until`, in unix seconds on the daemon's clock, saved as\ngiven: one already past is a snooze that has ended.",
+          "properties": {
+            "kind": {
+              "const": "snoozed",
+              "type": "string"
+            },
+            "until": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "until"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "pinned",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "kept",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
           ],
           "type": "object"
         }
@@ -6311,6 +6382,29 @@
           "type": "object"
         },
         {
+          "description": "The session's mark changed, as when a client set or cleared it\n([`super::SESSION_MARK`]) or the daemon marked the session done for\na merged pull request; absent once cleared. Saved conversations hold\nnone: [`super::SESSION_LIST_DETAILED`] reports the mark a session has.",
+          "properties": {
+            "mark": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/SessionMark"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": {
+              "const": "mark_changed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Any other value: one a later protocol minor adds.",
           "properties": {
             "type": {
@@ -6533,6 +6627,140 @@
       "required": [
         "sessions"
       ],
+      "type": "object"
+    },
+    "SessionMark": {
+      "anyOf": [
+        {
+          "description": "The person is finished with the session, as of `at`. The daemon\nmarks a session done itself when a pull request its agent watched\nmerges and it watches no other, at or after the last save of the\nturn that told the agent.",
+          "properties": {
+            "at": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "done",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "at"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Hide the session until `until`, which the client chose.",
+          "properties": {
+            "kind": {
+              "const": "snoozed",
+              "type": "string"
+            },
+            "until": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "until"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Keep the session on top; pinned at `at`.",
+          "properties": {
+            "at": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "pinned",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "at"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The person put the session back on the active list at `at`, as by\nrestoring a done one or unpinning a pinned one.",
+          "properties": {
+            "at": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "kept",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "at"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "properties": {
+            "kind": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object",
+          "x-rho-other": true
+        }
+      ],
+      "description": "A session's mark, as the daemon saved it."
+    },
+    "SessionMarkParams": {
+      "description": "Params of [`SESSION_MARK`].",
+      "properties": {
+        "mark": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NewSessionMark"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The mark to save in place of the session's own; absent clears it."
+        },
+        "session": {
+          "$ref": "#/$defs/SessionId"
+        }
+      },
+      "required": [
+        "session"
+      ],
+      "type": "object"
+    },
+    "SessionMarkResponse": {
+      "description": "Result of [`SESSION_MARK`]: the mark is saved, on a session the daemon\nhas not loaded too, and clients attached to the session receive it as\n[`super::SessionEvent::MarkChanged`] if it changed. The session's\n[`super::SessionSummary::updated_at`] is as it was. A session nothing\nis saved under is [`crate::ErrorCode::SessionNotFound`].",
+      "properties": {
+        "mark": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionMark"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The session's mark as saved, with the time the daemon stamped;\nabsent once cleared."
+        }
+      },
       "type": "object"
     },
     "SessionMcpCatalog": {
@@ -9719,6 +9947,14 @@
       },
       "result": {
         "$ref": "#/$defs/SessionListDetailedResponse"
+      }
+    },
+    "rho/session/mark": {
+      "params": {
+        "$ref": "#/$defs/SessionMarkParams"
+      },
+      "result": {
+        "$ref": "#/$defs/SessionMarkResponse"
       }
     },
     "rho/session/mcp": {

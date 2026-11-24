@@ -144,7 +144,12 @@ fn is_legacy_transcript(path: &Path) -> bool {
 }
 
 pub(super) fn session_root() -> anyhow::Result<PathBuf> {
-    Ok(crate::paths::rho_dir()?.join("sessions"))
+    Ok(session_root_in(&crate::paths::rho_dir()?))
+}
+
+/// Where the Rho home `rho_home` keeps its sessions.
+pub(super) fn session_root_in(rho_home: &Path) -> PathBuf {
+    rho_home.join("sessions")
 }
 
 pub(super) fn session_dir_in_root(session_root: &Path, cwd: &Path) -> PathBuf {

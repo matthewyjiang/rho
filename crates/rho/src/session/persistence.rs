@@ -31,8 +31,9 @@ use super::id_match::{matching_session_files, session_id, single_match, single_w
 // Layout helpers live in `layout`; re-export the historical `persistence::` surface.
 pub(super) use super::layout::{
     ensure_session_dir, parse_timestamp, resolve_transcript_path, session_dir_in_root,
-    session_id_from_path, session_root, set_private_dir_permissions, set_private_file_permissions,
-    timestamp, unix_timestamp_secs, workspace_key, SessionUnit, SESSION_TRANSCRIPT_FILE_NAME,
+    session_id_from_path, session_root, session_root_in, set_private_dir_permissions,
+    set_private_file_permissions, timestamp, unix_timestamp_secs, workspace_key, SessionUnit,
+    SESSION_TRANSCRIPT_FILE_NAME,
 };
 
 /// Oldest session version this binary opens: the first whose files hold only

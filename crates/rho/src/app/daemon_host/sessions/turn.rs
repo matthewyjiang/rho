@@ -25,6 +25,7 @@ use super::{
     budget, cost,
     held_context::UnsentContext,
     inputs::{Asker, Inputs},
+    marks,
     options::available_auths,
     saved_replay,
     start::StartedTurn,
@@ -33,6 +34,7 @@ use super::{
 use crate::{
     app::{
         prompt_content::Prompt,
+        pull_requests::unix_ms,
         session_commands::{
             self, BuiltInCommand, CommandScope, CommandSet, Hosting, PromptCommand,
         },
@@ -189,6 +191,10 @@ impl TurnTask {
                 },
             stopping,
         } = self;
+        let origin = match &input {
+            TurnInput::Prompt { .. } => marks::TurnOrigin::Prompt { at: unix_ms() },
+            TurnInput::Daemon(_) => marks::TurnOrigin::Daemon,
+        };
         // Locked for the whole turn and released only after the turn's end
         // is recorded, so the daemon's stop, which waits for the lock, finds
         // every turn it waited for recorded. Free once the session's last
@@ -253,6 +259,8 @@ impl TurnTask {
                 // behind; clients see them before they see the turn end.
                 session.refresh_options(runtime, &available_auths(runtime.credentials()).await);
                 wake::prompt_ended(&session, runtime, &stopping).await;
+                // After the turn's last save, so the mark is not before it.
+                marks::turn_ended(&session, runtime, origin);
                 (
                     ended.map_err(|error| failure(&session, runtime, &error)),
                     timed_out,

@@ -178,6 +178,24 @@ pub(crate) enum End {
     Unreadable(String),
 }
 
+/// When rho found the newest merge `news` tells of, in unix milliseconds:
+/// `None` when it tells of none, and when a watch ended some other way
+/// then or since, so a pull request closed unmerged beside a merged one
+/// does not read as work that all merged.
+pub(super) fn merged_last<'a>(news: impl IntoIterator<Item = &'a News>) -> Option<u64> {
+    let (mut merged, mut otherwise) = (None, None);
+    for news in news {
+        match news.end {
+            Some(End::Merged { .. }) => merged = merged.max(Some(news.at)),
+            Some(End::Closed | End::CommentLoop | End::Unreadable(_)) => {
+                otherwise = otherwise.max(Some(news.at));
+            }
+            None => {}
+        }
+    }
+    merged.filter(|merged| otherwise < Some(*merged))
+}
+
 /// One evaluation's news on one pull request, queued for the session until
 /// a turn takes it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

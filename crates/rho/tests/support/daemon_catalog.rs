@@ -1,12 +1,13 @@
 //! The session catalog over the daemon's socket (`rho/session/list`,
-//! `rho/session/list_detailed`, `rho/session/rename`,
+//! `rho/session/list_detailed`, `rho/session/rename`, `rho/session/mark`,
 //! `rho/session/delete`), through the real binary: a list holds every
 //! workspace's sessions or one workspace's, a detailed list names each
 //! session's agent and the session that started it, a rename reaches
-//! attached clients and the list, and a delete detaches a loaded session's
-//! clients and removes it, removes one the daemon has not loaded, but never
-//! runs under a running turn (#1670, #1667). Paging itself is the session
-//! catalog's, covered in its unit tests.
+//! attached clients and the list, a mark does too and outlives the daemon,
+//! and a delete detaches a loaded session's clients and removes it, removes
+//! one the daemon has not loaded, but never runs under a running turn
+//! (#1670, #1667). Paging itself is the session catalog's, covered in its
+//! unit tests.
 
 use std::{
     num::NonZeroU32,
@@ -17,12 +18,13 @@ use pretty_assertions::assert_eq;
 use rho_protocol::{
     methods::{
         JobList, Method, SessionAttach, SessionCancel, SessionDelete, SessionList,
-        SessionListDetailed, SessionNew, SessionRename,
+        SessionListDetailed, SessionMarkMethod, SessionNew, SessionRename,
     },
     Client, ClientError, DaemonNotification, DetachReason, ErrorCode, JobKind, JobListParams,
-    Notifications, RpcError, SessionAttachParams, SessionCancelParams, SessionDeleteParams,
-    SessionDetachedParams, SessionEvent, SessionId, SessionListParams, SessionListResponse,
-    SessionNewParams, SessionRenameParams, SessionRenameResponse, SessionSetup, SessionSummary,
+    NewSessionMark, Notifications, RpcError, SessionAttachParams, SessionCancelParams,
+    SessionDeleteParams, SessionDetachedParams, SessionEvent, SessionId, SessionListParams,
+    SessionListResponse, SessionMark, SessionMarkParams, SessionMarkResponse, SessionNewParams,
+    SessionRenameParams, SessionRenameResponse, SessionSetup, SessionSummary,
 };
 
 use super::sessions::{
@@ -376,6 +378,111 @@ async fn a_rename_reaches_attached_clients_and_the_list() {
                 ..prompted_once(&session, &sandbox.workspace)
             }],
         )
+    );
+}
+
+/// Each session `rho/session/list_detailed` lists, in every workspace, as
+/// `rho/session/list` lists it, with its mark.
+async fn marks(client: &Client) -> Vec<(SessionSummary, Option<SessionMark>)> {
+    call::<SessionListDetailed>(client, &SessionListParams::default())
+        .await
+        .unwrap()
+        .sessions
+        .into_iter()
+        .map(|row| (row.summary, row.mark))
+        .collect()
+}
+
+// Covers: a mark set over the socket is saved with the session: the
+// daemon stamps its time and answers with it, an attached client hears it
+// as `mark_changed`, and the detailed list reports it beside an
+// `updated_at` the mark did not move; a daemon started later still lists
+// it, and clears it on a session it has not loaded; a deleted session has
+// no mark to set. Owner: daemon session catalog.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_mark_reaches_attached_clients_and_the_list_and_outlives_the_daemon() {
+    let sandbox = Sandbox::new();
+    let (mut daemon, client) = sandbox.spawn_daemon(sandbox.rho("fixed"), &[]).await;
+    let session = saved_session(&sandbox, &client, sandbox.workspace.clone()).await;
+    let deleted = saved_session(&sandbox, &client, sandbox.workspace.clone()).await;
+    let mark = async |client: &Client, session: &SessionId, mark: Option<NewSessionMark>| {
+        let params = SessionMarkParams::new(session.clone(), mark);
+        call::<SessionMarkMethod>(client, &params).await
+    };
+    // Far past any run of this test.
+    let snooze = NewSessionMark::Snoozed {
+        until: 4_102_444_800,
+    };
+    let snoozed = Some(SessionMark::Snoozed {
+        until: 4_102_444_800,
+    });
+
+    let delete = SessionDeleteParams {
+        session: deleted.clone(),
+        unless_attached: false,
+    };
+    call::<SessionDelete>(&client, &delete).await.unwrap();
+    let after_delete = mark(&client, &deleted, Some(NewSessionMark::Done)).await;
+    let unmarked = marks(&client).await;
+    let (watcher, mut notifications) = follow(&sandbox, &session).await;
+    let pinned = mark(&client, &session, Some(NewSessionMark::Pinned))
+        .await
+        .unwrap();
+    let told = next_notification(&mut notifications, |notification| match notification {
+        DaemonNotification::SessionEvent(params) => match params.event {
+            SessionEvent::MarkChanged { mark } => Some((params.session, mark)),
+            _ => None,
+        },
+        notification => panic!("expected the session's events, got {notification:?}"),
+    })
+    .await;
+    let replaced = mark(&client, &session, Some(snooze)).await;
+    let marked = marks(&client).await;
+
+    drop((watcher, client));
+    let stop = sandbox
+        .rho("fixed")
+        .args(["daemon", "stop"])
+        .status()
+        .unwrap();
+    assert!(stop.success(), "log:\n{}", sandbox.isolated.daemon_log());
+    daemon.wait().unwrap();
+    let client = sandbox.start_daemon("fixed").await;
+    let after_restart = marks(&client).await;
+    let cleared = mark(&client, &session, None).await;
+    let after_clear = marks(&client).await;
+
+    let Some(SessionMark::Pinned { at }) = pinned.mark else {
+        panic!("the session is pinned, not {:?}", pinned.mark);
+    };
+    let [(saved, None)] = unmarked.as_slice() else {
+        panic!("one session is listed, unmarked, not {unmarked:?}");
+    };
+    let snoozed_session = vec![(saved.clone(), snoozed.clone())];
+    assert_eq!(
+        (
+            without_time(std::slice::from_ref(saved)),
+            after_delete,
+            (at >= saved.updated_at, told),
+            replaced,
+            marked,
+            after_restart,
+            (cleared, after_clear),
+        ),
+        (
+            vec![prompted_once(&session, &sandbox.workspace)],
+            Err(RpcError::new(
+                ErrorCode::SessionNotFound,
+                format!("no session is saved under {deleted}"),
+            )),
+            (true, (session.clone(), pinned.mark)),
+            Ok(SessionMarkResponse::new(snoozed)),
+            snoozed_session.clone(),
+            snoozed_session,
+            (Ok(SessionMarkResponse::new(None)), unmarked.clone()),
+        ),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
     );
 }
 

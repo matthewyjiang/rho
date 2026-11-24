@@ -89,6 +89,7 @@ mod hold;
 mod idle_wake;
 mod inputs;
 mod inspect;
+mod marks;
 mod mcp;
 mod new;
 mod next_turn;
@@ -172,6 +173,8 @@ pub(super) struct Sessions {
     /// Read-held from each idle unload decision through its teardown, and
     /// through each delete; the stop write-locks it to wait for them.
     unloading: tokio::sync::RwLock<()>,
+    /// The daemon's Rho home, whose saved sessions [`marks`] marks.
+    rho_home: PathBuf,
     /// Where the sessions' T3 wake watchers keep their files (see
     /// [`t3_wake`]).
     wakes: WakeDir,
@@ -550,6 +553,7 @@ impl Sessions {
             reopening: ReopenLocks::default(),
             stopping,
             unloading: tokio::sync::RwLock::new(()),
+            rho_home: rho_home.to_path_buf(),
             wakes: WakeDir::in_home(rho_home),
             worktrees: crate::worktree::root(rho_home),
             restart_resumes: RestartResumes::default(),

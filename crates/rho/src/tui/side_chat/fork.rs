@@ -332,6 +332,7 @@ async fn apply(
         | SessionEvent::Plan { .. }
         | SessionEvent::Usage { .. }
         | SessionEvent::TitleChanged { .. }
+        | SessionEvent::MarkChanged { .. }
         | SessionEvent::Compaction { .. }
         | SessionEvent::ProviderRequest
         | SessionEvent::ProviderRetry { .. }

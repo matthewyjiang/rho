@@ -16,21 +16,22 @@ use crate::{
         SessionBackgroundStop, SessionBackgroundStopParams, SessionCancel, SessionCancelParams,
         SessionConfigure, SessionConfigureParams, SessionDelete, SessionDeleteParams, SessionFork,
         SessionForkParams, SessionHold, SessionHoldParams, SessionId, SessionInspect,
-        SessionInspectParams, SessionList, SessionListDetailed, SessionListParams, SessionMcp,
-        SessionMcpCatalogParams, SessionMcpCatalogRead, SessionMcpComplete,
-        SessionMcpCompleteParams, SessionMcpParams, SessionMcpResourceParams,
-        SessionMcpResourceRead, SessionNew, SessionNewParams, SessionProcesses,
-        SessionProcessesParams, SessionPrompt, SessionPromptParams, SessionPullRequestLink,
-        SessionPullRequestLinkParams, SessionPullRequestList, SessionPullRequestListParams,
-        SessionPullRequestShow, SessionPullRequestShowParams, SessionPullRequestUnlink,
-        SessionPullRequestUnlinkParams, SessionRename, SessionRenameParams, SessionSteer,
-        SessionSteerParams, SessionSurfaceAction, SessionSurfaceActionParams, SessionUnsteer,
-        SessionUnsteerParams, Status, Stop, WorktreePrune, WorktreePruneParams, AUTH_CHOOSE_STORE,
-        AUTH_KEY, AUTH_LIST, AUTH_LOGIN_CANCEL, AUTH_LOGOUT, CONFIG_REGISTER, CONFIG_SCHEMA,
-        CONFIG_SET, DAEMON_RESTART, DAEMON_STATUS, DAEMON_STOP, JOB_LIST, MODEL_REFRESH,
-        SESSION_ANSWER, SESSION_ANSWER_QUESTION, SESSION_BACKGROUND_LIST, SESSION_BACKGROUND_STOP,
-        SESSION_CANCEL, SESSION_CONFIGURE, SESSION_DELETE, SESSION_FORK, SESSION_HOLD,
-        SESSION_INSPECT, SESSION_LIST, SESSION_LIST_DETAILED, SESSION_MCP, SESSION_MCP_CATALOG,
+        SessionInspectParams, SessionList, SessionListDetailed, SessionListParams,
+        SessionMarkMethod, SessionMarkParams, SessionMcp, SessionMcpCatalogParams,
+        SessionMcpCatalogRead, SessionMcpComplete, SessionMcpCompleteParams, SessionMcpParams,
+        SessionMcpResourceParams, SessionMcpResourceRead, SessionNew, SessionNewParams,
+        SessionProcesses, SessionProcessesParams, SessionPrompt, SessionPromptParams,
+        SessionPullRequestLink, SessionPullRequestLinkParams, SessionPullRequestList,
+        SessionPullRequestListParams, SessionPullRequestShow, SessionPullRequestShowParams,
+        SessionPullRequestUnlink, SessionPullRequestUnlinkParams, SessionRename,
+        SessionRenameParams, SessionSteer, SessionSteerParams, SessionSurfaceAction,
+        SessionSurfaceActionParams, SessionUnsteer, SessionUnsteerParams, Status, Stop,
+        WorktreePrune, WorktreePruneParams, AUTH_CHOOSE_STORE, AUTH_KEY, AUTH_LIST,
+        AUTH_LOGIN_CANCEL, AUTH_LOGOUT, CONFIG_REGISTER, CONFIG_SCHEMA, CONFIG_SET, DAEMON_RESTART,
+        DAEMON_STATUS, DAEMON_STOP, JOB_LIST, MODEL_REFRESH, SESSION_ANSWER,
+        SESSION_ANSWER_QUESTION, SESSION_BACKGROUND_LIST, SESSION_BACKGROUND_STOP, SESSION_CANCEL,
+        SESSION_CONFIGURE, SESSION_DELETE, SESSION_FORK, SESSION_HOLD, SESSION_INSPECT,
+        SESSION_LIST, SESSION_LIST_DETAILED, SESSION_MARK, SESSION_MCP, SESSION_MCP_CATALOG,
         SESSION_MCP_COMPLETE, SESSION_MCP_RESOURCE, SESSION_NEW, SESSION_PROCESSES, SESSION_PROMPT,
         SESSION_PULL_REQUEST_LINK, SESSION_PULL_REQUEST_LIST, SESSION_PULL_REQUEST_SHOW,
         SESSION_PULL_REQUEST_UNLINK, SESSION_RENAME, SESSION_STEER, SESSION_SURFACE_ACTION,
@@ -72,6 +73,7 @@ pub(crate) enum ServiceCall {
     ListSessions(SessionListParams),
     ListSessionsDetailed(SessionListParams),
     RenameSession(SessionRenameParams),
+    MarkSession(SessionMarkParams),
     DeleteSession(SessionDeleteParams),
     ListJobs,
     PruneWorktrees(WorktreePruneParams),
@@ -148,6 +150,7 @@ impl ServiceCall {
                 decode_params::<SessionListDetailed>(params).map(Self::ListSessionsDetailed)
             }
             SESSION_RENAME => decode_params::<SessionRename>(params).map(Self::RenameSession),
+            SESSION_MARK => decode_params::<SessionMarkMethod>(params).map(Self::MarkSession),
             SESSION_DELETE => decode_params::<SessionDelete>(params).map(Self::DeleteSession),
             JOB_LIST => decode_params::<JobList>(params).map(|JobListParams {}| Self::ListJobs),
             WORKTREE_PRUNE => decode_params::<WorktreePrune>(params).map(Self::PruneWorktrees),
@@ -191,7 +194,8 @@ impl ServiceCall {
             | Self::UnlinkSessionPullRequest(SessionPullRequestUnlinkParams { session, .. })
             | Self::InspectSession(SessionInspectParams { session, .. })
             | Self::ConfigureSession(SessionConfigureParams { session, .. })
-            | Self::RenameSession(SessionRenameParams { session, .. }) => Some(session),
+            | Self::RenameSession(SessionRenameParams { session, .. })
+            | Self::MarkSession(SessionMarkParams { session, .. }) => Some(session),
             Self::Status
             | Self::Stop
             | Self::Restart
@@ -307,6 +311,9 @@ impl ServiceCall {
             }
             Self::RenameSession(params) => {
                 encode_result::<SessionRename>(&service.rename_session(params).await?)
+            }
+            Self::MarkSession(params) => {
+                encode_result::<SessionMarkMethod>(&service.mark_session(params).await?)
             }
             Self::DeleteSession(params) => {
                 encode_result::<SessionDelete>(&service.delete_session(params).await?)

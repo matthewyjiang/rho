@@ -449,6 +449,7 @@ mod tests {
             origin: None,
             agent: None,
             started_by: None,
+            mark: None,
         };
         assert!(session_matches(&session, "aaaa"));
         assert!(session_matches(&session, "LOGIN"));
