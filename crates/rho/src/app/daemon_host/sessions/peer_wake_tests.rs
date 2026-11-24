@@ -168,9 +168,21 @@ impl Fixture {
     }
 }
 
-/// A session that takes daemon turns, as the daemon adds it.
+/// A session that takes daemon turns, as the daemon adds it. It has history,
+/// as a session that started a turn elsewhere does, so the daemon's turn has
+/// something to continue.
 async fn load_starter(sessions: &Sessions, root: &TempDir) -> Arc<LoadedSession> {
     let starter = load(sessions, root, Load::Waking).await;
+    sessions
+        .configure(wire::SessionConfigureParams {
+            session: session_to_wire(starter.id.clone()),
+            change: wire::SessionChange::Context {
+                text: "earlier work".into(),
+                display: "earlier work".into(),
+            },
+        })
+        .await
+        .expect("the starter takes context");
     starter.report_activity();
     starter
 }
