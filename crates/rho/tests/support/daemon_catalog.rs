@@ -20,13 +20,14 @@ use rho_protocol::{
         SessionListDetailed, SessionNew, SessionRename,
     },
     Client, ClientError, DaemonNotification, DetachReason, ErrorCode, JobKind, JobListParams,
-    JobState, Notifications, RpcError, SessionAttachParams, SessionCancelParams,
-    SessionDeleteParams, SessionDetachedParams, SessionEvent, SessionId, SessionListParams,
-    SessionListResponse, SessionNewParams, SessionRenameParams, SessionRenameResponse,
-    SessionSetup, SessionSummary,
+    Notifications, RpcError, SessionAttachParams, SessionCancelParams, SessionDeleteParams,
+    SessionDetachedParams, SessionEvent, SessionId, SessionListParams, SessionListResponse,
+    SessionNewParams, SessionRenameParams, SessionRenameResponse, SessionSetup, SessionSummary,
 };
 
-use super::sessions::{settled_job, Sandbox, ARCHIVIST_AGENT, DEADLINE};
+use super::sessions::{
+    blue, first_request, settled_job, Follower, Sandbox, ARCHIVIST_AGENT, DEADLINE,
+};
 
 /// Sends `M` with `params`; its result, or the error the daemon answered.
 async fn call<M: Method>(client: &Client, params: &M::Params) -> Result<M::Result, RpcError> {
@@ -244,25 +245,36 @@ async fn the_detailed_list_names_agents_and_the_sessions_that_started_them() {
     // any other prompt.
     let client = sandbox.start_daemon("tool-call").await;
     let lead = sandbox.new_session(&client).await;
-    // The run's prompt is a call too, which blocks until `go` exists, so
-    // the run is under way when a session starts from its session.
-    let blocked = serde_json::json!({
-        "id": "bash",
-        "name": "bash",
-        "arguments": {"command": "while [ ! -e go ]; do sleep 0.02; done"},
+    let (mut following, _) = Follower::attach(&sandbox, &lead, Vec::new(), None).await;
+    // The run's prompt is a call too: it asks its parent and waits, so the
+    // run is under way when a session starts from its session.
+    let ask = serde_json::json!({
+        "id": "ask",
+        "name": "questionnaire",
+        "arguments": {
+            "questions": [{
+                "id": "color",
+                "question": "Which color?",
+                "choices": ["Red", "Blue"],
+            }],
+        },
     });
     let delegate = serde_json::json!({
         "id": "delegate",
         "name": "agent",
-        "arguments": {"agent_id": "worker", "prompt": blocked.to_string()},
+        "arguments": {"agent_id": "worker", "prompt": ask.to_string()},
     });
     sandbox.prompt_tool_call(&client, &lead, &delegate).await;
+    following
+        .read_until(|event| matches!(event, SessionEvent::InputRequested { .. }))
+        .await;
+    let request = first_request(&following.events).id;
     let run_session = sandbox
-        .poll_until("the run to start", async || {
+        .poll_until("the run's session", async || {
             let jobs = call::<JobList>(&client, &JobListParams {}).await.unwrap();
             jobs.jobs
                 .into_iter()
-                .find(|job| job.kind == JobKind::Subagent && job.state == JobState::Running)?
+                .find(|job| job.kind == JobKind::Subagent && job.state.in_progress())?
                 .session
         })
         .await;
@@ -288,7 +300,9 @@ async fn the_detailed_list_names_agents_and_the_sessions_that_started_them() {
     let archived = start(Some("archivist"), lead.clone()).await;
     let from_run = start(None, run_session).await;
     let unknown = start(None, SessionId::new("no-session-of-this-daemon")).await;
-    std::fs::write(sandbox.workspace.join("go"), "").unwrap();
+    super::sessions::answer(&client, &lead, request, blue())
+        .await
+        .unwrap();
     settled_job(&sandbox, &client, &lead).await;
 
     let default = Some("default".to_owned());
