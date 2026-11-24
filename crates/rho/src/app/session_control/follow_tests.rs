@@ -182,7 +182,8 @@ struct Waited {
 // but still returns the turn's outcome, with the cursor held before the
 // turn's end so the next wait reads it again; the delivery turn's outcome
 // then replaces it; a subagent question open at rest stops it with the
-// question listed; a stream that never reports activity, as a subagent
+// question listed; one open while a turn runs does not stop it, but is
+// listed, so the check of an answer finds it; a stream that never reports activity, as a subagent
 // run's, is done once its turn ends.
 // Owner: session-control wait.
 #[test]
@@ -211,6 +212,15 @@ fn wait_is_done_once_the_session_settles() {
             request: Box::new(question(1, InputAsker::Subagent)),
         });
         events
+    };
+    let asked_while_running = || {
+        vec![
+            activity(SessionActivity::Active),
+            state(JobState::Running, "t1"),
+            SessionEvent::InputRequested {
+                request: Box::new(question(1, InputAsker::Subagent)),
+            },
+        ]
     };
     let unreported = || {
         vec![
@@ -251,6 +261,17 @@ fn wait_is_done_once_the_session_settles() {
                 turn: Some(TurnId::new("t1")),
                 inputs: vec![question(1, InputAsker::Subagent)],
                 cursor: Some("stream:5".into()),
+            },
+        ),
+        (
+            "a subagent asks while a turn runs",
+            asked_while_running(),
+            Waited {
+                done: false,
+                outcome: None,
+                turn: Some(TurnId::new("t1")),
+                inputs: vec![question(1, InputAsker::Subagent)],
+                cursor: Some("stream:3".into()),
             },
         ),
         (

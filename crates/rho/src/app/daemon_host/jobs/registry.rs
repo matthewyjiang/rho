@@ -94,6 +94,10 @@ pub(in crate::app::daemon_host) enum AnswerRefused {
     /// The answering session started the asking one, but the grant it runs
     /// under may only watch sessions.
     ReadOnly,
+    /// The answering session started the asking one, but the daemon knows
+    /// no grant it runs under: it is a subagent run whose session's job is
+    /// gone.
+    NoGrant,
 }
 
 /// What the registry knows of a session, for reopening it (#1661).
@@ -351,7 +355,8 @@ impl JobRegistry {
             .ok_or(AnswerRefused::NotStarter)?;
         match session_grant(&jobs, &starter.id).map(|grant| grant.scope.access) {
             Some(Access::Write) => Ok(()),
-            Some(Access::Read) | None => Err(AnswerRefused::ReadOnly),
+            Some(Access::Read) => Err(AnswerRefused::ReadOnly),
+            None => Err(AnswerRefused::NoGrant),
         }
     }
 

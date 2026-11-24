@@ -19,7 +19,7 @@ use super::{AnswerResult, ControlError, DaemonError, SessionControl};
 impl SessionControl {
     /// Hands `answer` to question `request` of `session`, as session
     /// `by`'s. An answer that lost, to a person's or the timeout's, or to a
-    /// request the turn withdrew, says the question is no longer open.
+    /// request the turn withdrew, says the question is not open.
     pub(super) async fn answer(
         &self,
         session: SessionId,
@@ -41,11 +41,18 @@ impl SessionControl {
             Err(DaemonError::Request(ClientError::Rpc { error, .. }))
                 if error.error_code() == Some(ErrorCode::InputNotOpen) =>
             {
-                Err(ControlError::Invalid(format!(
-                    "input request {request} of session {session} is no longer open: it was already answered, it timed out, or its turn withdrew it"
-                )))
+                Err(not_open(&session, request))
             }
             Err(error) => Err(error.into()),
         }
     }
+}
+
+/// The refusal of an answer to request `request` of `session`, which is not
+/// open: from the daemon, or from the check, which reads the open requests
+/// first and also sees an id that never opened.
+pub(super) fn not_open(session: &SessionId, request: InputRequestId) -> ControlError {
+    ControlError::Invalid(format!(
+        "input request {request} of session {session} is not open: it was already answered, it timed out, or its turn withdrew it"
+    ))
 }

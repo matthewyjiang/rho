@@ -286,7 +286,9 @@ rules. Know these before you approve one:
 - An agent can't answer another session's approvals or plan approvals. That
   session waits until a person answers from a Rho frontend.
 - An agent can answer the questions of a session it started, with `answer`.
-  This covers the session's own questionnaires and its subagents' questions.
+  This covers the session's own questionnaires and its subagents' questions;
+  `wait` lists a subagent's question in `inputs` even while a turn runs. The
+  approval names each question's prompt next to its answer.
   It doesn't cover an MCP server's request for input (an elicitation), which
   waits for a person, and it can't answer a session it didn't start. A person
   can still answer first, and the first answer wins. Attached clients show

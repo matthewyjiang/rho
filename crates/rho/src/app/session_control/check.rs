@@ -8,12 +8,12 @@
 
 use std::path::PathBuf;
 
-use rho_protocol::{Ask, InputRequestId, QuestionAnswer, SessionId};
+use rho_protocol::{Ask, InputRequest, InputRequestId, QuestionAnswer, QuestionAsk, SessionId};
 use serde_json::{Map, Value};
 
 use super::{
-    canonical, dispatch::parse_arguments, prompt_content, Action, AnswerParams, Caller,
-    CancelParams, ControlError, ListParams, NewParams, PromptParams, ReadParams, Refusal,
+    answer::not_open, canonical, dispatch::parse_arguments, prompt_content, Action, AnswerParams,
+    Caller, CancelParams, ControlError, ListParams, NewParams, PromptParams, ReadParams, Refusal,
     SessionControl, SteerParams, WaitParams,
 };
 
@@ -72,8 +72,15 @@ impl SessionControl {
     /// whether its grant allows the action and reaches the session's
     /// workspace, the session is one the daemon knows, a prompt is not
     /// empty, a start or prompt stays within the nesting depth, and an
-    /// answer gives answers or declines, from a calling session. Whether
-    /// that session may answer is the daemon's to decide, when it answers.
+    /// answer gives answers or declines, from a calling session, to a
+    /// question the session has open. Whether that session may answer is
+    /// the daemon's to decide, when it answers, and so is whether only the
+    /// user may answer the question, which its wire ask does not say.
+    ///
+    /// An answer's check reads the asking session's open inputs as `wait`
+    /// does, on a connection of its own that replays the session's events
+    /// from its start with no deadline; a failure there fails the check, so
+    /// nothing is sent.
     pub(crate) async fn check(
         &self,
         caller: &Caller,
@@ -154,8 +161,8 @@ impl SessionControl {
                     )
                 })?;
                 let workspace = self.reach_session(caller, &params.session).await?;
-                let title = self.question_title(&params.session, params.request).await?;
-                let text = answer_text(&params, title.as_deref(), &answer);
+                let question = self.open_question(&params.session, params.request).await?;
+                let text = answer_text(&params, &question, &answer);
                 let target = target(Some(params.session.clone()), workspace, Some(text));
                 let AnswerParams {
                     session, request, ..
@@ -172,25 +179,22 @@ impl SessionControl {
         Ok(Checked { call, target })
     }
 
-    /// The title of question `request` of `session`, as `wait` reports the
-    /// session's open inputs; `None` when it is not an open question, which
-    /// the daemon refuses an answer to.
-    async fn question_title(
+    /// Question `request` of `session`, from the session's open inputs as
+    /// `wait` reports them, its subagents' included. Refuses, as the daemon
+    /// would, a request that is not open or is not a question, so nobody is
+    /// asked to approve an answer the daemon refuses.
+    async fn open_question(
         &self,
         session: &SessionId,
         request: InputRequestId,
-    ) -> Result<Option<String>, ControlError> {
+    ) -> Result<QuestionAsk, ControlError> {
         let now = self.now(session).await?;
-        Ok(now
-            .inputs
-            .into_iter()
-            .find(|input| input.id == request)
-            .and_then(|input| match input.ask {
-                Ask::Question(question) => Some(question.title),
-                // An approval, a plan approval, or a kind a newer protocol
-                // adds: none is a question an answer may name.
-                _ => None,
-            }))
+        find_question(now.inputs, request).map_err(|refused| match refused {
+            Unanswerable::NotOpen => not_open(session, request),
+            Unanswerable::NotQuestion => ControlError::Invalid(format!(
+                "input request {request} of session {session} is not a question: only a person answers an approval or a plan approval"
+            )),
+        })
     }
 
     /// Refuses a start or prompt deeper than [`super::Limits::max_depth`].
@@ -206,28 +210,72 @@ impl SessionControl {
     }
 }
 
+/// Why the check refuses an answer before anyone approves it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Unanswerable {
+    /// No open request has the id: it was answered, timed out, or
+    /// withdrawn, or never opened.
+    NotOpen,
+    /// The request is an approval or a plan approval, which only a person
+    /// answers.
+    NotQuestion,
+}
+
+/// The question that request `request` among the open `inputs` asks.
+fn find_question(
+    inputs: Vec<InputRequest>,
+    request: InputRequestId,
+) -> Result<QuestionAsk, Unanswerable> {
+    let input = inputs
+        .into_iter()
+        .find(|input| input.id == request)
+        .ok_or(Unanswerable::NotOpen)?;
+    match input.ask {
+        Ask::Question(question) => Ok(question),
+        // An approval, a plan approval, or a kind a newer protocol adds:
+        // none is a question an answer may name.
+        _ => Err(Unanswerable::NotQuestion),
+    }
+}
+
 /// What an answer sends, for an approval to show and remember: the request
-/// and session it answers, with the question's `title` when known, then
-/// each question's id and its answers, as `color: Blue; size: S, M`, or
-/// that it declines. Naming the request keeps an approval for this answer
-/// from covering the same answers to a later question.
-fn answer_text(params: &AnswerParams, title: Option<&str>, answer: &QuestionAnswer) -> String {
-    let asked = match title {
-        Some(title) => format!(
-            "request {} of session {} ({title:?})",
-            params.request, params.session
-        ),
-        None => format!("request {} of session {}", params.request, params.session),
+/// and session it answers with the `question`'s title, then each question
+/// it answers by id and prompt with its answers, as
+/// `color ("Which color?"): Blue; size ("Which sizes?"): S, M`, or the
+/// questions it declines. Request ids restart when the daemon reloads the
+/// session, and titles default to the same text, so the prompts are what
+/// keep an approval for this answer from covering the same answers to
+/// another question.
+fn answer_text(params: &AnswerParams, question: &QuestionAsk, answer: &QuestionAnswer) -> String {
+    // A question id the ask lacks, which the daemon refuses, shows bare.
+    let named = |id: &str| match question.questions.iter().find(|asked| asked.id == id) {
+        Some(asked) => format!("{id} ({:?})", asked.prompt),
+        None => id.to_owned(),
     };
     let answers = match answer {
         QuestionAnswer::Answers { answers } => answers
             .iter()
-            .map(|(question, values)| format!("{question}: {}", values.join(", ")))
+            .map(|(id, values)| format!("{}: {}", named(id), values.join(", ")))
             .collect::<Vec<_>>()
             .join("; "),
-        QuestionAnswer::Decline => "decline".to_owned(),
+        QuestionAnswer::Decline => format!(
+            "decline {}",
+            question
+                .questions
+                .iter()
+                .map(|asked| named(&asked.id))
+                .collect::<Vec<_>>()
+                .join("; ")
+        ),
         // A kind a newer protocol adds, which this core never builds.
         _ => "answer".to_owned(),
     };
-    format!("{asked}: {answers}")
+    format!(
+        "request {} of session {} ({:?}): {answers}",
+        params.request, params.session, question.title
+    )
 }
+
+#[cfg(test)]
+#[path = "check_tests.rs"]
+mod tests;

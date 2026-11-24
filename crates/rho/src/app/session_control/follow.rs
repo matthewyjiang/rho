@@ -434,11 +434,10 @@ impl Watch {
             done,
             outcome: end.filter(|_| turn_over).map(|end| end.outcome.clone()),
             turn: self.turn.clone(),
-            inputs: if done {
-                self.inputs.clone()
-            } else {
-                Vec::new()
-            },
+            // Whether or not it is done: a subagent's question is open while
+            // a turn runs, and the session that started this one may answer
+            // it then.
+            inputs: self.inputs.clone(),
             // Seq 0 is no position: a cursor at it always resets.
             cursor: (checkpoint > Seq(0)).then(|| {
                 format_cursor(&Cursor {

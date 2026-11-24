@@ -589,11 +589,13 @@ fn a_run_a_session_started_is_under_that_sessions_grant() {
 // answer its questions, and only under a grant that acts on sessions; a
 // sibling, a grandparent, a session whose job is gone, and any session
 // answering a session nobody started are refused. A subagent run's session
-// that started one may answer, under the grant of the session running it.
+// that started one may answer, under the grant of the session running it,
+// and is refused once that session's job is gone; another session's
+// subagent run, and the starter's own subagent run, are not the starter.
 // Owner: daemon job registry, the rule `rho/session/answer_question` checks.
 #[test]
 fn only_the_starting_session_may_answer_with_write_access() {
-    use super::AnswerRefused::{NotStarter, ReadOnly};
+    use super::AnswerRefused::{NoGrant, NotStarter, ReadOnly};
     use crate::caller_context::{Access, CallerContext, Scope, Workspaces};
     let home = TempDir::new().unwrap();
     let registry = JobRegistry::open(JobStore::open(home.path()).unwrap());
@@ -627,12 +629,43 @@ fn only_the_starting_session_may_answer_with_write_access() {
         "run".into(),
     );
     let subagents_worker = session(Some(&subagent.id), Access::Write);
+    let siblings_subagent = JobRecord::new_subagent(
+        sibling.id.clone(),
+        PathBuf::from("/work"),
+        Some(rho_sdk::SessionId::new()),
+        "run".into(),
+    );
+    let orphan_subagent = JobRecord::new_subagent(
+        JobId::generate(),
+        PathBuf::from("/work"),
+        Some(rho_sdk::SessionId::new()),
+        "run".into(),
+    );
+    let orphan_subagents_worker = session(Some(&orphan_subagent.id), Access::Write);
     let cases = [
         ("the starter", &worker, &lead, Ok(())),
         ("a read-only starter", &watched, &watcher, Err(ReadOnly)),
         ("a sibling", &worker, &sibling, Err(NotStarter)),
         ("a grandparent", &grandchild, &lead, Err(NotStarter)),
         ("a subagent run", &subagents_worker, &subagent, Ok(())),
+        (
+            "a subagent run whose session's job is gone",
+            &orphan_subagents_worker,
+            &orphan_subagent,
+            Err(NoGrant),
+        ),
+        (
+            "another session's subagent run",
+            &worker,
+            &siblings_subagent,
+            Err(NotStarter),
+        ),
+        (
+            "the starter's subagent run",
+            &worker,
+            &subagent,
+            Err(NotStarter),
+        ),
         (
             "a starter whose job is gone",
             &orphan,
@@ -651,6 +684,9 @@ fn only_the_starting_session_may_answer_with_write_access() {
         &orphan,
         &subagent,
         &subagents_worker,
+        &siblings_subagent,
+        &orphan_subagent,
+        &orphan_subagents_worker,
     ] {
         registry.register(record.clone()).unwrap();
     }

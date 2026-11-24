@@ -43,6 +43,9 @@ impl Sessions {
                     AnswerRefused::ReadOnly => format!(
                         "session {by} may not act on sessions; answering a question needs write access"
                     ),
+                    AnswerRefused::NoGrant => format!(
+                        "session {by} runs under no grant the daemon knows, since the session that ran it is gone; answering a question needs write access"
+                    ),
                 })
             })?;
         asking.change_inputs(|inputs| inputs.answer_question(request, answer))?;
