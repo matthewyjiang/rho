@@ -13,7 +13,7 @@ use rho_sdk::{SessionId, StopReason, UserInput};
 use super::{
     agent_binding::{AgentBinder, BoundAgent},
     read_only_session::{self, ReadOnlySession},
-    session_assembly::{BuiltSession, HookStart, ModelOwner},
+    session_assembly::BuiltSession,
 };
 use crate::{
     added_dirs::AddedDirs,
@@ -85,12 +85,6 @@ pub(crate) async fn generate_title(request: TitleRequest) -> anyhow::Result<Stri
             max_steps: TITLE_MAX_STEPS,
             usage_purpose: USAGE_PURPOSE,
             parent: session,
-            // A title is the host's own bookkeeping, not work the user's
-            // hooks asked to hear about; its reads still obey their
-            // `before_tool_use` denials.
-            hook_start: HookStart::Gate,
-            model_owner: ModelOwner::InternalAgent,
-            history: Vec::new(),
         }),
     )
     .await

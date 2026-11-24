@@ -1,9 +1,10 @@
-//! `/side` / `/btw` overlay: a frozen-context aside that does not write back.
+//! `/side` / `/btw` overlay: an aside in a fork of the session, which does
+//! not write back to it (`fork`).
 
 mod command;
 mod composer;
+mod fork;
 mod overlay;
-mod snapshot;
 
 use std::time::Instant;
 
@@ -16,19 +17,14 @@ use super::{
     commands,
     composer_buffer::ComposerEditKey,
     panel_pointer::{PanelPointer, PanelPointerEffect, PanelPointerEvent},
-    App, CommandId, CommandInvocation, ComposerMode, Entry, HistoryDirection,
+    App, CommandId, CommandInvocation, ComposerMode, HistoryDirection,
 };
-use crate::app::side_chat::{spawn_side_chat, SideChatEvent, SideChatHandle, SideChatLaunch};
-use crate::config::Config;
-use rho_sdk::{
-    model::{ContentBlock, Message},
-    SessionId,
-};
+use rho_protocol::SessionId;
 
 use command::{side_command_action, SideCommandAction};
 use composer::SideEditFollowUp;
+use fork::{spawn_side_chat, ForkLaunch, SideChatEvent, SideChatHandle};
 use overlay::{side_overlay_frame, side_scroll_metrics, SideOverlay, SideOverlayFrame};
-use snapshot::frozen_parent_snapshot;
 
 pub(super) struct SideChat {
     overlay: SideOverlay,
@@ -36,9 +32,9 @@ pub(super) struct SideChat {
 }
 
 impl SideChat {
-    fn new(snapshot: String) -> Self {
+    fn new() -> Self {
         Self {
-            overlay: SideOverlay::new(snapshot),
+            overlay: SideOverlay::new(),
             handle: None,
         }
     }
@@ -48,10 +44,11 @@ impl SideChat {
             SideChatEvent::AssistantDelta(text) => self.overlay.append_assistant_delta(&text),
             SideChatEvent::AssistantReset => self.overlay.reset_assistant_stream(),
             SideChatEvent::ToolStarted(name) => self.overlay.push_tool(name),
+            SideChatEvent::Denied(summary) => self.overlay.push_denied(&summary),
             SideChatEvent::Finished => self.overlay.finish_assistant(),
             SideChatEvent::Cancelled => self.overlay.mark_cancelled(),
             SideChatEvent::Failed(message) => self.overlay.fail_run(message),
-            SideChatEvent::Rejected(message) => self.overlay.push_notice(message),
+            SideChatEvent::Notice(message) => self.overlay.push_notice(message),
         }
     }
 
@@ -60,7 +57,7 @@ impl SideChat {
             return false;
         }
         self.overlay
-            .push_notice("could not start side chat: a turn is already running".into());
+            .push_error("could not start side chat: a turn is already running".into());
         true
     }
 
@@ -73,7 +70,9 @@ impl SideChat {
         }
     }
 
-    fn submit(&mut self, prompt: String, launch: Option<SideChatLaunch>) {
+    /// Sends `prompt` to the aside's worker, started with `launch` if it
+    /// has none yet.
+    fn submit(&mut self, prompt: String, launch: Option<ForkLaunch>) {
         if self.reject_if_busy() {
             return;
         }
@@ -118,7 +117,7 @@ impl App {
 
     pub(super) fn open_side_chat(&mut self) {
         if self.side_chat.is_none() {
-            self.side_chat = Some(SideChat::new(self.frozen_parent_snapshot()));
+            self.side_chat = Some(SideChat::new());
         }
         self.input_ui.set_composer(ComposerMode::Side);
         self.set_status("side chat");
@@ -141,15 +140,11 @@ impl App {
     }
 
     fn submit_side_prompt(&mut self, prompt: String) {
-        let (busy, needs_spawn, snapshot) = {
+        let (busy, needs_spawn) = {
             let Some(side) = self.side_chat.as_ref() else {
                 return;
             };
-            (
-                side.overlay.busy,
-                side.handle.is_none(),
-                side.overlay.snapshot.clone(),
-            )
+            (side.overlay.busy, side.handle.is_none())
         };
         if busy {
             if let Some(side) = self.side_chat.as_mut() {
@@ -157,26 +152,37 @@ impl App {
             }
             return;
         }
-        let launch = needs_spawn.then(|| self.side_chat_launch(snapshot));
+        let launch = match needs_spawn.then(|| self.side_chat_launch()).transpose() {
+            Ok(launch) => launch,
+            Err(why) => {
+                // Nothing to fork yet: the question stays in the composer.
+                if let Some(side) = self.side_chat.as_mut() {
+                    side.overlay.push_error(why.into());
+                    side.overlay.composer.replace_text(prompt);
+                }
+                return;
+            }
+        };
         if let Some(side) = self.side_chat.as_mut() {
             side.submit(prompt, launch);
         }
     }
 
-    fn side_chat_launch(&self, snapshot: String) -> SideChatLaunch {
-        SideChatLaunch {
-            config: self.side_chat_config(),
-            config_path: self
-                .info
-                .services
-                .config_repository
-                .configured_path()
-                .unwrap_or_else(|_| self.info.runtime.cwd.join(".rho").join("config.toml")),
-            cwd: self.info.runtime.cwd.clone(),
-            parent_session_id: self.side_chat_parent_session_id(),
-            snapshot,
-            added_dirs: self.info.runtime.added_dirs.clone(),
+    /// What forks the followed session, or why it can't be forked: the
+    /// daemon forks only what a session saved.
+    fn side_chat_launch(&self) -> Result<ForkLaunch, &'static str> {
+        let session = &self.info.session.daemon;
+        if self.info.session.no_save {
+            return Err("could not start side chat: this session is not saved");
         }
+        let parent = session
+            .saved_id()
+            .ok_or("could not start side chat: send the session a message first")?;
+        Ok(ForkLaunch {
+            daemon: session.daemon(),
+            parent: SessionId::new(parent),
+            setup: session.launch().setup.clone(),
+        })
     }
 
     pub(super) fn poll_side_chat(&mut self) -> bool {
@@ -304,50 +310,6 @@ impl App {
             }
         }
         self.submit_side_prompt(text);
-    }
-
-    fn frozen_parent_snapshot(&self) -> String {
-        let mut messages = Vec::new();
-        for entry in self.history.entries() {
-            match entry {
-                Entry::User(text) if !text.is_empty() => {
-                    messages.push(Message::User(vec![ContentBlock::Text(text.clone())].into()));
-                }
-                Entry::Assistant(assistant) if !assistant.text.is_empty() => {
-                    messages.push(Message::Assistant(
-                        vec![ContentBlock::Text(assistant.text.clone())].into(),
-                    ));
-                }
-                _ => {}
-            }
-        }
-        let live = self.streams.assistant_stream.emitted_text();
-        if !live.is_empty() {
-            messages.push(Message::Assistant(
-                vec![ContentBlock::Text(live.to_string())].into(),
-            ));
-        }
-        frozen_parent_snapshot(&messages)
-    }
-
-    fn side_chat_config(&self) -> Config {
-        let mut config = self
-            .info
-            .services
-            .config_repository
-            .load()
-            .unwrap_or_default();
-        config.provider.clone_from(&self.info.runtime.provider);
-        config.model.clone_from(&self.info.runtime.model);
-        config.auth.clone_from(&self.info.runtime.auth);
-        config.reasoning = self.info.runtime.reasoning;
-        config
-    }
-
-    fn side_chat_parent_session_id(&self) -> SessionId {
-        self.current_session_id()
-            .and_then(|id| id.parse().ok())
-            .unwrap_or_default()
     }
 
     #[cfg(test)]

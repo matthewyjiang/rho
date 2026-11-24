@@ -34,7 +34,7 @@ use crate::{
     session_environment::{Ambient, SessionEnvironment},
 };
 
-pub(crate) use transcript::{render_transcript, TranscriptBudget, DEFAULT_TRANSCRIPT_BUDGET};
+use transcript::{TranscriptBudget, DEFAULT_TRANSCRIPT_BUDGET};
 
 pub(crate) const TOOL_NAME: &str = "advisor";
 

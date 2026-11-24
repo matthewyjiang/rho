@@ -86,6 +86,13 @@ const SIDE_POINTER_STEPS: &[Step] = &[
         text: "gpt-5.5",
         timeout: STARTUP,
     },
+    // The daemon forks only a session that saved something.
+    Step::Phase("parent_message"),
+    Step::SubmitText("parent before the aside"),
+    Step::WaitText {
+        text: "fixture response: parent before the aside",
+        timeout: STREAM,
+    },
     Step::Phase("open_btw"),
     Step::SubmitText("/btw copy me please"),
     Step::WaitText {

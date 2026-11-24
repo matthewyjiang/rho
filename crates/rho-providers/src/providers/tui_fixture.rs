@@ -300,6 +300,11 @@ fn title_response(request: &ModelRequest<'_>) -> Option<Result<ModelResponse, Pr
     Some(completed(title))
 }
 
+/// How the daemon's word to a fork's model starts (`MODEL_CONTEXT` in
+/// rho's `daemon_host/sessions/fork.rs`), which goes ahead of the person's
+/// first message there; the fixture answers the message alone.
+const FORK_CONTEXT_START: &str = "You are in a side chat: a fork of the conversation above";
+
 fn last_user_text(request: &ModelRequest<'_>) -> Option<String> {
     request.messages.iter().rev().find_map(|message| {
         let (Message::User(content) | Message::BoundaryInput(content)) = message else {
@@ -308,8 +313,10 @@ fn last_user_text(request: &ModelRequest<'_>) -> Option<String> {
         let text = content
             .iter()
             .filter_map(|block| match block {
-                ContentBlock::Text(text) => Some(text.as_str()),
-                ContentBlock::Image(_) | ContentBlock::ToolCall(_) => None,
+                ContentBlock::Text(text) if !text.starts_with(FORK_CONTEXT_START) => {
+                    Some(text.as_str())
+                }
+                ContentBlock::Text(_) | ContentBlock::Image(_) | ContentBlock::ToolCall(_) => None,
             })
             .collect::<String>();
         (!text.is_empty()).then_some(text)
