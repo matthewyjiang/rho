@@ -490,3 +490,46 @@ async fn a_busy_starter_takes_the_notice_at_its_boundary_and_no_turn_follows() {
         )
     );
 }
+
+// Covers: a started turn that ends after the starter's delivery turn took
+// its notices, and before that turn ended, wakes the starter again once it
+// did. A miss leaves a starter that runs several sessions untold of the
+// later ones until something else starts a turn.
+// Owner: daemon wake for started sessions.
+#[tokio::test]
+async fn a_turn_that_ends_during_the_delivery_turn_wakes_the_starter_again() {
+    let fixture = Fixture::watched().await;
+    let (first, second) = (fixture.session().await, fixture.session().await);
+    for child in [&first, &second] {
+        prompt_from(&fixture.sessions, fixture.inbox(), child)
+            .await
+            .expect("the prompt starts a turn");
+    }
+
+    cancel(&fixture.sessions, &first).await;
+    until(
+        || cards(&fixture.starter).len() == 1,
+        "the starter shows the first notice",
+    )
+    .await;
+    // The delivery turn is past the boundary that took the first notice.
+    cancel(&fixture.sessions, &second).await;
+    let left_behind = fixture.inbox().has_notices();
+    // Not awaited to its end: the next delivery turn may be under way by
+    // the time this task looks.
+    fixture.starter.cancel_turn();
+    fixture.shown_then_cancelled(2).await;
+
+    assert_eq!(
+        (
+            left_behind,
+            cards(&fixture.starter),
+            fixture.inbox().outstanding(),
+        ),
+        (
+            true,
+            vec![Some(first.id.to_string()), Some(second.id.to_string())],
+            false,
+        )
+    );
+}
