@@ -157,9 +157,11 @@ impl SessionRecord {
     /// Keeps how each linked pull request stands, as `last_read` says the
     /// newest read of it found it, with when that read was, in unix
     /// milliseconds. A link it has no read of keeps what it had, and so
-    /// does one linked in the second of that read or after it: sessions
-    /// share reads, and a read older than the link may show as open a pull
-    /// request that had merged by the time it was linked.
+    /// does one linked after the second of that read: sessions share
+    /// reads, and a read older than the link may show as open a pull
+    /// request that had merged by the time it was linked. A read in the
+    /// second of the link counts, as the one a new link to a session a
+    /// client looks at wakes the poller for.
     pub(crate) fn keep_standing(
         &mut self,
         last_read: impl Fn(&PrId) -> Option<(Stood, u64)>,
@@ -169,7 +171,7 @@ impl SessionRecord {
             let Some((read, at)) = last_read(&link.pr) else {
                 continue;
             };
-            if at / 1000 <= link.linked_at || link.stood == Some(read) {
+            if at / 1000 < link.linked_at || link.stood == Some(read) {
                 continue;
             }
             kept.changed = true;

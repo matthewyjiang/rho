@@ -67,6 +67,10 @@ struct Want {
     linked: bool,
     /// Whether a watch of it has not taken its baseline.
     pending: bool,
+    /// Whether a link to it is newer than the last time it was asked for,
+    /// so that link has no read of its own: due whatever its cadence says,
+    /// else a merge before its first read would never be found.
+    unasked: bool,
 }
 
 impl Want {
@@ -98,6 +102,9 @@ pub(super) fn due(state: &State, now: u64) -> BTreeMap<String, Due> {
             want.linked = true;
             if awaits_merge {
                 want.at(Cadence::Linked);
+                let asked_at = state.snapshots.get(&link.pr).and_then(|read| read.asked_at);
+                want.unasked |=
+                    link.stood.is_none() && asked_at.is_some_and(|at| at / 1000 < link.linked_at);
             }
             if let Some(cadence) = leased {
                 want.at(cadence);
@@ -155,7 +162,8 @@ pub(super) fn due(state: &State, now: u64) -> BTreeMap<String, Due> {
             continue;
         };
         let snapshot = state.snapshots.get(pr);
-        let is_due = cadence.due(snapshot.and_then(|snapshot| snapshot.asked_at), now);
+        let is_due =
+            want.unasked || cadence.due(snapshot.and_then(|snapshot| snapshot.asked_at), now);
         let host = pr.repo.host.as_str();
         match cadence {
             Cadence::Linked => {

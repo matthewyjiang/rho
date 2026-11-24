@@ -5,10 +5,10 @@
 //! The daemon reads a pull request while something wants it: a session
 //! that watches it, or a client that listed or showed it recently. One
 //! that is only linked it reads every 5 minutes until it merges or closes.
-//! Each
-//! `list` and `show` takes a lease on what it names, which runs out unless
-//! renewed: a `list` lease lasts 10 minutes and a `show` lease 60 seconds,
-//! two periods of the cadence each is read at (5 minutes and 30 seconds).
+//! Each `list` and `show` takes a lease on what it names, which runs out
+//! unless renewed: a `list` lease lasts 10 minutes and a `show` lease 60
+//! seconds, two periods of the cadence each is read at (5 minutes and 30
+//! seconds).
 //! Reissue `list` every 5 minutes and `show` every 30 seconds, so one late
 //! request does not stop the reads.
 

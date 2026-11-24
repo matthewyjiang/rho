@@ -693,8 +693,8 @@ async fn a_merge_is_told_once_every_linked_pull_request_has_merged() {
 
 // Covers: a pull request first read for a session after it merged, as one
 // linked for reference, is no merge found, so linking it marks nothing:
-// also when another session's read, older than the link, showed it open.
-// Owner: PR service
+// also when another session's read, older than the link, showed it open
+// and the read the new link asks for failed. Owner: PR service
 #[tokio::test]
 async fn a_pull_request_linked_after_it_merged_is_no_merge_found() {
     let fixture = Fixture::new();
@@ -716,9 +716,10 @@ async fn a_pull_request_linked_after_it_merged_is_no_merge_found() {
     fixture.service.tick(TICK).await;
     fixture.forge.set(merged(open(13, CheckStatus::Passed)));
     link(&late_reference, 13, TICK + MINUTE).await;
-    // Not due yet: this tick has only the read from before the merge.
+    // This tick is left with the read from before the merge.
+    fixture.forge.fail_next(ReadError::Failed("offline".into()));
     fixture.service.tick(TICK + 2 * MINUTE).await;
-    let found_at = TICK + millis(LINKED_POLL);
+    let found_at = TICK + 2 * MINUTE + millis(LINKED_POLL);
     fixture.service.tick(found_at).await;
 
     assert_eq!(
@@ -730,6 +731,35 @@ async fn a_pull_request_linked_after_it_merged_is_no_merge_found() {
             }),
             None,
         )
+    );
+}
+
+// Covers: a read in the second a pull request was linked counts as that
+// link's, as the tick a new link to a listed session wakes at once: the
+// merge that follows is found. Owner: PR service
+#[tokio::test]
+async fn a_read_as_a_pull_request_is_linked_counts_as_read_unmerged() {
+    let fixture = Fixture::new();
+    let mut merges = fixture.service.take_all_merged().unwrap();
+    let session = SessionId::new();
+    fixture.forge.set(open(12, CheckStatus::Passed));
+    fixture
+        .inbox(&session)
+        .link(&target(12), LinkOrigin::Agent, NOW)
+        .await
+        .unwrap();
+
+    fixture.service.tick(NOW).await;
+    fixture.forge.set(merged(open(12, CheckStatus::Passed)));
+    let found_at = NOW + millis(LINKED_POLL);
+    fixture.service.tick(found_at).await;
+
+    assert_eq!(
+        merges.try_recv().ok(),
+        Some(AllMerged {
+            session,
+            at: found_at,
+        })
     );
 }
 

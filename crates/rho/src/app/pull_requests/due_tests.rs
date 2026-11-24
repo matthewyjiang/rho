@@ -232,6 +232,17 @@ fn a_lease_decides_what_a_tick_reads() {
             period: WATCH_POLL,
         },
         Case {
+            name: "linked since its pull request was last asked for, as for another session",
+            given: |state| {
+                let (pr, url) = (pr(12), pr(12).url());
+                let record = &mut state.entry(&session()).record;
+                record.link(pr, url, LinkOrigin::Agent, ago(50) / 1000);
+                read_summary(state, 12, ago(100));
+            },
+            asked: asks(&[], &[12], &[], &[], &[]),
+            period: WATCH_POLL,
+        },
+        Case {
             name: "linked, no lease, one due: the host's other open links with it",
             given: |state| {
                 link_read(state, 12, Stood::Open);
