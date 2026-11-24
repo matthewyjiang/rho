@@ -341,12 +341,17 @@ impl LoadedSession {
         let mut inputs = self.inputs.lock().unwrap_or_else(PoisonError::into_inner);
         let was_waiting = inputs.waiting();
         let result = change(&mut inputs);
-        self.feed.publish(inputs.take_events());
+        let events = inputs.take_events();
+        let opened = super::peer_wake::opened_inputs(&events);
+        self.feed.publish(events);
         match (was_waiting, inputs.waiting()) {
             (false, true) => self.record(JobEvent::InputOpened),
             (true, false) => self.record(JobEvent::InputSettled),
             (false, false) | (true, true) => {}
         }
+        // Once the job follows, so a starter that looks once told finds the
+        // session waiting.
+        self.tell_starter_waiting(opened);
         inputs.send_answers();
         for (id, after) in inputs.take_timeouts() {
             tokio::spawn(super::time_out(Arc::downgrade(self), id, after));

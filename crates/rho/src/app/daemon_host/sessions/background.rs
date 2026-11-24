@@ -21,6 +21,7 @@ use tokio::sync::watch;
 use super::{awaited::AwaitedWork, LoadedSession, Sessions};
 use crate::{
     app::{
+        peer_sessions::PeerInbox,
         pull_requests::PullRequestInbox,
         session_runtime::{BackgroundWait, SessionRuntime},
         subagent_manager::{BackgroundChild, SubagentManager},
@@ -58,6 +59,8 @@ struct Sources {
     subagents: Option<SubagentManager>,
     surfaces: Option<SurfaceHost>,
     pull_requests: Option<PullRequestInbox>,
+    /// Notices of the sessions it started (see `peer_wake`).
+    peers: Option<PeerInbox>,
 }
 
 impl Sources {
@@ -67,6 +70,7 @@ impl Sources {
             subagents: runtime.tools().subagents().cloned(),
             surfaces: runtime.tools().surfaces().cloned(),
             pull_requests: runtime.tools().pull_requests().cloned(),
+            peers: runtime.peer_sessions().cloned(),
         }
     }
 }
@@ -100,6 +104,7 @@ impl SessionBackground {
                 subagents,
                 surfaces: None,
                 pull_requests: None,
+                peers: None,
             }),
             workflows: WorkflowRunTracker::new(),
             replaced: watch::Sender::new(0),
@@ -143,6 +148,7 @@ impl SessionBackground {
             subagents,
             surfaces,
             pull_requests,
+            peers,
         } = self.sources();
         AwaitedWork::new(
             self.wait,
@@ -152,6 +158,7 @@ impl SessionBackground {
             subagents,
             surfaces,
             pull_requests,
+            peers,
         )
     }
 

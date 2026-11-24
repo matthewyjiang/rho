@@ -35,7 +35,24 @@ pub(super) enum Load {
 /// A session loaded in `sessions` as `load` says, on a new job, with a
 /// provider that never answers, so nothing but the test ends its turns.
 pub(super) async fn load(sessions: &Sessions, root: &TempDir, load: Load) -> Arc<LoadedSession> {
-    insert(sessions, opened(sessions, root, load).await)
+    insert(
+        sessions,
+        opened(sessions, root, load, /*parent*/ None).await,
+    )
+}
+
+/// A session loaded in `sessions` as [`load`] loads a [`Load::Saved`] one,
+/// whose job `parent` started it, as a session another one starts through
+/// session control is.
+pub(super) async fn load_started_by(
+    sessions: &Sessions,
+    root: &TempDir,
+    parent: &JobId,
+) -> Arc<LoadedSession> {
+    insert(
+        sessions,
+        opened(sessions, root, Load::Saved, Some(parent)).await,
+    )
 }
 
 /// A saved session loaded in `sessions` as [`load`] loads it, whose
@@ -46,7 +63,7 @@ pub(super) async fn load_waiting_on(
     root: &TempDir,
     background: impl FnOnce(&str) -> SessionBackground,
 ) -> Arc<LoadedSession> {
-    let session = opened(sessions, root, Load::Saved).await;
+    let session = opened(sessions, root, Load::Saved, /*parent*/ None).await;
     let background = background(session.id.as_str());
     insert(
         sessions,
@@ -65,7 +82,12 @@ fn insert(sessions: &Sessions, session: LoadedSession) -> Arc<LoadedSession> {
     session
 }
 
-async fn opened(sessions: &Sessions, root: &TempDir, load: Load) -> LoadedSession {
+async fn opened(
+    sessions: &Sessions,
+    root: &TempDir,
+    load: Load,
+    parent: Option<&JobId>,
+) -> LoadedSession {
     let config = Config::default();
     let provider: Arc<dyn rho_sdk::provider::ModelProvider> = Arc::new(HangUntilCancel);
     let sdk = rho_sdk::Rho::builder()
@@ -85,7 +107,10 @@ async fn opened(sessions: &Sessions, root: &TempDir, load: Load) -> LoadedSessio
         Load::Unsaved => unsaved_unattended_runtime_on(root.path(), &config, sdk, provider).await,
     };
     let id = runtime.session_id().clone();
-    let record = JobRecord::new_session(JobId::generate(), PathBuf::from("/work"), id);
+    let record = JobRecord {
+        parent: parent.cloned(),
+        ..JobRecord::new_session(JobId::generate(), PathBuf::from("/work"), id)
+    };
     let job = record.id.clone();
     sessions.jobs.register(record).unwrap();
     match load {

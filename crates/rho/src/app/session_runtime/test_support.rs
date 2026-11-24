@@ -182,7 +182,8 @@ pub(in crate::app) async fn host_woken_runtime_on(
 /// [`unattended_runtime_on`] for a client that asked the daemon to start a
 /// turn when the idle session's background work finishes, as
 /// `idle_wake: turn` does. Its tools hold the pull request inbox
-/// `pull_requests` gives for its id, as a daemon session's do.
+/// `pull_requests` gives for its id, and its host an inbox for notices of
+/// the sessions it starts, as a daemon session's do.
 pub(in crate::app) async fn idle_woken_runtime_on(
     root: &Path,
     config: &Config,
@@ -193,6 +194,7 @@ pub(in crate::app) async fn idle_woken_runtime_on(
     let host = HostCapabilities {
         surfaces: None,
         pull_requests: None,
+        peer_sessions: Some(crate::app::peer_sessions::PeerInbox::new()),
         idle_turns: super::IdleTurns::Host,
         ..HostCapabilities::unattended(UnattendedApprovals::Alone)
     };
@@ -259,6 +261,7 @@ pub(in crate::app) fn test_build(config: &Config, workspace_root: &Path) -> Sess
         host: HostCapabilities {
             surfaces: None,
             pull_requests: None,
+            peer_sessions: None,
             questions: QuestionSupport::Unavailable,
             children: ChildAgents::InProcess,
             idle_turns: super::IdleTurns::Never,

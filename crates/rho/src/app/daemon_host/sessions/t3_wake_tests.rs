@@ -146,6 +146,7 @@ impl Fixture {
             /*subagents*/ None,
             /*surfaces*/ None,
             /*pull_requests*/ None,
+            /*peers*/ None,
         )
         .expect("a host that wakes its session waits on its work")
     }

@@ -146,6 +146,7 @@ impl Fixture {
                 subagents: Some(&manager),
                 processes: Some(&processes),
                 workflows: &workflows,
+                peer_sessions: None,
             },
             wait,
             None,
@@ -674,6 +675,7 @@ async fn failed_attach_keeps_held_notices() {
             subagents: Some(&manager),
             processes: Some(&processes),
             workflows: &workflows,
+            peer_sessions: None,
         },
         BackgroundWait::HoldPrompt,
         None,
@@ -746,6 +748,7 @@ async fn only_live_processes_and_task_results_are_background_work() {
             subagents: None,
             processes: Some(&processes),
             workflows: &workflows,
+            peer_sessions: None,
         };
         assert_eq!(sources.has_work(SESSION_ID), expected, "{name}");
     }

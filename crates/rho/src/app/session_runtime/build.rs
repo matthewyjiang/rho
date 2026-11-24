@@ -75,6 +75,10 @@ pub(crate) struct HostCapabilities {
     /// daemon root session whose host starts its turns; `None` leaves the
     /// session without the pull request tools.
     pub(crate) pull_requests: Option<crate::app::pull_requests::PullRequestInbox>,
+    /// Where notices of the sessions this one starts through session
+    /// control arrive, for a daemon session whose host starts its turns;
+    /// `None` for a session nothing would wake to deliver them.
+    pub(crate) peer_sessions: Option<crate::app::peer_sessions::PeerInbox>,
     /// Who runs the `agent` tool's children.
     pub(crate) children: ChildAgents,
     /// Whether the host starts a turn when background work finishes idle.
@@ -126,6 +130,7 @@ impl HostCapabilities {
             questions: QuestionSupport::Unavailable,
             surfaces: None,
             pull_requests: None,
+            peer_sessions: None,
             children: ChildAgents::InProcess,
             idle_turns: IdleTurns::Never,
             subagent_pool: SubagentPool::Own,

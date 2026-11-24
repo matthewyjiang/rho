@@ -11,6 +11,8 @@
 //! boundaries; one that turn left behind is delivered once it ended. A
 //! background service's exit is no result: it wakes nothing.
 //!
+//! A turn the session started in another session through session control
+//! that ended or waits for a person is a result too (see `peer_wake`).
 //! A subagent's request that its parent act (`request_parent_action`) is a
 //! result too. Its informational notices (`message_parent`) are not: they
 //! start no turn, and go with the next one.
@@ -234,7 +236,8 @@ async fn watch_results(
                     // Nothing awaited runs and no turn is under way, so a
                     // new result can only come from work a later turn
                     // starts, and that turn's end wakes this loop, or from
-                    // a watched pull request, which needs no turn. What
+                    // a watched pull request or a session this one started,
+                    // which need no turn. What
                     // `another` hears meanwhile, a service's exit or a
                     // child's notice, starts no turn.
                     tokio::select! {

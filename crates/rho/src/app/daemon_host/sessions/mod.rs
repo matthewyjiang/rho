@@ -92,6 +92,7 @@ mod next_turn;
 mod observe;
 mod open;
 mod options;
+mod peer_wake;
 mod processes;
 mod pull_request_wake;
 mod pull_requests;
@@ -255,6 +256,12 @@ struct LoadedSession {
     cache_warm: Option<KeepWarm>,
     /// Prompt context no model turn has sent yet (see [`held_context`]).
     held_context: Mutex<crate::app::prompt_content::PromptContext>,
+    /// Where notices of the turns this session starts in other sessions
+    /// arrive, when its client asked for daemon turns (see [`peer_wake`]).
+    peers: Option<crate::app::peer_sessions::PeerInbox>,
+    /// The turn under way, when it owes the session that started this one
+    /// a notice (see [`peer_wake`]).
+    starter_turn: Mutex<Option<peer_wake::StarterTurn>>,
 }
 
 /// The state a session's turn lock guards.
@@ -401,6 +408,8 @@ impl LoadedSession {
             wake_gave_up: AtomicBool::new(false),
             cache_warm: KeepWarm::of(&runtime),
             held_context: Mutex::new(held_context),
+            peers: runtime.peer_sessions().cloned(),
+            starter_turn: Mutex::new(None),
             child_questions: ChildQuestions::of(&mut runtime),
             handle: runtime.handle(),
             workspace: runtime.workspace_root().to_path_buf(),
@@ -460,13 +469,17 @@ impl LoadedSession {
     /// client's replay holds one without the other (#1669). Any change to
     /// its background work goes first, so a client hears what the turn left
     /// running before it hears the turn end, and whether the session settled
-    /// follows.
+    /// follows. A turn that owes the session that started this one a notice
+    /// tells it then (see [`peer_wake`]).
     fn end_turn(&self, turn: rho_protocol::TurnId, outcome: Option<TurnOutcome>, end: TurnEnd) {
         self.report_background();
         let ended = outcome
             .clone()
-            .map(|outcome| rho_protocol::SessionEvent::TurnEnded { turn, outcome });
-        match self.jobs.end_turn(&self.job, end, outcome) {
+            .map(|outcome| rho_protocol::SessionEvent::TurnEnded {
+                turn: turn.clone(),
+                outcome,
+            });
+        match self.jobs.end_turn(&self.job, end.clone(), outcome.clone()) {
             Ok(moved) => self
                 .feed
                 .publish(ended.into_iter().chain([state_event(&moved)])),
@@ -475,6 +488,9 @@ impl LoadedSession {
                 self.feed.publish(ended);
             }
         }
+        // Once the job records the end, so a starter that looks once told
+        // finds the turn ended.
+        self.tell_starter_ended(&turn, outcome.as_ref(), &end);
         self.report_activity();
     }
 

@@ -55,6 +55,7 @@ use crate::{
             root_host_tools, AgentBinder, AgentInvocation, AgentRole, BoundAgent, LaunchTools,
         },
         cli_config::{settle_bound_config, ProviderRefreshStatus, SettledConfig},
+        peer_sessions::PeerInbox,
         prompt_content::PromptContext,
         session_assembly::SignIn,
         session_runtime::{
@@ -456,6 +457,13 @@ async fn open_runtime(
         (Some(service), ChildAgents::InProcess, IdleTurns::Host) => Some(service.inbox(&id, cwd)),
         _ => None,
     };
+    // Likewise, only such a session hears of the turns it starts in other
+    // sessions through session control (see `peer_wake`): no other would
+    // be woken to take the notice.
+    let peer_sessions = match (children, idle_turns) {
+        (ChildAgents::InProcess, IdleTurns::Host) => Some(PeerInbox::new()),
+        (ChildAgents::InProcess, IdleTurns::Never) | (ChildAgents::HostThreads, _) => None,
+    };
     let build = SessionBuild {
         launch: SessionLaunch {
             config_path,
@@ -468,6 +476,7 @@ async fn open_runtime(
             questions,
             surfaces,
             pull_requests,
+            peer_sessions,
             children,
             idle_turns,
             subagent_pool,

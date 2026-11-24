@@ -123,6 +123,7 @@ async fn started(
         Some(subagents),
         /*surfaces*/ None,
         Some(inbox),
+        /*peers*/ None,
     )
     .unwrap();
     (awaited, processes, running)

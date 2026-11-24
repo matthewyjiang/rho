@@ -12,7 +12,9 @@
 //! A session is busy, never idle, while a turn or a subagent writes it, a
 //! settings change is queued on it or applying, a delete holds it, a client
 //! follows it, or background work its prompts started runs on or holds a
-//! result.
+//! result, or a turn it started in another session through session control
+//! runs on or left a notice it has not taken (see `peer_wake`), which an
+//! unload would lose.
 //!
 //! A sweep every grace marks each idle session idle from then, and unloads
 //! or discards one a sweep already marked a grace ago, so a session leaves
@@ -29,7 +31,9 @@ use rho_sdk::SessionId;
 use tokio::time::Instant;
 
 use super::{worktree::Prune, LoadedSession, Sessions};
-use crate::app::{daemon_host::jobs::SessionJob, session_runtime::SessionRuntime};
+use crate::app::{
+    daemon_host::jobs::SessionJob, peer_sessions::PeerInbox, session_runtime::SessionRuntime,
+};
 
 /// How long a session sits idle before the daemon unloads or discards it,
 /// unless `rho daemon run --unload-idle-after` says otherwise.
@@ -125,7 +129,8 @@ impl Sessions {
             let busy = matches!(self.jobs.session_job(id), SessionJob::Busy(_))
                 || turn.hold.is_some()
                 || session.feed.followed()
-                || session.runtime_keeps_loaded();
+                || session.runtime_keeps_loaded()
+                || session.peers.as_ref().is_some_and(PeerInbox::outstanding);
             let now = Instant::now();
             let idle_since = match turn.residency {
                 Residency::Unloaded => return false,

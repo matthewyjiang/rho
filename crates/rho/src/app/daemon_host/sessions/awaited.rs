@@ -6,12 +6,16 @@
 //! service neither wakes the session nor keeps it from settling (see
 //! `settle`). A session whose prompts hold until their work finishes
 //! (`BackgroundWait::HoldPrompt`) waits on nothing between turns.
+//!
+//! A turn the session started in another session through session control
+//! counts too (see `peer_wake`): it runs until it ends, and its notice is
+//! a result, as is one that it waits for a person.
 
 use std::future::Future;
 
 use crate::{
     app::{
-        pull_requests::PullRequestInbox, session_runtime::BackgroundWait,
+        peer_sessions::PeerInbox, pull_requests::PullRequestInbox, session_runtime::BackgroundWait,
         subagent_manager::SubagentManager,
     },
     tools::{
@@ -38,6 +42,9 @@ pub(super) struct AwaitedWork {
     /// watch is neither running work nor a result: it never keeps the
     /// session active or loaded.
     pull_requests: Option<PullRequestInbox>,
+    /// Notices of turns the session started in other sessions, which are
+    /// results; such a turn still under way is running work.
+    peers: Option<PeerInbox>,
 }
 
 impl AwaitedWork {
@@ -51,13 +58,14 @@ impl AwaitedWork {
         subagents: Option<SubagentManager>,
         surfaces: Option<SurfaceHost>,
         pull_requests: Option<PullRequestInbox>,
+        peers: Option<PeerInbox>,
     ) -> Option<Self> {
-        let (subagents, surfaces, pull_requests) = match wait {
+        let (subagents, surfaces, pull_requests, peers) = match wait {
             BackgroundWait::HoldPrompt => return None,
             // The host runs the session's children as its own threads and
             // reports them itself, and its client draws no surfaces.
-            BackgroundWait::HostWakes => (None, None, None),
-            BackgroundWait::HostTurns => (subagents, surfaces, pull_requests),
+            BackgroundWait::HostWakes => (None, None, None, None),
+            BackgroundWait::HostTurns => (subagents, surfaces, pull_requests, peers),
         };
         Some(Self {
             session_id,
@@ -66,6 +74,7 @@ impl AwaitedWork {
             subagents,
             surfaces,
             pull_requests,
+            peers,
         })
     }
 
@@ -109,17 +118,32 @@ impl AwaitedWork {
         }
     }
 
-    /// Resolves once pull request news may have arrived, which, unlike every
-    /// other result, needs no turn of the session's to start it.
+    /// Resolves once pull request news or a notice of a started session may
+    /// have arrived, which, unlike every other result, need no turn of the
+    /// session's to start them: another session-control caller may prompt
+    /// a session this one started (see `peer_wake`).
     pub(super) fn outside_news(&self) -> impl Future<Output = ()> + Send + 'static {
         let news = self
             .pull_requests
             .as_ref()
             .map(PullRequestInbox::news_owned);
+        let peers = self.peers.as_ref().map(PeerInbox::arrived_owned);
         async move {
-            match news {
-                Some(news) => news.await,
-                None => std::future::pending().await,
+            let news = async move {
+                match news {
+                    Some(news) => news.await,
+                    None => std::future::pending().await,
+                }
+            };
+            let peers = async move {
+                match peers {
+                    Some(arrived) => arrived.await,
+                    None => std::future::pending().await,
+                }
+            };
+            tokio::select! {
+                () = news => {}
+                () = peers => {}
             }
         }
     }
@@ -141,6 +165,7 @@ impl AwaitedWork {
             || self.subagents.as_ref().is_some_and(|subagents| {
                 subagents.has_active_or_pending_notification(&self.session_id)
             })
+            || self.peers.as_ref().is_some_and(PeerInbox::expecting)
             || self.has_result()
     }
 
@@ -155,6 +180,7 @@ impl AwaitedWork {
                 .subagents
                 .as_ref()
                 .is_some_and(|subagents| subagents.has_running(&self.session_id))
+            || self.peers.as_ref().is_some_and(PeerInbox::expecting)
     }
 
     /// The session's tasks still running or holding a result not yet
@@ -190,6 +216,7 @@ impl AwaitedWork {
                 .pull_requests
                 .as_ref()
                 .is_some_and(PullRequestInbox::has_news)
+            || self.peers.as_ref().is_some_and(PeerInbox::has_notices)
     }
 
     /// Resolves once a result is waiting.

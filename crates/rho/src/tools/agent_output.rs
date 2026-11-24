@@ -8,7 +8,9 @@ use {
 
 const DETAIL_BYTES: usize = 160;
 const SUMMARY_DETAIL_BYTES: usize = 256;
-const RESULT_EXCERPT_BYTES: usize = 16 * 1024;
+/// The most of one run's result a notification quotes.
+pub(crate) const RESULT_EXCERPT_BYTES: usize = 16 * 1024;
+/// The most one notification's whole text may take.
 pub(crate) const MODEL_NOTIFICATION_BYTES: usize = 16 * 1024;
 
 const NOTIFICATION_HEADER: &str = "[agent notification]\n\nRun status:\n";
@@ -283,7 +285,9 @@ fn push_cli_metadata(lines: &mut Vec<String>, snapshot: &SubagentSnapshot) {
     }
 }
 
-fn push_excerpt(output: &mut String, result: &str, max_bytes: usize) {
+/// Appends `result` to `output`, cut with [`TRUNCATION_MARKER`] to at most
+/// `max_bytes`.
+pub(crate) fn push_excerpt(output: &mut String, result: &str, max_bytes: usize) {
     if result.len() <= max_bytes {
         output.push_str(result);
         return;
