@@ -7,7 +7,9 @@ use rho_sdk::{
 };
 
 use super::*;
-use crate::{config::Config, subagent::RunState, tools::agent_output::MODEL_NOTIFICATION_BYTES};
+use crate::{
+    config::Config, subagent::RunState, tools::notification_format::MODEL_NOTIFICATION_BYTES,
+};
 
 /// Isolates delegated-run storage and agent discovery from the developer's own
 /// home, so these tests see the same catalog everywhere they run.

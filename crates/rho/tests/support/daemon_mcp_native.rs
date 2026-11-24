@@ -439,38 +439,11 @@ fn boundary_inputs(sandbox: &Sandbox, session: &SessionId) -> Vec<String> {
         .collect()
 }
 
-/// What one session notification told of its one session.
-#[derive(Debug, PartialEq)]
-struct Told {
-    /// The session id its summary line names.
-    session: String,
-    /// The state at the end of its summary line.
-    state: String,
-    /// The line under the summary.
-    outcome: String,
-    /// The answer's heading and excerpt.
-    answer: String,
-}
-
-/// Parses a session notification of one session: its paragraphs are the
-/// header, the summaries, the answers' heading, and each answer.
-fn parse_told(text: &str) -> Told {
-    let paragraphs: Vec<&str> = text.split("\n\n").collect();
-    let summary: Vec<&str> = paragraphs[1].lines().collect();
-    let (name, state) = summary[1].rsplit_once(": ").expect("a summary line");
-    Told {
-        session: name.split(' ').nth(1).unwrap_or_default().to_owned(),
-        state: state.to_owned(),
-        outcome: summary[2].to_owned(),
-        answer: paragraphs[3].to_owned(),
-    }
-}
-
 // Covers: an agent in a daemon session that no client follows, and whose
 // client asked for daemon turns, starts a session elsewhere and ends its own
 // turn; once the started session's turn ends, the daemon wakes the agent with
-// one turn whose input names that session, its state and its answer, so the
-// agent never has to poll `sessions wait`.
+// one turn whose one notification names that session and quotes its answer,
+// so the agent never has to poll `sessions wait`.
 // Owner: daemon wake for started sessions, through the native tool.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_started_sessions_end_wakes_its_idle_starter() {
@@ -511,26 +484,18 @@ async fn a_started_sessions_end_wakes_its_idle_starter() {
     std::fs::write(workspace.join("go"), "").unwrap();
     let child_answer = answer(&host, &child).await;
     let woken = stopped(&host, &agent).await;
-    // What each notification told: the session its summary names, before
-    // any title, with the state and outcome after it, and the answer under
-    // the session's own heading.
-    let notices: Vec<Told> = boundary_inputs(&sandbox, &agent)
-        .iter()
+    let notices: Vec<String> = boundary_inputs(&sandbox, &agent)
+        .into_iter()
         .filter(|text| text.lines().next() == Some("[session notification]"))
-        .map(|text| parse_told(text))
         .collect();
+    let names = |text: &String| (text.contains(child.as_str()), text.contains(&child_answer));
 
     assert_eq!(
-        (woken["outcome"]["text"].clone(), notices),
         (
-            json!(REPLY),
-            vec![Told {
-                session: child.to_string(),
-                state: "completed".to_owned(),
-                outcome: "outcome: answered".to_owned(),
-                answer: format!("session {child}:\n{child_answer}"),
-            }],
+            woken["outcome"]["text"].clone(),
+            notices.iter().map(names).collect::<Vec<_>>()
         ),
+        (json!(REPLY), vec![(true, true)]),
         "log:\n{}",
         sandbox.isolated.daemon_log()
     );

@@ -171,7 +171,9 @@ pub(crate) fn fence_context(kind: &str, header: &str, body: &str) -> String {
     format!("{fence}{kind} {header}\n{body}\n{fence}")
 }
 
-fn longest_backtick_run(text: &str) -> usize {
+/// The most backticks in a row in `text`, which a fence around it must
+/// outgrow.
+pub(crate) fn longest_backtick_run(text: &str) -> usize {
     let mut longest = 0;
     let mut run = 0;
     for character in text.chars() {

@@ -1,8 +1,10 @@
 //! Sessions loaded into a [`Sessions`] as session tests use them.
 
-use std::{path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
+use rho_protocol as wire;
 use tempfile::TempDir;
+use tokio::time::timeout;
 
 use super::{background::SessionBackground, open::OpenedSession, LoadedSession, Sessions};
 use crate::{
@@ -24,7 +26,8 @@ pub(super) enum Load {
     Saved,
     /// As [`Self::Saved`], its client having asked the daemon to start a
     /// turn when its background work finishes idle (`idle_wake: turn`), so
-    /// its tools hold its pull request inbox, as the daemon opens it.
+    /// its tools hold its pull request inbox, and it has an inbox for the
+    /// turns it starts in other sessions, as the daemon opens it.
     Waking,
     /// Saved, with its turn under way.
     Busy,
@@ -35,24 +38,7 @@ pub(super) enum Load {
 /// A session loaded in `sessions` as `load` says, on a new job, with a
 /// provider that never answers, so nothing but the test ends its turns.
 pub(super) async fn load(sessions: &Sessions, root: &TempDir, load: Load) -> Arc<LoadedSession> {
-    insert(
-        sessions,
-        opened(sessions, root, load, /*parent*/ None).await,
-    )
-}
-
-/// A session loaded in `sessions` as [`load`] loads a [`Load::Saved`] one,
-/// whose job `parent` started it, as a session another one starts through
-/// session control is.
-pub(super) async fn load_started_by(
-    sessions: &Sessions,
-    root: &TempDir,
-    parent: &JobId,
-) -> Arc<LoadedSession> {
-    insert(
-        sessions,
-        opened(sessions, root, Load::Saved, Some(parent)).await,
-    )
+    insert(sessions, opened(sessions, root, load).await)
 }
 
 /// A saved session loaded in `sessions` as [`load`] loads it, whose
@@ -63,7 +49,7 @@ pub(super) async fn load_waiting_on(
     root: &TempDir,
     background: impl FnOnce(&str) -> SessionBackground,
 ) -> Arc<LoadedSession> {
-    let session = opened(sessions, root, Load::Saved, /*parent*/ None).await;
+    let session = opened(sessions, root, Load::Saved).await;
     let background = background(session.id.as_str());
     insert(
         sessions,
@@ -82,12 +68,7 @@ fn insert(sessions: &Sessions, session: LoadedSession) -> Arc<LoadedSession> {
     session
 }
 
-async fn opened(
-    sessions: &Sessions,
-    root: &TempDir,
-    load: Load,
-    parent: Option<&JobId>,
-) -> LoadedSession {
+async fn opened(sessions: &Sessions, root: &TempDir, load: Load) -> LoadedSession {
     let config = Config::default();
     let provider: Arc<dyn rho_sdk::provider::ModelProvider> = Arc::new(HangUntilCancel);
     let sdk = rho_sdk::Rho::builder()
@@ -107,10 +88,7 @@ async fn opened(
         Load::Unsaved => unsaved_unattended_runtime_on(root.path(), &config, sdk, provider).await,
     };
     let id = runtime.session_id().clone();
-    let record = JobRecord {
-        parent: parent.cloned(),
-        ..JobRecord::new_session(JobId::generate(), PathBuf::from("/work"), id)
-    };
+    let record = JobRecord::new_session(JobId::generate(), PathBuf::from("/work"), id);
     let job = record.id.clone();
     sessions.jobs.register(record).unwrap();
     match load {
@@ -142,4 +120,59 @@ async fn opened(
         &sessions.wakes,
         &sessions.settings,
     )
+}
+
+/// Bounds each wait on the daemon's own tasks; never the way a test syncs.
+pub(super) const TEST_BUDGET: Duration = Duration::from_secs(10);
+
+/// Runs the daemon's tasks until `done` holds. Nothing announces some of
+/// what tests wait for, as an idle watcher's give-up, but what the session
+/// publishes, so this looks again after each yield; [`TEST_BUDGET`] bounds
+/// a hang.
+pub(super) async fn until(done: impl Fn() -> bool, what: &str) {
+    let wait = async {
+        while !done() {
+            tokio::task::yield_now().await;
+        }
+    };
+    timeout(TEST_BUDGET, wait)
+        .await
+        .unwrap_or_else(|_| panic!("{what}"));
+}
+
+/// What a session's clients heard of its activity and its turns, each
+/// change once.
+#[derive(Debug, PartialEq)]
+pub(super) enum Seen {
+    Activity(wire::SessionActivity),
+    TurnRunning,
+    TurnEnded,
+}
+
+pub(super) fn seen(session: &LoadedSession) -> Vec<Seen> {
+    let mut seen: Vec<Seen> = session
+        .feed
+        .buffered_for_tests()
+        .into_iter()
+        .filter_map(|event| match event {
+            wire::SessionEvent::Activity { state } => Some(Seen::Activity(state)),
+            wire::SessionEvent::State { state, .. } if state.in_progress() => {
+                Some(Seen::TurnRunning)
+            }
+            wire::SessionEvent::State { .. } => Some(Seen::TurnEnded),
+            _ => None,
+        })
+        .collect();
+    seen.dedup();
+    seen
+}
+
+/// How many prompts `session`'s clients were shown.
+pub(super) fn prompts_shown(session: &LoadedSession) -> usize {
+    session
+        .feed
+        .buffered_for_tests()
+        .iter()
+        .filter(|event| matches!(event, wire::SessionEvent::UserMessage { .. }))
+        .count()
 }

@@ -130,10 +130,8 @@ impl Sessions {
         })?;
         // A prompt carries no setup, so a session it reopens opens with what
         // its file keeps alone.
-        // Kept: whether the prompt named it decides whether its turn tells
-        // the session that started this one (see `peer_wake`).
         let with = OpenWith::under(
-            grant::asked(params.grant.clone(), &params.environment)?,
+            grant::asked(params.grant, &params.environment)?,
             &params.environment,
             SessionSetup::default(),
         )?;
@@ -142,8 +140,8 @@ impl Sessions {
                 .enter_session(&params.session, &with, |session, turn| {
                     let limit = params.timeout_ms.map(TurnLimit::starting_now);
                     let entered = self.start_turn(session, turn, &with, key.clone(), limit)?;
-                    if let Entered::Started(started) = &entered {
-                        self.expect_starter_notice(session, &started.id, params.grant.as_ref());
+                    if matches!(entered, Entered::Started(_)) {
+                        self.claim_starter(session, key.as_ref());
                     }
                     Ok(entered)
                 })
@@ -245,9 +243,9 @@ impl Sessions {
                 // A turn takes the session's results, so whatever gave up
                 // waking it for them looks again once this turn ends.
                 session.rearm_wake();
-                // Only the prompt that started it says whether it owes the
-                // session that started this one a notice.
-                session.forget_starter_turn();
+                // Only the prompt that started it says whether it owes a
+                // session a notice (see `peer_wake`).
+                session.peer_wake.forget();
                 // A turn the daemon starts to deliver finished work has yet
                 // to take it, so clients hear how that work ended before
                 // they hear the turn begin.

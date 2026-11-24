@@ -42,9 +42,7 @@ const AGENTS_TOOL: &str = "agents";
 
 pub use crate::app::subagent_manager::{SubagentManager, SubagentNotification, SubagentSnapshot};
 
-pub(crate) use super::agent_output::{
-    notification_prompt, push_excerpt, MODEL_NOTIFICATION_BYTES, RESULT_EXCERPT_BYTES,
-};
+pub(crate) use super::agent_output::notification_prompt;
 
 pub struct AgentTool {
     manager: SubagentManager,

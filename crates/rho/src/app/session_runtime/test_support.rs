@@ -194,7 +194,7 @@ pub(in crate::app) async fn idle_woken_runtime_on(
     let host = HostCapabilities {
         surfaces: None,
         pull_requests: None,
-        peer_sessions: Some(crate::app::peer_sessions::PeerInbox::new()),
+        peer_sessions: Some(crate::app::peer_sessions::PeerInbox::default()),
         idle_turns: super::IdleTurns::Host,
         ..HostCapabilities::unattended(UnattendedApprovals::Alone)
     };

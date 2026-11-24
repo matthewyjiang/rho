@@ -408,8 +408,7 @@ impl SessionRuntime {
     /// see [`delegation::BackgroundSources::has_work`].
     pub(crate) fn has_background_work(&self) -> bool {
         let session_id = self.built.session.id().to_string();
-        delegation::BackgroundSources::of(&self.built.tools, self.peer_sessions())
-            .has_work(&session_id)
+        delegation::BackgroundSources::of(&self.built.tools).has_work(&session_id)
             || self
                 .held_notices
                 .as_ref()

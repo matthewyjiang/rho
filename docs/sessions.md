@@ -271,6 +271,11 @@ into the current turn, use [subagents](/subagents) instead.
 {"action":"wait","session":"<returned id>","timeout_secs":50}
 ```
 
+In a daemon session whose client takes daemon turns, the agent need not
+`wait`: rho tells it when a turn it started with `new` or `prompt` ends or
+asks a question, in a turn of its own if it is idle (see
+[the daemon](/daemon#sessions-other-sessions-start)).
+
 These are the same tools the [MCP server](/mcp-server) offers, with the same
 rules. Know these before you approve one:
 

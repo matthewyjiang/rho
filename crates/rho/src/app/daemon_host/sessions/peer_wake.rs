@@ -1,181 +1,186 @@
-//! Tells a session of the turns it started in other sessions through
-//! session control (the `sessions` tool's `new` and `prompt`): such a turn
-//! that ends, or stops to wait for a person's input, leaves a notice in
-//! the starter's `PeerInbox` (see `app::peer_sessions`). The starter's turn under way takes it at
-//! its next boundary; an idle starter is woken by a turn the daemon starts
-//! for it (see `idle_wake`), as for its finished background work, with no
-//! client attached. The inbox keeps the latest notice of each started
-//! session, so one delivery turn takes them all.
+//! Tells a session of the turns it starts in other sessions through session
+//! control (the `sessions` tool's `new` and `prompt`): such a turn that
+//! ends, or asks a question, leaves a notice in the starter's `PeerInbox`
+//! (see `app::peer_sessions`, which says what the inbox keeps and forgets).
+//! The starter's turn under way takes it at its next boundary; an idle
+//! starter is woken by a turn the daemon starts for it (see `idle_wake`), as
+//! for its finished background work, with no client attached.
 //!
-//! Only a starter whose client asked the daemon to start its idle turns
-//! (`idle_wake: turn`) has an inbox; no other would be woken to take a
-//! notice. Its started turns still under way keep it loaded and active
-//! (see `unload` and `settle`), so the notice finds it.
+//! Only a session opened with `idle_wake: turn` has an inbox: no other would
+//! be woken to take a notice. Its `sessions` tool registers each prompt
+//! before it sends it, under the idempotency key the prompt carries, and a
+//! turn owes a notice only when its prompt's key claims a registration as
+//! the turn starts (see [`Sessions::claim_starter`]). So a turn tells the
+//! session whose call started it, and nobody else: a turn a person, another
+//! caller, or the daemon starts tells nobody, and neither does one a caller
+//! without an inbox starts. Every turn start forgets what the last turn
+//! owed. A prompt whose turn ends before it began reports that end itself,
+//! and tells nobody. A turn that owes a notice keeps its starter loaded and
+//! active (see `unload` and `settle`), so the notice finds it.
 //!
-//! A started session's turn owes a notice from its start, which the
-//! prompt that started it records (see [`starter_to_tell`]), until it ends;
-//! every turn start forgets what the last one owed, so a turn the daemon
-//! starts in the started session owes none. Nothing is saved: a daemon
-//! restart forgets the notices not yet delivered and the turns that owed
-//! one.
+//! Of what a turn waits for, only questions are told: only a person can
+//! answer an approval, and the person's client shows it. A question that
+//! closes before a boundary took its notice withdraws it.
 //!
 //! The starter is told even while its turn waits on the same session with
 //! `sessions wait`: that wait runs on a connection of its own, which the
-//! daemon cannot tell from another caller's. The notice says a wait may
-//! already have returned it.
+//! daemon cannot tell from another caller's.
 
-use std::sync::{MutexGuard, PoisonError};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
-use rho_protocol::{self as wire, SessionGrant, TurnId};
+use rho_protocol::{self as wire, IdempotencyKey};
 
-use super::{
-    super::jobs::{JobId, TurnEnd},
-    LoadedSession, Sessions,
+use super::{super::jobs::TurnEnd, LoadedSession, Sessions};
+use crate::app::{
+    peer_sessions::{Expectation, PeerInbox, PeerTurnEnd},
+    session_runtime::SessionRuntime,
 };
-use crate::app::peer_sessions::{Expectation, PeerTurnEnd};
 
-/// The job whose session a prompt's turn must tell of its end and of its
-/// waits for input: the job that started the prompted session, `parent`,
-/// when the prompt named its grant.
-///
-/// Only session control names a prompt's grant (`app::session_control`'s
-/// `new` and `prompt`); every other client of the daemon leaves it to its
-/// environment. So the starter hears of the turns it began, and not of
-/// one a person began in a session it handed to them. The rule is
-/// imprecise: a prompt carries no caller, so a turn another session-control
-/// caller begins in that session tells the starter too.
-fn starter_to_tell<'a>(
-    grant: Option<&SessionGrant>,
-    parent: Option<&'a JobId>,
-) -> Option<&'a JobId> {
-    grant.and(parent)
+/// A loaded session's part in telling sessions of the turns they started.
+pub(super) struct PeerWake {
+    /// Where notices of the turns this session starts arrive, when its
+    /// client asked for daemon turns.
+    inbox: Option<PeerInbox>,
+    /// What the turn under way owes the session whose call started it.
+    owed: Mutex<Option<Expectation>>,
 }
 
-/// A started session's turn that owes its starter a notice.
-pub(super) struct StarterTurn {
-    turn: TurnId,
-    expectation: Expectation,
+impl PeerWake {
+    pub(super) fn of(runtime: &SessionRuntime) -> Self {
+        Self {
+            inbox: runtime.peer_sessions().cloned(),
+            owed: Mutex::new(None),
+        }
+    }
+
+    pub(super) fn inbox(&self) -> Option<&PeerInbox> {
+        self.inbox.as_ref()
+    }
+
+    fn owed(&self) -> MutexGuard<'_, Option<Expectation>> {
+        // Only ever replaced or taken whole.
+        self.owed.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The turn under way owes nothing: it just started, and its prompt
+    /// claims what it owes after, or it ended before it began. Call under
+    /// the turn lock.
+    pub(super) fn forget(&self) {
+        *self.owed() = None;
+    }
+
+    /// What the turn that ended as `end` with `outcome` tells the session
+    /// that started it, if it owes it a notice; tell it once the job
+    /// recorded the end. Call under the turn lock.
+    pub(super) fn ended(
+        &self,
+        end: &TurnEnd,
+        outcome: Option<&wire::TurnOutcome>,
+    ) -> Option<(Expectation, PeerTurnEnd)> {
+        let owed = self.owed().take()?;
+        Some((owed, turn_end(end, outcome)))
+    }
+
+    /// Tells the session that started the turn under way, if the turn owes
+    /// it a notice, of the questions `changes` asked and closed, with the
+    /// title `title` gives.
+    pub(super) fn tell_questions(
+        &self,
+        title: impl FnOnce() -> Option<String>,
+        changes: Vec<QuestionChange>,
+    ) {
+        if changes.is_empty() {
+            return;
+        }
+        let title = title();
+        let owed = self.owed();
+        let Some(owed) = owed.as_ref() else {
+            return;
+        };
+        for change in changes {
+            match change {
+                QuestionChange::Asked { request, ask } => {
+                    owed.tell_waiting(title.clone(), request, ask);
+                }
+                QuestionChange::Closed(request) => owed.withdraw_waiting(request),
+            }
+        }
+    }
 }
 
 impl Sessions {
-    /// Records that `session`'s turn `turn`, which a prompt naming `grant`
-    /// just started, owes the session that started `session` a notice, if
-    /// [`starter_to_tell`] says so and that session is loaded with an
-    /// inbox. Call under `session`'s turn lock, right after the turn
-    /// started.
-    pub(super) fn expect_starter_notice(
-        &self,
-        session: &LoadedSession,
-        turn: &TurnId,
-        grant: Option<&SessionGrant>,
-    ) {
-        let parent = self.jobs.get(&session.job).and_then(|job| job.parent);
-        let Some(starter) = starter_to_tell(grant, parent.as_ref()) else {
+    /// Makes `session`'s turn, which a prompt naming `key` just started,
+    /// owe a notice to the session that registered that prompt, if one
+    /// did. Call under `session`'s turn lock, right after the turn started.
+    pub(super) fn claim_starter(&self, session: &LoadedSession, key: Option<&IdempotencyKey>) {
+        let Some(key) = key else {
             return;
         };
         // The turn lock comes before `loaded`, never after.
-        let inbox = self
+        let owed = self
             .loaded()
             .values()
-            .find(|loaded| loaded.job == *starter)
-            .and_then(|loaded| loaded.peers.clone());
-        let Some(inbox) = inbox else {
-            return;
-        };
-        *session.starter_turn() = Some(StarterTurn {
-            turn: turn.clone(),
-            expectation: inbox.expect(session.id.as_str()),
-        });
-    }
-}
-
-impl LoadedSession {
-    fn starter_turn(&self) -> MutexGuard<'_, Option<StarterTurn>> {
-        // Only ever replaced or taken whole.
-        self.starter_turn
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-    }
-
-    /// A turn starts, which owes no notice unless the prompt that started
-    /// it records one after. Call under the turn lock.
-    pub(super) fn forget_starter_turn(&self) {
-        *self.starter_turn() = None;
-    }
-
-    /// Tells the starter, if turn `turn` owes it a notice, that the turn
-    /// ended as `end` with `outcome`.
-    pub(super) fn tell_starter_ended(
-        &self,
-        turn: &TurnId,
-        outcome: Option<&wire::TurnOutcome>,
-        end: &TurnEnd,
-    ) {
-        let owed = {
-            let mut slot = self.starter_turn();
-            match slot.as_ref() {
-                Some(owed) if owed.turn == *turn => slot.take(),
-                Some(_) | None => None,
-            }
-        };
-        if let Some(StarterTurn { expectation, .. }) = owed {
-            expectation.tell_ended(self.feed.title(), turn_end(end, outcome));
-        }
-    }
-
-    /// Tells the starter, if the turn under way owes it a notice, that the
-    /// session waits for each of the input requests `opened` (see
-    /// [`opened_inputs`]).
-    pub(super) fn tell_starter_waiting(&self, opened: Vec<OpenedInput>) {
-        if opened.is_empty() {
-            return;
-        }
-        let title = self.feed.title();
-        let slot = self.starter_turn();
-        let Some(owed) = slot.as_ref() else {
-            return;
-        };
-        for OpenedInput { request, ask } in opened {
-            owed.expectation.tell_waiting(title.clone(), request, ask);
+            .find_map(|loaded| loaded.peer_wake.inbox()?.claim(session.id.as_str(), key));
+        if owed.is_some() {
+            *session.peer_wake.owed() = owed;
         }
     }
 }
 
-/// An input request that opened, and what it asks in a few words.
-pub(super) struct OpenedInput {
-    request: wire::InputRequestId,
-    ask: String,
+/// A change of the questions a session's turn waits for a person to answer.
+pub(super) enum QuestionChange {
+    Asked {
+        request: wire::InputRequestId,
+        ask: String,
+    },
+    /// An input request closed; one that was no question withdraws nothing.
+    Closed(wire::InputRequestId),
 }
 
-/// The input requests `events`, those of one change of the session's
-/// input requests, open. Each request opens once.
-pub(super) fn opened_inputs(events: &[wire::SessionEvent]) -> Vec<OpenedInput> {
+/// The questions `events`, those of one change of the session's input
+/// requests, asked, and the requests they closed. Each request opens once.
+pub(super) fn question_changes(events: &[wire::SessionEvent]) -> Vec<QuestionChange> {
     events
         .iter()
         .filter_map(|event| match event {
-            wire::SessionEvent::InputRequested { request } => Some(OpenedInput {
-                request: request.id,
-                ask: ask_title(&request.ask),
-            }),
+            wire::SessionEvent::InputRequested { request } => match &request.ask {
+                wire::Ask::Question(question) => Some(QuestionChange::Asked {
+                    request: request.id,
+                    ask: ask_of(question),
+                }),
+                // Approvals, plan approvals, and what a newer protocol adds:
+                // only a person answers them, and their client shows them.
+                _ => None,
+            },
+            wire::SessionEvent::InputResolved { id, .. } => Some(QuestionChange::Closed(*id)),
             _ => None,
         })
         .collect()
+}
+
+/// What `question` asks: its title, else its first question's prompt.
+fn ask_of(question: &wire::QuestionAsk) -> String {
+    std::iter::once(&question.title)
+        .chain(question.questions.iter().map(|asked| &asked.prompt))
+        .find(|text| !text.trim().is_empty())
+        .cloned()
+        .unwrap_or_default()
 }
 
 /// How a turn that ended as `end` with `outcome` reads to its starter.
 fn turn_end(end: &TurnEnd, outcome: Option<&wire::TurnOutcome>) -> PeerTurnEnd {
     match end {
         TurnEnd::Completed => match outcome {
-            Some(wire::TurnOutcome::Answered { text, .. }) => PeerTurnEnd::Answered {
+            Some(wire::TurnOutcome::Answered { text, stop }) => PeerTurnEnd::Answered {
                 answer: text.clone(),
+                stop: *stop,
             },
             Some(wire::TurnOutcome::MaxSteps { text }) => PeerTurnEnd::StepLimit {
                 reply: text.clone(),
             },
-            // A completed turn records one of those two.
-            _ => PeerTurnEnd::Answered {
-                answer: String::new(),
-            },
+            // A completed turn records one of those two, unless the daemon
+            // stops, when it records none (see `DaemonView::end`).
+            Some(_) | None => PeerTurnEnd::Interrupted,
         },
         TurnEnd::Failed(error) => PeerTurnEnd::Failed {
             error: error.clone(),
@@ -185,20 +190,6 @@ fn turn_end(end: &TurnEnd, outcome: Option<&wire::TurnOutcome>) -> PeerTurnEnd {
             timeout_ms: *timeout_ms,
         },
         TurnEnd::Interrupted => PeerTurnEnd::Interrupted,
-    }
-}
-
-/// What an input request asks, in a few words: a question's title, or the
-/// kind of approval.
-fn ask_title(ask: &wire::Ask) -> String {
-    match ask {
-        wire::Ask::Question(question) if !question.title.trim().is_empty() => {
-            question.title.clone()
-        }
-        wire::Ask::Question(_) => "questions".into(),
-        wire::Ask::Approval(_) => "tool approval".into(),
-        wire::Ask::PlanApproval(_) => "plan approval".into(),
-        _ => "input".into(),
     }
 }
 

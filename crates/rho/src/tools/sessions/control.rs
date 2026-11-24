@@ -29,7 +29,10 @@ use rho_sdk::{
 use serde_json::{json, Map, Value};
 
 use crate::{
-    app::session_control::{Action, Caller, ControlError, Limits, Reach, SessionControl, Target},
+    app::{
+        peer_sessions::PeerInbox,
+        session_control::{Action, Caller, ControlError, Limits, Reach, SessionControl, Target},
+    },
     caller_context::{Access, CallerContext},
     session_environment::SessionEnvironment,
 };
@@ -81,17 +84,24 @@ fn core() -> &'static SessionControl {
 /// Checks `call` from `session`, whose children see `environment`, and
 /// prepares it. Acting calls ask for approval of what the check found;
 /// watching calls read other sessions' transcripts, so they ask for the
-/// read of the session store `root` that searching history asks for.
+/// read of the session store `root` that searching history asks for. A
+/// session with an inbox, `peers`, is told of the turns its `new` and
+/// `prompt` start (see `app::peer_sessions`).
 pub(super) async fn prepare<'a>(
     call: Call,
     session: &str,
+    peers: Option<PeerInbox>,
     environment: &SessionEnvironment,
     root: &Result<PathBuf, String>,
 ) -> Result<PreparedToolInvocation<'a>, ToolError> {
     let ambient = environment.current();
     let context = CallerContext::from_env(|name| ambient.read_os(name))
         .map_err(|error| ToolError::new(ToolErrorKind::Execution, format!("{error:#}")))?;
-    let caller = Caller::session(SessionId::new(session), &context, ambient.to_client());
+    let told = peers.is_some() && matches!(call.action, Action::New | Action::Prompt);
+    let caller = Caller {
+        told: peers,
+        ..Caller::session(SessionId::new(session), &context, ambient.to_client())
+    };
     let Call { action, arguments } = call;
     let checked = core()
         .check(&caller, action, arguments)
@@ -137,9 +147,12 @@ pub(super) async fn prepare<'a>(
                     Access::Write => run.await,
                 }
                 .map_err(tool_error)?;
-                serde_json::to_string_pretty(&value)
-                    .map(ToolOutput::text)
-                    .map_err(|error| ToolError::new(ToolErrorKind::Execution, error.to_string()))
+                let mut text = serde_json::to_string_pretty(&value)
+                    .map_err(|error| ToolError::new(ToolErrorKind::Execution, error.to_string()))?;
+                if told {
+                    text.push_str("\nrho tells you when this turn ends or asks a question.");
+                }
+                Ok(ToolOutput::text(text))
             })
         },
     ))

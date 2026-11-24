@@ -256,12 +256,10 @@ struct LoadedSession {
     cache_warm: Option<KeepWarm>,
     /// Prompt context no model turn has sent yet (see [`held_context`]).
     held_context: Mutex<crate::app::prompt_content::PromptContext>,
-    /// Where notices of the turns this session starts in other sessions
-    /// arrive, when its client asked for daemon turns (see [`peer_wake`]).
-    peers: Option<crate::app::peer_sessions::PeerInbox>,
-    /// The turn under way, when it owes the session that started this one
-    /// a notice (see [`peer_wake`]).
-    starter_turn: Mutex<Option<peer_wake::StarterTurn>>,
+    /// The notices of the turns this session starts in other sessions, and
+    /// what its turn under way owes the session that started it (see
+    /// [`peer_wake`]).
+    peer_wake: peer_wake::PeerWake,
 }
 
 /// The state a session's turn lock guards.
@@ -408,8 +406,7 @@ impl LoadedSession {
             wake_gave_up: AtomicBool::new(false),
             cache_warm: KeepWarm::of(&runtime),
             held_context: Mutex::new(held_context),
-            peers: runtime.peer_sessions().cloned(),
-            starter_turn: Mutex::new(None),
+            peer_wake: peer_wake::PeerWake::of(&runtime),
             child_questions: ChildQuestions::of(&mut runtime),
             handle: runtime.handle(),
             workspace: runtime.workspace_root().to_path_buf(),
@@ -473,13 +470,11 @@ impl LoadedSession {
     /// tells it then (see [`peer_wake`]).
     fn end_turn(&self, turn: rho_protocol::TurnId, outcome: Option<TurnOutcome>, end: TurnEnd) {
         self.report_background();
+        let told = self.peer_wake.ended(&end, outcome.as_ref());
         let ended = outcome
             .clone()
-            .map(|outcome| rho_protocol::SessionEvent::TurnEnded {
-                turn: turn.clone(),
-                outcome,
-            });
-        match self.jobs.end_turn(&self.job, end.clone(), outcome.clone()) {
+            .map(|outcome| rho_protocol::SessionEvent::TurnEnded { turn, outcome });
+        match self.jobs.end_turn(&self.job, end, outcome) {
             Ok(moved) => self
                 .feed
                 .publish(ended.into_iter().chain([state_event(&moved)])),
@@ -490,7 +485,9 @@ impl LoadedSession {
         }
         // Once the job records the end, so a starter that looks once told
         // finds the turn ended.
-        self.tell_starter_ended(&turn, outcome.as_ref(), &end);
+        if let Some((owed, end)) = told {
+            owed.tell_ended(self.feed.title(), end);
+        }
         self.report_activity();
     }
 

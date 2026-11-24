@@ -130,7 +130,10 @@ impl Sessions {
                 || turn.hold.is_some()
                 || session.feed.followed()
                 || session.runtime_keeps_loaded()
-                || session.peers.as_ref().is_some_and(PeerInbox::outstanding);
+                || session
+                    .peer_wake
+                    .inbox()
+                    .is_some_and(PeerInbox::outstanding);
             let now = Instant::now();
             let idle_since = match turn.residency {
                 Residency::Unloaded => return false,

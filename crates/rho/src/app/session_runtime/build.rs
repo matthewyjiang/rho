@@ -418,6 +418,9 @@ pub(super) async fn build_session(
         subagent_pool: build.host.subagent_pool.clone(),
         process_keep_warm: build.host.cache_warming.offer(),
         extend_tools: |mut tools: AppToolSet| {
+            if let Some(inbox) = &build.host.peer_sessions {
+                tools.bind_peer_sessions(inbox.clone());
+            }
             if let Some(poster) = &build.host.parent_notices {
                 tools.add_bundle(crate::tools::message_parent_bundle(Arc::clone(poster)));
             }

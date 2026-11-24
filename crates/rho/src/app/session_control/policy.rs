@@ -165,6 +165,10 @@ pub(crate) struct Caller {
     /// Which daemon the call asks: as the core reaches it, or, for a call
     /// on nobody's behalf, as a hub's watch makes, only one running.
     pub(crate) daemon: DaemonUse,
+    /// Where the daemon tells the calling session of the turns its `new`
+    /// and `prompt` start, when it has an inbox (see `app::peer_sessions`):
+    /// only a daemon session's native tool does.
+    pub(crate) told: Option<crate::app::peer_sessions::PeerInbox>,
 }
 
 impl Caller {
@@ -185,6 +189,7 @@ impl Caller {
             session: None,
             environment,
             daemon: DaemonUse::Call,
+            told: None,
         }
     }
 

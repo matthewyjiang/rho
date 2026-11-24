@@ -36,8 +36,8 @@ pub(crate) struct BoundaryResults<'a> {
     pub(crate) surface_actions: &'a [SurfaceAction],
     /// What changed on the session's watched pull requests.
     pub(crate) pull_requests: &'a NewsBatch,
-    /// How turns the session started in other sessions ended, or that they
-    /// wait for a person.
+    /// How turns the session started in other sessions ended, or the
+    /// questions they ask.
     pub(crate) peer_sessions: &'a PeerBatch,
 }
 

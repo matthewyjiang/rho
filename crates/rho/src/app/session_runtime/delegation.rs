@@ -130,16 +130,16 @@ pub(super) struct BackgroundSources<'a> {
 }
 
 impl<'a> BackgroundSources<'a> {
-    /// The work of the session's `tools`, and the notices of the sessions
-    /// it started that `peer_sessions` holds, when its host keeps them.
-    pub(super) fn of(tools: &'a AppToolSet, peer_sessions: Option<&'a PeerInbox>) -> Self {
+    /// The work of the session's `tools`; a turn adds its host's notices of
+    /// the turns it started in other sessions.
+    pub(super) fn of(tools: &'a AppToolSet) -> Self {
         Self {
             subagents: tools.subagents(),
             processes: tools.processes(),
             workflows: tools.workflow_tracker(),
             surfaces: tools.surfaces(),
             pull_requests: tools.pull_requests(),
-            peer_sessions,
+            peer_sessions: None,
         }
     }
 
@@ -150,8 +150,7 @@ impl<'a> BackgroundSources<'a> {
     /// it waits only for a next prompt, so it must not keep an idle
     /// session loaded or a daemon upgrade waiting. Neither does pull request
     /// news: it is saved, so an unloaded session or a restarted daemon still
-    /// delivers it. Nor do notices of started sessions, which the daemon
-    /// keeps the session loaded for itself, and which a restart forgets.
+    /// delivers it.
     pub(super) fn has_work(&self, session_id: &str) -> bool {
         self.subagents
             .is_some_and(|manager| manager.has_active_or_pending_notification(session_id))

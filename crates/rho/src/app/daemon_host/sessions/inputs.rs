@@ -342,7 +342,7 @@ impl LoadedSession {
         let was_waiting = inputs.waiting();
         let result = change(&mut inputs);
         let events = inputs.take_events();
-        let opened = super::peer_wake::opened_inputs(&events);
+        let questions = super::peer_wake::question_changes(&events);
         self.feed.publish(events);
         match (was_waiting, inputs.waiting()) {
             (false, true) => self.record(JobEvent::InputOpened),
@@ -351,7 +351,8 @@ impl LoadedSession {
         }
         // Once the job follows, so a starter that looks once told finds the
         // session waiting.
-        self.tell_starter_waiting(opened);
+        self.peer_wake
+            .tell_questions(|| self.feed.title(), questions);
         inputs.send_answers();
         for (id, after) in inputs.take_timeouts() {
             tokio::spawn(super::time_out(Arc::downgrade(self), id, after));

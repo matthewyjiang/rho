@@ -8,11 +8,12 @@
 //! (`BackgroundWait::HoldPrompt`) waits on nothing between turns.
 //!
 //! A turn the session started in another session through session control
-//! counts too (see `peer_wake`): it runs until it ends, and its notice is
-//! a result, as is one that it waits for a person.
+//! counts too (see `peer_wake`): it runs until it ends, and its notice is a
+//! result.
 
 use std::future::Future;
 
+use super::background::Sources;
 use crate::{
     app::{
         peer_sessions::PeerInbox, pull_requests::PullRequestInbox, session_runtime::BackgroundWait,
@@ -53,13 +54,16 @@ impl AwaitedWork {
     pub(super) fn new(
         wait: BackgroundWait,
         session_id: String,
-        processes: Option<ProcessManager>,
         workflows: WorkflowRunTracker,
-        subagents: Option<SubagentManager>,
-        surfaces: Option<SurfaceHost>,
-        pull_requests: Option<PullRequestInbox>,
-        peers: Option<PeerInbox>,
+        sources: Sources,
     ) -> Option<Self> {
+        let Sources {
+            processes,
+            subagents,
+            surfaces,
+            pull_requests,
+            peers,
+        } = sources;
         let (subagents, surfaces, pull_requests, peers) = match wait {
             BackgroundWait::HoldPrompt => return None,
             // The host runs the session's children as its own threads and
@@ -88,64 +92,28 @@ impl AwaitedWork {
         let workflow_finish = self.workflows.notified_owned();
         let subagent = self.subagents.as_ref().map(SubagentManager::parent_wake);
         let surface_action = self.surfaces.as_ref().map(SurfaceHost::acted_owned);
+        let peer = self.peers.as_ref().map(PeerInbox::arrived_owned);
         let news = self.outside_news();
         async move {
-            let surface_action = async move {
-                match surface_action {
-                    Some(acted) => acted.await,
-                    None => std::future::pending().await,
-                }
-            };
-            let process_exit = async move {
-                match process_exit {
-                    Some(exit) => exit.await,
-                    None => std::future::pending().await,
-                }
-            };
-            let subagent = async move {
-                match subagent {
-                    Some(wake) => wake.await,
-                    None => std::future::pending().await,
-                }
-            };
             tokio::select! {
-                () = process_exit => {}
+                () = or_pending(process_exit) => {}
                 () = workflow_finish => {}
-                () = subagent => {}
-                () = surface_action => {}
+                () = or_pending(subagent) => {}
+                () = or_pending(surface_action) => {}
+                () = or_pending(peer) => {}
                 () = news => {}
             }
         }
     }
 
-    /// Resolves once pull request news or a notice of a started session may
-    /// have arrived, which, unlike every other result, need no turn of the
-    /// session's to start them: another session-control caller may prompt
-    /// a session this one started (see `peer_wake`).
+    /// Resolves once pull request news may have arrived, which, unlike every
+    /// other result, needs no turn of the session's to start it.
     pub(super) fn outside_news(&self) -> impl Future<Output = ()> + Send + 'static {
         let news = self
             .pull_requests
             .as_ref()
             .map(PullRequestInbox::news_owned);
-        let peers = self.peers.as_ref().map(PeerInbox::arrived_owned);
-        async move {
-            let news = async move {
-                match news {
-                    Some(news) => news.await,
-                    None => std::future::pending().await,
-                }
-            };
-            let peers = async move {
-                match peers {
-                    Some(arrived) => arrived.await,
-                    None => std::future::pending().await,
-                }
-            };
-            tokio::select! {
-                () = news => {}
-                () = peers => {}
-            }
-        }
+        or_pending(news)
     }
 
     /// Whether a result is waiting or could still arrive. A workflow counts
@@ -235,6 +203,14 @@ impl AwaitedWork {
             }
             another.await;
         }
+    }
+}
+
+/// Resolves as `wake` does, or never without one.
+async fn or_pending(wake: Option<impl Future<Output = ()>>) {
+    match wake {
+        Some(wake) => wake.await,
+        None => std::future::pending().await,
     }
 }
 

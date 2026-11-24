@@ -1,4 +1,4 @@
-use std::{path::Path, sync::Arc, time::Duration};
+use std::{path::Path, sync::Arc};
 
 use pretty_assertions::assert_eq;
 use rho_protocol::{self as wire, SessionSetup, TurnId};
@@ -9,7 +9,7 @@ use super::super::{
     background::SessionBackground,
     idle_wake::try_give_up,
     pull_request_wake::watch_for_tests,
-    test_sessions::{load, load_waiting_on, Load},
+    test_sessions::{load, load_waiting_on, seen, until, Load, Seen, TEST_BUDGET},
     Entered, LoadedSession, OpenWith, Sessions,
 };
 use crate::{
@@ -29,9 +29,6 @@ use crate::{
 const LONG_RUNNING_COMMAND: &str = "sleep 300";
 
 const SUBAGENT: &str = "abc123";
-
-/// Bounds each wait on the daemon's own tasks; never the way a test syncs.
-const TEST_BUDGET: Duration = Duration::from_secs(10);
 
 /// A session's job state or activity, as its clients hear them, in order.
 #[derive(Debug, PartialEq)]
@@ -63,42 +60,6 @@ fn activity(session: &LoadedSession) -> Option<wire::SessionActivity> {
             Heard::Activity(state) => Some(state),
             Heard::State(_) => None,
         })
-}
-
-/// What a session's clients heard of its activity and its turns, each
-/// change once.
-#[derive(Debug, PartialEq)]
-enum Seen {
-    Activity(wire::SessionActivity),
-    TurnRunning,
-    TurnEnded,
-}
-
-fn seen(session: &LoadedSession) -> Vec<Seen> {
-    let mut seen: Vec<Seen> = heard(session)
-        .into_iter()
-        .map(|heard| match heard {
-            Heard::Activity(state) => Seen::Activity(state),
-            Heard::State(state) if state.in_progress() => Seen::TurnRunning,
-            Heard::State(_) => Seen::TurnEnded,
-        })
-        .collect();
-    seen.dedup();
-    seen
-}
-
-/// Runs the daemon's tasks until `done` holds. Nothing announces an idle
-/// watcher's give-up but the activity it publishes, so this looks again
-/// after each yield; [`TEST_BUDGET`] bounds a hang.
-async fn until(done: impl Fn() -> bool, what: &str) {
-    let wait = async {
-        while !done() {
-            tokio::task::yield_now().await;
-        }
-    };
-    timeout(TEST_BUDGET, wait)
-        .await
-        .unwrap_or_else(|_| panic!("{what}"));
 }
 
 /// Where a fixture session's background work is read from.

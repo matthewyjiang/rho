@@ -128,8 +128,10 @@ pub enum IdleWake {
     /// The daemon starts a turn that gives the model the result, as the
     /// terminal UI does. A prompt's turn ends while the work it started
     /// runs on. A subagent's request that its parent act starts such a
-    /// turn too; its
-    /// informational messages go with the session's next provider request.
+    /// turn too, and so does a turn the session started in another session
+    /// through session control that ends or asks a question; the
+    /// subagent's informational messages go with the session's next
+    /// provider request.
     /// For a client that follows the session's events and shows a turn it
     /// did not send. A session whose host runs its children
     /// ([`ChildThreads::Host`]) is woken through that host instead.
