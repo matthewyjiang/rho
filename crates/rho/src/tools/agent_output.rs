@@ -3,11 +3,12 @@ use rho_tools::tool::truncate;
 use {
     super::{
         agent::{SubagentNotification, SubagentSnapshot},
-        notification_format::{bounded_notification, detail_line, Excerpt, RESULT_EXCERPT_BYTES},
+        notification_format::{bounded_notification, Excerpt, RESULT_EXCERPT_BYTES},
     },
     crate::subagent::{self, RunState},
 };
 
+const DETAIL_BYTES: usize = 160;
 const SUMMARY_DETAIL_BYTES: usize = 256;
 
 const NOTIFICATION_HEADER: &str = "[agent notification]\n\nRun status:\n";
@@ -271,13 +272,14 @@ pub(super) fn format_list_entry(snapshot: &SubagentSnapshot) -> String {
         .last_activity
         .as_deref()
         .unwrap_or(if snapshot.done { "finished" } else { "working" });
+    let detail = detail.lines().next().unwrap_or_default().trim();
     format!(
         "{}  {}  {}  {}  {}",
         snapshot.id,
         snapshot.agent_id,
         snapshot.status.state.as_str(),
         subagent::format_elapsed_secs(snapshot.elapsed.as_secs()),
-        detail_line(detail)
+        truncate(detail.to_string(), DETAIL_BYTES)
     )
 }
 

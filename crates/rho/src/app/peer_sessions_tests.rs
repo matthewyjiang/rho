@@ -97,8 +97,6 @@ fn only_a_finished_answer_reads_as_success() {
 enum Step {
     /// Session `0` asks question `1`.
     Ask(&'static str, u64),
-    /// Session `0`'s question `1` closes.
-    Close(&'static str, u64),
     /// Session `0`'s turn ends.
     End(&'static str),
     /// A boundary takes the notices; the next [`Step::Restore`] puts them
@@ -128,27 +126,17 @@ fn ended(session: &str) -> PeerNotice {
 
 // Covers: the inbox keeps each started session's latest notice, oldest
 // session first, so a session that asked and then ended tells only of its
-// end; a question that closes withdraws its notice, and only its own; a
-// boundary that puts back what it took never hides a newer notice of the
-// same session. A miss tells the starter twice, or tells it stale news.
+// end; a boundary that puts back what it took never hides a newer notice
+// of the same session. A miss tells the starter twice, or tells it stale
+// news.
 // Owner: started-session notices.
 #[test]
 fn the_inbox_keeps_each_sessions_latest_notice() {
-    let cases: [(&str, Vec<Step>, Vec<PeerNotice>); 5] = [
+    let cases: [(&str, Vec<Step>, Vec<PeerNotice>); 3] = [
         (
             "an end replaces the question",
             vec![Step::Ask("a", 0), Step::End("b"), Step::End("a")],
             vec![ended("b"), ended("a")],
-        ),
-        (
-            "a closed question is withdrawn",
-            vec![Step::Ask("a", 0), Step::Ask("b", 1), Step::Close("a", 0)],
-            vec![asking("b", 1)],
-        ),
-        (
-            "an older question's close keeps the newer",
-            vec![Step::Ask("a", 0), Step::Ask("a", 1), Step::Close("a", 0)],
-            vec![asking("a", 1)],
         ),
         (
             "a question that came after the take",
@@ -185,12 +173,6 @@ fn the_inbox_keeps_each_sessions_latest_notice() {
                         InputRequestId(request),
                         "input".into(),
                     );
-                }
-                Step::Close(session, request) => {
-                    let owed = if session == "a" { &a } else { &b };
-                    owed.as_ref()
-                        .unwrap()
-                        .withdraw_waiting(InputRequestId(request));
                 }
                 Step::End(session) => {
                     let owed = if session == "a" { &mut a } else { &mut b };

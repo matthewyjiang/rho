@@ -1,24 +1,11 @@
 //! Shared budgeted assembly for background-completion notifications.
 
 use rho_sdk::{floor_char_boundary, TRUNCATION_MARKER};
-use rho_tools::tool::truncate;
 
 /// The most one notification's whole text may take.
 pub(crate) const MODEL_NOTIFICATION_BYTES: usize = 16 * 1024;
 /// The most of one result a notification quotes.
 pub(crate) const RESULT_EXCERPT_BYTES: usize = 16 * 1024;
-/// The most of a one-line detail, such as a name or an activity, a
-/// notification or listing shows.
-const DETAIL_BYTES: usize = 160;
-
-/// `text`'s first line, trimmed and cut to [`DETAIL_BYTES`], so text from
-/// elsewhere can neither add a line of its own nor crowd out the rest.
-pub(crate) fn detail_line(text: &str) -> String {
-    truncate(
-        text.lines().next().unwrap_or_default().trim().to_owned(),
-        DETAIL_BYTES,
-    )
-}
 
 /// A result a notification quotes: `text` between `label` and `close`.
 pub(crate) struct Excerpt<'a> {

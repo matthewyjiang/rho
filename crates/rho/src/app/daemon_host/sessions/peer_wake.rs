@@ -18,9 +18,10 @@
 //! and tells nobody. A turn that owes a notice keeps its starter loaded and
 //! active (see `unload` and `settle`), so the notice finds it.
 //!
-//! Of what a turn waits for, only questions are told: only a person can
-//! answer an approval, and the person's client shows it. A question that
-//! closes before a boundary took its notice withdraws it.
+//! Of what a turn waits for, only questions are told, as each opens and
+//! never again: only a person can answer an approval, and the person's
+//! client shows it. A question's notice stays until a turn takes it, though
+//! the question may close first; the notice says it may have been answered.
 //!
 //! The starter is told even while its turn waits on the same session with
 //! `sessions wait`: that wait runs on a connection of its own, which the
@@ -82,14 +83,14 @@ impl PeerWake {
     }
 
     /// Tells the session that started the turn under way, if the turn owes
-    /// it a notice, of the questions `changes` asked and closed, with the
-    /// title `title` gives.
+    /// it a notice, of the questions `asked`, each a request and what it
+    /// asks, with the title `title` gives.
     pub(super) fn tell_questions(
         &self,
         title: impl FnOnce() -> Option<String>,
-        changes: Vec<QuestionChange>,
+        asked: Vec<(wire::InputRequestId, String)>,
     ) {
-        if changes.is_empty() {
+        if asked.is_empty() {
             return;
         }
         let title = title();
@@ -97,13 +98,8 @@ impl PeerWake {
         let Some(owed) = owed.as_ref() else {
             return;
         };
-        for change in changes {
-            match change {
-                QuestionChange::Asked { request, ask } => {
-                    owed.tell_waiting(title.clone(), request, ask);
-                }
-                QuestionChange::Closed(request) => owed.withdraw_waiting(request),
-            }
+        for (request, ask) in asked {
+            owed.tell_waiting(title.clone(), request, ask);
         }
     }
 }
@@ -113,7 +109,7 @@ impl Sessions {
     /// owe a notice to the session that registered that prompt, if one
     /// did. Call under `session`'s turn lock, right after the turn started.
     pub(super) fn claim_starter(&self, session: &LoadedSession, key: Option<&IdempotencyKey>) {
-        let Some(key) = key else {
+        let Some(key) = key.filter(|key| PeerInbox::may_claim(key)) else {
             return;
         };
         // The turn lock comes before `loaded`, never after.
@@ -127,32 +123,22 @@ impl Sessions {
     }
 }
 
-/// A change of the questions a session's turn waits for a person to answer.
-pub(super) enum QuestionChange {
-    Asked {
-        request: wire::InputRequestId,
-        ask: String,
-    },
-    /// An input request closed; one that was no question withdraws nothing.
-    Closed(wire::InputRequestId),
-}
-
 /// The questions `events`, those of one change of the session's input
-/// requests, asked, and the requests they closed. Each request opens once.
-pub(super) fn question_changes(events: &[wire::SessionEvent]) -> Vec<QuestionChange> {
+/// requests, asked: each request and what it asks. Each request opens once.
+pub(super) fn asked_questions(
+    events: &[wire::SessionEvent],
+) -> Vec<(wire::InputRequestId, String)> {
     events
         .iter()
         .filter_map(|event| match event {
             wire::SessionEvent::InputRequested { request } => match &request.ask {
-                wire::Ask::Question(question) => Some(QuestionChange::Asked {
-                    request: request.id,
-                    ask: ask_of(question),
-                }),
-                // Approvals, plan approvals, and what a newer protocol adds:
-                // only a person answers them, and their client shows them.
+                wire::Ask::Question(question) => Some((request.id, ask_of(question))),
+                // Only a person answers these, and their client shows them.
+                wire::Ask::Approval(_) | wire::Ask::PlanApproval(_) => None,
+                // `Unknown`, or an ask a newer protocol adds (`Ask` is
+                // non-exhaustive).
                 _ => None,
             },
-            wire::SessionEvent::InputResolved { id, .. } => Some(QuestionChange::Closed(*id)),
             _ => None,
         })
         .collect()

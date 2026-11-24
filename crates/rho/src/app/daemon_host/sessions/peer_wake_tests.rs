@@ -10,7 +10,7 @@ use tokio::{sync::mpsc, time::timeout};
 
 use super::super::{
     inputs::Asker,
-    test_events::{approval, question},
+    test_events::{approval, plan, question},
     test_sessions::{load, prompts_shown, seen, until, Load, Seen, TEST_BUDGET},
     LoadedSession, Sessions,
 };
@@ -262,12 +262,15 @@ enum Key {
     Absent,
     /// The client's own, which nobody registered.
     Unregistered,
+    /// One the starter registered for another session.
+    ForAnother,
 }
 
 // Covers: only the turn a prompt the starter registered starts tells the
 // starter; a turn a person, or a caller with no inbox, starts tells nobody,
-// and so does one whose prompt names a key nobody registered. A miss wakes
-// an agent for its user's own work.
+// and so does one whose prompt names a key nobody registered, or one the
+// starter registered for another session. A miss wakes an agent for its
+// user's own work.
 // Owner: daemon wake for started sessions.
 #[tokio::test]
 async fn only_the_turn_a_registered_prompt_starts_tells_the_starter() {
@@ -275,6 +278,7 @@ async fn only_the_turn_a_registered_prompt_starts_tells_the_starter() {
         (Key::Registered, true),
         (Key::Absent, false),
         (Key::Unregistered, false),
+        (Key::ForAnother, false),
     ];
     for (key, tells) in cases {
         let fixture = Fixture::unwatched().await;
@@ -285,6 +289,11 @@ async fn only_the_turn_a_registered_prompt_starts_tells_the_starter() {
             Key::Unregistered => {
                 let key = IdempotencyKey::new("the client's own");
                 prompt(&fixture.sessions, &child, Some(key)).await
+            }
+            Key::ForAnother => {
+                let elsewhere = fixture.session().await;
+                let registration = fixture.inbox().register(elsewhere.id.as_str());
+                prompt(&fixture.sessions, &child, Some(registration.key())).await
             }
         };
         started.expect("the prompt starts a turn");
@@ -304,8 +313,9 @@ async fn only_the_turn_a_registered_prompt_starts_tells_the_starter() {
     }
 }
 
-// Covers: a second caller that prompts a session another caller's turn
-// runs in is refused and owes nothing, and a turn it starts once that one
+// Covers: of two callers that registered a prompt of one session, a turn
+// tells only the one whose prompt started it; a second caller whose prompt
+// the busy session refuses owes nothing, and a turn it starts once that one
 // ended tells it alone. A miss tells a caller of a turn it never started,
 // or keeps the refused caller loaded forever.
 // Owner: daemon wake for started sessions.
@@ -316,15 +326,21 @@ async fn a_turn_tells_only_the_caller_whose_prompt_started_it() {
     let child = fixture.session().await;
     let (first, second) = (fixture.inbox(), inbox(&other));
 
+    // Each turn starts while the other caller holds a registration of the
+    // child too, so a claim on the session alone tells the wrong caller of
+    // one of the two turns, whichever inbox the daemon looks in first.
+    let second_registered = second.register(child.id.as_str());
     prompt_from(&fixture.sessions, first, &child)
         .await
         .expect("the prompt starts a turn");
-    let refused = prompt_from(&fixture.sessions, second, &child)
+    let refused = prompt(&fixture.sessions, &child, Some(second_registered.key()))
         .await
         .map(|_| ());
     let second_owed_once_refused = second.outstanding();
     cancel(&fixture.sessions, &child).await;
     let told_of_the_first = (first.take().notices, second.take().notices);
+    drop(second_registered);
+    let _first_registered = first.register(child.id.as_str());
     prompt_from(&fixture.sessions, second, &child)
         .await
         .expect("the prompt starts a turn");
@@ -347,15 +363,15 @@ async fn a_turn_tells_only_the_caller_whose_prompt_started_it() {
     );
 }
 
-// Covers: a started turn tells its starter of a question once, naming the
-// request and what it asks; an approval tells nothing, since only a person
-// answers it; a question answered before a boundary took its notice leaves
-// none; the turn's end follows. A miss leaves the starter waiting on a
-// session that waits on a person, or tells it of a question nobody asks
-// any more.
+// Covers: a started turn tells its starter of each question once, as it
+// opens, naming the request and what it asks, though it closes before a
+// boundary takes the notice, and its close tells nothing; an approval or a
+// plan approval tells nothing, since only a person answers it; the turn's
+// end follows. A miss leaves the starter waiting on a session that waits
+// on a person, or tells it of one question twice.
 // Owner: daemon wake for started sessions.
 #[tokio::test]
-async fn a_started_turn_tells_its_starter_of_open_questions_only() {
+async fn a_started_turn_tells_its_starter_of_each_question_once() {
     let fixture = Fixture::unwatched().await;
     let child = fixture.session().await;
     prompt_from(&fixture.sessions, fixture.inbox(), &child)
@@ -365,31 +381,42 @@ async fn a_started_turn_tells_its_starter_of_open_questions_only() {
     let ask = |event: &SessionEvent| {
         child.change_inputs(|inputs| inputs.note(Asker::Turn, &control, event, SystemTime::now()));
     };
+    let answer = |request| {
+        child
+            .change_inputs(|inputs| inputs.answer(InputRequestId(request), InputAnswer::Decline))
+            .unwrap();
+    };
     let taken = || fixture.inbox().take().notices;
 
     ask(&approval(0));
     let approval_opened = taken();
+    ask(&plan(0));
+    let plan_opened = taken();
     ask(&question("pick"));
-    child
-        .change_inputs(|inputs| inputs.answer(InputRequestId(1), InputAnswer::Decline))
-        .unwrap();
-    let question_answered = taken();
+    answer(2);
+    let closed_before_taken = taken();
     ask(&question("again"));
-    let question_opened = taken();
+    let opened = taken();
+    answer(3);
+    let closed_once_taken = taken();
     cancel(&fixture.sessions, &child).await;
     let turn_ended = taken();
 
     assert_eq!(
         [
             approval_opened,
-            question_answered,
-            question_opened,
+            plan_opened,
+            closed_before_taken,
+            opened,
+            closed_once_taken,
             turn_ended
         ],
         [
             Vec::new(),
             Vec::new(),
             vec![asking(&child, 2)],
+            vec![asking(&child, 3)],
+            Vec::new(),
             vec![ended(&child)],
         ]
     );

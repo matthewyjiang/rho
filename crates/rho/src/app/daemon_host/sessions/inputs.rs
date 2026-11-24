@@ -342,7 +342,7 @@ impl LoadedSession {
         let was_waiting = inputs.waiting();
         let result = change(&mut inputs);
         let events = inputs.take_events();
-        let questions = super::peer_wake::question_changes(&events);
+        let questions = super::peer_wake::asked_questions(&events);
         self.feed.publish(events);
         match (was_waiting, inputs.waiting()) {
             (false, true) => self.record(JobEvent::InputOpened),
