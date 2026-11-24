@@ -4920,7 +4920,7 @@
         },
         {
           "const": "answered_by_session",
-          "description": "The session that started the asking session answered the question\n([`SESSION_ANSWER_QUESTION`]); a [`super::SessionEvent::Notice`]\nnaming that session follows. Only a question closes this way. It\nnames no session: only the asker's parent may answer, which a client\nalready knows from [`super::JobSummary::parent`].",
+          "description": "An answer through [`SESSION_ANSWER_QUESTION`] closed the question.\nOnly a question closes this way. The daemon checked that the\ndeclared answering session started the asking one, but it does not\nprove who sent the answer. It names no session: the daemon accepts\nonly the asker's parent, which a client already knows from\n[`super::JobSummary::parent`].",
           "type": "string"
         },
         {
@@ -5068,7 +5068,7 @@
       "type": "object"
     },
     "SessionAnswerQuestionParams": {
-      "description": "Params of [`SESSION_ANSWER_QUESTION`]: `by` answers question `request`\nof `session`, a session `by` started.\n\nThe daemon answers only a question ([`Ask::Question`], a subagent's\nincluded), only for the session whose job started `session`'s job\n([`super::JobSummary::parent`]), and only while that session's grant\nhas write access ([`super::GrantAccess::Write`]). Anything else is\nrefused: an approval or a plan approval with\n[`crate::ErrorCode::InvalidParams`], any other session with\n[`crate::ErrorCode::InvalidParams`], and a request that is not open with\n[`crate::ErrorCode::InputNotOpen`]. The first answer wins, whoever\nsends it.\n\n`by` is what the caller declares, as [`super::SessionNewParams::parent`]\nand the connection's role are: the daemon checks it against its job\nrecords, but cannot tell who sends it. The method asks for no\ncapability, so an agent's connection may call it.",
+      "description": "Params of [`SESSION_ANSWER_QUESTION`]: `by` answers question `request`\nof `session`, a session `by` started.\n\nThe daemon answers only a question ([`Ask::Question`], a subagent's\nincluded), only for the session whose job started `session`'s job\n([`super::JobSummary::parent`]), and only while that session's grant\nhas write access ([`super::GrantAccess::Write`]); it checks the\ngrant's access only, not its workspaces, since starting `session`\nalready took reaching its workspace. Anything else is refused: an\napproval, a plan approval, or a question only the user may answer with\n[`crate::ErrorCode::InvalidParams`], any other session with\n[`crate::ErrorCode::InvalidParams`], and a request that is not open with\n[`crate::ErrorCode::InputNotOpen`]. The first answer wins, whoever\nsends it.\n\n`by` is what the caller declares, as [`super::SessionNewParams::parent`]\nand the connection's role are: the daemon checks it against its job\nrecords, but cannot tell who sends it. A caller that lies about `by` can\nanswer or decline the open question of any session started through\nsession control, by naming that session's real parent: this is the\ntrust the daemon gives a connection's declared role. It never reaches an\napproval, a plan approval, or a question only the user may answer, as\nan MCP server's elicitation is. The method asks for no capability, so an\nagent's connection may call it.",
       "properties": {
         "answer": {
           "$ref": "#/$defs/QuestionAnswer"
@@ -5966,7 +5966,7 @@
           "type": "object"
         },
         {
-          "description": "The turn waits for a person to answer `request` with\n[`super::SESSION_ANSWER`] (#1660).",
+          "description": "The turn waits for an answer to `request`: a person's, with\n[`super::SESSION_ANSWER`] (#1660), or for a question anyone but the\nuser may answer, the starting session's, with\n[`super::SESSION_ANSWER_QUESTION`].",
           "properties": {
             "request": {
               "$ref": "#/$defs/InputRequest"
