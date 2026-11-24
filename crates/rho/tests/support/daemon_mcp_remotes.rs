@@ -12,9 +12,9 @@ use rmcp::model::CallToolRequestParams;
 use serde_json::{json, Value};
 
 use super::{
-    bash, call, http_client, http_server, rotate, stdio_server,
+    bash, bash_call, call, http_client, http_server, rotate, stdio_server,
     webhooks::{add_webhook, receiver},
-    Sandbox, DEADLINE,
+    Sandbox, BLOCKED, DEADLINE,
 };
 
 /// A machine serving its sessions over HTTP as `name`, with a write token
@@ -124,6 +124,90 @@ async fn a_hub_drives_a_session_on_a_remote_machine() {
                 (json!("lab-box"), vec![session])
             ],
             Err("`wait` needs `server`, the machine to act on: one of hub, lab-box".to_owned()),
+        ),
+        "remote log:\n{}",
+        remote.isolated.daemon_log()
+    );
+}
+
+// Covers: a hub's caller finds a session a person opened on a remote, the
+// hub passing `list`'s filter on, and steers and cancels it there by
+// `server`, through the token the remote issued the hub.
+// Owner: rho mcp serve hub routing, through the actual binary.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_hub_drives_a_session_a_person_opened_on_a_remote() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let remote = Sandbox::new();
+    let hub = Sandbox::new();
+    remote.set_permission_mode("bypass");
+    let person = remote.start_daemon("tool-call").await;
+    let session = remote.new_session(&person).await;
+    remote
+        .prompt_tool_call(
+            &person,
+            &session,
+            &bash_call(&format!("touch started; {BLOCKED}")),
+        )
+        .await;
+    // Steer only once bash runs, as a steer before the first model request
+    // would end the fixture's turn.
+    remote
+        .poll_until("the person's bash call to start", async || {
+            remote.workspace.join("started").exists().then_some(())
+        })
+        .await;
+    let (_remote_server, url, secret) = remote_machine(&remote, "lab-box").await;
+    add_remote(&hub, "lab-box", &url, &secret);
+    let host = stdio_server(&hub, "tool-call", &["--name", "hub"], &[]).await;
+    let on_remote = |arguments: Value| {
+        let mut arguments = arguments;
+        arguments["server"] = json!("lab-box");
+        arguments["session"] = json!(session);
+        arguments
+    };
+
+    let every = call(&host, "list", json!({"opened_by": "person"}))
+        .await
+        .unwrap();
+    let steered = call(&host, "steer", on_remote(json!({"text": "hurry"})))
+        .await
+        .unwrap();
+    let cancelled = call(&host, "cancel", on_remote(json!({}))).await;
+    let settled = call(&host, "wait", on_remote(json!({"timeout_secs": 50})))
+        .await
+        .unwrap();
+
+    let found: Vec<_> = every["servers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|server| {
+            let sessions: Vec<_> = server["sessions"]
+                .as_array()
+                .unwrap_or_else(|| panic!("a server that listed its sessions, not {server}"))
+                .iter()
+                .map(|entry| (entry["session"].clone(), entry["opened_by"].clone()))
+                .collect();
+            (server["server"].clone(), sessions)
+        })
+        .collect();
+    assert_eq!(
+        (
+            found,
+            steered["id"].is_string(),
+            steered["server"].clone(),
+            cancelled,
+            settled["state"].clone(),
+        ),
+        (
+            vec![
+                (json!("hub"), Vec::new()),
+                (json!("lab-box"), vec![(json!(session), json!("person"))]),
+            ],
+            true,
+            json!("lab-box"),
+            Ok(json!({"server": "lab-box"})),
+            json!("cancelled"),
         ),
         "remote log:\n{}",
         remote.isolated.daemon_log()

@@ -18,8 +18,9 @@ impl Action {
         match self {
             Self::List => {
                 "List the rho daemon's sessions, most recently changed first, with each one's \
-                 workspace and state (idle, running, waiting_for_input, completed, failed, \
-                 cancelled, timed_out, interrupted)."
+                 workspace, state (idle, running, waiting_for_input, completed, failed, \
+                 cancelled, timed_out, interrupted), who opened it (`opened_by`: a person, as \
+                 from the TUI, or an agent), and its title once it has one."
             }
             Self::Read => {
                 "Read a rho session's transcript as text, a window of characters at a time, \

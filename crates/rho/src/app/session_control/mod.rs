@@ -51,13 +51,10 @@ use std::{
 };
 
 use rho_protocol::{
-    methods::{
-        JobList, SessionCancel, SessionConfigure, SessionList, SessionNew, SessionPrompt,
-        SessionSteer,
-    },
+    methods::{JobList, SessionCancel, SessionConfigure, SessionNew, SessionPrompt, SessionSteer},
     ClientEnvironment, ClientError, ContentBlock, JobId, JobKind, JobListParams, JobSummary,
     ModelRef, SessionCancelParams, SessionChange, SessionConfigureParams, SessionId,
-    SessionListParams, SessionNewParams, SessionPromptParams, SessionSetup, SessionSteerParams,
+    SessionNewParams, SessionPromptParams, SessionSetup, SessionSteerParams,
 };
 use serde_json::Value;
 
@@ -67,6 +64,7 @@ use super::{
 };
 use crate::{app::session_options::OfferedModels, daemon::ConnectAs};
 
+mod catalog;
 mod check;
 mod dispatch;
 mod follow;
@@ -193,7 +191,8 @@ impl SessionControl {
     }
 
     /// The daemon's sessions the grant reaches, the most recently changed
-    /// first.
+    /// first, whoever opened them. Those the daemon does not have loaded
+    /// take their title from its catalog.
     async fn list(&self, caller: &Caller, params: ListParams) -> Result<ListResult, ControlError> {
         let limit = params.limit()?;
         let workspace = params.workspace.as_deref().map(canonical).transpose()?;
@@ -215,12 +214,23 @@ impl SessionControl {
                     .as_ref()
                     .is_none_or(|only| workspaces_of(job).into_iter().any(|place| place == only))
             })
-            .filter(|job| params.state.is_none_or(|state| job.state == state))
+            .filter(|job| params.keeps(job))
             .filter_map(|job| SessionEntry::of_job(job, &writers))
             .collect();
         sessions.sort_by_key(|entry| std::cmp::Reverse(entry.updated_at));
         let more = sessions.len() > limit;
         sessions.truncate(limit);
+        let untitled = sessions
+            .iter()
+            .filter(|entry| entry.title.is_none())
+            .map(|entry| &entry.session)
+            .collect();
+        let mut saved = catalog::titles(&self.daemon, untitled).await?;
+        for entry in &mut sessions {
+            if entry.title.is_none() {
+                entry.title = saved.remove(&entry.session);
+            }
+        }
         Ok(ListResult { sessions, more })
     }
 
@@ -520,35 +530,19 @@ async fn place_of(daemon: &Daemon, session: &SessionId) -> Result<Place, Control
             project: job.project().to_path_buf(),
         });
     }
-    let mut cursor = None;
-    loop {
-        let page = daemon
-            .request::<SessionList>(&SessionListParams {
-                cwd: None,
-                cursor,
-                limit: std::num::NonZeroU32::new(CATALOG_PAGE),
-            })
-            .await?;
-        if let Some(saved) = page.sessions.iter().find(|saved| &saved.session == session) {
-            return Ok(Place {
-                workspace: saved.cwd.clone(),
-                project: saved.cwd.clone(),
-            });
-        }
-        match page.next_cursor {
-            Some(next) => cursor = Some(next),
-            None => return Err(ControlError::UnknownSession(session.clone())),
-        }
-    }
+    catalog::find(daemon, |saved| {
+        (&saved.session == session).then(|| Place {
+            workspace: saved.cwd.clone(),
+            project: saved.cwd,
+        })
+    })
+    .await?
+    .ok_or_else(|| ControlError::UnknownSession(session.clone()))
 }
 
 async fn jobs_of(daemon: &Daemon) -> Result<Vec<JobSummary>, ControlError> {
     Ok(daemon.request::<JobList>(&JobListParams {}).await?.jobs)
 }
-
-/// The catalog page `place_of` walks: the daemon's largest
-/// (`rho/session/list` refuses more than 1000).
-const CATALOG_PAGE: u32 = 1000;
 
 /// Where a session works: its workspace, and the project it works for,
 /// which for a session in a worktree is the workspace the worktree was
