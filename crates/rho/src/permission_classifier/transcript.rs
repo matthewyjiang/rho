@@ -231,8 +231,9 @@ fn required(text: String) -> TranscriptLine {
     }
 }
 
-/// Only the questionnaire host-input bridge supplies answer evidence. Pair by
-/// call occurrence, parse its structured response, and omit every other tool body.
+/// Only the questionnaire host-input bridge supplies answer evidence, and
+/// only when the user answered. Pair by call occurrence, parse its
+/// structured response, and omit every other tool body.
 fn append_questionnaire_answers(
     entries: &mut Vec<Entry>,
     call: &ToolCall,
@@ -249,6 +250,11 @@ fn append_questionnaire_answers(
     else {
         return Ok(());
     };
+    // Only the user's own answers carry their intent: a timeout's fallback
+    // or another session's answer authorizes nothing.
+    if response.source != rho_sdk::HostInputSource::User {
+        return Ok(());
+    }
     for answer in response.answers {
         let Some(question) = request.questions.iter().find(|q| q.id == answer.id) else {
             continue;

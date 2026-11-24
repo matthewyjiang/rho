@@ -4,8 +4,11 @@
 //! client.
 //!
 //! Whoever asks opens and withdraws requests through its events; any client
-//! answers one with `rho/session/answer`. The first answer takes the
-//! request out, so a later one finds it gone. Nothing answers a request
+//! answers one with `rho/session/answer`, and the session that started this
+//! one may answer a question, never an approval nor a question only the
+//! user may answer, with `rho/session/answer_question` (see
+//! `answer_question`). The first answer
+//! takes the request out, so a later one finds it gone. Nothing answers a request
 //! because a client left: one with nobody attached stays open until someone
 //! answers it or the turn withdraws it.
 //!
@@ -20,7 +23,9 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use rho_protocol::{self as wire, ErrorCode, InputAnswer, InputRequestId, Resolution, RpcError};
+use rho_protocol::{
+    self as wire, ErrorCode, InputAnswer, InputRequestId, QuestionAnswer, Resolution, RpcError,
+};
 use rho_sdk::{
     ApprovalDecision, HostInputId, HostInputRefusal, HostInputRequest, HostInputResponse,
     HostInputSource, ToolCallId,
@@ -310,18 +315,59 @@ impl Inputs {
         id: InputRequestId,
         answer: InputAnswer,
     ) -> Result<(), RpcError> {
-        let Entry::Occupied(open) = self.open.entry(id) else {
-            return Err(not_open(id));
+        let open = self.open.get(&id).ok_or_else(|| not_open(id))?;
+        let answer = control_for(&open.waiting, answer, HostInputSource::User)?;
+        self.hand_over(id, answer, Resolution::Answered)
+    }
+
+    /// Takes question `id` out with `answer` from the session that started
+    /// this one, as [`Self::answer`] does a client's, with the answers'
+    /// source [`HostInputSource::Session`]: the saved tool result says a
+    /// session answered. Only a question takes it. An approval or a plan
+    /// approval waits for a person, and so does a question only the user may
+    /// answer ([`rho_sdk::HostInputRequest::is_user_only`]), as an MCP
+    /// server's elicitation is: each is refused and left open. The caller
+    /// checks that the answering session may answer.
+    pub(super) fn answer_question(
+        &mut self,
+        id: InputRequestId,
+        answer: QuestionAnswer,
+    ) -> Result<(), RpcError> {
+        let open = self.open.get(&id).ok_or_else(|| not_open(id))?;
+        let answer = match &open.waiting {
+            Waiting::Question { request, .. } if request.is_user_only() => {
+                return Err(invalid(format!(
+                    "input request {id} is for the user alone: only a person answers it"
+                )))
+            }
+            Waiting::Question { .. } => {
+                control_for(&open.waiting, answer.into(), HostInputSource::Session)?
+            }
+            Waiting::Approval(_) | Waiting::Plan { .. } => {
+                return Err(invalid(format!(
+                    "input request {id} is not a question: only a person answers an approval or a plan approval"
+                )))
+            }
         };
-        let answer = control_for(&open.get().waiting, answer)?;
-        let Open { control, .. } = open.remove();
+        self.hand_over(id, answer, Resolution::AnsweredBySession)
+    }
+
+    /// Takes open request `id` out, resolved as `resolution`, for
+    /// [`Self::send_answers`] to hand `answer` to whoever waits for it.
+    fn hand_over(
+        &mut self,
+        id: InputRequestId,
+        answer: TurnControl,
+        resolution: Resolution,
+    ) -> Result<(), RpcError> {
+        let Open { control, .. } = self.open.remove(&id).ok_or_else(|| not_open(id))?;
         // The model turn that asked ended, so nobody waits for the request;
         // its withdrawal may still be on the way, and will find it gone.
         if control.is_closed() {
             self.events.push(resolved(id, Resolution::Withdrawn));
             return Err(not_open(id));
         }
-        self.events.push(resolved(id, Resolution::Answered));
+        self.events.push(resolved(id, resolution));
         self.answers.push((control, answer));
         Ok(())
     }
@@ -382,13 +428,17 @@ pub(super) fn not_open(id: InputRequestId) -> RpcError {
     )
 }
 
-fn invalid(message: impl Into<String>) -> RpcError {
+pub(super) fn invalid(message: impl Into<String>) -> RpcError {
     RpcError::new(ErrorCode::InvalidParams, message)
 }
 
-/// What the turn gets for `answer` to the request `waiting`, or why the
-/// request does not take it.
-fn control_for(waiting: &Waiting, answer: InputAnswer) -> Result<TurnControl, RpcError> {
+/// What the turn gets for `answer` to the request `waiting`, answers given
+/// by `source`, or why the request does not take it.
+fn control_for(
+    waiting: &Waiting,
+    answer: InputAnswer,
+    source: HostInputSource,
+) -> Result<TurnControl, RpcError> {
     match waiting {
         Waiting::Approval(id) => {
             let decision = match answer {
@@ -431,7 +481,7 @@ fn control_for(waiting: &Waiting, answer: InputAnswer) -> Result<TurnControl, Rp
         }
         Waiting::Question { id, request } => {
             let answer = match answer {
-                InputAnswer::Answers { answers } => Ok(answered(request, answers)?),
+                InputAnswer::Answers { answers } => Ok(answered(request, answers, source)?),
                 InputAnswer::Decline => Err(HostInputRefusal::Declined),
                 InputAnswer::Dismiss => Err(HostInputRefusal::Dismissed),
                 // Another kind of request's answer, or a kind a newer protocol
@@ -446,13 +496,14 @@ fn control_for(waiting: &Waiting, answer: InputAnswer) -> Result<TurnControl, Rp
     }
 }
 
-/// The user's `answers` to `request`, checked against its questions.
+/// `source`'s `answers` to `request`, checked against its questions.
 fn answered(
     request: &HostInputRequest,
     answers: BTreeMap<String, Vec<String>>,
+    source: HostInputSource,
 ) -> Result<HostInputResponse, RpcError> {
     let response = answers.into_iter().fold(
-        HostInputResponse::new().with_source(HostInputSource::User),
+        HostInputResponse::new().with_source(source),
         |response, (question, values)| response.answer(question, values),
     );
     request

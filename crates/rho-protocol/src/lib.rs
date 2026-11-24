@@ -98,6 +98,7 @@ pub mod methods;
 pub mod schema;
 mod server;
 mod server_calls;
+mod server_codec;
 mod server_settings;
 mod server_streams;
 mod subscription;
@@ -128,8 +129,9 @@ pub use methods::{
     InputRequestId, InputTimeout, JobId, JobKind, JobListParams, JobListResponse, JobLive,
     JobState, JobSummary, JobUsage, Location, MessageId, Operation, PathScope, PendingUpgrade,
     PermissionMode, PlanApprovalAsk, PlanEntry, PlanStatus, ProjectTrustMismatch, PromptAuthor,
-    Question, QuestionAsk, QueuePlace, Replay, Resolution, RestartParams, RestartResponse,
-    RetryReason, Selection, Seq, SessionActivity, SessionAnswerParams, SessionAnswerResponse,
+    Question, QuestionAnswer, QuestionAsk, QueuePlace, Replay, Resolution, RestartParams,
+    RestartResponse, RetryReason, Selection, Seq, SessionActivity, SessionAnswerParams,
+    SessionAnswerQuestionParams, SessionAnswerQuestionResponse, SessionAnswerResponse,
     SessionAttachParams, SessionAttachResponse, SessionCancelParams, SessionCancelResponse,
     SessionControlAction, SessionDetachParams, SessionDetachResponse, SessionDetachedParams,
     SessionEvent, SessionEventParams, SessionForkParams, SessionForkResponse, SessionGrant,
@@ -138,7 +140,7 @@ pub use methods::{
     SessionSteerResponse, SessionUnsteerParams, SessionUnsteerResponse, SessionWorktree,
     StatusParams, SteerId, StopParams, StopResponse, StreamId, ToolCallId, ToolCallUpdate,
     ToolContent, ToolKind, ToolStatus, TurnError, TurnErrorKind, TurnId, TurnOutcome, UncheckedKey,
-    UncheckedReason, UnsteerOutcome, SESSION_ANSWER, SESSION_HOLD,
+    UncheckedReason, UnsteerOutcome, SESSION_ANSWER, SESSION_ANSWER_QUESTION, SESSION_HOLD,
 };
 pub use methods::{
     Applies, ClientName, ConfigCategory, ConfigChangedParams, ConfigError, ConfigGetParams,

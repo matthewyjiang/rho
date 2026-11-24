@@ -14,7 +14,8 @@ use super::{
 };
 
 // Covers: questionnaire consent reaches the classifier, without promoting unrelated,
-// failed, unmatched, or repeated tool results to user authorization.
+// failed, unmatched, or repeated tool results, or answers the user did not give
+// (another session's, a timeout's fallback), to user authorization.
 // Owner: permission classifier transcript boundary; no TUI rendering changes.
 #[test]
 fn questionnaire_answers_are_paired_with_the_completed_question() {
@@ -22,6 +23,8 @@ fn questionnaire_answers_are_paired_with_the_completed_question() {
     let yes = r#"{"answers":[{"id":"q1","answer":"Yes"}]}"#;
     let no = r#"{"answers":[{"id":"q1","answer":"No"}]}"#;
     let unknown = r#"{"answers":[{"id":"unknown","answer":"Yes"}]}"#;
+    let by_a_session = r#"{"answers":[{"id":"q1","answer":"Yes"}],"source":"session"}"#;
+    let timed_out = r#"{"answers":[{"id":"q1","answer":"Yes"}],"source":"timeout_fallback"}"#;
     for (tool_name, result_id, ok, content, expected_answer) in [
         ("questionnaire", "ask", true, yes, Some("Yes")),
         ("questionnaire", "ask", true, no, Some("No")),
@@ -31,6 +34,8 @@ fn questionnaire_answers_are_paired_with_the_completed_question() {
         ("questionnaire", "ask", true, "cancelled", None),
         ("questionnaire", "ask", true, unknown, None),
         ("questionnaire", "ask", true, r#"{"answers":[]}"#, None),
+        ("questionnaire", "ask", true, by_a_session, None),
+        ("questionnaire", "ask", true, timed_out, None),
     ] {
         let status = if ok {
             rho_sdk::model::ToolResultStatus::Succeeded

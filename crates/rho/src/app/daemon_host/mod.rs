@@ -429,6 +429,13 @@ impl Service for DaemonHost {
         self.sessions.answer(params).await
     }
 
+    async fn answer_question(
+        &self,
+        params: rho_protocol::SessionAnswerQuestionParams,
+    ) -> Result<rho_protocol::SessionAnswerQuestionResponse, RpcError> {
+        self.sessions.answer_question(params).await
+    }
+
     async fn surface_action(
         &self,
         params: SessionSurfaceActionParams,

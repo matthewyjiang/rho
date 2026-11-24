@@ -4,8 +4,7 @@
 
 use std::{future::Future, sync::Arc, time::Duration};
 
-use serde::Serialize;
-use serde_json::{Map, Value};
+use serde_json::Value;
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::{mpsc, watch, OwnedSemaphorePermit},
@@ -13,6 +12,7 @@ use tokio::{
 };
 
 use crate::server_calls::ServiceCall;
+use crate::server_codec::{decode_params, encode, encode_result, unsupported};
 use crate::server_settings::{self, SettingsService, WatchRequest};
 use crate::server_streams::{attach, login, AttachRequest};
 use crate::{
@@ -24,20 +24,21 @@ use crate::{
         AuthChooseStoreParams, AuthChooseStoreResponse, AuthKeyParams, AuthKeyResponse,
         AuthListParams, AuthListResponse, AuthLogin, AuthLoginCancelParams,
         AuthLoginCancelResponse, AuthLoginParams, AuthLoginResponse, AuthLogoutParams,
-        AuthLogoutResponse, ClientInfo, ConfigGet, Hello, JobListResponse, Method, ModelListMethod,
-        SessionAnswerParams, SessionAnswerResponse, SessionAttach, SessionAttachParams,
-        SessionAttachResponse, SessionBackgroundListResponse, SessionBackgroundStopParams,
-        SessionBackgroundStopResponse, SessionCancelParams, SessionCancelResponse,
-        SessionConfigureParams, SessionConfigureResponse, SessionDeleteParams,
-        SessionDeleteResponse, SessionDetach, SessionDetachParams, SessionDetachResponse,
-        SessionForkParams, SessionForkResponse, SessionHoldParams, SessionHoldResponse,
-        SessionInspectParams, SessionInspectResponse, SessionListDetailedResponse,
-        SessionListParams, SessionListResponse, SessionMcpCatalog, SessionMcpCatalogParams,
-        SessionMcpCompleteParams, SessionMcpCompleteResponse, SessionMcpInventory,
-        SessionMcpParams, SessionMcpResourceParams, SessionMcpResourceResponse, SessionNewParams,
-        SessionNewResponse, SessionObserve, SessionObserveParams, SessionProcessesParams,
-        SessionProcessesResponse, SessionPromptParams, SessionPromptResponse,
-        SessionPullRequestLinkParams, SessionPullRequestLinkResponse, SessionPullRequestListParams,
+        AuthLogoutResponse, ClientInfo, ConfigGet, Hello, JobListResponse, ModelListMethod,
+        SessionAnswerParams, SessionAnswerQuestionParams, SessionAnswerQuestionResponse,
+        SessionAnswerResponse, SessionAttach, SessionAttachParams, SessionAttachResponse,
+        SessionBackgroundListResponse, SessionBackgroundStopParams, SessionBackgroundStopResponse,
+        SessionCancelParams, SessionCancelResponse, SessionConfigureParams,
+        SessionConfigureResponse, SessionDeleteParams, SessionDeleteResponse, SessionDetach,
+        SessionDetachParams, SessionDetachResponse, SessionForkParams, SessionForkResponse,
+        SessionHoldParams, SessionHoldResponse, SessionInspectParams, SessionInspectResponse,
+        SessionListDetailedResponse, SessionListParams, SessionListResponse, SessionMcpCatalog,
+        SessionMcpCatalogParams, SessionMcpCompleteParams, SessionMcpCompleteResponse,
+        SessionMcpInventory, SessionMcpParams, SessionMcpResourceParams,
+        SessionMcpResourceResponse, SessionNewParams, SessionNewResponse, SessionObserve,
+        SessionObserveParams, SessionProcessesParams, SessionProcessesResponse,
+        SessionPromptParams, SessionPromptResponse, SessionPullRequestLinkParams,
+        SessionPullRequestLinkResponse, SessionPullRequestListParams,
         SessionPullRequestListResponse, SessionPullRequestShowParams,
         SessionPullRequestShowResponse, SessionPullRequestUnlinkParams,
         SessionPullRequestUnlinkResponse, SessionRenameParams, SessionRenameResponse,
@@ -45,13 +46,13 @@ use crate::{
         SessionSurfaceActionResponse, SessionUnsteerParams, SessionUnsteerResponse,
         WorktreePruneParams, WorktreePruneResponse, AUTH_CHOOSE_STORE, AUTH_KEY, AUTH_LIST,
         AUTH_LOGIN, AUTH_LOGIN_CANCEL, AUTH_LOGOUT, CONFIG_GET, HELLO, MODEL_LIST, SESSION_ANSWER,
-        SESSION_ATTACH, SESSION_BACKGROUND_LIST, SESSION_BACKGROUND_STOP, SESSION_CANCEL,
-        SESSION_CONFIGURE, SESSION_DELETE, SESSION_DETACH, SESSION_FORK, SESSION_HOLD,
-        SESSION_INSPECT, SESSION_LIST, SESSION_LIST_DETAILED, SESSION_MCP, SESSION_MCP_CATALOG,
-        SESSION_MCP_COMPLETE, SESSION_MCP_RESOURCE, SESSION_NEW, SESSION_OBSERVE,
-        SESSION_PROCESSES, SESSION_PROMPT, SESSION_PULL_REQUEST_LINK, SESSION_PULL_REQUEST_LIST,
-        SESSION_PULL_REQUEST_SHOW, SESSION_PULL_REQUEST_UNLINK, SESSION_RENAME, SESSION_STEER,
-        SESSION_SURFACE_ACTION, SESSION_UNSTEER, WORKTREE_PRUNE,
+        SESSION_ANSWER_QUESTION, SESSION_ATTACH, SESSION_BACKGROUND_LIST, SESSION_BACKGROUND_STOP,
+        SESSION_CANCEL, SESSION_CONFIGURE, SESSION_DELETE, SESSION_DETACH, SESSION_FORK,
+        SESSION_HOLD, SESSION_INSPECT, SESSION_LIST, SESSION_LIST_DETAILED, SESSION_MCP,
+        SESSION_MCP_CATALOG, SESSION_MCP_COMPLETE, SESSION_MCP_RESOURCE, SESSION_NEW,
+        SESSION_OBSERVE, SESSION_PROCESSES, SESSION_PROMPT, SESSION_PULL_REQUEST_LINK,
+        SESSION_PULL_REQUEST_LIST, SESSION_PULL_REQUEST_SHOW, SESSION_PULL_REQUEST_UNLINK,
+        SESSION_RENAME, SESSION_STEER, SESSION_SURFACE_ACTION, SESSION_UNSTEER, WORKTREE_PRUNE,
     },
     subscription::Subscription,
     BuildId, BuildSkew, DaemonInfo, DaemonStatus, ErrorCode, FrameError, HelloResponse, Message,
@@ -205,6 +206,17 @@ pub trait Service: SettingsService + Send + Sync {
     ) -> impl Future<Output = Result<SessionAnswerResponse, RpcError>> + Send {
         let _ = params;
         unsupported(SESSION_ANSWER)
+    }
+
+    /// Handles `rho/session/answer_question`: hand a question's answer
+    /// from the session that started the asking one to whoever asked, if
+    /// the request is an open question and that session may answer it.
+    fn answer_question(
+        &self,
+        params: SessionAnswerQuestionParams,
+    ) -> impl Future<Output = Result<SessionAnswerQuestionResponse, RpcError>> + Send {
+        let _ = params;
+        unsupported(SESSION_ANSWER_QUESTION)
     }
 
     /// Handles `rho/session/surface_action`: hand a user's action on an
@@ -956,34 +968,6 @@ impl Drop for Responder {
             "the daemon failed while handling this request",
         )));
     }
-}
-
-/// Decodes `M`'s params. Absent params decode like `{}`, so params-less
-/// methods accept both. Typing by [`Method`] keeps the server on the same
-/// params type the client sends.
-pub(crate) fn decode_params<M: Method>(params: Option<Value>) -> Result<M::Params, RpcError> {
-    serde_json::from_value(params.unwrap_or_else(|| Value::Object(Map::new())))
-        .map_err(|error| RpcError::new(ErrorCode::InvalidParams, error.to_string()))
-}
-
-/// Encodes `M`'s result, the type [`crate::Client::request`] decodes.
-pub(crate) fn encode_result<M: Method>(result: &M::Result) -> Result<Value, RpcError> {
-    encode(result)
-}
-
-/// What a [`Service`] or [`SettingsService`] method that is not overridden
-/// answers: this daemon does not serve `method`.
-pub(crate) fn unsupported<T>(method: &str) -> std::future::Ready<Result<T, RpcError>> {
-    std::future::ready(Err(RpcError::new(
-        ErrorCode::MethodNotFound,
-        format!("this rho daemon does not serve {method}"),
-    )))
-}
-
-/// Fails only for values JSON cannot hold, such as a non-UTF-8 path.
-fn encode<T: Serialize>(value: &T) -> Result<Value, RpcError> {
-    serde_json::to_value(value)
-        .map_err(|error| RpcError::new(ErrorCode::InternalError, error.to_string()))
 }
 
 #[cfg(test)]

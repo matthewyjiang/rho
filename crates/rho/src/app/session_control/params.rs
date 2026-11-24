@@ -2,11 +2,16 @@
 //! their input schemas and return the results as JSON, so every front end
 //! answers the same call the same way.
 
-use std::{collections::HashMap, num::NonZeroUsize, path::PathBuf, time::Duration};
+use std::{
+    collections::{BTreeMap, HashMap},
+    num::NonZeroUsize,
+    path::PathBuf,
+    time::Duration,
+};
 
 use rho_protocol::{
-    Cursor, InputRequest, JobId, JobState, JobSummary, Seq, SessionId, SessionWorktree, SteerId,
-    StreamId, TurnId, TurnOutcome,
+    Cursor, InputRequest, InputRequestId, JobId, JobState, JobSummary, QuestionAnswer, Seq,
+    SessionId, SessionWorktree, SteerId, StreamId, TurnId, TurnOutcome,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -246,6 +251,45 @@ pub(crate) struct CancelParams {
 #[derive(Debug, Serialize)]
 pub(crate) struct CancelResult {}
 
+/// Params of `answer`: answers to a question that a session the caller
+/// started asks, or `decline`. Never an approval's answer: those wait for a
+/// person.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AnswerParams {
+    /// A session this one started.
+    pub(crate) session: SessionId,
+    /// The question's `id`, from the `inputs` that `wait` returned.
+    pub(crate) request: InputRequestId,
+    /// The answers, by question `id`: the `value` of each choice picked, or
+    /// your own text where the question allows other answers. Leave out to
+    /// decline.
+    #[serde(default)]
+    pub(crate) answers: Option<BTreeMap<String, Vec<String>>>,
+    /// Decline to answer the questions, instead of giving `answers`.
+    #[serde(default)]
+    pub(crate) decline: bool,
+}
+
+impl AnswerParams {
+    /// The answer the call gives: its `answers`, or a decline.
+    pub(super) fn answer(&self) -> Result<QuestionAnswer, ControlError> {
+        match (&self.answers, self.decline) {
+            (Some(answers), false) => Ok(QuestionAnswer::Answers {
+                answers: answers.clone(),
+            }),
+            (None, true) => Ok(QuestionAnswer::Decline),
+            (Some(_), true) | (None, false) => Err(ControlError::Invalid(
+                "`answer` takes either `answers` or `decline: true`".into(),
+            )),
+        }
+    }
+}
+
+/// Result of `answer`: the question's asker has the answer.
+#[derive(Debug, Serialize)]
+pub(crate) struct AnswerResult {}
+
 /// Params of `wait`.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -295,9 +339,10 @@ pub(crate) struct WaitResult {
     /// The turn `state` is of: the one under way, or the last one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) turn: Option<TurnId>,
-    /// What the turn or the session's subagents wait on a person for. Only
-    /// a person answers these, from a rho frontend; no session-control
-    /// action can.
+    /// What the turn or the session's subagents wait on a person for. A
+    /// person answers these from a rho frontend. The session that started
+    /// this one may answer a question with `answer`; no session-control
+    /// action answers an approval or a plan approval.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) inputs: Vec<InputRequest>,
     /// Pass to the next `wait` on this session to resume after what this

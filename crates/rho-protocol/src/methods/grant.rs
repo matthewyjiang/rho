@@ -42,7 +42,8 @@ pub struct SessionGrant {
 pub enum GrantAccess {
     /// List, read, and wait for sessions.
     Read,
-    /// Also start, prompt, steer, and cancel them.
+    /// Also start, prompt, steer, and cancel them, and answer the questions
+    /// of sessions they started.
     Write,
 }
 

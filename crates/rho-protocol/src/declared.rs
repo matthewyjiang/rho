@@ -117,7 +117,9 @@ fn may_declare(role: ClientRole, capability: ClientCapability) -> bool {
 /// for a person, as an answer does, belongs here.
 ///
 /// Answering, holding and acting on a surface are the only gated methods,
-/// on purpose. An agent
+/// on purpose. `rho/session/answer_question` needs none: an agent's session
+/// answers through it a question asked by a session it started, never an
+/// approval, and the daemon checks that against its job records. An agent
 /// connection may change settings (`rho/config/set` and the other settings
 /// methods) and reconfigure a session (`rho/session/configure`): agents
 /// legitimately tune the sessions they run, and a role is declared, not

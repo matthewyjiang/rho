@@ -7,7 +7,9 @@
 //! id. A prompt or an attach for a saved session the daemon has not loaded,
 //! such as one an earlier daemon ran or one the TUI saved, reopens it from
 //! its file in its own workspace, recording its turns on the session's last
-//! job (#1661). Cancel, steer, unsteer, answer, hold, and configure never
+//! job (#1661). The session that started another may answer its questions,
+//! never its approvals; see [`answer_question`]. Cancel, steer, unsteer,
+//! answer, hold, and configure never
 //! load a session: one that is not loaded has no turn to act on, and a
 //! client attaches before it changes settings. A steer answers with its id,
 //! which a client withdraws it by; see [`steer`]. A prompt answers with its
@@ -69,6 +71,7 @@ use crate::{
     config::Config,
 };
 
+mod answer_question;
 mod awaited;
 mod background;
 mod budget;

@@ -589,3 +589,126 @@ fn a_run_runs_under_the_session_whose_turn_runs_it() {
         ]
     );
 }
+
+// Covers: only the session whose job started the asking session's job may
+// answer its questions, and only under a grant that acts on sessions; a
+// sibling, a grandparent, a session whose job is gone, and any session
+// answering a session nobody started are refused. A subagent run's session
+// that started one may answer, under the grant of the session running it,
+// and is refused once that session's job is gone; another session's
+// subagent run, and the starter's own subagent run, are not the starter.
+// Owner: daemon job registry, the rule `rho/session/answer_question` checks.
+#[test]
+fn only_the_starting_session_may_answer_with_write_access() {
+    use super::AnswerRefused::{NoGrant, NotStarter, ReadOnly};
+    use crate::caller_context::{Access, CallerContext, Scope, Workspaces};
+    let home = TempDir::new().unwrap();
+    let registry = JobRegistry::open(JobStore::open(home.path()).unwrap());
+    let grant = |access| CallerContext {
+        depth: 1,
+        scope: Scope {
+            access,
+            workspaces: Workspaces::Any,
+        },
+    };
+    let session = |parent: Option<&JobId>, access| JobRecord {
+        parent: parent.cloned(),
+        grant: grant(access),
+        ..JobRecord::new_session(
+            JobId::generate(),
+            PathBuf::from("/work"),
+            rho_sdk::SessionId::new(),
+        )
+    };
+    let lead = session(None, Access::Write);
+    let watcher = session(None, Access::Read);
+    let worker = session(Some(&lead.id), Access::Write);
+    let watched = session(Some(&watcher.id), Access::Write);
+    let sibling = session(Some(&lead.id), Access::Write);
+    let grandchild = session(Some(&worker.id), Access::Write);
+    let orphan = session(Some(&JobId::generate()), Access::Write);
+    let subagent = JobRecord::new_subagent(
+        lead.id.clone(),
+        PathBuf::from("/work"),
+        Some(rho_sdk::SessionId::new()),
+        "run".into(),
+    );
+    let subagents_worker = session(Some(&subagent.id), Access::Write);
+    let siblings_subagent = JobRecord::new_subagent(
+        sibling.id.clone(),
+        PathBuf::from("/work"),
+        Some(rho_sdk::SessionId::new()),
+        "run".into(),
+    );
+    let orphan_subagent = JobRecord::new_subagent(
+        JobId::generate(),
+        PathBuf::from("/work"),
+        Some(rho_sdk::SessionId::new()),
+        "run".into(),
+    );
+    let orphan_subagents_worker = session(Some(&orphan_subagent.id), Access::Write);
+    let cases = [
+        ("the starter", &worker, &lead, Ok(())),
+        ("a read-only starter", &watched, &watcher, Err(ReadOnly)),
+        ("a sibling", &worker, &sibling, Err(NotStarter)),
+        ("a grandparent", &grandchild, &lead, Err(NotStarter)),
+        ("a subagent run", &subagents_worker, &subagent, Ok(())),
+        (
+            "a subagent run whose session's job is gone",
+            &orphan_subagents_worker,
+            &orphan_subagent,
+            Err(NoGrant),
+        ),
+        (
+            "another session's subagent run",
+            &worker,
+            &siblings_subagent,
+            Err(NotStarter),
+        ),
+        (
+            "the starter's subagent run",
+            &worker,
+            &subagent,
+            Err(NotStarter),
+        ),
+        (
+            "a starter whose job is gone",
+            &orphan,
+            &lead,
+            Err(NotStarter),
+        ),
+        ("nobody started it", &lead, &worker, Err(NotStarter)),
+    ];
+    for record in [
+        &lead,
+        &watcher,
+        &worker,
+        &watched,
+        &sibling,
+        &grandchild,
+        &orphan,
+        &subagent,
+        &subagents_worker,
+        &siblings_subagent,
+        &orphan_subagent,
+        &orphan_subagents_worker,
+    ] {
+        registry.register(record.clone()).unwrap();
+    }
+
+    let decided: Vec<_> = cases
+        .iter()
+        .map(|(case, asking, by, _)| {
+            let by = by
+                .subject
+                .session()
+                .expect("each answering job writes a session");
+            (*case, registry.may_answer(&asking.id, by))
+        })
+        .collect();
+    let expected: Vec<_> = cases
+        .iter()
+        .map(|(case, _, _, expected)| (*case, *expected))
+        .collect();
+    assert_eq!(decided, expected);
+}

@@ -65,7 +65,7 @@ impl Transcript {
                 }
             }
             SessionEvent::InputRequested { request } => self.blocks.push(Block::Note(format!(
-                "waiting for a person to answer input request {}",
+                "waiting for an answer to input request {}",
                 request.id
             ))),
             SessionEvent::TurnEnded { outcome, .. } => {
