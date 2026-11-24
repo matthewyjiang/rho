@@ -5,7 +5,8 @@
 //! read-only server refuses the tools that write, and the HTTP transport
 //! refuses requests its tokens and origin rules do not allow. How a
 //! session's caller context carries depth and scope through the server
-//! into the sessions it starts is in [`caller`]; webhook watches are in
+//! into the sessions it starts is in [`caller`]; a token driving a session
+//! a person opened is in [`reach`]; webhook watches are in
 //! [`webhooks`]; a hub driving another machine's server is in [`remotes`];
 //! an HTTP server upgrading in place is in [`upgrade`].
 
@@ -32,6 +33,9 @@ mod caller;
 
 #[path = "daemon_mcp_native.rs"]
 mod native;
+
+#[path = "daemon_mcp_reach.rs"]
+mod reach;
 
 #[path = "daemon_mcp_remotes.rs"]
 mod remotes;
@@ -99,12 +103,40 @@ async fn call(client: &McpClient, tool: &str, arguments: Value) -> Result<Value,
 
 /// A `tool-call` fixture prompt that runs `command` in bash.
 fn bash(command: &str) -> String {
-    json!({"id": "bash", "name": "bash", "arguments": {"command": command}}).to_string()
+    bash_call(command).to_string()
+}
+
+/// The tool call [`bash`] prompts with, for a prompt a daemon client sends
+/// itself.
+fn bash_call(command: &str) -> Value {
+    json!({"id": "bash", "name": "bash", "arguments": {"command": command}})
 }
 
 /// A bash command that blocks until `go` exists in its workspace, then
 /// prints the depth its session runs at.
 const BLOCKED: &str = "while [ ! -e go ]; do sleep 0.02; done; echo \"depth $RHO_SESSION_DEPTH\"";
+
+/// A session a person opens in `sandbox`'s workspace outside MCP, over
+/// `person`, a frontend's connection to its daemon, with its first turn
+/// blocked in bash. Returns once bash runs: a steer that lands before the
+/// first model request joins it, and the fixture then answers that text
+/// and ends the turn on its own (#1852).
+async fn a_persons_running_session(sandbox: &Sandbox, person: &rho_protocol::Client) -> SessionId {
+    let session = sandbox.new_session(person).await;
+    sandbox
+        .prompt_tool_call(
+            person,
+            &session,
+            &bash_call(&format!("touch started; {BLOCKED}")),
+        )
+        .await;
+    sandbox
+        .poll_until("the person's bash call to start", async || {
+            sandbox.workspace.join("started").exists().then_some(())
+        })
+        .await;
+    session
+}
 
 // Covers: an MCP host starts a session in another workspace, waits past a
 // timeout and again from the cursor until the turn ends, reads the final
