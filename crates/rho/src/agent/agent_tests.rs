@@ -340,7 +340,10 @@ fn plugin_agents_rank_below_user_files_and_cannot_replace_builtins() {
                 contents: Err("stream did not contain valid UTF-8".into()),
             },
             source("/user-plugin/shared.md", "user plugin"),
-            source("/user-plugin/side.md", "claims the /side agent"),
+            source(
+                "/user-plugin/permission-classifier-screen.md",
+                "claims the permission screen's id",
+            ),
         ],
         project_plugins: vec![source("/project-plugin/auditor.md", "project plugin")],
         agents_home: vec![source("/agents-home/shared.md", "agents home")],
@@ -374,8 +377,8 @@ fn plugin_agents_rank_below_user_files_and_cannot_replace_builtins() {
             Path::new("/user-plugin/reviewer.md"),
             Path::new("/user-plugin/worker.md"),
             Path::new("/user-plugin/garbled.md"),
-            Path::new("/user-plugin/side.md")
+            Path::new("/user-plugin/permission-classifier-screen.md")
         ]
     );
-    assert!(catalog.find("side").is_err());
+    assert!(catalog.find("permission-classifier-screen").is_err());
 }

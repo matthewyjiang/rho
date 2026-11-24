@@ -449,9 +449,6 @@ impl TierLoad {
     }
 }
 
-/// Id the synthetic `/side` agent binds under.
-pub(crate) const SIDE_AGENT_ID: &str = "side";
-
 /// An id Rho owns, so catalog files and model overrides cannot take it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ReservedId {
@@ -460,8 +457,7 @@ enum ReservedId {
     /// Built-in agents, reserved from plugins only.
     BuiltIn,
     /// Ids Rho uses outside the catalog (the permission screen's
-    /// `[internal_agents]` key and the `/side` agent), reserved from plugins
-    /// only.
+    /// `[internal_agents]` key), reserved from plugins only.
     Host,
 }
 
@@ -472,12 +468,7 @@ impl ReservedId {
             Some(Self::Internal)
         } else if BUILTINS.iter().any(|(builtin, _)| *builtin == id) {
             Some(Self::BuiltIn)
-        } else if [
-            crate::permission_classifier::DECISION_SCREEN_ID,
-            SIDE_AGENT_ID,
-        ]
-        .contains(&id)
-        {
+        } else if id == crate::permission_classifier::DECISION_SCREEN_ID {
             Some(Self::Host)
         } else {
             None

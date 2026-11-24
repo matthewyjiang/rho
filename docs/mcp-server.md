@@ -8,7 +8,7 @@ The server speaks stdio by default. For hosts that connect by URL, use [`--http`
 
 | Tool | What it does | Access |
 | --- | --- | --- |
-| `list` | Lists sessions with their id, workspace, state, and parent session. Filter by `workspace` or `state`. | read |
+| `list` | Lists sessions with their id, workspace, state, who opened them, title, and parent session. Filter by `workspace`, `state`, or `opened_by`; `hide_idle` leaves out sessions in state `idle`. See [Sessions you opened yourself](#sessions-you-opened-yourself). | read |
 | `read` | Returns a session's transcript as text, a page at a time. | read |
 | `new` | Starts a session in `workspace` (an absolute path) with a first `prompt`. Optional `agent` and `model`. `worktree: true` runs it in a new [git worktree](/daemon#sessions-in-worktrees). | write |
 | `prompt` | Starts the session's next turn with `text`. | write |
@@ -43,6 +43,31 @@ Over stdio the host has write access unless you start the server [read-only](#re
 - `outcome.text` is the final answer. `read` returns the whole conversation.
 - `inputs` lists the approvals or questions the turn waits on. A subagent's question stops `wait` too, even with no turn running.
 - `turn` is the turn `state` is of.
+
+## Sessions you opened yourself
+
+The tools reach every session the [daemon](/daemon) knows, not only the ones a caller started through this server. A session you opened in the TUI, a web UI, or with `rho run --detach` can be listed, read, followed, steered, prompted, and cancelled like any other. Over HTTP, a token reaches a session by its workspace, whoever opened it: see [Tokens](#tokens).
+
+Each `list` entry says who opened the session:
+
+```json
+{"sessions": [
+  {"session": "8c1e…", "workspace": "/home/me/src/app", "state": "running", "opened_by": "person", "title": "Fix the flaky test", "updated_at": 1795516591},
+  {"session": "4f0a…", "workspace": "/home/me/src/app", "state": "completed", "opened_by": "agent", "updated_at": 1795510211}
+], "more": false}
+```
+
+- `opened_by` is `agent` for a session opened through this server or a Rho agent's [`sessions` tool](/sessions#starting-and-driving-other-sessions), and `person` for any other, such as one you opened in the TUI. It does not name the token or the frontend: the daemon does not record them. A session that an agent in one of your own sessions starts from its shell with `rho run --detach` also lists as `person`.
+- `title` is the session's title, once it has one. Rho names a session during its first turn, and you can rename it. Once the daemon unloads a session, its title comes from the saved session, so a fork, and a session whose workspace directory is gone, then list without one.
+- `opened_by: "person"` as an argument lists only those sessions. `hide_idle: true` leaves out sessions in state `idle`, which the daemon has run no turn on: one opened and not yet prompted, or an older saved session you reopened and have not prompted since.
+
+`list` returns 20 sessions unless `limit` asks for more, so filter rather than page through a busy machine.
+
+A turn the caller prompts on your session runs with the caller's [scope](#scope-follows-the-sessions-a-token-starts). Your next prompt from the TUI runs with your own again. A frontend that follows the session gets the caller's turns as they happen.
+
+- A `steer` joins the turn that is running. On a turn you started, the caller's text is read by an agent that runs with your scope, not the caller's.
+- A turn the caller prompts runs its commands with the environment of the `rho mcp serve` process, its `PATH` included, not your shell's.
+- If you opened the session with `RHO_TRUST_PROJECT_*` variables the server was started without, or the other way round, `prompt` is refused and the error names the variables.
 
 ## Approvals stay with people
 
@@ -151,7 +176,7 @@ rho mcp token rotate laptop --scope write --workspace ~/src/app --workspace ~/sr
 `rotate` prints the secret once on stdout. Rho keeps only a hash of it, in your [credential store](/authentication-and-models#where-credentials-live). Clients send it as `Authorization: Bearer <secret>`.
 
 - `--scope read`, the default, allows `list`, `read`, and `wait`. `--scope write` also allows `new`, `prompt`, `steer`, and `cancel`.
-- `--workspace` grants a directory and everything under it. A new token needs at least one. The token cannot see or touch sessions anywhere else. A daemon session in a [worktree](/daemon#sessions-in-worktrees), such as one `new` starts with `worktree: true`, counts as in the workspace it was started in, so a token that reaches that workspace reaches the session too, though its worktree is under `~/.rho/worktrees`. A foreground `rho run --worktree` session counts as in its worktree only.
+- `--workspace` grants a directory and everything under it. A new token needs at least one. The token reaches every session there, [whoever opened it](#sessions-you-opened-yourself), and cannot see or touch sessions anywhere else. `--workspace /` reaches every session on the machine: with `--scope read` to watch them all, with `--scope write` to drive them all and start sessions anywhere. A daemon session in a [worktree](/daemon#sessions-in-worktrees), such as one `new` starts with `worktree: true`, counts as in the workspace it was started in, so a token that reaches that workspace reaches the session too, though its worktree is under `~/.rho/worktrees`. A foreground `rho run --worktree` session counts as in its worktree only.
 - Running `rotate` on an existing token issues a new secret. It keeps the token's scope and workspaces unless you pass new ones.
 
 ```bash
@@ -165,7 +190,7 @@ Rotations and revokes apply from the next request, without a restart. They do no
 
 A turn that a token starts or prompts runs with the token's scope and workspaces. Any `rho mcp serve` the session calls holds it to that scope too. A session the token started keeps that limit for good, so a person who prompts it later does not give it their own access.
 
-Like the [limits](#limits), this is not a sandbox. A write token can also steer a turn someone else started.
+Like the [limits](#limits), this is not a sandbox. A write token can also prompt, steer, and cancel a session someone else opened in its workspaces, yours included, and a steer joins a turn that runs with the scope of whoever started it. To keep a caller off your own sessions, give its token workspaces you do not work in yourself.
 
 ### Hosts and origins
 
@@ -318,6 +343,7 @@ A remote can be a hub too, and two hubs can list each other. A call a hub forwar
 ### Who may do what on a remote
 
 - The hub checks the caller's access, read or write, and sends the call on. The remote's token for the hub holds it to that machine's workspaces and [limits](#limits).
+- The remote's token for the hub also decides which of that machine's sessions the hub's callers find: every session in its workspaces, [whoever opened it](#sessions-you-opened-yourself). `list`'s filters are passed on to each remote; a remote running an older Rho refuses a filter it does not know, and `list` reports that as the remote's `error`.
 - Every token of the hub reaches every remote. A token's `--workspace` paths are on the hub's machine; on a remote, the remote's token for the hub decides which workspaces the call reaches. So a hub token limited to one workspace still reaches every workspace the remotes' tokens allow, and so do the sessions it starts. Keep the remotes' tokens for the hub narrow.
 - Session depth counts across machines: a session one hub session starts on a remote runs one level deeper.
 

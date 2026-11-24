@@ -217,23 +217,6 @@ impl BoundAgent {
         }
     }
 
-    /// Carries the host session's `/fast` onto a Rho bind that inherits the
-    /// host model, when the bound selection can serve it.
-    ///
-    /// For synthetic host-owned asides such as `/side`, which follow the
-    /// conversation rather than an agent file. Catalog agents must not use
-    /// this: their definition's `fast` is authoritative.
-    pub(crate) fn keep_host_fast_mode(&mut self, host_config: &Config) {
-        if let BoundRuntime::Rho { config, .. } = &mut self.runtime {
-            config.fast_mode = host_config.fast_mode
-                && rho_providers::providers::fast_mode::supports_fast_mode(
-                    &config.provider,
-                    &config.model,
-                    &config.auth,
-                );
-        }
-    }
-
     /// Rho-bound capabilities. Claude-cli agents do not bind host tools.
     pub(crate) fn rho_capabilities(&self) -> Option<&AgentCapabilities> {
         match &self.runtime {

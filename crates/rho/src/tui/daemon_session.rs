@@ -92,19 +92,6 @@ const NOT_OPENED: &str = "the session opens with its first prompt";
 /// Shown while the TUI reconnects to a restarting daemon.
 const RECONNECTING: &str = "rho daemon restarting; reconnecting";
 
-/// Routes session `id`'s notifications to the receiver this returns,
-/// replacing any earlier route.
-fn route(daemon: &Daemon, id: &SessionId) -> mpsc::UnboundedReceiver<Routed> {
-    let (sender, routed) = mpsc::unbounded_channel();
-    daemon.route(
-        id,
-        Box::new(move |routed| {
-            let _ = sender.send(routed);
-        }),
-    );
-    routed
-}
-
 /// One daemon session the TUI follows.
 pub(crate) struct DaemonSession {
     /// Holds the connection; dropping it closes the connection, which
