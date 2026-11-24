@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
-use super::{AgentCatalog, DEFAULT_AGENT_ID};
+use super::{AgentCatalog, DEFAULT_AGENT_ID, LEAD_AGENT_ID};
 
 /// Agent IDs and descriptions as a parent model was told about them.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -42,7 +42,9 @@ impl AdvertisedAgents {
         Self(
             catalog
                 .iter()
-                .filter(|entry| entry.definition.id.as_str() != DEFAULT_AGENT_ID)
+                .filter(|entry| {
+                    ![DEFAULT_AGENT_ID, LEAD_AGENT_ID].contains(&entry.definition.id.as_str())
+                })
                 .map(|entry| {
                     (
                         entry.definition.id.to_string(),
