@@ -7,11 +7,11 @@ use super::{prepare_side_panel, side_overlay_frame, Entry, SideOverlay};
 // Owner: side-chat overlay state
 #[test]
 fn rejected_submit_keeps_busy_and_stream() {
-    let mut overlay = SideOverlay::new("snap".into());
+    let mut overlay = SideOverlay::new();
     overlay.busy = true;
     overlay.append_assistant_delta("partial");
 
-    overlay.push_notice("could not start side chat: a turn is already running".into());
+    overlay.push_error("could not start side chat: a turn is already running".into());
 
     pretty_assertions::assert_eq!(overlay.busy, true);
     pretty_assertions::assert_eq!(overlay.streaming_assistant.as_deref(), Some("partial"));
@@ -33,7 +33,7 @@ fn rejected_submit_keeps_busy_and_stream() {
 // Owner: side-chat overlay state
 #[test]
 fn tool_boundary_commits_assistant_before_retry_reset() {
-    let mut overlay = SideOverlay::new("snap".into());
+    let mut overlay = SideOverlay::new();
     overlay.append_assistant_delta("before tool");
     overlay.push_tool("read_file".into());
     overlay.append_assistant_delta("discarded attempt");
@@ -57,7 +57,7 @@ fn tool_boundary_commits_assistant_before_retry_reset() {
 // Owner: side-chat overlay layout
 #[test]
 fn side_scroll_metrics_follow_wrapped_body() {
-    let mut overlay = SideOverlay::new("snap".into());
+    let mut overlay = SideOverlay::new();
     overlay.push_user("short".into());
     overlay
         .entries
