@@ -24,7 +24,9 @@ mod registry;
 mod state;
 mod store;
 
-pub(super) use registry::{JobRegistry, Moved, RegisterError, SessionJob, StartTurnError};
+pub(super) use registry::{
+    AnswerRefused, JobRegistry, Moved, RegisterError, SessionJob, StartTurnError,
+};
 pub(super) use state::{JobEvent, JobState, TurnEnd};
 pub(super) use store::JobStore;
 
@@ -99,6 +101,21 @@ pub(super) enum JobSubject {
     /// One drive of workflow run `workflow_run`, started by the session job
     /// that is its parent. The run's agent nodes are its subagent jobs.
     Workflow { workflow_run: RunId },
+}
+
+impl JobSubject {
+    /// The Rho session the job writes: a session job's, or a subagent
+    /// run's on rho's own runtime. `None` for any other job.
+    pub(super) fn session(&self) -> Option<&rho_sdk::SessionId> {
+        match self {
+            Self::Session { session }
+            | Self::Subagent {
+                session: Some(session),
+                ..
+            } => Some(session),
+            Self::Subagent { session: None, .. } | Self::Workflow { .. } => None,
+        }
+    }
 }
 
 /// How a session job's turns get under way.

@@ -1,10 +1,12 @@
 //! The session catalog over the daemon's socket (`rho/session/list`,
-//! `rho/session/rename`, `rho/session/delete`), through the real binary: a
-//! list holds every workspace's sessions or one workspace's, a rename
-//! reaches attached clients and the list, and a delete detaches a loaded
-//! session's clients and removes it, removes one the daemon has not loaded,
-//! but never runs under a running turn (#1670, #1667). Paging itself is the
-//! session catalog's, covered in its unit tests.
+//! `rho/session/list_detailed`, `rho/session/rename`,
+//! `rho/session/delete`), through the real binary: a list holds every
+//! workspace's sessions or one workspace's, a detailed list names each
+//! session's agent and the session that started it, a rename reaches
+//! attached clients and the list, and a delete detaches a loaded session's
+//! clients and removes it, removes one the daemon has not loaded, but never
+//! runs under a running turn (#1670, #1667). Paging itself is the session
+//! catalog's, covered in its unit tests.
 
 use std::{
     num::NonZeroU32,
@@ -14,15 +16,18 @@ use std::{
 use pretty_assertions::assert_eq;
 use rho_protocol::{
     methods::{
-        Method, SessionAttach, SessionCancel, SessionDelete, SessionList, SessionNew, SessionRename,
+        JobList, Method, SessionAttach, SessionCancel, SessionDelete, SessionList,
+        SessionListDetailed, SessionNew, SessionRename,
     },
-    Client, ClientError, DaemonNotification, DetachReason, ErrorCode, Notifications, RpcError,
-    SessionAttachParams, SessionCancelParams, SessionDeleteParams, SessionDetachedParams,
-    SessionEvent, SessionId, SessionListParams, SessionListResponse, SessionNewParams,
-    SessionRenameParams, SessionRenameResponse, SessionSetup, SessionSummary,
+    Client, ClientError, DaemonNotification, DetachReason, ErrorCode, JobKind, JobListParams,
+    Notifications, RpcError, SessionAttachParams, SessionCancelParams, SessionDeleteParams,
+    SessionDetachedParams, SessionEvent, SessionId, SessionListParams, SessionListResponse,
+    SessionNewParams, SessionRenameParams, SessionRenameResponse, SessionSetup, SessionSummary,
 };
 
-use super::sessions::{settled_job, Sandbox, DEADLINE};
+use super::sessions::{
+    blue, first_request, settled_job, Follower, Sandbox, ARCHIVIST_AGENT, DEADLINE,
+};
 
 /// Sends `M` with `params`; its result, or the error the daemon answered.
 async fn call<M: Method>(client: &Client, params: &M::Params) -> Result<M::Result, RpcError> {
@@ -204,6 +209,115 @@ async fn the_list_holds_every_workspace_or_one() {
             ErrorCode::InvalidParams,
             "limit 1001 is over the session list's page limit (MAX_PAGE_SIZE = 1000)",
         ))
+    );
+}
+
+/// Each session `rho/session/list_detailed` lists, in every workspace: its
+/// id, agent, and parent, in id order.
+async fn agents_and_parents(
+    client: &Client,
+) -> Vec<(SessionId, Option<String>, Option<SessionId>)> {
+    let mut rows: Vec<_> = call::<SessionListDetailed>(client, &SessionListParams::default())
+        .await
+        .unwrap()
+        .sessions
+        .into_iter()
+        .map(|row| (row.summary.session, row.agent, row.parent))
+        .collect();
+    rows.sort();
+    rows
+}
+
+// Covers: the detailed list names the agent each session was saved as,
+// `default` for the default agent, and the session its `parent` resolves
+// to: the one named, or, for a subagent run's session, which no list holds,
+// the session whose turn runs the subagent; a `parent` no job of the daemon
+// writes records none.
+// Owner: daemon session catalog and `rho/session/new`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_detailed_list_names_agents_and_the_sessions_that_started_them() {
+    let sandbox = Sandbox::new();
+    sandbox.set_permission_mode("bypass");
+    let archivist = sandbox.isolated.home.join(".agents/agents/archivist.md");
+    std::fs::create_dir_all(archivist.parent().unwrap()).unwrap();
+    std::fs::write(&archivist, ARCHIVIST_AGENT).unwrap();
+    // The fixture makes the call a prompt spells out as JSON, and answers
+    // any other prompt.
+    let client = sandbox.start_daemon("tool-call").await;
+    let lead = sandbox.new_session(&client).await;
+    let (mut following, _) = Follower::attach(&sandbox, &lead, Vec::new(), None).await;
+    // The run's prompt is a call too: it asks its parent and waits, so the
+    // run is under way when a session starts from its session.
+    let ask = serde_json::json!({
+        "id": "ask",
+        "name": "questionnaire",
+        "arguments": {
+            "questions": [{
+                "id": "color",
+                "question": "Which color?",
+                "choices": ["Red", "Blue"],
+            }],
+        },
+    });
+    let delegate = serde_json::json!({
+        "id": "delegate",
+        "name": "agent",
+        "arguments": {"agent_id": "worker", "prompt": ask.to_string()},
+    });
+    sandbox.prompt_tool_call(&client, &lead, &delegate).await;
+    following
+        .read_until(|event| matches!(event, SessionEvent::InputRequested { .. }))
+        .await;
+    let request = first_request(&following.events).id;
+    let run_session = sandbox
+        .poll_until("the run's session", async || {
+            let jobs = call::<JobList>(&client, &JobListParams {}).await.unwrap();
+            jobs.jobs
+                .into_iter()
+                .find(|job| job.kind == JobKind::Subagent && job.state.in_progress())?
+                .session
+        })
+        .await;
+    let start = async |agent: Option<&'static str>, parent: SessionId| {
+        let session = call::<SessionNew>(
+            &client,
+            &SessionNewParams {
+                cwd: sandbox.workspace.clone(),
+                environment: sandbox.client_environment(),
+                agent: agent.map(str::to_owned),
+                setup: SessionSetup::default(),
+                parent: Some(parent),
+                grant: None,
+                worktree: false,
+            },
+        )
+        .await
+        .unwrap()
+        .session;
+        answer(&sandbox, &client, &session).await;
+        session
+    };
+    let archived = start(Some("archivist"), lead.clone()).await;
+    let from_run = start(None, run_session).await;
+    let unknown = start(None, SessionId::new("no-session-of-this-daemon")).await;
+    super::sessions::answer(&client, &lead, request, blue())
+        .await
+        .unwrap();
+    settled_job(&sandbox, &client, &lead).await;
+
+    let default = Some("default".to_owned());
+    let mut expected = vec![
+        (lead.clone(), default.clone(), None),
+        (archived, Some("archivist".to_owned()), Some(lead.clone())),
+        (from_run, default.clone(), Some(lead)),
+        (unknown, default, None),
+    ];
+    expected.sort();
+    assert_eq!(
+        agents_and_parents(&client).await,
+        expected,
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
     );
 }
 

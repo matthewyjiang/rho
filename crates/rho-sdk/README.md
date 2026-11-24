@@ -352,6 +352,13 @@ assert!(matches!(run.outcome().await, Err(Error::Cancelled)));
 
 Tools can request typed host questionnaires through `ToolContext::request_host_input`.
 Hosts observe `RunEvent::ToolHostInputRequested` and answer with `Run::respond`.
+An answer records who gave it in `HostInputResponse::source`: `User`,
+`TimeoutFallback`, or `Session` when another agent session answered, as Rho's
+daemon lets the session that started the asking one answer its questions. A
+request marked `HostInputRequest::user_only`, as Rho marks an MCP server's
+elicitation, is for the user alone: a host must not answer it from another
+session, and Rho's daemon refuses such an answer and leaves the request open
+for a person.
 
 Security-sensitive capabilities use `ToolContext::authorize` with a
 `WorkspacePolicy` and optional `ApprovalHandler`. Approvals are deny-by-default.

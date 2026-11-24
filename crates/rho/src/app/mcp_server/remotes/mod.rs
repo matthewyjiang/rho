@@ -272,7 +272,10 @@ impl Naming {
                 | Action::Prompt
                 | Action::Steer
                 | Action::Cancel
-                | Action::Wait,
+                | Action::Wait
+                // Never served (`tool::served_actions`); named for the match
+                // to stay exhaustive over the core's actions.
+                | Action::Answer,
             )
             | ServedTool::Watch => Self::One,
         }

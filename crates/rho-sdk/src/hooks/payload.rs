@@ -99,9 +99,10 @@ pub enum HookCapability {
         scope: HookPathScope,
     },
     /// Acting on another agent session: `action` is what the tool does to
-    /// it (`new`, `prompt`, `steer`, or `cancel`), `session` the session,
-    /// `null` for one it starts, `workspace` the session's workspace, and
-    /// `text` what the operation sends, `null` for a cancel.
+    /// it (`new`, `prompt`, `steer`, `cancel`, or `answer`, which answers
+    /// one of its questions), `session` the session, `null` for one it
+    /// starts, `workspace` the session's workspace, and `text` what the
+    /// operation sends, `null` for a cancel.
     ControlSession {
         action: String,
         session: Option<String>,

@@ -11,7 +11,9 @@
 //!
 //! A new session runs as the agent its client names, else the default
 //! agent, with the configured model, reasoning, fast mode, and permission
-//! mode. A reopened one runs as the agent it was saved as, which must still
+//! mode; one opened under a `parent` then takes the permission mode and
+//! model a person chose for the sessions its choosing session starts (see
+//! `new.rs`). A reopened one runs as the agent it was saved as, which must still
 //! be defined as it was, and with the settings a client last chose for it
 //! (`rho/session/configure`), else the configured ones. Either way it takes
 //! the setup of the request that opens it, on top of the directories and
@@ -107,10 +109,12 @@ impl Workspace {
 /// What a session opens from.
 pub(super) enum Opening {
     /// Nothing yet: a new session in `workspace`, running as agent `agent`,
-    /// the default agent when `None`.
+    /// the default agent when `None`, which session `started_by` started
+    /// through session control, if one did.
     New {
         workspace: Workspace,
         agent: Option<String>,
+        started_by: Option<rho_sdk::SessionId>,
     },
     /// The session saved here, opened in its own workspace as the agent it
     /// was saved as.
@@ -515,7 +519,15 @@ async fn open_runtime(
     };
     // Opening a session builds a large future; keep it on the heap.
     let runtime = match opening {
-        Opening::New { .. } => Box::pin(SessionRuntime::open_new(session, id, persistence)).await?,
+        Opening::New { started_by, .. } => {
+            Box::pin(SessionRuntime::open_new(
+                session,
+                id,
+                persistence,
+                started_by,
+            ))
+            .await?
+        }
         Opening::Fork(parent) => {
             Box::pin(SessionRuntime::open_fork(session, id, &parent, persistence)).await?
         }

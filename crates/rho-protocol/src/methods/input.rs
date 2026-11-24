@@ -14,6 +14,13 @@
 //! the daemon answers it itself at the deadline, unless a client answers it
 //! first or holds it with [`SESSION_HOLD`], as a client does once its user
 //! starts on the request.
+//!
+//! The other exception is a question: the session that started the asking
+//! session through session control may answer it with
+//! [`SESSION_ANSWER_QUESTION`], which an agent's connection may call. No
+//! agent ever answers an approval, a plan approval, or a question only the
+//! user may answer, as an MCP server's elicitation is: those wait for a
+//! person, and [`SESSION_ANSWER`] stays a person's client's alone.
 
 use std::{collections::BTreeMap, fmt, path::PathBuf};
 
@@ -24,6 +31,9 @@ use super::{SessionId, ToolCallId};
 
 /// Answer one of a session's open input requests.
 pub const SESSION_ANSWER: &str = "rho/session/answer";
+
+/// Answer a question a session asks, for the session that started it.
+pub const SESSION_ANSWER_QUESTION: &str = "rho/session/answer_question";
 
 /// Stop an open input request's timeout, so it waits for an answer.
 pub const SESSION_HOLD: &str = "rho/session/hold";
@@ -214,6 +224,9 @@ pub enum SessionControlAction {
     Steer,
     /// Cancel the turn in progress.
     Cancel,
+    /// Answer a question the session, one the caller started, asks
+    /// ([`SESSION_ANSWER_QUESTION`]).
+    Answer,
     /// A value a newer daemon sends that this crate does not know.
     #[serde(other)]
     #[schemars(extend("x-rho-other" = true))]
@@ -228,6 +241,7 @@ impl SessionControlAction {
             Self::Prompt => "prompt",
             Self::Steer => "steer",
             Self::Cancel => "cancel",
+            Self::Answer => "answer",
             Self::Unknown => "unknown",
         }
     }
@@ -270,7 +284,9 @@ pub enum PermissionMode {
     AllowEdits,
     Plan,
     Supervised,
-    /// A value a newer daemon sends that this crate does not know.
+    /// A value a newer daemon sends that this crate does not know, or, in
+    /// [`super::StartedSessionDefaults::permission_mode`], a saved choice
+    /// the daemon could not read, as when a newer rho saved it.
     #[serde(other)]
     #[schemars(extend("x-rho-other" = true))]
     Unknown,
@@ -366,6 +382,13 @@ pub enum Resolution {
     /// Nobody answered or held it by its timeout's deadline, so the daemon
     /// answered it with the timeout's answer.
     TimedOut,
+    /// An answer through [`SESSION_ANSWER_QUESTION`] closed the question.
+    /// Only a question closes this way. The daemon checked that the
+    /// declared answering session started the asking one, but it does not
+    /// prove who sent the answer. It names no session: the daemon accepts
+    /// only the asker's parent, which a client already knows from
+    /// [`super::JobSummary::parent`].
+    AnsweredBySession,
     /// A value a newer daemon sends that this crate does not know.
     #[serde(other)]
     #[schemars(extend("x-rho-other" = true))]
@@ -426,6 +449,69 @@ pub enum InputAnswer {
 /// tool that asked gave up, ignores an answer that won.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SessionAnswerResponse {}
+
+/// Params of [`SESSION_ANSWER_QUESTION`]: `by` answers question `request`
+/// of `session`, a session `by` started.
+///
+/// The daemon answers only a question ([`Ask::Question`], a subagent's
+/// included), only for the session whose job started `session`'s job
+/// ([`super::JobSummary::parent`]), and only while that session's grant
+/// has write access ([`super::GrantAccess::Write`]); it checks the
+/// grant's access only, not its workspaces, since starting `session`
+/// already took reaching its workspace. Anything else is refused: an
+/// approval, a plan approval, or a question only the user may answer with
+/// [`crate::ErrorCode::InvalidParams`], any other session with
+/// [`crate::ErrorCode::InvalidParams`], and a request that is not open with
+/// [`crate::ErrorCode::InputNotOpen`]. The first answer wins, whoever
+/// sends it.
+///
+/// `by` is what the caller declares, as [`super::SessionNewParams::parent`]
+/// and the connection's role are: the daemon checks it against its job
+/// records, but cannot tell who sends it. A caller that lies about `by` can
+/// answer or decline the open question of any session started through
+/// session control, by naming that session's real parent: this is the
+/// trust the daemon gives a connection's declared role. It never reaches an
+/// approval, a plan approval, or a question only the user may answer, as
+/// an MCP server's elicitation is. The method asks for no capability, so an
+/// agent's connection may call it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SessionAnswerQuestionParams {
+    pub session: SessionId,
+    pub request: InputRequestId,
+    pub answer: QuestionAnswer,
+    /// The answering session, which started `session`.
+    pub by: SessionId,
+}
+
+/// An answer to a question, as [`SESSION_ANSWER_QUESTION`] takes it: the
+/// answers a question takes from [`InputAnswer`], and nothing an approval
+/// takes. On the wire each is the same as its [`InputAnswer`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum QuestionAnswer {
+    /// Answers keyed by question id, as [`InputAnswer::Answers`].
+    Answers {
+        answers: BTreeMap<String, Vec<String>>,
+    },
+    /// Decline to answer the questions, as [`InputAnswer::Decline`].
+    Decline,
+}
+
+impl From<QuestionAnswer> for InputAnswer {
+    fn from(answer: QuestionAnswer) -> Self {
+        match answer {
+            QuestionAnswer::Answers { answers } => Self::Answers { answers },
+            QuestionAnswer::Decline => Self::Decline,
+        }
+    }
+}
+
+/// Result of [`SESSION_ANSWER_QUESTION`]: the answer won, and the daemon
+/// handed it to whoever asked. Every attached client of the asking session
+/// saw the request close as [`Resolution::AnsweredBySession`].
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SessionAnswerQuestionResponse {}
 
 /// Params of [`SESSION_HOLD`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

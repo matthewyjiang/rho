@@ -236,11 +236,14 @@ pub enum SessionEvent {
     },
     /// Something to tell the user that is not part of the conversation.
     Notice { text: String },
-    /// The turn waits for a person to answer `request` with
-    /// [`super::SESSION_ANSWER`] (#1660).
+    /// The turn waits for an answer to `request`: a person's, with
+    /// [`super::SESSION_ANSWER`] (#1660), or for a question anyone but the
+    /// user may answer, the starting session's, with
+    /// [`super::SESSION_ANSWER_QUESTION`].
     InputRequested { request: Box<InputRequest> },
-    /// Input request `id` closed: a client answered it, the turn withdrew
-    /// it, or it timed out. Clients that show it stop.
+    /// Input request `id` closed: a client answered it, the session that
+    /// started this one answered its question, the turn withdrew it, or it
+    /// timed out. Clients that show it stop.
     InputResolved {
         id: InputRequestId,
         resolution: Resolution,
@@ -323,6 +326,22 @@ pub enum SessionEvent {
     /// `SessionOptions` is not `#[non_exhaustive]`, so a field is a major
     /// change; until then a reset replay carries the agent as this event.
     Agent { id: String },
+    /// What a person chose, with
+    /// [`super::SessionChange::StartedSessionPermissionMode`] and
+    /// [`super::SessionChange::StartedSessionModel`], for the sessions this
+    /// session starts through session control (the `sessions` tool's `new`):
+    /// the permission mode and the model they open with, as a flat object
+    /// beside `type`. An absent part was not chosen, and such a session takes
+    /// the config's. Every reset replay sends it right after [`Self::Agent`],
+    /// and every change to the choice sends it again.
+    ///
+    /// # Next major
+    ///
+    /// NEXT_MAJOR(rho-protocol): report the started sessions' permission mode and model in SessionOptions::started_session_defaults and remove SessionEvent::StartedSessionDefaults.
+    ///
+    /// `SessionOptions` is not `#[non_exhaustive]`, so a field is a major
+    /// change; until then a reset replay carries the choice as this event.
+    StartedSessionDefaults(super::StartedSessionDefaults),
     /// The session's pull requests changed: one was linked, unlinked,
     /// watched, or read with a change. All of them, replacing what
     /// [`super::SESSION_PULL_REQUEST_LIST`] or the last of these gave. Sent

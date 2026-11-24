@@ -10,14 +10,20 @@ use rho_protocol as wire;
 use super::{turn::DAEMON_COMMANDS, LoadedSession, Sessions};
 pub(super) use crate::app::session_options::available_auths;
 use crate::{
-    app::{session_options, session_runtime::SessionRuntime},
+    app::{
+        session_options,
+        session_runtime::{
+            SessionRuntime, StartedMode, StartedModel, StartedSessionDefaults, StartedSessions,
+        },
+    },
     config::Config,
 };
 
 impl LoadedSession {
     /// Rebuilds the session's options from `runtime` and `auths` (see
-    /// [`available_auths`]), tells attached clients when they or the agent
-    /// the session runs as changed, and returns the options. Call after
+    /// [`available_auths`]), tells attached clients when they, the agent
+    /// the session runs as, or what the sessions it starts open with
+    /// changed, and returns the options. Call after
     /// anything that may change them: a configure, a plan approval's mode
     /// switch, a credential write, an `/agent:` rebind, or a turn, which may
     /// leave new skills, prompts, or MCP prompts behind.
@@ -34,6 +40,10 @@ impl LoadedSession {
         self.background.refresh(runtime);
         // Before the options, so a client knows whose they are.
         self.feed.update_agent(runtime.agent_id().as_str());
+        self.feed
+            .update_started_session_defaults(started_session_defaults(
+                runtime.started_session_defaults(),
+            ));
         let options = daemon_options(runtime, &self.config(), auths);
         self.feed.update_options(options.clone());
         self.feed.options()
@@ -79,4 +89,35 @@ pub(super) fn daemon_options(
     auths: &[String],
 ) -> wire::SessionOptions {
     session_options::of(runtime, process_config, auths, DAEMON_COMMANDS)
+}
+
+/// `started`, what the sessions a session starts open with, on the wire.
+/// A mode this rho does not know is `Unknown`, and so is a saved choice it
+/// cannot read, with no model: both refuse every session started under
+/// them, as either may choose a stricter mode than the config's.
+pub(super) fn started_session_defaults(started: &StartedSessions) -> wire::StartedSessionDefaults {
+    let StartedSessionDefaults {
+        permission_mode,
+        model,
+    } = match started {
+        StartedSessions::Chosen(defaults) => defaults,
+        StartedSessions::Unreadable(_) => {
+            return wire::StartedSessionDefaults {
+                permission_mode: Some(wire::PermissionMode::Unknown),
+                model: None,
+            }
+        }
+    };
+    wire::StartedSessionDefaults {
+        permission_mode: permission_mode.as_ref().map(|mode| match mode {
+            StartedMode::Known(mode) => (*mode).into(),
+            StartedMode::Unknown(_) => wire::PermissionMode::Unknown,
+        }),
+        model: model
+            .as_ref()
+            .map(|StartedModel { provider, model }| wire::ModelRef {
+                provider: provider.clone(),
+                model: model.clone(),
+            }),
+    }
 }

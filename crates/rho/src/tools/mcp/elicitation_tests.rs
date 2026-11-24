@@ -1,7 +1,7 @@
 use pretty_assertions::assert_eq;
 use serde_json::json;
 
-use rho_sdk::HostInputResponse;
+use rho_sdk::{HostInputResponse, HostInputSource};
 use rmcp::model::{ElicitRequestParams, ElicitationAction};
 
 use super::{McpElicitationService, McpElicitationSupport, McpInFlightCalls};
@@ -85,7 +85,8 @@ async fn url_elicitation_is_declined() {
 
 // Covers: the three protocol actions must follow what happened to the user's
 // form, because a server reads accept, decline, and cancel as three different
-// instructions.
+// instructions; only the user's own answer accepts, so a form is asked as
+// user-only and an answer from any other source declines.
 // Owner: MCP elicitation routing.
 #[tokio::test]
 async fn answering_the_form_produces_the_matching_action() {
@@ -98,6 +99,7 @@ async fn answering_the_form_produces_the_matching_action() {
     let (accepted, ()) = tokio::join!(service.elicit(colour_request()), async {
         let question = questions.recv().await.expect("the form reached the caller");
         assert_eq!(question.request.title(), "MCP server `live`: which colour?");
+        assert!(question.request.is_user_only(), "only the user may answer");
         let _ = question
             .reply
             .send(Ok(HostInputResponse::new().answer("colour", ["blue"])));
@@ -105,6 +107,22 @@ async fn answering_the_form_produces_the_matching_action() {
     let accepted = accepted.unwrap();
     assert_eq!(accepted.action, ElicitationAction::Accept);
     assert_eq!(accepted.content, Some(json!({"colour": "blue"})));
+
+    // Decline: answers from anyone but the user accept nothing for them.
+    for source in [HostInputSource::Session, HostInputSource::TimeoutFallback] {
+        let (answered, ()) = tokio::join!(service.elicit(colour_request()), async {
+            let question = questions.recv().await.expect("the form reached the caller");
+            let _ = question.reply.send(Ok(HostInputResponse::new()
+                .answer("colour", ["blue"])
+                .with_source(source)));
+        });
+        let answered = answered.unwrap();
+        assert_eq!(
+            (answered.action, answered.content),
+            (ElicitationAction::Decline, None),
+            "{source:?}"
+        );
+    }
 
     // Cancel: dismissing the form cancels the turn.
     let (cancelled, ()) = tokio::join!(service.elicit(colour_request()), async {

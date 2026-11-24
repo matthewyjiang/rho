@@ -1,6 +1,7 @@
 //! What a session hears of the turns it starts in other sessions through
 //! session control (the `sessions` tool's `new` and `prompt`): such a turn
-//! ended, or waits for a person to answer its question. [`PeerInbox`] holds
+//! ended, or waits for an answer to its question, which the starter may
+//! give (`answer`) if a person does not first. [`PeerInbox`] holds
 //! those notices for the starter until a turn boundary delivers them, as
 //! finished background work is delivered: at the next boundary of a turn
 //! under way, or by the turn the daemon starts on the idle session (see
@@ -92,8 +93,8 @@ pub(crate) struct PeerNotice {
 pub(crate) enum PeerEvent {
     /// The turn ended.
     TurnEnded(PeerTurnEnd),
-    /// The turn waits for a person to answer question `request`, which
-    /// asks `ask`.
+    /// The turn waits for an answer to question `request`, which asks
+    /// `ask`.
     WaitingForInput {
         request: InputRequestId,
         ask: String,
@@ -296,9 +297,9 @@ impl Drop for Registration {
 }
 
 impl Expectation {
-    /// Tells the starter that the turn waits for a person to answer
-    /// question `request`, which asks `ask`; the turn still owes the notice
-    /// of its end.
+    /// Tells the starter that the turn waits for an answer to question
+    /// `request`, which asks `ask`; the turn still owes the notice of its
+    /// end.
     pub(crate) fn tell_waiting(&self, title: Option<String>, request: InputRequestId, ask: String) {
         self.inbox.queue(PeerNotice {
             session: self.session.clone(),

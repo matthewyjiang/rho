@@ -18,7 +18,7 @@ use rho_providers::model::catalog::ModelSelection;
 use rho_sdk::{model::ServiceTier, ReasoningLevel, SessionSnapshot};
 use serde::{Deserialize, Serialize};
 
-use super::{CurrentModel, SessionRuntime, SettingChangeError};
+use super::{CurrentModel, SessionRuntime, SettingChangeError, StartedSessions};
 use crate::{config::Config, permission::PermissionMode, session::Session as StoredSession};
 
 /// The snapshot metadata key of a session's [`SavedSettings`].
@@ -137,12 +137,16 @@ impl SessionRuntime {
     /// them, through the same cores a host's changes use. A setting the
     /// session can no longer take, such as a model whose credentials are
     /// gone, is logged and left as the config has it; the session's next
-    /// save then records what it runs with.
+    /// save then records what it runs with. Also takes back what the
+    /// sessions it starts open with, which its file keeps apart (see
+    /// `started_sessions.rs`), whether or not it keeps its settings.
     pub(crate) async fn restore_settings(&mut self, process_config: &Config) {
         let Some(stored) = self.storage.file() else {
             return;
         };
         let saved = saved_settings(stored);
+        let started = StartedSessions::saved_in(stored);
+        self.restore_started_session_defaults(started);
         self.apply_saved_settings(saved, process_config).await;
     }
 
@@ -153,6 +157,7 @@ impl SessionRuntime {
         source: &StoredSession,
         process_config: &Config,
     ) {
+        self.restore_started_session_defaults(StartedSessions::saved_in(source));
         self.apply_saved_settings(saved_settings(source), process_config)
             .await;
     }

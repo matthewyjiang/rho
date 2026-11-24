@@ -265,6 +265,7 @@ into the current turn, use [subagents](/subagents) instead.
 | `cancel` | Cancels the turn in progress. |
 | `wait` | Waits for the session to settle, with no turn running and none rho will start for its background work, or to need a person, a subagent's question included, for up to `timeout_secs`, at most 50. Returns the state, the last turn's final answer once it ended (final once `done` is true), and a `cursor` for the next `wait`. |
 | `read` | Without an `anchor`, pages through a session's transcript, including the turn in progress. |
+| `answer` | Answers a question that `session`, a session this one started, asks: `request` from `wait`'s `inputs`, and `answers` by question id, or `decline: true`. |
 
 ```json
 {"action":"new","workspace":"/home/me/other-project","prompt":"Run the test suite and summarize failures"}
@@ -276,20 +277,48 @@ In a daemon session whose client takes daemon turns, the agent need not
 asks a question, in a turn of its own if it is idle (see
 [the daemon](/daemon#sessions-other-sessions-start)).
 
-These are the same tools the [MCP server](/mcp-server) offers, with the same
-rules. Know these before you approve one:
+Apart from `answer`, these are the same tools the [MCP server](/mcp-server)
+offers, with the same rules. Know these before you approve one:
 
-- `new`, `prompt`, `steer`, and `cancel` ask for approval, and `plan` mode
-  refuses them. `list`, `read`, and `wait` ask for read access to session
-  storage.
+- `new`, `prompt`, `steer`, `cancel`, and `answer` ask for approval, and
+  `plan` mode refuses them. `list`, `read`, and `wait` ask for read access to
+  session storage.
 - A new session runs in its workspace's permission mode, which can be looser
-  than the agent's.
+  than the agent's, unless a person chose the permission mode and model of the
+  sessions this agent's session starts. A Rho frontend sets that choice with
+  [`rho/session/configure`](/protocol#what-started-sessions-run-with); the
+  agent cannot. The choice also covers sessions this session's subagents
+  start, and each started session keeps a copy of it for the sessions it
+  starts in turn: changing the choice later does not change what sessions
+  already started hand to the sessions they start. A change made while the
+  agent's turn runs waits for that turn to end, so sessions the turn starts
+  meanwhile get the earlier choice. The tool's `model` still applies to the
+  session it starts, and an agent that names its own model, preferred or
+  required, keeps it. Such a session hands the chosen model on without
+  resolving it, so a chosen model that no longer resolves fails the `new` of
+  the first session down the line that would run it.
+- One gap remains: when the daemon has no record of any job that ran the
+  session that starts one, it finds the choice through the session files,
+  following each subagent's recorded parent. A workflow node's session, or a
+  subagent of a session that had saved nothing yet, records no parent, so a
+  session it starts then opens in the workspace's permission mode.
 - A new session gets the agent session's environment, including its
   `RHO_TRUST_PROJECT_*` variables. The target workspace's project agents,
   plugins, and hooks load only if those allow it. Starting a session there
   grants it no trust. See [Environment](/daemon#environment).
-- An agent can't answer another session's approvals or questions. That session
-  waits until a person answers from a Rho frontend.
+- An agent can't answer another session's approvals or plan approvals. That
+  session waits until a person answers from a Rho frontend.
+- An agent can answer the questions of a session it started, with `answer`.
+  This covers the session's own questionnaires and its subagents' questions;
+  `wait` lists a subagent's question in `inputs` even while a turn runs. The
+  approval names each question's prompt next to its answer.
+  It doesn't cover an MCP server's request for input (an elicitation), which
+  waits for a person, and it can't answer a session it didn't start. A person
+  can still answer first, and the first answer wins. Attached clients show
+  that the session that started this one answered, and the questionnaire's
+  saved result records `"source": "session"` instead of `"user"`. The
+  [auto mode](/configuration/permissions) classifier never counts such an
+  answer as your consent.
 
 Limits apply:
 
@@ -398,7 +427,7 @@ rho sessions cleanup --force   # allow stale non-terminal related runs
 
 `rm` accepts one or more session ids or unique prefixes. It checks every id before deleting anything. If it can't delete a session, it reports it, deletes the rest, and exits non-zero. It deletes each session transcript unit (folder layout or legacy flat `.jsonl`), its web sidecar, and its session index row. Folder deletion also removes delegated runs nested under `subagents/`. Rho still removes older or legacy-session runs under `~/.rho/subagents/` when their `result.json` records the session as `parent_session_id`. Usage ledger rows are **not** deleted, so cost history remains.
 
-Deleting a session also deletes the sessions it started, such as its subagents' sessions, and their children, in any workspace. Each child goes through the same checks listed below. If Rho refuses one, the error names it, and the parent stays. Delete the parent again once you fix that. Deleting a child keeps its parent. Deleting the session that started a workflow keeps the workflow's node sessions.
+Deleting a session also deletes the sessions it owns, such as its subagents' sessions, and their children, in any workspace. Sessions it started with the `sessions` tool are kept. Each child goes through the same checks listed below. If Rho refuses one, the error names it, and the parent stays. Delete the parent again once you fix that. Deleting a child keeps its parent. Deleting the session that started a workflow keeps the workflow's node sessions.
 
 Delete refuses:
 

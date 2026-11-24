@@ -1,8 +1,10 @@
 //! The `sessions` tool's control actions (#1714): `list`, `new`, `prompt`,
-//! `steer`, `cancel`, `wait`, and `read` of a session the daemon hosts. A
-//! thin adapter over the session-control core (`app::session_control`),
-//! which `rho mcp serve` adapts too, so both answer the same call the same
-//! way under one policy.
+//! `steer`, `cancel`, `wait`, and `read` of a session the daemon hosts, and
+//! `answer` to a question a session this one started asks. A thin adapter
+//! over the session-control core (`app::session_control`), which `rho mcp
+//! serve` adapts too, so both answer the same call the same way under one
+//! policy; only this tool offers `answer`, since only it knows the calling
+//! session.
 //!
 //! The caller is this session's agent: its own holder, at the depth and
 //! within the scope its environment carries (`crate::caller_context`), and
@@ -247,8 +249,9 @@ fn capability_target(target: &Target) -> Result<SessionControlTarget, ToolError>
         Action::Prompt => SessionControlAction::Prompt,
         Action::Steer => SessionControlAction::Steer,
         Action::Cancel => SessionControlAction::Cancel,
+        Action::Answer => SessionControlAction::Answer,
         Action::New | Action::List | Action::Read | Action::Wait => {
-            unreachable!("a target with a session is a prompt, steer, or cancel")
+            unreachable!("a target with a session is a prompt, steer, cancel, or answer")
         }
     };
     let session = rho_sdk::SessionId::from_string(session.as_str())

@@ -29,7 +29,8 @@ pub(crate) const DEFAULT_MAX_SESSIONS: u32 = crate::config::DEFAULT_AGENT_CONCUR
 
 /// One session-control action. Each maps one to one onto the protocol:
 /// `rho/job/list`, an attach's replay, `rho/session/new` and `prompt`,
-/// `steer`, `cancel`, and an attach followed until the turn ends.
+/// `steer`, `cancel`, an attach followed until the turn ends, and
+/// `rho/session/answer_question`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Action {
     List,
@@ -39,11 +40,15 @@ pub(crate) enum Action {
     Steer,
     Cancel,
     Wait,
+    /// Answer a question a session the caller started asks. Only a front
+    /// end that knows its calling session offers it, as the native
+    /// `sessions` tool does.
+    Answer,
 }
 
 impl Action {
     /// Every action, in the order adapters present them.
-    pub(crate) const ALL: [Self; 7] = [
+    pub(crate) const ALL: [Self; 8] = [
         Self::List,
         Self::Read,
         Self::New,
@@ -51,6 +56,7 @@ impl Action {
         Self::Steer,
         Self::Cancel,
         Self::Wait,
+        Self::Answer,
     ];
 
     /// The action's name, as adapters expose it.
@@ -63,6 +69,7 @@ impl Action {
             Self::Steer => "steer",
             Self::Cancel => "cancel",
             Self::Wait => "wait",
+            Self::Answer => "answer",
         }
     }
 
@@ -74,7 +81,7 @@ impl Action {
     pub(crate) fn needs(self) -> Access {
         match self {
             Self::List | Self::Read | Self::Wait => Access::Read,
-            Self::New | Self::Prompt | Self::Steer | Self::Cancel => Access::Write,
+            Self::New | Self::Prompt | Self::Steer | Self::Cancel | Self::Answer => Access::Write,
         }
     }
 }

@@ -271,7 +271,9 @@ impl SessionRole {
     /// created it and, for a subagent of a saved session, that parent, so
     /// deleting the parent deletes it too. A workflow node records no
     /// parent: the workflow runtime does not know the session that started
-    /// its run, if any.
+    /// its run, if any. The session that started it through session
+    /// control is not the role's to know: `SessionRuntime::open_new` takes
+    /// it.
     pub(super) fn provenance(&self) -> SessionProvenance {
         let (origin, parent) = match self {
             Self::Interactive => (SessionOrigin::Interactive, None),
@@ -288,7 +290,11 @@ impl SessionRole {
             ),
             Self::WorkflowNode => (SessionOrigin::WorkflowNode, None),
         };
-        SessionProvenance { origin, parent }
+        SessionProvenance {
+            origin,
+            parent,
+            started_by: None,
+        }
     }
 }
 

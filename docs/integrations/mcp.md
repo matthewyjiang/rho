@@ -309,6 +309,8 @@ one large resource cannot swamp the turn it joins.
 
 A server may interrupt a tool call with `elicitation/create` to ask the user something. Rho shows the request as a form on the tool card that caused it, titled with the asking server's identity so it is never mistaken for one of Rho's own questions.
 
+An elicitation is for the user alone, since the server takes any answer as the user's consent. The session that started a daemon session may answer that session's other questions through the `sessions` tool's `answer` action ([sessions](/sessions)), but not an elicitation: the daemon refuses that answer and the form stays open until a person answers it.
+
 **How Rho decides which call the question belongs to.** The protocol carries nothing in an `elicitation/create` that names the `tools/call` it came from. Rho therefore records the in-flight calls of each session and answers only when exactly one call is running on that server. With no call running, or with several, Rho declines rather than interrupting a caller it guessed at. Two servers asking at the same time never confuse each other, because the record is per session.
 
 **What Rho does with the answer.**

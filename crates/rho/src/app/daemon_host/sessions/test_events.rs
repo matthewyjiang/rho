@@ -59,6 +59,15 @@ pub(super) fn question(name: &str) -> SessionEvent {
     }
 }
 
+/// A question only the user may answer, as an MCP server's elicitation is.
+pub(super) fn elicitation(name: &str) -> SessionEvent {
+    SessionEvent::QuestionAsked {
+        id: question_id(name),
+        call_id: None,
+        request: questionnaire().user_only(),
+    }
+}
+
 /// A question whose agent offers answering `yes`, for `reason`, if nobody
 /// answers in time.
 pub(super) fn question_with_fallback(name: &str, reason: &str) -> SessionEvent {

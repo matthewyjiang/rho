@@ -21,6 +21,8 @@ fn summary(id: &str, cwd: &str, updated_at: u64) -> SessionSummary {
         last_user_message: Some(format!("last {id}")),
         added_dirs: Vec::new(),
         origin: None,
+        agent: None,
+        started_by: None,
     }
 }
 

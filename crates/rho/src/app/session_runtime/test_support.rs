@@ -10,9 +10,10 @@ use rho_sdk::{
 };
 
 use super::{
-    credentials::SessionCredentials, ApprovalPolicy, ChildAgents, HostCapabilities, LeftOut,
-    OpenedSession, QuestionSupport, RunShape, SessionBuild, SessionLaunch, SessionPermission,
-    SessionRole, SessionRuntime, SessionStorage, UnattendedApprovals,
+    credentials::SessionCredentials, started_sessions::STARTED_SESSION_DEFAULTS_METADATA,
+    ApprovalPolicy, ChildAgents, HostCapabilities, LeftOut, OpenedSession, QuestionSupport,
+    RunShape, SessionBuild, SessionLaunch, SessionPermission, SessionRole, SessionRuntime,
+    SessionStorage, StartedSessions, UnattendedApprovals,
 };
 use crate::{
     agent::{
@@ -352,5 +353,29 @@ impl SessionRuntime {
     /// following the config, as it does from its first settings change on.
     pub(in crate::app) fn keeps_settings_for_tests(&self) -> bool {
         matches!(self.settings, super::saved_settings::SettingsPolicy::Keep)
+    }
+
+    /// Saves `record` as the session's choice for the sessions it starts,
+    /// as a rho that wrote it would, then takes back what its file keeps,
+    /// as a reopen does.
+    pub(in crate::app) fn reopen_with_started_sessions_record_for_tests(&mut self, record: &str) {
+        self.built.session.advance_revision().unwrap();
+        let snapshot = self
+            .durable_snapshot()
+            .with_metadata(STARTED_SESSION_DEFAULTS_METADATA, record);
+        let stored = self.storage.file().expect("a saved session");
+        stored.save_snapshot(&snapshot, &[]).unwrap();
+        let saved = StartedSessions::saved_in(stored);
+        self.restore_started_session_defaults(saved);
+    }
+
+    /// The session's choice for the sessions it starts as its file keeps
+    /// it, byte for byte.
+    pub(in crate::app) fn saved_started_sessions_record_for_tests(&self) -> Option<String> {
+        self.storage
+            .file()
+            .expect("a saved session")
+            .session_metadata(STARTED_SESSION_DEFAULTS_METADATA)
+            .unwrap()
     }
 }

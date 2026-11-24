@@ -86,6 +86,7 @@ impl<O: Write, E: Write> TextView<O, E> {
             | SessionEvent::Background { .. }
             | SessionEvent::Activity { .. }
             | SessionEvent::Agent { .. }
+            | SessionEvent::StartedSessionDefaults(_)
             | SessionEvent::PullRequests { .. } => {}
             // `SessionEvent` is non-exhaustive; an event a newer daemon sends
             // is not shown.

@@ -17,6 +17,7 @@
 //! | [`SESSION_STEER`] | [`SessionSteerParams`] | [`SessionSteerResponse`] |
 //! | [`SESSION_UNSTEER`] | [`SessionUnsteerParams`] | [`SessionUnsteerResponse`] |
 //! | [`SESSION_ANSWER`] | [`SessionAnswerParams`] | [`SessionAnswerResponse`] |
+//! | [`SESSION_ANSWER_QUESTION`] | [`SessionAnswerQuestionParams`] | [`SessionAnswerQuestionResponse`] |
 //! | [`SESSION_HOLD`] | [`SessionHoldParams`] | [`SessionHoldResponse`] |
 //! | [`SESSION_SURFACE_ACTION`] | [`SessionSurfaceActionParams`] | [`SessionSurfaceActionResponse`] |
 //! | [`SESSION_ATTACH`] | [`SessionAttachParams`] | [`SessionAttachResponse`] |
@@ -36,6 +37,7 @@
 //! | [`SESSION_INSPECT`] | [`SessionInspectParams`] | [`SessionInspectResponse`] |
 //! | [`SESSION_CONFIGURE`] | [`SessionConfigureParams`] | [`SessionConfigureResponse`] |
 //! | [`SESSION_LIST`] | [`SessionListParams`] | [`SessionListResponse`] |
+//! | [`SESSION_LIST_DETAILED`] | [`SessionListParams`] | [`SessionListDetailedResponse`] |
 //! | [`SESSION_RENAME`] | [`SessionRenameParams`] | [`SessionRenameResponse`] |
 //! | [`SESSION_DELETE`] | [`SessionDeleteParams`] | [`SessionDeleteResponse`] |
 //! | [`JOB_LIST`] | [`JobListParams`] | [`JobListResponse`] |
@@ -109,8 +111,9 @@ pub use background::{
     SessionBackgroundStopResponse, SESSION_BACKGROUND_LIST, SESSION_BACKGROUND_STOP,
 };
 pub use catalog::{
-    SessionDeleteParams, SessionDeleteResponse, SessionListParams, SessionListResponse,
-    SessionRenameParams, SessionRenameResponse, SessionSummary, SESSION_DELETE, SESSION_LIST,
+    DetailedSessionSummary, SessionDeleteParams, SessionDeleteResponse,
+    SessionListDetailedResponse, SessionListParams, SessionListResponse, SessionRenameParams,
+    SessionRenameResponse, SessionSummary, SESSION_DELETE, SESSION_LIST, SESSION_LIST_DETAILED,
     SESSION_RENAME,
 };
 pub use config::{
@@ -136,9 +139,10 @@ pub use grant::{GrantAccess, GrantWorkspaces, SessionGrant};
 pub use input::{
     ApprovalAsk, ApprovalSource, Ask, Choice, DefaultAnswer, DefaultStyle, InputAnswer, InputAsker,
     InputRequest, InputRequestId, InputTimeout, Operation, PathScope, PermissionMode,
-    PlanApprovalAsk, Question, QuestionAsk, Resolution, Selection, SessionAnswerParams,
+    PlanApprovalAsk, Question, QuestionAnswer, QuestionAsk, Resolution, Selection,
+    SessionAnswerParams, SessionAnswerQuestionParams, SessionAnswerQuestionResponse,
     SessionAnswerResponse, SessionControlAction, SessionHoldParams, SessionHoldResponse,
-    SESSION_ANSWER, SESSION_HOLD,
+    SESSION_ANSWER, SESSION_ANSWER_QUESTION, SESSION_HOLD,
 };
 pub use inspect::{SessionInspectParams, SessionInspectResponse, SessionReport, SESSION_INSPECT};
 pub use job::{
@@ -165,7 +169,7 @@ pub use models::{
 pub use options::{
     CommandKind, FastModeOptions, ModelChoice, ModelOptions, ModelRef, PermissionModeOptions,
     ReasoningLevel, ReasoningOptions, SessionChange, SessionCommand, SessionConfigureParams,
-    SessionConfigureResponse, SessionOptions, SESSION_CONFIGURE,
+    SessionConfigureResponse, SessionOptions, StartedSessionDefaults, SESSION_CONFIGURE,
 };
 pub use outcome::{AnswerStop, TurnError, TurnErrorKind, TurnOutcome};
 pub use process::{
@@ -292,6 +296,7 @@ protocol! {
         SessionSteer = SESSION_STEER: SessionSteerParams => SessionSteerResponse,
         SessionUnsteer = SESSION_UNSTEER: SessionUnsteerParams => SessionUnsteerResponse,
         SessionAnswer = SESSION_ANSWER: SessionAnswerParams => SessionAnswerResponse,
+        SessionAnswerQuestion = SESSION_ANSWER_QUESTION: SessionAnswerQuestionParams => SessionAnswerQuestionResponse,
         SessionHold = SESSION_HOLD: SessionHoldParams => SessionHoldResponse,
         SessionSurfaceAction = SESSION_SURFACE_ACTION: SessionSurfaceActionParams => SessionSurfaceActionResponse,
         SessionAttach = SESSION_ATTACH: SessionAttachParams => SessionAttachResponse,
@@ -311,6 +316,7 @@ protocol! {
         SessionPullRequestUnlink = SESSION_PULL_REQUEST_UNLINK: SessionPullRequestUnlinkParams => SessionPullRequestUnlinkResponse,
         SessionInspect = SESSION_INSPECT: SessionInspectParams => SessionInspectResponse,
         SessionList = SESSION_LIST: SessionListParams => SessionListResponse,
+        SessionListDetailed = SESSION_LIST_DETAILED: SessionListParams => SessionListDetailedResponse,
         SessionRename = SESSION_RENAME: SessionRenameParams => SessionRenameResponse,
         SessionDelete = SESSION_DELETE: SessionDeleteParams => SessionDeleteResponse,
         JobList = JOB_LIST: JobListParams => JobListResponse,

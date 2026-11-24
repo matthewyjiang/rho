@@ -98,6 +98,13 @@ pub struct SessionSummary {
     /// The host that created the session; `None` for a file written before
     /// origins were recorded.
     pub origin: Option<SessionOrigin>,
+    /// The id of the agent the session runs as, as its header names it:
+    /// the one `/agent:` rebound it to, if one did, and `default` for the
+    /// default agent. `None` for a file written before agents were recorded.
+    pub agent: Option<String>,
+    /// The session that started this one through session control, by id:
+    /// see `SessionProvenance::started_by`.
+    pub started_by: Option<String>,
 }
 
 /// Which host created a session, recorded on its header when its file is
@@ -160,10 +167,17 @@ impl SessionOrigin {
 pub(crate) struct SessionProvenance {
     /// The host that created it.
     pub(crate) origin: SessionOrigin,
-    /// The saved session that started it, such as a subagent's parent, by
-    /// its id and workspace: the same id can be saved in two workspaces.
-    /// Deleting that session deletes this one with it.
+    /// The saved session that owns it, such as a subagent's parent or the
+    /// session a fork forks, by its id and workspace: the same id can be
+    /// saved in two workspaces. Deleting that session deletes this one with
+    /// it.
     pub(crate) parent: Option<SessionTarget>,
+    /// The session whose turn started this one through session control
+    /// (`rho/session/new`'s `parent`), by id, which listings report so a
+    /// client can show it under that session. Unlike `parent`, a delete
+    /// never follows it: deleting the session that started this one leaves
+    /// this one, still naming it.
+    pub(crate) started_by: Option<String>,
 }
 
 impl From<SessionOrigin> for SessionProvenance {
@@ -172,6 +186,7 @@ impl From<SessionOrigin> for SessionProvenance {
         Self {
             origin,
             parent: None,
+            started_by: None,
         }
     }
 }
@@ -231,6 +246,14 @@ pub(crate) fn workspace_key(cwd: &Path) -> String {
     layout::workspace_key(cwd)
 }
 
+/// The session saved under exactly `id` in `cwd`'s workspace; an error
+/// when nothing is.
+fn resolve_saved(cwd: &Path, id: &str) -> anyhow::Result<persistence::ResolvedSession> {
+    SessionStore::new(&session_root()?, cwd)
+        .resolve_exact_local(id)?
+        .ok_or_else(|| anyhow::anyhow!("no session is saved under {id} in {}", cwd.display()))
+}
+
 impl SessionSummary {
     pub fn target(&self) -> SessionTarget {
         SessionTarget::new(self.id.clone(), self.cwd.clone())
@@ -279,8 +302,8 @@ pub(super) struct SessionIndexRecord {
     pub(super) branch_count: u64,
     pub(super) active_leaf_id: Option<String>,
     pub(super) effective_format_version: u32,
-    /// The session that started this one, from its header; `None` for a
-    /// file written before parents were recorded.
+    /// The session that owns this one, which deleting deletes it with, from
+    /// its header; `None` for a file written before parents were recorded.
     pub(super) parent_session: Option<SessionTarget>,
 }
 
@@ -372,6 +395,34 @@ impl Session {
         let store = SessionStore::new(&session_root()?, cwd);
         let resolved = store.resolve(id_prefix)?;
         Ok(resolved.tree()?.facts())
+    }
+
+    /// Metadata `key` of the session saved under exactly `id` in `cwd`'s
+    /// workspace, as [`Self::session_metadata`] reads it, read without
+    /// opening the session, which another process may hold. `None` when the
+    /// session's last save did not record `key`; an error when nothing is
+    /// saved under `id` there.
+    pub(crate) fn session_metadata_by_id(
+        cwd: &Path,
+        id: &str,
+        key: &str,
+    ) -> anyhow::Result<Option<String>> {
+        Ok(resolve_saved(cwd, id)?
+            .tree()?
+            .newest_node_metadata(key)
+            .map(str::to_owned))
+    }
+
+    /// The session that started the subagent saved under exactly `id` in
+    /// `cwd`'s workspace, as its header records it, read without opening
+    /// it, which another process may hold. `None` when it is no subagent's
+    /// session, or its parent had no file when it started; an error when
+    /// nothing is saved under `id` there.
+    pub(crate) fn subagent_parent_by_id(
+        cwd: &Path,
+        id: &str,
+    ) -> anyhow::Result<Option<SessionTarget>> {
+        agent_identity::read_subagent_parent(&resolve_saved(cwd, id)?.path)
     }
 
     /// Session `id_prefix`'s tree as `/tree` lists it, read without opening

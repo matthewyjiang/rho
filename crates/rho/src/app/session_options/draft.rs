@@ -122,7 +122,10 @@ impl Setting {
             | wire::SessionChange::AddDirectory { .. }
             | wire::SessionChange::ModelCatalog
             | wire::SessionChange::SelectNode { .. }
-            | wire::SessionChange::RewindWorkspace { .. } => None,
+            | wire::SessionChange::RewindWorkspace { .. }
+            // The started sessions' settings, not this session's.
+            | wire::SessionChange::StartedSessionPermissionMode { .. }
+            | wire::SessionChange::StartedSessionModel { .. } => None,
             // `SessionChange` is non-exhaustive; nothing else is a setting.
             _ => None,
         }

@@ -58,6 +58,9 @@ pub(super) fn migrate_index_with_hook(
     // reads, so it keeps using an index that has this one. Rows without it,
     // or with a stale one, re-summarize; see `StampedDirs`.
     ensure_column(&transaction, "added_dirs text")?;
+    // Added without a version bump too, for the same reason; see
+    // `StampedAgentStarter`.
+    ensure_column(&transaction, "agent_starter text")?;
     ensure_column(&transaction, "node_count integer not null default 0")?;
     ensure_column(&transaction, "branch_count integer not null default 0")?;
     ensure_column(&transaction, "active_leaf_id text")?;
@@ -132,6 +135,7 @@ pub(super) fn validate_index_columns(connection: &Connection) -> anyhow::Result<
         "origin",
         "parent_workspace_key",
         "parent_id",
+        "agent_starter",
     ];
     validate_columns(connection, REQUIRED_COLUMNS)
 }

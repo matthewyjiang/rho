@@ -17,8 +17,8 @@ use crate::{
         PermissionModeOptions, Replay, Seq, SessionDetachedParams, SessionEvent,
         SessionEventParams, SessionId, SessionOptions, StreamId, AUTH_LOGIN_FINISHED,
         AUTH_LOGIN_PROMPT, CONFIG_CHANGED, DAEMON_STATUS, DAEMON_STOP, MODEL_CHANGED, MODEL_LIST,
-        SESSION_ANSWER, SESSION_DETACHED, SESSION_EVENT, SESSION_FORK, SESSION_HOLD, SESSION_LIST,
-        SESSION_NEW, SESSION_PROMPT,
+        SESSION_ANSWER, SESSION_ANSWER_QUESTION, SESSION_DETACHED, SESSION_EVENT, SESSION_FORK,
+        SESSION_HOLD, SESSION_LIST, SESSION_NEW, SESSION_PROMPT,
     },
     subscription, ClientRole, ConfigChangedParams, ConfigGetParams, ConfigGetResponse,
     ConfigNamespace, ConfigRevision, ConfigWatch, CredentialStoreKind, CredentialStoreStatus,
@@ -150,6 +150,13 @@ impl Service for FakeService {
         &self,
         _: SessionAnswerParams,
     ) -> Result<SessionAnswerResponse, RpcError> {
+        Err(no_such_session())
+    }
+
+    async fn answer_question(
+        &self,
+        _: SessionAnswerQuestionParams,
+    ) -> Result<SessionAnswerQuestionResponse, RpcError> {
         Err(no_such_session())
     }
 }
@@ -413,6 +420,39 @@ async fn dispatch_enforces_the_handshake_and_rejects_unknown_requests() {
                 (id(2), Err(Some(ErrorCode::CapabilityRequired))),
                 (id(3), Err(Some(ErrorCode::CapabilityRequired))),
                 (id(4), Ok(())),
+            ],
+        ),
+        (
+            "an agent's connection reaches the service with a question's answer, never an approval's",
+            // The refused answer goes first: a request that fails to decode is
+            // answered before the service's answer to an earlier one.
+            vec![
+                hello_as(1, PROTOCOL_VERSION, "agent", &[]),
+                request_with_params(
+                    2,
+                    SESSION_ANSWER_QUESTION,
+                    serde_json::json!({
+                        "session": "s",
+                        "request": 1,
+                        "answer": {"kind": "allow_once"},
+                        "by": "p",
+                    }),
+                ),
+                request_with_params(
+                    3,
+                    SESSION_ANSWER_QUESTION,
+                    serde_json::json!({
+                        "session": "s",
+                        "request": 1,
+                        "answer": {"kind": "answers", "answers": {"q": ["yes"]}},
+                        "by": "p",
+                    }),
+                ),
+            ],
+            vec![
+                (id(1), Ok(())),
+                (id(2), Err(Some(ErrorCode::InvalidParams))),
+                (id(3), Err(Some(ErrorCode::SessionNotFound))),
             ],
         ),
         (

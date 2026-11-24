@@ -8,7 +8,9 @@ use std::path::Path;
 use rusqlite::params;
 
 use super::super::id_match::prefer_exact;
-use super::{open_index, reconcile_all_workspaces, summary_from_row, SessionSummary};
+use super::{
+    open_index, reconcile_all_workspaces, summary_from_row, SessionSummary, SUMMARY_COLUMNS,
+};
 
 /// Lists sessions across every workspace under `session_root`.
 ///
@@ -23,12 +25,10 @@ pub(in crate::session) fn list_all_sessions(
     let connection = connection
         .lock()
         .expect("session index connection poisoned");
-    let mut statement = connection.prepare(
-        "select id, path, cwd, created_at, updated_at, message_count,
-                title, first_user_message, last_user_message, added_dirs, origin
+    let mut statement = connection.prepare(&format!(
+        "select {SUMMARY_COLUMNS}
          from (
-             select id, path, cwd, created_at, updated_at, message_count,
-                    title, first_user_message, last_user_message, added_dirs, origin,
+             select {SUMMARY_COLUMNS},
                     row_number() over (
                         partition by path
                         order by updated_at desc, cwd asc
@@ -36,8 +36,8 @@ pub(in crate::session) fn list_all_sessions(
              from sessions
          )
          where rn = 1
-         order by updated_at desc, created_at desc, id asc",
-    )?;
+         order by updated_at desc, created_at desc, id asc"
+    ))?;
     let rows = statement.query_map([], summary_from_row)?;
     Ok(rows
         .collect::<rusqlite::Result<Vec<_>>>()?
@@ -58,12 +58,10 @@ pub(in crate::session) fn summaries_matching_id_prefix(
     let connection = connection
         .lock()
         .expect("session index connection poisoned");
-    let mut statement = connection.prepare(
-        "select id, path, cwd, created_at, updated_at, message_count,
-                title, first_user_message, last_user_message, added_dirs, origin
+    let mut statement = connection.prepare(&format!(
+        "select {SUMMARY_COLUMNS}
          from (
-             select id, path, cwd, created_at, updated_at, message_count,
-                    title, first_user_message, last_user_message, added_dirs, origin,
+             select {SUMMARY_COLUMNS},
                     row_number() over (
                         partition by path
                         order by updated_at desc, cwd asc
@@ -72,8 +70,8 @@ pub(in crate::session) fn summaries_matching_id_prefix(
              where substr(id, 1, length(?1)) = ?1
          )
          where rn = 1
-         order by updated_at desc, created_at desc, id asc",
-    )?;
+         order by updated_at desc, created_at desc, id asc"
+    ))?;
     let rows = statement.query_map(params![id_prefix], summary_from_row)?;
     let summaries = rows
         .collect::<rusqlite::Result<Vec<_>>>()?
