@@ -215,6 +215,10 @@ Picking up a session I started
   I said against `title` and `workspace`; if several fit, ask me which.
 - Call `read` before you act on it. To follow it, call `watch` with
   `webhook: "grok"`. Add it to the ledger.
+- `watch` can answer with the news itself. If it returns `watching: false`,
+  the session already settled and no webhook follows: tell me its outcome
+  now. If it returns `inputs`, the session is waiting on me and that is not
+  sent again: tell me now. Otherwise the webhook brings the news.
 - Call `steer`, `prompt`, or `cancel` on it only when I asked for that.
 
 When "Rho session updates" runs, the JSON body has `server` (the machine),
