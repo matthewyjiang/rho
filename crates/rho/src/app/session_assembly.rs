@@ -115,7 +115,7 @@ pub(super) enum ModelOwner {
 pub(super) enum HookStart {
     /// Starts them, so they hear the session's events from its start.
     Start,
-    /// Starts the blocking `before_tool_use` gate alone: the session is
+    /// Starts the blocking `before_tool_use` hooks alone: the session is
     /// Rho's own bookkeeping, such as the title agent's, so its tool calls
     /// obey the user's denials and no observational hook hears of it.
     Gate,

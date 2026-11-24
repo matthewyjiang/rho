@@ -481,6 +481,11 @@ impl DaemonEvents {
             // A replayed rename only sets the title, which the attach
             // already showed; a live one says so too.
             SessionEvent::TitleChanged { title } if self.inputs.replaying() => {
+                // A notice held since before the replay says this title,
+                // not the one it replaced.
+                if let Some(held) = &mut self.held_title {
+                    held.clone_from(&title);
+                }
                 vec![DaemonView::Title(title)]
             }
             SessionEvent::TitleChanged { title } if self.turn_under_way => {

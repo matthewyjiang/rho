@@ -102,6 +102,12 @@ impl HookCatalog {
         self.hooks.len()
     }
 
+    /// Drops the observational hooks, for a session only the blocking
+    /// gate hears of.
+    pub(crate) fn retain_blocking(&mut self) {
+        self.hooks.retain(|hook| hook.event().is_blocking());
+    }
+
     /// Whether any blocking `before_tool_use` hook is configured.
     pub fn has_blocking_hooks(&self) -> bool {
         self.hooks.iter().any(|hook| hook.event().is_blocking())

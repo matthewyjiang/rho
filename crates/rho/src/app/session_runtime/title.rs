@@ -4,10 +4,11 @@
 //! agent then works beside the turn, so the name lands while a long first
 //! turn still runs, and a turn that is cancelled or fails is named all the
 //! same; after a turn that fails, the next prompt asks again, since the
-//! title model may have failed with it. A loaded session that was never named is asked for at the first
-//! prompt of its reload, and named from the first message its history
-//! holds. Until the title lands, or if it fails, or if no
-//! host runs it, the session is listed by its first message.
+//! title model may have failed with it. A loaded session that was never
+//! named is asked for at the first prompt of its reload. Either way the
+//! session is named from the first message its transcript shows. Until the title lands, or if it
+//! fails, or if no host runs it, the session is listed by its first
+//! message.
 //!
 //! The runtime only asks, with a [`SessionEvent::TitleRequested`]: the host
 //! runs the job it carries, and shows the title it saves if the session is
@@ -61,6 +62,8 @@ impl TitleJob {
         let title = generate_title(request).await;
         match title.and_then(|title| StoredSession::set_generated_title(&cwd, &stored_id, &title)) {
             Ok(saved) => saved.map(|update| update.title),
+            // Deleted while the title agent worked.
+            Err(error) if error.is::<NoSessionFound>() => None,
             Err(error) => {
                 // Nothing else says why a session kept its first message
                 // for a name, such as a title model nobody signed in to.
@@ -73,10 +76,11 @@ impl TitleJob {
 
 impl SessionRuntime {
     /// The job that names the session, when the runtime has yet to ask for
-    /// one on a session with a file, and `None` otherwise. `prompt` is the one a
-    /// turn just saved, as the user sent it: the session's first message,
-    /// unless the session was reloaded untitled, which is named from the
-    /// first message its history holds instead.
+    /// one on a session with a file, and `None` otherwise. `prompt` is the
+    /// one a turn just saved, as the user sent it. The session is named
+    /// from the first message its transcript shows: `prompt` in a new
+    /// session, an earlier one when the session was reloaded untitled or
+    /// its last turn failed.
     pub(super) fn request_title(
         &mut self,
         process_config: &Config,
@@ -87,11 +91,17 @@ impl SessionRuntime {
             TitleState::Unasked => {}
             TitleState::Asked => return None,
         }
-        // Committed at turn boundaries, so without `prompt` yet.
-        let history = self.built.session.history();
-        let first = history
+        // The first message as its sender wrote it, from the transcript the
+        // session saved: `prompt` itself in a new session. The model's
+        // history holds it with whatever context its client added, and not
+        // at all for a turn cut off before its first step.
+        let shown = stored.active_display_history().unwrap_or_else(|error| {
+            tracing::debug!(%error, "could not read the session's first message");
+            Vec::new()
+        });
+        let first = shown
             .iter()
-            .find_map(|message| match message {
+            .find_map(|row| match &row.message {
                 Message::User(blocks) => Some(&**blocks),
                 Message::System(_)
                 | Message::Assistant(_)
@@ -116,6 +126,15 @@ impl SessionRuntime {
             },
             stored_id: stored.id().to_owned(),
         })
+    }
+
+    /// Has the next prompt ask for a title again, after a turn that
+    /// failed: the title model may share what failed it, such as an outage
+    /// or an expired sign-in. A title saved meanwhile costs that request no
+    /// model call (see [`TitleJob::generate`]); a title job still under way
+    /// is doubled, and the first of the two to save wins.
+    pub(super) fn ask_for_title_again(&mut self) {
+        self.title = TitleState::Unasked;
     }
 
     /// The title the session's file has saved, if any: none for a session

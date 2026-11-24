@@ -19,7 +19,6 @@ use super::{
     persist::TurnCheckpoint,
     prompt_gate::ActiveWork,
     pump::{pump, AppliedDisplays, ApprovalSource, EventSource, PumpSources},
-    title::TitleState,
     PromptScope, QuestionSupport, SessionRuntime,
 };
 use crate::session::workspace_checkpoint::CheckpointOutcome;
@@ -132,10 +131,7 @@ impl SessionRuntime {
             .await;
         self.note_credential_failure(&result);
         if result.is_err() {
-            // The title model may share what failed the turn, such as an
-            // outage or an expired sign-in, so the next prompt asks again;
-            // a title saved meanwhile costs that request no model call.
-            self.title = TitleState::Unasked;
+            self.ask_for_title_again();
         }
         result
     }
