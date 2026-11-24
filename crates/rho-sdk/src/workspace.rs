@@ -92,7 +92,8 @@ impl ScopedWorkspacePolicy {
     }
 
     /// Allows starting, prompting, steering, and cancelling other agent
-    /// sessions, wherever their workspace is.
+    /// sessions, wherever their workspace is, and answering the questions
+    /// of sessions this one started.
     pub fn allow_session_control(mut self) -> Self {
         self.allowed.insert(CapabilityKind::SessionControl);
         self

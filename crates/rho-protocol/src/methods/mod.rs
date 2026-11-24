@@ -17,6 +17,7 @@
 //! | [`SESSION_STEER`] | [`SessionSteerParams`] | [`SessionSteerResponse`] |
 //! | [`SESSION_UNSTEER`] | [`SessionUnsteerParams`] | [`SessionUnsteerResponse`] |
 //! | [`SESSION_ANSWER`] | [`SessionAnswerParams`] | [`SessionAnswerResponse`] |
+//! | [`SESSION_ANSWER_QUESTION`] | [`SessionAnswerQuestionParams`] | [`SessionAnswerQuestionResponse`] |
 //! | [`SESSION_HOLD`] | [`SessionHoldParams`] | [`SessionHoldResponse`] |
 //! | [`SESSION_SURFACE_ACTION`] | [`SessionSurfaceActionParams`] | [`SessionSurfaceActionResponse`] |
 //! | [`SESSION_ATTACH`] | [`SessionAttachParams`] | [`SessionAttachResponse`] |
@@ -136,9 +137,10 @@ pub use grant::{GrantAccess, GrantWorkspaces, SessionGrant};
 pub use input::{
     ApprovalAsk, ApprovalSource, Ask, Choice, DefaultAnswer, DefaultStyle, InputAnswer, InputAsker,
     InputRequest, InputRequestId, InputTimeout, Operation, PathScope, PermissionMode,
-    PlanApprovalAsk, Question, QuestionAsk, Resolution, Selection, SessionAnswerParams,
+    PlanApprovalAsk, Question, QuestionAnswer, QuestionAsk, Resolution, Selection,
+    SessionAnswerParams, SessionAnswerQuestionParams, SessionAnswerQuestionResponse,
     SessionAnswerResponse, SessionControlAction, SessionHoldParams, SessionHoldResponse,
-    SESSION_ANSWER, SESSION_HOLD,
+    SESSION_ANSWER, SESSION_ANSWER_QUESTION, SESSION_HOLD,
 };
 pub use inspect::{SessionInspectParams, SessionInspectResponse, SessionReport, SESSION_INSPECT};
 pub use job::{
@@ -292,6 +294,7 @@ protocol! {
         SessionSteer = SESSION_STEER: SessionSteerParams => SessionSteerResponse,
         SessionUnsteer = SESSION_UNSTEER: SessionUnsteerParams => SessionUnsteerResponse,
         SessionAnswer = SESSION_ANSWER: SessionAnswerParams => SessionAnswerResponse,
+        SessionAnswerQuestion = SESSION_ANSWER_QUESTION: SessionAnswerQuestionParams => SessionAnswerQuestionResponse,
         SessionHold = SESSION_HOLD: SessionHoldParams => SessionHoldResponse,
         SessionSurfaceAction = SESSION_SURFACE_ACTION: SessionSurfaceActionParams => SessionSurfaceActionResponse,
         SessionAttach = SESSION_ATTACH: SessionAttachParams => SessionAttachResponse,

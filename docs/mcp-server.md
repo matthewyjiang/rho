@@ -71,7 +71,7 @@ A turn the caller prompts on your session runs with the caller's [scope](#scope-
 
 ## Approvals stay with people
 
-No tool answers a session's approvals or questions. When a turn asks for one, `wait` returns with `done: true`, `state: "waiting_for_input"`, and the request in `inputs`. A person answers it from `rho attach <session>` or the TUI, and the next `wait` follows the turn from there.
+No tool here answers a session's approvals or questions. The native `sessions` tool's `answer`, which lets a session answer the questions of a session it started, is not served over MCP ([Sessions](/sessions)). When a turn asks for one, `wait` returns with `done: true`, `state: "waiting_for_input"`, and the request in `inputs`. A person answers it from `rho attach <session>` or the TUI, and the next `wait` follows the turn from there.
 
 To let a session work unattended, give it a [permission mode](/configuration/permissions) that does not ask, as you would for `rho run`.
 

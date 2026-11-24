@@ -3,9 +3,9 @@
 //! (`app::mcp_server`) and the native `sessions` tool's control actions
 //! (`tools::sessions::control`) are thin adapters over it (#1714).
 //!
-//! [`SessionControl`] serves seven actions ([`Action`]): `list`, `read`,
-//! `new`, `prompt`, `steer`, `cancel`, and `wait`. Each call carries its
-//! [`Caller`]: the transport's [`Grant`], narrowed by the scope of the
+//! [`SessionControl`] serves eight actions ([`Action`]): `list`, `read`,
+//! `new`, `prompt`, `steer`, `cancel`, `wait`, and `answer`. Each call
+//! carries its [`Caller`]: the transport's [`Grant`], narrowed by the scope of the
 //! session that calls, and that session's depth (`crate::caller_context`).
 //! The core enforces it: the access the action needs, the workspaces the
 //! grant reaches, the nesting depth ([`Limits::max_depth`]), and how many
@@ -23,11 +23,18 @@
 //! in the workspace the worktree was added from as well as its own, for the
 //! grant and `list`'s filter.
 //!
-//! No action answers a session's approvals or questions: a turn that asks
-//! waits for a person, and `wait` reports it waiting for input. The daemon
-//! holds the core to that. Its connections declare an agent's role
-//! ([`ConnectAs::Agent`]), which the daemon refuses `rho/session/answer`
-//! and `rho/session/hold` from (#1780).
+//! No action answers a session's approvals or plan approvals: a turn that
+//! asks waits for a person, and `wait` reports it waiting for input. The
+//! one input an action answers is a question, and only one asked by a
+//! session the caller's session started: `answer`, which `wait`'s `inputs`
+//! name the question for (see [`answer`]). The daemon holds the core to
+//! that, and decides who may answer. Its connections declare an agent's
+//! role ([`ConnectAs::Agent`]), which the daemon refuses
+//! `rho/session/answer` and `rho/session/hold` from (#1780), and
+//! `rho/session/answer_question`, the one answering method open to an
+//! agent, takes only a question's answers, from the session whose job
+//! started the asker's, and never for a question only the user may answer,
+//! as an MCP server's elicitation is. `rho mcp serve` offers no `answer`.
 //!
 //! The daemon is reached as [`Reach`] allows: `rho mcp serve` starts it
 //! when none runs, as any client does, and the native tool reaches only one
@@ -64,6 +71,7 @@ use super::{
 };
 use crate::{app::session_options::OfferedModels, daemon::ConnectAs};
 
+mod answer;
 mod catalog;
 mod check;
 mod dispatch;
@@ -79,8 +87,9 @@ use dispatch::json;
 pub(crate) use dispatch::{parse_arguments, schema_of};
 pub(crate) use follow::{Connect, Follow, FollowEnd, Followed, NewsKey};
 use params::{
-    CancelParams, CancelResult, ListParams, ListResult, NewParams, NewResult, PromptParams,
-    PromptResult, ReadParams, ReadResult, SessionEntry, SteerParams, SteerResult, WaitParams,
+    AnswerParams, AnswerResult, CancelParams, CancelResult, ListParams, ListResult, NewParams,
+    NewResult, PromptParams, PromptResult, ReadParams, ReadResult, SessionEntry, SteerParams,
+    SteerResult, WaitParams,
 };
 pub(crate) use params::{WaitResult, MAX_WAIT_SECS};
 pub(crate) use policy::{Action, Caller, Grant, Holder, Limits, Refusal};
@@ -187,6 +196,12 @@ impl SessionControl {
             CheckedCall::Steer(params) => json(self.steer(params).await?),
             CheckedCall::Cancel(params) => json(self.cancel(params).await?),
             CheckedCall::Wait(params) => json(self.wait(caller, params).await?),
+            CheckedCall::Answer {
+                session,
+                request,
+                answer,
+                by,
+            } => json(self.answer(session, request, answer, by).await?),
         }
     }
 

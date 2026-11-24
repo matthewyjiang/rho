@@ -66,6 +66,7 @@ pub(super) fn approval(request: &ApprovalRequest) -> Ask {
                 SdkAction::Prompt => SessionControlAction::Prompt,
                 SdkAction::Steer => SessionControlAction::Steer,
                 SdkAction::Cancel => SessionControlAction::Cancel,
+                SdkAction::Answer => SessionControlAction::Answer,
                 _ => SessionControlAction::Unknown,
             },
             session: target

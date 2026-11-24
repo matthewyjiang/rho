@@ -263,28 +263,40 @@ into the current turn, use [subagents](/subagents) instead.
 | `prompt` | Starts the session's next turn with `text`. |
 | `steer` | Adds `text` to the running turn's next model request. |
 | `cancel` | Cancels the turn in progress. |
-| `wait` | Waits for the session to settle, with no turn running and none rho will start for its background work, or to need a person, a subagent's question included, for up to `timeout_secs`, at most 50. Returns the state, the last turn's final answer once it ended (final once `done` is true), and a `cursor` for the next `wait`. |
+| `wait` | Waits for the session to settle, with no turn running and none rho will start for its background work, or to need a person, for up to `timeout_secs`, at most 50. A subagent's question asked while the session is at rest ends the wait; one asked while a turn runs is listed in `inputs` but does not end it. Returns the state, the last turn's final answer once it ended (final once `done` is true), and a `cursor` for the next `wait`. |
 | `read` | Without an `anchor`, pages through a session's transcript, including the turn in progress. |
+| `answer` | Answers a question that `session`, a session this one started, asks: `request` from `wait`'s `inputs`, and `answers` by question id, or `decline: true`. |
 
 ```json
 {"action":"new","workspace":"/home/me/other-project","prompt":"Run the test suite and summarize failures"}
 {"action":"wait","session":"<returned id>","timeout_secs":50}
 ```
 
-These are the same tools the [MCP server](/mcp-server) offers, with the same
-rules. Know these before you approve one:
+Apart from `answer`, these are the same tools the [MCP server](/mcp-server)
+offers, with the same rules. Know these before you approve one:
 
-- `new`, `prompt`, `steer`, and `cancel` ask for approval, and `plan` mode
-  refuses them. `list`, `read`, and `wait` ask for read access to session
-  storage.
+- `new`, `prompt`, `steer`, `cancel`, and `answer` ask for approval, and
+  `plan` mode refuses them. `list`, `read`, and `wait` ask for read access to
+  session storage.
 - A new session runs in its workspace's permission mode, which can be looser
   than the agent's.
 - A new session gets the agent session's environment, including its
   `RHO_TRUST_PROJECT_*` variables. The target workspace's project agents,
   plugins, and hooks load only if those allow it. Starting a session there
   grants it no trust. See [Environment](/daemon#environment).
-- An agent can't answer another session's approvals or questions. That session
-  waits until a person answers from a Rho frontend.
+- An agent can't answer another session's approvals or plan approvals. That
+  session waits until a person answers from a Rho frontend.
+- An agent can answer the questions of a session it started, with `answer`.
+  This covers the session's own questionnaires and its subagents' questions;
+  `wait` lists a subagent's question in `inputs` even while a turn runs. The
+  approval names each question's prompt next to its answer.
+  It doesn't cover an MCP server's request for input (an elicitation), which
+  waits for a person, and it can't answer a session it didn't start. A person
+  can still answer first, and the first answer wins. Attached clients show
+  that the session that started this one answered, and the questionnaire's
+  saved result records `"source": "session"` instead of `"user"`. The
+  [auto mode](/configuration/permissions) classifier never counts such an
+  answer as your consent.
 
 Limits apply:
 

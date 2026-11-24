@@ -429,6 +429,9 @@ pub enum SessionControlAction {
     Steer,
     /// Cancel the turn in progress.
     Cancel,
+    /// Answer a question the session asks, for the session that started
+    /// it. Never an approval: those wait for a person.
+    Answer,
 }
 
 impl SessionControlAction {
@@ -439,12 +442,13 @@ impl SessionControlAction {
             Self::Prompt => "prompt",
             Self::Steer => "steer",
             Self::Cancel => "cancel",
+            Self::Answer => "answer",
         }
     }
 }
 
 /// The agent session an operation acts on: one it starts, prompts, steers,
-/// or cancels. Every field is part of the request, so an approval
+/// cancels, or answers a question of. Every field is part of the request, so an approval
 /// remembered for the session covers only an identical request: the same
 /// text sent to the same session.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -455,8 +459,9 @@ pub struct SessionControlTarget {
     pub session: Option<SessionId>,
     /// The session's workspace.
     pub workspace: PathBuf,
-    /// The text the operation sends: a new session's first prompt, or a
-    /// prompt's or steer's text. `None` for a cancel.
+    /// The text the operation sends: a new session's first prompt, a
+    /// prompt's or steer's text, or an answer's answers. `None` for a
+    /// cancel.
     pub text: Option<String>,
 }
 

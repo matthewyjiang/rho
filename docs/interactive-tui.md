@@ -267,7 +267,8 @@ permanently for that form. Nothing automatically submits while you edit.
 Mouse movement counts as interaction, even without a click.
 Explicit submit still returns your answers with `source: "user"`. Expiry returns
 the proposed fallback with `source: "timeout_fallback"` and a transcript notice,
-not a user message. Neither fallback answers nor silence grant authorization. Fallbacks are for safe, reversible decisions, never permissions, purchases, destructive actions, or other authorization.
+not a user message. A daemon session's question that the session which started it
+answers through the `sessions` tool returns its answers with `source: "session"`. Neither fallback answers nor silence grant authorization. Fallbacks are for safe, reversible decisions, never permissions, purchases, destructive actions, or other authorization.
 
 Timeouts are serviced by the UI event loop, with input taking priority. Heavy
 event traffic can delay a fallback; it never makes it run early.
