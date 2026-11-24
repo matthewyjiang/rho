@@ -133,15 +133,21 @@ impl<'a> SavedHistory<'a> {
 }
 
 impl SessionRuntime {
-    /// Opens a new session `id` as the build's launch agent. Its file is
-    /// created by its first save, unless `persistence` says it is never
-    /// written.
+    /// Opens a new session `id` as the build's launch agent, which session
+    /// `started_by` started through session control, if one did. Its file
+    /// is created by its first save, unless `persistence` says it is never
+    /// written, and records `started_by` (see
+    /// `SessionProvenance::started_by`).
     pub(crate) async fn open_new(
         opening: SessionOpening<'_>,
         id: SessionId,
         persistence: SessionPersistence,
+        started_by: Option<SessionId>,
     ) -> anyhow::Result<Self> {
-        let provenance = opening.build.run.role.provenance();
+        let provenance = SessionProvenance {
+            started_by: started_by.map(|session| session.to_string()),
+            ..opening.build.run.role.provenance()
+        };
         Self::open_fresh(opening, id.clone(), persistence, provenance, |_| {
             Ok(session_options_for_id(id))
         })
@@ -167,6 +173,7 @@ impl SessionRuntime {
         let provenance = SessionProvenance {
             origin: SessionOrigin::Fork,
             parent: Some(SessionTarget::new(parent.id(), parent.cwd())),
+            started_by: None,
         };
         let mut runtime =
             Self::open_fresh(opening, id.clone(), persistence, provenance, |provider| {

@@ -1833,6 +1833,77 @@
       ],
       "description": "Why the daemon dropped an attachment."
     },
+    "DetailedSessionSummary": {
+      "description": "One session, as [`SESSION_LIST_DETAILED`] reports it: its\n[`SessionSummary`]'s fields, then the agent it runs as and the session\nthat started it. Goes at the next major with [`SESSION_LIST_DETAILED`].\n\nOn the wire it is a [`SessionSummary`] with two more optional fields, so\nfolding them into it changes no row a client reads.",
+      "properties": {
+        "added_dirs": {
+          "description": "The directories the session added beside its workspace, as last\nsaved, those since removed left out.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "agent": {
+          "description": "The agent the session runs as, by id, as\n[`super::SessionNewParams::agent`] takes it: the one a `/agent:` first\nprompt rebound it to, if one did, and `default` for the default\nagent. Absent for a session saved before agents were recorded.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cwd": {
+          "description": "The workspace the session was saved in, which an attach reopens it\nin.",
+          "type": "string"
+        },
+        "first_user_message": {
+          "description": "The session's first user message on one line, cut to 80 characters,\nwhich an untitled session is labelled with.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "last_user_message": {
+          "description": "The session's last user message, cut like `first_user_message`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The session that started this one through session control, saved\nwith the session: the one [`super::SessionNewParams::parent`] named,\nor, when that names a subagent's or workflow node's session, the\nsession whose turn runs that subagent or workflow. Absent for a\nsession nothing started that way, one whose `parent` no job of the\ndaemon writes, and one started before the daemon saved it. The id\nalone names the parent, and a list may not hold it: the parent may be\ndeleted, a fork, unsaved, in another workspace or on another page.\nA client treats a parent it cannot find as none."
+        },
+        "session": {
+          "$ref": "#/$defs/SessionId"
+        },
+        "title": {
+          "description": "The session's title; absent until it has one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "updated_at": {
+          "description": "Unix time, in seconds, of the session's last save.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "session",
+        "cwd",
+        "added_dirs",
+        "updated_at"
+      ],
+      "type": "object"
+    },
     "DiffRow": {
       "description": "One row of a compact diff body, with the line numbers for its gutter.",
       "properties": {
@@ -5604,7 +5675,7 @@
       "type": "object"
     },
     "SessionDeleteResponse": {
-      "description": "Result of [`SESSION_DELETE`]: the session's files are gone, with those\nof the sessions it started, such as its subagents', and the daemon has\nunloaded it, detaching its clients as\n[`super::DetachReason::Deleted`]. Its job stays in [`super::JOB_LIST`].\n\nA session whose turn is under way, a settings change waiting or\napplying, background work running, such as a subagent, or a run it started not yet\nfinished is refused as [`crate::ErrorCode::SessionBusy`]; one another\nprocess has open, or one a session it started is open in, as\n[`crate::ErrorCode::SessionInUse`]. Either refusal leaves a loaded\nsession loaded. A session the daemon loaded but that has saved nothing\nyet is unloaded all the same. An id the daemon has not loaded and nothing\nis saved under is [`crate::ErrorCode::SessionNotFound`].",
+      "description": "Result of [`SESSION_DELETE`]: the session's files are gone, with those\nof the sessions it owns, its subagents' and forks',\nand the daemon has unloaded it, detaching its clients as\n[`super::DetachReason::Deleted`]. Its job stays in [`super::JOB_LIST`].\nThe sessions it started through session control\n([`super::SessionNewParams::parent`]) stay, still naming it as\n[`DetailedSessionSummary::parent`].\n\nA session whose turn is under way, a settings change waiting or\napplying, background work running, such as a subagent, or a run it started not yet\nfinished is refused as [`crate::ErrorCode::SessionBusy`]; one another\nprocess has open, or one a session it started is open in, as\n[`crate::ErrorCode::SessionInUse`]. Either refusal leaves a loaded\nsession loaded. A session the daemon loaded but that has saved nothing\nyet is unloaded all the same. An id the daemon has not loaded and nothing\nis saved under is [`crate::ErrorCode::SessionNotFound`].",
       "type": "object"
     },
     "SessionDetachParams": {
@@ -6331,6 +6402,28 @@
       ],
       "type": "object"
     },
+    "SessionListDetailedResponse": {
+      "description": "Result of [`SESSION_LIST_DETAILED`]: a page of [`SESSION_LIST`]'s, its\nrows detailed. Goes at the next major with [`SESSION_LIST_DETAILED`].",
+      "properties": {
+        "next_cursor": {
+          "description": "The cursor of the next page, as [`SessionListResponse::next_cursor`];\nabsent on the last.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sessions": {
+          "items": {
+            "$ref": "#/$defs/DetailedSessionSummary"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "sessions"
+      ],
+      "type": "object"
+    },
     "SessionListParams": {
       "description": "Params of [`SESSION_LIST`].",
       "properties": {
@@ -6874,7 +6967,7 @@
               "type": "null"
             }
           ],
-          "description": "The session whose turn starts this one, such as the session of an\nagent that starts a peer through session control (#1714). The daemon\nrecords the job writing that session as the new session's job's\n[`super::JobSummary::parent`], and the new session's turns then wait\nfor capacity in the daemon-wide agent budget, as subagent runs do\n([`super::JobState::Queued`]). A session no job of the daemon writes,\nsuch as one an in-process rho runs, records no parent, but the new\nsession's turns still share the budget."
+          "description": "The session whose turn starts this one, such as the session of an\nagent that starts a peer through session control (#1714). The daemon\nrecords the job writing that session as the new session's job's\n[`super::JobSummary::parent`], and the new session's turns then wait\nfor capacity in the daemon-wide agent budget, as subagent runs do\n([`super::JobState::Queued`]). The new session saves, as\n[`super::DetailedSessionSummary::parent`], that session, or, when a\nsubagent run or workflow node writes it, the session whose turn runs\nthat run or workflow. A session no job of the daemon writes, such as\none an in-process rho runs, records no parent, in the job or the\nsaved session, but the new session's turns still share the budget."
         },
         "setup": {
           "$ref": "#/$defs/SessionSetup",
@@ -9531,6 +9624,14 @@
       },
       "result": {
         "$ref": "#/$defs/SessionListResponse"
+      }
+    },
+    "rho/session/list_detailed": {
+      "params": {
+        "$ref": "#/$defs/SessionListParams"
+      },
+      "result": {
+        "$ref": "#/$defs/SessionListDetailedResponse"
       }
     },
     "rho/session/mcp": {

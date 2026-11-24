@@ -164,6 +164,7 @@ fn v4_tree_session_summary_matches_active_display() {
                 launch_agent: None,
                 origin: None,
                 parent_session: None,
+                started_by: None,
             },
             SessionEntry::Node {
                 node: SessionNode {

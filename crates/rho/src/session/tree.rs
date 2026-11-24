@@ -245,6 +245,9 @@ pub(crate) struct SessionTree {
     cwd: Option<PathBuf>,
     origin: Option<SessionOrigin>,
     parent_session: Option<SessionTarget>,
+    /// The header's `agent_id`: the agent the session runs as.
+    agent: Option<String>,
+    started_by: Option<String>,
     created_at: Option<u64>,
     updated_at: Option<u64>,
     version: Option<u32>,
@@ -496,8 +499,10 @@ impl SessionTree {
             id,
             timestamp,
             cwd,
+            agent_id,
             origin,
             parent_session,
+            started_by,
             ..
         } = serde_json::from_str(&header)?
         else {
@@ -508,6 +513,8 @@ impl SessionTree {
             cwd: Some(cwd),
             origin,
             parent_session,
+            agent: agent_id,
+            started_by,
             created_at: parse_timestamp(&timestamp),
             version: Some(version),
             ..Self::default()
@@ -569,6 +576,8 @@ impl SessionTree {
                     self.newest_node_metadata(crate::added_dirs::METADATA_KEY),
                 ),
                 origin: self.origin,
+                agent: self.agent.clone(),
+                started_by: self.started_by.clone(),
             },
             file_size,
             file_mtime,
@@ -594,8 +603,10 @@ impl SessionTree {
                 id,
                 cwd,
                 timestamp,
+                agent_id,
                 origin,
                 parent_session,
+                started_by,
                 ..
             } => {
                 validate_session_version(version, Path::new("session"))?;
@@ -613,6 +624,8 @@ impl SessionTree {
                 self.cwd = Some(cwd);
                 self.origin = origin;
                 self.parent_session = parent_session;
+                self.agent = agent_id;
+                self.started_by = started_by;
                 if let Some(created) = parse_timestamp(&timestamp) {
                     self.created_at = Some(created);
                 }

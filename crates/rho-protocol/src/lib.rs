@@ -189,13 +189,14 @@ pub use methods::{
     SessionConfigureResponse, SessionOptions, SESSION_CONFIGURE,
 };
 pub use methods::{
-    ProcessChunk, ProcessOutput, ProcessOutputParams, ProcessState, ProcessStream, SessionProcess,
-    SessionProcessesParams, SessionProcessesResponse, SESSION_PROCESSES,
+    DetailedSessionSummary, SessionDeleteParams, SessionDeleteResponse,
+    SessionListDetailedResponse, SessionListParams, SessionListResponse, SessionRenameParams,
+    SessionRenameResponse, SessionSummary, SESSION_DELETE, SESSION_LIST, SESSION_LIST_DETAILED,
+    SESSION_RENAME,
 };
 pub use methods::{
-    SessionDeleteParams, SessionDeleteResponse, SessionListParams, SessionListResponse,
-    SessionRenameParams, SessionRenameResponse, SessionSummary, SESSION_DELETE, SESSION_LIST,
-    SESSION_RENAME,
+    ProcessChunk, ProcessOutput, ProcessOutputParams, ProcessState, ProcessStream, SessionProcess,
+    SessionProcessesParams, SessionProcessesResponse, SESSION_PROCESSES,
 };
 pub use methods::{
     SessionInspectParams, SessionInspectResponse, SessionMcpInventory, SessionMcpMode,

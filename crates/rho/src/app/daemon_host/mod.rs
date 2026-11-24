@@ -35,11 +35,12 @@ use rho_protocol::{
     SessionAttachParams, SessionAttachResponse, SessionCancelParams, SessionCancelResponse,
     SessionConfigureParams, SessionConfigureResponse, SessionDeleteParams, SessionDeleteResponse,
     SessionForkParams, SessionForkResponse, SessionHoldParams, SessionHoldResponse,
-    SessionListParams, SessionListResponse, SessionNewParams, SessionNewResponse,
-    SessionObserveParams, SessionPromptParams, SessionPromptResponse, SessionRenameParams,
-    SessionRenameResponse, SessionSteerParams, SessionSteerResponse, SessionSurfaceActionParams,
-    SessionSurfaceActionResponse, SessionUnsteerParams, SessionUnsteerResponse, SettingsService,
-    Subscription, WorktreePruneParams, WorktreePruneResponse, PROTOCOL_VERSION,
+    SessionListDetailedResponse, SessionListParams, SessionListResponse, SessionNewParams,
+    SessionNewResponse, SessionObserveParams, SessionPromptParams, SessionPromptResponse,
+    SessionRenameParams, SessionRenameResponse, SessionSteerParams, SessionSteerResponse,
+    SessionSurfaceActionParams, SessionSurfaceActionResponse, SessionUnsteerParams,
+    SessionUnsteerResponse, SettingsService, Subscription, WorktreePruneParams,
+    WorktreePruneResponse, PROTOCOL_VERSION,
 };
 use rho_providers::credentials::CredentialStoreBackend;
 
@@ -558,6 +559,13 @@ impl Service for DaemonHost {
         params: SessionListParams,
     ) -> Result<SessionListResponse, RpcError> {
         self.sessions.list(params).await
+    }
+
+    async fn list_sessions_detailed(
+        &self,
+        params: SessionListParams,
+    ) -> Result<SessionListDetailedResponse, RpcError> {
+        self.sessions.list_detailed(params).await
     }
 
     async fn rename_session(

@@ -199,7 +199,9 @@ pub(crate) async fn run_child(run: ChildRun) -> anyhow::Result<()> {
         // `NodeSession::find` held a saved session to the agent the child is
         // bound to, as its root session, which opens as the launch agent.
         let runtime = match saved {
-            None => SessionRuntime::open_new(opening, id, persistence).await?,
+            None => {
+                SessionRuntime::open_new(opening, id, persistence, /*started_by*/ None).await?
+            }
             Some(stored) => SessionRuntime::open_saved(opening, stored).await?,
         };
         // The parent steers the child's model turns through its handle.

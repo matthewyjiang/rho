@@ -32,12 +32,13 @@ use crate::{
         SessionConfigureResponse, SessionDeleteParams, SessionDeleteResponse, SessionDetach,
         SessionDetachParams, SessionDetachResponse, SessionForkParams, SessionForkResponse,
         SessionHoldParams, SessionHoldResponse, SessionInspectParams, SessionInspectResponse,
-        SessionListParams, SessionListResponse, SessionMcpCatalog, SessionMcpCatalogParams,
-        SessionMcpCompleteParams, SessionMcpCompleteResponse, SessionMcpInventory,
-        SessionMcpParams, SessionMcpResourceParams, SessionMcpResourceResponse, SessionNewParams,
-        SessionNewResponse, SessionObserve, SessionObserveParams, SessionProcessesParams,
-        SessionProcessesResponse, SessionPromptParams, SessionPromptResponse,
-        SessionPullRequestLinkParams, SessionPullRequestLinkResponse, SessionPullRequestListParams,
+        SessionListDetailedResponse, SessionListParams, SessionListResponse, SessionMcpCatalog,
+        SessionMcpCatalogParams, SessionMcpCompleteParams, SessionMcpCompleteResponse,
+        SessionMcpInventory, SessionMcpParams, SessionMcpResourceParams,
+        SessionMcpResourceResponse, SessionNewParams, SessionNewResponse, SessionObserve,
+        SessionObserveParams, SessionProcessesParams, SessionProcessesResponse,
+        SessionPromptParams, SessionPromptResponse, SessionPullRequestLinkParams,
+        SessionPullRequestLinkResponse, SessionPullRequestListParams,
         SessionPullRequestListResponse, SessionPullRequestShowParams,
         SessionPullRequestShowResponse, SessionPullRequestUnlinkParams,
         SessionPullRequestUnlinkResponse, SessionRenameParams, SessionRenameResponse,
@@ -47,11 +48,11 @@ use crate::{
         AUTH_LOGIN, AUTH_LOGIN_CANCEL, AUTH_LOGOUT, CONFIG_GET, HELLO, MODEL_LIST, SESSION_ANSWER,
         SESSION_ANSWER_QUESTION, SESSION_ATTACH, SESSION_BACKGROUND_LIST, SESSION_BACKGROUND_STOP,
         SESSION_CANCEL, SESSION_CONFIGURE, SESSION_DELETE, SESSION_DETACH, SESSION_FORK,
-        SESSION_HOLD, SESSION_INSPECT, SESSION_LIST, SESSION_MCP, SESSION_MCP_CATALOG,
-        SESSION_MCP_COMPLETE, SESSION_MCP_RESOURCE, SESSION_NEW, SESSION_OBSERVE,
-        SESSION_PROCESSES, SESSION_PROMPT, SESSION_PULL_REQUEST_LINK, SESSION_PULL_REQUEST_LIST,
-        SESSION_PULL_REQUEST_SHOW, SESSION_PULL_REQUEST_UNLINK, SESSION_RENAME, SESSION_STEER,
-        SESSION_SURFACE_ACTION, SESSION_UNSTEER, WORKTREE_PRUNE,
+        SESSION_HOLD, SESSION_INSPECT, SESSION_LIST, SESSION_LIST_DETAILED, SESSION_MCP,
+        SESSION_MCP_CATALOG, SESSION_MCP_COMPLETE, SESSION_MCP_RESOURCE, SESSION_NEW,
+        SESSION_OBSERVE, SESSION_PROCESSES, SESSION_PROMPT, SESSION_PULL_REQUEST_LINK,
+        SESSION_PULL_REQUEST_LIST, SESSION_PULL_REQUEST_SHOW, SESSION_PULL_REQUEST_UNLINK,
+        SESSION_RENAME, SESSION_STEER, SESSION_SURFACE_ACTION, SESSION_UNSTEER, WORKTREE_PRUNE,
     },
     subscription::Subscription,
     BuildId, BuildSkew, DaemonInfo, DaemonStatus, ErrorCode, FrameError, HelloResponse, Message,
@@ -397,6 +398,17 @@ pub trait Service: SettingsService + Send + Sync {
     ) -> impl Future<Output = Result<SessionListResponse, RpcError>> + Send {
         let _ = params;
         unsupported(SESSION_LIST)
+    }
+
+    /// Answers `rho/session/list_detailed`: a page of the saved sessions a
+    /// person can resume, as [`Self::list_sessions`] answers, each with the
+    /// agent it runs as and the session that started it.
+    fn list_sessions_detailed(
+        &self,
+        params: SessionListParams,
+    ) -> impl Future<Output = Result<SessionListDetailedResponse, RpcError>> + Send {
+        let _ = params;
+        unsupported(SESSION_LIST_DETAILED)
     }
 
     /// Handles `rho/session/rename`: save a session's title and tell the

@@ -31,15 +31,22 @@ impl Sessions {
         let workspace = Workspace::parse(&cwd)?;
         // Resolved before the session opens, so a malformed parent opens
         // nothing.
-        let started_by = parent.map(|parent| self.job_writing(&parent)).transpose()?;
-        // A session another one starts opens with no more than its
-        // parent's turn could give. A subagent run writing the parent runs
-        // under its session's grant.
-        let parents = started_by
+        let parent = parent.as_ref().map(reopen::parse_session).transpose()?;
+        let parent_job = parent.as_ref().and_then(|parent| self.job_writing(parent));
+        // The session job whose turn runs the parent: the parent's own, or,
+        // when a subagent run or workflow node writes the parent, that of
+        // the session that started it. The new session opens with no more
+        // than that turn could give, and its file records that session as
+        // the one that started it, which a client can list, as it cannot a
+        // run's own session. A parent no job of this daemon writes records
+        // none.
+        let starter = parent_job
             .as_ref()
-            .and_then(Option::as_ref)
-            .and_then(|job| self.jobs.session_grant(job));
-        let opening = grant::opening(grant::asked(grant, &environment)?, parents.as_ref());
+            .and_then(|job| self.jobs.runs_under(job));
+        let opening = grant::opening(
+            grant::asked(grant, &environment)?,
+            starter.as_ref().map(|starter| &starter.grant),
+        );
         let with = OpenWith::under(opening, &environment, setup)?;
         let global = config_for_new(&self.settings).await?;
         // Added last, once the request is otherwise sound, since nothing
@@ -55,7 +62,11 @@ impl Sessions {
         };
         let job = JobId::generate();
         let opened = open_session(
-            Opening::New { workspace, agent },
+            Opening::New {
+                workspace,
+                agent,
+                started_by: starter.map(|starter| starter.session),
+            },
             &with,
             &self.subagents,
             &self.pull_requests,
@@ -69,11 +80,11 @@ impl Sessions {
         let record = JobRecord {
             // A session started from one no daemon job writes still shares
             // the budget, with no parent to show.
-            admission: match started_by {
+            admission: match parent {
                 Some(_) => Admission::SharedBudget,
                 None => Admission::Immediate,
             },
-            parent: started_by.flatten(),
+            parent: parent_job,
             keeping: match opened.runtime.persistence() {
                 crate::session::SessionPersistence::Saved => Keeping::Stored,
                 crate::session::SessionPersistence::Ephemeral => Keeping::MemoryOnly,
@@ -105,13 +116,11 @@ impl Sessions {
     /// under way, as the turn of a session that starts another is, else the
     /// latest job of its turns. `None` for a session no job of this daemon
     /// writes, such as one an in-process rho runs.
-    fn job_writing(&self, session: &rho_protocol::SessionId) -> Result<Option<JobId>, RpcError> {
-        Ok(
-            match self.jobs.session_job(&reopen::parse_session(session)?) {
-                SessionJob::Busy(job) => Some(job),
-                SessionJob::Last(record) => Some(record.id),
-                SessionJob::New => None,
-            },
-        )
+    fn job_writing(&self, session: &rho_sdk::SessionId) -> Option<JobId> {
+        match self.jobs.session_job(session) {
+            SessionJob::Busy(job) => Some(job),
+            SessionJob::Last(record) => Some(record.id),
+            SessionJob::New => None,
+        }
     }
 }

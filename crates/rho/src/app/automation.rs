@@ -316,9 +316,13 @@ async fn run_session(
     }
     let herdr = &startup.herdr;
     let open = async {
-        let runtime =
-            SessionRuntime::open_new(opening, rho_sdk::SessionId::new(), startup.persistence)
-                .await?;
+        let runtime = SessionRuntime::open_new(
+            opening,
+            rho_sdk::SessionId::new(),
+            startup.persistence,
+            /*started_by*/ None,
+        )
+        .await?;
         let _ = herdr.report_state(HerdrState::Working, None, None).await;
         anyhow::Ok(runtime)
     };

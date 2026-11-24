@@ -1,7 +1,8 @@
-//! The session catalog over the socket (#1670, #1667): `rho/session/list`,
-//! `rho/session/rename`, and `rho/session/delete`, over the session store's
-//! catalog, titles, and delete, which ACP's `session/list` and
-//! `session/delete` and `rho sessions` use too.
+//! The session catalog over the socket (#1670, #1667): `rho/session/list`
+//! and `rho/session/list_detailed`, `rho/session/rename`, and
+//! `rho/session/delete`, over the session store's catalog, titles, and
+//! delete, which ACP's `session/list` and `session/delete` and `rho
+//! sessions` use too.
 //!
 //! A rename tells a loaded session's attached clients the new title. A
 //! delete must unload a loaded session first, since its runtime holds the
@@ -16,7 +17,8 @@ use std::{num::NonZeroU32, num::NonZeroUsize, sync::Arc};
 
 use rho_protocol::{
     self as wire, DetachReason, ErrorCode, RpcError, SessionDeleteParams, SessionDeleteResponse,
-    SessionListParams, SessionListResponse, SessionRenameParams, SessionRenameResponse,
+    SessionListDetailedResponse, SessionListParams, SessionListResponse, SessionRenameParams,
+    SessionRenameResponse,
 };
 use rho_sdk::SessionId;
 use tokio::sync::OwnedMutexGuard;
@@ -37,21 +39,37 @@ use crate::{
     },
 };
 
-/// The most sessions one `rho/session/list` page holds.
+/// The most sessions one `rho/session/list` or `rho/session/list_detailed`
+/// page holds.
 //
-// Measured on a dev machine's store: its 249 listable sessions encode to
-// 86 KB of summaries, 393 B at most each, so a full page is about 400 KB,
-// far under the 16 MiB line limit (`rho_protocol::MAX_LINE_BYTES`), and four
-// times that whole store still lists in one page. A client that wants more
-// follows `next_cursor`.
+// Measured on a copy of a dev machine's store: its 505 listable sessions
+// encode to `rho/session/list_detailed` rows of 489 B at most each (418 B as
+// `rho/session/list` rows), counting a 36-character `parent` on every one,
+// so a full page is about 490 KB, far under the 16 MiB line limit
+// (`rho_protocol::MAX_LINE_BYTES`), and twice that whole store still lists
+// in one page. A client that wants more follows `next_cursor`.
 const MAX_PAGE_SIZE: usize = 1000;
 
 impl Sessions {
-    /// One page of the saved sessions a person can resume, newest first.
+    /// One page of the saved sessions a person can resume, newest first:
+    /// [`Self::list_detailed`]'s, without the details.
     pub(in crate::app::daemon_host) async fn list(
         &self,
         params: SessionListParams,
     ) -> Result<SessionListResponse, RpcError> {
+        let page = self.list_detailed(params).await?;
+        Ok(SessionListResponse {
+            sessions: page.sessions.into_iter().map(|row| row.summary).collect(),
+            next_cursor: page.next_cursor,
+        })
+    }
+
+    /// One page of the saved sessions a person can resume, newest first,
+    /// each with the agent it runs as and the session that started it.
+    pub(in crate::app::daemon_host) async fn list_detailed(
+        &self,
+        params: SessionListParams,
+    ) -> Result<SessionListDetailedResponse, RpcError> {
         let SessionListParams { cwd, cursor, limit } = params;
         let limit = page_size(limit)?;
         let page = store_blocking("list the sessions", move || {
@@ -64,10 +82,10 @@ impl Sessions {
             }
             CatalogError::Store(error) => store_failed("list the sessions", &error),
         })?;
-        Ok(SessionListResponse {
-            sessions: page.sessions.into_iter().map(summary_to_wire).collect(),
-            next_cursor: page.next_cursor,
-        })
+        Ok(SessionListDetailedResponse::new(
+            page.sessions.into_iter().map(summary_to_wire).collect(),
+            page.next_cursor,
+        ))
     }
 
     /// Saves a session's title, then tells the clients attached to it, if
@@ -102,8 +120,9 @@ impl Sessions {
         Ok(SessionRenameResponse {})
     }
 
-    /// Deletes a saved session and the sessions it started, unloading it
-    /// and its loaded forks first.
+    /// Deletes a saved session and the sessions it owns, its subagents' and
+    /// forks', unloading it and its loaded forks first.
+    /// The sessions it started through session control stay.
     pub(in crate::app::daemon_host) async fn delete(
         &self,
         params: SessionDeleteParams,
@@ -356,8 +375,9 @@ fn page_size(limit: Option<NonZeroU32>) -> Result<NonZeroUsize, RpcError> {
         })
 }
 
-/// `summary` as `rho/session/list` sends it.
-fn summary_to_wire(summary: SessionSummary) -> wire::SessionSummary {
+/// `summary` as `rho/session/list_detailed` sends it; its `summary` is what
+/// `rho/session/list` sends.
+fn summary_to_wire(summary: SessionSummary) -> wire::DetailedSessionSummary {
     let SessionSummary {
         id,
         path: _,
@@ -370,8 +390,10 @@ fn summary_to_wire(summary: SessionSummary) -> wire::SessionSummary {
         last_user_message,
         added_dirs,
         origin: _,
+        agent,
+        started_by,
     } = summary;
-    wire::SessionSummary {
+    let summary = wire::SessionSummary {
         session: wire::SessionId::new(id),
         cwd,
         added_dirs,
@@ -379,7 +401,11 @@ fn summary_to_wire(summary: SessionSummary) -> wire::SessionSummary {
         first_user_message: first_user_message.as_deref().and_then(catalog::preview),
         last_user_message: last_user_message.as_deref().and_then(catalog::preview),
         updated_at,
-    }
+    };
+    // `parent` on the wire, as `rho/session/new` names the session that
+    // starts another.
+    let parent = started_by.map(wire::SessionId::new);
+    wire::DetailedSessionSummary::new(summary, agent, parent)
 }
 
 fn invalid(message: impl Into<String>) -> RpcError {

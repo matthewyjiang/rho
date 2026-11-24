@@ -114,6 +114,16 @@ pub(in crate::app::daemon_host) enum SessionJob {
     Busy(JobId),
 }
 
+/// The session job a job runs under, as [`JobRegistry::runs_under`] finds
+/// it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::app::daemon_host) struct RunsUnder {
+    /// The session whose turns that job runs.
+    pub(in crate::app::daemon_host) session: rho_sdk::SessionId,
+    /// The grant of that job's turn under way, or of its last one.
+    pub(in crate::app::daemon_host) grant: CallerContext,
+}
+
 /// Where a change left a job: its state, and the turn the state is of,
 /// which a session job's attached clients are told together.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -327,18 +337,24 @@ impl JobRegistry {
         }
     }
 
-    /// The grant of the session turn job `id` runs under: its own, for a
-    /// session job, else that of the nearest session job that started it,
-    /// as a subagent run's or a workflow drive's is. `None` when no known
-    /// session job is found.
-    pub(in crate::app::daemon_host) fn session_grant(&self, id: &JobId) -> Option<CallerContext> {
-        session_grant(&self.lock(), id).cloned()
+    /// The session job whose turn job `id` runs under: itself, for a
+    /// session job, else the nearest session job that started it, as a
+    /// subagent run's or a workflow drive's is, and so a workflow node's,
+    /// whose subagent job the drive started. `None` when no known session
+    /// job is found.
+    pub(in crate::app::daemon_host) fn runs_under(&self, id: &JobId) -> Option<RunsUnder> {
+        let jobs = self.lock();
+        let (session, grant) = runs_under(&jobs, id)?;
+        Some(RunsUnder {
+            session: session.clone(),
+            grant: grant.clone(),
+        })
     }
 
     /// Refuses session `by`'s answer to a question of the session whose
     /// turns job `asking` runs, unless the job that started `asking` writes
     /// `by`, as a session job or a subagent run does, and the grant that
-    /// job runs under ([`Self::session_grant`]) may act on sessions. Only
+    /// job runs under ([`Self::runs_under`]) may act on sessions. Only
     /// the grant's access counts, not the workspaces it reaches: starting
     /// the asking session already took reaching its workspace.
     pub(in crate::app::daemon_host) fn may_answer(
@@ -353,7 +369,7 @@ impl JobRegistry {
             .and_then(|parent| jobs.get(parent))
             .filter(|parent| parent.subject.session() == Some(by))
             .ok_or(AnswerRefused::NotStarter)?;
-        match session_grant(&jobs, &starter.id).map(|grant| grant.scope.access) {
+        match runs_under(&jobs, &starter.id).map(|(_, grant)| grant.scope.access) {
             Some(Access::Write) => Ok(()),
             Some(Access::Read) => Err(AnswerRefused::ReadOnly),
             None => Err(AnswerRefused::NoGrant),
@@ -629,16 +645,16 @@ fn persist(store: &JobStore, record: &JobRecord) {
     }
 }
 
-/// The grant of the session turn job `id` runs under, in `jobs`: see
-/// [`JobRegistry::session_grant`].
-fn session_grant<'a>(
+/// The session and the grant of the session job that job `id` runs under,
+/// in `jobs`: see [`JobRegistry::runs_under`].
+fn runs_under<'a>(
     jobs: &'a BTreeMap<JobId, JobRecord>,
     id: &JobId,
-) -> Option<&'a CallerContext> {
+) -> Option<(&'a rho_sdk::SessionId, &'a CallerContext)> {
     let mut record = jobs.get(id)?;
     loop {
-        match record.subject {
-            JobSubject::Session { .. } => return Some(&record.grant),
+        match &record.subject {
+            JobSubject::Session { session } => return Some((session, &record.grant)),
             JobSubject::Subagent { .. } | JobSubject::Workflow { .. } => {
                 record = jobs.get(record.parent.as_ref()?)?;
             }
