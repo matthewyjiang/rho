@@ -143,7 +143,7 @@ The token's secret goes from one machine to the other without reaching your term
 - The address, port, or path is wrong. The URL ends in `/mcp`.
 - The server isn't running on that machine, or listens on another address. `systemctl --user status rho-mcp` and `journalctl --user -u rho-mcp` there say which.
 
-The `curl` above tells you when it's fixed. Then run the same line again. That is safe: the secret the failed line rotated was not saved on the hub, and the new rotate replaces it. If the hub already had this remote, it is refused until the line succeeds, since the rotate replaced its secret. A webhook watch of that remote's sessions stops after an hour of refusals; once the line succeeds, look for stopped watches in `rho mcp webhook list` and restart the hub or watch those sessions again.
+The `curl` above tells you when it's fixed; with the SSH forward, run it against `http://127.0.0.1:18765/mcp` instead. Then run the same line again. That is safe: the secret the failed line rotated was not saved on the hub, and the new rotate replaces it. If the hub already had this remote, it is refused until the line succeeds, since the rotate replaced its secret. A webhook watch of that remote's sessions stops after an hour of refusals; once the line succeeds, look for stopped watches in `rho mcp webhook list` and restart the hub or watch those sessions again.
 
 ## Once, in Grok Bot
 
