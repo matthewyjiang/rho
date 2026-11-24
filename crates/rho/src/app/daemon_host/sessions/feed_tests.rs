@@ -59,17 +59,25 @@ fn agent(id: &str) -> wire::SessionEvent {
 }
 
 /// The events an attach from `after` replays, and whether it resets; a
-/// reset's after the agent it starts with. Also checks the count the attach
-/// reports, which the client reads before the lazily rendered events, and
-/// that a reset starts with the agent.
+/// reset's after the agent and the started sessions' defaults it starts
+/// with. Also checks the count the attach reports, which the client reads
+/// before the lazily rendered events, and that a reset starts with those
+/// two, the defaults as [`idle_feed`]'s session has none.
 fn replay(feed: &Feed, after: Option<Cursor>) -> (Replay, Vec<(u64, wire::SessionEvent)>) {
     let (replay, events) = feed.state().replay_from(after.as_ref());
     let len = events.len;
     let mut events: Vec<_> = events.events.map(|(seq, event)| (seq.0, event)).collect();
     assert_eq!(len, events.len(), "the reported replay length");
     if replay == Replay::Reset {
-        let (_, first) = events.remove(0);
-        assert_eq!(first, agent(AGENT), "a reset starts with the agent");
+        let head: Vec<_> = events.drain(..2).map(|(_, event)| event).collect();
+        assert_eq!(
+            head,
+            [
+                agent(AGENT),
+                wire::SessionEvent::StartedSessionDefaults(Default::default()),
+            ],
+            "a reset starts with the agent and the started sessions' defaults"
+        );
     }
     (replay, events)
 }

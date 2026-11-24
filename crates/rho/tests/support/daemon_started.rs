@@ -2,14 +2,15 @@
 //! writing the starting session as the new session's parent, and the new
 //! session's turns wait for capacity in the daemon-wide agent budget, as
 //! subagent runs do. A new session opens in the permission mode and on the
-//! model a person chose for the sessions its parent starts.
+//! model a person chose for the sessions its parent starts, and keeps that
+//! choice for the sessions it starts.
 
 use pretty_assertions::assert_eq;
 use rho_protocol::{
     methods::{JobList, SessionCancel, SessionConfigure, SessionNew},
     Budget, Client, JobListParams, JobState, JobSummary, PermissionMode, QueuePlace,
     SessionCancelParams, SessionChange, SessionConfigureParams, SessionEvent, SessionId,
-    SessionNewParams, SessionNewResponse, SessionOptions, SessionSetup,
+    SessionNewParams, SessionNewResponse, SessionOptions, SessionSetup, StartedSessionDefaults,
 };
 
 use super::sessions::{settled_job, Follower, Sandbox};
@@ -58,14 +59,18 @@ async fn configure(client: &Client, session: &SessionId, change: SessionChange) 
         .options
 }
 
-/// The event a reset replay of `session` sends right after the agent it
-/// runs as.
-async fn replayed_after_agent(sandbox: &Sandbox, session: &SessionId) -> Option<SessionEvent> {
-    let (mut follower, _) = Follower::attach(sandbox, session, Vec::new(), None).await;
+/// Attaches to `session`: its options, and the event its reset replay
+/// sends right after the agent it runs as.
+async fn attached(
+    sandbox: &Sandbox,
+    session: &SessionId,
+) -> (SessionOptions, Option<SessionEvent>) {
+    let (mut follower, attached) = Follower::attach(sandbox, session, Vec::new(), None).await;
     follower
         .read_until(|event| !matches!(event, SessionEvent::Agent { .. }))
         .await;
-    follower.events.pop().map(|(_, event)| event)
+    let after_agent = follower.events.pop().map(|(_, event)| event);
+    (attached.options, after_agent)
 }
 
 /// The job of `session`'s turns, as `rho/job/list` reports it now.
@@ -233,39 +238,37 @@ async fn a_started_session_waiting_for_a_person_lends_its_slot() {
 }
 
 // Covers: the permission mode and model a person chose for the sessions a
-// session starts are kept with it through a daemon restart: a session it
-// starts then opens in that mode on that model, a model change as the
-// `sessions` tool's `model` sends it replaces the model and keeps the mode,
-// and the started session has no choice of its own. Before the choice, a
-// session it starts takes the config's. A reset replay of the starting
-// session reports the choice.
+// session starts outlast a daemon restart, and a reset replay of that
+// session reports them; a session it starts then opens in that mode on
+// that model, and keeps them as its own choice, so a session that one
+// starts does too. The choosing session itself, and a session it started
+// before it chose, keep no settings of their own: after the restart both
+// follow the config's new mode.
 // Owner: daemon sessions other sessions start.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_started_session_opens_with_what_a_person_chose_for_its_parent() {
     let sandbox = Sandbox::new();
     // Auto needs a classifier model, as a person's config gives it.
-    sandbox.set_config(
-        "bypass",
-        r#"[internal_agents.permission-classifier]
+    let classifier = r#"[internal_agents.permission-classifier]
 provider = "xai"
 model = "grok-fixture"
 auth = "xai-oauth"
-"#,
-    );
+"#;
+    sandbox.set_config("bypass", classifier);
     let (mut daemon, client) = sandbox.spawn_daemon(sandbox.rho("fixed"), &[]).await;
     let parent = sandbox.new_session(&client).await;
-    // Saved, so the next daemon has a file to reopen.
-    sandbox.prompt(&client, &parent).await.unwrap();
-    settled_job(&sandbox, &client, &parent).await;
-    let before = open_child(&sandbox, &client, &parent).await.options;
-    let configured = before.model.current.clone();
-    let chosen = before
+    let unchosen = start_child(&sandbox, &client, &parent).await;
+    // Both saved, so the next daemon has their files to reopen.
+    for session in [&parent, &unchosen] {
+        sandbox.prompt(&client, session).await.unwrap();
+        settled_job(&sandbox, &client, session).await;
+    }
+    // The one model the fixture surely runs: the config's.
+    let configured = open_child(&sandbox, &client, &parent)
+        .await
+        .options
         .model
-        .available
-        .iter()
-        .map(|choice| choice.model.clone())
-        .find(|model| *model != configured)
-        .expect("the session may switch to a model besides the config's");
+        .current;
     configure(
         &client,
         &parent,
@@ -278,7 +281,7 @@ auth = "xai-oauth"
         &client,
         &parent,
         SessionChange::StartedSessionModel {
-            model: Some(chosen.clone()),
+            model: Some(configured.clone()),
         },
     )
     .await;
@@ -291,25 +294,14 @@ auth = "xai-oauth"
     assert!(stop.success(), "log:\n{}", sandbox.isolated.daemon_log());
     daemon.wait().unwrap();
 
+    sandbox.set_config("supervised", classifier);
     let client = sandbox.start_daemon("fixed").await;
     // The attach loads the parent again, as its turn that starts a session
     // keeps it loaded.
-    let reported = replayed_after_agent(&sandbox, &parent).await;
+    let (parent_options, reported) = attached(&sandbox, &parent).await;
+    let (unchosen_options, _) = attached(&sandbox, &unchosen).await;
     let started = open_child(&sandbox, &client, &parent).await;
-    let overridden = configure(
-        &client,
-        &started.session,
-        SessionChange::Model {
-            model: configured.clone(),
-            auth: None,
-            setup: true,
-        },
-    )
-    .await;
-    let started_chose = matches!(
-        replayed_after_agent(&sandbox, &started.session).await,
-        Some(SessionEvent::StartedSessions { .. })
-    );
+    let started_by_started = open_child(&sandbox, &client, &started.session).await;
 
     let settings = |options: &SessionOptions| {
         (
@@ -317,23 +309,26 @@ auth = "xai-oauth"
             options.model.current.clone(),
         )
     };
+    let chosen = (PermissionMode::Auto, configured.clone());
     assert_eq!(
         (
-            settings(&before),
+            parent_options.permission_mode.current,
+            unchosen_options.permission_mode.current,
             reported,
             settings(&started.options),
-            settings(&overridden),
-            started_chose,
+            settings(&started_by_started.options),
         ),
         (
-            (PermissionMode::Bypass, configured.clone()),
-            Some(SessionEvent::StartedSessions {
-                permission_mode: Some(PermissionMode::Auto),
-                model: Some(chosen.clone()),
-            }),
-            (PermissionMode::Auto, chosen),
-            (PermissionMode::Auto, configured),
-            false,
+            PermissionMode::Supervised,
+            PermissionMode::Supervised,
+            Some(SessionEvent::StartedSessionDefaults(
+                StartedSessionDefaults {
+                    permission_mode: Some(PermissionMode::Auto),
+                    model: Some(configured),
+                }
+            )),
+            chosen.clone(),
+            chosen,
         ),
         "log:\n{}",
         sandbox.isolated.daemon_log()

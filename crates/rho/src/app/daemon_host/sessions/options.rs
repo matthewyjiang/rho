@@ -7,12 +7,12 @@ use std::sync::Arc;
 
 use rho_protocol as wire;
 
-use super::{feed::StartedSessions, turn::DAEMON_COMMANDS, LoadedSession, Sessions};
+use super::{turn::DAEMON_COMMANDS, LoadedSession, Sessions};
 pub(super) use crate::app::session_options::available_auths;
 use crate::{
     app::{
         session_options,
-        session_runtime::{SessionRuntime, StartedModel, StartedSessionDefaults},
+        session_runtime::{SessionRuntime, StartedMode, StartedModel, StartedSessionDefaults},
     },
     config::Config,
 };
@@ -39,7 +39,9 @@ impl LoadedSession {
         // Before the options, so a client knows whose they are.
         self.feed.update_agent(runtime.agent_id().as_str());
         self.feed
-            .update_started_sessions(started_sessions(runtime.started_session_defaults()));
+            .update_started_session_defaults(started_session_defaults(
+                runtime.started_session_defaults(),
+            ));
         let options = daemon_options(runtime, &self.config(), auths);
         self.feed.update_options(options.clone());
         self.feed.options()
@@ -88,13 +90,19 @@ pub(super) fn daemon_options(
 }
 
 /// `defaults`, what the sessions a session starts open with, on the wire.
-pub(super) fn started_sessions(defaults: &StartedSessionDefaults) -> StartedSessions {
+/// A mode this rho does not know is `Unknown`.
+pub(super) fn started_session_defaults(
+    defaults: &StartedSessionDefaults,
+) -> wire::StartedSessionDefaults {
     let StartedSessionDefaults {
         permission_mode,
         model,
     } = defaults;
-    StartedSessions {
-        permission_mode: permission_mode.map(Into::into),
+    wire::StartedSessionDefaults {
+        permission_mode: permission_mode.as_ref().map(|mode| match mode {
+            StartedMode::Known(mode) => (*mode).into(),
+            StartedMode::Unknown(_) => wire::PermissionMode::Unknown,
+        }),
         model: model
             .as_ref()
             .map(|StartedModel { provider, model }| wire::ModelRef {

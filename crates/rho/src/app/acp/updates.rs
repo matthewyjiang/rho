@@ -139,7 +139,7 @@ impl Updates {
             // ACP has no place for the agent a session runs as.
             | SessionEvent::Agent { .. }
             // Nor for what the sessions it starts open with.
-            | SessionEvent::StartedSessions { .. }
+            | SessionEvent::StartedSessionDefaults(_)
             // Nor for a session's pull requests.
             | SessionEvent::PullRequests { .. }
             // ACP has no update for what the turn is doing.

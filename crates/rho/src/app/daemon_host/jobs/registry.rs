@@ -317,15 +317,20 @@ impl JobRegistry {
     /// session job is found.
     pub(in crate::app::daemon_host) fn session_grant(&self, id: &JobId) -> Option<CallerContext> {
         let jobs = self.lock();
-        let mut record = jobs.get(id)?;
-        loop {
-            match record.subject {
-                JobSubject::Session { .. } => return Some(record.grant.clone()),
-                JobSubject::Subagent { .. } | JobSubject::Workflow { .. } => {
-                    record = jobs.get(record.parent.as_ref()?)?;
-                }
-            }
-        }
+        nearest_session_job(&jobs, id).map(|(record, _)| record.grant.clone())
+    }
+
+    /// The session whose turns job `id` runs in, found as
+    /// [`Self::session_grant`] finds its grant: `id`'s own, for a session
+    /// job, which a person or session control opened, else that of the
+    /// nearest session job that started it. `None` when no known session
+    /// job is found.
+    pub(in crate::app::daemon_host) fn nearest_session(
+        &self,
+        id: &JobId,
+    ) -> Option<rho_sdk::SessionId> {
+        let jobs = self.lock();
+        nearest_session_job(&jobs, id).map(|(_, session)| session.clone())
     }
 
     /// The grant job `id`'s record holds, if the job is known.
@@ -570,6 +575,25 @@ impl JobRegistry {
         // A panic mid-update leaves at worst a record one transition
         // behind, which the next transition rewrites.
         self.jobs.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+/// The nearest session job of job `id` in `jobs`, with the session whose
+/// turns it runs: `id` itself for a session job, else the job that started
+/// it, walking up through subagent runs and workflow drives. `None` when
+/// the walk reaches a job `jobs` does not hold.
+fn nearest_session_job<'a>(
+    jobs: &'a BTreeMap<JobId, JobRecord>,
+    id: &JobId,
+) -> Option<(&'a JobRecord, &'a rho_sdk::SessionId)> {
+    let mut record = jobs.get(id)?;
+    loop {
+        match &record.subject {
+            JobSubject::Session { session } => return Some((record, session)),
+            JobSubject::Subagent { .. } | JobSubject::Workflow { .. } => {
+                record = jobs.get(record.parent.as_ref()?)?;
+            }
+        }
     }
 }
 

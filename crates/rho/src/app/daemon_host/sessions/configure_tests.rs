@@ -309,10 +309,11 @@ async fn a_model_change_after_compaction_waits_for_the_last_turn_to_compact() {
 }
 
 // Covers: each part of what a person chooses for the sessions a session
-// starts is set and cleared on its own, each change told to clients; an
-// unknown mode, and auto while the config has no classifier model, which
-// every session started in it would fail to open with, are refused and
-// leave the choice as it was.
+// starts is set and cleared on its own, each change told to clients, and
+// clearing it again tells nothing; an unknown mode, and auto while the
+// config has no classifier model, which every session started in it would
+// fail to open with, are refused and leave the choice as it was. None of it
+// changes the session's own settings, which go on following the config.
 // Owner: daemon session settings.
 #[tokio::test]
 async fn each_part_of_the_started_sessions_choice_changes_on_its_own() {
@@ -341,6 +342,7 @@ async fn each_part_of_the_started_sessions_choice_changes_on_its_own() {
         mode(Some(wire::PermissionMode::Unknown)),
         mode(Some(wire::PermissionMode::Auto)),
         mode(None),
+        mode(None),
     ];
 
     let mut answered = Vec::new();
@@ -353,24 +355,33 @@ async fn each_part_of_the_started_sessions_choice_changes_on_its_own() {
         .buffered_for_tests()
         .into_iter()
         .filter_map(|event| match event {
-            wire::SessionEvent::StartedSessions {
-                permission_mode,
-                model,
-            } => Some((permission_mode, model)),
+            wire::SessionEvent::StartedSessionDefaults(defaults) => Some(defaults),
             _ => None,
         })
         .collect();
+    let follows_config = !session
+        .runtime
+        .try_lock()
+        .unwrap()
+        .as_ref()
+        .unwrap()
+        .keeps_settings_for_tests();
     let invalid = Err(wire::ErrorCode::InvalidParams.code());
+    let chosen = |permission_mode, model| wire::StartedSessionDefaults {
+        permission_mode,
+        model,
+    };
     let plan = Some(wire::PermissionMode::Plan);
     assert_eq!(
-        (answered, told),
+        (answered, told, follows_config),
         (
-            vec![Ok(()), Ok(()), invalid, invalid, Ok(())],
+            vec![Ok(()), Ok(()), invalid, invalid, Ok(()), Ok(())],
             vec![
-                (plan, None),
-                (plan, Some(model.clone())),
-                (None, Some(model)),
+                chosen(plan, None),
+                chosen(plan, Some(model.clone())),
+                chosen(None, Some(model)),
             ],
+            true,
         )
     );
 }

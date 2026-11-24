@@ -166,7 +166,12 @@ pub struct SessionNewParams {
     /// for capacity in the daemon-wide agent budget, as subagent runs do
     /// ([`super::JobState::Queued`]). A session no job of the daemon writes,
     /// such as one an in-process rho runs, records no parent, but the new
-    /// session's turns still share the budget.
+    /// session's turns still share the budget. The new session also opens
+    /// in the permission mode and on the model a person chose for the
+    /// sessions the nearest session a person or session control opened
+    /// starts: `parent` itself, or the session whose turn runs the subagent
+    /// or workflow node writing it ([`super::SessionChange::StartedSessionPermissionMode`],
+    /// [`super::SessionChange::StartedSessionModel`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<SessionId>,
     /// What the session may do through session control until a prompt

@@ -374,6 +374,27 @@ impl Session {
         Ok(resolved.tree()?.facts())
     }
 
+    /// Metadata `key` of the session saved under exactly `id` in `cwd`'s
+    /// workspace, as [`Self::session_metadata`] reads it, read without
+    /// opening the session, which another process may hold. `None` when the
+    /// session's last save did not record `key`; an error when nothing is
+    /// saved under `id` there.
+    pub(crate) fn session_metadata_by_id(
+        cwd: &Path,
+        id: &str,
+        key: &str,
+    ) -> anyhow::Result<Option<String>> {
+        let resolved = SessionStore::new(&session_root()?, cwd)
+            .resolve_exact_local(id)?
+            .ok_or_else(|| {
+                anyhow::anyhow!("no session is saved under {id} in {}", cwd.display())
+            })?;
+        Ok(resolved
+            .tree()?
+            .newest_node_metadata(key)
+            .map(str::to_owned))
+    }
+
     /// Session `id_prefix`'s tree as `/tree` lists it, read without opening
     /// the session, which another process may hold.
     pub(crate) fn tree_turn_items_by_id(

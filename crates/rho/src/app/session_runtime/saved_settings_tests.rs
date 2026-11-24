@@ -5,7 +5,7 @@ use super::SavedSettings;
 use crate::{
     app::session_runtime::{
         test_support::{idle_built, idle_runtime},
-        SessionRuntime, SessionStorage, StartedModel, StartedSessionDefaults,
+        SessionRuntime, SessionStorage,
     },
     config::Config,
     permission::PermissionMode,
@@ -14,8 +14,7 @@ use crate::{
 
 // Covers: a reopened session takes back the settings its file keeps,
 // including a fast-mode preference its model cannot use, which a model
-// switch keeps and a switch back to a fast model shows again, and what the
-// sessions it starts open with.
+// switch keeps and a switch back to a fast model shows again.
 // Owner: session runtime saved settings
 #[tokio::test]
 async fn a_reopened_session_restores_its_saved_settings() {
@@ -36,17 +35,6 @@ async fn a_reopened_session_restores_its_saved_settings() {
         .set_permission_mode(PermissionMode::AllowEdits, &config)
         .await
         .unwrap();
-    let started = StartedSessionDefaults {
-        permission_mode: Some(PermissionMode::Supervised),
-        model: Some(StartedModel {
-            provider: "test".into(),
-            model: "other-model".into(),
-        }),
-    };
-    saved
-        .set_started_session_permission_mode(started.permission_mode, &config)
-        .unwrap();
-    saved.set_started_session_model(started.model.clone());
     saved.keep_settings().unwrap();
 
     let id = saved.session_id().clone();
@@ -59,28 +47,5 @@ async fn a_reopened_session_restores_its_saved_settings() {
     );
     reopened.restore_settings(&config).await;
 
-    assert_eq!(
-        (
-            SavedSettings::of(&reopened),
-            reopened.started_session_defaults()
-        ),
-        (SavedSettings::of(&saved), &started)
-    );
-}
-
-// Covers: settings an older rho saved, which keep no choice for the
-// sessions the session starts, still load, with none, so those sessions
-// take the config's as before.
-// Owner: session runtime saved settings
-#[test]
-fn settings_saved_before_started_session_choices_load_with_none() {
-    let saved: SavedSettings = serde_json::from_str(
-        r#"{"provider":"test","model":"model","auth":"api-key","reasoning":"medium","fast_mode":false,"permission_mode":"bypass"}"#,
-    )
-    .unwrap();
-
-    assert_eq!(
-        saved.started_sessions.restore(),
-        StartedSessionDefaults::default()
-    );
+    assert_eq!(SavedSettings::of(&reopened), SavedSettings::of(&saved));
 }

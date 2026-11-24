@@ -11,7 +11,8 @@ use crate::{
     methods::{
         AnswerStop, BranchLookup, BranchPullRequest, LinkedPullRequest, ModelRef, PermissionMode,
         PullRequestId, PullRequestLinkOrigin, PullRequestRollup, PullRequestState,
-        PullRequestSummary, SessionPullRequests, TurnError, TurnErrorKind, TurnOutcome,
+        PullRequestSummary, SessionPullRequests, StartedSessionDefaults, TurnError, TurnErrorKind,
+        TurnOutcome,
     },
 };
 
@@ -56,25 +57,22 @@ fn every_session_event_round_trips_through_its_wire_form() {
             json!({"type": "agent", "id": "worker"}),
         ),
         (
-            SessionEvent::StartedSessions {
+            SessionEvent::StartedSessionDefaults(StartedSessionDefaults {
                 permission_mode: Some(PermissionMode::Auto),
                 model: Some(ModelRef {
                     provider: "openai".into(),
                     model: "gpt-5".into(),
                 }),
-            },
+            }),
             json!({
-                "type": "started_sessions",
+                "type": "started_session_defaults",
                 "permission_mode": "auto",
                 "model": {"provider": "openai", "model": "gpt-5"},
             }),
         ),
         (
-            SessionEvent::StartedSessions {
-                permission_mode: None,
-                model: None,
-            },
-            json!({"type": "started_sessions"}),
+            SessionEvent::StartedSessionDefaults(StartedSessionDefaults::default()),
+            json!({"type": "started_session_defaults"}),
         ),
         (
             SessionEvent::TurnEnded {

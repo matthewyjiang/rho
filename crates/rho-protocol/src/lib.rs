@@ -184,7 +184,7 @@ pub use methods::{
 pub use methods::{
     CommandKind, FastModeOptions, ModelChoice, ModelOptions, ModelRef, PermissionModeOptions,
     ReasoningLevel, ReasoningOptions, SessionChange, SessionCommand, SessionConfigureParams,
-    SessionConfigureResponse, SessionOptions, SESSION_CONFIGURE,
+    SessionConfigureResponse, SessionOptions, StartedSessionDefaults, SESSION_CONFIGURE,
 };
 pub use methods::{
     ProcessChunk, ProcessOutput, ProcessOutputParams, ProcessState, ProcessStream, SessionProcess,

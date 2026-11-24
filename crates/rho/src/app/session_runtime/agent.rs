@@ -244,6 +244,7 @@ impl SessionRuntime {
                 // As before the rebind; the next save records the rebound
                 // session's.
                 settings: self.settings_record(),
+                started_sessions: self.started_sessions.clone(),
             }
             .decorate(built.session.snapshot())
         });

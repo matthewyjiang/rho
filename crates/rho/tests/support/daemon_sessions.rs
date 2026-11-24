@@ -1644,7 +1644,7 @@ fn conversation(events: &[(Seq, SessionEvent)]) -> Vec<SessionEvent> {
                     | SessionEvent::Background { .. }
                     | SessionEvent::Activity { .. }
                     | SessionEvent::Agent { .. }
-                    | SessionEvent::StartedSessions { .. }
+                    | SessionEvent::StartedSessionDefaults(_)
                     | SessionEvent::PullRequests { .. }
             )
         })
@@ -1686,22 +1686,26 @@ async fn clients_that_leave_and_come_back_see_the_same_turn() {
     let (mut latecomer, late) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
     latecomer.read_until(is_state(JobState::Cancelled)).await;
 
-    // The watcher's reset starts with the session's agent, which no saved
-    // row holds, at seq 0; the stream numbers every event after it.
-    let (first, rest) = watcher
-        .events
-        .split_first()
-        .expect("the watcher's reset replays the agent");
+    // The watcher's reset starts with the session's agent and what the
+    // sessions it starts open with, which no saved row holds, at seq 0; the
+    // stream numbers every event after them.
+    let (head, rest) = watcher.events.split_at(2);
     let seqs: Vec<u64> = rest.iter().map(|(seq, _)| seq.0).collect();
     assert_eq!(
-        (first.clone(), seqs.clone()),
+        (head.to_vec(), seqs.clone()),
         (
-            (
-                Seq(0),
-                SessionEvent::Agent {
-                    id: "default".into()
-                }
-            ),
+            vec![
+                (
+                    Seq(0),
+                    SessionEvent::Agent {
+                        id: "default".into()
+                    }
+                ),
+                (
+                    Seq(0),
+                    SessionEvent::StartedSessionDefaults(Default::default())
+                ),
+            ],
             (1..=seqs.len() as u64).collect::<Vec<_>>(),
         ),
         "the stream numbers every event once, in order"

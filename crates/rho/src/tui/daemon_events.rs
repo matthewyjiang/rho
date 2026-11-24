@@ -555,7 +555,7 @@ impl DaemonEvents {
             SessionEvent::Agent { .. } => Vec::new(),
             // The TUI offers no control for what the sessions this one
             // starts open with.
-            SessionEvent::StartedSessions { .. } => Vec::new(),
+            SessionEvent::StartedSessionDefaults(_) => Vec::new(),
             // The TUI does not show a session's pull requests; the agent's
             // tools report them.
             SessionEvent::PullRequests { .. } => Vec::new(),

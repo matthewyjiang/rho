@@ -1,21 +1,36 @@
 //! Opening a new session for `rho/session/new`, in its workspace or in a
 //! worktree added for it, and registering the job of its turns.
 //!
-//! A session another loaded session starts, which names it as its parent,
-//! opens with the permission mode and model a person chose for the sessions
-//! that one starts (see `configure.rs`), before anything else can reach it,
-//! and keeps them as its own settings. Without a choice, it takes the
-//! config's, as any new session does.
+//! A session opened under a `parent` takes what a person chose for the
+//! sessions its choosing session starts (see `configure.rs`): its
+//! permission mode and model, before anything else can reach it, kept as
+//! its own settings, and the choice itself, kept as its own, so the
+//! sessions it starts take it too. The choosing session is the nearest
+//! session a person or session control opened: the parent itself, or, for
+//! a subagent's or workflow node's session, the session whose turn runs
+//! that, found as the grant of a session it starts is. Its choice is read
+//! just before it applies: from its feed while it is loaded, as it is while
+//! its turn runs, else from its file. A choice that cannot be read or taken
+//! fails the `new` rather than open the session on the config's, which may
+//! be looser. Without a parent, or with one no job of this daemon writes
+//! and nothing is saved under, the session takes the config's, as any new
+//! session does.
 
-use rho_protocol::{RpcError, SessionNewParams, SessionNewResponse};
+use rho_protocol::{self as wire, ErrorCode, RpcError, SessionNewParams, SessionNewResponse};
+use rho_sdk::SessionId;
 
 use super::{
     configure::set_up_started_session,
     grant,
     open::{config_for_new, open_session, OpenWith, Opening, Workspace},
-    reopen, worktree, Admission, JobId, JobRecord, Keeping, SessionJob, SessionJobRecord, Sessions,
+    options, reopen,
+    store::store_blocking,
+    worktree, Admission, JobId, JobRecord, Keeping, SessionJob, SessionJobRecord, Sessions,
 };
-use crate::app::daemon_host::wire::session_to_wire;
+use crate::{
+    app::{daemon_host::wire::session_to_wire, session_runtime::StartedSessionDefaults},
+    session::Session as StoredSession,
+};
 
 impl Sessions {
     /// Opens a new session in `cwd`, or in a worktree added for it, as
@@ -36,25 +51,17 @@ impl Sessions {
         } = params;
         self.refuse_when_stopping()?;
         let workspace = Workspace::parse(&cwd)?;
-        // Resolved before the session opens, so a malformed parent opens
-        // nothing.
-        let started_by = parent
+        // Resolved before the session opens, so a malformed parent, or
+        // one whose choosing session is lost, opens nothing.
+        let parent = parent.as_ref().map(reopen::parse_session).transpose()?;
+        let started_by = parent.as_ref().map(|parent| self.job_writing(parent));
+        let choosing = parent
             .as_ref()
-            .map(|parent| self.job_writing(parent))
+            .map(|parent| {
+                let writer = started_by.as_ref().and_then(Option::as_ref);
+                self.choosing_session(parent, writer)
+            })
             .transpose()?;
-        // The parent's turn, which starts this session, holds its runtime,
-        // so its feed says what it chose. A parent this daemon has not
-        // loaded chose nothing it knows of.
-        let parent_session = match &parent {
-            Some(parent) => {
-                let id = reopen::parse_session(parent)?;
-                self.loaded().get(&id).cloned()
-            }
-            None => None,
-        };
-        let started = parent_session
-            .map(|session| session.feed.started_sessions())
-            .unwrap_or_default();
         // A session another one starts opens with no more than its
         // parent's turn could give. A subagent run writing the parent runs
         // under its session's grant.
@@ -88,10 +95,24 @@ impl Sessions {
         )
         .await
         .map_err(|error| worktree::kept(error, worktree.as_ref()))?;
-        // Before it is added, so no prompt finds it on the config's.
-        set_up_started_session(&mut opened.runtime, &opened.config, started)
-            .await
-            .map_err(|error| worktree::kept(error, worktree.as_ref()))?;
+        // Read now, so a change a person made while the session opened
+        // counts, and applied before it is added, so no prompt finds it on
+        // the config's.
+        let set_up = match &choosing {
+            Some(choosing) => match self.chosen_by(choosing).await {
+                Ok(chosen) => {
+                    set_up_started_session(&mut opened.runtime, &opened.config, choosing, chosen)
+                        .await
+                }
+                Err(error) => Err(error),
+            },
+            None => Ok(()),
+        };
+        if let Err(error) = set_up {
+            // Never added, so nothing else holds the runtime.
+            opened.runtime.shutdown().await;
+            return Err(worktree::kept(error, worktree.as_ref()));
+        }
         let session = opened.runtime.session_id().clone();
         let record = JobRecord {
             // A session started from one no daemon job writes still shares
@@ -132,13 +153,71 @@ impl Sessions {
     /// under way, as the turn of a session that starts another is, else the
     /// latest job of its turns. `None` for a session no job of this daemon
     /// writes, such as one an in-process rho runs.
-    fn job_writing(&self, session: &rho_protocol::SessionId) -> Result<Option<JobId>, RpcError> {
-        Ok(
-            match self.jobs.session_job(&reopen::parse_session(session)?) {
-                SessionJob::Busy(job) => Some(job),
-                SessionJob::Last(record) => Some(record.id),
-                SessionJob::New => None,
-            },
-        )
+    fn job_writing(&self, session: &SessionId) -> Option<JobId> {
+        match self.jobs.session_job(session) {
+            SessionJob::Busy(job) => Some(job),
+            SessionJob::Last(record) => Some(record.id),
+            SessionJob::New => None,
+        }
+    }
+
+    /// The session whose choice applies to a session `parent` starts, when
+    /// `writer` is the job writing `parent`: the nearest session job's at
+    /// or above `writer`, as a session `parent` starts takes that one's
+    /// grant, so a subagent or workflow node of a session starts sessions
+    /// under that session's choice. `parent` itself when no job of this
+    /// daemon writes it. A writer whose session job is gone is
+    /// `SessionOpenFailed`: the choice that applies cannot be found.
+    fn choosing_session(
+        &self,
+        parent: &SessionId,
+        writer: Option<&JobId>,
+    ) -> Result<SessionId, RpcError> {
+        let Some(writer) = writer else {
+            return Ok(parent.clone());
+        };
+        self.jobs.nearest_session(writer).ok_or_else(|| {
+            RpcError::new(
+                ErrorCode::SessionOpenFailed,
+                format!(
+                    "could not find the session whose turn runs job {writer}, which writes {parent}, so not what it chose for the sessions it starts"
+                ),
+            )
+        })
+    }
+
+    /// What `choosing` chose for the sessions it starts, as it is now: from
+    /// its feed while it is loaded, as it is while its turn or that of one
+    /// of its subagents runs, else from its file. A session nothing is
+    /// saved under chose nothing. A choice its file keeps but that does not
+    /// read fails, naming why: it may be stricter than the config.
+    async fn chosen_by(
+        &self,
+        choosing: &SessionId,
+    ) -> Result<wire::StartedSessionDefaults, RpcError> {
+        let loaded = self.loaded().get(choosing).cloned();
+        if let Some(session) = loaded {
+            return Ok(session.feed.started_session_defaults());
+        }
+        let id = choosing.clone();
+        let saved = store_blocking(READ_CHOICE, move || {
+            let Some(cwd) = StoredSession::workspace_of(id.as_str())? else {
+                return Ok(None);
+            };
+            StartedSessionDefaults::saved_by_id(&cwd, id.as_str()).map(Some)
+        })
+        .await?;
+        Ok(saved
+            .as_ref()
+            .map(options::started_session_defaults)
+            .unwrap_or_default())
     }
 }
+
+/// What a failed read of a starting session's choice could not do.
+const READ_CHOICE: &str =
+    "read what the session that starts this one chose for the sessions it starts";
+
+#[cfg(test)]
+#[path = "new_tests.rs"]
+mod tests;

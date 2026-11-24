@@ -40,6 +40,7 @@ use rho_sdk::{
 
 use super::{
     events::InsertedMessage, left_out::LeftOut, saved_settings::SettingsRecord, SessionRuntime,
+    StartedSessionDefaults,
 };
 use crate::{
     added_dirs::AddedDirs,
@@ -346,6 +347,7 @@ impl SessionRuntime {
             left_out: self.build.launch.left_out,
             auth: self.auth.clone(),
             settings: self.settings_record(),
+            started_sessions: self.started_sessions.clone(),
         }
     }
 
@@ -379,6 +381,9 @@ pub(super) struct DurableState {
     pub(super) auth: String,
     /// The session's settings, once a host kept them.
     pub(super) settings: SettingsRecord,
+    /// What the sessions it starts open with, kept whether or not it keeps
+    /// its settings.
+    pub(super) started_sessions: StartedSessionDefaults,
 }
 
 impl DurableState {
@@ -392,12 +397,13 @@ impl DurableState {
             left_out,
             auth,
             settings,
+            started_sessions,
         } = self;
         let snapshot = todo.decorate(prompt.decorate(code_mode.decorate(snapshot)));
-        settings.decorate(super::agent::decorate_model_override(
+        started_sessions.decorate(settings.decorate(super::agent::decorate_model_override(
             left_out.decorate(added_dirs.decorate(snapshot)),
             auth,
-        ))
+        )))
     }
 }
 

@@ -281,7 +281,12 @@ rules. Know these before you approve one:
   than the agent's, unless a person chose the permission mode and model of the
   sessions this agent's session starts. A Rho frontend sets that choice with
   [`rho/session/configure`](/protocol#what-started-sessions-run-with); the
-  agent cannot. The tool's `model` still applies to the session it starts.
+  agent cannot. The choice also covers sessions this session's subagents
+  start, and each started session keeps it for the sessions it starts in
+  turn. A change made while the agent's turn runs waits for that turn to end,
+  so sessions the turn starts meanwhile get the earlier choice. The tool's
+  `model` still applies to the session it starts, and an agent that names its
+  own model keeps it.
 - A new session gets the agent session's environment, including its
   `RHO_TRUST_PROJECT_*` variables. The target workspace's project agents,
   plugins, and hooks load only if those allow it. Starting a session there
