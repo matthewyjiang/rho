@@ -1877,7 +1877,7 @@
               "type": "null"
             }
           ],
-          "description": "The session that started this one through session control, saved\nwith the session: the one [`super::SessionNewParams::parent`] named,\nor, when that names a subagent's or workflow node's session, the\nsession whose turn runs that subagent or workflow. Absent for a\nsession nothing started that way, one whose `parent` no job of the\ndaemon writes, and one started before the daemon saved it. Deleting\nthe parent leaves this session listed, still naming it: an id\n[`SESSION_LIST`] no longer lists."
+          "description": "The session that started this one through session control, saved\nwith the session: the one [`super::SessionNewParams::parent`] named,\nor, when that names a subagent's or workflow node's session, the\nsession whose turn runs that subagent or workflow. Absent for a\nsession nothing started that way, one whose `parent` no job of the\ndaemon writes, and one started before the daemon saved it. The id\nalone names the parent, and a list may not hold it: the parent may be\ndeleted, a fork, unsaved, in another workspace or on another page.\nA client treats a parent it cannot find as none."
         },
         "session": {
           "$ref": "#/$defs/SessionId"
@@ -5595,7 +5595,7 @@
       "type": "object"
     },
     "SessionDeleteResponse": {
-      "description": "Result of [`SESSION_DELETE`]: the session's files are gone, with those\nof the sessions it owns, its subagents', workflow nodes', and forks',\nand the daemon has unloaded it, detaching its clients as\n[`super::DetachReason::Deleted`]. Its job stays in [`super::JOB_LIST`].\nThe sessions it started through session control\n([`super::SessionNewParams::parent`]) stay, still naming it as\n[`DetailedSessionSummary::parent`].\n\nA session whose turn is under way, a settings change waiting or\napplying, background work running, such as a subagent, or a run it started not yet\nfinished is refused as [`crate::ErrorCode::SessionBusy`]; one another\nprocess has open, or one a session it started is open in, as\n[`crate::ErrorCode::SessionInUse`]. Either refusal leaves a loaded\nsession loaded. A session the daemon loaded but that has saved nothing\nyet is unloaded all the same. An id the daemon has not loaded and nothing\nis saved under is [`crate::ErrorCode::SessionNotFound`].",
+      "description": "Result of [`SESSION_DELETE`]: the session's files are gone, with those\nof the sessions it owns, its subagents' and forks',\nand the daemon has unloaded it, detaching its clients as\n[`super::DetachReason::Deleted`]. Its job stays in [`super::JOB_LIST`].\nThe sessions it started through session control\n([`super::SessionNewParams::parent`]) stay, still naming it as\n[`DetailedSessionSummary::parent`].\n\nA session whose turn is under way, a settings change waiting or\napplying, background work running, such as a subagent, or a run it started not yet\nfinished is refused as [`crate::ErrorCode::SessionBusy`]; one another\nprocess has open, or one a session it started is open in, as\n[`crate::ErrorCode::SessionInUse`]. Either refusal leaves a loaded\nsession loaded. A session the daemon loaded but that has saved nothing\nyet is unloaded all the same. An id the daemon has not loaded and nothing\nis saved under is [`crate::ErrorCode::SessionNotFound`].",
       "type": "object"
     },
     "SessionDetachParams": {
