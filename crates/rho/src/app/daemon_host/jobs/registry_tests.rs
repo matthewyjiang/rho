@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 
-use super::{JobRegistry, RegisterError, SessionJob, StartTurnError};
+use super::{JobRegistry, RegisterError, RunsUnder, SessionJob, StartTurnError};
 use crate::app::daemon_host::jobs::{
     Admission, JobEvent, JobId, JobRecord, JobState, JobStore, TurnEnd, TurnRecord,
 };
@@ -536,12 +536,14 @@ fn a_jobs_grant_never_exceeds_its_limit() {
     );
 }
 
-// Covers: the grant a session started from a subagent's or a workflow
-// node's session is held under is that of the session whose turn runs
-// them, not the unlimited one their own jobs keep (#1796).
-// Owner: daemon job registry, session grants.
+// Covers: a session started from a subagent's or a workflow node's session
+// runs under the session whose turn runs them: it is held under that
+// session's grant, not the unlimited one their own jobs keep (#1796), and
+// lists that session as the one that started it; a run whose session job
+// the daemon does not know runs under none.
+// Owner: daemon job registry, session grants and starters.
 #[test]
-fn a_run_a_session_started_is_under_that_sessions_grant() {
+fn a_run_runs_under_the_session_whose_turn_runs_it() {
     use crate::caller_context::{Access, CallerContext, Scope, Workspaces};
     let home = TempDir::new().unwrap();
     let registry = JobRegistry::open(JobStore::open(home.path()).unwrap());
@@ -552,13 +554,10 @@ fn a_run_a_session_started_is_under_that_sessions_grant() {
             workspaces: Workspaces::Any,
         },
     };
+    let lead = rho_sdk::SessionId::new();
     let session = JobRecord {
         grant: limited.clone(),
-        ..JobRecord::new_session(
-            JobId::generate(),
-            PathBuf::from("/work"),
-            rho_sdk::SessionId::new(),
-        )
+        ..JobRecord::new_session(JobId::generate(), PathBuf::from("/work"), lead.clone())
     };
     let workflow = JobRecord::new_workflow(
         session.id.clone(),
@@ -567,19 +566,25 @@ fn a_run_a_session_started_is_under_that_sessions_grant() {
     );
     let subagent =
         |parent: JobId| JobRecord::new_subagent(parent, PathBuf::from("/work"), None, "run".into());
+    let run = subagent(session.id.clone());
     let node = subagent(workflow.id.clone());
     let orphan = subagent(JobId::generate());
-    let ids = [&session, &workflow, &node, &orphan].map(|record| record.id.clone());
-    for record in [session, workflow, node, orphan] {
+    let ids = [&session, &workflow, &run, &node, &orphan].map(|record| record.id.clone());
+    for record in [session, workflow, run, node, orphan] {
         registry.register(record).unwrap();
     }
 
+    let under_lead = Some(RunsUnder {
+        session: lead,
+        grant: limited,
+    });
     assert_eq!(
-        ids.map(|id| registry.session_grant(&id)),
+        ids.map(|id| registry.runs_under(&id)),
         [
-            Some(limited.clone()),
-            Some(limited.clone()),
-            Some(limited),
+            under_lead.clone(),
+            under_lead.clone(),
+            under_lead.clone(),
+            under_lead,
             None
         ]
     );

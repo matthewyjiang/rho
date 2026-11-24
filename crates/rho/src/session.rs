@@ -167,9 +167,10 @@ impl SessionOrigin {
 pub(crate) struct SessionProvenance {
     /// The host that created it.
     pub(crate) origin: SessionOrigin,
-    /// The saved session that started it, such as a subagent's parent, by
-    /// its id and workspace: the same id can be saved in two workspaces.
-    /// Deleting that session deletes this one with it.
+    /// The saved session that owns it, such as a subagent's parent or the
+    /// session a fork forks, by its id and workspace: the same id can be
+    /// saved in two workspaces. Deleting that session deletes this one with
+    /// it.
     pub(crate) parent: Option<SessionTarget>,
     /// The session whose turn started this one through session control
     /// (`rho/session/new`'s `parent`), by id, which listings report so a
@@ -293,8 +294,8 @@ pub(super) struct SessionIndexRecord {
     pub(super) branch_count: u64,
     pub(super) active_leaf_id: Option<String>,
     pub(super) effective_format_version: u32,
-    /// The session that started this one, from its header; `None` for a
-    /// file written before parents were recorded.
+    /// The session that owns this one, which deleting deletes it with, from
+    /// its header; `None` for a file written before parents were recorded.
     pub(super) parent_session: Option<SessionTarget>,
 }
 

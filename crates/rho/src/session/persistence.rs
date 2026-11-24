@@ -265,15 +265,16 @@ pub(super) enum SessionEntry {
         /// before origins were recorded.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         origin: Option<SessionOrigin>,
-        /// The saved session that started this one, such as a subagent's
-        /// parent, by id and workspace; `None` for one nothing saved
-        /// started, or in a file written before parents were recorded.
+        /// The saved session that owns this one, such as a subagent's
+        /// parent, by id and workspace, which deleting deletes it with;
+        /// `None` for one no saved session owns, or in a file written before
+        /// parents were recorded.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         parent_session: Option<SessionTarget>,
         /// The session that started this one through session control, by
         /// id (see `SessionProvenance::started_by`); `None` for one
         /// nothing started that way, or in a file written before it was
-        /// recorded. Deletes never follow it, unlike `parent_session`.
+        /// recorded.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         started_by: Option<String>,
     },

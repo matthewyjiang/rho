@@ -58,7 +58,7 @@ impl SessionRuntime {
     /// Whether this session's turns take workspace checkpoints.
     fn takes_checkpoints(&self) -> bool {
         match self.build.run.role {
-            SessionRole::Interactive | SessionRole::Daemon { .. } | SessionRole::Run => {
+            SessionRole::Interactive | SessionRole::Daemon | SessionRole::Run => {
                 !self.checkpoints_paused
             }
             // Their writes are their parent's turn's, or no session's.

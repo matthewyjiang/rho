@@ -272,7 +272,7 @@ pub(in crate::app) fn test_build(config: &Config, workspace_root: &Path) -> Sess
             cache_warming: crate::app::session_runtime::CacheWarming::None,
         },
         run: RunShape {
-            role: SessionRole::Daemon { started_by: None },
+            role: SessionRole::Daemon,
             max_steps: None,
             hook_labels: Default::default(),
         },

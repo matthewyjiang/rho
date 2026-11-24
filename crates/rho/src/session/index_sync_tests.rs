@@ -333,6 +333,7 @@ fn stale_index_keys_uses_loaded_map_without_requery() {
                 message_count: 1,
                 first_user_message: Some("x".into()),
                 added_dirs_read_at: None,
+                agent_starter_read_at: None,
             },
         ),
         (
@@ -345,6 +346,7 @@ fn stale_index_keys_uses_loaded_map_without_requery() {
                 message_count: 0,
                 first_user_message: None,
                 added_dirs_read_at: None,
+                agent_starter_read_at: None,
             },
         ),
         (
@@ -357,6 +359,7 @@ fn stale_index_keys_uses_loaded_map_without_requery() {
                 message_count: 0,
                 first_user_message: None,
                 added_dirs_read_at: None,
+                agent_starter_read_at: None,
             },
         ),
         (
@@ -369,6 +372,7 @@ fn stale_index_keys_uses_loaded_map_without_requery() {
                 message_count: 0,
                 first_user_message: None,
                 added_dirs_read_at: None,
+                agent_starter_read_at: None,
             },
         ),
     ]);
@@ -441,53 +445,102 @@ fn listed_roots_survive_older_writers() {
     }
 }
 
-// Covers: a listing reports the agent a session runs as and the session
-// that started it, from the index row its creation writes, and again after
-// an index from before those columns (version 3) migrates: its rows must
-// re-read their headers rather than list every session as the default
-// agent's, started by none.
-// Owner: session index
-#[test]
-fn listed_agent_and_starter_survive_an_older_index() {
-    let root = TempDir::new().unwrap();
-    let workspace = TempDir::new().unwrap();
-    let cwd = workspace.path().canonicalize().unwrap();
+/// A session `worker` saved under `root` for `cwd`, running as agent
+/// `worker`, which session `lead` started through session control.
+fn started_worker(root: &Path, cwd: &Path) -> crate::session::Session {
     let provenance = SessionProvenance {
         origin: SessionOrigin::Daemon,
         parent: None,
         started_by: Some("lead".into()),
     };
     crate::session::Session::create_with_id_in_root(
-        root.path(),
-        &cwd,
+        root,
+        cwd,
         "worker",
         Some(("worker", "fingerprint")),
         provenance,
     )
-    .unwrap();
-    let listed = || {
-        list_workspace_sessions(root.path(), &cwd)
-            .unwrap()
-            .into_iter()
-            .map(|summary| (summary.agent, summary.started_by))
-            .collect::<Vec<_>>()
-    };
-    let created = listed();
+    .unwrap()
+}
 
-    {
-        let connection = open_index(root.path()).unwrap();
-        let mut connection = connection.lock().unwrap();
+/// Each session `list_workspace_sessions` lists: its agent and starter.
+fn listed_agents_and_starters(root: &Path, cwd: &Path) -> Vec<(Option<String>, Option<String>)> {
+    list_workspace_sessions(root, cwd)
+        .unwrap()
+        .into_iter()
+        .map(|summary| (summary.agent, summary.started_by))
+        .collect()
+}
+
+// Covers: creating a session writes the agent it runs as and the session
+// that started it to its index row, which a listing reports.
+// Owner: session index
+#[test]
+fn creating_a_session_indexes_its_agent_and_starter() {
+    let root = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+    let cwd = workspace.path().canonicalize().unwrap();
+    started_worker(root.path(), &cwd);
+
+    assert_eq!(
+        listed_agents_and_starters(root.path(), &cwd),
+        vec![(Some("worker".to_owned()), Some("lead".to_owned()))]
+    );
+}
+
+// Covers: the agent and starter a listing reports are the header's, whoever
+// wrote the row last: this Rho after an `/agent:` rebind; an older Rho,
+// which writes rows without the `agent_starter` column, so its update leaves
+// the column at an earlier stamp and its insert leaves it unset; or nobody,
+// once the index is lost and rebuilt from the files.
+// Owner: session index reconciliation
+#[test]
+fn listed_agent_and_starter_follow_the_header() {
+    let root = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+    let cwd = workspace.path().canonicalize().unwrap();
+    let session = started_worker(root.path(), &cwd);
+    let connection = open_index(root.path()).unwrap();
+    let before_rebind: Option<String> = connection
+        .lock()
+        .unwrap()
+        .query_row("select agent_starter from sessions", [], |row| row.get(0))
+        .unwrap();
+    let set_column = |value: Option<String>| {
         connection
-            .execute_batch(
-                "update sessions set agent_id = null, started_by = null;
-                 pragma user_version = 3;",
-            )
+            .lock()
+            .unwrap()
+            .execute("update sessions set agent_starter = ?1", [value])
             .unwrap();
-        migrate_index(&mut connection).unwrap();
-    }
+    };
+    session
+        .rewrite_fresh_delegated_identity("reviewer", "fingerprint", None)
+        .unwrap();
 
-    let expected = vec![(Some("worker".to_owned()), Some("lead".to_owned()))];
-    assert_eq!((created, listed()), (expected.clone(), expected));
+    let mut listings = vec![("rebind", listed_agents_and_starters(root.path(), &cwd))];
+    set_column(before_rebind);
+    listings.push((
+        "older update",
+        listed_agents_and_starters(root.path(), &cwd),
+    ));
+    set_column(None);
+    listings.push((
+        "older insert",
+        listed_agents_and_starters(root.path(), &cwd),
+    ));
+    connection
+        .lock()
+        .unwrap()
+        .execute("delete from sessions", [])
+        .unwrap();
+    listings.push(("lost index", listed_agents_and_starters(root.path(), &cwd)));
+
+    let header = vec![(Some("reviewer".to_owned()), Some("lead".to_owned()))];
+    assert_eq!(
+        listings,
+        ["rebind", "older update", "older insert", "lost index"]
+            .map(|writer| (writer, header.clone()))
+    );
 }
 
 // Covers: cross-project list must index never-synced workspace dirs

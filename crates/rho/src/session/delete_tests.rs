@@ -149,8 +149,8 @@ fn delete_takes_child_sessions_recursively() {
 }
 
 // Covers: deleting the session that started another through session control
-// leaves the one it started, still listed and still naming it as its
-// starter, unlike a subagent's parent, whose delete takes its children.
+// leaves the one it started, unlike a subagent's parent, whose delete takes
+// its children.
 // Owner: session deletion
 #[test]
 fn deleting_a_starter_leaves_the_sessions_it_started() {
@@ -166,7 +166,7 @@ fn deleting_a_starter_leaves_the_sessions_it_started() {
     Session::create_with_id_in_root(sessions.path(), workspace.path(), "worker", None, started)
         .unwrap();
 
-    let outcome = delete_target_in_roots(
+    delete_target_in_roots(
         sessions.path(),
         subagents.path(),
         &SessionTarget::new("lead", workspace.path()),
@@ -181,12 +181,9 @@ fn deleting_a_starter_leaves_the_sessions_it_started() {
     )
     .unwrap()
     .into_iter()
-    .map(|summary| (summary.id, summary.started_by))
+    .map(|summary| summary.id)
     .collect::<Vec<_>>();
-    assert_eq!(
-        (outcome.deleted_child_session_count, listed),
-        (0, vec![("worker".to_owned(), Some("lead".to_owned()))])
-    );
+    assert_eq!(listed, vec!["worker".to_owned()]);
 }
 
 // Covers: a child session that refuses its delete stops its parent's: the

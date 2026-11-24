@@ -95,6 +95,16 @@ pub(in crate::app::daemon_host) enum SessionJob {
     Busy(JobId),
 }
 
+/// The session job a job runs under, as [`JobRegistry::runs_under`] finds
+/// it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::app::daemon_host) struct RunsUnder {
+    /// The session whose turns that job runs.
+    pub(in crate::app::daemon_host) session: rho_sdk::SessionId,
+    /// The grant of that job's turn under way, or of its last one.
+    pub(in crate::app::daemon_host) grant: CallerContext,
+}
+
 /// Where a change left a job: its state, and the turn the state is of,
 /// which a session job's attached clients are told together.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -311,16 +321,22 @@ impl JobRegistry {
         }
     }
 
-    /// The grant of the session turn job `id` runs under: its own, for a
-    /// session job, else that of the nearest session job that started it,
-    /// as a subagent run's or a workflow drive's is. `None` when no known
-    /// session job is found.
-    pub(in crate::app::daemon_host) fn session_grant(&self, id: &JobId) -> Option<CallerContext> {
+    /// The session job whose turn job `id` runs under: itself, for a
+    /// session job, else the nearest session job that started it, as a
+    /// subagent run's or a workflow drive's is, and so a workflow node's,
+    /// whose subagent job the drive started. `None` when no known session
+    /// job is found.
+    pub(in crate::app::daemon_host) fn runs_under(&self, id: &JobId) -> Option<RunsUnder> {
         let jobs = self.lock();
         let mut record = jobs.get(id)?;
         loop {
-            match record.subject {
-                JobSubject::Session { .. } => return Some(record.grant.clone()),
+            match &record.subject {
+                JobSubject::Session { session } => {
+                    return Some(RunsUnder {
+                        session: session.clone(),
+                        grant: record.grant.clone(),
+                    })
+                }
                 JobSubject::Subagent { .. } | JobSubject::Workflow { .. } => {
                     record = jobs.get(record.parent.as_ref()?)?;
                 }

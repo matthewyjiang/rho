@@ -226,13 +226,7 @@ pub(crate) enum SessionRole {
     #[expect(dead_code, reason = "the TUI builds on the runtime in a later PR")]
     Interactive,
     /// A session the rho daemon hosts, which its clients prompt.
-    Daemon {
-        /// For a new session, the session whose turn started it through
-        /// session control (`rho/session/new`'s `parent`), which its file
-        /// records. `None` for a session a client started, and for one the
-        /// daemon reopens, whose file already holds it.
-        started_by: Option<rho_sdk::SessionId>,
-    },
+    Daemon,
     /// `rho run`'s session.
     Run,
     /// A Rho subagent `parent` started through the `agent` tool. Every host
@@ -254,7 +248,7 @@ impl SessionRole {
     /// The usage purpose the session's requests are recorded under.
     pub(super) fn usage_purpose(&self) -> &'static str {
         match self {
-            Self::Interactive | Self::Daemon { .. } | Self::Run => "agent",
+            Self::Interactive | Self::Daemon | Self::Run => "agent",
             Self::Subagent { .. } | Self::WorkflowNode => "subagent",
         }
     }
@@ -264,24 +258,21 @@ impl SessionRole {
     pub(crate) fn parent(&self) -> Option<&rho_sdk::SessionId> {
         match self {
             Self::Subagent { parent, .. } => Some(parent),
-            Self::Interactive | Self::Daemon { .. } | Self::Run | Self::WorkflowNode => None,
+            Self::Interactive | Self::Daemon | Self::Run | Self::WorkflowNode => None,
         }
     }
 
     /// Where a new session's file records it came from: the host that
     /// created it and, for a subagent of a saved session, that parent, so
-    /// deleting the parent deletes it too; for a daemon session another
-    /// started through session control, that session, which a delete never
-    /// follows. A workflow node records no parent: the workflow runtime does
-    /// not know the session that started its run, if any.
+    /// deleting the parent deletes it too. A workflow node records no
+    /// parent: the workflow runtime does not know the session that started
+    /// its run, if any. The session that started it through session
+    /// control is not the role's to know: `SessionRuntime::open_new` takes
+    /// it.
     pub(super) fn provenance(&self) -> SessionProvenance {
-        let started_by = match self {
-            Self::Daemon { started_by } => started_by.as_ref().map(ToString::to_string),
-            Self::Interactive | Self::Run | Self::Subagent { .. } | Self::WorkflowNode => None,
-        };
         let (origin, parent) = match self {
             Self::Interactive => (SessionOrigin::Interactive, None),
-            Self::Daemon { .. } => (SessionOrigin::Daemon, None),
+            Self::Daemon => (SessionOrigin::Daemon, None),
             Self::Run => (SessionOrigin::Run, None),
             Self::Subagent {
                 parent,
@@ -297,7 +288,7 @@ impl SessionRole {
         SessionProvenance {
             origin,
             parent,
-            started_by,
+            started_by: None,
         }
     }
 }
@@ -357,7 +348,7 @@ pub(super) async fn build_session(
         // A daemon session opens in Auto without a classifier model: the
         // classifier denies every gated tool until a client picks a model and
         // sets Auto again.
-        SessionRole::Daemon { .. } => {
+        SessionRole::Daemon => {
             if config.permission_mode == crate::permission::PermissionMode::Auto {
                 crate::permission_classifier::check_screen_config(config, credentials.as_ref())?;
             }

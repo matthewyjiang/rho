@@ -458,12 +458,6 @@ async fn open_runtime(
         (Some(service), ChildAgents::InProcess, IdleTurns::Host) => Some(service.inbox(&id, cwd)),
         _ => None,
     };
-    // Only a new session's file records who started it; a reopened one's
-    // already holds it.
-    let started_by = match &opening {
-        Opening::New { started_by, .. } => started_by.clone(),
-        Opening::Saved(_) | Opening::Fork(_) => None,
-    };
     let build = SessionBuild {
         launch: SessionLaunch {
             config_path,
@@ -494,7 +488,7 @@ async fn open_runtime(
             cache_warming,
         },
         run: RunShape {
-            role: SessionRole::Daemon { started_by },
+            role: SessionRole::Daemon,
             max_steps: None,
             hook_labels: Default::default(),
         },
@@ -516,7 +510,15 @@ async fn open_runtime(
     };
     // Opening a session builds a large future; keep it on the heap.
     let runtime = match opening {
-        Opening::New { .. } => Box::pin(SessionRuntime::open_new(session, id, persistence)).await?,
+        Opening::New { started_by, .. } => {
+            Box::pin(SessionRuntime::open_new(
+                session,
+                id,
+                persistence,
+                started_by,
+            ))
+            .await?
+        }
         Opening::Fork(parent) => {
             Box::pin(SessionRuntime::open_fork(session, id, &parent, persistence)).await?
         }

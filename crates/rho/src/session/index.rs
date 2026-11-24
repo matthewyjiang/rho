@@ -37,14 +37,12 @@ pub(super) fn list_workspace_sessions(
         .lock()
         .expect("session index connection poisoned");
     let workspace_key = workspace_key(cwd);
-    let mut statement = connection.prepare(
-        "select id, path, cwd, created_at, updated_at, message_count,
-                title, first_user_message, last_user_message, added_dirs, origin,
-                agent_id, started_by
+    let mut statement = connection.prepare(&format!(
+        "select {SUMMARY_COLUMNS}
          from sessions
          where workspace_key = ?1
-         order by updated_at desc, created_at desc, id asc",
-    )?;
+         order by updated_at desc, created_at desc, id asc"
+    ))?;
     let rows = statement.query_map(params![workspace_key], summary_from_row)?;
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
@@ -569,6 +567,8 @@ struct IndexedFile {
     first_user_message: Option<String>,
     /// The transcript stamp `added_dirs` was read at, if it was.
     added_dirs_read_at: Option<FileStamp>,
+    /// The transcript stamp `agent_starter` was read at, if it was.
+    agent_starter_read_at: Option<FileStamp>,
 }
 
 impl IndexedFile {
@@ -578,6 +578,7 @@ impl IndexedFile {
             && self.file_mtime == file_mtime
             && (self.message_count == 0 || self.first_user_message.is_some())
             && self.added_dirs_read_at == Some(FileStamp(file_size, file_mtime))
+            && self.agent_starter_read_at == Some(FileStamp(file_size, file_mtime))
     }
 }
 
@@ -615,6 +616,41 @@ impl StampedDirs {
     }
 }
 
+/// The `agent_starter` column: the agent a session runs as and the session
+/// that started it through session control, as its header records them, and
+/// the transcript stamp they were read at. Like [`StampedDirs`], it came
+/// without a schema version: older Rho writes rows without touching this
+/// column, leaving it unset on a row it inserts and at an older stamp on one
+/// it updates, so a row is current only while these were read at the row's
+/// own stamp; otherwise the next sync re-summarizes it.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct StampedAgentStarter {
+    read_at: FileStamp,
+    agent: Option<String>,
+    started_by: Option<String>,
+}
+
+impl StampedAgentStarter {
+    fn of(record: &SessionIndexRecord) -> Self {
+        Self {
+            read_at: FileStamp(record.file_size, record.file_mtime),
+            agent: record.summary.agent.clone(),
+            started_by: record.summary.started_by.clone(),
+        }
+    }
+
+    fn encode(&self) -> String {
+        // Strings and integers only, so encoding cannot fail.
+        serde_json::to_string(self).unwrap_or_default()
+    }
+
+    /// The column's value; `None` when unset or unreadable, which only
+    /// forces a re-summary.
+    fn decode(column: Option<String>) -> Option<Self> {
+        serde_json::from_str(&column?).ok()
+    }
+}
+
 fn indexed_files_for_scope(
     connection: &Connection,
     scope: &ReconcileScope,
@@ -623,7 +659,7 @@ fn indexed_files_for_scope(
         ReconcileScope::Workspace { workspace_key, .. } => {
             let mut statement = connection.prepare(
                 "select workspace_key, id, cwd, path, file_size, file_mtime,
-                        message_count, first_user_message, added_dirs
+                        message_count, first_user_message, added_dirs, agent_starter
                  from sessions where workspace_key = ?1",
             )?;
             let rows = statement.query_map(params![workspace_key], indexed_file_from_row)?;
@@ -632,7 +668,7 @@ fn indexed_files_for_scope(
         ReconcileScope::All => {
             let mut statement = connection.prepare(
                 "select workspace_key, id, cwd, path, file_size, file_mtime,
-                        message_count, first_user_message, added_dirs
+                        message_count, first_user_message, added_dirs, agent_starter
                  from sessions",
             )?;
             let rows = statement.query_map([], indexed_file_from_row)?;
@@ -652,6 +688,8 @@ fn indexed_file_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<(IndexKey,
             message_count: row.get(6)?,
             first_user_message: row.get(7)?,
             added_dirs_read_at: StampedDirs::decode(row.get(8)?).map(|dirs| dirs.read_at),
+            agent_starter_read_at: StampedAgentStarter::decode(row.get(9)?)
+                .map(|stamped| stamped.read_at),
         },
     ))
 }
@@ -668,7 +706,7 @@ fn indexed_file_is_current(
     let current = connection
         .query_row(
             "select cwd, path, file_size, file_mtime, message_count, first_user_message,
-                    added_dirs
+                    added_dirs, agent_starter
              from sessions where workspace_key = ?1 and id = ?2",
             params![workspace_key, id],
             |row| {
@@ -680,6 +718,8 @@ fn indexed_file_is_current(
                     message_count: row.get(4)?,
                     first_user_message: row.get(5)?,
                     added_dirs_read_at: StampedDirs::decode(row.get(6)?).map(|dirs| dirs.read_at),
+                    agent_starter_read_at: StampedAgentStarter::decode(row.get(7)?)
+                        .map(|stamped| stamped.read_at),
                 })
             },
         )
@@ -722,10 +762,9 @@ fn upsert_record(
             origin,
             parent_workspace_key,
             parent_id,
-            agent_id,
-            started_by
+            agent_starter
          ) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18,
-                   ?19, ?20, ?21, ?22)
+                   ?19, ?20, ?21)
          on conflict(workspace_key, id) do update set
             cwd = excluded.cwd,
             path = excluded.path,
@@ -745,8 +784,7 @@ fn upsert_record(
             origin = excluded.origin,
             parent_workspace_key = excluded.parent_workspace_key,
             parent_id = excluded.parent_id,
-            agent_id = excluded.agent_id,
-            started_by = excluded.started_by",
+            agent_starter = excluded.agent_starter",
         params![
             workspace_key,
             cwd,
@@ -771,8 +809,7 @@ fn upsert_record(
                 .parent_session
                 .as_ref()
                 .map(|parent| parent.id.as_str()),
-            record.summary.agent.as_deref(),
-            record.summary.started_by.as_deref(),
+            StampedAgentStarter::of(record).encode(),
         ],
     )?;
     Ok(())
@@ -868,7 +905,14 @@ pub(super) fn remove_sessions(session_root: &Path, sessions: &[IndexKey]) -> any
     Ok(())
 }
 
+/// The columns [`summary_from_row`] reads, in its order.
+const SUMMARY_COLUMNS: &str = "id, path, cwd, created_at, updated_at, message_count, title,
+    first_user_message, last_user_message, added_dirs, origin, agent_starter";
+
 fn summary_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSummary> {
+    let (agent, started_by) = StampedAgentStarter::decode(row.get(11)?)
+        .map(|stamped| (stamped.agent, stamped.started_by))
+        .unwrap_or_default();
     Ok(SessionSummary {
         id: row.get(0)?,
         path: PathBuf::from(row.get::<_, String>(1)?),
@@ -883,8 +927,8 @@ fn summary_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSummary>
             .map(|stamped| stamped.dirs)
             .unwrap_or_default(),
         origin: row.get::<_, Option<String>>(10)?.and_then(decode_origin),
-        agent: row.get(11)?,
-        started_by: row.get(12)?,
+        agent,
+        started_by,
     })
 }
 

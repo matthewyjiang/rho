@@ -12,8 +12,8 @@ use super::{session_root, Session, SessionListing, SessionSummary};
 /// again. Listing 445 saved sessions across all workspaces took about 0.1 s
 /// and 80 KB of ACP `SessionInfo` JSON on a dev machine, so a page is about
 /// 18 KB and a large store still lists in a handful of requests. The
-/// daemon's summaries are larger, 393 B at most each on a dev machine's
-/// store, so its default page is about 40 KB.
+/// daemon's `rho/session/list_detailed` rows are larger, 489 B at most each
+/// on a dev machine's store, so its default page is about 49 KB.
 pub(crate) const DEFAULT_PAGE_SIZE: NonZeroUsize = NonZeroUsize::new(100).unwrap();
 
 /// How many characters of a user message a listing shows: the `/resume`

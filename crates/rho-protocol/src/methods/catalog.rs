@@ -92,11 +92,7 @@ pub struct SessionSummary {
 }
 
 /// Result of [`SESSION_LIST_DETAILED`]: a page of [`SESSION_LIST`]'s, its
-/// rows detailed.
-///
-/// # Next major
-///
-/// NEXT_MAJOR(rho-protocol): fold `agent` and `parent` into SessionSummary and remove rho/session/list_detailed (SESSION_LIST_DETAILED, SessionListDetailedResponse, DetailedSessionSummary).
+/// rows detailed. Goes at the next major with [`SESSION_LIST_DETAILED`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[non_exhaustive]
 pub struct SessionListDetailedResponse {
@@ -119,11 +115,7 @@ impl SessionListDetailedResponse {
 
 /// One session, as [`SESSION_LIST_DETAILED`] reports it: its
 /// [`SessionSummary`]'s fields, then the agent it runs as and the session
-/// that started it.
-///
-/// # Next major
-///
-/// NEXT_MAJOR(rho-protocol): fold `agent` and `parent` into SessionSummary and remove rho/session/list_detailed (SESSION_LIST_DETAILED, SessionListDetailedResponse, DetailedSessionSummary).
+/// that started it. Goes at the next major with [`SESSION_LIST_DETAILED`].
 ///
 /// On the wire it is a [`SessionSummary`] with two more optional fields, so
 /// folding them into it changes no row a client reads.
@@ -134,15 +126,18 @@ pub struct DetailedSessionSummary {
     pub summary: SessionSummary,
     /// The agent the session runs as, by id, as
     /// [`super::SessionNewParams::agent`] takes it: the one a `/agent:` first
-    /// prompt rebound it to, if one did. Absent for the default agent, and
-    /// for a session saved before agents were recorded.
+    /// prompt rebound it to, if one did, and `default` for the default
+    /// agent. Absent for a session saved before agents were recorded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent: Option<String>,
-    /// The session that started this one through session control, as
-    /// [`super::SessionNewParams::parent`] named it, saved with the session.
-    /// Absent for a session nothing started that way, or one started before
-    /// the daemon saved it. Deleting the parent leaves this session listed,
-    /// still naming it: an id [`SESSION_LIST`] no longer lists.
+    /// The session that started this one through session control, saved
+    /// with the session: the one [`super::SessionNewParams::parent`] named,
+    /// or, when that names a subagent's or workflow node's session, the
+    /// session whose turn runs that subagent or workflow. Absent for a
+    /// session nothing started that way, one whose `parent` no job of the
+    /// daemon writes, and one started before the daemon saved it. Deleting
+    /// the parent leaves this session listed, still naming it: an id
+    /// [`SESSION_LIST`] no longer lists.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<SessionId>,
 }
@@ -188,8 +183,8 @@ pub struct SessionDeleteParams {
 }
 
 /// Result of [`SESSION_DELETE`]: the session's files are gone, with those
-/// of the sessions it started, such as its subagents', and the daemon has
-/// unloaded it, detaching its clients as
+/// of the sessions it owns, its subagents', workflow nodes', and forks',
+/// and the daemon has unloaded it, detaching its clients as
 /// [`super::DetachReason::Deleted`]. Its job stays in [`super::JOB_LIST`].
 /// The sessions it started through session control
 /// ([`super::SessionNewParams::parent`]) stay, still naming it as

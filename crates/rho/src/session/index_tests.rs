@@ -23,12 +23,10 @@ pub(super) fn insert_placeholder_session(connection: &Connection, id: &str) {
 const INDEX_V0: &str = include_str!("fixtures/index-v0.sql");
 const INDEX_V1: &str = include_str!("fixtures/index-v1.sql");
 const INDEX_V2: &str = include_str!("fixtures/index-v2.sql");
-const INDEX_V3: &str = include_str!("fixtures/index-v3.sql");
 
 // Covers: every older index migrates, keeps titles (which transcripts cannot
 // rebuild), and drops its rows' file stamps so the next sync re-summarizes
-// them, backfilling tree facts, header origins, and header agents and
-// starters.
+// them, backfilling tree facts and header origins.
 // Owner: session index
 #[test]
 fn every_supported_index_fixture_migrates_transactionally() {
@@ -36,7 +34,6 @@ fn every_supported_index_fixture_migrates_transactionally() {
         (0, INDEX_V0, None),
         (1, INDEX_V1, Some("fixture title")),
         (2, INDEX_V2, Some("fixture title")),
-        (3, INDEX_V3, Some("fixture title")),
     ] {
         let mut connection = Connection::open_in_memory().unwrap();
         connection.execute_batch(fixture).unwrap();
