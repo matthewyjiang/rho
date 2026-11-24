@@ -22,6 +22,7 @@ use super::{
         ValidatedMessage,
     },
     subagent_pool::ChildEventSender,
+    title_agent::{generate_title, TitleRequest},
 };
 
 #[derive(Clone)]
@@ -463,6 +464,12 @@ impl AgentExecutor {
         // A Rho child writes the session it was given; a run on another
         // runtime keeps that runtime's own.
         let child_session = bound.rho_config().map(|_| session.id().clone());
+        // The run's title counts toward the session it works for, as the
+        // run's own usage does; a run nobody delegated keeps it.
+        let title_session = role
+            .parent()
+            .cloned()
+            .unwrap_or_else(|| session.id().clone());
         let mut initial = bound.artifact_identity().queued_status();
         initial.parent_session_id = role.parent().map(ToString::to_string);
         // Executor owns the Queued and Starting boundaries; sinks
@@ -490,10 +497,7 @@ impl AgentExecutor {
         let task_steering_slot = steering_slot.clone();
 
         let task_status_tx = status_tx.clone();
-        let title_run_id = run_id.clone();
         let title_output = output_file.clone();
-        let title_cwd = self.cwd.clone();
-        let title_prompt = prompt.clone();
         let title_agent_id = bound.id().to_string();
         let title_slot = std::sync::Arc::clone(&live_title);
         let task_live_title = std::sync::Arc::clone(&live_title);
@@ -515,12 +519,15 @@ impl AgentExecutor {
             subagent::write_status(&output_file, &task_status_tx.borrow().clone())?;
 
             spawn_run_title(
-                &title_config,
-                title_prompt,
-                title_agent_id,
-                title_run_id,
-                title_cwd,
-                environment.credentials(),
+                TitleRequest {
+                    config: title_config,
+                    config_path: config_path.clone(),
+                    cwd: cwd.clone(),
+                    added_dirs: added_dirs.clone(),
+                    environment: environment.clone(),
+                    session: title_session,
+                    input: crate::title::run_input(&title_agent_id, &prompt),
+                },
                 RunTitleSinks {
                     output_file: title_output,
                     status_tx: task_status_tx.clone(),
@@ -791,33 +798,16 @@ struct RunTitleSinks {
     live_title: crate::run_artifacts::LiveRunTitle,
 }
 
-fn spawn_run_title(
-    config: &Config,
-    prompt: String,
-    agent_id: String,
-    run_id: String,
-    workspace_path: PathBuf,
-    credentials: Arc<dyn rho_providers::credentials::CredentialStore>,
-    sinks: RunTitleSinks,
-) {
-    let model = crate::title::title_model_from_config(config);
-    let session_id =
-        rho_sdk::SessionId::from_string(run_id).unwrap_or_else(|_| rho_sdk::SessionId::new());
+/// Names a run from `request`, beside the run, into `sinks`. A title that
+/// fails leaves the run unnamed.
+fn spawn_run_title(request: TitleRequest, sinks: RunTitleSinks) {
     tokio::spawn(async move {
-        let usage_recording = crate::usage::default_recording().await;
-        let cancellation = rho_sdk::CancellationToken::new();
-        let title = crate::title::generate_title(
-            model,
-            format!("Agent name: {agent_id}\n\nTask assignment:\n{prompt}"),
-            session_id,
-            workspace_path,
-            credentials,
-            usage_recording,
-            cancellation,
-        )
-        .await;
-        let Ok(title) = title else {
-            return;
+        let title = match generate_title(request).await {
+            Ok(title) => title,
+            Err(error) => {
+                tracing::warn!(error = %format!("{error:#}"), "could not title delegated run");
+                return;
+            }
         };
         {
             let mut slot = sinks

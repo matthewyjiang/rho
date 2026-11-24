@@ -91,6 +91,17 @@ impl fmt::Display for ToolCapability {
 
 pub type ToolCapabilitySet = BTreeSet<ToolCapability>;
 
+/// The tools that only read the workspace: all a session that must change
+/// nothing gets, such as `/side`'s and the title agent's.
+pub(crate) fn read_only_tools() -> ToolCapabilitySet {
+    ToolCapabilitySet::from([
+        ToolCapability::ListDir,
+        ToolCapability::ReadFile,
+        ToolCapability::Grep,
+        ToolCapability::Glob,
+    ])
+}
+
 /// Tool capabilities resolved against the current host and invocation role.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AgentCapabilities {

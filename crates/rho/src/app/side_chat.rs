@@ -1,29 +1,24 @@
 //! User-initiated aside session: frozen parent snapshot plus read-only tools.
 
-use std::{collections::BTreeSet, num::NonZeroUsize, path::PathBuf, sync::Arc};
+use std::{num::NonZeroUsize, path::PathBuf, sync::Arc};
 
 use rho_sdk::{
     model::{ContentBlock, Message},
-    SessionId, SessionOptions, UserInput,
+    SessionId, UserInput,
 };
 use tokio::sync::mpsc;
 
 use super::{
-    agent_binding::{AgentBinder, AgentInvocation, AgentRole, BoundAgent},
-    session_assembly::{
-        assemble_session, ApprovalInputs, BuiltSession, HookStart, SessionApproval,
-        SessionAssemblyOptions, SignIn,
-    },
-    tools_prompt::ToolSourceAttach,
+    agent_binding::{AgentBinder, BoundAgent},
+    read_only_session::{self, ReadOnlySession},
+    session_assembly::{BuiltSession, HookStart, ModelOwner},
 };
 use crate::{
     agent::{
-        AgentCapabilities, AgentDefinition, AgentId, AgentRuntimeSpec, ModelPolicy, PromptPolicy,
-        ToolCapability, ToolPolicy,
+        read_only_tools, AgentDefinition, AgentId, AgentRuntimeSpec, ModelPolicy, PromptPolicy,
+        ToolPolicy,
     },
     config::Config,
-    diagnostics::RuntimeDiagnostics,
-    permission::PermissionMode,
 };
 
 pub(crate) const USAGE_PURPOSE: &str = "side";
@@ -39,7 +34,7 @@ session.
 
 Answer the user's aside directly and concisely.";
 
-const SIDE_CHAT_STEP_LIMIT: usize = 16;
+const SIDE_CHAT_STEP_LIMIT: NonZeroUsize = NonZeroUsize::new(16).unwrap();
 
 #[derive(Debug)]
 pub(crate) enum SideChatCommand {
@@ -222,84 +217,37 @@ fn apply_run_event(
 }
 
 async fn assemble_side_session(launch: &SideChatLaunch) -> anyhow::Result<BuiltSession> {
-    let mut config = launch.config.clone();
-    config.mcp = crate::tools::mcp::config::McpConfig::default();
-    config.permission_mode = PermissionMode::Plan;
-    let diagnostics = RuntimeDiagnostics::new(&config);
-    let agent = bind_side_agent(&config)?;
-    let snapshot = launch.snapshot.clone();
-    let assembled = assemble_session(SessionAssemblyOptions {
-        config: &config,
+    let agent = bind_side_agent(&launch.config)?;
+    read_only_session::assemble(ReadOnlySession {
+        agent: &agent,
         config_path: launch.config_path.clone(),
         cwd: &launch.cwd,
-        no_system_prompt: false,
-        no_tools: false,
-        no_subagents: true,
-        questionnaire_enabled: false,
-        surfaces: None,
-        pull_requests: None,
-        mcp_elicitation: crate::tools::mcp::McpElicitationSupport::Unavailable,
-        tool_source_attach: ToolSourceAttach::None,
-        tool_source_load: super::tools_prompt::ToolSourceLoad::Inline,
-        hook_start: HookStart::Start,
-        sign_in: SignIn::Required,
-        mcp_authorization: crate::tools::mcp::McpAuthorizationMode::NonInteractive,
-        diagnostics: &diagnostics,
-        agent: &agent,
-        max_steps: NonZeroUsize::new(SIDE_CHAT_STEP_LIMIT),
-        usage_purpose: USAGE_PURPOSE,
-        usage_parent_session_id: Some(launch.parent_session_id.clone()),
-        hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
         added_dirs: &launch.added_dirs,
         environment: Default::default(),
-        subagent_pool: crate::app::subagent_pool::SubagentPool::Own,
-        // A side chat starts no process the session would idle on.
-        process_keep_warm: crate::tools::process::KeepWarmOffer::Hidden,
-        extend_tools: std::convert::identity,
-        system_prompt_suffix: None,
-        approval: |_: ApprovalInputs| {
-            Ok(SessionApproval {
-                session: None,
-                receiver: None,
-            })
-        },
-        session_options: move |_| {
-            Ok(SessionOptions::new()
-                .id(SessionId::new())
-                .history(vec![Message::User(
-                    vec![ContentBlock::Text(snapshot)].into(),
-                )]))
-        },
+        max_steps: SIDE_CHAT_STEP_LIMIT,
+        usage_purpose: USAGE_PURPOSE,
+        parent: launch.parent_session_id.clone(),
+        hook_start: HookStart::Start,
+        model_owner: ModelOwner::Host,
+        history: vec![Message::User(
+            vec![ContentBlock::Text(launch.snapshot.clone())].into(),
+        )],
     })
-    .await?;
-    Ok(assembled.built)
+    .await
 }
 
 fn bind_side_agent(host_config: &Config) -> anyhow::Result<BoundAgent> {
-    let tools = BTreeSet::from([
-        ToolCapability::ListDir,
-        ToolCapability::ReadFile,
-        ToolCapability::Grep,
-        ToolCapability::Glob,
-    ]);
     let definition = Arc::new(AgentDefinition {
         id: AgentId::new(crate::agent::SIDE_AGENT_ID).expect("valid side-chat agent id"),
         description: "User-initiated read-only aside from /side.".into(),
         prompt: PromptPolicy::Replace(SIDE_CHAT_PROMPT.into()),
         runtime: AgentRuntimeSpec::Rho {
-            tools: ToolPolicy::Allow(tools.clone()),
+            tools: ToolPolicy::Allow(read_only_tools()),
             model: ModelPolicy::Inherit,
             reasoning: None,
         },
     });
-    let mut agent = AgentBinder::bind(
-        definition,
-        AgentInvocation {
-            role: AgentRole::Delegated,
-            available_tools: AgentCapabilities::new(tools),
-        },
-        host_config,
-    )?;
+    let mut agent = AgentBinder::bind(definition, read_only_session::invocation(), host_config)?;
     // The aside continues the conversation, so it keeps the session's `/fast`
     // even though delegated binds otherwise take `fast` from the definition.
     agent.keep_host_fast_mode(host_config);

@@ -261,7 +261,6 @@ impl TurnTask {
             // Only the daemon's stop takes the runtime, after its last turn.
             None => (Ok(Ran::Cancelled), None),
         };
-        let title = runtime.as_mut().and_then(SessionRuntime::take_title);
         let (outcome, end) = match (ended, timed_out) {
             (Ok(Ran::Completed(outcome)), _) => (Some(outcome), TurnEnd::Completed),
             // The daemon's stop already detached every client, so none
@@ -278,10 +277,6 @@ impl TurnTask {
             }
         };
         view.end(outcome, end);
-        // After the end, so the title follows the turn's events.
-        if let Some(title) = title {
-            tokio::spawn(report_title(Arc::downgrade(&session), title));
-        }
     }
 }
 
@@ -386,12 +381,13 @@ pub(super) async fn restart_transcript(session: &LoadedSession, runtime: &Sessio
         .publish([rests].into_iter().chain(usage).chain(unread));
 }
 
-/// Generates the title the session's first answered turn asked for, which
-/// saves it, and tells the session's clients (#1670). It lands seconds
-/// after the turn; a session the daemon unloaded by then is titled all the
-/// same, with no clients to tell. Holds the session weakly, so a pending
-/// title never keeps an unloaded session's feed alive; a session reloaded
-/// once the title saved starts its feed with it, and reports it on attach.
+/// Generates the title the session's first prompt asked for, which saves
+/// it, and tells the session's clients (#1670). It runs beside the turn
+/// and lands seconds into it; a session the daemon unloaded by then is
+/// titled all the same, with no clients to tell. Holds the session weakly,
+/// so a pending title never keeps an unloaded session's feed alive; a
+/// session reloaded once the title saved starts its feed with it, and
+/// reports it on attach.
 async fn report_title(session: Weak<LoadedSession>, title: TitleJob) {
     if let Some(title) = title.generate().await {
         if let Some(session) = session.upgrade() {
@@ -810,8 +806,13 @@ impl DaemonView {
             } else {
                 events.recv().await
             };
-            let Some(event) = event else {
-                break;
+            let event = match event {
+                Some(SessionEvent::TitleRequested(title)) => {
+                    tokio::spawn(report_title(Arc::downgrade(&self.session), *title));
+                    continue;
+                }
+                Some(event) => event,
+                None => break,
             };
             let wire = {
                 let mut live = self.session.live();

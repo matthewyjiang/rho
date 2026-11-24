@@ -3,8 +3,6 @@ use crate::title::sanitize_title;
 
 use super::App;
 
-pub(crate) use crate::title::SESSION_TITLE_PROMPT;
-
 #[cfg(test)]
 pub(super) fn sanitize_session_title(title: &str) -> Option<String> {
     sanitize_title(title)

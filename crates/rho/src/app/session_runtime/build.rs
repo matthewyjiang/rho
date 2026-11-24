@@ -14,7 +14,7 @@ use crate::{
     app::{
         agent_binding::BoundAgent,
         session_assembly::{
-            assemble_session, ApprovalInputs, BuiltSession, HookStart, SessionAssembly,
+            assemble_session, ApprovalInputs, BuiltSession, HookStart, ModelOwner, SessionAssembly,
             SessionAssemblyOptions, SignIn,
         },
         subagent_messaging::NoticePoster,
@@ -400,6 +400,7 @@ pub(super) async fn build_session(
             SessionUse::Run(sign_in) => sign_in,
             SessionUse::Read => SignIn::Optional,
         },
+        model_owner: ModelOwner::Host,
         mcp_authorization: build.host.mcp_authorization,
         diagnostics: &build.launch.diagnostics,
         agent,

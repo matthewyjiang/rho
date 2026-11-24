@@ -7,7 +7,10 @@ use rho_providers::{
 
 use crate::config::{InternalAgentModelConfig, InternalAgentTarget, ProviderConfigs};
 
-use super::{AgentDefinition, AgentId, AgentRuntimeSpec, ModelPolicy, PromptPolicy, ToolPolicy};
+use super::{
+    read_only_tools, AgentDefinition, AgentId, AgentRuntimeSpec, ModelPolicy, PromptPolicy,
+    ToolPolicy,
+};
 
 pub(crate) const SESSION_TITLE_AGENT_ID: &str = "session-title";
 pub(crate) const ADVISOR_AGENT_ID: &str = "advisor";
@@ -36,11 +39,13 @@ static INTERNAL_AGENTS: LazyLock<Vec<InternalAgent>> = LazyLock::new(|| {
         InternalAgent {
             definition: AgentDefinition {
                 id: AgentId::new(SESSION_TITLE_AGENT_ID).expect("valid internal agent ID"),
-                description: "Internal agent that names chat sessions. Reserved; cannot be overridden or delegated."
+                description: "Internal agent that names chat sessions and delegated runs. Reserved; cannot be overridden or delegated."
                     .to_string(),
-                prompt: PromptPolicy::Replace(crate::tui::SESSION_TITLE_PROMPT.into()),
+                prompt: PromptPolicy::Replace(crate::title::SESSION_TITLE_PROMPT.into()),
                 runtime: AgentRuntimeSpec::Rho {
-                    tools: ToolPolicy::Allow(BTreeSet::new()),
+                    // It reads the workspace to name a vague request, and
+                    // changes nothing.
+                    tools: ToolPolicy::Allow(read_only_tools()),
                     model: ModelPolicy::Inherit,
                     reasoning: Some(ReasoningLevel::Low),
                 },

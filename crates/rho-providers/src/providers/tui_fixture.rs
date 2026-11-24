@@ -290,7 +290,7 @@ fn title_response(request: &ModelRequest<'_>) -> Option<Result<ModelResponse, Pr
     let source: String = serde_json::from_str(source).ok()?;
     let title = if let Some(title) = docs_demo::session_title(&source) {
         title
-    } else if source.starts_with("First turn:") {
+    } else if source.starts_with("First message:") {
         "Fixture session title"
     } else if agent_message::is_untitled_task(&source) {
         ""

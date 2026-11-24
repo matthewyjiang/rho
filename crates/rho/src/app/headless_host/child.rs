@@ -215,7 +215,7 @@ pub(crate) async fn run_child(run: ChildRun) -> anyhow::Result<()> {
         view = view.streaming_to(events);
     }
     // The child's status file keeps the title its prompt was given; the
-    // session's own title request is left untaken.
+    // view drops the session's own title request.
     let end = run_prompt(
         &mut stops,
         &mut view,

@@ -10,6 +10,7 @@ use rho_sdk::{
     HostInputRequest, HostInputResponse, RunEvent, ToolCallId,
 };
 
+use super::title::TitleJob;
 use crate::{
     display_transcript::DisplayTranscript, permission::PermissionMode,
     session::tree::DisplayRowOrigin, tools::plan_exit::PlanExitDecision,
@@ -70,6 +71,13 @@ pub(crate) enum SessionEvent {
     /// it shows anything of the turn. Not sent when the save fails, which
     /// fails the turn.
     MessageInserted(InsertedMessage),
+    /// The session may have no name yet, as of this prompt, the first the
+    /// runtime saved. Sent right after
+    /// [`Self::MessageInserted`], so the session's file exists. A host that
+    /// names its sessions runs the job beside the turn (see
+    /// [`TitleJob::generate`]); one that does not drops it, and no model is
+    /// asked.
+    TitleRequested(Box<TitleJob>),
     /// The SDK run started, and [`super::SessionHandle::steer`] reaches it.
     /// Nothing about the run precedes it; the inserted message and a notice
     /// may.

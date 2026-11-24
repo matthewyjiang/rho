@@ -76,6 +76,81 @@ fn usage_and_title_updates_keep_their_independent_values() {
     );
 }
 
+// Covers: the daemon names a session seconds into its first turn. The TUI
+// takes the title at once but says so only once the turn rests: a notice
+// amid the turn's rows would land wherever the title model's answer raced
+// the turn to. A rename the TUI missed while detached, replayed before the
+// rest, is the title the held notice says.
+// Owner: pure daemon event mapper
+#[test]
+fn a_title_that_lands_mid_turn_is_said_once_the_turn_rests() {
+    let titled = |title: &str| {
+        Step::Event(SessionEvent::TitleChanged {
+            title: title.into(),
+        })
+    };
+    let cases = [
+        (
+            "held until the rest",
+            vec![
+                state(JobState::Running),
+                titled("Generated"),
+                reply("m1", "answer"),
+                answered("answer"),
+                state(JobState::Idle),
+            ],
+            vec![
+                "running",
+                "title Generated",
+                "text",
+                "rest",
+                "notice of Generated",
+            ],
+        ),
+        (
+            "a replayed rename replaces the held title",
+            vec![
+                state(JobState::Running),
+                titled("Generated"),
+                Step::Tail,
+                Step::Attached(Vec::new(), JobState::Running),
+                titled("Renamed"),
+                Step::ReplayEnded,
+                state(JobState::Idle),
+            ],
+            vec![
+                "running",
+                "title Generated",
+                "other",
+                "title Renamed",
+                "running",
+                "rest",
+                "notice of Renamed",
+            ],
+        ),
+    ];
+    for (case, steps, expected) in cases {
+        let order: Vec<_> = map(steps)
+            .into_iter()
+            .map(|view| match view {
+                DaemonView::Turn(TurnState::Running) => "running".to_owned(),
+                DaemonView::Title(title) => format!("title {title}"),
+                DaemonView::Text { .. } => "text".to_owned(),
+                DaemonView::Turn(TurnState::Resting(_)) => "rest".to_owned(),
+                // Which title the notice names, not how it says so.
+                DaemonView::Notice(text) => {
+                    let named = ["Generated", "Renamed"]
+                        .into_iter()
+                        .find(|title| text.ends_with(title));
+                    format!("notice of {}", named.unwrap_or("neither"))
+                }
+                _ => "other".to_owned(),
+            })
+            .collect();
+        assert_eq!(order, expected, "{case}");
+    }
+}
+
 /// What the session hands the mapper: an event, a reset replay's start, an
 /// attach's open requests and its replay's end, or what came of an answer
 /// the TUI sent.
