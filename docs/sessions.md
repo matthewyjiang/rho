@@ -265,14 +265,15 @@ into the current turn, use [subagents](/subagents) instead.
 | `cancel` | Cancels the turn in progress. |
 | `wait` | Waits for the session to settle, with no turn running and none rho will start for its background work, or to need a person, a subagent's question included, for up to `timeout_secs`, at most 50. Returns the state, the last turn's final answer once it ended (final once `done` is true), and a `cursor` for the next `wait`. |
 | `read` | Without an `anchor`, pages through a session's transcript, including the turn in progress. |
+| `answer` | Answers a question that `session`, a session this one started, asks: `request` from `wait`'s `inputs`, and `answers` by question id, or `decline: true`. |
 
 ```json
 {"action":"new","workspace":"/home/me/other-project","prompt":"Run the test suite and summarize failures"}
 {"action":"wait","session":"<returned id>","timeout_secs":50}
 ```
 
-These are the same tools the [MCP server](/mcp-server) offers, with the same
-rules. Know these before you approve one:
+Apart from `answer`, these are the same tools the [MCP server](/mcp-server)
+offers, with the same rules. Know these before you approve one:
 
 - `new`, `prompt`, `steer`, `cancel`, and `answer` ask for approval, and
   `plan` mode refuses them. `list`, `read`, and `wait` ask for read access to
