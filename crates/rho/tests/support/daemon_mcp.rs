@@ -116,6 +116,28 @@ fn bash_call(command: &str) -> Value {
 /// prints the depth its session runs at.
 const BLOCKED: &str = "while [ ! -e go ]; do sleep 0.02; done; echo \"depth $RHO_SESSION_DEPTH\"";
 
+/// A session a person opens in `sandbox`'s workspace outside MCP, over
+/// `person`, a frontend's connection to its daemon, with its first turn
+/// blocked in bash. Returns once bash runs: a steer that lands before the
+/// first model request joins it, and the fixture then answers that text
+/// and ends the turn on its own (#1852).
+async fn a_persons_running_session(sandbox: &Sandbox, person: &rho_protocol::Client) -> SessionId {
+    let session = sandbox.new_session(person).await;
+    sandbox
+        .prompt_tool_call(
+            person,
+            &session,
+            &bash_call(&format!("touch started; {BLOCKED}")),
+        )
+        .await;
+    sandbox
+        .poll_until("the person's bash call to start", async || {
+            sandbox.workspace.join("started").exists().then_some(())
+        })
+        .await;
+    session
+}
+
 // Covers: an MCP host starts a session in another workspace, waits past a
 // timeout and again from the cursor until the turn ends, reads the final
 // answer, which a second daemon client following the session sees too, and

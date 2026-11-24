@@ -258,7 +258,7 @@ into the current turn, use [subagents](/subagents) instead.
 
 | Action | What it does |
 | --- | --- |
-| `list` | Lists the daemon's sessions with their workspace, state, title, who opened them (`opened_by`: `person` or `agent`), and the `parent` session that started them. Filter by `workspace`, `state`, or `opened_by`; `hide_idle` leaves out sessions no turn has started on. |
+| `list` | Lists the daemon's sessions with their workspace, state, title, who opened them (`opened_by`: `person` or `agent`), and the `parent` session that started them. Filter by `workspace`, `state`, or `opened_by`; `hide_idle` leaves out sessions in state `idle`. |
 | `new` | Starts a session in `workspace`, an absolute path, with a first `prompt`. `agent` and `model` are optional. Returns the session id right away. |
 | `prompt` | Starts the session's next turn with `text`. |
 | `steer` | Adds `text` to the running turn's next model request. |

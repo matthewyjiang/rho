@@ -191,8 +191,9 @@ impl SessionControl {
     }
 
     /// The daemon's sessions the grant reaches, the most recently changed
-    /// first, whoever opened them. Those the daemon does not have loaded
-    /// take their title from its catalog.
+    /// first, whoever opened them. Those it returns that the daemon does
+    /// not have loaded take their title from its catalog; a catalog the
+    /// daemon cannot read costs the titles, not the list.
     async fn list(&self, caller: &Caller, params: ListParams) -> Result<ListResult, ControlError> {
         let limit = params.limit()?;
         let workspace = params.workspace.as_deref().map(canonical).transpose()?;
@@ -201,9 +202,9 @@ impl SessionControl {
             .iter()
             .filter_map(|job| Some((job.id.clone(), job.session.clone()?)))
             .collect();
-        let mut sessions: Vec<SessionEntry> = jobs
+        let mut jobs: Vec<JobSummary> = jobs
             .into_iter()
-            .filter(|job| job.kind == JobKind::Session)
+            .filter(|job| job.kind == JobKind::Session && job.session.is_some())
             .filter(|job| {
                 workspaces_of(job)
                     .into_iter()
@@ -215,22 +216,27 @@ impl SessionControl {
                     .is_none_or(|only| workspaces_of(job).into_iter().any(|place| place == only))
             })
             .filter(|job| params.keeps(job))
-            .filter_map(|job| SessionEntry::of_job(job, &writers))
             .collect();
-        sessions.sort_by_key(|entry| std::cmp::Reverse(entry.updated_at));
-        let more = sessions.len() > limit;
-        sessions.truncate(limit);
-        let untitled = sessions
+        jobs.sort_by_key(|job| std::cmp::Reverse(job.updated_at));
+        let more = jobs.len() > limit;
+        jobs.truncate(limit);
+        // A loaded session's title is the saved one already, so only the
+        // unloaded ones are looked up.
+        let unloaded = jobs
             .iter()
-            .filter(|entry| entry.title.is_none())
-            .map(|entry| &entry.session)
-            .collect();
-        let mut saved = catalog::titles(&self.daemon, untitled).await?;
-        for entry in &mut sessions {
-            if entry.title.is_none() {
-                entry.title = saved.remove(&entry.session);
+            .filter(|job| job.live.is_none())
+            .filter_map(|job| Some((job.session.as_ref()?, job.workspace.as_path())));
+        let mut saved = match catalog::titles(&self.daemon, unloaded).await {
+            Ok(saved) => saved,
+            Err(error) => {
+                tracing::warn!(%error, "could not read the saved sessions' titles; listing without them");
+                HashMap::new()
             }
-        }
+        };
+        let sessions = jobs
+            .into_iter()
+            .filter_map(|job| SessionEntry::of_job(job, &writers, &mut saved))
+            .collect();
         Ok(ListResult { sessions, more })
     }
 
@@ -530,7 +536,7 @@ async fn place_of(daemon: &Daemon, session: &SessionId) -> Result<Place, Control
             project: job.project().to_path_buf(),
         });
     }
-    catalog::find(daemon, |saved| {
+    catalog::scan(daemon, /*cwd*/ None, |saved| {
         (&saved.session == session).then(|| Place {
             workspace: saved.cwd.clone(),
             project: saved.cwd,

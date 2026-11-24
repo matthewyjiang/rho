@@ -158,38 +158,45 @@ fn list_filters_keep_only_the_sessions_they_name() {
 }
 
 // Covers: a `list` entry says who opened its session, from the limit the
-// session opened under, and carries the title the daemon follows; a session
-// without a title has no `title`.
+// session opened under; a loaded session's title is the one the daemon
+// follows, never a saved one, and an unloaded session's is the saved one;
+// a session with neither has no `title`.
 // Owner: session-control list result.
 #[test]
 fn an_entry_says_who_opened_its_session_and_its_title() {
-    let entry = |job| serde_json::to_value(SessionEntry::of_job(job, &HashMap::new())).unwrap();
+    let entry = |job, saved: Option<&str>| {
+        let mut saved = saved
+            .map(|title| (SessionId::new("s"), title.to_owned()))
+            .into_iter()
+            .collect();
+        serde_json::to_value(SessionEntry::of_job(job, &HashMap::new(), &mut saved)).unwrap()
+    };
+    let running = |title| session_job(JobState::Running, Opener::Person, Some(title));
+    let unloaded = || session_job(JobState::Completed, Opener::Agent, None);
+    let listed = |state: &str, opened_by: &str, title: Option<&str>| {
+        let mut entry = json!({
+            "session": "s",
+            "workspace": "/work",
+            "state": state,
+            "opened_by": opened_by,
+            "updated_at": 2,
+        });
+        if let Some(title) = title {
+            entry["title"] = json!(title);
+        }
+        entry
+    };
 
     assert_eq!(
         [
-            entry(session_job(
-                JobState::Running,
-                Opener::Person,
-                Some("Fix the flaky test")
-            )),
-            entry(session_job(JobState::Completed, Opener::Agent, None)),
+            entry(running("Fix the flaky test"), Some("An older title")),
+            entry(unloaded(), Some("Bump the dependencies")),
+            entry(unloaded(), None),
         ],
         [
-            json!({
-                "session": "s",
-                "workspace": "/work",
-                "state": "running",
-                "opened_by": "person",
-                "title": "Fix the flaky test",
-                "updated_at": 2,
-            }),
-            json!({
-                "session": "s",
-                "workspace": "/work",
-                "state": "completed",
-                "opened_by": "agent",
-                "updated_at": 2,
-            }),
+            listed("running", "person", Some("Fix the flaky test")),
+            listed("completed", "agent", Some("Bump the dependencies")),
+            listed("completed", "agent", None),
         ]
     );
 }

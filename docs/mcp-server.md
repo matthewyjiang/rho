@@ -8,7 +8,7 @@ The server speaks stdio by default. For hosts that connect by URL, use [`--http`
 
 | Tool | What it does | Access |
 | --- | --- | --- |
-| `list` | Lists sessions with their id, workspace, state, who opened them, title, and parent session. Filter by `workspace`, `state`, or `opened_by`; `hide_idle` leaves out sessions no turn has started on. See [Sessions you opened yourself](#sessions-you-opened-yourself). | read |
+| `list` | Lists sessions with their id, workspace, state, who opened them, title, and parent session. Filter by `workspace`, `state`, or `opened_by`; `hide_idle` leaves out sessions in state `idle`. See [Sessions you opened yourself](#sessions-you-opened-yourself). | read |
 | `read` | Returns a session's transcript as text, a page at a time. | read |
 | `new` | Starts a session in `workspace` (an absolute path) with a first `prompt`. Optional `agent` and `model`. `worktree: true` runs it in a new [git worktree](/daemon#sessions-in-worktrees). | write |
 | `prompt` | Starts the session's next turn with `text`. | write |
@@ -57,13 +57,17 @@ Each `list` entry says who opened the session:
 ], "more": false}
 ```
 
-- `opened_by` is `person` for a session opened from a Rho frontend or command, and `agent` for one opened through this server or a Rho agent's [`sessions` tool](/sessions#starting-and-driving-other-sessions). It does not name the token or the frontend: the daemon does not record them.
-- `title` is the session's title, once it has one. Rho names a session during its first turn, and you can rename it.
-- `opened_by: "person"` as an argument lists only your own sessions, and `hide_idle: true` leaves out the ones you opened and never prompted.
+- `opened_by` is `agent` for a session opened through this server or a Rho agent's [`sessions` tool](/sessions#starting-and-driving-other-sessions), and `person` for any other, such as one you opened in the TUI. It does not name the token or the frontend: the daemon does not record them. A session that an agent in one of your own sessions starts from its shell with `rho run --detach` also lists as `person`.
+- `title` is the session's title, once it has one. Rho names a session during its first turn, and you can rename it. Once the daemon unloads a session, its title comes from the saved session, so a fork, and a session whose workspace directory is gone, then list without one.
+- `opened_by: "person"` as an argument lists only those sessions. `hide_idle: true` leaves out sessions in state `idle`, which the daemon has run no turn on: one opened and not yet prompted, or an older saved session you reopened and have not prompted since.
 
 `list` returns 20 sessions unless `limit` asks for more, so filter rather than page through a busy machine.
 
 A turn the caller prompts on your session runs with the caller's [scope](#scope-follows-the-sessions-a-token-starts). Your next prompt from the TUI runs with your own again. A frontend that follows the session gets the caller's turns as they happen.
+
+- A `steer` joins the turn that is running. On a turn you started, the caller's text is read by an agent that runs with your scope, not the caller's.
+- A turn the caller prompts runs its commands with the environment of the `rho mcp serve` process, its `PATH` included, not your shell's.
+- If you opened the session with `RHO_TRUST_PROJECT_*` variables the server was started without, or the other way round, `prompt` is refused and the error names the variables.
 
 ## Approvals stay with people
 
@@ -186,7 +190,7 @@ Rotations and revokes apply from the next request, without a restart. They do no
 
 A turn that a token starts or prompts runs with the token's scope and workspaces. Any `rho mcp serve` the session calls holds it to that scope too. A session the token started keeps that limit for good, so a person who prompts it later does not give it their own access.
 
-Like the [limits](#limits), this is not a sandbox. A write token can also prompt, steer, and cancel a session someone else opened in its workspaces, yours included. To keep a caller off your own sessions, give its token workspaces you do not work in yourself.
+Like the [limits](#limits), this is not a sandbox. A write token can also prompt, steer, and cancel a session someone else opened in its workspaces, yours included, and a steer joins a turn that runs with the scope of whoever started it. To keep a caller off your own sessions, give its token workspaces you do not work in yourself.
 
 ### Hosts and origins
 

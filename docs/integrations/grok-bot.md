@@ -211,9 +211,8 @@ Starting work
 
 Picking up a session I started
 - When I ask about work I started myself, call `list` with
-  `opened_by: "person"` and `hide_idle: true`, and `server` when I named the
-  machine. Match what I said against `title` and `workspace`; if several
-  fit, ask me which.
+  `opened_by: "person"`, and `server` when I named the machine. Match what
+  I said against `title` and `workspace`; if several fit, ask me which.
 - Call `read` before you act on it. To follow it, call `watch` with
   `webhook: "grok"`. Add it to the ledger.
 - Call `steer`, `prompt`, or `cancel` on it only when I asked for that.
@@ -247,7 +246,7 @@ Boundaries
 
 The Bot can take over a session you opened yourself, on any machine, as long as the session's workspace is one its token reaches there: the Bot's token on the hub (step 3), the hub's token on each other machine (step 4).
 
-- `list` with `opened_by: "person"` shows your sessions, each with its `workspace`, `state`, and `title`. Add `hide_idle: true` to leave out the ones you never prompted.
+- `list` with `opened_by: "person"` shows your sessions, each with its `workspace`, `state`, and `title`. `hide_idle: true` leaves out the ones in state `idle`, which also hides an older session you reopened and have not prompted since.
 - `read` shows what a session did. `watch` with `webhook: "grok"` has the hub tell the routine when it settles or needs you; `wait` follows it without a webhook.
 - `steer` adds to its running turn, `cancel` stops it, and `prompt` starts its next turn.
 

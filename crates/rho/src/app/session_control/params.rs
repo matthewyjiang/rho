@@ -45,12 +45,12 @@ pub(crate) struct ListParams {
     /// Only sessions in this state.
     #[serde(default)]
     pub(crate) state: Option<JobState>,
-    /// Only sessions this kind of caller opened: `person` for one opened
-    /// from a rho frontend or command, such as the TUI, and `agent` for one
-    /// opened through session control.
+    /// Only sessions opened this way: `agent` for one opened through
+    /// session control, as this tool's `new` does, and `person` for any
+    /// other, such as one opened from the TUI.
     #[serde(default)]
     pub(crate) opened_by: Option<Opener>,
-    /// Leave out sessions in state `idle`, which no turn has started on.
+    /// Leave out sessions in state `idle`: opened, and not prompted since.
     #[serde(default)]
     pub(crate) hide_idle: bool,
     /// The most sessions to return, most recently changed first: 20 when
@@ -74,31 +74,36 @@ impl ListParams {
     /// `opened_by`, and `hide_idle`.
     pub(super) fn keeps(&self, job: &JobSummary) -> bool {
         self.state.is_none_or(|state| job.state == state)
-            && self.opened_by.is_none_or(|by| Opener::of(job) == by)
+            && self
+                .opened_by
+                .is_none_or(|by| Opener::of(job.grant_limit.as_ref()) == by)
             && !(self.hide_idle && job.state == JobState::Idle)
     }
 }
 
-/// Who opened a session. The daemon records the limit a session opened
-/// under, not the client that opened it, so this tells a person's own
-/// session from one an agent started, and no more.
+/// Who opened a session, as far as the daemon records it. It keeps the
+/// limit a session opened under, not the client that opened it, so this
+/// tells the sessions session control started from the rest, and no more.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Opener {
-    /// A person, from a rho frontend or command: the TUI, a web UI, `rho
-    /// run --detach`. The session opened without a session-control limit.
+    /// The session opened without a session-control limit, as one opened
+    /// from a person's frontend or command does: the TUI, a web UI, `rho
+    /// run --detach`. So does one a command opens from a session that has
+    /// no limit itself, whoever ran the command, its own agent included.
     Person,
-    /// An agent, through session control: `rho mcp serve` or the `sessions`
-    /// tool. The session opened under its caller's limit, which it keeps.
+    /// The session opened under a session-control limit, which it keeps:
+    /// `rho mcp serve` or the `sessions` tool started it, or a command run
+    /// inside such a session did.
     Agent,
 }
 
 impl Opener {
-    /// Who opened the session of `job`: an agent when it opened under a
-    /// limit (`JobSummary::grant_limit`), as every session the core starts
-    /// does, one level deeper than its caller.
-    fn of(job: &JobSummary) -> Self {
-        match job.grant_limit {
+    /// Who opened a session whose job has `limit`
+    /// (`JobSummary::grant_limit`): an agent when it has one, as every
+    /// session the core starts does, one level deeper than its caller.
+    fn of(limit: Option<&rho_protocol::SessionGrant>) -> Self {
+        match limit {
             Some(_) => Self::Agent,
             None => Self::Person,
         }
@@ -122,9 +127,7 @@ pub(crate) struct SessionEntry {
     /// Who opened the session, so a caller can find the ones a person
     /// started from the TUI among the ones agents started.
     pub(crate) opened_by: Opener,
-    /// The session's title, once it has one: the one the daemon follows
-    /// while it has the session loaded, else the saved one, which `list`
-    /// fills in from the daemon's catalog.
+    /// The session's title, once it has one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) title: Option<String>,
     /// Unix time, in seconds, of the session's last state change.
@@ -142,12 +145,23 @@ pub(crate) struct SessionEntry {
 impl SessionEntry {
     /// The entry for a session job, whose parent is the session `writers`
     /// says its parent job writes; `None` for a job that writes no session.
-    pub(super) fn of_job(job: JobSummary, writers: &HashMap<JobId, SessionId>) -> Option<Self> {
+    /// Its title is the one the daemon follows while it has the session
+    /// loaded, which starts as the saved one; else the one `saved` holds
+    /// for it, which the entry takes.
+    pub(super) fn of_job(
+        job: JobSummary,
+        writers: &HashMap<JobId, SessionId>,
+        saved: &mut HashMap<SessionId, String>,
+    ) -> Option<Self> {
+        let session = job.session?;
         Some(Self {
-            opened_by: Opener::of(&job),
-            title: job.live.and_then(|live| live.title),
+            opened_by: Opener::of(job.grant_limit.as_ref()),
+            title: match job.live {
+                Some(live) => live.title,
+                None => saved.remove(&session),
+            },
             parent: job.parent.and_then(|parent| writers.get(&parent).cloned()),
-            session: job.session?,
+            session,
             workspace: job.workspace,
             state: job.state,
             updated_at: job.updated_at,
