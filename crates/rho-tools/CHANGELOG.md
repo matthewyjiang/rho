@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.4.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v2.3.0...rho-agent-tools-v2.4.0) (2026-11-24)
+
+
+### Features
+
+* **protocol:** report the agent a session runs as ([#2001](https://github.com/matthewyjiang/rho/issues/2001)) ([255bbb4](https://github.com/matthewyjiang/rho/commit/255bbb454a90dfd3b9c744320fd75cda1a494c36))
+
 ## [2.3.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v2.2.0...rho-agent-tools-v2.3.0) (2026-11-18)
 
 

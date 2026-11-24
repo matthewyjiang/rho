@@ -1,5 +1,23 @@
 # Changelog
 
+## [3.4.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v3.3.0...rho-coding-agent-v3.4.0) (2026-11-24)
+
+
+### Features
+
+* **daemon:** serve rho-protocol over HTTP WebSockets so hosts can skip SSH ([#2000](https://github.com/matthewyjiang/rho/issues/2000)) ([18c36d6](https://github.com/matthewyjiang/rho/commit/18c36d68ec4930227905d07e0ca91b3bd9720c78))
+* **daemon:** watch GitHub pull requests and wake the session on changes ([#2007](https://github.com/matthewyjiang/rho/issues/2007)) ([834500f](https://github.com/matthewyjiang/rho/commit/834500f0da63b436281dd28a9730a6bcf7ca7ada))
+* **protocol:** let clients list and refresh available models ([#2005](https://github.com/matthewyjiang/rho/issues/2005)) ([7623f23](https://github.com/matthewyjiang/rho/commit/7623f23f25512834d3666ecea5c5803532ae0783))
+* **protocol:** let clients list and show a session's pull requests from the daemon ([#2009](https://github.com/matthewyjiang/rho/issues/2009)) ([472467e](https://github.com/matthewyjiang/rho/commit/472467e152c0a8969b01d6b64c103f9bbc3db0fd))
+* **protocol:** report the agent a session runs as ([#2001](https://github.com/matthewyjiang/rho/issues/2001)) ([255bbb4](https://github.com/matthewyjiang/rho/commit/255bbb454a90dfd3b9c744320fd75cda1a494c36))
+* **tui:** add minimal mode that keeps the transcript in native scrollback ([#1993](https://github.com/matthewyjiang/rho/issues/1993)) ([7714be3](https://github.com/matthewyjiang/rho/commit/7714be3868ee87dbbba3b372d0882bd5f1af1c08))
+
+
+### Bug Fixes
+
+* **daemon:** let scoop update rho while the daemon runs ([#1999](https://github.com/matthewyjiang/rho/issues/1999)) ([2137288](https://github.com/matthewyjiang/rho/commit/213728884df2c48774cc022268ea6b643727804b))
+* **mcp:** close gaps in the Grok Bot hub setup ([#2008](https://github.com/matthewyjiang/rho/issues/2008)) ([969737b](https://github.com/matthewyjiang/rho/commit/969737bec2803e6f96b9af6f52aff21ecd45bae3))
+
 ## [3.3.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v3.2.0...rho-coding-agent-v3.3.0) (2026-11-18)
 
 
