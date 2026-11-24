@@ -14,7 +14,8 @@ use crate::{
         ModelRefreshResponse, CONFIG_GET, CONFIG_REGISTER, CONFIG_SCHEMA, CONFIG_SET, MODEL_LIST,
         MODEL_REFRESH,
     },
-    server::{encode_result, unsupported, Responder},
+    server::Responder,
+    server_codec::{encode_result, unsupported},
     RpcError,
 };
 
