@@ -17,7 +17,6 @@ use crate::{
             wire::session_to_wire,
         },
         pull_requests::ScriptedForge,
-        session_runtime::StartedSessionDefaults,
     },
     config::Config,
 };
@@ -66,7 +65,10 @@ async fn a_session_a_subagent_starts_takes_its_leads_choice() {
     let mut chosen = Vec::new();
     for parent in [&lead.id, &subagent] {
         let writer = sessions.job_writing(parent);
-        let choosing = sessions.choosing_session(parent, writer.as_ref()).unwrap();
+        let choosing = sessions
+            .choosing_session(parent, writer.as_ref())
+            .await
+            .unwrap();
         let choice = sessions.chosen_by(&choosing).await.unwrap();
         chosen.push((choosing, choice));
     }
@@ -81,34 +83,49 @@ async fn a_session_a_subagent_starts_takes_its_leads_choice() {
     assert_eq!(chosen, vec![leads.clone(), leads]);
 }
 
-// Covers: a permission mode a newer rho saved for the sessions a session
-// starts is kept as it was read, so a save does not erase it, and a session
-// started under it fails to open rather than run in the config's mode,
-// which may be looser.
+// Covers: a choice for the sessions a session starts that this rho cannot
+// use, a mode a newer rho named or a record it cannot read at all, fails
+// every session started under it rather than open it on the config's,
+// which may be looser, and a save keeps the record byte for byte, model
+// included, so a rho that reads it still finds it.
 // Owner: daemon session new.
 #[tokio::test]
-async fn a_session_started_under_an_unknown_saved_mode_fails_to_open() {
-    let (root, home) = (TempDir::new().unwrap(), TempDir::new().unwrap());
-    let sessions = new_sessions(&home);
-    let saved = r#"{"permission_mode":"paranoid"}"#;
-    let read: StartedSessionDefaults = serde_json::from_str(saved).unwrap();
-    let started = load(&sessions, &root, Load::Unsaved).await;
-    let mut runtime = started.runtime.try_lock().unwrap();
+async fn a_saved_choice_this_rho_cannot_use_refuses_new_and_survives_a_save() {
+    let saved = [
+        r#"{"permission_mode":"paranoid"}"#,
+        r#"{"permission_mode":{"name":"plan"},"model":{"provider":"openai","model":"gpt-5"}}"#,
+    ];
+    let mut outcomes = Vec::new();
+    for record in saved {
+        let (root, home) = (TempDir::new().unwrap(), TempDir::new().unwrap());
+        let sessions = new_sessions(&home);
+        let choosing = load(&sessions, &root, Load::Saved).await;
+        let started = load(&sessions, &root, Load::Unsaved).await;
+        let mut choosing_runtime = choosing.runtime.try_lock().unwrap();
+        let choosing_runtime = choosing_runtime.as_mut().unwrap();
+        let mut started_runtime = started.runtime.try_lock().unwrap();
+        choosing_runtime.reopen_with_started_sessions_record_for_tests(record);
 
-    let opened = set_up_started_session(
-        runtime.as_mut().unwrap(),
-        &Config::default(),
-        &rho_sdk::SessionId::new(),
-        started_session_defaults(&read),
-    )
-    .await
-    .map_err(|error| error.code);
-
-    assert_eq!(
-        (serde_json::to_string(&read).unwrap(), opened),
-        (
-            saved.to_owned(),
-            Err(wire::ErrorCode::SessionOpenFailed.code())
+        let opened = set_up_started_session(
+            started_runtime.as_mut().unwrap(),
+            &Config::default(),
+            &choosing.id,
+            started_session_defaults(choosing_runtime.started_session_defaults()),
         )
+        .await
+        .map_err(|error| error.code);
+        choosing_runtime.save_state().unwrap();
+        outcomes.push((
+            opened,
+            choosing_runtime.saved_started_sessions_record_for_tests(),
+        ));
+    }
+
+    let refused = Err(wire::ErrorCode::SessionOpenFailed.code());
+    assert_eq!(
+        outcomes,
+        saved
+            .map(|record| (refused, Some(record.to_owned())))
+            .to_vec()
     );
 }

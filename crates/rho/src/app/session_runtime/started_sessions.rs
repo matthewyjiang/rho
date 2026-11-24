@@ -4,13 +4,17 @@
 //! the model calls; the daemon applies it to each session it opens under
 //! this one (`daemon_host/sessions/new.rs`), and that session keeps it as
 //! its own choice, so the sessions it starts in turn open with it too. A
-//! fork keeps the choice of the session it forks.
+//! fork keeps the choice of the session it forks. A session takes a copy
+//! of the choice as it opens: changing the starter's choice later does not
+//! change what the sessions it already started hand to the sessions they
+//! start.
 //!
 //! The choice rides in snapshot metadata under a key of its own, which
 //! every durable save rewrites, apart from the session's own settings
 //! (`saved_settings.rs`): setting it never makes a session that follows the
 //! config keep its own settings. Every host that opens the session restores
-//! it, so none of their saves drops it.
+//! it, so none of their saves drops it. A record this rho cannot read is
+//! kept as it was saved ([`StartedSessions::Unreadable`]).
 
 use rho_sdk::SessionSnapshot;
 use serde::{Deserialize, Serialize};
@@ -22,7 +26,7 @@ use crate::{
 };
 
 /// The snapshot metadata key of a session's [`StartedSessionDefaults`].
-const STARTED_SESSION_DEFAULTS_METADATA: &str = "rho.session.started_session_defaults";
+pub(super) const STARTED_SESSION_DEFAULTS_METADATA: &str = "rho.session.started_session_defaults";
 
 /// The permission mode and model the sessions a session starts open with,
 /// as its file keeps them. A part left `None` leaves it to the config those
@@ -40,16 +44,11 @@ pub(crate) struct StartedSessionDefaults {
 #[serde(from = "String", into = "String")]
 pub(crate) enum StartedMode {
     Known(PermissionMode),
-    /// A name this rho does not know, as a newer one may have saved, or
-    /// [`UNREADABLE`] for a record that did not read. Kept as it was read,
-    /// so a save does not erase it, and no session opens in it: the daemon
-    /// refuses to start one under it.
+    /// A name this rho does not know, as a newer one may have saved. Kept
+    /// as it was read, so a save does not erase it, and no session opens in
+    /// it: the daemon refuses to start one under it.
     Unknown(String),
 }
-
-/// The mode a session takes for a choice its file keeps but this rho could
-/// not read.
-const UNREADABLE: &str = "unreadable";
 
 impl From<String> for StartedMode {
     fn from(name: String) -> Self {
@@ -77,51 +76,105 @@ pub(crate) struct StartedModel {
     pub(crate) model: String,
 }
 
-impl StartedSessionDefaults {
+/// What the sessions a session starts open with, as the session holds it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum StartedSessions {
+    /// A choice this rho reads; [`StartedSessionDefaults::default`] when
+    /// nothing is chosen.
+    Chosen(StartedSessionDefaults),
+    /// A record the session's file keeps that this rho could not read, as
+    /// it was saved, or `None` when the file itself did not read. Every
+    /// save writes it back as it was, so a rho that reads it still finds
+    /// it, and the daemon starts no session under it: it may choose a
+    /// stricter mode than the config's. Setting the mode for the sessions
+    /// this one starts replaces it, and clearing that mode removes it.
+    Unreadable(Option<String>),
+}
+
+impl Default for StartedSessions {
+    fn default() -> Self {
+        Self::Chosen(StartedSessionDefaults::default())
+    }
+}
+
+impl StartedSessions {
     /// What the session saved under `id` in workspace `cwd` keeps, read
     /// without opening it, which another process may hold. An error when
-    /// nothing is saved there or the record does not read.
+    /// nothing is saved there or its file does not read.
     pub(crate) fn saved_by_id(cwd: &std::path::Path, id: &str) -> anyhow::Result<Self> {
         StoredSession::session_metadata_by_id(cwd, id, STARTED_SESSION_DEFAULTS_METADATA)
-            .and_then(decode)
+            .map(Self::read)
     }
 
-    /// What `stored`'s file keeps.
-    pub(super) fn saved_in(stored: &StoredSession) -> anyhow::Result<Self> {
-        stored
-            .session_metadata(STARTED_SESSION_DEFAULTS_METADATA)
-            .and_then(decode)
-    }
-
-    /// `snapshot` with this choice in its metadata; with none, unchanged,
-    /// so a save after the choice is cleared records none.
-    pub(super) fn decorate(&self, snapshot: SessionSnapshot) -> SessionSnapshot {
-        if *self == Self::default() {
-            return snapshot;
+    /// What `stored`'s file keeps; [`Self::Unreadable`] when the file does
+    /// not read.
+    pub(super) fn saved_in(stored: &StoredSession) -> Self {
+        match stored.session_metadata(STARTED_SESSION_DEFAULTS_METADATA) {
+            Ok(record) => Self::read(record),
+            Err(error) => {
+                tracing::warn!(
+                    error = format!("{error:#}"),
+                    "could not read what the sessions this one starts open with; none will start until a person sets their permission mode again"
+                );
+                Self::Unreadable(None)
+            }
         }
-        snapshot.with_metadata(
-            STARTED_SESSION_DEFAULTS_METADATA,
-            serde_json::to_string(self).expect("the choice holds only plain values"),
-        )
+    }
+
+    /// The choice `record` holds: none without a record, and
+    /// [`Self::Unreadable`], keeping it, for one this rho cannot read.
+    fn read(record: Option<String>) -> Self {
+        let Some(record) = record else {
+            return Self::default();
+        };
+        match serde_json::from_str(&record) {
+            Ok(defaults) => Self::Chosen(defaults),
+            Err(error) => {
+                tracing::warn!(
+                    %error,
+                    "could not read the saved choice of what the sessions this one starts open with; it is kept as saved, and none will start until a person sets their permission mode again"
+                );
+                Self::Unreadable(Some(record))
+            }
+        }
+    }
+
+    /// `snapshot` with this choice in its metadata. Nothing chosen writes
+    /// no record where the snapshot has none, and an empty one where it
+    /// has one, as a reopened session's snapshot does, so a cleared choice
+    /// stays cleared. An unreadable record is written back as it was read.
+    pub(super) fn decorate(&self, snapshot: SessionSnapshot) -> SessionSnapshot {
+        let record = match self {
+            Self::Chosen(defaults) => {
+                if *defaults == StartedSessionDefaults::default()
+                    && !snapshot
+                        .metadata()
+                        .contains_key(STARTED_SESSION_DEFAULTS_METADATA)
+                {
+                    return snapshot;
+                }
+                serde_json::to_string(defaults).expect("the choice holds only plain values")
+            }
+            Self::Unreadable(Some(record)) => record.clone(),
+            Self::Unreadable(None) => return snapshot,
+        };
+        snapshot.with_metadata(STARTED_SESSION_DEFAULTS_METADATA, record)
     }
 }
 
-/// The choice `encoded` records, or none when there is no record.
-fn decode(encoded: Option<String>) -> anyhow::Result<StartedSessionDefaults> {
-    encoded.map_or_else(
-        || Ok(StartedSessionDefaults::default()),
-        |encoded| Ok(serde_json::from_str(&encoded)?),
-    )
-}
+/// Why a started-session model change is refused while the saved choice
+/// does not read.
+const UNREADABLE_MODEL_CHANGE: &str = "could not read the choice saved for the sessions this one starts, as when a newer rho saved it; set their permission mode first, which replaces it";
 
 impl SessionRuntime {
     /// What the sessions this session starts open with.
-    pub(crate) fn started_session_defaults(&self) -> &StartedSessionDefaults {
+    pub(crate) fn started_session_defaults(&self) -> &StartedSessions {
         &self.started_sessions
     }
 
     /// Whether the agent the session runs as names its own model, which a
-    /// chosen model for started sessions does not replace.
+    /// chosen model for started sessions does not replace: any agent that
+    /// names one, preferred ([`ModelPolicy::Prefer`]) or required, keeps it.
     pub(crate) fn agent_pins_model(&self) -> bool {
         !matches!(
             self.agent.definition().model_policy().as_ref(),
@@ -134,7 +187,8 @@ impl SessionRuntime {
     /// session's config could not run, such as auto without a
     /// permission-classifier model, is [`SettingChangeError::Unsupported`],
     /// and the choice stays as it was: every session it starts would fail
-    /// to open in it.
+    /// to open in it. A saved choice that did not read is replaced whole,
+    /// its model included.
     pub(crate) fn set_started_session_permission_mode(
         &mut self,
         mode: Option<PermissionMode>,
@@ -143,68 +197,70 @@ impl SessionRuntime {
         if let Some(mode) = mode {
             self.config_for_mode(mode, process_config)?;
         }
-        self.change_started_session_defaults(StartedSessionDefaults {
+        let model = match &self.started_sessions {
+            StartedSessions::Chosen(defaults) => defaults.model.clone(),
+            StartedSessions::Unreadable(_) => None,
+        };
+        self.change_started_sessions(StartedSessions::Chosen(StartedSessionDefaults {
             permission_mode: mode.map(StartedMode::Known),
-            ..self.started_sessions.clone()
-        })
+            model,
+        }))
     }
 
     /// Opens the sessions this session starts on `model`, or on the
-    /// config's when `None`, and saves the choice when it changed.
+    /// config's when `None`, and saves the choice when it changed. While a
+    /// saved choice does not read, [`SettingChangeError::Unsupported`]:
+    /// keeping its mode is not possible, and dropping it could loosen it.
     pub(crate) fn set_started_session_model(
         &mut self,
         model: Option<StartedModel>,
     ) -> Result<(), SettingChangeError> {
-        self.change_started_session_defaults(StartedSessionDefaults {
+        let StartedSessions::Chosen(defaults) = &self.started_sessions else {
+            return Err(SettingChangeError::Unsupported(
+                UNREADABLE_MODEL_CHANGE.to_owned(),
+            ));
+        };
+        let defaults = StartedSessionDefaults {
             model,
-            ..self.started_sessions.clone()
-        })
+            ..defaults.clone()
+        };
+        self.change_started_sessions(StartedSessions::Chosen(defaults))
     }
 
-    /// Takes `defaults` and saves them, unless they are what the session
-    /// has: a change that changes nothing writes nothing.
-    fn change_started_session_defaults(
+    /// Takes `started` and saves it, unless it is what the session has: a
+    /// change that changes nothing writes nothing. A failed save keeps the
+    /// choice as it was, so no client is told of one that was not saved.
+    fn change_started_sessions(
         &mut self,
-        defaults: StartedSessionDefaults,
+        started: StartedSessions,
     ) -> Result<(), SettingChangeError> {
-        if self.started_sessions == defaults {
+        if self.started_sessions == started {
             return Ok(());
         }
-        self.started_sessions = defaults;
-        self.save_state().map_err(SettingChangeError::Apply)
+        let previous = std::mem::replace(&mut self.started_sessions, started);
+        if let Err(error) = self.save_state() {
+            self.started_sessions = previous;
+            return Err(SettingChangeError::Apply(error));
+        }
+        Ok(())
     }
 
-    /// Takes `saved`, the choice a file keeps ([`StartedSessionDefaults::saved_in`]):
+    /// Takes `saved`, the choice a file keeps ([`StartedSessions::saved_in`]):
     /// the session's own or, for a fork, that of the session it forks. A
     /// mode this rho does not know is kept as it was read (see
-    /// [`StartedMode::Unknown`]). A record that does not read is logged and
-    /// taken as an unknown mode, so no session starts under this one on the
-    /// config's until a person chooses again: the record may have chosen a
-    /// stricter mode.
-    pub(super) fn restore_started_session_defaults(
-        &mut self,
-        saved: anyhow::Result<StartedSessionDefaults>,
-    ) {
-        match saved {
-            Ok(defaults) => {
-                if let Some(StartedMode::Unknown(name)) = &defaults.permission_mode {
-                    tracing::warn!(
-                        permission_mode = %name,
-                        "the permission mode chosen for the sessions this one starts is unknown to this rho; none will start until a person chooses another"
-                    );
-                }
-                self.started_sessions = defaults;
-            }
-            Err(error) => {
-                tracing::warn!(
-                    error = format!("{error:#}"),
-                    "could not read what the sessions this one starts open with; none will start until a person chooses again"
-                );
-                self.started_sessions = StartedSessionDefaults {
-                    permission_mode: Some(StartedMode::Unknown(UNREADABLE.to_owned())),
-                    model: None,
-                };
-            }
+    /// [`StartedMode::Unknown`]), and so is a record that does not read
+    /// (see [`StartedSessions::Unreadable`]).
+    pub(super) fn restore_started_session_defaults(&mut self, saved: StartedSessions) {
+        if let StartedSessions::Chosen(StartedSessionDefaults {
+            permission_mode: Some(StartedMode::Unknown(name)),
+            ..
+        }) = &saved
+        {
+            tracing::warn!(
+                permission_mode = %name,
+                "the permission mode chosen for the sessions this one starts is unknown to this rho; none will start until a person chooses another"
+            );
         }
+        self.started_sessions = saved;
     }
 }

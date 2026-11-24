@@ -89,9 +89,11 @@ pub enum SessionChange {
     /// set it on each before its first turn; absent, they take the
     /// config's. A person's client sets it; no tool rho gives the model
     /// does. The sessions this session's subagents and workflow nodes start
-    /// take it too, and each session started under it keeps it as its own
-    /// choice, so the sessions that one starts open in `mode` as well, until
-    /// a person changes it there. `Unknown`, or `auto` while the config has
+    /// take it too, and each session started under it keeps a copy as its
+    /// own choice, so the sessions that one starts open in `mode` as well,
+    /// until a person changes it there: changing it here later does not
+    /// change what sessions already started hand to the sessions they
+    /// start. `Unknown`, or `auto` while the config has
     /// no permission-classifier model, is
     /// [`crate::ErrorCode::InvalidParams`]. The session reports its choice as
     /// [`super::SessionEvent::StartedSessionDefaults`]. It is kept with the
@@ -109,11 +111,15 @@ pub enum SessionChange {
     /// [`Self::StartedSessionPermissionMode`] sets their mode, and carried
     /// down and kept as that one is; absent, they take the config's. A
     /// model the `new` call names itself still wins for that session, and
-    /// a session whose agent names its own model runs that one. Each
+    /// a session whose agent names its own model, preferred or required,
+    /// runs that one, and does not need `model` to resolve. Each
     /// started session runs `model` on an auth that has credentials, as a
     /// [`Self::Model`] with no `auth` picks; one it no longer resolves to
-    /// fails the `new`. Sent while the session's turn runs, it waits for
-    /// that turn's end, as [`Self::StartedSessionPermissionMode`] does.
+    /// fails the `new`. While the session keeps a saved choice this daemon
+    /// cannot read, it is [`crate::ErrorCode::InvalidParams`]: a
+    /// [`Self::StartedSessionPermissionMode`] replaces that choice first.
+    /// Sent while the session's turn runs, it waits for that turn's end, as
+    /// [`Self::StartedSessionPermissionMode`] does.
     StartedSessionModel {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         model: Option<ModelRef>,
@@ -207,8 +213,8 @@ pub struct ModelRef {
 /// carries it.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct StartedSessionDefaults {
-    /// `Unknown` for a mode a newer rho saved, which this daemon refuses to
-    /// open a session in.
+    /// `Unknown` for a mode a newer rho saved, or a saved choice this daemon
+    /// cannot read, under which it refuses to open a session.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub permission_mode: Option<PermissionMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

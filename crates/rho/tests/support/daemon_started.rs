@@ -334,3 +334,98 @@ auth = "xai-oauth"
         sandbox.isolated.daemon_log()
     );
 }
+
+// Covers: a choice for the sessions a session starts that a person clears
+// after the session reopened stays cleared once it reopens again, though
+// the reopened session's conversation carried the saved choice: a reset
+// replay reports none, and a session it starts opens in the config's mode.
+// Owner: daemon sessions other sessions start.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_cleared_choice_stays_cleared_once_the_session_reopens() {
+    let sandbox = Sandbox::new();
+    sandbox.set_config("bypass", "");
+    let client = sandbox
+        .start_daemon_with("fixed", &["--unload-idle-after", "200ms"])
+        .await;
+    let parent = sandbox.new_session(&client).await;
+    let mode = |mode| SessionChange::StartedSessionPermissionMode { mode };
+    // Kept attached, so the session stays loaded until the change applied.
+    let (follower, _) = Follower::attach(&sandbox, &parent, Vec::new(), None).await;
+    // Saved, so the unload has a file to reopen.
+    sandbox.prompt(&client, &parent).await.unwrap();
+    settled_job(&sandbox, &client, &parent).await;
+    configure(&client, &parent, mode(Some(PermissionMode::Plan))).await;
+    drop(follower);
+    sandbox.wait_unloaded(&parent, /*times*/ 1).await;
+    let (follower, _) = Follower::attach(&sandbox, &parent, Vec::new(), None).await;
+    configure(&client, &parent, mode(None)).await;
+    drop(follower);
+    sandbox.wait_unloaded(&parent, /*times*/ 2).await;
+
+    let (_, reported) = attached(&sandbox, &parent).await;
+    let started = open_child(&sandbox, &client, &parent).await;
+
+    assert_eq!(
+        (reported, started.options.permission_mode.current),
+        (
+            Some(SessionEvent::StartedSessionDefaults(
+                StartedSessionDefaults::default()
+            )),
+            PermissionMode::Bypass,
+        ),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
+// Covers: a session a subagent starts after the daemon stopped tracking the
+// subagent's run, here one that ended, opens with the choice of the session
+// that owns the subagent, found through the subagent's file, rather than on
+// the config's, which may be looser.
+// Owner: daemon sessions other sessions start.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_session_an_ended_subagent_starts_takes_its_owners_choice() {
+    let sandbox = Sandbox::new();
+    sandbox.set_config("bypass", "");
+    // The fixture makes the call the prompt spells out as JSON.
+    let client = sandbox.start_daemon("tool-call").await;
+    let lead = sandbox.new_session(&client).await;
+    configure(
+        &client,
+        &lead,
+        SessionChange::StartedSessionPermissionMode {
+            mode: Some(PermissionMode::Plan),
+        },
+    )
+    .await;
+    let call = serde_json::json!({
+        "id": "delegate",
+        "name": "agent",
+        "arguments": {"agent_id": "explorer", "prompt": "Look around."},
+    });
+    sandbox.prompt_tool_call(&client, &lead, &call).await;
+    let lead_job = settled_job(&sandbox, &client, &lead).await.id;
+    let subagent = sandbox
+        .poll_until("the subagent's run to end", async || {
+            client
+                .request::<JobList>(&JobListParams {})
+                .await
+                .unwrap()
+                .jobs
+                .into_iter()
+                .find(|job| {
+                    job.parent.as_ref() == Some(&lead_job) && job.state == JobState::Completed
+                })
+                .and_then(|job| job.session)
+        })
+        .await;
+
+    let started = open_child(&sandbox, &client, &subagent).await;
+
+    assert_eq!(
+        started.options.permission_mode.current,
+        PermissionMode::Plan,
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}

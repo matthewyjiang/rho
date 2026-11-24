@@ -231,6 +231,14 @@ pub(crate) fn workspace_key(cwd: &Path) -> String {
     layout::workspace_key(cwd)
 }
 
+/// The session saved under exactly `id` in `cwd`'s workspace; an error
+/// when nothing is.
+fn resolve_saved(cwd: &Path, id: &str) -> anyhow::Result<persistence::ResolvedSession> {
+    SessionStore::new(&session_root()?, cwd)
+        .resolve_exact_local(id)?
+        .ok_or_else(|| anyhow::anyhow!("no session is saved under {id} in {}", cwd.display()))
+}
+
 impl SessionSummary {
     pub fn target(&self) -> SessionTarget {
         SessionTarget::new(self.id.clone(), self.cwd.clone())
@@ -384,15 +392,22 @@ impl Session {
         id: &str,
         key: &str,
     ) -> anyhow::Result<Option<String>> {
-        let resolved = SessionStore::new(&session_root()?, cwd)
-            .resolve_exact_local(id)?
-            .ok_or_else(|| {
-                anyhow::anyhow!("no session is saved under {id} in {}", cwd.display())
-            })?;
-        Ok(resolved
+        Ok(resolve_saved(cwd, id)?
             .tree()?
             .newest_node_metadata(key)
             .map(str::to_owned))
+    }
+
+    /// The session that started the subagent saved under exactly `id` in
+    /// `cwd`'s workspace, as its header records it, read without opening
+    /// it, which another process may hold. `None` when it is no subagent's
+    /// session, or its parent had no file when it started; an error when
+    /// nothing is saved under `id` there.
+    pub(crate) fn subagent_parent_by_id(
+        cwd: &Path,
+        id: &str,
+    ) -> anyhow::Result<Option<SessionTarget>> {
+        agent_identity::read_subagent_parent(&resolve_saved(cwd, id)?.path)
     }
 
     /// Session `id_prefix`'s tree as `/tree` lists it, read without opening

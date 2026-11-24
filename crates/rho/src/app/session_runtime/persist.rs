@@ -40,7 +40,7 @@ use rho_sdk::{
 
 use super::{
     events::InsertedMessage, left_out::LeftOut, saved_settings::SettingsRecord, SessionRuntime,
-    StartedSessionDefaults,
+    StartedSessions,
 };
 use crate::{
     added_dirs::AddedDirs,
@@ -383,7 +383,7 @@ pub(super) struct DurableState {
     pub(super) settings: SettingsRecord,
     /// What the sessions it starts open with, kept whether or not it keeps
     /// its settings.
-    pub(super) started_sessions: StartedSessionDefaults,
+    pub(super) started_sessions: StartedSessions,
 }
 
 impl DurableState {

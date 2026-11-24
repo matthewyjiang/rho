@@ -18,7 +18,7 @@ use rho_providers::model::catalog::ModelSelection;
 use rho_sdk::{model::ServiceTier, ReasoningLevel, SessionSnapshot};
 use serde::{Deserialize, Serialize};
 
-use super::{CurrentModel, SessionRuntime, SettingChangeError, StartedSessionDefaults};
+use super::{CurrentModel, SessionRuntime, SettingChangeError, StartedSessions};
 use crate::{config::Config, permission::PermissionMode, session::Session as StoredSession};
 
 /// The snapshot metadata key of a session's [`SavedSettings`].
@@ -145,7 +145,7 @@ impl SessionRuntime {
             return;
         };
         let saved = saved_settings(stored);
-        let started = StartedSessionDefaults::saved_in(stored);
+        let started = StartedSessions::saved_in(stored);
         self.restore_started_session_defaults(started);
         self.apply_saved_settings(saved, process_config).await;
     }
@@ -157,7 +157,7 @@ impl SessionRuntime {
         source: &StoredSession,
         process_config: &Config,
     ) {
-        self.restore_started_session_defaults(StartedSessionDefaults::saved_in(source));
+        self.restore_started_session_defaults(StartedSessions::saved_in(source));
         self.apply_saved_settings(saved_settings(source), process_config)
             .await;
     }

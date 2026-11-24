@@ -436,7 +436,9 @@ impl Change {
 /// person's client would send: its model, as a setup [`Change::Model`],
 /// unless its agent names its own, then its permission mode, and the choice
 /// itself, which the session keeps, so the sessions it starts in turn open
-/// with it too. It keeps its settings, so a reopen restores them. A part it
+/// with it too. A model its agent replaces is kept for those sessions
+/// without resolving it here. It keeps its settings, so a reopen restores
+/// them. A part it
 /// cannot take fails the open, naming it, rather than leave the session on
 /// the config's: the mode a person chose may be stricter. With nothing
 /// chosen, it changes and keeps nothing, as any new session.
@@ -466,7 +468,7 @@ pub(super) async fn set_up_started_session(
             PermissionMode::try_from(mode).map_err(|_| {
                 refused(
                     "in the permission mode",
-                    "this rho does not know it, as when a newer rho saved it; choose another there",
+                    "this rho could not read the saved choice, as when a newer rho saved it; setting the permission mode of the sessions it starts again there replaces it",
                 )
             })
         })
@@ -474,15 +476,27 @@ pub(super) async fn set_up_started_session(
     let mut changes = Vec::new();
     if let Some(model) = model {
         let part = format!("on the model {}/{}", model.provider, model.model);
-        if !runtime.agent_pins_model() {
+        if runtime.agent_pins_model() {
+            // Kept as the choosing session resolved it, for the sessions
+            // this one starts, but not resolved here: the session runs its
+            // agent's model, so a choice that no longer resolves must not
+            // fail it.
+            let model = StartedModel {
+                provider: model.provider,
+                model: model.model,
+            };
+            runtime
+                .set_started_session_model(Some(model))
+                .map_err(|error| refused(&part, &setting_error(error).message))?;
+        } else {
             let switch = Change::Model {
                 model: model.clone(),
                 auth: None,
                 setup: true,
             };
             changes.push((part.clone(), switch));
+            changes.push((part, Change::StartedSessionModel(Some(model))));
         }
-        changes.push((part, Change::StartedSessionModel(Some(model))));
     }
     if let Some(mode) = mode {
         let part = format!("in the permission mode {}", mode.as_str());

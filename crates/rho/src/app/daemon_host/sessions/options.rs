@@ -12,7 +12,9 @@ pub(super) use crate::app::session_options::available_auths;
 use crate::{
     app::{
         session_options,
-        session_runtime::{SessionRuntime, StartedMode, StartedModel, StartedSessionDefaults},
+        session_runtime::{
+            SessionRuntime, StartedMode, StartedModel, StartedSessionDefaults, StartedSessions,
+        },
     },
     config::Config,
 };
@@ -89,15 +91,23 @@ pub(super) fn daemon_options(
     session_options::of(runtime, process_config, auths, DAEMON_COMMANDS)
 }
 
-/// `defaults`, what the sessions a session starts open with, on the wire.
-/// A mode this rho does not know is `Unknown`.
-pub(super) fn started_session_defaults(
-    defaults: &StartedSessionDefaults,
-) -> wire::StartedSessionDefaults {
+/// `started`, what the sessions a session starts open with, on the wire.
+/// A mode this rho does not know is `Unknown`, and so is a saved choice it
+/// cannot read, with no model: both refuse every session started under
+/// them, as either may choose a stricter mode than the config's.
+pub(super) fn started_session_defaults(started: &StartedSessions) -> wire::StartedSessionDefaults {
     let StartedSessionDefaults {
         permission_mode,
         model,
-    } = defaults;
+    } = match started {
+        StartedSessions::Chosen(defaults) => defaults,
+        StartedSessions::Unreadable(_) => {
+            return wire::StartedSessionDefaults {
+                permission_mode: Some(wire::PermissionMode::Unknown),
+                model: None,
+            }
+        }
+    };
     wire::StartedSessionDefaults {
         permission_mode: permission_mode.as_ref().map(|mode| match mode {
             StartedMode::Known(mode) => (*mode).into(),

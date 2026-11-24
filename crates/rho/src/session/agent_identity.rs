@@ -149,6 +149,21 @@ pub(super) fn read_forked_from(path: &Path) -> anyhow::Result<Option<SessionTarg
     }
 }
 
+/// The session that started a subagent's session, as its header records it,
+/// the parent a delete cascades over. `None` for a session of any other
+/// origin, and for a subagent whose parent had no file when it started.
+pub(super) fn read_subagent_parent(path: &Path) -> anyhow::Result<Option<SessionTarget>> {
+    match read_header(path)? {
+        SessionEntry::Session {
+            origin: Some(SessionOrigin::Subagent),
+            parent_session,
+            ..
+        } => Ok(parent_session),
+        SessionEntry::Session { .. } => Ok(None),
+        _ => anyhow::bail!("session file does not start with session metadata"),
+    }
+}
+
 /// The agent id of a session rebound as a delegated child, or `None` for a
 /// root session.
 pub(super) fn read_delegated_agent_id(path: &Path) -> anyhow::Result<Option<String>> {
