@@ -389,6 +389,7 @@ impl LoadedSession {
             environment,
             setup,
             fork_of,
+            held_context,
         } = opened;
         let (feed, live) = opening_feed(job, &runtime, &config, auths);
         let keyed = KeyedTurn::recorded(job);
@@ -399,7 +400,7 @@ impl LoadedSession {
             idle_wake: IdleWatch::of(&runtime),
             wake_gave_up: AtomicBool::new(false),
             cache_warm: KeepWarm::of(&runtime),
-            held_context: Mutex::default(),
+            held_context: Mutex::new(held_context),
             child_questions: ChildQuestions::of(&mut runtime),
             handle: runtime.handle(),
             workspace: runtime.workspace_root().to_path_buf(),

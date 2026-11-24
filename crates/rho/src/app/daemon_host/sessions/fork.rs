@@ -29,13 +29,15 @@
 //! again, and neither are subagents', workflow nodes', or sessions rebound
 //! to another agent with `/agent:`, whose files do not keep everything a
 //! fork would need to run as they do. A session whose worktree the daemon
-//! removed (see `worktree.rs`) forks once a reopen has restored it.
+//! removed (see `worktree.rs`) forks once a reopen has restored it, and an
+//! unloaded fork of it reopens only then too: the worktree is the session's
+//! job's, not the fork's.
 
 use rho_protocol::{ErrorCode, RpcError, SessionForkParams, SessionForkResponse};
 
 use super::{
     grant,
-    open::{config_for_new, open_session, OpenWith, Opening},
+    open::{config_for_new, open_session, OpenWith, OpenedSession, Opening},
     reopen::{parse_session, saved_session, SavedFor},
     Admission, JobId, JobRecord, Keeping, SessionJobRecord, Sessions,
 };
@@ -88,6 +90,12 @@ impl Sessions {
             &job,
         )
         .await?;
+        // Held before the fork is added, so even a prompt from a client that
+        // found it in the job list first sends it.
+        let opened = OpenedSession {
+            held_context: PromptContext::of(MODEL_CONTEXT),
+            ..opened
+        };
         let session = opened.runtime.session_id().clone();
         let record = JobRecord {
             admission: Admission::Immediate,
@@ -104,8 +112,6 @@ impl Sessions {
             )
         };
         let added = self.add(SessionJobRecord::Register(record), opened).await?;
-        // Before the reply names the fork, so its first prompt finds it.
-        added.hold_context(PromptContext::of(MODEL_CONTEXT));
         tracing::info!(%session, %job, %source, "forked session");
         Ok(SessionForkResponse {
             session: session_to_wire(session),

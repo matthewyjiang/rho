@@ -55,6 +55,7 @@ use crate::{
             root_host_tools, AgentBinder, AgentInvocation, AgentRole, BoundAgent, LaunchTools,
         },
         cli_config::{settle_bound_config, ProviderRefreshStatus, SettledConfig},
+        prompt_content::PromptContext,
         session_assembly::SignIn,
         session_runtime::{
             ApprovalPolicy, CacheWarming, ChildAgents, CredentialFailure, HostCapabilities,
@@ -160,6 +161,10 @@ pub(super) struct OpenedSession {
     pub(super) setup: SessionSetup,
     /// The session it forks, for a fork, new or reopened.
     pub(super) fork_of: Option<rho_sdk::SessionId>,
+    /// Prompt context its next model turn sends (see `held_context.rs`):
+    /// none from here; a new fork's opener sets its word to the model
+    /// before adding it.
+    pub(super) held_context: PromptContext,
 }
 
 /// What a session is opened for.
@@ -534,6 +539,7 @@ async fn open_runtime(
         environment,
         setup: requested,
         fork_of,
+        held_context: PromptContext::default(),
     })
 }
 

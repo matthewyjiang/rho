@@ -17,8 +17,8 @@ use crate::{
         PermissionModeOptions, Replay, Seq, SessionDetachedParams, SessionEvent,
         SessionEventParams, SessionId, SessionOptions, StreamId, AUTH_LOGIN_FINISHED,
         AUTH_LOGIN_PROMPT, CONFIG_CHANGED, DAEMON_STATUS, DAEMON_STOP, MODEL_CHANGED, MODEL_LIST,
-        SESSION_ANSWER, SESSION_DETACHED, SESSION_EVENT, SESSION_HOLD, SESSION_LIST, SESSION_NEW,
-        SESSION_PROMPT,
+        SESSION_ANSWER, SESSION_DETACHED, SESSION_EVENT, SESSION_FORK, SESSION_HOLD, SESSION_LIST,
+        SESSION_NEW, SESSION_PROMPT,
     },
     subscription, ClientRole, ConfigChangedParams, ConfigGetParams, ConfigGetResponse,
     ConfigNamespace, ConfigRevision, ConfigWatch, CredentialStoreKind, CredentialStoreStatus,
@@ -450,6 +450,15 @@ async fn dispatch_enforces_the_handshake_and_rejects_unknown_requests() {
                 ),
                 request_with_params(
                     4,
+                    SESSION_FORK,
+                    serde_json::json!({
+                        "session": "s",
+                        "environment": {},
+                        "setup": {"surfaces": "drawn"},
+                    }),
+                ),
+                request_with_params(
+                    5,
                     SESSION_NEW,
                     serde_json::json!({"cwd": "/", "environment": {}}),
                 ),
@@ -458,7 +467,8 @@ async fn dispatch_enforces_the_handshake_and_rejects_unknown_requests() {
                 (id(1), Ok(())),
                 (id(2), Err(Some(ErrorCode::CapabilityRequired))),
                 (id(3), Err(Some(ErrorCode::CapabilityRequired))),
-                (id(4), Err(Some(ErrorCode::MethodNotFound))),
+                (id(4), Err(Some(ErrorCode::CapabilityRequired))),
+                (id(5), Err(Some(ErrorCode::MethodNotFound))),
             ],
         ),
         (

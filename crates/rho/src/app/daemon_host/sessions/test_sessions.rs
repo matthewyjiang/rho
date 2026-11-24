@@ -111,6 +111,7 @@ async fn opened(sessions: &Sessions, root: &TempDir, load: Load) -> LoadedSessio
             environment: SessionEnvironment::default(),
             setup: rho_protocol::SessionSetup::default(),
             fork_of: None,
+            held_context: Default::default(),
         },
         /*auths*/ &[],
         &sessions.wakes,

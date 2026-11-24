@@ -889,8 +889,12 @@ impl Connection {
                         .map(|params| Route::Watch(WatchRequest::Models(params))),
                     method => {
                         let call = ServiceCall::decode(method, params)?;
-                        if let ServiceCall::NewSession(params) = &call {
-                            declared.permit_setup(&params.setup)?;
+                        match &call {
+                            ServiceCall::NewSession(SessionNewParams { setup, .. })
+                            | ServiceCall::ForkSession(SessionForkParams { setup, .. }) => {
+                                declared.permit_setup(setup)?;
+                            }
+                            _ => {}
                         }
                         Ok(Route::Call(call))
                     }
