@@ -25,7 +25,7 @@ path = "src/main.rs"
 rho-sdk = { version = "6.0.1", path = "../rho-sdk" }
 rho-providers = { version = "3.2.0", path = "../rho-providers", default-features = false }
 rho-tools = { version = "2.4.0", path = "../rho-tools", package = "rho-agent-tools" }
-rho-protocol = { version = "1.4.0", path = "../rho-protocol" }
+rho-protocol = { version = "1.5.0", path = "../rho-protocol" }
 rho-a2ui = { version = "0.1.0", path = "../rho-a2ui" }
 tokio = { version = "1", features = ["full"] }
 reqwest = { workspace = true }
