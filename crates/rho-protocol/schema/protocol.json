@@ -1833,6 +1833,77 @@
       ],
       "description": "Why the daemon dropped an attachment."
     },
+    "DetailedSessionSummary": {
+      "description": "One session, as [`SESSION_LIST_DETAILED`] reports it: its\n[`SessionSummary`]'s fields, then the agent it runs as and the session\nthat started it.\n\n# Next major\n\nNEXT_MAJOR(rho-protocol): fold `agent` and `parent` into SessionSummary and remove rho/session/list_detailed (SESSION_LIST_DETAILED, SessionListDetailedResponse, DetailedSessionSummary).\n\nOn the wire it is a [`SessionSummary`] with two more optional fields, so\nfolding them into it changes no row a client reads.",
+      "properties": {
+        "added_dirs": {
+          "description": "The directories the session added beside its workspace, as last\nsaved, those since removed left out.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "agent": {
+          "description": "The agent the session runs as, by id, as\n[`super::SessionNewParams::agent`] takes it: the one a `/agent:` first\nprompt rebound it to, if one did. Absent for the default agent, and\nfor a session saved before agents were recorded.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cwd": {
+          "description": "The workspace the session was saved in, which an attach reopens it\nin.",
+          "type": "string"
+        },
+        "first_user_message": {
+          "description": "The session's first user message on one line, cut to 80 characters,\nwhich an untitled session is labelled with.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "last_user_message": {
+          "description": "The session's last user message, cut like `first_user_message`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The session that started this one through session control, as\n[`super::SessionNewParams::parent`] named it, saved with the session.\nAbsent for a session nothing started that way, or one started before\nthe daemon saved it. Deleting the parent leaves this session listed,\nstill naming it: an id [`SESSION_LIST`] no longer lists."
+        },
+        "session": {
+          "$ref": "#/$defs/SessionId"
+        },
+        "title": {
+          "description": "The session's title; absent until it has one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "updated_at": {
+          "description": "Unix time, in seconds, of the session's last save.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "session",
+        "cwd",
+        "added_dirs",
+        "updated_at"
+      ],
+      "type": "object"
+    },
     "DiffRow": {
       "description": "One row of a compact diff body, with the line numbers for its gutter.",
       "properties": {
@@ -5524,7 +5595,7 @@
       "type": "object"
     },
     "SessionDeleteResponse": {
-      "description": "Result of [`SESSION_DELETE`]: the session's files are gone, with those\nof the sessions it started, such as its subagents', and the daemon has\nunloaded it, detaching its clients as\n[`super::DetachReason::Deleted`]. Its job stays in [`super::JOB_LIST`].\n\nA session whose turn is under way, a settings change waiting or\napplying, background work running, such as a subagent, or a run it started not yet\nfinished is refused as [`crate::ErrorCode::SessionBusy`]; one another\nprocess has open, or one a session it started is open in, as\n[`crate::ErrorCode::SessionInUse`]. Either refusal leaves a loaded\nsession loaded. A session the daemon loaded but that has saved nothing\nyet is unloaded all the same. An id the daemon has not loaded and nothing\nis saved under is [`crate::ErrorCode::SessionNotFound`].",
+      "description": "Result of [`SESSION_DELETE`]: the session's files are gone, with those\nof the sessions it started, such as its subagents', and the daemon has\nunloaded it, detaching its clients as\n[`super::DetachReason::Deleted`]. Its job stays in [`super::JOB_LIST`].\nThe sessions it started through session control\n([`super::SessionNewParams::parent`]) stay, still naming it as\n[`DetailedSessionSummary::parent`].\n\nA session whose turn is under way, a settings change waiting or\napplying, background work running, such as a subagent, or a run it started not yet\nfinished is refused as [`crate::ErrorCode::SessionBusy`]; one another\nprocess has open, or one a session it started is open in, as\n[`crate::ErrorCode::SessionInUse`]. Either refusal leaves a loaded\nsession loaded. A session the daemon loaded but that has saved nothing\nyet is unloaded all the same. An id the daemon has not loaded and nothing\nis saved under is [`crate::ErrorCode::SessionNotFound`].",
       "type": "object"
     },
     "SessionDetachParams": {
@@ -6248,6 +6319,28 @@
       },
       "required": [
         "report"
+      ],
+      "type": "object"
+    },
+    "SessionListDetailedResponse": {
+      "description": "Result of [`SESSION_LIST_DETAILED`]: a page of [`SESSION_LIST`]'s, its\nrows detailed.\n\n# Next major\n\nNEXT_MAJOR(rho-protocol): fold `agent` and `parent` into SessionSummary and remove rho/session/list_detailed (SESSION_LIST_DETAILED, SessionListDetailedResponse, DetailedSessionSummary).",
+      "properties": {
+        "next_cursor": {
+          "description": "The cursor of the next page, as [`SessionListResponse::next_cursor`];\nabsent on the last.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sessions": {
+          "items": {
+            "$ref": "#/$defs/DetailedSessionSummary"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "sessions"
       ],
       "type": "object"
     },
@@ -9443,6 +9536,14 @@
       },
       "result": {
         "$ref": "#/$defs/SessionListResponse"
+      }
+    },
+    "rho/session/list_detailed": {
+      "params": {
+        "$ref": "#/$defs/SessionListParams"
+      },
+      "result": {
+        "$ref": "#/$defs/SessionListDetailedResponse"
       }
     },
     "rho/session/mcp": {
