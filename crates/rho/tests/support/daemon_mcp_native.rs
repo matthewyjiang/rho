@@ -360,10 +360,10 @@ async fn a_started_session_that_asks_waits_for_a_person() {
 }
 
 // Covers: a session's question reaches the session that started it, whose
-// `answer` hands the asker's tool the answers as an ordinary questionnaire
-// result; clients see the request closed by a session and a notice naming
-// it; a session that did not start the asker is refused by the tool and by
-// the daemon alike; a second answer finds the question closed (#1714).
+// `answer` hands the asker's tool the answers as a questionnaire result
+// whose source says a session answered; clients see the request closed by a
+// session; a session that did not start the asker is refused by the tool and
+// by the daemon alike; a second answer finds the question closed (#1714).
 // Owner: session-control answer, daemon `rho/session/answer_question`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_session_that_started_another_answers_its_question() {
@@ -423,48 +423,43 @@ async fn the_session_that_started_another_answers_its_question() {
         answer_with(json!({"color": ["Blue"]})),
     )
     .await;
-    // The request closes, then the notice naming who closed it follows.
     watcher
         .read_until(
             |event| matches!(event, SessionEvent::InputResolved { id, .. } if *id == request),
         )
         .await;
-    watcher.read_until(|_| true).await;
-    let again = ask(
-        &sandbox,
-        &client,
-        &host,
-        &agent,
-        answer_with(json!({"color": ["Red"]})),
-    )
-    .await;
+    let again = client
+        .request::<SessionAnswerQuestion>(&SessionAnswerQuestionParams {
+            session: worker.clone(),
+            request,
+            answer: QuestionAnswer::Decline,
+            by: agent.clone(),
+        })
+        .await
+        .map_err(|error| error.error_code());
     let result: Value = serde_json::from_str(&answer(&host, &worker).await).unwrap();
-    let closed: Vec<_> = watcher.events[watcher.events.len() - 2..]
-        .iter()
-        .map(|(_, event)| event.clone())
-        .collect();
+    let closed = watcher.events.last().map(|(_, event)| event.clone());
 
     assert_eq!(
-        (outsiders, declared, answered, closed, again, result),
         (
-            Err(format!(
-                "session {outsider} did not start session {worker}; only the session that started it may answer its questions"
-            )),
+            outsiders.map_err(drop),
+            declared,
+            answered,
+            closed,
+            again,
+            result
+        ),
+        (
+            // The tool hands the model the daemon's refusal.
+            Err(()),
             Err(Some(ErrorCode::InvalidParams)),
             Ok(json!({})),
-            vec![
-                SessionEvent::InputResolved {
-                    id: request,
-                    resolution: Resolution::AnsweredBySession,
-                },
-                SessionEvent::Notice {
-                    text: format!("session {agent} answered input request {request}"),
-                },
-            ],
-            Err(format!(
-                "input request {request} of session {worker} is no longer open: it was already answered, it timed out, or its turn withdrew it"
-            )),
-            json!({"answers": [{"id": "color", "answer": "Blue"}], "source": "user"}),
+            Some(SessionEvent::InputResolved {
+                id: request,
+                resolution: Resolution::AnsweredBySession,
+            }),
+            Err(Some(ErrorCode::InputNotOpen)),
+            json!({"answers": [{"id": "color", "answer": "Blue"}], "source": "session"}),
         ),
         "log:\n{}",
         sandbox.isolated.daemon_log()

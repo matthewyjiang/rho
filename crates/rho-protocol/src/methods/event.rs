@@ -236,8 +236,10 @@ pub enum SessionEvent {
     },
     /// Something to tell the user that is not part of the conversation.
     Notice { text: String },
-    /// The turn waits for a person to answer `request` with
-    /// [`super::SESSION_ANSWER`] (#1660).
+    /// The turn waits for an answer to `request`: a person's, with
+    /// [`super::SESSION_ANSWER`] (#1660), or for a question anyone but the
+    /// user may answer, the starting session's, with
+    /// [`super::SESSION_ANSWER_QUESTION`].
     InputRequested { request: Box<InputRequest> },
     /// Input request `id` closed: a client answered it, the session that
     /// started this one answered its question, the turn withdrew it, or it

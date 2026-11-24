@@ -44,12 +44,8 @@ impl Action {
                  by a person in rho; a question only by a person or the session that started \
                  the one asking."
             }
-            Self::Answer => {
-                "Answer a question that a session you started asks, as `wait`'s `inputs` show \
-                 it: its `id` as `request`, and `answers` by question id, or `decline: true`. \
-                 Only questions: approvals wait for a person. Answer only what your \
-                 instructions already settle; leave anything else for the person."
-            }
+            // Read only by `rho mcp serve`, which does not serve it.
+            Self::Answer => "Answer a question a session you started asks.",
         }
     }
 

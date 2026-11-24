@@ -107,7 +107,7 @@ All subagents, workflow agent nodes, and sessions started by agents share one bu
 
 An agent can start other sessions with its `sessions` tool. Each started session gets no more permissions than the turn that started it, whoever prompts it later. Its turns use the same budget as subagents.
 
-The starting session can answer a started session's questions with the tool's `answer`. It can't answer that session's approvals or plan approvals, which wait for a person. You can still answer a question first from any client, and the first answer wins.
+The starting session can answer a started session's questions with the tool's `answer`. It can't answer that session's approvals, plan approvals, or MCP servers' requests for input, which wait for a person. You can still answer a question first from any client, and the first answer wins.
 
 A turn that waits for a person, or for sessions it started, gives its slot back while it waits. This prevents deadlocks, but it means the number of running agents can go somewhat above `agent_concurrency`. [MCP server limits](/mcp-server#limits) cap how many sessions an agent can start.
 

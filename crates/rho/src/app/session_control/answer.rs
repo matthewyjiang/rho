@@ -3,53 +3,35 @@
 //! for a person, and the daemon refuses them on this path whatever the
 //! caller.
 //!
-//! The check refuses a session the caller did not start, as the daemon's
-//! job records tell it, so the model learns why before anyone is asked to
-//! approve the call. The daemon checks the same again, and the grant, when
-//! it answers (`rho/session/answer_question`), naming the calling session
-//! as the one that answers.
+//! The daemon alone decides whether the calling session may answer
+//! (`rho/session/answer_question`, naming the calling session as the one
+//! that answers): it refuses a session that did not start the asker, or
+//! whose grant may not act on sessions, and its refusal is the call's
+//! error.
 
 use rho_protocol::{
-    methods::SessionAnswerQuestion, ClientError, ErrorCode, JobKind, JobSummary,
+    methods::SessionAnswerQuestion, ClientError, ErrorCode, InputRequestId, QuestionAnswer,
     SessionAnswerQuestionParams, SessionId,
 };
 
-use super::{
-    jobs_of, AnswerParams, AnswerResult, Caller, ControlError, DaemonError, Refusal, SessionControl,
-};
+use super::{AnswerResult, ControlError, DaemonError, SessionControl};
 
 impl SessionControl {
-    /// Refuses `session` unless `caller`'s session started it.
-    pub(super) async fn check_started(
-        &self,
-        caller: &Caller,
-        session: &SessionId,
-    ) -> Result<(), ControlError> {
-        let jobs = jobs_of(self.daemon_for(caller.daemon)).await?;
-        if started_by(&jobs, session, caller.session.as_ref()) {
-            return Ok(());
-        }
-        Err(not_started(caller, session).into())
-    }
-
-    /// Hands the call's answer to the question it names, as the calling
-    /// session's. An answer that lost, to a person's or the timeout's, or
-    /// to a request the turn withdrew, says the question is no longer open.
+    /// Hands `answer` to question `request` of `session`, as session
+    /// `by`'s. An answer that lost, to a person's or the timeout's, or to a
+    /// request the turn withdrew, says the question is no longer open.
     pub(super) async fn answer(
         &self,
-        caller: &Caller,
-        params: AnswerParams,
+        session: SessionId,
+        request: InputRequestId,
+        answer: QuestionAnswer,
+        by: SessionId,
     ) -> Result<AnswerResult, ControlError> {
-        let answer = params.answer()?;
-        let by = caller
-            .session
-            .clone()
-            .ok_or_else(|| not_started(caller, &params.session))?;
         let answered = self
             .daemon
             .request::<SessionAnswerQuestion>(&SessionAnswerQuestionParams {
-                session: params.session.clone(),
-                request: params.request,
+                session: session.clone(),
+                request,
                 answer,
                 by,
             })
@@ -60,38 +42,10 @@ impl SessionControl {
                 if error.error_code() == Some(ErrorCode::InputNotOpen) =>
             {
                 Err(ControlError::Invalid(format!(
-                    "input request {} of session {} is no longer open: it was already answered, it timed out, or its turn withdrew it",
-                    params.request, params.session
+                    "input request {request} of session {session} is no longer open: it was already answered, it timed out, or its turn withdrew it"
                 )))
             }
             Err(error) => Err(error.into()),
         }
     }
 }
-
-/// Whether `jobs` record that session `by` started `session`: a job of
-/// `session`'s turns whose parent is a job writing `by`. No calling
-/// session started nothing.
-fn started_by(jobs: &[JobSummary], session: &SessionId, by: Option<&SessionId>) -> bool {
-    let Some(by) = by else {
-        return false;
-    };
-    jobs.iter()
-        .filter(|job| job.kind == JobKind::Session && job.session.as_ref() == Some(session))
-        .filter_map(|job| job.parent.as_ref())
-        .any(|parent| {
-            jobs.iter()
-                .any(|job| &job.id == parent && job.session.as_ref() == Some(by))
-        })
-}
-
-fn not_started(caller: &Caller, session: &SessionId) -> Refusal {
-    Refusal::NotStarted {
-        holder: caller.grant.holder.clone(),
-        session: session.clone(),
-    }
-}
-
-#[cfg(test)]
-#[path = "answer_tests.rs"]
-mod tests;

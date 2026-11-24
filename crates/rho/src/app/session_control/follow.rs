@@ -347,8 +347,9 @@ impl Watch {
     /// Whether the session is done: it waits for a person, or no turn runs
     /// and the session settled, so none starts but a prompt, or a subagent
     /// asks a person something. A stream that does not report activity is
-    /// done once its turn stops running. Only a person moves a session that
-    /// waits for input on.
+    /// done once its turn stops running. A session that waits for input
+    /// moves on only once someone answers: a person, or for a question, the
+    /// session that started it.
     fn done(&self) -> bool {
         match self.state {
             JobState::WaitingForInput => true,

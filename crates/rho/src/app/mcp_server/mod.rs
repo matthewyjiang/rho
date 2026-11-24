@@ -15,9 +15,9 @@
 //! HTTP it can never widen a token's.
 //!
 //! No tool answers a session's approvals or questions: the server serves
-//! the core's actions but `answer` (`Action::OVER_MCP`), whose caller must be
-//! the session that started the asker, and an unknown tool name is refused
-//! before anything runs.
+//! the core's actions but `answer` (`tool::served_actions`), whose caller
+//! must be the session that started the asker, and an unknown tool name is
+//! refused before anything runs.
 //!
 //! Over HTTP the server adds webhook watches (`watch/`): `watch` and
 //! `unwatch`, and `notify` on `new` and `prompt`, which have it POST a
@@ -159,8 +159,7 @@ impl ServerHandler for SessionTools {
     ) -> Result<ListToolsResult, ErrorData> {
         let watching = self.transport.watches().is_some();
         let machines = self.servers.load(Arrival::of(&context.meta)).await;
-        let mut tools: Vec<Tool> = Action::OVER_MCP
-            .into_iter()
+        let mut tools: Vec<Tool> = tool::served_actions()
             .map(|action| {
                 let schema = action.input_schema();
                 let schema = if watching {
@@ -191,7 +190,7 @@ impl ServerHandler for SessionTools {
     ) -> Result<CallToolResponse, ErrorData> {
         // Refused before anything runs. Stdio serves no watch tools.
         let tool = match &self.transport {
-            Transport::Stdio { .. } => Action::from_mcp_name(&request.name).map(ServedTool::Core),
+            Transport::Stdio { .. } => ServedTool::core(&request.name),
             Transport::Http { .. } => ServedTool::from_name(&request.name),
         }
         .ok_or_else(|| {

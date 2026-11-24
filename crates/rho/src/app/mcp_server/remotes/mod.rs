@@ -273,7 +273,8 @@ impl Naming {
                 | Action::Steer
                 | Action::Cancel
                 | Action::Wait
-                // Never served over MCP (`Action::OVER_MCP`).
+                // Never served (`tool::served_actions`); named for the match
+                // to stay exhaustive over the core's actions.
                 | Action::Answer,
             )
             | ServedTool::Watch => Self::One,

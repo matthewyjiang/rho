@@ -98,12 +98,12 @@ pub(super) fn job_summary(
         resume_after_restart: _,
         keeping: _,
     } = record;
-    let (kind, session, run, workflow_run) = match subject {
-        JobSubject::Session { session } => (wire::JobKind::Session, Some(session), None, None),
-        JobSubject::Subagent { session, run } => (wire::JobKind::Subagent, session, run, None),
+    let session = subject.session().cloned().map(session_to_wire);
+    let (kind, run, workflow_run) = match subject {
+        JobSubject::Session { .. } => (wire::JobKind::Session, None, None),
+        JobSubject::Subagent { run, .. } => (wire::JobKind::Subagent, run, None),
         JobSubject::Workflow { workflow_run } => (
             wire::JobKind::Workflow,
-            None,
             None,
             Some(workflow_run.to_string()),
         ),
@@ -116,7 +116,7 @@ pub(super) fn job_summary(
         parent: parent.as_ref().map(Into::into),
         grant: (!grant.is_root()).then(|| grant.into()),
         grant_limit: grant_limit.map(Into::into),
-        session: session.map(session_to_wire),
+        session,
         run,
         result_pending: workflow_run
             .as_ref()

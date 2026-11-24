@@ -8,7 +8,7 @@
 
 use std::path::PathBuf;
 
-use rho_protocol::{QuestionAnswer, SessionId};
+use rho_protocol::{Ask, InputRequestId, QuestionAnswer, SessionId};
 use serde_json::{Map, Value};
 
 use super::{
@@ -36,7 +36,14 @@ pub(super) enum CheckedCall {
     Steer(SteerParams),
     Cancel(CancelParams),
     Wait(WaitParams),
-    Answer(AnswerParams),
+    /// `by`, the calling session, gives `answer` to question `request` of
+    /// `session`.
+    Answer {
+        session: SessionId,
+        request: InputRequestId,
+        answer: QuestionAnswer,
+        by: SessionId,
+    },
 }
 
 /// The session a call acts on, for an approval to name.
@@ -49,7 +56,7 @@ pub(crate) struct Target {
     /// The session's workspace, canonical.
     pub(crate) workspace: PathBuf,
     /// What it sends: the first prompt, the prompt's or steer's text, or
-    /// the answer.
+    /// the answer with the request it answers.
     pub(crate) text: Option<String>,
 }
 
@@ -65,7 +72,8 @@ impl SessionControl {
     /// whether its grant allows the action and reaches the session's
     /// workspace, the session is one the daemon knows, a prompt is not
     /// empty, a start or prompt stays within the nesting depth, and an
-    /// answer gives answers or declines, for a session the caller started.
+    /// answer gives answers or declines, from a calling session. Whether
+    /// that session may answer is the daemon's to decide, when it answers.
     pub(crate) async fn check(
         &self,
         caller: &Caller,
@@ -140,17 +148,49 @@ impl SessionControl {
             Action::Answer => {
                 let params: AnswerParams = parse_arguments(action.name(), arguments)?;
                 let answer = params.answer()?;
+                let by = caller.session.clone().ok_or_else(|| {
+                    ControlError::Invalid(
+                        "`answer` needs a calling session: only the session that started another may answer its questions".into(),
+                    )
+                })?;
                 let workspace = self.reach_session(caller, &params.session).await?;
-                self.check_started(caller, &params.session).await?;
-                let target = target(
-                    Some(params.session.clone()),
-                    workspace,
-                    Some(answer_text(&answer)),
-                );
-                (CheckedCall::Answer(params), target)
+                let title = self.question_title(&params.session, params.request).await?;
+                let text = answer_text(&params, title.as_deref(), &answer);
+                let target = target(Some(params.session.clone()), workspace, Some(text));
+                let AnswerParams {
+                    session, request, ..
+                } = params;
+                let call = CheckedCall::Answer {
+                    session,
+                    request,
+                    answer,
+                    by,
+                };
+                (call, target)
             }
         };
         Ok(Checked { call, target })
+    }
+
+    /// The title of question `request` of `session`, as `wait` reports the
+    /// session's open inputs; `None` when it is not an open question, which
+    /// the daemon refuses an answer to.
+    async fn question_title(
+        &self,
+        session: &SessionId,
+        request: InputRequestId,
+    ) -> Result<Option<String>, ControlError> {
+        let now = self.now(session).await?;
+        Ok(now
+            .inputs
+            .into_iter()
+            .find(|input| input.id == request)
+            .and_then(|input| match input.ask {
+                Ask::Question(question) => Some(question.title),
+                // An approval, a plan approval, or a kind a newer protocol
+                // adds: none is a question an answer may name.
+                _ => None,
+            }))
     }
 
     /// Refuses a start or prompt deeper than [`super::Limits::max_depth`].
@@ -166,10 +206,20 @@ impl SessionControl {
     }
 }
 
-/// What an answer sends, for an approval to show: each question's id and
-/// its answers, as `color: Blue; size: S, M`, or that it declines.
-fn answer_text(answer: &QuestionAnswer) -> String {
-    match answer {
+/// What an answer sends, for an approval to show and remember: the request
+/// and session it answers, with the question's `title` when known, then
+/// each question's id and its answers, as `color: Blue; size: S, M`, or
+/// that it declines. Naming the request keeps an approval for this answer
+/// from covering the same answers to a later question.
+fn answer_text(params: &AnswerParams, title: Option<&str>, answer: &QuestionAnswer) -> String {
+    let asked = match title {
+        Some(title) => format!(
+            "request {} of session {} ({title:?})",
+            params.request, params.session
+        ),
+        None => format!("request {} of session {}", params.request, params.session),
+    };
+    let answers = match answer {
         QuestionAnswer::Answers { answers } => answers
             .iter()
             .map(|(question, values)| format!("{question}: {}", values.join(", ")))
@@ -178,5 +228,6 @@ fn answer_text(answer: &QuestionAnswer) -> String {
         QuestionAnswer::Decline => "decline".to_owned(),
         // A kind a newer protocol adds, which this core never builds.
         _ => "answer".to_owned(),
-    }
+    };
+    format!("{asked}: {answers}")
 }

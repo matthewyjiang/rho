@@ -23,7 +23,7 @@ A hello also declares what the connection is for and what it does ([#1780](https
 - `role` is `frontend`, a person's client such as a terminal UI or an editor's agent host, or `agent`, session control that starts, prompts, and watches sessions for a model, as `rho mcp serve` and the `sessions` tool do.
 - `capabilities` lists what the connection does. The only one is `answer`: answering a session's approvals and questions with `rho/session/answer`, holding their timeouts with `rho/session/hold`, and acting on a [surface](#surfaces) with `rho/session/surface_action`. Any of these methods from a connection that did not declare it gets `CapabilityRequired`, and nothing is done.
 
-A role bounds the capabilities a hello may declare: an `agent` may not declare `answer`, and a hello that does gets `InvalidParams` and is not accepted. So a turn that asks waits for a person, whichever agent drives the session. A role is declared, not proven. The socket is private to its user and any of that user's processes may declare any role, so this keeps a client to its part; it does not confine a process that can open the socket itself.
+A role bounds the capabilities a hello may declare: an `agent` may not declare `answer`, and a hello that does gets `InvalidParams` and is not accepted. So an approval or a plan approval waits for a person, whichever agent drives the session. The one exception is a question, which the session that started the asking one may answer ([below](#a-session-answering-another-s-question)). A role is declared, not proven. The socket is private to its user and any of that user's processes may declare any role, so this keeps a client to its part; it does not confine a process that can open the socket itself.
 
 `rho/session/answer`, `rho/session/hold`, and `rho/session/surface_action` are the only methods that need a capability (`answer`, which only a person's `frontend` connection may declare). `rho/session/answer_question` needs none: it takes only a question's answers, from the session that started the asking one, which the daemon checks against its jobs ([below](#a-session-answering-another-s-question)). Every other method is open to both roles, and that is intended: an `agent` connection may change the daemon's settings with `rho/config/set` and the other [settings](#settings) methods, and reconfigure a session with `rho/session/configure`. Agents legitimately tune the sessions they run, and since a role is declared, not authenticated, refusing these methods would stop no process that wanted to call them. Custom per-method permissions for connections may come later, after the beta ([#1810](https://github.com/matthewyjiang/rho/issues/1810)).
 
@@ -214,7 +214,7 @@ After `rho/session/attach`, the daemon sends the session's events as `rho/sessio
 | `card` | A titled card shown outside the conversation, such as a background result: its body as `markdown`, as `plain` text for hosts that show text as is, and its `tone`: `neutral`, `accent`, `success`, `warning`, or `error`. A card that is a notification also carries it as `display`, the [notification](#tool-cards) Rho's TUI draws, with what expanding it shows. |
 | `notice` | Something to tell the user that is not part of the conversation. |
 | `input_requested` | The turn waits for a person: the `request`, with its `id`, what it `ask`s ([below](#answering-a-turn-s-requests)), the `tool_call` that asks, if one does, its `timeout`, if it has one ([below](#timeouts)), and its `asker`, `subagent` for a [subagent's question](#answering-a-turn-s-requests) and absent for the turn's own request. |
-| `input_resolved` | The request `id` closed, with its `resolution`: `answered`, `answered_by_session` (the session that started this one answered its question; a `notice` naming that session follows), `withdrawn`, or `timed_out`. |
+| `input_resolved` | The request `id` closed, with its `resolution`: `answered`, `answered_by_session` (the session that started this one answered its question), `withdrawn`, or `timed_out`. |
 | `input_held` | The request `id`'s timeout stopped; it waits for an answer. |
 | `turn_ended` | Turn `turn` ended, with its `outcome` ([below](#how-a-turn-ends)). |
 | `background` | The session's [background work](#session-background-work) changed: `work`, all of it, replacing the last. |
@@ -299,17 +299,17 @@ Each request's `ask` has a `kind`, which decides the answers it takes; any other
 
 ### A session answering another's question
 
-A session that started another through session control, as the `sessions` tool's `new` does, may answer that session's questions with `rho/session/answer_question`, its own and its subagents'. Approvals and plan approvals are never answered this way: they wait for a person. The method needs no capability, so an `agent` connection may call it.
+A session that started another through session control, as the `sessions` tool's `new` does, may answer that session's questions with `rho/session/answer_question`, its own and its subagents'. Approvals, plan approvals, and an MCP server's request for input (an elicitation), which the server takes as the user's consent, are never answered this way: they wait for a person. The method needs no capability, so an `agent` connection may call it.
 
 Its `answer` takes only what a question takes: `answers` or `decline`, as in `rho/session/answer`. Anything else, such as `allow_once`, is not a valid param. The daemon then refuses with `InvalidParams`, in this order, unless:
 
 1. `by`'s job started `session`'s job: the asking session's job has the job writing `by` as its `parent` in `rho/job/list`.
-2. That job's [grant](#a-session-s-grant) may act on sessions (`write`).
-3. The request is a question.
+2. That job's [grant](#a-session-s-grant) may act on sessions (`write`). Only its access counts, not its `workspaces`: starting the session already took reaching its workspace.
+3. The request is a question, and not an MCP server's elicitation.
 
-A refused answer leaves the request open. A request that is not open gets `InputNotOpen`, and the first answer wins, whether a person's, a session's, or a timeout's. An accepted answer closes the request with `answered_by_session`, followed by a `notice` naming `by`. The asking tool gets the answers as it would a person's.
+A refused answer leaves the request open. A request that is not open gets `InputNotOpen`, and the first answer wins, whether a person's, a session's, or a timeout's. An accepted answer closes the request with `answered_by_session`. The asking tool gets the answers marked as a session's, not the user's: a questionnaire's result records `"source": "session"`.
 
-`by` is declared by the caller, as `rho/session/new`'s `parent` is: the daemon checks it against its jobs, but cannot tell which process sends the request.
+`by` is declared by the caller, as `rho/session/new`'s `parent` is: the daemon checks it against its jobs, but cannot tell which process sends the request. A caller that lies about `by` can answer or decline the open question of any session started through session control, by naming that session's real parent. That is the trust the daemon gives a connection's declared role ([above](#connection)); it never reaches an approval, a plan approval, or an elicitation.
 
 ### Timeouts
 

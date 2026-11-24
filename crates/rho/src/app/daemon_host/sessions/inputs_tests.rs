@@ -14,8 +14,8 @@ use super::{Asker, Inputs};
 use crate::{
     app::{
         daemon_host::sessions::test_events::{
-            approval, approval_withdrawn, plan, question, question_id, question_with_fallback,
-            question_withdrawn,
+            approval, approval_withdrawn, elicitation, plan, question, question_id,
+            question_with_fallback, question_withdrawn,
         },
         session_runtime::{ApprovalId, PlanApprovalId, SessionEvent, TurnControl},
     },
@@ -196,75 +196,102 @@ fn a_request_hands_the_turn_only_the_answers_it_takes() {
     }
 }
 
-// Covers: the path a session answers through takes only a question: an
-// approval and a plan approval are refused, stay open, and reach no turn;
-// a question hands its turn the answers and tells clients that a session
-// answered it, and which; a second answer finds it closed.
+/// One answer a session gives through `answer_question`, and what it gets.
+struct SessionAnswerRow {
+    case: &'static str,
+    asker: Asker,
+    event: SessionEvent,
+    answer: QuestionAnswer,
+    /// What the asker's turn gets, or the code that refuses the answer.
+    expected: Result<TurnControl, ErrorCode>,
+}
+
+// Covers: the path a session answers through takes only a question anyone
+// but the user may answer: an approval, a plan approval, and an MCP
+// server's elicitation (user-only), the turn's own or one a subagent
+// forwards, are refused, stay open for a person, and reach no turn; a
+// question hands its turn the answers as a session's and tells clients a
+// session answered it.
 // Owner: daemon input requests.
 #[test]
 fn only_a_question_takes_a_sessions_answer() {
-    let code = |error: rho_protocol::RpcError| error.error_code();
-    let by = wire::SessionId::new("lead");
     let yes = || QuestionAnswer::Answers {
         answers: [("answer".to_owned(), vec!["yes".to_owned()])].into(),
     };
-    let not_a_question = Err(Some(ErrorCode::InvalidParams));
-    let cases = [
-        (
-            "approval",
-            approval(0),
-            QuestionAnswer::Decline,
-            (not_a_question, not_a_question),
-            None,
-            Vec::new(),
-            true,
-        ),
-        (
-            "plan approval",
-            plan(0),
-            yes(),
-            (not_a_question, not_a_question),
-            None,
-            Vec::new(),
-            true,
-        ),
-        (
-            "question",
-            question("q"),
-            yes(),
-            (Ok(()), Err(Some(ErrorCode::InputNotOpen))),
-            Some(TurnControl::AnswerQuestion {
+    let rows = [
+        // A person alone answers either kind of approval; both stay, since
+        // each is its own request kind that a change could let through alone.
+        SessionAnswerRow {
+            case: "approval",
+            asker: Asker::Turn,
+            event: approval(0),
+            answer: QuestionAnswer::Decline,
+            expected: Err(ErrorCode::InvalidParams),
+        },
+        SessionAnswerRow {
+            case: "plan approval",
+            asker: Asker::Turn,
+            event: plan(0),
+            answer: yes(),
+            expected: Err(ErrorCode::InvalidParams),
+        },
+        SessionAnswerRow {
+            case: "elicitation",
+            asker: Asker::Turn,
+            event: elicitation("q"),
+            answer: yes(),
+            expected: Err(ErrorCode::InvalidParams),
+        },
+        SessionAnswerRow {
+            case: "a subagent's elicitation",
+            asker: Asker::Subagent,
+            event: elicitation("q"),
+            answer: QuestionAnswer::Decline,
+            expected: Err(ErrorCode::InvalidParams),
+        },
+        SessionAnswerRow {
+            case: "question",
+            asker: Asker::Turn,
+            event: question("q"),
+            answer: yes(),
+            expected: Ok(TurnControl::AnswerQuestion {
                 id: question_id("q"),
-                answer: Ok(HostInputResponse::new().answer("answer", ["yes"])),
+                answer: Ok(HostInputResponse::new()
+                    .answer("answer", ["yes"])
+                    .with_source(HostInputSource::Session)),
             }),
-            vec![
-                resolved(InputRequestId(0), Resolution::AnsweredBySession),
-                wire::SessionEvent::Notice {
-                    text: "session lead answered input request 0".into(),
-                },
-            ],
-            false,
-        ),
+        },
     ];
-    for (case, event, answer, refused, delivered, told, still_open) in cases {
+    for row in rows {
         let mut inputs = Inputs::new(/*question_timeout*/ None);
-        let (id, mut turn) = open(&mut inputs, &event);
+        let (control, mut turn) = mpsc::unbounded_channel();
+        inputs.note(row.asker, &control, &row.event, UNIX_EPOCH);
+        let id = opened(&mut inputs).id;
 
-        let first = inputs.answer_question(id, answer, &by).map_err(code);
-        let second = inputs
-            .answer_question(id, QuestionAnswer::Decline, &by)
-            .map_err(code);
+        let result = inputs
+            .answer_question(id, row.answer)
+            .map_err(|error| error.error_code());
         inputs.send_answers();
 
+        let expected = match row.expected {
+            Ok(delivered) => (
+                Ok(()),
+                Some(delivered),
+                vec![resolved(id, Resolution::AnsweredBySession)],
+                false,
+            ),
+            Err(code) => (Err(Some(code)), None, Vec::new(), true),
+        };
         assert_eq!(
             (
-                (first, second),
+                result,
                 turn.try_recv().ok(),
                 inputs.take_events(),
-                inputs.waiting(),
+                inputs.open.contains_key(&id),
             ),
-            (refused, delivered, told, still_open),
-            "{case}"
+            expected,
+            "{}",
+            row.case
         );
     }
 }

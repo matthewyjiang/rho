@@ -18,7 +18,8 @@
 //! The other exception is a question: the session that started the asking
 //! session through session control may answer it with
 //! [`SESSION_ANSWER_QUESTION`], which an agent's connection may call. No
-//! agent ever answers an approval or a plan approval: those wait for a
+//! agent ever answers an approval, a plan approval, or a question only the
+//! user may answer, as an MCP server's elicitation is: those wait for a
 //! person, and [`SESSION_ANSWER`] stays a person's client's alone.
 
 use std::{collections::BTreeMap, fmt, path::PathBuf};
@@ -379,11 +380,12 @@ pub enum Resolution {
     /// Nobody answered or held it by its timeout's deadline, so the daemon
     /// answered it with the timeout's answer.
     TimedOut,
-    /// The session that started the asking session answered the question
-    /// ([`SESSION_ANSWER_QUESTION`]); a [`super::SessionEvent::Notice`]
-    /// naming that session follows. Only a question closes this way. It
-    /// names no session: only the asker's parent may answer, which a client
-    /// already knows from [`super::JobSummary::parent`].
+    /// An answer through [`SESSION_ANSWER_QUESTION`] closed the question.
+    /// Only a question closes this way. The daemon checked that the
+    /// declared answering session started the asking one, but it does not
+    /// prove who sent the answer. It names no session: the daemon accepts
+    /// only the asker's parent, which a client already knows from
+    /// [`super::JobSummary::parent`].
     AnsweredBySession,
     /// A value a newer daemon sends that this crate does not know.
     #[serde(other)]
@@ -452,8 +454,10 @@ pub struct SessionAnswerResponse {}
 /// The daemon answers only a question ([`Ask::Question`], a subagent's
 /// included), only for the session whose job started `session`'s job
 /// ([`super::JobSummary::parent`]), and only while that session's grant
-/// has write access ([`super::GrantAccess::Write`]). Anything else is
-/// refused: an approval or a plan approval with
+/// has write access ([`super::GrantAccess::Write`]); it checks the
+/// grant's access only, not its workspaces, since starting `session`
+/// already took reaching its workspace. Anything else is refused: an
+/// approval, a plan approval, or a question only the user may answer with
 /// [`crate::ErrorCode::InvalidParams`], any other session with
 /// [`crate::ErrorCode::InvalidParams`], and a request that is not open with
 /// [`crate::ErrorCode::InputNotOpen`]. The first answer wins, whoever
@@ -461,8 +465,13 @@ pub struct SessionAnswerResponse {}
 ///
 /// `by` is what the caller declares, as [`super::SessionNewParams::parent`]
 /// and the connection's role are: the daemon checks it against its job
-/// records, but cannot tell who sends it. The method asks for no
-/// capability, so an agent's connection may call it.
+/// records, but cannot tell who sends it. A caller that lies about `by` can
+/// answer or decline the open question of any session started through
+/// session control, by naming that session's real parent: this is the
+/// trust the daemon gives a connection's declared role. It never reaches an
+/// approval, a plan approval, or a question only the user may answer, as
+/// an MCP server's elicitation is. The method asks for no capability, so an
+/// agent's connection may call it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SessionAnswerQuestionParams {
     pub session: SessionId,

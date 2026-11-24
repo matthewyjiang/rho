@@ -286,10 +286,14 @@ rules. Know these before you approve one:
 - An agent can't answer another session's approvals or plan approvals. That
   session waits until a person answers from a Rho frontend.
 - An agent can answer the questions of a session it started, with `answer`.
-  This covers the session's own questionnaires and its subagents'. It can't
-  answer a session it didn't start. A person can still answer first, and the
-  first answer wins. The asking session's transcript says which session
-  answered.
+  This covers the session's own questionnaires and its subagents' questions.
+  It doesn't cover an MCP server's request for input (an elicitation), which
+  waits for a person, and it can't answer a session it didn't start. A person
+  can still answer first, and the first answer wins. Attached clients show
+  that the session that started this one answered, and the questionnaire's
+  saved result records `"source": "session"` instead of `"user"`. The
+  [auto mode](/configuration/permissions) classifier never counts such an
+  answer as your consent.
 
 Limits apply:
 

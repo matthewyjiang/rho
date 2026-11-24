@@ -42,12 +42,12 @@ pub(crate) enum Action {
     Wait,
     /// Answer a question a session the caller started asks. Only a front
     /// end that knows its calling session offers it, as the native
-    /// `sessions` tool does; `rho mcp serve` does not ([`Self::OVER_MCP`]).
+    /// `sessions` tool does.
     Answer,
 }
 
 impl Action {
-    /// Every action, in the order the native `sessions` tool presents them.
+    /// Every action, in the order adapters present them.
     pub(crate) const ALL: [Self; 8] = [
         Self::List,
         Self::Read,
@@ -57,19 +57,6 @@ impl Action {
         Self::Cancel,
         Self::Wait,
         Self::Answer,
-    ];
-
-    /// The actions `rho mcp serve` serves, in the order it lists them: all
-    /// but `answer`. No MCP tool answers a session's input: its caller is no
-    /// session that started the asker.
-    pub(crate) const OVER_MCP: [Self; 7] = [
-        Self::List,
-        Self::Read,
-        Self::New,
-        Self::Prompt,
-        Self::Steer,
-        Self::Cancel,
-        Self::Wait,
     ];
 
     /// The action's name, as adapters expose it.
@@ -88,13 +75,6 @@ impl Action {
 
     pub(crate) fn from_name(name: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|action| action.name() == name)
-    }
-
-    /// The action `rho mcp serve` serves as tool `name`, if any.
-    pub(crate) fn from_mcp_name(name: &str) -> Option<Self> {
-        Self::OVER_MCP
-            .into_iter()
-            .find(|action| action.name() == name)
     }
 
     /// The access the action needs: watching, or acting on a session.
@@ -304,13 +284,6 @@ pub(crate) enum Refusal {
         holder: Holder,
         limit: u32,
         asked: u32,
-    },
-    #[error(
-        "{holder} did not start session {session}; only the session that started it may answer its questions"
-    )]
-    NotStarted {
-        holder: Holder,
-        session: rho_protocol::SessionId,
     },
 }
 
