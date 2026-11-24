@@ -4,7 +4,9 @@ use std::{
 };
 
 use pretty_assertions::assert_eq;
-use rho_protocol::{self as wire, ErrorCode, InputAnswer, InputRequestId, Resolution};
+use rho_protocol::{
+    self as wire, ErrorCode, InputAnswer, InputRequestId, QuestionAnswer, Resolution,
+};
 use rho_sdk::{ApprovalDecision, HostInputRefusal, HostInputResponse, HostInputSource};
 use tokio::sync::mpsc;
 
@@ -190,6 +192,79 @@ fn a_request_hands_the_turn_only_the_answers_it_takes() {
             (inputs.waiting(), inputs.take_events()),
             (refused, told),
             "case {index}"
+        );
+    }
+}
+
+// Covers: the path a session answers through takes only a question: an
+// approval and a plan approval are refused, stay open, and reach no turn;
+// a question hands its turn the answers and tells clients that a session
+// answered it, and which; a second answer finds it closed.
+// Owner: daemon input requests.
+#[test]
+fn only_a_question_takes_a_sessions_answer() {
+    let code = |error: rho_protocol::RpcError| error.error_code();
+    let by = wire::SessionId::new("lead");
+    let yes = || QuestionAnswer::Answers {
+        answers: [("answer".to_owned(), vec!["yes".to_owned()])].into(),
+    };
+    let not_a_question = Err(Some(ErrorCode::InvalidParams));
+    let cases = [
+        (
+            "approval",
+            approval(0),
+            QuestionAnswer::Decline,
+            (not_a_question.clone(), not_a_question.clone()),
+            None,
+            Vec::new(),
+            true,
+        ),
+        (
+            "plan approval",
+            plan(0),
+            yes(),
+            (not_a_question.clone(), not_a_question.clone()),
+            None,
+            Vec::new(),
+            true,
+        ),
+        (
+            "question",
+            question("q"),
+            yes(),
+            (Ok(()), Err(Some(ErrorCode::InputNotOpen))),
+            Some(TurnControl::AnswerQuestion {
+                id: question_id("q"),
+                answer: Ok(HostInputResponse::new().answer("answer", ["yes"])),
+            }),
+            vec![
+                resolved(InputRequestId(0), Resolution::AnsweredBySession),
+                wire::SessionEvent::Notice {
+                    text: "session lead answered input request 0".into(),
+                },
+            ],
+            false,
+        ),
+    ];
+    for (case, event, answer, refused, delivered, told, still_open) in cases {
+        let mut inputs = Inputs::new(/*question_timeout*/ None);
+        let (id, mut turn) = open(&mut inputs, &event);
+
+        let first = inputs.answer_question(id, answer, &by).map_err(code);
+        let second = inputs
+            .answer_question(id, QuestionAnswer::Decline, &by)
+            .map_err(code);
+        inputs.send_answers();
+
+        assert_eq!(
+            (
+                (first, second),
+                turn.try_recv().ok(),
+                inputs.take_events(),
+                inputs.waiting(),
+            ),
+            (refused, delivered, told, still_open),
+            "{case}"
         );
     }
 }

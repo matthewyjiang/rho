@@ -23,7 +23,7 @@ impl ServedTool {
         match name {
             WATCH => Some(Self::Watch),
             UNWATCH => Some(Self::Unwatch),
-            _ => Action::from_name(name).map(Self::Core),
+            _ => Action::from_mcp_name(name).map(Self::Core),
         }
     }
 

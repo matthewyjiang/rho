@@ -8,8 +8,8 @@ use serde::{de::DeserializeOwned, Serialize};
 use serde_json::{Map, Value};
 
 use super::{
-    Action, Caller, CancelParams, ControlError, ListParams, NewParams, PromptParams, ReadParams,
-    SessionControl, SteerParams, WaitParams,
+    Action, AnswerParams, Caller, CancelParams, ControlError, ListParams, NewParams, PromptParams,
+    ReadParams, SessionControl, SteerParams, WaitParams,
 };
 
 impl Action {
@@ -40,8 +40,15 @@ impl Action {
                  and none rho will start for its background work, or to stop for a person's \
                  input, a subagent's question included. Returns its state, how its last turn \
                  ended with its final answer when it did, and a `cursor`; while `done` is false, \
-                 call again with the cursor. Approvals and questions can only be answered by a \
-                 person in rho."
+                 call again with the cursor. Approvals and plan approvals can only be answered \
+                 by a person in rho; a question only by a person or the session that started \
+                 the one asking."
+            }
+            Self::Answer => {
+                "Answer a question that a session you started asks, as `wait`'s `inputs` show \
+                 it: its `id` as `request`, and `answers` by question id, or `decline: true`. \
+                 Only questions: approvals wait for a person. Answer only what your \
+                 instructions already settle; leave anything else for the person."
             }
         }
     }
@@ -56,6 +63,7 @@ impl Action {
             Self::Steer => schema_of::<SteerParams>(),
             Self::Cancel => schema_of::<CancelParams>(),
             Self::Wait => schema_of::<WaitParams>(),
+            Self::Answer => schema_of::<AnswerParams>(),
         }
     }
 }

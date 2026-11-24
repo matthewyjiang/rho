@@ -274,17 +274,22 @@ into the current turn, use [subagents](/subagents) instead.
 These are the same tools the [MCP server](/mcp-server) offers, with the same
 rules. Know these before you approve one:
 
-- `new`, `prompt`, `steer`, and `cancel` ask for approval, and `plan` mode
-  refuses them. `list`, `read`, and `wait` ask for read access to session
-  storage.
+- `new`, `prompt`, `steer`, `cancel`, and `answer` ask for approval, and
+  `plan` mode refuses them. `list`, `read`, and `wait` ask for read access to
+  session storage.
 - A new session runs in its workspace's permission mode, which can be looser
   than the agent's.
 - A new session gets the agent session's environment, including its
   `RHO_TRUST_PROJECT_*` variables. The target workspace's project agents,
   plugins, and hooks load only if those allow it. Starting a session there
   grants it no trust. See [Environment](/daemon#environment).
-- An agent can't answer another session's approvals or questions. That session
-  waits until a person answers from a Rho frontend.
+- An agent can't answer another session's approvals or plan approvals. That
+  session waits until a person answers from a Rho frontend.
+- An agent can answer the questions of a session it started, with `answer`.
+  This covers the session's own questionnaires and its subagents'. It can't
+  answer a session it didn't start. A person can still answer first, and the
+  first answer wins. The asking session's transcript says which session
+  answered.
 
 Limits apply:
 

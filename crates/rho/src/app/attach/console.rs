@@ -479,6 +479,7 @@ fn resolved(resolution: Resolution) -> &'static str {
         Resolution::Answered => "another client answered it",
         Resolution::TimedOut => "the daemon answered it at its timeout",
         Resolution::Withdrawn => "it was withdrawn",
+        Resolution::AnsweredBySession => "the session that started this one answered it",
         // `Resolution` is non-exhaustive.
         _ => "it closed",
     }

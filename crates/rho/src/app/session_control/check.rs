@@ -8,13 +8,13 @@
 
 use std::path::PathBuf;
 
-use rho_protocol::SessionId;
+use rho_protocol::{QuestionAnswer, SessionId};
 use serde_json::{Map, Value};
 
 use super::{
-    canonical, dispatch::parse_arguments, prompt_content, Action, Caller, CancelParams,
-    ControlError, ListParams, NewParams, PromptParams, ReadParams, Refusal, SessionControl,
-    SteerParams, WaitParams,
+    canonical, dispatch::parse_arguments, prompt_content, Action, AnswerParams, Caller,
+    CancelParams, ControlError, ListParams, NewParams, PromptParams, ReadParams, Refusal,
+    SessionControl, SteerParams, WaitParams,
 };
 
 /// A call that passed [`SessionControl::check`].
@@ -36,17 +36,20 @@ pub(super) enum CheckedCall {
     Steer(SteerParams),
     Cancel(CancelParams),
     Wait(WaitParams),
+    Answer(AnswerParams),
 }
 
 /// The session a call acts on, for an approval to name.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Target {
     pub(crate) action: Action,
-    /// The session it prompts, steers, or cancels; `None` for one it starts.
+    /// The session it prompts, steers, cancels, or answers; `None` for one
+    /// it starts.
     pub(crate) session: Option<SessionId>,
     /// The session's workspace, canonical.
     pub(crate) workspace: PathBuf,
-    /// What it sends: the first prompt, or the prompt's or steer's text.
+    /// What it sends: the first prompt, the prompt's or steer's text, or
+    /// the answer.
     pub(crate) text: Option<String>,
 }
 
@@ -61,7 +64,8 @@ impl SessionControl {
     /// Parses `arguments` for `action` and checks them for `caller`:
     /// whether its grant allows the action and reaches the session's
     /// workspace, the session is one the daemon knows, a prompt is not
-    /// empty, and a start or prompt stays within the nesting depth.
+    /// empty, a start or prompt stays within the nesting depth, and an
+    /// answer gives answers or declines, for a session the caller started.
     pub(crate) async fn check(
         &self,
         caller: &Caller,
@@ -133,6 +137,18 @@ impl SessionControl {
                 let target = target(Some(params.session.clone()), workspace, None);
                 (CheckedCall::Cancel(params), target)
             }
+            Action::Answer => {
+                let params: AnswerParams = parse_arguments(action.name(), arguments)?;
+                let answer = params.answer()?;
+                let workspace = self.reach_session(caller, &params.session).await?;
+                self.check_started(caller, &params.session).await?;
+                let target = target(
+                    Some(params.session.clone()),
+                    workspace,
+                    Some(answer_text(&answer)),
+                );
+                (CheckedCall::Answer(params), target)
+            }
         };
         Ok(Checked { call, target })
     }
@@ -147,5 +163,20 @@ impl SessionControl {
             });
         }
         Ok(())
+    }
+}
+
+/// What an answer sends, for an approval to show: each question's id and
+/// its answers, as `color: Blue; size: S, M`, or that it declines.
+fn answer_text(answer: &QuestionAnswer) -> String {
+    match answer {
+        QuestionAnswer::Answers { answers } => answers
+            .iter()
+            .map(|(question, values)| format!("{question}: {}", values.join(", ")))
+            .collect::<Vec<_>>()
+            .join("; "),
+        QuestionAnswer::Decline => "decline".to_owned(),
+        // A kind a newer protocol adds, which this core never builds.
+        _ => "answer".to_owned(),
     }
 }

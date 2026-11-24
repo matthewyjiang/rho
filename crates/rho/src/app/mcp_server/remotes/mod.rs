@@ -272,7 +272,9 @@ impl Naming {
                 | Action::Prompt
                 | Action::Steer
                 | Action::Cancel
-                | Action::Wait,
+                | Action::Wait
+                // Never served over MCP (`Action::OVER_MCP`).
+                | Action::Answer,
             )
             | ServedTool::Watch => Self::One,
         }

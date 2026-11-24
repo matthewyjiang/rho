@@ -29,7 +29,8 @@ pub(crate) const DEFAULT_MAX_SESSIONS: u32 = crate::config::DEFAULT_AGENT_CONCUR
 
 /// One session-control action. Each maps one to one onto the protocol:
 /// `rho/job/list`, an attach's replay, `rho/session/new` and `prompt`,
-/// `steer`, `cancel`, and an attach followed until the turn ends.
+/// `steer`, `cancel`, an attach followed until the turn ends, and
+/// `rho/session/answer_question`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Action {
     List,
@@ -39,11 +40,29 @@ pub(crate) enum Action {
     Steer,
     Cancel,
     Wait,
+    /// Answer a question a session the caller started asks. Only a front
+    /// end that knows its calling session offers it, as the native
+    /// `sessions` tool does; `rho mcp serve` does not ([`Self::OVER_MCP`]).
+    Answer,
 }
 
 impl Action {
-    /// Every action, in the order adapters present them.
-    pub(crate) const ALL: [Self; 7] = [
+    /// Every action, in the order the native `sessions` tool presents them.
+    pub(crate) const ALL: [Self; 8] = [
+        Self::List,
+        Self::Read,
+        Self::New,
+        Self::Prompt,
+        Self::Steer,
+        Self::Cancel,
+        Self::Wait,
+        Self::Answer,
+    ];
+
+    /// The actions `rho mcp serve` serves, in the order it lists them: all
+    /// but `answer`. No MCP tool answers a session's input: its caller is no
+    /// session that started the asker.
+    pub(crate) const OVER_MCP: [Self; 7] = [
         Self::List,
         Self::Read,
         Self::New,
@@ -63,6 +82,7 @@ impl Action {
             Self::Steer => "steer",
             Self::Cancel => "cancel",
             Self::Wait => "wait",
+            Self::Answer => "answer",
         }
     }
 
@@ -70,11 +90,18 @@ impl Action {
         Self::ALL.into_iter().find(|action| action.name() == name)
     }
 
+    /// The action `rho mcp serve` serves as tool `name`, if any.
+    pub(crate) fn from_mcp_name(name: &str) -> Option<Self> {
+        Self::OVER_MCP
+            .into_iter()
+            .find(|action| action.name() == name)
+    }
+
     /// The access the action needs: watching, or acting on a session.
     pub(crate) fn needs(self) -> Access {
         match self {
             Self::List | Self::Read | Self::Wait => Access::Read,
-            Self::New | Self::Prompt | Self::Steer | Self::Cancel => Access::Write,
+            Self::New | Self::Prompt | Self::Steer | Self::Cancel | Self::Answer => Access::Write,
         }
     }
 }
@@ -277,6 +304,13 @@ pub(crate) enum Refusal {
         holder: Holder,
         limit: u32,
         asked: u32,
+    },
+    #[error(
+        "{holder} did not start session {session}; only the session that started it may answer its questions"
+    )]
+    NotStarted {
+        holder: Holder,
+        session: rho_protocol::SessionId,
     },
 }
 

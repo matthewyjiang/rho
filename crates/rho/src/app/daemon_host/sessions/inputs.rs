@@ -4,8 +4,10 @@
 //! client.
 //!
 //! Whoever asks opens and withdraws requests through its events; any client
-//! answers one with `rho/session/answer`. The first answer takes the
-//! request out, so a later one finds it gone. Nothing answers a request
+//! answers one with `rho/session/answer`, and the session that started this
+//! one may answer a question, never an approval, with
+//! `rho/session/answer_question` (see `answer_question`). The first answer
+//! takes the request out, so a later one finds it gone. Nothing answers a request
 //! because a client left: one with nobody attached stays open until someone
 //! answers it or the turn withdraws it.
 //!
@@ -20,7 +22,9 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use rho_protocol::{self as wire, ErrorCode, InputAnswer, InputRequestId, Resolution, RpcError};
+use rho_protocol::{
+    self as wire, ErrorCode, InputAnswer, InputRequestId, QuestionAnswer, Resolution, RpcError,
+};
 use rho_sdk::{
     ApprovalDecision, HostInputId, HostInputRefusal, HostInputRequest, HostInputResponse,
     HostInputSource, ToolCallId,
@@ -310,18 +314,54 @@ impl Inputs {
         id: InputRequestId,
         answer: InputAnswer,
     ) -> Result<(), RpcError> {
-        let Entry::Occupied(open) = self.open.entry(id) else {
-            return Err(not_open(id));
+        let open = self.open.get(&id).ok_or_else(|| not_open(id))?;
+        let answer = control_for(&open.waiting, answer)?;
+        self.hand_over(id, answer, Resolution::Answered)
+    }
+
+    /// Takes question `id` out with `answer` from session `by`, the one
+    /// that started this session, as [`Self::answer`] does a client's, and
+    /// tells clients which session answered. Only a question takes it: an
+    /// approval or a plan approval waits for a person, so it is refused and
+    /// left open. The caller checks that `by` may answer.
+    pub(super) fn answer_question(
+        &mut self,
+        id: InputRequestId,
+        answer: QuestionAnswer,
+        by: &wire::SessionId,
+    ) -> Result<(), RpcError> {
+        let open = self.open.get(&id).ok_or_else(|| not_open(id))?;
+        let answer = match &open.waiting {
+            Waiting::Question { .. } => control_for(&open.waiting, answer.into())?,
+            Waiting::Approval(_) | Waiting::Plan { .. } => {
+                return Err(invalid(format!(
+                    "input request {id} is not a question: only a person answers an approval or a plan approval"
+                )))
+            }
         };
-        let answer = control_for(&open.get().waiting, answer)?;
-        let Open { control, .. } = open.remove();
+        self.hand_over(id, answer, Resolution::AnsweredBySession)?;
+        self.events.push(wire::SessionEvent::Notice {
+            text: format!("session {by} answered input request {id}"),
+        });
+        Ok(())
+    }
+
+    /// Takes open request `id` out, resolved as `resolution`, for
+    /// [`Self::send_answers`] to hand `answer` to whoever waits for it.
+    fn hand_over(
+        &mut self,
+        id: InputRequestId,
+        answer: TurnControl,
+        resolution: Resolution,
+    ) -> Result<(), RpcError> {
+        let Open { control, .. } = self.open.remove(&id).ok_or_else(|| not_open(id))?;
         // The model turn that asked ended, so nobody waits for the request;
         // its withdrawal may still be on the way, and will find it gone.
         if control.is_closed() {
             self.events.push(resolved(id, Resolution::Withdrawn));
             return Err(not_open(id));
         }
-        self.events.push(resolved(id, Resolution::Answered));
+        self.events.push(resolved(id, resolution));
         self.answers.push((control, answer));
         Ok(())
     }
