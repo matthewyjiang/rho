@@ -244,8 +244,10 @@ pub enum Command {
         #[arg(long, conflicts_with_all = ["output_file", "output", "max_steps", "no_save"])]
         detach: bool,
         /// Run in a new git worktree of the current directory's repository,
-        /// on a new branch from its HEAD, so runs in one repository cannot
-        /// overwrite each other's edits. The worktree is made under the rho
+        /// on a new branch from `origin`'s default branch, fetched first, or
+        /// from its HEAD when there is none, it cannot be fetched in time, or
+        /// `git.worktree_from_remote` is off, so runs in one repository
+        /// cannot overwrite each other's edits. The worktree is made under the rho
         /// home, and the run works at the current directory's place in it.
         /// The daemon removes it once it is clean and merged, nothing has
         /// worked in it for a day, and no process works in it; the branch

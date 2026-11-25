@@ -46,7 +46,8 @@ Options:
                             runs, and exit once its prompt is saved, printing the
                             session's id
       --worktree            Run in a new git worktree of the current directory's
-                            repository, on a new branch from its HEAD
+                            repository, on a new branch from `origin`'s
+                            default branch, fetched first, or from its HEAD
       --no-subagents        Do not expose the delegated-agent tools (agent/agents) to the model
       --agent <ID>          Select the agent definition used for this session or automation run
   -h, --help                Print help (see more with '--help')

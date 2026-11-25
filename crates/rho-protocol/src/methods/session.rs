@@ -191,12 +191,17 @@ pub struct SessionNewParams {
     /// Whether the session works in a git worktree of its own (#1673), so
     /// sessions in one repository cannot overwrite each other's edits. The
     /// daemon adds a worktree of the repository `cwd` is in, on a new
-    /// branch from that repository's `HEAD`, under its rho home, and opens
-    /// the session at `cwd`'s place in it. A `cwd` in no git repository,
-    /// or one git cannot add a worktree of, is
-    /// [`crate::ErrorCode::SessionOpenFailed`]. The daemon never removes
-    /// the worktree; [`SessionNewResponse::worktree`] and
-    /// [`super::JobSummary::worktree`] name it.
+    /// branch, under its rho home, and opens the session at `cwd`'s place in
+    /// it. The branch starts from the `origin` remote's default branch,
+    /// fetched first, or from the repository's `HEAD` when there is no
+    /// `origin`, it cannot be fetched in time, or the daemon's
+    /// `git.worktree_from_remote` is off. A `cwd` in no git repository, or
+    /// one git cannot add a worktree of, is
+    /// [`crate::ErrorCode::SessionOpenFailed`]. The daemon removes the
+    /// worktree once it is clean, merged, and unused, keeping its branch,
+    /// and adds it back when the session reopens ([`super::WORKTREE_PRUNE`]);
+    /// [`SessionNewResponse::worktree`] and [`super::JobSummary::worktree`]
+    /// name it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub worktree: bool,
 }
