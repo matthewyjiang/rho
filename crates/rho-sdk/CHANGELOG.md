@@ -1,5 +1,12 @@
 # Changelog
 
+## [6.1.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v6.0.1...rho-sdk-v6.1.0) (2026-11-25)
+
+
+### Features
+
+* **daemon:** let a session answer the questions of sessions it started ([#2023](https://github.com/matthewyjiang/rho/issues/2023)) ([e23a34a](https://github.com/matthewyjiang/rho/commit/e23a34ac172b761113ecb792a84fcadcacdd0150))
+
 ## [6.0.1](https://github.com/matthewyjiang/rho/compare/rho-sdk-v6.0.0...rho-sdk-v6.0.1) (2026-11-16)
 
 

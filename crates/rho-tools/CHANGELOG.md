@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.5.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v2.4.0...rho-agent-tools-v2.5.0) (2026-11-25)
+
+
+### Features
+
+* **daemon:** fork a saved session into a supervised side session ([#2017](https://github.com/matthewyjiang/rho/issues/2017)) ([166fa2b](https://github.com/matthewyjiang/rho/commit/166fa2bcf0899bd7f9626ef2cecff63123de32cb))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 6.0.1 to 6.1.0
+
 ## [2.4.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v2.3.0...rho-agent-tools-v2.4.0) (2026-11-24)
 
 

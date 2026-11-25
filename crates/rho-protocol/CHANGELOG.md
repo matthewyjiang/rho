@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.5.0](https://github.com/matthewyjiang/rho/compare/rho-protocol-v1.4.0...rho-protocol-v1.5.0) (2026-11-25)
+
+
+### Features
+
+* **daemon:** fork a saved session into a supervised side session ([#2017](https://github.com/matthewyjiang/rho/issues/2017)) ([166fa2b](https://github.com/matthewyjiang/rho/commit/166fa2bcf0899bd7f9626ef2cecff63123de32cb))
+* **daemon:** keep session marks on the daemon and mark a session done when its pull request merges ([#2027](https://github.com/matthewyjiang/rho/issues/2027)) ([eba0536](https://github.com/matthewyjiang/rho/commit/eba05366f69ff9a7fe2e3abb012a3cdffe8f72f9))
+* **daemon:** let a person choose the permission mode and model of the sessions a session starts ([#2025](https://github.com/matthewyjiang/rho/issues/2025)) ([af3f686](https://github.com/matthewyjiang/rho/commit/af3f686b67749218a774f614f46ff11906b6519a))
+* **daemon:** let a session answer the questions of sessions it started ([#2023](https://github.com/matthewyjiang/rho/issues/2023)) ([e23a34a](https://github.com/matthewyjiang/rho/commit/e23a34ac172b761113ecb792a84fcadcacdd0150))
+* **daemon:** mark a session done when all its linked pull requests have merged, watched or not ([#2029](https://github.com/matthewyjiang/rho/issues/2029)) ([8913bf5](https://github.com/matthewyjiang/rho/commit/8913bf54e07bd84e97873ea9054b36c889385a9f))
+* **daemon:** replay a saved compaction as a compaction event ([#2033](https://github.com/matthewyjiang/rho/issues/2033)) ([07f5560](https://github.com/matthewyjiang/rho/commit/07f55600aeda3c399be28b31aa1e0ef0f861195a))
+* **daemon:** wake a session when a session it started ends or asks a question ([#2026](https://github.com/matthewyjiang/rho/issues/2026)) ([efff3d7](https://github.com/matthewyjiang/rho/commit/efff3d7ffdf86c1be5bb1b54b048583f424c65cb))
+* **protocol:** list sessions with their agent and the session that started them ([#2024](https://github.com/matthewyjiang/rho/issues/2024)) ([910fd2a](https://github.com/matthewyjiang/rho/commit/910fd2a596158a188e75ab48cba422e056594780))
+
+
+### Bug Fixes
+
+* **agents:** stop rho contradicting a lead about worktrees, delegation, and its tools ([#2035](https://github.com/matthewyjiang/rho/issues/2035)) ([7a00817](https://github.com/matthewyjiang/rho/commit/7a00817fba37744827285d54deafac1d64c4777c))
+
 ## [1.4.0](https://github.com/matthewyjiang/rho/compare/rho-protocol-v1.3.0...rho-protocol-v1.4.0) (2026-11-24)
 
 
