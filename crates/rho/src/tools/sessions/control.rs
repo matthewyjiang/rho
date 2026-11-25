@@ -164,12 +164,11 @@ pub(super) async fn prepare<'a>(
 /// Adds the core's actions to the history `schema`, with each action's
 /// arguments as the core's own schema has them, so the tool and `rho mcp
 /// serve` take the same arguments. An argument several actions take names
-/// each action's use in its description, once per distinct text: actions
-/// that describe it alike share one `For a, b: ...` clause.
+/// each action's use in its description, as [`describe`] words it.
 pub(super) fn extend_schema(schema: &mut Value) {
-    // Each argument's distinct descriptions, in first-use order, with the
-    // actions that give each one.
-    let mut uses: BTreeMap<String, Vec<(String, Vec<&'static str>)>> = BTreeMap::new();
+    // Each argument's descriptions, by the actions that give them, in
+    // action order.
+    let mut uses: BTreeMap<String, Vec<(&'static str, String)>> = BTreeMap::new();
     for action in Action::ALL {
         let mut own = Value::Object(action.input_schema());
         let defs = own.get("$defs").cloned().unwrap_or(Value::Null);
@@ -186,16 +185,9 @@ pub(super) fn extend_schema(schema: &mut Value) {
             continue;
         };
         for (key, mut argument) in std::mem::take(arguments) {
-            // The clauses below replace the core's own description.
-            let said = argument
-                .as_object_mut()
-                .and_then(|fields| fields.remove("description"));
-            if let Some(Value::String(said)) = said {
-                let clauses = uses.entry(key.clone()).or_default();
-                match clauses.iter_mut().find(|(text, _)| *text == said) {
-                    Some((_, actions)) => actions.push(name),
-                    None => clauses.push((said, vec![name])),
-                }
+            // Taken in place, so the merged description keeps its slot.
+            if let Some(Value::String(said)) = argument.get_mut("description").map(Value::take) {
+                uses.entry(key.clone()).or_default().push((name, said));
             }
             let properties = &mut schema["properties"];
             if properties.get(&key).is_none() {
@@ -203,19 +195,34 @@ pub(super) fn extend_schema(schema: &mut Value) {
             }
         }
     }
-    for (key, clauses) in uses {
-        let said = clauses
-            .iter()
-            .map(|(text, actions)| format!("For {}: {text}", actions.join(", ")))
-            .collect::<Vec<_>>()
-            .join(" ");
+    for (key, uses) in uses {
         let known = &mut schema["properties"][&key];
-        known["description"] = json!(match known["description"].as_str() {
-            None | Some("") => said,
-            Some(before) if before.ends_with('.') => format!("{before} {said}"),
-            Some(before) => format!("{before}. {said}"),
-        });
+        known["description"] = json!(describe(known["description"].as_str(), &uses));
     }
+}
+
+/// An argument's merged description: `before`, the history's own, then one
+/// `For a, b: text` clause per distinct text in `uses` (action, text) pairs,
+/// naming every action that gives that text, in first-use order.
+fn describe(before: Option<&str>, uses: &[(&str, String)]) -> String {
+    let mut clauses: Vec<(Vec<&str>, &str)> = Vec::new();
+    for (action, text) in uses {
+        match clauses.iter_mut().find(|(_, said)| said == text) {
+            Some((actions, _)) => actions.push(action),
+            None => clauses.push((vec![action], text)),
+        }
+    }
+    clauses
+        .into_iter()
+        .map(|(actions, text)| format!("For {}: {text}", actions.join(", ")))
+        .fold(
+            before.unwrap_or_default().to_owned(),
+            |said, clause| match said.as_str() {
+                "" => clause,
+                before if before.ends_with('.') => format!("{before} {clause}"),
+                before => format!("{before}. {clause}"),
+            },
+        )
 }
 
 /// Replaces each `{"$ref": "#/$defs/Name"}` in `value` with `Name` from
