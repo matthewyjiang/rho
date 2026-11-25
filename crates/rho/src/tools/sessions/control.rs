@@ -186,7 +186,8 @@ pub(super) fn extend_schema(schema: &mut Value) {
         };
         for (key, mut argument) in std::mem::take(arguments) {
             // Taken in place, so the merged description keeps its slot.
-            if let Some(Value::String(said)) = argument.get_mut("description").map(Value::take) {
+            if let Some(Value::String(said)) = argument.get_mut("description") {
+                let said = std::mem::take(said);
                 uses.entry(key.clone()).or_default().push((name, said));
             }
             let properties = &mut schema["properties"];
@@ -195,9 +196,9 @@ pub(super) fn extend_schema(schema: &mut Value) {
             }
         }
     }
-    for (key, uses) in uses {
+    for (key, pairs) in uses {
         let known = &mut schema["properties"][&key];
-        known["description"] = json!(describe(known["description"].as_str(), &uses));
+        known["description"] = json!(describe(known["description"].as_str(), &pairs));
     }
 }
 
@@ -217,10 +218,10 @@ fn describe(before: Option<&str>, uses: &[(&str, String)]) -> String {
         .map(|(actions, text)| format!("For {}: {text}", actions.join(", ")))
         .fold(
             before.unwrap_or_default().to_owned(),
-            |said, clause| match said.as_str() {
+            |so_far, clause| match so_far.as_str() {
                 "" => clause,
-                before if before.ends_with('.') => format!("{before} {clause}"),
-                before => format!("{before}. {clause}"),
+                so_far if so_far.ends_with('.') => format!("{so_far} {clause}"),
+                so_far => format!("{so_far}. {clause}"),
             },
         )
 }
