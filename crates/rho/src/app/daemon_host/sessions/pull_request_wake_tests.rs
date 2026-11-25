@@ -257,3 +257,47 @@ async fn one_batch_of_news_reopens_an_unloaded_session_once() {
         ]
     );
 }
+
+// Covers: the daemon forgets the pull requests of a session it has not
+// loaded and nothing is saved under, as after `rho sessions rm` deleted it
+// while unloaded, and keeps those of a saved session it unloaded and of a
+// loaded one that has saved nothing yet, which a client may just have
+// linked one to. Otherwise a deleted session's watches are read for good,
+// or a new session loses its pull requests.
+// Owner: daemon pull request wake of unloaded sessions.
+#[tokio::test]
+async fn a_session_deleted_behind_the_daemon_loses_its_pull_requests() {
+    let home = TempDir::new().unwrap();
+    // The home's `sessions` directory, where the daemon finds saved sessions.
+    let saved_root = tempfile::Builder::new()
+        .prefix("sessions")
+        .rand_bytes(0)
+        .tempdir_in(home.path())
+        .unwrap();
+    // Outside the home: the daemon finds nothing saved there, as after a
+    // delete.
+    let deleted_root = TempDir::new().unwrap();
+    let forge = ScriptedForge::new();
+    let sessions = Sessions::new(
+        Arc::new(JobRegistry::open(JobStore::open(home.path()).unwrap())),
+        home.path(),
+        forge.clone(),
+    );
+    let saved = load(&sessions, &saved_root, Load::Saved).await;
+    let deleted = load(&sessions, &deleted_root, Load::Saved).await;
+    let unsaved = load(&sessions, &saved_root, Load::Unsaved).await;
+    for session in [&saved, &deleted, &unsaved] {
+        let inbox = sessions.pull_requests.inbox(&session.id, saved_root.path());
+        watch_for_tests(&forge, &inbox).await;
+    }
+    // As the idle unload took them.
+    for session in [&saved, &deleted] {
+        sessions.loaded().remove(&session.id);
+    }
+
+    sessions.forget_deleted_pull_requests().await;
+
+    let service = sessions.pull_requests.service();
+    let watching = [&saved, &deleted, &unsaved].map(|session| service.watches(&session.id));
+    assert_eq!(watching, [true, false, true]);
+}

@@ -263,9 +263,10 @@ impl Sessions {
         if unloaded.is_empty() {
             return workspaces;
         }
+        let rho_home = self.rho_home.clone();
         let saved = store_blocking(
             "look up the sessions a pull request list named",
-            move || StoredSession::workspaces_of(&unloaded),
+            move || Ok(StoredSession::workspaces_of(&rho_home, &unloaded)),
         )
         .await;
         let saved = match saved {

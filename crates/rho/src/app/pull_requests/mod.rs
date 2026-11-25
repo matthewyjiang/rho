@@ -48,6 +48,7 @@ pub(crate) use self::{
         PullRequestError, PullRequestInbox, Unlinked, Unwatched, Watched,
     },
     model::{Mergeable, PrState, Rollup},
+    poller::WATCH_POLL,
     record::LinkOrigin,
     service::{unix_ms, AllMerged, PullRequests, ShowRead, ShowTarget},
     state::Gate,

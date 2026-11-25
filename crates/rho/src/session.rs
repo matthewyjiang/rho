@@ -330,12 +330,14 @@ impl Session {
         SessionStore::workspace_of(&session_root()?, id)
     }
 
-    /// [`Self::workspace_of`] of each of `ids`, in order, each with its own
-    /// failure, reconciling the index at most once for all of them.
+    /// [`Self::workspace_of`] of each of `ids`, in order, among the sessions
+    /// `rho_home` keeps, each with its own failure, reconciling the index at
+    /// most once for all of them.
     pub(crate) fn workspaces_of(
+        rho_home: &Path,
         ids: &[String],
-    ) -> anyhow::Result<Vec<anyhow::Result<Option<PathBuf>>>> {
-        Ok(SessionStore::workspaces_of(&session_root()?, ids))
+    ) -> Vec<anyhow::Result<Option<PathBuf>>> {
+        SessionStore::workspaces_of(&layout::session_root_in(rho_home), ids)
     }
 
     /// Opens the session saved under exactly `id` in `cwd`'s workspace, with

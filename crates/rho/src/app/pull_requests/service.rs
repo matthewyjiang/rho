@@ -562,6 +562,12 @@ impl PullRequests {
             .map_or(0, |entry| entry.record.news_generation())
     }
 
+    /// Every session the service keeps anything of, in no particular
+    /// order: links, watches, news, or a turn that asked for news.
+    pub(crate) fn sessions(&self) -> Vec<SessionId> {
+        self.0.state().sessions.keys().cloned().collect()
+    }
+
     /// Whether `session` watches any pull request.
     pub(crate) fn watches(&self, session: &SessionId) -> bool {
         self.0

@@ -22,6 +22,11 @@
 //! stops. It holds the client's environment, credentials included, so it
 //! lives only here, in memory, is never logged, and has no `Debug`. After a
 //! daemon restart there is none: news waits for the next attach.
+//!
+//! A session's pull requests go when it is deleted: at once when the
+//! daemon deletes it, and otherwise at the daemon's next check for sessions
+//! it has not loaded and nothing is saved under (see
+//! [`Sessions::forget_deleted_pull_requests`]).
 
 use std::{
     collections::HashMap,
@@ -31,12 +36,15 @@ use std::{
 
 use rho_sdk::SessionId;
 
-use super::{open::OpenWith, LoadedSession, Sessions};
+use super::{open::OpenWith, store::store_blocking, LoadedSession, Sessions};
 #[cfg(test)]
 use crate::app::pull_requests::ScriptedForge;
-use crate::app::{
-    daemon_host::wire::session_to_wire,
-    pull_requests::{unix_ms, Forge, PullRequestInbox, PullRequests},
+use crate::{
+    app::{
+        daemon_host::wire::session_to_wire,
+        pull_requests::{unix_ms, Forge, PullRequestInbox, PullRequests, WATCH_POLL},
+    },
+    session::Session as StoredSession,
 };
 
 /// The daemon's pull request service, owned by [`Sessions`], and what it
@@ -125,17 +133,85 @@ impl Sessions {
     /// Polls the pull requests that are linked to sessions or that clients
     /// look at, wakes the unloaded sessions that get news, marks done the
     /// sessions whose linked pull requests have all merged (see `marks`),
-    /// and tells loaded sessions' clients their pull requests as they
-    /// change, until the daemon starts stopping; then drops every kept
-    /// opening.
+    /// tells loaded sessions' clients their pull requests as they change,
+    /// and forgets those of sessions deleted behind the daemon's back,
+    /// until the daemon starts stopping; then drops every kept opening.
     pub(in crate::app::daemon_host) async fn poll_pull_requests(&self) {
         tokio::join!(
             self.pull_requests.service.run(self.stopping.cancelled()),
             self.wake_unloaded(),
             self.mark_merged_done(),
             self.report_pull_requests(unix_ms),
+            self.forget_deleted_sessions(),
         );
         self.pull_requests.kept().clear();
+    }
+
+    /// Runs [`Self::forget_deleted_pull_requests`] at once, which at the
+    /// daemon's start is before the poll loop's first period ends, and then
+    /// every [`WATCH_POLL`], until the daemon starts stopping. As often as a
+    /// watch is read, so a deleted session's watches are read about once
+    /// more at most.
+    async fn forget_deleted_sessions(&self) {
+        loop {
+            self.forget_deleted_pull_requests().await;
+            tokio::select! {
+                () = self.stopping.cancelled() => return,
+                () = tokio::time::sleep(WATCH_POLL) => {}
+            }
+        }
+    }
+
+    /// Forgets the pull requests of each session the daemon has not loaded
+    /// and nothing is saved under: one another process deleted, such as
+    /// `rho sessions rm` or the terminal UI's session manager, which refuse
+    /// only a session the daemon has loaded; a session deleted with its
+    /// parent; or one that had saved nothing when an earlier daemon
+    /// stopped. Otherwise its watches and links would be read, and its news
+    /// would try to wake it, for good.
+    ///
+    /// A loaded session keeps them though it saved nothing yet, as a new
+    /// one a client linked a pull request to before its first prompt. One
+    /// not loaded has saved, else the idle unload discarded it with its
+    /// pull requests, and a session gone from the store stays gone: ids
+    /// are never reused, so no reopen lock is needed.
+    async fn forget_deleted_pull_requests(&self) {
+        let mut unloaded = self.pull_requests.service.sessions();
+        {
+            let loaded = self.loaded();
+            unloaded.retain(|id| !loaded.contains_key(id));
+        }
+        if unloaded.is_empty() {
+            return;
+        }
+        let ids: Vec<String> = unloaded.iter().map(|id| id.as_str().to_owned()).collect();
+        let rho_home = self.rho_home.clone();
+        let saved = store_blocking("look up the sessions that have pull requests", move || {
+            Ok(StoredSession::workspaces_of(&rho_home, &ids))
+        })
+        .await;
+        let saved = match saved {
+            Ok(saved) => saved,
+            Err(error) => {
+                tracing::warn!(%error, "could not check for deleted sessions that have pull requests");
+                return;
+            }
+        };
+        for (id, saved) in unloaded.iter().zip(saved) {
+            match saved {
+                Ok(Some(_)) => {}
+                Ok(None) => {
+                    tracing::info!(session = %id, "forgot the pull requests of a deleted session");
+                    self.pull_requests.forget(id);
+                }
+                // Kept until a later check can tell.
+                Err(error) => tracing::debug!(
+                    session = %id,
+                    error = format!("{error:#}"),
+                    "could not tell whether a session that has pull requests is saved"
+                ),
+            }
+        }
     }
 
     /// Wakes each session a wake request names, one at a time, until the
