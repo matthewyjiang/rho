@@ -6,6 +6,7 @@ Rho uses one agent definition model for interactive sessions, `rho run`, and del
 
 - `default` - standard root coding-agent behavior
 - `explorer` - fast read-only investigation
+- `lead` - takes a goal to merged pull requests by running other sessions; see [Leading a goal](#leading-a-goal)
 - `reviewer` - code review and verification; it can run shell commands (diffs, targeted tests) but is instructed never to change code or repository state
 - `worker` - independent implementation
 
@@ -81,6 +82,14 @@ For the full value set, constraints, and defaults, see [Agent definition schema]
 | `reasoning` | no | For `runtime: rho`: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`. For `runtime: claude-cli`: maps to Claude `effort` as `low`, `medium`, `high`, `xhigh`, or `max`. Omit to inherit Claude's default. `off` and `minimal` are rejected on `claude-cli` |
 | `tools` | no | Tool allowlist. Vocabulary depends on `runtime` (see [definition schema](/subagents/definition-schema)) |
 | `inherit_claude_config` | no | `true` or `false` (default). Opt in only with `runtime: claude-cli` to load the user's full Claude settings (`user,project,local`). Default stays closed |
+
+## Leading a goal
+
+`lead` is a session's own agent, like `default`: start it with `rho --agent lead` or a client that opens sessions as an agent. The built-in one is not offered to the `agent` tool. It does not write code. It plans a goal as pull requests, starts one [session](/daemon#sessions-other-sessions-start) per pull request in a worktree of its own, answers those sessions' questions when its instructions settle them, watches the pull requests, and asks you for the decisions it was not given.
+
+What it knows between turns is a file, `brief.md` in its working directory: the goal, where it may work, what it may decide without you, the pull requests, and a log of decisions. It writes the brief from your first message when none exists, reads it at the start of every turn, and you can edit it at any time. Start a lead in a directory of its own, since it spans repositories.
+
+It needs a running [daemon](/daemon) to start sessions, and a client that takes the daemon's turns to be told when one of them ends or asks a question; without that it only hears of them when you prompt it. It has a shell, to read git and GitHub state and to merge when the brief says it may. Its shell commands follow the [permission mode](/configuration/permissions) like any session's, so only its instructions keep it from changing code under Bypass. To change what it does, copy its prompt from `/agents` into `~/.rho/agents/lead.md` and edit that. An agent of your own with the id `lead` is offered to the `agent` tool like any other you define.
 
 ## Delegating work
 

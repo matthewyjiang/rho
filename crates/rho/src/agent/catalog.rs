@@ -16,12 +16,19 @@ use crate::workspace::{ProjectTrust, ProjectTrusts};
 /// The built-in root agent. It is never offered for delegation.
 pub(crate) const DEFAULT_AGENT_ID: &str = "default";
 
+/// The built-in agent that leads a goal across pull requests by running
+/// other sessions. Like the default agent it is a session's own agent, and
+/// never offered for delegation: a delegated run has no turns of its own to
+/// be woken for.
+pub(crate) const LEAD_AGENT_ID: &str = "lead";
+
 const BUILTINS: &[(&str, &str)] = &[
     (
         DEFAULT_AGENT_ID,
         include_str!("../builtin_agents/default.md"),
     ),
     ("explorer", include_str!("../builtin_agents/explorer.md")),
+    (LEAD_AGENT_ID, include_str!("../builtin_agents/lead.md")),
     ("reviewer", include_str!("../builtin_agents/reviewer.md")),
     ("worker", include_str!("../builtin_agents/worker.md")),
 ];

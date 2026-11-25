@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
-use super::{AgentCatalog, DEFAULT_AGENT_ID};
+use super::{AgentCatalog, AgentCatalogEntry, AgentOrigin, DEFAULT_AGENT_ID, LEAD_AGENT_ID};
 
 /// Agent IDs and descriptions as a parent model was told about them.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -36,13 +36,21 @@ pub(crate) enum AdvertisedChange {
     },
 }
 
+/// Whether `entry` is a session's own agent, never offered for delegation:
+/// the default agent, whatever defines it, and the built-in lead. A user's
+/// own agent under the lead's id is an agent like any other of theirs.
+fn runs_only_as_root(entry: &AgentCatalogEntry) -> bool {
+    let id = entry.definition.id.as_str();
+    id == DEFAULT_AGENT_ID || (id == LEAD_AGENT_ID && entry.metadata.origin == AgentOrigin::BuiltIn)
+}
+
 impl AdvertisedAgents {
     /// Models are deliberately absent: each run reports its own model separately.
     pub(crate) fn from_catalog(catalog: &AgentCatalog) -> Self {
         Self(
             catalog
                 .iter()
-                .filter(|entry| entry.definition.id.as_str() != DEFAULT_AGENT_ID)
+                .filter(|entry| !runs_only_as_root(entry))
                 .map(|entry| {
                     (
                         entry.definition.id.to_string(),
