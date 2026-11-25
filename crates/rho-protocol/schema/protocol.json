@@ -6022,7 +6022,7 @@
           "type": "object"
         },
         {
-          "description": "A context compaction began or ended. Each one starts\n[`CompactionStatus::Started`] and ends with exactly one other\nstatus, under the same `id` (#1670).",
+          "description": "A context compaction began or ended. Each live one starts\n[`CompactionStatus::Started`] and ends with exactly one other\nstatus, under the same `id` (#1670). A replay sends a saved\ncompaction as its [`CompactionStatus::Completed`] alone.",
           "properties": {
             "id": {
               "$ref": "#/$defs/CompactionId"

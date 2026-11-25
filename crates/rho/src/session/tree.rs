@@ -23,9 +23,10 @@ use super::persistence::{
 };
 use super::snapshot_delta::StoredSnapshotDelta;
 use super::{SessionIndexRecord, SessionOrigin, SessionSummary, SessionTarget};
+use crate::display_transcript::{DisplayRow, DisplayTranscript, COMPACTION_TITLE};
 
 /// Where a projected display row was saved: row `row` of node `node`, a
-/// compaction node's notice following its saved rows. Unique to one insertion
+/// compaction node's row following its saved rows. Unique to one insertion
 /// even when the same text is saved twice, and the same on every load.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct DisplayRowOrigin {
@@ -115,6 +116,19 @@ pub(crate) struct StoredCompactionFacts {
     pub(crate) previous_tokens: u64,
     pub(crate) current_tokens: u64,
     pub(crate) cost_usd_micros: Option<u64>,
+}
+
+impl StoredCompactionFacts {
+    /// The counts clients get for this compaction.
+    pub(crate) fn counts(&self) -> rho_protocol::CompactionCounts {
+        rho_protocol::CompactionCounts {
+            previous_messages: self.previous_messages as u64,
+            current_messages: self.current_messages as u64,
+            previous_tokens: self.previous_tokens,
+            current_tokens: self.current_tokens,
+            cost_usd_micros: self.cost_usd_micros,
+        }
+    }
 }
 
 /// One tree node record. `D` is the display row type: stored rows as read
@@ -403,35 +417,28 @@ impl SessionTree {
                     .map(|(row, message)| (origin(row), message.clone())),
             );
             if node.kind() == SessionNodeKind::Compaction {
-                let detail = if let Some(facts) = node.compaction_facts() {
-                    let cost = facts.cost_usd_micros.map_or_else(String::new, |micros| {
-                        format!("\n${:.6} compaction cost", micros as f64 / 1_000_000.0)
-                    });
-                    format!(
-                        "\n{} → {} messages\n{} → {} estimated tokens{cost}",
-                        facts.previous_messages,
-                        facts.current_messages,
-                        facts.previous_tokens,
-                        facts.current_tokens,
-                    )
-                } else {
-                    match (
-                        node.facts().compaction.last_previous_tokens(),
-                        node.facts().compaction.last_current_tokens(),
-                    ) {
-                        (Some(previous), Some(current)) => {
-                            format!("\n{previous} → {current} estimated tokens")
-                        }
-                        _ => String::new(),
-                    }
+                let row = match node.compaction_facts() {
+                    Some(facts) => DisplayRow::Compaction(facts.counts()),
+                    // A node saved before compactions kept their facts has
+                    // too few counts for a compaction row: a notice says
+                    // what it knows.
+                    None => DisplayRow::Notice(
+                        match (
+                            node.facts().compaction.last_previous_tokens(),
+                            node.facts().compaction.last_current_tokens(),
+                        ) {
+                            (Some(previous), Some(current)) => format!(
+                                "{COMPACTION_TITLE}\n{previous} → {current} estimated tokens"
+                            ),
+                            _ => COMPACTION_TITLE.to_owned(),
+                        },
+                    ),
                 };
                 display.push((
                     origin(node.display_messages().len()),
                     StoredDisplayMessage {
                         timestamp: node.record.timestamp.clone(),
-                        message: rho_providers::model::Message::assistant_text(format!(
-                            "◆ Compacted context{detail}"
-                        )),
+                        message: DisplayTranscript(vec![row]).display_message(),
                     },
                 ));
             }

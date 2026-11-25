@@ -136,11 +136,15 @@ impl App {
                     self.set_status("compacting context");
                 }
                 DaemonView::CompactTurnOver => self.daemon_compact_turn = None,
-                DaemonView::CompactionEnded(outcome) => {
+                DaemonView::CompactionEnded { outcome, replayed } => {
                     let status = outcome.status_label();
                     let compacted = matches!(outcome, CompactionUiOutcome::Completed(_));
                     self.handle_agent_event(compact_finished_event(outcome), terminal)?;
-                    self.set_status(status);
+                    // A replayed one is history: its card says so, and the
+                    // status line keeps saying what the session does now.
+                    if !replayed {
+                        self.set_status(status);
+                    }
                     if let Some(turn) = &mut self.daemon_compact_turn {
                         turn.rest_status = Some(status);
                         turn.compacted = Some(compacted);

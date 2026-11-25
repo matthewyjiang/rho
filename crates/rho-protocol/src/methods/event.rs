@@ -195,9 +195,10 @@ pub enum SessionEvent {
     /// first turn (#1670) or a client renamed it
     /// ([`super::SESSION_RENAME`]).
     TitleChanged { title: String },
-    /// A context compaction began or ended. Each one starts
+    /// A context compaction began or ended. Each live one starts
     /// [`CompactionStatus::Started`] and ends with exactly one other
-    /// status, under the same `id` (#1670).
+    /// status, under the same `id` (#1670). A replay sends a saved
+    /// compaction as its [`CompactionStatus::Completed`] alone.
     Compaction {
         id: CompactionId,
         status: CompactionStatus,

@@ -9,7 +9,7 @@
 use rho_sdk::model::Message;
 use serde::{Deserialize, Serialize};
 
-use rho_protocol::display::NotificationCard;
+use rho_protocol::{display::NotificationCard, CompactionCounts};
 
 const PREFIX: &str = "[rho boundary transcript v1]";
 const FAMILY: &str = "[rho boundary transcript ";
@@ -20,6 +20,10 @@ pub(crate) enum DisplayRow {
     #[serde(rename = "Message")]
     Notification(Box<NotificationCard>),
     Notice(String),
+    /// A compaction of the session's context, where it happened, with its
+    /// context before and after. A load projects it from the compaction's
+    /// node; it is never saved, so no saved record holds it.
+    Compaction(CompactionCounts),
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -56,6 +60,12 @@ impl DisplayTranscript {
                     format!("{}\n{}\n{}", card.title, subtitle(card), card.plain_body())
                 }
                 DisplayRow::Notice(text) => text.clone(),
+                DisplayRow::Compaction(counts) => {
+                    format!(
+                        "{COMPACTION_TITLE}\n{}",
+                        compaction_lines(counts).join("\n")
+                    )
+                }
             })
             .collect::<Vec<_>>()
             .join("\n\n")
@@ -87,8 +97,41 @@ impl DisplayRow {
                     plain: String::new(),
                 },
             },
+            Self::Compaction(counts) => {
+                let lines = compaction_lines(counts);
+                CardText {
+                    title: COMPACTION_TITLE,
+                    // Markdown joins single line breaks into one line.
+                    markdown: lines.join("\n\n"),
+                    plain: lines.join("\n"),
+                }
+            }
         }
     }
+}
+
+/// How a compaction row is titled where it shows as text.
+pub(crate) const COMPACTION_TITLE: &str = "Compacted context";
+
+/// A compaction's counts, a line each: messages, tokens, and its cost when
+/// the session priced it.
+fn compaction_lines(counts: &CompactionCounts) -> Vec<String> {
+    let mut lines = vec![
+        format!(
+            "{} → {} messages",
+            counts.previous_messages, counts.current_messages
+        ),
+        format!(
+            "{} → {} estimated tokens",
+            counts.previous_tokens, counts.current_tokens
+        ),
+    ];
+    lines.extend(
+        counts
+            .cost_usd_micros
+            .map(|micros| format!("${:.6} compaction cost", micros as f64 / 1_000_000.0)),
+    );
+    lines
 }
 
 /// One row's card title with its body in both host forms.

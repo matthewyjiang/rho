@@ -1,7 +1,8 @@
 use pretty_assertions::assert_eq;
 use rho_protocol::{
-    AnswerStop, CardTone, CompactionId, CompactionStatus, CompactionTrigger, ContentBlock,
-    MessageId, SessionEvent, ToolCallId, ToolCallUpdate, ToolStatus, TurnId, TurnOutcome,
+    AnswerStop, CardTone, CompactionCounts, CompactionId, CompactionStatus, CompactionTrigger,
+    ContentBlock, MessageId, SessionEvent, ToolCallId, ToolCallUpdate, ToolStatus, TurnId,
+    TurnOutcome,
 };
 
 use super::TextView;
@@ -27,19 +28,33 @@ fn chunk(text: &str) -> SessionEvent {
 }
 
 fn compaction(status: CompactionStatus) -> SessionEvent {
+    compaction_of("compaction", status)
+}
+
+fn compaction_of(id: &str, status: CompactionStatus) -> SessionEvent {
     SessionEvent::Compaction {
-        id: CompactionId::new("compaction"),
+        id: CompactionId::new(id),
         status,
     }
 }
 
 // Covers: the conversation streams to stdout with the prompt quoted, each
 // tool call and compaction on a line of its own once started and once more
-// if it fails, a card as plain text, and the reply ending its line;
-// notices and discarded responses go to stderr.
+// if it fails, a replayed compaction, which arrives completed alone, once,
+// a card as plain text, and the reply ending its line; notices and
+// discarded responses go to stderr.
 // Owner: rho attach text output (unit).
 #[test]
 fn text_output_streams_the_conversation_and_tells_the_rest_on_stderr() {
+    let completed = CompactionStatus::Completed {
+        counts: CompactionCounts {
+            previous_messages: 40,
+            current_messages: 4,
+            previous_tokens: 9000,
+            current_tokens: 800,
+            cost_usd_micros: None,
+        },
+    };
     let events = [
         SessionEvent::UserMessage {
             message: MessageId::new("prompt"),
@@ -63,6 +78,9 @@ fn text_output_streams_the_conversation_and_tells_the_rest_on_stderr() {
         compaction(CompactionStatus::Failed {
             error: "provider unavailable".into(),
         }),
+        compaction_of("live", CompactionStatus::Started { trigger: None }),
+        compaction_of("live", completed.clone()),
+        compaction_of("replayed", completed),
         SessionEvent::Card {
             title: "Background process".into(),
             markdown: "exited 1\n\n```text\nboom\n```".into(),
@@ -88,7 +106,8 @@ fn text_output_streams_the_conversation_and_tells_the_rest_on_stderr() {
     assert_eq!(
         String::from_utf8(out).unwrap(),
         "> read the docs\n> then answer\nLooking\n• Read docs/index.md\n• Read docs/index.md failed\n\
-         • compact context\n• compact context failed\nBackground process\nexited 1\n\nboom\nDone.\n"
+         • compact context\n• compact context failed\n• compact context\n• compact context\n\
+         Background process\nexited 1\n\nboom\nDone.\n"
     );
     assert_eq!(
         String::from_utf8(err).unwrap(),

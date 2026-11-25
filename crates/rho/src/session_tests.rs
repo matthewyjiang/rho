@@ -194,8 +194,7 @@ fn replace_history_is_append_only_but_model_replay_uses_latest_replacement() {
     assert!(
         matches!(&display[1].message, Message::Assistant(blocks) if matches!(blocks.as_ref(), [ContentBlock::Text(text)] if text == "old assistant"))
     );
-    assert!(matches!(&display[2].message, Message::Assistant(blocks)
-            if matches!(blocks.as_ref(), [ContentBlock::Text(text)] if text.contains("Compacted context"))));
+    assert!(is_compaction_row(&display[2].message));
     assert!(
         matches!(&display[3].message, Message::User(blocks) if matches!(blocks.as_ref(), [ContentBlock::Text(text)] if text == "after replacement"))
     );
@@ -468,10 +467,7 @@ fn export_by_id_normalizes_incomplete_display_tool_calls() {
     assert!(
         matches!(&export.messages[0].message, Message::User(blocks) if matches!(blocks.as_ref(), [ContentBlock::Text(text)] if text == "original"))
     );
-    assert!(
-        matches!(&export.messages[1].message, Message::Assistant(blocks)
-            if matches!(blocks.as_ref(), [ContentBlock::Text(text)] if text.contains("Compacted context")))
-    );
+    assert!(is_compaction_row(&export.messages[1].message));
     assert!(matches!(
         &export.messages[2].message,
         Message::Assistant(blocks)
@@ -484,6 +480,19 @@ fn export_by_id_normalizes_incomplete_display_tool_calls() {
                 && result.is_failure()
                 && result.content == "tool call interrupted before completion"
     ));
+}
+
+/// Whether `message` is the row a load projects for a compaction node.
+fn is_compaction_row(message: &Message) -> bool {
+    let Message::System(text) = message else {
+        return false;
+    };
+    crate::display_transcript::DisplayTranscript::from_display(text).is_some_and(|transcript| {
+        matches!(
+            transcript.0.as_slice(),
+            [crate::display_transcript::DisplayRow::Compaction(_)]
+        )
+    })
 }
 
 fn temp_session_root() -> TestDir {

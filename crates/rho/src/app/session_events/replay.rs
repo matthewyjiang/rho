@@ -8,8 +8,8 @@ use std::{
 };
 
 use rho_protocol::{
-    display::Presentation, MessageId, PlanEntry, SessionEvent as WireEvent, ToolCallId,
-    ToolCallUpdate, ToolStatus,
+    display::Presentation, CompactionId, CompactionStatus, MessageId, PlanEntry,
+    SessionEvent as WireEvent, ToolCallId, ToolCallUpdate, ToolStatus,
 };
 use rho_sdk::{
     model::{self, Message, SemanticMessage, ToolResult},
@@ -17,12 +17,12 @@ use rho_sdk::{
 };
 
 use super::{
-    cards, encoded_len, opened_call, plan_entries, result_content, status_update, user_content,
+    card, encoded_len, opened_call, plan_entries, result_content, status_update, user_content,
     CallIds, UNNAMED_TOOL_TITLE,
 };
 use crate::{
     app::{interactive_presenter::InteractiveToolPresenter, session_runtime::SessionTools},
-    display_transcript::DisplayTranscript,
+    display_transcript::{DisplayRow, DisplayTranscript},
     session::tree::{DisplayRowOrigin, ProjectedMessage},
     tools::{
         mcp::exported_name::McpToolNames,
@@ -42,7 +42,8 @@ use crate::{
 /// time, a row at a time as its client takes them.
 ///
 /// Each saved message replays whole: one event per message, never chunks.
-/// Message ids derive from the row a message was saved in, and tool call
+/// A compaction replays as the completed compaction event alone. Message
+/// and compaction ids derive from the row they were saved in, and tool call
 /// ids from the provider's saved ids, numbered after the rows saved before.
 /// A call the history left without a result, as a killed process does,
 /// closes `failed`, since history is not running work. The turn's replay
@@ -454,8 +455,20 @@ impl Replay {
             }
             SemanticMessage::AbortedAssistant(assistant) => self.agent(&assistant.content, calls),
             SemanticMessage::System(text) => {
-                if let Some(transcript) = DisplayTranscript::from_display(text) {
-                    self.events.extend(cards(&transcript));
+                let Some(transcript) = DisplayTranscript::from_display(text) else {
+                    return;
+                };
+                for row in &transcript.0 {
+                    let event = match row {
+                        // The event that ended it live, its start left out:
+                        // a client draws the card it drew live.
+                        DisplayRow::Compaction(counts) => WireEvent::Compaction {
+                            id: self.message_ids.compaction(),
+                            status: CompactionStatus::Completed { counts: *counts },
+                        },
+                        DisplayRow::Notification(_) | DisplayRow::Notice(_) => card(row),
+                    };
+                    self.events.push(event);
                 }
             }
             // Display rows never hold model-only entries.
@@ -630,6 +643,15 @@ impl MessageIds {
         let id = MessageId::new(format!("saved-{}-{}", self.saved, self.part));
         self.part += 1;
         id
+    }
+
+    /// The id of the compaction the current saved row shows. A compaction
+    /// row is its node's own, so the id is unique to that compaction, across
+    /// sessions too, and the same on every load: a client that keeps its
+    /// transcript across reconnects updates the card it has rather than
+    /// adding one.
+    fn compaction(&self) -> CompactionId {
+        CompactionId::new(format!("saved-compaction-{}", self.saved))
     }
 }
 

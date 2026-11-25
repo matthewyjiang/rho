@@ -252,24 +252,29 @@ fn text_content(text: impl Into<String>) -> ToolContent {
 }
 
 /// One card per row of a background result's transcript: the rows a turn
-/// shows where it applied the result, and saves for replay.
+/// shows where it applied the result, and saves for replay. Such a
+/// transcript holds no compaction rows, which a replay sends as compaction
+/// events instead.
 fn cards(transcript: &DisplayTranscript) -> impl Iterator<Item = WireEvent> + '_ {
-    transcript.0.iter().map(|row| {
-        let text = row.card_text();
-        WireEvent::Card {
-            title: text.title.to_owned(),
-            markdown: text.markdown,
-            plain: text.plain,
-            tone: card_tone(row),
-            display: match row {
-                DisplayRow::Notification(card) => Some(card.clone()),
-                DisplayRow::Notice(_) => None,
-            },
-        }
-    })
+    transcript.0.iter().map(card)
 }
 
-/// How a row's card reads: a notification card's tone; a notice is neutral.
+/// The card that shows `row`.
+fn card(row: &DisplayRow) -> WireEvent {
+    let text = row.card_text();
+    WireEvent::Card {
+        title: text.title.to_owned(),
+        markdown: text.markdown,
+        plain: text.plain,
+        tone: card_tone(row),
+        display: match row {
+            DisplayRow::Notification(card) => Some(card.clone()),
+            DisplayRow::Notice(_) | DisplayRow::Compaction(_) => None,
+        },
+    }
+}
+
+/// How a row's card reads: a notification card's tone; any other is neutral.
 fn card_tone(row: &DisplayRow) -> CardTone {
     match row {
         DisplayRow::Notification(card) => match card.tone {
@@ -281,7 +286,7 @@ fn card_tone(row: &DisplayRow) -> CardTone {
             // `Unknown`, or a tone a newer protocol adds.
             _ => CardTone::Neutral,
         },
-        DisplayRow::Notice(_) => CardTone::Neutral,
+        DisplayRow::Notice(_) | DisplayRow::Compaction(_) => CardTone::Neutral,
     }
 }
 

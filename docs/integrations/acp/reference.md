@@ -121,7 +121,7 @@ Listing and deleting saved history do not start a model or require provider cred
 `session/load` replays the session as message chunks and tool calls/updates marked with `_meta.isReplay: true`. Hosts that keep their own transcript can skip these notifications; hosts that rebuild the transcript from the replay can ignore the marker.
 
 - The replay is the saved conversation, then the turn under way, if any, whose later events arrive live.
-- Tool cards retain their saved names, arguments, success/failure status, output, and tool-owned images. Background result cards replay too.
+- Tool cards retain their saved names, arguments, success/failure status, output, and tool-owned images. Background result cards replay too, and so does each compaction, as a `completed` `compaction_update` card on hosts that advertise compaction and a notice on others.
 - Each saved message replays as one chunk carrying a `messageId` (see [Message IDs](#message-ids)). IDs are derived from where the message was saved, so loading the same session again replays the same IDs.
 - Each replayed call gets an ACP identity of its own, so provider IDs reused across turns do not collapse distinct cards.
 - A call without a saved result, such as an interrupted one, is marked failed rather than left running.
@@ -185,7 +185,7 @@ Successful `write` and edit-tool calls include ACP `diff` content with an absolu
 
 ### Compaction
 
-A `compaction_update` card opens `in_progress` and ends `completed`, `failed` with the error, or `cancelled`. A card still open when its prompt ends, including one whose prompt fails, closes the same way. Cards carry no `summary`, which ACP reserves for retained summary content; the before and after token counts arrive in `usage_update`. Each compaction gets a new random ID, so hosts that keep their transcript across reconnects never update an earlier card. Hosts that do not advertise compaction see automatic compaction only as the drop in `usage_update`.
+A `compaction_update` card opens `in_progress` and ends `completed`, `failed` with the error, or `cancelled`. A card still open when its prompt ends, including one whose prompt fails, closes the same way. Cards carry no `summary`, which ACP reserves for retained summary content; the before and after token counts arrive in `usage_update`. Each compaction gets an ID of its own, random live and derived from where it was saved on replay, so hosts that keep their transcript across reconnects never update an earlier card. A replayed compaction arrives as one `completed` card. Hosts that do not advertise compaction see a live compaction only as the drop in `usage_update`, and a replayed one as a notice with its before and after counts.
 
 ### Titles
 

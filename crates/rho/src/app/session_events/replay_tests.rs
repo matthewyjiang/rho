@@ -2,8 +2,9 @@ use std::{path::Path, sync::Arc};
 
 use pretty_assertions::assert_eq;
 use rho_protocol::{
-    CardTone, ContentBlock, MessageId, PlanEntry, PlanStatus, SessionEvent as WireEvent,
-    ToolCallId, ToolCallUpdate, ToolContent, ToolKind, ToolStatus,
+    CardTone, CompactionCounts, CompactionId, CompactionStatus, ContentBlock, MessageId, PlanEntry,
+    PlanStatus, SessionEvent as WireEvent, ToolCallId, ToolCallUpdate, ToolContent, ToolKind,
+    ToolStatus,
 };
 use rho_sdk::{
     model::{self, AbortedAssistant, AssistantMessage, Message, ToolResult},
@@ -144,6 +145,37 @@ fn a_saved_conversation_replays_messages_calls_and_cards() {
                 display: None,
             },
             saved_agent(saved_id(4, 0), "Found a.rs."),
+        ]
+    );
+}
+
+// Covers: a compaction replays where its row sits as the completed
+// compaction event a live one ends with, carrying its counts, under an id
+// from its row that stays the same on every load, rather than as agent text
+// a markdown client runs together into one line.
+// Owner: session event replay
+#[test]
+fn a_saved_compaction_replays_as_a_completed_compaction() {
+    let counts = CompactionCounts {
+        previous_messages: 263,
+        current_messages: 65,
+        previous_tokens: 247_276,
+        current_tokens: 54_798,
+        cost_usd_micros: Some(12_345),
+    };
+    assert_eq!(
+        replay_messages(&[
+            Message::user_text("long talk"),
+            DisplayTranscript(vec![DisplayRow::Compaction(counts)]).display_message(),
+            Message::user_text("after"),
+        ]),
+        vec![
+            user(saved_id(0, 0), "long talk"),
+            WireEvent::Compaction {
+                id: CompactionId::new("saved-compaction-node-1"),
+                status: CompactionStatus::Completed { counts },
+            },
+            user(saved_id(2, 0), "after"),
         ]
     );
 }

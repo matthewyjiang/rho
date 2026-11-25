@@ -112,8 +112,13 @@ pub(super) enum DaemonView {
         command: bool,
     },
     /// The compaction under way ended: its card closes, and the status
-    /// line says how.
-    CompactionEnded(CompactionUiOutcome),
+    /// line says how. `replayed` when an attach's replay reads it back,
+    /// as it reads back each compaction of saved history: only its card
+    /// shows, and the status line is left alone.
+    CompactionEnded {
+        outcome: CompactionUiOutcome,
+        replayed: bool,
+    },
     /// The turn a `/compact` prompt started is over, live or replayed:
     /// what follows shows as any turn's does.
     CompactTurnOver,
@@ -434,7 +439,7 @@ impl DaemonEvents {
                 DaemonView::Spend(cost_usd_micros),
             ],
             SessionEvent::Compaction { status, .. } => {
-                let views = compaction(status);
+                let views = compaction(status, self.replay_end.is_some());
                 if matches!(views[..], [DaemonView::CompactionStarted { command: true }]) {
                     self.compact_turn = CompactTurn::UnderWay;
                 }
@@ -799,8 +804,8 @@ fn todo_list(entries: &[PlanEntry]) -> Option<TodoList> {
     (!todos.is_empty()).then_some(TodoList { todos })
 }
 
-/// The compaction card and status line for `status`.
-fn compaction(status: CompactionStatus) -> Vec<DaemonView> {
+/// The compaction card and status line for `status`, `replayed` or live.
+fn compaction(status: CompactionStatus, replayed: bool) -> Vec<DaemonView> {
     let outcome = match status {
         CompactionStatus::Started { trigger } => {
             return vec![DaemonView::CompactionStarted {
@@ -818,7 +823,7 @@ fn compaction(status: CompactionStatus) -> Vec<DaemonView> {
             detail: "compaction ended".into(),
         },
     };
-    vec![DaemonView::CompactionEnded(outcome)]
+    vec![DaemonView::CompactionEnded { outcome, replayed }]
 }
 
 /// The hint for a retry for `reason`, which reads as the SDK reason it came
