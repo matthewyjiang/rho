@@ -17,6 +17,7 @@
 //! never starts one.
 
 use std::{
+    collections::BTreeMap,
     path::{Path, PathBuf},
     sync::OnceLock,
 };
@@ -163,8 +164,12 @@ pub(super) async fn prepare<'a>(
 /// Adds the core's actions to the history `schema`, with each action's
 /// arguments as the core's own schema has them, so the tool and `rho mcp
 /// serve` take the same arguments. An argument several actions take names
-/// each action's use in its description.
+/// each action's use in its description, once per distinct text: actions
+/// that describe it alike share one `For a, b: ...` clause.
 pub(super) fn extend_schema(schema: &mut Value) {
+    // Each argument's distinct descriptions, in first-use order, with the
+    // actions that give each one.
+    let mut uses: BTreeMap<String, Vec<(String, Vec<&'static str>)>> = BTreeMap::new();
     for action in Action::ALL {
         let mut own = Value::Object(action.input_schema());
         let defs = own.get("$defs").cloned().unwrap_or(Value::Null);
@@ -181,29 +186,35 @@ pub(super) fn extend_schema(schema: &mut Value) {
             continue;
         };
         for (key, mut argument) in std::mem::take(arguments) {
+            // The clauses below replace the core's own description.
             let said = argument
-                .get("description")
-                .and_then(Value::as_str)
-                .map(|said| format!("For {name}: {said}"));
-            let properties = &mut schema["properties"];
-            match properties.get_mut(&key) {
-                Some(known) => {
-                    if let Some(said) = said {
-                        known["description"] = json!(match known["description"].as_str() {
-                            None | Some("") => said,
-                            Some(before) if before.ends_with('.') => format!("{before} {said}"),
-                            Some(before) => format!("{before}. {said}"),
-                        });
-                    }
-                }
-                None => {
-                    if let Some(said) = said {
-                        argument["description"] = json!(said);
-                    }
-                    properties[&key] = argument;
+                .as_object_mut()
+                .and_then(|fields| fields.remove("description"));
+            if let Some(Value::String(said)) = said {
+                let clauses = uses.entry(key.clone()).or_default();
+                match clauses.iter_mut().find(|(text, _)| *text == said) {
+                    Some((_, actions)) => actions.push(name),
+                    None => clauses.push((said, vec![name])),
                 }
             }
+            let properties = &mut schema["properties"];
+            if properties.get(&key).is_none() {
+                properties[&key] = argument;
+            }
         }
+    }
+    for (key, clauses) in uses {
+        let said = clauses
+            .iter()
+            .map(|(text, actions)| format!("For {}: {text}", actions.join(", ")))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let known = &mut schema["properties"][&key];
+        known["description"] = json!(match known["description"].as_str() {
+            None | Some("") => said,
+            Some(before) if before.ends_with('.') => format!("{before} {said}"),
+            Some(before) => format!("{before}. {said}"),
+        });
     }
 }
 
@@ -293,3 +304,7 @@ fn tool_error(error: ControlError) -> ToolError {
     };
     ToolError::new(kind, error.to_string())
 }
+
+#[cfg(test)]
+#[path = "control_tests.rs"]
+mod tests;
