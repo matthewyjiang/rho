@@ -67,8 +67,9 @@ impl Action {
             }
             Self::Link => {
                 "Link a pull request to this session without watching it, so clients show its \
-                 state beside the session. To be woken on changes, call `watch_pull_request` \
-                 instead."
+                 state beside the session. rho marks the session done once every pull request \
+                 linked to it has merged, so link only this session's own work. To be woken on \
+                 changes, call `watch_pull_request` instead."
             }
             Self::Unlink => {
                 "Remove a pull request's link from this session, and its watch if it has one. \

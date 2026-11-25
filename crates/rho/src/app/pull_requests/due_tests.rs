@@ -13,7 +13,7 @@ use crate::app::pull_requests::{
         PrState, PrSummary, RepoId, Review, Rollup,
     },
     poller::WATCH_POLL,
-    record::LinkOrigin,
+    record::{LinkOrigin, Stood},
     service::{BranchRead, DefaultBranch, Detailed, ShowRead, Snapshot, State, Trouble},
     state::{Baseline, WatchState},
 };
@@ -104,6 +104,13 @@ fn link(state: &mut State, number: u32) {
         .link(pr, url, LinkOrigin::User, 0);
 }
 
+/// Links PR `number`, which the last read of it found as `stood`.
+fn link_read(state: &mut State, number: u32, stood: Stood) {
+    link(state, number);
+    let entry = state.entry(&session());
+    entry.record.link_mut(&pr(number)).unwrap().stood = Some(stood);
+}
+
 /// Links PR `number` and watches it, its baseline taken.
 fn watch(state: &mut State, number: u32) {
     link(state, number);
@@ -186,9 +193,11 @@ struct Case {
     period: Duration,
 }
 
-// Covers: the lease table. With no lease only watches are read; a listed
-// session's links get summaries and its branch a lookup, never a detail,
-// once their cadence is due; a shown PR gets its detail when it needs one,
+// Covers: the lease table. With no lease, watches are read, and so is a
+// link's summary, at its own slower cadence, until a read found its pull
+// request merged or closed, so a merge nobody asks about is found; a
+// listed session's links get summaries and its branch a lookup, never a
+// detail, once their cadence is due; a shown PR gets its detail when it needs one,
 // else its summary, and a shown branch's PR comes with its lookup; the
 // default branch is not looked up while its observation is younger than the
 // reread period (else a default that moved is never seen), and a checkout on
@@ -199,8 +208,61 @@ struct Case {
 fn a_lease_decides_what_a_tick_reads() {
     let cases = [
         Case {
-            name: "linked, not watched, no lease",
+            name: "linked, not watched, no lease, never read: its summary",
             given: |state| link(state, 12),
+            asked: asks(&[], &[12], &[], &[], &[]),
+            period: WATCH_POLL,
+        },
+        Case {
+            name: "linked, no lease, read open within the linked period",
+            given: |state| {
+                link_read(state, 12, Stood::Open);
+                read_summary(state, 12, ago(100));
+            },
+            asked: None,
+            period: WATCH_POLL,
+        },
+        Case {
+            name: "linked, no lease, read open a linked period ago: its summary",
+            given: |state| {
+                link_read(state, 12, Stood::Open);
+                read_summary(state, 12, ago(290));
+            },
+            asked: asks(&[], &[12], &[], &[], &[]),
+            period: WATCH_POLL,
+        },
+        Case {
+            name: "linked since its pull request was last asked for, as for another session",
+            given: |state| {
+                let (pr, url) = (pr(12), pr(12).url());
+                let record = &mut state.entry(&session()).record;
+                record.link(pr, url, LinkOrigin::Agent, ago(50) / 1000);
+                read_summary(state, 12, ago(100));
+            },
+            asked: asks(&[], &[12], &[], &[], &[]),
+            period: WATCH_POLL,
+        },
+        Case {
+            name: "linked, no lease, one due: the host's other open links with it",
+            given: |state| {
+                link_read(state, 12, Stood::Open);
+                link_read(state, 13, Stood::Open);
+                link_read(state, 14, Stood::Merged);
+                read_summary(state, 12, ago(290));
+                read_summary(state, 13, ago(100));
+                read_summary(state, 14, ago(600));
+            },
+            asked: asks(&[], &[12, 13], &[], &[], &[]),
+            period: WATCH_POLL,
+        },
+        Case {
+            name: "linked, no lease, read merged or closed: not read again",
+            given: |state| {
+                link_read(state, 12, Stood::Merged);
+                link_read(state, 13, Stood::Closed);
+                read_summary(state, 12, ago(600));
+                read_summary(state, 13, ago(600));
+            },
             asked: None,
             period: WATCH_POLL,
         },
@@ -265,7 +327,7 @@ fn a_lease_decides_what_a_tick_reads() {
         Case {
             name: "a listed lease that ran out",
             given: |state| {
-                link(state, 12);
+                link_read(state, 12, Stood::Closed);
                 state.interest.list(&session(), on("feature"), ago(601));
             },
             asked: None,

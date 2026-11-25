@@ -1,9 +1,11 @@
 //! What a tick reads at `now`, from the state alone: each watched pull
-//! request at [`super::poller::WATCH_POLL`], and what clients list or show
+//! request at [`super::poller::WATCH_POLL`], each linked one that has not
+//! ended at [`super::poller::LINKED_POLL`], and what clients list or show
 //! at their leases' cadences ([`super::interest`]), each at the fastest
 //! cadence anything wants it at, and only once that cadence is due.
 //!
-//! A listed pull request gets its summary only. A watched or shown one gets
+//! A listed pull request gets its summary only, as does one read only
+//! because it is linked. A watched or shown one gets
 //! its detail when [`detail_due`] says so, else its summary, and its detail
 //! in the tick's second query when the summary moved; so does the PR a
 //! shown branch's lookup finds.
@@ -65,6 +67,10 @@ struct Want {
     linked: bool,
     /// Whether a watch of it has not taken its baseline.
     pending: bool,
+    /// Whether a link to it is newer than the last time it was asked for,
+    /// so that link has no read of its own: due whatever its cadence says,
+    /// else a merge before its first read would never be found.
+    unasked: bool,
 }
 
 impl Want {
@@ -87,11 +93,19 @@ pub(super) fn due(state: &State, now: u64) -> BTreeMap<String, Due> {
                 .watch
                 .as_ref()
                 .map(|watch| watch.baseline == Baseline::Pending);
-            if leased.is_none() && watched.is_none() {
+            // Read with no one asking until it ends, to find its merge.
+            let awaits_merge = link.awaits_merge();
+            if leased.is_none() && watched.is_none() && !awaits_merge {
                 continue;
             }
             let want = prs.entry(&link.pr).or_default();
             want.linked = true;
+            if awaits_merge {
+                want.at(Cadence::Linked);
+                let asked_at = state.snapshots.get(&link.pr).and_then(|read| read.asked_at);
+                want.unasked |=
+                    link.stood.is_none() && asked_at.is_some_and(|at| at / 1000 < link.linked_at);
+            }
             if let Some(cadence) = leased {
                 want.at(cadence);
             }
@@ -136,21 +150,30 @@ pub(super) fn due(state: &State, now: u64) -> BTreeMap<String, Due> {
                 Cadence::Shown => {
                     due.shown_branches.insert(branch.clone());
                 }
-                Cadence::Watched | Cadence::Listed => {}
+                Cadence::Watched | Cadence::Listed | Cadence::Linked => {}
             }
         }
     }
+    // Each host's PRs read only because they are linked, and whether any
+    // is due.
+    let mut linked: HashMap<&str, (Vec<&PrId>, bool)> = HashMap::new();
     for (pr, want) in prs {
         let Some(cadence) = want.cadence else {
             continue;
         };
         let snapshot = state.snapshots.get(pr);
-        if !cadence.due(snapshot.and_then(|snapshot| snapshot.asked_at), now) {
-            continue;
-        }
-        let due = hosts.entry(pr.repo.host.clone()).or_default();
+        let is_due =
+            want.unasked || cadence.due(snapshot.and_then(|snapshot| snapshot.asked_at), now);
+        let host = pr.repo.host.as_str();
         match cadence {
+            Cadence::Linked => {
+                let (prs, any_due) = linked.entry(host).or_default();
+                prs.push(pr);
+                *any_due |= is_due;
+            }
+            Cadence::Shown | Cadence::Watched | Cadence::Listed if !is_due => {}
             Cadence::Shown | Cadence::Watched => {
+                let due = hosts.entry(host.to_owned()).or_default();
                 due.wants_detail.insert(pr.clone());
                 if want.pending || detail_due(snapshot, now) {
                     due.plan.details.push(pr.clone());
@@ -160,9 +183,18 @@ pub(super) fn due(state: &State, now: u64) -> BTreeMap<String, Due> {
             }
             Cadence::Listed => {
                 if want.linked {
+                    let due = hosts.entry(host.to_owned()).or_default();
                     due.plan.links.push(pr.clone());
                 }
             }
+        }
+    }
+    // A host's linked reads go together once one is due, the others early,
+    // so they stay one query a period however far apart they were linked.
+    for (host, (prs, any_due)) in linked {
+        if any_due {
+            let due = hosts.entry(host.to_owned()).or_default();
+            due.plan.links.extend(prs.into_iter().cloned());
         }
     }
     hosts.retain(|_, due| !due.plan.is_empty());

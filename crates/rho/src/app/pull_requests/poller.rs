@@ -12,8 +12,10 @@
 //! and only then are sessions told, so one wake carries all of a session's
 //! news from the tick.
 //!
-//! With no client asking, a PR linked and not watched is kept, and not
-//! read.
+//! With no client asking, a PR linked and not watched is still read, at
+//! [`LINKED_POLL`], until a read finds it merged or closed: the session
+//! whose linked pull requests have all merged is told to the daemon, which
+//! marks it done.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -26,9 +28,9 @@ use super::{
     gh::{Forge, ReadError},
     model::{Batch, BranchId, Budget, FetchPlan, Found, PrDetail, PrId},
     reads::{keep, read_into, Read, Reads},
-    record::{SessionRecord, NEWS_PER_SESSION},
-    service::{Detailed, Shared, State, Told, Trouble},
-    state::{merged_last, CheckTally, News},
+    record::{SessionRecord, Stood, NEWS_PER_SESSION},
+    service::{AllMerged, Applied, Detailed, Shared, State, Told, Trouble},
+    state::{CheckTally, News},
     watch::{self, Report},
 };
 
@@ -40,6 +42,19 @@ use super::{
 /// `pull_requests.rs:32-34`), about 22 ticks. `list_session_pull_requests`
 /// shows each PR's read age.
 pub(crate) const WATCH_POLL: Duration = Duration::from_secs(60);
+
+/// How often the poller reads a linked pull request that no session
+/// watches and no client asks about, to find its merge: a cadence, not a
+/// cap. It stops once a read finds the pull request merged or closed.
+///
+/// Receipt: [`super::interest::LISTED_POLL`]'s, whose query this is. Up to
+/// 100 summaries cost 1 point (`gh_query::SUMMARIES_PER_QUERY`), and a
+/// host's linked reads go together (see `due::due`), so every open link on
+/// a host costs 12 points an hour together, 0.24% of GitHub's 5,000, and
+/// 12 more for each further 100, which `reads::read_into` logs. A new link
+/// is read at the next tick, the host's others with it: one more query. A
+/// merge is marked at most this long after it happens.
+pub(crate) const LINKED_POLL: Duration = Duration::from_secs(300);
 
 /// The rate-limit points rho leaves a host's account: at or below this, it
 /// reads nothing from that host until the limit resets.
@@ -214,9 +229,9 @@ impl Shared {
         }
         // Applied before `reader` is released, so a show's read that waited
         // on it lands after, and this tick's older reads never overwrite it.
-        let told = self.update(|state| self.apply(state, &reads, now));
+        let applied = self.update(|state| self.apply(state, &reads, now));
         drop(reader);
-        self.tell(told);
+        self.tell(applied);
     }
 
     /// Reads `pr` in full at `now`, through the same lock and budget guard
@@ -327,9 +342,10 @@ impl Shared {
     }
 
     /// Keeps what the tick read in `state`, evaluates every watch against
-    /// it, and queues and saves each session's news. Returns the sessions
-    /// to tell.
-    fn apply(&self, state: &mut State, reads: &Reads, now: u64) -> Vec<Told> {
+    /// it, queues and saves each session's news, and keeps how each linked
+    /// pull request stands as the newest read of it says, a read outside a
+    /// tick included. Returns what to tell.
+    fn apply(&self, state: &mut State, reads: &Reads, now: u64) -> Applied {
         keep(state, reads, now);
         let shown = due::shown(state, now);
         let State {
@@ -339,28 +355,34 @@ impl Shared {
             branches,
             default_branches: _,
         } = state;
-        let mut told = Vec::new();
+        let mut applied = Applied::default();
         for (session, entry) in sessions.iter_mut() {
             let (changed, news) = evaluate(&mut entry.record, &reads.prs, now);
             let has_news = !news.is_empty();
-            let merged = merged_last(&news).is_some();
             for item in news {
                 entry
                     .record
                     .queue_news(item, NEWS_PER_SESSION, &entry.in_flight);
             }
-            if changed || has_news {
+            let standing = entry.record.keep_standing(|pr| {
+                let snapshot = snapshots.get(pr)?;
+                let summary = snapshot.summary.as_ref()?;
+                Some((Stood::from(summary.state), snapshot.read_at?))
+            });
+            if changed || has_news || standing.changed {
                 // A failed save is logged; the news stays queued in memory.
                 let _ = self.save(session, &entry.record);
             }
+            if standing.found_merge && entry.record.all_merged() {
+                applied.all_merged.push(AllMerged {
+                    session: session.clone(),
+                    at: now,
+                });
+            }
             if has_news {
-                // A session that watches another pull request still has
-                // work under way, so its merge is not told as one.
-                let watches = entry.record.watching().next().is_some();
-                told.push(Told {
+                applied.told.push(Told {
                     session: session.clone(),
                     notify: Arc::clone(&entry.notify),
-                    merged_at: (merged && !watches).then_some(now),
                 });
             }
         }
@@ -395,7 +417,7 @@ impl Shared {
             }
             true
         });
-        told
+        applied
     }
 }
 

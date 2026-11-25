@@ -20,9 +20,9 @@ use super::{
     model::{Mergeable, PrDetail, PrId, PrState, Rollup, ThreadState, GITHUB},
     news,
     poller::{DetailError, BUDGET_FLOOR, WATCHES_PER_SESSION},
-    record::LinkOrigin,
-    service::{Entry, Shared, ToldMerge},
-    state::{ended_otherwise_since, merged_last, CheckTally, Gate, News, WatchState},
+    record::{LinkOrigin, Stood},
+    service::{Entry, Shared},
+    state::{CheckTally, End, Gate, News, WatchState},
     watch,
 };
 
@@ -250,11 +250,14 @@ impl PullRequestInbox {
         let seqs = batch.seqs();
         entry.release(&seqs);
         entry.record.acknowledge(&seqs);
-        if batch.news.iter().any(|news| news.end.is_some()) {
-            entry.merge_told = merged_last(&batch.news).map(|news| ToldMerge {
-                at: news.at,
-                seq: news.seq,
-            });
+        let merged = batch
+            .news
+            .iter()
+            .filter(|news| matches!(news.end, Some(End::Merged { .. })))
+            .map(|news| news.at)
+            .max();
+        if merged.is_some() {
+            entry.merge_told = merged;
         }
         let _ = self.shared.save(&self.session, &entry.record);
     }
@@ -262,23 +265,14 @@ impl PullRequestInbox {
     /// When rho found the newest merge that acknowledged news told the
     /// session's agent of, in unix milliseconds, taken: `None` until a turn
     /// delivers news that a watch ended merged, and again once taken. Also
-    /// `None`, and still taken, unless that merge ended the session's last
-    /// watch: not while it watches a pull request, as one its agent began
-    /// to watch in that turn, and not when another watch ended some other
-    /// way with the merge or since, by news acknowledged with it or still
-    /// queued, as of a pull request closed while the turn ran, or by an
-    /// unwatch or an unlink.
+    /// `None`, and still taken, while a pull request linked to the session
+    /// has not merged, as one its agent linked in that turn: its work is
+    /// not over.
     pub(crate) fn take_merge_told(&self) -> Option<u64> {
         let mut state = self.shared.state();
         let entry = state.sessions.get_mut(&self.session)?;
         let told = entry.merge_told.take()?;
-        let record = &entry.record;
-        let ended_last = record.watching().next().is_none()
-            && !ended_otherwise_since(record.news(), told.at)
-            && entry
-                .watch_dropped_at
-                .is_none_or(|dropped| dropped <= told.seq);
-        ended_last.then_some(told.at)
+        entry.record.all_merged().then_some(told)
     }
 
     /// Watches `target` for the session, linking it first, at `now` (unix
@@ -315,6 +309,9 @@ impl PullRequestInbox {
                     let baseline = watch::evaluate(&WatchState::new(now), &detail, now);
                     link.watch = Some(baseline.next);
                     link.told_head = Some(detail.summary.change.head_oid.clone());
+                    // Read open just now. Only the tick keeps an end, so
+                    // it finds each merge.
+                    link.stood = Some(Stood::Open);
                 }
             }
             if linked || started {
@@ -349,7 +346,6 @@ impl PullRequestInbox {
                 .and_then(|link| link.watch.take())
                 .is_some();
             if was_watched {
-                entry.watch_dropped_at = Some(entry.record.news_generation());
                 // Polling stopped in memory; a failed save is logged.
                 let _ = self.shared.save(&self.session, &entry.record);
             }
@@ -359,9 +355,9 @@ impl PullRequestInbox {
     }
 
     /// Links `target` to the session as `origin` asked, unwatched, at
-    /// `now` (unix milliseconds). It is read only while it is watched or a
-    /// client looks at the session; a link to a session a client looks at
-    /// wakes the poller to read it.
+    /// `now` (unix milliseconds). The poller reads it at its next tick, and
+    /// from then at its linked cadence until it ends; a link to a session a
+    /// client looks at wakes the poller to read it at once.
     pub(crate) async fn link(
         &self,
         target: &str,
@@ -400,18 +396,12 @@ impl PullRequestInbox {
             };
             // Changed in a copy until it is saved, as in `link`.
             let mut record = entry.record.clone();
-            let was_watched = record
-                .link_mut(&pr)
-                .is_some_and(|link| link.watch.is_some());
             let was_linked = record.unlink(&pr);
             if was_linked {
                 self.shared
                     .save(&self.session, &record)
                     .map_err(PullRequestError::Store)?;
                 entry.record = record;
-            }
-            if was_linked && was_watched {
-                entry.watch_dropped_at = Some(entry.record.news_generation());
             }
             Ok::<_, PullRequestError>(was_linked)
         })?;

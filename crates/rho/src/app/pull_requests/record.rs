@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::{
-    model::PrId,
+    model::{PrId, PrState},
     state::{News, WatchState},
 };
 
@@ -51,6 +51,54 @@ pub(crate) struct Link {
     /// each news since. News on another head says new commits came.
     #[serde(default)]
     pub(crate) told_head: Option<String>,
+    /// How the pull request stood at the last read of it made since it was
+    /// linked; `None` until one is kept. Saved, so a merge that came while
+    /// the daemon was down still reads as one.
+    #[serde(default)]
+    pub(crate) stood: Option<Stood>,
+}
+
+/// How a linked pull request stood at a read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum Stood {
+    Open,
+    /// Closed without merging.
+    Closed,
+    Merged,
+}
+
+impl From<PrState> for Stood {
+    fn from(state: PrState) -> Self {
+        match state {
+            PrState::Open | PrState::Draft => Self::Open,
+            PrState::Closed => Self::Closed,
+            PrState::Merged => Self::Merged,
+        }
+    }
+}
+
+impl Link {
+    /// Whether the poller reads the pull request with no one asking, to
+    /// find its merge: until a read finds it ended. A closed pull request
+    /// that is reopened is read again once a watch or a client reads it.
+    pub(crate) fn awaits_merge(&self) -> bool {
+        match self.stood {
+            None | Some(Stood::Open) => true,
+            Some(Stood::Closed | Stood::Merged) => false,
+        }
+    }
+}
+
+/// What [`SessionRecord::keep_standing`] changed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct StandingKept {
+    /// Whether any link's standing changed, so the record needs saving.
+    pub(crate) changed: bool,
+    /// Whether a link that an earlier read found unmerged now reads
+    /// merged. A pull request first read as merged, as one linked after it
+    /// merged, is no merge found.
+    pub(crate) found_merge: bool,
 }
 
 /// Who linked a pull request to a session.
@@ -77,6 +125,7 @@ impl SessionRecord {
             linked_at: now,
             watch: None,
             told_head: None,
+            stood: None,
         });
         true
     }
@@ -103,6 +152,43 @@ impl SessionRecord {
         self.links
             .iter()
             .filter_map(|link| link.watch.as_ref().map(|watch| (link, watch)))
+    }
+
+    /// Keeps how each linked pull request stands, as `last_read` says the
+    /// newest read of it found it, with when that read was, in unix
+    /// milliseconds. A link it has no read of keeps what it had, and so
+    /// does one linked after the second of that read: sessions share
+    /// reads, and a read older than the link may show as open a pull
+    /// request that had merged by the time it was linked. A read in the
+    /// second of the link counts, as the one a new link to a session a
+    /// client looks at wakes the poller for.
+    pub(crate) fn keep_standing(
+        &mut self,
+        last_read: impl Fn(&PrId) -> Option<(Stood, u64)>,
+    ) -> StandingKept {
+        let mut kept = StandingKept::default();
+        for link in &mut self.links {
+            let Some((read, at)) = last_read(&link.pr) else {
+                continue;
+            };
+            if at / 1000 < link.linked_at || link.stood == Some(read) {
+                continue;
+            }
+            kept.changed = true;
+            kept.found_merge |= read == Stood::Merged && link.stood.is_some();
+            link.stood = Some(read);
+        }
+        kept
+    }
+
+    /// Whether every linked pull request has merged, and one is linked:
+    /// the session's work on them is over.
+    pub(crate) fn all_merged(&self) -> bool {
+        !self.links.is_empty()
+            && self
+                .links
+                .iter()
+                .all(|link| link.stood == Some(Stood::Merged))
     }
 
     /// Undelivered news, oldest first.
