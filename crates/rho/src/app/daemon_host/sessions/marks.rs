@@ -24,8 +24,13 @@
 //! closed, marks nothing either time: the session's work is not over, and
 //! a session marked done by mistake is hidden, which is worse than one
 //! left listed. Neither does a pull request first read after it merged,
-//! as one linked for reference. Past that, [`after_merge`] is the whole
-//! rule.
+//! as one linked for reference. Nor does a merge while a job the session
+//! started is still queued, running, or waiting for input, as a session
+//! it started for a pull request not yet opened, or one it starts in the
+//! turn that tells it of the merge: that work is the session's too.
+//! Nothing marks the session when that job ends; it stays listed until
+//! the person or a later merge settles it. Past that, [`after_merge`] is
+//! the whole rule.
 
 use rho_protocol::{self as wire, ErrorCode, RpcError};
 use rho_sdk::SessionId;
@@ -64,7 +69,8 @@ impl Sessions {
 
     /// Marks done each session whose linked pull requests have all merged,
     /// as [`after_merge`] says, until the daemon starts stopping: a merge
-    /// it read before that is marked first.
+    /// it read before that is marked first. Not a session that started a
+    /// job still in progress, which nothing marks once that job ends.
     pub(super) async fn mark_merged_done(&self) {
         let Some(mut merged) = self.pull_requests.service().take_all_merged() else {
             return;
@@ -76,6 +82,9 @@ impl Sessions {
                 () = self.stopping.cancelled() => return,
                 else => return,
             };
+            if self.jobs.session_started_in_progress(&session) {
+                continue;
+            }
             let merged_at = at / 1000;
             let change = self
                 .change_saved_mark(&session, move |mark, now| after_merge(mark, merged_at, now));
@@ -134,7 +143,9 @@ pub(super) enum TurnOrigin {
 /// says: at or after the `updated_at` the turn leaves, so clients read the
 /// session as done once the turn is over. Not the turn of a prompt sent
 /// since rho found the merge, as when the news waited for one: the person
-/// turned to the session again, so it stays active.
+/// turned to the session again, so it stays active. Nor one that leaves a
+/// job the session started still in progress, as one the turn started on
+/// hearing of the merge; nothing marks the session once that job ends.
 pub(super) fn turn_ended(session: &LoadedSession, runtime: &SessionRuntime, origin: TurnOrigin) {
     let told = runtime
         .tools()
@@ -148,6 +159,9 @@ pub(super) fn turn_ended(session: &LoadedSession, runtime: &SessionRuntime, orig
         // The merge came while the prompt's turn ran.
         TurnOrigin::Prompt { at } if at <= merged_at => {}
         TurnOrigin::Prompt { .. } => return,
+    }
+    if session.jobs.session_started_in_progress(&session.id) {
+        return;
     }
     let merged_at = merged_at / 1000;
     match runtime.change_mark(|mark, now| after_merge(mark, merged_at, now)) {

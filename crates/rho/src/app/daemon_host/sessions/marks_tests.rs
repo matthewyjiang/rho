@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use pretty_assertions::assert_eq;
 use rho_protocol::{self as wire, ContentBlock as WireBlock, PromptAuthor, SessionPromptParams};
@@ -20,7 +20,7 @@ use super::{
 use crate::{
     app::{
         daemon_host::{
-            jobs::{JobRegistry, JobStore},
+            jobs::{JobEvent, JobRecord, JobRegistry, JobStore, TurnEnd},
             wire::session_to_wire,
         },
         pull_requests::{PullRequestInbox, ScriptedForge},
@@ -290,6 +290,80 @@ async fn a_merge_no_turn_tells_of_marks_the_session_done_at_once() {
             vec![Heard::Mark(Some(wire::SessionMark::Done { at }))]
         )
     );
+}
+
+/// Where a job the session started is when its pull request merges.
+enum Started {
+    /// Queued for capacity, as a subagent run is before it runs.
+    InProgress,
+    /// Queued, and recorded as writing the session itself: the job the
+    /// registry finds writing the session is then this one, not the job
+    /// that started it.
+    InProgressWritingIt,
+    /// It ran, and completed.
+    Ended,
+}
+
+// Covers: a merge marks nothing while a job the session started is still
+// in progress, neither as the daemon reads the merge nor as the turn that
+// tells the agent of it ends, so a session whose started sessions or
+// subagents work on is not hidden; one whose started job ended is marked.
+// A daemon that marks on the merges alone hides the first three; one that
+// holds back for any job the session ever started leaves the last listed;
+// one that asks only the job it finds writing the session hides the third.
+// Owner: daemon session marks.
+#[tokio::test]
+async fn a_merge_marks_nothing_while_a_job_the_session_started_is_in_progress() {
+    let cases = [
+        (Told::AtTheNextPrompt, Started::InProgress, false),
+        (Told::ByTheDaemon, Started::InProgress, false),
+        (Told::AtTheNextPrompt, Started::InProgressWritingIt, false),
+        (Told::AtTheNextPrompt, Started::Ended, true),
+    ];
+    let (mut marked, mut expected) = (Vec::new(), Vec::new());
+    for (told, started, done) in cases {
+        let by_the_daemon = matches!(told, Told::ByTheDaemon);
+        let fixture = Fixture::watching(told).await;
+        let jobs = &fixture.sessions.jobs;
+        let writes = match started {
+            Started::InProgress | Started::Ended => None,
+            Started::InProgressWritingIt => Some(fixture.session.id.clone()),
+        };
+        let run = JobRecord::new_subagent(
+            fixture.session.job.clone(),
+            PathBuf::from("/work"),
+            writes,
+            "run".into(),
+        );
+        let run_id = run.id.clone();
+        jobs.register(run).unwrap();
+        match started {
+            Started::InProgress | Started::InProgressWritingIt => {}
+            Started::Ended => {
+                jobs.record(&run_id, JobEvent::TurnEnded(TurnEnd::Completed))
+                    .unwrap();
+            }
+        }
+
+        if by_the_daemon {
+            fixture.merge_and_deliver().await;
+        } else {
+            fixture.merge().await;
+            fixture.sessions.stopping.cancel();
+            timeout(TEST_BUDGET, fixture.sessions.mark_merged_done())
+                .await
+                .expect("the daemon marks what it read, then stops");
+        }
+
+        let listed_done = matches!(fixture.listed().mark, Some(SessionMark::Done { .. }));
+        let told_mark = fixture
+            .heard()
+            .iter()
+            .any(|heard| matches!(heard, Heard::Mark(_)));
+        marked.push((listed_done, told_mark));
+        expected.push((done, done));
+    }
+    assert_eq!(marked, expected);
 }
 
 // Covers: a merge whose news waited for the person's next prompt, as after

@@ -252,6 +252,26 @@ impl JobRegistry {
                 .any(|record| record.parent.as_ref() == Some(id) && record.state.in_progress())
     }
 
+    /// Whether a job that writes `session` started a job still queued,
+    /// running, or waiting for input, which keeps a merge from marking the
+    /// session done (see `sessions::marks`). Every job that writes the
+    /// session counts, its turns' and a subagent run's alike, so the answer
+    /// does not turn on which of them is under way.
+    pub(in crate::app::daemon_host) fn session_started_in_progress(
+        &self,
+        session: &rho_sdk::SessionId,
+    ) -> bool {
+        let jobs = self.lock();
+        jobs.values().any(|record| {
+            record.state.in_progress()
+                && record
+                    .parent
+                    .as_ref()
+                    .and_then(|parent| jobs.get(parent))
+                    .is_some_and(|parent| parent.subject.session() == Some(session))
+        })
+    }
+
     /// Job `id` as the registry has it now.
     pub(in crate::app::daemon_host) fn get(&self, id: &JobId) -> Option<JobRecord> {
         self.lock().get(id).cloned()
