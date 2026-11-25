@@ -381,9 +381,10 @@ fn intern(
         metadata_upstream,
         catalog_lookup,
         openai_compatible_api: api,
-        // Same Chat Completions effort field as Ollama. Custom names are not in
-        // models.dev, so Unknown must still send the selected level.
-        catalog_reasoning: CatalogReasoningPolicy::OffAsNone,
+        // A borrowed catalog row is the host's vocabulary: Off is selectable
+        // only where it advertises `none` (gpt-oss rejects it). Models with no
+        // row still send the selected level; see `unknown_effort`.
+        catalog_reasoning: CatalogReasoningPolicy::ExactAdvertised,
         default_model: None,
     }));
     registry.interned.insert(name.to_string(), descriptor);

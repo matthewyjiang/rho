@@ -1388,8 +1388,8 @@ fn hydrate_borrowed_openrouter_slug_uses_catalog_document() {
             (
                 "anthropic/claude-test",
                 "OpenRouter Claude",
+                // The borrowed row lists no `none`, so custom hosts get no Off.
                 Some(vec![
-                    ReasoningLevel::Off,
                     ReasoningLevel::Low,
                     ReasoningLevel::Medium,
                     ReasoningLevel::High,

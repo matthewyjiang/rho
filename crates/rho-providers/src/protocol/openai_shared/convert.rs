@@ -12,25 +12,39 @@ use rho_sdk::model::{ToolCall, ToolSpec};
 use rho_sdk::tool::ToolExecutionMode;
 
 use crate::protocol::openai_chat::{
-    ChatResponse, OpenAiFunctionCall, OpenAiMessage, OpenAiTool, OpenAiToolCall, OpenAiToolFunction,
+    ChatReasoning, ChatReasoningField, ChatReasoningReplay, ChatResponse, OpenAiFunctionCall,
+    OpenAiMessage, OpenAiTool, OpenAiToolCall, OpenAiToolFunction,
 };
 
 use super::content_chunks::{content_parts, ContentPart};
 use super::image_generation::{is_image_generation_replay, restore_image_generation_results};
 use super::tool_calls::{finalize_chat_tool_calls, ChatToolCallPolicy, RawChatToolCall};
 
-/// Provider-context kind for chat-completions `reasoning_content`.
+/// Provider-context kind for raw chat-completions reasoning.
 ///
-/// Models such as Qwen3.x stream thinking in `delta.reasoning_content` and expect
-/// that field to be replayed on later assistant messages that carried tool calls.
-/// Raw reasoning stays opaque provider context (never `reasoning_summary`).
+/// Models such as Qwen3.x stream thinking in `delta.reasoning_content` (Groq
+/// uses `delta.reasoning`) and expect it replayed on later assistant messages
+/// that carried tool calls. Raw reasoning stays opaque provider context
+/// (never `reasoning_summary`).
+///
+/// Data is a bare string for `reasoning_content`, the shape every release has
+/// written. Other fields store [`StoredChatReasoning`]; releases that predate
+/// it skip non-string data, so a session still resumes in an older build.
 pub(crate) const OPENAI_CHAT_REASONING_CONTENT_KIND: &str = "openai_chat_reasoning_content";
+
+/// Context data for reasoning that streamed in a field other than
+/// `reasoning_content`.
+#[derive(serde::Serialize, Deserialize)]
+struct StoredChatReasoning {
+    field: ChatReasoningField,
+    text: String,
+}
 
 /// Normalized chat-completions assistant payload after stream or JSON convert.
 #[derive(Debug)]
 pub(crate) struct ChatAssistantFinish {
     pub(crate) response: ModelResponse,
-    pub(crate) reasoning_content: Option<String>,
+    pub(crate) reasoning: Option<ChatReasoning>,
 }
 
 /// Builds the shared chat assistant response from accumulated text, reasoning,
@@ -38,7 +52,7 @@ pub(crate) struct ChatAssistantFinish {
 /// for reasoning separately via [`emit_chat_reasoning_context`].
 pub(crate) fn finalize_chat_assistant(
     text: String,
-    reasoning: String,
+    reasoning: ChatReasoning,
     tool_calls: Vec<RawChatToolCall>,
     policy: ChatToolCallPolicy,
 ) -> Result<ChatAssistantFinish, ModelError> {
@@ -56,34 +70,43 @@ pub(crate) fn finalize_chat_assistant(
     }
     Ok(ChatAssistantFinish {
         response: ModelResponse::Assistant(blocks),
-        reasoning_content: (!reasoning.is_empty()).then_some(reasoning),
+        reasoning: (!reasoning.text.is_empty()).then_some(reasoning),
     })
 }
 
-/// Publishes retained chat `reasoning_content` as opaque provider context.
+/// Publishes retained chat reasoning as opaque provider context.
 pub(crate) fn emit_chat_reasoning_context(
-    reasoning_content: Option<String>,
+    reasoning: Option<ChatReasoning>,
     on_event: &mut (dyn FnMut(crate::model::ModelEvent) -> Result<(), ModelError> + Send),
 ) -> Result<(), ModelError> {
-    let Some(reasoning) = reasoning_content.filter(|text| !text.is_empty()) else {
+    let Some(reasoning) = reasoning.filter(|reasoning| !reasoning.text.is_empty()) else {
         return Ok(());
+    };
+    let data = match reasoning.field {
+        ChatReasoningField::ReasoningContent => Value::String(reasoning.text),
+        field @ (ChatReasoningField::Reasoning | ChatReasoningField::ReasoningText) => {
+            json!(StoredChatReasoning {
+                field,
+                text: reasoning.text,
+            })
+        }
     };
     on_event(crate::model::ModelEvent::ProviderContext {
         kind: OPENAI_CHAT_REASONING_CONTENT_KIND.into(),
         position: Some(0),
-        data: serde_json::Value::String(reasoning),
+        data,
         replay: crate::model::ReplayScope::ExactModel,
     })
 }
 
 /// Non-stream completions keep only the portable assistant response.
 ///
-/// Chat `reasoning_content` is stream-path provider context
+/// Chat reasoning is stream-path provider context
 /// ([`OPENAI_CHAT_REASONING_CONTENT_KIND`]). `send_turn` / `complete_turn` have
 /// no event channel to publish it, and [`ModelResponse`] cannot carry it.
 /// Rho orchestration always uses the stream path for multi-step tool loops.
 pub(crate) fn response_without_stream_context(finish: ChatAssistantFinish) -> ModelResponse {
-    let _ = finish.reasoning_content;
+    let _ = finish.reasoning;
     finish.response
 }
 
@@ -102,11 +125,11 @@ pub(crate) fn convert_openai_response(
         .ok_or_else(|| ModelError::InvalidResponse("missing choices".into()))?
         .message;
     let mut text = String::new();
-    let mut reasoning = message
-        .reasoning_content
-        .filter(|text| !text.is_empty())
-        .unwrap_or_default();
-    let reasoning_from_chunks = reasoning.is_empty();
+    let mut reasoning = ChatReasoning {
+        field: ChatReasoningField::ReasoningContent,
+        text: message.reasoning_content.unwrap_or_default(),
+    };
+    let reasoning_from_chunks = reasoning.text.is_empty();
     for part in message
         .content
         .as_ref()
@@ -115,7 +138,7 @@ pub(crate) fn convert_openai_response(
     {
         match part {
             ContentPart::Text(part) => text.push_str(part),
-            ContentPart::Thinking(part) if reasoning_from_chunks => reasoning.push_str(&part),
+            ContentPart::Thinking(part) if reasoning_from_chunks => reasoning.text.push_str(&part),
             ContentPart::Thinking(_) => {}
         }
     }
@@ -134,28 +157,35 @@ pub(crate) fn convert_openai_response(
 
 /// Known chat wire fields extracted from replayable provider context.
 struct ChatReplay {
-    reasoning_content: Option<String>,
+    reasoning: Option<ChatReasoning>,
 }
 
 fn chat_replay(replay_context: Vec<ProviderContextBlock>) -> Result<ChatReplay, ModelError> {
-    let mut reasoning_content = None;
+    let mut reasoning = None;
     let mut unknown_kinds = Vec::new();
     for block in replay_context {
         if block.kind == OPENAI_CHAT_REASONING_CONTENT_KIND {
-            let Some(text) = block
-                .data
-                .as_str()
-                .map(str::to_owned)
-                .filter(|text| !text.is_empty())
-            else {
+            // Data a newer release wrote in a shape this build does not know
+            // is skipped, as older builds skip `StoredChatReasoning`.
+            let stored = match block.data {
+                Value::String(text) => Some(StoredChatReasoning {
+                    field: ChatReasoningField::ReasoningContent,
+                    text,
+                }),
+                data => serde_json::from_value::<StoredChatReasoning>(data).ok(),
+            };
+            let Some(stored) = stored.filter(|stored| !stored.text.is_empty()) else {
                 continue;
             };
-            if reasoning_content.is_some() {
+            if reasoning.is_some() {
                 return Err(ModelError::InvalidResponse(
-                    "openai chat received multiple reasoning_content replay blocks".into(),
+                    "openai chat received multiple reasoning replay blocks".into(),
                 ));
             }
-            reasoning_content = Some(text);
+            reasoning = Some(ChatReasoning {
+                field: stored.field,
+                text: stored.text,
+            });
             continue;
         }
         if !unknown_kinds.contains(&block.kind) {
@@ -168,7 +198,7 @@ fn chat_replay(replay_context: Vec<ProviderContextBlock>) -> Result<ChatReplay, 
             unknown_kinds.join(", ")
         )));
     }
-    Ok(ChatReplay { reasoning_content })
+    Ok(ChatReplay { reasoning })
 }
 
 pub(crate) fn codex_reasoning_param(
@@ -509,6 +539,8 @@ fn openai_assistant_message(blocks: &[ContentBlock]) -> Result<OpenAiMessage, Mo
             content: blocks.to_vec(),
             replay_context: Vec::new(),
         },
+        // No replay context, so the policy never applies.
+        ChatReasoningReplay::ReasoningContent,
         // Plain assistant history carries no provenance, so it never gets
         // same-model reasoning synthesis.
         /*synthesize_tool_reasoning*/
@@ -519,7 +551,8 @@ fn openai_assistant_message(blocks: &[ContentBlock]) -> Result<OpenAiMessage, Mo
 /// DeepSeek's thinking mode rejects tool-call turns that omit
 /// `reasoning_content` (a present empty string is accepted), while stricter
 /// chat hosts can reject the field as unknown. Synthesis is therefore scoped
-/// to same-model turns for the models documented to require it.
+/// to same-model turns for the models documented to require it, and those
+/// turns replay reasoning as `reasoning_content` whatever field it streamed in.
 fn synthesizes_tool_reasoning(
     provenance: Option<&crate::model::ModelIdentity>,
     target: &crate::model::ModelIdentity,
@@ -529,14 +562,22 @@ fn synthesizes_tool_reasoning(
 
 /// Converts a prepared assistant turn for the chat-completions wire.
 ///
+/// This is the one place the replayed reasoning field is chosen: `replay`
+/// picks it from the field the reasoning streamed in, and
 /// `synthesize_tool_reasoning` makes tool-call turns always carry
 /// `reasoning_content`, defaulting to an empty string; see
 /// [`synthesizes_tool_reasoning`].
 fn openai_prepared_assistant(
     prepared: PreparedAssistant,
+    replay: ChatReasoningReplay,
     synthesize_tool_reasoning: bool,
 ) -> Result<OpenAiMessage, ModelError> {
-    let replay = chat_replay(prepared.replay_context)?;
+    let reasoning = chat_replay(prepared.replay_context)?
+        .reasoning
+        .map(|reasoning| ChatReasoning {
+            field: replay.field(reasoning.field),
+            text: reasoning.text,
+        });
     let content = assistant_text(&prepared.content);
     let tool_calls = prepared
         .content
@@ -549,9 +590,16 @@ fn openai_prepared_assistant(
     Ok(OpenAiMessage {
         role: "assistant".into(),
         content: (!content.is_empty()).then(|| Value::String(content)),
-        reasoning_content: replay
-            .reasoning_content
-            .or_else(|| (synthesize_tool_reasoning && !tool_calls.is_empty()).then(String::new)),
+        reasoning: if synthesize_tool_reasoning && !tool_calls.is_empty() {
+            Some(ChatReasoning {
+                field: ChatReasoningField::ReasoningContent,
+                text: reasoning
+                    .map(|reasoning| reasoning.text)
+                    .unwrap_or_default(),
+            })
+        } else {
+            reasoning
+        },
         tool_calls: (!tool_calls.is_empty()).then_some(tool_calls),
         tool_call_id: None,
     })
@@ -560,10 +608,11 @@ fn openai_prepared_assistant(
 pub(crate) fn to_openai_messages_for_target(
     messages: &[Message],
     target: Option<&crate::model::ModelIdentity>,
+    replay: ChatReasoningReplay,
 ) -> Result<Vec<OpenAiMessage>, ModelError> {
     crate::protocol::late_tool_results::normalize_late_tool_results(messages)
         .iter()
-        .filter_map(|message| to_openai_message_for_target(message, target).transpose())
+        .filter_map(|message| to_openai_message_for_target(message, target, replay).transpose())
         .collect()
 }
 
@@ -572,13 +621,14 @@ pub(crate) fn to_openai_messages_for_target(
 pub(crate) fn to_openai_message_for_target(
     message: &Message,
     target: Option<&crate::model::ModelIdentity>,
+    replay: ChatReasoningReplay,
 ) -> Result<Option<OpenAiMessage>, ModelError> {
     let message = match message.wire() {
         WireMessage::System(content) => openai_text_message("system", content.to_owned()),
         WireMessage::User(blocks) => OpenAiMessage {
             role: "user".into(),
             content: Some(chat_content_blocks(&blocks)),
-            reasoning_content: None,
+            reasoning: None,
             tool_calls: None,
             tool_call_id: None,
         },
@@ -589,7 +639,11 @@ pub(crate) fn to_openai_message_for_target(
             });
             let target = target.unwrap_or(&fallback_target);
             let synthesize = synthesizes_tool_reasoning(message.provenance.as_ref(), target);
-            openai_prepared_assistant(prepare_assistant(message.clone(), target), synthesize)?
+            openai_prepared_assistant(
+                prepare_assistant(message.clone(), target),
+                replay,
+                synthesize,
+            )?
         }
         WireMessage::AbortedAssistant(message) => {
             let mut enriched = crate::protocol::aborted_replay::aborted_replay_message(
@@ -604,14 +658,14 @@ pub(crate) fn to_openai_message_for_target(
             });
             let target = target.unwrap_or(&fallback_target);
             let synthesize = synthesizes_tool_reasoning(enriched.provenance.as_ref(), target);
-            openai_prepared_assistant(prepare_assistant(enriched, target), synthesize)?
+            openai_prepared_assistant(prepare_assistant(enriched, target), replay, synthesize)?
         }
         // `to_openai_messages_for_target` has already moved result images
         // into the user message after the result run.
         WireMessage::ToolResult(result) => OpenAiMessage {
             role: "tool".into(),
             content: Some(json!(result.content)),
-            reasoning_content: None,
+            reasoning: None,
             tool_calls: None,
             tool_call_id: Some(result.id.clone()),
         },
@@ -624,7 +678,7 @@ fn openai_text_message(role: &str, content: String) -> OpenAiMessage {
     OpenAiMessage {
         role: role.into(),
         content: Some(Value::String(content)),
-        reasoning_content: None,
+        reasoning: None,
         tool_calls: None,
         tool_call_id: None,
     }

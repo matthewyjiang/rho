@@ -1,6 +1,7 @@
 use crate::protocol::openai_chat::{
     convert_openai_response, invalid_stream_utf8, response_without_stream_context,
-    to_openai_messages_for_target, to_openai_tool, ChatStreamAccumulator, ChatToolCallPolicy,
+    to_openai_messages_for_target, to_openai_tool, ChatReasoningReplay, ChatStreamAccumulator,
+    ChatToolCallPolicy,
 };
 use reqwest::StatusCode;
 
@@ -72,7 +73,11 @@ impl GitHubCopilotProvider {
         stream: bool,
     ) -> Result<ChatRequest<'a>, ModelError> {
         let target = self.model_identity();
-        let messages = to_openai_messages_for_target(request.messages, Some(&target))?;
+        let messages = to_openai_messages_for_target(
+            request.messages,
+            Some(&target),
+            ChatReasoningReplay::ReasoningContent,
+        )?;
         let tools = request.tools.iter().map(to_openai_tool).collect::<Vec<_>>();
         let has_tools = !tools.is_empty();
         Ok(ChatRequest {

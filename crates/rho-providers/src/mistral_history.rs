@@ -12,8 +12,8 @@ use crate::protocol::openai_chat::OpenAiMessage;
 /// Moves replayed reasoning in `messages` into thinking content chunks.
 pub(super) fn normalize(messages: &mut [OpenAiMessage]) {
     for message in messages {
-        if let Some(reasoning) = message.reasoning_content.take() {
-            message.content = Some(with_thinking_chunk(reasoning, message.content.take()));
+        if let Some(reasoning) = message.reasoning.take() {
+            message.content = Some(with_thinking_chunk(reasoning.text, message.content.take()));
         }
     }
 }

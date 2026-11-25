@@ -203,56 +203,153 @@ fn kimi_code_k3_serializes_each_reasoning_mode_as_a_whole_request() {
     }
 }
 
-// Covers: Chat Completions must send prompt_cache_key when the session has one
-// and omit it otherwise so strict hosts never see an empty field.
+// Covers: prompt_cache_key reaches dialects that declare it only when the
+// session has one; config-defined hosts never get it because strict hosts
+// (Groq) reject undeclared fields with 400.
 // Owner: openai compatible chat request
 #[test]
-fn chat_completions_forwards_prompt_cache_key_when_present() {
-    let provider = OpenAiCompatibleProvider::new(
-        crate::reqwest_client(),
-        "cliproxyapi",
-        "xai/grok-4.6".into(),
-        OpenAiCompatibleDialect::Custom,
-        CompatibleAuth::ApiKey("secret".into()),
-        "https://example.com".into(),
-    );
+fn chat_completions_sends_prompt_cache_key_only_where_dialect_declares_it() {
     let messages = [Message::user_text("hello")];
+    for (dialect, prompt_cache_key, expected) in [
+        (
+            OpenAiCompatibleDialect::Standard,
+            Some("rho:session-1"),
+            Some("rho:session-1"),
+        ),
+        (OpenAiCompatibleDialect::Standard, None, None),
+        (OpenAiCompatibleDialect::Custom, Some("rho:session-1"), None),
+    ] {
+        let provider = OpenAiCompatibleProvider::new(
+            crate::reqwest_client(),
+            "example",
+            "example-model".into(),
+            dialect,
+            CompatibleAuth::ApiKey("secret".into()),
+            "https://example.com".into(),
+        );
+        let body = serde_json::to_value(
+            provider
+                .request_body(
+                    ModelRequest {
+                        messages: &messages,
+                        tools: &[],
+                        cancellation: Default::default(),
+                        reasoning_level: crate::reasoning::ReasoningLevel::Off,
+                        prompt_cache_key,
+                    },
+                    /*stream*/ false,
+                )
+                .unwrap()
+                .body,
+        )
+        .unwrap();
+        assert_eq!(
+            body.get("prompt_cache_key").and_then(|key| key.as_str()),
+            expected,
+            "{dialect:?} with {prompt_cache_key:?}"
+        );
+    }
+}
 
-    let with_key = serde_json::to_value(
-        provider
-            .request_body(
-                ModelRequest {
-                    messages: &messages,
-                    tools: &[],
-                    cancellation: Default::default(),
-                    reasoning_level: crate::reasoning::ReasoningLevel::Off,
-                    prompt_cache_key: Some("rho:session-1"),
-                },
-                /*stream*/ false,
-            )
-            .unwrap()
-            .body,
-    )
-    .unwrap();
-    assert_eq!(with_key["prompt_cache_key"], "rho:session-1");
+// Covers: config-defined hosts get streamed reasoning back on the next
+// tool-loop request under the field it streamed in (Groq streams `reasoning`
+// and rejects `reasoning_content` with 400), while built-in dialects keep the
+// `reasoning_content` replay they have always sent.
+// Owner: openai compatible chat stream-to-replay round trip
+#[test]
+fn chat_reasoning_replay_field_follows_dialect() {
+    for (dialect, streamed, replayed) in [
+        (OpenAiCompatibleDialect::Custom, "reasoning", "reasoning"),
+        (
+            OpenAiCompatibleDialect::Custom,
+            "reasoning_content",
+            "reasoning_content",
+        ),
+        (
+            OpenAiCompatibleDialect::OpenRouter,
+            "reasoning",
+            "reasoning_content",
+        ),
+    ] {
+        let provider = OpenAiCompatibleProvider::new(
+            crate::reqwest_client(),
+            "example",
+            "example-model".into(),
+            dialect,
+            CompatibleAuth::ApiKey("secret".into()),
+            "https://example.com".into(),
+        );
+        let mut stream = ChatStreamAccumulator::new(
+            dialect.chat_tool_call_policy(),
+            HiddenReasoningRisk::Unlikely,
+        );
+        let mut provider_context = Vec::new();
+        let mut on_event = |event| {
+            if let ModelEvent::ProviderContext {
+                kind,
+                position,
+                data,
+                replay,
+            } = event
+            {
+                provider_context.push(crate::model::ProviderContextBlock {
+                    identity: provider.model_identity(),
+                    kind,
+                    position,
+                    data,
+                    replay,
+                });
+            }
+            Ok(())
+        };
+        for line in [
+            format!(r#"data: {{"choices":[{{"delta":{{"{streamed}":"read it first"}}}}]}}"#),
+            r#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","type":"function","function":{"name":"read","arguments":"{}"}}]}}]}"#.into(),
+        ] {
+            stream.handle_line(&line, &mut on_event).unwrap();
+        }
+        let ModelResponse::Assistant(content) = stream.finish(&mut on_event).unwrap();
+        let history = [
+            Message::user_text("read note.txt"),
+            Message::assistant(crate::model::AssistantMessage {
+                content,
+                provenance: Some(provider.model_identity()),
+                reasoning_summary: None,
+                provider_context,
+            }),
+        ];
 
-    let without_key = serde_json::to_value(
-        provider
-            .request_body(
-                ModelRequest {
-                    messages: &messages,
-                    tools: &[],
-                    cancellation: Default::default(),
-                    reasoning_level: crate::reasoning::ReasoningLevel::Off,
-                    prompt_cache_key: None,
-                },
-                /*stream*/ false,
-            )
-            .unwrap()
-            .body,
-    )
-    .unwrap();
-    assert!(without_key.get("prompt_cache_key").is_none());
+        let body = serde_json::to_value(
+            provider
+                .request_body(
+                    ModelRequest {
+                        messages: &history,
+                        tools: &[],
+                        cancellation: Default::default(),
+                        reasoning_level: crate::reasoning::ReasoningLevel::Medium,
+                        prompt_cache_key: None,
+                    },
+                    /*stream*/ true,
+                )
+                .unwrap()
+                .body,
+        )
+        .unwrap();
+
+        assert_eq!(
+            body["messages"][1],
+            json!({
+                "role": "assistant",
+                replayed: "read it first",
+                "tool_calls": [{
+                    "id": "call-1",
+                    "type": "function",
+                    "function": {"name": "read", "arguments": "{}"},
+                }],
+            }),
+            "{dialect:?} streaming {streamed}"
+        );
+    }
 }
 
 #[test]

@@ -647,7 +647,11 @@ async fn fetch_models_dev_document<T: serde::de::DeserializeOwned>(url: &str) ->
 /// v16: the new `mistral` provider reads per-model `reasoning_effort` values
 /// from its rows. A current older snapshot has no `mistral` rows, so reasoning
 /// would stay unconfigurable until the daily refresh.
-pub(super) const MODEL_METADATA_CACHE_VERSION: i64 = 16;
+///
+/// v17: custom hosts parse borrowed `catalog` slugs with `ExactAdvertised`
+/// instead of `OffAsNone`. Older rows add Off to models that do not advertise
+/// `none`, so Groq's gpt-oss would keep sending an effort it rejects.
+pub(super) const MODEL_METADATA_CACHE_VERSION: i64 = 17;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CacheFreshness {

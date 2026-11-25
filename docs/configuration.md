@@ -213,7 +213,7 @@ Rho reads each model's advertised effort values from cached [models.dev](https:/
 
 For supported OpenAI Responses providers, `off` omits the reasoning object. Other levels send `reasoning.summary = "auto"` with the matching effort.
 
-Local Ollama and [config-defined OpenAI-compatible hosts](/providers/openai-compatible) send `reasoning_effort`, including `"none"`, when capability metadata is missing or the model supports reasoning. Rho omits the field when metadata says reasoning is not configurable, because those APIs treat a missing field as thinking on. Switching models maps an unavailable level to the closest lower supported level. When metadata is missing or uses an unsupported scheme, Rho keeps the full list rather than guessing.
+Local Ollama and [config-defined OpenAI-compatible hosts](/providers/openai-compatible) send `reasoning_effort`, including `"none"`, when capability metadata is missing or the model supports reasoning. A custom host's borrowed `catalog` keeps Off only for models that advertise `"none"`. Rho omits the field when metadata says reasoning is not configurable, because those APIs treat a missing field as thinking on. Switching models maps an unavailable level to the closest lower supported level. When metadata is missing or uses an unsupported scheme, Rho keeps the full list rather than guessing.
 
 Whether reasoning text is shown, zen mode, and output streaming are display settings. See [Transcript display](/interactive-tui/transcript#display-modes) and [Text streaming](/interactive-tui#text-streaming).
 
