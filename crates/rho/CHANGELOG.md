@@ -1,5 +1,41 @@
 # Changelog
 
+## [3.5.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v3.4.0...rho-coding-agent-v3.5.0) (2026-11-25)
+
+
+### Features
+
+* **agents:** add a built-in lead agent that runs a goal through other sessions ([#2028](https://github.com/matthewyjiang/rho/issues/2028)) ([826672a](https://github.com/matthewyjiang/rho/commit/826672ac0d2ab17ca63d81ab4b0e9e3eec0a0f94))
+* **agents:** have the lead take its added directories as its repositories ([#2034](https://github.com/matthewyjiang/rho/issues/2034)) ([65596cb](https://github.com/matthewyjiang/rho/commit/65596cb675ebff104541b82622958716c5458be1))
+* **daemon:** fork a saved session into a supervised side session ([#2017](https://github.com/matthewyjiang/rho/issues/2017)) ([166fa2b](https://github.com/matthewyjiang/rho/commit/166fa2bcf0899bd7f9626ef2cecff63123de32cb))
+* **daemon:** keep session marks on the daemon and mark a session done when its pull request merges ([#2027](https://github.com/matthewyjiang/rho/issues/2027)) ([eba0536](https://github.com/matthewyjiang/rho/commit/eba05366f69ff9a7fe2e3abb012a3cdffe8f72f9))
+* **daemon:** let a person choose the permission mode and model of the sessions a session starts ([#2025](https://github.com/matthewyjiang/rho/issues/2025)) ([af3f686](https://github.com/matthewyjiang/rho/commit/af3f686b67749218a774f614f46ff11906b6519a))
+* **daemon:** let a session answer the questions of sessions it started ([#2023](https://github.com/matthewyjiang/rho/issues/2023)) ([e23a34a](https://github.com/matthewyjiang/rho/commit/e23a34ac172b761113ecb792a84fcadcacdd0150))
+* **daemon:** mark a session done when all its linked pull requests have merged, watched or not ([#2029](https://github.com/matthewyjiang/rho/issues/2029)) ([8913bf5](https://github.com/matthewyjiang/rho/commit/8913bf54e07bd84e97873ea9054b36c889385a9f))
+* **daemon:** replay a saved compaction as a compaction event ([#2033](https://github.com/matthewyjiang/rho/issues/2033)) ([07f5560](https://github.com/matthewyjiang/rho/commit/07f55600aeda3c399be28b31aa1e0ef0f861195a))
+* **daemon:** wake a session when a session it started ends or asks a question ([#2026](https://github.com/matthewyjiang/rho/issues/2026)) ([efff3d7](https://github.com/matthewyjiang/rho/commit/efff3d7ffdf86c1be5bb1b54b048583f424c65cb))
+* **mcp:** let hosts find and pick up the sessions a person opened ([#2018](https://github.com/matthewyjiang/rho/issues/2018)) ([32c88a4](https://github.com/matthewyjiang/rho/commit/32c88a4716e8c252b099d64503bb8eeb029726cc))
+* **protocol:** list sessions with their agent and the session that started them ([#2024](https://github.com/matthewyjiang/rho/issues/2024)) ([910fd2a](https://github.com/matthewyjiang/rho/commit/910fd2a596158a188e75ab48cba422e056594780))
+* **titles:** name sessions seconds into the first turn, from images and files too ([#2015](https://github.com/matthewyjiang/rho/issues/2015)) ([ac61f78](https://github.com/matthewyjiang/rho/commit/ac61f78aba50ea70f898ae0c3f3f4ba72faf35c4))
+* **tui:** run /side in a daemon fork of the session ([#2019](https://github.com/matthewyjiang/rho/issues/2019)) ([0243687](https://github.com/matthewyjiang/rho/commit/024368762e12e5dcdef6f9dc1e51f1fddf4a5afd))
+
+
+### Bug Fixes
+
+* **agents:** stop rho contradicting a lead about worktrees, delegation, and its tools ([#2035](https://github.com/matthewyjiang/rho/issues/2035)) ([7a00817](https://github.com/matthewyjiang/rho/commit/7a00817fba37744827285d54deafac1d64c4777c))
+* **config:** offer only rho's models for the permission classifier ([#2014](https://github.com/matthewyjiang/rho/issues/2014)) ([1dc41b2](https://github.com/matthewyjiang/rho/commit/1dc41b261a7a24c4b7b03eabdea2d5f84594dd59))
+* **daemon:** forget the pull requests of a session deleted without the daemon ([#2030](https://github.com/matthewyjiang/rho/issues/2030)) ([be00250](https://github.com/matthewyjiang/rho/commit/be00250c218ec95fe169ae7570f88cdf230f1d33))
+* **daemon:** mark no session done for a merge while work it started is in progress ([#2032](https://github.com/matthewyjiang/rho/issues/2032)) ([a781e62](https://github.com/matthewyjiang/rho/commit/a781e626c7b11179689c92dfad1273a00f466d1c))
+* **sessions:** stop repeating identical argument descriptions in the sessions tool schema ([#2036](https://github.com/matthewyjiang/rho/issues/2036)) ([479563e](https://github.com/matthewyjiang/rho/commit/479563e7fc8ecf5c4aa18a35c4cc7295da56704a))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 6.0.1 to 6.1.0
+    * rho-providers bumped from 3.2.0 to 3.3.0
+
 ## [3.4.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v3.3.0...rho-coding-agent-v3.4.0) (2026-11-24)
 
 

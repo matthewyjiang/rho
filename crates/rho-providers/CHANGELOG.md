@@ -1,5 +1,26 @@
 # Changelog
 
+## [3.3.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v3.2.0...rho-providers-v3.3.0) (2026-11-25)
+
+
+### Features
+
+* **daemon:** fork a saved session into a supervised side session ([#2017](https://github.com/matthewyjiang/rho/issues/2017)) ([166fa2b](https://github.com/matthewyjiang/rho/commit/166fa2bcf0899bd7f9626ef2cecff63123de32cb))
+* **titles:** name sessions seconds into the first turn, from images and files too ([#2015](https://github.com/matthewyjiang/rho/issues/2015)) ([ac61f78](https://github.com/matthewyjiang/rho/commit/ac61f78aba50ea70f898ae0c3f3f4ba72faf35c4))
+* **tui:** run /side in a daemon fork of the session ([#2019](https://github.com/matthewyjiang/rho/issues/2019)) ([0243687](https://github.com/matthewyjiang/rho/commit/024368762e12e5dcdef6f9dc1e51f1fddf4a5afd))
+
+
+### Bug Fixes
+
+* **providers:** stop sending fields strict chat hosts reject ([#2031](https://github.com/matthewyjiang/rho/issues/2031)) ([394e0df](https://github.com/matthewyjiang/rho/commit/394e0df2cdfa86a20ecd33cb3ca13ed9e51d73ec))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 6.0.1 to 6.1.0
+
 ## [3.2.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v3.1.0...rho-providers-v3.2.0) (2026-11-18)
 
 
