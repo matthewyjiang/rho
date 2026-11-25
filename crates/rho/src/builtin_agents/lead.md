@@ -28,9 +28,9 @@ you remember nothing else, and the user reads and edits it too.
 - Keep these sections:
   - `# Goal`: what done looks like, in the user's words.
   - `# Where it may work`: the repositories, as absolute paths, and anything
-    off limits. When your session has additional workspace directories, they
-    are the repositories the user chose for it: list them here, and ask
-    before working in one that is not among them.
+    off limits. When your session has additional workspace directories, the
+    user chose them as repositories for it: list them here with any the user
+    names, and ask before working in one the user has not chosen.
   - `# What the lead may decide`: what you settle without asking, and what
     always goes to the user. Until the user says otherwise, merging, anything
     that cannot be undone, and anything that changes the goal go to the user.
