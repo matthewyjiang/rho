@@ -99,8 +99,8 @@ impl Sessions {
         );
         let with = OpenWith::under(opening, &environment, setup)?;
         let global = config_for_new(&self.settings).await?;
-        // Added last, once the request is otherwise sound, since nothing
-        // removes it.
+        // Added last, once the request is otherwise sound, since a failed
+        // open leaves it behind.
         let (workspace, worktree) = match worktree {
             false => (workspace, None),
             true => {

@@ -191,11 +191,17 @@ pub struct SessionNewParams {
     /// Whether the session works in a git worktree of its own (#1673), so
     /// sessions in one repository cannot overwrite each other's edits. The
     /// daemon adds a worktree of the repository `cwd` is in, on a new
-    /// branch from that repository's `HEAD`, under its rho home, and opens
-    /// the session at `cwd`'s place in it. A `cwd` in no git repository,
-    /// or one git cannot add a worktree of, is
-    /// [`crate::ErrorCode::SessionOpenFailed`]. The daemon never removes
-    /// the worktree; [`SessionNewResponse::worktree`] and
+    /// branch, under its rho home, and opens the session at `cwd`'s place in
+    /// it. The branch starts from the `origin` remote's default branch,
+    /// fetched first, or from the repository's `HEAD` when there is no
+    /// `origin`, the fetch fails or takes over 30 seconds, or the daemon's
+    /// `git.worktree_from_remote` is off. A `cwd` in no git repository, or
+    /// one git cannot add a worktree of, is
+    /// [`crate::ErrorCode::SessionOpenFailed`]. The daemon's own pass
+    /// removes the worktree once it is clean, merged, not locked, and unused
+    /// for a day, and [`super::WORKTREE_PRUNE`] does without waiting the
+    /// day. Either keeps its branch, and the daemon adds the worktree back
+    /// when the session reopens; [`SessionNewResponse::worktree`] and
     /// [`super::JobSummary::worktree`] name it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub worktree: bool,
@@ -255,8 +261,8 @@ pub struct SessionForkResponse {
 /// A git worktree the daemon added for a session to work in (#1673).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SessionWorktree {
-    /// The branch checked out in the worktree, new from the repository's
-    /// `HEAD` when the session opened.
+    /// The branch checked out in the worktree, new when the worktree was
+    /// added, from where [`SessionNewParams::worktree`] says.
     pub branch: String,
     /// The worktree's root directory, under the daemon's rho home: what
     /// `git worktree remove` takes.

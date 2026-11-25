@@ -288,7 +288,7 @@ Compaction summarizes older turns, so earlier details can drop out of context. W
 }
 
 pub fn append_subagents_disabled_instruction(text: &mut String) {
-    text.push_str("\n\nAgent delegation is disabled. Do not attempt to delegate work.\n");
+    text.push_str("\n\nThis session has no `agent` tool, so it cannot start subagents. Do not hand work to other sessions unless your instructions say to.\n");
 }
 
 /// Why a mid-session model notice is being appended.

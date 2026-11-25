@@ -261,8 +261,13 @@ pub(crate) struct NewParams {
     #[serde(default)]
     pub(crate) model: Option<String>,
     /// Work in a new git worktree of the workspace's repository, on a new
-    /// branch from its HEAD, so the session's edits cannot collide with
-    /// other sessions' in that repository. Nothing removes the worktree.
+    /// branch, so the session's edits cannot collide with other sessions' in
+    /// that repository. The branch starts from `origin`'s default branch,
+    /// fetched first, or from `HEAD` when there is no `origin`, the fetch
+    /// fails or takes over 30 seconds, or `git.worktree_from_remote` is off.
+    /// The daemon removes the worktree once it is clean, merged, not locked,
+    /// and unused for a day, keeps the branch, and adds the worktree back if
+    /// the session reopens; one with unmerged work stays.
     #[serde(default)]
     pub(crate) worktree: bool,
 }

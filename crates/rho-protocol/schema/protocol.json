@@ -7262,7 +7262,7 @@
           "description": "The client's choices for the session."
         },
         "worktree": {
-          "description": "Whether the session works in a git worktree of its own (#1673), so\nsessions in one repository cannot overwrite each other's edits. The\ndaemon adds a worktree of the repository `cwd` is in, on a new\nbranch from that repository's `HEAD`, under its rho home, and opens\nthe session at `cwd`'s place in it. A `cwd` in no git repository,\nor one git cannot add a worktree of, is\n[`crate::ErrorCode::SessionOpenFailed`]. The daemon never removes\nthe worktree; [`SessionNewResponse::worktree`] and\n[`super::JobSummary::worktree`] name it.",
+          "description": "Whether the session works in a git worktree of its own (#1673), so\nsessions in one repository cannot overwrite each other's edits. The\ndaemon adds a worktree of the repository `cwd` is in, on a new\nbranch, under its rho home, and opens the session at `cwd`'s place in\nit. The branch starts from the `origin` remote's default branch,\nfetched first, or from the repository's `HEAD` when there is no\n`origin`, the fetch fails or takes over 30 seconds, or the daemon's\n`git.worktree_from_remote` is off. A `cwd` in no git repository, or\none git cannot add a worktree of, is\n[`crate::ErrorCode::SessionOpenFailed`]. The daemon's own pass\nremoves the worktree once it is clean, merged, not locked, and unused\nfor a day, and [`super::WORKTREE_PRUNE`] does without waiting the\nday. Either keeps its branch, and the daemon adds the worktree back\nwhen the session reopens; [`SessionNewResponse::worktree`] and\n[`super::JobSummary::worktree`] name it.",
           "type": "boolean"
         }
       },
@@ -7975,7 +7975,7 @@
       "description": "A git worktree the daemon added for a session to work in (#1673).",
       "properties": {
         "branch": {
-          "description": "The branch checked out in the worktree, new from the repository's\n`HEAD` when the session opened.",
+          "description": "The branch checked out in the worktree, new when the worktree was\nadded, from where [`SessionNewParams::worktree`] says.",
           "type": "string"
         },
         "origin": {
