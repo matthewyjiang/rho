@@ -197,11 +197,12 @@ pub struct SessionNewParams {
     /// `origin`, the fetch fails or takes over 30 seconds, or the daemon's
     /// `git.worktree_from_remote` is off. A `cwd` in no git repository, or
     /// one git cannot add a worktree of, is
-    /// [`crate::ErrorCode::SessionOpenFailed`]. The daemon removes the
-    /// worktree once it is clean, merged, and unused, keeping its branch,
-    /// and adds it back when the session reopens ([`super::WORKTREE_PRUNE`]);
-    /// [`SessionNewResponse::worktree`] and [`super::JobSummary::worktree`]
-    /// name it.
+    /// [`crate::ErrorCode::SessionOpenFailed`]. The daemon's own pass
+    /// removes the worktree once it is clean, merged, not locked, and unused
+    /// for a day, and [`super::WORKTREE_PRUNE`] does without waiting the
+    /// day. Either keeps its branch, and the daemon adds the worktree back
+    /// when the session reopens; [`SessionNewResponse::worktree`] and
+    /// [`super::JobSummary::worktree`] name it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub worktree: bool,
 }

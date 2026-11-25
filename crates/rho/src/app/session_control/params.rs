@@ -265,9 +265,9 @@ pub(crate) struct NewParams {
     /// that repository. The branch starts from `origin`'s default branch,
     /// fetched first, or from `HEAD` when there is no `origin`, the fetch
     /// fails or takes over 30 seconds, or `git.worktree_from_remote` is off.
-    /// The daemon removes the worktree once it is clean, merged, and unused,
-    /// keeps the branch, and adds the worktree back if the session reopens;
-    /// one with unmerged work stays.
+    /// The daemon removes the worktree once it is clean, merged, not locked,
+    /// and unused for a day, keeps the branch, and adds the worktree back if
+    /// the session reopens; one with unmerged work stays.
     #[serde(default)]
     pub(crate) worktree: bool,
 }
