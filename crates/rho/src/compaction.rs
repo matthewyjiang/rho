@@ -97,16 +97,36 @@ pub(crate) fn outcome_reduced_context(outcome: &rho_sdk::CompactionOutcome) -> b
 /// What a finished compaction did, as one line of text: the message and
 /// token counts before and after, or that it ran without reducing context.
 pub(crate) fn outcome_summary(outcome: &rho_sdk::CompactionOutcome) -> String {
-    if outcome_reduced_context(outcome) {
+    counts_summary(&outcome_counts(outcome))
+}
+
+/// [`outcome_summary`] for the counts clients get, live or replayed.
+pub(crate) fn counts_summary(counts: &rho_protocol::CompactionCounts) -> String {
+    let reduced = counts.current_messages < counts.previous_messages
+        || counts.current_tokens < counts.previous_tokens;
+    if reduced {
         format!(
             "context compacted: {} → {} messages, {} → {} tokens",
-            outcome.previous_messages(),
-            outcome.current_messages(),
-            outcome.previous_tokens(),
-            outcome.current_tokens(),
+            counts.previous_messages,
+            counts.current_messages,
+            counts.previous_tokens,
+            counts.current_tokens,
         )
     } else {
         "context not compacted: compaction ran but did not reduce context".into()
+    }
+}
+
+/// A finished compaction's counts as clients get them.
+pub(crate) fn outcome_counts(
+    outcome: &rho_sdk::CompactionOutcome,
+) -> rho_protocol::CompactionCounts {
+    rho_protocol::CompactionCounts {
+        previous_messages: outcome.previous_messages() as u64,
+        current_messages: outcome.current_messages() as u64,
+        previous_tokens: outcome.previous_tokens(),
+        current_tokens: outcome.current_tokens(),
+        cost_usd_micros: outcome.cost_usd_micros(),
     }
 }
 

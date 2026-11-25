@@ -140,9 +140,9 @@ impl App {
                     let status = outcome.status_label();
                     let compacted = matches!(outcome, CompactionUiOutcome::Completed(_));
                     self.handle_agent_event(compact_finished_event(outcome), terminal)?;
-                    if replayed {
-                        self.set_status_quiet(status);
-                    } else {
+                    // A replayed one is history: its card says so, and the
+                    // status line keeps saying what the session does now.
+                    if !replayed {
                         self.set_status(status);
                     }
                     if let Some(turn) = &mut self.daemon_compact_turn {

@@ -83,13 +83,9 @@ impl Transcript {
             SessionEvent::Compaction {
                 status: CompactionStatus::Completed { counts },
                 ..
-            } => self.blocks.push(Block::Note(format!(
-                "context compacted: {} → {} messages, {} → {} estimated tokens",
-                counts.previous_messages,
-                counts.current_messages,
-                counts.previous_tokens,
-                counts.current_tokens,
-            ))),
+            } => self
+                .blocks
+                .push(Block::Note(crate::compaction::counts_summary(counts))),
             _ => {}
         }
     }

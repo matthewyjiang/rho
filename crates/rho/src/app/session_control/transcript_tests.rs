@@ -71,7 +71,7 @@ fn a_turn_reads_as_who_said_what() {
     assert_eq!(
         transcript.text(),
         "[user]\nlist files\n\n[assistant]\nLooking.\n\n[tool] ls (completed)\n\n\
-         [context compacted: 263 → 65 messages, 247276 → 54798 estimated tokens]\n\n\
+         [context compacted: 263 → 65 messages, 247276 → 54798 tokens]\n\n\
          [the turn failed: the provider failed]"
     );
 }

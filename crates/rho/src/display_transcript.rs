@@ -111,7 +111,7 @@ impl DisplayRow {
 }
 
 /// How a compaction row is titled where it shows as text.
-const COMPACTION_TITLE: &str = "Compacted context";
+pub(crate) const COMPACTION_TITLE: &str = "Compacted context";
 
 /// A compaction's counts, a line each: messages, tokens, and its cost when
 /// the session priced it.

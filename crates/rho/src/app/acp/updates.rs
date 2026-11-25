@@ -47,6 +47,9 @@ pub(super) struct Updates {
     features: HostFeatures,
     /// Tool calls the host already holds a card for.
     seen_tools: HashSet<String>,
+    /// Compactions seen starting and not yet ended. One that ends unseen
+    /// is a saved one, which a replay sends as its end alone.
+    started_compactions: HashSet<String>,
     /// Prefix of the IDs this mapping mints, unique per process, so hosts
     /// that keep their transcript across reconnects never merge two.
     nonce: String,
@@ -62,6 +65,7 @@ impl Updates {
         Self {
             features,
             seen_tools: HashSet::new(),
+            started_compactions: HashSet::new(),
             nonce,
             minted: 0,
         }
@@ -107,8 +111,22 @@ impl Updates {
             SessionEvent::Compaction { id, status } if self.features.compaction => {
                 Vec::from_iter(compaction_update(id, status))
             }
-            // A host without cards sees compaction only in `usage_update`.
-            SessionEvent::Compaction { .. } => Vec::new(),
+            // A host without cards sees a live compaction only in
+            // `usage_update`; a saved one, which no usage follows, shows as
+            // a notice where it happened.
+            SessionEvent::Compaction { id, status } => {
+                let started = self.started_compactions.remove(id.as_str());
+                match status {
+                    wire::CompactionStatus::Started { .. } => {
+                        self.started_compactions.insert(id.as_str().to_owned());
+                        Vec::new()
+                    }
+                    wire::CompactionStatus::Completed { counts } if !started => {
+                        vec![self.notice(&crate::compaction::counts_summary(counts))]
+                    }
+                    _ => Vec::new(),
+                }
+            }
             // The retried response starts a message of its own.
             SessionEvent::ResponseDiscarded => {
                 let id = self.mint("rho-msg");

@@ -113,8 +113,8 @@ pub(super) enum DaemonView {
     },
     /// The compaction under way ended: its card closes, and the status
     /// line says how. `replayed` when an attach's replay reads it back,
-    /// as it reads back each compaction of saved history: the status line
-    /// says how, without a toast.
+    /// as it reads back each compaction of saved history: only its card
+    /// shows, and the status line is left alone.
     CompactionEnded {
         outcome: CompactionUiOutcome,
         replayed: bool,

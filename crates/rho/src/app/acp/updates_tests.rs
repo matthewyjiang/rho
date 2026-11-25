@@ -182,6 +182,26 @@ fn transcript_events_map_to_acp_updates() {
             vec![],
         ),
         (
+            "saved compaction to a host without cards",
+            plain,
+            SessionEvent::Compaction {
+                id: wire::CompactionId::new("saved-compaction-1"),
+                status: wire::CompactionStatus::Completed {
+                    counts: wire::CompactionCounts {
+                        previous_messages: 9,
+                        current_messages: 2,
+                        previous_tokens: 900,
+                        current_tokens: 200,
+                        cost_usd_micros: None,
+                    },
+                },
+            },
+            vec![SessionUpdate::AgentMessageChunk(message(
+                "rho-msg-n-1",
+                "context compacted: 9 → 2 messages, 900 → 200 tokens",
+            ))],
+        ),
+        (
             "discarded response",
             plain,
             SessionEvent::ResponseDiscarded,
@@ -260,6 +280,33 @@ fn transcript_events_map_to_acp_updates() {
     for (label, features, event, expected) in cases {
         assert_eq!(updates(features).map(&event), expected, "{label}");
     }
+}
+
+// Covers: a host without compaction cards gets no notice for a live
+// compaction, whose start it saw, so only a saved one's lone end shows
+// Owner: ACP event mapping
+#[test]
+fn a_live_compaction_shows_no_notice_without_cards() {
+    let mut mapping = updates(HostFeatures::default());
+    let id = wire::CompactionId::new("compaction-1");
+    let started = SessionEvent::Compaction {
+        id: id.clone(),
+        status: wire::CompactionStatus::Started { trigger: None },
+    };
+    let completed = SessionEvent::Compaction {
+        id,
+        status: wire::CompactionStatus::Completed {
+            counts: wire::CompactionCounts {
+                previous_messages: 9,
+                current_messages: 2,
+                previous_tokens: 900,
+                current_tokens: 200,
+                cost_usd_micros: None,
+            },
+        },
+    };
+    assert_eq!(mapping.map(&started), vec![]);
+    assert_eq!(mapping.map(&completed), vec![]);
 }
 
 // Covers: the first report of a tool call opens its card, defaulting what it

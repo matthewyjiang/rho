@@ -23,7 +23,7 @@ use super::persistence::{
 };
 use super::snapshot_delta::StoredSnapshotDelta;
 use super::{SessionIndexRecord, SessionOrigin, SessionSummary, SessionTarget};
-use crate::display_transcript::{DisplayRow, DisplayTranscript};
+use crate::display_transcript::{DisplayRow, DisplayTranscript, COMPACTION_TITLE};
 
 /// Where a projected display row was saved: row `row` of node `node`, a
 /// compaction node's row following its saved rows. Unique to one insertion
@@ -116,6 +116,19 @@ pub(crate) struct StoredCompactionFacts {
     pub(crate) previous_tokens: u64,
     pub(crate) current_tokens: u64,
     pub(crate) cost_usd_micros: Option<u64>,
+}
+
+impl StoredCompactionFacts {
+    /// The counts clients get for this compaction.
+    pub(crate) fn counts(&self) -> rho_protocol::CompactionCounts {
+        rho_protocol::CompactionCounts {
+            previous_messages: self.previous_messages as u64,
+            current_messages: self.current_messages as u64,
+            previous_tokens: self.previous_tokens,
+            current_tokens: self.current_tokens,
+            cost_usd_micros: self.cost_usd_micros,
+        }
+    }
 }
 
 /// One tree node record. `D` is the display row type: stored rows as read
@@ -405,13 +418,7 @@ impl SessionTree {
             );
             if node.kind() == SessionNodeKind::Compaction {
                 let row = match node.compaction_facts() {
-                    Some(facts) => DisplayRow::Compaction(rho_protocol::CompactionCounts {
-                        previous_messages: facts.previous_messages as u64,
-                        current_messages: facts.current_messages as u64,
-                        previous_tokens: facts.previous_tokens,
-                        current_tokens: facts.current_tokens,
-                        cost_usd_micros: facts.cost_usd_micros,
-                    }),
+                    Some(facts) => DisplayRow::Compaction(facts.counts()),
                     // A node saved before compactions kept their facts has
                     // too few counts for a compaction row: a notice says
                     // what it knows.
@@ -421,9 +428,9 @@ impl SessionTree {
                             node.facts().compaction.last_current_tokens(),
                         ) {
                             (Some(previous), Some(current)) => format!(
-                                "Compacted context\n{previous} → {current} estimated tokens"
+                                "{COMPACTION_TITLE}\n{previous} → {current} estimated tokens"
                             ),
-                            _ => "Compacted context".to_owned(),
+                            _ => COMPACTION_TITLE.to_owned(),
                         },
                     ),
                 };
