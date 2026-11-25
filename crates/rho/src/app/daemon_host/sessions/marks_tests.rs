@@ -296,6 +296,10 @@ async fn a_merge_no_turn_tells_of_marks_the_session_done_at_once() {
 enum Started {
     /// Queued for capacity, as a subagent run is before it runs.
     InProgress,
+    /// Queued, and recorded as writing the session itself: the job the
+    /// registry finds writing the session is then this one, not the job
+    /// that started it.
+    InProgressWritingIt,
     /// It ran, and completed.
     Ended,
 }
@@ -304,14 +308,16 @@ enum Started {
 // in progress, neither as the daemon reads the merge nor as the turn that
 // tells the agent of it ends, so a session whose started sessions or
 // subagents work on is not hidden; one whose started job ended is marked.
-// A daemon that marks on the merges alone hides the first two; one that
-// holds back for any job the session ever started leaves the last listed.
+// A daemon that marks on the merges alone hides the first three; one that
+// holds back for any job the session ever started leaves the last listed;
+// one that asks only the job it finds writing the session hides the third.
 // Owner: daemon session marks.
 #[tokio::test]
 async fn a_merge_marks_nothing_while_a_job_the_session_started_is_in_progress() {
     let cases = [
         (Told::AtTheNextPrompt, Started::InProgress, false),
         (Told::ByTheDaemon, Started::InProgress, false),
+        (Told::AtTheNextPrompt, Started::InProgressWritingIt, false),
         (Told::AtTheNextPrompt, Started::Ended, true),
     ];
     let (mut marked, mut expected) = (Vec::new(), Vec::new());
@@ -319,16 +325,20 @@ async fn a_merge_marks_nothing_while_a_job_the_session_started_is_in_progress() 
         let by_the_daemon = matches!(told, Told::ByTheDaemon);
         let fixture = Fixture::watching(told).await;
         let jobs = &fixture.sessions.jobs;
+        let writes = match started {
+            Started::InProgress | Started::Ended => None,
+            Started::InProgressWritingIt => Some(fixture.session.id.clone()),
+        };
         let run = JobRecord::new_subagent(
             fixture.session.job.clone(),
             PathBuf::from("/work"),
-            /*session*/ None,
+            writes,
             "run".into(),
         );
         let run_id = run.id.clone();
         jobs.register(run).unwrap();
         match started {
-            Started::InProgress => {}
+            Started::InProgress | Started::InProgressWritingIt => {}
             Started::Ended => {
                 jobs.record(&run_id, JobEvent::TurnEnded(TurnEnd::Completed))
                     .unwrap();

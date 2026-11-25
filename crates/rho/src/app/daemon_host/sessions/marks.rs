@@ -69,9 +69,8 @@ impl Sessions {
 
     /// Marks done each session whose linked pull requests have all merged,
     /// as [`after_merge`] says, until the daemon starts stopping: a merge
-    /// it read before that is marked first. Not a session whose job
-    /// started a job still in progress, which nothing marks once that job
-    /// ends; a session no job of this daemon writes started none.
+    /// it read before that is marked first. Not a session that started a
+    /// job still in progress, which nothing marks once that job ends.
     pub(super) async fn mark_merged_done(&self) {
         let Some(mut merged) = self.pull_requests.service().take_all_merged() else {
             return;
@@ -83,8 +82,7 @@ impl Sessions {
                 () = self.stopping.cancelled() => return,
                 else => return,
             };
-            let started = self.job_writing(&session);
-            if started.is_some_and(|job| self.jobs.started_in_progress(&job)) {
+            if self.jobs.session_started_in_progress(&session) {
                 continue;
             }
             let merged_at = at / 1000;
@@ -162,7 +160,7 @@ pub(super) fn turn_ended(session: &LoadedSession, runtime: &SessionRuntime, orig
         TurnOrigin::Prompt { at } if at <= merged_at => {}
         TurnOrigin::Prompt { .. } => return,
     }
-    if session.jobs.started_in_progress(&session.job) {
+    if session.jobs.session_started_in_progress(&session.id) {
         return;
     }
     let merged_at = merged_at / 1000;

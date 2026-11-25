@@ -189,7 +189,7 @@ impl Sessions {
     /// under way, as the turn of a session that starts another is, else the
     /// latest job of its turns. `None` for a session no job of this daemon
     /// writes, such as one an in-process rho runs.
-    pub(super) fn job_writing(&self, session: &SessionId) -> Option<JobId> {
+    fn job_writing(&self, session: &SessionId) -> Option<JobId> {
         match self.jobs.session_job(session) {
             SessionJob::Busy(job) => Some(job),
             SessionJob::Last(record) => Some(record.id),

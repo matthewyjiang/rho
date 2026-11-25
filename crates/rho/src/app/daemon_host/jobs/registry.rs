@@ -247,14 +247,29 @@ impl JobRegistry {
         let jobs = self.lock();
         jobs.get(id)
             .is_some_and(|record| record.state == JobState::Running)
-            && !started_in_progress(&jobs, id)
+            && !jobs
+                .values()
+                .any(|record| record.parent.as_ref() == Some(id) && record.state.in_progress())
     }
 
-    /// Whether job `id` started a job still queued, running, or waiting
-    /// for input, which keeps a merge from marking `id`'s session done
-    /// (see `sessions::marks`).
-    pub(in crate::app::daemon_host) fn started_in_progress(&self, id: &JobId) -> bool {
-        started_in_progress(&self.lock(), id)
+    /// Whether a job that writes `session` started a job still queued,
+    /// running, or waiting for input, which keeps a merge from marking the
+    /// session done (see `sessions::marks`). Every job that writes the
+    /// session counts, its turns' and a subagent run's alike, so the answer
+    /// does not turn on which of them is under way.
+    pub(in crate::app::daemon_host) fn session_started_in_progress(
+        &self,
+        session: &rho_sdk::SessionId,
+    ) -> bool {
+        let jobs = self.lock();
+        jobs.values().any(|record| {
+            record.state.in_progress()
+                && record
+                    .parent
+                    .as_ref()
+                    .and_then(|parent| jobs.get(parent))
+                    .is_some_and(|parent| parent.subject.session() == Some(session))
+        })
     }
 
     /// Job `id` as the registry has it now.
@@ -669,13 +684,6 @@ fn persist(store: &JobStore, record: &JobRecord) {
     if let Err(error) = store.write(record) {
         tracing::error!(job = %record.id, state = %record.state, %error, "could not write job record");
     }
-}
-
-/// Whether a job in `jobs` that job `id` started is still in progress: see
-/// [`JobRegistry::started_in_progress`].
-fn started_in_progress(jobs: &BTreeMap<JobId, JobRecord>, id: &JobId) -> bool {
-    jobs.values()
-        .any(|record| record.parent.as_ref() == Some(id) && record.state.in_progress())
 }
 
 /// The session and the grant of the session job that job `id` runs under,
