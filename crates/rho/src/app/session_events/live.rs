@@ -959,9 +959,10 @@ fn fresh_message_id() -> MessageId {
     MessageId::new(format!("msg-{}", uuid::Uuid::new_v4()))
 }
 
-/// Each compaction gets a fresh random id: clients may keep a session's
-/// events across daemon restarts, and an id that restarts per process
-/// would update an earlier card.
+/// Each live compaction gets a fresh random id: clients may keep a
+/// session's events across daemon restarts, and an id that restarts per
+/// process would update an earlier card. A replayed compaction's derives
+/// from its saved node instead.
 fn fresh_compaction_id() -> CompactionId {
     CompactionId::new(format!("compaction-{}", uuid::Uuid::new_v4()))
 }

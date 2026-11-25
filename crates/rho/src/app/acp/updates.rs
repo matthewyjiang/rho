@@ -318,10 +318,12 @@ pub(super) fn options_changed(
 /// for hosts that advertise `clientCapabilities.session.compaction`;
 /// nothing for a status a newer daemon sends.
 ///
-/// A card opens `in_progress` and ends with exactly one terminal update.
-/// Its ID is the daemon's compaction ID, random per compaction: hosts such
-/// as T3 Code keep their transcript across reconnects, so an ID that
-/// restarted per process would patch an earlier card in place. Cards carry
+/// A card opens `in_progress` and ends with exactly one terminal update; a
+/// replayed one, from saved history, arrives `completed` alone. Its ID is
+/// the daemon's compaction ID, unique per compaction (random live, from its
+/// saved node on replay): hosts such as T3 Code keep their transcript
+/// across reconnects, so an ID that restarted per process would patch an
+/// earlier card in place. Cards carry
 /// no `summary`: ACP reserves it for retained summary content, not status
 /// text such as the before and after counts, which hosts get from
 /// `usage_update`.

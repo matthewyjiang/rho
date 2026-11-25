@@ -1,10 +1,13 @@
 //! A session's events as plain text, for `read`: who said what, which tools
-//! ran, and how turns that did not answer ended. Reasoning, usage, and
-//! display cards are left out; a reader who needs them attaches.
+//! ran, where the context was compacted, and how turns that did not answer
+//! ended. Reasoning, usage, and display cards are left out; a reader who
+//! needs them attaches.
 
 use std::collections::HashMap;
 
-use rho_protocol::{ContentBlock, MessageId, SessionEvent, ToolCallId, ToolStatus, TurnOutcome};
+use rho_protocol::{
+    CompactionStatus, ContentBlock, MessageId, SessionEvent, ToolCallId, ToolStatus, TurnOutcome,
+};
 
 /// The text a session's events build, block by block.
 #[derive(Default)]
@@ -76,6 +79,17 @@ impl Transcript {
             SessionEvent::ResponseDiscarded => self.blocks.push(Block::Note(
                 "the provider discarded the response; retrying".into(),
             )),
+            // Live or replayed: a replay sends a compaction's end alone.
+            SessionEvent::Compaction {
+                status: CompactionStatus::Completed { counts },
+                ..
+            } => self.blocks.push(Block::Note(format!(
+                "context compacted: {} → {} messages, {} → {} estimated tokens",
+                counts.previous_messages,
+                counts.current_messages,
+                counts.previous_tokens,
+                counts.current_tokens,
+            ))),
             _ => {}
         }
     }

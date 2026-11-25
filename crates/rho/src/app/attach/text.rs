@@ -7,7 +7,8 @@ use std::{
 };
 
 use rho_protocol::{
-    CompactionStatus, ContentBlock, SessionEvent, ToolCallId, ToolCallUpdate, ToolStatus,
+    CompactionId, CompactionStatus, ContentBlock, SessionEvent, ToolCallId, ToolCallUpdate,
+    ToolStatus,
 };
 
 use crate::control_chars::{escape_controls, LineBreaks};
@@ -18,6 +19,8 @@ pub(super) struct TextView<O = io::Stdout, E = io::Stderr> {
     err: E,
     /// The tool calls shown, by id.
     calls: HashMap<ToolCallId, ShownCall>,
+    /// The compaction under way whose start was shown.
+    compaction: Option<CompactionId>,
     /// Whether `out` ends a line, so the next block starts on its own.
     line_ended: bool,
 }
@@ -34,6 +37,7 @@ impl<O: Write, E: Write> TextView<O, E> {
             out,
             err,
             calls: HashMap::new(),
+            compaction: None,
             line_ended: true,
         }
     }
@@ -61,7 +65,7 @@ impl<O: Write, E: Write> TextView<O, E> {
             SessionEvent::Card { title, plain, .. } => {
                 self.block(&format!("{title}\n{}\n", plain.trim_end_matches('\n')))?;
             }
-            SessionEvent::Compaction { status, .. } => self.compaction(status)?,
+            SessionEvent::Compaction { id, status } => self.compaction(id, status)?,
             SessionEvent::Notice { text } => {
                 writeln!(self.err, "rho: {}", escape_controls(text, LineBreaks::Keep))?
             }
@@ -133,11 +137,17 @@ impl<O: Write, E: Write> TextView<O, E> {
     }
 
     /// Shows a compaction once it starts, and again if it fails; a cancel
-    /// shows as the turn's end.
-    fn compaction(&mut self, status: &CompactionStatus) -> io::Result<()> {
+    /// shows as the turn's end. A replayed one arrives completed, without
+    /// its start, and shows then.
+    fn compaction(&mut self, id: &CompactionId, status: &CompactionStatus) -> io::Result<()> {
+        let started = self.compaction.take().is_some_and(|shown| shown == *id);
         match status {
-            CompactionStatus::Started { .. } => self.block("• compact context\n"),
+            CompactionStatus::Started { .. } => {
+                self.compaction = Some(id.clone());
+                self.block("• compact context\n")
+            }
             CompactionStatus::Failed { .. } => self.block("• compact context failed\n"),
+            CompactionStatus::Completed { .. } if !started => self.block("• compact context\n"),
             CompactionStatus::Completed { .. } | CompactionStatus::Cancelled => Ok(()),
             // `CompactionStatus` is non-exhaustive.
             _ => Ok(()),
@@ -161,6 +171,7 @@ impl<O: Write, E: Write> TextView<O, E> {
     /// the start: tool calls shown before are shown again.
     pub(super) fn restart(&mut self) -> io::Result<()> {
         self.calls.clear();
+        self.compaction = None;
         self.end_line()
     }
 
