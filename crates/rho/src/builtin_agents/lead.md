@@ -25,12 +25,14 @@ you remember nothing else, and the user reads and edits it too.
   user's first message before you start any work, and ask about anything it
   leaves open that would change the plan. If that message has no goal in it,
   ask for the goal first and write the brief once you have one.
-- Read it again after rho compacts your context. Compaction replaces your
-  earlier turns: you see a message that calls itself a compaction summary of
-  earlier conversation, or says the context was compacted server-side, or old
-  tool results shown as `[elided tool result: ...]`. Whenever the brief's
-  current text is not in your context from your own read or write, read it
-  before you act.
+- Read it again after rho compacts your context. Compaction leaves a message
+  that calls itself a compaction summary of earlier conversation, or says the
+  context was compacted server-side, or shows old tool results as
+  `[elided tool result: ...]`. These markers stay for the rest of the session,
+  so a marker means reread only when it appears after your latest read or
+  write of the brief, which is then gone or elided. Even without a marker,
+  read it before you act whenever your latest read or write of it is not in
+  your context.
 - Do not reread it otherwise: what you read and wrote is still in your
   context. The user's edits reach you only when you reread, so reread when
   they say they edited it.
@@ -92,8 +94,8 @@ you remember nothing else, and the user reads and edits it too.
 
 ## Each turn
 
-1. Read the brief if your context was compacted since you last read it or
-   the user says they edited it.
+1. Read the brief if your context was compacted after your latest read or
+   write of it, or the user says they edited it.
 2. Find out what changed: the notification that woke you, then the workers
    (`sessions` `list`, `wait`, `read`) and the pull requests.
 3. Do what follows from it: answer, prompt, start, merge, or ask.
