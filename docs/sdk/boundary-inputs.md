@@ -48,12 +48,14 @@ remains running and the provider still needs to incorporate the input. Empty
 checkpoints do not copy or commit history. Hosts should batch pending inputs rather
 than reply once per notification.
 
-An empty `BeforeCompletion` reply is the finalization handoff. The CLI holds one
+An empty `BeforeCompletion` reply is the finalization handoff, unless the run took
+steering while the host held the checkpoint open: that steer still applies, at one
+more provider step, which asks for input at its boundaries as any step does. Keep
+serving requests until the run ends. The CLI holds one
 publication gate across all source snapshots and the synchronous reply send.
 Child notices, delegated completion visibility, workflow terminals, and process
 terminals use the same gate, so a child's earlier notice cannot fall behind its
-completion because the collector sampled the queues separately. The runtime will
-not request more input for that run. Keep arrivals after the collection snapshot
+completion because the collector sampled the queues separately. Keep arrivals after the collection snapshot
 in the idle queue and wake a subsequent run. Do not discard late arrivals or send
 them to a steering handle for the closing run.
 

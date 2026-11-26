@@ -1,3 +1,5 @@
+use std::future::Future;
+
 use tokio::sync::mpsc;
 
 use crate::{
@@ -53,6 +55,30 @@ pub(in crate::orchestration) fn accept_command(command: RunCommand, steering: &m
         }
         RunCommand::Respond { accepted, .. } => {
             let _ = accepted.send(Err("no host input request is awaiting a response".into()));
+        }
+    }
+}
+
+/// Awaits `work` while accepting the run's commands, so a steer or a
+/// withdrawal answers at once even while the run waits on something that
+/// takes no commands of its own: the host holding a checkpoint open for
+/// background work the turn waits for, a compaction, or a retry delay. A
+/// provider request and a tool batch accept commands themselves.
+pub(in crate::orchestration) async fn accepting_commands<T>(
+    commands: &mut mpsc::Receiver<RunCommand>,
+    steering: &mut SteeringQueue,
+    work: impl Future<Output = T>,
+) -> T {
+    tokio::pin!(work);
+    let mut commands_open = true;
+    loop {
+        tokio::select! {
+            biased;
+            output = &mut work => return output,
+            command = commands.recv(), if commands_open => match command {
+                Some(command) => accept_command(command, steering),
+                None => commands_open = false,
+            },
         }
     }
 }

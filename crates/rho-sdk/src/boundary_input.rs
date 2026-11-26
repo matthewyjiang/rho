@@ -10,7 +10,9 @@ pub enum InputBoundary {
     /// Before a provider request, after the preceding tool batch has settled.
     BeforeProvider,
     /// Before committing an end-turn response. An empty reply closes this run's
-    /// delivery window; later arrivals belong to the host's idle queue.
+    /// delivery window; later arrivals belong to the host's idle queue. The run
+    /// takes steering while the host holds this checkpoint open, and a steer it
+    /// took there still applies, at one more provider step.
     BeforeCompletion,
 }
 
@@ -84,6 +86,8 @@ impl BoundaryInputRequest {
     ///
     /// For `BeforeCompletion`, sending `None` is the finalization handoff. The
     /// host must leave arrivals after its collection snapshot for the next run.
+    /// A steer the run took while the host held this checkpoint open still
+    /// applies at one more provider step, so keep serving until the run ends.
     ///
     /// Accepted input enters history as
     /// [`crate::model::Message::BoundaryInput`], not human input, and the run

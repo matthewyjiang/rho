@@ -4,9 +4,16 @@ use crate::{
 };
 
 use super::{
-    emit, provider_turn, stream_capture::StreamCapture, Rho, RunControl, INVALID_RESPONSE_ATTEMPTS,
-    MAX_HONORED_RETRY_AFTER, PROVIDER_TURN_ATTEMPTS, RETRYABLE_REQUEST_BASE_DELAY,
+    accepting_commands, emit, provider_turn, stream_capture::StreamCapture, Rho, RunControl,
+    INVALID_RESPONSE_ATTEMPTS, MAX_HONORED_RETRY_AFTER, PROVIDER_TURN_ATTEMPTS,
+    RETRYABLE_REQUEST_BASE_DELAY,
 };
+
+/// How the wait before retrying a provider request ended.
+enum RetryDelay {
+    Elapsed,
+    Cancelled,
+}
 
 pub(super) struct RequestFailure {
     pub error: ProviderError,
@@ -121,9 +128,16 @@ pub(super) async fn request_valid_response(
                     }
                     _ => exponential,
                 };
-                tokio::select! {
-                    () = tokio::time::sleep(delay) => {}
-                    () = control.cancellation.cancelled() => {
+                let cancellation = control.cancellation;
+                let wait = async {
+                    tokio::select! {
+                        () = tokio::time::sleep(delay) => RetryDelay::Elapsed,
+                        () = cancellation.cancelled() => RetryDelay::Cancelled,
+                    }
+                };
+                match accepting_commands(control.commands, control.steering, wait).await {
+                    RetryDelay::Elapsed => {}
+                    RetryDelay::Cancelled => {
                         // ProviderStreamReset already abandoned this attempt.
                         // Do not commit its discarded partials as AbortedAssistant.
                         failure.capture = StreamCapture::default();
