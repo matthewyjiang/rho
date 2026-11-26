@@ -146,7 +146,17 @@ pub use input::{
     SessionAnswerResponse, SessionControlAction, SessionHoldParams, SessionHoldResponse,
     SESSION_ANSWER, SESSION_ANSWER_QUESTION, SESSION_HOLD,
 };
-pub use inspect::{SessionInspectParams, SessionInspectResponse, SessionReport, SESSION_INSPECT};
+pub use inspect::{
+    CompactionCheck, CompactionContextSize, CompactionExtent, CompactionReread, CompactionRun,
+    CompactionRunOutcome, CompactionRunTrigger, CompactionSize, CompactionSkipReason,
+    CompactionThreshold, CompactionTier, CompletedCompactions, ContextBasis, ContextMessageKind,
+    ContextMessagePart, ContextPromptPart, ContextToolResultPart, ContextToolSchemaPart,
+    HookActivityRecord, HookContract, HookEvent, HookOutcome, HookStatus, HookTools, HookWarning,
+    PromptSourceKind, ProviderContextBlockId, SessionCompactionReport, SessionContextReport,
+    SessionHooksReport, SessionInspectParams, SessionInspectResponse, SessionProviderContextReport,
+    SessionReport, SessionReportData, SkippedHooksFile, SummaryRequestPath, ToolSchemaOrigin,
+    SESSION_INSPECT,
+};
 pub use job::{
     Budget, JobId, JobKind, JobListParams, JobListResponse, JobLive, JobState, JobSummary,
     JobUsage, QueuePlace, JOB_LIST,

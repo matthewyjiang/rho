@@ -2,7 +2,8 @@
 //! context blocks another model produced.
 //!
 //! A daemon session reports it (`SessionReport::ProviderContext`), so the
-//! TUI that follows one asks before a resume or a send omits the blocks.
+//! TUI that follows one asks before a resume or a send omits the blocks; the
+//! typed report it answers beside it is converted from this one.
 
 use std::collections::BTreeSet;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -65,6 +66,29 @@ impl ProviderContextReport {
         HandoffReport {
             omitted_provider_context: self.omitted,
             omitted_kinds: self.omitted_kinds.clone(),
+        }
+    }
+}
+
+impl From<&ProviderContextReport> for rho_protocol::SessionProviderContextReport {
+    fn from(report: &ProviderContextReport) -> Self {
+        let model = |identity: &ModelIdentity| rho_protocol::ModelRef {
+            provider: identity.provider.clone(),
+            model: identity.model.clone(),
+        };
+        Self {
+            target: model(&report.target),
+            omitted_blocks: report.omitted as u64,
+            omitted_kinds: report.omitted_kinds.clone(),
+            omitted_block_ids: report
+                .blocks
+                .iter()
+                .copied()
+                .map(rho_protocol::ProviderContextBlockId)
+                .collect(),
+            source: report.source.as_ref().map(model),
+            can_compact: report.can_compact,
+            source_selectable: report.source_selectable,
         }
     }
 }

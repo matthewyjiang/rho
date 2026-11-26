@@ -3,23 +3,22 @@
 use super::{context_window, model_scoped_config, SessionRuntime};
 use crate::{
     app::{
-        compaction_report::CompactionReport,
-        context_report::{mcp_tool_servers, ContextReport},
+        context_report::{mcp_tool_servers, session_context_report},
         provider_context_report::ProviderContextReport,
         session_options::{resolve_model, AuthPick},
     },
     compaction::CompactionConfig,
     config::Config,
     diagnostics::{CompactionContext, CompactionDiagnostics},
-    hooks::HookReport,
+    hooks::HookSnapshot,
 };
 
 impl SessionRuntime {
     /// What fills the context window on the next request, by source. Scans
     /// the committed history, so hosts read it on demand.
-    pub(crate) fn context_report(&self) -> ContextReport {
+    pub(crate) fn context_report(&self) -> rho_protocol::SessionContextReport {
         let breakdown = self.built.session.context_breakdown();
-        ContextReport::new(
+        session_context_report(
             &breakdown,
             &self.built.diagnostics.prompt_sources(),
             &mcp_tool_servers(self.tools().mcp_report()),
@@ -29,10 +28,10 @@ impl SessionRuntime {
 
     /// The session's compaction settings against its context, and what its
     /// compactions did, under `process_config`'s compaction settings.
-    pub(crate) fn compaction_report(&self, process_config: &Config) -> CompactionReport {
+    pub(crate) fn compaction_diagnostics(&self, process_config: &Config) -> CompactionDiagnostics {
         let session = &self.built.session;
         let config = model_scoped_config(&self.current_model(), process_config);
-        CompactionReport::new(&CompactionDiagnostics {
+        CompactionDiagnostics {
             completed: session.compaction_state(),
             current: CompactionContext::new(
                 session.context_estimate(),
@@ -41,7 +40,7 @@ impl SessionRuntime {
             ),
             last_provider_check: session.last_compaction_decision().map(Into::into),
             last_compaction: self.built.diagnostics.last_compaction(),
-        })
+        }
     }
 
     /// What of the conversation the session's model cannot be sent, whether
@@ -88,10 +87,10 @@ impl SessionRuntime {
     }
 
     /// Reads the session's hooks again from their files and reports them
-    /// (see [`crate::hooks::reload_report`]).
-    pub(crate) fn reload_hooks(&self) -> anyhow::Result<HookReport> {
+    /// (see [`crate::hooks::reload_snapshot`]).
+    pub(crate) fn reload_hooks(&self) -> anyhow::Result<HookSnapshot> {
         let environment = &self.build.host.environment;
-        crate::hooks::reload_report(
+        crate::hooks::reload_snapshot(
             self.built.hooks.as_ref(),
             self.cwd(),
             environment.project_trust(),

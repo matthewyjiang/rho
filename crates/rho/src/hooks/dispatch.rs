@@ -123,7 +123,7 @@ impl HookEngine {
     }
 
     fn enqueue(&self, event: ObservationalEvent) {
-        let event_name = event.wire_name();
+        let configured = event.configured_event();
         if let Some(sender) = self
             .observational_sender
             .read()
@@ -137,8 +137,8 @@ impl HookEngine {
         // A missing, full, or stopped queue cannot affect app state. Keep a
         // diagnostic record and return without waiting.
         self.record(HookActivity {
-            hook_id: "<queue>".into(),
-            event: event_name,
+            hook_id: None,
+            event: configured,
             outcome: HookOutcome::Dropped,
             duration: None,
             truncated: false,
@@ -321,8 +321,8 @@ impl HookEngine {
         truncated: bool,
     ) {
         self.record(HookActivity {
-            hook_id: "<queue>".into(),
-            event: event.wire_name(),
+            hook_id: None,
+            event: ConfiguredHookEvent::Workflow(event),
             outcome: HookOutcome::Failed { reason },
             duration: None,
             truncated,
@@ -361,13 +361,6 @@ enum ObservationalEvent {
 }
 
 impl ObservationalEvent {
-    fn wire_name(&self) -> &'static str {
-        match self {
-            Self::Sdk(envelope) => envelope.event().wire_name(),
-            Self::Workflow(envelope) => envelope.wire_name(),
-        }
-    }
-
     fn configured_event(&self) -> ConfiguredHookEvent {
         match self {
             Self::Sdk(envelope) => ConfiguredHookEvent::Sdk(envelope.event()),
@@ -524,8 +517,8 @@ fn interpret(
     match parse_decision(&output.stdout) {
         Ok(HookDecision::Continue) => {
             engine.record(HookActivity {
-                hook_id: id.to_owned(),
-                event: hook.event().wire_name(),
+                hook_id: Some(id.to_owned()),
+                event: hook.event(),
                 outcome: HookOutcome::Continued,
                 duration,
                 truncated: output.truncated,
@@ -581,8 +574,8 @@ fn record_denial(
     reason: String,
 ) -> HookDecision {
     engine.record(HookActivity {
-        hook_id: id.to_owned(),
-        event: event.wire_name(),
+        hook_id: Some(id.to_owned()),
+        event: ConfiguredHookEvent::Sdk(event),
         outcome: HookOutcome::Denied {
             reason: reason.clone(),
         },
@@ -616,11 +609,11 @@ pub struct QueuedHookObserver {
 impl HookObserver for QueuedHookObserver {
     fn observe(&self, envelope: HookEnvelope) {
         let event = ObservationalEvent::Sdk(envelope);
-        let event_name = event.wire_name();
+        let configured = event.configured_event();
         if self.sender.try_send(event).is_err() {
             self.engine.record(HookActivity {
-                hook_id: "<queue>".into(),
-                event: event_name,
+                hook_id: None,
+                event: configured,
                 outcome: HookOutcome::Dropped,
                 duration: None,
                 truncated: false,
@@ -740,8 +733,8 @@ async fn dispatch_observational(
     }
     let Ok(encoded) = event.to_bounded_json(engine.bounds) else {
         engine.record(HookActivity {
-            hook_id: "<queue>".into(),
-            event: event.wire_name(),
+            hook_id: None,
+            event: event.configured_event(),
             outcome: HookOutcome::Failed {
                 reason: "event payload exceeded its size bound".into(),
             },
@@ -789,8 +782,8 @@ async fn run_observational_hook(
         ),
     };
     engine.record(HookActivity {
-        hook_id: id,
-        event: hook.event().wire_name(),
+        hook_id: Some(id),
+        event: hook.event(),
         outcome: outcome.0,
         duration: outcome.1.as_ref().map(|output| output.duration),
         truncated: outcome.1.is_some_and(|output| output.truncated),

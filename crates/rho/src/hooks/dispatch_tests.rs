@@ -116,7 +116,7 @@ async fn hooks_run_in_configured_order_and_the_first_denial_wins() {
             .into_iter()
             .map(|record| record.hook_id)
             .collect::<Vec<_>>(),
-        vec!["user:first", "user:second"],
+        vec![Some("user:first".into()), Some("user:second".into())],
         "dispatch stops at the first denial"
     );
 }
@@ -225,7 +225,7 @@ async fn an_observational_failure_is_recorded_but_never_denies() {
     worker.drain(Duration::from_secs(10)).await;
 
     let activity = engine.activity();
-    assert_eq!(activity[0].hook_id, "user:post");
+    assert_eq!(activity[0].hook_id.as_deref(), Some("user:post"));
     assert_eq!(activity[0].outcome.label(), "failed");
 }
 
@@ -333,8 +333,8 @@ async fn observational_handlers_are_isolated_from_each_other() {
             .map(|record| (record.hook_id, record.outcome.label()))
             .collect::<Vec<_>>(),
         vec![
-            ("user:signalling".into(), "observed"),
-            ("user:waiting".into(), "observed"),
+            (Some("user:signalling".into()), "observed"),
+            (Some("user:waiting".into()), "observed"),
         ]
     );
 }

@@ -292,7 +292,7 @@ impl RuntimeDiagnostics {
                     .hooks
                     .as_ref()
                     .map(crate::hooks::HookInspector::report)
-                    .unwrap_or_else(crate::hooks::HookReport::disabled),
+                    .unwrap_or_else(|| crate::hooks::HookSnapshot::disabled().report()),
             ),
             _ => return Err(unsupported_action_error(action)),
         }

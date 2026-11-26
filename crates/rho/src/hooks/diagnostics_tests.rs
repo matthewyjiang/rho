@@ -12,7 +12,7 @@ fn project_with_hook() -> TempDir {
     std::fs::write(project.path().join(".rho/hooks/fmt"), "#!/bin/sh\n").unwrap();
     std::fs::write(
         project.path().join(".rho/hooks.toml"),
-        "version = 1\n\n[[hook]]\nid = \"fmt\"\non = \"after_tool_use\"\ntools = [\"edit\"]\ncommand = [\"./.rho/hooks/fmt\"]\ntimeout = \"5s\"\n",
+        "version = 1\n\n[[hook]]\nid = \"fmt\"\non = \"after_tool_use\"\ntools = [\"str_replace\", \"read_*\"]\ncommand = [\"./.rho/hooks/fmt\"]\ntimeout = \"5s\"\n",
     )
     .unwrap();
     project
@@ -21,7 +21,7 @@ fn project_with_hook() -> TempDir {
 #[test]
 fn a_session_without_hooks_reports_itself_disabled() {
     assert_eq!(
-        serde_json::to_value(HookReport::disabled()).unwrap(),
+        serde_json::to_value(HookSnapshot::disabled().report()).unwrap(),
         json!({
             "enabled": false,
             "files": [],
@@ -31,8 +31,12 @@ fn a_session_without_hooks_reports_itself_disabled() {
     );
 }
 
+// Covers: the typed hooks report a daemon session answers names the
+// untrusted project file and tells its hooks from the active ones, with each
+// hook's event, tool selection, timeout and edit-tool warning as data.
+// Owner: hook diagnostics.
 #[tokio::test]
-async fn an_untrusted_project_file_is_named_in_the_report() {
+async fn the_session_report_types_each_hook_and_the_untrusted_file() {
     let project = project_with_hook();
     let home = TempDir::new().unwrap();
     std::fs::write(
@@ -53,21 +57,67 @@ async fn an_untrusted_project_file_is_named_in_the_report() {
     )
     .unwrap();
 
-    let report = HookInspector::new(&runtime).report();
+    let report = HookInspector::new(&runtime).snapshot().session_report();
 
+    let hooks: Vec<_> = report
+        .hooks
+        .iter()
+        .map(|hook| {
+            (
+                hook.id.as_str(),
+                hook.status,
+                hook.event,
+                hook.tools.clone(),
+                hook.timeout_ms,
+                hook.warnings.clone(),
+            )
+        })
+        .collect();
     assert_eq!(
-        report.skipped_untrusted,
-        Some(crate::paths::display(
-            &project.path().join(".rho/hooks.toml")
-        ))
+        (
+            report.enabled,
+            report.files,
+            report.skipped_untrusted,
+            hooks
+        ),
+        (
+            true,
+            vec![home.path().join("hooks.toml")],
+            Some(SkippedHooksFile {
+                path: project.path().join(".rho/hooks.toml"),
+                error: None,
+            }),
+            vec![
+                (
+                    "user:log",
+                    HookStatus::Active,
+                    rho_protocol::HookEvent::RunCompleted,
+                    HookTools::All,
+                    1_000,
+                    vec![],
+                ),
+                (
+                    "project:fmt",
+                    HookStatus::Untrusted,
+                    rho_protocol::HookEvent::AfterToolUse,
+                    HookTools::Matching {
+                        patterns: vec!["str_replace".into(), "read_*".into()],
+                    },
+                    5_000,
+                    vec![HookWarning::MissingEditTools {
+                        tools: vec!["apply_patch".into()],
+                    }],
+                ),
+            ],
+        )
     );
 }
 
 #[test]
 fn an_activity_view_carries_the_denial_reason() {
     let activity = HookActivity {
-        hook_id: "user:no-force-push".into(),
-        event: "before_tool_use",
+        hook_id: Some("user:no-force-push".into()),
+        event: ConfiguredHookEvent::Sdk(HookEventKind::BeforeToolUse),
         outcome: crate::hooks::activity::HookOutcome::Denied {
             reason: "force push".into(),
         },
@@ -86,4 +136,25 @@ fn an_activity_view_carries_the_denial_reason() {
             "detail": "force push",
         })
     );
+}
+
+// Covers: the typed report names each hook event as a hooks file does, so a
+// swapped arm or an SDK event the mapping misses (sent as `unknown`) fails.
+// Owner: hook diagnostics.
+#[test]
+fn every_hook_event_has_its_hooks_file_name_in_the_typed_report() {
+    let events = HookEventKind::ALL
+        .iter()
+        .map(|event| ConfiguredHookEvent::Sdk(*event))
+        .chain(
+            WorkflowHookEventKind::ALL
+                .iter()
+                .map(|event| ConfiguredHookEvent::Workflow(*event)),
+        );
+    for event in events {
+        assert_eq!(
+            serde_json::to_value(wire_event(event)).unwrap(),
+            json!(event.wire_name())
+        );
+    }
 }

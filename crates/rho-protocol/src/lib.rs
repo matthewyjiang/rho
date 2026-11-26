@@ -189,6 +189,17 @@ pub use methods::{
     SessionConfigureResponse, SessionOptions, StartedSessionDefaults, SESSION_CONFIGURE,
 };
 pub use methods::{
+    CompactionCheck, CompactionContextSize, CompactionExtent, CompactionReread, CompactionRun,
+    CompactionRunOutcome, CompactionRunTrigger, CompactionSize, CompactionSkipReason,
+    CompactionThreshold, CompactionTier, CompletedCompactions, ContextBasis, ContextMessageKind,
+    ContextMessagePart, ContextPromptPart, ContextToolResultPart, ContextToolSchemaPart,
+    HookActivityRecord, HookContract, HookEvent, HookOutcome, HookStatus, HookTools, HookWarning,
+    PromptSourceKind, ProviderContextBlockId, SessionCompactionReport, SessionContextReport,
+    SessionHooksReport, SessionInspectParams, SessionInspectResponse, SessionProviderContextReport,
+    SessionReport, SessionReportData, SkippedHooksFile, SummaryRequestPath, ToolSchemaOrigin,
+    SESSION_INSPECT,
+};
+pub use methods::{
     DetailedSessionSummary, SessionDeleteParams, SessionDeleteResponse,
     SessionListDetailedResponse, SessionListParams, SessionListResponse, SessionRenameParams,
     SessionRenameResponse, SessionSummary, SESSION_DELETE, SESSION_LIST, SESSION_LIST_DETAILED,
@@ -202,15 +213,14 @@ pub use methods::{
     SessionProcessesParams, SessionProcessesResponse, SESSION_PROCESSES,
 };
 pub use methods::{
-    SessionInspectParams, SessionInspectResponse, SessionMcpInventory, SessionMcpMode,
-    SessionMcpParams, SessionMcpServer, SessionMcpStatus, SessionReport, SESSION_INSPECT,
-    SESSION_MCP,
-};
-pub use methods::{
     SessionMcpCatalog, SessionMcpCatalogParams, SessionMcpCompleteParams,
     SessionMcpCompleteResponse, SessionMcpPrompt, SessionMcpPromptArgument, SessionMcpResource,
     SessionMcpResourceContent, SessionMcpResourceParams, SessionMcpResourceResponse,
     SESSION_MCP_CATALOG, SESSION_MCP_COMPLETE, SESSION_MCP_RESOURCE,
+};
+pub use methods::{
+    SessionMcpInventory, SessionMcpMode, SessionMcpParams, SessionMcpServer, SessionMcpStatus,
+    SESSION_MCP,
 };
 pub use methods::{
     SessionSurfaceActionParams, SessionSurfaceActionResponse, SESSION_SURFACE_ACTION,

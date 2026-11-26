@@ -204,8 +204,8 @@ fn the_spawn_contract_shows_everything_that_decides_what_runs() {
     let entry = &contract[0];
 
     assert_eq!(entry.id, "project:fmt");
-    assert_eq!(entry.event, "after_tool_use");
-    assert_eq!(entry.tools, "str_replace");
+    assert_eq!(entry.event.wire_name(), "after_tool_use");
+    assert_eq!(entry.tools.describe(), "str_replace");
     assert_eq!(
         entry.command,
         vec![

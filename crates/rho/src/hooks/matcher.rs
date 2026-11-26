@@ -74,19 +74,24 @@ impl ToolMatcher {
         }
     }
 
-    /// Rendering used in the spawn contract and diagnostics.
-    pub fn describe(&self) -> String {
-        match &self.patterns {
-            None => "*".into(),
-            Some(patterns) => patterns
+    /// The patterns as a hooks file writes them, in its order; `None` when
+    /// it matches every tool.
+    pub fn patterns(&self) -> Option<Vec<String>> {
+        self.patterns.as_ref().map(|patterns| {
+            patterns
                 .iter()
                 .map(|pattern| match pattern {
                     Pattern::Exact(name) => name.clone(),
                     Pattern::Prefix(prefix) => format!("{prefix}*"),
                 })
-                .collect::<Vec<_>>()
-                .join(", "),
-        }
+                .collect()
+        })
+    }
+
+    /// Rendering used in the spawn contract and diagnostics.
+    pub fn describe(&self) -> String {
+        self.patterns()
+            .map_or_else(|| "*".into(), |patterns| patterns.join(", "))
     }
 }
 

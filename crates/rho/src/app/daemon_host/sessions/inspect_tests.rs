@@ -17,9 +17,9 @@ use crate::app::{
     pull_requests::ScriptedForge,
 };
 
-// Covers: a client reads what fills a loaded session's context window as
-// the report the TUI's overlay shows; while a turn holds the session the
-// daemon refuses rather than making the person wait for it.
+// Covers: a client reads what fills a loaded session's context window,
+// typed and as the report the TUI's overlay shows; while a turn holds the
+// session the daemon refuses rather than making the person wait for it.
 // Owner: daemon session reports.
 #[tokio::test]
 async fn a_context_report_is_read_between_turns() {
@@ -41,7 +41,9 @@ async fn a_context_report_is_read_between_turns() {
     };
 
     let read = sessions.inspect(context(&session)).await.map(|answer| {
-        serde_json::from_value::<ContextReport>(answer.report).map_err(|error| error.to_string())
+        let shown = serde_json::from_value::<ContextReport>(answer.report)
+            .map_err(|error| error.to_string());
+        (shown, answer.typed_report)
     });
     let expected = session
         .runtime
@@ -58,6 +60,12 @@ async fn a_context_report_is_read_between_turns() {
 
     assert_eq!(
         (read, during_turn),
-        (Ok(Ok(expected)), Err(wire::ErrorCode::SessionBusy.code()))
+        (
+            Ok((
+                Ok(ContextReport::from(&expected)),
+                Some(wire::SessionReportData::Context(expected))
+            )),
+            Err(wire::ErrorCode::SessionBusy.code())
+        )
     );
 }

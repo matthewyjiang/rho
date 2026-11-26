@@ -1,8 +1,12 @@
 //! What a daemon session records about a compaction after it commits: the
-//! `/info` "After run" figures and the usage ledger's follow-up columns.
+//! follow-up figures of its compaction report, which `/info` shows as
+//! "After run", and the usage ledger's follow-up columns.
 
 use pretty_assertions::assert_eq;
-use rho_protocol::{methods::SessionInspect, SessionInspectParams, SessionReport};
+use rho_protocol::{
+    methods::SessionInspect, CompactionReread, SessionInspectParams, SessionReport,
+    SessionReportData,
+};
 use serde_json::{json, Value};
 
 use super::sessions::{settled_job, Sandbox};
@@ -11,8 +15,9 @@ use super::sessions::{settled_job, Sandbox};
 /// later request reports one more.
 const PROMPT_TOKENS: u64 = 4_000;
 
-// Covers: after `/compact` in a daemon session, `/info` shows the size the
-// provider reports for the first request after it (not one from before),
+// Covers: after `/compact` in a daemon session, its compaction report says
+// the size the provider reports for the first request after it (not one
+// from before),
 // once the one-step turn that sent it ends; the tool calls that follow, one
 // of them a repeat of a read the compaction removed, count in the re-read
 // window, and reach the usage ledger when the daemon stops with that window
@@ -47,13 +52,13 @@ async fn a_daemon_session_records_what_follows_a_compaction() {
             })
             .await
             .unwrap()
-            .report;
-        report["rows"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|row| row["label"] == "After run")
-            .map(|row| row["value"].clone())
+            .typed_report;
+        let Some(SessionReportData::Compaction(report)) = report else {
+            panic!("not a typed compaction report: {report:?}");
+        };
+        report
+            .last_run
+            .map(|run| (run.next_prompt_tokens, run.reread))
     };
 
     // Requests 0 and 1 read the file and reply; 2 writes the summary; 3
@@ -101,16 +106,17 @@ async fn a_daemon_session_records_what_follows_a_compaction() {
         .collect::<rusqlite::Result<Vec<Value>>>()
         .unwrap();
 
-    let watched = "removed reads or commands (1 watched, window 24)";
+    let reread = |tool_calls, repeated| CompactionReread {
+        window_tool_calls: 24,
+        tool_calls,
+        repeated,
+        tracked: 1,
+    };
     assert_eq!(
         (after_prompt, after_calls, followed),
         (
-            Some(Value::from(format!(
-                "next prompt 4,003 · 0/0 calls repeated {watched}"
-            ))),
-            Some(Value::from(format!(
-                "next prompt 4,003 · 1/2 calls repeated {watched}"
-            ))),
+            Some((Some(PROMPT_TOKENS + 3), Some(reread(0, 0)))),
+            Some((Some(PROMPT_TOKENS + 3), Some(reread(2, 1)))),
             vec![json!(["manual", PROMPT_TOKENS + 3, 24, 2, 1, 1])]
         ),
         "log:\n{}",
