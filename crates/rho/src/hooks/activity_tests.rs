@@ -4,8 +4,8 @@ use super::*;
 
 fn activity(id: &str, outcome: HookOutcome) -> HookActivity {
     HookActivity {
-        hook_id: id.into(),
-        event: "before_tool_use",
+        hook_id: Some(id.into()),
+        event: ConfiguredHookEvent::Sdk(rho_sdk::hooks::HookEventKind::BeforeToolUse),
         outcome,
         duration: Some(Duration::from_millis(12)),
         truncated: false,
@@ -29,7 +29,7 @@ fn the_log_keeps_order_and_drops_the_oldest_record_at_its_bound() {
             .map(|record| record.hook_id)
             .collect::<Vec<_>>(),
         (5..MAX_RECORDS + 5)
-            .map(|index| format!("hook-{index}"))
+            .map(|index| Some(format!("hook-{index}")))
             .collect::<Vec<_>>()
     );
 }

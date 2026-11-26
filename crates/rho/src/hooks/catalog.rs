@@ -10,6 +10,7 @@ use super::{
         parse_hooks_file, ConfiguredHookEvent, HookConfigError, HookDefinition,
         WorkflowHookEventKind,
     },
+    matcher::ToolMatcher,
     HookSource,
 };
 
@@ -179,19 +180,20 @@ impl HookCatalog {
     }
 }
 
-/// What one hook will execute, rendered for the user before trust is granted.
+/// What one hook will execute, shown to the user before trust is granted.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HookSpawnContract {
     pub active: bool,
     pub id: String,
-    pub event: &'static str,
-    pub tools: String,
+    pub(crate) event: ConfiguredHookEvent,
+    pub tools: ToolMatcher,
     pub command: Vec<String>,
     pub working_directory: PathBuf,
     pub timeout: std::time::Duration,
     pub environment: Vec<String>,
-    /// Load-time problem that does not stop the hook from running.
-    pub warning: Option<String>,
+    /// Edit tools `tools` misses while it names others: a load-time
+    /// problem that does not stop the hook from running.
+    pub missing_edit_tools: Vec<&'static str>,
 }
 
 fn read_definitions(
@@ -223,8 +225,8 @@ fn spawn_contract(hook: &HookDefinition, active: bool) -> HookSpawnContract {
     HookSpawnContract {
         active,
         id: hook.qualified_id(),
-        event: hook.event().wire_name(),
-        tools: hook.tools().describe(),
+        event: hook.event(),
+        tools: hook.tools().clone(),
         command: hook.command().to_vec(),
         working_directory: hook.working_directory().to_path_buf(),
         timeout: hook.timeout(),
@@ -235,20 +237,8 @@ fn spawn_contract(hook: &HookDefinition, active: bool) -> HookSpawnContract {
             .map(str::to_owned)
             .chain(hook.env().iter().cloned())
             .collect(),
-        warning: partial_edit_coverage_warning(hook.tools()),
+        missing_edit_tools: hook.tools().missing_edit_tools(),
     }
-}
-
-/// Warns when `tools` names some edit tools but not all, since the session's
-/// edit tool can change with the provider or `behavior.edit_tool`.
-fn partial_edit_coverage_warning(tools: &super::matcher::ToolMatcher) -> Option<String> {
-    let missing = tools.missing_edit_tools();
-    (!missing.is_empty()).then(|| {
-        format!(
-            "skips some edit tools; add {} so this hook runs for every edit format",
-            missing.join(", ")
-        )
-    })
 }
 
 #[cfg(test)]

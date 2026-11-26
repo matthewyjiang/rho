@@ -71,10 +71,6 @@ impl AppHookEnvelope {
         self.kind
     }
 
-    pub(super) fn wire_name(&self) -> &'static str {
-        self.event
-    }
-
     pub(super) fn to_bounded_json(&self) -> Result<String, String> {
         serde_json::to_string(self).map_err(|error| error.to_string())
     }

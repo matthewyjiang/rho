@@ -35,6 +35,7 @@
 //! | [`SESSION_PULL_REQUEST_LINK`] | [`SessionPullRequestLinkParams`] | [`SessionPullRequestLinkResponse`] |
 //! | [`SESSION_PULL_REQUEST_UNLINK`] | [`SessionPullRequestUnlinkParams`] | [`SessionPullRequestUnlinkResponse`] |
 //! | [`SESSION_INSPECT`] | [`SessionInspectParams`] | [`SessionInspectResponse`] |
+//! | [`SESSION_REPORT`] | [`SessionReportParams`] | [`SessionReportResponse`] |
 //! | [`SESSION_CONFIGURE`] | [`SessionConfigureParams`] | [`SessionConfigureResponse`] |
 //! | [`SESSION_LIST`] | [`SessionListParams`] | [`SessionListResponse`] |
 //! | [`SESSION_LIST_DETAILED`] | [`SessionListParams`] | [`SessionListDetailedResponse`] |
@@ -146,7 +147,17 @@ pub use input::{
     SessionAnswerResponse, SessionControlAction, SessionHoldParams, SessionHoldResponse,
     SESSION_ANSWER, SESSION_ANSWER_QUESTION, SESSION_HOLD,
 };
-pub use inspect::{SessionInspectParams, SessionInspectResponse, SessionReport, SESSION_INSPECT};
+pub use inspect::{
+    CompactionCheck, CompactionContextSize, CompactionExtent, CompactionReread, CompactionRun,
+    CompactionRunOutcome, CompactionRunTrigger, CompactionSize, CompactionSkipReason,
+    CompactionThreshold, CompactionTier, CompletedCompactions, ContextBasis, ContextMessageKind,
+    ContextMessagePart, ContextPromptPart, ContextToolResultPart, ContextToolSchemaPart,
+    HookActivityRecord, HookContract, HookEvent, HookOutcome, HookStatus, HookTools, HookWarning,
+    PromptSourceKind, ProviderContextBlockId, SessionCompactionReport, SessionContextReport,
+    SessionHooksReport, SessionInspectParams, SessionInspectResponse, SessionProviderContextReport,
+    SessionReport, SessionReportData, SessionReportParams, SessionReportResponse, SkippedHooksFile,
+    SummaryRequestPath, ToolSchemaOrigin, SESSION_INSPECT, SESSION_REPORT,
+};
 pub use job::{
     Budget, JobId, JobKind, JobListParams, JobListResponse, JobLive, JobState, JobSummary,
     JobUsage, QueuePlace, JOB_LIST,
@@ -318,6 +329,7 @@ protocol! {
         SessionPullRequestLink = SESSION_PULL_REQUEST_LINK: SessionPullRequestLinkParams => SessionPullRequestLinkResponse,
         SessionPullRequestUnlink = SESSION_PULL_REQUEST_UNLINK: SessionPullRequestUnlinkParams => SessionPullRequestUnlinkResponse,
         SessionInspect = SESSION_INSPECT: SessionInspectParams => SessionInspectResponse,
+        SessionReportRead = SESSION_REPORT: SessionReportParams => SessionReportResponse,
         SessionList = SESSION_LIST: SessionListParams => SessionListResponse,
         SessionListDetailed = SESSION_LIST_DETAILED: SessionListParams => SessionListDetailedResponse,
         SessionRename = SESSION_RENAME: SessionRenameParams => SessionRenameResponse,

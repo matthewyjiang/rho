@@ -52,7 +52,7 @@ use crate::{
 pub use catalog::{HookCatalog, TRUST_PROJECT_HOOKS_ENV};
 pub use config::HookConfigError;
 pub(crate) use diagnostics::HookContractView;
-pub use diagnostics::{contract_views, HookInspector, HookReport};
+pub use diagnostics::{HookInspector, HookReport, HookSnapshot};
 pub use dispatch::HookEngine;
 pub(crate) use dispatch::WorkflowNodeFinished;
 
@@ -239,16 +239,16 @@ pub fn running_inside_hook(environment: &Ambient) -> bool {
 /// way until it is opened again: installing a gate or worker means
 /// rebuilding the SDK runtime, which a report should not do behind the
 /// user's back.
-pub fn reload_report(
+pub fn reload_snapshot(
     hooks: Option<&HookPipeline>,
     cwd: &std::path::Path,
     trust: ProjectTrusts,
     inside_hook: bool,
-) -> anyhow::Result<HookReport> {
+) -> anyhow::Result<HookSnapshot> {
     let Some(hooks) = hooks else {
         // A Rho a hook started runs without hooks (#1659).
         if inside_hook {
-            return Ok(HookReport::disabled());
+            return Ok(HookSnapshot::disabled());
         }
         let mut discard = |_message: String| {};
         let catalog = discover_for_cwd(cwd, trust, &mut discard)?;
@@ -256,19 +256,10 @@ pub fn reload_report(
             catalog.is_empty(),
             "hooks were added since this session started; restart Rho to load them"
         );
-        let mut report = HookReport::disabled();
-        report.skipped_untrusted = catalog
-            .skipped_untrusted()
-            .map(|skipped| crate::paths::display(&skipped.path));
-        report.skipped_untrusted_error = catalog
-            .skipped_untrusted()
-            .and_then(|skipped| skipped.error())
-            .map(ToString::to_string);
-        report.hooks = contract_views(&catalog);
-        return Ok(report);
+        return Ok(HookSnapshot::untrusted_only(&catalog));
     };
     hooks.reload_for_cwd(cwd)?;
-    Ok(HookInspector::new(hooks).report())
+    Ok(HookInspector::new(hooks).snapshot())
 }
 
 /// How long queued observational hooks may finish after a session ends.

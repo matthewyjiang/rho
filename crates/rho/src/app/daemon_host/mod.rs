@@ -534,6 +534,13 @@ impl Service for DaemonHost {
         self.sessions.inspect(params).await
     }
 
+    async fn report_session(
+        &self,
+        params: rho_protocol::SessionReportParams,
+    ) -> Result<rho_protocol::SessionReportResponse, RpcError> {
+        self.sessions.report(params).await
+    }
+
     async fn configure_session(
         &self,
         params: SessionConfigureParams,

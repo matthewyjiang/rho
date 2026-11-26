@@ -6,6 +6,8 @@
 
 use std::{collections::VecDeque, sync::Mutex, time::Duration};
 
+use super::config::ConfiguredHookEvent;
+
 /// How many records are retained before the oldest is dropped.
 const MAX_RECORDS: usize = 256;
 
@@ -47,11 +49,20 @@ impl HookOutcome {
 /// One sanitized hook invocation.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HookActivity {
-    pub hook_id: String,
-    pub event: &'static str,
+    /// The hook that ran; `None` when none did, as for an event the
+    /// observational queue dropped or failed to deliver.
+    pub hook_id: Option<String>,
+    pub event: ConfiguredHookEvent,
     pub outcome: HookOutcome,
     pub duration: Option<Duration>,
     pub truncated: bool,
+}
+
+impl HookActivity {
+    /// The hook's id, or `<queue>` for the observational queue's own record.
+    pub fn hook_label(&self) -> &str {
+        self.hook_id.as_deref().unwrap_or("<queue>")
+    }
 }
 
 impl std::fmt::Display for HookActivity {
@@ -59,7 +70,7 @@ impl std::fmt::Display for HookActivity {
         write!(
             formatter,
             "{} {} {}",
-            self.hook_id,
+            self.hook_label(),
             self.event,
             self.outcome.label()
         )?;
@@ -85,8 +96,8 @@ pub struct HookActivityLog {
 impl HookActivityLog {
     pub fn record(&self, activity: HookActivity) {
         tracing::debug!(
-            hook = %activity.hook_id,
-            event = activity.event,
+            hook = activity.hook_label(),
+            event = activity.event.wire_name(),
             outcome = activity.outcome.label(),
             "hook finished"
         );

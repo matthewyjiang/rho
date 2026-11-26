@@ -24,6 +24,12 @@ use crate::methods::{
     SessionMcpStatus, SettingKind, StoreSelectedBy, ToolContent, ToolKind, ToolStatus,
     TurnErrorKind, TurnOutcome, UncheckedReason, UnsteerOutcome, ValueSource, WorktreeVerdict,
 };
+use crate::methods::{
+    CompactionExtent, CompactionRunOutcome, CompactionRunTrigger, CompactionSkipReason,
+    CompactionThreshold, CompactionTier, ContextBasis, ContextMessageKind, HookEvent, HookOutcome,
+    HookStatus, HookTools, HookWarning, PromptSourceKind, SessionReportData, SummaryRequestPath,
+    ToolSchemaOrigin,
+};
 
 // Covers: the committed schema/protocol.json is what the wire types
 // generate, so clients that generate types from it speak the daemon's wire.
@@ -62,7 +68,57 @@ fn enums_marked_open_read_unknown_values_as_unknown() {
     let unseen = || json!("from_a_newer_daemon");
     let unseen_tag = || json!({ "type": "from_a_newer_daemon" });
     let unseen_kind = || json!({ "kind": "from_a_newer_daemon" });
-    let cases: [(&str, bool); 77] = [
+    let cases: [(&str, bool); 94] = [
+        ("ContextBasis", reads_as(unseen(), ContextBasis::Unknown)),
+        (
+            "PromptSourceKind",
+            reads_as(unseen(), PromptSourceKind::Unknown),
+        ),
+        (
+            "ContextMessageKind",
+            reads_as(unseen(), ContextMessageKind::Unknown),
+        ),
+        ("HookStatus", reads_as(unseen(), HookStatus::Unknown)),
+        ("HookEvent", reads_as(unseen(), HookEvent::Unknown)),
+        (
+            "CompactionRunTrigger",
+            reads_as(unseen(), CompactionRunTrigger::Unknown),
+        ),
+        (
+            "CompactionRunOutcome",
+            reads_as(unseen(), CompactionRunOutcome::Unknown),
+        ),
+        (
+            "CompactionTier",
+            reads_as(unseen(), CompactionTier::Unknown),
+        ),
+        (
+            "SummaryRequestPath",
+            reads_as(unseen(), SummaryRequestPath::Unknown),
+        ),
+        (
+            "CompactionSkipReason",
+            reads_as(unseen(), CompactionSkipReason::Unknown),
+        ),
+        (
+            "CompactionExtent",
+            reads_as(unseen(), CompactionExtent::Unknown),
+        ),
+        (
+            "SessionReportData",
+            reads_as(unseen_tag(), SessionReportData::Unknown),
+        ),
+        (
+            "ToolSchemaOrigin",
+            reads_as(unseen_tag(), ToolSchemaOrigin::Unknown),
+        ),
+        ("HookTools", reads_as(unseen_tag(), HookTools::Unknown)),
+        ("HookWarning", reads_as(unseen_tag(), HookWarning::Unknown)),
+        ("HookOutcome", reads_as(unseen_tag(), HookOutcome::Unknown)),
+        (
+            "CompactionThreshold",
+            reads_as(unseen_tag(), CompactionThreshold::Unknown),
+        ),
         (
             "SessionMcpResourceContent",
             reads_as(unseen_tag(), SessionMcpResourceContent::Unknown),

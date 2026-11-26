@@ -1,17 +1,50 @@
-//! Reads a report about a loaded session between its turns.
+//! Reads a report about a loaded session between its turns, as rho's
+//! frontends show it (`rho/session/inspect`) or typed (`rho/session/report`).
 
 use rho_protocol::{
-    ErrorCode, RpcError, SessionInspectParams, SessionInspectResponse, SessionReport,
+    ErrorCode, RpcError, SessionId, SessionInspectParams, SessionInspectResponse, SessionReport,
+    SessionReportData, SessionReportParams, SessionReportResponse,
 };
 
 use super::Sessions;
-use crate::app::daemon_host::jobs::SessionJob;
+use crate::app::{
+    compaction_report::{session_compaction_report, CompactionReport},
+    context_report::ContextReport,
+    daemon_host::jobs::SessionJob,
+};
+
+/// One report both ways: the typed data and the presentation view derived
+/// from it.
+struct ReadReport {
+    typed: SessionReportData,
+    shown: serde_json::Value,
+}
 
 impl Sessions {
     pub(in crate::app::daemon_host) async fn inspect(
         &self,
         params: SessionInspectParams,
     ) -> Result<SessionInspectResponse, RpcError> {
+        let read = self.read_report(&params.session, params.report).await?;
+        Ok(SessionInspectResponse { report: read.shown })
+    }
+
+    pub(in crate::app::daemon_host) async fn report(
+        &self,
+        params: SessionReportParams,
+    ) -> Result<SessionReportResponse, RpcError> {
+        let read = self.read_report(&params.session, params.report).await?;
+        Ok(SessionReportResponse::new(read.typed))
+    }
+
+    // NEXT_MAJOR(rho-protocol): make rho/session/inspect answer the typed SessionReportData, render rho's TUI from it, and remove rho/session/report.
+    // Until then both methods read the report here, and inspect answers
+    // only the presentation view.
+    async fn read_report(
+        &self,
+        session_id: &SessionId,
+        report: SessionReport,
+    ) -> Result<ReadReport, RpcError> {
         self.refuse_when_stopping()?;
         let not_loaded = || {
             RpcError::new(
@@ -20,7 +53,7 @@ impl Sessions {
             )
         };
         let session = self
-            .loaded_session(&params.session)
+            .loaded_session(session_id)
             .await?
             .ok_or_else(not_loaded)?;
         // A report reads what a turn is changing, and a client asked to
@@ -50,20 +83,38 @@ impl Sessions {
         let runtime = session.runtime.lock().await;
         // `None` once the daemon's stop or the idle unload took it.
         let runtime = runtime.as_ref().ok_or_else(not_loaded)?;
-        let report = match params.report {
-            SessionReport::Context => serde_json::to_value(runtime.context_report()),
+        let (shown, typed) = match report {
+            SessionReport::Context => {
+                let report = runtime.context_report();
+                (
+                    serde_json::to_value(ContextReport::from(&report)),
+                    SessionReportData::Context(report),
+                )
+            }
             SessionReport::Compaction => {
-                serde_json::to_value(runtime.compaction_report(&session.config()))
+                let report =
+                    session_compaction_report(&runtime.compaction_diagnostics(&session.config()));
+                (
+                    serde_json::to_value(CompactionReport::from(&report)),
+                    SessionReportData::Compaction(Box::new(report)),
+                )
             }
             SessionReport::ProviderContext => {
                 let auths = super::options::available_auths(runtime.credentials()).await;
-                serde_json::to_value(runtime.provider_context_report(&session.config(), &auths))
+                let report = runtime.provider_context_report(&session.config(), &auths);
+                (
+                    serde_json::to_value(&report),
+                    SessionReportData::ProviderContext((&report).into()),
+                )
             }
             SessionReport::Hooks => {
-                let report = runtime.reload_hooks().map_err(|error| {
+                let snapshot = runtime.reload_hooks().map_err(|error| {
                     RpcError::new(ErrorCode::InternalError, format!("{error:#}"))
                 })?;
-                serde_json::to_value(report)
+                (
+                    serde_json::to_value(snapshot.report()),
+                    SessionReportData::Hooks(snapshot.session_report()),
+                )
             }
             _ => {
                 return Err(RpcError::new(
@@ -72,9 +123,9 @@ impl Sessions {
                 ))
             }
         };
-        report
-            .map(|report| SessionInspectResponse { report })
-            .map_err(|error| RpcError::new(ErrorCode::InternalError, error.to_string()))
+        let shown =
+            shown.map_err(|error| RpcError::new(ErrorCode::InternalError, error.to_string()))?;
+        Ok(ReadReport { typed, shown })
     }
 }
 

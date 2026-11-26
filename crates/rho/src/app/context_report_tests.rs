@@ -10,7 +10,11 @@ use rho_sdk::{
     Rho, SessionOptions, SystemPrompt,
 };
 
-use super::{largest_remainder, ContextBasis, ContextReport};
+use rho_protocol::{
+    ContextBasis, ContextMessageKind, PromptSourceKind as WirePromptSource, ToolSchemaOrigin,
+};
+
+use super::{largest_remainder, session_context_report, ContextReport};
 use crate::prompt::{PromptSource, PromptSourceKind};
 
 fn spec(name: &str) -> ToolSpec {
@@ -62,11 +66,11 @@ async fn calibrated_session(reported: u64) -> rho_sdk::Session {
 }
 
 // Covers: sources misattributed (MCP schemas counted as built-in, tool output
-// not grouped by tool, prompt split ignoring source bytes) and rows left on the
-// local scale while the header shows the provider-calibrated total.
+// not grouped by tool, prompt split ignoring source bytes) and parts left on
+// the local scale while the total is the provider-calibrated one.
 // Owner: Rho's /context grouping policy over the SDK itemization.
 #[tokio::test]
-async fn report_groups_sources_and_scales_rows_to_calibrated_total() {
+async fn report_groups_sources_and_scales_parts_to_calibrated_total() {
     let session = calibrated_session(100_000).await;
     let sources = [
         PromptSource {
@@ -82,14 +86,61 @@ async fn report_groups_sources_and_scales_rows_to_calibrated_total() {
     ];
     let mcp_tools = HashMap::from([("mcp__mem__query".to_string(), "mem".to_string())]);
 
-    let report = ContextReport::new(
+    let report = session_context_report(
         &session.context_breakdown(),
         &sources,
         &mcp_tools,
         Some(200_000),
     );
 
-    let layout: Vec<_> = report
+    let layout = (
+        report
+            .system_prompt
+            .iter()
+            .map(|part| (part.source, part.path.clone()))
+            .collect::<Vec<_>>(),
+        report
+            .tool_schemas
+            .iter()
+            .map(|part| (part.origin.clone(), part.schemas))
+            .collect::<Vec<_>>(),
+        report
+            .messages
+            .iter()
+            .map(|part| part.kind)
+            .collect::<Vec<_>>(),
+        report
+            .tool_results
+            .iter()
+            .map(|part| part.tool.clone())
+            .collect::<Vec<_>>(),
+    );
+    assert_eq!(
+        layout,
+        (
+            vec![
+                (WirePromptSource::Base, None),
+                (
+                    WirePromptSource::InstructionFile,
+                    Some("/repo/AGENTS.md".into())
+                ),
+            ],
+            vec![
+                (
+                    ToolSchemaOrigin::Mcp {
+                        server: "mem".into()
+                    },
+                    1
+                ),
+                (ToolSchemaOrigin::BuiltIn, 1),
+            ],
+            vec![ContextMessageKind::Assistant, ContextMessageKind::User],
+            vec![Some("read_file".to_owned())],
+        )
+    );
+    // The overlay groups the parts the same way, in its order.
+    let overlay = ContextReport::from(&report);
+    let shown_layout: Vec<_> = overlay
         .groups
         .iter()
         .map(|group| {
@@ -102,7 +153,7 @@ async fn report_groups_sources_and_scales_rows_to_calibrated_total() {
         })
         .collect();
     assert_eq!(
-        layout,
+        shown_layout,
         vec![
             (
                 "System prompt",
@@ -131,13 +182,28 @@ async fn report_groups_sources_and_scales_rows_to_calibrated_total() {
     assert_eq!(report.basis, ContextBasis::ProviderCalibrated);
     assert_eq!(report.tokens, session.context_estimate().tokens());
 
-    let system = &report.groups[0];
-    let [base, agents] = [&system.rows[0], &system.rows[1]];
-    assert!(base.tokens.abs_diff(3 * agents.tokens) <= 3, "{system:?}");
+    let [base, agents] = [&report.system_prompt[0], &report.system_prompt[1]];
+    assert!(base.tokens.abs_diff(3 * agents.tokens) <= 3, "{report:?}");
 
-    // Rows are on the calibrated scale: groups add up to the header total,
-    // short only of fixed request framing and per-group rounding.
-    let shown: u64 = report.groups.iter().map(|group| group.tokens).sum();
+    // Parts are on the calibrated scale: they add up to the total, short
+    // only of fixed request framing and per-part rounding.
+    let shown: u64 = report
+        .system_prompt
+        .iter()
+        .map(|part| part.tokens)
+        .sum::<u64>()
+        + report
+            .tool_schemas
+            .iter()
+            .map(|part| part.tokens)
+            .sum::<u64>()
+        + report.messages.iter().map(|part| part.tokens).sum::<u64>()
+        + report
+            .tool_results
+            .iter()
+            .map(|part| part.tokens)
+            .sum::<u64>()
+        + report.request_context_tokens;
     assert!(
         report.tokens - shown < report.tokens / 100,
         "{shown} of {}",
