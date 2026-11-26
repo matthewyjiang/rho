@@ -369,6 +369,51 @@ fn replay_closes_incomplete_calls_and_opens_orphan_results() {
     }
 }
 
+// Covers: a replayed event carries when the row it shows was saved, and a
+// call the replay closes itself, superseded or left open at the end,
+// carries no time. A miss dates a closing the session never saved at the
+// next row's time.
+// Owner: session event replay
+#[test]
+fn replayed_events_carry_their_rows_time_and_closings_none() {
+    let rows: Vec<_> = [
+        (1_000, Message::Assistant(vec![call_block("reused")].into())),
+        (2_000, Message::Assistant(vec![call_block("reused")].into())),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(row, (saved_at, message))| ProjectedMessage {
+        origin: Some(origin(row)),
+        message,
+        saved_at: Some(saved_at),
+    })
+    .collect();
+    let mut transcript = SavedTranscript::default();
+    transcript.push(SavedTurn::capture(
+        &rows,
+        Path::new("/work"),
+        SessionTools::of_tool_set_for_tests(&AppToolSet::disabled()),
+        &mut CallIds::default(),
+    ));
+
+    let (events, times): (Vec<_>, Vec<_>) = transcript
+        .events()
+        .map(|event| (event.event, event.at))
+        .unzip();
+    assert_eq!(
+        (without_display(events), times),
+        (
+            vec![
+                opened("reused", "ls"),
+                closed("reused"),
+                opened("reused#2", "ls"),
+                closed("reused#2"),
+            ],
+            vec![Some(1_000), None, Some(2_000), None],
+        )
+    );
+}
+
 // Covers: a provider id reused across turns opens a new call rather than
 // updating the earlier one, an unfinished occurrence it supersedes closes,
 // and later results and end-of-history closing reach the newest call.

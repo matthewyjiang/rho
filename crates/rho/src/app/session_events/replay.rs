@@ -196,18 +196,14 @@ impl Iterator for TurnEvents {
                 calls: &self.turn.calls,
                 next: &mut self.call,
             };
-            // When the row the events show was saved; what `finish`
-            // renders shows no row of its own.
-            let saved_at = match self.turn.rows.get(self.row) {
+            match self.turn.rows.get(self.row) {
                 Some(row) => {
                     self.replay.row(row, &mut calls);
                     self.row += 1;
-                    row.saved_at
                 }
                 None if !self.finished => {
                     self.replay.finish(&self.turn.plan);
                     self.finished = true;
-                    None
                 }
                 None => {
                     // Rendering from the rows alone, the replay opens the
@@ -216,12 +212,8 @@ impl Iterator for TurnEvents {
                     debug_assert_eq!(self.rendered, self.turn.sent + self.turn.unencodable.len());
                     return None;
                 }
-            };
-            self.pending
-                .extend(self.replay.take_events().into_iter().map(|mut event| {
-                    event.at = saved_at;
-                    event
-                }));
+            }
+            self.pending.extend(self.replay.take_events());
         }
     }
 }
@@ -347,6 +339,9 @@ struct Replay {
     /// How many calls replay opened.
     opened: usize,
     message_ids: MessageIds,
+    /// When the row being rendered was saved, which the events that show
+    /// it carry ([`Self::push`]).
+    saved_at: Option<u64>,
     /// Rendered since the last [`Self::take_events`].
     events: Vec<FeedEvent>,
 }
@@ -395,6 +390,7 @@ impl Replay {
             calls: HashMap::new(),
             opened: 0,
             message_ids: MessageIds::default(),
+            saved_at: None,
             events: Vec::new(),
         }
     }
@@ -402,7 +398,17 @@ impl Replay {
     /// Renders `row`, opening its calls from `calls`.
     fn row(&mut self, row: &ProjectedMessage, calls: &mut dyn CallSource) {
         self.message_ids.enter(row.origin.as_ref());
+        self.saved_at = row.saved_at;
         self.message(&row.message, calls);
+    }
+
+    /// Sends `event`, which shows the row being rendered, timed as the row
+    /// was saved. What the replay adds of its own, such as closing a call
+    /// it left open, goes to [`Self::events`] untimed.
+    fn push(&mut self, event: impl Into<FeedEvent>) {
+        let mut event = event.into();
+        event.at = self.saved_at;
+        self.events.push(event);
     }
 
     /// Ends the replay: closes the calls the rows left open, in the order
@@ -444,14 +450,11 @@ impl Replay {
                 let content = user_content(blocks);
                 if !content.is_empty() {
                     let message = self.message_ids.next();
-                    self.events.push(
-                        WireEvent::UserMessage {
-                            message,
-                            content,
-                            steer: None,
-                        }
-                        .into(),
-                    );
+                    self.push(WireEvent::UserMessage {
+                        message,
+                        content,
+                        steer: None,
+                    });
                 }
             }
             SemanticMessage::Assistant(blocks) => self.agent(blocks, calls),
@@ -464,13 +467,10 @@ impl Replay {
                     .filter(|summary| !summary.is_empty())
                 {
                     let message = self.message_ids.next();
-                    self.events.push(
-                        WireEvent::ThoughtChunk {
-                            message,
-                            text: summary.to_owned(),
-                        }
-                        .into(),
-                    );
+                    self.push(WireEvent::ThoughtChunk {
+                        message,
+                        text: summary.to_owned(),
+                    });
                 }
                 self.agent(&assistant.content, calls);
             }
@@ -489,7 +489,7 @@ impl Replay {
                         }),
                         DisplayRow::Notification(_) | DisplayRow::Notice(_) => card(row),
                     };
-                    self.events.push(event);
+                    self.push(event);
                 }
             }
             // Display rows never hold model-only entries.
@@ -523,8 +523,7 @@ impl Replay {
             return;
         }
         let message = self.message_ids.next();
-        self.events
-            .push(WireEvent::AgentMessageChunk { message, text }.into());
+        self.push(WireEvent::AgentMessageChunk { message, text });
     }
 
     fn call(&mut self, call: &model::ToolCall, calls: &mut dyn CallSource) {
@@ -575,14 +574,12 @@ impl Replay {
             call.status = status;
             call.results.push(Arc::clone(result));
             let shown = self.presenter.historical(&call.call, ok, &result.content);
-            self.events.push(
-                WireEvent::tool_call(ToolCallUpdate {
-                    content: Some(call.content()),
-                    display: Some(shown.presentation),
-                    ..status_update(call.id.clone(), Some(status))
-                })
-                .into(),
-            );
+            let update = WireEvent::tool_call(ToolCallUpdate {
+                content: Some(call.content()),
+                display: Some(shown.presentation),
+                ..status_update(call.id.clone(), Some(status))
+            });
+            self.push(update);
             return;
         }
         let OpenedCall { id, .. } = calls.open(&result.id, None);
@@ -633,10 +630,11 @@ impl Replay {
         self.opened += 1;
         if let Some(superseded) = self.calls.insert(saved.to_owned(), call) {
             if superseded.status == ToolStatus::InProgress {
+                // The replay's own closing, which shows no saved row.
                 self.events.push(superseded.closed().into());
             }
         }
-        self.events.push(WireEvent::tool_call(opened).into());
+        self.push(WireEvent::tool_call(opened));
     }
 }
 
