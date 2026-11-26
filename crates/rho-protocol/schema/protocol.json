@@ -8365,7 +8365,7 @@
       "description": "One thing that happened in a session."
     },
     "SessionEventEnvelope": {
-      "description": "What a [`SESSION_EVENT`] notification carries: [`SessionEventParams`],\nflat, and what that struct cannot take in a protocol minor. A client\nthat reads only [`SessionEventParams`] ignores the rest.\n\n# Next major\n\nNEXT_MAJOR(rho-protocol): add at: Option<u64> to SessionEventParams and remove SessionEventEnvelope.\n\n`SessionEventParams` has only public fields and is not\n`#[non_exhaustive]`, so a field is a major change. Until then the schema\npublishes [`SESSION_EVENT`] with this type, and [`crate::Client`] reads\n[`SessionEventParams`].",
+      "description": "What a [`SESSION_EVENT`] notification carries: [`SessionEventParams`],\nflat, and what that struct cannot take in a protocol minor. A client\nthat reads only [`SessionEventParams`] ignores the rest.\n\n# Next major\n\nNEXT_MAJOR(rho-protocol): add `at: Option<u64>` to `SessionEventParams` and remove SessionEventEnvelope.\n\n`SessionEventParams` has only public fields and is not\n`#[non_exhaustive]`, so a field is a major change. Until then the schema\npublishes [`SESSION_EVENT`] with this type, and [`crate::Notifications`]\nyields [`SessionEventParams`] unless a client opts into this type with\n[`crate::Notifications::with_session_event_envelopes`].",
       "properties": {
         "at": {
           "description": "When the event happened, in unix milliseconds. A replay sends the\ntime the event first had: a buffered event's own, and a saved row's\nas the session file keeps it, to the second, which the rows one step\nsaved share. Absent when the daemon does not know it, as for the\nstate a reset replays ahead of the transcript.",

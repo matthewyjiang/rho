@@ -603,12 +603,13 @@ pub struct SessionEventParams {
 ///
 /// # Next major
 ///
-/// NEXT_MAJOR(rho-protocol): add at: Option<u64> to SessionEventParams and remove SessionEventEnvelope.
+/// NEXT_MAJOR(rho-protocol): add `at: Option<u64>` to `SessionEventParams` and remove SessionEventEnvelope.
 ///
 /// `SessionEventParams` has only public fields and is not
 /// `#[non_exhaustive]`, so a field is a major change. Until then the schema
-/// publishes [`SESSION_EVENT`] with this type, and [`crate::Client`] reads
-/// [`SessionEventParams`].
+/// publishes [`SESSION_EVENT`] with this type, and [`crate::Notifications`]
+/// yields [`SessionEventParams`] unless a client opts into this type with
+/// [`crate::Notifications::with_session_event_envelopes`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[non_exhaustive]
 pub struct SessionEventEnvelope {

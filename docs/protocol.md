@@ -263,6 +263,10 @@ Attaching or observing a session the connection already follows replaces the ear
 
 `NEXT_MAJOR(rho-protocol): add at: Option<u64> to SessionEventParams and remove SessionEventEnvelope.` Until then, `at` and `notification` sit beside `event` in the params, which `SessionEventEnvelope` reads.
 
+A Rust `Client` drops both unless its `Notifications` opt in: `notifications.with_session_event_envelopes()` yields each event as `DaemonNotification::SessionEventEnvelope`, its `params` beside `at` and `notification`, instead of `DaemonNotification::SessionEvent`. The wire is the same either way.
+
+`NEXT_MAJOR(rho-protocol): yield the event's time and notification in DaemonNotification::SessionEvent, and remove DaemonNotification::SessionEventEnvelope and Notifications::with_session_event_envelopes.`
+
 ### Notification cards
 
 A `card` that is a notification, such as a subagent's result, a background process's exit, or news on a watched pull request, carries `notification`, its typed side, beside its `event`:

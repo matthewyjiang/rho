@@ -29,7 +29,10 @@ daemon and its frontends: the Rho TUI, rho-ui, the `rho acp` adapter, and MCP.
   `MethodNotFound`, so a partial daemon, such as a test double, implements
   only what it serves. `Client` implements the frontend side: overlapping
   requests, and the daemon's notifications on a separate `Notifications`
-  stream.
+  stream. `Notifications::with_session_event_envelopes` opts that stream
+  into `DaemonNotification::SessionEventEnvelope`, which carries each
+  session event's time and a card's typed notification; by default it
+  yields `DaemonNotification::SessionEvent` without them.
 - `DaemonEndpoint::locate` says where a rho home's daemon listens, the same
   layout the `rho` CLI uses. `LocalDaemon` connects a frontend to that
   daemon, over its Unix socket or, on Windows, its named pipe, and when none

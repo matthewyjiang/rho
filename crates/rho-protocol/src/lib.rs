@@ -45,7 +45,11 @@
 //!
 //! [`Client`] implements the frontend side, with daemon notifications on its
 //! [`Notifications`]; [`serve_connection`] implements the daemon side around a
-//! [`Service`], which publishes events through [`subscription()`].
+//! [`Service`], which publishes events through [`subscription()`]. A client
+//! that reads each session event's time and a card's typed notification
+//! opts in with [`Notifications::with_session_event_envelopes`], and then
+//! receives [`DaemonNotification::SessionEventEnvelope`] instead of
+//! [`DaemonNotification::SessionEvent`].
 //!
 //! # Finding the daemon
 //!
