@@ -99,6 +99,7 @@ pub mod schema;
 mod server;
 mod server_calls;
 mod server_codec;
+mod server_outbox;
 mod server_settings;
 mod server_streams;
 mod subscription;
