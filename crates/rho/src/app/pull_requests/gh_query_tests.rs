@@ -393,7 +393,7 @@ fn a_full_read_takes_what_the_watch_needs() {
             "__typename": "CheckRun", "name": name, "status": "COMPLETED",
             "conclusion": "SUCCESS",
             "detailsUrl": format!("https://github.com/acme/widgets/actions/runs/1/job/{job}"),
-            "checkSuite": { "workflowRun": { "workflow": { "name": "CI" } } }
+            "checkSuite": { "id": "CS_1", "workflowRun": { "workflow": { "name": "CI" } } }
         })
     };
     let answer = json!({
@@ -518,6 +518,7 @@ fn a_full_read_takes_what_the_watch_needs() {
         ],
         checks_total: 3,
         queued_workflows: 0,
+        unread_suites: 0,
         posts: vec![
             Post {
                 id: "IC_1".to_owned(),
@@ -578,8 +579,8 @@ fn a_full_read_takes_what_the_watch_needs() {
 // or running as checks still to come, as when the docs workflow passed
 // before CI made its jobs; never one whose jobs are listed running, nor an
 // app's suite that GitHub keeps QUEUED for good because the app never
-// reports. Suites past those read count too, as any may be such a run.
-// Real answers for matthewyjiang/rho-ui, bodies and posts cut.
+// reports. Suites past those read are counted apart, as any may be such a
+// run. Real answers for matthewyjiang/rho-ui, bodies and posts cut.
 // Owner: pure unit (wire contract)
 #[test]
 fn a_workflow_without_jobs_yet_counts_as_checks_to_come() {
@@ -594,22 +595,22 @@ fn a_workflow_without_jobs_yet_counts_as_checks_to_come() {
         (
             "CI queued with no job yet, docs done",
             fixture(include_str!("fixtures/gh_checks_queued.json")),
-            (1, vec![Passed, Skipped]),
+            (1, 0, vec![Passed, Skipped]),
         ),
         (
             "CI's jobs listed running",
             fixture(include_str!("fixtures/gh_checks_running.json")),
-            (0, vec![Running, Running, Passed, Passed, Skipped]),
+            (0, 0, vec![Running, Running, Passed, Passed, Skipped]),
         ),
         (
             "every workflow done, six apps' suites still QUEUED",
             done,
-            (0, vec![Passed, Passed, Passed, Passed, Skipped]),
+            (0, 0, vec![Passed, Passed, Passed, Passed, Skipped]),
         ),
         (
             "suites past those read",
             suites_past_page,
-            (93, vec![Passed, Passed, Passed, Passed, Skipped]),
+            (0, 93, vec![Passed, Passed, Passed, Passed, Skipped]),
         ),
     ];
     for (name, answer, expected) in cases {
@@ -623,8 +624,11 @@ fn a_workflow_without_jobs_yet_counts_as_checks_to_come() {
             panic!("{name}: the PR's detail: {:?}", batch.details);
         };
         let statuses: Vec<CheckStatus> = detail.checks.iter().map(|check| check.status).collect();
-        assert_eq!((detail.queued_workflows, statuses), expected, "{name}");
-        assert_eq!(detail.checks_to_come(), expected.0 > 0, "{name}");
+        assert_eq!(
+            (detail.queued_workflows, detail.unread_suites, statuses),
+            expected,
+            "{name}"
+        );
     }
 }
 

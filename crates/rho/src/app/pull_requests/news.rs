@@ -210,18 +210,14 @@ fn tally_line(tally: &CheckTally) -> String {
     } else {
         format!(", {unread} not read")
     };
-    let queued = queued_text(queued_workflows);
-    format!("- Checks now: {passed} passed, {failed} failed, {running} running{unread}{queued}.")
-}
-
-/// `, 1 workflow queued`, or nothing for none: workflows whose checks are
-/// still to come, after the counts of those already there.
-fn queued_text(queued_workflows: u32) -> String {
-    match queued_workflows {
+    let queued = match queued_workflows {
         0 => String::new(),
-        1 => ", 1 workflow queued".to_owned(),
-        queued => format!(", {queued} workflows queued"),
-    }
+        queued => format!(
+            ", {queued} {} queued",
+            plural(queued as usize, "workflow", "workflows")
+        ),
+    };
+    format!("- Checks now: {passed} passed, {failed} failed, {running} running{unread}{queued}.")
 }
 
 /// The first [`LISTED_ITEMS`] of `items` as sub-items, and how many more.

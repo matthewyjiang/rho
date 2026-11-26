@@ -95,6 +95,7 @@ impl ScriptedForge {
             review: Review::None,
             checks_total: u32::try_from(checks.len()).expect("a few checks"),
             queued_workflows: 0,
+            unread_suites: 0,
             checks,
             posts: Vec::new(),
             older_posts: 0,

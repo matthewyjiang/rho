@@ -448,8 +448,7 @@ enum GhCheck {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CheckSuite {
-    #[serde(default)]
-    id: Option<String>,
+    id: String,
     workflow_run: Option<WorkflowRun>,
 }
 
@@ -813,11 +812,11 @@ impl GhDetail {
                 .and_then(|rollup| rollup.contexts.take());
             (contexts, commit.check_suites.take())
         });
-        let queued_workflows = suites.map_or(0, |suites| {
+        let (queued_workflows, unread_suites) = suites.map_or((0, 0), |suites| {
             let checks = contexts
                 .as_ref()
                 .map_or(&[][..], |contexts| &contexts.nodes);
-            queued_workflows(suites, checks)
+            (queued_workflows(&suites, checks), suites.unread())
         });
         let mut gates = self
             .gate
@@ -881,6 +880,7 @@ impl GhDetail {
             checks,
             checks_total,
             queued_workflows,
+            unread_suites,
             mergeable,
             merge_methods: self.repository.methods(),
             viewer: viewer.map(str::to_owned),
@@ -897,20 +897,18 @@ impl GhDetail {
 /// to come that `checks` can't show. Another app's suite doesn't count:
 /// GitHub makes one for every installed app that listens for checks, and
 /// one whose app never reports stays `QUEUED` with no checks for good.
-/// Suites past those read count too, as any of them may be such a run.
-fn queued_workflows(suites: Connection<GhSuite>, checks: &[GhCheck]) -> u32 {
+fn queued_workflows(suites: &Connection<GhSuite>, checks: &[GhCheck]) -> u32 {
     let busy: Vec<&str> = checks
         .iter()
         .filter_map(|check| match check {
             GhCheck::CheckRun {
                 status,
-                check_suite: Some(CheckSuite { id: Some(id), .. }),
+                check_suite: Some(CheckSuite { id, .. }),
                 ..
             } if status != "COMPLETED" => Some(id.as_str()),
             GhCheck::CheckRun { .. } | GhCheck::StatusContext { .. } => None,
         })
         .collect();
-    let unread = suites.unread();
     let queued = suites
         .nodes
         .iter()
@@ -920,9 +918,7 @@ fn queued_workflows(suites: Connection<GhSuite>, checks: &[GhCheck]) -> u32 {
                 && !busy.contains(&suite.id.as_str())
         })
         .count();
-    u32::try_from(queued)
-        .unwrap_or(u32::MAX)
-        .saturating_add(unread)
+    u32::try_from(queued).unwrap_or(u32::MAX)
 }
 
 impl GhCheck {

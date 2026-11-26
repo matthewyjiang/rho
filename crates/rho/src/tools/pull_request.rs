@@ -318,46 +318,46 @@ fn checks_text(checks: &CheckCounts, gate: Gate, gate_checks: u32) -> String {
         running,
         failed,
         queued_workflows,
+        unread_suites,
     } = *checks;
     let (queued, waited) = match queued_workflows {
-        0 => (String::new(), None),
-        1 => (
-            ", 1 workflow queued".to_owned(),
-            Some("the queued workflow"),
-        ),
+        0 => (String::new(), String::new()),
         queued => (
-            format!(", {queued} workflows queued"),
-            Some("the queued workflows"),
+            format!(", {} queued", counted(queued, "workflow", "workflows")),
+            format!(
+                "; rho also waits on the queued {}",
+                if queued == 1 { "workflow" } else { "workflows" }
+            ),
         ),
     };
     if total == 0 {
         return format!("no checks yet{queued}");
     }
-    // A read lists the first checks only. With some left out, the watch
-    // can't know they passed: it tells failures among those read, never
-    // the gate passing.
+    // A read lists the first checks and check suites only. With some left
+    // out, the watch can't know they passed: it tells failures among those
+    // read, never the gate passing.
     let read = passed.saturating_add(running).saturating_add(failed);
     let (total_text, unread) = if read < total {
         (
             format!("{read} of {total} checks read"),
             "; rho can't read the rest, so it won't tell you when they all pass",
         )
+    } else if unread_suites > 0 {
+        (
+            counted(total, "check", "checks"),
+            "; rho can't read every workflow of this commit, so it won't tell you when they all \
+             pass",
+        )
     } else {
         (counted(total, "check", "checks"), "")
     };
-    let gate = match (gate, waited) {
-        (Gate::Required, None) => format!("{gate_checks} required"),
-        (Gate::Required, Some(waited)) => {
-            format!("{gate_checks} required, and rho waits on {waited}")
-        }
-        (Gate::All, None) => format!("none are required, so rho waits on all {gate_checks}"),
-        (Gate::All, Some(waited)) => {
-            format!("none are required, so rho waits on all {gate_checks} and on {waited}")
-        }
+    let gate = match gate {
+        Gate::Required => format!("{gate_checks} required"),
+        Gate::All => format!("none are required, so rho waits on all {gate_checks}"),
     };
     format!(
         "{total_text} ({passed} passed, {running} running, {failed} failed{queued}; \
-         {gate}{unread})"
+         {gate}{waited}{unread})"
     )
 }
 

@@ -48,6 +48,7 @@ fn read(checks: Vec<CheckRun>) -> PrDetail {
         review: Review::None,
         checks_total: u32::try_from(checks.len()).unwrap(),
         queued_workflows: 0,
+        unread_suites: 0,
         checks,
         posts: Vec::new(),
         older_posts: 0,
@@ -372,7 +373,7 @@ fn the_gate_passes_once() {
             expected: quiet(watched()),
         },
         Case {
-            // rho-ui#103 at acfbb0a: docs passed before CI made its jobs.
+            // rho-ui#101 at ee99c82: docs passed before CI made its jobs.
             name: "every listed check passed, but a workflow is still queued",
             before: watched(),
             read: with_queued(read(vec![check("a", Passed), check("b", Skipped)]), 1),
@@ -450,6 +451,17 @@ fn owed_checks_are_told_once_when_they_settle() {
                 }],
                 gate_passed.clone(),
             ),
+        },
+        Case {
+            // As between a job and those that need it: nothing is taken
+            // back, so the pass isn't told again and the wake stays owed.
+            name: "the owed checks pass while a workflow is queued",
+            before: owing.clone(),
+            read: with_queued(
+                read(vec![required("r", Passed), advisory("adv", Passed)]),
+                1,
+            ),
+            expected: quiet(owing.clone()),
         },
         Case {
             name: "the last owed check fails: one wake naming it",

@@ -165,11 +165,13 @@ fn checks(
 /// A failing gate owes one wake once every check finishes, when other
 /// checks still ran as it failed or a failed check ran again (as t3).
 /// `next.failed` is already this read's; `failed_before` is the last
-/// read's. With checks `to_come` past those listed (unread, or a queued
-/// workflow's not made yet), which may be required, running or failing,
-/// the gate never passes and nothing is told finished; listed failures
-/// still are. Returns the pass and the owed wake, each if
-/// told now.
+/// read's. Checks `to_come` past those listed (unread, or a queued
+/// workflow's not made yet) may be required, running or failing: while
+/// they are, a gate whose listed checks all pass is neither told passed
+/// nor taken back, and what the watch knew of it and owed holds, as a
+/// workflow may queue between jobs after the gate passed. Nothing is told
+/// finished then; listed failures still are. Returns the pass and the owed
+/// wake, each if told now.
 fn gate(
     next: &mut WatchState,
     checks: &[CheckRun],
@@ -179,7 +181,10 @@ fn gate(
 ) -> (Option<Change>, Option<Change>) {
     let (kind, gate) = gate_of(checks);
     let names: Vec<String> = gate.iter().map(|check| check.name.clone()).collect();
-    let passed_now = !to_come && gate.iter().all(|check| passes(check.status));
+    let passed_now = gate.iter().all(|check| passes(check.status));
+    if to_come && passed_now {
+        return (None, None);
+    }
     let grew = kind == Gate::Required && names.iter().any(|name| !next.gate.contains(name));
     let owed_before = std::mem::replace(&mut next.owed, Owed::Nothing);
 
