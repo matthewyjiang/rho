@@ -176,9 +176,13 @@ impl Ports for ServerPorts {
             Err(error @ (ControlError::Refused(_) | ControlError::UnknownSession(_))) => {
                 Err(Denied::Drop(error.to_string()))
             }
-            Err(error @ (ControlError::Invalid(_) | ControlError::Daemon(_))) => Err(
-                Denied::Stall(format!("could not check the session's reach: {error}")),
-            ),
+            Err(
+                error @ (ControlError::Invalid(_)
+                | ControlError::NotSteerable(_)
+                | ControlError::Daemon(_)),
+            ) => Err(Denied::Stall(format!(
+                "could not check the session's reach: {error}"
+            ))),
         }
     }
 

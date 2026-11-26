@@ -108,6 +108,10 @@ pub(crate) enum ControlError {
     /// The call's arguments are not ones the action takes.
     #[error("{0}")]
     Invalid(String),
+    /// A steer reached a session whose turn takes no input: none runs, or
+    /// it is starting, ending, or running a command.
+    #[error("session {0} has no running turn to steer; `prompt` starts one")]
+    NotSteerable(SessionId),
     #[error(transparent)]
     Daemon(#[from] DaemonError),
 }
@@ -122,7 +126,7 @@ impl ControlError {
             Self::Daemon(DaemonError::Request(ClientError::Rpc { error, .. })) => {
                 error.code == rho_protocol::ErrorCode::SessionNotFound.code()
             }
-            Self::Refused(_) | Self::Invalid(_) | Self::Daemon(_) => false,
+            Self::Refused(_) | Self::Invalid(_) | Self::NotSteerable(_) | Self::Daemon(_) => false,
         }
     }
 }
@@ -327,15 +331,26 @@ impl SessionControl {
         })
     }
 
-    /// Stages text for the running turn's next model request.
+    /// Stages text for the running turn's next model request. The daemon
+    /// answers as soon as the turn staged it, and refuses at once a session
+    /// with no turn taking input.
     async fn steer(&self, params: SteerParams) -> Result<SteerResult, ControlError> {
+        let SteerParams { session, text } = params;
         let steered = self
             .daemon
             .request::<SessionSteer>(&SessionSteerParams {
-                session: params.session,
-                text: params.text,
+                session: session.clone(),
+                text,
             })
-            .await?;
+            .await
+            .map_err(|error| match &error {
+                DaemonError::Request(ClientError::Rpc { error: rpc, .. })
+                    if rpc.code == rho_protocol::ErrorCode::NotSteerable.code() =>
+                {
+                    ControlError::NotSteerable(session)
+                }
+                _ => error.into(),
+            })?;
         Ok(SteerResult { id: steered.id })
     }
 

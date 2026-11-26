@@ -18,7 +18,9 @@ use crate::app::{session_events::steer_to_wire, session_runtime::SteerError};
 
 impl Sessions {
     /// Stages `text` for the running turn's next model request, and answers
-    /// once the run accepted it, with the id it applies under.
+    /// with the id it applies under as soon as the run staged it, which it
+    /// does whatever it is waiting on: a tool call, a compaction, or the end
+    /// of background work it holds its completion for.
     pub(in crate::app::daemon_host) async fn steer(
         &self,
         params: SessionSteerParams,

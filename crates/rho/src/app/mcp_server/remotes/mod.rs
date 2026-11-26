@@ -78,9 +78,10 @@ pub(crate) fn control_lasts(error: &ControlError) -> Lasts {
     }
     match error {
         ControlError::Refused(_) => Lasts::ForGood,
-        ControlError::UnknownSession(_) | ControlError::Invalid(_) | ControlError::Daemon(_) => {
-            Lasts::ForNow
-        }
+        ControlError::UnknownSession(_)
+        | ControlError::Invalid(_)
+        | ControlError::NotSteerable(_)
+        | ControlError::Daemon(_) => Lasts::ForNow,
     }
 }
 

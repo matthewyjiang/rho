@@ -306,9 +306,10 @@ fn metadata(action: Action, session: Option<&str>, workspace: Option<&Path>) -> 
 fn tool_error(error: ControlError) -> ToolError {
     let kind = match error {
         ControlError::Invalid(_) => ToolErrorKind::InvalidArguments,
-        ControlError::Refused(_) | ControlError::UnknownSession(_) | ControlError::Daemon(_) => {
-            ToolErrorKind::Execution
-        }
+        ControlError::Refused(_)
+        | ControlError::UnknownSession(_)
+        | ControlError::NotSteerable(_)
+        | ControlError::Daemon(_) => ToolErrorKind::Execution,
     };
     ToolError::new(kind, error.to_string())
 }

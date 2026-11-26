@@ -62,8 +62,9 @@ use provider_cancellation::{
 use provider_request::{request_valid_response, ProviderRequestScope, RequestFailure};
 use run_hooks::RunHooks;
 pub(in crate::orchestration) use steering_control::{
-    accept_command as accept_non_tool_command, apply_staged as apply_staged_steering,
-    drain_commands, handle_outcome as handle_steering_outcome,
+    accept_command as accept_non_tool_command, accepting_commands,
+    apply_staged as apply_staged_steering, drain_commands,
+    handle_outcome as handle_steering_outcome,
 };
 use stream_capture::{capture_provider_event, StreamCapture};
 use terminal::{commit_terminal, commit_terminal_history, send_terminal, TerminalKind};
@@ -234,7 +235,7 @@ async fn execute_turn_loop(
             pending_compacted_end,
         );
         let len_before_compaction = history.len();
-        let mut compaction_estimate = match maybe_compact(
+        let compaction = maybe_compact(
             &core,
             request_scope,
             &tool_specs,
@@ -242,14 +243,14 @@ async fn execute_turn_loop(
             limit,
             &cancellation,
             &events,
-        )
-        .await
-        {
-            Ok(estimate) => estimate,
-            Err(error) => {
-                return control.terminate(core, history, error).await;
-            }
-        };
+        );
+        let mut compaction_estimate =
+            match accepting_commands(control.commands, control.steering, compaction).await {
+                Ok(estimate) => estimate,
+                Err(error) => {
+                    return control.terminate(core, history, error).await;
+                }
+            };
         let mut limit = limit.shifted(len_before_compaction, history.len());
         if compaction_estimate.is_none() {
             if let CompactionLimit::BeforePendingCalls(end) = limit {
@@ -257,7 +258,7 @@ async fn execute_turn_loop(
             }
         }
         if !control.async_jobs.has_pending() {
-            match boundary_input::collect(
+            let checkpoint = boundary_input::collect(
                 &runtime,
                 &core,
                 &run_id,
@@ -265,9 +266,8 @@ async fn execute_turn_loop(
                 &mut history,
                 &cancellation,
                 &events,
-            )
-            .await
-            {
+            );
+            match accepting_commands(control.commands, control.steering, checkpoint).await {
                 Ok(true) => compaction_estimate = None,
                 Ok(false) => {}
                 Err(error) => {
@@ -357,8 +357,9 @@ async fn execute_turn_loop(
                     &error.error,
                     &cancellation,
                     &events,
-                )
-                .await;
+                );
+                let recovery =
+                    accepting_commands(control.commands, control.steering, recovery).await;
                 limit = limit.shifted(len_before_recovery, history.len());
                 match recovery {
                     Ok(OverflowRecovery::Retry) => {
@@ -534,9 +535,12 @@ async fn execute_turn_loop(
         }
 
         // Leave notices with the host if there is no provider step to consume them.
+        // The host may hold this checkpoint open while background work the turn
+        // waits for still runs, so steering is accepted meanwhile, and a steer it
+        // accepted takes one more step rather than being dropped.
         if step < runtime.max_steps.get() {
             let input_start = history.len();
-            match boundary_input::collect(
+            let checkpoint = boundary_input::collect(
                 &runtime,
                 &core,
                 &run_id,
@@ -544,14 +548,19 @@ async fn execute_turn_loop(
                 &mut history,
                 &cancellation,
                 &events,
-            )
-            .await
-            {
+            );
+            match accepting_commands(control.commands, control.steering, checkpoint).await {
                 Ok(true) => {
                     preserve_from = Some(input_start);
                     continue;
                 }
-                Ok(false) => {}
+                Ok(false) => {
+                    // A steer that arrived with the reply applies too.
+                    drain_commands(control.commands, control.steering);
+                    if control.steering.has_staged() {
+                        continue;
+                    }
+                }
                 Err(error) => {
                     return control.terminate(core, history, error).await;
                 }

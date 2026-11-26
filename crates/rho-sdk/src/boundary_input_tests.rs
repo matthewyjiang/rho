@@ -1,4 +1,4 @@
-use std::num::NonZeroUsize;
+use std::{num::NonZeroUsize, time::Duration};
 
 use pretty_assertions::assert_eq;
 
@@ -6,8 +6,11 @@ use crate::{
     boundary_input_channel,
     model::{ContentBlock, Message, ModelIdentity, ModelResponse},
     provider::{ScriptedProvider, ScriptedTurn},
-    Error, InputBoundary, Rho, RunEvent, SessionOptions, UserInput,
+    Error, InputBoundary, Rho, RunEvent, SessionOptions, SteeringRetraction, UserInput,
 };
+
+/// Bounds each wait on an explicit signal; never the way a test syncs.
+const TEST_BUDGET: Duration = Duration::from_secs(5);
 
 // Covers: input pending at the final checkpoint must cause another provider step,
 // with identity distinct from human steering, even under event backpressure.
@@ -110,6 +113,97 @@ async fn completion_checkpoint_incorporates_input_before_committing() {
     assert_eq!(requests_seen[2].messages, expected[1]);
     // Empty final acknowledgement closes the checkpoint stream for this run.
     assert!(requests.try_recv().is_err());
+}
+
+// Covers: a steer sent while the host holds the completion checkpoint open,
+// as the daemon does while a background task the turn waits for still runs,
+// answers at once, as does its withdrawal; a steer still staged when the host
+// then lets the run complete applies at one more provider step, never dropped.
+// Owner: SDK orchestration.
+#[tokio::test]
+async fn steering_answers_while_the_completion_checkpoint_waits() {
+    for withdraw in [false, true] {
+        let provider = ScriptedProvider::new(
+            ModelIdentity::new("scripted", "test", "model"),
+            ["candidate", "steered"].map(|text| {
+                ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
+                    text.into(),
+                )]))
+            }),
+        );
+        let runtime = Rho::builder().provider(provider.clone()).build().unwrap();
+        let session = runtime.session(SessionOptions::default()).await.unwrap();
+        let (source, mut requests) = boundary_input_channel();
+        session.set_boundary_inputs(Some(source)).unwrap();
+        let mut run = session.start(UserInput::text("work")).await.unwrap();
+        let mut held = None;
+        let mut applied = Vec::new();
+        loop {
+            tokio::select! {
+                Some(request) = requests.recv() => {
+                    if request.boundary() == InputBoundary::BeforeCompletion && held.is_none() {
+                        // The checkpoint stays unanswered until the steer is.
+                        let steered = tokio::time::timeout(TEST_BUDGET, async {
+                            let id = run
+                                .request_steer_retractable(UserInput::text("change course"))
+                                .unwrap()
+                                .await
+                                .unwrap();
+                            let withdrawn = match withdraw {
+                                true => Some(
+                                    run.request_steering_retraction(id.clone())
+                                        .unwrap()
+                                        .await
+                                        .unwrap(),
+                                ),
+                                false => None,
+                            };
+                            (id, withdrawn)
+                        })
+                        .await
+                        .expect("the run answers while the checkpoint waits");
+                        held = Some(steered);
+                    }
+                    assert!(request.respond(None).await);
+                }
+                event = run.next_event() => match event {
+                    Some(RunEvent::SteeringApplied { ids }) => applied.extend(ids),
+                    Some(_) => {}
+                    None => break,
+                }
+            }
+        }
+        let (id, withdrawn) = held.expect("the run reached its completion checkpoint");
+        let outcome = run.outcome().await.unwrap();
+        // What each provider request ended with.
+        let request_tails = provider
+            .recorded_requests()
+            .into_iter()
+            .filter_map(|request| request.messages.last().cloned())
+            .collect::<Vec<_>>();
+        let expected = match withdraw {
+            false => (
+                None,
+                vec![id],
+                "steered",
+                vec![
+                    Message::user_text("work"),
+                    Message::user_text("change course"),
+                ],
+            ),
+            true => (
+                Some(SteeringRetraction::Retracted),
+                Vec::new(),
+                "candidate",
+                vec![Message::user_text("work")],
+            ),
+        };
+        assert_eq!(
+            (withdrawn, applied, outcome.text(), request_tails),
+            expected,
+            "withdraw: {withdraw}"
+        );
+    }
 }
 
 // Covers: the final step must leave completion notices queued with the host.
