@@ -131,8 +131,9 @@ fn notification_info_wire_form() {
 }
 
 // Covers: a card from a newer daemon, with an urgency, outcome and subject
-// kind this crate does not know, still reads, as `Unknown` each, so a client
-// keeps the card rather than failing the event.
+// kind this crate does not know, still reads, as `Unknown` each, though the
+// unknown subject carries fields of its own, so a client keeps the card
+// rather than failing the event. The open-enum table reads bare kinds only.
 // Owner: protocol wire contract.
 #[test]
 fn a_newer_daemons_card_reads_with_unknown_values() {

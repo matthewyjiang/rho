@@ -290,13 +290,15 @@ async fn forward(
             at,
             notification,
         } = event;
-        let mut envelope = SessionEventEnvelope::new(SessionEventParams {
-            session: session.clone(),
-            seq,
-            event,
-        });
-        envelope.at = at;
-        envelope.notification = notification;
+        let envelope = SessionEventEnvelope {
+            params: SessionEventParams {
+                session: session.clone(),
+                seq,
+                event,
+            },
+            at,
+            notification,
+        };
         // A publisher sends only events that encode (`Publisher`), replayed
         // or live.
         let message = encode(SessionEventNotification::NAME, &envelope)

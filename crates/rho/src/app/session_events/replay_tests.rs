@@ -59,7 +59,7 @@ fn replay_with(tool_set: &AppToolSet, messages: &[Message]) -> Vec<WireEvent> {
         SessionTools::of_tool_set_for_tests(tool_set),
         &mut CallIds::default(),
     ));
-    transcript.events().map(|(_, event)| event.event).collect()
+    transcript.events().map(|event| event.event).collect()
 }
 
 fn replay_messages(messages: &[Message]) -> Vec<WireEvent> {
@@ -653,7 +653,7 @@ fn a_transcript_saved_turn_by_turn_replays_as_one_and_the_same_each_time() {
         transcript.push(turn.expect("each save adds rows"));
     }
 
-    let rendered: Vec<_> = transcript.events().map(|(_, event)| event.event).collect();
+    let rendered: Vec<_> = transcript.events().map(|event| event.event).collect();
     let ids: Vec<_> = rendered
         .iter()
         .filter_map(|event| match event {
@@ -667,7 +667,7 @@ fn a_transcript_saved_turn_by_turn_replays_as_one_and_the_same_each_time() {
         rendered,
         transcript
             .events()
-            .map(|(_, event)| event.event)
+            .map(|event| event.event)
             .collect::<Vec<_>>()
     );
     assert_eq!(rendered.len(), transcript.len());

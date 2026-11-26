@@ -52,7 +52,7 @@ use std::{
     collections::{BTreeMap, VecDeque},
     path::Path,
     sync::{Mutex, MutexGuard, PoisonError},
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant},
 };
 
 use rho_protocol::{
@@ -61,7 +61,10 @@ use rho_protocol::{
 };
 
 use crate::{
-    app::session_events::{FeedEvent, SavedTranscript, SavedTurn},
+    app::{
+        pull_requests::unix_ms,
+        session_events::{FeedEvent, SavedTranscript, SavedTurn},
+    },
     tools::ui::SurfaceViewer,
 };
 
@@ -285,7 +288,7 @@ impl Feed {
     pub(super) fn publish<E: Into<FeedEvent>>(&self, events: impl IntoIterator<Item = E>) {
         let mut state = self.state();
         for event in events {
-            state.push(event.into());
+            state.push(event);
         }
     }
 
@@ -294,9 +297,9 @@ impl Feed {
     pub(super) fn update_options(&self, options: wire::SessionOptions) {
         let mut state = self.state();
         if state.options != options {
-            state.push(FeedEvent::from(wire::SessionEvent::OptionsChanged {
+            state.push(wire::SessionEvent::OptionsChanged {
                 options: Box::new(options),
-            }));
+            });
         }
     }
 
@@ -305,9 +308,7 @@ impl Feed {
     pub(super) fn update_agent(&self, id: &str) {
         let mut state = self.state();
         if state.agent != id {
-            state.push(FeedEvent::from(wire::SessionEvent::Agent {
-                id: id.to_owned(),
-            }));
+            state.push(wire::SessionEvent::Agent { id: id.to_owned() });
         }
     }
 
@@ -316,9 +317,7 @@ impl Feed {
     pub(super) fn update_started_session_defaults(&self, defaults: wire::StartedSessionDefaults) {
         let mut state = self.state();
         if state.started_session_defaults != defaults {
-            state.push(FeedEvent::from(wire::SessionEvent::StartedSessionDefaults(
-                defaults,
-            )));
+            state.push(wire::SessionEvent::StartedSessionDefaults(defaults));
         }
     }
 
@@ -334,7 +333,7 @@ impl Feed {
         let mut state = self.state();
         let work = read();
         if state.background != work {
-            state.push(FeedEvent::from(wire::SessionEvent::Background { work }));
+            state.push(wire::SessionEvent::Background { work });
         }
     }
 
@@ -350,9 +349,9 @@ impl Feed {
         let mut state = self.state();
         let pull_requests = read();
         if state.pull_requests != pull_requests {
-            state.push(FeedEvent::from(wire::SessionEvent::PullRequests {
+            state.push(wire::SessionEvent::PullRequests {
                 pull_requests: Box::new(pull_requests.clone()),
-            }));
+            });
         }
         pull_requests
     }
@@ -370,9 +369,7 @@ impl Feed {
             wire::SessionActivity::Settled
         };
         if state.activity != Some(activity) {
-            state.push(FeedEvent::from(wire::SessionEvent::Activity {
-                state: activity,
-            }));
+            state.push(wire::SessionEvent::Activity { state: activity });
         }
     }
 
@@ -563,24 +560,24 @@ impl Feed {
 }
 
 impl FeedState {
-    fn push(&mut self, pushed: FeedEvent) {
+    /// Sends `event` to every attached client, timed now, and buffers it.
+    fn push(&mut self, event: impl Into<FeedEvent>) {
+        let mut pushed = event.into();
         let Some(bytes) = pushed.encoded_len() else {
             return;
         };
-        let FeedEvent {
-            event,
-            notification,
-        } = pushed;
+        pushed.at = Some(unix_ms());
+        let event = &pushed.event;
         // A turn starting makes a settled session active, and clients hear
         // that first.
         if self.activity == Some(wire::SessionActivity::Settled)
-            && matches!(&event, wire::SessionEvent::State { state, .. } if state.in_progress())
+            && matches!(event, wire::SessionEvent::State { state, .. } if state.in_progress())
         {
-            self.push(FeedEvent::from(wire::SessionEvent::Activity {
+            self.push(wire::SessionEvent::Activity {
                 state: wire::SessionActivity::Active,
-            }));
+            });
         }
-        match &event {
+        match event {
             wire::SessionEvent::State { state, turn } => {
                 // A turn waiting for input is still the same turn under way.
                 let continues = self.job.in_progress() && self.turn == *turn;
@@ -604,7 +601,7 @@ impl FeedState {
                 }
             }
             wire::SessionEvent::TitleChanged { title } => self.title = Some(title.clone()),
-            wire::SessionEvent::Usage { .. } => self.usage = usage_of(&event),
+            wire::SessionEvent::Usage { .. } => self.usage = usage_of(event),
             wire::SessionEvent::OptionsChanged { options } => self.options = (**options).clone(),
             wire::SessionEvent::Agent { id } => self.agent.clone_from(id),
             wire::SessionEvent::StartedSessionDefaults(defaults) => {
@@ -619,9 +616,7 @@ impl FeedState {
         }
         let seq = Seq(self.last.0 + 1);
         self.last = seq;
-        let mut event = StreamEvent::new(seq, event);
-        event.at = Some(now_ms());
-        event.notification = notification;
+        let event = pushed.into_stream(seq);
         self.subscribers.retain(|subscriber| {
             match subscriber.publisher.try_publish_event(event.clone()) {
                 Ok(()) => true,
@@ -730,24 +725,20 @@ impl FeedState {
         let turn_start = self.turn_start;
         let tail = self.events_after(turn_start);
         let len = saved + tail.len();
-        let untimed = |event: wire::SessionEvent| (None, FeedEvent::from(event));
         let events = [agent, started]
             .into_iter()
-            .map(untimed)
+            .map(FeedEvent::from)
             .chain(self.transcript.events())
-            .chain(evicted.map(untimed))
-            .chain(usage.map(untimed))
+            .chain(evicted.map(FeedEvent::from))
+            .chain(usage.map(FeedEvent::from))
             .enumerate()
-            .map(move |(index, (at, event))| {
+            .map(move |(index, event)| {
                 let seq = if index + 1 == saved {
                     turn_start
                 } else {
                     Seq(0)
                 };
-                let mut sent = StreamEvent::new(seq, event.event);
-                sent.at = at;
-                sent.notification = event.notification;
-                sent
+                event.into_stream(seq)
             })
             .chain(tail);
         ReplayEvents {
@@ -755,15 +746,6 @@ impl FeedState {
             events: Box::new(events),
         }
     }
-}
-
-/// Now, as Unix time in milliseconds.
-fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |since| {
-            u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
-        })
 }
 
 /// What `event` says of the session's context use and spend, if it is a

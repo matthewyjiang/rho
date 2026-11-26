@@ -4887,7 +4887,7 @@
       "description": "Whether the card's content waits for the recipient or has reached it."
     },
     "NotificationId": {
-      "description": "Identifies one notification card: the same on every replay of it, live,\nafter a reattach, and after a daemon restart.",
+      "description": "Identifies one notification card within a session's conversation: the\nsame on every replay of it, live, after a reattach, and after a daemon\nrestart. A fork keeps the ids of the cards it copies.",
       "type": "string"
     },
     "NotificationInfo": {
@@ -4897,7 +4897,7 @@
           "$ref": "#/$defs/NotificationId"
         },
         "items": {
-          "description": "One per event the card tells of, in the card's order; never empty.",
+          "description": "One per event the card tells of, in the card's order. Rho sends at\nleast one.",
           "items": {
             "$ref": "#/$defs/NotificationItem"
           },
@@ -4945,12 +4945,6 @@
     "NotificationOutcome": {
       "anyOf": [
         {
-          "enum": [
-            "merged"
-          ],
-          "type": "string"
-        },
-        {
           "const": "update",
           "description": "Progress from work still under way, such as a subagent's message.",
           "type": "string"
@@ -4992,7 +4986,7 @@
         },
         {
           "const": "stopped",
-          "description": "Someone stopped it.",
+          "description": "Stopped before it finished: by someone, or, for a subagent, by the\ndaemon stopping.",
           "type": "string"
         },
         {
@@ -5053,6 +5047,11 @@
         {
           "const": "merge_conflict",
           "description": "A pull request's branch conflicts with its base.",
+          "type": "string"
+        },
+        {
+          "const": "merged",
+          "description": "A pull request merged.",
           "type": "string"
         },
         {
@@ -5164,19 +5163,19 @@
           "type": "object"
         },
         {
-          "description": "A workflow run, by its run id.",
+          "description": "A workflow run, by its run id, as [`crate::BackgroundItem::Workflow`]\nnames it.",
           "properties": {
-            "id": {
+            "kind": {
+              "const": "workflow",
               "type": "string"
             },
-            "kind": {
-              "const": "workflow_run",
+            "run": {
               "type": "string"
             }
           },
           "required": [
             "kind",
-            "id"
+            "run"
           ],
           "type": "object"
         },
@@ -5260,7 +5259,7 @@
         },
         {
           "const": "routine",
-          "description": "Progress and stops someone chose; safe to fold away.",
+          "description": "Progress, and work stopped before it finished; safe to fold away.",
           "type": "string"
         },
         {

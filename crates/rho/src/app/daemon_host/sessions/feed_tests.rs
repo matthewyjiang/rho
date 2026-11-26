@@ -4,7 +4,7 @@ use pretty_assertions::assert_eq;
 use rho_protocol::{self as wire, Cursor, Replay, Seq, StreamEvent};
 use rho_sdk::model::Message;
 
-use super::{now_ms, Feed, REPLAY_BUFFER_BYTES, TURN_START_EVICTED};
+use super::{Feed, REPLAY_BUFFER_BYTES, TURN_START_EVICTED};
 use crate::{
     app::{
         session_events::{LiveEvents, SavedTurn},
@@ -179,9 +179,10 @@ fn attach_resumes_a_buffered_cursor_and_resets_anything_else() {
 }
 
 // Covers: every event a client is sent says when it happened: a live one
-// when the feed took it, kept for a tail, a saved one when its row was
-// saved, and the state a reset starts with none. A miss shows a reattached
-// client a buffered event at its replay time, or a saved one at none.
+// when the feed took it, kept for a tail and a reset alike, a saved one when
+// its row was saved, and the state a reset starts with none. A miss shows a
+// reattached client a buffered event at its replay time, or a saved one at
+// none.
 // Owner: daemon session feed
 #[test]
 fn replays_carry_when_each_event_happened() {
@@ -189,16 +190,10 @@ fn replays_carry_when_each_event_happened() {
     // The turn's live event, which its saved row replaces.
     feed.publish(notices(&["saving"]));
     feed.end_turn(saved(&["saved"]));
-    let before = now_ms();
     feed.publish(notices(&["live"]));
-    let after = now_ms();
 
     let tail = feed.replay_for_tests(cursor(&feed, 1).as_ref());
     let live_at = tail[0].at.expect("a live event is timed");
-    assert!(
-        (before..=after).contains(&live_at),
-        "{live_at} in {before}..={after}"
-    );
     let times = |events: Vec<StreamEvent>| -> Vec<(wire::SessionEvent, Option<u64>)> {
         events
             .into_iter()

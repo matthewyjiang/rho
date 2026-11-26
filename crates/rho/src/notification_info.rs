@@ -31,6 +31,17 @@ impl NotificationRow {
             info: Some(NotificationInfo::new(id, urgency, subject, items)),
         }
     }
+
+    /// `card`, about `subject`, telling of one event that ended as
+    /// `outcome`, which its title says.
+    pub(crate) fn single(
+        card: NotificationCard,
+        subject: NotificationSubject,
+        outcome: NotificationOutcome,
+    ) -> Self {
+        let item = NotificationItem::new(outcome, subject.clone(), card.title.clone());
+        Self::typed(card, subject, vec![item])
+    }
 }
 
 /// What an event that ended as `outcome` asks of the reader: to act on a

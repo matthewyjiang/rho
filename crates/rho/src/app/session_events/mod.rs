@@ -50,11 +50,14 @@ pub(crate) use live::{CompactionEnd, LiveEvents};
 pub(crate) use replay::{SavedTranscript, SavedTurn};
 
 /// A wire event, with what a client is sent beside it
-/// ([`rho_protocol::SessionEventEnvelope`]) but its time, which the feed
-/// gives it: the typed notification of a card that shows one.
+/// ([`rho_protocol::SessionEventEnvelope`]): when it happened, in unix
+/// milliseconds, and the typed notification of a card that shows one. A
+/// replayed event carries when its row was saved; the daemon's feed times a
+/// live one as it sends it.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct FeedEvent {
     pub(crate) event: WireEvent,
+    pub(crate) at: Option<u64>,
     pub(crate) notification: Option<Box<NotificationInfo>>,
 }
 
@@ -62,12 +65,21 @@ impl From<WireEvent> for FeedEvent {
     fn from(event: WireEvent) -> Self {
         Self {
             event,
+            at: None,
             notification: None,
         }
     }
 }
 
 impl FeedEvent {
+    /// The event as a subscription carries it, under `seq`.
+    pub(crate) fn into_stream(self, seq: rho_protocol::Seq) -> rho_protocol::StreamEvent {
+        let mut sent = rho_protocol::StreamEvent::new(seq, self.event);
+        sent.at = self.at;
+        sent.notification = self.notification;
+        sent
+    }
+
     /// How many bytes it takes as JSON, event and notification, or `None`
     /// when JSON cannot hold it ([`encoded_len`]).
     pub(crate) fn encoded_len(&self) -> Option<usize> {
@@ -307,6 +319,7 @@ fn card(row: &DisplayRow) -> FeedEvent {
             tone: card_tone(row),
             display,
         },
+        at: None,
         notification,
     }
 }

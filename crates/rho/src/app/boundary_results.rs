@@ -23,8 +23,8 @@ use crate::{
 };
 use rho_protocol::{
     display::{
-        NotificationCard, NotificationDelivery, NotificationItem, NotificationOutcome,
-        NotificationPreview, NotificationSubject, NotificationTone, NotificationVisibility,
+        NotificationCard, NotificationDelivery, NotificationOutcome, NotificationPreview,
+        NotificationSubject, NotificationTone, NotificationVisibility,
     },
     SessionId,
 };
@@ -243,7 +243,6 @@ fn agent_row(
             .and_then(|identity| identity.session)
             .map(|session| SessionId::new(session.to_string())),
     };
-    let item = NotificationItem::new(outcome, subject.clone(), title.clone());
     let card = NotificationCard {
         title,
         sender: sender.into(),
@@ -258,7 +257,7 @@ fn agent_row(
         output: None,
         details: vec![format!("task: {task}")],
     };
-    NotificationRow::typed(card, subject, vec![item])
+    NotificationRow::single(card, subject, outcome)
 }
 
 #[cfg(test)]

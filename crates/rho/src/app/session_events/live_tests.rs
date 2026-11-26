@@ -1059,6 +1059,7 @@ fn background_cards_carry_plain_text_and_tone() {
                 tone: CardTone::Error,
                 display: Some(Box::new(card)),
             },
+            at: None,
             notification: row.info.map(Box::new),
         }]
     );

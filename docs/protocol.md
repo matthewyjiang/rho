@@ -267,10 +267,10 @@ Attaching or observing a session the connection already follows replaces the ear
 
 A `card` that is a notification, such as a subagent's result, a background process's exit, or news on a watched pull request, carries `notification`, its typed side, beside its `event`:
 
-- `id`: the card's id, the same whenever it is replayed.
-- `urgency`: how much it wants the reader: `needs_you` (a question, a failure, failing checks, a merge conflict), `notable` (finished work, new comments, a merge), or `routine` (progress, a stop the user asked for, new commits). A card is as urgent as its most urgent item.
-- `subject`: what the card is about, with a `kind`: `pull_request` (`id`, `url`), `session` (`id`), `subagent` (`run`, and the run's `session` when it keeps one), `workflow_run` (`id`), `process` (`id`), or `other`.
-- `items`: one per thing the card tells of, in the order its body does: the item's `outcome`, its `subject`, and its `text`, one line.
+- `id`: the card's id, the same whenever it is replayed. A fork keeps the ids of the cards it copies.
+- `urgency`: how much it wants the reader: `needs_you` (a question, a failure, failing checks, a merge conflict), `notable` (finished work, new comments, a merge), or `routine` (progress, work stopped before it finished, new commits). A card is as urgent as its most urgent item.
+- `subject`: what the card is about, with a `kind`: `pull_request` (`id`, `url`), `session` (`id`), `subagent` (`run`, and the run's `session` when it keeps one), `workflow` (`run`), `process` (`id`), or `other`.
+- `items`: one per thing the card tells of, at least one, in the order its body does: the item's `outcome`, its `subject`, and its `text`, one line.
 
 An item's `outcome` is one of `update`, `question`, `action_requested`, `running`, `completed`, `failed`, `failed_to_start`, `exited`, `stopped`, `cancelled`, `timed_out`, `interrupted`, `cut_off`, `refused`, `out_of_steps`, `new_commits`, `checks_failed`, `checks_passed`, `checks_finished`, `new_comments`, `merge_conflict`, `merged`, `closed`, `watch_stopped`, or `unreadable`. A newer daemon may send kinds, urgencies, and outcomes not listed here: read an unknown urgency as `routine`, and show an unknown subject or outcome by its text. A card saved before Rho typed notifications carries none.
 

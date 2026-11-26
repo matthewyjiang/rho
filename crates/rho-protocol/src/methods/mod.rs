@@ -259,9 +259,11 @@ pub trait Method {
 
 /// A notification the daemon sends, typed like [`Method`].
 ///
-/// Implemented by the zero-sized markers this module declares, so the
-/// daemon encodes, and [`crate::Client`] decodes, each notification with one
-/// params type.
+/// Implemented by the zero-sized markers this module declares, so
+/// [`crate::Client`] decodes each notification with its params type. The
+/// daemon encodes most with the same type; one declared `as` a wire type
+/// sends that type instead, which adds keys beside the params' own
+/// ([`SessionEventNotification`] sends [`SessionEventEnvelope`]).
 pub trait Notification {
     const NAME: &'static str;
     type Params: Serialize + DeserializeOwned + JsonSchema;

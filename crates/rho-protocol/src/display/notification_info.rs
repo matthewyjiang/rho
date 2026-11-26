@@ -12,8 +12,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::methods::{PullRequestId, SessionId};
 
-/// Identifies one notification card: the same on every replay of it, live,
-/// after a reattach, and after a daemon restart.
+/// Identifies one notification card within a session's conversation: the
+/// same on every replay of it, live, after a reattach, and after a daemon
+/// restart. A fork keeps the ids of the cards it copies.
 #[derive(
     Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
 )]
@@ -54,7 +55,8 @@ pub struct NotificationInfo {
     pub urgency: NotificationUrgency,
     /// What the card as a whole is about.
     pub subject: NotificationSubject,
-    /// One per event the card tells of, in the card's order; never empty.
+    /// One per event the card tells of, in the card's order. Rho sends at
+    /// least one.
     pub items: Vec<NotificationItem>,
 }
 
@@ -120,8 +122,9 @@ pub enum NotificationSubject {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         session: Option<SessionId>,
     },
-    /// A workflow run, by its run id.
-    WorkflowRun { id: String },
+    /// A workflow run, by its run id, as [`crate::BackgroundItem::Workflow`]
+    /// names it.
+    Workflow { run: String },
     /// A background process, by its [`crate::SessionProcess::id`].
     Process { id: String },
     /// Something none of the other kinds names.
@@ -143,7 +146,7 @@ pub enum NotificationUrgency {
     NeedsYou,
     /// Worth a look: work finished, a pull request moved.
     Notable,
-    /// Progress and stops someone chose; safe to fold away.
+    /// Progress, and work stopped before it finished; safe to fold away.
     Routine,
     /// A value a newer daemon sends that this crate does not know; daemons
     /// never send it.
@@ -175,7 +178,8 @@ pub enum NotificationOutcome {
     FailedToStart,
     /// A process exited without an exit code.
     Exited,
-    /// Someone stopped it.
+    /// Stopped before it finished: by someone, or, for a subagent, by the
+    /// daemon stopping.
     Stopped,
     /// Someone cancelled the turn.
     Cancelled,
@@ -201,6 +205,7 @@ pub enum NotificationOutcome {
     NewComments,
     /// A pull request's branch conflicts with its base.
     MergeConflict,
+    /// A pull request merged.
     Merged,
     /// Closed without merging.
     Closed,

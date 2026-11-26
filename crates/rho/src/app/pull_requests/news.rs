@@ -93,11 +93,7 @@ impl News {
             url: self.url.clone(),
         };
         let item = |outcome, text: String| NotificationItem::new(outcome, subject.clone(), text);
-        let commit = self
-            .head
-            .as_deref()
-            .map(|head| format!(" on {}", short(head)))
-            .unwrap_or_default();
+        let commit = on_head(self);
         let pushed = self.pushed.then(|| {
             let head = self.head.as_deref().map_or("", short);
             item(
@@ -113,20 +109,19 @@ impl News {
             let (outcome, text) = end_item(end);
             item(outcome, text)
         });
-        let items = pushed.into_iter().chain(changes).chain(end).collect();
-        NotificationRow::typed(self.card(), subject, items)
+        let items: Vec<_> = pushed.into_iter().chain(changes).chain(end).collect();
+        NotificationRow::typed(self.card(&items), subject, items)
     }
 
-    fn card(&self) -> NotificationCard {
+    /// The card, toned as the most pressing of `items`.
+    fn card(&self, items: &[NotificationItem]) -> NotificationCard {
         let label = self.pr.to_string();
         let mut outcomes: Vec<&str> = self.changes.iter().map(change_summary).collect();
         outcomes.extend(self.end.as_ref().map(end_summary));
-        let tone = self
-            .changes
+        let tone = items
             .iter()
-            .map(change_tone)
-            .chain(self.end.iter().map(end_tone))
-            .max_by_key(|tone| urgency(*tone))
+            .map(|item| tone(item.outcome))
+            .max_by_key(|tone| pressing(*tone))
             .unwrap_or(NotificationTone::Neutral);
         let mut body = change_lines(self);
         body.extend(
@@ -176,13 +171,17 @@ fn capitalized(text: &str) -> String {
     })
 }
 
-/// The lines of `news`'s changes, as a Markdown list.
-fn change_lines(news: &News) -> Vec<String> {
-    let commit = news
-        .head
+/// Which head `news`'s checks ran on, as " on <short oid>", if it knows.
+fn on_head(news: &News) -> String {
+    news.head
         .as_deref()
         .map(|head| format!(" on {}", short(head)))
-        .unwrap_or_default();
+        .unwrap_or_default()
+}
+
+/// The lines of `news`'s changes, as a Markdown list.
+fn change_lines(news: &News) -> Vec<String> {
+    let commit = on_head(news);
     let mut lines = Vec::new();
     if news.pushed {
         let head = news.head.as_deref().map_or("", short);
@@ -345,11 +344,15 @@ fn change_item(change: &Change, commit: &str) -> (NotificationOutcome, String) {
             NotificationOutcome::ChecksFailed,
             format!("Checks failed{commit}: {}", check_names(failed)),
         ),
-        Change::ChecksPassed { count, .. } => {
+        Change::ChecksPassed { count, gate } => {
+            let required = match gate {
+                Gate::Required => "required ",
+                Gate::All => "",
+            };
             let checks = plural(*count as usize, "check", "checks");
             (
                 NotificationOutcome::ChecksPassed,
-                format!("All {count} {checks} passed{commit}"),
+                format!("All {count} {required}{checks} passed{commit}"),
             )
         }
         Change::ChecksFinished { passed, failing } if failing.is_empty() => (
@@ -444,24 +447,24 @@ fn end_summary(end: &End) -> &'static str {
     }
 }
 
-fn change_tone(change: &Change) -> NotificationTone {
-    match change {
-        Change::ChecksFailed { .. } | Change::Conflicting => NotificationTone::Error,
-        Change::ChecksFinished { failing, .. } if !failing.is_empty() => NotificationTone::Error,
-        Change::ChecksFinished { .. } | Change::ChecksPassed { .. } => NotificationTone::Success,
-        Change::Remarks { .. } => NotificationTone::Accent,
-    }
-}
-
-fn end_tone(end: &End) -> NotificationTone {
-    match end {
-        End::Merged { .. } => NotificationTone::Success,
-        End::Closed | End::CommentLoop | End::Unreadable(_) => NotificationTone::Warning,
+/// The color of an item that ended as `outcome`. New commits alone are
+/// neutral.
+fn tone(outcome: NotificationOutcome) -> NotificationTone {
+    use NotificationOutcome as Outcome;
+    match outcome {
+        Outcome::ChecksFailed | Outcome::MergeConflict => NotificationTone::Error,
+        Outcome::ChecksPassed | Outcome::ChecksFinished | Outcome::Merged => {
+            NotificationTone::Success
+        }
+        Outcome::NewComments => NotificationTone::Accent,
+        Outcome::Closed | Outcome::WatchStopped | Outcome::Unreadable => NotificationTone::Warning,
+        // `NewCommits`, and outcomes news has none of.
+        _ => NotificationTone::Neutral,
     }
 }
 
 /// Which of a card's tones wins: the one that most needs a look.
-fn urgency(tone: NotificationTone) -> u8 {
+fn pressing(tone: NotificationTone) -> u8 {
     match tone {
         NotificationTone::Error => 4,
         NotificationTone::Warning => 3,

@@ -9,8 +9,8 @@ use std::time::Duration;
 use super::types::State;
 use crate::display_transcript::NotificationRow;
 use rho_protocol::display::{
-    NotificationCard, NotificationDelivery, NotificationItem, NotificationOutcome,
-    NotificationPreview, NotificationSubject, NotificationTone, NotificationVisibility,
+    NotificationCard, NotificationDelivery, NotificationOutcome, NotificationPreview,
+    NotificationSubject, NotificationTone, NotificationVisibility,
 };
 
 const MODEL_NOTIFICATION_BYTES: usize = 16 * 1024;
@@ -73,8 +73,7 @@ impl ProcessNotification {
         let subject = NotificationSubject::Process {
             id: self.process_id.clone(),
         };
-        let item = NotificationItem::new(outcome, subject.clone(), title.clone());
-        NotificationRow::typed(self.card(title, tone), subject, vec![item])
+        NotificationRow::single(self.card(title, tone), subject, outcome)
     }
 
     fn card(&self, title: String, tone: NotificationTone) -> NotificationCard {

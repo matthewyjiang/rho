@@ -159,8 +159,8 @@ struct TurnEvents {
     /// The next of the turn's calls to open.
     call: usize,
     finished: bool,
-    /// Rendered and not taken yet, with the time of the row they show.
-    pending: VecDeque<(Option<u64>, FeedEvent)>,
+    /// Rendered and not taken yet.
+    pending: VecDeque<FeedEvent>,
     /// How many events were rendered before `pending`'s first.
     rendered: usize,
 }
@@ -180,11 +180,9 @@ impl TurnEvents {
 }
 
 impl Iterator for TurnEvents {
-    /// An event, with when its row was saved, in unix milliseconds, if the
-    /// session file says.
-    type Item = (Option<u64>, FeedEvent);
+    type Item = FeedEvent;
 
-    fn next(&mut self) -> Option<Self::Item> {
+    fn next(&mut self) -> Option<FeedEvent> {
         loop {
             if let Some(event) = self.pending.pop_front() {
                 let index = self.rendered;
@@ -198,17 +196,18 @@ impl Iterator for TurnEvents {
                 calls: &self.turn.calls,
                 next: &mut self.call,
             };
-            // What `finish` renders shows no row of its own.
-            let mut saved_at = None;
-            match self.turn.rows.get(self.row) {
+            // When the row the events show was saved; what `finish`
+            // renders shows no row of its own.
+            let saved_at = match self.turn.rows.get(self.row) {
                 Some(row) => {
                     self.replay.row(row, &mut calls);
-                    saved_at = row.saved_at;
                     self.row += 1;
+                    row.saved_at
                 }
                 None if !self.finished => {
                     self.replay.finish(&self.turn.plan);
                     self.finished = true;
+                    None
                 }
                 None => {
                     // Rendering from the rows alone, the replay opens the
@@ -217,13 +216,12 @@ impl Iterator for TurnEvents {
                     debug_assert_eq!(self.rendered, self.turn.sent + self.turn.unencodable.len());
                     return None;
                 }
-            }
-            self.pending.extend(
-                self.replay
-                    .take_events()
-                    .into_iter()
-                    .map(|event| (saved_at, event)),
-            );
+            };
+            self.pending
+                .extend(self.replay.take_events().into_iter().map(|mut event| {
+                    event.at = saved_at;
+                    event
+                }));
         }
     }
 }
@@ -251,12 +249,10 @@ impl SavedTranscript {
     }
 
     /// The wire events that replay every turn, in order, the same each
-    /// time, each with when its row was saved, in unix milliseconds, if the
-    /// session file says. They render a row at a time as the replay is
-    /// taken, so a reset never holds a long session's events at once.
-    pub(crate) fn events(
-        &self,
-    ) -> impl Iterator<Item = (Option<u64>, FeedEvent)> + Send + Sync + 'static {
+    /// time, each with when its row was saved if the session file says.
+    /// They render a row at a time as the replay is taken, so a reset never
+    /// holds a long session's events at once.
+    pub(crate) fn events(&self) -> impl Iterator<Item = FeedEvent> + Send + Sync + 'static {
         self.turns.clone().into_iter().flat_map(TurnEvents::new)
     }
 }

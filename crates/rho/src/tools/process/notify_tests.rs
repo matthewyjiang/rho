@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use pretty_assertions::assert_eq;
 
-use rho_protocol::display::NotificationUrgency;
+use rho_protocol::display::{NotificationItem, NotificationUrgency};
 
 use super::*;
 
