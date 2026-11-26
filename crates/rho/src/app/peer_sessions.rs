@@ -383,12 +383,13 @@ impl PeerNotice {
         use NotificationTone::{Accent, Error, Success, Warning};
         use PeerEvent::{TurnEnded, WaitingForInput};
         match &self.event {
-WaitingForInput { request, ask } => Reading {
+            WaitingForInput { request, ask } => Reading {
                 state: "waiting_for_input",
                 said: format!(
-                    ", for an answer to \"{}\" (input request {request}; it may have been answered since)",
+                    ", for an answer to \"{}\" (input request {request}; it may have been \
+                     answered since)",
                     detail_line(ask)
-                    ),
+                ),
                 label: "Waiting for an answer",
                 tone: Warning,
                 outcome: Outcome::Question,
@@ -396,7 +397,7 @@ WaitingForInput { request, ask } => Reading {
             TurnEnded(PeerTurnEnd::Answered {
                 stop: AnswerStop::MaxTokens,
                 ..
-}) => Reading {
+            }) => Reading {
                 state: "completed",
                 said: ", its answer cut off at the model's output limit".into(),
                 label: "Cut off",
@@ -406,7 +407,7 @@ WaitingForInput { request, ask } => Reading {
             TurnEnded(PeerTurnEnd::Answered {
                 stop: AnswerStop::Refusal,
                 ..
-}) => Reading {
+            }) => Reading {
                 state: "completed",
                 said: ", but the model refused".into(),
                 label: "Refused",
@@ -414,42 +415,42 @@ WaitingForInput { request, ask } => Reading {
                 outcome: Outcome::Refused,
             },
             // `EndTurn`, `Unknown`, and any reason a newer SDK adds.
-TurnEnded(PeerTurnEnd::Answered { .. }) => Reading {
+            TurnEnded(PeerTurnEnd::Answered { .. }) => Reading {
                 state: "completed",
                 said: String::new(),
                 label: "Completed",
                 tone: Success,
                 outcome: Outcome::Completed,
             },
-TurnEnded(PeerTurnEnd::StepLimit { .. }) => Reading {
+            TurnEnded(PeerTurnEnd::StepLimit { .. }) => Reading {
                 state: "completed",
                 said: " at its step limit, before the model answered".into(),
                 label: "Out of steps",
                 tone: Warning,
                 outcome: Outcome::OutOfSteps,
             },
-TurnEnded(PeerTurnEnd::Failed { .. }) => Reading {
+            TurnEnded(PeerTurnEnd::Failed { .. }) => Reading {
                 state: "failed",
                 said: String::new(),
                 label: "Failed",
                 tone: Error,
                 outcome: Outcome::Failed,
             },
-TurnEnded(PeerTurnEnd::Cancelled) => Reading {
+            TurnEnded(PeerTurnEnd::Cancelled) => Reading {
                 state: "cancelled",
                 said: String::new(),
                 label: "Cancelled",
                 tone: Accent,
                 outcome: Outcome::Cancelled,
             },
-TurnEnded(PeerTurnEnd::TimedOut { timeout_ms }) => Reading {
+            TurnEnded(PeerTurnEnd::TimedOut { timeout_ms }) => Reading {
                 state: "timed_out",
                 said: format!(" after {}", format_elapsed_secs(timeout_ms / 1000)),
                 label: "Timed out",
                 tone: Error,
                 outcome: Outcome::TimedOut,
             },
-TurnEnded(PeerTurnEnd::Interrupted) => Reading {
+            TurnEnded(PeerTurnEnd::Interrupted) => Reading {
                 state: "interrupted",
                 said: ", as the daemon stopped".into(),
                 label: "Interrupted",
