@@ -27,6 +27,7 @@ async fn archive_access_is_authorized_before_search_execution() {
             recall: Default::default(),
             max_output_bytes: rho_tools::DEFAULT_MAX_OUTPUT_BYTES,
             environment: Default::default(),
+            agent_concurrency: crate::config::DEFAULT_AGENT_CONCURRENCY,
             root: Ok(root.path().to_path_buf()),
         };
         let provider = ScriptedProvider::new(

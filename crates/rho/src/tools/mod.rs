@@ -21,6 +21,7 @@ mod sessions;
 pub(crate) mod todo;
 pub(crate) mod tool_name;
 pub(crate) use sdk_features::message_parent_bundle;
+pub(crate) use sessions::share_agent_budget;
 pub mod sdk_registry;
 #[cfg(debug_assertions)]
 pub(crate) mod tui_fixture;

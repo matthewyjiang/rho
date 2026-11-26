@@ -494,6 +494,43 @@ async fn starting_past_the_nesting_cap_is_refused() {
     );
 }
 
+// Covers: the native tool caps a session's running sessions at
+// `behavior.agent_concurrency`, live: at 1, a second `new` while the first
+// runs is refused naming the budget, its limit, and the count asked for; once
+// the config says 32, the next `new` starts.
+// Owner: native sessions tool's session cap, from the daemon's agent budget.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_session_cap_follows_agent_concurrency() {
+    let sandbox = Sandbox::new();
+    sandbox.set_config("bypass", "agent_concurrency = 1\n");
+    let workspace = elsewhere(&sandbox);
+    let client = sandbox.start_daemon("tool-call").await;
+    let host = stdio_server(&sandbox, "tool-call", &[], &[]).await;
+    let agent = sandbox.new_session(&client).await;
+    let ask = async |arguments| ask(&sandbox, &client, &host, &agent, arguments).await;
+    let start = json!({"action": "new", "workspace": workspace, "prompt": bash(BLOCKED)});
+
+    let first = ask(start.clone()).await;
+    let refused = ask(start.clone()).await;
+    // Read at the agent's next turn start, which publishes it.
+    sandbox.set_config("bypass", "agent_concurrency = 32\n");
+    let raised = ask(start).await;
+    std::fs::write(workspace.join("go"), "").unwrap();
+
+    assert_eq!(
+        (first.is_ok(), refused, raised.is_ok()),
+        (
+            true,
+            Err(format!(
+                "concurrent sessions budget for session {agent}: limit 1, asked 2"
+            )),
+            true,
+        ),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
 // Covers: in a rho that runs its session itself, with no daemon running, a
 // watching call reports that no daemon runs; a tool call never starts the
 // long-lived daemon on its own (#1714).
