@@ -418,11 +418,16 @@ fn end_item(end: &End) -> (NotificationOutcome, String) {
             NotificationOutcome::WatchStopped,
             format!("Stopped watching after {COMMENT_WAKE_LIMIT} comment-only updates in a row"),
         ),
+        // GitHub's refusal is kept as it said it, which may run to several
+        // lines; an item is one.
         End::Unreadable(why) => (
             NotificationOutcome::Unreadable,
             format!(
                 "Stopped watching after {READ_FAILURE_LIMIT} failed reads: {}",
-                why.trim_end_matches('.')
+                why.split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+                    .trim_end_matches('.')
             ),
         ),
     }

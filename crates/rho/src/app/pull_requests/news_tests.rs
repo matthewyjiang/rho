@@ -5,6 +5,7 @@ use super::{omitted, prompt, section, snippet, MODEL_NOTIFICATION_BYTES};
 use crate::app::pull_requests::{
     model::{PrId, RepoId},
     state::{Change, CheckRef, End, Failure, Gate, News, Remark},
+    watch::READ_FAILURE_LIMIT,
 };
 
 fn news(number: u32, changes: Vec<Change>, end: Option<End>) -> News {
@@ -205,6 +206,30 @@ fn a_cards_tone_and_urgency_are_its_most_pressing_outcome() {
                 vec![Outcome::NewCommits]
             ),
         ]
+    );
+}
+
+// Covers: an unreadable watch's item stays one line when GitHub's refusal
+// runs to several, as a GraphQL error message may. A miss breaks the one
+// line a client shows the item in.
+// Owner: news rendering.
+#[test]
+fn an_unreadable_watchs_item_is_one_line() {
+    let refusal = "Could not resolve to a Repository\n  with the name 'acme/widgets'.";
+    let row = news(12, vec![], Some(End::Unreadable(refusal.into()))).row();
+    let texts: Vec<_> = row
+        .info
+        .expect("news is typed")
+        .items
+        .into_iter()
+        .map(|item| item.text)
+        .collect();
+    assert_eq!(
+        texts,
+        [format!(
+            "Stopped watching after {READ_FAILURE_LIMIT} failed reads: Could not resolve to a \
+             Repository with the name 'acme/widgets'"
+        )]
     );
 }
 
