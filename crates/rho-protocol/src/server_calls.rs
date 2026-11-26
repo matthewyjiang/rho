@@ -24,18 +24,18 @@ use crate::{
         SessionPullRequestLink, SessionPullRequestLinkParams, SessionPullRequestList,
         SessionPullRequestListParams, SessionPullRequestShow, SessionPullRequestShowParams,
         SessionPullRequestUnlink, SessionPullRequestUnlinkParams, SessionRename,
-        SessionRenameParams, SessionSteer, SessionSteerParams, SessionSurfaceAction,
-        SessionSurfaceActionParams, SessionUnsteer, SessionUnsteerParams, Status, Stop,
-        WorktreePrune, WorktreePruneParams, AUTH_CHOOSE_STORE, AUTH_KEY, AUTH_LIST,
-        AUTH_LOGIN_CANCEL, AUTH_LOGOUT, CONFIG_REGISTER, CONFIG_SCHEMA, CONFIG_SET, DAEMON_RESTART,
-        DAEMON_STATUS, DAEMON_STOP, JOB_LIST, MODEL_REFRESH, SESSION_ANSWER,
-        SESSION_ANSWER_QUESTION, SESSION_BACKGROUND_LIST, SESSION_BACKGROUND_STOP, SESSION_CANCEL,
-        SESSION_CONFIGURE, SESSION_DELETE, SESSION_FORK, SESSION_HOLD, SESSION_INSPECT,
-        SESSION_LIST, SESSION_LIST_DETAILED, SESSION_MARK, SESSION_MCP, SESSION_MCP_CATALOG,
-        SESSION_MCP_COMPLETE, SESSION_MCP_RESOURCE, SESSION_NEW, SESSION_PROCESSES, SESSION_PROMPT,
-        SESSION_PULL_REQUEST_LINK, SESSION_PULL_REQUEST_LIST, SESSION_PULL_REQUEST_SHOW,
-        SESSION_PULL_REQUEST_UNLINK, SESSION_RENAME, SESSION_STEER, SESSION_SURFACE_ACTION,
-        SESSION_UNSTEER, WORKTREE_PRUNE,
+        SessionRenameParams, SessionReportParams, SessionReportRead, SessionSteer,
+        SessionSteerParams, SessionSurfaceAction, SessionSurfaceActionParams, SessionUnsteer,
+        SessionUnsteerParams, Status, Stop, WorktreePrune, WorktreePruneParams, AUTH_CHOOSE_STORE,
+        AUTH_KEY, AUTH_LIST, AUTH_LOGIN_CANCEL, AUTH_LOGOUT, CONFIG_REGISTER, CONFIG_SCHEMA,
+        CONFIG_SET, DAEMON_RESTART, DAEMON_STATUS, DAEMON_STOP, JOB_LIST, MODEL_REFRESH,
+        SESSION_ANSWER, SESSION_ANSWER_QUESTION, SESSION_BACKGROUND_LIST, SESSION_BACKGROUND_STOP,
+        SESSION_CANCEL, SESSION_CONFIGURE, SESSION_DELETE, SESSION_FORK, SESSION_HOLD,
+        SESSION_INSPECT, SESSION_LIST, SESSION_LIST_DETAILED, SESSION_MARK, SESSION_MCP,
+        SESSION_MCP_CATALOG, SESSION_MCP_COMPLETE, SESSION_MCP_RESOURCE, SESSION_NEW,
+        SESSION_PROCESSES, SESSION_PROMPT, SESSION_PULL_REQUEST_LINK, SESSION_PULL_REQUEST_LIST,
+        SESSION_PULL_REQUEST_SHOW, SESSION_PULL_REQUEST_UNLINK, SESSION_RENAME, SESSION_REPORT,
+        SESSION_STEER, SESSION_SURFACE_ACTION, SESSION_UNSTEER, WORKTREE_PRUNE,
     },
     server::Service,
     server_codec::{decode_params, encode_result},
@@ -70,6 +70,7 @@ pub(crate) enum ServiceCall {
     LinkSessionPullRequest(SessionPullRequestLinkParams),
     UnlinkSessionPullRequest(SessionPullRequestUnlinkParams),
     InspectSession(SessionInspectParams),
+    ReportSession(SessionReportParams),
     ListSessions(SessionListParams),
     ListSessionsDetailed(SessionListParams),
     RenameSession(SessionRenameParams),
@@ -145,6 +146,7 @@ impl ServiceCall {
             SESSION_PULL_REQUEST_UNLINK => decode_params::<SessionPullRequestUnlink>(params)
                 .map(Self::UnlinkSessionPullRequest),
             SESSION_INSPECT => decode_params::<SessionInspect>(params).map(Self::InspectSession),
+            SESSION_REPORT => decode_params::<SessionReportRead>(params).map(Self::ReportSession),
             SESSION_LIST => decode_params::<SessionList>(params).map(Self::ListSessions),
             SESSION_LIST_DETAILED => {
                 decode_params::<SessionListDetailed>(params).map(Self::ListSessionsDetailed)
@@ -193,6 +195,7 @@ impl ServiceCall {
             | Self::LinkSessionPullRequest(SessionPullRequestLinkParams { session, .. })
             | Self::UnlinkSessionPullRequest(SessionPullRequestUnlinkParams { session, .. })
             | Self::InspectSession(SessionInspectParams { session, .. })
+            | Self::ReportSession(SessionReportParams { session, .. })
             | Self::ConfigureSession(SessionConfigureParams { session, .. })
             | Self::RenameSession(SessionRenameParams { session, .. })
             | Self::MarkSession(SessionMarkParams { session, .. }) => Some(session),
@@ -302,6 +305,9 @@ impl ServiceCall {
             ),
             Self::InspectSession(params) => {
                 encode_result::<SessionInspect>(&service.inspect_session(params).await?)
+            }
+            Self::ReportSession(params) => {
+                encode_result::<SessionReportRead>(&service.report_session(params).await?)
             }
             Self::ListSessions(params) => {
                 encode_result::<SessionList>(&service.list_sessions(params).await?)

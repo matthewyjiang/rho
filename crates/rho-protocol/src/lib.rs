@@ -196,8 +196,8 @@ pub use methods::{
     HookActivityRecord, HookContract, HookEvent, HookOutcome, HookStatus, HookTools, HookWarning,
     PromptSourceKind, ProviderContextBlockId, SessionCompactionReport, SessionContextReport,
     SessionHooksReport, SessionInspectParams, SessionInspectResponse, SessionProviderContextReport,
-    SessionReport, SessionReportData, SkippedHooksFile, SummaryRequestPath, ToolSchemaOrigin,
-    SESSION_INSPECT,
+    SessionReport, SessionReportData, SessionReportParams, SessionReportResponse, SkippedHooksFile,
+    SummaryRequestPath, ToolSchemaOrigin, SESSION_INSPECT, SESSION_REPORT,
 };
 pub use methods::{
     DetailedSessionSummary, SessionDeleteParams, SessionDeleteResponse,

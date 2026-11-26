@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use pretty_assertions::assert_eq;
-use rho_protocol::{self as wire, SessionInspectParams, SessionReport};
+use rho_protocol::{self as wire, SessionInspectParams, SessionReport, SessionReportParams};
 use tempfile::TempDir;
 
 use crate::app::{
@@ -18,7 +18,8 @@ use crate::app::{
 };
 
 // Covers: a client reads what fills a loaded session's context window,
-// typed and as the report the TUI's overlay shows; while a turn holds the
+// typed (`rho/session/report`) and as the report the TUI's overlay shows
+// (`rho/session/inspect`); while a turn holds the
 // session the daemon refuses rather than making the person wait for it.
 // Owner: daemon session reports.
 #[tokio::test]
@@ -40,11 +41,16 @@ async fn a_context_report_is_read_between_turns() {
         report: SessionReport::Context,
     };
 
-    let read = sessions.inspect(context(&session)).await.map(|answer| {
-        let shown = serde_json::from_value::<ContextReport>(answer.report)
-            .map_err(|error| error.to_string());
-        (shown, answer.typed_report)
+    let shown = sessions.inspect(context(&session)).await.map(|answer| {
+        serde_json::from_value::<ContextReport>(answer.report).map_err(|error| error.to_string())
     });
+    let typed = sessions
+        .report(SessionReportParams::new(
+            session_to_wire(session.id.clone()),
+            SessionReport::Context,
+        ))
+        .await
+        .map(|answer| answer.report);
     let expected = session
         .runtime
         .try_lock()
@@ -59,12 +65,10 @@ async fn a_context_report_is_read_between_turns() {
         .map_err(|error| error.code);
 
     assert_eq!(
-        (read, during_turn),
+        (shown, typed, during_turn),
         (
-            Ok((
-                Ok(ContextReport::from(&expected)),
-                Some(wire::SessionReportData::Context(expected))
-            )),
+            Ok(Ok(ContextReport::from(&expected))),
+            Ok(wire::SessionReportData::Context(expected)),
             Err(wire::ErrorCode::SessionBusy.code())
         )
     );

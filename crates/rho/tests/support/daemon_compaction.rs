@@ -4,8 +4,8 @@
 
 use pretty_assertions::assert_eq;
 use rho_protocol::{
-    methods::SessionInspect, CompactionReread, SessionInspectParams, SessionReport,
-    SessionReportData,
+    methods::SessionReportRead, CompactionReread, SessionReport, SessionReportData,
+    SessionReportParams,
 };
 use serde_json::{json, Value};
 
@@ -46,14 +46,14 @@ async fn a_daemon_session_records_what_follows_a_compaction() {
     };
     let after_run = async || {
         let report = client
-            .request::<SessionInspect>(&SessionInspectParams {
-                session: session.clone(),
-                report: SessionReport::Compaction,
-            })
+            .request::<SessionReportRead>(&SessionReportParams::new(
+                session.clone(),
+                SessionReport::Compaction,
+            ))
             .await
             .unwrap()
-            .typed_report;
-        let Some(SessionReportData::Compaction(report)) = report else {
+            .report;
+        let SessionReportData::Compaction(report) = report else {
             panic!("not a typed compaction report: {report:?}");
         };
         report

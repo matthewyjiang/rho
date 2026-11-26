@@ -1,8 +1,9 @@
-//! Reads a report about a loaded session between its turns.
+//! Reads a report about a loaded session between its turns, as rho's
+//! frontends show it (`rho/session/inspect`) or typed (`rho/session/report`).
 
 use rho_protocol::{
-    ErrorCode, RpcError, SessionInspectParams, SessionInspectResponse, SessionReport,
-    SessionReportData,
+    ErrorCode, RpcError, SessionId, SessionInspectParams, SessionInspectResponse, SessionReport,
+    SessionReportData, SessionReportParams, SessionReportResponse,
 };
 
 use super::Sessions;
@@ -12,11 +13,38 @@ use crate::app::{
     daemon_host::jobs::SessionJob,
 };
 
+/// One report both ways: the typed data and the presentation view derived
+/// from it.
+struct ReadReport {
+    typed: SessionReportData,
+    shown: serde_json::Value,
+}
+
 impl Sessions {
     pub(in crate::app::daemon_host) async fn inspect(
         &self,
         params: SessionInspectParams,
     ) -> Result<SessionInspectResponse, RpcError> {
+        let read = self.read_report(&params.session, params.report).await?;
+        Ok(SessionInspectResponse { report: read.shown })
+    }
+
+    pub(in crate::app::daemon_host) async fn report(
+        &self,
+        params: SessionReportParams,
+    ) -> Result<SessionReportResponse, RpcError> {
+        let read = self.read_report(&params.session, params.report).await?;
+        Ok(SessionReportResponse::new(read.typed))
+    }
+
+    // NEXT_MAJOR(rho-protocol): make rho/session/inspect answer the typed SessionReportData, render rho's TUI from it, and remove rho/session/report.
+    // Until then both methods read the report here, and inspect answers
+    // only the presentation view.
+    async fn read_report(
+        &self,
+        session_id: &SessionId,
+        report: SessionReport,
+    ) -> Result<ReadReport, RpcError> {
         self.refuse_when_stopping()?;
         let not_loaded = || {
             RpcError::new(
@@ -25,7 +53,7 @@ impl Sessions {
             )
         };
         let session = self
-            .loaded_session(&params.session)
+            .loaded_session(session_id)
             .await?
             .ok_or_else(not_loaded)?;
         // A report reads what a turn is changing, and a client asked to
@@ -55,10 +83,7 @@ impl Sessions {
         let runtime = session.runtime.lock().await;
         // `None` once the daemon's stop or the idle unload took it.
         let runtime = runtime.as_ref().ok_or_else(not_loaded)?;
-        // NEXT_MAJOR(rho-protocol): replace the untyped SessionInspectResponse::report with the typed SessionReportData, render rho's TUI from it, and remove typed_report.
-        // Until then each report goes out twice: as rho's frontends show it,
-        // and typed.
-        let (report, typed) = match params.report {
+        let (shown, typed) = match report {
             SessionReport::Context => {
                 let report = runtime.context_report();
                 (
@@ -98,12 +123,9 @@ impl Sessions {
                 ))
             }
         };
-        report
-            .map(|report| SessionInspectResponse {
-                report,
-                typed_report: Some(typed),
-            })
-            .map_err(|error| RpcError::new(ErrorCode::InternalError, error.to_string()))
+        let shown =
+            shown.map_err(|error| RpcError::new(ErrorCode::InternalError, error.to_string()))?;
+        Ok(ReadReport { typed, shown })
     }
 }
 

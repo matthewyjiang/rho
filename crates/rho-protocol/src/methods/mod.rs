@@ -35,6 +35,7 @@
 //! | [`SESSION_PULL_REQUEST_LINK`] | [`SessionPullRequestLinkParams`] | [`SessionPullRequestLinkResponse`] |
 //! | [`SESSION_PULL_REQUEST_UNLINK`] | [`SessionPullRequestUnlinkParams`] | [`SessionPullRequestUnlinkResponse`] |
 //! | [`SESSION_INSPECT`] | [`SessionInspectParams`] | [`SessionInspectResponse`] |
+//! | [`SESSION_REPORT`] | [`SessionReportParams`] | [`SessionReportResponse`] |
 //! | [`SESSION_CONFIGURE`] | [`SessionConfigureParams`] | [`SessionConfigureResponse`] |
 //! | [`SESSION_LIST`] | [`SessionListParams`] | [`SessionListResponse`] |
 //! | [`SESSION_LIST_DETAILED`] | [`SessionListParams`] | [`SessionListDetailedResponse`] |
@@ -154,8 +155,8 @@ pub use inspect::{
     HookActivityRecord, HookContract, HookEvent, HookOutcome, HookStatus, HookTools, HookWarning,
     PromptSourceKind, ProviderContextBlockId, SessionCompactionReport, SessionContextReport,
     SessionHooksReport, SessionInspectParams, SessionInspectResponse, SessionProviderContextReport,
-    SessionReport, SessionReportData, SkippedHooksFile, SummaryRequestPath, ToolSchemaOrigin,
-    SESSION_INSPECT,
+    SessionReport, SessionReportData, SessionReportParams, SessionReportResponse, SkippedHooksFile,
+    SummaryRequestPath, ToolSchemaOrigin, SESSION_INSPECT, SESSION_REPORT,
 };
 pub use job::{
     Budget, JobId, JobKind, JobListParams, JobListResponse, JobLive, JobState, JobSummary,
@@ -328,6 +329,7 @@ protocol! {
         SessionPullRequestLink = SESSION_PULL_REQUEST_LINK: SessionPullRequestLinkParams => SessionPullRequestLinkResponse,
         SessionPullRequestUnlink = SESSION_PULL_REQUEST_UNLINK: SessionPullRequestUnlinkParams => SessionPullRequestUnlinkResponse,
         SessionInspect = SESSION_INSPECT: SessionInspectParams => SessionInspectResponse,
+        SessionReportRead = SESSION_REPORT: SessionReportParams => SessionReportResponse,
         SessionList = SESSION_LIST: SessionListParams => SessionListResponse,
         SessionListDetailed = SESSION_LIST_DETAILED: SessionListParams => SessionListDetailedResponse,
         SessionRename = SESSION_RENAME: SessionRenameParams => SessionRenameResponse,

@@ -42,17 +42,18 @@ use crate::{
         SessionPullRequestListResponse, SessionPullRequestShowParams,
         SessionPullRequestShowResponse, SessionPullRequestUnlinkParams,
         SessionPullRequestUnlinkResponse, SessionRenameParams, SessionRenameResponse,
-        SessionSteerParams, SessionSteerResponse, SessionSurfaceActionParams,
-        SessionSurfaceActionResponse, SessionUnsteerParams, SessionUnsteerResponse,
-        WorktreePruneParams, WorktreePruneResponse, AUTH_CHOOSE_STORE, AUTH_KEY, AUTH_LIST,
-        AUTH_LOGIN, AUTH_LOGIN_CANCEL, AUTH_LOGOUT, CONFIG_GET, HELLO, MODEL_LIST, SESSION_ANSWER,
-        SESSION_ANSWER_QUESTION, SESSION_ATTACH, SESSION_BACKGROUND_LIST, SESSION_BACKGROUND_STOP,
-        SESSION_CANCEL, SESSION_CONFIGURE, SESSION_DELETE, SESSION_DETACH, SESSION_FORK,
-        SESSION_HOLD, SESSION_INSPECT, SESSION_LIST, SESSION_LIST_DETAILED, SESSION_MARK,
-        SESSION_MCP, SESSION_MCP_CATALOG, SESSION_MCP_COMPLETE, SESSION_MCP_RESOURCE, SESSION_NEW,
-        SESSION_OBSERVE, SESSION_PROCESSES, SESSION_PROMPT, SESSION_PULL_REQUEST_LINK,
-        SESSION_PULL_REQUEST_LIST, SESSION_PULL_REQUEST_SHOW, SESSION_PULL_REQUEST_UNLINK,
-        SESSION_RENAME, SESSION_STEER, SESSION_SURFACE_ACTION, SESSION_UNSTEER, WORKTREE_PRUNE,
+        SessionReportParams, SessionReportResponse, SessionSteerParams, SessionSteerResponse,
+        SessionSurfaceActionParams, SessionSurfaceActionResponse, SessionUnsteerParams,
+        SessionUnsteerResponse, WorktreePruneParams, WorktreePruneResponse, AUTH_CHOOSE_STORE,
+        AUTH_KEY, AUTH_LIST, AUTH_LOGIN, AUTH_LOGIN_CANCEL, AUTH_LOGOUT, CONFIG_GET, HELLO,
+        MODEL_LIST, SESSION_ANSWER, SESSION_ANSWER_QUESTION, SESSION_ATTACH,
+        SESSION_BACKGROUND_LIST, SESSION_BACKGROUND_STOP, SESSION_CANCEL, SESSION_CONFIGURE,
+        SESSION_DELETE, SESSION_DETACH, SESSION_FORK, SESSION_HOLD, SESSION_INSPECT, SESSION_LIST,
+        SESSION_LIST_DETAILED, SESSION_MARK, SESSION_MCP, SESSION_MCP_CATALOG,
+        SESSION_MCP_COMPLETE, SESSION_MCP_RESOURCE, SESSION_NEW, SESSION_OBSERVE,
+        SESSION_PROCESSES, SESSION_PROMPT, SESSION_PULL_REQUEST_LINK, SESSION_PULL_REQUEST_LIST,
+        SESSION_PULL_REQUEST_SHOW, SESSION_PULL_REQUEST_UNLINK, SESSION_RENAME, SESSION_REPORT,
+        SESSION_STEER, SESSION_SURFACE_ACTION, SESSION_UNSTEER, WORKTREE_PRUNE,
     },
     subscription::Subscription,
     BuildId, BuildSkew, DaemonInfo, DaemonStatus, ErrorCode, FrameError, HelloResponse, Message,
@@ -362,6 +363,16 @@ pub trait Service: SettingsService + Send + Sync {
     ) -> impl Future<Output = Result<SessionInspectResponse, RpcError>> + Send {
         let _ = params;
         unsupported(SESSION_INSPECT)
+    }
+
+    /// Handles `rho/session/report`: read a report about the loaded session
+    /// as typed data, between its turns, refusing while one runs.
+    fn report_session(
+        &self,
+        params: SessionReportParams,
+    ) -> impl Future<Output = Result<SessionReportResponse, RpcError>> + Send {
+        let _ = params;
+        unsupported(SESSION_REPORT)
     }
 
     /// Handles `rho/session/attach`: subscribe this connection to the

@@ -5,8 +5,8 @@ use super::*;
 use crate::methods::ModelRef;
 
 // Covers: each typed report's wire form (the `type` tags, snake_case names,
-// unit-suffixed fields, and absent optionals left out) round-trips beside
-// the untyped report, which clients such as rho-ui read by name.
+// unit-suffixed fields, and absent optionals left out) round-trips as a
+// `rho/session/report` answer, which clients such as rho-ui read by name.
 // Owner: protocol wire contract.
 #[test]
 fn every_typed_report_round_trips_through_its_wire_form() {
@@ -272,14 +272,11 @@ fn every_typed_report_round_trips_through_its_wire_form() {
         ),
     ];
     for (typed, wire) in cases {
-        let response = SessionInspectResponse {
-            report: json!({"shown": "as rho shows it"}),
-            typed_report: Some(typed),
-        };
-        let expected = json!({"report": {"shown": "as rho shows it"}, "typed_report": wire});
+        let response = SessionReportResponse::new(typed);
+        let expected = json!({"report": wire});
         assert_eq!(serde_json::to_value(&response).unwrap(), expected);
         assert_eq!(
-            serde_json::from_value::<SessionInspectResponse>(expected).unwrap(),
+            serde_json::from_value::<SessionReportResponse>(expected).unwrap(),
             response
         );
     }
