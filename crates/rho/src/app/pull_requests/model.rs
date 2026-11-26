@@ -248,6 +248,13 @@ pub(crate) struct PrDetail {
     pub(crate) checks: Vec<CheckRun>,
     /// How many checks there are, which may be more than `checks` holds.
     pub(crate) checks_total: u32,
+    /// GitHub Actions workflows still going with no job queued or running,
+    /// as before their first job: their checks are still to come. With
+    /// checks unread, one whose running jobs weren't read counts too.
+    pub(crate) queued_workflows: u32,
+    /// The head commit's check suites past those the read listed: any may
+    /// be a queued workflow.
+    pub(crate) unread_suites: u32,
     /// The newest comments and reviews, oldest first.
     pub(crate) posts: Vec<Post>,
     /// Comments and reviews older than `posts`, not read.
@@ -274,6 +281,12 @@ impl PrDetail {
     pub(crate) fn unread_checks(&self) -> u32 {
         let read = u32::try_from(self.checks.len()).unwrap_or(u32::MAX);
         self.checks_total.saturating_sub(read)
+    }
+
+    /// Whether checks `checks` doesn't hold may still change how the
+    /// checks stand: some weren't read, or a workflow's may still come.
+    pub(crate) fn checks_to_come(&self) -> bool {
+        self.unread_checks() > 0 || self.queued_workflows > 0 || self.unread_suites > 0
     }
 }
 

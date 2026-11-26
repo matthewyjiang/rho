@@ -207,6 +207,10 @@ impl From<&Detailed> for wire::PullRequestDetail {
             review,
             checks,
             checks_total,
+            // The protocol doesn't carry these yet: clients see only the
+            // checks already made.
+            queued_workflows: _,
+            unread_suites: _,
             posts,
             older_posts,
             threads,

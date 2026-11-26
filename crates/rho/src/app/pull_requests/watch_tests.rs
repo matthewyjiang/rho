@@ -47,6 +47,8 @@ fn read(checks: Vec<CheckRun>) -> PrDetail {
         changed_files: 1,
         review: Review::None,
         checks_total: u32::try_from(checks.len()).unwrap(),
+        queued_workflows: 0,
+        unread_suites: 0,
         checks,
         posts: Vec::new(),
         older_posts: 0,
@@ -78,6 +80,12 @@ fn with_posts(mut detail: PrDetail, posts: Vec<Post>) -> PrDetail {
 /// `detail` with `unread` more checks than it lists, as past GitHub's page.
 fn with_unread(mut detail: PrDetail, unread: u32) -> PrDetail {
     detail.checks_total += unread;
+    detail
+}
+
+/// `detail` with `queued` workflows whose checks are still to come.
+fn with_queued(mut detail: PrDetail, queued: u32) -> PrDetail {
+    detail.queued_workflows = queued;
     detail
 }
 
@@ -307,7 +315,7 @@ fn failures_are_told_once_at_once() {
 
 #[test]
 fn the_gate_passes_once() {
-    use CheckStatus::{Passed, Running};
+    use CheckStatus::{Passed, Running, Skipped};
     assert_cases(vec![
         Case {
             name: "required checks pass while an advisory one runs",
@@ -362,6 +370,29 @@ fn the_gate_passes_once() {
             name: "every listed check passed, but more were not read",
             before: watched(),
             read: with_unread(read(vec![check("a", Passed), check("b", Passed)]), 1),
+            expected: quiet(watched()),
+        },
+        Case {
+            // rho-ui#101 at ee99c82: docs passed before CI made its jobs.
+            name: "every listed check passed, but a workflow is still queued",
+            before: watched(),
+            read: with_queued(read(vec![check("a", Passed), check("b", Skipped)]), 1),
+            expected: quiet(watched()),
+        },
+        Case {
+            name: "every listed check passed, but some check suites were not read",
+            before: watched(),
+            read: PrDetail {
+                unread_suites: 1,
+                ..read(vec![check("a", Passed)])
+            },
+            expected: quiet(watched()),
+        },
+        Case {
+            // The queued workflow's checks may be required too.
+            name: "required checks passed, but a workflow is still queued",
+            before: watched(),
+            read: with_queued(read(vec![required("r", Passed)]), 1),
             expected: quiet(watched()),
         },
         Case {
@@ -429,6 +460,17 @@ fn owed_checks_are_told_once_when_they_settle() {
                 }],
                 gate_passed.clone(),
             ),
+        },
+        Case {
+            // As between a job and those that need it: nothing is taken
+            // back, so the pass isn't told again and the wake stays owed.
+            name: "the owed checks pass while a workflow is queued",
+            before: owing.clone(),
+            read: with_queued(
+                read(vec![required("r", Passed), advisory("adv", Passed)]),
+                1,
+            ),
+            expected: quiet(owing.clone()),
         },
         Case {
             name: "the last owed check fails: one wake naming it",

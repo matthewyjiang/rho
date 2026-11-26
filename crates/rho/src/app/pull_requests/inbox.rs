@@ -96,6 +96,10 @@ pub(crate) struct CheckCounts {
     pub(crate) running: u32,
     /// Failed or cancelled.
     pub(crate) failed: u32,
+    /// Workflows whose checks are still to come, which rho waits on too.
+    pub(crate) queued_workflows: u32,
+    /// Check suites the read left out, any of which may be such a workflow.
+    pub(crate) unread_suites: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -517,6 +521,8 @@ impl Watched {
             passed: tally.passed,
             running: tally.running,
             failed: tally.failed,
+            queued_workflows: tally.queued_workflows,
+            unread_suites: detail.unread_suites,
         };
         let (gate, gate_checks) = match watch::gate_of(&detail.checks) {
             // Every check, the unread ones too.

@@ -33,6 +33,7 @@
             "conclusion": "SUCCESS",
             "detailsUrl": "https://github.com/cli/cli/actions/runs/37728841987/job/113153112470",
             "checkSuite": {
+             "id": "CS_1",
              "workflowRun": {
               "workflow": {
                "name": "Code Scanning"
@@ -47,6 +48,7 @@
             "conclusion": "SUCCESS",
             "detailsUrl": "https://github.com/cli/cli/actions/runs/37728842012/job/113153111890",
             "checkSuite": {
+             "id": "CS_2",
              "workflowRun": {
               "workflow": {
                "name": "Lint"
@@ -61,6 +63,7 @@
             "conclusion": "SUCCESS",
             "detailsUrl": "https://github.com/cli/cli/actions/runs/37728841990/job/113153112043",
             "checkSuite": {
+             "id": "CS_3",
              "workflowRun": {
               "workflow": {
                "name": "Unit and Integration Tests"
@@ -75,6 +78,7 @@
             "conclusion": "SUCCESS",
             "detailsUrl": "https://github.com/cli/cli/actions/runs/37728841987/job/113153112276",
             "checkSuite": {
+             "id": "CS_1",
              "workflowRun": {
               "workflow": {
                "name": "Code Scanning"
@@ -89,6 +93,7 @@
             "conclusion": "SUCCESS",
             "detailsUrl": "https://github.com/cli/cli/actions/runs/37728841990/job/113153112092",
             "checkSuite": {
+             "id": "CS_3",
              "workflowRun": {
               "workflow": {
                "name": "Unit and Integration Tests"
@@ -103,6 +108,7 @@
             "conclusion": "SUCCESS",
             "detailsUrl": "https://github.com/cli/cli/actions/runs/37728841990/job/113153112126",
             "checkSuite": {
+             "id": "CS_3",
              "workflowRun": {
               "workflow": {
                "name": "Unit and Integration Tests"
@@ -117,6 +123,7 @@
             "conclusion": "SUCCESS",
             "detailsUrl": "https://github.com/cli/cli/actions/runs/37728842012/job/113153112141",
             "checkSuite": {
+             "id": "CS_2",
              "workflowRun": {
               "workflow": {
                "name": "Lint"
@@ -131,6 +138,7 @@
             "conclusion": "SUCCESS",
             "detailsUrl": "https://github.com/cli/cli/actions/runs/37728841990/job/113153112136",
             "checkSuite": {
+             "id": "CS_3",
              "workflowRun": {
               "workflow": {
                "name": "Unit and Integration Tests"
@@ -145,6 +153,7 @@
             "conclusion": "SUCCESS",
             "detailsUrl": "https://github.com/cli/cli/actions/runs/37728841990/job/113153111897",
             "checkSuite": {
+             "id": "CS_3",
              "workflowRun": {
               "workflow": {
                "name": "Unit and Integration Tests"
@@ -159,6 +168,7 @@
             "conclusion": "SUCCESS",
             "detailsUrl": "https://github.com/cli/cli/actions/runs/37728841990/job/113153112157",
             "checkSuite": {
+             "id": "CS_3",
              "workflowRun": {
               "workflow": {
                "name": "Unit and Integration Tests"
@@ -173,6 +183,7 @@
             "conclusion": "SUCCESS",
             "detailsUrl": "https://github.com/cli/cli/runs/113153267782",
             "checkSuite": {
+             "id": "CS_4",
              "workflowRun": null
             }
            }

@@ -194,21 +194,30 @@ fn change_lines(news: &News) -> Vec<String> {
     lines
 }
 
-/// `- Checks now: 10 passed, 2 failed, 2 running.`: where CI stands as
-/// failures are told, so the agent can tell acting now from waiting.
+/// `- Checks now: 10 passed, 2 failed, 2 running, 1 workflow queued.`:
+/// where CI stands as failures are told, so the agent can tell acting now
+/// from waiting.
 fn tally_line(tally: &CheckTally) -> String {
     let CheckTally {
         passed,
         running,
         failed,
         unread,
+        queued_workflows,
     } = *tally;
     let unread = if unread == 0 {
         String::new()
     } else {
         format!(", {unread} not read")
     };
-    format!("- Checks now: {passed} passed, {failed} failed, {running} running{unread}.")
+    let queued = match queued_workflows {
+        0 => String::new(),
+        queued => format!(
+            ", {queued} {} queued",
+            plural(queued as usize, "workflow", "workflows")
+        ),
+    };
+    format!("- Checks now: {passed} passed, {failed} failed, {running} running{unread}{queued}.")
 }
 
 /// The first [`LISTED_ITEMS`] of `items` as sub-items, and how many more.

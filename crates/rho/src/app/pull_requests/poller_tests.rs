@@ -120,6 +120,8 @@ fn open(number: u32, ci: CheckStatus) -> PrDetail {
         review: Review::None,
         checks: vec![check("ci", ci)],
         checks_total: 1,
+        queued_workflows: 0,
+        unread_suites: 0,
         posts: Vec::new(),
         older_posts: 0,
         threads: Vec::new(),
@@ -208,6 +210,11 @@ async fn a_tick_reads_a_detail_only_when_the_watch_may_have_news() {
         .checks
         .push(check("lint", CheckStatus::Running));
     failing_while_running.checks_total = 2;
+    // GitHub's rollup reads passing while a workflow has made no job yet.
+    let queued = PrDetail {
+        queued_workflows: 1,
+        ..passing.clone()
+    };
     let cases = [
         (
             "quiet, its detail a minute old",
@@ -227,6 +234,13 @@ async fn a_tick_reads_a_detail_only_when_the_watch_may_have_news() {
             "a check was running though the rollup read failing",
             failing_while_running.clone(),
             failing_while_running,
+            TICK,
+            vec![details(&[12])],
+        ),
+        (
+            "a workflow was queued though its listed checks passed",
+            queued.clone(),
+            queued,
             TICK,
             vec![details(&[12])],
         ),
@@ -817,6 +831,8 @@ async fn watching_again_keeps_the_watch_as_it_was() {
             passed: 0,
             running: 1,
             failed: 0,
+            queued_workflows: 0,
+            unread_suites: 0,
         },
         gate: Gate::All,
         gate_checks: 1,
