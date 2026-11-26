@@ -133,7 +133,14 @@ async fn a_report_tells_which_hooks_a_reload_or_only_a_reopen_loads() {
         .unwrap();
         HookCatalog::discover(Some(home.path()), None, ProjectTrust::Untrusted)
     };
-    let cases: [(Option<&[&str]>, &[&str], Vec<(&str, HookStatus)>); 3] = [
+    // The hooks the session started with (`None`: no hook runtime), the
+    // files now, and each listed hook's id and status.
+    type Case<'a> = (
+        Option<&'a [&'a str]>,
+        &'a [&'a str],
+        Vec<(&'a str, HookStatus)>,
+    );
+    let cases: [Case; 3] = [
         (
             Some(&[LOG]),
             &[LOG_EDITED],
