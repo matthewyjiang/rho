@@ -98,10 +98,10 @@ fn hooks_body_lines(report: &HookReport, width: usize) -> Vec<Line<'static>> {
     {
         lines.push(Line::default());
     }
-    if let Some(error) = &report.invalid {
+    if let Some(invalid) = &report.invalid {
         // The session keeps the hooks it runs, which the list below shows.
         lines.extend(indented_wrapped_lines(
-            &format!("could not load hooks: {error}"),
+            &format!("could not load {}: {}", invalid.path, invalid.error),
             ROW_INDENT,
             width,
             Theme::error(),

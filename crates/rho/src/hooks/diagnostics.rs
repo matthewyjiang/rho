@@ -98,12 +98,20 @@ pub struct HookReport {
     pub skipped_untrusted: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skipped_untrusted_error: Option<String>,
-    /// A hooks file that loads but could not be read or validated, with
-    /// why; the session keeps the hooks listed.
+    /// A hooks file that loads but could not be read or validated; the
+    /// session keeps the hooks listed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub invalid: Option<String>,
+    pub invalid: Option<InvalidHooksFileView>,
     pub hooks: Vec<HookContractView>,
     pub recent_activity: Vec<HookActivityView>,
+}
+
+/// A hooks file that does not load, as [`HookReport`] shows it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InvalidHooksFileView {
+    pub path: String,
+    /// What is wrong, without the path.
+    pub error: String,
 }
 
 /// What a session's hooks are and did, read at one moment: the source of
@@ -157,8 +165,8 @@ impl HookSnapshot {
     /// so; otherwise it is pending when a reload would load it, and needs a
     /// reopen when the files define a kind of hook the session started
     /// without (see [`HookPorts`]), which refuses the whole reload. One the
-    /// session runs that the files no longer define is stale. Files that do not load are reported as `invalid` with the
-    /// hooks the session runs.
+    /// session runs that the files no longer define is stale. Files that do
+    /// not load are reported as `invalid` with the hooks the session runs.
     pub(super) fn checked(
         running: Option<&HookPipeline>,
         files: Result<HookCatalog, HookConfigError>,
@@ -268,7 +276,10 @@ impl HookSnapshot {
                 .skipped_untrusted
                 .as_ref()
                 .and_then(|skipped| skipped.error.clone()),
-            invalid: self.invalid.as_ref().map(|invalid| invalid.error.clone()),
+            invalid: self.invalid.as_ref().map(|invalid| InvalidHooksFileView {
+                path: crate::paths::display(&invalid.path),
+                error: invalid.error.clone(),
+            }),
             hooks: self.hooks.iter().map(contract_view).collect(),
             recent_activity: self.activity.iter().map(HookActivityView::from).collect(),
         }
