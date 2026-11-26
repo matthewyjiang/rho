@@ -508,7 +508,8 @@ A settings screen shows what the daemon's configuration sets up with `rho/mcp/li
 - `absent`: no file is there.
 - `loaded`: a session loads it; its hooks are `active`.
 - `untrusted`: the project's file, which a session skips because the client does not trust the project; its hooks are `untrusted`. An `error` says why it could not be read or parsed, when it could not.
-- `invalid`: a file a session would load could not be read or parsed; its `error` says why. A session then runs no hooks at all, those of the other file included.
+- `invalid`: a file a session would load could not be read or parsed; its `error` says why. A session then runs no hooks at all.
+- `disabled`: a file that would load, but `by` names the `invalid` file that stops a session loading any hooks; its hooks are `disabled`.
 
 A daemon that predates either method answers `MethodNotFound`.
 

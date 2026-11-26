@@ -73,6 +73,10 @@ pub enum HookStatus {
     /// It belongs to a project file the session does not trust, so it does
     /// not run.
     Untrusted,
+    /// Its file loads, but another hooks file a session would load is
+    /// invalid, so a session runs no hooks at all. Only
+    /// [`crate::HOOKS_LIST`] sends it.
+    Disabled,
     /// A value a newer daemon sends that this crate does not know; daemons
     /// never send it.
     #[serde(other)]

@@ -31,18 +31,19 @@ use rho_protocol::{
     AuthListResponse, AuthLoginCancelParams, AuthLoginCancelResponse, AuthLoginParams,
     AuthLoginResponse, AuthLogoutParams, AuthLogoutResponse, BuildId, ClientInfo, ConfigGetParams,
     ConfigRegisterParams, ConfigRegisterResponse, ConfigSchema, ConfigSetParams, ConfigSetResponse,
-    ConfigWatch, DaemonStatus, DetachReason, JobListResponse, LoginStream, ModelListParams,
-    ModelRefreshParams, ModelRefreshResponse, ModelWatch, PendingUpgrade, ProtocolVersion,
-    RestartCost, RpcError, Service, SessionAnswerParams, SessionAnswerResponse,
-    SessionAttachParams, SessionAttachResponse, SessionCancelParams, SessionCancelResponse,
-    SessionConfigureParams, SessionConfigureResponse, SessionDeleteParams, SessionDeleteResponse,
-    SessionForkParams, SessionForkResponse, SessionHoldParams, SessionHoldResponse,
-    SessionListDetailedResponse, SessionListParams, SessionListResponse, SessionMarkParams,
-    SessionMarkResponse, SessionNewParams, SessionNewResponse, SessionObserveParams,
-    SessionPromptParams, SessionPromptResponse, SessionRenameParams, SessionRenameResponse,
-    SessionSteerParams, SessionSteerResponse, SessionSurfaceActionParams,
-    SessionSurfaceActionResponse, SessionUnsteerParams, SessionUnsteerResponse, SettingsService,
-    Subscription, WorktreePruneParams, WorktreePruneResponse, PROTOCOL_VERSION,
+    ConfigWatch, DaemonStatus, DetachReason, HooksListParams, HooksListResponse, JobListResponse,
+    LoginStream, McpListParams, McpListResponse, ModelListParams, ModelRefreshParams,
+    ModelRefreshResponse, ModelWatch, PendingUpgrade, ProtocolVersion, RestartCost, RpcError,
+    Service, SessionAnswerParams, SessionAnswerResponse, SessionAttachParams,
+    SessionAttachResponse, SessionCancelParams, SessionCancelResponse, SessionConfigureParams,
+    SessionConfigureResponse, SessionDeleteParams, SessionDeleteResponse, SessionForkParams,
+    SessionForkResponse, SessionHoldParams, SessionHoldResponse, SessionListDetailedResponse,
+    SessionListParams, SessionListResponse, SessionMarkParams, SessionMarkResponse,
+    SessionNewParams, SessionNewResponse, SessionObserveParams, SessionPromptParams,
+    SessionPromptResponse, SessionRenameParams, SessionRenameResponse, SessionSteerParams,
+    SessionSteerResponse, SessionSurfaceActionParams, SessionSurfaceActionResponse,
+    SessionUnsteerParams, SessionUnsteerResponse, SettingsService, Subscription,
+    WorktreePruneParams, WorktreePruneResponse, PROTOCOL_VERSION,
 };
 use rho_providers::credentials::CredentialStoreBackend;
 
@@ -721,17 +722,11 @@ impl SettingsService for DaemonHost {
         models::refresh(params, &self.sessions).await
     }
 
-    async fn list_mcp_servers(
-        &self,
-        params: rho_protocol::McpListParams,
-    ) -> Result<rho_protocol::McpListResponse, RpcError> {
+    async fn list_mcp_servers(&self, params: McpListParams) -> Result<McpListResponse, RpcError> {
         configured::mcp(params, self.sessions.settings()).await
     }
 
-    async fn list_hooks(
-        &self,
-        params: rho_protocol::HooksListParams,
-    ) -> Result<rho_protocol::HooksListResponse, RpcError> {
+    async fn list_hooks(&self, params: HooksListParams) -> Result<HooksListResponse, RpcError> {
         configured::hooks(params)
     }
 }

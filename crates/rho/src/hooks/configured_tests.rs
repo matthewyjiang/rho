@@ -18,7 +18,7 @@ const PROJECT_HOOKS: &str =
 const BROKEN: &str = "version = 1\n[[hook]]\nid = \n";
 
 /// What a listed file shows a settings page, with each error reduced to
-/// whether there is one.
+/// whether there is one and a disabling file named by its scope.
 #[derive(Debug, PartialEq, Eq)]
 struct Listed {
     path: PathBuf,
@@ -28,17 +28,33 @@ struct Listed {
 }
 
 fn listed(files: Vec<HooksFile>) -> Vec<Listed> {
+    let scope_of = |path: &Path| {
+        files
+            .iter()
+            .find(|file| file.path == path)
+            .map(|file| file.scope)
+    };
+    let statuses = files
+        .iter()
+        .map(|file| match &file.status {
+            HooksFileStatus::Absent => "absent",
+            HooksFileStatus::Loaded => "loaded",
+            HooksFileStatus::Disabled { by } => match scope_of(by) {
+                Some(HooksFileScope::User) => "disabled by user",
+                Some(HooksFileScope::Project) => "disabled by project",
+                _ => "disabled by another file",
+            },
+            HooksFileStatus::Untrusted { error: None } => "untrusted",
+            HooksFileStatus::Untrusted { error: Some(_) } => "untrusted, invalid",
+            HooksFileStatus::Invalid { .. } => "invalid",
+            _ => "unknown",
+        })
+        .collect::<Vec<_>>();
     files
         .into_iter()
-        .map(|file| Listed {
-            status: match file.status {
-                HooksFileStatus::Absent => "absent",
-                HooksFileStatus::Loaded => "loaded",
-                HooksFileStatus::Untrusted { error: None } => "untrusted",
-                HooksFileStatus::Untrusted { error: Some(_) } => "untrusted, invalid",
-                HooksFileStatus::Invalid { .. } => "invalid",
-                _ => "unknown",
-            },
+        .zip(statuses)
+        .map(|(file, status)| Listed {
+            status,
             path: file.path,
             scope: file.scope,
             hooks: file
@@ -52,7 +68,8 @@ fn listed(files: Vec<HooksFile>) -> Vec<Listed> {
 
 // Covers: each hooks file is listed on its own, so a broken file reports its
 // error, as untrusted when the project is, without hiding the other file's
-// hooks. The daemon test `configured` covers trust from a client.
+// hooks, which are disabled when that broken file stops a session loading
+// any. The daemon test `configured` covers trust from a client.
 // Owner: host hook discovery.
 #[test]
 fn each_hooks_file_is_listed_with_its_own_status() {
@@ -82,13 +99,23 @@ fn each_hooks_file_is_listed_with_its_own_status() {
             ],
         },
         Case {
-            name: "a broken user file keeps the project's hooks listed",
+            name: "a broken user file disables the project's hooks",
             user: Some(BROKEN),
             project: Some(PROJECT_HOOKS),
             trust: ProjectTrust::Trusted,
             expected: [
                 ("invalid", &[]),
-                ("loaded", &[("project:fmt", HookStatus::Active)]),
+                ("disabled by user", &[("project:fmt", HookStatus::Disabled)]),
+            ],
+        },
+        Case {
+            name: "a broken trusted project file disables the user's hooks",
+            user: Some(USER_HOOKS),
+            project: Some(BROKEN),
+            trust: ProjectTrust::Trusted,
+            expected: [
+                ("disabled by project", &[("user:log", HookStatus::Disabled)]),
+                ("invalid", &[]),
             ],
         },
     ];

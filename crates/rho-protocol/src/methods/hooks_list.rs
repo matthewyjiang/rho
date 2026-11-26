@@ -65,8 +65,9 @@ pub struct HooksFile {
     pub path: PathBuf,
     pub scope: HooksFileScope,
     pub status: HooksFileStatus,
-    /// The hooks it defines, in file order: [`super::HookStatus::Active`]
-    /// when it loads, [`super::HookStatus::Untrusted`] when it is skipped.
+    /// The hooks it defines, in file order, each with the
+    /// [`super::HookStatus`] its file's status gives it: `active` when
+    /// `loaded`, `untrusted` when `untrusted`, `disabled` when `disabled`.
     /// Empty when it is absent or could not be read or parsed.
     pub hooks: Vec<HookContract>,
 }
@@ -114,6 +115,9 @@ pub enum HooksFileStatus {
     Absent,
     /// A session loads it and runs its hooks.
     Loaded,
+    /// It parses and would load, but the file at `by` is `invalid`, so a
+    /// session runs no hooks at all, this file's included.
+    Disabled { by: PathBuf },
     /// The project's file, which a session skips because the client does
     /// not trust the project; `error` says why it could not be read or
     /// parsed, when it could not.
@@ -122,7 +126,8 @@ pub enum HooksFileStatus {
         error: Option<String>,
     },
     /// A file a session would load could not be read or parsed. A session
-    /// then runs no hooks at all, those of the other file included.
+    /// then runs no hooks at all: the other file, if it would load, is
+    /// `disabled`.
     Invalid { error: String },
     /// A value a newer daemon sends that this crate does not know; daemons
     /// never send it.

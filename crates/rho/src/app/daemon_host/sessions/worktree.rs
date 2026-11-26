@@ -123,7 +123,7 @@ pub(super) async fn add_for_session(
         }
     }
     let workspace =
-        Workspace::parse(&added.cwd).map_err(|error| kept(error, Some(&added.worktree)))?;
+        Workspace::parse("cwd", &added.cwd).map_err(|error| kept(error, Some(&added.worktree)))?;
     Ok((workspace, added.worktree))
 }
 

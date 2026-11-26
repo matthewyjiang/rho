@@ -51,47 +51,30 @@ impl HookCatalog {
     ) -> Result<Self, HookConfigError> {
         let mut catalog = Self::default();
         if let Some(home) = rho_home {
-            catalog.load(&home.join("hooks.toml"), HookSource::User, None)?;
+            catalog.add(HooksFileRead::user(home))?;
         }
-        let Some(root) = project_root else {
-            return Ok(catalog);
-        };
-        let project_file = root.join(".rho/hooks.toml");
-        if !trust.is_trusted() {
-            match read_definitions(&project_file, HookSource::Project, Some(root)) {
-                Ok(Some(definitions)) => {
-                    catalog.skipped_untrusted = Some(SkippedProjectHooks {
-                        path: project_file,
-                        definitions,
-                        error: None,
-                    });
-                }
-                Ok(None) => {}
-                Err(error) => {
-                    catalog.skipped_untrusted = Some(SkippedProjectHooks {
-                        path: project_file,
-                        definitions: Vec::new(),
-                        error: Some(error),
-                    });
-                }
-            }
-            return Ok(catalog);
+        if let Some(root) = project_root {
+            catalog.add(HooksFileRead::project(root, trust))?;
         }
-        catalog.load(&project_file, HookSource::Project, Some(root))?;
         Ok(catalog)
     }
 
-    fn load(
-        &mut self,
-        path: &Path,
-        source: HookSource,
-        project_root: Option<&Path>,
-    ) -> Result<(), HookConfigError> {
-        let Some(hooks) = read_definitions(path, source, project_root)? else {
-            return Ok(());
-        };
-        self.files.push(path.to_path_buf());
-        self.hooks.extend(hooks);
+    fn add(&mut self, file: HooksFileRead) -> Result<(), HookConfigError> {
+        match file.outcome {
+            HooksFileOutcome::Absent => {}
+            HooksFileOutcome::Loaded(hooks) => {
+                self.files.push(file.path);
+                self.hooks.extend(hooks);
+            }
+            HooksFileOutcome::Untrusted { definitions, error } => {
+                self.skipped_untrusted = Some(SkippedProjectHooks {
+                    path: file.path,
+                    definitions,
+                    error,
+                });
+            }
+            HooksFileOutcome::Invalid(error) => return Err(error),
+        }
         Ok(())
     }
 
@@ -180,6 +163,78 @@ impl HookCatalog {
     }
 }
 
+/// One hooks file, read as a session reads it under its project trust: what
+/// [`HookCatalog::discover`] loads and `rho/hooks/list` (`configured.rs`)
+/// lists, so the two cannot disagree on a file.
+pub(super) struct HooksFileRead {
+    pub(super) path: PathBuf,
+    pub(super) outcome: HooksFileOutcome,
+}
+
+/// What reading one hooks file found.
+pub(super) enum HooksFileOutcome {
+    /// No file is there.
+    Absent,
+    /// A session loads its hooks.
+    Loaded(Vec<HookDefinition>),
+    /// The project's file, skipped for lack of trust: its hooks, or why it
+    /// could not be read or parsed.
+    Untrusted {
+        definitions: Vec<HookDefinition>,
+        error: Option<HookConfigError>,
+    },
+    /// A file a session would load could not be read or parsed, which stops
+    /// it loading any hooks.
+    Invalid(HookConfigError),
+}
+
+impl HooksFileRead {
+    /// The user's `hooks.toml` under `rho_home`, which needs no trust.
+    pub(super) fn user(rho_home: &Path) -> Self {
+        Self::read(
+            rho_home.join("hooks.toml"),
+            HookSource::User,
+            None,
+            ProjectTrust::Trusted,
+        )
+    }
+
+    /// The `.rho/hooks.toml` of the project at `root`, loaded under `trust`.
+    pub(super) fn project(root: &Path, trust: ProjectTrust) -> Self {
+        Self::read(
+            root.join(".rho/hooks.toml"),
+            HookSource::Project,
+            Some(root),
+            trust,
+        )
+    }
+
+    fn read(
+        path: PathBuf,
+        source: HookSource,
+        project_root: Option<&Path>,
+        trust: ProjectTrust,
+    ) -> Self {
+        let outcome = match (
+            read_definitions(&path, source, project_root),
+            trust.is_trusted(),
+        ) {
+            (Ok(None), _) => HooksFileOutcome::Absent,
+            (Ok(Some(hooks)), true) => HooksFileOutcome::Loaded(hooks),
+            (Ok(Some(definitions)), false) => HooksFileOutcome::Untrusted {
+                definitions,
+                error: None,
+            },
+            (Err(error), true) => HooksFileOutcome::Invalid(error),
+            (Err(error), false) => HooksFileOutcome::Untrusted {
+                definitions: Vec::new(),
+                error: Some(error),
+            },
+        };
+        Self { path, outcome }
+    }
+}
+
 /// What one hook will execute, shown to the user before trust is granted.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HookSpawnContract {
@@ -196,7 +251,7 @@ pub struct HookSpawnContract {
     pub missing_edit_tools: Vec<&'static str>,
 }
 
-pub(super) fn read_definitions(
+fn read_definitions(
     path: &Path,
     source: HookSource,
     project_root: Option<&Path>,

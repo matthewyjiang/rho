@@ -54,8 +54,10 @@ fn parse(
     environment: &ClientEnvironment,
 ) -> Result<(Option<PathBuf>, ProjectTrusts), RpcError> {
     let workspace = workspace
-        .map(|path| Workspace::parse(path).map(|workspace| workspace.path().to_path_buf()))
+        .map(|path| {
+            Workspace::parse("workspace", path).map(|workspace| workspace.path().to_path_buf())
+        })
         .transpose()?;
     let ambient = session_environment(environment)?;
-    Ok((workspace, ProjectTrusts::read(|name| ambient.read(name))))
+    Ok((workspace, ambient.project_trusts()))
 }

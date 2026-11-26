@@ -2,18 +2,19 @@
 //! `rho/hooks/list`: a settings view of what is configured, with no
 //! session, runtime, or activity.
 //!
-//! [`HookCatalog::discover`](super::HookCatalog::discover) stops at the first
-//! file a session cannot load, since a session then runs no hooks; this
-//! reads every file so one file's error does not hide the other's hooks.
+//! Each file is read as [`HookCatalog::discover`](super::HookCatalog::discover)
+//! reads it ([`HooksFileRead`]). Where `discover` stops at the first file a
+//! session cannot load, since a session then runs no hooks, this reads
+//! every file, so one file's error does not hide the other's hooks, and
+//! marks the file that would load `disabled`.
 
 use std::path::Path;
 
-use rho_protocol::{HooksFile, HooksFileScope, HooksFileStatus};
+use rho_protocol::{HookStatus, HooksFile, HooksFileScope, HooksFileStatus};
 
 use super::{
-    catalog::{read_definitions, spawn_contract},
+    catalog::{spawn_contract, HooksFileOutcome, HooksFileRead},
     diagnostics::contract,
-    HookSource,
 };
 use crate::workspace::ProjectTrust;
 
@@ -25,61 +26,60 @@ pub(crate) fn configured_files(
     project_root: Option<&Path>,
     trust: ProjectTrust,
 ) -> Vec<HooksFile> {
-    // The user's own file needs no trust.
-    let user = rho_home.map(|home| {
-        read_file(
-            &home.join("hooks.toml"),
-            HookSource::User,
-            None,
-            ProjectTrust::Trusted,
-        )
-    });
-    let project = project_root.map(|root| {
-        read_file(
-            &root.join(".rho/hooks.toml"),
-            HookSource::Project,
-            Some(root),
-            trust,
-        )
-    });
-    user.into_iter().chain(project).collect()
+    let user = rho_home.map(|home| (HooksFileScope::User, HooksFileRead::user(home)));
+    let project =
+        project_root.map(|root| (HooksFileScope::Project, HooksFileRead::project(root, trust)));
+    let files = user.into_iter().chain(project).collect::<Vec<_>>();
+    // The first invalid file is the one a session fails on.
+    let invalid = files
+        .iter()
+        .find(|(_, file)| matches!(file.outcome, HooksFileOutcome::Invalid(_)))
+        .map(|(_, file)| file.path.clone());
+    files
+        .into_iter()
+        .map(|(scope, file)| listed(scope, file, invalid.as_deref()))
+        .collect()
 }
 
-/// One hooks file as a session treats it: loaded under `trust`, else
-/// skipped with its hooks shown inactive.
-fn read_file(
-    path: &Path,
-    source: HookSource,
-    project_root: Option<&Path>,
-    trust: ProjectTrust,
-) -> HooksFile {
-    let trusted = trust.is_trusted();
-    let (status, definitions) = match (read_definitions(path, source, project_root), trusted) {
-        (Ok(None), _) => (HooksFileStatus::Absent, Vec::new()),
-        (Ok(Some(definitions)), true) => (HooksFileStatus::Loaded, definitions),
-        (Ok(Some(definitions)), false) => (HooksFileStatus::Untrusted { error: None }, definitions),
-        (Err(error), true) => (
+/// `file` as `rho/hooks/list` lists it, `disabled` by the file at
+/// `invalid` when it would load.
+fn listed(scope: HooksFileScope, file: HooksFileRead, invalid: Option<&Path>) -> HooksFile {
+    let (status, definitions, hook_status) = match file.outcome {
+        HooksFileOutcome::Absent => (HooksFileStatus::Absent, Vec::new(), HookStatus::Active),
+        HooksFileOutcome::Loaded(hooks) => match invalid {
+            None => (HooksFileStatus::Loaded, hooks, HookStatus::Active),
+            Some(by) => (
+                HooksFileStatus::Disabled {
+                    by: by.to_path_buf(),
+                },
+                hooks,
+                HookStatus::Disabled,
+            ),
+        },
+        HooksFileOutcome::Untrusted { definitions, error } => (
+            HooksFileStatus::Untrusted {
+                error: error.map(|error| error.to_string()),
+            },
+            definitions,
+            HookStatus::Untrusted,
+        ),
+        HooksFileOutcome::Invalid(error) => (
             HooksFileStatus::Invalid {
                 error: error.to_string(),
             },
             Vec::new(),
+            HookStatus::Active,
         ),
-        (Err(error), false) => (
-            HooksFileStatus::Untrusted {
-                error: Some(error.to_string()),
-            },
-            Vec::new(),
-        ),
-    };
-    let scope = match source {
-        HookSource::User => HooksFileScope::User,
-        HookSource::Project => HooksFileScope::Project,
     };
     let hooks = definitions
         .iter()
-        .map(|hook| contract(&spawn_contract(hook, trusted)))
+        .map(|hook| {
+            let mut contract = contract(&spawn_contract(hook, hook_status == HookStatus::Active));
+            contract.status = hook_status;
+            contract
+        })
         .collect();
-    HooksFile::new(path.to_path_buf(), scope, status, hooks)
+    HooksFile::new(file.path, scope, status, hooks)
 }
 
 #[cfg(test)]

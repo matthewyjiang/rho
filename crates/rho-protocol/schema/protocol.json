@@ -3054,6 +3054,11 @@
           "type": "string"
         },
         {
+          "const": "disabled",
+          "description": "Its file loads, but another hooks file a session would load is\ninvalid, so a session runs no hooks at all. Only\n[`crate::HOOKS_LIST`] sends it.",
+          "type": "string"
+        },
+        {
           "description": "Any other value: one a later protocol minor adds.",
           "type": "string",
           "x-rho-other": true
@@ -3154,7 +3159,7 @@
       "description": "One hooks file and the hooks it defines.",
       "properties": {
         "hooks": {
-          "description": "The hooks it defines, in file order: [`super::HookStatus::Active`]\nwhen it loads, [`super::HookStatus::Untrusted`] when it is skipped.\nEmpty when it is absent or could not be read or parsed.",
+          "description": "The hooks it defines, in file order, each with the\n[`super::HookStatus`] its file's status gives it: `active` when\n`loaded`, `untrusted` when `untrusted`, `disabled` when `disabled`.\nEmpty when it is absent or could not be read or parsed.",
           "items": {
             "$ref": "#/$defs/HookContract"
           },
@@ -3227,6 +3232,23 @@
           "type": "object"
         },
         {
+          "description": "It parses and would load, but the file at `by` is `invalid`, so a\nsession runs no hooks at all, this file's included.",
+          "properties": {
+            "by": {
+              "type": "string"
+            },
+            "type": {
+              "const": "disabled",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "by"
+          ],
+          "type": "object"
+        },
+        {
           "description": "The project's file, which a session skips because the client does\nnot trust the project; `error` says why it could not be read or\nparsed, when it could not.",
           "properties": {
             "error": {
@@ -3246,7 +3268,7 @@
           "type": "object"
         },
         {
-          "description": "A file a session would load could not be read or parsed. A session\nthen runs no hooks at all, those of the other file included.",
+          "description": "A file a session would load could not be read or parsed. A session\nthen runs no hooks at all: the other file, if it would load, is\n`disabled`.",
           "properties": {
             "error": {
               "type": "string"

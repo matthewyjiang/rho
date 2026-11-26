@@ -74,7 +74,7 @@ impl Sessions {
             worktree,
         } = params;
         self.refuse_when_stopping()?;
-        let workspace = Workspace::parse(&cwd)?;
+        let workspace = Workspace::parse("cwd", &cwd)?;
         // Resolved before the session opens, so a malformed parent, or
         // one whose choosing session is lost, opens nothing.
         let parent = parent.as_ref().map(reopen::parse_session).transpose()?;
