@@ -380,6 +380,15 @@ fn the_gate_passes_once() {
             expected: quiet(watched()),
         },
         Case {
+            name: "every listed check passed, but some check suites were not read",
+            before: watched(),
+            read: PrDetail {
+                unread_suites: 1,
+                ..read(vec![check("a", Passed)])
+            },
+            expected: quiet(watched()),
+        },
+        Case {
             // The queued workflow's checks may be required too.
             name: "required checks passed, but a workflow is still queued",
             before: watched(),

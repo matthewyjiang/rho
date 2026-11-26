@@ -78,7 +78,7 @@
             "conclusion": "SUCCESS",
             "detailsUrl": "https://github.com/cli/cli/actions/runs/37728841987/job/113153112276",
             "checkSuite": {
-             "id": "CS_4",
+             "id": "CS_1",
              "workflowRun": {
               "workflow": {
                "name": "Code Scanning"
@@ -93,7 +93,7 @@
             "conclusion": "SUCCESS",
             "detailsUrl": "https://github.com/cli/cli/actions/runs/37728841990/job/113153112092",
             "checkSuite": {
-             "id": "CS_5",
+             "id": "CS_3",
              "workflowRun": {
               "workflow": {
                "name": "Unit and Integration Tests"
@@ -108,7 +108,7 @@
             "conclusion": "SUCCESS",
             "detailsUrl": "https://github.com/cli/cli/actions/runs/37728841990/job/113153112126",
             "checkSuite": {
-             "id": "CS_6",
+             "id": "CS_3",
              "workflowRun": {
               "workflow": {
                "name": "Unit and Integration Tests"
@@ -123,7 +123,7 @@
             "conclusion": "SUCCESS",
             "detailsUrl": "https://github.com/cli/cli/actions/runs/37728842012/job/113153112141",
             "checkSuite": {
-             "id": "CS_7",
+             "id": "CS_2",
              "workflowRun": {
               "workflow": {
                "name": "Lint"
@@ -138,7 +138,7 @@
             "conclusion": "SUCCESS",
             "detailsUrl": "https://github.com/cli/cli/actions/runs/37728841990/job/113153112136",
             "checkSuite": {
-             "id": "CS_8",
+             "id": "CS_3",
              "workflowRun": {
               "workflow": {
                "name": "Unit and Integration Tests"
@@ -153,7 +153,7 @@
             "conclusion": "SUCCESS",
             "detailsUrl": "https://github.com/cli/cli/actions/runs/37728841990/job/113153111897",
             "checkSuite": {
-             "id": "CS_9",
+             "id": "CS_3",
              "workflowRun": {
               "workflow": {
                "name": "Unit and Integration Tests"
@@ -168,7 +168,7 @@
             "conclusion": "SUCCESS",
             "detailsUrl": "https://github.com/cli/cli/actions/runs/37728841990/job/113153112157",
             "checkSuite": {
-             "id": "CS_10",
+             "id": "CS_3",
              "workflowRun": {
               "workflow": {
                "name": "Unit and Integration Tests"
@@ -183,7 +183,7 @@
             "conclusion": "SUCCESS",
             "detailsUrl": "https://github.com/cli/cli/runs/113153267782",
             "checkSuite": {
-             "id": "CS_11",
+             "id": "CS_4",
              "workflowRun": null
             }
            }
