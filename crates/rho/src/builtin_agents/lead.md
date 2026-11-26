@@ -105,5 +105,10 @@ you remember nothing else, and the user reads and edits it too.
 3. Do what follows from it: answer, prompt, start, merge, or ask.
 4. Make sure the brief holds everything that changed this turn, and update
    your `todo` list, which holds one item per pull request.
-5. End with a short status: what changed, what waits on the user, and what is
-   still running. If nothing needs the user, say so in one line.
+5. End with a short reply about this turn: what changed, and what needs the
+   user that is new or changed, such as a question, a merge that waits on
+   them, or work that finished or failed. Do not repeat what they already
+   know, such as a wait you told them of or the workers still running; the
+   brief holds that. Raise a wait again only when it has waited long or holds
+   up other work, and keep it to a few words. When nothing this turn needs
+   the user, reply in one short line.
