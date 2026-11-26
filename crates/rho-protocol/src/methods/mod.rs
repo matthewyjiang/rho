@@ -259,11 +259,11 @@ pub trait Method {
 
 /// A notification the daemon sends, typed like [`Method`].
 ///
-/// Implemented by the zero-sized markers this module declares, so
-/// [`crate::Client`] decodes each notification with its params type. The
-/// daemon encodes most with the same type; one declared `as` a wire type
-/// sends that type instead, which adds keys beside the params' own
-/// ([`SessionEventNotification`] sends [`SessionEventEnvelope`]).
+/// Implemented by the zero-sized markers this module declares. The daemon
+/// encodes, and [`crate::Client`] decodes, most notifications with their
+/// params type; one declared `as` a wire type travels as that type instead,
+/// which adds keys beside the params' own: [`SessionEventNotification`]
+/// travels as [`SessionEventEnvelope`], which the client decodes whole.
 pub trait Notification {
     const NAME: &'static str;
     type Params: Serialize + DeserializeOwned + JsonSchema;
@@ -378,7 +378,7 @@ protocol! {
         HooksList = HOOKS_LIST: HooksListParams => HooksListResponse,
     }
     notifications {
-        // NEXT_MAJOR(rho-protocol): add at: Option<u64> to SessionEventParams and remove SessionEventEnvelope.
+        // NEXT_MAJOR(rho-protocol): add an optional unix-ms at field to SessionEventParams and remove SessionEventEnvelope.
         SessionEventNotification = SESSION_EVENT: SessionEventParams as SessionEventEnvelope,
         SessionDetachedNotification = SESSION_DETACHED: SessionDetachedParams,
         AuthLoginPromptNotification = AUTH_LOGIN_PROMPT: AuthLoginPromptParams,

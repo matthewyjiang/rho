@@ -261,7 +261,7 @@ Attaching or observing a session the connection already follows replaces the ear
 
 `at` is when the event happened, in Unix milliseconds: for a live event, when the daemon sent it, which a `tail` replay repeats; for an event of a saved conversation that a `reset` replays, when its message was saved, to the second. The events a replay adds rather than repeats carry none: a `reset`'s `agent`, `started_session_defaults`, missing-start `notice` and `usage`, the trailing `activity`, and a saved turn's calls that a replay closes and its plan. An older daemon sends no `at`.
 
-`NEXT_MAJOR(rho-protocol): add at: Option<u64> to SessionEventParams and remove SessionEventEnvelope.` Until then, `at` and `notification` sit beside `event` in the params, which `SessionEventEnvelope` reads.
+`NEXT_MAJOR(rho-protocol): add an optional unix-ms at field to SessionEventParams and remove SessionEventEnvelope.` Until then, `at` and `notification` sit beside `event` in the params, which `SessionEventEnvelope` reads.
 
 A Rust `Client` drops both unless its `Notifications` opt in: `notifications.with_session_event_envelopes()` yields each event as `DaemonNotification::SessionEventEnvelope`, its `params` beside `at` and `notification`, instead of `DaemonNotification::SessionEvent`. The wire is the same either way.
 

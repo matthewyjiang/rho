@@ -1184,9 +1184,12 @@ async fn an_events_time_and_notification_ride_beside_it() {
 }
 
 // Covers: a `Client` whose notifications opted into envelopes receives an
-// event's time and notification from the server, and a default one still
-// receives the bare `SessionEvent`. A miss leaves Rust clients unable to
-// read either, or changes what every existing client receives.
+// event's time and notification as the server forwards them, and a default
+// one still receives the bare `SessionEvent`. A miss leaves Rust clients
+// unable to read either, or changes what every existing client receives.
+// Runs the real forwarder and client together, so it also fails when the
+// server's encoding and the client's decoding disagree, which neither side's
+// own tests catch.
 // Owner: protocol client notifications.
 #[tokio::test]
 async fn only_a_client_that_opts_in_receives_an_events_time_and_notification() {
@@ -1230,7 +1233,10 @@ async fn only_a_client_that_opts_in_receives_an_events_time_and_notification() {
             environment: ClientEnvironment::default(),
             setup: Default::default(),
         };
-        client.request::<SessionAttach>(&attach).await.unwrap();
+        tokio::time::timeout(RESPONSE_DEADLINE, client.request::<SessionAttach>(&attach))
+            .await
+            .expect("the attach answers within RESPONSE_DEADLINE")
+            .unwrap();
         let publisher = publishers.recv().await.unwrap();
         assert_eq!(publisher.try_publish_event(timed_card()), Ok(()));
 

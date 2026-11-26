@@ -603,7 +603,7 @@ pub struct SessionEventParams {
 ///
 /// # Next major
 ///
-/// NEXT_MAJOR(rho-protocol): add `at: Option<u64>` to `SessionEventParams` and remove SessionEventEnvelope.
+/// NEXT_MAJOR(rho-protocol): add an optional unix-ms at field to SessionEventParams and remove SessionEventEnvelope.
 ///
 /// `SessionEventParams` has only public fields and is not
 /// `#[non_exhaustive]`, so a field is a major change. Until then the schema
