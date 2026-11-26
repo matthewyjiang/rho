@@ -10,32 +10,33 @@ use crate::{
         AuthChooseStore, AuthChooseStoreParams, AuthKey, AuthKeyParams, AuthList, AuthListParams,
         AuthLoginCancel, AuthLoginCancelParams, AuthLogout, AuthLogoutParams, ConfigRegister,
         ConfigRegisterParams, ConfigSchemaMethod, ConfigSchemaParams, ConfigSet, ConfigSetParams,
-        JobList, JobListParams, ModelRefresh, ModelRefreshParams, Restart, RestartParams,
-        RestartResponse, SessionAnswer, SessionAnswerParams, SessionAnswerQuestion,
-        SessionAnswerQuestionParams, SessionBackgroundList, SessionBackgroundListParams,
-        SessionBackgroundStop, SessionBackgroundStopParams, SessionCancel, SessionCancelParams,
-        SessionConfigure, SessionConfigureParams, SessionDelete, SessionDeleteParams, SessionFork,
-        SessionForkParams, SessionHold, SessionHoldParams, SessionId, SessionInspect,
-        SessionInspectParams, SessionList, SessionListDetailed, SessionListParams,
-        SessionMarkMethod, SessionMarkParams, SessionMcp, SessionMcpCatalogParams,
-        SessionMcpCatalogRead, SessionMcpComplete, SessionMcpCompleteParams, SessionMcpParams,
-        SessionMcpResourceParams, SessionMcpResourceRead, SessionNew, SessionNewParams,
-        SessionProcesses, SessionProcessesParams, SessionPrompt, SessionPromptParams,
-        SessionPullRequestLink, SessionPullRequestLinkParams, SessionPullRequestList,
-        SessionPullRequestListParams, SessionPullRequestShow, SessionPullRequestShowParams,
-        SessionPullRequestUnlink, SessionPullRequestUnlinkParams, SessionRename,
-        SessionRenameParams, SessionReportParams, SessionReportRead, SessionSteer,
-        SessionSteerParams, SessionSurfaceAction, SessionSurfaceActionParams, SessionUnsteer,
-        SessionUnsteerParams, Status, Stop, WorktreePrune, WorktreePruneParams, AUTH_CHOOSE_STORE,
-        AUTH_KEY, AUTH_LIST, AUTH_LOGIN_CANCEL, AUTH_LOGOUT, CONFIG_REGISTER, CONFIG_SCHEMA,
-        CONFIG_SET, DAEMON_RESTART, DAEMON_STATUS, DAEMON_STOP, JOB_LIST, MODEL_REFRESH,
-        SESSION_ANSWER, SESSION_ANSWER_QUESTION, SESSION_BACKGROUND_LIST, SESSION_BACKGROUND_STOP,
-        SESSION_CANCEL, SESSION_CONFIGURE, SESSION_DELETE, SESSION_FORK, SESSION_HOLD,
-        SESSION_INSPECT, SESSION_LIST, SESSION_LIST_DETAILED, SESSION_MARK, SESSION_MCP,
-        SESSION_MCP_CATALOG, SESSION_MCP_COMPLETE, SESSION_MCP_RESOURCE, SESSION_NEW,
-        SESSION_PROCESSES, SESSION_PROMPT, SESSION_PULL_REQUEST_LINK, SESSION_PULL_REQUEST_LIST,
-        SESSION_PULL_REQUEST_SHOW, SESSION_PULL_REQUEST_UNLINK, SESSION_RENAME, SESSION_REPORT,
-        SESSION_STEER, SESSION_SURFACE_ACTION, SESSION_UNSTEER, WORKTREE_PRUNE,
+        HooksList, HooksListParams, JobList, JobListParams, McpList, McpListParams, ModelRefresh,
+        ModelRefreshParams, Restart, RestartParams, RestartResponse, SessionAnswer,
+        SessionAnswerParams, SessionAnswerQuestion, SessionAnswerQuestionParams,
+        SessionBackgroundList, SessionBackgroundListParams, SessionBackgroundStop,
+        SessionBackgroundStopParams, SessionCancel, SessionCancelParams, SessionConfigure,
+        SessionConfigureParams, SessionDelete, SessionDeleteParams, SessionFork, SessionForkParams,
+        SessionHold, SessionHoldParams, SessionId, SessionInspect, SessionInspectParams,
+        SessionList, SessionListDetailed, SessionListParams, SessionMarkMethod, SessionMarkParams,
+        SessionMcp, SessionMcpCatalogParams, SessionMcpCatalogRead, SessionMcpComplete,
+        SessionMcpCompleteParams, SessionMcpParams, SessionMcpResourceParams,
+        SessionMcpResourceRead, SessionNew, SessionNewParams, SessionProcesses,
+        SessionProcessesParams, SessionPrompt, SessionPromptParams, SessionPullRequestLink,
+        SessionPullRequestLinkParams, SessionPullRequestList, SessionPullRequestListParams,
+        SessionPullRequestShow, SessionPullRequestShowParams, SessionPullRequestUnlink,
+        SessionPullRequestUnlinkParams, SessionRename, SessionRenameParams, SessionReportParams,
+        SessionReportRead, SessionSteer, SessionSteerParams, SessionSurfaceAction,
+        SessionSurfaceActionParams, SessionUnsteer, SessionUnsteerParams, Status, Stop,
+        WorktreePrune, WorktreePruneParams, AUTH_CHOOSE_STORE, AUTH_KEY, AUTH_LIST,
+        AUTH_LOGIN_CANCEL, AUTH_LOGOUT, CONFIG_REGISTER, CONFIG_SCHEMA, CONFIG_SET, DAEMON_RESTART,
+        DAEMON_STATUS, DAEMON_STOP, HOOKS_LIST, JOB_LIST, MCP_LIST, MODEL_REFRESH, SESSION_ANSWER,
+        SESSION_ANSWER_QUESTION, SESSION_BACKGROUND_LIST, SESSION_BACKGROUND_STOP, SESSION_CANCEL,
+        SESSION_CONFIGURE, SESSION_DELETE, SESSION_FORK, SESSION_HOLD, SESSION_INSPECT,
+        SESSION_LIST, SESSION_LIST_DETAILED, SESSION_MARK, SESSION_MCP, SESSION_MCP_CATALOG,
+        SESSION_MCP_COMPLETE, SESSION_MCP_RESOURCE, SESSION_NEW, SESSION_PROCESSES, SESSION_PROMPT,
+        SESSION_PULL_REQUEST_LINK, SESSION_PULL_REQUEST_LIST, SESSION_PULL_REQUEST_SHOW,
+        SESSION_PULL_REQUEST_UNLINK, SESSION_RENAME, SESSION_REPORT, SESSION_STEER,
+        SESSION_SURFACE_ACTION, SESSION_UNSTEER, WORKTREE_PRUNE,
     },
     server::Service,
     server_codec::{decode_params, encode_result},
@@ -81,6 +82,8 @@ pub(crate) enum ServiceCall {
     SaveAuthKey(AuthKeyParams),
     LogoutAuth(AuthLogoutParams),
     ListAuths(AuthListParams),
+    ListMcpServers(McpListParams),
+    ListHooks(HooksListParams),
     CancelLogin(AuthLoginCancelParams),
     ChooseStore(AuthChooseStoreParams),
     ConfigSchema,
@@ -159,6 +162,8 @@ impl ServiceCall {
             AUTH_KEY => decode_params::<AuthKey>(params).map(Self::SaveAuthKey),
             AUTH_LOGOUT => decode_params::<AuthLogout>(params).map(Self::LogoutAuth),
             AUTH_LIST => decode_params::<AuthList>(params).map(Self::ListAuths),
+            MCP_LIST => decode_params::<McpList>(params).map(Self::ListMcpServers),
+            HOOKS_LIST => decode_params::<HooksList>(params).map(Self::ListHooks),
             AUTH_LOGIN_CANCEL => decode_params::<AuthLoginCancel>(params).map(Self::CancelLogin),
             AUTH_CHOOSE_STORE => decode_params::<AuthChooseStore>(params).map(Self::ChooseStore),
             CONFIG_SCHEMA => decode_params::<ConfigSchemaMethod>(params)
@@ -216,6 +221,8 @@ impl ServiceCall {
             | Self::SaveAuthKey(_)
             | Self::LogoutAuth(_)
             | Self::ListAuths(_)
+            | Self::ListMcpServers(_)
+            | Self::ListHooks(_)
             | Self::CancelLogin(_)
             | Self::ChooseStore(_)
             | Self::ConfigSchema
@@ -336,6 +343,12 @@ impl ServiceCall {
             }
             Self::ListAuths(params) => {
                 encode_result::<AuthList>(&service.list_auths(params).await?)
+            }
+            Self::ListMcpServers(params) => {
+                encode_result::<McpList>(&service.list_mcp_servers(params).await?)
+            }
+            Self::ListHooks(params) => {
+                encode_result::<HooksList>(&service.list_hooks(params).await?)
             }
             Self::CancelLogin(params) => {
                 encode_result::<AuthLoginCancel>(&service.cancel_login(params).await?)

@@ -79,12 +79,12 @@ use crate::{
 /// The directory a session works in: an existing directory, canonicalized
 /// to the form its commands take as a working directory and other `rho`
 /// processes name it by. Parsed once from the request's `cwd`.
-pub(super) struct Workspace(PathBuf);
+pub(in crate::app::daemon_host) struct Workspace(PathBuf);
 
 impl Workspace {
     /// The workspace `cwd` names. A relative path, a path that does not
     /// resolve, and one that is not a directory are invalid params.
-    pub(super) fn parse(cwd: &Path) -> Result<Self, RpcError> {
+    pub(in crate::app::daemon_host) fn parse(cwd: &Path) -> Result<Self, RpcError> {
         let invalid = |reason: String| {
             RpcError::new(
                 ErrorCode::InvalidParams,
@@ -101,7 +101,7 @@ impl Workspace {
         Ok(Self(path))
     }
 
-    pub(super) fn path(&self) -> &Path {
+    pub(in crate::app::daemon_host) fn path(&self) -> &Path {
         &self.0
     }
 }

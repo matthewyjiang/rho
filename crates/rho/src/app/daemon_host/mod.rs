@@ -8,11 +8,13 @@
 //! subagents share (`subagents.rs`). It also writes the credential store
 //! those sessions read (`auth.rs`), reports and chooses that store
 //! (`store.rs`), runs the interactive logins clients start, relaying each
-//! to its client (`logins.rs`), and fetches the provider model lists its
-//! clients pick models from (`models.rs`). It re-executes the daemon in place on
-//! `rho/daemon/restart` and once a replaced executable finds it idle
-//! (`upgrade.rs`, #1713), and the daemon it re-executes continues the
-//! session turns that restart interrupted (`sessions/restart_resume.rs`).
+//! to its client (`logins.rs`), fetches the provider model lists its
+//! clients pick models from (`models.rs`), and lists the MCP servers and
+//! hooks its configuration sets up without a session (`configured.rs`). It
+//! re-executes the daemon in place on `rho/daemon/restart` and once a
+//! replaced executable finds it idle (`upgrade.rs`, #1713), and the daemon
+//! it re-executes continues the session turns that restart interrupted
+//! (`sessions/restart_resume.rs`).
 
 use std::{
     io,
@@ -50,6 +52,7 @@ use crate::{
 };
 
 mod auth;
+mod configured;
 mod jobs;
 mod logins;
 mod models;
@@ -716,5 +719,19 @@ impl SettingsService for DaemonHost {
         params: ModelRefreshParams,
     ) -> Result<ModelRefreshResponse, RpcError> {
         models::refresh(params, &self.sessions).await
+    }
+
+    async fn list_mcp_servers(
+        &self,
+        params: rho_protocol::McpListParams,
+    ) -> Result<rho_protocol::McpListResponse, RpcError> {
+        configured::mcp(params, self.sessions.settings()).await
+    }
+
+    async fn list_hooks(
+        &self,
+        params: rho_protocol::HooksListParams,
+    ) -> Result<rho_protocol::HooksListResponse, RpcError> {
+        configured::hooks(params)
     }
 }

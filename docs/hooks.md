@@ -26,6 +26,10 @@ Preferences stay in `config.toml`. Hook policy lives only in `hooks.toml`,
 because "which model do I prefer" and "which programs may Rho run" are different
 trust questions.
 
+A daemon client, such as a settings screen, lists these files and the hooks they
+define without a session through
+[`rho/hooks/list`](/protocol#configured-mcp-servers-and-hooks).
+
 ## A first hook
 
 ```toml

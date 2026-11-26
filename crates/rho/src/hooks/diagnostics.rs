@@ -213,7 +213,7 @@ fn contract_view(contract: &HookSpawnContract) -> HookContractView {
     }
 }
 
-fn contract(contract: &HookSpawnContract) -> HookContract {
+pub(super) fn contract(contract: &HookSpawnContract) -> HookContract {
     HookContract {
         id: contract.id.clone(),
         status: if contract.active {

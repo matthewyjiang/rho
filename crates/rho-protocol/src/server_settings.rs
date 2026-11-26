@@ -1,8 +1,9 @@
-//! The settings part of the daemon's protocol: `rho/config/*` (#1720), and
-//! `rho/model/*`, the models a model setting may take. The
-//! [`SettingsService`] methods every [`crate::Service`] answers, and
-//! forwarding a namespace's changes, or the models', once a client reads
-//! them.
+//! The settings part of the daemon's protocol: `rho/config/*` (#1720),
+//! `rho/model/*`, the models a model setting may take, and `rho/mcp/list`
+//! and `rho/hooks/list`, the MCP servers and hooks the configuration sets
+//! up. The [`SettingsService`] methods every [`crate::Service`] answers,
+//! and forwarding a namespace's changes, or the models', once a client
+//! reads them.
 
 use std::{future::Future, sync::Arc};
 
@@ -10,16 +11,18 @@ use crate::{
     forward::{ConfigWatch, Forwarders, ModelWatch},
     methods::{
         ConfigGet, ConfigGetParams, ConfigRegisterParams, ConfigRegisterResponse, ConfigSchema,
-        ConfigSetParams, ConfigSetResponse, ModelListMethod, ModelListParams, ModelRefreshParams,
-        ModelRefreshResponse, CONFIG_GET, CONFIG_REGISTER, CONFIG_SCHEMA, CONFIG_SET, MODEL_LIST,
-        MODEL_REFRESH,
+        ConfigSetParams, ConfigSetResponse, HooksListParams, HooksListResponse, McpListParams,
+        McpListResponse, ModelListMethod, ModelListParams, ModelRefreshParams,
+        ModelRefreshResponse, CONFIG_GET, CONFIG_REGISTER, CONFIG_SCHEMA, CONFIG_SET, HOOKS_LIST,
+        MCP_LIST, MODEL_LIST, MODEL_REFRESH,
     },
     server::Responder,
     server_codec::{encode_result, unsupported},
     RpcError,
 };
 
-/// The daemon's answers to `rho/config/*` and `rho/model/*`, which
+/// The daemon's answers to `rho/config/*`, `rho/model/*`, `rho/mcp/list`,
+/// and `rho/hooks/list`, which
 /// [`crate::Service`] requires. Calls run as [`crate::Service`]'s do: each
 /// in its own task, overlapping within a connection and across
 /// connections. Each method answers [`crate::ErrorCode::MethodNotFound`]
@@ -83,6 +86,26 @@ pub trait SettingsService: Send + Sync {
     ) -> impl Future<Output = Result<ModelRefreshResponse, RpcError>> + Send {
         let _ = params;
         unsupported(MODEL_REFRESH)
+    }
+
+    /// Answers `rho/mcp/list`: the MCP servers a session would configure,
+    /// read without a session or starting a server.
+    fn list_mcp_servers(
+        &self,
+        params: McpListParams,
+    ) -> impl Future<Output = Result<McpListResponse, RpcError>> + Send {
+        let _ = params;
+        unsupported(MCP_LIST)
+    }
+
+    /// Answers `rho/hooks/list`: the hooks files a session would load and
+    /// the hooks they define, read without a session or running a hook.
+    fn list_hooks(
+        &self,
+        params: HooksListParams,
+    ) -> impl Future<Output = Result<HooksListResponse, RpcError>> + Send {
+        let _ = params;
+        unsupported(HOOKS_LIST)
     }
 }
 

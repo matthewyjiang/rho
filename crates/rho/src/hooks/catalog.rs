@@ -196,7 +196,7 @@ pub struct HookSpawnContract {
     pub missing_edit_tools: Vec<&'static str>,
 }
 
-fn read_definitions(
+pub(super) fn read_definitions(
     path: &Path,
     source: HookSource,
     project_root: Option<&Path>,
@@ -221,7 +221,7 @@ fn read_definitions(
     .map(Some)
 }
 
-fn spawn_contract(hook: &HookDefinition, active: bool) -> HookSpawnContract {
+pub(super) fn spawn_contract(hook: &HookDefinition, active: bool) -> HookSpawnContract {
     HookSpawnContract {
         active,
         id: hook.qualified_id(),

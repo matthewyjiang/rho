@@ -129,7 +129,7 @@ use hold::{Held, Hold};
 use idle_wake::IdleWatch;
 use inputs::Inputs;
 use open::open_failed;
-pub(super) use open::session_environment;
+pub(super) use open::{session_environment, Workspace};
 use open::{OpenWith, OpenedSession};
 use queued::Queued;
 use reopen::ReopenLocks;

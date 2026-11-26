@@ -30,6 +30,7 @@ use crate::methods::{
     HookStatus, HookTools, HookWarning, PromptSourceKind, SessionReportData, SummaryRequestPath,
     ToolSchemaOrigin,
 };
+use crate::methods::{HooksFileScope, HooksFileStatus, McpServerSource, McpTransport};
 
 // Covers: the committed schema/protocol.json is what the wire types
 // generate, so clients that generate types from it speak the daemon's wire.
@@ -68,7 +69,7 @@ fn enums_marked_open_read_unknown_values_as_unknown() {
     let unseen = || json!("from_a_newer_daemon");
     let unseen_tag = || json!({ "type": "from_a_newer_daemon" });
     let unseen_kind = || json!({ "kind": "from_a_newer_daemon" });
-    let cases: [(&str, bool); 94] = [
+    let cases: [(&str, bool); 98] = [
         ("ContextBasis", reads_as(unseen(), ContextBasis::Unknown)),
         (
             "PromptSourceKind",
@@ -309,6 +310,22 @@ fn enums_marked_open_read_unknown_values_as_unknown() {
         (
             "ModelRefreshOutcome",
             reads_as(unseen_tag(), ModelRefreshOutcome::Unknown),
+        ),
+        (
+            "McpServerSource",
+            reads_as(unseen_tag(), McpServerSource::Unknown),
+        ),
+        (
+            "McpTransport",
+            reads_as(unseen_tag(), McpTransport::Unknown),
+        ),
+        (
+            "HooksFileScope",
+            reads_as(unseen(), HooksFileScope::Unknown),
+        ),
+        (
+            "HooksFileStatus",
+            reads_as(unseen_tag(), HooksFileStatus::Unknown),
         ),
     ];
 

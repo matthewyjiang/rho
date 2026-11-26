@@ -200,10 +200,16 @@ pub use methods::{
     SummaryRequestPath, ToolSchemaOrigin, SESSION_INSPECT, SESSION_REPORT,
 };
 pub use methods::{
+    ConfiguredMcpServer, McpListParams, McpListResponse, McpServerSource, McpTransport, MCP_LIST,
+};
+pub use methods::{
     DetailedSessionSummary, SessionDeleteParams, SessionDeleteResponse,
     SessionListDetailedResponse, SessionListParams, SessionListResponse, SessionRenameParams,
     SessionRenameResponse, SessionSummary, SESSION_DELETE, SESSION_LIST, SESSION_LIST_DETAILED,
     SESSION_RENAME,
+};
+pub use methods::{
+    HooksFile, HooksFileScope, HooksFileStatus, HooksListParams, HooksListResponse, HOOKS_LIST,
 };
 pub use methods::{
     NewSessionMark, SessionMark, SessionMarkParams, SessionMarkResponse, SESSION_MARK,
