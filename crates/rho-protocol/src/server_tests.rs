@@ -9,7 +9,7 @@ use tokio::{
 
 use super::*;
 use crate::{
-    login_relay,
+    jsonrpc, login_relay,
     methods::{
         AuthLoginFinishedParams, AuthLoginPromptParams, DetachReason, JobState, LoginId,
         LoginOutcome, LoginPrompt, ModelChoice, ModelList, ModelListKind, ModelListParams,

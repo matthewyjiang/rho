@@ -214,13 +214,15 @@ pub use methods::{
     HooksFile, HooksFileScope, HooksFileStatus, HooksListParams, HooksListResponse, HOOKS_LIST,
 };
 pub use methods::{
+    HooksReloadOutcome, SessionHooksReloadParams, SessionHooksReloadResponse, SESSION_HOOKS_RELOAD,
+};
+pub use methods::{
     NewSessionMark, SessionMark, SessionMarkParams, SessionMarkResponse, SESSION_MARK,
 };
 pub use methods::{
     ProcessChunk, ProcessOutput, ProcessOutputParams, ProcessState, ProcessStream, SessionProcess,
     SessionProcessesParams, SessionProcessesResponse, SESSION_PROCESSES,
 };
-pub use methods::{SessionHooksReloadParams, SessionHooksReloadResponse, SESSION_HOOKS_RELOAD};
 pub use methods::{
     SessionMcpCatalog, SessionMcpCatalogParams, SessionMcpCompleteParams,
     SessionMcpCompleteResponse, SessionMcpPrompt, SessionMcpPromptArgument, SessionMcpResource,

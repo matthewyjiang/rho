@@ -19,7 +19,6 @@ use crate::server_streams::{attach, login, AttachRequest};
 use crate::{
     declared::{hello_protocol, Declared},
     forward::Forwarders,
-    jsonrpc,
     login_relay::LoginStream,
     methods::{
         AuthChooseStoreParams, AuthChooseStoreResponse, AuthKeyParams, AuthKeyResponse,
@@ -60,8 +59,8 @@ use crate::{
     },
     subscription::Subscription,
     BuildId, BuildSkew, DaemonInfo, DaemonStatus, ErrorCode, FrameError, HelloResponse, Message,
-    MessageReader, MessageWriter, ProtocolVersion, Request, RequestId, Response, RestartCost,
-    RpcError, VersionFix, VersionMismatch, PROTOCOL_VERSION,
+    MessageReader, MessageWriter, ProtocolVersion, Request, Response, RestartCost, RpcError,
+    VersionFix, VersionMismatch, PROTOCOL_VERSION,
 };
 
 /// The daemon's answers to post-handshake requests, one method per protocol

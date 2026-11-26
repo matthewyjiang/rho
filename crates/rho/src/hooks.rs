@@ -184,26 +184,16 @@ impl HookPipeline {
     /// Re-reads the hooks files for the workspace containing `cwd`.
     ///
     /// The swap is atomic and applies to dispatches that have not started, so a
-    /// reload can never change the hook set halfway through one decision. On a
-    /// validation error the previous hook set stays in force.
+    /// reload can never change the hook set halfway through one decision. On an
+    /// error the previous hook set stays in force.
     ///
-    /// Reload cannot install a gate or observer that was absent at start. If the
-    /// new catalog needs a port this session never attached, the caller should
-    /// tell the user to restart.
-    pub fn reload_for_cwd(&self, cwd: &std::path::Path) -> Result<(), HookConfigError> {
+    /// Reload cannot install a gate or observer that was absent at start, so a
+    /// catalog that needs one is refused (see [`HookPorts`]).
+    pub fn reload_for_cwd(&self, cwd: &std::path::Path) -> Result<(), HookReloadError> {
         let mut discard = |_message: String| {};
         let catalog = discover_for_cwd(cwd, self.engine.project_trust(), &mut discard)?;
-        if catalog.has_blocking_hooks() && self.gate.is_none() {
-            return Err(HookConfigError::at_file(
-                cwd,
-                "blocking hooks were added since this session started; restart Rho to load them",
-            ));
-        }
-        if catalog.has_observational_hooks() && self.observer.is_none() {
-            return Err(HookConfigError::at_file(
-                cwd,
-                "observational hooks were added since this session started; restart Rho to load them",
-            ));
+        if let Some(kind) = HookPorts::of(Some(self)).missing(&catalog) {
+            return Err(HookReloadError::NeedsReopen(kind));
         }
         self.engine.reload(catalog);
         Ok(())
@@ -219,6 +209,80 @@ impl HookPipeline {
             worker.drain(grace).await;
         }
     }
+}
+
+/// Which kinds of hook a session can run. Each kind needs a port the
+/// session's SDK runtime installs when it is built (the gate for blocking
+/// hooks, the observer for observing ones), so a kind the session started
+/// without runs only once it is opened again.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct HookPorts {
+    blocking: bool,
+    observing: bool,
+}
+
+impl HookPorts {
+    /// The ports of a session running `hooks`; none without a hook runtime.
+    pub(crate) fn of(hooks: Option<&HookPipeline>) -> Self {
+        hooks.map_or_else(Self::default, |hooks| Self {
+            blocking: hooks.gate.is_some(),
+            observing: hooks.observer.is_some(),
+        })
+    }
+
+    /// Whether a hook on `event` can run here.
+    pub(crate) fn runs(self, event: config::ConfiguredHookEvent) -> bool {
+        if event.is_blocking() {
+            self.blocking
+        } else {
+            self.observing
+        }
+    }
+
+    /// A kind of hook `catalog` has that cannot run here.
+    fn missing(self, catalog: &HookCatalog) -> Option<HookKind> {
+        if catalog.has_blocking_hooks() && !self.blocking {
+            Some(HookKind::Blocking)
+        } else if catalog.has_observational_hooks() && !self.observing {
+            Some(HookKind::Observing)
+        } else {
+            None
+        }
+    }
+}
+
+/// A kind of hook, by the port it runs through.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HookKind {
+    /// `before_tool_use` hooks, which may deny what follows.
+    Blocking,
+    /// Every other hook, which only hears of what happened.
+    Observing,
+}
+
+impl std::fmt::Display for HookKind {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Blocking => "blocking",
+            Self::Observing => "observing",
+        })
+    }
+}
+
+/// Why a session's hooks were not reloaded; it keeps the hooks it ran.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum HookReloadError {
+    /// A hooks file that loads could not be read or validated.
+    #[error(transparent)]
+    Invalid(#[from] HookConfigError),
+    /// The files add a kind of hook the session started without.
+    #[error(
+        "{0} hooks were added since this session started; open the session again to load them"
+    )]
+    NeedsReopen(HookKind),
+    /// A hook program started the session, which runs no hooks (#1659).
+    #[error("a hook started this session, so it runs no hooks")]
+    InsideHook,
 }
 
 /// Whether `environment` is a hook program's: [`IN_HOOK_ENV`] is set in it.
@@ -248,11 +312,7 @@ pub fn read_snapshot(
         return HookSnapshot::disabled();
     }
     let mut discard = |_message: String| {};
-    let files = discover_for_cwd(cwd, trust, &mut discard);
-    match hooks {
-        Some(hooks) => HookInspector::new(hooks).checked(files),
-        None => HookSnapshot::checked(None, Vec::new(), files),
-    }
+    HookSnapshot::checked(hooks, discover_for_cwd(cwd, trust, &mut discard))
 }
 
 /// Reloads the hooks of a session running `hooks` in the workspace
@@ -269,23 +329,20 @@ pub fn reload_for_session(
     cwd: &std::path::Path,
     trust: ProjectTrusts,
     inside_hook: bool,
-) -> Result<(), HookConfigError> {
+) -> Result<(), HookReloadError> {
     if let Some(hooks) = hooks {
         return hooks.reload_for_cwd(cwd);
     }
     // A Rho a hook started runs without hooks (#1659).
     if inside_hook {
-        return Ok(());
+        return Err(HookReloadError::InsideHook);
     }
     let mut discard = |_message: String| {};
     let catalog = discover_for_cwd(cwd, trust, &mut discard)?;
-    if catalog.is_empty() {
-        return Ok(());
+    match HookPorts::default().missing(&catalog) {
+        Some(kind) => Err(HookReloadError::NeedsReopen(kind)),
+        None => Ok(()),
     }
-    Err(HookConfigError::at_file(
-        cwd,
-        "hooks were added since this session started; open it again to load them",
-    ))
 }
 
 /// How long queued observational hooks may finish after a session ends.

@@ -101,7 +101,7 @@ impl SessionRuntime {
 
     /// Reloads the session's hooks from their files, as `/hooks` asks (see
     /// [`crate::hooks::reload_for_session`]).
-    pub(crate) fn reload_hooks(&self) -> Result<(), crate::hooks::HookConfigError> {
+    pub(crate) fn reload_hooks(&self) -> Result<(), crate::hooks::HookReloadError> {
         let environment = &self.build.host.environment;
         crate::hooks::reload_for_session(
             self.built.hooks.as_ref(),

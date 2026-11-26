@@ -113,6 +113,70 @@ async fn the_session_report_types_each_hook_and_the_untrusted_file() {
     );
 }
 
+// Covers: a hooks report checks the files against what the session runs
+// without reloading: an edited hook is pending beside its stale running
+// self, and a hook of a kind the session started without (no gate or no
+// observer, or no hook runtime at all) needs the session opened again,
+// since a reload cannot add it.
+// Owner: hook diagnostics.
+#[tokio::test]
+async fn a_report_tells_which_hooks_a_reload_or_only_a_reopen_loads() {
+    const LOG: &str = "[[hook]]\nid = \"log\"\non = \"run_completed\"\ncommand = [\"logger\"]\ntimeout = \"1s\"\n";
+    const LOG_EDITED: &str = "[[hook]]\nid = \"log\"\non = \"run_completed\"\ncommand = [\"logger\"]\ntimeout = \"2s\"\n";
+    const GUARD: &str = "[[hook]]\nid = \"guard\"\non = \"before_tool_use\"\ncommand = [\"guard\"]\ntimeout = \"1s\"\n";
+    let home = TempDir::new().unwrap();
+    let catalog = |hooks: &[&str]| {
+        std::fs::write(
+            home.path().join("hooks.toml"),
+            format!("version = 1\n\n{}", hooks.join("\n")),
+        )
+        .unwrap();
+        HookCatalog::discover(Some(home.path()), None, ProjectTrust::Untrusted)
+    };
+    let cases: [(Option<&[&str]>, &[&str], Vec<(&str, HookStatus)>); 3] = [
+        (
+            Some(&[LOG]),
+            &[LOG_EDITED],
+            vec![
+                ("user:log", HookStatus::Pending),
+                ("user:log", HookStatus::Stale),
+            ],
+        ),
+        (
+            Some(&[LOG]),
+            &[LOG, GUARD],
+            vec![
+                ("user:log", HookStatus::Active),
+                ("user:guard", HookStatus::NeedsReopen),
+            ],
+        ),
+        (None, &[LOG], vec![("user:log", HookStatus::NeedsReopen)]),
+    ];
+
+    for (started, now, expected) in cases {
+        let pipeline = started.map(|hooks| {
+            HookPipeline::start(
+                catalog(hooks).unwrap(),
+                SessionEnvironment::default(),
+                rho_sdk::CancellationToken::new(),
+            )
+            .unwrap()
+        });
+        let report = HookSnapshot::checked(pipeline.as_ref(), catalog(now)).session_report();
+
+        let listed: Vec<_> = report
+            .hooks
+            .iter()
+            .map(|hook| (hook.id.as_str(), hook.status))
+            .collect();
+        assert_eq!(
+            (report.enabled, listed),
+            (started.is_some(), expected),
+            "started with {started:?}, files now {now:?}"
+        );
+    }
+}
+
 #[test]
 fn an_activity_view_carries_the_denial_reason() {
     let activity = HookActivity {

@@ -175,6 +175,9 @@ fn hook_lines(hook: &HookContractView, width: usize) -> Vec<Line<'static>> {
     if let Some(drift) = hook.drift {
         let note = match drift {
             HookDrift::Pending => "not loaded: its file changed since the session loaded its hooks",
+            HookDrift::NeedsReopen => {
+                "not loaded: the session started without hooks of its kind; open it again to load it"
+            }
             HookDrift::Stale => "still runs: its file no longer defines it this way",
         };
         lines.extend(indented_wrapped_lines(

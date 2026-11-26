@@ -128,7 +128,9 @@ fn assert_edited_hook_reloaded(harness: &mut PtyHarness) -> Result<()> {
     // itself does not spell.
     harness.wait_for_text("1s 500ms", SETTLE)?;
     let screen = harness.screen().contents();
-    if screen.contains("still runs") || screen.contains("not loaded") {
+    // Unreloaded, the overlay lists the hook twice, pending then stale, and
+    // notes the first as not loaded.
+    if screen.matches("user:deny-force-push").count() != 1 || screen.contains("not loaded") {
         anyhow::bail!("/hooks did not reload the edited hooks file:\n{screen}");
     }
     Ok(())

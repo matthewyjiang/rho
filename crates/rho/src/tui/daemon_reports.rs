@@ -88,6 +88,14 @@ impl App {
         self.await_daemon_report(SessionReport::Hooks, asked);
     }
 
+    /// `/hooks` could not reload the hooks; the report that follows shows
+    /// the hooks the session keeps. Dropped once the person moved on.
+    pub(super) fn show_hooks_not_reloaded(&mut self, reason: &str) {
+        if self.awaited_daemon_report == Some(SessionReport::Hooks) {
+            self.insert_entry(&Entry::Error(format!("could not reload hooks: {reason}")));
+        }
+    }
+
     fn await_daemon_report(&mut self, report: SessionReport, asked: anyhow::Result<()>) {
         match asked {
             Ok(()) => {

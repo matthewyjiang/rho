@@ -229,7 +229,7 @@ pub use session::{
     SESSION_UNSTEER,
 };
 pub use session_hooks::{
-    SessionHooksReloadParams, SessionHooksReloadResponse, SESSION_HOOKS_RELOAD,
+    HooksReloadOutcome, SessionHooksReloadParams, SessionHooksReloadResponse, SESSION_HOOKS_RELOAD,
 };
 pub use setup::{
     ChildThreads, IdleWake, McpServer, SecretMap, SessionPart, SessionSetup, SignIn, Surfaces,

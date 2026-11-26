@@ -13,10 +13,10 @@ use super::SessionId;
 /// A file that cannot be read or validated leaves the session's hooks as
 /// they were, and so does a kind of hook (blocking or observing) the session
 /// started without, which loads only when the session is opened again: the
-/// response says the reload did not apply and the hooks report says why. An
-/// unloaded session is [`crate::ErrorCode::SessionNotLoaded`], and one with a
-/// turn or a change under way [`crate::ErrorCode::SessionBusy`]. A daemon
-/// that predates it answers [`crate::ErrorCode::MethodNotFound`].
+/// response's [`HooksReloadOutcome::Refused`] says why. An unloaded session
+/// is [`crate::ErrorCode::SessionNotLoaded`], and one in a turn
+/// [`crate::ErrorCode::SessionBusy`]. A daemon that predates it answers
+/// [`crate::ErrorCode::MethodNotFound`].
 pub const SESSION_HOOKS_RELOAD: &str = "rho/session/hooks/reload";
 
 /// Params of [`SESSION_HOOKS_RELOAD`].
@@ -37,15 +37,30 @@ impl SessionHooksReloadParams {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[non_exhaustive]
 pub struct SessionHooksReloadResponse {
-    /// Whether the session now runs what its hooks files define. False when
-    /// they could not load in full, so it keeps the hooks it ran; its hooks
-    /// report says why.
-    pub reloaded: bool,
+    pub outcome: HooksReloadOutcome,
 }
 
 impl SessionHooksReloadResponse {
     /// Builds it from each of its fields.
-    pub fn new(reloaded: bool) -> Self {
-        Self { reloaded }
+    pub fn new(outcome: HooksReloadOutcome) -> Self {
+        Self { outcome }
     }
+}
+
+/// What a [`SESSION_HOOKS_RELOAD`] did.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum HooksReloadOutcome {
+    /// The session now runs what its hooks files define.
+    Reloaded,
+    /// The session keeps the hooks it ran: a hooks file does not load, the
+    /// files add a kind of hook it started without, or a hook started it, so
+    /// it runs none. `reason` says which, as rho words it.
+    Refused { reason: String },
+    /// A value a newer daemon sends that this crate does not know; daemons
+    /// never send it.
+    #[serde(other)]
+    #[schemars(extend("x-rho-other" = true))]
+    Unknown,
 }

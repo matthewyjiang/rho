@@ -6,8 +6,8 @@ use std::path::Path;
 use pretty_assertions::assert_eq;
 use rho_protocol::{
     methods::{SessionHooksReload, SessionReportRead},
-    Client, HookStatus, SessionHooksReloadParams, SessionHooksReport, SessionId, SessionReport,
-    SessionReportData, SessionReportParams,
+    Client, HookStatus, HooksReloadOutcome, SessionHooksReloadParams, SessionHooksReport,
+    SessionId, SessionReport, SessionReportData, SessionReportParams,
 };
 
 use super::sessions::{settled_job, Sandbox};
@@ -53,12 +53,18 @@ async fn hooks_report(client: &Client, session: &SessionId) -> SessionHooksRepor
     }
 }
 
+/// Whether a reload of `session`'s hooks applied.
 async fn reload(client: &Client, session: &SessionId) -> bool {
-    client
+    let outcome = client
         .request::<SessionHooksReload>(&SessionHooksReloadParams::new(session.clone()))
         .await
         .expect("the reload is answered")
-        .reloaded
+        .outcome;
+    match outcome {
+        HooksReloadOutcome::Reloaded => true,
+        HooksReloadOutcome::Refused { .. } => false,
+        outcome => panic!("an outcome this test does not know: {outcome:?}"),
+    }
 }
 
 /// Prompts `session`, then waits until its `notify` hook has run `runs`

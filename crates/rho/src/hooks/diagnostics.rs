@@ -24,13 +24,14 @@ use super::{
     catalog::{HookCatalog, HookSpawnContract},
     config::{ConfiguredHookEvent, HookConfigError, WorkflowHookEventKind},
     dispatch::HookEngine,
-    HookPipeline,
+    HookPipeline, HookPorts,
 };
 
 /// What a hook will execute, ready to show before trust is granted.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HookContractView {
-    /// Whether the session runs it now.
+    /// Whether the session runs it now: false for a pending hook, true for
+    /// a stale one.
     pub active: bool,
     /// How it differs from what the session runs, when its file changed
     /// since the session loaded its hooks.
@@ -53,6 +54,9 @@ pub struct HookContractView {
 pub enum HookDrift {
     /// Its file defines it, but the session does not run it yet.
     Pending,
+    /// Its file defines it, but the session started without a hook of its
+    /// kind, so it runs only once the session is opened again.
+    NeedsReopen,
     /// The session still runs it, but its file no longer defines it so.
     Stale,
 }
@@ -128,6 +132,7 @@ enum ListedStatus {
     Active,
     Untrusted,
     Pending,
+    NeedsReopen,
     Stale,
 }
 
@@ -144,35 +149,40 @@ impl HookSnapshot {
         }
     }
 
-    /// The hooks files as read now (`files`), checked against the hooks the
-    /// session runs: `running`, none for a session without a hook runtime,
-    /// whose hooks did `activity`.
+    /// The hooks files as read now (`files`), checked against the hooks a
+    /// session running `running` runs; `None` for a session without a hook
+    /// runtime.
     ///
     /// A hook the files define is active when the session runs it exactly
-    /// so, and pending otherwise; one the session runs that the files no
-    /// longer define is stale. Files that do not load are reported as
-    /// `invalid` with the hooks the session runs.
+    /// so, pending when it does not but could after a reload, and needs a
+    /// reopen when the session started without a hook of its kind (see
+    /// [`HookPorts`]); one the session runs that the files no longer define
+    /// is stale. Files that do not load are reported as `invalid` with the
+    /// hooks the session runs.
     pub(super) fn checked(
-        running: Option<&HookCatalog>,
-        activity: Vec<HookActivity>,
+        running: Option<&HookPipeline>,
         files: Result<HookCatalog, HookConfigError>,
     ) -> Self {
-        let enabled = running.is_some();
+        let ports = HookPorts::of(running);
+        let current = running.map(|hooks| hooks.engine().catalog());
+        let activity = running.map_or_else(Vec::new, |hooks| hooks.engine().activity());
         let files = match files {
             Ok(files) => files,
             Err(error) => {
                 return Self {
+                    enabled: running.is_some(),
                     invalid: Some(InvalidHooksFile {
                         path: error.path.clone(),
-                        error: error.to_string(),
+                        error: error.detail(),
                     }),
                     activity,
-                    enabled,
-                    ..running.map_or_else(Self::disabled, Self::running)
+                    ..current
+                        .as_deref()
+                        .map_or_else(Self::disabled, Self::running)
                 };
             }
         };
-        let runs: Vec<HookSpawnContract> = running
+        let runs: Vec<HookSpawnContract> = current
             .map(|catalog| {
                 catalog
                     .spawn_contract()
@@ -197,15 +207,17 @@ impl HookSnapshot {
                     ListedStatus::Untrusted
                 } else if runs.contains(&contract) {
                     ListedStatus::Active
-                } else {
+                } else if ports.runs(contract.event) {
                     ListedStatus::Pending
+                } else {
+                    ListedStatus::NeedsReopen
                 };
                 ListedHook { contract, status }
             })
             .chain(stale)
             .collect();
         Self {
-            enabled,
+            enabled: running.is_some(),
             files: files.files().to_vec(),
             skipped_untrusted: skipped_untrusted(&files),
             invalid: None,
@@ -302,13 +314,6 @@ impl HookInspector {
         }
     }
 
-    /// The session's hooks files as read now (`files`), checked against the
-    /// hooks it runs (see [`HookSnapshot::checked`]).
-    pub(super) fn checked(&self, files: Result<HookCatalog, HookConfigError>) -> HookSnapshot {
-        let running = self.engine.catalog();
-        HookSnapshot::checked(Some(&running), self.engine.activity(), files)
-    }
-
     pub fn report(&self) -> HookReport {
         self.snapshot().report()
     }
@@ -330,6 +335,7 @@ fn contract_view(hook: &ListedHook) -> HookContractView {
         ListedStatus::Active => (true, None),
         ListedStatus::Untrusted => (false, None),
         ListedStatus::Pending => (false, Some(HookDrift::Pending)),
+        ListedStatus::NeedsReopen => (false, Some(HookDrift::NeedsReopen)),
         ListedStatus::Stale => (true, Some(HookDrift::Stale)),
     };
     HookContractView {
@@ -357,6 +363,7 @@ fn listed_contract(hook: &ListedHook) -> HookContract {
         ListedStatus::Active => HookStatus::Active,
         ListedStatus::Untrusted => HookStatus::Untrusted,
         ListedStatus::Pending => HookStatus::Pending,
+        ListedStatus::NeedsReopen => HookStatus::NeedsReopen,
         ListedStatus::Stale => HookStatus::Stale,
     };
     contract(&hook.contract, status)

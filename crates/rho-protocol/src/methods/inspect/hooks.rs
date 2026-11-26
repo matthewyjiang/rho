@@ -37,7 +37,10 @@ pub struct SessionHooksReport {
     /// Every hook the files define: those that load in the order they run,
     /// the user's file then the project's, each in file order; then those of
     /// the skipped file; then the [`HookStatus::Stale`] ones the session
-    /// still runs.
+    /// still runs. An edited hook is listed twice under its id, pending and
+    /// stale, so key hooks by more than their id. Each hook is checked on its
+    /// own: hooks the session runs in another order than the file now lists
+    /// them stay active.
     pub hooks: Vec<HookContract>,
     /// The latest hook invocations, oldest first. rho keeps a bounded
     /// number of them.
@@ -102,9 +105,12 @@ pub enum HookStatus {
     Disabled,
     /// Its file defines it, but the session does not run it as defined: the
     /// file changed since the session loaded its hooks. Reloading them loads
-    /// it, or, for a kind of hook (blocking or observing) the session started
-    /// without, opening the session again.
+    /// it.
     Pending,
+    /// Its file defines it, but the session started without a hook of its
+    /// kind (blocking or observing), which a reload cannot add: it runs once
+    /// the session is opened again.
+    NeedsReopen,
     /// The session runs it as its file defined it when the session loaded
     /// its hooks, but the file no longer does. Reloading them drops it.
     Stale,

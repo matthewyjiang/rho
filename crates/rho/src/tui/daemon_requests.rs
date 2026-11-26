@@ -34,10 +34,10 @@ use rho_protocol::{
         SessionMcp, SessionProcesses, SessionPrompt, SessionRename,
     },
     ClientEnvironment, ClientError, ConfigSetParams, ConfigWriter, ContentBlock, ErrorCode,
-    IdempotencyKey, JobListParams, ProcessOutputParams, PromptAuthor, SessionChange,
-    SessionConfigureParams, SessionDeleteParams, SessionHooksReloadParams, SessionId,
-    SessionInspectParams, SessionInspectResponse, SessionMcpParams, SessionProcessesParams,
-    SessionPromptParams, SessionRenameParams, SessionReport,
+    HooksReloadOutcome, IdempotencyKey, JobListParams, ProcessOutputParams, PromptAuthor,
+    SessionChange, SessionConfigureParams, SessionDeleteParams, SessionHooksReloadParams,
+    SessionId, SessionInspectParams, SessionInspectResponse, SessionMcpParams,
+    SessionProcessesParams, SessionPromptParams, SessionRenameParams, SessionReport,
 };
 use tokio::sync::{mpsc, oneshot, watch};
 
@@ -319,29 +319,47 @@ impl DaemonRequests {
                                         session.clone(),
                                     ))
                                     .await;
-                                // A file that does not load is in the report
-                                // that follows. A daemon from before the
-                                // method reloads the hooks as it reads them.
-                                match reload {
+                                let outcome = match reload {
+                                    Ok(answer) => Some(answer.outcome),
+                                    // A daemon from before the method reloads
+                                    // the hooks as it reads them.
                                     Err(error)
                                         if error.error_code()
-                                            != Some(ErrorCode::MethodNotFound) =>
+                                            == Some(ErrorCode::MethodNotFound) =>
                                     {
-                                        return Err(error);
+                                        None
                                     }
-                                    Ok(_) | Err(_) => {}
-                                }
-                                link.request::<SessionInspect>(&SessionInspectParams {
-                                    session,
-                                    report: SessionReport::Hooks,
-                                })
-                                .await
+                                    Err(error) => return Err(error),
+                                };
+                                let report = link
+                                    .request::<SessionInspect>(&SessionInspectParams {
+                                        session,
+                                        report: SessionReport::Hooks,
+                                    })
+                                    .await?;
+                                Ok((outcome, report))
                             })
                             .await;
-                        let result = report_answer(answer);
+                        let (refused, answer) = match answer {
+                            Some((link, Ok((outcome, report)))) => {
+                                let refused = match outcome {
+                                    Some(HooksReloadOutcome::Refused { reason }) => Some(reason),
+                                    Some(HooksReloadOutcome::Reloaded) | None => None,
+                                    Some(_) => Some(
+                                        "this rho does not know the daemon's answer".to_owned(),
+                                    ),
+                                };
+                                (refused, Some((link, Ok(report))))
+                            }
+                            Some((link, Err(error))) => (None, Some((link, Err(error)))),
+                            None => (None, None),
+                        };
+                        if let Some(reason) = refused {
+                            let _ = control_views.send(DaemonView::HooksNotReloaded(reason));
+                        }
                         let _ = control_views.send(DaemonView::Report {
                             report: SessionReport::Hooks,
-                            result,
+                            result: report_answer(answer),
                         });
                     }
                     Control::Rename(title) => {

@@ -216,6 +216,12 @@ impl HookConfigError {
         }
     }
 
+    /// What is wrong, without the file's path, for a view that shows the
+    /// path on its own.
+    pub fn detail(&self) -> String {
+        format!("{}{}", self.location, self.message)
+    }
+
     pub(crate) fn at_file(path: &Path, message: impl Into<String>) -> Self {
         Self::new(path, None, None, message)
     }
