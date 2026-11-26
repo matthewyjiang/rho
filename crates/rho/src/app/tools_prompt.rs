@@ -335,7 +335,8 @@ pub(crate) async fn assemble_tools_and_prompt(
             .process_keep_warm(options.process_keep_warm)
             .environment(options.environment.clone())
             .surfaces(options.surfaces.clone())
-            .pull_requests(options.pull_requests.clone());
+            .pull_requests(options.pull_requests.clone())
+            .agent_pool(options.subagent_pool.clone());
         let workflow_tracker = crate::tools::workflow_tracker::WorkflowRunTracker::new();
         tool_options = tool_options.workflow_tracker(workflow_tracker.clone());
         if advisor_capable {

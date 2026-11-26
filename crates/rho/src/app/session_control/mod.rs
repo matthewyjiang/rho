@@ -95,7 +95,9 @@ use params::{
     SteerResult, WaitParams,
 };
 pub(crate) use params::{WaitResult, MAX_WAIT_SECS};
-pub(crate) use policy::{Action, Caller, Grant, Holder, Limits, Refusal};
+pub(crate) use policy::{
+    Action, Caller, Grant, Holder, Limits, MaxSessions, Refusal, DEFAULT_MAX_SESSIONS,
+};
 
 /// Why an action failed. Its `Display` is what the caller sees.
 #[derive(Debug, thiserror::Error)]
@@ -502,10 +504,11 @@ impl SessionControl {
         let asked = u32::try_from(mine.map_or(0, HashSet::len))
             .unwrap_or(u32::MAX)
             .saturating_add(u32::from(adds));
-        if adds && asked > self.limits.max_sessions {
+        let limit = self.limits.max_sessions.limit();
+        if adds && asked > limit {
             return Err(Refusal::Sessions {
                 holder: holder.clone(),
-                limit: self.limits.max_sessions,
+                limit,
                 asked,
             }
             .into());

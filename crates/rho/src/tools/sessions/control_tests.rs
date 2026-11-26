@@ -46,3 +46,22 @@ fn describe_says_each_distinct_text_once() {
 
     assert_eq!(described, expected);
 }
+
+// Covers: the tool's concurrent-sessions cap is `behavior.agent_concurrency`,
+// as a session's config sets it, or as the budget the daemon shares stands
+// when the cap is checked, after a config publish resized it.
+// Owner: sessions tool, sizing its session-control core.
+#[test]
+fn max_sessions_follows_agent_concurrency() {
+    let shared = AgentConcurrency::from_config(10);
+    let live = max_sessions(/*agent_concurrency*/ 10, Some(&shared));
+    shared.set_total(32);
+
+    let limits = [
+        max_sessions(crate::config::DEFAULT_AGENT_CONCURRENCY, None).limit(),
+        max_sessions(/*agent_concurrency*/ 32, None).limit(),
+        live.limit(),
+    ];
+
+    assert_eq!(limits, [10, 32, 32]);
+}

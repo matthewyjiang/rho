@@ -16,7 +16,7 @@ use rho_sdk::{
 };
 
 use crate::{
-    app::peer_sessions::PeerInbox,
+    app::{peer_sessions::PeerInbox, session_control::MaxSessions},
     session::{
         recall::{self, RecallRequest, RecallStore},
         search::Request,
@@ -25,6 +25,8 @@ use crate::{
 };
 
 mod control;
+
+pub(in crate::tools) use control::max_sessions;
 
 /// Tool arguments: index-backed prior-session actions, current-session
 /// recall, which never touches the search index, or a call of the
@@ -81,12 +83,14 @@ pub(super) fn sdk_bundle(
     recall: RecallStore,
     max_output_bytes: usize,
     environment: SessionEnvironment,
+    max_sessions: MaxSessions,
 ) -> super::sdk_registry::StaticToolBundle {
     super::sdk_registry::StaticToolBundle::new(vec![Arc::new(Sessions {
         binding,
         recall,
         max_output_bytes,
         environment,
+        max_sessions,
         root: crate::paths::rho_dir()
             .map(|path| path.join("sessions"))
             .map_err(|error| error.to_string()),
@@ -100,6 +104,8 @@ struct Sessions {
     /// The environment the session's children see, which the sessions its
     /// agent starts run with, and whose caller context bounds them.
     environment: SessionEnvironment,
+    /// How many sessions this session may have running through the tool.
+    max_sessions: MaxSessions,
     root: Result<std::path::PathBuf, String>,
 }
 
@@ -148,6 +154,7 @@ impl Tool for Sessions {
                     return control::prepare(
                         call,
                         &self.current()?,
+                        &self.max_sessions,
                         peers,
                         &self.environment,
                         &self.root,

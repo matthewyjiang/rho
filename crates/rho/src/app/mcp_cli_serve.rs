@@ -20,7 +20,7 @@ use crate::{
             tokens::{Rotation, TokenSet},
             watch, HttpOptions,
         },
-        session_control::{Limits, Reach, SessionControl},
+        session_control::{Limits, MaxSessions, Reach, SessionControl, DEFAULT_MAX_SESSIONS},
     },
     caller_context::{Access, CallerContext},
     cli::{Cli, McpServeArgs, McpTokenCommand, McpTokenScope},
@@ -38,9 +38,10 @@ pub(in crate::app) async fn serve(args: &McpServeArgs, cli: &Cli) -> anyhow::Res
         })
         .transpose()?;
     let defaults = Limits::default();
+    let max_sessions = args.max_sessions.unwrap_or(DEFAULT_MAX_SESSIONS);
     let limits = Limits {
         max_depth: args.max_depth.unwrap_or(defaults.max_depth),
-        max_sessions: args.max_sessions.unwrap_or(defaults.max_sessions),
+        max_sessions: MaxSessions::Fixed(max_sessions),
     };
     let control = Arc::new(SessionControl::new(limits, Reach::StartIfNeeded));
     let environment = ClientEnvironment::of_this_process();
@@ -72,7 +73,7 @@ pub(in crate::app) async fn serve(args: &McpServeArgs, cli: &Cli) -> anyhow::Res
                     name,
                     max_watches: args
                         .max_watches
-                        .unwrap_or_else(|| watch::default_max_watches(limits.max_sessions)),
+                        .unwrap_or_else(|| watch::default_max_watches(max_sessions)),
                     watches_dir: crate::paths::rho_dir()?.join(watch::DIR),
                     inherited_listener,
                     upgrade: upgrade(),

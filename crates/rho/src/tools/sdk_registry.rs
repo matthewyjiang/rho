@@ -93,6 +93,9 @@ pub struct ToolSetOptions {
     environment: crate::session_environment::SessionEnvironment,
     surfaces: Option<super::ui::SurfaceHost>,
     pull_requests: Option<crate::app::pull_requests::PullRequestInbox>,
+    /// The agent budget the session takes capacity from, which sizes the
+    /// sessions it may run through the `sessions` tool.
+    agent_pool: crate::app::subagent_pool::SubagentPool,
 }
 
 impl Default for ToolSetOptions {
@@ -113,7 +116,17 @@ impl ToolSetOptions {
             environment: Default::default(),
             surfaces: None,
             pull_requests: None,
+            agent_pool: crate::app::subagent_pool::SubagentPool::Own,
         }
+    }
+
+    /// Supplies the agent budget the session takes capacity from, which the
+    /// daemon shares across its sessions; it sizes the sessions the session
+    /// may run through the `sessions` tool. Without it the session's config
+    /// sizes them.
+    pub(crate) fn agent_pool(mut self, pool: crate::app::subagent_pool::SubagentPool) -> Self {
+        self.agent_pool = pool;
+        self
     }
 
     /// Supplies the session's surfaces, which the `ui` tool shows the user.
@@ -310,6 +323,7 @@ impl AppToolSet {
             environment,
             surfaces,
             pull_requests,
+            agent_pool,
         } = options;
         let mut tool_set = Self::disabled_for(environment.credentials());
         tool_set.workflow_tracker = workflow_tracker;
@@ -354,6 +368,7 @@ impl AppToolSet {
                 recall,
                 config.max_output_bytes,
                 environment.clone(),
+                super::sessions::max_sessions(config.agent_concurrency, agent_pool.shared_budget()),
             ));
         }
         if capabilities.contains(&ToolCapability::Rho) {

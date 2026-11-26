@@ -50,6 +50,14 @@ impl SubagentPool {
         }
     }
 
+    /// The budget the host shares across its sessions, if it shares one.
+    pub(crate) fn shared_budget(&self) -> Option<&AgentConcurrency> {
+        match self {
+            Self::Own => None,
+            Self::Shared { concurrency, .. } => Some(concurrency),
+        }
+    }
+
     /// The pool workflow run `run`'s agent nodes take capacity from: this
     /// one, whose observer hears of the run first and returns the observer
     /// of its nodes, and where to report how the run ended, if anyone
