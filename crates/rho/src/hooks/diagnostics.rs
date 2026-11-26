@@ -2,6 +2,10 @@
 //! [`HookReport`] for diagnostics and the `/hooks` overlay, and the typed
 //! report a daemon session answers, both read from one [`HookSnapshot`].
 //!
+//! A daemon session's report reads its hooks files again and checks them
+//! against the hooks the session runs ([`HookSnapshot::checked`]); it never
+//! installs what it read. The `rho` tool's report is the running hooks alone.
+//!
 //! Kept next to the hook types rather than in the diagnostics module so the
 //! hook contract stays explicit. Diagnostics and the `/hooks` overlay consume
 //! that data; they do not decide which programs run.
@@ -9,8 +13,8 @@
 use std::{path::PathBuf, sync::Arc};
 
 use rho_protocol::{
-    HookActivityRecord, HookContract, HookStatus, HookTools, HookWarning, SessionHooksReport,
-    SkippedHooksFile,
+    HookActivityRecord, HookContract, HookStatus, HookTools, HookWarning, InvalidHooksFile,
+    SessionHooksReport, SkippedHooksFile,
 };
 use rho_sdk::hooks::HookEventKind;
 use serde::{Deserialize, Serialize};
@@ -18,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use super::{
     activity::{HookActivity, HookOutcome},
     catalog::{HookCatalog, HookSpawnContract},
-    config::{ConfiguredHookEvent, WorkflowHookEventKind},
+    config::{ConfiguredHookEvent, HookConfigError, WorkflowHookEventKind},
     dispatch::HookEngine,
     HookPipeline,
 };
@@ -26,7 +30,12 @@ use super::{
 /// What a hook will execute, ready to show before trust is granted.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HookContractView {
+    /// Whether the session runs it now.
     pub active: bool,
+    /// How it differs from what the session runs, when its file changed
+    /// since the session loaded its hooks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drift: Option<HookDrift>,
     pub id: String,
     pub event: String,
     pub tools: String,
@@ -36,6 +45,16 @@ pub struct HookContractView {
     pub environment: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub warning: Option<String>,
+}
+
+/// How a listed hook differs from what its session runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HookDrift {
+    /// Its file defines it, but the session does not run it yet.
+    Pending,
+    /// The session still runs it, but its file no longer defines it so.
+    Stale,
 }
 
 /// One recorded hook invocation.
@@ -75,6 +94,10 @@ pub struct HookReport {
     pub skipped_untrusted: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skipped_untrusted_error: Option<String>,
+    /// A hooks file that loads but could not be read or validated, with
+    /// why; the session keeps the hooks listed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub invalid: Option<String>,
     pub hooks: Vec<HookContractView>,
     pub recent_activity: Vec<HookActivityView>,
 }
@@ -87,8 +110,25 @@ pub struct HookSnapshot {
     enabled: bool,
     files: Vec<PathBuf>,
     skipped_untrusted: Option<SkippedHooksFile>,
-    contracts: Vec<HookSpawnContract>,
+    invalid: Option<InvalidHooksFile>,
+    hooks: Vec<ListedHook>,
     activity: Vec<HookActivity>,
+}
+
+/// One hook a report lists, and whether its session runs it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ListedHook {
+    contract: HookSpawnContract,
+    status: ListedStatus,
+}
+
+/// Whether a session runs a listed hook, as [`HookStatus`] tells it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ListedStatus {
+    Active,
+    Untrusted,
+    Pending,
+    Stale,
 }
 
 impl HookSnapshot {
@@ -98,18 +138,102 @@ impl HookSnapshot {
             enabled: false,
             files: Vec::new(),
             skipped_untrusted: None,
-            contracts: Vec::new(),
+            invalid: None,
+            hooks: Vec::new(),
             activity: Vec::new(),
         }
     }
 
-    /// A session with no hook runtime whose workspace has a project hooks
-    /// file it does not trust: `catalog` holds that file, and no active hook.
-    pub fn untrusted_only(catalog: &HookCatalog) -> Self {
+    /// The hooks files as read now (`files`), checked against the hooks the
+    /// session runs: `running`, none for a session without a hook runtime,
+    /// whose hooks did `activity`.
+    ///
+    /// A hook the files define is active when the session runs it exactly
+    /// so, and pending otherwise; one the session runs that the files no
+    /// longer define is stale. Files that do not load are reported as
+    /// `invalid` with the hooks the session runs.
+    pub(super) fn checked(
+        running: Option<&HookCatalog>,
+        activity: Vec<HookActivity>,
+        files: Result<HookCatalog, HookConfigError>,
+    ) -> Self {
+        let enabled = running.is_some();
+        let files = match files {
+            Ok(files) => files,
+            Err(error) => {
+                return Self {
+                    invalid: Some(InvalidHooksFile {
+                        path: error.path.clone(),
+                        error: error.to_string(),
+                    }),
+                    activity,
+                    enabled,
+                    ..running.map_or_else(Self::disabled, Self::running)
+                };
+            }
+        };
+        let runs: Vec<HookSpawnContract> = running
+            .map(|catalog| {
+                catalog
+                    .spawn_contract()
+                    .into_iter()
+                    .filter(|contract| contract.active)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let defined = files.spawn_contract();
+        let stale: Vec<ListedHook> = runs
+            .iter()
+            .filter(|contract| !defined.contains(contract))
+            .map(|contract| ListedHook {
+                contract: contract.clone(),
+                status: ListedStatus::Stale,
+            })
+            .collect();
+        let hooks = defined
+            .into_iter()
+            .map(|contract| {
+                let status = if !contract.active {
+                    ListedStatus::Untrusted
+                } else if runs.contains(&contract) {
+                    ListedStatus::Active
+                } else {
+                    ListedStatus::Pending
+                };
+                ListedHook { contract, status }
+            })
+            .chain(stale)
+            .collect();
         Self {
+            enabled,
+            files: files.files().to_vec(),
+            skipped_untrusted: skipped_untrusted(&files),
+            invalid: None,
+            hooks,
+            activity,
+        }
+    }
+
+    /// The hooks `catalog` runs, with no activity.
+    fn running(catalog: &HookCatalog) -> Self {
+        Self {
+            enabled: true,
+            files: catalog.files().to_vec(),
             skipped_untrusted: skipped_untrusted(catalog),
-            contracts: catalog.spawn_contract(),
-            ..Self::disabled()
+            invalid: None,
+            hooks: catalog
+                .spawn_contract()
+                .into_iter()
+                .map(|contract| ListedHook {
+                    status: if contract.active {
+                        ListedStatus::Active
+                    } else {
+                        ListedStatus::Untrusted
+                    },
+                    contract,
+                })
+                .collect(),
+            activity: Vec::new(),
         }
     }
 
@@ -131,7 +255,8 @@ impl HookSnapshot {
                 .skipped_untrusted
                 .as_ref()
                 .and_then(|skipped| skipped.error.clone()),
-            hooks: self.contracts.iter().map(contract_view).collect(),
+            invalid: self.invalid.as_ref().map(|invalid| invalid.error.clone()),
+            hooks: self.hooks.iter().map(contract_view).collect(),
             recent_activity: self.activity.iter().map(HookActivityView::from).collect(),
         }
     }
@@ -142,7 +267,8 @@ impl HookSnapshot {
             enabled: self.enabled,
             files: self.files.clone(),
             skipped_untrusted: self.skipped_untrusted.clone(),
-            hooks: self.contracts.iter().map(contract).collect(),
+            invalid: self.invalid.clone(),
+            hooks: self.hooks.iter().map(listed_contract).collect(),
             recent_activity: self.activity.iter().map(activity_record).collect(),
         }
     }
@@ -168,15 +294,19 @@ impl HookInspector {
         }
     }
 
+    /// The hooks the session runs and what they did.
     pub fn snapshot(&self) -> HookSnapshot {
-        let catalog = self.engine.catalog();
         HookSnapshot {
-            enabled: true,
-            files: catalog.files().to_vec(),
-            skipped_untrusted: skipped_untrusted(&catalog),
-            contracts: catalog.spawn_contract(),
             activity: self.engine.activity(),
+            ..HookSnapshot::running(&self.engine.catalog())
         }
+    }
+
+    /// The session's hooks files as read now (`files`), checked against the
+    /// hooks it runs (see [`HookSnapshot::checked`]).
+    pub(super) fn checked(&self, files: Result<HookCatalog, HookConfigError>) -> HookSnapshot {
+        let running = self.engine.catalog();
+        HookSnapshot::checked(Some(&running), self.engine.activity(), files)
     }
 
     pub fn report(&self) -> HookReport {
@@ -193,10 +323,18 @@ impl std::fmt::Debug for HookInspector {
     }
 }
 
-/// Renders one hook's resolved spawn contract.
-fn contract_view(contract: &HookSpawnContract) -> HookContractView {
+/// Renders one listed hook's resolved spawn contract.
+fn contract_view(hook: &ListedHook) -> HookContractView {
+    let contract = &hook.contract;
+    let (active, drift) = match hook.status {
+        ListedStatus::Active => (true, None),
+        ListedStatus::Untrusted => (false, None),
+        ListedStatus::Pending => (false, Some(HookDrift::Pending)),
+        ListedStatus::Stale => (true, Some(HookDrift::Stale)),
+    };
     HookContractView {
-        active: contract.active,
+        active,
+        drift,
         id: contract.id.clone(),
         event: contract.event.wire_name().to_owned(),
         tools: contract.tools.describe(),
@@ -213,14 +351,22 @@ fn contract_view(contract: &HookSpawnContract) -> HookContractView {
     }
 }
 
-pub(super) fn contract(contract: &HookSpawnContract) -> HookContract {
+/// A listed hook as the typed report carries it.
+fn listed_contract(hook: &ListedHook) -> HookContract {
+    let status = match hook.status {
+        ListedStatus::Active => HookStatus::Active,
+        ListedStatus::Untrusted => HookStatus::Untrusted,
+        ListedStatus::Pending => HookStatus::Pending,
+        ListedStatus::Stale => HookStatus::Stale,
+    };
+    contract(&hook.contract, status)
+}
+
+/// `contract` as the typed reports carry it, with `status`.
+pub(super) fn contract(contract: &HookSpawnContract, status: HookStatus) -> HookContract {
     HookContract {
         id: contract.id.clone(),
-        status: if contract.active {
-            HookStatus::Active
-        } else {
-            HookStatus::Untrusted
-        },
+        status,
         event: wire_event(contract.event),
         tools: contract
             .tools

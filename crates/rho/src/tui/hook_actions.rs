@@ -4,7 +4,7 @@ use super::App;
 
 impl App {
     pub(super) fn execute_hooks_command(&mut self) -> anyhow::Result<()> {
-        self.request_daemon_report(rho_protocol::SessionReport::Hooks);
+        self.reload_daemon_hooks();
         Ok(())
     }
 }

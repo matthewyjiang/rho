@@ -545,6 +545,13 @@ impl Service for DaemonHost {
         self.sessions.report(params).await
     }
 
+    async fn reload_session_hooks(
+        &self,
+        params: rho_protocol::SessionHooksReloadParams,
+    ) -> Result<rho_protocol::SessionHooksReloadResponse, RpcError> {
+        self.sessions.reload_hooks(params).await
+    }
+
     async fn configure_session(
         &self,
         params: SessionConfigureParams,

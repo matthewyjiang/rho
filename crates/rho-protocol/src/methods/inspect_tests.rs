@@ -84,6 +84,10 @@ fn every_typed_report_round_trips_through_its_wire_form() {
                     path: "/work/.rho/hooks.toml".into(),
                     error: None,
                 }),
+                invalid: Some(InvalidHooksFile {
+                    path: "/home/me/.rho/hooks.toml".into(),
+                    error: "missing field `on`".into(),
+                }),
                 hooks: vec![HookContract {
                     id: "user:fmt".into(),
                     status: HookStatus::Active,
@@ -123,6 +127,7 @@ fn every_typed_report_round_trips_through_its_wire_form() {
                 "enabled": true,
                 "files": ["/home/me/.rho/hooks.toml"],
                 "skipped_untrusted": {"path": "/work/.rho/hooks.toml"},
+                "invalid": {"path": "/home/me/.rho/hooks.toml", "error": "missing field `on`"},
                 "hooks": [{
                     "id": "user:fmt",
                     "status": "active",

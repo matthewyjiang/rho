@@ -30,13 +30,14 @@ use std::{
 
 use rho_protocol::{
     methods::{
-        ConfigSet, JobList, SessionConfigure, SessionDelete, SessionInspect, SessionMcp,
-        SessionProcesses, SessionPrompt, SessionRename,
+        ConfigSet, JobList, SessionConfigure, SessionDelete, SessionHooksReload, SessionInspect,
+        SessionMcp, SessionProcesses, SessionPrompt, SessionRename,
     },
     ClientEnvironment, ClientError, ConfigSetParams, ConfigWriter, ContentBlock, ErrorCode,
     IdempotencyKey, JobListParams, ProcessOutputParams, PromptAuthor, SessionChange,
-    SessionConfigureParams, SessionDeleteParams, SessionId, SessionInspectParams, SessionMcpParams,
-    SessionProcessesParams, SessionPromptParams, SessionRenameParams, SessionReport,
+    SessionConfigureParams, SessionDeleteParams, SessionHooksReloadParams, SessionId,
+    SessionInspectParams, SessionInspectResponse, SessionMcpParams, SessionProcessesParams,
+    SessionPromptParams, SessionRenameParams, SessionReport,
 };
 use tokio::sync::{mpsc, oneshot, watch};
 
@@ -160,6 +161,21 @@ where
     }
 }
 
+/// What the TUI shows of a report the daemon answered `answer` with.
+fn report_answer(
+    answer: Option<(Arc<Link>, Result<SessionInspectResponse, ClientError>)>,
+) -> Result<serde_json::Value, ReportRefusal> {
+    match answer {
+        Some((_, answer)) => answer
+            .map(|answer| answer.report)
+            .map_err(|error| ReportRefusal {
+                busy: error.error_code() == Some(ErrorCode::SessionBusy),
+                message: error.to_string(),
+            }),
+        None => Err(LOST.to_owned().into()),
+    }
+}
+
 /// A request that must not wait behind a queued change.
 enum Control {
     Mcp,
@@ -168,6 +184,9 @@ enum Control {
     /// The session's processes, and the output named, if any.
     Processes(Option<ProcessOutputParams>),
     Inspect(SessionReport),
+    /// Reloads the session's hooks, then reads its hooks report, for
+    /// `/hooks`.
+    ReloadHooks,
     /// Deletes saved sessions, in order; `result` takes each one's refusal.
     Delete {
         sessions: Vec<String>,
@@ -289,18 +308,41 @@ impl DaemonRequests {
                                 .await
                             })
                             .await;
-                        let result = match answer {
-                            Some((_, answer)) => {
-                                answer
-                                    .map(|answer| answer.report)
-                                    .map_err(|error| ReportRefusal {
-                                        busy: error.error_code() == Some(ErrorCode::SessionBusy),
-                                        message: error.to_string(),
-                                    })
-                            }
-                            None => Err(LOST.to_owned().into()),
-                        };
+                        let result = report_answer(answer);
                         let _ = control_views.send(DaemonView::Report { report, result });
+                    }
+                    Control::ReloadHooks => {
+                        let answer =
+                            on_attachment(&mut control_target, |link, session| async move {
+                                let reload = link
+                                    .request::<SessionHooksReload>(&SessionHooksReloadParams::new(
+                                        session.clone(),
+                                    ))
+                                    .await;
+                                // A file that does not load is in the report
+                                // that follows. A daemon from before the
+                                // method reloads the hooks as it reads them.
+                                match reload {
+                                    Err(error)
+                                        if error.error_code()
+                                            != Some(ErrorCode::MethodNotFound) =>
+                                    {
+                                        return Err(error);
+                                    }
+                                    Ok(_) | Err(_) => {}
+                                }
+                                link.request::<SessionInspect>(&SessionInspectParams {
+                                    session,
+                                    report: SessionReport::Hooks,
+                                })
+                                .await
+                            })
+                            .await;
+                        let result = report_answer(answer);
+                        let _ = control_views.send(DaemonView::Report {
+                            report: SessionReport::Hooks,
+                            result,
+                        });
                     }
                     Control::Rename(title) => {
                         let answer = on_attachment(&mut control_target, |link, session| {
@@ -498,6 +540,12 @@ impl DaemonRequests {
     pub(super) fn inspect(&self, report: SessionReport) -> anyhow::Result<()> {
         self.control
             .send(Control::Inspect(report))
+            .map_err(|_| anyhow::anyhow!(LOST))
+    }
+
+    pub(super) fn reload_hooks(&self) -> anyhow::Result<()> {
+        self.control
+            .send(Control::ReloadHooks)
             .map_err(|_| anyhow::anyhow!(LOST))
     }
 

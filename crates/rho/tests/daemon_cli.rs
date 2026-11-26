@@ -104,6 +104,11 @@ mod upgrade;
 #[path = "support/daemon_skew.rs"]
 mod skew;
 
+// Unix: its hooks are shell scripts.
+#[cfg(unix)]
+#[path = "support/daemon_hooks.rs"]
+mod hooks;
+
 // Unix: its hooks are shell scripts, and it reads `/proc`.
 #[cfg(unix)]
 #[path = "support/daemon_identity.rs"]

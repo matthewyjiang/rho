@@ -194,10 +194,11 @@ pub use methods::{
     CompactionThreshold, CompactionTier, CompletedCompactions, ContextBasis, ContextMessageKind,
     ContextMessagePart, ContextPromptPart, ContextToolResultPart, ContextToolSchemaPart,
     HookActivityRecord, HookContract, HookEvent, HookOutcome, HookStatus, HookTools, HookWarning,
-    PromptSourceKind, ProviderContextBlockId, SessionCompactionReport, SessionContextReport,
-    SessionHooksReport, SessionInspectParams, SessionInspectResponse, SessionProviderContextReport,
-    SessionReport, SessionReportData, SessionReportParams, SessionReportResponse, SkippedHooksFile,
-    SummaryRequestPath, ToolSchemaOrigin, SESSION_INSPECT, SESSION_REPORT,
+    InvalidHooksFile, PromptSourceKind, ProviderContextBlockId, SessionCompactionReport,
+    SessionContextReport, SessionHooksReport, SessionInspectParams, SessionInspectResponse,
+    SessionProviderContextReport, SessionReport, SessionReportData, SessionReportParams,
+    SessionReportResponse, SkippedHooksFile, SummaryRequestPath, ToolSchemaOrigin, SESSION_INSPECT,
+    SESSION_REPORT,
 };
 pub use methods::{
     ConfiguredMcpServer, McpListParams, McpListResponse, McpServerSource, McpTransport, MCP_LIST,
@@ -218,6 +219,7 @@ pub use methods::{
     ProcessChunk, ProcessOutput, ProcessOutputParams, ProcessState, ProcessStream, SessionProcess,
     SessionProcessesParams, SessionProcessesResponse, SESSION_PROCESSES,
 };
+pub use methods::{SessionHooksReloadParams, SessionHooksReloadResponse, SESSION_HOOKS_RELOAD};
 pub use methods::{
     SessionMcpCatalog, SessionMcpCatalogParams, SessionMcpCompleteParams,
     SessionMcpCompleteResponse, SessionMcpPrompt, SessionMcpPromptArgument, SessionMcpResource,

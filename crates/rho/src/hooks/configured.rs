@@ -74,9 +74,10 @@ fn listed(scope: HooksFileScope, file: HooksFileRead, invalid: Option<&Path>) ->
     let hooks = definitions
         .iter()
         .map(|hook| {
-            let mut contract = contract(&spawn_contract(hook, hook_status == HookStatus::Active));
-            contract.status = hook_status;
-            contract
+            contract(
+                &spawn_contract(hook, hook_status == HookStatus::Active),
+                hook_status,
+            )
         })
         .collect();
     HooksFile::new(file.path, scope, status, hooks)

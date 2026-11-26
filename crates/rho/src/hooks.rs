@@ -52,7 +52,7 @@ use crate::{
 
 pub use catalog::{HookCatalog, TRUST_PROJECT_HOOKS_ENV};
 pub use config::HookConfigError;
-pub(crate) use diagnostics::HookContractView;
+pub(crate) use diagnostics::{HookContractView, HookDrift};
 pub use diagnostics::{HookInspector, HookReport, HookSnapshot};
 pub use dispatch::HookEngine;
 pub(crate) use dispatch::WorkflowNodeFinished;
@@ -229,38 +229,63 @@ pub fn running_inside_hook(environment: &Ambient) -> bool {
     environment.read_os(IN_HOOK_ENV).is_some()
 }
 
-/// Reads the hooks for the workspace containing `cwd` again and reports
-/// what a session running `hooks` there now has. `inside_hook` is
+/// Reports the hooks of a session running `hooks` in the workspace
+/// containing `cwd`: its hooks files read again and checked against what it
+/// runs, without changing what it runs. `inside_hook` is
 /// [`running_inside_hook`] for the session's environment, and `trust` its
 /// project trust.
 ///
-/// The swap is atomic, so a blocking decision already in flight keeps the
-/// hook set it started with. A session that started without hooks, or
-/// without a whole class of hooks (blocking vs observational), stays that
-/// way until it is opened again: installing a gate or worker means
-/// rebuilding the SDK runtime, which a report should not do behind the
-/// user's back.
-pub fn reload_snapshot(
+/// A file that does not load is reported, not raised: the report shows it
+/// with the hooks the session runs.
+pub fn read_snapshot(
     hooks: Option<&HookPipeline>,
     cwd: &std::path::Path,
     trust: ProjectTrusts,
     inside_hook: bool,
-) -> anyhow::Result<HookSnapshot> {
-    let Some(hooks) = hooks else {
-        // A Rho a hook started runs without hooks (#1659).
-        if inside_hook {
-            return Ok(HookSnapshot::disabled());
-        }
-        let mut discard = |_message: String| {};
-        let catalog = discover_for_cwd(cwd, trust, &mut discard)?;
-        anyhow::ensure!(
-            catalog.is_empty(),
-            "hooks were added since this session started; restart Rho to load them"
-        );
-        return Ok(HookSnapshot::untrusted_only(&catalog));
-    };
-    hooks.reload_for_cwd(cwd)?;
-    Ok(HookInspector::new(hooks).snapshot())
+) -> HookSnapshot {
+    // A Rho a hook started runs without hooks (#1659).
+    if hooks.is_none() && inside_hook {
+        return HookSnapshot::disabled();
+    }
+    let mut discard = |_message: String| {};
+    let files = discover_for_cwd(cwd, trust, &mut discard);
+    match hooks {
+        Some(hooks) => HookInspector::new(hooks).checked(files),
+        None => HookSnapshot::checked(None, Vec::new(), files),
+    }
+}
+
+/// Reloads the hooks of a session running `hooks` in the workspace
+/// containing `cwd` from their files, as `/hooks` asks
+/// (`rho/session/hooks/reload`). `inside_hook` and `trust` are as for
+/// [`read_snapshot`].
+///
+/// On an error the session keeps the hooks it ran (see
+/// [`HookPipeline::reload_for_cwd`]). A session that started without hooks
+/// cannot start them here: installing a gate or worker means rebuilding its
+/// SDK runtime, so hooks added since load when it is opened again.
+pub fn reload_for_session(
+    hooks: Option<&HookPipeline>,
+    cwd: &std::path::Path,
+    trust: ProjectTrusts,
+    inside_hook: bool,
+) -> Result<(), HookConfigError> {
+    if let Some(hooks) = hooks {
+        return hooks.reload_for_cwd(cwd);
+    }
+    // A Rho a hook started runs without hooks (#1659).
+    if inside_hook {
+        return Ok(());
+    }
+    let mut discard = |_message: String| {};
+    let catalog = discover_for_cwd(cwd, trust, &mut discard)?;
+    if catalog.is_empty() {
+        return Ok(());
+    }
+    Err(HookConfigError::at_file(
+        cwd,
+        "hooks were added since this session started; open it again to load them",
+    ))
 }
 
 /// How long queued observational hooks may finish after a session ends.

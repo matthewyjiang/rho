@@ -47,6 +47,17 @@ impl DaemonSession {
             .inspect(report)
     }
 
+    /// Reload the session's hooks from their files, then ask for its hooks
+    /// report, which arrives as `DaemonView::Report`; the daemon refuses
+    /// during a turn.
+    pub(in crate::tui) fn reload_hooks(&self) -> anyhow::Result<()> {
+        self.ensure_followed()?;
+        self.requests
+            .as_ref()
+            .expect("attached session has requests")
+            .reload_hooks()
+    }
+
     /// Reads what of the conversation the session's model cannot be sent,
     /// now: the send that asks waits on the answer, so it does not go
     /// through the request queue. The daemon refuses during a turn.

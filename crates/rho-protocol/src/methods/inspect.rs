@@ -24,7 +24,7 @@ pub use context::{
 };
 pub use hooks::{
     HookActivityRecord, HookContract, HookEvent, HookOutcome, HookStatus, HookTools, HookWarning,
-    SessionHooksReport, SkippedHooksFile,
+    InvalidHooksFile, SessionHooksReport, SkippedHooksFile,
 };
 pub use provider_context::{ProviderContextBlockId, SessionProviderContextReport};
 
@@ -51,8 +51,10 @@ pub enum SessionReport {
     /// What fills the model's context window on the next request, by
     /// source.
     Context,
-    /// The session's hooks, read again from their files, and their recent
-    /// activity.
+    /// The session's hooks files read again, checked against the hooks the
+    /// session runs, and their recent activity. Reading it leaves the
+    /// session's hooks as they are; [`super::SESSION_HOOKS_RELOAD`] reloads
+    /// them.
     Hooks,
     /// The session's compaction settings as token counts, what its
     /// compactions removed, and what the latest one did and cost.

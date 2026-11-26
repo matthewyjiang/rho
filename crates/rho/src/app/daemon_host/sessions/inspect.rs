@@ -1,12 +1,17 @@
 //! Reads a report about a loaded session between its turns, as rho's
-//! frontends show it (`rho/session/inspect`) or typed (`rho/session/report`).
+//! frontends show it (`rho/session/inspect`) or typed (`rho/session/report`),
+//! and reloads its hooks (`rho/session/hooks/reload`), the one change here.
+//! A report changes nothing about the session it reads.
+
+use std::sync::Arc;
 
 use rho_protocol::{
-    ErrorCode, RpcError, SessionId, SessionInspectParams, SessionInspectResponse, SessionReport,
-    SessionReportData, SessionReportParams, SessionReportResponse,
+    ErrorCode, RpcError, SessionHooksReloadParams, SessionHooksReloadResponse, SessionId,
+    SessionInspectParams, SessionInspectResponse, SessionReport, SessionReportData,
+    SessionReportParams, SessionReportResponse,
 };
 
-use super::Sessions;
+use super::{LoadedSession, Sessions};
 use crate::app::{
     compaction_report::{session_compaction_report, CompactionReport},
     context_report::ContextReport,
@@ -37,6 +42,30 @@ impl Sessions {
         Ok(SessionReportResponse::new(read.typed))
     }
 
+    /// Reloads the session's hooks from their files. Files that do not load
+    /// leave its hooks as they were, which the answer and its hooks report
+    /// say, rather than failing the request.
+    pub(in crate::app::daemon_host) async fn reload_hooks(
+        &self,
+        params: SessionHooksReloadParams,
+    ) -> Result<SessionHooksReloadResponse, RpcError> {
+        let session = self.between_turns(&params.session).await?;
+        let runtime = session.runtime.lock().await;
+        let runtime = runtime.as_ref().ok_or_else(not_loaded)?;
+        let reloaded = match runtime.reload_hooks() {
+            Ok(()) => true,
+            Err(error) => {
+                tracing::info!(
+                    target: "rho::hooks",
+                    session = %session.id,
+                    "hooks were not reloaded: {error}"
+                );
+                false
+            }
+        };
+        Ok(SessionHooksReloadResponse::new(reloaded))
+    }
+
     // NEXT_MAJOR(rho-protocol): make rho/session/inspect answer the typed SessionReportData, render rho's TUI from it, and remove rho/session/report.
     // Until then both methods read the report here, and inspect answers
     // only the presentation view.
@@ -45,41 +74,7 @@ impl Sessions {
         session_id: &SessionId,
         report: SessionReport,
     ) -> Result<ReadReport, RpcError> {
-        self.refuse_when_stopping()?;
-        let not_loaded = || {
-            RpcError::new(
-                ErrorCode::SessionNotLoaded,
-                "the daemon has not loaded the session; attach to it first",
-            )
-        };
-        let session = self
-            .loaded_session(session_id)
-            .await?
-            .ok_or_else(not_loaded)?;
-        // A report reads what a turn is changing, and a client asked to
-        // see it now: refused, not queued behind the turn. A change or an
-        // options refresh holds the runtime only briefly, so those are
-        // waited for.
-        match self.jobs.session_job(&session.id) {
-            SessionJob::Busy(job) if job == session.job => {
-                return Err(RpcError::new(
-                    ErrorCode::SessionBusy,
-                    "the session is in a turn; ask again once it ends",
-                ));
-            }
-            // Another job writes it, as a subagent run writes its own
-            // session: not a turn of this one, but as busy.
-            SessionJob::Busy(job) => {
-                return Err(RpcError::new(
-                    ErrorCode::SessionBusy,
-                    format!(
-                        "job {job} is writing session {}; ask again once it ends",
-                        session.id
-                    ),
-                ));
-            }
-            SessionJob::New | SessionJob::Last(_) => {}
-        }
+        let session = self.between_turns(session_id).await?;
         let runtime = session.runtime.lock().await;
         // `None` once the daemon's stop or the idle unload took it.
         let runtime = runtime.as_ref().ok_or_else(not_loaded)?;
@@ -108,9 +103,7 @@ impl Sessions {
                 )
             }
             SessionReport::Hooks => {
-                let snapshot = runtime.reload_hooks().map_err(|error| {
-                    RpcError::new(ErrorCode::InternalError, format!("{error:#}"))
-                })?;
+                let snapshot = runtime.hooks_report();
                 (
                     serde_json::to_value(snapshot.report()),
                     SessionReportData::Hooks(snapshot.session_report()),
@@ -127,6 +120,48 @@ impl Sessions {
             shown.map_err(|error| RpcError::new(ErrorCode::InternalError, error.to_string()))?;
         Ok(ReadReport { typed, shown })
     }
+
+    /// The loaded session `session_id` names, unless a turn holds it. Its
+    /// runtime is `None` once the daemon's stop or the idle unload took it.
+    async fn between_turns(&self, session_id: &SessionId) -> Result<Arc<LoadedSession>, RpcError> {
+        self.refuse_when_stopping()?;
+        let session = self
+            .loaded_session(session_id)
+            .await?
+            .ok_or_else(not_loaded)?;
+        // A report reads what a turn is changing, and a client asked to
+        // see it now: refused, not queued behind the turn. A change or an
+        // options refresh holds the runtime only briefly, so those are
+        // waited for.
+        match self.jobs.session_job(&session.id) {
+            SessionJob::Busy(job) if job == session.job => {
+                return Err(RpcError::new(
+                    ErrorCode::SessionBusy,
+                    "the session is in a turn; ask again once it ends",
+                ));
+            }
+            // Another job writes it, as a subagent run writes its own
+            // session: not a turn of this one, but as busy.
+            SessionJob::Busy(job) => {
+                return Err(RpcError::new(
+                    ErrorCode::SessionBusy,
+                    format!(
+                        "job {job} is writing session {}; ask again once it ends",
+                        session.id
+                    ),
+                ));
+            }
+            SessionJob::New | SessionJob::Last(_) => {}
+        }
+        Ok(session)
+    }
+}
+
+fn not_loaded() -> RpcError {
+    RpcError::new(
+        ErrorCode::SessionNotLoaded,
+        "the daemon has not loaded the session; attach to it first",
+    )
 }
 
 #[cfg(test)]

@@ -1,5 +1,7 @@
-//! [`super::SessionReport::Hooks`]: the session's hooks, read again from
-//! their files, and what they did recently.
+//! [`super::SessionReport::Hooks`]: the session's hooks files read again,
+//! checked against the hooks the session runs, and what those did recently.
+//! Reading it changes nothing; [`super::super::SESSION_HOOKS_RELOAD`] loads
+//! what the files say into the session.
 
 use std::path::PathBuf;
 
@@ -7,22 +9,35 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// The session's hooks and their recent activity.
+///
+/// The report reads the hooks files again but leaves the session's hooks as
+/// they are: a session runs the hooks it loaded when it opened, or when its
+/// hooks were last reloaded. Each hook's [`HookStatus`] says whether the
+/// session runs it as its file now defines it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SessionHooksReport {
     /// Whether the session runs hooks: false when it started without them,
     /// because none were configured, they failed to load, or a hook started
-    /// the session. Its report still lists an untrusted project file.
+    /// the session. Its report still lists what its files define.
     pub enabled: bool,
-    /// The hooks files the session loaded, in load order: the user's, then
-    /// the project's.
+    /// The hooks files that load, in load order: the user's, then the
+    /// project's. While a file is [`Self::invalid`], the files the session
+    /// loaded its hooks from instead.
     pub files: Vec<PathBuf>,
-    /// The project's hooks file, when the session skipped it because it
+    /// The project's hooks file, when it is skipped because the session
     /// does not trust the project.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skipped_untrusted: Option<SkippedHooksFile>,
-    /// Every hook the files define: the active ones in the order they run,
+    /// A hooks file that loads but could not be read or validated now. A
+    /// session runs no part of a policy it cannot read whole, so while it is
+    /// invalid the session keeps the hooks it runs, and the report lists
+    /// those.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub invalid: Option<InvalidHooksFile>,
+    /// Every hook the files define: those that load in the order they run,
     /// the user's file then the project's, each in file order; then those of
-    /// the skipped file.
+    /// the skipped file; then the [`HookStatus::Stale`] ones the session
+    /// still runs.
     pub hooks: Vec<HookContract>,
     /// The latest hook invocations, oldest first. rho keeps a bounded
     /// number of them.
@@ -38,6 +53,14 @@ pub struct SkippedHooksFile {
     /// hooks are then not listed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+/// A hooks file that loads but could not be read or validated.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct InvalidHooksFile {
+    pub path: PathBuf,
+    /// What is wrong with it, as rho words it.
+    pub error: String,
 }
 
 /// What one hook executes, shown so a person can judge it before trusting
@@ -77,6 +100,14 @@ pub enum HookStatus {
     /// invalid, so a session runs no hooks at all. Only
     /// [`crate::HOOKS_LIST`] sends it.
     Disabled,
+    /// Its file defines it, but the session does not run it as defined: the
+    /// file changed since the session loaded its hooks. Reloading them loads
+    /// it, or, for a kind of hook (blocking or observing) the session started
+    /// without, opening the session again.
+    Pending,
+    /// The session runs it as its file defined it when the session loaded
+    /// its hooks, but the file no longer does. Reloading them drops it.
+    Stale,
     /// A value a newer daemon sends that this crate does not know; daemons
     /// never send it.
     #[serde(other)]

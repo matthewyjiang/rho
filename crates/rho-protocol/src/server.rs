@@ -31,7 +31,8 @@ use crate::{
         SessionCancelParams, SessionCancelResponse, SessionConfigureParams,
         SessionConfigureResponse, SessionDeleteParams, SessionDeleteResponse, SessionDetach,
         SessionDetachParams, SessionDetachResponse, SessionForkParams, SessionForkResponse,
-        SessionHoldParams, SessionHoldResponse, SessionInspectParams, SessionInspectResponse,
+        SessionHoldParams, SessionHoldResponse, SessionHooksReloadParams,
+        SessionHooksReloadResponse, SessionInspectParams, SessionInspectResponse,
         SessionListDetailedResponse, SessionListParams, SessionListResponse, SessionMarkParams,
         SessionMarkResponse, SessionMcpCatalog, SessionMcpCatalogParams, SessionMcpCompleteParams,
         SessionMcpCompleteResponse, SessionMcpInventory, SessionMcpParams,
@@ -48,12 +49,13 @@ use crate::{
         AUTH_KEY, AUTH_LIST, AUTH_LOGIN, AUTH_LOGIN_CANCEL, AUTH_LOGOUT, CONFIG_GET, HELLO,
         MODEL_LIST, SESSION_ANSWER, SESSION_ANSWER_QUESTION, SESSION_ATTACH,
         SESSION_BACKGROUND_LIST, SESSION_BACKGROUND_STOP, SESSION_CANCEL, SESSION_CONFIGURE,
-        SESSION_DELETE, SESSION_DETACH, SESSION_FORK, SESSION_HOLD, SESSION_INSPECT, SESSION_LIST,
-        SESSION_LIST_DETAILED, SESSION_MARK, SESSION_MCP, SESSION_MCP_CATALOG,
-        SESSION_MCP_COMPLETE, SESSION_MCP_RESOURCE, SESSION_NEW, SESSION_OBSERVE,
-        SESSION_PROCESSES, SESSION_PROMPT, SESSION_PULL_REQUEST_LINK, SESSION_PULL_REQUEST_LIST,
-        SESSION_PULL_REQUEST_SHOW, SESSION_PULL_REQUEST_UNLINK, SESSION_RENAME, SESSION_REPORT,
-        SESSION_STEER, SESSION_SURFACE_ACTION, SESSION_UNSTEER, WORKTREE_PRUNE,
+        SESSION_DELETE, SESSION_DETACH, SESSION_FORK, SESSION_HOLD, SESSION_HOOKS_RELOAD,
+        SESSION_INSPECT, SESSION_LIST, SESSION_LIST_DETAILED, SESSION_MARK, SESSION_MCP,
+        SESSION_MCP_CATALOG, SESSION_MCP_COMPLETE, SESSION_MCP_RESOURCE, SESSION_NEW,
+        SESSION_OBSERVE, SESSION_PROCESSES, SESSION_PROMPT, SESSION_PULL_REQUEST_LINK,
+        SESSION_PULL_REQUEST_LIST, SESSION_PULL_REQUEST_SHOW, SESSION_PULL_REQUEST_UNLINK,
+        SESSION_RENAME, SESSION_REPORT, SESSION_STEER, SESSION_SURFACE_ACTION, SESSION_UNSTEER,
+        WORKTREE_PRUNE,
     },
     subscription::Subscription,
     BuildId, BuildSkew, DaemonInfo, DaemonStatus, ErrorCode, FrameError, HelloResponse, Message,
@@ -373,6 +375,16 @@ pub trait Service: SettingsService + Send + Sync {
     ) -> impl Future<Output = Result<SessionReportResponse, RpcError>> + Send {
         let _ = params;
         unsupported(SESSION_REPORT)
+    }
+
+    /// Handles `rho/session/hooks/reload`: reload the loaded session's
+    /// hooks from their files, between its turns, refusing while one runs.
+    fn reload_session_hooks(
+        &self,
+        params: SessionHooksReloadParams,
+    ) -> impl Future<Output = Result<SessionHooksReloadResponse, RpcError>> + Send {
+        let _ = params;
+        unsupported(SESSION_HOOKS_RELOAD)
     }
 
     /// Handles `rho/session/attach`: subscribe this connection to the

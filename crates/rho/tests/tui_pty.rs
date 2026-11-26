@@ -698,7 +698,8 @@ fn doctor_reports_the_session_mcp_servers() {
 }
 
 // Covers: /hooks must open a single-pane overlay with the spawn contract, and
-// Esc must dismiss it instead of leaving a transcript notice.
+// Esc must dismiss it instead of leaving a transcript notice; /hooks reloads
+// a hooks file edited mid-session, which reading the report alone does not.
 // Owner: interactive TUI
 #[test]
 fn hooks_overlay_shows_contract_and_dismisses() {

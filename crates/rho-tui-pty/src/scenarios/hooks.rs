@@ -3,7 +3,8 @@
 //! Trusting a workspace means trusting the programs listed here, so the argv,
 //! working directory, and timeout a hook will actually run with have to reach
 //! the screen. That contract belongs in the overlay, not a transcript notice
-//! that stays after dismiss.
+//! that stays after dismiss. `/hooks` also reloads a hooks file edited during
+//! the session, which reading the session's hooks report alone never does.
 
 use std::fs;
 
@@ -61,6 +62,28 @@ const HOOKS_CONTRACT_STEPS: &[Step] = &[
         timeout: SETTLE,
     },
     Step::Custom(assert_hooks_overlay_dismissed),
+    Step::Phase("reload_edited"),
+    // The user edits the hooks file mid-session; `/hooks` loads it, so the
+    // overlay lists the new timeout as what runs, with no stale or pending
+    // copy of the hook beside it.
+    Step::SubmitText(
+        "!!f=\"$HOME/.rho/hooks.toml\"; sed 's/^timeout = .*/timeout = \"1500ms\"/' \"$f\" > \"$f.new\" && mv \"$f.new\" \"$f\" && printf hooks-%s edited",
+    ),
+    Step::WaitText {
+        text: "hooks-edited",
+        timeout: SETTLE,
+    },
+    Step::SubmitText("/hooks"),
+    Step::WaitText {
+        text: "user:deny-force-push",
+        timeout: SETTLE,
+    },
+    Step::Custom(assert_edited_hook_reloaded),
+    Step::Key(Key::Esc),
+    Step::WaitTextGone {
+        text: "user:deny-force-push",
+        timeout: SETTLE,
+    },
     Step::ExitCommand,
 ];
 
@@ -96,6 +119,17 @@ fn assert_hooks_overlay_dismissed(harness: &mut PtyHarness) -> Result<()> {
     }
     if harness.screen().hide_cursor() {
         anyhow::bail!("composer caret still hidden after dismissing hooks:\n{screen}");
+    }
+    Ok(())
+}
+
+fn assert_edited_hook_reloaded(harness: &mut PtyHarness) -> Result<()> {
+    // humantime's rendering of the edited timeout, which the edit command
+    // itself does not spell.
+    harness.wait_for_text("1s 500ms", SETTLE)?;
+    let screen = harness.screen().contents();
+    if screen.contains("still runs") || screen.contains("not loaded") {
+        anyhow::bail!("/hooks did not reload the edited hooks file:\n{screen}");
     }
     Ok(())
 }
