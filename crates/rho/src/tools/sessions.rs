@@ -26,6 +26,8 @@ use crate::{
 
 mod control;
 
+pub(crate) use control::share_agent_budget;
+
 /// Tool arguments: index-backed prior-session actions, current-session
 /// recall, which never touches the search index, or a call of the
 /// session-control core.
@@ -81,12 +83,14 @@ pub(super) fn sdk_bundle(
     recall: RecallStore,
     max_output_bytes: usize,
     environment: SessionEnvironment,
+    agent_concurrency: usize,
 ) -> super::sdk_registry::StaticToolBundle {
     super::sdk_registry::StaticToolBundle::new(vec![Arc::new(Sessions {
         binding,
         recall,
         max_output_bytes,
         environment,
+        agent_concurrency,
         root: crate::paths::rho_dir()
             .map(|path| path.join("sessions"))
             .map_err(|error| error.to_string()),
@@ -100,6 +104,10 @@ struct Sessions {
     /// The environment the session's children see, which the sessions its
     /// agent starts run with, and whose caller context bounds them.
     environment: SessionEnvironment,
+    /// The session's `behavior.agent_concurrency`, which caps how many
+    /// sessions it may have running through the tool when it is the first
+    /// to call the core outside the daemon (see `control::core`).
+    agent_concurrency: usize,
     root: Result<std::path::PathBuf, String>,
 }
 
@@ -148,6 +156,7 @@ impl Tool for Sessions {
                     return control::prepare(
                         call,
                         &self.current()?,
+                        self.agent_concurrency,
                         peers,
                         &self.environment,
                         &self.root,

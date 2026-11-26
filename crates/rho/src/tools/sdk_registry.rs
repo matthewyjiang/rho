@@ -354,6 +354,7 @@ impl AppToolSet {
                 recall,
                 config.max_output_bytes,
                 environment.clone(),
+                config.agent_concurrency,
             ));
         }
         if capabilities.contains(&ToolCapability::Rho) {

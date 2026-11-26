@@ -33,8 +33,11 @@ use serde_json::{json, Map, Value};
 
 use crate::{
     app::{
+        agent_concurrency::AgentConcurrency,
         peer_sessions::PeerInbox,
-        session_control::{Action, Caller, ControlError, Limits, Reach, SessionControl, Target},
+        session_control::{
+            Action, Caller, ControlError, Limits, MaxSessions, Reach, SessionControl, Target,
+        },
     },
     caller_context::{Access, CallerContext},
     session_environment::SessionEnvironment,
@@ -79,9 +82,33 @@ const CONTROL_OPERATION: &str = "session control";
 /// calling session, across calls. The daemon, where sessions run, and an
 /// in-process rho each run one async runtime, which the core's daemon
 /// connection lives on.
-fn core() -> &'static SessionControl {
-    static CORE: OnceLock<SessionControl> = OnceLock::new();
-    CORE.get_or_init(|| SessionControl::new(Limits::default(), Reach::Running))
+static CORE: OnceLock<SessionControl> = OnceLock::new();
+
+/// Makes the core cap each session's running sessions at the daemon's
+/// shared agent budget, which its settings resize as each config is
+/// published, so a change to `behavior.agent_concurrency` applies to the
+/// next `new` or `prompt`. The daemon calls it as it starts, before any
+/// session's tool can make the core.
+pub(crate) fn share_agent_budget(budget: AgentConcurrency) {
+    // One daemon per process; a second one (in tests) finds the core made.
+    let _ = CORE.set(capped_at(MaxSessions::AgentConcurrency(budget)));
+}
+
+/// The core, which a process other than the daemon makes on first use,
+/// capped at the calling session's `agent_concurrency`.
+fn core(agent_concurrency: usize) -> &'static SessionControl {
+    CORE.get_or_init(|| {
+        let limit = u32::try_from(agent_concurrency).unwrap_or(u32::MAX);
+        capped_at(MaxSessions::Fixed(limit))
+    })
+}
+
+fn capped_at(max_sessions: MaxSessions) -> SessionControl {
+    let limits = Limits {
+        max_sessions,
+        ..Limits::default()
+    };
+    SessionControl::new(limits, Reach::Running)
 }
 
 /// Checks `call` from `session`, whose children see `environment`, and
@@ -93,6 +120,7 @@ fn core() -> &'static SessionControl {
 pub(super) async fn prepare<'a>(
     call: Call,
     session: &str,
+    agent_concurrency: usize,
     peers: Option<PeerInbox>,
     environment: &SessionEnvironment,
     root: &Result<PathBuf, String>,
@@ -106,7 +134,8 @@ pub(super) async fn prepare<'a>(
         ..Caller::session(SessionId::new(session), &context, ambient.to_client())
     };
     let Call { action, arguments } = call;
-    let checked = core()
+    let core = core(agent_concurrency);
+    let checked = core
         .check(&caller, action, arguments)
         .await
         .map_err(tool_error)?;
@@ -136,7 +165,7 @@ pub(super) async fn prepare<'a>(
         metadata,
         move |context| {
             Box::pin(async move {
-                let run = core().run(&caller, checked);
+                let run = core.run(&caller, checked);
                 let value = match action.needs() {
                     // A wait or read stops with the tool. An action runs to
                     // its end, so a session it opened is never left behind

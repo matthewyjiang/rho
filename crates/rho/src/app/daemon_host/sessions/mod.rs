@@ -544,6 +544,7 @@ impl Sessions {
     pub(super) fn new(jobs: Arc<JobRegistry>, rho_home: &Path, forge: Arc<dyn Forge>) -> Arc<Self> {
         let stopping = CancellationToken::new();
         let subagents = Subagents::new(Arc::clone(&jobs), stopping.clone());
+        crate::tools::share_agent_budget(subagents.concurrency());
         Arc::new_cyclic(|myself| Self {
             myself: Weak::clone(myself),
             settings: Arc::new(ConfigStore::new(rho_home, subagents.concurrency())),

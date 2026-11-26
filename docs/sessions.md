@@ -326,8 +326,10 @@ Limits apply:
   [agent budget](/daemon#sessions-other-sessions-start), so one may wait
   `queued` for a slot.
 - Rho refuses to start or prompt a session 4 or more levels deep.
-- A session can have at most 10 sessions it started or prompted running at
-  once.
+- A session can have at most
+  [`agent_concurrency`](/configuration#behavior) (10 by default) sessions it
+  started or prompted running at once. A change applies to its next `new` or
+  `prompt`.
 - The tool needs a daemon that is already running. It never starts one.
 
 ## Resuming a session

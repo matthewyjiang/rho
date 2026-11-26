@@ -11,7 +11,10 @@ use std::{
 use rho_protocol::ClientEnvironment;
 
 use super::DaemonUse;
-use crate::caller_context::{Access, CallerContext, Scope, Workspaces};
+use crate::{
+    app::agent_concurrency::AgentConcurrency,
+    caller_context::{Access, CallerContext, Scope, Workspaces},
+};
 
 /// The deepest a session the core starts or prompts may run by default: a
 /// session at depth 3 may, and asking for depth 4 is refused.
@@ -21,10 +24,12 @@ use crate::caller_context::{Access, CallerContext, Scope, Workspaces};
 // further. One spare level, then a recursion stops within a few starts.
 pub(crate) const DEFAULT_MAX_DEPTH: u32 = 3;
 
-/// How many sessions one caller may have running by default.
+/// How many sessions one caller of `rho mcp serve` may have running unless
+/// `--max-sessions` says otherwise.
 //
 // Matches `behavior.agent_concurrency`'s default, the agent runs the daemon
-// already runs at once (`config::DEFAULT_AGENT_CONCURRENCY`).
+// already runs at once (`config::DEFAULT_AGENT_CONCURRENCY`). The `sessions`
+// tool follows the configured value instead ([`MaxSessions::AgentConcurrency`]).
 pub(crate) const DEFAULT_MAX_SESSIONS: u32 = crate::config::DEFAULT_AGENT_CONCURRENCY as u32;
 
 /// One session-control action. Each maps one to one onto the protocol:
@@ -238,19 +243,44 @@ impl Caller {
 }
 
 /// The caps the core enforces for one process.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone)]
 pub(crate) struct Limits {
     /// The deepest a session the core starts or prompts may run.
     pub(crate) max_depth: u32,
     /// How many sessions each holder may have running at once.
-    pub(crate) max_sessions: u32,
+    pub(crate) max_sessions: MaxSessions,
 }
 
 impl Default for Limits {
     fn default() -> Self {
         Self {
             max_depth: DEFAULT_MAX_DEPTH,
-            max_sessions: DEFAULT_MAX_SESSIONS,
+            max_sessions: MaxSessions::Fixed(DEFAULT_MAX_SESSIONS),
+        }
+    }
+}
+
+/// How many sessions each holder may have running at once.
+#[derive(Clone)]
+pub(crate) enum MaxSessions {
+    /// A set number: `rho mcp serve --max-sessions`, or, for the `sessions`
+    /// tool outside the daemon, the first calling session's
+    /// `agent_concurrency`.
+    Fixed(u32),
+    /// `behavior.agent_concurrency`, the limit of this agent budget as it
+    /// stands at each admission: the daemon resizes its shared budget as
+    /// each config is published, so a change applies to the next start.
+    AgentConcurrency(AgentConcurrency),
+}
+
+impl MaxSessions {
+    /// The limit right now.
+    pub(crate) fn limit(&self) -> u32 {
+        match self {
+            Self::Fixed(limit) => *limit,
+            Self::AgentConcurrency(budget) => {
+                u32::try_from(budget.total_limit()).unwrap_or(u32::MAX)
+            }
         }
     }
 }

@@ -80,7 +80,7 @@ To let a session work unattended, give it a [permission mode](/configuration/per
 Sessions can start sessions, so the server checks two budgets on every `new` and `prompt`:
 
 - Session depth. A session started by a person or an outside agent is depth 1, a session it starts is depth 2, and so on. `--max-depth` sets the limit, 3 by default.
-- Concurrent sessions. Each caller may run `--max-sessions` sessions at once, 10 by default. Each HTTP token is a separate caller. A session counts until its turn ends, including time waiting for a person.
+- Concurrent sessions. Each caller may run `--max-sessions` sessions at once, 10 by default. Each HTTP token is a separate caller. A session counts until its turn ends, including time waiting for a person. A daemon session's own `sessions` tool takes its limit from [`agent_concurrency`](/configuration#behavior) instead, also 10 by default.
 
 Over HTTP, each token may also [watch](#webhooks) `--max-watches` sessions at once: unless set, 5 × `--max-sessions` (50 by default). A watch counts until its news is delivered or it is removed, including while it is stopped on an error. `rho mcp webhook list` shows each token's count against the limit.
 
