@@ -217,12 +217,17 @@ pub(crate) struct CheckTally {
     pub(crate) failed: u32,
     /// Past the checks the read listed, so of unknown outcome.
     pub(crate) unread: u32,
+    /// Workflows whose checks are still to come; see
+    /// [`PrDetail::queued_workflows`].
+    #[serde(default)]
+    pub(crate) queued_workflows: u32,
 }
 
 impl CheckTally {
     pub(crate) fn of(detail: &PrDetail) -> Self {
         let mut tally = Self {
             unread: detail.unread_checks(),
+            queued_workflows: detail.queued_workflows,
             ..Self::default()
         };
         for check in &detail.checks {

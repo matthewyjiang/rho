@@ -1,0 +1,177 @@
+{
+ "data": {
+  "viewer": {
+   "login": "matthewyjiang"
+  },
+  "rateLimit": {
+   "cost": 1,
+   "remaining": 4490,
+   "resetAt": "2026-11-26T11:42:05Z"
+  },
+  "r0": {
+   "defaultBranchRef": {
+    "name": "main"
+   },
+   "p0": {
+    "number": 101,
+    "title": "feat(panel): show what fills a session's context",
+    "url": "https://github.com/matthewyjiang/rho-ui/pull/101",
+    "state": "OPEN",
+    "isDraft": false,
+    "isCrossRepository": false,
+    "updatedAt": "2026-11-26T11:25:32Z",
+    "headRefOid": "ee99c82992fa1fac9a15e10eea896ae88c4bdbe3",
+    "commits": {
+     "nodes": [
+      {
+       "commit": {
+        "statusCheckRollup": {
+         "state": "SUCCESS",
+         "contexts": {
+          "totalCount": 2,
+          "nodes": [
+           {
+            "__typename": "CheckRun",
+            "name": "build",
+            "status": "COMPLETED",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/matthewyjiang/rho-ui/actions/runs/45810448045/job/139876573476",
+            "checkSuite": {
+             "id": "CS_kwDOVkXwd88AAAAc232Eqg",
+             "workflowRun": {
+              "workflow": {
+               "name": "docs"
+              }
+             }
+            }
+           },
+           {
+            "__typename": "CheckRun",
+            "name": "deploy",
+            "status": "COMPLETED",
+            "conclusion": "SKIPPED",
+            "detailsUrl": "https://github.com/matthewyjiang/rho-ui/actions/runs/45810448045/job/139876860837",
+            "checkSuite": {
+             "id": "CS_kwDOVkXwd88AAAAc232Eqg",
+             "workflowRun": {
+              "workflow": {
+               "name": "docs"
+              }
+             }
+            }
+           }
+          ]
+         }
+        },
+        "checkSuites": {
+         "totalCount": 8,
+         "nodes": [
+          {
+           "id": "CS_kwDOVkXwd88AAAAc230IDA",
+           "status": "QUEUED",
+           "workflowRun": null
+          },
+          {
+           "id": "CS_kwDOVkXwd88AAAAc230LCQ",
+           "status": "QUEUED",
+           "workflowRun": null
+          },
+          {
+           "id": "CS_kwDOVkXwd88AAAAc230M-g",
+           "status": "QUEUED",
+           "workflowRun": null
+          },
+          {
+           "id": "CS_kwDOVkXwd88AAAAc230O5g",
+           "status": "QUEUED",
+           "workflowRun": null
+          },
+          {
+           "id": "CS_kwDOVkXwd88AAAAc230Q5g",
+           "status": "QUEUED",
+           "workflowRun": null
+          },
+          {
+           "id": "CS_kwDOVkXwd88AAAAc230SuQ",
+           "status": "QUEUED",
+           "workflowRun": null
+          },
+          {
+           "id": "CS_kwDOVkXwd88AAAAc232Eqg",
+           "status": "COMPLETED",
+           "workflowRun": {
+            "id": "WFR_kwLOVkXwd88AAAAKqoP2rQ"
+           }
+          },
+          {
+           "id": "CS_kwDOVkXwd88AAAAc232Fag",
+           "status": "PENDING",
+           "workflowRun": {
+            "id": "WFR_kwLOVkXwd88AAAAKqoP28g"
+           }
+          }
+         ]
+        }
+       }
+      }
+     ]
+    },
+    "body": "Closes #12\n\n## What it does\n\nA new right-panel surface, **Co",
+    "author": {
+     "login": "matthewyjiang"
+    },
+    "headRefName": "rho/rho-ui-1693b4f9",
+    "baseRefName": "main",
+    "additions": 1525,
+    "deletions": 63,
+    "changedFiles": 21,
+    "reviewDecision": null,
+    "mergeable": "MERGEABLE",
+    "mergedBy": null,
+    "mergeCommit": null,
+    "repository": {
+     "mergeCommitAllowed": true,
+     "squashMergeAllowed": true,
+     "rebaseMergeAllowed": true,
+     "viewerDefaultMergeMethod": "SQUASH"
+    },
+    "comments": {
+     "totalCount": 0,
+     "nodes": []
+    },
+    "reviews": {
+     "totalCount": 0,
+     "nodes": []
+    },
+    "reviewThreads": {
+     "totalCount": 0,
+     "nodes": []
+    },
+    "gate": {
+     "nodes": [
+      {
+       "commit": {
+        "statusCheckRollup": {
+         "contexts": {
+          "nodes": [
+           {
+            "__typename": "CheckRun",
+            "name": "build",
+            "isRequired": false
+           },
+           {
+            "__typename": "CheckRun",
+            "name": "deploy",
+            "isRequired": false
+           }
+          ]
+         }
+        }
+       }
+      }
+     ]
+    }
+   }
+  }
+ }
+}

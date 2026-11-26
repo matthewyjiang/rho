@@ -83,6 +83,7 @@ fn quiet(number: u32) -> PrDetail {
             required: None,
         }],
         checks_total: 1,
+        queued_workflows: 0,
         posts: Vec::new(),
         older_posts: 0,
         threads: Vec::new(),

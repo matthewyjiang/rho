@@ -323,7 +323,7 @@ fn kept_lookup(state: &State, branch: &BranchId) -> Kept {
 ///
 /// Running checks come from the last detail: GitHub's rollup reads failing
 /// as soon as one check fails, while others still run, and checks past
-/// those the detail lists may be running too. A pending rollup in a newer
+/// those the detail lists may be running too, as may a queued workflow's. A pending rollup in a newer
 /// summary counts as well.
 pub(super) fn detail_due(snapshot: Option<&Snapshot>, now: u64) -> bool {
     let Some(snapshot) = snapshot else {
@@ -333,7 +333,7 @@ pub(super) fn detail_due(snapshot: Option<&Snapshot>, now: u64) -> bool {
         return true;
     };
     let detail = &detailed.detail;
-    let running = detail.unread_checks() > 0
+    let running = detail.checks_to_come()
         || detail
             .checks
             .iter()

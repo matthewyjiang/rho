@@ -59,7 +59,7 @@ pub(crate) fn evaluate(watch: &WatchState, read: &PrDetail, _now: u64) -> Report
     next.head_oid = Some(head.clone());
     next.read_failures = 0;
 
-    let mut changes = checks(&mut next, &read.checks, read.unread_checks(), baseline);
+    let mut changes = checks(&mut next, &read.checks, read.checks_to_come(), baseline);
     changes.extend(remarks(&mut next, read));
     changes.extend(conflict(&mut next, read.mergeable, baseline));
     let comment_loop = comment_loop(&mut next, &changes, head_moved);
@@ -120,9 +120,15 @@ fn new_head(watch: &WatchState) -> WatchState {
 /// The check rules. A read without checks keeps what was known: GitHub
 /// lists none for a moment after a push, and a PR with none has no news.
 /// A failure is told once, when first seen, unless the owed wake that
-/// lists every failing check is told in the same read. `unread` checks
-/// past those the read lists may stand any way (see [`gate`]).
-fn checks(next: &mut WatchState, checks: &[CheckRun], unread: u32, baseline: bool) -> Vec<Change> {
+/// lists every failing check is told in the same read. With checks
+/// `to_come` past those the read lists, they may stand any way (see
+/// [`gate`]).
+fn checks(
+    next: &mut WatchState,
+    checks: &[CheckRun],
+    to_come: bool,
+    baseline: bool,
+) -> Vec<Change> {
     if checks.is_empty() {
         return Vec::new();
     }
@@ -137,7 +143,7 @@ fn checks(next: &mut WatchState, checks: &[CheckRun], unread: u32, baseline: boo
         .filter(|check| !failed_before.contains(&check.name))
         .filter_map(check_ref)
         .collect();
-    let (passed, finished) = gate(next, checks, unread, &failed_before, &newly_failed);
+    let (passed, finished) = gate(next, checks, to_come, &failed_before, &newly_failed);
 
     let mut changes = Vec::new();
     if !baseline && !newly_failed.is_empty() && finished.is_none() {
@@ -159,20 +165,21 @@ fn checks(next: &mut WatchState, checks: &[CheckRun], unread: u32, baseline: boo
 /// A failing gate owes one wake once every check finishes, when other
 /// checks still ran as it failed or a failed check ran again (as t3).
 /// `next.failed` is already this read's; `failed_before` is the last
-/// read's. With `unread` checks past those listed, which may be required,
-/// running or failing, the gate never passes and nothing is told finished;
-/// listed failures still are. Returns the pass and the owed wake, each if
+/// read's. With checks `to_come` past those listed (unread, or a queued
+/// workflow's not made yet), which may be required, running or failing,
+/// the gate never passes and nothing is told finished; listed failures
+/// still are. Returns the pass and the owed wake, each if
 /// told now.
 fn gate(
     next: &mut WatchState,
     checks: &[CheckRun],
-    unread: u32,
+    to_come: bool,
     failed_before: &[String],
     newly_failed: &[CheckRef],
 ) -> (Option<Change>, Option<Change>) {
     let (kind, gate) = gate_of(checks);
     let names: Vec<String> = gate.iter().map(|check| check.name.clone()).collect();
-    let passed_now = unread == 0 && gate.iter().all(|check| passes(check.status));
+    let passed_now = !to_come && gate.iter().all(|check| passes(check.status));
     let grew = kind == Gate::Required && names.iter().any(|name| !next.gate.contains(name));
     let owed_before = std::mem::replace(&mut next.owed, Owed::Nothing);
 
@@ -218,7 +225,7 @@ fn gate(
         // A check that failed before and no longer does ran again.
         let rerun = failed_before.iter().any(|name| !next.failed.contains(name));
         let owing = owed_before != Owed::Nothing || rerun;
-        if unread > 0 || checks.iter().any(|check| running(check.status)) {
+        if to_come || checks.iter().any(|check| running(check.status)) {
             if owing || !newly_failed.is_empty() {
                 next.owed = Owed::Everything;
             }

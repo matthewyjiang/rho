@@ -309,16 +309,29 @@ fn watched_text(watched: &Watched) -> String {
 
 /// `14 checks (12 passed, 2 running, 0 failed; none are required, so rho
 /// waits on all 14)`,
-/// or `50 of 60 checks read (...)` when the read left some out.
+/// or `50 of 60 checks read (...)` when the read left some out. A workflow
+/// whose checks are still to come shows after the counts, and as waited on.
 fn checks_text(checks: &CheckCounts, gate: Gate, gate_checks: u32) -> String {
     let CheckCounts {
         total,
         passed,
         running,
         failed,
+        queued_workflows,
     } = *checks;
+    let (queued, waited) = match queued_workflows {
+        0 => (String::new(), None),
+        1 => (
+            ", 1 workflow queued".to_owned(),
+            Some("the queued workflow"),
+        ),
+        queued => (
+            format!(", {queued} workflows queued"),
+            Some("the queued workflows"),
+        ),
+    };
     if total == 0 {
-        return "no checks yet".to_owned();
+        return format!("no checks yet{queued}");
     }
     // A read lists the first checks only. With some left out, the watch
     // can't know they passed: it tells failures among those read, never
@@ -332,11 +345,20 @@ fn checks_text(checks: &CheckCounts, gate: Gate, gate_checks: u32) -> String {
     } else {
         (counted(total, "check", "checks"), "")
     };
-    let gate = match gate {
-        Gate::Required => format!("{gate_checks} required"),
-        Gate::All => format!("none are required, so rho waits on all {gate_checks}"),
+    let gate = match (gate, waited) {
+        (Gate::Required, None) => format!("{gate_checks} required"),
+        (Gate::Required, Some(waited)) => {
+            format!("{gate_checks} required, and rho waits on {waited}")
+        }
+        (Gate::All, None) => format!("none are required, so rho waits on all {gate_checks}"),
+        (Gate::All, Some(waited)) => {
+            format!("none are required, so rho waits on all {gate_checks} and on {waited}")
+        }
     };
-    format!("{total_text} ({passed} passed, {running} running, {failed} failed; {gate}{unread})")
+    format!(
+        "{total_text} ({passed} passed, {running} running, {failed} failed{queued}; \
+         {gate}{unread})"
+    )
 }
 
 fn unwatched_text(unwatched: &Unwatched) -> String {

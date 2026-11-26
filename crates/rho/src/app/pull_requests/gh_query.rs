@@ -89,19 +89,25 @@ const SUMMARY: &str = "fragment Summary on PullRequest {
 /// (cli/cli#10513: comment 20:42:15, update 20:42:16), so a summary read
 /// sees it. Each post's author's picture, at 72 pixels (drawn at 24 and
 /// sharp to a display scale of 3), cost nothing more either (rho-ui
-/// measured it on cli/cli#14578).
+/// measured it on cli/cli#14578). Neither did the head commit's first 100
+/// check suites, which tell a workflow queued before its first job: on
+/// 2026-11-26, 25 details of matthewyjiang/rho cost 17 points with them and
+/// without, each head having at most 12 suites.
 const DETAIL: &str = "fragment Detail on PullRequest {
   ...Summary
   body author { login } headRefName baseRefName additions deletions changedFiles reviewDecision
   mergeable mergedBy { login } mergeCommit { oid }
   repository { mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed viewerDefaultMergeMethod }
-  commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 50) {
-    totalCount nodes {
+  commits(last: 1) { nodes { commit {
+    checkSuites(first: 100) { totalCount nodes { id status workflowRun { id } } }
+    statusCheckRollup { state contexts(first: 50) { totalCount nodes {
       __typename
-      ... on CheckRun { name status conclusion detailsUrl checkSuite { workflowRun { workflow { name } } } }
+      ... on CheckRun {
+        name status conclusion detailsUrl checkSuite { id workflowRun { workflow { name } } }
+      }
       ... on StatusContext { context state targetUrl }
-    }
-  } } } } }
+    } } }
+  } } }
   comments(last: 30) { totalCount nodes { ...Post } }
   reviews(last: 30) { totalCount nodes {
     id author { login avatarUrl(size: 72) } authorAssociation body state submittedAt url
@@ -398,6 +404,20 @@ struct CommitNode {
 #[serde(rename_all = "camelCase")]
 struct Commit {
     status_check_rollup: Option<GhRollup>,
+    /// Asked by a full read only.
+    #[serde(default)]
+    check_suites: Option<Connection<GhSuite>>,
+}
+
+/// A check suite of the head commit: one app's checks on it, such as one
+/// GitHub Actions workflow run's jobs.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GhSuite {
+    id: String,
+    status: String,
+    /// Set for a GitHub Actions workflow run's suite only.
+    workflow_run: Option<serde::de::IgnoredAny>,
 }
 
 #[derive(Deserialize)]
@@ -428,6 +448,8 @@ enum GhCheck {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CheckSuite {
+    #[serde(default)]
+    id: Option<String>,
     workflow_run: Option<WorkflowRun>,
 }
 
@@ -778,13 +800,25 @@ impl GhSummary {
 impl GhDetail {
     /// The detail as `viewer` read it.
     fn into_detail(mut self, repo: &RepoId, viewer: Option<&str>) -> PrDetail {
-        let contexts = self
+        let commit = self
             .summary
             .commits
             .nodes
             .last_mut()
-            .and_then(|node| node.commit.status_check_rollup.as_mut())
-            .and_then(|rollup| rollup.contexts.take());
+            .map(|node| &mut node.commit);
+        let (contexts, suites) = commit.map_or((None, None), |commit| {
+            let contexts = commit
+                .status_check_rollup
+                .as_mut()
+                .and_then(|rollup| rollup.contexts.take());
+            (contexts, commit.check_suites.take())
+        });
+        let queued_workflows = suites.map_or(0, |suites| {
+            let checks = contexts
+                .as_ref()
+                .map_or(&[][..], |contexts| &contexts.nodes);
+            queued_workflows(suites, checks)
+        });
         let mut gates = self
             .gate
             .take()
@@ -846,6 +880,7 @@ impl GhDetail {
             review,
             checks,
             checks_total,
+            queued_workflows,
             mergeable,
             merge_methods: self.repository.methods(),
             viewer: viewer.map(str::to_owned),
@@ -853,6 +888,41 @@ impl GhDetail {
             merge_commit: self.merge_commit.map(|commit| commit.oid),
         }
     }
+}
+
+/// How many of the head commit's GitHub Actions workflow runs are still
+/// going with none of their jobs listed as queued or running: queued before
+/// their first job, or between one job and those that need it. GitHub lists
+/// a job as a check only once it is made, so each such run has checks still
+/// to come that `checks` can't show. Another app's suite doesn't count:
+/// GitHub makes one for every installed app that listens for checks, and
+/// one whose app never reports stays `QUEUED` with no checks for good.
+/// Suites past those read count too, as any of them may be such a run.
+fn queued_workflows(suites: Connection<GhSuite>, checks: &[GhCheck]) -> u32 {
+    let busy: Vec<&str> = checks
+        .iter()
+        .filter_map(|check| match check {
+            GhCheck::CheckRun {
+                status,
+                check_suite: Some(CheckSuite { id: Some(id), .. }),
+                ..
+            } if status != "COMPLETED" => Some(id.as_str()),
+            GhCheck::CheckRun { .. } | GhCheck::StatusContext { .. } => None,
+        })
+        .collect();
+    let unread = suites.unread();
+    let queued = suites
+        .nodes
+        .iter()
+        .filter(|suite| {
+            suite.workflow_run.is_some()
+                && suite.status != "COMPLETED"
+                && !busy.contains(&suite.id.as_str())
+        })
+        .count();
+    u32::try_from(queued)
+        .unwrap_or(u32::MAX)
+        .saturating_add(unread)
 }
 
 impl GhCheck {

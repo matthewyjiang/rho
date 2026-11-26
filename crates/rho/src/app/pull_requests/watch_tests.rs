@@ -47,6 +47,7 @@ fn read(checks: Vec<CheckRun>) -> PrDetail {
         changed_files: 1,
         review: Review::None,
         checks_total: u32::try_from(checks.len()).unwrap(),
+        queued_workflows: 0,
         checks,
         posts: Vec::new(),
         older_posts: 0,
@@ -78,6 +79,12 @@ fn with_posts(mut detail: PrDetail, posts: Vec<Post>) -> PrDetail {
 /// `detail` with `unread` more checks than it lists, as past GitHub's page.
 fn with_unread(mut detail: PrDetail, unread: u32) -> PrDetail {
     detail.checks_total += unread;
+    detail
+}
+
+/// `detail` with `queued` workflows whose checks are still to come.
+fn with_queued(mut detail: PrDetail, queued: u32) -> PrDetail {
+    detail.queued_workflows = queued;
     detail
 }
 
@@ -307,7 +314,7 @@ fn failures_are_told_once_at_once() {
 
 #[test]
 fn the_gate_passes_once() {
-    use CheckStatus::{Passed, Running};
+    use CheckStatus::{Passed, Running, Skipped};
     assert_cases(vec![
         Case {
             name: "required checks pass while an advisory one runs",
@@ -362,6 +369,20 @@ fn the_gate_passes_once() {
             name: "every listed check passed, but more were not read",
             before: watched(),
             read: with_unread(read(vec![check("a", Passed), check("b", Passed)]), 1),
+            expected: quiet(watched()),
+        },
+        Case {
+            // rho-ui#103 at acfbb0a: docs passed before CI made its jobs.
+            name: "every listed check passed, but a workflow is still queued",
+            before: watched(),
+            read: with_queued(read(vec![check("a", Passed), check("b", Skipped)]), 1),
+            expected: quiet(watched()),
+        },
+        Case {
+            // The queued workflow's checks may be required too.
+            name: "required checks passed, but a workflow is still queued",
+            before: watched(),
+            read: with_queued(read(vec![required("r", Passed)]), 1),
             expected: quiet(watched()),
         },
         Case {
