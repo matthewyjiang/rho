@@ -165,7 +165,8 @@ pub(crate) fn home_dir() -> Option<PathBuf> {
     home_dir_from_env(|name| std::env::var_os(name))
 }
 
-fn home_dir_from_env(mut var: impl FnMut(&str) -> Option<OsString>) -> Option<PathBuf> {
+/// [`home_dir`] in the environment `var` reads, by name.
+pub(crate) fn home_dir_from_env(mut var: impl FnMut(&str) -> Option<OsString>) -> Option<PathBuf> {
     if let Some(home) = var("HOME").filter(|value| !value.is_empty()) {
         return Some(PathBuf::from(home));
     }

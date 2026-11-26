@@ -112,35 +112,52 @@ pub(crate) struct GhCli {
     /// The user's login shell, asked for `gh` when `path` lacks it: a daemon
     /// started from a desktop launcher inherits its bare `PATH`.
     shell: Option<OsString>,
+    /// `gh` among mise's shims, tried when the login shell doesn't find it
+    /// either: mise usually activates from an interactive shell's rc file,
+    /// which neither a desktop session nor a non-interactive ssh `sh` reads.
+    mise_gh: Option<PathBuf>,
     /// Where `gh` was found; forgotten when it no longer starts, so a later
     /// read looks again.
     found: Mutex<Option<PathBuf>>,
 }
 
 impl Default for GhCli {
-    /// Looks for `gh` on the daemon's own `PATH` and `SHELL`.
+    /// Looks for `gh` in the daemon's own environment.
     fn default() -> Self {
-        Self::new(std::env::var_os("PATH"), std::env::var_os("SHELL"))
+        Self::new(|name| std::env::var_os(name))
     }
 }
 
 impl GhCli {
-    /// A reader that looks for `gh` on `path`, else through the login shell
-    /// `shell`.
-    pub(crate) fn new(path: Option<OsString>, shell: Option<OsString>) -> Self {
+    /// A reader that looks for `gh` in the environment `var` reads, by name:
+    /// its `PATH`, `SHELL`, and the variables [`mise_shims_dir`] reads. An
+    /// empty variable counts as unset.
+    pub(crate) fn new(var: impl Fn(&str) -> Option<OsString>) -> Self {
+        let var = |name: &str| var(name).filter(|value| !value.is_empty());
         Self {
-            path,
-            shell,
+            path: var("PATH"),
+            shell: var("SHELL"),
+            mise_gh: mise_shims_dir(&var).map(|shims| {
+                shims
+                    .join("gh")
+                    .with_extension(std::env::consts::EXE_EXTENSION)
+            }),
             found: Mutex::new(None),
         }
     }
 
-    /// Where `gh` is: on the `PATH`, else where the login shell finds it.
+    /// Where `gh` is: on the `PATH`, else where the login shell finds it,
+    /// else among mise's shims. rho-ui finds its own `gh` the same way.
     pub(crate) async fn find(&self) -> Option<PathBuf> {
         if let Some(gh) = find_on("gh", self.path.as_deref()) {
             return Some(gh);
         }
-        login_shell_gh(self.shell.as_deref()?).await
+        if let Some(shell) = &self.shell {
+            if let Some(gh) = login_shell_gh(shell).await {
+                return Some(gh);
+            }
+        }
+        self.mise_gh.clone().filter(|gh| is_executable_file(gh))
     }
 
     /// Where `gh` is, found once and then remembered.
@@ -161,7 +178,7 @@ impl GhCli {
     async fn read_now(&self, host: &str, plan: &FetchPlan) -> Result<Batch, ReadError> {
         let Some(gh) = self.program().await else {
             return Err(ReadError::NotInstalled(
-                "gh is not on the daemon's PATH, and its login shell doesn't find it either"
+                "gh is not on the daemon's PATH, nor found by its login shell or among mise's shims"
                     .to_owned(),
             ));
         };
@@ -215,6 +232,42 @@ impl Forge for GhCli {
             }
         })
     }
+}
+
+/// The folder mise keeps its shims in, as mise's own `mise-util/src/env.rs`
+/// resolves it: `MISE_SHIMS_DIR`; else `shims` in `MISE_DATA_DIR`; else in
+/// `mise` in `XDG_DATA_HOME`, which defaults to `~/.local/share`, or on
+/// Windows to `LOCALAPPDATA`, else `~/AppData/Local`. A `shims_dir` set in
+/// mise's config file goes unread. `var` reads a variable, empty as unset.
+/// A relative folder, which mise refuses, finds nothing: it would resolve
+/// against the daemon's working directory, as relative `PATH` entries would.
+fn mise_shims_dir(var: &dyn Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
+    let shims = if let Some(shims) = var("MISE_SHIMS_DIR") {
+        PathBuf::from(shims)
+    } else if let Some(data) = var("MISE_DATA_DIR") {
+        PathBuf::from(data).join("shims")
+    } else {
+        default_mise_data(var)?.join("shims")
+    };
+    shims.is_absolute().then_some(shims)
+}
+
+/// mise's data folder when `MISE_DATA_DIR` is unset: `mise` in the XDG data
+/// home, or its default, as [`mise_shims_dir`] describes.
+fn default_mise_data(var: &dyn Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
+    let data_home = match var("XDG_DATA_HOME") {
+        Some(dir) => PathBuf::from(dir),
+        None if cfg!(windows) => match var("LOCALAPPDATA") {
+            Some(dir) => PathBuf::from(dir),
+            None => crate::paths::home_dir_from_env(var)?
+                .join("AppData")
+                .join("Local"),
+        },
+        None => crate::paths::home_dir_from_env(var)?
+            .join(".local")
+            .join("share"),
+    };
+    Some(data_home.join("mise"))
 }
 
 /// Where the login shell `shell` finds `gh`: its last line, after whatever
