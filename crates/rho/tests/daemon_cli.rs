@@ -13,7 +13,9 @@
 //! them, in [`login`], signing in where no OS credential store answers in
 //! [`headless`]; `rho mcp serve` driving its sessions is in [`mcp`],
 //! and the sessions a session starts, as its children, in [`started`];
-//! reading and changing settings over its socket is in [`config`];
+//! reading and changing settings over its socket is in [`config`], and
+//! listing the MCP servers and hooks its configuration sets up in
+//! [`configured`];
 //! re-executing the daemon in place, for an upgrade or `rho daemon
 //! restart`, is in [`upgrade`]; what a client of another version hears at
 //! the handshake is in [`skew`]; what a daemon takes from the client that
@@ -85,6 +87,8 @@ mod mcp;
 
 #[path = "support/daemon_config.rs"]
 mod config;
+#[path = "support/daemon_configured.rs"]
+mod configured;
 // Unix: its sessions run shell commands.
 #[cfg(unix)]
 #[path = "support/daemon_started.rs"]

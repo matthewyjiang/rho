@@ -13,6 +13,7 @@ pub(crate) mod boundary_results;
 mod cli_config;
 pub(crate) mod compaction_report;
 pub(crate) mod config_repository;
+mod configured_mcp;
 pub(crate) mod context_report;
 pub(crate) mod conversation_switch;
 mod credential_writes;

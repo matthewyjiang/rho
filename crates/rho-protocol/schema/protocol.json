@@ -1959,6 +1959,46 @@
       "description": "Names one client instance's settings writes, such as a terminal's, so\nthey never conflict with each other (see [`ConfigSetParams::writer`]).\nOpaque: a client picks one unique to it, such as a random UUID, and\nsends it with each write.",
       "type": "string"
     },
+    "ConfiguredMcpServer": {
+      "description": "One configured MCP server.",
+      "properties": {
+        "enabled": {
+          "description": "Whether a session starts it: false when its configuration disables\nit or is invalid.",
+          "type": "boolean"
+        },
+        "error": {
+          "description": "Why its configuration is invalid, when it is.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "identity": {
+          "description": "Qualified server identity: `<plugin>/<server>` for a plugin's, as\n[`super::SessionMcpServer::identity`].",
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/McpServerSource"
+        },
+        "transport": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/McpTransport"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How a session reaches it; absent when its configuration is invalid."
+        }
+      },
+      "required": [
+        "identity",
+        "source",
+        "enabled"
+      ],
+      "type": "object"
+    },
     "ContentBlock": {
       "anyOf": [
         {
@@ -3014,6 +3054,11 @@
           "type": "string"
         },
         {
+          "const": "disabled",
+          "description": "Its file loads, but another hooks file a session would load is\ninvalid, so a session runs no hooks at all. Only\n[`crate::HOOKS_LIST`] sends it.",
+          "type": "string"
+        },
+        {
           "description": "Any other value: one a later protocol minor adds.",
           "type": "string",
           "x-rho-other": true
@@ -3109,6 +3154,184 @@
         }
       ],
       "description": "A problem with a hook that does not stop it from running."
+    },
+    "HooksFile": {
+      "description": "One hooks file and the hooks it defines.",
+      "properties": {
+        "hooks": {
+          "description": "The hooks it defines, in file order, each with the\n[`super::HookStatus`] its file's status gives it: `active` when\n`loaded`, `untrusted` when `untrusted`, `disabled` when `disabled`.\nEmpty when it is absent or could not be read or parsed.",
+          "items": {
+            "$ref": "#/$defs/HookContract"
+          },
+          "type": "array"
+        },
+        "path": {
+          "type": "string"
+        },
+        "scope": {
+          "$ref": "#/$defs/HooksFileScope"
+        },
+        "status": {
+          "$ref": "#/$defs/HooksFileStatus"
+        }
+      },
+      "required": [
+        "path",
+        "scope",
+        "status",
+        "hooks"
+      ],
+      "type": "object"
+    },
+    "HooksFileScope": {
+      "anyOf": [
+        {
+          "const": "user",
+          "description": "The user's, which always loads.",
+          "type": "string"
+        },
+        {
+          "const": "project",
+          "description": "The workspace's project's, which loads only when the client trusts\nthe project.",
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "Whose hooks file it is."
+    },
+    "HooksFileStatus": {
+      "anyOf": [
+        {
+          "description": "No file is there.",
+          "properties": {
+            "type": {
+              "const": "absent",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A session loads it and runs its hooks.",
+          "properties": {
+            "type": {
+              "const": "loaded",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "It parses and would load, but the file at `by` is `invalid`, so a\nsession runs no hooks at all, this file's included.",
+          "properties": {
+            "by": {
+              "type": "string"
+            },
+            "type": {
+              "const": "disabled",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "by"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The project's file, which a session skips because the client does\nnot trust the project; `error` says why it could not be read or\nparsed, when it could not.",
+          "properties": {
+            "error": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "const": "untrusted",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A file a session would load could not be read or parsed. A session\nthen runs no hooks at all: the other file, if it would load, is\n`disabled`.",
+          "properties": {
+            "error": {
+              "type": "string"
+            },
+            "type": {
+              "const": "invalid",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "error"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "properties": {
+            "type": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object",
+          "x-rho-other": true
+        }
+      ],
+      "description": "Whether a session would load a hooks file."
+    },
+    "HooksListParams": {
+      "description": "Params of [`HOOKS_LIST`].",
+      "properties": {
+        "environment": {
+          "$ref": "#/$defs/ClientEnvironment",
+          "description": "The asking client's environment, whose `RHO_TRUST_PROJECT_HOOKS`\ndecides whether the project's hooks file loads, as for a session that\nclient opens. Absent, it does not."
+        },
+        "workspace": {
+          "description": "The directory a session would open in, whose project's hooks file\nto list. Absent, only the user's is.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "HooksListResponse": {
+      "description": "Result of [`HOOKS_LIST`].",
+      "properties": {
+        "files": {
+          "description": "The user's hooks file, then the project's when the params name a\nworkspace, each listed whether or not it exists. Their hooks run in\nthis order.",
+          "items": {
+            "$ref": "#/$defs/HooksFile"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "files"
+      ],
+      "type": "object"
     },
     "IdempotencyKey": {
       "description": "A client's own name for one prompt, which makes sending it again\nsafe ([`super::SessionPromptParams::idempotency_key`]). Any\nnon-empty string the client will not reuse for another prompt of\nthe session, such as a UUID.",
@@ -3904,6 +4127,44 @@
       ],
       "type": "object"
     },
+    "McpListParams": {
+      "description": "Params of [`MCP_LIST`].",
+      "properties": {
+        "environment": {
+          "$ref": "#/$defs/ClientEnvironment",
+          "description": "The asking client's environment, whose `RHO_TRUST_PROJECT_PLUGINS`\ndecides whether the project's plugins count, as for a session that\nclient opens. Absent, they do not."
+        },
+        "workspace": {
+          "description": "The directory a session would open in, whose project's plugins\ncontribute servers. Absent, the daemon user's home directory, which\nleaves only the user's plugins.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "McpListResponse": {
+      "description": "Result of [`MCP_LIST`].",
+      "properties": {
+        "config_path": {
+          "description": "The daemon's `config.toml`, whose `[mcp.servers]` table configures\nthe servers whose source is [`McpServerSource::Config`].",
+          "type": "string"
+        },
+        "servers": {
+          "description": "Every configured server, by identity, including disabled and invalid\nones.",
+          "items": {
+            "$ref": "#/$defs/ConfiguredMcpServer"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "config_path",
+        "servers"
+      ],
+      "type": "object"
+    },
     "McpServer": {
       "description": "An MCP server a client provides, by how the daemon reaches it.",
       "oneOf": [
@@ -3969,6 +4230,113 @@
           "type": "object"
         }
       ]
+    },
+    "McpServerSource": {
+      "anyOf": [
+        {
+          "description": "The `[mcp.servers]` table of [`McpListResponse::config_path`].",
+          "properties": {
+            "type": {
+              "const": "config",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The `mcp.json` of the agent plugin named `plugin`.",
+          "properties": {
+            "plugin": {
+              "type": "string"
+            },
+            "type": {
+              "const": "plugin",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "plugin"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "properties": {
+            "type": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object",
+          "x-rho-other": true
+        }
+      ],
+      "description": "Where a server's configuration comes from."
+    },
+    "McpTransport": {
+      "anyOf": [
+        {
+          "description": "A program the session starts, and its arguments.",
+          "properties": {
+            "args": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "command": {
+              "type": "string"
+            },
+            "type": {
+              "const": "stdio",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "command",
+            "args"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A remote server at `url`.",
+          "properties": {
+            "type": {
+              "const": "streamable_http",
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "url"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "properties": {
+            "type": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object",
+          "x-rho-other": true
+        }
+      ],
+      "description": "How a session reaches a server, as its configuration says."
     },
     "MessageId": {
       "description": "Identifies one message in a session's event stream: chunks with the\nsame id extend one message.",
@@ -11262,12 +11630,28 @@
         "$ref": "#/$defs/HelloResponse"
       }
     },
+    "rho/hooks/list": {
+      "params": {
+        "$ref": "#/$defs/HooksListParams"
+      },
+      "result": {
+        "$ref": "#/$defs/HooksListResponse"
+      }
+    },
     "rho/job/list": {
       "params": {
         "$ref": "#/$defs/JobListParams"
       },
       "result": {
         "$ref": "#/$defs/JobListResponse"
+      }
+    },
+    "rho/mcp/list": {
+      "params": {
+        "$ref": "#/$defs/McpListParams"
+      },
+      "result": {
+        "$ref": "#/$defs/McpListResponse"
       }
     },
     "rho/model/list": {

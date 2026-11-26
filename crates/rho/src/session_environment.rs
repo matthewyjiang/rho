@@ -57,6 +57,12 @@ impl Ambient {
         }
     }
 
+    /// The project trust this environment's `RHO_TRUST_PROJECT_*` variables
+    /// grant.
+    pub(crate) fn project_trusts(&self) -> ProjectTrusts {
+        ProjectTrusts::read(|name| self.read(name))
+    }
+
     /// Clears `command`'s environment and installs the sanitized base set of
     /// [`crate::child_env`], read from this environment, with `rho_home` as
     /// the daemon's home (see [`crate::child_env::apply_base`]).
@@ -197,7 +203,7 @@ impl SessionEnvironment {
     pub(crate) fn new(ambient: Ambient) -> Self {
         Self {
             process: ambient.process_environment().into(),
-            project_trust: ProjectTrusts::read(|name| ambient.read(name)),
+            project_trust: ambient.project_trusts(),
             opened_with: ambient.clone(),
             ambient: Arc::new(RwLock::new(ambient)),
         }
@@ -267,7 +273,7 @@ impl SessionEnvironment {
     /// run the prompt with trust that client did not grant, or without
     /// trust it did (#1779).
     pub(crate) fn trust_mismatch(&self, ambient: &Ambient) -> Option<TrustMismatch> {
-        let theirs = ProjectTrusts::read(|name| ambient.read(name));
+        let theirs = ambient.project_trusts();
         (theirs != self.project_trust).then(|| TrustMismatch {
             session_only: self.project_trust.variables_beyond(theirs),
             other_only: theirs.variables_beyond(self.project_trust),

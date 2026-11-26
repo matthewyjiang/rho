@@ -14,7 +14,7 @@ use crate::{
     },
 };
 
-use super::config_repository::ConfigRepository;
+use super::{config_repository::ConfigRepository, configured_mcp::ConfiguredMcp};
 
 #[path = "mcp_cli_remote.rs"]
 mod remote;
@@ -51,14 +51,12 @@ async fn inventory(view: Inventory<'_>, connect: bool, cli: &Cli) -> anyhow::Res
     let config = config_repository.load()?;
     // Include plugin-provided servers so the inventory matches a session.
     let cwd = std::env::current_dir()?;
-    let plugin_discovery = crate::plugins::discover_mcp(
-        &cwd,
-        crate::paths::home_dir().as_deref(),
+    let mcp_config = ConfiguredMcp::discover(
+        &config.mcp,
+        Some(&cwd),
         crate::workspace::ProjectTrusts::of_this_process(),
-    );
-    crate::plugins::log(&plugin_discovery.report);
-    let mut mcp_config = config.mcp.clone();
-    mcp_config.merge(plugin_discovery.mcp);
+    )
+    .merged();
     let plan = if connect {
         McpSessionPlan::Connect
     } else {

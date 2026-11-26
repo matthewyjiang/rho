@@ -356,6 +356,7 @@ There is no marketplace in Rho. Configure servers in the selected config file, t
 
 - **Interactive:** `/mcp` lists configured servers, transport, status, errors, exported tool names, and any prompts and resources the server offers, for the current session. A server that is still connecting shows as connecting, not as a failure. `/doctor` includes an MCP health row.
 - **CLI:** `rho mcp list` prints configured servers from the selected config and plugins without starting them. `rho mcp show <id>` prints one server, including its prompts and resources when started with `--connect`. Pass `--connect` on either command to start enabled servers and report live status and discovered tools. Both accept `--json`.
+- **Protocol:** a daemon client, such as a settings screen, reads the same listing with [`rho/mcp/list`](/protocol#configured-mcp-servers-and-hooks), without a session, and a loaded session's live status with `rho/session/mcp`.
 
 Use `/mcp` when you already have a session open. Use `rho mcp list` from a shell to verify config before starting the TUI, and `rho mcp list --connect` when you need a live probe.
 

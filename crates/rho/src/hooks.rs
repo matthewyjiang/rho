@@ -37,6 +37,7 @@ mod activity;
 mod catalog;
 mod command;
 mod config;
+mod configured;
 mod diagnostics;
 mod dispatch;
 mod matcher;
@@ -317,11 +318,9 @@ pub fn discover_for_cwd(
     trust: ProjectTrusts,
     report: &mut dyn FnMut(String),
 ) -> Result<HookCatalog, HookConfigError> {
-    let project_root = crate::workspace::project_ancestor_dirs(cwd)
-        .into_iter()
-        .next();
+    let project_root = project_root(cwd);
     let rho_home = crate::paths::rho_dir().ok();
-    let catalog = HookCatalog::discover(rho_home.as_deref(), project_root.as_deref(), trust.hooks)?;
+    let catalog = HookCatalog::discover(rho_home.as_deref(), Some(&project_root), trust.hooks)?;
     if let Some(skipped) = catalog.skipped_untrusted() {
         report(format!(
             "ignoring {} because this workspace is not trusted; set {TRUST_PROJECT_HOOKS_ENV}=1 to load it",
@@ -329,6 +328,27 @@ pub fn discover_for_cwd(
         ));
     }
     Ok(catalog)
+}
+
+/// The hooks files a session in `cwd` would load under `trust`, each with
+/// the hooks it defines, read without starting anything (`rho/hooks/list`):
+/// the user's, then, given `cwd`, its project's.
+pub(crate) fn configured_for_cwd(
+    cwd: Option<&std::path::Path>,
+    trust: ProjectTrusts,
+) -> Vec<rho_protocol::HooksFile> {
+    let rho_home = crate::paths::rho_dir().ok();
+    let project_root = cwd.map(project_root);
+    configured::configured_files(rho_home.as_deref(), project_root.as_deref(), trust.hooks)
+}
+
+/// The project whose `.rho/hooks.toml` applies to `cwd`: its repository's
+/// root, else `cwd` itself.
+fn project_root(cwd: &std::path::Path) -> std::path::PathBuf {
+    crate::workspace::project_ancestor_dirs(cwd)
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| cwd.to_path_buf())
 }
 
 #[cfg(test)]

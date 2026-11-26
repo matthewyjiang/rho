@@ -56,6 +56,8 @@
 //! | [`CONFIG_SET`] | [`ConfigSetParams`] | [`ConfigSetResponse`] |
 //! | [`MODEL_LIST`] | [`ModelListParams`] | [`ModelList`] |
 //! | [`MODEL_REFRESH`] | [`ModelRefreshParams`] | [`ModelRefreshResponse`] |
+//! | [`MCP_LIST`] | [`McpListParams`] | [`McpListResponse`] |
+//! | [`HOOKS_LIST`] | [`HooksListParams`] | [`HooksListResponse`] |
 //!
 //! The daemon sends these notifications; clients send none.
 //!
@@ -85,12 +87,14 @@ mod config;
 mod daemon;
 mod event;
 mod grant;
+mod hooks_list;
 mod input;
 mod inspect;
 mod job;
 mod login;
 mod mark;
 mod mcp;
+mod mcp_list;
 mod models;
 mod options;
 mod outcome;
@@ -139,6 +143,9 @@ pub use event::{
     ToolCallUpdate, ToolContent, ToolKind, ToolStatus, TurnId,
 };
 pub use grant::{GrantAccess, GrantWorkspaces, SessionGrant};
+pub use hooks_list::{
+    HooksFile, HooksFileScope, HooksFileStatus, HooksListParams, HooksListResponse, HOOKS_LIST,
+};
 pub use input::{
     ApprovalAsk, ApprovalSource, Ask, Choice, DefaultAnswer, DefaultStyle, InputAnswer, InputAsker,
     InputRequest, InputRequestId, InputTimeout, Operation, PathScope, PermissionMode,
@@ -174,6 +181,9 @@ pub use mcp::{
     SessionMcpPrompt, SessionMcpPromptArgument, SessionMcpResource, SessionMcpResourceContent,
     SessionMcpResourceParams, SessionMcpResourceResponse, SessionMcpServer, SessionMcpStatus,
     SESSION_MCP, SESSION_MCP_CATALOG, SESSION_MCP_COMPLETE, SESSION_MCP_RESOURCE,
+};
+pub use mcp_list::{
+    ConfiguredMcpServer, McpListParams, McpListResponse, McpServerSource, McpTransport, MCP_LIST,
 };
 pub use models::{
     ClaudeCliModel, ModelList, ModelListKind, ModelListParams, ModelListRefresh,
@@ -349,6 +359,8 @@ protocol! {
         ConfigSet = CONFIG_SET: ConfigSetParams => ConfigSetResponse,
         ModelListMethod = MODEL_LIST: ModelListParams => ModelList,
         ModelRefresh = MODEL_REFRESH: ModelRefreshParams => ModelRefreshResponse,
+        McpList = MCP_LIST: McpListParams => McpListResponse,
+        HooksList = HOOKS_LIST: HooksListParams => HooksListResponse,
     }
     notifications {
         SessionEventNotification = SESSION_EVENT: SessionEventParams,

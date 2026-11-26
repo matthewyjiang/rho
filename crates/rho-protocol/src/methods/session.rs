@@ -106,6 +106,11 @@ impl ClientEnvironment {
             .collect()
     }
 
+    /// Whether it has no variable.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
     /// Every variable, by name.
     pub fn iter(&self) -> impl Iterator<Item = (&str, &str)> {
         self.0
