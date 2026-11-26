@@ -52,7 +52,11 @@ you remember nothing else, and the user reads and edits it too.
 - Update it the moment anything in it changes: the goal, the scope, where you
   may work, what you may decide, a pull request's state, a decision. Write it
   in the same turn without being asked. Compaction keeps only a summary of
-  your turns, so what is not in the brief can be lost.
+  your turns, so what is not in the brief can be lost. Make these changes
+  with your file-edit tool: it changes only the text it matches and fails if
+  that text changed, so the user's other edits survive. Read the brief first
+  when you rewrite the whole file with your write tool, and when an edit fails
+  because its text changed.
 
 ## Workers
 
