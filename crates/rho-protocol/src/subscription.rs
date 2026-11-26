@@ -16,7 +16,10 @@ use tokio::sync::mpsc::{
     error::{TryRecvError, TrySendError},
 };
 
-use crate::methods::{DetachReason, Seq, SessionEvent};
+use crate::{
+    display::NotificationInfo,
+    methods::{DetachReason, Seq, SessionEvent},
+};
 
 /// Opens a subscription that first sends `replay`, the events a client
 /// attaching or reattaching has not seen, then holds up to `backlog` live
@@ -27,12 +30,32 @@ use crate::methods::{DetachReason, Seq, SessionEvent};
 /// subscriber further than `backlog` live events behind is dropped with
 /// [`DetachReason::Lagged`] rather than buffered without end.
 ///
+/// The events carry no time or notification; [`subscription_of`] sends them.
+///
 /// # Panics
 ///
 /// When `backlog` is 0.
+///
+/// # Next major
+///
+/// NEXT_MAJOR(rho-protocol): replay StreamEvents in subscription() and publish them with Publisher::try_publish, removing subscription_of and Publisher::try_publish_event.
 pub fn subscription<R>(backlog: usize, replay: R) -> (Publisher, Subscription)
 where
     R: IntoIterator<Item = (Seq, SessionEvent)>,
+    R::IntoIter: Send + Sync + 'static,
+{
+    subscription_of(
+        backlog,
+        replay
+            .into_iter()
+            .map(|(seq, event)| StreamEvent::new(seq, event)),
+    )
+}
+
+/// [`subscription`], replaying events with their time and notification.
+pub fn subscription_of<R>(backlog: usize, replay: R) -> (Publisher, Subscription)
+where
+    R: IntoIterator<Item = StreamEvent>,
     R::IntoIter: Send + Sync + 'static,
 {
     let (events, receiver) = mpsc::channel(backlog);
@@ -49,6 +72,32 @@ where
     (publisher, subscription)
 }
 
+/// One event of a session's stream as a subscription carries it: what a
+/// [`crate::methods::SESSION_EVENT`] notification sends of it
+/// ([`crate::SessionEventEnvelope`]) but the session.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct StreamEvent {
+    pub seq: Seq,
+    pub event: SessionEvent,
+    /// When it happened, in unix milliseconds, if known.
+    pub at: Option<u64>,
+    /// What the event, a card, is about, when it shows a notification.
+    pub notification: Option<Box<NotificationInfo>>,
+}
+
+impl StreamEvent {
+    /// `event` at `seq`, with no time or notification.
+    pub fn new(seq: Seq, event: SessionEvent) -> Self {
+        Self {
+            seq,
+            event,
+            at: None,
+            notification: None,
+        }
+    }
+}
+
 /// The daemon's end of one subscription: publishes one session's live events
 /// to one attached client. Publish, and replay through [`subscription`],
 /// only events that encode as JSON; one with a non-UTF-8 path does not, and
@@ -59,7 +108,7 @@ where
 /// [`Publisher::close`] ends it with one.
 #[derive(Debug)]
 pub struct Publisher {
-    events: mpsc::Sender<(Seq, SessionEvent)>,
+    events: mpsc::Sender<StreamEvent>,
     /// Set once: by the first lag, or by [`Publisher::close`].
     reason: Arc<OnceLock<DetachReason>>,
 }
@@ -84,11 +133,19 @@ impl Publisher {
     ///
     /// Once it has reported [`Published::Lagged`], it keeps doing so even
     /// after the backlog drains, so the client never sees a gap in `seq`.
+    ///
+    /// The event carries no time or notification; see
+    /// [`Self::try_publish_event`].
     pub fn try_publish(&self, seq: Seq, event: SessionEvent) -> Result<(), Published> {
+        self.try_publish_event(StreamEvent::new(seq, event))
+    }
+
+    /// [`Self::try_publish`], for an event with its time and notification.
+    pub fn try_publish_event(&self, event: StreamEvent) -> Result<(), Published> {
         if self.reason.get().is_some() {
             return Err(Published::Lagged);
         }
-        match self.events.try_send((seq, event)) {
+        match self.events.try_send(event) {
             Ok(()) => Ok(()),
             Err(TrySendError::Full(_)) => {
                 // Only this publisher sets the reason, and only once.
@@ -124,8 +181,8 @@ impl Publisher {
 /// forwards its events, then its detach reason, if any.
 pub struct Subscription {
     /// Sent before any live event.
-    replay: Box<dyn Iterator<Item = (Seq, SessionEvent)> + Send + Sync>,
-    events: mpsc::Receiver<(Seq, SessionEvent)>,
+    replay: Box<dyn Iterator<Item = StreamEvent> + Send + Sync>,
+    events: mpsc::Receiver<StreamEvent>,
     reason: Arc<OnceLock<DetachReason>>,
 }
 
@@ -142,7 +199,7 @@ impl fmt::Debug for Subscription {
 impl Subscription {
     /// The next event, replayed ones first, or `None` once the publisher is
     /// gone and every published event was taken.
-    pub(crate) async fn next(&mut self) -> Option<(Seq, SessionEvent)> {
+    pub(crate) async fn next(&mut self) -> Option<StreamEvent> {
         match self.replay.next() {
             Some(event) => Some(event),
             None => self.events.recv().await,
@@ -151,11 +208,11 @@ impl Subscription {
 
     /// The next event already published, without waiting.
     pub(crate) fn try_next(&mut self) -> Next {
-        if let Some((seq, event)) = self.replay.next() {
-            return Next::Event(seq, event);
+        if let Some(event) = self.replay.next() {
+            return Next::Event(event);
         }
         match self.events.try_recv() {
-            Ok((seq, event)) => Next::Event(seq, event),
+            Ok(event) => Next::Event(event),
             Err(TryRecvError::Empty) => Next::Empty,
             Err(TryRecvError::Disconnected) => Next::Ended,
         }
@@ -171,7 +228,7 @@ impl Subscription {
 
 /// What [`Subscription::try_next`] found.
 pub(crate) enum Next {
-    Event(Seq, SessionEvent),
+    Event(StreamEvent),
     /// Nothing published yet; the publisher may still publish.
     Empty,
     /// The publisher is gone and every event it published was taken.

@@ -1,5 +1,5 @@
 use pretty_assertions::assert_eq;
-use rho_protocol::display::NotificationTone;
+use rho_protocol::display::{NotificationOutcome, NotificationTone, NotificationUrgency};
 
 use super::{omitted, prompt, section, snippet, MODEL_NOTIFICATION_BYTES};
 use crate::app::pull_requests::{
@@ -48,10 +48,16 @@ fn remark(body: &str) -> Remark {
     }
 }
 
-// Covers: a card's color says the most pressing thing that happened.
+// Covers: a card's color and urgency say the most pressing thing that
+// happened, and it holds one item per thing, in the body's order: new
+// commits, each change, the end. A miss files failing checks among routine
+// cards, or hides a merge behind the comments that came with it.
 // Owner: news rendering.
 #[test]
-fn a_cards_tone_is_its_most_pressing_outcome() {
+fn a_cards_tone_and_urgency_are_its_most_pressing_outcome() {
+    use NotificationOutcome as Outcome;
+    use NotificationTone as Tone;
+    use NotificationUrgency as Urgency;
     let remarks = || Change::Remarks {
         remarks: vec![remark("looks good")],
     };
@@ -112,24 +118,92 @@ fn a_cards_tone_is_its_most_pressing_outcome() {
             "unreadable",
             news(12, vec![], Some(End::Unreadable("Not Found".into()))),
         ),
+        (
+            "pushed",
+            News {
+                pushed: true,
+                ..news(12, vec![], None)
+            },
+        ),
     ];
-    let tones: Vec<(&str, NotificationTone)> = cases
+    let read: Vec<_> = cases
         .iter()
-        .map(|(name, news)| (*name, news.card().tone))
+        .map(|(name, news)| {
+            let row = news.row();
+            let info = row.info.expect("news is typed");
+            let outcomes: Vec<_> = info.items.iter().map(|item| item.outcome).collect();
+            (*name, row.card.tone, info.urgency, outcomes)
+        })
         .collect();
     assert_eq!(
-        tones,
+        read,
         vec![
-            ("checks failed", NotificationTone::Error),
-            ("checks passed", NotificationTone::Success),
-            ("owed checks finished, one failing", NotificationTone::Error),
-            ("remarks", NotificationTone::Accent),
-            ("remarks with a conflict", NotificationTone::Error),
-            ("merged", NotificationTone::Success),
-            ("merged with remarks", NotificationTone::Accent),
-            ("closed", NotificationTone::Warning),
-            ("comment loop", NotificationTone::Warning),
-            ("unreadable", NotificationTone::Warning),
+            (
+                "checks failed",
+                Tone::Error,
+                Urgency::NeedsYou,
+                vec![Outcome::ChecksFailed]
+            ),
+            (
+                "checks passed",
+                Tone::Success,
+                Urgency::Notable,
+                vec![Outcome::ChecksPassed]
+            ),
+            (
+                "owed checks finished, one failing",
+                Tone::Error,
+                Urgency::NeedsYou,
+                vec![Outcome::ChecksFailed]
+            ),
+            (
+                "remarks",
+                Tone::Accent,
+                Urgency::Notable,
+                vec![Outcome::NewComments]
+            ),
+            (
+                "remarks with a conflict",
+                Tone::Error,
+                Urgency::NeedsYou,
+                vec![Outcome::NewComments, Outcome::MergeConflict]
+            ),
+            (
+                "merged",
+                Tone::Success,
+                Urgency::Notable,
+                vec![Outcome::Merged]
+            ),
+            (
+                "merged with remarks",
+                Tone::Accent,
+                Urgency::Notable,
+                vec![Outcome::NewComments, Outcome::Merged]
+            ),
+            (
+                "closed",
+                Tone::Warning,
+                Urgency::Notable,
+                vec![Outcome::Closed]
+            ),
+            (
+                "comment loop",
+                Tone::Warning,
+                Urgency::Notable,
+                vec![Outcome::NewComments, Outcome::WatchStopped]
+            ),
+            (
+                "unreadable",
+                Tone::Warning,
+                Urgency::NeedsYou,
+                vec![Outcome::Unreadable]
+            ),
+            (
+                "pushed",
+                Tone::Neutral,
+                Urgency::Routine,
+                vec![Outcome::NewCommits]
+            ),
         ]
     );
 }

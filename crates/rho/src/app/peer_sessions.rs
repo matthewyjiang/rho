@@ -30,16 +30,17 @@ use std::{
 
 use rho_protocol::{
     display::{
-        NotificationCard, NotificationDelivery, NotificationPreview, NotificationTone,
-        NotificationVisibility,
+        NotificationCard, NotificationDelivery, NotificationItem, NotificationOutcome,
+        NotificationPreview, NotificationSubject, NotificationTone, NotificationVisibility,
     },
-    AnswerStop, IdempotencyKey, InputRequestId,
+    AnswerStop, IdempotencyKey, InputRequestId, SessionId,
 };
 use tokio::sync::Notify;
 
 use crate::{
     app::prompt_content::longest_backtick_run,
     cli_runtime::stream_format::truncate,
+    display_transcript::NotificationRow,
     subagent::format_elapsed_secs,
     tools::notification_format::{bounded_notification, Excerpt},
 };
@@ -359,8 +360,8 @@ impl PeerBatch {
     }
 
     /// One transcript card per notice, in the batch's order.
-    pub(crate) fn cards(&self) -> Vec<NotificationCard> {
-        self.notices.iter().map(PeerNotice::card).collect()
+    pub(crate) fn rows(&self) -> Vec<NotificationRow> {
+        self.notices.iter().map(PeerNotice::row).collect()
     }
 }
 
@@ -377,8 +378,10 @@ impl PeerNotice {
     }
 
     /// How the notice reads: the session's state as `sessions wait` names
-    /// it, what its summary line adds, and its card's label and tone.
-    fn reading(&self) -> (&'static str, String, &'static str, NotificationTone) {
+    /// it, what its summary line adds, its card's label and tone, and its
+    /// item's outcome.
+    fn reading(&self) -> Reading {
+        use NotificationOutcome as Outcome;
         use NotificationTone::{Accent, Error, Success, Warning};
         use PeerEvent::{TurnEnded, WaitingForInput};
         match &self.event {
@@ -390,6 +393,7 @@ impl PeerNotice {
                 ),
                 "Waiting for an answer",
                 Warning,
+                Outcome::Question,
             ),
             TurnEnded(PeerTurnEnd::Answered {
                 stop: AnswerStop::MaxTokens,
@@ -399,6 +403,7 @@ impl PeerNotice {
                 ", its answer cut off at the model's output limit".into(),
                 "Cut off",
                 Warning,
+                Outcome::CutOff,
             ),
             TurnEnded(PeerTurnEnd::Answered {
                 stop: AnswerStop::Refusal,
@@ -408,30 +413,50 @@ impl PeerNotice {
                 ", but the model refused".into(),
                 "Refused",
                 Warning,
+                Outcome::Refused,
             ),
             // `EndTurn`, `Unknown`, and any reason a newer SDK adds.
-            TurnEnded(PeerTurnEnd::Answered { .. }) => {
-                ("completed", String::new(), "Completed", Success)
-            }
+            TurnEnded(PeerTurnEnd::Answered { .. }) => (
+                "completed",
+                String::new(),
+                "Completed",
+                Success,
+                Outcome::Completed,
+            ),
             TurnEnded(PeerTurnEnd::StepLimit { .. }) => (
                 "completed",
                 " at its step limit, before the model answered".into(),
                 "Out of steps",
                 Warning,
+                Outcome::OutOfSteps,
             ),
-            TurnEnded(PeerTurnEnd::Failed { .. }) => ("failed", String::new(), "Failed", Error),
-            TurnEnded(PeerTurnEnd::Cancelled) => ("cancelled", String::new(), "Cancelled", Accent),
+            TurnEnded(PeerTurnEnd::Failed { .. }) => (
+                "failed",
+                String::new(),
+                "Failed",
+                Error,
+                Outcome::Failed,
+            ),
+            TurnEnded(PeerTurnEnd::Cancelled) => (
+                "cancelled",
+                String::new(),
+                "Cancelled",
+                Accent,
+                Outcome::Cancelled,
+            ),
             TurnEnded(PeerTurnEnd::TimedOut { timeout_ms }) => (
                 "timed_out",
                 format!(" after {}", format_elapsed_secs(timeout_ms / 1000)),
                 "Timed out",
                 Error,
+                Outcome::TimedOut,
             ),
             TurnEnded(PeerTurnEnd::Interrupted) => (
                 "interrupted",
                 ", as the daemon stopped".into(),
                 "Interrupted",
                 Accent,
+                Outcome::Interrupted,
             ),
         }
     }
@@ -452,9 +477,20 @@ impl PeerNotice {
     }
 
     /// The notice's transcript card, drawn as a subagent's result card is:
-    /// the answer, reply or error, else what the summary line says.
+    /// the answer, reply or error, else what the summary line says. Typed as
+    /// one item about the session.
+    fn row(&self) -> NotificationRow {
+        let card = self.card();
+        let (.., outcome) = self.reading();
+        let subject = NotificationSubject::Session {
+            id: SessionId::new(self.session.clone()),
+        };
+        let item = NotificationItem::new(outcome, subject.clone(), card.title.clone());
+        NotificationRow::typed(card, subject, vec![item])
+    }
+
     fn card(&self) -> NotificationCard {
-        let (_, said, label, tone) = self.reading();
+        let (_, said, label, tone, _) = self.reading();
         let (body, preview) = match (&self.event, self.text()) {
             (PeerEvent::TurnEnded(PeerTurnEnd::Failed { .. }), Some(error)) => {
                 (error.to_owned(), NotificationPreview::Full)
@@ -485,6 +521,15 @@ impl PeerNotice {
         }
     }
 }
+
+/// What [`PeerNotice::reading`] says of a notice.
+type Reading = (
+    &'static str,
+    String,
+    &'static str,
+    NotificationTone,
+    NotificationOutcome,
+);
 
 /// `text`'s first line, trimmed and cut to [`DETAIL_CHARS`], so a title or
 /// an ask can neither add a line of its own nor crowd out the rest.

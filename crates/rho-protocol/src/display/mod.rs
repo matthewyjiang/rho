@@ -7,6 +7,7 @@
 
 mod card;
 mod notification;
+mod notification_info;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -18,6 +19,10 @@ pub use card::{
 pub use notification::{
     NotificationCard, NotificationDelivery, NotificationPreview, NotificationTone,
     NotificationVisibility,
+};
+pub use notification_info::{
+    NotificationId, NotificationInfo, NotificationItem, NotificationOutcome, NotificationSubject,
+    NotificationUrgency,
 };
 
 /// A transcript row has exactly one presentation.

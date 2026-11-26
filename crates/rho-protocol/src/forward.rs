@@ -44,12 +44,12 @@ use crate::{
     login_relay::{LoginEvent, LoginStream},
     methods::{
         AuthLoginFinishedNotification, AuthLoginFinishedParams, AuthLoginPromptNotification,
-        AuthLoginPromptParams, LoginId, Notification, Seq, SessionDetachedNotification,
-        SessionDetachedParams, SessionEvent, SessionEventNotification, SessionEventParams,
+        AuthLoginPromptParams, LoginId, Notification, SessionDetachedNotification,
+        SessionDetachedParams, SessionEventEnvelope, SessionEventNotification, SessionEventParams,
         SessionId,
     },
     server_outbox::{Outbox, Outgoing},
-    subscription::{Next, Subscription},
+    subscription::{Next, StreamEvent, Subscription},
 };
 
 /// Notifications a connection may have queued for its writer but not yet
@@ -279,19 +279,27 @@ async fn forward(
 ) {
     /// What woke the forwarder.
     enum Wake {
-        Next(Option<(Seq, SessionEvent)>),
+        Next(Option<StreamEvent>),
         Flush(oneshot::Sender<()>),
         Ending,
     }
-    let send_event = async |seq, event| {
-        let params = SessionEventParams {
+    let send_event = async |event: StreamEvent| {
+        let StreamEvent {
+            seq,
+            event,
+            at,
+            notification,
+        } = event;
+        let mut envelope = SessionEventEnvelope::new(SessionEventParams {
             session: session.clone(),
             seq,
             event,
-        };
+        });
+        envelope.at = at;
+        envelope.notification = notification;
         // A publisher sends only events that encode (`Publisher`), replayed
         // or live.
-        let message = notification::<SessionEventNotification>(&params)
+        let message = encode(SessionEventNotification::NAME, &envelope)
             .expect("published session events encode");
         forwarders.send(&session, id, message, &outbox).await
     };
@@ -303,16 +311,16 @@ async fn forward(
             _ = ending.wait_for(|ending| *ending) => Wake::Ending,
         };
         match wake {
-            Wake::Next(Some((seq, event))) => {
-                if !send_event(seq, event).await {
+            Wake::Next(Some(event)) => {
+                if !send_event(event).await {
                     return;
                 }
             }
             Wake::Next(None) => break true,
             Wake::Flush(done) => {
                 // Whatever was published before the request is taken now.
-                while let Next::Event(seq, event) = subscription.try_next() {
-                    if !send_event(seq, event).await {
+                while let Next::Event(event) = subscription.try_next() {
+                    if !send_event(event).await {
                         return;
                     }
                 }
@@ -324,8 +332,8 @@ async fn forward(
     if !published_all {
         loop {
             match subscription.try_next() {
-                Next::Event(seq, event) => {
-                    if !send_event(seq, event).await {
+                Next::Event(event) => {
+                    if !send_event(event).await {
                         return;
                     }
                 }
@@ -405,8 +413,16 @@ fn login_notification(login: &LoginId, event: LoginEvent) -> jsonrpc::Notificati
 fn notification<N: Notification>(
     params: &N::Params,
 ) -> Result<jsonrpc::Notification, serde_json::Error> {
+    encode(N::NAME, params)
+}
+
+/// Notification `method` carrying `params`.
+fn encode(
+    method: &str,
+    params: &impl serde::Serialize,
+) -> Result<jsonrpc::Notification, serde_json::Error> {
     Ok(jsonrpc::Notification {
-        method: N::NAME.to_owned(),
+        method: method.to_owned(),
         params: Some(serde_json::to_value(params)?),
     })
 }

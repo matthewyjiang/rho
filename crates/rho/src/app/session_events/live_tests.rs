@@ -25,10 +25,11 @@ use crate::{
                 agent, canonical_messages, closed, opened, origin, shell_call, text, updated,
                 without_display,
             },
+            FeedEvent,
         },
         session_runtime::{InsertedMessage, SessionEvent, SessionTools},
     },
-    display_transcript::{DisplayRow, DisplayTranscript},
+    display_transcript::{DisplayRow, DisplayTranscript, NotificationRow},
     tools::{
         mcp::exported_name::McpToolNames,
         sdk_registry::AppToolSet,
@@ -36,8 +37,9 @@ use crate::{
     },
 };
 use rho_protocol::display::{
-    NotificationCard, NotificationDelivery, NotificationPreview, NotificationTone,
-    NotificationVisibility, Presentation,
+    NotificationCard, NotificationDelivery, NotificationItem, NotificationOutcome,
+    NotificationPreview, NotificationSubject, NotificationTone, NotificationVisibility,
+    Presentation,
 };
 
 fn live(tool_set: &AppToolSet) -> LiveEvents {
@@ -49,7 +51,15 @@ fn live(tool_set: &AppToolSet) -> LiveEvents {
 }
 
 fn map_all(live: &mut LiveEvents, events: &[SessionEvent]) -> Vec<WireEvent> {
-    events.iter().flat_map(|event| live.map(event)).collect()
+    events.iter().flat_map(|event| map(live, event)).collect()
+}
+
+/// The wire events `live` maps `event` to, without what goes beside them.
+fn map(live: &mut LiveEvents, event: &SessionEvent) -> Vec<WireEvent> {
+    live.map(event)
+        .into_iter()
+        .map(|event| event.event)
+        .collect()
 }
 
 fn call_id(id: &str) -> rho_sdk::ToolCallId {
@@ -458,7 +468,7 @@ fn steers_show_as_user_messages_once_applied() {
                     live.withdrawn(&id);
                     Vec::new()
                 }
-                Step::Runtime(event) => live.map(&event),
+                Step::Runtime(event) => map(&mut live, &event),
             };
             assert_eq!(canonical_messages(shown), expected, "{name}, step {index}");
         }
@@ -750,7 +760,7 @@ fn a_retry_says_why() {
         let tool_set = AppToolSet::disabled();
         let mut live = live(&tool_set);
         map_all(&mut live, &before);
-        assert_eq!(live.map(&event), expected, "{case}");
+        assert_eq!(map(&mut live, &event), expected, "{case}");
     }
 }
 
@@ -1004,8 +1014,9 @@ fn streamed_usage_repeats_the_steps_fill() {
 }
 
 // Covers: a background result's card carries its body as markdown, with
-// output fenced, and as plain text, unfenced, and reads as its card's
-// tone, so a client can show an error card as failed.
+// output fenced, and as plain text, unfenced, reads as its card's tone, so
+// a client can show an error card as failed, and goes out with its typed
+// notification beside it.
 // Owner: session event live mapping
 #[test]
 fn background_cards_carry_plain_text_and_tone() {
@@ -1023,19 +1034,32 @@ fn background_cards_carry_plain_text_and_tone() {
         output: Some("boom".into()),
         details: Vec::new(),
     };
+    let subject = NotificationSubject::Process { id: "bg-1".into() };
+    let row = NotificationRow::typed(
+        card.clone(),
+        subject.clone(),
+        vec![NotificationItem::new(
+            NotificationOutcome::Failed,
+            subject,
+            "exited 1".to_owned(),
+        )],
+    );
     let tool_set = AppToolSet::disabled();
     let mut live = live(&tool_set);
     let applied = SessionEvent::BoundaryApplied {
-        transcript: DisplayTranscript(vec![DisplayRow::Notification(Box::new(card.clone()))]),
+        transcript: DisplayTranscript(vec![DisplayRow::Notification(Box::new(row.clone()))]),
     };
     assert_eq!(
         live.map(&applied),
-        vec![WireEvent::Card {
-            title: "Background process".into(),
-            markdown: "exited 1\nfailed\n\n```text\nboom\n```".into(),
-            plain: "exited 1\nfailed\n\nboom".into(),
-            tone: CardTone::Error,
-            display: Some(Box::new(card)),
+        vec![FeedEvent {
+            event: WireEvent::Card {
+                title: "Background process".into(),
+                markdown: "exited 1\nfailed\n\n```text\nboom\n```".into(),
+                plain: "exited 1\nfailed\n\nboom".into(),
+                tone: CardTone::Error,
+                display: Some(Box::new(card)),
+            },
+            notification: row.info.map(Box::new),
         }]
     );
 }

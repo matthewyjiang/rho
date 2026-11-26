@@ -135,13 +135,14 @@ pub use methods::{
     SessionAnswerQuestionParams, SessionAnswerQuestionResponse, SessionAnswerResponse,
     SessionAttachParams, SessionAttachResponse, SessionCancelParams, SessionCancelResponse,
     SessionControlAction, SessionDetachParams, SessionDetachResponse, SessionDetachedParams,
-    SessionEvent, SessionEventParams, SessionForkParams, SessionForkResponse, SessionGrant,
-    SessionHoldParams, SessionHoldResponse, SessionId, SessionNewParams, SessionNewResponse,
-    SessionObserveParams, SessionPromptParams, SessionPromptResponse, SessionSteerParams,
-    SessionSteerResponse, SessionUnsteerParams, SessionUnsteerResponse, SessionWorktree,
-    StatusParams, SteerId, StopParams, StopResponse, StreamId, ToolCallId, ToolCallUpdate,
-    ToolContent, ToolKind, ToolStatus, TurnError, TurnErrorKind, TurnId, TurnOutcome, UncheckedKey,
-    UncheckedReason, UnsteerOutcome, SESSION_ANSWER, SESSION_ANSWER_QUESTION, SESSION_HOLD,
+    SessionEvent, SessionEventEnvelope, SessionEventParams, SessionForkParams, SessionForkResponse,
+    SessionGrant, SessionHoldParams, SessionHoldResponse, SessionId, SessionNewParams,
+    SessionNewResponse, SessionObserveParams, SessionPromptParams, SessionPromptResponse,
+    SessionSteerParams, SessionSteerResponse, SessionUnsteerParams, SessionUnsteerResponse,
+    SessionWorktree, StatusParams, SteerId, StopParams, StopResponse, StreamId, ToolCallId,
+    ToolCallUpdate, ToolContent, ToolKind, ToolStatus, TurnError, TurnErrorKind, TurnId,
+    TurnOutcome, UncheckedKey, UncheckedReason, UnsteerOutcome, SESSION_ANSWER,
+    SESSION_ANSWER_QUESTION, SESSION_HOLD,
 };
 pub use methods::{
     Applies, ClientName, ConfigCategory, ConfigChangedParams, ConfigError, ConfigGetParams,
@@ -241,7 +242,9 @@ pub use methods::{
 };
 pub use server::{serve_connection, Service, CLOSE_GRACE};
 pub use server_settings::SettingsService;
-pub use subscription::{subscription, Published, Publisher, Subscription};
+pub use subscription::{
+    subscription, subscription_of, Published, Publisher, StreamEvent, Subscription,
+};
 pub use transport::CloseOnShutdown;
 pub use version::{
     BuildSkew, ProtocolVersion, RestartCost, VersionFix, VersionMismatch, PROTOCOL_VERSION,

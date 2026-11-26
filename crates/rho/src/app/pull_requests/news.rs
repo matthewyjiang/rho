@@ -1,9 +1,12 @@
 //! News on watched pull requests as the model reads it ([`prompt`]) and as
-//! clients show it ([`News::card`]).
+//! clients show it ([`News::row`]).
 
-use rho_protocol::display::{
-    NotificationCard, NotificationDelivery, NotificationPreview, NotificationTone,
-    NotificationVisibility,
+use rho_protocol::{
+    display::{
+        NotificationCard, NotificationDelivery, NotificationItem, NotificationOutcome,
+        NotificationPreview, NotificationSubject, NotificationTone, NotificationVisibility,
+    },
+    PullRequestId,
 };
 
 use super::{
@@ -11,7 +14,9 @@ use super::{
     state::{Change, CheckRef, CheckTally, End, Failure, Gate, News, Remark, Reviewed},
     watch::{COMMENT_WAKE_LIMIT, READ_FAILURE_LIMIT},
 };
-use crate::tools::notification_format::join_budgeted_sections;
+use crate::{
+    display_transcript::NotificationRow, tools::notification_format::join_budgeted_sections,
+};
 
 /// The most one wake's text may take: the budget process and subagent
 /// notifications have (`tools/process/notify.rs`, `tools/agent_output.rs`).
@@ -80,8 +85,39 @@ fn section(news: &News) -> String {
 impl News {
     /// Transcript card for this news: what happened and which pull request
     /// up front, the head beneath, the same lines the model reads as the
-    /// body. The tone is that of its most pressing item.
-    pub(crate) fn card(&self) -> NotificationCard {
+    /// body. The tone is that of its most pressing item. Typed with one item
+    /// per change, in the body's order: new commits, each change, the end.
+    pub(crate) fn row(&self) -> NotificationRow {
+        let subject = NotificationSubject::PullRequest {
+            id: PullRequestId::from(&self.pr),
+            url: self.url.clone(),
+        };
+        let item = |outcome, text: String| NotificationItem::new(outcome, subject.clone(), text);
+        let commit = self
+            .head
+            .as_deref()
+            .map(|head| format!(" on {}", short(head)))
+            .unwrap_or_default();
+        let pushed = self.pushed.then(|| {
+            let head = self.head.as_deref().map_or("", short);
+            item(
+                NotificationOutcome::NewCommits,
+                format!("New commits: the head is now {head}"),
+            )
+        });
+        let changes = self.changes.iter().map(|change| {
+            let (outcome, text) = change_item(change, &commit);
+            item(outcome, text)
+        });
+        let end = self.end.as_ref().map(|end| {
+            let (outcome, text) = end_item(end);
+            item(outcome, text)
+        });
+        let items = pushed.into_iter().chain(changes).chain(end).collect();
+        NotificationRow::typed(self.card(), subject, items)
+    }
+
+    fn card(&self) -> NotificationCard {
         let label = self.pr.to_string();
         let mut outcomes: Vec<&str> = self.changes.iter().map(change_summary).collect();
         outcomes.extend(self.end.as_ref().map(end_summary));
@@ -297,6 +333,94 @@ fn end_line(end: &End, label: &str, url: &str) -> String {
         End::Unreadable(why) => format!(
             "rho stopped watching pull request {label} ({url}) after {READ_FAILURE_LIMIT} failed reads in a row (limit {READ_FAILURE_LIMIT}): {}. Check it yourself, then call watch_pull_request to watch it again.",
             why.trim_end_matches('.')
+        ),
+    }
+}
+
+/// One change's item: its outcome, and the change in one line. Checks that
+/// all finished with some failing are failed checks.
+fn change_item(change: &Change, commit: &str) -> (NotificationOutcome, String) {
+    match change {
+        Change::ChecksFailed { failed } => (
+            NotificationOutcome::ChecksFailed,
+            format!("Checks failed{commit}: {}", check_names(failed)),
+        ),
+        Change::ChecksPassed { count, .. } => {
+            let checks = plural(*count as usize, "check", "checks");
+            (
+                NotificationOutcome::ChecksPassed,
+                format!("All {count} {checks} passed{commit}"),
+            )
+        }
+        Change::ChecksFinished { passed, failing } if failing.is_empty() => (
+            NotificationOutcome::ChecksFinished,
+            format!("Every check has finished{commit}: {passed} passed"),
+        ),
+        Change::ChecksFinished { passed, failing } => (
+            NotificationOutcome::ChecksFailed,
+            format!(
+                "Every check has finished{commit}: {passed} passed, {} still failing: {}",
+                failing.len(),
+                check_names(failing)
+            ),
+        ),
+        Change::Remarks { remarks } => {
+            let comments = plural(remarks.len(), "comment", "comments");
+            (
+                NotificationOutcome::NewComments,
+                format!("{} new {comments}", remarks.len()),
+            )
+        }
+        Change::Conflicting => (
+            NotificationOutcome::MergeConflict,
+            "The branch conflicts with its base branch".to_owned(),
+        ),
+    }
+}
+
+/// The first [`LISTED_ITEMS`] of `checks` by name, and how many more.
+fn check_names(checks: &[CheckRef]) -> String {
+    let names: Vec<&str> = checks
+        .iter()
+        .take(LISTED_ITEMS)
+        .map(|check| check.name.as_str())
+        .collect();
+    let more = checks
+        .len()
+        .checked_sub(LISTED_ITEMS)
+        .filter(|more| *more > 0)
+        .map(|more| format!(" and {more} more"))
+        .unwrap_or_default();
+    format!("{}{more}", names.join(", "))
+}
+
+/// The end's item: its outcome, and the end in one line.
+fn end_item(end: &End) -> (NotificationOutcome, String) {
+    match end {
+        End::Merged { by, base, .. } => {
+            let by = by
+                .as_deref()
+                .map(|by| format!(" by {by}"))
+                .unwrap_or_default();
+            (
+                NotificationOutcome::Merged,
+                format!("Merged into {base}{by}"),
+            )
+        }
+        End::Closed => (
+            NotificationOutcome::Closed,
+            "Closed without merging".to_owned(),
+        ),
+        End::CommentLoop => (
+            NotificationOutcome::WatchStopped,
+            format!("Stopped watching after {COMMENT_WAKE_LIMIT} comment-only updates in a row"),
+        ),
+        End::Unreadable(why) => (
+            NotificationOutcome::Unreadable,
+            format!(
+                "Stopped watching after {READ_FAILURE_LIMIT} failed reads: {}",
+                why.trim_end_matches('.')
+            ),
         ),
     }
 }

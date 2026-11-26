@@ -1,10 +1,10 @@
 use std::path::Path;
 
 use pretty_assertions::assert_eq;
-use rho_protocol::{self as wire, Cursor, Replay, Seq};
+use rho_protocol::{self as wire, Cursor, Replay, Seq, StreamEvent};
 use rho_sdk::model::Message;
 
-use super::{Feed, REPLAY_BUFFER_BYTES, TURN_START_EVICTED};
+use super::{now_ms, Feed, REPLAY_BUFFER_BYTES, TURN_START_EVICTED};
 use crate::{
     app::{
         session_events::{LiveEvents, SavedTurn},
@@ -22,8 +22,11 @@ fn notices(texts: &[&str]) -> Vec<wire::SessionEvent> {
     texts.iter().map(|text| notice(text)).collect()
 }
 
+/// When [`saved`]'s rows were saved, in unix milliseconds.
+const SAVED_AT: u64 = 1_700_000_000_000;
+
 /// `texts` saved as one save's display rows, a user message each, saved in
-/// a node named after its text.
+/// a node named after its text at [`SAVED_AT`].
 fn saved(texts: &[&str]) -> SavedTurn {
     let rows: Vec<_> = texts
         .iter()
@@ -33,6 +36,7 @@ fn saved(texts: &[&str]) -> SavedTurn {
                 row: 0,
             }),
             message: Message::user_text(*text),
+            saved_at: Some(SAVED_AT),
         })
         .collect();
     let tool_set = AppToolSet::disabled();
@@ -66,7 +70,10 @@ fn agent(id: &str) -> wire::SessionEvent {
 fn replay(feed: &Feed, after: Option<Cursor>) -> (Replay, Vec<(u64, wire::SessionEvent)>) {
     let (replay, events) = feed.state().replay_from(after.as_ref());
     let len = events.len;
-    let mut events: Vec<_> = events.events.map(|(seq, event)| (seq.0, event)).collect();
+    let mut events: Vec<_> = events
+        .events
+        .map(|event| (event.seq.0, event.event))
+        .collect();
     assert_eq!(len, events.len(), "the reported replay length");
     if replay == Replay::Reset {
         let head: Vec<_> = events.drain(..2).map(|(_, event)| event).collect();
@@ -169,6 +176,48 @@ fn attach_resumes_a_buffered_cursor_and_resets_anything_else() {
     ] {
         assert_eq!(replay(&feed, after), expected, "{name}");
     }
+}
+
+// Covers: every event a client is sent says when it happened: a live one
+// when the feed took it, kept for a tail, a saved one when its row was
+// saved, and the state a reset starts with none. A miss shows a reattached
+// client a buffered event at its replay time, or a saved one at none.
+// Owner: daemon session feed
+#[test]
+fn replays_carry_when_each_event_happened() {
+    let feed = idle_feed();
+    // The turn's live event, which its saved row replaces.
+    feed.publish(notices(&["saving"]));
+    feed.end_turn(saved(&["saved"]));
+    let before = now_ms();
+    feed.publish(notices(&["live"]));
+    let after = now_ms();
+
+    let tail = feed.replay_for_tests(cursor(&feed, 1).as_ref());
+    let live_at = tail[0].at.expect("a live event is timed");
+    assert!(
+        (before..=after).contains(&live_at),
+        "{live_at} in {before}..={after}"
+    );
+    let times = |events: Vec<StreamEvent>| -> Vec<(wire::SessionEvent, Option<u64>)> {
+        events
+            .into_iter()
+            .map(|event| (event.event, event.at))
+            .collect()
+    };
+    assert_eq!(times(tail), [(notice("live"), Some(live_at))]);
+    assert_eq!(
+        times(feed.replay_for_tests(None)),
+        [
+            (agent(AGENT), None),
+            (
+                wire::SessionEvent::StartedSessionDefaults(Default::default()),
+                None
+            ),
+            (shown("saved"), Some(SAVED_AT)),
+            (notice("live"), Some(live_at)),
+        ]
+    );
 }
 
 #[test]
@@ -455,10 +504,12 @@ fn events_json_cannot_hold_are_dropped_live_and_saved() {
                 row: 0,
             }),
             message: Message::user_text("saved"),
+            saved_at: None,
         },
         ProjectedMessage {
             origin: None,
             message: Message::Assistant(vec![rho_sdk::model::ContentBlock::ToolCall(read)].into()),
+            saved_at: None,
         },
     ];
     let tools = SessionTools::of_tool_set_for_tests(&tool_set);

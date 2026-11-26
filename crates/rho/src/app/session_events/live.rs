@@ -21,7 +21,7 @@ use super::{
     cards, named_call, opened_call, plan_entries,
     replay::{saved_message_id, SavedTurn},
     result_content, status_update, steer_to_wire, text_content, tools, user_content, CallIds,
-    UNNAMED_TOOL_TITLE,
+    FeedEvent, UNNAMED_TOOL_TITLE,
 };
 use crate::{
     app::{
@@ -336,9 +336,9 @@ impl LiveEvents {
         self.usage(estimate)
     }
 
-    /// The wire events for `event`, in order; empty for events the wire does
-    /// not carry yet.
-    pub(crate) fn map(&mut self, event: &SessionEvent) -> Vec<WireEvent> {
+    /// The wire events for `event`, in order, each with what goes beside
+    /// it; empty for events the wire does not carry yet.
+    pub(crate) fn map(&mut self, event: &SessionEvent) -> Vec<FeedEvent> {
         let late_steers = std::mem::take(&mut self.late_steers);
         if !late_steers.is_empty() {
             // A user message ends any message.
@@ -356,12 +356,43 @@ impl LiveEvents {
             ) => self.held_previews(),
             _ => Vec::new(),
         };
-        let events = match event {
+        // A boundary's cards carry their notifications; no other event
+        // has anything beside it.
+        let events: Vec<FeedEvent> = match event {
+            SessionEvent::BoundaryApplied { transcript } => cards(transcript).collect(),
+            event => self
+                .wire_events(event)
+                .into_iter()
+                .map(FeedEvent::from)
+                .collect(),
+        };
+        if events.iter().any(|event| {
+            !matches!(
+                event.event,
+                WireEvent::AgentMessageChunk { .. }
+                    | WireEvent::ThoughtChunk { .. }
+                    | WireEvent::SteeringDelivered { .. }
+            )
+        }) {
+            self.message = None;
+        }
+        late_steers
+            .into_iter()
+            .chain(held)
+            .map(FeedEvent::from)
+            .chain(events)
+            .collect()
+    }
+
+    /// The wire events of `event`, any but a boundary's.
+    fn wire_events(&mut self, event: &SessionEvent) -> Vec<WireEvent> {
+        match event {
             SessionEvent::MessageInserted(inserted) => {
                 self.user_message(inserted).into_iter().collect()
             }
             SessionEvent::Run(event) => self.run_event(event),
-            SessionEvent::BoundaryApplied { transcript } => cards(transcript).collect(),
+            // Mapped with their notifications by `Self::map`.
+            SessionEvent::BoundaryApplied { .. } => Vec::new(),
             SessionEvent::Notice { text } => vec![WireEvent::Notice { text: text.clone() }],
             SessionEvent::RunClosed => self.close_unfinished(),
             // The committed turn is the settled context; in-run updates
@@ -381,18 +412,7 @@ impl LiveEvents {
             | SessionEvent::PlanApprovalWithdrawn { .. }
             | SessionEvent::QuestionAsked { .. }
             | SessionEvent::QuestionWithdrawn { .. } => Vec::new(),
-        };
-        if events.iter().any(|event| {
-            !matches!(
-                event,
-                WireEvent::AgentMessageChunk { .. }
-                    | WireEvent::ThoughtChunk { .. }
-                    | WireEvent::SteeringDelivered { .. }
-            )
-        }) {
-            self.message = None;
         }
-        late_steers.into_iter().chain(held).chain(events).collect()
     }
 
     /// The prompt as the user message the turn saved. Nothing when no

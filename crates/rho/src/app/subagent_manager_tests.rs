@@ -98,6 +98,7 @@ fn task_identity_prefers_nonblank_generated_titles() {
                 run_id: "abc123".into(),
                 agent_id: "fixture".into(),
                 task: expected.into(),
+                session: None,
             })
         );
         assert!(!manager.inner.lock().unwrap()["abc123"].observed);

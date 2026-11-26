@@ -80,3 +80,64 @@ fn a_clients_environment_leaves_out_names_no_command_takes() {
         [("EMPTY", ""), ("PATH", r"C:\bin")]
     );
 }
+
+// Covers: `rho/session/event` carries an event's time and notification
+// flat beside `session`, `seq` and `event`, leaves them out when absent, and
+// a client that reads only `SessionEventParams` reads the same notification,
+// ignoring them.
+// Owner: protocol wire contract.
+#[test]
+fn an_event_envelope_adds_its_time_and_notification_beside_the_params() {
+    let params = SessionEventParams {
+        session: SessionId::new("s1"),
+        seq: Seq(7),
+        event: SessionEvent::Notice {
+            text: "hello".into(),
+        },
+    };
+    let info = crate::display::NotificationInfo::new(
+        crate::display::NotificationId::new("card-1"),
+        crate::display::NotificationUrgency::Notable,
+        crate::display::NotificationSubject::Other,
+        Vec::new(),
+    );
+    let mut timed = SessionEventEnvelope::new(params.clone());
+    timed.at = Some(1_764_158_400_123);
+    timed.notification = Some(Box::new(info));
+    let cases = [
+        (
+            SessionEventEnvelope::new(params.clone()),
+            json!({
+                "session": "s1",
+                "seq": 7,
+                "event": {"type": "notice", "text": "hello"},
+            }),
+        ),
+        (
+            timed,
+            json!({
+                "session": "s1",
+                "seq": 7,
+                "at": 1_764_158_400_123_u64,
+                "event": {"type": "notice", "text": "hello"},
+                "notification": {
+                    "id": "card-1",
+                    "urgency": "notable",
+                    "subject": {"kind": "other"},
+                    "items": [],
+                },
+            }),
+        ),
+    ];
+    for (envelope, wire) in cases {
+        assert_eq!(serde_json::to_value(&envelope).unwrap(), wire);
+        assert_eq!(
+            serde_json::from_value::<SessionEventEnvelope>(wire.clone()).unwrap(),
+            envelope
+        );
+        assert_eq!(
+            serde_json::from_value::<SessionEventParams>(wire).unwrap(),
+            params
+        );
+    }
+}

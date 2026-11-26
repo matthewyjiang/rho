@@ -16,7 +16,7 @@
 //! compares each change with the commit before it, where any change to the
 //! wire needs the minor to rise.
 
-use schemars::{generate::SchemaSettings, SchemaGenerator};
+use schemars::{generate::SchemaSettings, JsonSchema, SchemaGenerator};
 use serde_json::{json, Map, Value};
 
 use crate::{
@@ -128,8 +128,8 @@ impl Visitor for Publisher {
         self.methods.insert(M::NAME.to_owned(), schema);
     }
 
-    fn notification<N: Notification>(&mut self) {
-        let schema = json!({ "params": self.generator.subschema_for::<N::Params>().to_value() });
+    fn notification<N: Notification, Wire: JsonSchema>(&mut self) {
+        let schema = json!({ "params": self.generator.subschema_for::<Wire>().to_value() });
         self.notifications.insert(N::NAME.to_owned(), schema);
     }
 }

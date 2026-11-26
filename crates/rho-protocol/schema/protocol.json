@@ -4886,6 +4886,198 @@
       ],
       "description": "Whether the card's content waits for the recipient or has reached it."
     },
+    "NotificationId": {
+      "description": "Identifies one notification card: the same on every replay of it, live,\nafter a reattach, and after a daemon restart.",
+      "type": "string"
+    },
+    "NotificationInfo": {
+      "description": "The typed side of one notification card.\n\n# Next major\n\nNEXT_MAJOR(rho-protocol): fold NotificationInfo's id, urgency, subject and items into NotificationCard and remove SessionEventEnvelope::notification.\n\n`NotificationCard` has only public fields and is not\n`#[non_exhaustive]`, so a field is a major change; until then this rides\nbeside the card's event. Saved cards already store these fields flat\nbeside the card's own, as `NotificationCard` will hold them.",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/NotificationId"
+        },
+        "items": {
+          "description": "One per event the card tells of, in the card's order; never empty.",
+          "items": {
+            "$ref": "#/$defs/NotificationItem"
+          },
+          "type": "array"
+        },
+        "subject": {
+          "$ref": "#/$defs/NotificationSubject",
+          "description": "What the card as a whole is about."
+        },
+        "urgency": {
+          "$ref": "#/$defs/NotificationUrgency",
+          "description": "What the card asks of the reader: that of its most urgent item."
+        }
+      },
+      "required": [
+        "id",
+        "urgency",
+        "subject",
+        "items"
+      ],
+      "type": "object"
+    },
+    "NotificationItem": {
+      "description": "One event a notification card tells of.",
+      "properties": {
+        "outcome": {
+          "$ref": "#/$defs/NotificationOutcome"
+        },
+        "subject": {
+          "$ref": "#/$defs/NotificationSubject",
+          "description": "What this event is about, which may be narrower than the card's."
+        },
+        "text": {
+          "description": "The event in words, one line of plain text.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "outcome",
+        "subject",
+        "text"
+      ],
+      "type": "object"
+    },
+    "NotificationOutcome": {
+      "anyOf": [
+        {
+          "enum": [
+            "merged"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "update",
+          "description": "Progress from work still under way, such as a subagent's message.",
+          "type": "string"
+        },
+        {
+          "const": "question",
+          "description": "Another session waits for an answer to its question.",
+          "type": "string"
+        },
+        {
+          "const": "action_requested",
+          "description": "A subagent asks its parent to act before it goes on.",
+          "type": "string"
+        },
+        {
+          "const": "running",
+          "description": "Still running.",
+          "type": "string"
+        },
+        {
+          "const": "completed",
+          "description": "Finished as it should: a run succeeded, a process exited 0.",
+          "type": "string"
+        },
+        {
+          "const": "failed",
+          "description": "Failed: a run's error, a process's non-zero exit.",
+          "type": "string"
+        },
+        {
+          "const": "failed_to_start",
+          "description": "A process never started.",
+          "type": "string"
+        },
+        {
+          "const": "exited",
+          "description": "A process exited without an exit code.",
+          "type": "string"
+        },
+        {
+          "const": "stopped",
+          "description": "Someone stopped it.",
+          "type": "string"
+        },
+        {
+          "const": "cancelled",
+          "description": "Someone cancelled the turn.",
+          "type": "string"
+        },
+        {
+          "const": "timed_out",
+          "description": "It ran past its time limit and was stopped.",
+          "type": "string"
+        },
+        {
+          "const": "interrupted",
+          "description": "The daemon stopped while it ran.",
+          "type": "string"
+        },
+        {
+          "const": "cut_off",
+          "description": "The model's answer was cut off at its output limit.",
+          "type": "string"
+        },
+        {
+          "const": "refused",
+          "description": "The model refused.",
+          "type": "string"
+        },
+        {
+          "const": "out_of_steps",
+          "description": "The turn reached its step limit before the model answered.",
+          "type": "string"
+        },
+        {
+          "const": "new_commits",
+          "description": "A pull request's head moved.",
+          "type": "string"
+        },
+        {
+          "const": "checks_failed",
+          "description": "A pull request's checks failed, or finished with some failing.",
+          "type": "string"
+        },
+        {
+          "const": "checks_passed",
+          "description": "A pull request's checks all passed.",
+          "type": "string"
+        },
+        {
+          "const": "checks_finished",
+          "description": "Every check of a pull request finished, none failing.",
+          "type": "string"
+        },
+        {
+          "const": "new_comments",
+          "description": "A pull request has new comments or reviews.",
+          "type": "string"
+        },
+        {
+          "const": "merge_conflict",
+          "description": "A pull request's branch conflicts with its base.",
+          "type": "string"
+        },
+        {
+          "const": "closed",
+          "description": "Closed without merging.",
+          "type": "string"
+        },
+        {
+          "const": "watch_stopped",
+          "description": "Rho stopped watching a pull request that kept getting comment-only\nupdates.",
+          "type": "string"
+        },
+        {
+          "const": "unreadable",
+          "description": "Rho stopped watching a pull request it could not read.",
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "What happened in one notification item, for a client's icon or label;\n[`NotificationItem::text`] says it in words. Protocol minors may add\nvalues."
+    },
     "NotificationPreview": {
       "anyOf": [
         {
@@ -4902,6 +5094,137 @@
         }
       ],
       "description": "How much of the body a collapsed card shows."
+    },
+    "NotificationSubject": {
+      "anyOf": [
+        {
+          "description": "A pull request, and where to open it.",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/PullRequestId"
+            },
+            "kind": {
+              "const": "pull_request",
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id",
+            "url"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Another session, such as one this session started.",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/SessionId"
+            },
+            "kind": {
+              "const": "session",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A subagent run, by its run id, as [`crate::BackgroundItem::Subagent`]\nnames it.",
+          "properties": {
+            "kind": {
+              "const": "subagent",
+              "type": "string"
+            },
+            "run": {
+              "type": "string"
+            },
+            "session": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/SessionId"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The subagent's own session, when the daemon knew it; runtimes\nthat keep no Rho session never have one."
+            }
+          },
+          "required": [
+            "kind",
+            "run"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A workflow run, by its run id.",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "workflow_run",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A background process, by its [`crate::SessionProcess::id`].",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "process",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Something none of the other kinds names.",
+          "properties": {
+            "kind": {
+              "const": "other",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "properties": {
+            "kind": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object",
+          "x-rho-other": true
+        }
+      ],
+      "description": "What a notification card, or one of its items, is about. Protocol minors\nmay add kinds."
     },
     "NotificationTone": {
       "anyOf": [
@@ -4922,6 +5245,31 @@
         }
       ],
       "description": "How a notification card reads, which picks its accent color."
+    },
+    "NotificationUrgency": {
+      "anyOf": [
+        {
+          "const": "needs_you",
+          "description": "The reader should act: a question or approval waits, or something\nfailed in a way that needs a fix.",
+          "type": "string"
+        },
+        {
+          "const": "notable",
+          "description": "Worth a look: work finished, a pull request moved.",
+          "type": "string"
+        },
+        {
+          "const": "routine",
+          "description": "Progress and stops someone chose; safe to fold away.",
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "What a notification card asks of the reader. Protocol minors may add\nvalues."
     },
     "NotificationVisibility": {
       "anyOf": [
@@ -8017,11 +8365,31 @@
       ],
       "description": "One thing that happened in a session."
     },
-    "SessionEventParams": {
-      "description": "Params of the [`SESSION_EVENT`] notification.",
+    "SessionEventEnvelope": {
+      "description": "What a [`SESSION_EVENT`] notification carries: [`SessionEventParams`],\nflat, and what that struct cannot take in a protocol minor. A client\nthat reads only [`SessionEventParams`] ignores the rest.\n\n# Next major\n\nNEXT_MAJOR(rho-protocol): add at: Option<u64> to SessionEventParams and remove SessionEventEnvelope.\n\n`SessionEventParams` has only public fields and is not\n`#[non_exhaustive]`, so a field is a major change. Until then the schema\npublishes [`SESSION_EVENT`] with this type, and [`crate::Client`] reads\n[`SessionEventParams`].",
       "properties": {
+        "at": {
+          "description": "When the event happened, in unix milliseconds. A replay sends the\ntime the event first had: a buffered event's own, and a saved row's\nas the session file keeps it, to the second, which the rows one step\nsaved share. Absent when the daemon does not know it, as for the\nstate a reset replays ahead of the transcript.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "event": {
           "$ref": "#/$defs/SessionEvent"
+        },
+        "notification": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NotificationInfo"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What the [`SessionEvent::Card`] beside it is about, typed, when that\ncard shows a notification. Absent beside any other event, and beside\na card saved before the daemon typed them."
         },
         "seq": {
           "$ref": "#/$defs/Seq",
@@ -12087,7 +12455,7 @@
     },
     "rho/session/event": {
       "params": {
-        "$ref": "#/$defs/SessionEventParams"
+        "$ref": "#/$defs/SessionEventEnvelope"
       }
     }
   },

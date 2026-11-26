@@ -58,6 +58,8 @@ pub(crate) struct SubagentTaskIdentity {
     pub run_id: String,
     pub agent_id: String,
     pub task: String,
+    /// The run's own session, when its runtime keeps one.
+    pub session: Option<rho_sdk::SessionId>,
 }
 
 struct AgentEntry {
@@ -425,6 +427,7 @@ impl SubagentManager {
             run_id: id,
             agent_id: entry.agent_id.clone(),
             task,
+            session: entry.handle.session().cloned(),
         })
     }
 

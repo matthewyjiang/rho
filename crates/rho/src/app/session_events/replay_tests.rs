@@ -44,6 +44,7 @@ fn saved_rows(messages: &[Message]) -> Vec<ProjectedMessage> {
         .map(|(row, message)| ProjectedMessage {
             origin: Some(origin(row)),
             message: message.clone(),
+            saved_at: None,
         })
         .collect()
 }
@@ -58,7 +59,7 @@ fn replay_with(tool_set: &AppToolSet, messages: &[Message]) -> Vec<WireEvent> {
         SessionTools::of_tool_set_for_tests(tool_set),
         &mut CallIds::default(),
     ));
-    transcript.events().collect()
+    transcript.events().map(|(_, event)| event.event).collect()
 }
 
 fn replay_messages(messages: &[Message]) -> Vec<WireEvent> {
@@ -232,7 +233,11 @@ fn live_and_replayed_turns_agree() {
             context: ContextEstimate::from_estimated_tokens(10),
         },
     ];
-    let live_events: Vec<_> = events.iter().flat_map(|event| live.map(event)).collect();
+    let live_events: Vec<_> = events
+        .iter()
+        .flat_map(|event| live.map(event))
+        .map(|event| event.event)
+        .collect();
     let replayed = replay_messages(&saved_conversation());
 
     let users = |events: &[WireEvent]| -> Vec<WireEvent> {
@@ -603,6 +608,7 @@ fn live_calls_continue_the_numbering_of_the_saved_transcript() {
     ]
     .iter()
     .flat_map(|event| live.map(event))
+    .map(|event| event.event)
     .collect();
 
     let mut whole = saved;
@@ -647,7 +653,7 @@ fn a_transcript_saved_turn_by_turn_replays_as_one_and_the_same_each_time() {
         transcript.push(turn.expect("each save adds rows"));
     }
 
-    let rendered: Vec<_> = transcript.events().collect();
+    let rendered: Vec<_> = transcript.events().map(|(_, event)| event.event).collect();
     let ids: Vec<_> = rendered
         .iter()
         .filter_map(|event| match event {
@@ -657,6 +663,12 @@ fn a_transcript_saved_turn_by_turn_replays_as_one_and_the_same_each_time() {
         .collect();
     assert_eq!(ids, ["reused", "reused", "reused#2", "reused#2"]);
     assert_eq!(rendered, replay_messages(&whole));
-    assert_eq!(rendered, transcript.events().collect::<Vec<_>>());
+    assert_eq!(
+        rendered,
+        transcript
+            .events()
+            .map(|(_, event)| event.event)
+            .collect::<Vec<_>>()
+    );
     assert_eq!(rendered.len(), transcript.len());
 }

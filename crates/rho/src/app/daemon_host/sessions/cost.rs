@@ -10,7 +10,10 @@ use rho_protocol::SessionEvent as WireEvent;
 use rho_sdk::{model::ModelUsage, RunEvent};
 
 use crate::{
-    app::session_runtime::{CurrentModel, SessionEvent},
+    app::{
+        session_events::FeedEvent,
+        session_runtime::{CurrentModel, SessionEvent},
+    },
     usage::{
         pricing::{catalog_cost_usd_micros, usage_difference},
         report::{catalog_route_pricing, RoutePricing, Valuation},
@@ -67,18 +70,25 @@ impl TurnCost {
     pub(super) async fn priced(
         &mut self,
         event: &SessionEvent,
-        events: Vec<WireEvent>,
+        mut events: Vec<FeedEvent>,
         session: &rho_sdk::SessionId,
-    ) -> Vec<WireEvent> {
-        if let SessionEvent::Run(RunEvent::UsageUpdated { usage }) = event {
-            return with_cost(events, self.streaming(usage));
-        }
-        if !has_usage(&events) {
+    ) -> Vec<FeedEvent> {
+        let streamed = match event {
+            SessionEvent::Run(RunEvent::UsageUpdated { usage }) => Some(self.streaming(usage)),
+            _ => None,
+        };
+        let Some(cost) = usage_cost(events.iter_mut().map(|event| &mut event.event)) else {
             return events;
-        }
-        let ledger = usd_micros(crate::usage::session_valuation(session).await);
-        self.read_ledger(ledger);
-        with_cost(events, ledger)
+        };
+        *cost = match streamed {
+            Some(streamed) => streamed,
+            None => {
+                let ledger = usd_micros(crate::usage::session_valuation(session).await);
+                self.read_ledger(ledger);
+                ledger
+            }
+        };
+        events
     }
 
     /// The session's cost with the response under way at `run`, the run's
@@ -111,37 +121,30 @@ impl TurnCost {
     }
 }
 
-fn has_usage(events: &[WireEvent]) -> bool {
-    events
-        .iter()
-        .any(|event| matches!(event, WireEvent::Usage { .. }))
-}
-
-/// `events` with `cost` on their usage event: one runtime event maps to at
-/// most one.
-fn with_cost(mut events: Vec<WireEvent>, cost: Option<u64>) -> Vec<WireEvent> {
-    if let Some(WireEvent::Usage {
-        cost_usd_micros, ..
-    }) = events
-        .iter_mut()
-        .find(|event| matches!(event, WireEvent::Usage { .. }))
-    {
-        *cost_usd_micros = cost;
-    }
-    events
+/// The cost of the usage event among `events`, to set: one runtime event
+/// maps to at most one.
+fn usage_cost<'a>(
+    events: impl IntoIterator<Item = &'a mut WireEvent>,
+) -> Option<&'a mut Option<u64>> {
+    events.into_iter().find_map(|event| match event {
+        WireEvent::Usage {
+            cost_usd_micros, ..
+        } => Some(cost_usd_micros),
+        _ => None,
+    })
 }
 
 /// `events`, one runtime event's wire events outside a turn's run, with
 /// `session`'s cost so far on their usage event. Reads the ledger only when
 /// there is one.
-pub(super) async fn priced(events: Vec<WireEvent>, session: &rho_sdk::SessionId) -> Vec<WireEvent> {
-    if !has_usage(&events) {
-        return events;
+pub(super) async fn priced(
+    mut events: Vec<WireEvent>,
+    session: &rho_sdk::SessionId,
+) -> Vec<WireEvent> {
+    if let Some(cost) = usage_cost(&mut events) {
+        *cost = usd_micros(crate::usage::session_valuation(session).await);
     }
-    with_cost(
-        events,
-        usd_micros(crate::usage::session_valuation(session).await),
-    )
+    events
 }
 
 /// What `valuation` comes to in millionths of a dollar once a request had

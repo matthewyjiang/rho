@@ -21,7 +21,7 @@
 
 use std::{collections::HashMap, path::Path};
 
-use rho_protocol::display::ToolHeader;
+use rho_protocol::display::{NotificationInfo, ToolHeader};
 use rho_protocol::{
     CardTone, ContentBlock, Location, PlanEntry, PlanStatus, SessionEvent as WireEvent, SteerId,
     ToolCallId, ToolCallUpdate, ToolContent, ToolStatus,
@@ -48,6 +48,36 @@ mod tools;
 
 pub(crate) use live::{CompactionEnd, LiveEvents};
 pub(crate) use replay::{SavedTranscript, SavedTurn};
+
+/// A wire event, with what a client is sent beside it
+/// ([`rho_protocol::SessionEventEnvelope`]) but its time, which the feed
+/// gives it: the typed notification of a card that shows one.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct FeedEvent {
+    pub(crate) event: WireEvent,
+    pub(crate) notification: Option<Box<NotificationInfo>>,
+}
+
+impl From<WireEvent> for FeedEvent {
+    fn from(event: WireEvent) -> Self {
+        Self {
+            event,
+            notification: None,
+        }
+    }
+}
+
+impl FeedEvent {
+    /// How many bytes it takes as JSON, event and notification, or `None`
+    /// when JSON cannot hold it ([`encoded_len`]).
+    pub(crate) fn encoded_len(&self) -> Option<usize> {
+        let notification = match &self.notification {
+            Some(notification) => encoded_len(notification)?,
+            None => 0,
+        };
+        Some(encoded_len(&self.event)? + notification)
+    }
+}
 
 /// Hands out wire ids for tool calls. Providers may reuse a call id across
 /// turns, and a reused wire id would update the earlier card, so each call
@@ -87,7 +117,7 @@ impl CallIds {
 /// the daemon's feed sends none this rejects: it checks each live event as
 /// it publishes it, and [`SavedTurn`] each saved one as its turn saves.
 /// Counts the bytes without keeping them.
-pub(crate) fn encoded_len(event: &WireEvent) -> Option<usize> {
+pub(crate) fn encoded_len(event: &impl serde::Serialize) -> Option<usize> {
     struct Counter(usize);
     impl std::io::Write for Counter {
         fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
@@ -255,29 +285,36 @@ fn text_content(text: impl Into<String>) -> ToolContent {
 /// shows where it applied the result, and saves for replay. Such a
 /// transcript holds no compaction rows, which a replay sends as compaction
 /// events instead.
-fn cards(transcript: &DisplayTranscript) -> impl Iterator<Item = WireEvent> + '_ {
+fn cards(transcript: &DisplayTranscript) -> impl Iterator<Item = FeedEvent> + '_ {
     transcript.0.iter().map(card)
 }
 
-/// The card that shows `row`.
-fn card(row: &DisplayRow) -> WireEvent {
+/// The card that shows `row`, with a notification's typed side.
+fn card(row: &DisplayRow) -> FeedEvent {
     let text = row.card_text();
-    WireEvent::Card {
-        title: text.title.to_owned(),
-        markdown: text.markdown,
-        plain: text.plain,
-        tone: card_tone(row),
-        display: match row {
-            DisplayRow::Notification(card) => Some(card.clone()),
-            DisplayRow::Notice(_) | DisplayRow::Compaction(_) => None,
+    let (display, notification) = match row {
+        DisplayRow::Notification(row) => (
+            Some(Box::new(row.card.clone())),
+            row.info.clone().map(Box::new),
+        ),
+        DisplayRow::Notice(_) | DisplayRow::Compaction(_) => (None, None),
+    };
+    FeedEvent {
+        event: WireEvent::Card {
+            title: text.title.to_owned(),
+            markdown: text.markdown,
+            plain: text.plain,
+            tone: card_tone(row),
+            display,
         },
+        notification,
     }
 }
 
 /// How a row's card reads: a notification card's tone; any other is neutral.
 fn card_tone(row: &DisplayRow) -> CardTone {
     match row {
-        DisplayRow::Notification(card) => match card.tone {
+        DisplayRow::Notification(row) => match row.card.tone {
             NotificationTone::Neutral => CardTone::Neutral,
             NotificationTone::Accent => CardTone::Accent,
             NotificationTone::Success => CardTone::Success,

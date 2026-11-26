@@ -34,12 +34,16 @@ pub(crate) struct DisplayRowOrigin {
     pub(crate) row: usize,
 }
 
-/// A display message a load replays, with where it was saved; `None` for
-/// rows the load adds, such as placeholders for interrupted tool calls.
+/// A display message a load replays, with where and when it was saved;
+/// `None` for rows the load adds, such as placeholders for interrupted tool
+/// calls.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ProjectedMessage {
     pub(crate) origin: Option<DisplayRowOrigin>,
     pub(crate) message: rho_providers::model::Message,
+    /// When the row was saved, in unix milliseconds, to the second: the
+    /// session file keeps seconds. `None` when its timestamp does not read.
+    pub(crate) saved_at: Option<u64>,
 }
 
 /// Stable identity for one durable state in a session tree.
