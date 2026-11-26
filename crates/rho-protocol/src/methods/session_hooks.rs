@@ -37,6 +37,7 @@ impl SessionHooksReloadParams {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[non_exhaustive]
 pub struct SessionHooksReloadResponse {
+    /// Whether the session now runs what its hooks files define, or why not.
     pub outcome: HooksReloadOutcome,
 }
 

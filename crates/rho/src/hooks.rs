@@ -230,17 +230,8 @@ impl HookPorts {
         })
     }
 
-    /// Whether a hook on `event` can run here.
-    pub(crate) fn runs(self, event: config::ConfiguredHookEvent) -> bool {
-        if event.is_blocking() {
-            self.blocking
-        } else {
-            self.observing
-        }
-    }
-
     /// A kind of hook `catalog` has that cannot run here.
-    fn missing(self, catalog: &HookCatalog) -> Option<HookKind> {
+    pub(crate) fn missing(self, catalog: &HookCatalog) -> Option<HookKind> {
         if catalog.has_blocking_hooks() && !self.blocking {
             Some(HookKind::Blocking)
         } else if catalog.has_observational_hooks() && !self.observing {

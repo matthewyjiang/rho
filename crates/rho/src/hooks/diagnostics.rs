@@ -154,10 +154,10 @@ impl HookSnapshot {
     /// runtime.
     ///
     /// A hook the files define is active when the session runs it exactly
-    /// so, pending when it does not but could after a reload, and needs a
-    /// reopen when the session started without a hook of its kind (see
-    /// [`HookPorts`]); one the session runs that the files no longer define
-    /// is stale. Files that do not load are reported as `invalid` with the
+    /// so; otherwise it is pending when a reload would load it, and needs a
+    /// reopen when the files define a kind of hook the session started
+    /// without (see [`HookPorts`]), which refuses the whole reload. One the
+    /// session runs that the files no longer define is stale. Files that do not load are reported as `invalid` with the
     /// hooks the session runs.
     pub(super) fn checked(
         running: Option<&HookPipeline>,
@@ -191,6 +191,7 @@ impl HookSnapshot {
                     .collect()
             })
             .unwrap_or_default();
+        let reloadable = ports.missing(&files).is_none();
         let defined = files.spawn_contract();
         let stale: Vec<ListedHook> = runs
             .iter()
@@ -207,7 +208,7 @@ impl HookSnapshot {
                     ListedStatus::Untrusted
                 } else if runs.contains(&contract) {
                     ListedStatus::Active
-                } else if ports.runs(contract.event) {
+                } else if reloadable {
                     ListedStatus::Pending
                 } else {
                     ListedStatus::NeedsReopen

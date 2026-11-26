@@ -117,7 +117,7 @@ async fn the_session_report_types_each_hook_and_the_untrusted_file() {
 // without reloading: an edited hook is pending beside its stale running
 // self, and a hook of a kind the session started without (no gate or no
 // observer, or no hook runtime at all) needs the session opened again,
-// since a reload cannot add it.
+// since a reload cannot add it and is refused, edits beside it included.
 // Owner: hook diagnostics.
 #[tokio::test]
 async fn a_report_tells_which_hooks_a_reload_or_only_a_reopen_loads() {
@@ -140,7 +140,7 @@ async fn a_report_tells_which_hooks_a_reload_or_only_a_reopen_loads() {
         &'a [&'a str],
         Vec<(&'a str, HookStatus)>,
     );
-    let cases: [Case; 3] = [
+    let cases: [Case; 4] = [
         (
             Some(&[LOG]),
             &[LOG_EDITED],
@@ -155,6 +155,15 @@ async fn a_report_tells_which_hooks_a_reload_or_only_a_reopen_loads() {
             vec![
                 ("user:log", HookStatus::Active),
                 ("user:guard", HookStatus::NeedsReopen),
+            ],
+        ),
+        (
+            Some(&[LOG]),
+            &[LOG_EDITED, GUARD],
+            vec![
+                ("user:log", HookStatus::NeedsReopen),
+                ("user:guard", HookStatus::NeedsReopen),
+                ("user:log", HookStatus::Stale),
             ],
         ),
         (None, &[LOG], vec![("user:log", HookStatus::NeedsReopen)]),

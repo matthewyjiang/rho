@@ -336,7 +336,7 @@ impl DaemonRequests {
                                         session,
                                         report: SessionReport::Hooks,
                                     })
-                                    .await?;
+                                    .await;
                                 Ok((outcome, report))
                             })
                             .await;
@@ -349,7 +349,7 @@ impl DaemonRequests {
                                         "this rho does not know the daemon's answer".to_owned(),
                                     ),
                                 };
-                                (refused, Some((link, Ok(report))))
+                                (refused, Some((link, report)))
                             }
                             Some((link, Err(error))) => (None, Some((link, Err(error)))),
                             None => (None, None),

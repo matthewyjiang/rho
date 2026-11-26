@@ -107,12 +107,14 @@ pub enum HookStatus {
     /// file changed since the session loaded its hooks. Reloading them loads
     /// it.
     Pending,
-    /// Its file defines it, but the session started without a hook of its
-    /// kind (blocking or observing), which a reload cannot add: it runs once
-    /// the session is opened again.
+    /// Its file defines it, but the session does not run it as defined, and
+    /// a reload would be refused: the files define a hook of a kind
+    /// (blocking or observing) the session started without, which a reload
+    /// cannot add. It runs once the session is opened again.
     NeedsReopen,
     /// The session runs it as its file defined it when the session loaded
-    /// its hooks, but the file no longer does. Reloading them drops it.
+    /// its hooks, but the file no longer does. Reloading them drops it,
+    /// unless a [`HookStatus::NeedsReopen`] hook refuses the reload.
     Stale,
     /// A value a newer daemon sends that this crate does not know; daemons
     /// never send it.
