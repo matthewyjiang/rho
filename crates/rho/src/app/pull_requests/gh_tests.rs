@@ -1,6 +1,4 @@
-use std::io;
-#[cfg(unix)]
-use std::path::Path;
+use std::{ffi::OsString, io, path::Path};
 
 use pretty_assertions::assert_eq;
 
@@ -48,6 +46,93 @@ fn failures_tell_not_installed_and_signed_out_from_the_rest() {
     }
 }
 
+/// Environment variables, by name.
+type Vars<'a> = [(&'a str, &'a Path)];
+
+/// An environment of `vars`, for [`GhCli::new`].
+fn env<'a>(vars: &'a Vars<'a>) -> impl Fn(&str) -> Option<OsString> + 'a {
+    |name| {
+        vars.iter()
+            .find(|(set, _)| *set == name)
+            .map(|(_, value)| value.as_os_str().to_owned())
+    }
+}
+
+// Covers: the daemon looks among mise's shims in the folder mise itself
+// puts them in: MISE_SHIMS_DIR, else MISE_DATA_DIR, else XDG_DATA_HOME
+// (LOCALAPPDATA on Windows), else the home folder; empty reads as unset,
+// and a relative folder finds nothing.
+// Owner: pure unit (policy table)
+#[test]
+fn mise_shims_are_where_mise_puts_them() {
+    let root = Path::new(if cfg!(windows) { r"C:\" } else { "/" });
+    let home = &root.join("home/rho");
+    let shims = &root.join("opt/mise-shims");
+    let data = &root.join("opt/mise");
+    let xdg = &root.join("xdg");
+    let local = &root.join("local");
+    let empty = Path::new("");
+    let relative = Path::new("relative/shims");
+    let by_home = if cfg!(windows) {
+        home.join("AppData/Local/mise/shims")
+    } else {
+        home.join(".local/share/mise/shims")
+    };
+    let by_local = if cfg!(windows) {
+        local.join("mise/shims")
+    } else {
+        by_home.clone()
+    };
+    let cases: [(&Vars<'_>, Option<PathBuf>); 8] = [
+        (
+            &[
+                ("MISE_SHIMS_DIR", shims),
+                ("MISE_DATA_DIR", data),
+                ("HOME", home),
+            ],
+            Some(shims.to_path_buf()),
+        ),
+        (
+            &[
+                ("MISE_DATA_DIR", data),
+                ("XDG_DATA_HOME", xdg),
+                ("HOME", home),
+            ],
+            Some(data.join("shims")),
+        ),
+        (
+            &[
+                ("XDG_DATA_HOME", xdg),
+                ("LOCALAPPDATA", local),
+                ("HOME", home),
+            ],
+            Some(xdg.join("mise/shims")),
+        ),
+        (&[("LOCALAPPDATA", local), ("HOME", home)], Some(by_local)),
+        (&[("HOME", home)], Some(by_home.clone())),
+        (
+            &[
+                ("MISE_SHIMS_DIR", empty),
+                ("MISE_DATA_DIR", empty),
+                ("XDG_DATA_HOME", empty),
+                ("HOME", home),
+            ],
+            Some(by_home),
+        ),
+        (&[("MISE_SHIMS_DIR", relative), ("HOME", home)], None),
+        (&[], None),
+    ];
+    let gh = if cfg!(windows) { "gh.exe" } else { "gh" };
+    for (vars, expected) in cases {
+        let cli = GhCli::new(env(vars));
+        assert_eq!(
+            cli.mise_gh,
+            expected.map(|shims| shims.join(gh)),
+            "{vars:?}"
+        );
+    }
+}
+
 /// Writes `script` to `path` as a program. A child process writes it: a
 /// write fd held by this test binary can be inherited across a concurrent
 /// test's fork, and exec of the fresh script would then fail with ETXTBSY.
@@ -63,25 +148,29 @@ fn write_program(path: &Path, script: &str) {
 }
 
 // Covers: a daemon started with a bare PATH still finds gh through the
-// user's login shell, after whatever its login files print; a file on the
-// PATH that can't run is skipped.
+// user's login shell, after whatever its login files print, else among
+// mise's shims, which come after the login shell; a file that can't run is
+// skipped.
 // Owner: OS or process
 #[cfg(unix)]
 #[tokio::test]
-async fn gh_is_found_on_the_path_else_through_the_login_shell() {
+async fn gh_is_found_on_the_path_else_through_the_login_shell_else_mise() {
     let dir = tempfile::tempdir().unwrap();
     let dir = dir.path();
     let bin = dir.join("bin");
     let login_bin = dir.join("login-bin");
+    let shims = dir.join("shims");
     let unrunnable = dir.join("unrunnable");
     let empty = dir.join("empty");
-    for folder in [&bin, &login_bin, &unrunnable, &empty] {
+    for folder in [&bin, &login_bin, &shims, &unrunnable, &empty] {
         std::fs::create_dir(folder).unwrap();
     }
     let gh = bin.join("gh");
     let via_login = login_bin.join("gh");
-    write_program(&gh, "#!/bin/sh\n");
-    write_program(&via_login, "#!/bin/sh\n");
+    let via_mise = shims.join("gh");
+    for program in [&gh, &via_login, &via_mise] {
+        write_program(program, "#!/bin/sh\n");
+    }
     std::fs::write(unrunnable.join("gh"), "#!/bin/sh\n").unwrap();
     // A login shell whose PATH holds `login-bin`, greeting first, as login
     // files do. It runs as `shell -l -c 'command -v gh'`.
@@ -92,25 +181,39 @@ async fn gh_is_found_on_the_path_else_through_the_login_shell() {
         &format!("#!/bin/sh\necho 'welcome'\nPATH={login_bin_path}:/usr/bin:/bin\nexec /bin/sh -c \"$3\"\n"),
     );
     let no_shell = dir.join("no-such-shell");
-    let skipping = std::env::join_paths([&unrunnable, &bin]).unwrap();
-    let cases = [
-        (bin.clone().into_os_string(), Some(&shell), Some(gh.clone())),
-        (skipping, None, Some(gh)),
+    let skipping = PathBuf::from(std::env::join_paths([&unrunnable, &bin]).unwrap());
+    let cases: [(&Vars<'_>, Option<&PathBuf>); 6] = [
         (
-            empty.clone().into_os_string(),
-            Some(&shell),
-            Some(via_login),
+            &[
+                ("PATH", &bin),
+                ("SHELL", &shell),
+                ("MISE_SHIMS_DIR", &shims),
+            ],
+            Some(&gh),
         ),
-        (empty.clone().into_os_string(), None, None),
-        (empty.into_os_string(), Some(&no_shell), None),
+        (&[("PATH", &skipping)], Some(&gh)),
+        (
+            &[
+                ("PATH", &empty),
+                ("SHELL", &shell),
+                ("MISE_SHIMS_DIR", &shims),
+            ],
+            Some(&via_login),
+        ),
+        (
+            &[
+                ("PATH", &empty),
+                ("SHELL", &no_shell),
+                ("MISE_SHIMS_DIR", &shims),
+            ],
+            Some(&via_mise),
+        ),
+        (&[("PATH", &empty), ("MISE_SHIMS_DIR", &unrunnable)], None),
+        (&[("PATH", &empty), ("SHELL", &no_shell)], None),
     ];
-    for (path, shell, expected) in cases {
-        let label = format!("PATH {path:?}, shell {shell:?}");
-        let cli = GhCli::new(
-            Some(path),
-            shell.map(|shell| shell.clone().into_os_string()),
-        );
-        assert_eq!(cli.find().await, expected, "{label}");
+    for (vars, expected) in cases {
+        let cli = GhCli::new(env(vars));
+        assert_eq!(cli.find().await.as_ref(), expected, "{vars:?}");
     }
 }
 
@@ -174,11 +277,11 @@ async fn a_read_takes_what_gh_printed_whatever_it_exits_with() {
         let bin = dir.join(format!("bin{ix}"));
         std::fs::create_dir(&bin).unwrap();
         write_program(&bin.join("gh"), &format!("#!/bin/sh\n{asked}\n{body}\n"));
-        let cli = GhCli::new(Some(bin.into_os_string()), None);
+        let cli = GhCli::new(env(&[("PATH", &bin)]));
         assert_eq!(cli.read("github.com", &plan).await, expected, "{body}");
     }
 
-    let nowhere = GhCli::new(Some(dir.join("empty").into_os_string()), None);
+    let nowhere = GhCli::new(env(&[("PATH", &dir.join("empty"))]));
     let read = nowhere.read("github.com", &plan).await;
     assert!(
         matches!(read, Err(ReadError::NotInstalled(_))),
