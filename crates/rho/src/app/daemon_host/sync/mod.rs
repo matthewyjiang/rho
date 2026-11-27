@@ -1,0 +1,264 @@
+//! `rho/sync/recipient`, `rho/sync/export`, and `rho/sync/compare`: saved
+//! API keys copied from one daemon to another through a client that sees
+//! only ciphertext. [`seal`] owns the keys and the crypto; this module
+//! decides what is sealed, from where, and how it compares.
+//!
+//! Keys are read from the daemon's own credential store, the one its config
+//! selects, with no client environment: a key held only in a variable is
+//! not saved, so it is not exported. Only API keys are: interactive logins
+//! hold refresh tokens the provider rotates, so a copy could sign both
+//! machines out.
+//!
+//! The sealed plaintext is the JSON array of the values in `items` order,
+//! and the `aad` is the JSON of `items`, so the list a bundle shows in the
+//! clear is the list it holds. Nothing here logs a value.
+
+mod seal;
+
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
+
+use rho_protocol::{
+    ClientEnvironment, CompareState, ErrorCode, RpcError, SealRecipient, SealSuite, SealedSecrets,
+    SecretComparison, SecretItem, SyncCompareParams, SyncCompareResponse, SyncExportParams,
+    SyncExportResponse, SyncRecipientResponse,
+};
+use rho_providers::{
+    credentials::CredentialStore,
+    provider::{self, ProviderAuthKind},
+};
+use sha2::{Digest, Sha256};
+use zeroize::Zeroizing;
+
+use super::auth::{client_credentials, off_workers, repository};
+use crate::app::credential_writes::{self, CredentialWriteError};
+
+/// HPKE `info` for every bundle, which binds it to this use and version.
+const INFO: &[u8] = b"rho sync secrets v1";
+
+/// The one suite [`seal`] speaks.
+const SUITE: SealSuite = SealSuite::X25519HkdfSha256ChaCha20Poly1305;
+
+/// The daemon's sync state: the recipient keys it issued.
+#[derive(Default)]
+pub(super) struct SecretSync {
+    recipients: seal::Recipients,
+}
+
+impl SecretSync {
+    /// Answers `rho/sync/recipient`.
+    pub(super) fn recipient(&self) -> SyncRecipientResponse {
+        let public_key = self.recipients.issue(Instant::now());
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default();
+        let expires_at = (now + seal::RECIPIENT_LIFETIME).as_secs();
+        SyncRecipientResponse::new(SealRecipient::new(SUITE, public_key, expires_at))
+    }
+
+    /// Answers `rho/sync/export`: reads the saved keys off the async
+    /// workers, then seals them.
+    pub(super) async fn export(
+        &self,
+        params: SyncExportParams,
+    ) -> Result<SyncExportResponse, RpcError> {
+        let SyncExportParams {
+            recipient, items, ..
+        } = params;
+        known_suite(recipient.suite)?;
+        let credentials = client_credentials(&ClientEnvironment::default())?;
+        let saved = off_workers(move || {
+            credential_writes::load_config_and_store(&repository())?;
+            saved_values(credentials.as_ref(), items)
+        })
+        .await??;
+        let sealed = seal_values(&recipient, saved.items, &saved.values)?;
+        tracing::info!(
+            sealed = sealed.items.len(),
+            missing = saved.missing.len(),
+            "sealed saved API keys for another daemon"
+        );
+        Ok(SyncExportResponse::new(sealed, saved.missing))
+    }
+
+    /// Answers `rho/sync/compare`: opens the bundle, then compares its
+    /// values with the saved ones off the async workers.
+    pub(super) async fn compare(
+        &self,
+        params: SyncCompareParams,
+    ) -> Result<SyncCompareResponse, RpcError> {
+        let SyncCompareParams { sealed, .. } = params;
+        let values = open_values(&self.recipients, Instant::now(), &sealed)?;
+        let credentials = client_credentials(&ClientEnvironment::default())?;
+        let items = sealed.items;
+        let compared = off_workers(move || {
+            credential_writes::load_config_and_store(&repository())?;
+            compare_values(credentials.as_ref(), items, &values)
+        })
+        .await??;
+        Ok(SyncCompareResponse::new(compared))
+    }
+}
+
+/// What [`saved_values`] found: the items that have a saved value, with
+/// those values in the same order, and the items that have none.
+struct Saved {
+    items: Vec<SecretItem>,
+    values: Zeroizing<Vec<String>>,
+    missing: Vec<SecretItem>,
+}
+
+/// Reads each item's saved value from `store`. An item this daemon cannot
+/// export is refused before anything is read.
+fn saved_values(store: &dyn CredentialStore, items: Vec<SecretItem>) -> Result<Saved, RpcError> {
+    let accounts = items
+        .iter()
+        .map(saved_account)
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut saved = Saved {
+        items: Vec::new(),
+        values: Zeroizing::new(Vec::new()),
+        missing: Vec::new(),
+    };
+    for (item, account) in items.into_iter().zip(accounts) {
+        match store.get_secret(account).map_err(store_error)? {
+            Some(value) => {
+                saved.items.push(item);
+                saved.values.push(value);
+            }
+            None => saved.missing.push(item),
+        }
+    }
+    Ok(saved)
+}
+
+/// Seals `values`, one per item of `items`, to `recipient`.
+fn seal_values(
+    recipient: &SealRecipient,
+    items: Vec<SecretItem>,
+    values: &[String],
+) -> Result<SealedSecrets, RpcError> {
+    let plaintext = Zeroizing::new(serde_json::to_vec(values).map_err(internal)?);
+    let sealed =
+        seal::seal(&recipient.public_key, INFO, &aad(&items)?, &plaintext).map_err(|error| {
+            match error {
+                seal::SealError::InvalidRecipient => {
+                    RpcError::new(ErrorCode::InvalidParams, error.to_string())
+                }
+                seal::SealError::Failed => internal(error),
+            }
+        })?;
+    Ok(SealedSecrets::new(
+        SUITE,
+        recipient.public_key.clone(),
+        items,
+        sealed.encapped_key,
+        sealed.ciphertext,
+    ))
+}
+
+/// Opens `sealed` with a key `recipients` holds, using the key up, and
+/// returns one value per item.
+fn open_values(
+    recipients: &seal::Recipients,
+    now: Instant,
+    sealed: &SealedSecrets,
+) -> Result<Zeroizing<Vec<String>>, RpcError> {
+    known_suite(sealed.suite)?;
+    let bundle = seal::Sealed {
+        encapped_key: sealed.encapped_key.clone(),
+        ciphertext: sealed.ciphertext.clone(),
+    };
+    let plaintext = recipients
+        .open(now, &sealed.recipient, &bundle, INFO, &aad(&sealed.items)?)
+        .map_err(|error| {
+            let code = match error {
+                seal::OpenError::Gone => ErrorCode::SealRecipientGone,
+                seal::OpenError::Invalid(_) => ErrorCode::InvalidParams,
+            };
+            RpcError::new(code, error.to_string())
+        })?;
+    let values = Zeroizing::new(
+        serde_json::from_slice::<Vec<String>>(&plaintext)
+            .map_err(|_| invalid("the sealed values are not a JSON array of strings"))?,
+    );
+    if values.len() != sealed.items.len() {
+        return Err(invalid("the bundle seals a value count unlike its items"));
+    }
+    Ok(values)
+}
+
+/// How each of `values`, one per item of `items`, compares with the value
+/// `store` holds for it.
+fn compare_values(
+    store: &dyn CredentialStore,
+    items: Vec<SecretItem>,
+    values: &[String],
+) -> Result<Vec<SecretComparison>, RpcError> {
+    items
+        .into_iter()
+        .zip(values)
+        .map(|(item, value)| {
+            let account = saved_account(&item)?;
+            // Comparing digests keeps the time it takes from telling how
+            // much of a guessed key is right.
+            let state = match store.get_secret(account).map_err(store_error)? {
+                None => CompareState::Absent,
+                Some(held) if digest(&held) == digest(value) => CompareState::Same,
+                Some(_) => CompareState::Differs,
+            };
+            Ok(SecretComparison::new(item, state))
+        })
+        .collect()
+}
+
+/// The credential store account `item` is saved under. Only an API key
+/// auth profile's key can be exported.
+fn saved_account(item: &SecretItem) -> Result<&'static str, RpcError> {
+    let auth = match item {
+        SecretItem::ApiKey { auth } => auth,
+        // `Unknown`, or a kind a newer protocol adds.
+        _ => return Err(invalid("this daemon cannot export that kind of secret")),
+    };
+    let Some((_, mode)) = provider::resolve_auth_mode(auth) else {
+        return Err(CredentialWriteError::UnknownAuth { auth: auth.clone() }.into());
+    };
+    match mode.auth_kind {
+        ProviderAuthKind::ApiKey { account, .. } => Ok(account),
+        _ => Err(CredentialWriteError::NotAnApiKey { auth: auth.clone() }.into()),
+    }
+}
+
+fn known_suite(suite: SealSuite) -> Result<(), RpcError> {
+    if suite == SUITE {
+        Ok(())
+    } else {
+        Err(invalid("this daemon does not know that seal suite"))
+    }
+}
+
+fn aad(items: &[SecretItem]) -> Result<Vec<u8>, RpcError> {
+    serde_json::to_vec(items).map_err(internal)
+}
+
+fn digest(value: &str) -> [u8; 32] {
+    Sha256::digest(value.as_bytes()).into()
+}
+
+fn invalid(message: &str) -> RpcError {
+    RpcError::new(ErrorCode::InvalidParams, message)
+}
+
+fn internal(error: impl std::fmt::Display) -> RpcError {
+    RpcError::new(ErrorCode::InternalError, error.to_string())
+}
+
+fn store_error(error: impl std::fmt::Display) -> RpcError {
+    RpcError::new(
+        ErrorCode::CredentialStoreUnavailable,
+        format!("could not read the credential store: {error}"),
+    )
+}
+
+#[cfg(test)]
+#[path = "sync_tests.rs"]
+mod tests;
