@@ -117,7 +117,7 @@ async fn the_first_saved_prompt_asks_for_a_title_once() {
                 Some("message saved")
             } else if matches!(event, SessionEvent::TitleRequested(_)) {
                 Some("title requested")
-            } else if matches!(event, SessionEvent::RunStarted) {
+            } else if matches!(event, SessionEvent::RunStarted { .. }) {
                 Some("run started")
             } else {
                 None

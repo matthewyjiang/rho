@@ -344,7 +344,7 @@ pub enum ExcerptRole {
 #[non_exhaustive]
 pub enum SearchLocation {
     /// A user or agent message: the [`MessageId`] its replay's first event
-    /// carries (`saved-{node}-{row}-0` today).
+    /// carries, which its live events carried when a turn streamed it.
     Message { id: MessageId },
     /// A tool result, or an agent message that only calls tools: the
     /// [`ToolCallId`] of the call replay opens for it.

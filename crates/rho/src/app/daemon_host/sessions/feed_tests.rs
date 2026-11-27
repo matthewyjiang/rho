@@ -37,6 +37,7 @@ fn saved(texts: &[&str]) -> SavedTurn {
             }),
             message: Message::user_text(*text),
             saved_at: Some(SAVED_AT),
+            key: None,
         })
         .collect();
     let tool_set = AppToolSet::disabled();
@@ -500,11 +501,13 @@ fn events_json_cannot_hold_are_dropped_live_and_saved() {
             }),
             message: Message::user_text("saved"),
             saved_at: None,
+            key: None,
         },
         ProjectedMessage {
             origin: None,
             message: Message::Assistant(vec![rho_sdk::model::ContentBlock::ToolCall(read)].into()),
             saved_at: None,
+            key: None,
         },
     ];
     let tools = SessionTools::of_tool_set_for_tests(&tool_set);

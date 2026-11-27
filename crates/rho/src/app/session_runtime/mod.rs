@@ -98,7 +98,7 @@ pub(crate) use delegation::BackgroundWait;
 use delegation::HeldNotices;
 pub(crate) use events::{
     cancelled_approval, ApprovalId, InsertedMessage, PlanApprovalId, PlanApprovalRequest,
-    SessionEvent, TurnControl,
+    SessionEvent, TurnControl, TurnKeys,
 };
 pub(crate) use handle::{SessionHandle, SteerError};
 pub(crate) use left_out::LeftOut;

@@ -25,7 +25,7 @@ use crate::{
         },
         session_runtime::{
             host_woken_runtime_on, unattended_runtime_on, HangUntilCancel, InsertedMessage,
-            QuestionSupport, SessionEvent,
+            QuestionSupport, SessionEvent, TurnKeys,
         },
     },
     config::Config,
@@ -209,7 +209,12 @@ async fn the_job_waits_for_input_while_any_request_is_open() {
     let cases = vec![
         WaitingCase {
             name: "no request",
-            events: vec![inserted(), SessionEvent::RunStarted],
+            events: vec![
+                inserted(),
+                SessionEvent::RunStarted {
+                    keys: TurnKeys::for_tests("turn"),
+                },
+            ],
             state: JobState::Running,
             start: began(),
         },

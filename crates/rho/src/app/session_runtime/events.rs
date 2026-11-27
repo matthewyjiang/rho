@@ -12,8 +12,10 @@ use rho_sdk::{
 
 use super::title::TitleJob;
 use crate::{
-    display_transcript::DisplayTranscript, permission::PermissionMode,
-    session::tree::DisplayRowOrigin, tools::plan_exit::PlanExitDecision,
+    display_transcript::DisplayTranscript,
+    permission::PermissionMode,
+    session::tree::{DisplayRowOrigin, MessageKey},
+    tools::plan_exit::PlanExitDecision,
 };
 
 /// One tool approval a turn asked for, unique within the turn.
@@ -63,6 +65,38 @@ pub(crate) enum InsertedMessage {
     Unreplayed,
 }
 
+/// Keys for one turn's messages: the turn's saves key the rows of its
+/// model replies and steers with them, and its host derives the ids it
+/// shows those messages under live from the same keys, so a message keeps
+/// its id when a reload replays it.
+///
+/// The `n`th model reply, counting from 1, is the one the run's `n`th
+/// [`RunEvent::StepStarted`] streams: a step ends with its reply, or ends
+/// the run with what streamed of it. The `n`th steer is the `n`th to apply.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct TurnKeys(String);
+
+impl TurnKeys {
+    pub(super) fn new() -> Self {
+        Self(uuid::Uuid::new_v4().to_string())
+    }
+
+    /// The key of the turn's `ordinal`th model reply.
+    pub(crate) fn reply(&self, ordinal: u32) -> MessageKey {
+        MessageKey::new(format!("{}-{ordinal}", self.0))
+    }
+
+    /// The key of the turn's `ordinal`th applied steer.
+    pub(crate) fn steer(&self, ordinal: u32) -> MessageKey {
+        MessageKey::new(format!("{}-steer-{ordinal}", self.0))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_tests(turn: &str) -> Self {
+        Self(turn.to_owned())
+    }
+}
+
 /// What one turn reports, in order.
 pub(crate) enum SessionEvent {
     /// The turn saved the prompt's user message, before its run. Sent once,
@@ -80,8 +114,8 @@ pub(crate) enum SessionEvent {
     TitleRequested(Box<TitleJob>),
     /// The SDK run started, and [`super::SessionHandle::steer`] reaches it.
     /// Nothing about the run precedes it; the inserted message and a notice
-    /// may.
-    RunStarted,
+    /// may. `keys` names the run's messages as its saves key them.
+    RunStarted { keys: TurnKeys },
     /// An SDK run event, as the run emitted it.
     Run(RunEvent),
     /// The rows to show for a background result the run is about to apply,

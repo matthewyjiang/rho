@@ -108,7 +108,7 @@ async fn steering_through_the_handle_reaches_only_a_running_model_turn() {
         // once its first request is in flight.
         loop {
             match shown.recv().await {
-                Some(SessionEvent::RunStarted) => break,
+                Some(SessionEvent::RunStarted { .. }) => break,
                 Some(_) => {}
                 None => panic!("the turn ended before its run started"),
             }

@@ -673,12 +673,14 @@ fn display_rows_preserve_roles_and_visible_omissions() {
             }),
             message,
             saved_at: Some(7_000),
+            key: None,
         })
         .collect::<Vec<_>>();
     rows.push(tree::ProjectedMessage {
         origin: None,
         message: Message::user_text("added by the load"),
         saved_at: None,
+        key: None,
     });
     let locations = vec![None; rows.len()];
 

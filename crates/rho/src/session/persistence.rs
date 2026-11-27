@@ -19,7 +19,7 @@ use rho_sdk::{CompactionState, Revision, SessionSnapshot};
 
 use super::agent_identity::{SavedAgent, SessionAgentRole};
 use super::append_cursor::AppendCursor;
-use super::tree::{NodeId, ProjectedMessage, SessionNode};
+use super::tree::{MessageKey, NodeId, ProjectedMessage, SessionNode};
 use super::{
     index, Session, SessionIndexRecord, SessionOrigin, SessionProvenance, SessionSummary,
     SessionTarget,
@@ -241,6 +241,9 @@ impl ResolvedSession {
 pub(crate) struct StoredDisplayMessage {
     pub(crate) timestamp: String,
     pub(crate) message: Message,
+    /// The key a live turn showed the row under (`SessionNode::display_keys`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) key: Option<MessageKey>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -560,6 +563,7 @@ pub(super) fn active_display_from_tree(
             origin: Some(origin),
             saved_at: parse_timestamp(&row.timestamp).map(|secs| secs.saturating_mul(1000)),
             message: row.message,
+            key: row.key,
         })
         .collect();
     normalize_loaded_history_by(
@@ -569,6 +573,7 @@ pub(super) fn active_display_from_tree(
             origin: None,
             message: Message::ToolResult(result.into()),
             saved_at: None,
+            key: None,
         },
     );
     Ok(messages)
@@ -706,6 +711,7 @@ pub(super) fn test_transcript(cwd: &Path, id: &str, created_at: u64, prompts: &[
                 kind: SessionNodeKind::Commit,
                 compaction_facts: None,
                 display_messages: (0..prompts.len()).map(StoredDisplayRow::Model).collect(),
+                display_keys: Default::default(),
                 transition: StoredStateTransition::Snapshot {
                     snapshot: Box::new(snapshot),
                 },
@@ -788,6 +794,7 @@ pub(crate) fn insert_interrupted_display_placeholders(
         |source, result| StoredDisplayMessage {
             timestamp: source.timestamp.clone(),
             message: Message::ToolResult(result.into()),
+            key: None,
         },
     );
     messages

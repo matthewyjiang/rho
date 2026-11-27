@@ -7,18 +7,28 @@ use std::{
 
 use pretty_assertions::assert_eq;
 use rho_protocol::{
-    ErrorCode, SearchLocation, SessionEvent as WireEvent, SessionSearchParams,
-    SessionSearchResponse,
+    ContentBlock as WireBlock, ErrorCode, MessageId, PromptAuthor, SearchLocation,
+    SessionEvent as WireEvent, SessionPromptParams, SessionSearchParams, SessionSearchResponse,
 };
-use rho_sdk::model::{ContentBlock, Message, ToolCall, ToolResult};
+use rho_sdk::{
+    model::{
+        ContentBlock, Message, ModelEvent, ModelIdentity, ModelResponse, ToolCall, ToolResult,
+    },
+    provider::{ScriptedProvider, ScriptedTurn},
+};
 use serde_json::json;
 use tempfile::TempDir;
+use tokio::time::timeout;
 
 use crate::{
     app::{
         daemon_host::{
             jobs::{JobRegistry, JobStore},
-            sessions::Sessions,
+            sessions::{
+                test_sessions::{load_on, Load, TEST_BUDGET},
+                Sessions,
+            },
+            wire::session_to_wire,
         },
         pull_requests::ScriptedForge,
         session_events::{LiveEvents, SavedTranscript},
@@ -462,4 +472,79 @@ async fn every_excerpt_names_an_event_the_replay_sends() {
 
     let expected: Vec<_> = rows.iter().map(|(word, _)| (*word, true, true)).collect();
     assert_eq!(named, expected);
+}
+
+// Covers: a message keeps one id from the moment it streams: every chunk of
+// a streamed reply shares the id an attach's replay of the saved turn shows
+// it under, and the id a search excerpt's `at` names, so a client can find
+// a match among the events it was sent live.
+// Owner: daemon session live feed, replay, and search.
+#[tokio::test]
+async fn a_streamed_reply_keeps_its_id_in_the_replay_and_search() {
+    let daemon = Daemon::new();
+    // The session saves where the daemon searches.
+    let root = tempfile::Builder::new()
+        .prefix("sessions")
+        .rand_bytes(0)
+        .tempdir_in(daemon.home.path())
+        .unwrap();
+    assert_eq!(root.path(), session_root_in(daemon.home.path()));
+    daemon.built().await;
+    let reply = ScriptedTurn::streaming(
+        vec![
+            ModelEvent::OutputDelta("tokstream ".into()),
+            ModelEvent::OutputDelta("arrives".into()),
+        ],
+        ModelResponse::Assistant(vec![ContentBlock::Text("tokstream arrives".into())]),
+    );
+    let provider = ScriptedProvider::new(ModelIdentity::new("test", "test", "model"), [reply]);
+    let session = load_on(&daemon.sessions, &root, Load::Saved, Arc::new(provider)).await;
+    let prompted = daemon.sessions.prompt(SessionPromptParams {
+        author: PromptAuthor::Person,
+        session: session_to_wire(session.id.clone()),
+        content: vec![WireBlock::Text {
+            text: "hello".into(),
+        }],
+        timeout_ms: None,
+        environment: std::iter::empty::<(String, String)>().collect(),
+        idempotency_key: None,
+        grant: None,
+    });
+    timeout(TEST_BUDGET, prompted)
+        .await
+        .expect("the turn saves its prompt")
+        .unwrap();
+    // The turn holds the runtime until its end is recorded.
+    drop(
+        timeout(TEST_BUDGET, session.runtime.lock())
+            .await
+            .expect("the turn ends"),
+    );
+
+    let agent = |events: Vec<WireEvent>| -> Vec<(MessageId, String)> {
+        events
+            .into_iter()
+            .filter_map(|event| match event {
+                WireEvent::AgentMessageChunk { message, text } => Some((message, text)),
+                _ => None,
+            })
+            .collect()
+    };
+    let streamed = agent(session.feed.buffered_for_tests());
+    let replayed = agent(session.feed.reset_replay_for_tests());
+    let page = daemon.search(query("tokstream")).await.unwrap();
+    let at = page.sessions[0].excerpts[0].at.clone();
+
+    let id = streamed[0].0.clone();
+    assert_eq!(
+        (streamed, replayed, at),
+        (
+            vec![
+                (id.clone(), "tokstream ".into()),
+                (id.clone(), "arrives".into()),
+            ],
+            vec![(id.clone(), "tokstream arrives".into())],
+            Some(SearchLocation::Message { id }),
+        )
+    );
 }

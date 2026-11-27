@@ -10,7 +10,8 @@ use super::snapshot_delta::StoredSnapshotDelta;
 #[cfg(test)]
 use super::tree::SessionTreeFacts;
 use super::tree::{
-    NodeId, SessionNode, SessionNodeKind, SessionTree, StoredCompactionFacts, StoredStateTransition,
+    MessageKey, NodeId, SessionNode, SessionNodeKind, SessionTree, StoredCompactionFacts,
+    StoredStateTransition,
 };
 use super::{index, Session};
 
@@ -40,7 +41,19 @@ impl Session {
         snapshot: &SessionSnapshot,
         display_tail: &[Message],
     ) -> anyhow::Result<()> {
-        self.save_snapshot_with_compaction_facts(snapshot, display_tail, None)?;
+        self.save_snapshot_with_compaction_facts(snapshot, display_tail, /*keys*/ &[], None)?;
+        Ok(())
+    }
+
+    /// [`Self::save_snapshot`], with the [`MessageKey`] a live turn showed
+    /// some of `display_tail` under, by their place in it.
+    pub(crate) fn save_snapshot_keyed(
+        &self,
+        snapshot: &SessionSnapshot,
+        display_tail: &[Message],
+        keys: &[(usize, MessageKey)],
+    ) -> anyhow::Result<()> {
+        self.save_snapshot_with_compaction_facts(snapshot, display_tail, keys, None)?;
         Ok(())
     }
 
@@ -51,7 +64,12 @@ impl Session {
         snapshot: &SessionSnapshot,
         display_tail: &[Message],
     ) -> anyhow::Result<NodeId> {
-        let (node, _) = self.save_snapshot_with_compaction_facts(snapshot, display_tail, None)?;
+        let (node, _) = self.save_snapshot_with_compaction_facts(
+            snapshot,
+            display_tail,
+            /*keys*/ &[],
+            None,
+        )?;
         Ok(node)
     }
 
@@ -64,6 +82,7 @@ impl Session {
         self.save_snapshot_with_compaction_facts(
             snapshot,
             display_tail,
+            /*keys*/ &[],
             Some(StoredCompactionFacts {
                 previous_messages: outcome.previous_messages(),
                 current_messages: outcome.current_messages(),
@@ -81,6 +100,7 @@ impl Session {
         &self,
         snapshot: &SessionSnapshot,
         display_tail: &[Message],
+        keys: &[(usize, MessageKey)],
         supplied_compaction_facts: Option<StoredCompactionFacts>,
     ) -> anyhow::Result<(NodeId, Option<super::SessionIndexRecord>)> {
         if snapshot.session_id().as_str() != self.id {
@@ -156,6 +176,7 @@ impl Session {
             compaction_facts,
             transition,
             display_messages,
+            display_keys: keys.to_vec(),
         };
 
         self.commit_tree_entry(&mut cursor, &mut tree, SessionEntry::Node { node })?;
@@ -185,7 +206,12 @@ impl Session {
         snapshot: &SessionSnapshot,
         display_tail: &[Message],
     ) -> anyhow::Result<super::SessionIndexRecord> {
-        let (_, record) = self.save_snapshot_with_compaction_facts(snapshot, display_tail, None)?;
+        let (_, record) = self.save_snapshot_with_compaction_facts(
+            snapshot,
+            display_tail,
+            /*keys*/ &[],
+            None,
+        )?;
         record.ok_or_else(|| anyhow::anyhow!("save produced no mirrored index record"))
     }
 
