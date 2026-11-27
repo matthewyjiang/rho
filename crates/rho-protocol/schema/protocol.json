@@ -1864,7 +1864,7 @@
       "type": "object"
     },
     "ConfigRevision": {
-      "description": "Identifies one state of what a read returned: a namespace's values, or\nthe user's hooks file ([`super::HOOKS_FILE_GET`]). Opaque: compare it\nonly for equality, and send back the one that read, or\n[`CONFIG_CHANGED`] for a namespace, gave.",
+      "description": "Identifies one state of what a read returned, such as a namespace's\nvalues. Opaque: compare it only for equality, and send back the one the\nread, or its change notification, gave. Each method that returns one\nsays what changes it.",
       "type": "string"
     },
     "ConfigSchema": {
@@ -3236,7 +3236,7 @@
       "description": "Result of [`HOOKS_FILE_GET`].",
       "properties": {
         "path": {
-          "description": "Where the file is, or would be, on the daemon's machine.",
+          "description": "Where the file is, or would be, on the daemon's machine, with its\nlinks resolved.",
           "type": "string"
         },
         "revision": {
@@ -3285,7 +3285,7 @@
           "description": "The revision the text replaces. A stale one is refused with\n[`crate::ErrorCode::ConfigConflict`]."
         },
         "text": {
-          "description": "The file's new text, written atomically once it parses as a session\nwould load it; text that does not is refused with\n[`crate::ErrorCode::InvalidParams`] naming the problem. Absent or\n`null` deletes the file.",
+          "description": "The file's new text, written atomically once it loads as a session\nwould load it, which includes finding each hook's program when it is\nnamed by an absolute path. Text that does not load is refused with\n[`crate::ErrorCode::InvalidParams`] naming the problem. Absent or\n`null` deletes the file.",
           "type": [
             "string",
             "null"

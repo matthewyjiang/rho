@@ -12,7 +12,8 @@ use super::ConfigRevision;
 /// [`HOOKS_FILE_SET`] sends back. A project's hooks file is never read. A
 /// daemon that predates it answers [`crate::ErrorCode::MethodNotFound`].
 pub const HOOKS_FILE_GET: &str = "rho/hooks/file/get";
-/// Replace or delete the user's `~/.rho/hooks.toml`.
+/// Replace or delete the user's `~/.rho/hooks.toml`. A daemon that predates
+/// it answers [`crate::ErrorCode::MethodNotFound`].
 pub const HOOKS_FILE_SET: &str = "rho/hooks/file/set";
 
 /// Params of [`HOOKS_FILE_GET`].
@@ -21,6 +22,7 @@ pub const HOOKS_FILE_SET: &str = "rho/hooks/file/set";
 pub struct HooksFileGetParams {}
 
 impl HooksFileGetParams {
+    /// Builds it; it has no fields.
     pub fn new() -> Self {
         Self {}
     }
@@ -30,7 +32,8 @@ impl HooksFileGetParams {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[non_exhaustive]
 pub struct HooksFileGetResponse {
-    /// Where the file is, or would be, on the daemon's machine.
+    /// Where the file is, or would be, on the daemon's machine, with its
+    /// links resolved.
     pub path: PathBuf,
     /// Send it with the next [`HOOKS_FILE_SET`]. It changes with any byte of
     /// the file, comments included, and an absent file has its own.
@@ -58,8 +61,9 @@ pub struct HooksFileSetParams {
     /// The revision the text replaces. A stale one is refused with
     /// [`crate::ErrorCode::ConfigConflict`].
     pub revision: ConfigRevision,
-    /// The file's new text, written atomically once it parses as a session
-    /// would load it; text that does not is refused with
+    /// The file's new text, written atomically once it loads as a session
+    /// would load it, which includes finding each hook's program when it is
+    /// named by an absolute path. Text that does not load is refused with
     /// [`crate::ErrorCode::InvalidParams`] naming the problem. Absent or
     /// `null` deletes the file.
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -28,7 +28,9 @@ trust questions.
 
 A daemon client, such as a settings screen, lists these files and the hooks they
 define without a session through
-[`rho/hooks/list`](/protocol#configured-mcp-servers-and-hooks).
+[`rho/hooks/list`](/protocol#configured-mcp-servers-and-hooks), and reads or
+replaces the user's file as text through
+[`rho/hooks/file/get` and `rho/hooks/file/set`](/protocol#the-user-s-hooks-file).
 
 ## A first hook
 

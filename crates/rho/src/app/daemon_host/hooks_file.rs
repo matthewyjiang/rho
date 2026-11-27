@@ -7,7 +7,6 @@
 use std::{
     io,
     path::{Path, PathBuf},
-    sync::{Mutex, PoisonError},
 };
 
 use rho_protocol::{
@@ -25,14 +24,14 @@ pub(super) struct HooksFileStore {
     path: PathBuf,
     /// Held from a write's revision check through its write, so the file
     /// checked is the one replaced.
-    writes: Mutex<()>,
+    writes: tokio::sync::Mutex<()>,
 }
 
 impl HooksFileStore {
     pub(super) fn new(rho_home: &Path) -> Self {
         Self {
             path: crate::hooks::user_hooks_path(rho_home),
-            writes: Mutex::new(()),
+            writes: tokio::sync::Mutex::new(()),
         }
     }
 
@@ -57,12 +56,15 @@ impl HooksFileStore {
     /// Answers `rho/hooks/file/set`: checks the text, then, while the file
     /// is still at the params' revision, writes it atomically, or deletes the
     /// file when there is none.
-    pub(super) fn set(&self, params: HooksFileSetParams) -> Result<HooksFileSetResponse, RpcError> {
+    pub(super) async fn set(
+        &self,
+        params: HooksFileSetParams,
+    ) -> Result<HooksFileSetResponse, RpcError> {
         if let Some(text) = &params.text {
             crate::hooks::check_user_hooks(&self.path, text)
                 .map_err(|error| RpcError::new(ErrorCode::InvalidParams, error.to_string()))?;
         }
-        let _writing = self.writes.lock().unwrap_or_else(PoisonError::into_inner);
+        let _writing = self.writes.lock().await;
         if revision(self.read()?.as_deref()) != params.revision {
             return Err(RpcError::new(
                 ErrorCode::ConfigConflict,

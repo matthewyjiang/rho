@@ -758,7 +758,7 @@ impl SettingsService for DaemonHost {
 
     async fn read_hooks_file(
         &self,
-        HooksFileGetParams { .. }: HooksFileGetParams,
+        _params: HooksFileGetParams,
     ) -> Result<HooksFileGetResponse, RpcError> {
         self.hooks_file.get()
     }
@@ -767,7 +767,7 @@ impl SettingsService for DaemonHost {
         &self,
         params: HooksFileSetParams,
     ) -> Result<HooksFileSetResponse, RpcError> {
-        self.hooks_file.set(params)
+        self.hooks_file.set(params).await
     }
 
     async fn list_plugins(
