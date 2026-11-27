@@ -531,7 +531,7 @@ The daemon never moves credentials to another store on its own. While `selected_
 
 The daemon reads and writes the user's settings for its clients (#1720), so a frontend renders a settings screen from data. A `namespace` is `{"kind": "agent"}`, the agent's settings in `config.toml`, or `{"kind": "client", "name": "<name>"}`, a client's own ([below](#client-settings)).
 
-`rho/config/schema` describes each agent setting with its `key`, which is also where `config.toml` keeps it (`behavior.permission_mode` is the `permission_mode` key of `[behavior]`); its `kind`; its `default`, absent for an optional setting that is unset by default; the `category` page and optional `section` it sits under; a `label` and `help`; whether a project may later override it (`overridable_per_project`); whether it belongs to one machine (`per_machine`, absent when false), such as `behavior.agent_concurrency`, which sizes the daemon, `behavior.inline_shell`, whose default differs by OS, or `behavior.credential_store`, so a client copying settings from one daemon to another leaves it out unless the user picks it; and `applies`, when a change takes effect:
+`rho/config/schema` describes each agent setting with its `key`, which is also where `config.toml` keeps it (`behavior.permission_mode` is the `permission_mode` key of `[behavior]`); its `kind`; its `default`, absent for an optional setting that is unset by default; the `category` page and optional `section` it sits under; a `label` and `help`; whether a project may later override it (`overridable_per_project`); whether it belongs to one machine (`per_machine`, absent when false); and `applies`, when a change takes effect:
 
 | `applies` | Takes effect |
 | --- | --- |
@@ -539,6 +539,8 @@ The daemon reads and writes the user's settings for its clients (#1720), so a fr
 | `next_turn` | At the next turn of every loaded session: the advisor and automatic compaction settings, and the codemode mode. |
 | `next_session` | In sessions the daemon opens later. |
 | `restart` | When the daemon next starts, such as `behavior.credential_store`. |
+
+A `per_machine` setting suits only the machine it is set on, such as `behavior.agent_concurrency`, which sizes the daemon, or `behavior.inline_shell`, whose default differs by OS. A client copying settings from one daemon to another leaves it out unless the user picks it.
 
 A `kind` is `bool`; `choice`, whose `choices` each have a `value`, a `label`, and optional `help`; `integer`, from `min` to an optional `max`, with an optional `unit` (`bytes`, `lines`, `percent`, or `seconds`); `text`; or `model`, on the `runtimes` it lists (`rho`, `claude-cli`), whose values `rho/model/list` offers ([below](#models)). A value is `true`/`false`, a whole number, a string (a choice's `value`), or for a model `{"runtime": "rho", "provider", "model"}` or `{"runtime": "claude-cli", "model"?}`. A model on another provider takes that provider's default auth profile.
 

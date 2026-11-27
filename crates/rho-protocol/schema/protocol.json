@@ -11311,7 +11311,7 @@
       "description": "The values a setting takes."
     },
     "SettingSpec": {
-      "description": "One setting, as a settings screen shows it.\n\n# Next major\n\nNEXT_MAJOR(rho-protocol): make SettingSpec #[non_exhaustive] with a constructor, so later fields are additive.\n\nEvery field is public and the struct is exhaustive, so a field added in\na minor, as [`Self::per_machine`] was, breaks struct literals.",
+      "description": "One setting, as a settings screen shows it.\n\n# Next major\n\nNEXT_MAJOR(rho-protocol): make SettingSpec #[non_exhaustive] and build it with SettingSpec::new(key, kind, category, label, help, applies) plus with_* setters for the optional fields, so later fields are additive.\n\nEvery field is public and the struct is exhaustive, so a new field\nbreaks struct literals.",
       "properties": {
         "applies": {
           "$ref": "#/$defs/Applies"

@@ -37,10 +37,10 @@ impl fmt::Display for SettingKey {
 ///
 /// # Next major
 ///
-/// NEXT_MAJOR(rho-protocol): make SettingSpec #[non_exhaustive] with a constructor, so later fields are additive.
+/// NEXT_MAJOR(rho-protocol): make SettingSpec #[non_exhaustive] and build it with SettingSpec::new(key, kind, category, label, help, applies) plus with_* setters for the optional fields, so later fields are additive.
 ///
-/// Every field is public and the struct is exhaustive, so a field added in
-/// a minor, as [`Self::per_machine`] was, breaks struct literals.
+/// Every field is public and the struct is exhaustive, so a new field
+/// breaks struct literals.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SettingSpec {
     pub key: SettingKey,

@@ -293,6 +293,7 @@ static ENABLE_SUBAGENTS: Setting<Config, bool> = Setting {
 
 static AGENT_CONCURRENCY: Setting<Config, u64> = Setting {
     key: "behavior.agent_concurrency",
+    // It sizes this daemon.
     meta: per_machine(daemon_wide(meta(
         "agent",
         Some("Subagents"),
@@ -661,6 +662,7 @@ static WORKTREE_FROM_REMOTE: Setting<Config, bool> = Setting {
 /// can be reached; `rho/config/set` refuses it.
 pub(super) static CREDENTIAL_STORE: Setting<Config, Option<CredentialStoreBackend>> = Setting {
     key: "behavior.credential_store",
+    // It names this machine's keyring or a file on it.
     meta: per_machine(daemon_wide(meta(
         "providers",
         None,
