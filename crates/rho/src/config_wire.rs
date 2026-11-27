@@ -20,7 +20,7 @@ use super::{
     load,
     registry::AGENT_SETTINGS,
     setting::{save_settings, AnySetting, ConfigError},
-    Config, ConfigWarning,
+    ChangeError, Config, ConfigWarning,
 };
 
 /// The agent's settings pages, in display order. Every registry row names
@@ -76,17 +76,6 @@ pub(crate) fn agent_values(
         .collect()
 }
 
-/// Why agent changes were not applied; `doc` is left as it was.
-#[derive(Debug, PartialEq)]
-pub(crate) enum AgentChangeError {
-    /// A change a setting refuses, an unknown key, or a result that would
-    /// not load, such as a compaction target above its threshold.
-    Refused(Vec<ConfigError>),
-    /// The file does not load for keys the changes leave alone; a hand
-    /// edit must fix it.
-    FileInvalid(Vec<ConfigError>),
-}
-
 /// Applies protocol `changes`, in order, to the agent settings `doc`
 /// holds: each through its registry setter, as a typed edit would, then
 /// every setting that changed written back leaf by leaf, keeping the rest
@@ -96,7 +85,7 @@ pub(crate) enum AgentChangeError {
 pub(crate) fn apply_agent_changes(
     doc: &mut ConfigDocument,
     changes: &[SettingChange],
-) -> Result<(Config, Vec<ConfigWarning>), AgentChangeError> {
+) -> Result<(Config, Vec<ConfigWarning>), ChangeError> {
     let mut changed = Vec::new();
     let mut errors = Vec::new();
     for change in changes {
@@ -116,7 +105,7 @@ pub(crate) fn apply_agent_changes(
         }
     }
     let mut edited = loadable_base(doc, &changed)?;
-    let (before, _) = load::resolve(&edited).map_err(AgentChangeError::FileInvalid)?;
+    let (before, _) = load::resolve(&edited).map_err(ChangeError::FileInvalid)?;
     let mut after = before.clone();
     for (setting, change) in &changed {
         let value = match change {
@@ -143,7 +132,7 @@ pub(crate) fn apply_agent_changes(
         ));
     }
     if !errors.is_empty() {
-        return Err(AgentChangeError::Refused(errors));
+        return Err(ChangeError::Refused(errors));
     }
     // Setters reach past their own setting, such as a model change moving
     // its auth, so every setting that differs is saved; internal agents
@@ -155,7 +144,7 @@ pub(crate) fn apply_agent_changes(
             SettingChange::Reset { .. } => setting.remove(&mut edited),
         }
     }
-    let resolved = load::resolve(&edited).map_err(AgentChangeError::Refused)?;
+    let resolved = load::resolve(&edited).map_err(ChangeError::Refused)?;
     *doc = edited;
     Ok(resolved)
 }
@@ -165,7 +154,7 @@ pub(crate) fn apply_agent_changes(
 fn loadable_base(
     doc: &ConfigDocument,
     changed: &[(&dyn AnySetting<Config>, &SettingChange)],
-) -> Result<ConfigDocument, AgentChangeError> {
+) -> Result<ConfigDocument, ChangeError> {
     let Err(errors) = load::resolve(doc) else {
         return Ok(doc.clone());
     };
@@ -179,7 +168,7 @@ fn loadable_base(
     let mut base = doc.clone();
     for error in &errors {
         let Some(setting) = replaced(error) else {
-            return Err(AgentChangeError::FileInvalid(errors));
+            return Err(ChangeError::FileInvalid(errors));
         };
         setting.remove(&mut base);
     }

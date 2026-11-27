@@ -4,7 +4,8 @@ use rho_protocol::{
     SettingSpec, SettingValue, ValueSource,
 };
 
-use super::{agent_values, apply_agent_changes, client_specs_problem, AgentChangeError};
+use super::{agent_values, apply_agent_changes, client_specs_problem};
+use crate::config::ChangeError;
 use crate::config::{document::ConfigDocument, load::resolve, registry::AGENT_SETTINGS};
 
 fn set(key: &str, value: SettingValue) -> SettingChange {
@@ -147,8 +148,8 @@ fn applied(before: &str, changes: &[SettingChange]) -> Written {
     }
     result.map(|_| doc.text()).map_err(|error| {
         let (prefix, errors) = match error {
-            AgentChangeError::Refused(errors) => ("", errors),
-            AgentChangeError::FileInvalid(errors) => ("file: ", errors),
+            ChangeError::Refused(errors) => ("", errors),
+            ChangeError::FileInvalid(errors) => ("file: ", errors),
         };
         errors
             .iter()

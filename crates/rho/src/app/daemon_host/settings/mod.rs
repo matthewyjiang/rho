@@ -21,6 +21,7 @@
 
 mod clients;
 mod file;
+mod tables;
 mod writer_run;
 
 use std::{
@@ -44,8 +45,8 @@ use self::{
 use crate::{
     app::agent_concurrency::AgentConcurrency,
     config::{
-        agent_schema, agent_values, apply_agent_changes, resolve_document, AgentChangeError,
-        Config, ConfigDocument, ConfigError,
+        agent_schema, agent_values, apply_agent_changes, resolve_document, ChangeError, Config,
+        ConfigDocument, ConfigError, ConfigWarning,
     },
 };
 
@@ -208,20 +209,26 @@ impl ConfigStore {
         self.refresh_agent(&mut file.seen);
         let current = self.agent_state.borrow().revision.clone();
         let admitted = file.run.admit(current, &revision, writer)?;
-        let (config, warnings) =
-            apply_agent_changes(&mut edit.doc, &changes).map_err(|error| match error {
-                AgentChangeError::Refused(errors) => refused(errors),
-                AgentChangeError::FileInvalid(errors) => {
-                    RpcError::new(ErrorCode::ConfigInvalid, joined(&errors))
-                }
-            })?;
-        let (stat, doc) = edit.save()?;
-        file.seen = Some(stat);
-        let values = agent_values(&doc, &config);
-        log_warnings(path, &warnings);
-        let revision = self.publish_agent(Ok((config, values)));
+        let loaded = apply_agent_changes(&mut edit.doc, &changes).map_err(change_error)?;
+        let (_, revision) = self.save_agent(&mut file, edit, loaded)?;
         file.run.landed(admitted, revision.clone());
         Ok(ConfigSetResponse { revision })
+    }
+
+    /// Saves a change to `config.toml` that loads as `loaded`, under the
+    /// agent lock `file`, and publishes the agent namespace's new state.
+    /// Returns the file as saved and the namespace's revision.
+    fn save_agent(
+        &self,
+        file: &mut AgentFile,
+        edit: Edit,
+        (config, warnings): (Config, Vec<ConfigWarning>),
+    ) -> Result<(ConfigDocument, ConfigRevision), RpcError> {
+        let (stat, doc) = edit.save()?;
+        file.seen = Some(stat);
+        log_warnings(&self.agent_path, &warnings);
+        let values = agent_values(&doc, &config);
+        Ok((doc, self.publish_agent(Ok((config, values)))))
     }
 
     /// Reads `config.toml` again if it changed since `seen`, the agent
@@ -335,6 +342,16 @@ pub(super) fn wire_errors(errors: &[ConfigError]) -> Vec<WireError> {
 /// A change the daemon refused, naming each problem; nothing was written.
 fn refused(errors: Vec<ConfigError>) -> RpcError {
     RpcError::new(ErrorCode::InvalidParams, joined(&errors))
+}
+
+/// Why changes to `config.toml` were not written, for the client.
+fn change_error(error: ChangeError) -> RpcError {
+    match error {
+        ChangeError::Refused(errors) => refused(errors),
+        ChangeError::FileInvalid(errors) => {
+            RpcError::new(ErrorCode::ConfigInvalid, joined(&errors))
+        }
+    }
 }
 
 /// Every error, one per line.

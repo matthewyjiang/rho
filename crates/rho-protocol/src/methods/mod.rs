@@ -56,6 +56,8 @@
 //! | [`CONFIG_REGISTER`] | [`ConfigRegisterParams`] | [`ConfigRegisterResponse`] |
 //! | [`CONFIG_GET`] | [`ConfigGetParams`] | [`ConfigGetResponse`] |
 //! | [`CONFIG_SET`] | [`ConfigSetParams`] | [`ConfigSetResponse`] |
+//! | [`CONFIG_TABLE_GET`] | [`ConfigTableGetParams`] | [`ConfigTableGetResponse`] |
+//! | [`CONFIG_TABLE_SET`] | [`ConfigTableSetParams`] | [`ConfigTableSetResponse`] |
 //! | [`MODEL_LIST`] | [`ModelListParams`] | [`ModelList`] |
 //! | [`MODEL_REFRESH`] | [`ModelRefreshParams`] | [`ModelRefreshResponse`] |
 //! | [`MCP_LIST`] | [`McpListParams`] | [`McpListResponse`] |
@@ -93,6 +95,7 @@ mod auth;
 mod background;
 mod catalog;
 mod config;
+mod config_table;
 mod daemon;
 mod event;
 mod grant;
@@ -143,6 +146,10 @@ pub use config::{
     ConfigWriter, FileOnlyTable, IntegerUnit, InvalidClientName, ModelRuntime, ModelSelection,
     SettingChange, SettingChoice, SettingEntry, SettingKey, SettingKind, SettingSpec, SettingValue,
     ValueSource, CONFIG_CHANGED, CONFIG_GET, CONFIG_REGISTER, CONFIG_SCHEMA, CONFIG_SET,
+};
+pub use config_table::{
+    ConfigTable, ConfigTableGetParams, ConfigTableGetResponse, ConfigTableSetParams,
+    ConfigTableSetResponse, TableChange, TableEntry, CONFIG_TABLE_GET, CONFIG_TABLE_SET,
 };
 pub use daemon::{
     ClientCapability, ClientHello, ClientInfo, ClientRole, DaemonInfo, DaemonStatus, HelloParams,
@@ -395,6 +402,8 @@ protocol! {
         ConfigRegister = CONFIG_REGISTER: ConfigRegisterParams => ConfigRegisterResponse,
         ConfigGet = CONFIG_GET: ConfigGetParams => ConfigGetResponse,
         ConfigSet = CONFIG_SET: ConfigSetParams => ConfigSetResponse,
+        ConfigTableGet = CONFIG_TABLE_GET: ConfigTableGetParams => ConfigTableGetResponse,
+        ConfigTableSet = CONFIG_TABLE_SET: ConfigTableSetParams => ConfigTableSetResponse,
         ModelListMethod = MODEL_LIST: ModelListParams => ModelList,
         ModelRefresh = MODEL_REFRESH: ModelRefreshParams => ModelRefreshResponse,
         McpList = MCP_LIST: McpListParams => McpListResponse,

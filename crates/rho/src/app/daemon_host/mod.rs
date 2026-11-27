@@ -31,6 +31,7 @@ use rho_protocol::{
     AuthListResponse, AuthLoginCancelParams, AuthLoginCancelResponse, AuthLoginParams,
     AuthLoginResponse, AuthLogoutParams, AuthLogoutResponse, BuildId, ClientInfo, ConfigGetParams,
     ConfigRegisterParams, ConfigRegisterResponse, ConfigSchema, ConfigSetParams, ConfigSetResponse,
+    ConfigTableGetParams, ConfigTableGetResponse, ConfigTableSetParams, ConfigTableSetResponse,
     ConfigWatch, DaemonStatus, DetachReason, HooksFileGetParams, HooksFileGetResponse,
     HooksFileSetParams, HooksFileSetResponse, HooksListParams, HooksListResponse, JobListResponse,
     LoginStream, McpListParams, McpListResponse, ModelListParams, ModelRefreshParams,
@@ -735,6 +736,20 @@ impl SettingsService for DaemonHost {
 
     async fn set_config(&self, params: ConfigSetParams) -> Result<ConfigSetResponse, RpcError> {
         self.sessions.settings().set(params).await
+    }
+
+    async fn get_config_table(
+        &self,
+        params: ConfigTableGetParams,
+    ) -> Result<ConfigTableGetResponse, RpcError> {
+        self.sessions.settings().get_table(params).await
+    }
+
+    async fn set_config_table(
+        &self,
+        params: ConfigTableSetParams,
+    ) -> Result<ConfigTableSetResponse, RpcError> {
+        self.sessions.settings().set_table(params).await
     }
 
     async fn list_models(&self, params: ModelListParams) -> Result<ModelWatch, RpcError> {
