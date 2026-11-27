@@ -64,3 +64,42 @@ async fn cancellation_cleanup_keeps_result_completed_during_trailing_progress() 
         )]
     );
 }
+
+// Covers: a cancel that lands after a running tool last checked for it, and
+// before the coordinator does, still lets the tool return its own result,
+// such as the `ui` tool saying it stopped waiting on a surface the user saw,
+// instead of the call reading as interrupted before it ran.
+// Owner: SDK tool batch coordinator.
+#[tokio::test]
+async fn a_cancel_after_the_tools_last_check_keeps_its_own_result() {
+    let cancellation = CancellationToken::new();
+    let (_progress, progress_receiver) = tool_progress_channel(NonZeroUsize::new(1).unwrap());
+    let (_host_input, host_input_receiver) = mpsc::channel(1);
+    let (worker_tx, _worker_rx) = mpsc::channel(1);
+    let cancel = cancellation.clone();
+    let mut checked = false;
+    // Checks for the cancel, which lands just after; sees it on its next poll.
+    let execution: ToolFuture<'static> = Box::pin(std::future::poll_fn(move |_| {
+        if checked {
+            return Poll::Ready(Err(ToolError::new(
+                crate::tool::ToolErrorKind::Execution,
+                "stopped waiting",
+            )));
+        }
+        checked = true;
+        cancel.cancel();
+        Poll::Pending
+    }));
+
+    let result = forward_execution(
+        0,
+        execution,
+        progress_receiver,
+        host_input_receiver,
+        worker_tx,
+        cancellation,
+    )
+    .await;
+
+    assert_eq!(result.unwrap_err().message(), "stopped waiting");
+}

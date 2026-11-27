@@ -536,40 +536,54 @@ fn forward_execution<'a>(
         let mut progress_open = true;
         let mut host_input_open = true;
         loop {
-            tokio::select! {
+            let result = tokio::select! {
                 biased;
-                result = &mut future => {
-                    while let Some(progress) = progress.try_recv() {
-                        tokio::select! {
-                            biased;
-                            sent = events.send(WorkerEvent::Progress { index, progress }) => {
-                                if sent.is_err() {
-                                    return result;
-                                }
+                result = &mut future => result,
+                // A cancel can land after the tool's own check in this poll
+                // and before this one, so the tool gets one poll more, past
+                // the task's budget, to return its own result.
+                () = cancellation.cancelled() => {
+                    let mut last = tokio::task::coop::unconstrained(&mut future);
+                    match std::future::poll_fn(|cx| Poll::Ready(Pin::new(&mut last).poll(cx))).await {
+                        Poll::Ready(result) => result,
+                        Poll::Pending => return Err(ToolError::cancelled()),
+                    }
+                }
+                update = progress.recv(), if progress_open => {
+                    match update {
+                        Some(progress) => {
+                            if events.send(WorkerEvent::Progress { index, progress }).await.is_err() {
+                                return Err(ToolError::cancelled());
                             }
-                            () = cancellation.cancelled() => return result,
+                        }
+                        None => progress_open = false,
+                    }
+                    continue;
+                }
+                request = host_input.recv(), if host_input_open => {
+                    match request {
+                        Some(request) => {
+                            if events.send(WorkerEvent::HostInput { index, request }).await.is_err() {
+                                return Err(ToolError::cancelled());
+                            }
+                        }
+                        None => host_input_open = false,
+                    }
+                    continue;
+                }
+            };
+            while let Some(progress) = progress.try_recv() {
+                tokio::select! {
+                    biased;
+                    sent = events.send(WorkerEvent::Progress { index, progress }) => {
+                        if sent.is_err() {
+                            return result;
                         }
                     }
-                    return result;
-                },
-                () = cancellation.cancelled() => return Err(ToolError::cancelled()),
-                update = progress.recv(), if progress_open => match update {
-                    Some(progress) => {
-                        if events.send(WorkerEvent::Progress { index, progress }).await.is_err() {
-                            return Err(ToolError::cancelled());
-                        }
-                    }
-                    None => progress_open = false,
-                },
-                request = host_input.recv(), if host_input_open => match request {
-                    Some(request) => {
-                        if events.send(WorkerEvent::HostInput { index, request }).await.is_err() {
-                            return Err(ToolError::cancelled());
-                        }
-                    }
-                    None => host_input_open = false,
-                },
+                    () = cancellation.cancelled() => return result,
+                }
             }
+            return result;
         }
     })
 }
