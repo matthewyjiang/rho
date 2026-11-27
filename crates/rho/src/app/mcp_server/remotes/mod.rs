@@ -114,6 +114,7 @@ impl Target {
             Self::Local => Ok(control.call(caller, action, arguments).await?),
             Self::Remote(remote) => {
                 caller.grant.permit(action).map_err(ControlError::from)?;
+                let arguments = for_any_release(action, arguments);
                 Ok(call(remote, action, arguments, &forwarded(caller), Asked::ByCall).await?)
             }
         }
@@ -168,6 +169,27 @@ impl Target {
             Self::Remote(remote) => Some(&remote.name),
         }
     }
+}
+
+/// `action`'s `arguments` as a remote of any release takes them: the
+/// message of `prompt` and `steer` as `text`, the name releases before
+/// `prompt` took and later ones still accept.
+// NEXT_MAJOR(rho mcp serve): forward `prompt` as it is, with the `text` alias gone.
+fn for_any_release(action: Action, mut arguments: Map<String, Value>) -> Map<String, Value> {
+    match action {
+        Action::Prompt | Action::Steer => {
+            if let Some(message) = arguments.remove("prompt") {
+                arguments.insert("text".to_owned(), message);
+            }
+        }
+        Action::List
+        | Action::Read
+        | Action::New
+        | Action::Cancel
+        | Action::Wait
+        | Action::Answer => {}
+    }
+    arguments
 }
 
 /// The context a call for a remote carries there: the caller's depth and

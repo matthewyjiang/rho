@@ -200,3 +200,30 @@ fn an_entry_says_who_opened_its_session_and_its_title() {
         ]
     );
 }
+
+// Covers: `prompt` and `steer` take their message as `prompt`, as `new`
+// does, still take `text`, the name earlier releases used, and refuse a
+// call that gives both rather than pick one.
+// Owner: session-control params.
+#[test]
+fn prompt_and_steer_take_their_message_as_prompt_or_text() {
+    let message = |arguments: Value| {
+        let prompted = serde_json::from_value::<PromptParams>(arguments.clone())
+            .map(|params| params.prompt)
+            .ok();
+        let steered = serde_json::from_value::<SteerParams>(arguments)
+            .map(|params| params.prompt)
+            .ok();
+        (prompted, steered)
+    };
+    let hello = || (Some("hello".to_owned()), Some("hello".to_owned()));
+
+    assert_eq!(
+        [
+            message(json!({"session": "s", "prompt": "hello"})),
+            message(json!({"session": "s", "text": "hello"})),
+            message(json!({"session": "s", "prompt": "hello", "text": "hello"})),
+        ],
+        [hello(), hello(), (None, None)]
+    );
+}

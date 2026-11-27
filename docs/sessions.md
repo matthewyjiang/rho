@@ -260,8 +260,8 @@ into the current turn, use [subagents](/subagents) instead.
 | --- | --- |
 | `list` | Lists the daemon's sessions with their workspace, state, title, who opened them (`opened_by`: `person` or `agent`), and the `parent` session that started them. Filter by `workspace`, `state`, or `opened_by`; `hide_idle` leaves out sessions in state `idle`. |
 | `new` | Starts a session in `workspace`, an absolute path, with a first `prompt`. `agent` and `model` are optional. Returns the session id right away. |
-| `prompt` | Starts the session's next turn with `text`. |
-| `steer` | Adds `text` to the running turn's next model request. |
+| `prompt` | Starts the session's next turn with `prompt`. |
+| `steer` | Adds `prompt` to the running turn's next model request. |
 | `cancel` | Cancels the turn in progress. |
 | `wait` | Waits for the session to settle, with no turn running and none rho will start for its background work, or to need a person, for up to `timeout_secs`, at most 50. A subagent's question asked while the session is at rest ends the wait; one asked while a turn runs is listed in `inputs` but does not end it. Returns the state, the last turn's final answer once it ended (final once `done` is true), and a `cursor` for the next `wait`. |
 | `read` | Without an `anchor`, pages through a session's transcript, including the turn in progress. |

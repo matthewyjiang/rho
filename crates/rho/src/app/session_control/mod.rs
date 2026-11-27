@@ -325,7 +325,7 @@ impl SessionControl {
         caller: &Caller,
         params: PromptParams,
     ) -> Result<PromptResult, ControlError> {
-        let content = prompt_content(&params.text)?;
+        let content = prompt_content(&params.prompt)?;
         let _admitted = self.admit(caller, Some(&params.session)).await?;
         self.start_turn(caller, &params.session, content).await?;
         Ok(PromptResult {
@@ -337,12 +337,12 @@ impl SessionControl {
     /// answers as soon as the turn staged it, and refuses at once a session
     /// with no turn taking input.
     async fn steer(&self, params: SteerParams) -> Result<SteerResult, ControlError> {
-        let SteerParams { session, text } = params;
+        let SteerParams { session, prompt } = params;
         let steered = self
             .daemon
             .request::<SessionSteer>(&SessionSteerParams {
                 session: session.clone(),
-                text,
+                text: prompt,
             })
             .await
             .map_err(|error| match &error {

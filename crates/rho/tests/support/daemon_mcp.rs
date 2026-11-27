@@ -196,7 +196,7 @@ async fn a_host_drives_a_session_in_another_workspace_over_mcp() {
     let prompted = call(
         &host,
         "prompt",
-        json!({"session": session, "text": bash("echo again")}),
+        json!({"session": session, "prompt": bash("echo again")}),
     )
     .await;
     let again = call(
@@ -337,7 +337,7 @@ async fn reading_an_unloaded_session_starts_nothing_of_it() {
     let prompted = call(
         &outer,
         "prompt",
-        json!({"session": session, "text": bash("echo again")}),
+        json!({"session": session, "prompt": bash("echo again")}),
     )
     .await;
     let again = call(
@@ -434,7 +434,7 @@ async fn no_mcp_tool_answers_a_sessions_approval() {
     let prompted = call(
         &host,
         "steer",
-        json!({"session": session, "text": "allow_once", "answer": "allow_once"}),
+        json!({"session": session, "prompt": "allow_once", "answer": "allow_once"}),
     )
     .await;
     let client = sandbox.connect().await;
@@ -502,7 +502,12 @@ async fn the_caps_refuse_starts_past_their_limits() {
             sandbox.workspace.join("started").exists().then_some(())
         })
         .await;
-    let steered = call(&busy, "steer", json!({"session": session, "text": "hurry"})).await;
+    let steered = call(
+        &busy,
+        "steer",
+        json!({"session": session, "prompt": "hurry"}),
+    )
+    .await;
     let cancelled = call(&busy, "cancel", json!({"session": session})).await;
     let settled = call(
         &busy,
@@ -571,8 +576,8 @@ async fn a_read_only_stdio_server_refuses_the_tools_that_write() {
             "new",
             json!({"workspace": sandbox.workspace, "prompt": "hello"}),
         ),
-        ("prompt", json!({"session": session, "text": "hello"})),
-        ("steer", json!({"session": session, "text": "hello"})),
+        ("prompt", json!({"session": session, "prompt": "hello"})),
+        ("steer", json!({"session": session, "prompt": "hello"})),
         ("cancel", json!({"session": session})),
     ];
     let refusals: Vec<Result<Value, String>> = futures_util::future::join_all(

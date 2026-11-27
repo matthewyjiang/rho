@@ -181,7 +181,7 @@ async fn a_hub_drives_a_session_a_person_opened_on_a_remote() {
     let steered = call(
         &host,
         "steer",
-        on_remote(&session, json!({"text": "hurry"})),
+        on_remote(&session, json!({"prompt": "hurry"})),
     )
     .await
     .unwrap();

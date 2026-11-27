@@ -191,7 +191,7 @@ async fn the_native_tool_and_the_mcp_server_answer_alike() {
         json!({"action": "read", "session": child, "start": 3, "chars": 40}),
         json!({"action": "wait", "session": child, "timeout_secs": 0}),
         json!({"action": "cancel", "session": "no-such-session"}),
-        json!({"action": "prompt", "session": child, "text": " "}),
+        json!({"action": "prompt", "session": child, "prompt": " "}),
         json!({"action": "new", "workspace": "relative", "prompt": "hello"}),
         json!({"action": "list", "limit": 1001}),
     ];
