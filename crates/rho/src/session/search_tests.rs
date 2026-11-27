@@ -629,7 +629,8 @@ fn focused_read_preserves_errors_and_expands_unicode_match_windows() {
 // not index the sessions tool's own calls and results (which would make every
 // later search find its predecessors) or rows a load adds, which no saved row
 // holds, nor partial calls replay does not show. A reused call id belongs to
-// its latest call. One table owns extraction.
+// its latest call, and text holds no highlight markers. One table owns
+// extraction.
 #[test]
 fn display_rows_preserve_roles_and_visible_omissions() {
     let message = |value: Value| serde_json::from_value::<Message>(value).unwrap();
@@ -648,6 +649,8 @@ fn display_rows_preserve_roles_and_visible_omissions() {
         // A later call that reuses a sessions call's id has its own results.
         message(json!({"Assistant":[call("s1", "bash")]})),
         result("s1", "reused"),
+        // Highlight markers in text would hide a match's highlight.
+        Message::user_text("foo\u{1f}bar\u{1e}"),
         // Replay shows an aborted reply's content, not its partial calls.
         Message::AbortedAssistant(std::sync::Arc::new(rho_sdk::model::AbortedAssistant {
             content: vec![ContentBlock::Text("partial".into())],
@@ -695,6 +698,7 @@ fn display_rows_preserve_roles_and_visible_omissions() {
             ("tool_result", "out".into(), 0, Some(7)),
             ("assistant", "tool_call bash {}".into(), 0, Some(7)),
             ("tool_result", "reused".into(), 0, Some(7)),
+            ("user", "foo bar ".into(), 0, Some(7)),
             ("assistant_aborted", "partial".into(), 0, Some(7)),
         ]
     );

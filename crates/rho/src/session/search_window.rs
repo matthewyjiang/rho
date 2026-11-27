@@ -31,12 +31,11 @@ pub(super) struct Window {
 /// same text with [`OPEN`] and [`CLOSE`] around each match, marks.
 ///
 /// Markers are found by walking both strings: a character `highlighted`
-/// has where `text` does not is a marker. A matched token never holds a
-/// marker character (the tokenizer splits words on control characters), so
-/// the first [`CLOSE`] after an open is always the marker. Outside a match,
-/// a marker character that `text` itself holds there reads as text, which
-/// is right: FTS5 puts its [`OPEN`] right before the token, after any
-/// literal one.
+/// has where `text` does not is a marker. Indexed text holds no marker
+/// characters (`search_evidence` replaces them), so neither can a match.
+/// Text that holds them anyway still reads right outside a match: the
+/// first [`CLOSE`] after an open is the marker, and a literal one before
+/// FTS5's [`OPEN`] reads as text.
 pub(super) fn window(text: &str, highlighted: &str) -> Window {
     let mut matches = Vec::new();
     let mut source = text.char_indices().peekable();

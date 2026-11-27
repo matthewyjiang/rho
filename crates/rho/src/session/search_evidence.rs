@@ -10,7 +10,11 @@ use rho_protocol::SearchLocation;
 use rho_providers::model::{ContentBlock, Message};
 use sha2::{Digest, Sha256};
 
-use super::{search::TOOL_NAME, tree::ProjectedMessage};
+use super::{
+    search::TOOL_NAME,
+    search_window::{CLOSE, OPEN},
+    tree::ProjectedMessage,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct Evidence {
@@ -53,6 +57,10 @@ pub(super) fn extract(
         .filter_map(|(row, at)| {
             let origin = row.origin.as_ref()?;
             let (role, text, omitted_blocks) = row_text(&row.message, &mut sessions_calls)?;
+            // Excerpts find matches by the markers `highlight()` puts around
+            // them (`search_window`), which a matched phrase could otherwise
+            // hold as text. Invisible control characters, shown as spaces.
+            let text = text.replace([OPEN, CLOSE], " ");
             Some(Evidence {
                 anchor: Evidence::anchor(
                     format!("{}:{}", origin.node, origin.row),
