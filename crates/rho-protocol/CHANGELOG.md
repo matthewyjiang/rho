@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.6.0](https://github.com/matthewyjiang/rho/compare/rho-protocol-v1.5.0...rho-protocol-v1.6.0) (2026-11-27)
+
+
+### Features
+
+* **protocol:** carry a questionnaire's reason to whoever answers it ([#2056](https://github.com/matthewyjiang/rho/issues/2056)) ([048d5ea](https://github.com/matthewyjiang/rho/commit/048d5ea5afbf92e8f4120c06db698ab5c39077a9))
+* **protocol:** give each notification item its own tone ([#2054](https://github.com/matthewyjiang/rho/issues/2054)) ([551667b](https://github.com/matthewyjiang/rho/commit/551667b497f4d50f71a22adfe4dabf9b7435e8f0))
+* **protocol:** manage agent plugins over the daemon ([#2055](https://github.com/matthewyjiang/rho/issues/2055)) ([8e7a278](https://github.com/matthewyjiang/rho/commit/8e7a278d440e339ec81cf9c0586d0dfa11fe60b0))
+* **protocol:** polish session MCP errors, notification item urgency and hooks errors before 1.6.0 ([#2052](https://github.com/matthewyjiang/rho/issues/2052)) ([65fff27](https://github.com/matthewyjiang/rho/commit/65fff27a677c64e6de7122bbf8553a7651001839))
+* **protocol:** read configured MCP servers and hooks without a session ([#2045](https://github.com/matthewyjiang/rho/issues/2045)) ([2fa1597](https://github.com/matthewyjiang/rho/commit/2fa159719ab0577e0b4fc98da3144c80f65123f1))
+* **protocol:** search saved sessions' transcripts ([#2053](https://github.com/matthewyjiang/rho/issues/2053)) ([ba586be](https://github.com/matthewyjiang/rho/commit/ba586bec824a02bece67af51989377c72afad239))
+* **protocol:** time session events and structure notification cards ([#2048](https://github.com/matthewyjiang/rho/issues/2048)) ([fed8b6b](https://github.com/matthewyjiang/rho/commit/fed8b6ba282e0ee00a08718e0e3d7e35c78d84d1))
+* **protocol:** type the session inspect reports ([#2040](https://github.com/matthewyjiang/rho/issues/2040)) ([51013f4](https://github.com/matthewyjiang/rho/commit/51013f45787dcf22050c551018a1ff9a905a5493))
+
+
+### Bug Fixes
+
+* **hooks:** read the hooks report without reloading the session's hooks ([#2049](https://github.com/matthewyjiang/rho/issues/2049)) ([d70d6ed](https://github.com/matthewyjiang/rho/commit/d70d6ed41ef78b56fafa0d0f18f23abfd8ca53a1))
+* **session:** keep a message's live id on replay ([#2058](https://github.com/matthewyjiang/rho/issues/2058)) ([149f21c](https://github.com/matthewyjiang/rho/commit/149f21c44b4c8924736234ace03a948852378eec))
+
 ## [1.5.0](https://github.com/matthewyjiang/rho/compare/rho-protocol-v1.4.0...rho-protocol-v1.5.0) (2026-11-25)
 
 
