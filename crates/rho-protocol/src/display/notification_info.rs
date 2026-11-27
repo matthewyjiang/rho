@@ -10,6 +10,7 @@ use std::fmt;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use super::NotificationTone;
 use crate::methods::{PullRequestId, SessionId};
 
 /// Identifies one notification card within a session's conversation: the
@@ -94,6 +95,17 @@ pub struct NotificationItem {
         skip_serializing_if = "NotificationUrgency::is_unknown"
     )]
     pub urgency: NotificationUrgency,
+    /// How this event reads, which picks its accent color, by the policy
+    /// that gives the card its tone, so a card's
+    /// rows can each take their own event's color. A daemon built before
+    /// items had it leaves it out, which reads as
+    /// [`NotificationTone::Unknown`]: show such an item, like one whose tone
+    /// this crate does not know, in its card's tone.
+    #[serde(
+        default = "NotificationTone::unknown",
+        skip_serializing_if = "NotificationTone::is_unknown"
+    )]
+    pub tone: NotificationTone,
     /// What this event is about, which may be narrower than the card's.
     pub subject: NotificationSubject,
     /// The event in words, one line of plain text.
@@ -105,12 +117,14 @@ impl NotificationItem {
     pub fn new(
         outcome: NotificationOutcome,
         urgency: NotificationUrgency,
+        tone: NotificationTone,
         subject: NotificationSubject,
         text: impl Into<String>,
     ) -> Self {
         Self {
             outcome,
             urgency,
+            tone,
             subject,
             text: text.into(),
         }
@@ -176,6 +190,19 @@ impl NotificationUrgency {
     }
 
     /// An `Unknown` item urgency is left off the wire, so it reads back the
+    /// same. Daemons never send it.
+    fn is_unknown(&self) -> bool {
+        *self == Self::Unknown
+    }
+}
+
+impl NotificationTone {
+    /// What an item that names no tone reads as.
+    fn unknown() -> Self {
+        Self::Unknown
+    }
+
+    /// An `Unknown` item tone is left off the wire, so it reads back the
     /// same. Daemons never send it.
     fn is_unknown(&self) -> bool {
         *self == Self::Unknown

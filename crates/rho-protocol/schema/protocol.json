@@ -4934,6 +4934,10 @@
           "description": "The event in words, one line of plain text.",
           "type": "string"
         },
+        "tone": {
+          "$ref": "#/$defs/NotificationTone",
+          "description": "How this event reads, which picks its accent color, by the policy\nthat gives the card its tone, so a card's\nrows can each take their own event's color. A daemon built before\nitems had it leaves it out, which reads as\n[`NotificationTone::Unknown`]: show such an item, like one whose tone\nthis crate does not know, in its card's tone."
+        },
         "urgency": {
           "$ref": "#/$defs/NotificationUrgency",
           "description": "What this event asks of the reader, by the policy that gives the\ncard its [`NotificationInfo::urgency`], so a card that bundles a\nroutine event with an urgent one can tell them apart. A daemon built\nbefore items had it leaves it out, which reads as\n[`NotificationUrgency::Unknown`]: show such an item, like one whose\nurgency this crate does not know, as urgent as its card."

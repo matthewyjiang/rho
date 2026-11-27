@@ -1041,6 +1041,7 @@ fn background_cards_carry_plain_text_and_tone() {
         vec![NotificationItem::new(
             NotificationOutcome::Failed,
             NotificationUrgency::NeedsYou,
+            NotificationTone::Error,
             subject,
             "exited 1".to_owned(),
         )],

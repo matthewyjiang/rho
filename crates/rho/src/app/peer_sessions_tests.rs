@@ -139,6 +139,7 @@ fn only_a_finished_answer_reads_as_success() {
                 &[NotificationItem::new(
                     outcome,
                     urgency,
+                    tone,
                     session.clone(),
                     row.card.title.clone()
                 )][..]
