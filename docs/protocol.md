@@ -468,7 +468,7 @@ Each excerpt has:
 | `at`? | Where an attach's replay shows the message: `{"kind": "message", "id"}`, the `MessageId` of the first event that shows it (`saved-{node}-{row}-0` today), or `{"kind": "tool_call", "id"}`, the `ToolCallId` of the call that shows a tool result, or of the first call an agent message that only calls tools opens. Absent when no replayed event shows the message. |
 | `saved_at`? | When the message was saved, in Unix seconds, the clock of `updated_at`; absent when its time does not read. |
 
-The index reads every transcript once before it can answer in full: on a daemon's first search, and again after an upgrade changes the index's layout. That read runs in the background, taking about 10 seconds for 1.4 GB of sessions on a dev machine, and meanwhile a search answers from what the index holds so far with `indexing: true`, which may miss matches; search again later. A daemon from before this method answers `MethodNotFound`.
+The index reads every transcript once before it can answer in full: on a daemon's first search, and again after an upgrade changes the index's layout. That read runs in the background, seconds for a store of a gigabyte or more, and meanwhile a search answers from what the index holds so far with `indexing: true`, which may miss matches; search again later. A daemon from before this method answers `MethodNotFound`.
 
 ### Session marks {#session-marks}
 

@@ -261,3 +261,53 @@ fn schema_upgrade_drops_evidence_from_pre_tree_sessions() {
     .unwrap();
     assert_eq!(matches(&connection), 0);
 }
+
+// Covers: a transcript that does not load is not indexed, and is not read
+// again on every refresh, which a search runs before each query, until it
+// changes. Owner: search index refresh.
+#[test]
+fn a_transcript_that_does_not_load_is_read_once() {
+    let root = TempDir::new().unwrap();
+    let cwd = TempDir::new().unwrap();
+    let session = Session::create_in_root(root.path(), cwd.path()).unwrap();
+    session
+        .append_message(&Message::user_text("brokenneedle"))
+        .unwrap();
+    let mut file = fs::OpenOptions::new()
+        .append(true)
+        .open(session.path())
+        .unwrap();
+    std::io::Write::write_all(&mut file, b"{\"type\":\"node\",\n").unwrap();
+    let cancellation = CancellationToken::new();
+    let mut connection = open(root.path()).unwrap();
+    let report = |refresh: Refresh| {
+        (
+            refresh.files_checked,
+            refresh.files_updated,
+            refresh.skipped_files,
+            refresh.omitted_records,
+        )
+    };
+
+    let first = refresh(
+        &mut connection,
+        root.path(),
+        /*reconcile*/ false,
+        row_locations,
+        &cancellation,
+    )
+    .unwrap();
+    let second = refresh(
+        &mut connection,
+        root.path(),
+        /*reconcile*/ false,
+        row_locations,
+        &cancellation,
+    )
+    .unwrap();
+
+    assert_eq!(
+        (report(first), report(second)),
+        ((1, 1, 0, 1), (0, 0, 0, 1))
+    );
+}

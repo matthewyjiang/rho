@@ -79,6 +79,13 @@ enum OpenError {
 
 fn migrate(connection: &mut Connection) -> Result<(), OpenError> {
     connection.pragma_update(None, "foreign_keys", true)?;
+    // Versions only rise, so a current one needs no lock: an opener must not
+    // wait on a refresh's write, which may hold it while a large transcript
+    // loads.
+    let version: u32 = connection.query_row("pragma user_version", [], |row| row.get(0))?;
+    if version == SCHEMA_VERSION {
+        return Ok(());
+    }
     // Serialize the version decision with invalidation. Another opener may have
     // already migrated and rebuilt the cache while this connection was waiting.
     let transaction =
@@ -481,16 +488,28 @@ fn index_file(
     let person_facing = serde_json::from_value::<SessionOrigin>(header["origin"].clone())
         .ok()
         .is_none_or(SessionOrigin::is_person_facing);
-    let rows = active_display_from_tree(&SessionTree::load(path)?)?;
-    // A load skips a last record still being written, which the index
-    // reports as omitted until it ends.
-    let torn = torn_tail(&mut reader.into_inner(), stamp.size)?;
+    let (rows, omitted) = match SessionTree::load(path)
+        .and_then(|tree| active_display_from_tree(&tree))
+    {
+        // A load skips a last record still being written, which the index
+        // reports as omitted until it ends.
+        Ok(rows) => {
+            let torn = torn_tail(&mut reader.into_inner(), stamp.size)?;
+            (rows, usize::from(torn))
+        }
+        // Nor does the session open. Its stamp is kept with no evidence, so
+        // it is not read again until it changes, and it is reported omitted.
+        Err(error) => {
+            tracing::debug!(%error, path = %path.display(), "session does not load; not indexed");
+            (Vec::new(), 1)
+        }
+    };
     let workspace = resolve_workspace(&cwd, indexed);
     let path_string = path.to_string_lossy();
     let key = hex::encode(Sha256::digest(path_string.as_bytes()));
     connection.execute(
         "insert into files(key,path,id,cwd,worktree,repo,size,stamp,omitted,person_facing) values(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
-        params![key, path_string, id, cwd.to_string_lossy(), workspace.worktree.to_string_lossy(), workspace.repo.to_string_lossy(), stamp.size, stamp.modified, usize::from(torn), person_facing],
+        params![key, path_string, id, cwd.to_string_lossy(), workspace.worktree.to_string_lossy(), workspace.repo.to_string_lossy(), stamp.size, stamp.modified, omitted, person_facing],
     )?;
     let mut insert = connection.prepare(
         "insert into evidence(session,anchor,role,text,omitted,at_kind,at_id,saved_at)

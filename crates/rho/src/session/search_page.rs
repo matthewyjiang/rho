@@ -81,6 +81,10 @@ pub(crate) fn search(
         limit,
     } = request;
     check_query(query)?;
+    let store = |error: rusqlite::Error| SearchError::Store(error.into());
+    // One snapshot for ranking and excerpts: a refresh committing between
+    // them gives a file's evidence new rowids.
+    let connection = &connection.unchecked_transaction().map_err(store)?;
     let after = cursor
         .map(|cursor| {
             Cursor::parse(cursor).ok_or_else(|| SearchError::UnknownCursor(cursor.into()))
@@ -97,7 +101,6 @@ pub(crate) fn search(
         .map(|summary| (summary.path.to_string_lossy().into_owned(), summary))
         .collect();
     let query = fts_query(query, LastTerm::Prefix);
-    let store = |error: rusqlite::Error| SearchError::Store(error.into());
     let mut found = Vec::new();
     {
         // Materialized so SQLite cannot flatten bm25() into the windows.
@@ -135,6 +138,14 @@ pub(crate) fn search(
     }
     found.sort_by(|left, right| left.place().cmp_order(&right.place()));
     let total = found.len() as u64;
+    // Every message indexed since the cursor's page moves every score, so
+    // the cursor takes its session's score now, as the order is now.
+    let after = after.map(|mut after| {
+        if let Some(cursor) = found.iter().find(|found| after.names(found)) {
+            after.best = cursor.best;
+        }
+        after
+    });
     let mut page: Vec<Found> = found
         .into_iter()
         .filter(|found| after.as_ref().is_none_or(|after| after.precedes(found)))
@@ -238,8 +249,8 @@ impl Found {
 /// more relevant, then id and workspace, as the catalog orders. A cursor is
 /// the place of the last session a page returned, so a walk repeats none
 /// and skips none deleted between pages. Relevance moves as the index
-/// changes, so a session saved in the same second as the cursor's may move
-/// across it.
+/// changes; a cursor follows its session's, but a session saved in the same
+/// second as the cursor's may still move across it.
 #[derive(Debug)]
 struct Cursor<'a> {
     updated_at: u64,
@@ -249,18 +260,19 @@ struct Cursor<'a> {
 }
 
 impl Cursor<'_> {
+    /// The score as its bits: a JSON float need not parse back exactly.
     fn encode(&self) -> String {
-        serde_json::json!([self.updated_at, self.best, self.id, self.cwd]).to_string()
+        serde_json::json!([self.updated_at, self.best.to_bits(), self.id, self.cwd]).to_string()
     }
 
     /// The cursor a page's `next_cursor` encoded, or `None` for a string no
     /// search issued.
     fn parse(cursor: &str) -> Option<Cursor<'static>> {
-        serde_json::from_str::<(u64, f64, String, String)>(cursor)
+        serde_json::from_str::<(u64, u64, String, String)>(cursor)
             .ok()
             .map(|(updated_at, best, id, cwd)| Cursor {
                 updated_at,
-                best,
+                best: f64::from_bits(best),
                 id: id.into(),
                 cwd: cwd.into(),
             })
@@ -277,6 +289,12 @@ impl Cursor<'_> {
 
     fn precedes(&self, found: &Found) -> bool {
         self.cmp_order(&found.place()) == Ordering::Less
+    }
+
+    /// Whether `found` is the session the cursor was taken at.
+    fn names(&self, found: &Found) -> bool {
+        let place = found.place();
+        place.id == self.id && place.cwd == self.cwd
     }
 }
 

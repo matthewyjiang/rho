@@ -192,7 +192,8 @@ async fn search_matches_the_listed_sessions_current_branch() {
 
 // Covers: a client that follows next_cursor sees each matching session
 // once, in the order one big page lists them, each page counting every
-// match; and each excerpt's highlights slice its text at the match.
+// match, even when a message indexed between pages moves every relevance
+// score; and each excerpt's highlights slice its text at the match.
 // Owner: daemon session search paging.
 #[tokio::test]
 async fn following_cursors_pages_through_every_match_once() {
@@ -232,6 +233,11 @@ async fn following_cursors_pages_through_every_match_once() {
             Some(next) => cursor = Some(next),
             None => break,
         }
+        if totals.len() == 1 {
+            // A newer, more relevant match: it sorts ahead of the cursor, and
+            // its word now in more messages, every score moves.
+            daemon.saved(&cwd, "pageword pageword pageword");
+        }
     }
     let highlighted: Vec<_> = all
         .sessions
@@ -247,7 +253,7 @@ async fn following_cursors_pages_through_every_match_once() {
 
     assert_eq!(
         (all.total, ids(&all).len(), walked, totals, highlighted),
-        (5, 5, ids(&all), vec![5, 5, 5], vec!["PageWord"; 5])
+        (5, 5, ids(&all), vec![5, 6, 6], vec!["PageWord"; 5])
     );
 }
 
