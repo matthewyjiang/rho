@@ -115,3 +115,15 @@ fn only_api_keys_are_exported() {
         );
     }
 }
+
+// Covers: the recipient keys go when the sync state does, even while a
+// sweep timer for one is still waiting.
+// Owner: sync policy (`sync/mod.rs`).
+#[tokio::test]
+async fn issued_keys_do_not_outlive_the_sync_state() {
+    let sync = SecretSync::default();
+    sync.recipient();
+    let keys = Arc::downgrade(&sync.recipients);
+    drop(sync);
+    assert!(keys.upgrade().is_none());
+}

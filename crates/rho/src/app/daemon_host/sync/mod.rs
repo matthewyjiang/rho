@@ -46,13 +46,16 @@ pub(super) struct SecretSync {
 
 impl SecretSync {
     /// Answers `rho/sync/recipient`, and drops the key once it expires even
-    /// if no later sync request comes to sweep it.
+    /// if no later sync request comes to sweep it. The timer holds the keys
+    /// weakly, so none outlives this.
     pub(super) fn recipient(&self) -> SyncRecipientResponse {
         let public_key = self.recipients.issue(Instant::now());
-        let recipients = Arc::clone(&self.recipients);
+        let recipients = Arc::downgrade(&self.recipients);
         tokio::spawn(async move {
             tokio::time::sleep(seal::RECIPIENT_LIFETIME).await;
-            recipients.sweep(Instant::now());
+            if let Some(recipients) = recipients.upgrade() {
+                recipients.sweep(Instant::now());
+            }
         });
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
