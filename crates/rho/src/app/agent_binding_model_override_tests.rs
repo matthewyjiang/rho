@@ -248,3 +248,48 @@ fn model_override_rejects_unavailable_selections_and_external_runtimes() {
         .is_err());
     }
 }
+
+// Covers: a call override's auth is chosen, at launch and when a resumed
+// child restores it, so a later credential change does not move the child
+// off it (a session moves only an auth nothing chose), even on a parent
+// whose own auth was only filled in.
+// Owner: agent model selection (auth origin of an override).
+#[test]
+fn a_model_override_keeps_its_auth_through_credential_changes() {
+    let store = MemoryCredentialStore::default();
+    save_xai_tokens(
+        &store,
+        &XaiTokens {
+            access_token: "fixture".into(),
+            refresh_token: None,
+            expires_at_unix: None,
+            id_token: None,
+        },
+    )
+    .unwrap();
+    let host = Config::default();
+    let overrides = [
+        ModelOverride::Reference("xai/grok-4.7"),
+        ModelOverride::Saved {
+            provider: "xai",
+            model: "grok-4.7",
+            auth: "xai-oauth",
+        },
+    ];
+    let kept = overrides.map(|model_override| {
+        let bound = AgentBinder::bind_with_credentials(
+            definition(ModelPolicy::Inherit),
+            invocation(),
+            &host,
+            Some(model_override),
+            &store,
+        )
+        .unwrap();
+        let mut config = bound.rho_config().unwrap().clone();
+        // OAuth signed out, only a key left.
+        config.settle_inferred_auth(&["xai-api-key".to_owned()]);
+        config.auth
+    });
+
+    assert_eq!(kept, ["xai-oauth", "xai-oauth"].map(String::from));
+}

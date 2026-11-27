@@ -108,13 +108,15 @@ fn restore_config(
         credentials::auth_has_credentials(store, auth)?,
         "agent '{agent_id}': no credentials available for saved {provider}/{model} with auth '{auth}'"
     );
-    Ok(Config {
+    // Chosen when the override was first resolved, so it stays chosen.
+    let mut config = Config {
         provider: selection.provider,
         model: selection.model,
-        auth: selection.auth,
         model_alias: None,
         ..host.clone()
-    })
+    };
+    config.choose_auth(selection.auth);
+    Ok(config)
 }
 
 #[cfg(test)]
