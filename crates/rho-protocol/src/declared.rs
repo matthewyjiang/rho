@@ -10,8 +10,8 @@ use serde_json::Value;
 
 use crate::{
     methods::{
-        CONFIG_TABLE_SET, HELLO, SESSION_ANSWER, SESSION_HOLD, SESSION_SURFACE_ACTION,
-        SYNC_COMPARE, SYNC_EXPORT,
+        CONFIG_TABLE_SET, HELLO, MCP_CONFIG_SET, SESSION_ANSWER, SESSION_HOLD,
+        SESSION_SURFACE_ACTION, SYNC_COMPARE, SYNC_EXPORT,
     },
     ClientCapability, ClientInfo, ClientRole, ErrorCode, HelloParams, ProtocolVersion, RpcError,
     SessionSetup, Surfaces,
@@ -132,15 +132,18 @@ fn may_declare(role: ClientRole, capability: ClientCapability) -> bool {
 ///   secret is right;
 /// - writing a config table, because a put can point a provider profile's
 ///   `base_url` somewhere new while the provider's saved key stays, and the
-///   next session sends that key there.
+///   next session sends that key there;
+/// - writing MCP servers, because a put may keep a server's secret while
+///   pointing the server elsewhere, and the revision of a put that fills a
+///   guessed secret tells whether the guess was right.
 ///
-/// Reading the tables stays open. An agent connection may still change
-/// settings (`rho/config/set` and the other settings methods) and
-/// reconfigure a session (`rho/session/configure`): agents legitimately
-/// tune the sessions they run. A role is declared, not authenticated, so a
-/// gate keeps a client to its part; it stops no process that opens the
-/// socket or reads the credential store itself. Custom per-method
-/// permissions may come after the beta (#1810).
+/// Reading the tables and the MCP servers stays open. An agent connection
+/// may still change settings (`rho/config/set` and the other settings
+/// methods) and reconfigure a session (`rho/session/configure`): agents
+/// legitimately tune the sessions they run. A role is declared, not
+/// authenticated, so a gate keeps a client to its part; it stops no process
+/// that opens the socket or reads the credential store or `config.toml`
+/// itself. Custom per-method permissions may come after the beta (#1810).
 fn needed_by(method: &str) -> Option<ClientCapability> {
     match method {
         SESSION_ANSWER
@@ -148,7 +151,8 @@ fn needed_by(method: &str) -> Option<ClientCapability> {
         | SESSION_SURFACE_ACTION
         | SYNC_EXPORT
         | SYNC_COMPARE
-        | CONFIG_TABLE_SET => Some(ClientCapability::Answer),
+        | CONFIG_TABLE_SET
+        | MCP_CONFIG_SET => Some(ClientCapability::Answer),
         _ => None,
     }
 }

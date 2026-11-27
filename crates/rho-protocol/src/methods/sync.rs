@@ -61,6 +61,15 @@ pub enum SecretItem {
     /// [`SecretItem::api_key`].
     #[non_exhaustive]
     ApiKey { auth: String },
+    /// The value of header `name` of MCP server `server`, under
+    /// `[mcp.servers]` in `config.toml`. Built with
+    /// [`SecretItem::mcp_header`].
+    #[non_exhaustive]
+    McpHeader { server: String, name: String },
+    /// The value of environment variable `name` of MCP server `server`.
+    /// Built with [`SecretItem::mcp_env`].
+    #[non_exhaustive]
+    McpEnv { server: String, name: String },
     /// A kind a newer peer sends that this crate does not know.
     #[serde(other)]
     #[schemars(extend("x-rho-other" = true))]
@@ -71,6 +80,22 @@ impl SecretItem {
     /// The saved API key of auth profile `auth`.
     pub fn api_key(auth: impl Into<String>) -> Self {
         Self::ApiKey { auth: auth.into() }
+    }
+
+    /// Header `name` of MCP server `server`.
+    pub fn mcp_header(server: impl Into<String>, name: impl Into<String>) -> Self {
+        Self::McpHeader {
+            server: server.into(),
+            name: name.into(),
+        }
+    }
+
+    /// Environment variable `name` of MCP server `server`.
+    pub fn mcp_env(server: impl Into<String>, name: impl Into<String>) -> Self {
+        Self::McpEnv {
+            server: server.into(),
+            name: name.into(),
+        }
     }
 }
 

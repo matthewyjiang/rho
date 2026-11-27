@@ -33,7 +33,8 @@ use crate::methods::{
     SummaryRequestPath, ToolSchemaOrigin,
 };
 use crate::methods::{
-    CompareState, ImportOutcome, RevertOutcome, SealSuite, SecretItem, SyncItem, SyncItemState,
+    CompareState, ImportOutcome, McpSecretKind, RevertOutcome, SealSuite, SecretItem, SyncItem,
+    SyncItemState,
 };
 use crate::methods::{
     HooksFileScope, HooksFileStatus, McpServerSource, McpTransport, PluginScope, PluginSource,
@@ -77,7 +78,7 @@ fn enums_marked_open_read_unknown_values_as_unknown() {
     let unseen = || json!("from_a_newer_daemon");
     let unseen_tag = || json!({ "type": "from_a_newer_daemon" });
     let unseen_kind = || json!({ "kind": "from_a_newer_daemon" });
-    let cases: [(&str, bool); 116] = [
+    let cases: [(&str, bool); 117] = [
         ("ContextBasis", reads_as(unseen(), ContextBasis::Unknown)),
         (
             "PromptSourceKind",
@@ -376,6 +377,7 @@ fn enums_marked_open_read_unknown_values_as_unknown() {
             reads_as(unseen_tag(), ImportOutcome::Unknown),
         ),
         ("SyncItemState", reads_as(unseen(), SyncItemState::Unknown)),
+        ("McpSecretKind", reads_as(unseen(), McpSecretKind::Unknown)),
         (
             "RevertOutcome",
             reads_as(unseen_tag(), RevertOutcome::Unknown),

@@ -114,6 +114,7 @@ mod job;
 mod login;
 mod mark;
 mod mcp;
+mod mcp_config;
 mod mcp_list;
 mod models;
 mod options;
@@ -215,6 +216,11 @@ pub use mcp::{
     SessionMcpPrompt, SessionMcpPromptArgument, SessionMcpResource, SessionMcpResourceContent,
     SessionMcpResourceParams, SessionMcpResourceResponse, SessionMcpServer, SessionMcpStatus,
     SESSION_MCP, SESSION_MCP_CATALOG, SESSION_MCP_COMPLETE, SESSION_MCP_RESOURCE,
+};
+pub use mcp_config::{
+    McpConfigGetParams, McpConfigGetResponse, McpConfigSetParams, McpConfigSetResponse, McpSecret,
+    McpSecretKind, McpSecretSlot, McpServerChange, McpServerEntry, SecretSource, MCP_CONFIG_GET,
+    MCP_CONFIG_SET,
 };
 pub use mcp_list::{
     ConfiguredMcpServer, McpListParams, McpListResponse, McpServerSource, McpTransport, MCP_LIST,
@@ -427,6 +433,8 @@ protocol! {
         ModelListMethod = MODEL_LIST: ModelListParams => ModelList,
         ModelRefresh = MODEL_REFRESH: ModelRefreshParams => ModelRefreshResponse,
         McpList = MCP_LIST: McpListParams => McpListResponse,
+        McpConfigGet = MCP_CONFIG_GET: McpConfigGetParams => McpConfigGetResponse,
+        McpConfigSet = MCP_CONFIG_SET: McpConfigSetParams => McpConfigSetResponse,
         HooksList = HOOKS_LIST: HooksListParams => HooksListResponse,
         HooksFileGet = HOOKS_FILE_GET: HooksFileGetParams => HooksFileGetResponse,
         HooksFileSet = HOOKS_FILE_SET: HooksFileSetParams => HooksFileSetResponse,

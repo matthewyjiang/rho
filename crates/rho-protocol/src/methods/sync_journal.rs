@@ -60,6 +60,11 @@ pub enum SyncItem {
     /// [`SyncItem::api_key`].
     #[non_exhaustive]
     ApiKey { auth: String },
+    /// The whole MCP server `identity` under `[mcp.servers]`, its secret
+    /// values included, as [`super::MCP_CONFIG_SET`] wrote it. Built with
+    /// [`SyncItem::mcp_server`].
+    #[non_exhaustive]
+    McpServer { identity: String },
     /// A kind a newer peer sends that this crate does not know.
     #[serde(other)]
     #[schemars(extend("x-rho-other" = true))]
@@ -70,6 +75,13 @@ impl SyncItem {
     /// The saved API key of auth profile `auth`.
     pub fn api_key(auth: impl Into<String>) -> Self {
         Self::ApiKey { auth: auth.into() }
+    }
+
+    /// The MCP server `identity`.
+    pub fn mcp_server(identity: impl Into<String>) -> Self {
+        Self::McpServer {
+            identity: identity.into(),
+        }
     }
 }
 

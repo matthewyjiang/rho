@@ -21,10 +21,10 @@ use crate::{
         PermissionModeOptions, Replay, Seq, SessionAttach, SessionAttachParams,
         SessionDetachedParams, SessionEvent, SessionEventEnvelope, SessionEventParams, SessionId,
         SessionOptions, StreamId, AUTH_LOGIN_FINISHED, AUTH_LOGIN_PROMPT, CONFIG_CHANGED,
-        CONFIG_TABLE_GET, CONFIG_TABLE_SET, DAEMON_STATUS, DAEMON_STOP, MODEL_CHANGED, MODEL_LIST,
-        SESSION_ANSWER, SESSION_ANSWER_QUESTION, SESSION_DETACHED, SESSION_EVENT, SESSION_FORK,
-        SESSION_HOLD, SESSION_LIST, SESSION_NEW, SESSION_PROMPT, SYNC_COMPARE, SYNC_EXPORT,
-        SYNC_RECIPIENT,
+        CONFIG_TABLE_GET, CONFIG_TABLE_SET, DAEMON_STATUS, DAEMON_STOP, MCP_CONFIG_SET,
+        MODEL_CHANGED, MODEL_LIST, SESSION_ANSWER, SESSION_ANSWER_QUESTION, SESSION_DETACHED,
+        SESSION_EVENT, SESSION_FORK, SESSION_HOLD, SESSION_LIST, SESSION_NEW, SESSION_PROMPT,
+        SYNC_COMPARE, SYNC_EXPORT, SYNC_RECIPIENT,
     },
     subscription, Client, ClientRole, ConfigChangedParams, ConfigGetParams, ConfigGetResponse,
     ConfigNamespace, ConfigRevision, ConfigWatch, CredentialStoreKind, CredentialStoreStatus,
@@ -415,7 +415,7 @@ async fn dispatch_enforces_the_handshake_and_rejects_unknown_requests() {
             ],
         ),
         (
-            "an agent's connection may not answer, hold, or export or compare secrets, and keeps its other methods",
+            "an agent's connection may not answer, hold, export or compare secrets, or write MCP servers, and keeps its other methods",
             // The double serves no sync method, so a recipient request that
             // passes the gate is refused by the service.
             vec![
@@ -424,8 +424,9 @@ async fn dispatch_enforces_the_handshake_and_rejects_unknown_requests() {
                 request_line(3, SESSION_HOLD),
                 request_line(4, SYNC_EXPORT),
                 request_line(5, SYNC_COMPARE),
-                request_line(6, DAEMON_STATUS),
-                request_line(7, SYNC_RECIPIENT),
+                request_line(6, MCP_CONFIG_SET),
+                request_line(7, DAEMON_STATUS),
+                request_line(8, SYNC_RECIPIENT),
             ],
             vec![
                 (id(1), Ok(())),
@@ -433,8 +434,9 @@ async fn dispatch_enforces_the_handshake_and_rejects_unknown_requests() {
                 (id(3), Err(Some(ErrorCode::CapabilityRequired))),
                 (id(4), Err(Some(ErrorCode::CapabilityRequired))),
                 (id(5), Err(Some(ErrorCode::CapabilityRequired))),
-                (id(6), Ok(())),
-                (id(7), Err(Some(ErrorCode::MethodNotFound))),
+                (id(6), Err(Some(ErrorCode::CapabilityRequired))),
+                (id(7), Ok(())),
+                (id(8), Err(Some(ErrorCode::MethodNotFound))),
             ],
         ),
         (
