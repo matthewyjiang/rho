@@ -23,6 +23,7 @@ fn spec(key: &str, label: &str, kind: SettingKind, applies: Applies) -> SettingS
         help: format!("{label} help."),
         applies,
         overridable_per_project: false,
+        per_machine: false,
     }
 }
 

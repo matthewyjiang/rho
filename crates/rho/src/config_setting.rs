@@ -50,6 +50,8 @@ pub(crate) struct SettingMeta {
     pub(crate) help: &'static str,
     pub(crate) applies: Apply,
     pub(crate) overridable_per_project: bool,
+    /// Whether the setting belongs to one machine: [`SettingSpec::per_machine`].
+    pub(crate) per_machine: bool,
 }
 
 /// One declared setting over the store `S`.
@@ -140,6 +142,7 @@ impl<S: Default + 'static, T: SettingType> AnySetting<S> for Setting<S, T> {
             help: self.meta.help.into(),
             applies: self.meta.applies.wire(),
             overridable_per_project: self.meta.overridable_per_project,
+            per_machine: self.meta.per_machine,
         }
     }
 

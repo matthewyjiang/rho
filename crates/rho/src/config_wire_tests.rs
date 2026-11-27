@@ -332,6 +332,7 @@ fn spec(key: &str, kind: SettingKind, default: Option<SettingValue>) -> SettingS
         help: String::new(),
         applies: rho_protocol::Applies::Immediately,
         overridable_per_project: false,
+        per_machine: false,
     }
 }
 

@@ -531,7 +531,7 @@ The daemon never moves credentials to another store on its own. While `selected_
 
 The daemon reads and writes the user's settings for its clients (#1720), so a frontend renders a settings screen from data. A `namespace` is `{"kind": "agent"}`, the agent's settings in `config.toml`, or `{"kind": "client", "name": "<name>"}`, a client's own ([below](#client-settings)).
 
-`rho/config/schema` describes each agent setting with its `key`, which is also where `config.toml` keeps it (`behavior.permission_mode` is the `permission_mode` key of `[behavior]`); its `kind`; its `default`, absent for an optional setting that is unset by default; the `category` page and optional `section` it sits under; a `label` and `help`; whether a project may later override it (`overridable_per_project`); and `applies`, when a change takes effect:
+`rho/config/schema` describes each agent setting with its `key`, which is also where `config.toml` keeps it (`behavior.permission_mode` is the `permission_mode` key of `[behavior]`); its `kind`; its `default`, absent for an optional setting that is unset by default; the `category` page and optional `section` it sits under; a `label` and `help`; whether a project may later override it (`overridable_per_project`); whether it belongs to one machine (`per_machine`, absent when false), such as `behavior.agent_concurrency`, which sizes the daemon, `behavior.inline_shell`, whose default differs by OS, or `behavior.credential_store`, so a client copying settings from one daemon to another leaves it out unless the user picks it; and `applies`, when a change takes effect:
 
 | `applies` | Takes effect |
 | --- | --- |

@@ -75,6 +75,7 @@ const fn meta(
         help,
         applies,
         overridable_per_project: true,
+        per_machine: false,
     }
 }
 
@@ -83,6 +84,15 @@ const fn meta(
 const fn daemon_wide(meta: SettingMeta) -> SettingMeta {
     SettingMeta {
         overridable_per_project: false,
+        ..meta
+    }
+}
+
+/// A setting whose value suits only the machine it is set on, so a copy of
+/// settings to another daemon leaves it out unless the user picks it.
+const fn per_machine(meta: SettingMeta) -> SettingMeta {
+    SettingMeta {
+        per_machine: true,
         ..meta
     }
 }
@@ -283,13 +293,13 @@ static ENABLE_SUBAGENTS: Setting<Config, bool> = Setting {
 
 static AGENT_CONCURRENCY: Setting<Config, u64> = Setting {
     key: "behavior.agent_concurrency",
-    meta: daemon_wide(meta(
+    meta: per_machine(daemon_wide(meta(
         "agent",
         Some("Subagents"),
         "Concurrent agents",
         "Maximum delegated agents running at once, including background ones.",
         Apply::Immediately,
-    )),
+    ))),
     // Receipt for the ceiling: `MAX_AGENT_CONCURRENCY`.
     spec: IntegerSpec {
         min: 1,
@@ -417,13 +427,14 @@ static MAX_OUTPUT_BYTES: Setting<Config, u64> = Setting {
 
 static INLINE_SHELL: Setting<Config, String> = Setting {
     key: "behavior.inline_shell",
-    meta: meta(
+    // Its default differs by OS (Bash or PowerShell), and it may be a path.
+    meta: per_machine(meta(
         "tools",
         None,
         "Inline shell",
         "Shell used by ! and !! commands.",
         Apply::NextSession,
-    ),
+    )),
     spec: (),
     get: |config| config.inline_shell.clone(),
     set: |config, shell| config.inline_shell = shell,
@@ -650,13 +661,13 @@ static WORKTREE_FROM_REMOTE: Setting<Config, bool> = Setting {
 /// can be reached; `rho/config/set` refuses it.
 pub(super) static CREDENTIAL_STORE: Setting<Config, Option<CredentialStoreBackend>> = Setting {
     key: "behavior.credential_store",
-    meta: daemon_wide(meta(
+    meta: per_machine(daemon_wide(meta(
         "providers",
         None,
         "Credential store",
         "Where provider credentials live. Unset uses the OS keyring.",
         Apply::Restart,
-    )),
+    ))),
     spec: (),
     get: |config| config.credential_store,
     set: |config, backend| config.credential_store = backend,

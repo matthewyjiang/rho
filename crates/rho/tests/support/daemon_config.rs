@@ -89,6 +89,7 @@ async fn register_tui(client: &Client) {
                 help: "Show only message text.".into(),
                 applies: Applies::Immediately,
                 overridable_per_project: false,
+                per_machine: false,
             }],
         })
         .await
