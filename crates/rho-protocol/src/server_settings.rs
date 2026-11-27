@@ -1,9 +1,10 @@
 //! The settings part of the daemon's protocol: `rho/config/*` (#1720),
 //! `rho/model/*`, the models a model setting may take, `rho/mcp/list`
 //! and `rho/hooks/list`, the MCP servers and hooks the configuration sets
-//! up, and `rho/plugins/*`, the agent plugins and managing them. The [`SettingsService`] methods every [`crate::Service`] answers,
-//! and forwarding a namespace's changes, or the models', once a client
-//! reads them.
+//! up, and `rho/plugins/*`, the agent plugins and managing them. The
+//! [`SettingsService`] methods every [`crate::Service`] answers, and
+//! forwarding a namespace's changes, or the models', once a client reads
+//! them.
 
 use std::{future::Future, sync::Arc};
 
