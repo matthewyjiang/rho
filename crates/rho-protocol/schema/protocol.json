@@ -3644,23 +3644,6 @@
           "type": "object"
         },
         {
-          "description": "Not saved: `variable` in the target daemon's environment holds the\nprofile's credential, and wins over a saved one.",
-          "properties": {
-            "type": {
-              "const": "overridden",
-              "type": "string"
-            },
-            "variable": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "type",
-            "variable"
-          ],
-          "type": "object"
-        },
-        {
           "description": "Not saved, for the reason `message` gives, such as an auth profile\nthe target does not know.",
           "properties": {
             "message": {

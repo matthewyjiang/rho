@@ -24,12 +24,6 @@ fn sync_journal_messages_travel_in_their_wire_form() {
         SyncImportKeysResponse::new(vec![
             ImportedSecret::new(SecretItem::api_key("a"), ImportOutcome::Saved),
             ImportedSecret::new(
-                SecretItem::api_key("b"),
-                ImportOutcome::Overridden {
-                    variable: "B_API_KEY".into(),
-                },
-            ),
-            ImportedSecret::new(
                 SecretItem::api_key("c"),
                 ImportOutcome::Failed {
                     message: "no".into(),
@@ -38,7 +32,6 @@ fn sync_journal_messages_travel_in_their_wire_form() {
         ]),
         json!({"items": [
             {"item": {"type": "api_key", "auth": "a"}, "outcome": {"type": "saved"}},
-            {"item": {"type": "api_key", "auth": "b"}, "outcome": {"type": "overridden", "variable": "B_API_KEY"}},
             {"item": {"type": "api_key", "auth": "c"}, "outcome": {"type": "failed", "message": "no"}},
         ]}),
     );

@@ -312,7 +312,8 @@ async fn run_foreground(
         let host = Arc::clone(&host);
         tokio::spawn(async move { host.unload_idle_sessions(unload_idle_after).await })
     };
-    // One pass at start; every `rho/sync/*` request sweeps it after that.
+    // One pass at start; after that, the `rho/sync/*` methods that read the
+    // journal sweep it as they read it.
     tokio::spawn({
         let host = Arc::clone(&host);
         async move { host.sweep_sync_journal().await }

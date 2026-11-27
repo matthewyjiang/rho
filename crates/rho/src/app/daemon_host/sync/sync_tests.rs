@@ -72,21 +72,30 @@ fn sealed_keys_compare_with_the_targets() {
     );
 }
 
-// Covers: a bundle holding a kind of secret this daemon does not know is
-// refused before opening, so its recipient still opens the bundle sent
-// again without that item.
+// Covers: a bundle holding a kind of secret this daemon does not know, or
+// naming a secret twice, is refused before opening, so its recipient
+// still opens the bundle sent again without the bad items.
 // Owner: sync policy (`sync/mod.rs`).
 #[test]
-fn an_unknown_kind_is_refused_without_using_the_recipient() {
+fn a_bundle_it_cannot_take_is_refused_without_using_the_recipient() {
     let recipients = seal::Recipients::default();
     let recipient = SealRecipient::new(SUITE, recipients.issue(Instant::now()), 0);
-    let newer = seal_values(&recipient, vec![SecretItem::Unknown], &["sk".into()]).unwrap();
-    assert_eq!(
-        open_values(&recipients, Instant::now(), &newer)
-            .err()
-            .and_then(|error| error.error_code()),
-        Some(ErrorCode::InvalidParams)
-    );
+    for (items, values) in [
+        (vec![SecretItem::Unknown], vec!["sk".to_owned()]),
+        (
+            vec![api_key("openai"), api_key("openai")],
+            vec!["sk".to_owned(), "sk-2".to_owned()],
+        ),
+    ] {
+        let refused = seal_values(&recipient, items.clone(), &values).unwrap();
+        assert_eq!(
+            open_values(&recipients, Instant::now(), &refused)
+                .err()
+                .and_then(|error| error.error_code()),
+            Some(ErrorCode::InvalidParams),
+            "{items:?}"
+        );
+    }
     let known = seal_values(&recipient, vec![api_key("openai")], &["sk".into()]).unwrap();
     assert_eq!(
         open_values(&recipients, Instant::now(), &known)

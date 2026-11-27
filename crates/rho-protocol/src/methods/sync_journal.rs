@@ -131,9 +131,6 @@ impl ImportedSecret {
 pub enum ImportOutcome {
     /// Saved, and journaled.
     Saved,
-    /// Not saved: `variable` in the target daemon's environment holds the
-    /// profile's credential, and wins over a saved one.
-    Overridden { variable: String },
     /// Not saved, for the reason `message` gives, such as an auth profile
     /// the target does not know.
     Failed { message: String },

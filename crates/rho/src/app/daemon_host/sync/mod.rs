@@ -20,16 +20,17 @@ mod keys;
 mod seal;
 
 use std::{
+    collections::HashSet,
     sync::Arc,
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
 use rho_protocol::{
-    ClientEnvironment, CompareState, ErrorCode, RpcError, SealRecipient, SealSuite, SealedSecrets,
-    SecretComparison, SecretItem, SyncCompareParams, SyncCompareResponse, SyncDiscardParams,
-    SyncDiscardResponse, SyncExportParams, SyncExportResponse, SyncImportKeysParams,
-    SyncImportKeysResponse, SyncRecipientResponse, SyncRevertParams, SyncRevertResponse,
-    SyncStatusParams, SyncStatusResponse,
+    ClientEnvironment, CompareState, ErrorCode, ImportOutcome, RevertOutcome, RpcError,
+    SealRecipient, SealSuite, SealedSecrets, SecretComparison, SecretItem, SyncCompareParams,
+    SyncCompareResponse, SyncDiscardParams, SyncDiscardResponse, SyncExportParams,
+    SyncExportResponse, SyncImportKeysParams, SyncImportKeysResponse, SyncRecipientResponse,
+    SyncRevertParams, SyncRevertResponse, SyncStatusParams, SyncStatusResponse,
 };
 use rho_providers::credentials::CredentialStore;
 use sha2::{Digest, Sha256};
@@ -37,7 +38,7 @@ use zeroize::Zeroizing;
 
 use super::{
     auth::{client_credentials, credentials_changed, off_workers, repository},
-    sessions::Sessions,
+    sessions::{session_environment, Sessions},
 };
 use crate::app::credential_writes::{self, CredentialWriteError};
 
@@ -49,7 +50,8 @@ const SUITE: SealSuite = SealSuite::X25519HkdfSha256ChaCha20Poly1305;
 
 /// The daemon's sync state: the recipient keys it issued, and the lock
 /// every journal read and write takes, so a revert's check and its write
-/// see no import between them.
+/// see no import between them. Writers outside `rho/sync/*`, such as
+/// `rho/auth/key`, do not take it.
 #[derive(Default)]
 pub(super) struct SecretSync {
     recipients: Arc<seal::Recipients>,
@@ -128,13 +130,14 @@ impl SecretSync {
         let values = open_values(&self.recipients, Instant::now(), &sealed)?;
         let items = sealed.items;
         let imported = self
-            .with_journal(move |store, now| {
-                keys::import(store, &sync, items, &values, now, |name| {
-                    std::env::var(name).ok()
-                })
-            })
+            .with_journal(move |stores, now| keys::import(stores, &sync, items, &values, now))
             .await?;
-        credentials_changed(sessions).await;
+        if imported
+            .iter()
+            .any(|imported| imported.outcome == ImportOutcome::Saved)
+        {
+            credentials_changed(sessions).await;
+        }
         tracing::info!(items = imported.len(), "imported sealed API keys");
         Ok(SyncImportKeysResponse::new(imported))
     }
@@ -145,7 +148,7 @@ impl SecretSync {
         params: SyncStatusParams,
     ) -> Result<SyncStatusResponse, RpcError> {
         let SyncStatusParams { sync, .. } = params;
-        self.with_journal(move |store, now| keys::status(store, &sync, now))
+        self.with_journal(move |stores, now| keys::status(stores, &sync, now))
             .await
     }
 
@@ -162,9 +165,14 @@ impl SecretSync {
             ..
         } = params;
         let reverted = self
-            .with_journal(move |store, now| keys::revert(store, &sync, items, &overwrite, now))
+            .with_journal(move |stores, now| keys::revert(stores, &sync, items, &overwrite, now))
             .await?;
-        credentials_changed(sessions).await;
+        if reverted
+            .iter()
+            .any(|reverted| reverted.outcome == RevertOutcome::Restored)
+        {
+            credentials_changed(sessions).await;
+        }
         Ok(SyncRevertResponse::new(reverted))
     }
 
@@ -174,7 +182,7 @@ impl SecretSync {
         params: SyncDiscardParams,
     ) -> Result<SyncDiscardResponse, RpcError> {
         let SyncDiscardParams { sync, .. } = params;
-        self.with_journal(move |store, now| keys::discard(store, &sync, now))
+        self.with_journal(move |stores, now| keys::discard(stores, &sync, now))
             .await?;
         Ok(SyncDiscardResponse::default())
     }
@@ -182,8 +190,8 @@ impl SecretSync {
     /// Deletes the journal if it expired, as the daemon starts.
     pub(super) async fn sweep_journal(&self) {
         let swept = self
-            .with_journal(|store, now| {
-                journal::load(store, now)
+            .with_journal(|stores, now| {
+                journal::load(stores.journal, now)
                     .map(|_| ())
                     .map_err(|error| internal(format!("could not read the sync journal: {error}")))
             })
@@ -197,13 +205,21 @@ impl SecretSync {
     /// config selects, off the async workers, holding the journal lock.
     async fn with_journal<T: Send + 'static>(
         &self,
-        operation: impl FnOnce(&dyn CredentialStore, u64) -> Result<T, RpcError> + Send + 'static,
+        operation: impl FnOnce(keys::Stores, u64) -> Result<T, RpcError> + Send + 'static,
     ) -> Result<T, RpcError> {
         let _held = self.journal.lock().await;
-        let credentials = client_credentials(&ClientEnvironment::default())?;
+        let environment = session_environment(&ClientEnvironment::default())?;
+        let (keys, journal) = (
+            environment.credentials(),
+            environment.untracked_credentials(),
+        );
         off_workers(move || {
             credential_writes::load_config_and_store(&repository())?;
-            operation(credentials.as_ref(), unix_now())
+            let stores = keys::Stores {
+                keys: keys.as_ref(),
+                journal: journal.as_ref(),
+            };
+            operation(stores, unix_now())
         })
         .await?
     }
@@ -228,6 +244,7 @@ struct Saved {
 /// Reads each item's saved value from `store`, refusing an item this
 /// daemon cannot export.
 fn saved_values(store: &dyn CredentialStore, items: Vec<SecretItem>) -> Result<Saved, RpcError> {
+    refuse_duplicates(&items)?;
     let mut saved = Saved {
         items: Vec::new(),
         values: Zeroizing::new(Vec::new()),
@@ -285,6 +302,7 @@ fn open_values(
             "the bundle holds a kind of secret this daemon does not know",
         ));
     }
+    refuse_duplicates(&sealed.items)?;
     let bundle = seal::Sealed {
         encapped_key: sealed.encapped_key.clone(),
         ciphertext: sealed.ciphertext.clone(),
@@ -359,6 +377,18 @@ fn aad(items: &[SecretItem]) -> Result<Vec<u8>, RpcError> {
     serde_json::to_vec(items).map_err(internal)
 }
 
+/// Refuses `items` that name a secret twice, which would leave which value
+/// wins, and what a revert restores, to their order.
+fn refuse_duplicates(items: &[SecretItem]) -> Result<(), RpcError> {
+    let mut seen = HashSet::new();
+    if items.iter().all(|item| seen.insert(item)) {
+        Ok(())
+    } else {
+        Err(invalid("the items name a secret twice"))
+    }
+}
+
+/// The SHA-256 of `value`, which compare and the journal match on.
 fn digest(value: &str) -> [u8; 32] {
     Sha256::digest(value.as_bytes()).into()
 }

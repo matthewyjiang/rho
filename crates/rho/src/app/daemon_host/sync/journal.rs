@@ -9,12 +9,16 @@
 //!
 //! The journal expires [`JOURNAL_LIFETIME`] after the sync's last write. An
 //! expired journal reads as none and is deleted as it is read: at daemon
-//! start and on every `rho/sync/*` call that reads it.
+//! start, and by every `rho/sync/*` method that reads it.
+//!
+//! Callers pass the untracked store: no provider reads the journal, so
+//! writing it must not rebuild any session's provider.
+
+use std::{fmt, io};
 
 use rho_protocol::{SyncId, SyncItem};
 use rho_providers::credentials::{CredentialResult, CredentialStore};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 /// The credential store account the journal is saved as.
@@ -28,7 +32,7 @@ pub(super) const JOURNAL_ACCOUNT: &str = "sync:journal";
 pub(super) const JOURNAL_LIFETIME: u64 = 7 * 24 * 60 * 60;
 
 /// One sync's journal.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub(super) struct Journal {
     pub(super) sync: SyncId,
     /// Unix seconds.
@@ -39,7 +43,7 @@ pub(super) struct Journal {
 }
 
 /// What a sync changed about one item.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
+#[derive(Clone, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
 pub(super) struct JournalItem {
     #[zeroize(skip)]
     pub(super) item: SyncItem,
@@ -69,30 +73,40 @@ impl Journal {
         self.items.iter().find(|journaled| &journaled.item == item)
     }
 
-    /// Records that the sync wrote `value` to `item` at `account`, which
-    /// held `previous`. An item the sync already changed keeps the value
-    /// from before its first write.
+    /// Records that the sync writes `value` to `item` at `account`, which
+    /// holds `previous`, and returns the entry this replaces, for
+    /// [`Self::undo`] if the write fails. An item the sync already changed
+    /// keeps the value from before its first write.
     pub(super) fn record(
         &mut self,
         item: SyncItem,
         account: &str,
         previous: Option<String>,
         value: &str,
-    ) {
-        let written = digest(value);
-        match self
+    ) -> Option<JournalItem> {
+        let written = written(value);
+        if let Some(journaled) = self
             .items
             .iter_mut()
             .find(|journaled| journaled.item == item)
         {
-            Some(journaled) => journaled.written = written,
-            None => self.items.push(JournalItem {
-                item,
-                account: account.to_owned(),
-                previous,
-                written,
-            }),
+            let displaced = journaled.clone();
+            journaled.written = written;
+            return Some(displaced);
         }
+        self.items.push(JournalItem {
+            item,
+            account: account.to_owned(),
+            previous,
+            written,
+        });
+        None
+    }
+
+    /// Puts back the entry for `item` that [`Self::record`] displaced.
+    pub(super) fn undo(&mut self, item: &SyncItem, displaced: Option<JournalItem>) {
+        self.remove(item);
+        self.items.extend(displaced);
     }
 
     /// Forgets `item`, once restored.
@@ -105,7 +119,20 @@ impl JournalItem {
     /// Whether `current`, the value its account holds now, is still what
     /// the sync wrote.
     pub(super) fn unchanged(&self, current: Option<&str>) -> bool {
-        current.is_some_and(|current| digest(current) == self.written)
+        current.is_some_and(|current| written(current) == self.written)
+    }
+}
+
+// By hand, so printing a journal never prints a key.
+impl fmt::Debug for JournalItem {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("JournalItem")
+            .field("item", &self.item)
+            .field("account", &self.account)
+            .field("previous", &self.previous.as_ref().map(|_| "[key]"))
+            .field("written", &self.written)
+            .finish()
     }
 }
 
@@ -134,8 +161,16 @@ pub(super) fn save(store: &dyn CredentialStore, journal: &Journal) -> Credential
     if journal.items.is_empty() {
         return delete(store);
     }
-    let saved = Zeroizing::new(serde_json::to_string(journal).expect("a journal serializes"));
-    store.set_secret(JOURNAL_ACCOUNT, &saved)
+    // Sized exactly before writing, so growing the buffer leaves no
+    // unzeroized copy of a key behind.
+    let mut length = Length(0);
+    serde_json::to_writer(&mut length, journal).expect("a journal serializes");
+    let mut saved = Zeroizing::new(Vec::with_capacity(length.0));
+    serde_json::to_writer(&mut *saved, journal).expect("a journal serializes");
+    store.set_secret(
+        JOURNAL_ACCOUNT,
+        std::str::from_utf8(&saved).expect("JSON is UTF-8"),
+    )
 }
 
 /// Deletes the journal, if there is one.
@@ -143,6 +178,21 @@ pub(super) fn delete(store: &dyn CredentialStore) -> CredentialResult<()> {
     store.delete_secret(JOURNAL_ACCOUNT).map(|_| ())
 }
 
-fn digest(value: &str) -> String {
-    hex::encode(Sha256::digest(value.as_bytes()))
+/// What the journal keeps of a value the sync wrote: its hex SHA-256.
+fn written(value: &str) -> String {
+    hex::encode(super::digest(value))
+}
+
+/// Counts the bytes written to it.
+struct Length(usize);
+
+impl io::Write for Length {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.0 += bytes.len();
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }

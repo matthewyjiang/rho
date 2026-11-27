@@ -416,7 +416,8 @@ fn status_check(
 }
 
 /// `message` with any copy of `key` removed, in case an error quoted it.
-fn redacted(message: String, key: &str) -> String {
+/// `message` with `key` blanked out, for an error that may quote it.
+pub(crate) fn redacted(message: String, key: &str) -> String {
     message.replace(key, "[key]")
 }
 

@@ -102,7 +102,7 @@ impl Ambient {
 
     /// [`Self::credentials`] for secrets no provider reads, such as an MCP
     /// server's OAuth tokens, whose writes rebuild no session's provider.
-    fn untracked_credentials(&self) -> Arc<dyn CredentialStore> {
+    pub(crate) fn untracked_credentials(&self) -> Arc<dyn CredentialStore> {
         match self {
             Self::ThisProcess => Arc::new(crate::credential_store::UntrackedCredentialStore),
             Self::Client(variables) => {

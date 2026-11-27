@@ -3,7 +3,9 @@ use rho_protocol::{
     ErrorCode, ImportOutcome, ImportedSecret, RevertOutcome, RevertedItem, SecretItem, SyncId,
     SyncItem, SyncItemState, SyncItemStatus, SyncStatusResponse,
 };
-use rho_providers::credentials::{CredentialStore, MemoryCredentialStore};
+use rho_providers::credentials::{
+    CredentialError, CredentialResult, CredentialStore, MemoryCredentialStore,
+};
 
 use super::*;
 use crate::app::credential_writes::api_key_account;
@@ -20,9 +22,18 @@ fn saved(store: &MemoryCredentialStore, auth: &str) -> Option<String> {
     store.get_secret(account(auth)).unwrap()
 }
 
-/// Imports `keys` under `sync` with no environment override.
-fn import_keys(
-    store: &MemoryCredentialStore,
+/// One memory store for both the keys and the journal.
+fn stores(store: &dyn CredentialStore) -> Stores<'_> {
+    Stores {
+        keys: store,
+        journal: store,
+    }
+}
+
+/// Imports `keys` under `sync`, writing the keys to `keys_store`.
+fn import_into(
+    keys_store: &dyn CredentialStore,
+    journal: &MemoryCredentialStore,
     sync: &SyncId,
     keys: &[(&str, &str)],
 ) -> Vec<ImportedSecret> {
@@ -31,7 +42,44 @@ fn import_keys(
         .map(|(auth, _)| SecretItem::api_key(*auth))
         .collect();
     let values: Vec<String> = keys.iter().map(|(_, key)| (*key).to_owned()).collect();
-    import(store, sync, items, &values, NOW, |_| None).unwrap()
+    let stores = Stores {
+        keys: keys_store,
+        journal,
+    };
+    import(stores, sync, items, &values, NOW).unwrap()
+}
+
+fn import_keys(
+    store: &MemoryCredentialStore,
+    sync: &SyncId,
+    keys: &[(&str, &str)],
+) -> Vec<ImportedSecret> {
+    import_into(store, store, sync, keys)
+}
+
+/// `inner`, except that it refuses every write to `account`.
+struct Refusing<'a> {
+    inner: &'a MemoryCredentialStore,
+    account: &'static str,
+}
+
+impl CredentialStore for Refusing<'_> {
+    fn get_secret(&self, account: &str) -> CredentialResult<Option<String>> {
+        self.inner.get_secret(account)
+    }
+
+    fn set_secret(&self, account: &str, secret: &str) -> CredentialResult<()> {
+        if account == self.account {
+            return Err(CredentialError::StoreUnavailable(format!(
+                "refused {secret}"
+            )));
+        }
+        self.inner.set_secret(account, secret)
+    }
+
+    fn delete_secret(&self, account: &str) -> CredentialResult<bool> {
+        self.inner.delete_secret(account)
+    }
 }
 
 fn error_code<T>(result: Result<T, RpcError>) -> Option<ErrorCode> {
@@ -63,7 +111,7 @@ fn a_revert_restores_what_the_sync_replaced() {
     );
     assert_eq!(saved(&store, ANTHROPIC).as_deref(), Some("sk-new"));
     assert_eq!(
-        status(&store, &sync, NOW).unwrap(),
+        status(stores(&store), &sync, NOW).unwrap(),
         SyncStatusResponse::new(
             NOW + JOURNAL_LIFETIME,
             vec![
@@ -75,7 +123,7 @@ fn a_revert_restores_what_the_sync_replaced() {
 
     let both = vec![SyncItem::api_key(ANTHROPIC), SyncItem::api_key(MOONSHOT)];
     assert_eq!(
-        revert(&store, &sync, both.clone(), &[], NOW).unwrap(),
+        revert(stores(&store), &sync, both.clone(), &[], NOW).unwrap(),
         vec![
             RevertedItem::new(SyncItem::api_key(ANTHROPIC), RevertOutcome::Restored),
             RevertedItem::new(SyncItem::api_key(MOONSHOT), RevertOutcome::Restored),
@@ -85,7 +133,7 @@ fn a_revert_restores_what_the_sync_replaced() {
     assert_eq!(saved(&store, MOONSHOT), None);
     assert_eq!(store.get_secret(journal::JOURNAL_ACCOUNT).unwrap(), None);
     assert_eq!(
-        error_code(status(&store, &sync, NOW)),
+        error_code(status(stores(&store), &sync, NOW)),
         Some(ErrorCode::SyncNotFound)
     );
 }
@@ -103,17 +151,17 @@ fn a_revert_keeps_a_key_changed_since_the_sync_unless_overwritten() {
     let item = SyncItem::api_key(ANTHROPIC);
 
     assert_eq!(
-        status(&store, &sync, NOW).unwrap().items,
+        status(stores(&store), &sync, NOW).unwrap().items,
         vec![SyncItemStatus::new(item.clone(), SyncItemState::Changed)]
     );
     assert_eq!(
-        revert(&store, &sync, vec![item.clone()], &[], NOW).unwrap(),
+        revert(stores(&store), &sync, vec![item.clone()], &[], NOW).unwrap(),
         vec![RevertedItem::new(item.clone(), RevertOutcome::Changed)]
     );
     assert_eq!(saved(&store, ANTHROPIC).as_deref(), Some("sk-mine"));
     assert_eq!(
         revert(
-            &store,
+            stores(&store),
             &sync,
             vec![item.clone()],
             std::slice::from_ref(&item),
@@ -125,42 +173,91 @@ fn a_revert_keeps_a_key_changed_since_the_sync_unless_overwritten() {
     assert_eq!(saved(&store, ANTHROPIC).as_deref(), Some("sk-old"));
 }
 
-// Covers: an import saves nothing, and journals nothing, for a profile a
-// daemon variable overrides, a blank key, or a profile the target does not
-// know, and says why per item.
+// Covers: an import saves nothing, and journals nothing, for a blank key
+// or a profile the target does not know, and says so per item.
 // Owner: sync keys policy (`sync/keys.rs`).
 #[test]
 fn an_import_skips_what_it_cannot_save() {
     let store = MemoryCredentialStore::default();
-    let items = vec![
-        SecretItem::api_key(ANTHROPIC),
-        SecretItem::api_key(MOONSHOT),
-        SecretItem::api_key("no-such-auth"),
-    ];
-    let values = ["sk-a".to_owned(), "  ".to_owned(), "sk-c".to_owned()];
-    let imported = import(&store, &SyncId::new("s"), items, &values, NOW, |name| {
-        (name == "ANTHROPIC_API_KEY").then(|| "sk-env".to_owned())
-    })
-    .unwrap();
     assert_eq!(
-        imported
-            .into_iter()
-            .map(|imported| imported.outcome)
-            .collect::<Vec<_>>(),
+        import_keys(
+            &store,
+            &SyncId::new("s"),
+            &[(ANTHROPIC, "  "), ("no-such-auth", "sk-c")]
+        ),
         vec![
-            ImportOutcome::Overridden {
-                variable: "ANTHROPIC_API_KEY".into()
-            },
-            ImportOutcome::Failed {
-                message: "the key is blank".into()
-            },
-            ImportOutcome::Failed {
-                message: "unknown auth profile 'no-such-auth'".into()
-            },
+            ImportedSecret::new(
+                SecretItem::api_key(ANTHROPIC),
+                ImportOutcome::Failed {
+                    message: CredentialWriteError::BlankKey.to_string()
+                }
+            ),
+            ImportedSecret::new(
+                SecretItem::api_key("no-such-auth"),
+                ImportOutcome::Failed {
+                    message: "unknown auth profile 'no-such-auth'".into()
+                }
+            ),
         ]
     );
     assert_eq!(saved(&store, ANTHROPIC), None);
     assert_eq!(store.get_secret(journal::JOURNAL_ACCOUNT).unwrap(), None);
+}
+
+// Covers: a key the store refuses to write fails alone, without the key in
+// its message, and leaves its journal entry as it was before the import;
+// an import under a new sync that writes nothing leaves the earlier sync's
+// journal revertible.
+// Owner: sync keys policy (`sync/keys.rs`).
+#[test]
+fn a_refused_write_replaces_nothing_in_the_journal() {
+    let store = MemoryCredentialStore::default();
+    store.set_secret(account(ANTHROPIC), "sk-old").unwrap();
+    let first = SyncId::new("first");
+    import_keys(&store, &first, &[(ANTHROPIC, "sk-1")]);
+    let refusing = Refusing {
+        inner: &store,
+        account: account(MOONSHOT),
+    };
+    let saved_each = |imported: Vec<ImportedSecret>| -> Vec<bool> {
+        imported
+            .iter()
+            .map(|imported| match &imported.outcome {
+                ImportOutcome::Saved => true,
+                ImportOutcome::Failed { message } => {
+                    assert!(!message.contains("sk-m"), "{message}");
+                    false
+                }
+                outcome => panic!("{outcome:?}"),
+            })
+            .collect()
+    };
+
+    let second = import_into(
+        &refusing,
+        &store,
+        &SyncId::new("second"),
+        &[(MOONSHOT, "sk-m")],
+    );
+    assert_eq!(saved_each(second), vec![false]);
+    let both = import_into(
+        &refusing,
+        &store,
+        &first,
+        &[(ANTHROPIC, "sk-2"), (MOONSHOT, "sk-m")],
+    );
+    assert_eq!(saved_each(both), vec![true, false]);
+
+    let anthropic = SyncItem::api_key(ANTHROPIC);
+    assert_eq!(
+        status(stores(&store), &first, NOW).unwrap().items,
+        vec![SyncItemStatus::new(
+            anthropic.clone(),
+            SyncItemState::Unchanged
+        )]
+    );
+    revert(stores(&store), &first, vec![anthropic], &[], NOW).unwrap();
+    assert_eq!(saved(&store, ANTHROPIC).as_deref(), Some("sk-old"));
 }
 
 // Covers: the journal holds only the last sync, so an import under another
@@ -175,12 +272,12 @@ fn the_journal_keeps_only_the_last_sync_until_it_expires() {
     import_keys(&store, &second, &[(ANTHROPIC, "sk-2")]);
 
     assert_eq!(
-        error_code(discard(&store, &first, NOW)),
+        error_code(discard(stores(&store), &first, NOW)),
         Some(ErrorCode::SyncNotFound)
     );
-    assert!(status(&store, &second, NOW + JOURNAL_LIFETIME - 1).is_ok());
+    assert!(status(stores(&store), &second, NOW + JOURNAL_LIFETIME - 1).is_ok());
     assert_eq!(
-        error_code(status(&store, &second, NOW + JOURNAL_LIFETIME)),
+        error_code(status(stores(&store), &second, NOW + JOURNAL_LIFETIME)),
         Some(ErrorCode::SyncNotFound)
     );
     assert_eq!(store.get_secret(journal::JOURNAL_ACCOUNT).unwrap(), None);
