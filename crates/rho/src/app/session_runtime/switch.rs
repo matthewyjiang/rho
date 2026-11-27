@@ -8,7 +8,10 @@ use rho_providers::{
     provider::model_reference,
 };
 
-use super::{model_context_window, SessionRuntime, SettingChangeError};
+use super::{
+    model_context_window, model_scoped_config, saved_settings::SettingsPolicy, SessionRuntime,
+    SettingChangeError,
+};
 use crate::{
     app::conversation_switch::{
         apply_conversation_switch, resolve_model_switch_reasoning, ConversationSwitch,
@@ -21,6 +24,36 @@ use crate::{
 };
 
 impl SessionRuntime {
+    /// Moves the session to the auth it would start on now that
+    /// `available` are the auths with credentials (see
+    /// [`Config::settle_inferred_auth`]), as a credential write calls for:
+    /// only while it follows `process_config`, whose auth nothing chose,
+    /// and only off an auth that lost its credentials, since the rules keep
+    /// the current one while it has them. A session a host changed a
+    /// setting of keeps what it runs on.
+    pub(crate) async fn follow_credentials(
+        &mut self,
+        process_config: &Config,
+        available: &[String],
+    ) -> Result<(), SettingChangeError> {
+        if self.settings == SettingsPolicy::Keep {
+            return Ok(());
+        }
+        let current = self.current_model();
+        let mut settled = model_scoped_config(&current, process_config);
+        settled.settle_inferred_auth(available);
+        if settled.auth == current.auth {
+            return Ok(());
+        }
+        let selection = ModelSelection {
+            provider: current.provider,
+            model: current.model,
+            auth: settled.auth,
+            from_catalog: false,
+        };
+        self.switch_model(&selection, process_config).await
+    }
+
     /// Switches the session to `selection`'s model and auth, keeping its
     /// reasoning level, then saves a call override's new selection. The host
     /// holds the runtime between prompts, so none is in flight. A new model

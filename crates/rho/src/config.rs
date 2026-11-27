@@ -18,6 +18,10 @@ use {
 mod provider_config;
 pub(crate) use provider_config::ensure_serves_chat;
 
+#[path = "config_auth.rs"]
+mod auth;
+pub(crate) use auth::{provider_auth_with_credentials, AuthOrigin};
+
 #[path = "config_streaming.rs"]
 mod streaming;
 pub use streaming::StreamingMode;
@@ -169,7 +173,13 @@ pub struct Config {
     /// selection no longer matches the alias table.
     pub model_alias: Option<String>,
     pub max_output_bytes: usize,
+    /// The conversation model's auth profile. A change that decides
+    /// whether someone chose it goes through [`Config::choose_auth`] or
+    /// [`Config::infer_auth`], which set [`Self::auth_origin`] with it.
     pub auth: String,
+    /// Whether someone chose [`Self::auth`] or it was filled in, which
+    /// decides whether a session starts on it as it is.
+    pub(crate) auth_origin: AuthOrigin,
     pub reasoning: ReasoningLevel,
     /// Faster serving for models that support `/fast`.
     ///
@@ -245,6 +255,7 @@ impl Default for Config {
             model_alias: None,
             max_output_bytes: DEFAULT_MAX_OUTPUT_BYTES,
             auth: DEFAULT_AUTH.into(),
+            auth_origin: AuthOrigin::Inferred,
             reasoning: ReasoningLevel::Medium,
             fast_mode: false,
             auto_compact: compaction.auto_compact,
@@ -555,8 +566,10 @@ impl Config {
             .as_deref()
             .filter(|provider| *provider != self.provider)
         {
+            // An auth chosen for the provider the alias replaces cannot
+            // run it.
             if let Some(descriptor) = provider::provider_descriptor(provider) {
-                self.auth = descriptor.default_auth().id.into();
+                self.infer_auth(descriptor.default_auth().id);
             }
             self.provider = provider.to_string();
         }

@@ -274,6 +274,53 @@ async fn a_relayed_login_signs_in_a_running_session() {
     );
 }
 
+// Covers: a session whose config names no auth, opened before any sign-in
+// on the provider's default auth (as rho-ui's draft is), moves to the
+// auth a relayed login signs in to, in the same options update that
+// brings the provider's models, so its sign-in card goes away.
+// Owner: session starting auth (credential writes).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_login_moves_a_session_that_named_no_auth_to_it() {
+    let sandbox = Sandbox::new();
+    std::fs::write(
+        &sandbox.isolated.config_path,
+        "[model]\nprovider = \"xai\"\nmodel = \"grok-4.7\"\n\n[web_search]\nmode = \"off\"\n",
+    )
+    .unwrap();
+    let client = start_daemon(&sandbox).await;
+    let session = sandbox.new_session(&client).await;
+    let (watcher, mut events) = sandbox.connect_following().await;
+    let attached = watcher
+        .request::<SessionAttach>(&SessionAttachParams {
+            session: session.clone(),
+            after: None,
+            environment: sandbox.client_environment(),
+            setup: SessionSetup::default(),
+        })
+        .await
+        .unwrap();
+    let (login_client, mut notifications) = sandbox.connect_following().await;
+
+    let login = start_login(&login_client).await.unwrap();
+    approve(&next_prompt(&mut notifications, &login).await.url).await;
+    next_finished(&mut notifications).await;
+    // Earlier updates, such as the session's MCP tools loading, offer no
+    // SpaceXAI model yet.
+    let signed_in = loop {
+        let options = next_options(&mut events, &session).await;
+        if !models_gained(&attached.options, &options).0.is_empty() {
+            break options;
+        }
+    };
+
+    assert_eq!(
+        (attached.options.model.auth, signed_in.model.auth),
+        ("xai-api-key".to_owned(), AUTH.to_owned()),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
 // Covers: the Ollama device key is each client's, kept in the directory its
 // own `OLLAMA_DEVICE_KEY_DIR` names. A daemon whose environment names a
 // directory of its own, as one inherited from the client that started it

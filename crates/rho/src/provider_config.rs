@@ -511,7 +511,7 @@ impl Config {
         if selected == rho_providers::provider::KEYLESS_AUTH {
             return false;
         }
-        self.auth = selected.to_string();
+        self.choose_auth(selected);
         true
     }
 

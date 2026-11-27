@@ -353,7 +353,7 @@ fn apply_cli_overrides(
             && current.is_some_and(|descriptor| descriptor.shares_auth_family(*profile))
         {
             config.provider = profile.name.into();
-            config.auth = auth.into();
+            config.choose_auth(auth);
         } else {
             apply_provider_override(
                 config,
@@ -362,7 +362,7 @@ fn apply_cli_overrides(
                 store,
                 cached_models,
             )?;
-            config.auth = auth.into();
+            config.choose_auth(auth);
         }
         flags_present = true;
     }
@@ -487,6 +487,9 @@ pub(super) struct SettledConfig {
 /// launch settles its bound agent here: the CLI, ACP, subagents, and daemon
 /// sessions.
 ///
+/// An auth nothing chose is first settled on the provider's auth that
+/// `credentials` can use ([`Config::settle_inferred_auth`]).
+///
 /// The model's capabilities are fetched when the cache lacks them and
 /// `provider_refresh` did not just fetch them, and the reasoning is
 /// normalized to what the model supports, or refused when an `Explicit`
@@ -499,6 +502,10 @@ pub(super) async fn settle_bound_config(
     provider_refresh: &ProviderRefreshStatus,
     reasoning: rho_providers::model::ReasoningRequestSource,
 ) -> anyhow::Result<SettledConfig> {
+    config.settle_inferred_auth(&provider_auths_with_credentials(
+        &config.provider,
+        credentials,
+    ));
     prepare_model_metadata(&config, credentials, provider_refresh).await;
     normalize_reasoning(&mut config, reasoning)?;
     let diagnostics = RuntimeDiagnostics::new(&config);
@@ -507,6 +514,17 @@ pub(super) async fn settle_bound_config(
         config,
         diagnostics,
     })
+}
+
+/// The auth modes of `provider` that `store` has credentials for. Only
+/// that provider's are read, so the store is not asked for every provider.
+fn provider_auths_with_credentials(provider: &str, store: &dyn CredentialStore) -> Vec<String> {
+    provider::provider_descriptor(provider)
+        .into_iter()
+        .flat_map(|descriptor| descriptor.auth_modes())
+        .filter(|mode| credentials::auth_has_credentials(store, mode.id).unwrap_or(false))
+        .map(|mode| mode.id.to_string())
+        .collect()
 }
 
 fn needs_startup_capability_refresh(

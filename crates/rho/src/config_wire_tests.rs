@@ -23,8 +23,9 @@ fn reset(key: &str) -> SettingChange {
 // Covers: a protocol change lands in `config.toml` through its typed
 // setting, keeping the rest of the file; every key no setting has, then
 // every value a setting refuses, is an error naming the key, the limit,
-// and the value, and the file is left as it was; a model on another provider takes
-// that provider's default auth; resetting an internal agent's model drops
+// and the value, and the file is left as it was; a model on another provider
+// names no auth, which a session then settles on the auth with credentials,
+// while one on the same provider keeps the auth chosen for it; resetting an internal agent's model drops
 // its whole table, reasoning included, so the agent falls back as a fresh
 // file would; its reasoning cannot be set while it has no model.
 // Owner: config wire changes.
@@ -46,15 +47,14 @@ fn agent_changes_write_by_setting_or_name_what_they_refuse() {
             Ok(before.replace("rtk = true\n", "")),
         ),
         (
-            "another provider takes its default auth",
-            vec![set(
-                "model",
-                SettingValue::Model(ModelSelection::Rho {
-                    provider: "anthropic".into(),
-                    model: "claude-opus-4-8".into(),
-                }),
-            )],
-            Ok(format!("{head}[model]\nprovider = \"anthropic\"\nmodel = \"claude-opus-4-8\"\nauth = \"anthropic-api-key\"\n{advisor}")),
+            "another provider names no auth",
+            vec![set("model", rho_model("anthropic", "claude-opus-4-8"))],
+            Ok(format!("{head}[model]\nprovider = \"anthropic\"\nmodel = \"claude-opus-4-8\"\n{advisor}")),
+        ),
+        (
+            "the same provider keeps the chosen auth",
+            vec![set("model", rho_model("openai", "gpt-5.5-mini"))],
+            Ok(before.replacen("model = \"gpt-5.5\"\n", "model = \"gpt-5.5-mini\"\n", 1)),
         ),
         (
             "resetting an internal agent's model drops its reasoning too",

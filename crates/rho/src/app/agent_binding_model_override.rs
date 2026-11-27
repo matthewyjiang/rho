@@ -70,7 +70,7 @@ pub(super) fn bind_config(
         let mut config = host.clone();
         config.provider = selection.provider;
         config.model = selection.model;
-        config.auth = selection.auth;
+        config.choose_auth(selection.auth);
         config.model_alias = resolved.alias;
         Ok(config)
     };
