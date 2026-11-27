@@ -11352,6 +11352,10 @@
           "description": "Whether the setting belongs to one machine, such as one that sizes\nthe daemon or names a program or path there, so copying settings\nfrom one daemon to another leaves it out unless the user picks it.\nAbsent, and false, from a daemon that predates it.",
           "type": "boolean"
         },
+        "read_only": {
+          "description": "Whether `rho/config/set` refuses the agent setting, which another\nmethod changes, such as `behavior.credential_store` through\n`rho/auth/choose_store`. A client offers no edit for it, and copying\nsettings between daemons leaves it out. A client's own settings\n([`ConfigRegisterParams`]) may not set it. Absent, and false, from a\ndaemon that predates it.",
+          "type": "boolean"
+        },
         "section": {
           "description": "A heading within the category page, when the page groups its rows.",
           "type": [

@@ -190,6 +190,7 @@ const fn meta(label: &'static str, help: &'static str) -> SettingMeta {
         applies: Apply::Immediately,
         overridable_per_project: false,
         per_machine: false,
+        changed_through: None,
     }
 }
 

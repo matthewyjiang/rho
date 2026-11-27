@@ -52,6 +52,9 @@ pub(crate) struct SettingMeta {
     pub(crate) overridable_per_project: bool,
     /// Whether the setting belongs to one machine: [`SettingSpec::per_machine`].
     pub(crate) per_machine: bool,
+    /// The method that changes the setting in place of `rho/config/set`,
+    /// which then refuses it: [`SettingSpec::read_only`].
+    pub(crate) changed_through: Option<&'static str>,
 }
 
 /// One declared setting over the store `S`.
@@ -83,6 +86,9 @@ pub(crate) trait AnySetting<S>: Sync {
     /// Whether the key path `path` in a file belongs to this setting.
     fn owns(&self, path: &[String]) -> bool;
     fn spec(&self) -> SettingSpec;
+    /// The method that changes the setting in place of `rho/config/set`,
+    /// which refuses it; `None` for a setting `rho/config/set` changes.
+    fn changed_through(&self) -> Option<&'static str>;
     /// The setting's value in `store` as the protocol carries it; `None`
     /// for an unset optional value.
     fn wire_value(&self, store: &S) -> Option<SettingValue>;
@@ -143,7 +149,12 @@ impl<S: Default + 'static, T: SettingType> AnySetting<S> for Setting<S, T> {
             applies: self.meta.applies.wire(),
             overridable_per_project: self.meta.overridable_per_project,
             per_machine: self.meta.per_machine,
+            read_only: self.meta.changed_through.is_some(),
         }
+    }
+
+    fn changed_through(&self) -> Option<&'static str> {
+        self.meta.changed_through
     }
 
     fn wire_value(&self, store: &S) -> Option<SettingValue> {

@@ -18,7 +18,7 @@ use toml_edit::Value;
 use super::{
     document::{shown, ConfigDocument},
     load,
-    registry::{AGENT_SETTINGS, CREDENTIAL_STORE},
+    registry::AGENT_SETTINGS,
     setting::{save_settings, AnySetting, ConfigError},
     Config, ConfigWarning,
 };
@@ -106,11 +106,13 @@ pub(crate) fn apply_agent_changes(
             .find(|setting| setting.key() == key.as_str())
         {
             None => errors.push(ConfigError::at(key.as_str(), "no such setting")),
-            Some(setting) if setting.key() == CREDENTIAL_STORE.key => errors.push(ConfigError::at(
-                key.as_str(),
-                "change it with rho/auth/choose_store",
-            )),
-            Some(setting) => changed.push((*setting, change)),
+            Some(setting) => match setting.changed_through() {
+                Some(method) => errors.push(ConfigError::at(
+                    key.as_str(),
+                    format!("change it with {method}"),
+                )),
+                None => changed.push((*setting, change)),
+            },
         }
     }
     let mut edited = loadable_base(doc, &changed)?;
@@ -252,7 +254,8 @@ pub(crate) fn write_changes(
 
 /// Why a client's settings cannot be stored, or `None` when they can: each
 /// takes a plain value, its key is a dotted path of bare TOML keys no other
-/// setting uses or lies under, and its default is a value its kind takes.
+/// setting uses or lies under, its default is a value its kind takes, and
+/// it is not `read_only`, since no other method would change it.
 pub(crate) fn client_specs_problem(specs: &[SettingSpec]) -> Option<String> {
     for (index, spec) in specs.iter().enumerate() {
         let key = spec.key.as_str();
@@ -274,6 +277,11 @@ pub(crate) fn client_specs_problem(specs: &[SettingSpec]) -> Option<String> {
         }
         if !default_fits_kind(spec) {
             return Some(format!("setting `{key}` has a default its kind refuses"));
+        }
+        if spec.read_only {
+            return Some(format!(
+                "setting `{key}` cannot be read-only: only rho/config/set changes a client's settings"
+            ));
         }
         let overlaps = |other: &SettingSpec| {
             let other = other.key.as_str();

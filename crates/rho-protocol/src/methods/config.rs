@@ -68,6 +68,14 @@ pub struct SettingSpec {
     /// Absent, and false, from a daemon that predates it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub per_machine: bool,
+    /// Whether `rho/config/set` refuses the agent setting, which another
+    /// method changes, such as `behavior.credential_store` through
+    /// `rho/auth/choose_store`. A client offers no edit for it, and copying
+    /// settings between daemons leaves it out. A client's own settings
+    /// ([`ConfigRegisterParams`]) may not set it. Absent, and false, from a
+    /// daemon that predates it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub read_only: bool,
 }
 
 /// The values a setting takes.

@@ -24,12 +24,6 @@ use super::{
 /// The `tui` client's namespace name.
 const TUI_CLIENT: &str = "tui";
 
-/// The agent setting `/config` leaves out: the daemon changes the
-/// credential store only through `rho/auth/choose_store`, which checks the
-/// store can be reached, so `rho credential-store set` and the login
-/// question own it.
-const CREDENTIAL_STORE_KEY: &str = "behavior.credential_store";
-
 /// The settings namespaces the TUI reads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -123,9 +117,10 @@ impl DaemonSettings {
         tui: NamespaceValues,
         models: ListedModels,
     ) -> Self {
-        schema
-            .settings
-            .retain(|spec| spec.key.as_str() != CREDENTIAL_STORE_KEY);
+        // `/config` leaves out what `rho/config/set` refuses, such as the
+        // credential store, which `rho credential-store set` and the login
+        // question change through `rho/auth/choose_store`.
+        schema.settings.retain(|spec| !spec.read_only);
         Self {
             schema,
             tui_specs,

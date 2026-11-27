@@ -3,7 +3,7 @@ use serde_json::json;
 
 use super::*;
 
-fn spec(per_machine: bool) -> SettingSpec {
+fn spec(per_machine: bool, read_only: bool) -> SettingSpec {
     SettingSpec {
         key: SettingKey::new("behavior.agent_concurrency"),
         kind: SettingKind::Bool,
@@ -15,16 +15,17 @@ fn spec(per_machine: bool) -> SettingSpec {
         applies: Applies::Immediately,
         overridable_per_project: false,
         per_machine,
+        read_only,
     }
 }
 
-// Covers: `per_machine` travels only when true, so a setting that does not
-// belong to one machine encodes as it did before the field, and a spec from
-// a daemon that predates the field reads as not per-machine.
+// Covers: `per_machine` and `read_only` each travel only when true, so a
+// setting with neither encodes as it did before the fields, and a spec from
+// a daemon that predates them reads as neither.
 // Owner: protocol wire contract.
 #[test]
-fn per_machine_travels_only_when_true() {
-    let wire = |per_machine: Option<bool>| {
+fn setting_flags_travel_only_when_true() {
+    let wire = |flags: &[&str]| {
         let mut wire = json!({
             "key": "behavior.agent_concurrency",
             "kind": {"kind": "bool"},
@@ -34,12 +35,16 @@ fn per_machine_travels_only_when_true() {
             "applies": "immediately",
             "overridable_per_project": false,
         });
-        if let Some(per_machine) = per_machine {
-            wire["per_machine"] = json!(per_machine);
+        for flag in flags {
+            wire[*flag] = json!(true);
         }
         wire
     };
-    for (value, encoded) in [(spec(true), wire(Some(true))), (spec(false), wire(None))] {
+    for (value, encoded) in [
+        (spec(true, false), wire(&["per_machine"])),
+        (spec(false, true), wire(&["read_only"])),
+        (spec(false, false), wire(&[])),
+    ] {
         assert_eq!(serde_json::to_value(&value).unwrap(), encoded);
         assert_eq!(
             serde_json::from_value::<SettingSpec>(encoded).unwrap(),

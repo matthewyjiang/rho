@@ -24,6 +24,7 @@ const META: SettingMeta = SettingMeta {
     applies: Apply::Immediately,
     overridable_per_project: false,
     per_machine: false,
+    changed_through: None,
 };
 
 static FLAG: Setting<Store, bool> = Setting {

@@ -24,6 +24,7 @@ fn spec(key: &str, label: &str, kind: SettingKind, applies: Applies) -> SettingS
         applies,
         overridable_per_project: false,
         per_machine: false,
+        read_only: false,
     }
 }
 
@@ -132,6 +133,7 @@ pub(in crate::tui) fn settings() -> DaemonSettings {
     let store = SettingSpec {
         category: "providers".into(),
         section: None,
+        read_only: true,
         ..spec(
             "behavior.credential_store",
             "Credential store",

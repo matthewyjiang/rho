@@ -90,6 +90,7 @@ async fn register_tui(client: &Client) {
                 applies: Applies::Immediately,
                 overridable_per_project: false,
                 per_machine: false,
+                read_only: false,
             }],
         })
         .await

@@ -76,6 +76,7 @@ const fn meta(
         applies,
         overridable_per_project: true,
         per_machine: false,
+        changed_through: None,
     }
 }
 
@@ -93,6 +94,15 @@ const fn daemon_wide(meta: SettingMeta) -> SettingMeta {
 const fn per_machine(meta: SettingMeta) -> SettingMeta {
     SettingMeta {
         per_machine: true,
+        ..meta
+    }
+}
+
+/// A setting `method` changes in place of `rho/config/set`, which refuses
+/// it and names `method`.
+const fn read_only(meta: SettingMeta, method: &'static str) -> SettingMeta {
+    SettingMeta {
+        changed_through: Some(method),
         ..meta
     }
 }
@@ -659,17 +669,20 @@ static WORKTREE_FROM_REMOTE: Setting<Config, bool> = Setting {
 };
 
 /// Changed only through `rho/auth/choose_store`, which checks the store
-/// can be reached; `rho/config/set` refuses it.
-pub(super) static CREDENTIAL_STORE: Setting<Config, Option<CredentialStoreBackend>> = Setting {
+/// can be reached.
+static CREDENTIAL_STORE: Setting<Config, Option<CredentialStoreBackend>> = Setting {
     key: "behavior.credential_store",
     // It names this machine's keyring or a file on it.
-    meta: per_machine(daemon_wide(meta(
-        "providers",
-        None,
-        "Credential store",
-        "Where provider credentials live. Unset uses the OS keyring.",
-        Apply::Restart,
-    ))),
+    meta: read_only(
+        per_machine(daemon_wide(meta(
+            "providers",
+            None,
+            "Credential store",
+            "Where provider credentials live. Unset uses the OS keyring.",
+            Apply::Restart,
+        ))),
+        "rho/auth/choose_store",
+    ),
     spec: (),
     get: |config| config.credential_store,
     set: |config, backend| config.credential_store = backend,

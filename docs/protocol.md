@@ -531,7 +531,7 @@ The daemon never moves credentials to another store on its own. While `selected_
 
 The daemon reads and writes the user's settings for its clients (#1720), so a frontend renders a settings screen from data. A `namespace` is `{"kind": "agent"}`, the agent's settings in `config.toml`, or `{"kind": "client", "name": "<name>"}`, a client's own ([below](#client-settings)).
 
-`rho/config/schema` describes each agent setting with its `key`, which is also where `config.toml` keeps it (`behavior.permission_mode` is the `permission_mode` key of `[behavior]`); its `kind`; its `default`, absent for an optional setting that is unset by default; the `category` page and optional `section` it sits under; a `label` and `help`; whether a project may later override it (`overridable_per_project`); whether it belongs to one machine (`per_machine`, absent when false); and `applies`, when a change takes effect:
+`rho/config/schema` describes each agent setting with its `key`, which is also where `config.toml` keeps it (`behavior.permission_mode` is the `permission_mode` key of `[behavior]`); its `kind`; its `default`, absent for an optional setting that is unset by default; the `category` page and optional `section` it sits under; a `label` and `help`; whether a project may later override it (`overridable_per_project`); whether it belongs to one machine (`per_machine`, absent when false); whether `rho/config/set` refuses it (`read_only`, absent when false); and `applies`, when a change takes effect:
 
 | `applies` | Takes effect |
 | --- | --- |
@@ -541,6 +541,8 @@ The daemon reads and writes the user's settings for its clients (#1720), so a fr
 | `restart` | When the daemon next starts, such as `behavior.credential_store`. |
 
 A `per_machine` setting suits only the machine it is set on, such as `behavior.agent_concurrency`, which sizes the daemon, or `behavior.inline_shell`, whose default differs by OS. A client copying settings from one daemon to another leaves it out unless the user picks it.
+
+A `read_only` setting is changed through another method, which checks what the setting needs: `behavior.credential_store` through `rho/auth/choose_store`. `rho/config/set` refuses it with `InvalidParams` naming that method, and since the whole set then fails, a client offers no edit for it and leaves it out of a copy between daemons. Only agent settings are read-only: `rho/config/register` refuses a client setting that claims it.
 
 A `kind` is `bool`; `choice`, whose `choices` each have a `value`, a `label`, and optional `help`; `integer`, from `min` to an optional `max`, with an optional `unit` (`bytes`, `lines`, `percent`, or `seconds`); `text`; or `model`, on the `runtimes` it lists (`rho`, `claude-cli`), whose values `rho/model/list` offers ([below](#models)). A value is `true`/`false`, a whole number, a string (a choice's `value`), or for a model `{"runtime": "rho", "provider", "model"}` or `{"runtime": "claude-cli", "model"?}`. A model on another provider takes that provider's default auth profile.
 
@@ -605,7 +607,7 @@ The methods acting on `plugin` act on the nearest root of its `scope` that holds
 
 ### Client settings
 
-A client keeps its own settings in the daemon by declaring them with `rho/config/register`: a `client` name of lowercase letters, digits, and `-`, and `settings` in the schema's shape, each a `bool`, `choice`, `integer`, or `text` setting. The daemon stores their values in `~/.rho/clients/<name>.toml`, one file per client, and serves them as `{"kind": "client", "name": "<name>"}`. Registering again replaces the client's schema, which the daemon keeps until it stops; a client registers each time it connects to a new daemon. Keys the file holds that the schema does not list stay in the file and are not served. A file that stops reading keeps its last good values served, with its error, as `config.toml` does; a value its setting refuses reads as the default. `rho/config/get` or `rho/config/set` on a client that has not registered gets `InvalidParams`.
+A client keeps its own settings in the daemon by declaring them with `rho/config/register`: a `client` name of lowercase letters, digits, and `-`, and `settings` in the schema's shape, each a `bool`, `choice`, `integer`, or `text` setting that is not `read_only`. The daemon stores their values in `~/.rho/clients/<name>.toml`, one file per client, and serves them as `{"kind": "client", "name": "<name>"}`. Registering again replaces the client's schema, which the daemon keeps until it stops; a client registers each time it connects to a new daemon. Keys the file holds that the schema does not list stay in the file and are not served. A file that stops reading keeps its last good values served, with its error, as `config.toml` does; a value its setting refuses reads as the default. `rho/config/get` or `rho/config/set` on a client that has not registered gets `InvalidParams`.
 
 ## A session's grant
 
