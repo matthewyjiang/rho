@@ -161,3 +161,45 @@ fn inventory_rows_carry_each_problem_servers_error() {
         ]
     );
 }
+
+// Covers: a deferred connect that never reports back fails each server still
+// connecting with its error on one line, as every other recorded error is,
+// and leaves the servers that settled alone.
+// Owner: MCP inventory
+#[test]
+fn a_connect_that_never_finished_fails_each_connecting_server_on_one_line() {
+    let mut report = McpSessionReport {
+        mode: McpLoadMode::Native,
+        servers: vec![
+            McpServerReport::connecting("slow", &stdio_server(true)),
+            McpServerReport::disabled("off", &stdio_server(false)),
+        ],
+    };
+
+    report.fail_connecting("MCP connect did not finish: task panicked\n  at src/lib.rs:1\n");
+
+    let inventory =
+        session_mcp_inventory(&report, &McpCatalog::default(), Path::new("config.toml"));
+    let rows: Vec<_> = inventory
+        .servers
+        .iter()
+        .map(|server| {
+            (
+                server.identity.as_str(),
+                server.status,
+                server.error.as_deref(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        rows,
+        vec![
+            (
+                "slow",
+                SessionMcpStatus::Failed,
+                Some("MCP connect did not finish: task panicked at src/lib.rs:1")
+            ),
+            ("off", SessionMcpStatus::Disabled, None),
+        ]
+    );
+}

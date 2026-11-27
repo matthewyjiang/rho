@@ -156,15 +156,27 @@ enum McpServerState {
     Connecting,
     Disabled,
     InvalidConfig {
-        error: String,
+        error: McpServerError,
     },
     Failed {
-        error: String,
+        error: McpServerError,
     },
     TimedOut {
-        error: String,
+        error: McpServerError,
     },
     NotLoaded,
+}
+
+/// Why a server is not usable, as every report shows it: on one line, since
+/// a TOML error may span several or end in a newline. Every error a report
+/// records is built here, so none skips that.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct McpServerError(String);
+
+impl McpServerError {
+    fn new(error: &str) -> Self {
+        Self(error.split_whitespace().collect::<Vec<_>>().join(" "))
+    }
 }
 
 impl McpServerState {
@@ -194,7 +206,7 @@ impl McpServerState {
     fn error(&self) -> Option<&str> {
         match self {
             Self::InvalidConfig { error } | Self::Failed { error } | Self::TimedOut { error } => {
-                Some(error)
+                Some(&error.0)
             }
             Self::Connected { .. } | Self::Connecting | Self::Disabled | Self::NotLoaded => None,
         }
@@ -340,7 +352,7 @@ impl McpServerReport {
             identity: identity.into(),
             transport: None,
             state: McpServerState::InvalidConfig {
-                error: one_line(error.as_ref()),
+                error: McpServerError::new(error.as_ref()),
             },
         }
     }
@@ -378,7 +390,7 @@ impl McpServerReport {
             identity: identity.into(),
             transport: Some(transport),
             state: McpServerState::TimedOut {
-                error: format!("exceeded {limit_seconds}s startup budget"),
+                error: McpServerError::new(&format!("exceeded {limit_seconds}s startup budget")),
             },
         }
     }
@@ -392,7 +404,7 @@ impl McpServerReport {
             identity: identity.into(),
             transport: Some(transport),
             state: McpServerState::Failed {
-                error: one_line(error.as_ref()),
+                error: McpServerError::new(error.as_ref()),
             },
         }
     }
@@ -511,12 +523,6 @@ impl McpServerReport {
         lines.extend(live_lines(&self.live()));
         lines.join("\n")
     }
-}
-
-/// A server's error as every report shows it, on one line: a TOML error may
-/// span several, or end in a newline.
-fn one_line(error: &str) -> String {
-    error.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// Inventory lines for changes a server made after startup. The tool registry
@@ -648,7 +654,7 @@ impl McpSessionReport {
         for server in &mut self.servers {
             if matches!(server.state, McpServerState::Connecting) {
                 server.state = McpServerState::Failed {
-                    error: error.to_string(),
+                    error: McpServerError::new(error),
                 };
             }
         }
