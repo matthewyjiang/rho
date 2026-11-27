@@ -114,7 +114,7 @@ impl Target {
             Self::Local => Ok(control.call(caller, action, arguments).await?),
             Self::Remote(remote) => {
                 caller.grant.permit(action).map_err(ControlError::from)?;
-                let arguments = for_any_release(action, arguments);
+                let arguments = for_any_release(action, arguments)?;
                 Ok(call(remote, action, arguments, &forwarded(caller), Asked::ByCall).await?)
             }
         }
@@ -173,11 +173,17 @@ impl Target {
 
 /// `action`'s `arguments` as a remote of any release takes them: the
 /// message of `prompt` and `steer` as `text`, the name releases before
-/// `prompt` took and later ones still accept.
+/// `prompt` took and later ones still accept. Arguments a local session
+/// refuses, such as both `prompt` and `text`, are refused here with its
+/// error, since the rename would hide the conflict.
 // NEXT_MAJOR(rho mcp serve): forward `prompt` as it is, with the `text` alias gone.
-fn for_any_release(action: Action, mut arguments: Map<String, Value>) -> Map<String, Value> {
+fn for_any_release(
+    action: Action,
+    mut arguments: Map<String, Value>,
+) -> Result<Map<String, Value>, ControlError> {
     match action {
         Action::Prompt | Action::Steer => {
+            action.check_arguments(&arguments)?;
             if let Some(message) = arguments.remove("prompt") {
                 arguments.insert("text".to_owned(), message);
             }
@@ -189,7 +195,7 @@ fn for_any_release(action: Action, mut arguments: Map<String, Value>) -> Map<Str
         | Action::Wait
         | Action::Answer => {}
     }
-    arguments
+    Ok(arguments)
 }
 
 /// The context a call for a remote carries there: the caller's depth and

@@ -63,6 +63,31 @@ impl Action {
             Self::Answer => schema_of::<AnswerParams>(),
         }
     }
+
+    /// Refuses `arguments` the action's params do not take, with the error
+    /// the core gives them, and runs nothing: for a hub to check a call as
+    /// a local session would before it forwards it.
+    pub(crate) fn check_arguments(
+        self,
+        arguments: &Map<String, Value>,
+    ) -> Result<(), ControlError> {
+        fn parse<T: DeserializeOwned>(
+            action: Action,
+            arguments: &Map<String, Value>,
+        ) -> Result<(), ControlError> {
+            parse_arguments::<T>(action.name(), arguments.clone()).map(drop)
+        }
+        match self {
+            Self::List => parse::<ListParams>(self, arguments),
+            Self::Read => parse::<ReadParams>(self, arguments),
+            Self::New => parse::<NewParams>(self, arguments),
+            Self::Prompt => parse::<PromptParams>(self, arguments),
+            Self::Steer => parse::<SteerParams>(self, arguments),
+            Self::Cancel => parse::<CancelParams>(self, arguments),
+            Self::Wait => parse::<WaitParams>(self, arguments),
+            Self::Answer => parse::<AnswerParams>(self, arguments),
+        }
+    }
 }
 
 impl SessionControl {
