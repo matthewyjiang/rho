@@ -228,8 +228,9 @@ pub struct SessionSearchResponse {
     /// How many sessions match in all.
     pub total: u64,
     /// The index has not read every transcript yet (first use, after its
-    /// schema changed, or while one that changed as it was read waits to
-    /// be read again), so this page may miss matches. Search again later.
+    /// schema changed, or for a few searches while one whose read failed
+    /// or that changed as it was read waits to be read again), so this
+    /// page may miss matches. Search again later.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub indexing: bool,
 }

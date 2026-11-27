@@ -8,9 +8,9 @@
 //! changed the index's layout, a background thread builds it, committing a
 //! file at a time, and each search answers from what it holds so far with
 //! `indexing` set. Once it is built, a search first reads the transcripts
-//! changed since the last one, on its own blocking thread, and says
-//! `indexing` while one waits to be read again, as one that changed while
-//! it was read.
+//! changed since the last one, on its own blocking thread, retrying those
+//! whose read failed, and says `indexing` while one of those has not
+//! failed [`search_index::MAX_COUNTED_ATTEMPTS`] times yet.
 
 use std::{
     num::{NonZeroU32, NonZeroUsize},
@@ -133,10 +133,12 @@ impl Sessions {
             // only now found for the refresh below to read.
             let listed = search_page::listed(&root, params.cwd.as_deref())?;
             let mut connection = search_index::open(&root).map_err(SearchError::Store)?;
-            let indexing = build.running()
-                || !search_index::complete(&connection)
+            // Only the first read of every transcript is left to the
+            // build; afterwards a search reads changes itself.
+            let building = build.running()
+                || !search_index::bootstrapped(&connection)
                     .map_err(|error| SearchError::Store(error.into()))?;
-            let indexing = if indexing {
+            let indexing = if building {
                 build.start(root.clone(), stopping);
                 true
             } else {

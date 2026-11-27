@@ -24,7 +24,7 @@ use crate::{
         session_events::{LiveEvents, SavedTranscript},
         session_runtime::SessionTools,
     },
-    session::{session_root_in, Session as StoredSession, SessionOrigin},
+    session::{search_index, session_root_in, Session as StoredSession, SessionOrigin},
     tools::sdk_registry::AppToolSet,
 };
 
@@ -119,6 +119,47 @@ async fn a_cold_index_answers_at_once_and_its_build_finds_sessions() {
         daemon.found(query("coldneedle")).await,
         [session.id().to_owned()]
     );
+}
+
+// Covers: a transcript no read can open, as one the daemon may not read,
+// must neither send searches back to the background build, which would
+// answer a step behind the sessions saved since, nor say `indexing` for
+// good: each search still reads new transcripts itself, and stops saying
+// it may miss matches once the read failed MAX_COUNTED_ATTEMPTS times.
+// Owner: daemon session search refresh.
+#[cfg(unix)]
+#[tokio::test]
+async fn an_unreadable_transcript_neither_stalls_nor_pins_indexing() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let daemon = Daemon::new();
+    let cwd = daemon.workspace("one");
+    let locked = daemon.saved(&cwd, "lockedword");
+    let readable = |mode| {
+        std::fs::set_permissions(locked.path(), std::fs::Permissions::from_mode(mode)).unwrap();
+    };
+    readable(0o000);
+    // Root or CAP_DAC_OVERRIDE can still open 0o000 files; skip if this process can.
+    if std::fs::File::open(locked.path()).is_ok() {
+        readable(0o600);
+        return;
+    }
+    daemon.built().await;
+    let fresh = daemon.saved(&cwd, "freshword");
+
+    let attempts = search_index::MAX_COUNTED_ATTEMPTS;
+    let mut actual = Vec::new();
+    for _ in 0..attempts {
+        let page = daemon.search(query("freshword")).await.unwrap();
+        actual.push((ids(&page), page.indexing));
+    }
+    readable(0o600);
+
+    // The build failed the first read; search `n` fails read `n + 1`.
+    let expected: Vec<_> = (1..=attempts)
+        .map(|search| (vec![fresh.id().to_owned()], search + 1 < attempts))
+        .collect();
+    assert_eq!(actual, expected);
 }
 
 // Covers: search finds the sessions the catalog lists, and only what their

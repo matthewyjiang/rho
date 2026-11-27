@@ -65,7 +65,7 @@ pub(crate) fn open(root: &Path) -> anyhow::Result<Connection> {
     Ok(database.into_connection())
 }
 
-const SCHEMA_VERSION: u32 = 6;
+const SCHEMA_VERSION: u32 = 7;
 
 #[derive(Debug, thiserror::Error)]
 enum OpenError {
@@ -105,7 +105,8 @@ fn migrate(connection: &mut Connection) -> Result<(), OpenError> {
         // not mark the sessions person-facing scopes leave out; version 4
         // held evidence from format 1-3 sessions, which no longer open;
         // version 5 held every branch's evidence, without where replay
-        // shows it or when it was saved.
+        // shows it or when it was saved; version 6 kept no count of a
+        // pending transcript's failed reads.
         transaction.execute_batch(
             "drop trigger if exists evidence_insert;
              drop trigger if exists evidence_delete;
@@ -126,7 +127,7 @@ fn migrate(connection: &mut Connection) -> Result<(), OpenError> {
          create unique index files_path on files(path);
          create index files_worktree on files(worktree);
          create table cursor (identity text not null, seq integer not null);
-         create table pending (path text primary key);
+         create table pending (path text primary key, attempts integer not null);
          create table evidence (
              rowid integer primary key, session text not null references files(key) on delete cascade,
              anchor text not null, role text not null, text text not null,
@@ -277,14 +278,30 @@ pub(crate) fn refresh(
     Ok(report)
 }
 
-/// Whether the index holds every transcript: false before the first
-/// refresh finishes, as after a schema change, and while a transcript
-/// waits to be read again (`pending`), as one that changed while it was
-/// read. Until then a search may miss sessions.
+/// How many refreshes in a row may fail to read a transcript before the
+/// index stops counting it as missing ([`complete`]). A transcript that
+/// changed while it was read, as a session saving a step does, reads on the
+/// next try; a read that fails three times running is taken as lasting, such
+/// as a file no one may read, which must not leave every search saying it
+/// may miss matches. Such a transcript is still tried on every refresh.
+pub(crate) const MAX_COUNTED_ATTEMPTS: u32 = 3;
+
+/// Whether a refresh has read every transcript once: false before the first
+/// finishes, as after a schema change. Until then searches leave reading
+/// to the background build.
+pub(crate) fn bootstrapped(connection: &Connection) -> rusqlite::Result<bool> {
+    connection.query_row("select exists(select 1 from cursor)", [], |row| row.get(0))
+}
+
+/// Whether the index holds every transcript it can: [`bootstrapped`], with
+/// no transcript waiting to be read again (`pending`) that has failed fewer
+/// than [`MAX_COUNTED_ATTEMPTS`] times. Until then a search may miss
+/// sessions.
 pub(crate) fn complete(connection: &Connection) -> rusqlite::Result<bool> {
     connection.query_row(
-        "select exists(select 1 from cursor) and not exists(select 1 from pending)",
-        [],
+        "select exists(select 1 from cursor)
+             and not exists(select 1 from pending where attempts<?1)",
+        [MAX_COUNTED_ATTEMPTS],
         |row| row.get(0),
     )
 }
@@ -302,6 +319,14 @@ fn refresh_file(
     report: &mut Refresh,
 ) -> anyhow::Result<()> {
     let path_string = path.to_string_lossy();
+    let attempts: u32 = transaction
+        .query_row(
+            "select attempts from pending where path=?1",
+            [&path_string],
+            |row| row.get(0),
+        )
+        .optional()?
+        .unwrap_or(0);
     transaction.execute("delete from pending where path=?1", [&path_string])?;
     report.files_checked += 1;
     if !path.try_exists()? {
@@ -388,8 +413,8 @@ fn refresh_file(
             transaction.execute("delete from files where path=?1", [&path_string])?;
             if transient(&error) {
                 transaction.execute(
-                    "insert or ignore into pending(path) values(?1)",
-                    [&path_string],
+                    "insert or ignore into pending(path,attempts) values(?1,?2)",
+                    params![path_string, attempts.saturating_add(1)],
                 )?;
             } else {
                 tracing::debug!(%error, path = %path.display(), "not a session transcript; not indexed");

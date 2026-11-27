@@ -10221,7 +10221,7 @@
       "description": "Result of [`SESSION_SEARCH`]: the matching sessions, newest\n`updated_at` first, the more relevant first among those saved in the\nsame second. Following `next_cursor` pages as [`SESSION_LIST`] does: a\nsession saved during the walk moves ahead of the cursor and is missed.\nRelevance moves as the index changes, so a session saved in the same\nsecond as the last one a page returned may be repeated or missed.",
       "properties": {
         "indexing": {
-          "description": "The index has not read every transcript yet (first use, after its\nschema changed, or while one that changed as it was read waits to\nbe read again), so this page may miss matches. Search again later.",
+          "description": "The index has not read every transcript yet (first use, after its\nschema changed, or for a few searches while one whose read failed\nor that changed as it was read waits to be read again), so this\npage may miss matches. Search again later.",
           "type": "boolean"
         },
         "next_cursor": {
