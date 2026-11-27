@@ -297,8 +297,8 @@ pub enum PermissionMode {
 pub struct QuestionAsk {
     pub title: String,
     /// Why the agent asks: the context a person, or the session that
-    /// answers for one, needs to choose. Absent when the agent gave none,
-    /// and from a daemon that predates it.
+    /// answers for one, needs to choose. Never blank: absent when the agent
+    /// gave none, and from a daemon that predates it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
     pub questions: Vec<Question>,

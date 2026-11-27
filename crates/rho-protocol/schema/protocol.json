@@ -6784,7 +6784,7 @@
           "type": "array"
         },
         "reason": {
-          "description": "Why the agent asks: the context a person, or the session that\nanswers for one, needs to choose. Absent when the agent gave none,\nand from a daemon that predates it.",
+          "description": "Why the agent asks: the context a person, or the session that\nanswers for one, needs to choose. Never blank: absent when the agent\ngave none, and from a daemon that predates it.",
           "type": [
             "string",
             "null"

@@ -361,9 +361,9 @@ async fn a_started_session_that_asks_waits_for_a_person() {
 
 // Covers: a session's question, with the reason its agent gave, reaches the
 // session that started it through `wait` and an attached client alike; that
-// session's `answer` hands the asker's tool the answers as a questionnaire result
-// whose source says a session answered; clients see the request closed by a
-// session; a session that did not start the asker is refused by the tool and
+// session's `answer` hands the asker's tool the answers as a questionnaire
+// result whose source says a session answered; clients see the request
+// closed by a session; a session that did not start the asker is refused by the tool and
 // by the daemon alike; a second answer finds the question closed (#1714).
 // Owner: session-control answer, daemon `rho/session/answer_question`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

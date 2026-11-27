@@ -48,9 +48,10 @@ fn choice(value: &str, label: &str, description: Option<&str>) -> Choice {
     }
 }
 
-/// Asked because CI runs on Linux: which database, one of two, required; which features, any of three or
-/// the user's own, optional, defaulting to "docs" in `default_style`; and a
-/// name, a text field as the questionnaire tool sends one.
+/// Asked because CI runs on Linux: which database, one of two, required;
+/// which features, any of three or the user's own, optional, defaulting to
+/// "docs" in `default_style`; and a name, a text field as the questionnaire
+/// tool sends one.
 fn questions(default_style: DefaultStyle) -> Ask {
     Ask::Question(QuestionAsk {
         title: "Setup".into(),
@@ -244,10 +245,9 @@ fn a_prompt_turns_typed_lines_into_its_answer() {
 
 // Covers: what a prompt shows: an approval's options; a plan approval's
 // plan above its options, its unknown mode left out; the questions' reason
-// above the first question; each question with
-// its help, choices and their descriptions, and how to answer it, a text
-// field showing no placeholder choice; and no prompt for an empty question
-// request.
+// above the first question; each question with its help, choices and their
+// descriptions, and how to answer it, a text field showing no placeholder
+// choice; and no prompt for an empty question request.
 // Owner: rho attach prompt (unit).
 #[test]
 fn a_prompt_shows_what_it_asks() {

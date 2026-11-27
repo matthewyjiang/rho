@@ -17,17 +17,16 @@ use crate::{
 /// One input request being answered.
 pub(super) struct Prompt {
     id: InputRequestId,
+    /// What the request is about, shown above what it asks: a plan, or why
+    /// the questions are asked.
+    preface: Option<String>,
     kind: Kind,
 }
 
 enum Kind {
     /// One of numbered options: an approval's three, or a plan approval's
     /// permission modes, then keeping on planning.
-    Pick {
-        /// What the options decide on, shown above them: a plan.
-        preface: Option<String>,
-        options: Vec<(String, InputAnswer)>,
-    },
+    Pick { options: Vec<(String, InputAnswer)> },
     /// Questions asked in turn and answered together.
     Questions {
         ask: QuestionAsk,
@@ -53,15 +52,18 @@ impl Prompt {
     /// Starts answering `request`; `None` when this rho cannot answer it,
     /// as with an ask a newer daemon sends.
     pub(super) fn new(request: &InputRequest) -> Option<Self> {
-        let kind = match &request.ask {
-            Ask::Approval(_) => Kind::Pick {
-                preface: None,
-                options: vec![
-                    ("allow once".to_owned(), InputAnswer::AllowOnce),
-                    ("allow for session".to_owned(), InputAnswer::AllowForSession),
-                    ("deny".to_owned(), InputAnswer::Deny { reason: None }),
-                ],
-            },
+        let preface = |text: &str| Some(escape_controls(text.trim_end(), LineBreaks::Keep));
+        let (preface, kind) = match &request.ask {
+            Ask::Approval(_) => (
+                None,
+                Kind::Pick {
+                    options: vec![
+                        ("allow once".to_owned(), InputAnswer::AllowOnce),
+                        ("allow for session".to_owned(), InputAnswer::AllowForSession),
+                        ("deny".to_owned(), InputAnswer::Deny { reason: None }),
+                    ],
+                },
+            ),
             Ask::PlanApproval(plan) => {
                 // A mode this rho does not know is left out: it could not
                 // name it.
@@ -83,22 +85,23 @@ impl Prompt {
                     "keep planning".to_owned(),
                     InputAnswer::KeepPlanning { feedback: None },
                 ));
-                Kind::Pick {
-                    preface: Some(escape_controls(plan.plan.trim_end(), LineBreaks::Keep)),
-                    options,
-                }
+                (preface(&plan.plan), Kind::Pick { options })
             }
-            Ask::Question(ask) if !ask.questions.is_empty() => Kind::Questions {
-                ask: ask.clone(),
-                answers: BTreeMap::new(),
-                index: 0,
-            },
+            Ask::Question(ask) if !ask.questions.is_empty() => (
+                ask.reason.as_deref().and_then(preface),
+                Kind::Questions {
+                    ask: ask.clone(),
+                    answers: BTreeMap::new(),
+                    index: 0,
+                },
+            ),
             // An empty question request, or an ask a newer daemon sends:
             // `Ask` is non-exhaustive.
             _ => return None,
         };
         Some(Self {
             id: request.id,
+            preface,
             kind,
         })
     }
@@ -110,14 +113,7 @@ impl Prompt {
     /// What the prompt shows first: a plan approval's plan, or why the
     /// questions are asked, then what it asks.
     pub(super) fn opening(&self) -> String {
-        let preface = match &self.kind {
-            Kind::Pick { preface, .. } => preface.clone(),
-            Kind::Questions { ask, .. } => ask
-                .reason
-                .as_deref()
-                .map(|reason| escape_controls(reason.trim_end(), LineBreaks::Keep)),
-        };
-        match preface {
+        match &self.preface {
             Some(preface) => format!("{preface}\n{}", self.asking()),
             None => self.asking(),
         }
@@ -126,7 +122,7 @@ impl Prompt {
     /// What the prompt asks now: its options, or the question being asked.
     pub(super) fn asking(&self) -> String {
         match &self.kind {
-            Kind::Pick { options, .. } => {
+            Kind::Pick { options } => {
                 let options: Vec<String> = (1..)
                     .zip(options)
                     .map(|(n, (label, _))| format!("{n} {label}"))
@@ -142,7 +138,7 @@ impl Prompt {
     pub(super) fn reply(&mut self, line: &str) -> Reply {
         let line = line.trim();
         match &mut self.kind {
-            Kind::Pick { options, .. } => match line
+            Kind::Pick { options } => match line
                 .parse::<usize>()
                 .ok()
                 .and_then(|n| options.get(n.checked_sub(1)?))
