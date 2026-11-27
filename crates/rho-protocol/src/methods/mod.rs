@@ -60,6 +60,11 @@
 //! | [`MODEL_REFRESH`] | [`ModelRefreshParams`] | [`ModelRefreshResponse`] |
 //! | [`MCP_LIST`] | [`McpListParams`] | [`McpListResponse`] |
 //! | [`HOOKS_LIST`] | [`HooksListParams`] | [`HooksListResponse`] |
+//! | [`PLUGINS_LIST`] | [`PluginsListParams`] | [`PluginsListResponse`] |
+//! | [`PLUGINS_INSTALL`] | [`PluginsInstallParams`] | [`PluginsInstallResponse`] |
+//! | [`PLUGINS_UPDATE`] | [`PluginsUpdateParams`] | [`PluginsUpdateResponse`] |
+//! | [`PLUGINS_SET_ENABLED`] | [`PluginsSetEnabledParams`] | [`PluginsSetEnabledResponse`] |
+//! | [`PLUGINS_REMOVE`] | [`PluginsRemoveParams`] | [`PluginsRemoveResponse`] |
 //!
 //! The daemon sends these notifications; clients send none.
 //!
@@ -100,6 +105,7 @@ mod mcp_list;
 mod models;
 mod options;
 mod outcome;
+mod plugins;
 mod process;
 mod pull_request;
 mod pull_request_detail;
@@ -201,6 +207,13 @@ pub use options::{
     SessionConfigureResponse, SessionOptions, StartedSessionDefaults, SESSION_CONFIGURE,
 };
 pub use outcome::{AnswerStop, TurnError, TurnErrorKind, TurnOutcome};
+pub use plugins::{
+    Plugin, PluginConflict, PluginInstallSource, PluginScope, PluginSource, PluginStatus,
+    PluginTarget, PluginUpdate, PluginUpdateOutcome, PluginsInstallParams, PluginsInstallResponse,
+    PluginsListParams, PluginsListResponse, PluginsRemoveParams, PluginsRemoveResponse,
+    PluginsSetEnabledParams, PluginsSetEnabledResponse, PluginsUpdateParams, PluginsUpdateResponse,
+    PLUGINS_INSTALL, PLUGINS_LIST, PLUGINS_REMOVE, PLUGINS_SET_ENABLED, PLUGINS_UPDATE,
+};
 pub use process::{
     ProcessChunk, ProcessOutput, ProcessOutputParams, ProcessState, ProcessStream, SessionProcess,
     SessionProcessesParams, SessionProcessesResponse, SESSION_PROCESSES,
@@ -379,6 +392,11 @@ protocol! {
         ModelRefresh = MODEL_REFRESH: ModelRefreshParams => ModelRefreshResponse,
         McpList = MCP_LIST: McpListParams => McpListResponse,
         HooksList = HOOKS_LIST: HooksListParams => HooksListResponse,
+        PluginsList = PLUGINS_LIST: PluginsListParams => PluginsListResponse,
+        PluginsInstall = PLUGINS_INSTALL: PluginsInstallParams => PluginsInstallResponse,
+        PluginsUpdate = PLUGINS_UPDATE: PluginsUpdateParams => PluginsUpdateResponse,
+        PluginsSetEnabled = PLUGINS_SET_ENABLED: PluginsSetEnabledParams => PluginsSetEnabledResponse,
+        PluginsRemove = PLUGINS_REMOVE: PluginsRemoveParams => PluginsRemoveResponse,
     }
     notifications {
         // NEXT_MAJOR(rho-protocol): add an optional unix-ms at field to SessionEventParams and remove SessionEventEnvelope.

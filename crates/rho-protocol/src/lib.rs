@@ -226,6 +226,13 @@ pub use methods::{
     NewSessionMark, SessionMark, SessionMarkParams, SessionMarkResponse, SESSION_MARK,
 };
 pub use methods::{
+    Plugin, PluginConflict, PluginInstallSource, PluginScope, PluginSource, PluginStatus,
+    PluginTarget, PluginUpdate, PluginUpdateOutcome, PluginsInstallParams, PluginsInstallResponse,
+    PluginsListParams, PluginsListResponse, PluginsRemoveParams, PluginsRemoveResponse,
+    PluginsSetEnabledParams, PluginsSetEnabledResponse, PluginsUpdateParams, PluginsUpdateResponse,
+    PLUGINS_INSTALL, PLUGINS_LIST, PLUGINS_REMOVE, PLUGINS_SET_ENABLED, PLUGINS_UPDATE,
+};
+pub use methods::{
     ProcessChunk, ProcessOutput, ProcessOutputParams, ProcessState, ProcessStream, SessionProcess,
     SessionProcessesParams, SessionProcessesResponse, SESSION_PROCESSES,
 };

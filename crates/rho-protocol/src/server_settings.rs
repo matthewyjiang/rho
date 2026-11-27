@@ -1,7 +1,7 @@
 //! The settings part of the daemon's protocol: `rho/config/*` (#1720),
-//! `rho/model/*`, the models a model setting may take, and `rho/mcp/list`
+//! `rho/model/*`, the models a model setting may take, `rho/mcp/list`
 //! and `rho/hooks/list`, the MCP servers and hooks the configuration sets
-//! up. The [`SettingsService`] methods every [`crate::Service`] answers,
+//! up, and `rho/plugins/*`, the agent plugins and managing them. The [`SettingsService`] methods every [`crate::Service`] answers,
 //! and forwarding a namespace's changes, or the models', once a client
 //! reads them.
 
@@ -16,13 +16,19 @@ use crate::{
         ModelRefreshResponse, CONFIG_GET, CONFIG_REGISTER, CONFIG_SCHEMA, CONFIG_SET, HOOKS_LIST,
         MCP_LIST, MODEL_LIST, MODEL_REFRESH,
     },
+    methods::{
+        PluginsInstallParams, PluginsInstallResponse, PluginsListParams, PluginsListResponse,
+        PluginsRemoveParams, PluginsRemoveResponse, PluginsSetEnabledParams,
+        PluginsSetEnabledResponse, PluginsUpdateParams, PluginsUpdateResponse, PLUGINS_INSTALL,
+        PLUGINS_LIST, PLUGINS_REMOVE, PLUGINS_SET_ENABLED, PLUGINS_UPDATE,
+    },
     server_codec::{encode_result, unsupported},
     server_outbox::Responder,
     RpcError,
 };
 
 /// The daemon's answers to `rho/config/*`, `rho/model/*`, `rho/mcp/list`,
-/// and `rho/hooks/list`, which
+/// `rho/hooks/list`, and `rho/plugins/*`, which
 /// [`crate::Service`] requires. Calls run as [`crate::Service`]'s do: each
 /// in its own task, overlapping within a connection and across
 /// connections. Each method answers [`crate::ErrorCode::MethodNotFound`]
@@ -106,6 +112,54 @@ pub trait SettingsService: Send + Sync {
     ) -> impl Future<Output = Result<HooksListResponse, RpcError>> + Send {
         let _ = params;
         unsupported(HOOKS_LIST)
+    }
+
+    /// Answers `rho/plugins/list`: the agent plugins a session would find.
+    fn list_plugins(
+        &self,
+        params: PluginsListParams,
+    ) -> impl Future<Output = Result<PluginsListResponse, RpcError>> + Send {
+        let _ = params;
+        unsupported(PLUGINS_LIST)
+    }
+
+    /// Handles `rho/plugins/install`: copy, link, or fetch a plugin package
+    /// into a plugins root. A git install resolves once `git` finishes, so
+    /// an implementation runs it off the async workers.
+    fn install_plugin(
+        &self,
+        params: PluginsInstallParams,
+    ) -> impl Future<Output = Result<PluginsInstallResponse, RpcError>> + Send {
+        let _ = params;
+        unsupported(PLUGINS_INSTALL)
+    }
+
+    /// Handles `rho/plugins/update`: fetch git-installed plugins again,
+    /// resolving once every fetch finishes.
+    fn update_plugins(
+        &self,
+        params: PluginsUpdateParams,
+    ) -> impl Future<Output = Result<PluginsUpdateResponse, RpcError>> + Send {
+        let _ = params;
+        unsupported(PLUGINS_UPDATE)
+    }
+
+    /// Handles `rho/plugins/set_enabled`: save a plugin's enable state.
+    fn set_plugin_enabled(
+        &self,
+        params: PluginsSetEnabledParams,
+    ) -> impl Future<Output = Result<PluginsSetEnabledResponse, RpcError>> + Send {
+        let _ = params;
+        unsupported(PLUGINS_SET_ENABLED)
+    }
+
+    /// Handles `rho/plugins/remove`: delete a plugin's package.
+    fn remove_plugin(
+        &self,
+        params: PluginsRemoveParams,
+    ) -> impl Future<Output = Result<PluginsRemoveResponse, RpcError>> + Send {
+        let _ = params;
+        unsupported(PLUGINS_REMOVE)
     }
 }
 

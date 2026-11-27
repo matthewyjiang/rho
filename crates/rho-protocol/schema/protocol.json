@@ -5690,6 +5690,637 @@
       ],
       "description": "Where a plan step is."
     },
+    "Plugin": {
+      "description": "One plugin package found in a plugins root.",
+      "properties": {
+        "agent_files": {
+          "description": "The file names of the Rho agent definitions it ships; the agent\ncatalog reads each and decides the agent it defines.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "enabled": {
+          "description": "Whether its scope's `plugins.toml` leaves it enabled.",
+          "type": "boolean"
+        },
+        "error": {
+          "description": "Why it was rejected, for a [`PluginStatus::Rejected`] package: its\n`plugin.json` is missing, unreadable, invalid, or resolves outside\nthe package.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "mcp_servers": {
+          "description": "The names of the MCP servers its `mcp.json` defines; a session\nqualifies each as `<plugin>/<server>`, as\n[`super::ConfiguredMcpServer::identity`].",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "name": {
+          "description": "Its manifest's name; for a [`PluginStatus::Rejected`] package whose\nmanifest did not load, its directory's name.",
+          "type": "string"
+        },
+        "path": {
+          "description": "The package's directory in its plugins root, or the symlink there\nfor a linked package.",
+          "type": "string"
+        },
+        "problems": {
+          "description": "Problems that leave the rest of the plugin usable, such as a skill\nor MCP server that did not load or a manifest warning; empty when\nclean.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "scope": {
+          "$ref": "#/$defs/PluginScope"
+        },
+        "skills": {
+          "description": "The names of the skills it brings. Empty for a shadowed or rejected\npackage, whose components are not read.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "source": {
+          "$ref": "#/$defs/PluginSource"
+        },
+        "state_path": {
+          "description": "The `plugins.toml` that saves whether it is enabled and how it was\ninstalled: the daemon's `~/.rho/plugins.toml` (or `$RHO_HOME`'s) for\na user plugin, the project's `.rho/plugins.toml` for a project one.\nIt may not exist yet.",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/PluginStatus"
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "scope",
+        "path",
+        "source",
+        "enabled",
+        "state_path",
+        "status",
+        "problems",
+        "skills",
+        "mcp_servers",
+        "agent_files"
+      ],
+      "type": "object"
+    },
+    "PluginConflict": {
+      "description": "The `data` of a [`crate::ErrorCode::PluginExists`] error: the plugin\nalready in the plugins root an install would replace.",
+      "properties": {
+        "name": {
+          "description": "The name of the package being installed, which the plugin there\nshares.",
+          "type": "string"
+        },
+        "path": {
+          "description": "The plugin there.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "path"
+      ],
+      "type": "object"
+    },
+    "PluginInstallSource": {
+      "description": "Where [`PLUGINS_INSTALL`] reads a package from. The daemon reads it, so\nit has no `Unknown`.",
+      "oneOf": [
+        {
+          "description": "Copy the package directory at `path`, an absolute path on the\ndaemon's machine.",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "type": {
+              "const": "path",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "path"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Symlink the package directory at `path`, an absolute path on the\ndaemon's machine, so edits there apply to new sessions without\ninstalling again.",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "type": {
+              "const": "link",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "path"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Fetch the repository at `url` with the daemon machine's `git`, then\ncopy its package. `url` is what `rho plugins install` takes: an\n`https://`, `http://`, `ssh://`, `git://`, `file://`, or `git@`\nremote, whose default branch's root holds the package, or a GitHub\nlink, whose `/tree/<ref>/<path>` names the ref and the package's\ndirectory. A URL with credentials in it is refused.",
+          "properties": {
+            "type": {
+              "const": "git",
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "url"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "PluginScope": {
+      "anyOf": [
+        {
+          "const": "user",
+          "description": "The daemon user's `~/.agents/plugins`, which always loads.",
+          "type": "string"
+        },
+        {
+          "const": "project",
+          "description": "A `.agents/plugins` of the workspace's project, which loads only\nwhen the client trusts the project.",
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "Whose plugins root a plugin is in."
+    },
+    "PluginSource": {
+      "anyOf": [
+        {
+          "description": "Placed there by hand or by another tool; Rho has no record of it.",
+          "properties": {
+            "type": {
+              "const": "local",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Copied from a local directory by an install.",
+          "properties": {
+            "type": {
+              "const": "install",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Symlinked to `target`, a local directory, by an install with\n[`PluginInstallSource::Link`].",
+          "properties": {
+            "target": {
+              "type": "string"
+            },
+            "type": {
+              "const": "link",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "target"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Copied from the git repository at `url` by an install;\n[`PLUGINS_UPDATE`] fetches it again.",
+          "properties": {
+            "commit": {
+              "description": "The commit the package was copied from.",
+              "type": "string"
+            },
+            "path": {
+              "description": "The package's directory in the repository; absent, its root.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "ref": {
+              "description": "The branch, tag, or commit installed; absent, the repository's\ndefault branch.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "const": "git",
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "url",
+            "commit"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "properties": {
+            "type": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object",
+          "x-rho-other": true
+        }
+      ],
+      "description": "How a plugin's package came to be in its plugins root."
+    },
+    "PluginStatus": {
+      "anyOf": [
+        {
+          "const": "loaded",
+          "description": "A session loads its skills, MCP servers, and agents.",
+          "type": "string"
+        },
+        {
+          "const": "disabled",
+          "description": "Disabled in its scope's `plugins.toml`, so a session loads none of\nit; it still keeps a same-named plugin of a later root from loading.",
+          "type": "string"
+        },
+        {
+          "const": "untrusted",
+          "description": "A project plugin the client does not trust the project for\n(`RHO_TRUST_PROJECT_PLUGINS`), so a session loads none of it. Its\ncomponents are still listed.",
+          "type": "string"
+        },
+        {
+          "const": "rejected",
+          "description": "Its `plugin.json` did not load; [`Plugin::error`] says why.",
+          "type": "string"
+        },
+        {
+          "const": "shadowed",
+          "description": "A plugin of the same name in a nearer root loads or is disabled, so\nthis one is skipped.",
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "Whether a session loads a plugin."
+    },
+    "PluginTarget": {
+      "description": "The plugin a request acts on: a row of [`PLUGINS_LIST`].",
+      "properties": {
+        "name": {
+          "description": "Its [`Plugin::name`].",
+          "type": "string"
+        },
+        "scope": {
+          "$ref": "#/$defs/PluginScope",
+          "description": "Its [`Plugin::scope`]. In project scope the nearest project root\nthat holds a plugin of that name is the one acted on."
+        }
+      },
+      "required": [
+        "name",
+        "scope"
+      ],
+      "type": "object"
+    },
+    "PluginUpdate": {
+      "description": "What [`PLUGINS_UPDATE`] did to one plugin.",
+      "properties": {
+        "outcome": {
+          "$ref": "#/$defs/PluginUpdateOutcome"
+        },
+        "plugin": {
+          "$ref": "#/$defs/PluginTarget"
+        }
+      },
+      "required": [
+        "plugin",
+        "outcome"
+      ],
+      "type": "object"
+    },
+    "PluginUpdateOutcome": {
+      "anyOf": [
+        {
+          "description": "Its ref moved from commit `previous` to `current`, whose package\nreplaced it.",
+          "properties": {
+            "current": {
+              "type": "string"
+            },
+            "previous": {
+              "type": "string"
+            },
+            "type": {
+              "const": "updated",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "previous",
+            "current"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Its ref still points at `commit`, the one installed.",
+          "properties": {
+            "commit": {
+              "type": "string"
+            },
+            "type": {
+              "const": "up_to_date",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "commit"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "It could not be updated and was left as it was. `code` is the\n[`crate::ErrorCode`] a request to update only it would have failed\nwith, such as [`crate::ErrorCode::PluginFetchFailed`], and\n`message` says why.",
+          "properties": {
+            "code": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "message": {
+              "type": "string"
+            },
+            "type": {
+              "const": "failed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "code",
+            "message"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "properties": {
+            "type": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object",
+          "x-rho-other": true
+        }
+      ],
+      "description": "How updating one plugin ended."
+    },
+    "PluginsInstallParams": {
+      "description": "Params of [`PLUGINS_INSTALL`].",
+      "properties": {
+        "environment": {
+          "$ref": "#/$defs/ClientEnvironment",
+          "description": "The asking client's environment, whose project trust the returned\n[`Plugin::status`] reflects. Installing into a project the client\ndoes not trust is allowed; the plugin stays inactive there."
+        },
+        "force": {
+          "description": "Replace a plugin of the same name already in that root. Even then, a\ndirectory there without a `plugin.json` is never replaced.",
+          "type": "boolean"
+        },
+        "scope": {
+          "$ref": "#/$defs/PluginScope",
+          "description": "The plugins root to install into: the daemon user's, or the\nworkspace project's, which needs a workspace."
+        },
+        "source": {
+          "$ref": "#/$defs/PluginInstallSource"
+        },
+        "workspace": {
+          "description": "The directory a session would open in, whose project a project-scope\ninstall goes to. Absent, the daemon user's home directory.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "source",
+        "scope"
+      ],
+      "type": "object"
+    },
+    "PluginsInstallResponse": {
+      "description": "Result of [`PLUGINS_INSTALL`].",
+      "properties": {
+        "plugin": {
+          "$ref": "#/$defs/Plugin",
+          "description": "The installed plugin as [`PLUGINS_LIST`] now lists it; a nearer\nroot's plugin of the same name leaves it\n[`PluginStatus::Shadowed`]."
+        }
+      },
+      "required": [
+        "plugin"
+      ],
+      "type": "object"
+    },
+    "PluginsListParams": {
+      "description": "Params of [`PLUGINS_LIST`].",
+      "properties": {
+        "environment": {
+          "$ref": "#/$defs/ClientEnvironment",
+          "description": "The asking client's environment, whose `RHO_TRUST_PROJECT_PLUGINS`\ndecides whether the project's plugins load, as for a session that\nclient opens. Absent, they do not: they are listed\n[`PluginStatus::Untrusted`]."
+        },
+        "workspace": {
+          "description": "The directory a session would open in, whose project's plugins are\nlisted with the user's. Absent, the daemon user's home directory,\nwhich leaves only the user's plugins.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "PluginsListResponse": {
+      "description": "Result of [`PLUGINS_LIST`].",
+      "properties": {
+        "plugins": {
+          "description": "Every plugin found, in the order a session loads them: the project's\nroots, nearest first, then the user's; within a root, by directory\nname.",
+          "items": {
+            "$ref": "#/$defs/Plugin"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "plugins"
+      ],
+      "type": "object"
+    },
+    "PluginsRemoveParams": {
+      "description": "Params of [`PLUGINS_REMOVE`].",
+      "properties": {
+        "plugin": {
+          "$ref": "#/$defs/PluginTarget"
+        },
+        "workspace": {
+          "description": "The directory a session would open in, whose project's plugins a\nproject-scope target is among. Absent, the daemon user's home\ndirectory.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "plugin"
+      ],
+      "type": "object"
+    },
+    "PluginsRemoveResponse": {
+      "description": "Result of [`PLUGINS_REMOVE`].",
+      "properties": {
+        "path": {
+          "description": "Where the removed package was.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "type": "object"
+    },
+    "PluginsSetEnabledParams": {
+      "description": "Params of [`PLUGINS_SET_ENABLED`].",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "environment": {
+          "$ref": "#/$defs/ClientEnvironment",
+          "description": "The asking client's environment, whose project trust the returned\n[`Plugin::status`] reflects. Enabling a project plugin the client\ndoes not trust is allowed; it stays inactive there."
+        },
+        "plugin": {
+          "$ref": "#/$defs/PluginTarget"
+        },
+        "workspace": {
+          "description": "The directory a session would open in, whose project's plugins a\nproject-scope target is among. Absent, the daemon user's home\ndirectory.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "plugin",
+        "enabled"
+      ],
+      "type": "object"
+    },
+    "PluginsSetEnabledResponse": {
+      "description": "Result of [`PLUGINS_SET_ENABLED`].",
+      "properties": {
+        "plugin": {
+          "$ref": "#/$defs/Plugin",
+          "description": "The plugin as [`PLUGINS_LIST`] now lists it."
+        }
+      },
+      "required": [
+        "plugin"
+      ],
+      "type": "object"
+    },
+    "PluginsUpdateParams": {
+      "description": "Params of [`PLUGINS_UPDATE`].",
+      "properties": {
+        "environment": {
+          "$ref": "#/$defs/ClientEnvironment",
+          "description": "The asking client's environment, whose `RHO_TRUST_PROJECT_PLUGINS`\ndecides whether the project's plugins are fetched: a project's\nplugin records arrive with the repository, so they are fetched only\nfor a client that trusts it."
+        },
+        "plugin": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PluginTarget"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The plugin to update, which must have been installed from git.\nAbsent, every git-installed plugin of the user and of the\nworkspace's project."
+        },
+        "workspace": {
+          "description": "The directory a session would open in, whose project's plugins are\nupdated. Absent, the daemon user's home directory, which leaves only\nthe user's.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "PluginsUpdateResponse": {
+      "description": "Result of [`PLUGINS_UPDATE`].",
+      "properties": {
+        "results": {
+          "description": "Each plugin fetched, project plugins first; empty when none was\ninstalled from git.",
+          "items": {
+            "$ref": "#/$defs/PluginUpdate"
+          },
+          "type": "array"
+        },
+        "untrusted": {
+          "description": "The names of the git-installed project plugins left alone because\nthe client does not trust the project.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "results",
+        "untrusted"
+      ],
+      "type": "object"
+    },
     "Presentation": {
       "description": "A transcript row has exactly one presentation.\n\nClosed: each variant carries its card under its own key, which serde\ncannot read into a unit `Unknown`, so a new variant is a protocol major.",
       "oneOf": [
@@ -12242,6 +12873,24 @@
     "-32023": {
       "name": "CapabilityRequired"
     },
+    "-32024": {
+      "name": "PluginNotFound"
+    },
+    "-32025": {
+      "data": {
+        "$ref": "#/$defs/PluginConflict"
+      },
+      "name": "PluginExists"
+    },
+    "-32026": {
+      "name": "PluginUntrusted"
+    },
+    "-32027": {
+      "name": "PluginInvalid"
+    },
+    "-32028": {
+      "name": "PluginFetchFailed"
+    },
     "-32600": {
       "name": "InvalidRequest"
     },
@@ -12409,6 +13058,46 @@
       },
       "result": {
         "$ref": "#/$defs/ModelRefreshResponse"
+      }
+    },
+    "rho/plugins/install": {
+      "params": {
+        "$ref": "#/$defs/PluginsInstallParams"
+      },
+      "result": {
+        "$ref": "#/$defs/PluginsInstallResponse"
+      }
+    },
+    "rho/plugins/list": {
+      "params": {
+        "$ref": "#/$defs/PluginsListParams"
+      },
+      "result": {
+        "$ref": "#/$defs/PluginsListResponse"
+      }
+    },
+    "rho/plugins/remove": {
+      "params": {
+        "$ref": "#/$defs/PluginsRemoveParams"
+      },
+      "result": {
+        "$ref": "#/$defs/PluginsRemoveResponse"
+      }
+    },
+    "rho/plugins/set_enabled": {
+      "params": {
+        "$ref": "#/$defs/PluginsSetEnabledParams"
+      },
+      "result": {
+        "$ref": "#/$defs/PluginsSetEnabledResponse"
+      }
+    },
+    "rho/plugins/update": {
+      "params": {
+        "$ref": "#/$defs/PluginsUpdateParams"
+      },
+      "result": {
+        "$ref": "#/$defs/PluginsUpdateResponse"
       }
     },
     "rho/session/answer": {

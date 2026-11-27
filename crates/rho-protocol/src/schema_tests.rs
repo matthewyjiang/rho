@@ -32,7 +32,10 @@ use crate::methods::{
     HookStatus, HookTools, HookWarning, HooksReloadOutcome, PromptSourceKind, SessionReportData,
     SummaryRequestPath, ToolSchemaOrigin,
 };
-use crate::methods::{HooksFileScope, HooksFileStatus, McpServerSource, McpTransport};
+use crate::methods::{
+    HooksFileScope, HooksFileStatus, McpServerSource, McpTransport, PluginScope, PluginSource,
+    PluginStatus, PluginUpdateOutcome,
+};
 
 // Covers: the committed schema/protocol.json is what the wire types
 // generate, so clients that generate types from it speak the daemon's wire.
@@ -71,7 +74,7 @@ fn enums_marked_open_read_unknown_values_as_unknown() {
     let unseen = || json!("from_a_newer_daemon");
     let unseen_tag = || json!({ "type": "from_a_newer_daemon" });
     let unseen_kind = || json!({ "kind": "from_a_newer_daemon" });
-    let cases: [(&str, bool); 104] = [
+    let cases: [(&str, bool); 108] = [
         ("ContextBasis", reads_as(unseen(), ContextBasis::Unknown)),
         (
             "PromptSourceKind",
@@ -349,6 +352,16 @@ fn enums_marked_open_read_unknown_values_as_unknown() {
         (
             "HooksFileStatus",
             reads_as(unseen_tag(), HooksFileStatus::Unknown),
+        ),
+        ("PluginScope", reads_as(unseen(), PluginScope::Unknown)),
+        (
+            "PluginSource",
+            reads_as(unseen_tag(), PluginSource::Unknown),
+        ),
+        ("PluginStatus", reads_as(unseen(), PluginStatus::Unknown)),
+        (
+            "PluginUpdateOutcome",
+            reads_as(unseen_tag(), PluginUpdateOutcome::Unknown),
         ),
     ];
 
