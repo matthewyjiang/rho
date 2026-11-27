@@ -27,7 +27,7 @@ use crate::{
             },
             FeedEvent,
         },
-        session_runtime::{InsertedMessage, SessionEvent, SessionTools},
+        session_runtime::{InsertedMessage, SessionEvent, SessionTools, TurnKeys},
     },
     display_transcript::{DisplayRow, DisplayTranscript, NotificationRow},
     tools::{
@@ -121,7 +121,9 @@ fn a_live_turn_streams_its_prompt_text_and_calls() {
     live.prompt(&UserInput::text("list files"));
     let events = [
         SessionEvent::MessageInserted(InsertedMessage::Saved(origin(0))),
-        SessionEvent::RunStarted,
+        SessionEvent::RunStarted {
+            keys: TurnKeys::for_tests("turn"),
+        },
         step(100),
         delta("Let me "),
         delta("look."),

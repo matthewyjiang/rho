@@ -17,13 +17,15 @@ use rho_sdk::{
 };
 
 use super::{
-    card, opened_call, plan_entries, result_content, status_update, user_content, CallIds,
-    FeedEvent, UNNAMED_TOOL_TITLE,
+    card,
+    message_ids::{keyed_message_id, KeyedPart},
+    opened_call, plan_entries, result_content, status_update, user_content, CallIds, FeedEvent,
+    UNNAMED_TOOL_TITLE,
 };
 use crate::{
     app::{interactive_presenter::InteractiveToolPresenter, session_runtime::SessionTools},
     display_transcript::{DisplayRow, DisplayTranscript},
-    session::tree::{DisplayRowOrigin, ProjectedMessage},
+    session::tree::{DisplayRowOrigin, MessageKey, ProjectedMessage},
     tools::{
         mcp::exported_name::McpToolNames,
         ui::{SurfaceContent, SurfaceRequest},
@@ -43,8 +45,10 @@ use crate::{
 ///
 /// Each saved message replays whole: one event per message, never chunks.
 /// A compaction replays as the completed compaction event alone. Message
-/// and compaction ids derive from the row they were saved in, and tool call
-/// ids from the provider's saved ids, numbered after the rows saved before.
+/// ids derive from the key a live turn saved the row with, so they are the
+/// ids it was shown under live (`message_ids`), else from the row it was
+/// saved in, as compaction ids do; tool call ids derive from the provider's
+/// saved ids, numbered after the rows saved before.
 /// A call the history left without a result, as a killed process does,
 /// closes `failed`, since history is not running work. The turn's replay
 /// ends with the session's plan as it stood, when it had one.
@@ -351,10 +355,13 @@ pub(crate) fn row_locations(rows: &[ProjectedMessage]) -> Vec<Option<SearchLocat
 /// The id replay gives the first message of the display row saved at
 /// `origin`: a live user message saved there takes it too, so a client sees
 /// one message whether it watched the prompt live or got it replayed.
-pub(super) fn saved_message_id(origin: &DisplayRowOrigin) -> MessageId {
-    let mut ids = MessageIds::default();
-    ids.enter(Some(origin));
-    ids.next()
+pub(super) fn saved_message_id(DisplayRowOrigin { node, row }: &DisplayRowOrigin) -> MessageId {
+    saved_id(&format!("{node}-{row}"), /*part*/ 0)
+}
+
+/// The id of message `part` of the unkeyed row saved at `saved`.
+fn saved_id(saved: &str, part: u32) -> MessageId {
+    MessageId::new(format!("saved-{saved}-{part}"))
 }
 
 /// A replay of display rows under way: what it needs from the rows it
@@ -433,7 +440,8 @@ impl Replay {
 
     /// Renders `row`, opening its calls from `calls`.
     fn row(&mut self, row: &ProjectedMessage, calls: &mut dyn CallSource) {
-        self.message_ids.enter(row.origin.as_ref());
+        self.message_ids
+            .enter(row.origin.as_ref(), row.key.as_ref());
         self.saved_at = row.saved_at;
         self.shown = None;
         self.message(&row.message, calls);
@@ -489,7 +497,7 @@ impl Replay {
             SemanticMessage::User(blocks) | SemanticMessage::BoundaryInput(blocks) => {
                 let content = user_content(blocks);
                 if !content.is_empty() {
-                    let message = self.message_ids.next();
+                    let message = self.message_ids.next(KeyedPart::Whole);
                     self.push(WireEvent::UserMessage {
                         message,
                         content,
@@ -506,7 +514,7 @@ impl Replay {
                     .as_deref()
                     .filter(|summary| !summary.is_empty())
                 {
-                    let message = self.message_ids.next();
+                    let message = self.message_ids.next(KeyedPart::Thought);
                     self.push(WireEvent::ThoughtChunk {
                         message,
                         text: summary.to_owned(),
@@ -562,7 +570,7 @@ impl Replay {
         if text.is_empty() {
             return;
         }
-        let message = self.message_ids.next();
+        let message = self.message_ids.agent();
         self.push(WireEvent::AgentMessageChunk { message, text });
     }
 
@@ -695,31 +703,72 @@ fn location(event: &WireEvent) -> Option<SearchLocation> {
 
 /// Ids for replayed messages that stay the same each time a session loads.
 ///
-/// A message is named after the display row it was saved in, so an id is
-/// unique to one insertion, even of text saved twice. One saved row can
-/// replay as several messages (text after a tool call, a reasoning
-/// summary), which are numbered in order.
+/// A message of a row a live turn keyed takes the id it was shown under
+/// live, from the key. Any other is named after the display row it was
+/// saved in, so an id is unique to one insertion, even of text saved twice.
+/// One saved row can replay as several messages (text after a tool call, a
+/// reasoning summary), which are numbered in order.
 #[derive(Default)]
 struct MessageIds {
+    /// Where the current row was saved, `{node}-{row}`.
     saved: String,
-    part: u32,
+    row: RowIds,
+}
+
+/// How the current row's messages are named.
+enum RowIds {
+    /// After where it was saved, its messages numbered in order.
+    Saved { part: u32 },
+    /// From the key a live turn saved it with, as live names them.
+    Keyed { key: MessageKey, stretches: u32 },
+}
+
+impl Default for RowIds {
+    fn default() -> Self {
+        Self::Saved { part: 0 }
+    }
 }
 
 impl MessageIds {
-    /// Moves on to the row saved at `origin`. A row the load added has none
-    /// and names no message of its own, so it continues the previous row.
-    fn enter(&mut self, origin: Option<&DisplayRowOrigin>) {
+    /// Moves on to the row saved at `origin` with `key`. A row the load
+    /// added has neither and names no message of its own, so it continues
+    /// the previous row.
+    fn enter(&mut self, origin: Option<&DisplayRowOrigin>, key: Option<&MessageKey>) {
         if let Some(DisplayRowOrigin { node, row }) = origin {
             self.saved = format!("{node}-{row}");
-            self.part = 0;
+            self.row = match key {
+                Some(key) => RowIds::Keyed {
+                    key: key.clone(),
+                    stretches: 0,
+                },
+                None => RowIds::default(),
+            };
         }
     }
 
-    /// The id of the next message the current saved row replays as.
-    fn next(&mut self) -> MessageId {
-        let id = MessageId::new(format!("saved-{}-{}", self.saved, self.part));
-        self.part += 1;
-        id
+    /// The id of the current row's next message, which is `part` of it.
+    fn next(&mut self, part: KeyedPart) -> MessageId {
+        match &mut self.row {
+            RowIds::Keyed { key, .. } => keyed_message_id(key, part),
+            RowIds::Saved { part: next } => {
+                *next += 1;
+                saved_id(&self.saved, *next - 1)
+            }
+        }
+    }
+
+    /// The id of the current row's next stretch of agent text.
+    fn agent(&mut self) -> MessageId {
+        match &mut self.row {
+            RowIds::Keyed { key, stretches } => {
+                *stretches += 1;
+                keyed_message_id(key, KeyedPart::Agent(*stretches - 1))
+            }
+            RowIds::Saved { part } => {
+                *part += 1;
+                saved_id(&self.saved, *part - 1)
+            }
+        }
     }
 
     /// The id of the compaction the current saved row shows. A compaction

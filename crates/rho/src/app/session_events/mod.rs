@@ -40,6 +40,7 @@ use crate::{
 use rho_protocol::display::NotificationTone;
 
 mod live;
+mod message_ids;
 pub(crate) mod outcome;
 mod replay;
 #[cfg(test)]

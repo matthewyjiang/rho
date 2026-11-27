@@ -52,7 +52,7 @@ fn seen(event: SessionEvent) -> Seen {
         SessionEvent::MessageInserted(_) | SessionEvent::TitleRequested(_) => {
             unreachable!("the turn inserts the message and asks for a title, not the pump")
         }
-        SessionEvent::RunStarted => Seen::RunStarted,
+        SessionEvent::RunStarted { .. } => Seen::RunStarted,
         SessionEvent::Run(_) => Seen::Run,
         SessionEvent::BoundaryApplied { .. } => Seen::BoundaryApplied,
         SessionEvent::ApprovalRequested { id, .. } => Seen::ApprovalRequested(id),

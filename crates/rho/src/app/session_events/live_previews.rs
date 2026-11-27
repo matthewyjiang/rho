@@ -78,7 +78,7 @@ impl LiveEvents {
             .collect();
         if !cards.is_empty() {
             // Called outside [`Self::map`] too.
-            self.message = None;
+            self.messages.interrupt();
         }
         cards
     }

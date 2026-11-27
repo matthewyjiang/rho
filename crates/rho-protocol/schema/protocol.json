@@ -7676,7 +7676,7 @@
     "SearchLocation": {
       "anyOf": [
         {
-          "description": "A user or agent message: the [`MessageId`] its replay's first event\ncarries (`saved-{node}-{row}-0` today).",
+          "description": "A user or agent message: the [`MessageId`] its replay's first event\ncarries, which its live events carried when a turn streamed it.",
           "properties": {
             "id": {
               "$ref": "#/$defs/MessageId"

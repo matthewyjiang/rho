@@ -117,7 +117,11 @@ impl StoredDisplayRow {
                         message,
                     },
                     _,
-                ) => Ok(StoredDisplayMessage { timestamp, message }),
+                ) => Ok(StoredDisplayMessage {
+                    timestamp,
+                    message,
+                    key: None,
+                }),
                 (
                     Self::Inline {
                         timestamp: None,
@@ -127,6 +131,7 @@ impl StoredDisplayRow {
                 ) => Ok(StoredDisplayMessage {
                     timestamp: timestamp.to_owned(),
                     message,
+                    key: None,
                 }),
                 (Self::Model(index), DisplayRowFormat::ModelRefs) => {
                     let message = model.get(index).ok_or_else(|| {
@@ -139,6 +144,7 @@ impl StoredDisplayRow {
                     Ok(StoredDisplayMessage {
                         timestamp: timestamp.to_owned(),
                         message: message.clone(),
+                        key: None,
                     })
                 }
                 (

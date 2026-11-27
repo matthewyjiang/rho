@@ -180,6 +180,7 @@ fn v4_tree_session_summary_matches_active_display() {
                         timestamp: Some("501".into()),
                         message: Message::user_text("tree display prompt"),
                     }],
+                    display_keys: Default::default(),
                 },
             },
         ],

@@ -24,7 +24,7 @@ use crate::{
             },
             CallIds, LiveEvents,
         },
-        session_runtime::{InsertedMessage, SessionEvent, SessionTools},
+        session_runtime::{InsertedMessage, SessionEvent, SessionTools, TurnKeys},
     },
     config::Config,
     diagnostics::RuntimeDiagnostics,
@@ -45,6 +45,7 @@ fn saved_rows(messages: &[Message]) -> Vec<ProjectedMessage> {
             origin: Some(origin(row)),
             message: message.clone(),
             saved_at: None,
+            key: None,
         })
         .collect()
 }
@@ -205,7 +206,9 @@ fn live_and_replayed_turns_agree() {
     let call_id = rho_sdk::ToolCallId::from_string("call-1").unwrap();
     let events = [
         SessionEvent::MessageInserted(InsertedMessage::Saved(origin(0))),
-        SessionEvent::RunStarted,
+        SessionEvent::RunStarted {
+            keys: TurnKeys::for_tests("turn"),
+        },
         step(),
         delta("Let me "),
         delta("look."),
@@ -256,6 +259,160 @@ fn live_and_replayed_turns_agree() {
         canonical_messages(merged_chunks(live_conversation)),
         canonical_messages(replayed)
     );
+}
+
+// Covers: a message keeps its id live and replayed: the reasoning, each
+// stretch of a reply's text (every chunk of one under one id, text after a
+// call a new message, whether or not the call showed yet), a steer whether
+// its record or its application reaches the daemon first, and the next
+// step's reply, once saved under the keys the turn's saves give them.
+// Owner: session event live and replay mapping
+#[test]
+fn a_message_keeps_its_live_id_when_replayed() {
+    let turn = TurnKeys::for_tests("turn");
+    let step = |step| {
+        SessionEvent::Run(RunEvent::StepStarted {
+            step,
+            context_estimate: ContextEstimate::from_estimated_tokens(10),
+        })
+    };
+    let delta = |text: &str| SessionEvent::Run(RunEvent::AssistantTextDelta { text: text.into() });
+    let steer = rho_sdk::SteeringId::new();
+    let applied = SessionEvent::Run(RunEvent::SteeringApplied {
+        ids: vec![steer.clone()],
+    });
+    let call_id = rho_sdk::ToolCallId::from_string("call-1").unwrap();
+    let first_step = |call_arguments: &str| {
+        [
+            SessionEvent::MessageInserted(InsertedMessage::Saved(origin(0))),
+            SessionEvent::RunStarted { keys: turn.clone() },
+            step(1),
+            SessionEvent::Run(RunEvent::ReasoningDelta { text: "why".into() }),
+            delta("Let me "),
+            delta("look."),
+            SessionEvent::Run(RunEvent::ToolCallUpdated {
+                index: 0,
+                id: Some("call-1".into()),
+                name: Some("bash".into()),
+                arguments_delta: call_arguments.into(),
+            }),
+            delta(" Then "),
+            delta("this."),
+            SessionEvent::Run(RunEvent::ToolProposed {
+                call: shell_call("call-1", "ls"),
+            }),
+            SessionEvent::Run(RunEvent::ToolStarted {
+                call_id: call_id.clone(),
+                name: "bash".into(),
+                metadata: ToolMetadata::new(),
+                execution: ToolExecution::Attached,
+            }),
+            SessionEvent::Run(RunEvent::ToolFinished {
+                call_id: call_id.clone(),
+                result: ToolCompletion::Completed(ToolOutput::text("a.rs")),
+            }),
+        ]
+    };
+    let next_step = [
+        step(2),
+        delta("Found "),
+        delta("a.rs."),
+        SessionEvent::RunClosed,
+        SessionEvent::RunFinished {
+            context: ContextEstimate::from_estimated_tokens(10),
+        },
+    ];
+    let reply = AssistantMessage {
+        reasoning_summary: Some("why".into()),
+        ..AssistantMessage::from_content(vec![
+            model::ContentBlock::Text("Let me look.".into()),
+            call_block("call-1"),
+            model::ContentBlock::Text(" Then this.".into()),
+        ])
+    };
+    let mut saved = saved_rows(&[
+        Message::user_text("list files"),
+        Message::assistant(reply),
+        Message::ToolResult(ToolResult::succeeded("call-1", "a.rs").into()),
+        Message::user_text("use tabs"),
+        Message::assistant(AssistantMessage::from_content(vec![
+            model::ContentBlock::Text("Found a.rs.".into()),
+        ])),
+    ]);
+    saved[1].key = Some(turn.reply(1));
+    saved[3].key = Some(turn.steer(1));
+    saved[4].key = Some(turn.reply(2));
+    let tool_set = AppToolSet::disabled();
+    let tools = || SessionTools::of_tool_set_for_tests(&tool_set);
+    let mut transcript = SavedTranscript::default();
+    transcript.push(SavedTurn::capture(
+        &saved,
+        Path::new("/work"),
+        tools(),
+        &mut CallIds::default(),
+    ));
+    let replayed = messages(transcript.events().map(|event| event.event).collect());
+
+    for (name, call_arguments, recorded_first) in [
+        (
+            "a call shown as it streams; a steer recorded before it applies",
+            r#"{"command":"ls"}"#,
+            true,
+        ),
+        (
+            "a call not shown until it starts; a steer applied before the daemon records it",
+            "",
+            false,
+        ),
+    ] {
+        let mut live =
+            LiveEvents::new(Path::new("/work"), tools(), /*configured_window*/ None);
+        live.prompt(&UserInput::text("list files"));
+        let mut events: Vec<_> = first_step(call_arguments)
+            .iter()
+            .flat_map(|event| live.map(event))
+            .map(|event| event.event)
+            .collect();
+        if recorded_first {
+            live.steered(steer.clone(), &UserInput::text("use tabs"));
+            events.extend(live.map(&applied).into_iter().map(|event| event.event));
+        } else {
+            events.extend(live.map(&applied).into_iter().map(|event| event.event));
+            live.steered(steer.clone(), &UserInput::text("use tabs"));
+        }
+        events.extend(
+            next_step
+                .iter()
+                .flat_map(|event| live.map(event))
+                .map(|event| event.event),
+        );
+        assert_eq!(messages(events), replayed, "{name}");
+    }
+}
+
+/// The messages of `events`: each one's kind, id and whole text, its
+/// chunks joined.
+fn messages(events: Vec<WireEvent>) -> Vec<(&'static str, MessageId, String)> {
+    merged_chunks(events)
+        .into_iter()
+        .filter_map(|event| match event {
+            WireEvent::UserMessage {
+                message, content, ..
+            } => {
+                let text = content
+                    .into_iter()
+                    .map(|block| match block {
+                        ContentBlock::Text { text } => text,
+                        other => panic!("unexpected block {other:?}"),
+                    })
+                    .collect();
+                Some(("user", message, text))
+            }
+            WireEvent::AgentMessageChunk { message, text } => Some(("agent", message, text)),
+            WireEvent::ThoughtChunk { message, text } => Some(("thought", message, text)),
+            _ => None,
+        })
+        .collect()
 }
 
 /// `events` with consecutive chunks of one message joined into one.
@@ -386,6 +543,7 @@ fn replayed_events_carry_their_rows_time_and_closings_none() {
         origin: Some(origin(row)),
         message,
         saved_at: Some(saved_at),
+        key: None,
     })
     .collect();
     let mut transcript = SavedTranscript::default();

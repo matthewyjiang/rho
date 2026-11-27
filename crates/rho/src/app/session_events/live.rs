@@ -1,7 +1,7 @@
 //! Maps a loaded session's live runtime events onto wire events.
 
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, HashMap},
     path::{Path, PathBuf},
 };
 
@@ -18,7 +18,9 @@ use rho_sdk::{
 };
 
 use super::{
-    cards, named_call, opened_call, plan_entries,
+    cards,
+    message_ids::{fresh_message_id, ChunkKind, MessageStream},
+    named_call, opened_call, plan_entries,
     replay::{saved_message_id, SavedTurn},
     result_content, status_update, steer_to_wire, text_content, tools, user_content, CallIds,
     FeedEvent, UNNAMED_TOOL_TITLE,
@@ -123,9 +125,8 @@ pub(crate) struct LiveEvents {
     replayed_rows: usize,
     /// The compaction under way.
     compaction: Option<CompactionId>,
-    /// The message the latest chunk belongs to, while later chunks of its
-    /// kind still continue it.
-    message: Option<OpenMessage>,
+    /// Names the messages chunks stream into.
+    messages: MessageStream,
     /// Whether the provider attempt under way showed clients its output:
     /// text, or a hosted tool's card. A reset discards a response only when
     /// its attempt showed one.
@@ -133,10 +134,11 @@ pub(crate) struct LiveEvents {
     /// The content of each steer the daemon recorded that has not applied,
     /// by the id the run accepted it under. The run's end clears it.
     steers: HashMap<SteeringId, Vec<ContentBlock>>,
-    /// Steers that applied before the daemon recorded them: the run's
-    /// receipt and its events reach the daemon apart. The run's end clears
-    /// it, so steers the daemon never records do not pile up.
-    applied_unseen: HashSet<SteeringId>,
+    /// Steers that applied before the daemon recorded them, with the id
+    /// each applied under: the run's receipt and its events reach the
+    /// daemon apart. The run's end clears it, so steers the daemon never
+    /// records do not pile up.
+    applied_unseen: HashMap<SteeringId, MessageId>,
     /// User messages of steers recorded after they applied, which the next
     /// [`Self::map`] sends first, so they keep the mapper's order.
     late_steers: Vec<WireEvent>,
@@ -149,18 +151,6 @@ pub(crate) enum CompactionEnd<'a> {
     /// Failed with this error, which clients see: never a provider's raw
     /// text, which may echo a credential.
     Failed(String),
-}
-
-/// Which message stream a chunk belongs to.
-#[derive(Clone, Copy, PartialEq)]
-enum ChunkKind {
-    Agent,
-    Thought,
-}
-
-struct OpenMessage {
-    kind: ChunkKind,
-    id: MessageId,
 }
 
 /// Whether clients may still be waiting for a call's final status.
@@ -211,10 +201,10 @@ impl LiveEvents {
             replayed_ids: CallIds::default(),
             replayed_rows: 0,
             compaction: None,
-            message: None,
+            messages: MessageStream::default(),
             attempt_streamed: false,
             steers: HashMap::new(),
-            applied_unseen: HashSet::new(),
+            applied_unseen: HashMap::new(),
             late_steers: Vec::new(),
         }
     }
@@ -224,8 +214,8 @@ impl LiveEvents {
     /// already arrived, the next [`Self::map`] sends the message first.
     pub(crate) fn steered(&mut self, id: SteeringId, input: &UserInput) {
         let content = user_content(input.blocks());
-        if self.applied_unseen.remove(&id) {
-            self.late_steers.push(steer_message(&id, content));
+        if let Some(message) = self.applied_unseen.remove(&id) {
+            self.late_steers.push(steer_message(&id, message, content));
         } else {
             self.steers.insert(id, content);
         }
@@ -271,7 +261,7 @@ impl LiveEvents {
         display: &UserInput,
         inserted: &InsertedMessage,
     ) -> WireEvent {
-        self.message = None;
+        self.messages.interrupt();
         WireEvent::UserMessage {
             message: inserted_message_id(inserted),
             content: user_content(display.blocks()),
@@ -282,7 +272,7 @@ impl LiveEvents {
     /// `text`, a host command's reply, shown as one agent message under the
     /// id of the row `reply` names, which no chunk continues.
     pub(crate) fn shown_reply(&mut self, reply: &InsertedMessage, text: String) -> WireEvent {
-        self.message = None;
+        self.messages.interrupt();
         WireEvent::AgentMessageChunk {
             message: inserted_message_id(reply),
             text,
@@ -342,7 +332,7 @@ impl LiveEvents {
         let late_steers = std::mem::take(&mut self.late_steers);
         if !late_steers.is_empty() {
             // A user message ends any message.
-            self.message = None;
+            self.messages.interrupt();
         }
         // Text after a call's arguments says they stopped growing, so a
         // card held for more of them goes out before the text. Left to the
@@ -374,7 +364,7 @@ impl LiveEvents {
                     | WireEvent::SteeringDelivered { .. }
             )
         }) {
-            self.message = None;
+            self.messages.interrupt();
         }
         late_steers
             .into_iter()
@@ -400,7 +390,10 @@ impl LiveEvents {
             SessionEvent::RunFinished { context } => vec![self.usage(*context)],
             // The daemon reports the job's state itself: a turn's start, its
             // waits for input, and its end.
-            SessionEvent::RunStarted => Vec::new(),
+            SessionEvent::RunStarted { keys } => {
+                self.messages.run_started(keys.clone());
+                Vec::new()
+            }
             // `DaemonView::show` takes the request and runs its job before
             // events reach here; clients hear of the title it saves.
             SessionEvent::TitleRequested(_) => Vec::new(),
@@ -430,11 +423,15 @@ impl LiveEvents {
     /// daemon has not recorded yet waits for [`Self::steered`].
     fn steering_applied(&mut self, ids: &[SteeringId]) -> Vec<WireEvent> {
         ids.iter()
-            .filter_map(|id| match self.steers.remove(id) {
-                Some(content) => Some(steer_message(id, content)),
-                None => {
-                    self.applied_unseen.insert(id.clone());
-                    None
+            .filter_map(|id| {
+                // Numbered as they apply, as the turn's saves number them.
+                let message = self.messages.steer();
+                match self.steers.remove(id) {
+                    Some(content) => Some(steer_message(id, message, content)),
+                    None => {
+                        self.applied_unseen.insert(id.clone(), message);
+                        None
+                    }
                 }
             })
             .collect()
@@ -449,7 +446,7 @@ impl LiveEvents {
             RunEvent::StepStarted {
                 context_estimate, ..
             } => {
-                self.message = None;
+                self.messages.step_started();
                 self.attempt_streamed = false;
                 // A step numbers its calls from zero again, and a call the
                 // last one streamed has started by now if it ever will.
@@ -461,6 +458,7 @@ impl LiveEvents {
                     .collect()
             }
             RunEvent::ToolProposed { call } => {
+                self.messages.call_seen();
                 if !call.id.is_empty() {
                     self.proposed.insert(call.id.clone(), call.clone());
                 }
@@ -472,6 +470,7 @@ impl LiveEvents {
                 metadata,
                 execution: _,
             } => {
+                self.messages.call_seen();
                 self.present_proposal(call_id.as_str());
                 let card = self
                     .presenter
@@ -549,6 +548,7 @@ impl LiveEvents {
                 // An attempt that failed before streaming, as one that could
                 // not connect, has no response to discard: only the retry.
                 let streamed = std::mem::take(&mut self.attempt_streamed) || !discarded.is_empty();
+                self.messages.response_reset(streamed);
                 discarded
                     .into_iter()
                     .chain(streamed.then_some(WireEvent::ResponseDiscarded))
@@ -572,7 +572,10 @@ impl LiveEvents {
                 id,
                 name,
                 arguments_delta,
-            } => self.streamed_call(*index, id.as_deref(), name.as_deref(), arguments_delta),
+            } => {
+                self.messages.call_seen();
+                self.streamed_call(*index, id.as_deref(), name.as_deref(), arguments_delta)
+            }
             RunEvent::CompactionStarted { .. } => {
                 self.compaction_started(CompactionTrigger::Automatic)
             }
@@ -644,17 +647,7 @@ impl LiveEvents {
     /// previous event was anything else.
     fn chunk(&mut self, kind: ChunkKind, text: &str) -> WireEvent {
         self.attempt_streamed = true;
-        let message = match &self.message {
-            Some(open) if open.kind == kind => open.id.clone(),
-            _ => {
-                let id = fresh_message_id();
-                self.message = Some(OpenMessage {
-                    kind,
-                    id: id.clone(),
-                });
-                id
-            }
-        };
+        let message = self.messages.chunk(kind);
         let text = text.to_owned();
         match kind {
             ChunkKind::Agent => WireEvent::AgentMessageChunk { message, text },
@@ -666,6 +659,7 @@ impl LiveEvents {
     /// never saw finish: each closes `failed`. Ends the run's state, so the
     /// next run starts clean: steers it has not applied were dropped.
     fn close_unfinished(&mut self) -> Vec<WireEvent> {
+        self.messages.run_ended();
         self.proposed.clear();
         self.previews.clear();
         self.presenter =
@@ -691,7 +685,7 @@ impl LiveEvents {
         let id = fresh_compaction_id();
         self.compaction = Some(id.clone());
         // Called outside [`Self::map`] too: a compaction ends any message.
-        self.message = None;
+        self.messages.interrupt();
         vec![WireEvent::Compaction {
             id,
             status: CompactionStatus::Started {
@@ -725,7 +719,7 @@ impl LiveEvents {
             return Vec::new();
         };
         // Called outside [`Self::map`] too: a compaction ends any message.
-        self.message = None;
+        self.messages.interrupt();
         std::iter::once(WireEvent::Compaction { id, status })
             .chain(usage.map(|used| self.fill(used)))
             .collect()
@@ -959,18 +953,13 @@ fn inserted_message_id(inserted: &InsertedMessage) -> MessageId {
     }
 }
 
-/// Applied steer `id`, `content`, as a user message.
-fn steer_message(id: &SteeringId, content: Vec<ContentBlock>) -> WireEvent {
+/// Applied steer `id`, `content`, as user message `message`.
+fn steer_message(id: &SteeringId, message: MessageId, content: Vec<ContentBlock>) -> WireEvent {
     WireEvent::UserMessage {
-        message: fresh_message_id(),
+        message,
         content,
         steer: Some(steer_to_wire(id)),
     }
-}
-
-/// A live message's id. Replayed messages derive theirs from saved rows.
-fn fresh_message_id() -> MessageId {
-    MessageId::new(format!("msg-{}", uuid::Uuid::new_v4()))
 }
 
 /// Each live compaction gets a fresh random id: clients may keep a

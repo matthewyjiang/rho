@@ -5,8 +5,10 @@ use pretty_assertions::assert_eq;
 use rho_providers::model::{Message, ModelIdentity};
 use rho_sdk::{CompactionState, Revision, SessionId, SessionSnapshot};
 
+use super::super::persistence::active_display_from_tree;
 use super::super::tree::{
-    SessionNodeKind, SessionTree, SessionTreeItemKind, StoredStateTransition,
+    DisplayKeys, MessageKey, SessionNodeKind, SessionTree, SessionTreeItemKind,
+    StoredStateTransition,
 };
 use super::super::Session;
 
@@ -223,6 +225,29 @@ fn sequential_saves_match_fresh_reload() {
             (SessionNodeKind::Commit, "delta", None),
             (SessionNodeKind::Commit, "snapshot", None),
         ]
+    );
+}
+
+// Covers: the keys a save gives its display rows survive a fresh load of
+// the transcript, on the rows they were given to, so a replay or the search
+// index reading the file names a live turn's messages as it showed them.
+// Owner: session persistence
+#[test]
+fn keyed_display_rows_load_with_their_keys() {
+    let (_root, _cwd, session) = create_session();
+    let rows = [
+        Message::user_text("prompt"),
+        Message::assistant_text("reply"),
+    ];
+    let keys = DisplayKeys::from([(1, MessageKey::new("turn-1"))]);
+    session
+        .save_snapshot_keyed(&snapshot(&session, 1, rows.to_vec()), &rows, &keys)
+        .unwrap();
+
+    let loaded = active_display_from_tree(&SessionTree::load(session.path()).unwrap()).unwrap();
+    assert_eq!(
+        loaded.into_iter().map(|row| row.key).collect::<Vec<_>>(),
+        vec![None, Some(MessageKey::new("turn-1"))]
     );
 }
 

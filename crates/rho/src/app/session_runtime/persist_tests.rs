@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use pretty_assertions::assert_eq;
 use rho_sdk::{
-    model::{ContentBlock, Message, ModelIdentity, ToolCall},
+    model::{AbortedAssistant, AssistantMessage, ContentBlock, Message, ModelIdentity, ToolCall},
     provider::{ModelProvider, ScriptedProvider},
     SessionOptions,
 };
@@ -157,6 +157,67 @@ fn turn_display_follows_only_history_that_extends_the_turn() {
         assert!(!display.follows(&history));
         let pending = display.pending_rows(&history, SaveScope::Step);
         assert_eq!(pending.rows, written);
+        display.mark_written(pending);
+    }
+}
+
+// Covers: a turn's saves key its model replies (whole or aborted) and its
+// steers by their place in the turn, counting rows earlier saves wrote, and
+// leave other rows, as a host's batch of calls, unkeyed.
+// Owner: session runtime turn persistence
+#[test]
+fn turn_saves_key_replies_and_steers_in_turn_order() {
+    let input = Message::user_text("input");
+    let reply = |text: &str| {
+        Message::assistant(AssistantMessage::from_content(vec![ContentBlock::Text(
+            text.into(),
+        )]))
+    };
+    let result = Message::ToolResult(rho_sdk::model::ToolResult::succeeded("call", "file").into());
+    let batch = Message::assistant_text("host batch");
+    let steer = Message::user_text("[stamped] use tabs");
+    let steer_shown = Message::user_text("use tabs");
+    let aborted = Message::AbortedAssistant(Arc::new(AbortedAssistant {
+        content: vec![ContentBlock::Text("partial".into())],
+        ..Default::default()
+    }));
+    let mut display = TurnDisplay::new(input.clone(), input.clone(), 0);
+    display.steered.push((steer.clone(), steer_shown.clone()));
+    let names = display.turn_keys.clone();
+
+    let mut history = vec![input.clone()];
+    for (added, scope, rows, keys) in [
+        (
+            vec![reply("a")],
+            SaveScope::Step,
+            vec![input.clone(), reply("a")],
+            vec![(1, names.reply(1))],
+        ),
+        // A step save stops at a user row, whose shown row may not be
+        // recorded yet.
+        (
+            vec![result.clone(), batch.clone(), steer, reply("b")],
+            SaveScope::Step,
+            vec![result, batch],
+            Vec::new(),
+        ),
+        (
+            vec![aborted.clone()],
+            SaveScope::Settle,
+            vec![steer_shown, reply("b"), aborted],
+            vec![
+                (0, names.steer(1)),
+                (1, names.reply(2)),
+                (2, names.reply(3)),
+            ],
+        ),
+    ] {
+        history.extend(added);
+        let pending = display.pending_rows(&history, scope);
+        assert_eq!(
+            (pending.rows.clone(), pending.keys.clone()),
+            (rows, keys.into_iter().collect())
+        );
         display.mark_written(pending);
     }
 }

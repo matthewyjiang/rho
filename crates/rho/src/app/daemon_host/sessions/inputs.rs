@@ -202,7 +202,7 @@ impl Inputs {
             }
             SessionEvent::MessageInserted(_)
             | SessionEvent::TitleRequested(_)
-            | SessionEvent::RunStarted
+            | SessionEvent::RunStarted { .. }
             | SessionEvent::Run(_)
             | SessionEvent::BoundaryApplied { .. }
             | SessionEvent::Notice { .. }

@@ -841,7 +841,7 @@ impl DaemonView {
             self.session.feed.publish(wire);
             if let Some(keep) = &self.session.cache_warm {
                 match &event {
-                    SessionEvent::RunStarted => keep.run_started(),
+                    SessionEvent::RunStarted { .. } => keep.run_started(),
                     SessionEvent::Run(RunEvent::ModelCallCompleted { metrics, .. }) => {
                         keep.model_call_completed(metrics);
                     }

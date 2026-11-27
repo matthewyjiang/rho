@@ -263,6 +263,7 @@ impl Session {
                         snapshot: Box::new(snapshot.clone()),
                     },
                     display_messages: Vec::new(),
+                    display_keys: Default::default(),
                 },
             };
             serde_json::to_writer(&mut temporary, &state)?;

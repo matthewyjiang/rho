@@ -39,14 +39,16 @@ use rho_sdk::{
 };
 
 use super::{
-    events::InsertedMessage, left_out::LeftOut, saved_settings::SettingsRecord, SessionRuntime,
-    StartedSessions,
+    events::{InsertedMessage, TurnKeys},
+    left_out::LeftOut,
+    saved_settings::SettingsRecord,
+    SessionRuntime, StartedSessions,
 };
 use crate::{
     added_dirs::AddedDirs,
     app::active_prompt::ActivePrompt,
     session::{
-        tree::{DisplayRowOrigin, NodeId},
+        tree::{DisplayKeys, DisplayRowOrigin, NodeId},
         Session as StoredSession, SessionPersistence, SessionProvenance,
     },
     tools::todo::TodoState,
@@ -274,7 +276,7 @@ impl SessionRuntime {
                     .map(Message::assistant_text),
             );
         }
-        stored.save_snapshot(&snapshot, &pending.rows)?;
+        stored.save_snapshot_keyed(&snapshot, &pending.rows, &pending.keys)?;
         display.mark_written(pending);
         Ok(())
     }
@@ -433,6 +435,11 @@ impl std::fmt::Debug for TurnCheckpoint {
 }
 
 impl TurnCheckpoint {
+    /// The names its saves key the turn's messages with.
+    pub(super) fn keys(&self) -> TurnKeys {
+        self.0.lock_display().turn_keys.clone()
+    }
+
     /// Records the row shown for a steer the run may apply as `model`, so
     /// saves write `shown` in place of the stamped copy.
     pub(super) fn record_steer(&self, model: &UserInput, shown: &UserInput) {
@@ -485,7 +492,7 @@ impl CheckpointStore {
         if let Some(stored) = &self.stored {
             let mut display = self.lock_display();
             let pending = display.pending_rows(snapshot.history(), SaveScope::Step);
-            stored.save_snapshot(&snapshot, &pending.rows)?;
+            stored.save_snapshot_keyed(&snapshot, &pending.rows, &pending.keys)?;
             display.mark_written(pending);
         }
         Ok(())
@@ -535,12 +542,15 @@ struct TurnDisplay {
     /// Steers offered to the run: the model's stamped copy and the row shown
     /// for it. A withdrawn steer never matches a history row.
     steered: Vec<(Message, Message)>,
+    /// What saves key the rows of model replies and steers with.
+    turn_keys: TurnKeys,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Followed {
-    /// History extends this turn; this many rows after the input are written.
-    Tracking { written: usize },
+    /// History extends this turn; this many rows after the input are
+    /// written, with `counted` replies and steers among them.
+    Tracking { written: usize, counted: Counted },
     /// History stopped extending this turn.
     Lost,
 }
@@ -559,6 +569,8 @@ enum SaveScope {
 /// What one save writes, and the display state once it lands.
 struct PendingRows {
     rows: Vec<Message>,
+    /// The keys of `rows` that are model replies or steers.
+    keys: DisplayKeys,
     applied_written: usize,
     followed: Followed,
 }
@@ -569,9 +581,13 @@ impl TurnDisplay {
             unsaved_user: Some(user),
             input,
             history_start,
-            followed: Followed::Tracking { written: 0 },
+            followed: Followed::Tracking {
+                written: 0,
+                counted: Counted::default(),
+            },
             applied: VecDeque::new(),
             steered: Vec::new(),
+            turn_keys: TurnKeys::new(),
         }
     }
 
@@ -579,7 +595,7 @@ impl TurnDisplay {
     fn pending_rows(&self, history: &[Message], scope: SaveScope) -> PendingRows {
         let mut rows: Vec<Message> = self.unsaved_user.iter().cloned().collect();
         let mut applied = self.applied.iter().peekable();
-        let Some((appended, written)) = self.appended(history) else {
+        let Some((appended, written, mut counted)) = self.appended(history) else {
             let applied_written = match scope {
                 SaveScope::Step => 0,
                 SaveScope::Settle => {
@@ -589,10 +605,13 @@ impl TurnDisplay {
             };
             return PendingRows {
                 rows,
+                // History no longer shows which reply is which.
+                keys: DisplayKeys::new(),
                 applied_written,
                 followed: Followed::Lost,
             };
         };
+        let mut keys = DisplayKeys::new();
         let mut taken = 0;
         for row in appended {
             if let Some((_, shown)) = applied.next_if(|(model, _)| model == row) {
@@ -611,15 +630,29 @@ impl TurnDisplay {
                     .steered
                     .iter()
                     .find_map(|(model, shown)| (model == row).then_some(shown));
+                let key = match (shown, is_reply(row)) {
+                    (Some(_), _) => {
+                        counted.steers += 1;
+                        Some(self.turn_keys.steer(counted.steers))
+                    }
+                    (None, true) => {
+                        counted.replies += 1;
+                        Some(self.turn_keys.reply(counted.replies))
+                    }
+                    (None, false) => None,
+                };
+                keys.extend(key.map(|key| (rows.len(), key)));
                 rows.push(shown.unwrap_or(row).clone());
             }
             taken += 1;
         }
         PendingRows {
             rows,
+            keys,
             applied_written: self.applied.len() - applied.len(),
             followed: Followed::Tracking {
                 written: written + taken,
+                counted,
             },
         }
     }
@@ -632,9 +665,13 @@ impl TurnDisplay {
             unsaved_user: None,
             input,
             history_start,
-            followed: Followed::Tracking { written: 0 },
+            followed: Followed::Tracking {
+                written: 0,
+                counted: Counted::default(),
+            },
             applied: VecDeque::new(),
             steered: Vec::new(),
+            turn_keys: TurnKeys::new(),
         }
     }
 
@@ -676,18 +713,37 @@ impl TurnDisplay {
         self.appended(history).is_some()
     }
 
-    /// The rows after this turn's input that no save has written, and how
-    /// many before them were. `None` once history no longer extends this turn.
-    fn appended<'h>(&self, history: &'h [Message]) -> Option<(&'h [Message], usize)> {
-        let Followed::Tracking { written } = self.followed else {
+    /// The rows after this turn's input that no save has written, how many
+    /// before them were, and the replies and steers among those. `None` once
+    /// history no longer extends this turn.
+    fn appended<'h>(&self, history: &'h [Message]) -> Option<(&'h [Message], usize, Counted)> {
+        let Followed::Tracking { written, counted } = self.followed else {
             return None;
         };
         if history.get(self.history_start) != Some(&self.input) {
             return None;
         }
         let rows = history.get(self.history_start + 1 + written..)?;
-        Some((rows, written))
+        Some((rows, written, counted))
     }
+}
+
+/// Model replies and steers among a turn's rows, which [`TurnKeys`]
+/// numbers.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Counted {
+    replies: u32,
+    steers: u32,
+}
+
+/// Whether `row` is a model reply: what one step of the run answered, whole
+/// or as it streamed before the run ended. A host's batch of calls
+/// (`Message::Assistant`) is none.
+fn is_reply(row: &Message) -> bool {
+    matches!(
+        row,
+        Message::EnrichedAssistant(_) | Message::AbortedAssistant(_)
+    )
 }
 
 #[cfg(test)]

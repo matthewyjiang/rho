@@ -34,6 +34,28 @@ pub(crate) struct DisplayRowOrigin {
     pub(crate) row: usize,
 }
 
+/// The key a live turn showed a display row's messages under, saved with
+/// the row so its replay gives them the same ids (`session_events`). Opaque
+/// to the store.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub(crate) struct MessageKey(String);
+
+impl MessageKey {
+    pub(crate) fn new(key: impl Into<String>) -> Self {
+        Self(key.into())
+    }
+
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Display rows' [`MessageKey`]s, by the rows' place among those a save
+/// adds, in row order. Pairs rather than a map: a node reads through a
+/// tagged entry, whose map keys would stay strings.
+pub(crate) type DisplayKeys = Vec<(usize, MessageKey)>;
+
 /// A display message a load replays, with where and when it was saved;
 /// `None` for rows the load adds, such as placeholders for interrupted tool
 /// calls.
@@ -44,6 +66,9 @@ pub(crate) struct ProjectedMessage {
     /// When the row was saved, in unix milliseconds, to the second: the
     /// session file keeps seconds. `None` when its timestamp does not read.
     pub(crate) saved_at: Option<u64>,
+    /// The key a live turn showed it under; `None` for rows saved without
+    /// one, as by rho before keys, or by commands.
+    pub(crate) key: Option<MessageKey>,
 }
 
 /// Stable identity for one durable state in a session tree.
@@ -152,6 +177,11 @@ pub(crate) struct SessionNode<D = StoredDisplayRow> {
     /// `Vec::new` instead of `default` keeps serde from bounding `D: Default`.
     #[serde(default = "Vec::new")]
     pub(crate) display_messages: Vec<D>,
+    /// The [`MessageKey`] of each display row a live turn showed under one,
+    /// by row. Rho before keys ignores the field.
+    /// Read into [`StoredDisplayMessage::key`] when the node loads.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) display_keys: DisplayKeys,
 }
 
 /// A node whose display rows are full messages.
@@ -161,13 +191,21 @@ impl SessionNode {
     /// Resolves stored rows against this node's own transition; `format`
     /// comes from the file header.
     pub(crate) fn resolve_display(self, format: DisplayRowFormat) -> anyhow::Result<LoadedNode> {
-        let display_messages = StoredDisplayRow::resolve(
+        let mut display_messages = StoredDisplayRow::resolve(
             self.display_messages,
             self.transition.model_messages(),
             format,
             &self.timestamp,
             self.id.as_str(),
         )?;
+        for (row, key) in self.display_keys {
+            match display_messages.get_mut(row) {
+                Some(message) => message.key = Some(key),
+                // Written by something other than a save; the row replays
+                // unkeyed.
+                None => tracing::warn!(row, "display key names no saved row"),
+            }
+        }
         Ok(SessionNode {
             id: self.id,
             parent_id: self.parent_id,
@@ -176,6 +214,7 @@ impl SessionNode {
             compaction_facts: self.compaction_facts,
             transition: self.transition,
             display_messages,
+            display_keys: DisplayKeys::new(),
         })
     }
 }
@@ -443,6 +482,7 @@ impl SessionTree {
                     StoredDisplayMessage {
                         timestamp: node.record.timestamp.clone(),
                         message: DisplayTranscript(vec![row]).display_message(),
+                        key: None,
                     },
                 ));
             }

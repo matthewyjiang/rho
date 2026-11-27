@@ -263,7 +263,9 @@ impl SessionRuntime {
             }
         };
         prompt.activate(ActiveWork::model_run(&run, checkpoint.clone()));
-        io.emit(SessionEvent::RunStarted);
+        io.emit(SessionEvent::RunStarted {
+            keys: checkpoint.keys(),
+        });
         let cancel = run.cancellation_handle();
         let mut approval_receiver = self.built.approval_receiver.take();
         // Plan approvals belong to the tool set, which outlives this prompt
