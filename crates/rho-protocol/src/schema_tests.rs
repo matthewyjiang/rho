@@ -7,8 +7,9 @@ use serde_json::{json, Value};
 
 use super::OTHER;
 use crate::display::{
-    CodeWindow, DiffRowKind, NotificationDelivery, NotificationPreview, NotificationTone,
-    NotificationVisibility, ToolCardStatus, ToolFact, ToolFamily, ToolHeader,
+    CodeWindow, DiffRowKind, NotificationDelivery, NotificationOutcome, NotificationPreview,
+    NotificationSubject, NotificationTone, NotificationUrgency, NotificationVisibility,
+    ToolCardStatus, ToolFact, ToolFamily, ToolHeader,
 };
 use crate::methods::{
     AnswerStop, Applies, ApprovalSource, Ask, AuthKind, AuthStatus, BackgroundItem,
@@ -69,7 +70,7 @@ fn enums_marked_open_read_unknown_values_as_unknown() {
     let unseen = || json!("from_a_newer_daemon");
     let unseen_tag = || json!({ "type": "from_a_newer_daemon" });
     let unseen_kind = || json!({ "kind": "from_a_newer_daemon" });
-    let cases: [(&str, bool); 99] = [
+    let cases: [(&str, bool); 102] = [
         ("ContextBasis", reads_as(unseen(), ContextBasis::Unknown)),
         (
             "PromptSourceKind",
@@ -241,6 +242,18 @@ fn enums_marked_open_read_unknown_values_as_unknown() {
         (
             "NotificationTone",
             reads_as(unseen(), NotificationTone::Unknown),
+        ),
+        (
+            "NotificationUrgency",
+            reads_as(unseen(), NotificationUrgency::Unknown),
+        ),
+        (
+            "NotificationOutcome",
+            reads_as(unseen(), NotificationOutcome::Unknown),
+        ),
+        (
+            "NotificationSubject",
+            reads_as(unseen_kind(), NotificationSubject::Unknown),
         ),
         (
             "NotificationPreview",

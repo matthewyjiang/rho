@@ -10,6 +10,7 @@ use std::{
     },
 };
 
+use serde::de::DeserializeOwned;
 use serde_json::Value;
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -22,7 +23,7 @@ use crate::{
         AuthLoginFinishedNotification, AuthLoginFinishedParams, AuthLoginPromptNotification,
         AuthLoginPromptParams, ConfigChangedNotification, ConfigChangedParams, Hello, Method,
         ModelChangedNotification, ModelList, Notification, SessionDetachedNotification,
-        SessionDetachedParams, SessionEventNotification, SessionEventParams, AUTH_LOGIN_FINISHED,
+        SessionDetachedParams, SessionEventEnvelope, SessionEventParams, AUTH_LOGIN_FINISHED,
         AUTH_LOGIN_PROMPT, CONFIG_CHANGED, MODEL_CHANGED, SESSION_DETACHED, SESSION_EVENT,
     },
     BuildId, ClientHello, ErrorCode, FrameError, HelloParams, HelloResponse, Message,
@@ -51,13 +52,28 @@ pub struct Client {
 /// discard them.
 pub struct Notifications {
     receiver: mpsc::UnboundedReceiver<DaemonNotification>,
+    /// Whether [`Notifications::with_session_event_envelopes`] opted in.
+    envelopes: bool,
 }
 
 /// One notification from the daemon.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum DaemonNotification {
+    /// A session event, without its time and notification. Yielded unless
+    /// the [`Notifications`] opted into [`Self::SessionEventEnvelope`].
     SessionEvent(SessionEventParams),
+    /// A session event with its time and the typed notification of a card
+    /// ([`SessionEventEnvelope`]), yielded in place of [`Self::SessionEvent`]
+    /// once [`Notifications::with_session_event_envelopes`] opts in.
+    ///
+    /// # Next major
+    ///
+    /// NEXT_MAJOR(rho-protocol): yield the event's time and notification in DaemonNotification::SessionEvent, and remove DaemonNotification::SessionEventEnvelope and Notifications::with_session_event_envelopes.
+    ///
+    /// [`Self::SessionEvent`] holds [`SessionEventParams`], which has only
+    /// public fields, so it cannot carry them in a minor.
+    SessionEventEnvelope(SessionEventEnvelope),
     SessionDetached(SessionDetachedParams),
     LoginPrompt(AuthLoginPromptParams),
     LoginFinished(AuthLoginFinishedParams),
@@ -248,7 +264,11 @@ impl Client {
         if let Some(mismatch) = VersionMismatch::between(hello.protocol, PROTOCOL_VERSION) {
             return Err(ClientError::VersionMismatch(mismatch));
         }
-        Ok((self, Notifications { receiver }, hello))
+        let notifications = Notifications {
+            receiver,
+            envelopes: false,
+        };
+        Ok((self, notifications, hello))
     }
 
     /// Sends one request and waits for its response. Requests may overlap;
@@ -292,10 +312,26 @@ impl Client {
 }
 
 impl Notifications {
+    /// These notifications, yielding each `rho/session/event` as
+    /// [`DaemonNotification::SessionEventEnvelope`], with when the event
+    /// happened and the typed notification of a card, instead of
+    /// [`DaemonNotification::SessionEvent`]. The wire is the same either
+    /// way: the daemon always sends both beside the event.
+    pub fn with_session_event_envelopes(mut self) -> Self {
+        self.envelopes = true;
+        self
+    }
+
     /// The next notification, or `None` once the connection has closed and
     /// every notification it delivered was taken.
     pub async fn recv(&mut self) -> Option<DaemonNotification> {
-        self.receiver.recv().await
+        let notification = self.receiver.recv().await?;
+        Some(match notification {
+            DaemonNotification::SessionEventEnvelope(envelope) if !self.envelopes => {
+                DaemonNotification::SessionEvent(envelope.params)
+            }
+            notification => notification,
+        })
     }
 }
 
@@ -457,11 +493,13 @@ async fn read_messages<R: AsyncRead + Unpin>(
 }
 
 /// Decodes a notification this crate knows; a known one with params that
-/// do not match is a daemon bug, which closes the connection.
+/// do not match is a daemon bug, which closes the connection. A session
+/// event decodes whole, as the daemon sends it ([`SessionEventEnvelope`]);
+/// [`Notifications::recv`] drops what a client did not opt into.
 fn decode(notification: jsonrpc::Notification) -> Result<DaemonNotification, ParseError> {
     let jsonrpc::Notification { method, params } = notification;
     if method == SESSION_EVENT {
-        decode_params::<SessionEventNotification>(params).map(DaemonNotification::SessionEvent)
+        decode_value::<SessionEventEnvelope>(params).map(DaemonNotification::SessionEventEnvelope)
     } else if method == SESSION_DETACHED {
         decode_params::<SessionDetachedNotification>(params)
             .map(DaemonNotification::SessionDetached)
@@ -480,6 +518,10 @@ fn decode(notification: jsonrpc::Notification) -> Result<DaemonNotification, Par
 }
 
 fn decode_params<N: Notification>(params: Option<Value>) -> Result<N::Params, ParseError> {
+    decode_value(params)
+}
+
+fn decode_value<T: DeserializeOwned>(params: Option<Value>) -> Result<T, ParseError> {
     serde_json::from_value(params.unwrap_or(Value::Null)).map_err(|_| ParseError::Invalid {
         id: None,
         reason: "notification params do not match the method",

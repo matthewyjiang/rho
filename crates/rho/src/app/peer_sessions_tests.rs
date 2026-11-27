@@ -1,7 +1,10 @@
 use pretty_assertions::assert_eq;
 use rho_protocol::{
-    display::{NotificationCard, NotificationTone},
-    AnswerStop, InputRequestId,
+    display::{
+        NotificationCard, NotificationItem, NotificationOutcome, NotificationSubject,
+        NotificationTone, NotificationUrgency,
+    },
+    AnswerStop, InputRequestId, SessionId,
 };
 
 use super::{PeerBatch, PeerEvent, PeerInbox, PeerNotice, PeerTurnEnd};
@@ -51,44 +54,96 @@ fn a_boundary_renders_one_card_per_notice_in_order() {
         "Pick a database".into(),
     );
     let batch = inbox.take();
-    let cards: Vec<NotificationCard> = batch.cards();
+    let cards: Vec<NotificationCard> = batch.rows().into_iter().map(|row| row.card).collect();
 
     let (model, transcript) = rendered(&batch).expect("the notices render");
     let named = |session: &str| model.find(session).expect("the session is named");
     let senders: Vec<String> = cards.iter().map(|card| card.sender.clone()).collect();
+    let shown: Vec<NotificationCard> = transcript
+        .0
+        .into_iter()
+        .map(|row| match row {
+            DisplayRow::Notification(row) => row.card,
+            other => panic!("a notice renders as a card, not {other:?}"),
+        })
+        .collect();
 
     assert_eq!(
-        (named("child-a") < named("child-b"), senders, transcript),
+        (named("child-a") < named("child-b"), senders, shown),
         (
             true,
             vec!["child-a".to_owned(), "child-b".to_owned()],
-            DisplayTranscript(
-                cards
-                    .into_iter()
-                    .map(|card| DisplayRow::Notification(Box::new(card)))
-                    .collect()
-            )
+            cards
         )
     );
 }
 
 // Covers: an answer the model cut off or refused does not read as a
-// success. A miss tells the starter that a refused turn did its work.
+// success, and a question needs the reader while a finished answer is only
+// notable. A miss tells the starter that a refused turn did its work, or
+// files a question among routine cards.
 // Owner: started-session notices.
 #[test]
 fn only_a_finished_answer_reads_as_success() {
+    use NotificationOutcome as Outcome;
+    use NotificationUrgency as Urgency;
+    let ask = || PeerEvent::WaitingForInput {
+        request: InputRequestId(3),
+        ask: "Pick a database".into(),
+    };
+    let ended = |stop| PeerEvent::TurnEnded(answered(stop));
     let cases = [
-        (AnswerStop::EndTurn, NotificationTone::Success),
-        (AnswerStop::MaxTokens, NotificationTone::Warning),
-        (AnswerStop::Refusal, NotificationTone::Warning),
+        (
+            ended(AnswerStop::EndTurn),
+            NotificationTone::Success,
+            Outcome::Completed,
+            Urgency::Notable,
+        ),
+        (
+            ended(AnswerStop::MaxTokens),
+            NotificationTone::Warning,
+            Outcome::CutOff,
+            Urgency::Notable,
+        ),
+        (
+            ended(AnswerStop::Refusal),
+            NotificationTone::Warning,
+            Outcome::Refused,
+            Urgency::Notable,
+        ),
+        (
+            ask(),
+            NotificationTone::Warning,
+            Outcome::Question,
+            Urgency::NeedsYou,
+        ),
     ];
-    for (stop, tone) in cases {
+    for (event, tone, outcome, urgency) in cases {
+        let name = format!("{event:?}");
         let notice = PeerNotice {
             session: "child".into(),
             title: None,
-            event: PeerEvent::TurnEnded(answered(stop)),
+            event,
         };
-        assert_eq!(notice.card().tone, tone, "{stop:?}");
+        let row = notice.row();
+        let info = row.info.expect("a notice is typed");
+        let session = NotificationSubject::Session {
+            id: SessionId::new("child"),
+        };
+        assert_eq!(
+            (row.card.tone, info.urgency, &info.subject, &info.items[..]),
+            (
+                tone,
+                urgency,
+                &session,
+                &[NotificationItem::new(
+                    outcome,
+                    session.clone(),
+                    row.card.title.clone()
+                )][..]
+            ),
+            "{name}"
+        );
     }
 }
 

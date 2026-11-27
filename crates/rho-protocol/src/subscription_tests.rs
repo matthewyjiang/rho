@@ -20,7 +20,10 @@ async fn try_publish_reports_lag_and_departure_without_waiting() {
         publisher.try_publish(Seq(2), notice(2)),
         Err(Published::Lagged)
     );
-    assert_eq!(events.next().await, Some((Seq(1), notice(1))));
+    assert_eq!(
+        events.next().await,
+        Some(StreamEvent::new(Seq(1), notice(1)))
+    );
     assert_eq!(
         publisher.try_publish(Seq(3), notice(3)),
         Err(Published::Lagged)
@@ -51,7 +54,10 @@ async fn the_replay_precedes_live_events_without_using_the_backlog() {
     while let Some(event) = events.next().await {
         received.push(event);
     }
-    let mut expected = replay;
-    expected.push((Seq(4), notice(4)));
+    let mut expected: Vec<_> = replay
+        .into_iter()
+        .map(|(seq, event)| StreamEvent::new(seq, event))
+        .collect();
+    expected.push(StreamEvent::new(Seq(4), notice(4)));
     assert_eq!(received, expected);
 }

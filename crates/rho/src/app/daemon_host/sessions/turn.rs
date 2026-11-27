@@ -38,7 +38,7 @@ use crate::{
         session_commands::{
             self, BuiltInCommand, CommandScope, CommandSet, Hosting, PromptCommand,
         },
-        session_events::{outcome, CompactionEnd},
+        session_events::{outcome, CompactionEnd, FeedEvent},
         session_runtime::{
             model_scoped_config, CommandRejected, InsertedMessage, PlanReport, PromptScope,
             SessionEvent, SessionRuntime, StartedBy, TitleJob, Turn, TurnControl, TurnIo,
@@ -833,7 +833,7 @@ impl DaemonView {
                 let mut live = self.session.live();
                 let mut wire = live.map(&event);
                 if matches!(event, SessionEvent::Run(RunEvent::UsageUpdated { .. })) {
-                    wire.extend(live.streamed_usage());
+                    wire.extend(live.streamed_usage().map(FeedEvent::from));
                 }
                 wire
             };

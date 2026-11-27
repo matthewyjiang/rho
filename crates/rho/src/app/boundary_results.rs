@@ -12,7 +12,7 @@ use crate::{
         pull_requests::NewsBatch,
         subagent_messaging::{NoticeDelivery, SubagentNotice},
     },
-    display_transcript::{DisplayRow, DisplayTranscript},
+    display_transcript::{DisplayRow, DisplayTranscript, NotificationRow},
     subagent::RunState,
     tools::{
         agent::{SubagentManager, SubagentNotification},
@@ -21,9 +21,12 @@ use crate::{
         workflow_tracker::WorkflowNotification,
     },
 };
-use rho_protocol::display::{
-    NotificationCard, NotificationDelivery, NotificationPreview, NotificationTone,
-    NotificationVisibility,
+use rho_protocol::{
+    display::{
+        NotificationCard, NotificationDelivery, NotificationOutcome, NotificationPreview,
+        NotificationSubject, NotificationTone, NotificationVisibility,
+    },
+    SessionId,
 };
 
 /// Finished background work drained for one boundary.
@@ -71,7 +74,7 @@ impl BoundaryResults<'_> {
                     NoticeDelivery::NextTurn => AgentEvent::Update,
                     NoticeDelivery::ParentActionRequired => AgentEvent::ActionRequired,
                 };
-                rows.push(DisplayRow::Notification(Box::new(agent_card(
+                rows.push(DisplayRow::Notification(Box::new(agent_row(
                     manager,
                     &notice.run_id,
                     &notice.agent_id,
@@ -84,7 +87,7 @@ impl BoundaryResults<'_> {
         if !self.subagents.is_empty() {
             model.push(crate::tools::agent::notification_prompt(self.subagents));
             for notification in self.subagents {
-                rows.push(DisplayRow::Notification(Box::new(subagent_result_card(
+                rows.push(DisplayRow::Notification(Box::new(subagent_result_row(
                     manager,
                     notification,
                 ))));
@@ -101,7 +104,7 @@ impl BoundaryResults<'_> {
             rows.extend(
                 self.processes
                     .iter()
-                    .map(|notification| DisplayRow::Notification(Box::new(notification.card()))),
+                    .map(|notification| DisplayRow::Notification(Box::new(notification.row()))),
             );
         }
         for SurfaceAction { surface, action } in self.surface_actions {
@@ -120,26 +123,26 @@ impl BoundaryResults<'_> {
                 self.pull_requests
                     .news
                     .iter()
-                    .map(|news| DisplayRow::Notification(Box::new(news.card()))),
+                    .map(|news| DisplayRow::Notification(Box::new(news.row()))),
             );
         }
         if !self.peer_sessions.is_empty() {
             model.push(self.peer_sessions.prompt());
             rows.extend(
                 self.peer_sessions
-                    .cards()
+                    .rows()
                     .into_iter()
-                    .map(|card| DisplayRow::Notification(Box::new(card))),
+                    .map(|row| DisplayRow::Notification(Box::new(row))),
             );
         }
         BoundaryMessage { model, rows }
     }
 }
 
-fn subagent_result_card(
+fn subagent_result_row(
     manager: Option<&SubagentManager>,
     notification: &SubagentNotification,
-) -> NotificationCard {
+) -> NotificationRow {
     let snapshot = &notification.snapshot;
     let event = match snapshot.status.state {
         RunState::Queued | RunState::Starting | RunState::Running => AgentEvent::Update,
@@ -155,7 +158,7 @@ fn subagent_result_card(
         .cloned()
         .collect::<Vec<_>>()
         .join("\n\n");
-    let mut card = agent_card(
+    let mut row = agent_row(
         manager,
         &snapshot.id,
         &snapshot.agent_id,
@@ -163,15 +166,17 @@ fn subagent_result_card(
         event,
         body,
     );
-    card.details.push(format!(
+    row.card.details.push(format!(
         "elapsed: {:.1}s · turns: {}",
         snapshot.elapsed.as_secs_f64(),
         snapshot.status.turns
     ));
     if let Some(model) = crate::model_identity::PromptModel::from_run_status(&snapshot.status) {
-        card.details.push(format!("model: {}", model.describe()));
+        row.card
+            .details
+            .push(format!("model: {}", model.describe()));
     }
-    card
+    row
 }
 
 /// Agent-specific policy becomes explicit, generic display data at this boundary.
@@ -183,48 +188,63 @@ enum AgentEvent {
     Stopped,
 }
 
-fn agent_card(
+/// A subagent's card, typed as one item about its run: the run's own
+/// session, when the manager knows it, lets a client open it.
+fn agent_row(
     manager: Option<&SubagentManager>,
     run_id: &str,
     sender: &str,
     title: Option<&str>,
     event: AgentEvent,
     body: String,
-) -> NotificationCard {
+) -> NotificationRow {
+    let identity = manager.and_then(|manager| manager.task_identity(run_id));
     let task = title
         .filter(|title| !title.trim().is_empty())
         .map(str::to_owned)
-        .or_else(|| {
-            manager
-                .and_then(|manager| manager.task_identity(run_id))
-                .map(|identity| identity.task)
-        })
+        .or_else(|| identity.as_ref().map(|identity| identity.task.clone()))
         .unwrap_or_else(|| "Delegated task".into());
-    let (label, tone, preview) = match event {
+    let (label, tone, preview, outcome) = match event {
         AgentEvent::Update => (
             "Update",
             NotificationTone::Accent,
             NotificationPreview::Truncated,
+            NotificationOutcome::Update,
         ),
         AgentEvent::ActionRequired => (
             "Action requested",
             NotificationTone::Warning,
             NotificationPreview::Full,
+            NotificationOutcome::ActionRequested,
         ),
         AgentEvent::Completed => (
             "Completed",
             NotificationTone::Success,
             NotificationPreview::Truncated,
+            NotificationOutcome::Completed,
         ),
-        AgentEvent::Failed => ("Failed", NotificationTone::Error, NotificationPreview::Full),
+        AgentEvent::Failed => (
+            "Failed",
+            NotificationTone::Error,
+            NotificationPreview::Full,
+            NotificationOutcome::Failed,
+        ),
         AgentEvent::Stopped => (
             "Stopped",
             NotificationTone::Accent,
             NotificationPreview::Truncated,
+            NotificationOutcome::Stopped,
         ),
     };
-    NotificationCard {
-        title: format!("{label} · {task}"),
+    let title = format!("{label} · {task}");
+    let subject = NotificationSubject::Subagent {
+        run: run_id.to_owned(),
+        session: identity
+            .and_then(|identity| identity.session)
+            .map(|session| SessionId::new(session.to_string())),
+    };
+    let card = NotificationCard {
+        title,
         sender: sender.into(),
         recipient: "parent".into(),
         delivery: NotificationDelivery::Received,
@@ -236,5 +256,10 @@ fn agent_card(
         body,
         output: None,
         details: vec![format!("task: {task}")],
-    }
+    };
+    NotificationRow::single(card, subject, outcome)
 }
+
+#[cfg(test)]
+#[path = "boundary_results_tests.rs"]
+mod tests;

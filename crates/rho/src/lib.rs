@@ -42,6 +42,7 @@ mod logging;
 mod login_prompt_print;
 mod model_aliases;
 mod model_identity;
+mod notification_info;
 mod paths;
 mod permission;
 mod permission_classifier;

@@ -597,6 +597,49 @@ pub struct SessionEventParams {
     pub event: SessionEvent,
 }
 
+/// What a [`SESSION_EVENT`] notification carries: [`SessionEventParams`],
+/// flat, and what that struct cannot take in a protocol minor. A client
+/// that reads only [`SessionEventParams`] ignores the rest.
+///
+/// # Next major
+///
+/// NEXT_MAJOR(rho-protocol): add an optional unix-ms at field to SessionEventParams and remove SessionEventEnvelope.
+///
+/// `SessionEventParams` has only public fields and is not
+/// `#[non_exhaustive]`, so a field is a major change. Until then the schema
+/// publishes [`SESSION_EVENT`] with this type, and [`crate::Notifications`]
+/// yields [`SessionEventParams`] unless a client opts into this type with
+/// [`crate::Notifications::with_session_event_envelopes`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[non_exhaustive]
+pub struct SessionEventEnvelope {
+    #[serde(flatten)]
+    pub params: SessionEventParams,
+    /// When the event happened, in unix milliseconds. A replay sends the
+    /// time the event first had: a buffered event's own, and a saved row's
+    /// as the session file keeps it, to the second, which the rows one step
+    /// saved share. Absent when the daemon does not know it, as for the
+    /// state a reset replays ahead of the transcript.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at: Option<u64>,
+    /// What the [`SessionEvent::Card`] beside it is about, typed, when that
+    /// card shows a notification. Absent beside any other event, and beside
+    /// a card saved before the daemon typed them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notification: Option<Box<crate::display::NotificationInfo>>,
+}
+
+impl SessionEventEnvelope {
+    /// `params`, with no time or notification.
+    pub fn new(params: SessionEventParams) -> Self {
+        Self {
+            params,
+            at: None,
+            notification: None,
+        }
+    }
+}
+
 /// Params of the [`SESSION_DETACHED`] notification. No events of the
 /// session follow; attach again, with the client's cursor, to resume.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

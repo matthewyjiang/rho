@@ -9,7 +9,10 @@
 use rho_sdk::model::Message;
 use serde::{Deserialize, Serialize};
 
-use rho_protocol::{display::NotificationCard, CompactionCounts};
+use rho_protocol::{
+    display::{NotificationCard, NotificationInfo},
+    CompactionCounts,
+};
 
 const PREFIX: &str = "[rho boundary transcript v1]";
 const FAMILY: &str = "[rho boundary transcript ";
@@ -18,12 +21,25 @@ const FAMILY: &str = "[rho boundary transcript ";
 pub(crate) enum DisplayRow {
     /// Saved as `Message`; the name predates non-agent notifications.
     #[serde(rename = "Message")]
-    Notification(Box<NotificationCard>),
+    Notification(Box<NotificationRow>),
     Notice(String),
     /// A compaction of the session's context, where it happened, with its
     /// context before and after. A load projects it from the compaction's
     /// node; it is never saved, so no saved record holds it.
     Compaction(CompactionCounts),
+}
+
+/// A notification card as a transcript saves it: the card, with its typed
+/// side flat beside the card's own fields, where `NotificationCard` will
+/// hold them at the next protocol major. A card saved before rho typed them
+/// reads back with none, and an older rho reads a newer card, ignoring them.
+// NEXT_MAJOR(rho-protocol): save NotificationCard alone once it holds NotificationInfo's fields, and remove NotificationRow.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct NotificationRow {
+    #[serde(flatten)]
+    pub(crate) card: NotificationCard,
+    #[serde(flatten)]
+    pub(crate) info: Option<NotificationInfo>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -56,7 +72,8 @@ impl DisplayTranscript {
         self.0
             .iter()
             .map(|row| match row {
-                DisplayRow::Notification(card) => {
+                DisplayRow::Notification(row) => {
+                    let card = &row.card;
                     format!("{}\n{}\n{}", card.title, subtitle(card), card.plain_body())
                 }
                 DisplayRow::Notice(text) => text.clone(),
@@ -77,7 +94,8 @@ impl DisplayRow {
     /// A notice is titled by its first line.
     pub(crate) fn card_text(&self) -> CardText<'_> {
         match self {
-            Self::Notification(card) => {
+            Self::Notification(row) => {
+                let card = &row.card;
                 let subtitle = subtitle(card);
                 CardText {
                     title: &card.title,

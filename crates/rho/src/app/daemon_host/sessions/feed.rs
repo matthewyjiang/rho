@@ -41,6 +41,12 @@
 //! the seq the turn in progress began after. A client's cursor is the
 //! highest seq it has seen, so one that detaches partway through a
 //! transcript holds no cursor past 0 and resets again.
+//!
+//! Each event goes out with when it happened
+//! ([`wire::SessionEventEnvelope::at`]): a live event when the feed takes
+//! it, which the buffer keeps for a tail, and a saved one when its row was
+//! saved. The state a reset replays ahead of the transcript, and the
+//! activity an attach's replay ends with, carry none.
 
 use std::{
     collections::{BTreeMap, VecDeque},
@@ -50,11 +56,15 @@ use std::{
 };
 
 use rho_protocol::{
-    self as wire, Cursor, DetachReason, Published, Publisher, Replay, Seq, StreamId, Subscription,
+    self as wire, Cursor, DetachReason, Published, Publisher, Replay, Seq, StreamEvent, StreamId,
+    Subscription,
 };
 
 use crate::{
-    app::session_events::{encoded_len, SavedTranscript, SavedTurn},
+    app::{
+        pull_requests::unix_ms,
+        session_events::{FeedEvent, SavedTranscript, SavedTurn},
+    },
     tools::ui::SurfaceViewer,
 };
 
@@ -161,12 +171,11 @@ impl Subscriber {
 /// reset's transcript renders as its client takes it.
 struct ReplayEvents {
     len: usize,
-    events: Box<dyn Iterator<Item = (Seq, wire::SessionEvent)> + Send + Sync>,
+    events: Box<dyn Iterator<Item = StreamEvent> + Send + Sync>,
 }
 
 struct Buffered {
-    seq: Seq,
-    event: wire::SessionEvent,
+    event: StreamEvent,
     bytes: usize,
 }
 
@@ -274,8 +283,9 @@ impl Feed {
         }
     }
 
-    /// Sends `events` to every attached client, in order, and buffers them.
-    pub(super) fn publish(&self, events: impl IntoIterator<Item = wire::SessionEvent>) {
+    /// Sends `events` to every attached client, in order, timed now, and
+    /// buffers them.
+    pub(super) fn publish<E: Into<FeedEvent>>(&self, events: impl IntoIterator<Item = E>) {
         let mut state = self.state();
         for event in events {
             state.push(event);
@@ -381,15 +391,25 @@ impl Feed {
         state
             .buffer
             .iter()
-            .map(|buffered| buffered.event.clone())
+            .map(|buffered| buffered.event.event.clone())
             .collect()
     }
 
     /// What a client attaching with no cursor replays, oldest first.
     #[cfg(test)]
     pub(super) fn reset_replay_for_tests(&self) -> Vec<wire::SessionEvent> {
-        let (_, replay) = self.state().replay_from(None);
-        replay.events.map(|(_, event)| event).collect()
+        self.replay_for_tests(None)
+            .into_iter()
+            .map(|event| event.event)
+            .collect()
+    }
+
+    /// What a client attaching with `after` replays, oldest first, as its
+    /// subscription carries it.
+    #[cfg(test)]
+    pub(super) fn replay_for_tests(&self, after: Option<&Cursor>) -> Vec<StreamEvent> {
+        let (_, replay) = self.state().replay_from(after);
+        replay.events.collect()
     }
 
     /// Records that the turns since the last save saved as `saved`: it
@@ -450,7 +470,7 @@ impl Feed {
         // A replay's events are counted in memory, so far below `u64::MAX`.
         let replay_events = u64::try_from(events.len).unwrap_or(u64::MAX);
         let (publisher, subscription) =
-            rho_protocol::subscription(SUBSCRIBER_BACKLOG, events.events);
+            rho_protocol::subscription_of(SUBSCRIBER_BACKLOG, events.events);
         // Clients that left an idle session would otherwise stay until the
         // next event.
         state.subscribers.retain(|subscriber| !subscriber.is_gone());
@@ -540,20 +560,24 @@ impl Feed {
 }
 
 impl FeedState {
-    fn push(&mut self, event: wire::SessionEvent) {
-        let Some(bytes) = encoded_len(&event) else {
+    /// Sends `event` to every attached client, timed now, and buffers it.
+    fn push(&mut self, event: impl Into<FeedEvent>) {
+        let mut pushed = event.into();
+        let Some(bytes) = pushed.encoded_len() else {
             return;
         };
+        pushed.at = Some(unix_ms());
+        let event = &pushed.event;
         // A turn starting makes a settled session active, and clients hear
         // that first.
         if self.activity == Some(wire::SessionActivity::Settled)
-            && matches!(&event, wire::SessionEvent::State { state, .. } if state.in_progress())
+            && matches!(event, wire::SessionEvent::State { state, .. } if state.in_progress())
         {
             self.push(wire::SessionEvent::Activity {
                 state: wire::SessionActivity::Active,
             });
         }
-        match &event {
+        match event {
             wire::SessionEvent::State { state, turn } => {
                 // A turn waiting for input is still the same turn under way.
                 let continues = self.job.in_progress() && self.turn == *turn;
@@ -577,7 +601,7 @@ impl FeedState {
                 }
             }
             wire::SessionEvent::TitleChanged { title } => self.title = Some(title.clone()),
-            wire::SessionEvent::Usage { .. } => self.usage = usage_of(&event),
+            wire::SessionEvent::Usage { .. } => self.usage = usage_of(event),
             wire::SessionEvent::OptionsChanged { options } => self.options = (**options).clone(),
             wire::SessionEvent::Agent { id } => self.agent.clone_from(id),
             wire::SessionEvent::StartedSessionDefaults(defaults) => {
@@ -592,20 +616,21 @@ impl FeedState {
         }
         let seq = Seq(self.last.0 + 1);
         self.last = seq;
+        let event = pushed.into_stream(seq);
         self.subscribers.retain(|subscriber| {
-            match subscriber.publisher.try_publish(seq, event.clone()) {
+            match subscriber.publisher.try_publish_event(event.clone()) {
                 Ok(()) => true,
                 Err(Published::Lagged | Published::Gone) => false,
             }
         });
-        self.buffer.push_back(Buffered { seq, event, bytes });
+        self.buffer.push_back(Buffered { event, bytes });
         self.buffered_bytes += bytes;
         while self.buffered_bytes > REPLAY_BUFFER_BYTES {
             let Some(evicted) = self.buffer.pop_front() else {
                 break;
             };
             self.buffered_bytes -= evicted.bytes;
-            if evicted.seq > self.turn_start && !self.turn_start_evicted {
+            if evicted.event.seq > self.turn_start && !self.turn_start_evicted {
                 self.turn_start_evicted = true;
                 tracing::warn!(
                     limit = REPLAY_BUFFER_BYTES,
@@ -637,14 +662,14 @@ impl FeedState {
         // does), so the back says the level only while its seq is the last.
         // NEXT_MAJOR(rho-protocol): report a session's activity as SessionAttachResponse::activity and stop replaying a trailing synthetic SessionEvent::Activity.
         let said = self.buffer.back().is_some_and(|newest| {
-            newest.seq == self.last
-                && newest.seq > from
-                && matches!(newest.event, wire::SessionEvent::Activity { .. })
+            newest.event.seq == self.last
+                && newest.event.seq > from
+                && matches!(newest.event.event, wire::SessionEvent::Activity { .. })
         });
         let activity = self
             .activity
             .filter(|_| !said)
-            .map(|state| (self.last, wire::SessionEvent::Activity { state }));
+            .map(|state| StreamEvent::new(self.last, wire::SessionEvent::Activity { state }));
         let events = ReplayEvents {
             len: events.len + usize::from(activity.is_some()),
             events: Box::new(events.events.chain(activity)),
@@ -659,18 +684,18 @@ impl FeedState {
         let oldest = self
             .buffer
             .front()
-            .map_or(Seq(self.last.0 + 1), |event| event.seq);
+            .map_or(Seq(self.last.0 + 1), |buffered| buffered.event.seq);
         cursor.stream == self.stream
             && cursor.seq > Seq(0)
             && cursor.seq <= self.last
             && cursor.seq.0 + 1 >= oldest.0
     }
 
-    fn events_after(&self, seq: Seq) -> Vec<(Seq, wire::SessionEvent)> {
+    fn events_after(&self, seq: Seq) -> Vec<StreamEvent> {
         self.buffer
             .iter()
-            .filter(|event| event.seq > seq)
-            .map(|event| (event.seq, event.event.clone()))
+            .filter(|buffered| buffered.event.seq > seq)
+            .map(|buffered| buffered.event.clone())
             .collect()
     }
 
@@ -702,13 +727,18 @@ impl FeedState {
         let len = saved + tail.len();
         let events = [agent, started]
             .into_iter()
+            .map(FeedEvent::from)
             .chain(self.transcript.events())
-            .chain(evicted)
-            .chain(usage)
+            .chain(evicted.map(FeedEvent::from))
+            .chain(usage.map(FeedEvent::from))
             .enumerate()
-            .map(move |(at, event)| {
-                let seq = if at + 1 == saved { turn_start } else { Seq(0) };
-                (seq, event)
+            .map(move |(index, event)| {
+                let seq = if index + 1 == saved {
+                    turn_start
+                } else {
+                    Seq(0)
+                };
+                event.into_stream(seq)
             })
             .chain(tail);
         ReplayEvents {

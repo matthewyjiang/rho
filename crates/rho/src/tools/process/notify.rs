@@ -7,9 +7,10 @@
 use std::time::Duration;
 
 use super::types::State;
+use crate::display_transcript::NotificationRow;
 use rho_protocol::display::{
-    NotificationCard, NotificationDelivery, NotificationPreview, NotificationTone,
-    NotificationVisibility,
+    NotificationCard, NotificationDelivery, NotificationOutcome, NotificationPreview,
+    NotificationSubject, NotificationTone, NotificationVisibility,
 };
 
 const MODEL_NOTIFICATION_BYTES: usize = 16 * 1024;
@@ -31,21 +32,53 @@ pub(crate) struct ProcessNotification {
 impl ProcessNotification {
     /// Transcript card for one finished process: outcome and command up front,
     /// run time beneath, any terminal detail as the body with the output after
-    /// it, identity in the expandable details.
-    pub(crate) fn card(&self) -> NotificationCard {
-        let (outcome, tone) = match (self.state, self.exit_code) {
-            (State::Exited, Some(0)) => ("Completed".to_string(), NotificationTone::Success),
-            (State::Exited, Some(code)) => {
-                (format!("Failed (exit {code})"), NotificationTone::Error)
+    /// it, identity in the expandable details. Typed as one item, the
+    /// process's end, about the process.
+    pub(crate) fn row(&self) -> NotificationRow {
+        use NotificationOutcome as Outcome;
+        let (label, tone, outcome) = match (self.state, self.exit_code) {
+            (State::Exited, Some(0)) => (
+                "Completed".to_string(),
+                NotificationTone::Success,
+                Outcome::Completed,
+            ),
+            (State::Exited, Some(code)) => (
+                format!("Failed (exit {code})"),
+                NotificationTone::Error,
+                Outcome::Failed,
+            ),
+            (State::Exited, None) => (
+                "Exited without code".into(),
+                NotificationTone::Warning,
+                Outcome::Exited,
+            ),
+            (State::Terminated, _) => {
+                ("Stopped".into(), NotificationTone::Accent, Outcome::Stopped)
             }
-            (State::Exited, None) => ("Exited without code".into(), NotificationTone::Warning),
-            (State::Terminated, _) => ("Stopped".into(), NotificationTone::Accent),
-            (State::TimedOut, _) => ("Timed out".into(), NotificationTone::Warning),
-            (State::FailedToStart, _) => ("Failed to start".into(), NotificationTone::Error),
-            (State::Starting | State::Running, _) => ("Running".into(), NotificationTone::Accent),
+            (State::TimedOut, _) => (
+                "Timed out".into(),
+                NotificationTone::Warning,
+                Outcome::TimedOut,
+            ),
+            (State::FailedToStart, _) => (
+                "Failed to start".into(),
+                NotificationTone::Error,
+                Outcome::FailedToStart,
+            ),
+            (State::Starting | State::Running, _) => {
+                ("Running".into(), NotificationTone::Accent, Outcome::Running)
+            }
         };
+        let title = format!("{label} · {}", self.command);
+        let subject = NotificationSubject::Process {
+            id: self.process_id.clone(),
+        };
+        NotificationRow::single(self.card(title, tone), subject, outcome)
+    }
+
+    fn card(&self, title: String, tone: NotificationTone) -> NotificationCard {
         NotificationCard {
-            title: format!("{outcome} · {}", self.command),
+            title,
             sender: "process".into(),
             recipient: "parent".into(),
             delivery: NotificationDelivery::Received,

@@ -30,16 +30,17 @@ use std::{
 
 use rho_protocol::{
     display::{
-        NotificationCard, NotificationDelivery, NotificationPreview, NotificationTone,
-        NotificationVisibility,
+        NotificationCard, NotificationDelivery, NotificationOutcome, NotificationPreview,
+        NotificationSubject, NotificationTone, NotificationVisibility,
     },
-    AnswerStop, IdempotencyKey, InputRequestId,
+    AnswerStop, IdempotencyKey, InputRequestId, SessionId,
 };
 use tokio::sync::Notify;
 
 use crate::{
     app::prompt_content::longest_backtick_run,
     cli_runtime::stream_format::truncate,
+    display_transcript::NotificationRow,
     subagent::format_elapsed_secs,
     tools::notification_format::{bounded_notification, Excerpt},
 };
@@ -359,8 +360,8 @@ impl PeerBatch {
     }
 
     /// One transcript card per notice, in the batch's order.
-    pub(crate) fn cards(&self) -> Vec<NotificationCard> {
-        self.notices.iter().map(PeerNotice::card).collect()
+    pub(crate) fn rows(&self) -> Vec<NotificationRow> {
+        self.notices.iter().map(PeerNotice::row).collect()
     }
 }
 
@@ -372,67 +373,90 @@ impl PeerNotice {
             Some(title) => format!("session {} ({})", self.session, detail_line(title)),
             None => format!("session {}", self.session),
         };
-        let (state, said, ..) = self.reading();
+        let Reading { state, said, .. } = self.reading();
         format!("{name}: {state}{said}")
     }
 
-    /// How the notice reads: the session's state as `sessions wait` names
-    /// it, what its summary line adds, and its card's label and tone.
-    fn reading(&self) -> (&'static str, String, &'static str, NotificationTone) {
+    /// How the notice reads, in its summary line and on its card.
+    fn reading(&self) -> Reading {
+        use NotificationOutcome as Outcome;
         use NotificationTone::{Accent, Error, Success, Warning};
         use PeerEvent::{TurnEnded, WaitingForInput};
         match &self.event {
-            WaitingForInput { request, ask } => (
-                "waiting_for_input",
-                format!(
-                    ", for an answer to \"{}\" (input request {request}; it may have been answered since)",
+            WaitingForInput { request, ask } => Reading {
+                state: "waiting_for_input",
+                said: format!(
+                    ", for an answer to \"{}\" (input request {request}; it may have been \
+                     answered since)",
                     detail_line(ask)
                 ),
-                "Waiting for an answer",
-                Warning,
-            ),
+                label: "Waiting for an answer",
+                tone: Warning,
+                outcome: Outcome::Question,
+            },
             TurnEnded(PeerTurnEnd::Answered {
                 stop: AnswerStop::MaxTokens,
                 ..
-            }) => (
-                "completed",
-                ", its answer cut off at the model's output limit".into(),
-                "Cut off",
-                Warning,
-            ),
+            }) => Reading {
+                state: "completed",
+                said: ", its answer cut off at the model's output limit".into(),
+                label: "Cut off",
+                tone: Warning,
+                outcome: Outcome::CutOff,
+            },
             TurnEnded(PeerTurnEnd::Answered {
                 stop: AnswerStop::Refusal,
                 ..
-            }) => (
-                "completed",
-                ", but the model refused".into(),
-                "Refused",
-                Warning,
-            ),
+            }) => Reading {
+                state: "completed",
+                said: ", but the model refused".into(),
+                label: "Refused",
+                tone: Warning,
+                outcome: Outcome::Refused,
+            },
             // `EndTurn`, `Unknown`, and any reason a newer SDK adds.
-            TurnEnded(PeerTurnEnd::Answered { .. }) => {
-                ("completed", String::new(), "Completed", Success)
-            }
-            TurnEnded(PeerTurnEnd::StepLimit { .. }) => (
-                "completed",
-                " at its step limit, before the model answered".into(),
-                "Out of steps",
-                Warning,
-            ),
-            TurnEnded(PeerTurnEnd::Failed { .. }) => ("failed", String::new(), "Failed", Error),
-            TurnEnded(PeerTurnEnd::Cancelled) => ("cancelled", String::new(), "Cancelled", Accent),
-            TurnEnded(PeerTurnEnd::TimedOut { timeout_ms }) => (
-                "timed_out",
-                format!(" after {}", format_elapsed_secs(timeout_ms / 1000)),
-                "Timed out",
-                Error,
-            ),
-            TurnEnded(PeerTurnEnd::Interrupted) => (
-                "interrupted",
-                ", as the daemon stopped".into(),
-                "Interrupted",
-                Accent,
-            ),
+            TurnEnded(PeerTurnEnd::Answered { .. }) => Reading {
+                state: "completed",
+                said: String::new(),
+                label: "Completed",
+                tone: Success,
+                outcome: Outcome::Completed,
+            },
+            TurnEnded(PeerTurnEnd::StepLimit { .. }) => Reading {
+                state: "completed",
+                said: " at its step limit, before the model answered".into(),
+                label: "Out of steps",
+                tone: Warning,
+                outcome: Outcome::OutOfSteps,
+            },
+            TurnEnded(PeerTurnEnd::Failed { .. }) => Reading {
+                state: "failed",
+                said: String::new(),
+                label: "Failed",
+                tone: Error,
+                outcome: Outcome::Failed,
+            },
+            TurnEnded(PeerTurnEnd::Cancelled) => Reading {
+                state: "cancelled",
+                said: String::new(),
+                label: "Cancelled",
+                tone: Accent,
+                outcome: Outcome::Cancelled,
+            },
+            TurnEnded(PeerTurnEnd::TimedOut { timeout_ms }) => Reading {
+                state: "timed_out",
+                said: format!(" after {}", format_elapsed_secs(timeout_ms / 1000)),
+                label: "Timed out",
+                tone: Error,
+                outcome: Outcome::TimedOut,
+            },
+            TurnEnded(PeerTurnEnd::Interrupted) => Reading {
+                state: "interrupted",
+                said: ", as the daemon stopped".into(),
+                label: "Interrupted",
+                tone: Accent,
+                outcome: Outcome::Interrupted,
+            },
         }
     }
 
@@ -452,9 +476,20 @@ impl PeerNotice {
     }
 
     /// The notice's transcript card, drawn as a subagent's result card is:
-    /// the answer, reply or error, else what the summary line says.
-    fn card(&self) -> NotificationCard {
-        let (_, said, label, tone) = self.reading();
+    /// the answer, reply or error, else what the summary line says. Typed as
+    /// one item about the session.
+    fn row(&self) -> NotificationRow {
+        let reading = self.reading();
+        let subject = NotificationSubject::Session {
+            id: SessionId::new(self.session.clone()),
+        };
+        NotificationRow::single(self.card(&reading), subject, reading.outcome)
+    }
+
+    fn card(&self, reading: &Reading) -> NotificationCard {
+        let Reading {
+            said, label, tone, ..
+        } = reading;
         let (body, preview) = match (&self.event, self.text()) {
             (PeerEvent::TurnEnded(PeerTurnEnd::Failed { .. }), Some(error)) => {
                 (error.to_owned(), NotificationPreview::Full)
@@ -474,7 +509,7 @@ impl PeerNotice {
             sender: self.session.clone(),
             recipient: "parent".into(),
             delivery: NotificationDelivery::Received,
-            tone,
+            tone: *tone,
             preview,
             visibility: NotificationVisibility::Conversation,
             reference: Some(self.session.clone()),
@@ -484,6 +519,19 @@ impl PeerNotice {
             details: vec![format!("session: {}", self.session)],
         }
     }
+}
+
+/// How a notice reads ([`PeerNotice::reading`]).
+struct Reading {
+    /// The session's state, as `sessions wait` names it.
+    state: &'static str,
+    /// What the summary line adds to the state.
+    said: String,
+    /// The card's label, ahead of the session's name.
+    label: &'static str,
+    tone: NotificationTone,
+    /// The outcome of the card's one item.
+    outcome: NotificationOutcome,
 }
 
 /// `text`'s first line, trimmed and cut to [`DETAIL_CHARS`], so a title or

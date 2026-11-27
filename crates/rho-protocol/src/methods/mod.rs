@@ -64,7 +64,7 @@
 //!
 //! | Notification | Params |
 //! |---|---|
-//! | [`SESSION_EVENT`] | [`SessionEventParams`] |
+//! | [`SESSION_EVENT`] | [`SessionEventEnvelope`]: [`SessionEventParams`], with the event's time and notification beside it |
 //! | [`SESSION_DETACHED`] | [`SessionDetachedParams`] |
 //! | [`AUTH_LOGIN_PROMPT`] | [`AuthLoginPromptParams`] |
 //! | [`AUTH_LOGIN_FINISHED`] | [`AuthLoginFinishedParams`] |
@@ -220,13 +220,13 @@ pub use pull_request_detail::{
 pub use session::{
     ClientEnvironment, DetachReason, ProjectTrustMismatch, PromptAuthor, Replay,
     SessionAttachParams, SessionAttachResponse, SessionCancelParams, SessionCancelResponse,
-    SessionDetachParams, SessionDetachResponse, SessionDetachedParams, SessionEventParams,
-    SessionForkParams, SessionForkResponse, SessionId, SessionNewParams, SessionNewResponse,
-    SessionObserveParams, SessionPromptParams, SessionPromptResponse, SessionSteerParams,
-    SessionSteerResponse, SessionUnsteerParams, SessionUnsteerResponse, SessionWorktree,
-    UnsteerOutcome, SESSION_ATTACH, SESSION_CANCEL, SESSION_DETACH, SESSION_DETACHED,
-    SESSION_EVENT, SESSION_FORK, SESSION_NEW, SESSION_OBSERVE, SESSION_PROMPT, SESSION_STEER,
-    SESSION_UNSTEER,
+    SessionDetachParams, SessionDetachResponse, SessionDetachedParams, SessionEventEnvelope,
+    SessionEventParams, SessionForkParams, SessionForkResponse, SessionId, SessionNewParams,
+    SessionNewResponse, SessionObserveParams, SessionPromptParams, SessionPromptResponse,
+    SessionSteerParams, SessionSteerResponse, SessionUnsteerParams, SessionUnsteerResponse,
+    SessionWorktree, UnsteerOutcome, SESSION_ATTACH, SESSION_CANCEL, SESSION_DETACH,
+    SESSION_DETACHED, SESSION_EVENT, SESSION_FORK, SESSION_NEW, SESSION_OBSERVE, SESSION_PROMPT,
+    SESSION_STEER, SESSION_UNSTEER,
 };
 pub use session_hooks::{
     HooksReloadOutcome, SessionHooksReloadParams, SessionHooksReloadResponse, SESSION_HOOKS_RELOAD,
@@ -259,9 +259,11 @@ pub trait Method {
 
 /// A notification the daemon sends, typed like [`Method`].
 ///
-/// Implemented by the zero-sized markers this module declares, so the
-/// daemon encodes, and [`crate::Client`] decodes, each notification with one
-/// params type.
+/// Implemented by the zero-sized markers this module declares. The daemon
+/// encodes, and [`crate::Client`] decodes, most notifications with their
+/// params type; one declared `as` a wire type travels as that type instead,
+/// which adds keys beside the params' own: [`SessionEventNotification`]
+/// travels as [`SessionEventEnvelope`], which the client decodes whole.
 pub trait Notification {
     const NAME: &'static str;
     type Params: Serialize + DeserializeOwned + JsonSchema;
@@ -271,18 +273,24 @@ pub trait Notification {
 /// [`crate::schema`] to publish them.
 pub(crate) trait Visitor {
     fn method<M: Method>(&mut self);
-    fn notification<N: Notification>(&mut self);
+    /// `Wire` is what the daemon sends as `N`'s params: `N::Params`, or a
+    /// type that reads as it and carries more.
+    fn notification<N: Notification, Wire: JsonSchema>(&mut self);
 }
 
 /// Declares the method and notification markers and [`visit`] from one list,
 /// so a method cannot exist without being published (#1657).
 macro_rules! protocol {
+    // The type a notification's schema publishes: its own params, or the
+    // wider type the daemon sends (`as`).
+    (@wire $params:ty) => { $params };
+    (@wire $params:ty, $wire:ty) => { $wire };
     (
         methods {
             $($method:ident = $method_name:ident: $params:ty => $result:ty,)+
         }
         notifications {
-            $($notification:ident = $notification_name:ident: $notification_params:ty,)+
+            $($notification:ident = $notification_name:ident: $notification_params:ty $(as $notification_wire:ty)?,)+
         }
     ) => {
         $(
@@ -308,7 +316,7 @@ macro_rules! protocol {
         /// Calls `visitor` for every method, then every notification.
         pub(crate) fn visit(visitor: &mut impl Visitor) {
             $(visitor.method::<$method>();)+
-            $(visitor.notification::<$notification>();)+
+            $(visitor.notification::<$notification, protocol!(@wire $notification_params $(, $notification_wire)?)>();)+
         }
     };
 }
@@ -370,7 +378,8 @@ protocol! {
         HooksList = HOOKS_LIST: HooksListParams => HooksListResponse,
     }
     notifications {
-        SessionEventNotification = SESSION_EVENT: SessionEventParams,
+        // NEXT_MAJOR(rho-protocol): add an optional unix-ms at field to SessionEventParams and remove SessionEventEnvelope.
+        SessionEventNotification = SESSION_EVENT: SessionEventParams as SessionEventEnvelope,
         SessionDetachedNotification = SESSION_DETACHED: SessionDetachedParams,
         AuthLoginPromptNotification = AUTH_LOGIN_PROMPT: AuthLoginPromptParams,
         AuthLoginFinishedNotification = AUTH_LOGIN_FINISHED: AuthLoginFinishedParams,

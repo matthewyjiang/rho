@@ -2,14 +2,17 @@ use std::time::Duration;
 
 use pretty_assertions::assert_eq;
 
+use rho_protocol::display::{NotificationItem, NotificationUrgency};
+
 use super::*;
 
 // Covers: a failed process card leads with outcome and command, and keeps its
-// output as verbatim card output rather than markdown body text.
+// output as verbatim card output rather than markdown body text; typed, it
+// is one failed item about the process, which needs the reader.
 // Owner: process notification presentation.
 #[test]
 fn failed_process_card_shows_outcome_command_and_verbatim_output() {
-    let card = ProcessNotification {
+    let row = ProcessNotification {
         process_id: "891ba4bc".into(),
         command: "cargo test".into(),
         state: State::Exited,
@@ -18,10 +21,26 @@ fn failed_process_card_shows_outcome_command_and_verbatim_output() {
         terminal_detail: None,
         elapsed: Duration::from_secs(65),
     }
-    .card();
+    .row();
 
+    let process = || NotificationSubject::Process {
+        id: "891ba4bc".into(),
+    };
+    let info = row.info.expect("a process card is typed");
     assert_eq!(
-        card,
+        (info.urgency, info.subject, info.items),
+        (
+            NotificationUrgency::NeedsYou,
+            process(),
+            vec![NotificationItem::new(
+                NotificationOutcome::Failed,
+                process(),
+                "Failed (exit 101) · cargo test",
+            )],
+        )
+    );
+    assert_eq!(
+        row.card,
         NotificationCard {
             title: "Failed (exit 101) · cargo test".into(),
             sender: "process".into(),

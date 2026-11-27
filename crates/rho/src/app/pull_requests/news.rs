@@ -1,9 +1,12 @@
 //! News on watched pull requests as the model reads it ([`prompt`]) and as
-//! clients show it ([`News::card`]).
+//! clients show it ([`News::row`]).
 
-use rho_protocol::display::{
-    NotificationCard, NotificationDelivery, NotificationPreview, NotificationTone,
-    NotificationVisibility,
+use rho_protocol::{
+    display::{
+        NotificationCard, NotificationDelivery, NotificationItem, NotificationOutcome,
+        NotificationPreview, NotificationSubject, NotificationTone, NotificationVisibility,
+    },
+    PullRequestId,
 };
 
 use super::{
@@ -11,7 +14,9 @@ use super::{
     state::{Change, CheckRef, CheckTally, End, Failure, Gate, News, Remark, Reviewed},
     watch::{COMMENT_WAKE_LIMIT, READ_FAILURE_LIMIT},
 };
-use crate::tools::notification_format::join_budgeted_sections;
+use crate::{
+    display_transcript::NotificationRow, tools::notification_format::join_budgeted_sections,
+};
 
 /// The most one wake's text may take: the budget process and subagent
 /// notifications have (`tools/process/notify.rs`, `tools/agent_output.rs`).
@@ -80,17 +85,43 @@ fn section(news: &News) -> String {
 impl News {
     /// Transcript card for this news: what happened and which pull request
     /// up front, the head beneath, the same lines the model reads as the
-    /// body. The tone is that of its most pressing item.
-    pub(crate) fn card(&self) -> NotificationCard {
+    /// body. The tone is that of its most pressing item. Typed with one item
+    /// per change, in the body's order: new commits, each change, the end.
+    pub(crate) fn row(&self) -> NotificationRow {
+        let subject = NotificationSubject::PullRequest {
+            id: PullRequestId::from(&self.pr),
+            url: self.url.clone(),
+        };
+        let item = |outcome, text: String| NotificationItem::new(outcome, subject.clone(), text);
+        let commit = on_head(self);
+        let pushed = self.pushed.then(|| {
+            let head = self.head.as_deref().map_or("", short);
+            item(
+                NotificationOutcome::NewCommits,
+                format!("New commits: the head is now {head}"),
+            )
+        });
+        let changes = self.changes.iter().map(|change| {
+            let (outcome, text) = change_item(change, &commit);
+            item(outcome, text)
+        });
+        let end = self.end.as_ref().map(|end| {
+            let (outcome, text) = end_item(end);
+            item(outcome, text)
+        });
+        let items: Vec<_> = pushed.into_iter().chain(changes).chain(end).collect();
+        NotificationRow::typed(self.card(&items), subject, items)
+    }
+
+    /// The card, toned as the most pressing of `items`.
+    fn card(&self, items: &[NotificationItem]) -> NotificationCard {
         let label = self.pr.to_string();
         let mut outcomes: Vec<&str> = self.changes.iter().map(change_summary).collect();
         outcomes.extend(self.end.as_ref().map(end_summary));
-        let tone = self
-            .changes
+        let tone = items
             .iter()
-            .map(change_tone)
-            .chain(self.end.iter().map(end_tone))
-            .max_by_key(|tone| urgency(*tone))
+            .map(|item| tone(item.outcome))
+            .max_by_key(|tone| pressing(*tone))
             .unwrap_or(NotificationTone::Neutral);
         let mut body = change_lines(self);
         body.extend(
@@ -140,13 +171,17 @@ fn capitalized(text: &str) -> String {
     })
 }
 
-/// The lines of `news`'s changes, as a Markdown list.
-fn change_lines(news: &News) -> Vec<String> {
-    let commit = news
-        .head
+/// Which head `news`'s checks ran on, as " on <short oid>", if it knows.
+fn on_head(news: &News) -> String {
+    news.head
         .as_deref()
         .map(|head| format!(" on {}", short(head)))
-        .unwrap_or_default();
+        .unwrap_or_default()
+}
+
+/// The lines of `news`'s changes, as a Markdown list.
+fn change_lines(news: &News) -> Vec<String> {
+    let commit = on_head(news);
     let mut lines = Vec::new();
     if news.pushed {
         let head = news.head.as_deref().map_or("", short);
@@ -301,6 +336,103 @@ fn end_line(end: &End, label: &str, url: &str) -> String {
     }
 }
 
+/// One change's item: its outcome, and the change in one line. Checks that
+/// all finished with some failing are failed checks.
+fn change_item(change: &Change, commit: &str) -> (NotificationOutcome, String) {
+    match change {
+        Change::ChecksFailed { failed } => (
+            NotificationOutcome::ChecksFailed,
+            format!("Checks failed{commit}: {}", check_names(failed)),
+        ),
+        Change::ChecksPassed { count, gate } => {
+            let required = match gate {
+                Gate::Required => "required ",
+                Gate::All => "",
+            };
+            let checks = plural(*count as usize, "check", "checks");
+            (
+                NotificationOutcome::ChecksPassed,
+                format!("All {count} {required}{checks} passed{commit}"),
+            )
+        }
+        Change::ChecksFinished { passed, failing } if failing.is_empty() => (
+            NotificationOutcome::ChecksFinished,
+            format!("Every check has finished{commit}: {passed} passed"),
+        ),
+        Change::ChecksFinished { passed, failing } => (
+            NotificationOutcome::ChecksFailed,
+            format!(
+                "Every check has finished{commit}: {passed} passed, {} still failing: {}",
+                failing.len(),
+                check_names(failing)
+            ),
+        ),
+        Change::Remarks { remarks } => {
+            let comments = plural(remarks.len(), "comment", "comments");
+            (
+                NotificationOutcome::NewComments,
+                format!("{} new {comments}", remarks.len()),
+            )
+        }
+        Change::Conflicting => (
+            NotificationOutcome::MergeConflict,
+            "The branch conflicts with its base branch".to_owned(),
+        ),
+    }
+}
+
+/// The first [`LISTED_ITEMS`] of `checks` by name, and how many more.
+fn check_names(checks: &[CheckRef]) -> String {
+    let names: Vec<&str> = checks
+        .iter()
+        .take(LISTED_ITEMS)
+        .map(|check| check.name.as_str())
+        .collect();
+    let more = checks
+        .len()
+        .checked_sub(LISTED_ITEMS)
+        .filter(|more| *more > 0)
+        .map(|more| format!(" and {more} more"))
+        .unwrap_or_default();
+    format!("{}{more}", names.join(", "))
+}
+
+/// The end's item: its outcome, and the end in one line.
+fn end_item(end: &End) -> (NotificationOutcome, String) {
+    match end {
+        End::Merged { by, base, .. } => {
+            let by = by
+                .as_deref()
+                .map(|by| format!(" by {by}"))
+                .unwrap_or_default();
+            (
+                NotificationOutcome::Merged,
+                format!("Merged into {base}{by}"),
+            )
+        }
+        End::Closed => (
+            NotificationOutcome::Closed,
+            "Closed without merging".to_owned(),
+        ),
+        End::CommentLoop => (
+            NotificationOutcome::WatchStopped,
+            format!("Stopped watching after {COMMENT_WAKE_LIMIT} comment-only updates in a row"),
+        ),
+        // GitHub's refusal is kept as it said it, which may run to several
+        // lines; an item is one.
+        End::Unreadable(why) => (
+            NotificationOutcome::Unreadable,
+            format!(
+                "Stopped watching after {READ_FAILURE_LIMIT} failed reads: {}",
+                why.split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+                    .trim_end_matches('.')
+            ),
+        ),
+    }
+}
+
 fn change_summary(change: &Change) -> &'static str {
     match change {
         Change::ChecksFailed { .. } => "checks failed",
@@ -320,24 +452,24 @@ fn end_summary(end: &End) -> &'static str {
     }
 }
 
-fn change_tone(change: &Change) -> NotificationTone {
-    match change {
-        Change::ChecksFailed { .. } | Change::Conflicting => NotificationTone::Error,
-        Change::ChecksFinished { failing, .. } if !failing.is_empty() => NotificationTone::Error,
-        Change::ChecksFinished { .. } | Change::ChecksPassed { .. } => NotificationTone::Success,
-        Change::Remarks { .. } => NotificationTone::Accent,
-    }
-}
-
-fn end_tone(end: &End) -> NotificationTone {
-    match end {
-        End::Merged { .. } => NotificationTone::Success,
-        End::Closed | End::CommentLoop | End::Unreadable(_) => NotificationTone::Warning,
+/// The color of an item that ended as `outcome`. New commits alone are
+/// neutral.
+fn tone(outcome: NotificationOutcome) -> NotificationTone {
+    use NotificationOutcome as Outcome;
+    match outcome {
+        Outcome::ChecksFailed | Outcome::MergeConflict => NotificationTone::Error,
+        Outcome::ChecksPassed | Outcome::ChecksFinished | Outcome::Merged => {
+            NotificationTone::Success
+        }
+        Outcome::NewComments => NotificationTone::Accent,
+        Outcome::Closed | Outcome::WatchStopped | Outcome::Unreadable => NotificationTone::Warning,
+        // `NewCommits`, and outcomes news has none of.
+        _ => NotificationTone::Neutral,
     }
 }
 
 /// Which of a card's tones wins: the one that most needs a look.
-fn urgency(tone: NotificationTone) -> u8 {
+fn pressing(tone: NotificationTone) -> u8 {
     match tone {
         NotificationTone::Error => 4,
         NotificationTone::Warning => 3,

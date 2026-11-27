@@ -203,7 +203,7 @@ A new session opened without `saving` lives in the daemon's memory alone, and so
 
 ## Following a session
 
-After `rho/session/attach`, the daemon sends the session's events as `rho/session/event` notifications, each with the `session`, a `seq`, and the `event`. The attach response comes first. Each event's `type` is one of:
+After `rho/session/attach`, the daemon sends the session's events as `rho/session/event` notifications, each with the `session`, a `seq`, the `event`, and `at`, when the event happened in Unix milliseconds ([below](#when-events-happened)). A `card` that is a notification also carries `notification` ([below](#notification-cards)). The attach response comes first. Each event's `type` is one of:
 
 | Event | What it carries |
 | --- | --- |
@@ -256,6 +256,29 @@ The daemon detaches a client with `rho/session/detached`, after which no event o
 - `not_loaded`: `rho/session/observe` found the session unloaded, so its replay was the saved conversation and nothing follows. Observe again to read it again.
 
 Attaching or observing a session the connection already follows replaces the earlier attachment.
+
+### When events happened
+
+`at` is when the event happened, in Unix milliseconds: for a live event, when the daemon sent it, which a `tail` replay repeats; for an event of a saved conversation that a `reset` replays, when its message was saved, to the second. The events a replay adds rather than repeats carry none: a `reset`'s `agent`, `started_session_defaults`, missing-start `notice` and `usage`, the trailing `activity`, and a saved turn's calls that a replay closes and its plan. An older daemon sends no `at`.
+
+`NEXT_MAJOR(rho-protocol): add an optional unix-ms at field to SessionEventParams and remove SessionEventEnvelope.` Until then, `at` and `notification` sit beside `event` in the params, which `SessionEventEnvelope` reads.
+
+A Rust `Client` drops both unless its `Notifications` opt in: `notifications.with_session_event_envelopes()` yields each event as `DaemonNotification::SessionEventEnvelope`, its `params` beside `at` and `notification`, instead of `DaemonNotification::SessionEvent`. The wire is the same either way.
+
+`NEXT_MAJOR(rho-protocol): yield the event's time and notification in DaemonNotification::SessionEvent, and remove DaemonNotification::SessionEventEnvelope and Notifications::with_session_event_envelopes.`
+
+### Notification cards
+
+A `card` that is a notification, such as a subagent's result, a background process's exit, or news on a watched pull request, carries `notification`, its typed side, beside its `event`:
+
+- `id`: the card's id, the same whenever it is replayed. A fork keeps the ids of the cards it copies.
+- `urgency`: how much it wants the reader: `needs_you` (a question, a failure, failing checks, a merge conflict), `notable` (finished work, new comments, a merge), or `routine` (progress, work stopped before it finished, new commits). A card is as urgent as its most urgent item.
+- `subject`: what the card is about, with a `kind`: `pull_request` (`id`, `url`), `session` (`id`), `subagent` (`run`, and the run's `session` when it keeps one), `workflow` (`run`), `process` (`id`), or `other`.
+- `items`: one per thing the card tells of, at least one, in the order its body does: the item's `outcome`, its `subject`, and its `text`, one line.
+
+An item's `outcome` is one of `update`, `question`, `action_requested`, `running`, `completed`, `failed`, `failed_to_start`, `exited`, `stopped`, `cancelled`, `timed_out`, `interrupted`, `cut_off`, `refused`, `out_of_steps`, `new_commits`, `checks_failed`, `checks_passed`, `checks_finished`, `new_comments`, `merge_conflict`, `merged`, `closed`, `watch_stopped`, or `unreadable`. A newer daemon may send kinds, urgencies, and outcomes not listed here: read an unknown urgency as `routine`, and show an unknown subject or outcome by its text. A card saved before Rho typed notifications carries none.
+
+`NEXT_MAJOR(rho-protocol): fold NotificationInfo's id, urgency, subject and items into NotificationCard and remove SessionEventEnvelope::notification.` Until then, read them from `notification` beside the card's `event`.
 
 `NEXT_MAJOR(rho-protocol): report the agent a session runs as in SessionOptions::agent and remove SessionEvent::Agent.` Until then, read the agent from the `agent` event a `reset` replay starts with, and from any later one.
 

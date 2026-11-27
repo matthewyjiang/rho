@@ -9,21 +9,27 @@ use tokio::{
 
 use super::*;
 use crate::{
+    display::{
+        NotificationId, NotificationInfo, NotificationItem, NotificationOutcome,
+        NotificationSubject, NotificationUrgency,
+    },
     jsonrpc, login_relay,
     methods::{
-        AuthLoginFinishedParams, AuthLoginPromptParams, DetachReason, JobState, LoginId,
-        LoginOutcome, LoginPrompt, ModelChoice, ModelList, ModelListKind, ModelListParams,
+        AuthLoginFinishedParams, AuthLoginPromptParams, ClientEnvironment, DetachReason, JobState,
+        LoginId, LoginOutcome, LoginPrompt, ModelChoice, ModelList, ModelListKind, ModelListParams,
         ModelListRefresh, ModelOptions, ModelRef, ModelRefreshOutcome, PermissionMode,
-        PermissionModeOptions, Replay, Seq, SessionDetachedParams, SessionEvent,
-        SessionEventParams, SessionId, SessionOptions, StreamId, AUTH_LOGIN_FINISHED,
-        AUTH_LOGIN_PROMPT, CONFIG_CHANGED, DAEMON_STATUS, DAEMON_STOP, MODEL_CHANGED, MODEL_LIST,
-        SESSION_ANSWER, SESSION_ANSWER_QUESTION, SESSION_DETACHED, SESSION_EVENT, SESSION_FORK,
-        SESSION_HOLD, SESSION_LIST, SESSION_NEW, SESSION_PROMPT,
+        PermissionModeOptions, Replay, Seq, SessionAttach, SessionAttachParams,
+        SessionDetachedParams, SessionEvent, SessionEventEnvelope, SessionEventParams, SessionId,
+        SessionOptions, StreamId, AUTH_LOGIN_FINISHED, AUTH_LOGIN_PROMPT, CONFIG_CHANGED,
+        DAEMON_STATUS, DAEMON_STOP, MODEL_CHANGED, MODEL_LIST, SESSION_ANSWER,
+        SESSION_ANSWER_QUESTION, SESSION_DETACHED, SESSION_EVENT, SESSION_FORK, SESSION_HOLD,
+        SESSION_LIST, SESSION_NEW, SESSION_PROMPT,
     },
-    subscription, ClientRole, ConfigChangedParams, ConfigGetParams, ConfigGetResponse,
+    subscription, Client, ClientRole, ConfigChangedParams, ConfigGetParams, ConfigGetResponse,
     ConfigNamespace, ConfigRevision, ConfigWatch, CredentialStoreKind, CredentialStoreStatus,
-    HelloParams, LoginRelay, ModelWatch, ProtocolVersion, Published, Publisher, RequestId,
-    SettingEntry, SettingKey, SettingValue, StoreSelectedBy, ValueSource,
+    DaemonNotification, HelloParams, LoginRelay, ModelWatch, Notifications, ProtocolVersion,
+    Published, Publisher, RequestId, SettingEntry, SettingKey, SettingValue, StoreSelectedBy,
+    StreamEvent, ValueSource,
 };
 
 /// Failure bound for each response a test waits for. The tests synchronize
@@ -919,7 +925,7 @@ impl SettingsService for AttachService {}
 #[derive(Debug, PartialEq)]
 enum Seen {
     Response(Outcome),
-    Event(SessionEventParams),
+    Event(SessionEventEnvelope),
     Detached(SessionDetachedParams),
     LoginPrompt(AuthLoginPromptParams),
     LoginFinished(AuthLoginFinishedParams),
@@ -932,11 +938,11 @@ fn answered(id: i64) -> Seen {
 }
 
 fn event(seq: u64) -> Seen {
-    Seen::Event(SessionEventParams {
+    Seen::Event(SessionEventEnvelope::new(SessionEventParams {
         session: SessionId::new("s"),
         seq: Seq(seq),
         event: notice(seq),
-    })
+    }))
 }
 
 fn detached(reason: DetachReason) -> Seen {
@@ -1129,6 +1135,116 @@ async fn reattach_replaces_and_detach_stops_the_forwarder() {
     let _ = current.try_publish(Seq(2), notice(2));
     peer.close_input().await;
     assert_eq!(peer.remaining().await, Vec::new());
+}
+
+/// When [`timed_card`] happened.
+const CARD_AT: u64 = 1_764_158_400_123;
+
+/// Event 1, timed at [`CARD_AT`], with a failed process's notification.
+fn timed_card() -> StreamEvent {
+    let mut published = StreamEvent::new(Seq(1), notice(1));
+    published.at = Some(CARD_AT);
+    published.notification = Some(Box::new(card_notification()));
+    published
+}
+
+fn card_notification() -> NotificationInfo {
+    NotificationInfo::new(
+        NotificationId::new("card-1"),
+        NotificationUrgency::NeedsYou,
+        NotificationSubject::Process { id: "p1".into() },
+        vec![NotificationItem::new(
+            NotificationOutcome::Failed,
+            NotificationSubject::Process { id: "p1".into() },
+            "exit 1",
+        )],
+    )
+}
+
+// Covers: an event's time and notification reach the client beside it, in
+// the one `rho/session/event` notification, so a forwarder that dropped
+// either would lose it for every client.
+// Owner: protocol server forwarding.
+#[tokio::test]
+async fn an_events_time_and_notification_ride_beside_it() {
+    let (service, mut publishers) = AttachService::new(8, 0);
+    let mut peer = Peer::connect(service);
+    peer.send(hello_line(1, PROTOCOL_VERSION)).await;
+    peer.send(session_line(2, SESSION_ATTACH)).await;
+    assert_eq!(peer.take(2).await, vec![answered(1), answered(2)]);
+    let publisher = publishers.recv().await.unwrap();
+    assert_eq!(publisher.try_publish_event(timed_card()), Ok(()));
+
+    let Seen::Event(mut expected) = event(1) else {
+        unreachable!("event() is an event")
+    };
+    expected.at = Some(CARD_AT);
+    expected.notification = Some(Box::new(card_notification()));
+    assert_eq!(peer.take(1).await, vec![Seen::Event(expected)]);
+}
+
+// Covers: a `Client` whose notifications opted into envelopes receives an
+// event's time and notification as the server forwards them, and a default
+// one still receives the bare `SessionEvent`. A miss leaves Rust clients
+// unable to read either, or changes what every existing client receives.
+// Runs the real forwarder and client together, so it also fails when the
+// server's encoding and the client's decoding disagree, which neither side's
+// own tests catch.
+// Owner: protocol client notifications.
+#[tokio::test]
+async fn only_a_client_that_opts_in_receives_an_events_time_and_notification() {
+    let params = SessionEventParams {
+        session: SessionId::new("s"),
+        seq: Seq(1),
+        event: notice(1),
+    };
+    let mut envelope = SessionEventEnvelope::new(params.clone());
+    envelope.at = Some(CARD_AT);
+    envelope.notification = Some(Box::new(card_notification()));
+    /// How a case sets up a client's notifications.
+    type Setup = fn(Notifications) -> Notifications;
+    let cases: [(&str, Setup, DaemonNotification); 2] = [
+        (
+            "default",
+            |notifications| notifications,
+            DaemonNotification::SessionEvent(params),
+        ),
+        (
+            "opted in",
+            Notifications::with_session_event_envelopes,
+            DaemonNotification::SessionEventEnvelope(envelope),
+        ),
+    ];
+    for (name, opt, expected) in cases {
+        let (service, mut publishers) = AttachService::new(8, 0);
+        let (client, server) = duplex(64 * 1024);
+        tokio::spawn(async move {
+            serve_connection(server, &test_info(), service, std::future::pending()).await
+        });
+        let hello = crate::ClientHello::frontend(ClientInfo {
+            name: "test".into(),
+            version: "0".into(),
+        });
+        let (client, notifications, _) = Client::handshake(client, hello).await.unwrap();
+        let mut notifications = opt(notifications);
+        let attach = SessionAttachParams {
+            session: SessionId::new("s"),
+            after: None,
+            environment: ClientEnvironment::default(),
+            setup: Default::default(),
+        };
+        tokio::time::timeout(RESPONSE_DEADLINE, client.request::<SessionAttach>(&attach))
+            .await
+            .expect("the attach answers within RESPONSE_DEADLINE")
+            .unwrap();
+        let publisher = publishers.recv().await.unwrap();
+        assert_eq!(publisher.try_publish_event(timed_card()), Ok(()));
+
+        let received = tokio::time::timeout(RESPONSE_DEADLINE, notifications.recv())
+            .await
+            .expect("the event arrives within RESPONSE_DEADLINE");
+        assert_eq!(received, Some(expected), "{name}");
+    }
 }
 
 // Covers: when the client leaves, the connection drops its subscriptions at

@@ -558,6 +558,7 @@ pub(super) fn active_display_from_tree(
         .into_iter()
         .map(|(origin, row)| ProjectedMessage {
             origin: Some(origin),
+            saved_at: parse_timestamp(&row.timestamp).map(|secs| secs.saturating_mul(1000)),
             message: row.message,
         })
         .collect();
@@ -567,6 +568,7 @@ pub(super) fn active_display_from_tree(
         |_source, result| ProjectedMessage {
             origin: None,
             message: Message::ToolResult(result.into()),
+            saved_at: None,
         },
     );
     Ok(messages)

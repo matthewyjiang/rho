@@ -325,8 +325,9 @@ impl<'a> WireView<'a> {
         if self.sink.failure().is_some() {
             return;
         }
+        // The headless wire carries no notifications.
         for wire in live.map(event) {
-            self.sink.send(wire);
+            self.sink.send(wire.event);
         }
         self.fail_turn_if_broken(control);
     }

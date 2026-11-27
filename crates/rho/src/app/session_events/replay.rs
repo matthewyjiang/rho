@@ -17,8 +17,8 @@ use rho_sdk::{
 };
 
 use super::{
-    card, encoded_len, opened_call, plan_entries, result_content, status_update, user_content,
-    CallIds, UNNAMED_TOOL_TITLE,
+    card, opened_call, plan_entries, result_content, status_update, user_content, CallIds,
+    FeedEvent, UNNAMED_TOOL_TITLE,
 };
 use crate::{
     app::{interactive_presenter::InteractiveToolPresenter, session_runtime::SessionTools},
@@ -123,9 +123,9 @@ impl SavedTurn {
         let mut replay = Replay::new(workspace, &mcp_tools);
         let mut unencodable = Vec::new();
         let mut rendered = 0;
-        let mut check = |events: Vec<WireEvent>| {
+        let mut check = |events: Vec<FeedEvent>| {
             for event in events {
-                if encoded_len(&event).is_none() {
+                if event.encoded_len().is_none() {
                     unencodable.push(rendered);
                 }
                 rendered += 1;
@@ -160,7 +160,7 @@ struct TurnEvents {
     call: usize,
     finished: bool,
     /// Rendered and not taken yet.
-    pending: VecDeque<WireEvent>,
+    pending: VecDeque<FeedEvent>,
     /// How many events were rendered before `pending`'s first.
     rendered: usize,
 }
@@ -180,14 +180,14 @@ impl TurnEvents {
 }
 
 impl Iterator for TurnEvents {
-    type Item = WireEvent;
+    type Item = FeedEvent;
 
-    fn next(&mut self) -> Option<WireEvent> {
+    fn next(&mut self) -> Option<FeedEvent> {
         loop {
             if let Some(event) = self.pending.pop_front() {
-                let at = self.rendered;
+                let index = self.rendered;
                 self.rendered += 1;
-                if self.turn.unencodable.binary_search(&at).is_err() {
+                if self.turn.unencodable.binary_search(&index).is_err() {
                     return Some(event);
                 }
                 continue;
@@ -241,9 +241,10 @@ impl SavedTranscript {
     }
 
     /// The wire events that replay every turn, in order, the same each
-    /// time. They render a row at a time as the replay is taken, so a reset
-    /// never holds a long session's events at once.
-    pub(crate) fn events(&self) -> impl Iterator<Item = WireEvent> + Send + Sync + 'static {
+    /// time, each with when its row was saved if the session file says.
+    /// They render a row at a time as the replay is taken, so a reset never
+    /// holds a long session's events at once.
+    pub(crate) fn events(&self) -> impl Iterator<Item = FeedEvent> + Send + Sync + 'static {
         self.turns.clone().into_iter().flat_map(TurnEvents::new)
     }
 }
@@ -338,8 +339,11 @@ struct Replay {
     /// How many calls replay opened.
     opened: usize,
     message_ids: MessageIds,
+    /// When the row being rendered was saved, which the events that show
+    /// it carry ([`Self::push`]).
+    saved_at: Option<u64>,
     /// Rendered since the last [`Self::take_events`].
-    events: Vec<WireEvent>,
+    events: Vec<FeedEvent>,
 }
 
 /// A call replay opened, and what it shows so far.
@@ -386,6 +390,7 @@ impl Replay {
             calls: HashMap::new(),
             opened: 0,
             message_ids: MessageIds::default(),
+            saved_at: None,
             events: Vec::new(),
         }
     }
@@ -393,7 +398,17 @@ impl Replay {
     /// Renders `row`, opening its calls from `calls`.
     fn row(&mut self, row: &ProjectedMessage, calls: &mut dyn CallSource) {
         self.message_ids.enter(row.origin.as_ref());
+        self.saved_at = row.saved_at;
         self.message(&row.message, calls);
+    }
+
+    /// Sends `event`, which shows the row being rendered, timed as the row
+    /// was saved. What the replay adds of its own, such as closing a call
+    /// it left open, goes to [`Self::events`] untimed.
+    fn push(&mut self, event: impl Into<FeedEvent>) {
+        let mut event = event.into();
+        event.at = self.saved_at;
+        self.events.push(event);
     }
 
     /// Ends the replay: closes the calls the rows left open, in the order
@@ -404,16 +419,22 @@ impl Replay {
             .filter(|call| call.status == ToolStatus::InProgress)
             .collect();
         unfinished.sort_by_key(|call| call.opened_at);
-        self.events
-            .extend(unfinished.into_iter().map(ReplayedCall::closed));
+        self.events.extend(
+            unfinished
+                .into_iter()
+                .map(|call| FeedEvent::from(call.closed())),
+        );
         if !plan.is_empty() {
-            self.events.push(WireEvent::Plan {
-                entries: plan.to_vec(),
-            });
+            self.events.push(
+                WireEvent::Plan {
+                    entries: plan.to_vec(),
+                }
+                .into(),
+            );
         }
     }
 
-    fn take_events(&mut self) -> Vec<WireEvent> {
+    fn take_events(&mut self) -> Vec<FeedEvent> {
         std::mem::take(&mut self.events)
     }
 
@@ -429,7 +450,7 @@ impl Replay {
                 let content = user_content(blocks);
                 if !content.is_empty() {
                     let message = self.message_ids.next();
-                    self.events.push(WireEvent::UserMessage {
+                    self.push(WireEvent::UserMessage {
                         message,
                         content,
                         steer: None,
@@ -446,7 +467,7 @@ impl Replay {
                     .filter(|summary| !summary.is_empty())
                 {
                     let message = self.message_ids.next();
-                    self.events.push(WireEvent::ThoughtChunk {
+                    self.push(WireEvent::ThoughtChunk {
                         message,
                         text: summary.to_owned(),
                     });
@@ -462,13 +483,13 @@ impl Replay {
                     let event = match row {
                         // The event that ended it live, its start left out:
                         // a client draws the card it drew live.
-                        DisplayRow::Compaction(counts) => WireEvent::Compaction {
+                        DisplayRow::Compaction(counts) => FeedEvent::from(WireEvent::Compaction {
                             id: self.message_ids.compaction(),
                             status: CompactionStatus::Completed { counts: *counts },
-                        },
+                        }),
                         DisplayRow::Notification(_) | DisplayRow::Notice(_) => card(row),
                     };
-                    self.events.push(event);
+                    self.push(event);
                 }
             }
             // Display rows never hold model-only entries.
@@ -502,8 +523,7 @@ impl Replay {
             return;
         }
         let message = self.message_ids.next();
-        self.events
-            .push(WireEvent::AgentMessageChunk { message, text });
+        self.push(WireEvent::AgentMessageChunk { message, text });
     }
 
     fn call(&mut self, call: &model::ToolCall, calls: &mut dyn CallSource) {
@@ -554,11 +574,12 @@ impl Replay {
             call.status = status;
             call.results.push(Arc::clone(result));
             let shown = self.presenter.historical(&call.call, ok, &result.content);
-            self.events.push(WireEvent::tool_call(ToolCallUpdate {
+            let update = WireEvent::tool_call(ToolCallUpdate {
                 content: Some(call.content()),
                 display: Some(shown.presentation),
                 ..status_update(call.id.clone(), Some(status))
-            }));
+            });
+            self.push(update);
             return;
         }
         let OpenedCall { id, .. } = calls.open(&result.id, None);
@@ -609,10 +630,11 @@ impl Replay {
         self.opened += 1;
         if let Some(superseded) = self.calls.insert(saved.to_owned(), call) {
             if superseded.status == ToolStatus::InProgress {
-                self.events.push(superseded.closed());
+                // The replay's own closing, which shows no saved row.
+                self.events.push(superseded.closed().into());
             }
         }
-        self.events.push(WireEvent::tool_call(opened));
+        self.push(WireEvent::tool_call(opened));
     }
 }
 
