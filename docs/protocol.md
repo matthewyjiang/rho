@@ -560,7 +560,7 @@ Some tables of `config.toml` hold entries no setting describes, so a client copy
 
 | `table` | Entries |
 | --- | --- |
-| `providers` | Each provider profile by name: `ollama` is `[providers.ollama]` and any other name is `[providers.custom.<name>]`, leaving out a custom table named after a built-in provider, which the built-in shadows, its value the profile's fields as [OpenAI-compatible providers](providers/openai-compatible.md) and [Ollama](providers/ollama.md) document them. Sorted by name. |
+| `providers` | Each provider profile by name: `ollama` is `[providers.ollama]` and any other name is `[providers.custom.<name>]`, leaving out a custom table named after a built-in provider, which the built-in shadows and a put or remove refuses, its value the profile's fields as [OpenAI-compatible providers](providers/openai-compatible.md) and [Ollama](providers/ollama.md) document them. Sorted by name. |
 | `model.aliases` | Each alias in `[model.aliases]` by name, its value the target string, such as `"openai/gpt-5-mini"`. Sorted by name. |
 | `model.favorite_models` | Each favorite in `model.favorite_models` by its `provider/model` reference, in the list's order, its value `null`. The daemon reads them as it loads them: each once, in its canonical spelling. |
 

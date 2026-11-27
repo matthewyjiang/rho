@@ -98,14 +98,10 @@ fn table_entries(doc: &ConfigDocument, table: EditableTable) -> Vec<TableEntry> 
     match table {
         EditableTable::Providers => {
             // A custom table named after a built-in provider is shadowed by
-            // it and never loaded, and its name would read as the built-in's
-            // own entry, such as `[providers.ollama]`.
+            // it, and its name would read as the built-in's own entry, such
+            // as `[providers.ollama]`.
             let mut providers = entries::keyed_entries(doc, &CUSTOM_PROVIDERS);
-            providers.retain(|name, _| {
-                !rho_providers::provider::builtin_providers()
-                    .iter()
-                    .any(|builtin| builtin.name == name)
-            });
+            providers.retain(|name, _| !is_builtin_provider(name));
             if let Some(ollama) = doc.get_at(&[PROVIDERS, OLLAMA]) {
                 providers.insert(OLLAMA.to_owned(), entries::to_json(ollama));
             }
@@ -159,6 +155,13 @@ fn apply(
     change: &TableChange,
 ) -> Result<(), String> {
     match (table, change) {
+        (EditableTable::Providers, TableChange::Put { key, .. } | TableChange::Remove { key })
+            if key != OLLAMA && is_builtin_provider(key) =>
+        {
+            Err(format!(
+                "`{key}` is a built-in provider, which only `ollama` has a profile for; name a custom provider something else"
+            ))
+        }
         (EditableTable::Providers, TableChange::Put { key, value }) => {
             let item = entries::to_item(value)?;
             decode_table::<PartialEndpointConfig>(&item)?;
@@ -244,6 +247,14 @@ fn remove_favorite(doc: &mut ConfigDocument, key: &str) -> Result<(), String> {
         doc.remove_at(&FAVORITES);
     }
     Ok(())
+}
+
+/// Whether `name` is a built-in provider's. The providers table lists no
+/// custom table by such a name, and takes none.
+fn is_builtin_provider(name: &str) -> bool {
+    rho_providers::provider::builtin_providers()
+        .iter()
+        .any(|builtin| builtin.name == name)
 }
 
 fn no_such_entry() -> String {

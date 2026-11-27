@@ -103,7 +103,8 @@ fn favorites_keep_their_order() {
 }
 
 // Covers: every change the loader refuses is named, by entry, and nothing is
-// applied.
+// applied; so is a put or remove of a provider the table never lists, a
+// custom one named after a built-in, so reads and writes agree.
 // Owner: config tables.
 #[test]
 fn a_refused_change_names_its_entry_and_applies_nothing() {
@@ -113,6 +114,19 @@ fn a_refused_change_names_its_entry_and_applies_nothing() {
             EditableTable::Providers,
             put("local", json!({"base_url": "http://x", "colour": "red"})),
             "providers.custom.local",
+        ),
+        (
+            EditableTable::Providers,
+            put(
+                "opencode",
+                json!({"base_url": "https://opencode.ai/zen/v1"}),
+            ),
+            "providers.custom.opencode",
+        ),
+        (
+            EditableTable::Providers,
+            remove("opencode"),
+            "providers.custom.opencode",
         ),
         (
             EditableTable::ModelAliases,
