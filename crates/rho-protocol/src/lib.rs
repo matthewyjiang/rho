@@ -235,6 +235,12 @@ pub use methods::{
     HooksReloadOutcome, SessionHooksReloadParams, SessionHooksReloadResponse, SESSION_HOOKS_RELOAD,
 };
 pub use methods::{
+    ImportOutcome, ImportedSecret, RevertOutcome, RevertedItem, SyncDiscardParams,
+    SyncDiscardResponse, SyncId, SyncImportKeysParams, SyncImportKeysResponse, SyncItem,
+    SyncItemState, SyncItemStatus, SyncRevertParams, SyncRevertResponse, SyncStatusParams,
+    SyncStatusResponse, SYNC_DISCARD, SYNC_IMPORT_KEYS, SYNC_REVERT, SYNC_STATUS,
+};
+pub use methods::{
     NewSessionMark, SessionMark, SessionMarkParams, SessionMarkResponse, SESSION_MARK,
 };
 pub use methods::{

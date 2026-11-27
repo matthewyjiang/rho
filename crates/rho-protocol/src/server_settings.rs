@@ -32,6 +32,11 @@ use crate::{
         SyncCompareParams, SyncCompareResponse, SyncExportParams, SyncExportResponse,
         SyncRecipientParams, SyncRecipientResponse, SYNC_COMPARE, SYNC_EXPORT, SYNC_RECIPIENT,
     },
+    methods::{
+        SyncDiscardParams, SyncDiscardResponse, SyncImportKeysParams, SyncImportKeysResponse,
+        SyncRevertParams, SyncRevertResponse, SyncStatusParams, SyncStatusResponse, SYNC_DISCARD,
+        SYNC_IMPORT_KEYS, SYNC_REVERT, SYNC_STATUS,
+    },
     server_codec::{encode_result, unsupported},
     server_outbox::Responder,
     RpcError,
@@ -242,6 +247,44 @@ pub trait SettingsService: Send + Sync {
     ) -> impl Future<Output = Result<SyncCompareResponse, RpcError>> + Send {
         let _ = params;
         unsupported(SYNC_COMPARE)
+    }
+
+    /// Handles `rho/sync/import_keys`: open a bundle sealed to this daemon,
+    /// save its keys, and journal what they replaced.
+    fn sync_import_keys(
+        &self,
+        params: SyncImportKeysParams,
+    ) -> impl Future<Output = Result<SyncImportKeysResponse, RpcError>> + Send {
+        let _ = params;
+        unsupported(SYNC_IMPORT_KEYS)
+    }
+
+    /// Answers `rho/sync/status`: whether each journaled item changed since
+    /// the sync wrote it.
+    fn sync_status(
+        &self,
+        params: SyncStatusParams,
+    ) -> impl Future<Output = Result<SyncStatusResponse, RpcError>> + Send {
+        let _ = params;
+        unsupported(SYNC_STATUS)
+    }
+
+    /// Handles `rho/sync/revert`: restore what the sync replaced.
+    fn sync_revert(
+        &self,
+        params: SyncRevertParams,
+    ) -> impl Future<Output = Result<SyncRevertResponse, RpcError>> + Send {
+        let _ = params;
+        unsupported(SYNC_REVERT)
+    }
+
+    /// Handles `rho/sync/discard`: forget the sync's journal.
+    fn sync_discard(
+        &self,
+        params: SyncDiscardParams,
+    ) -> impl Future<Output = Result<SyncDiscardResponse, RpcError>> + Send {
+        let _ = params;
+        unsupported(SYNC_DISCARD)
     }
 }
 

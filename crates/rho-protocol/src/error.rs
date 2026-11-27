@@ -206,6 +206,11 @@ error_codes! {
         /// bundle sealed to it, or the daemon restarted. Nothing was opened.
         /// Ask this daemon for a new recipient and export again.
         SealRecipientGone = -32029,
+        /// The daemon keeps no journal for the `sync` the request names
+        /// (`rho/sync/status`, `revert`, `discard`): a later sync replaced
+        /// it, it expired, or it was fully reverted or discarded. Nothing
+        /// was changed.
+        SyncNotFound = -32030,
     }
 }
 
