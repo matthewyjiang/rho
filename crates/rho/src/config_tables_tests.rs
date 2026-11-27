@@ -58,6 +58,25 @@ base_url = "http://10.0.0.2:8080/v1"
     );
 }
 
+// Covers: what the providers table lists is what a put or remove by the
+// same key reaches: a custom table named after a built-in provider, which
+// the built-in shadows, is not listed as the built-in's own profile.
+// Owner: config tables.
+#[test]
+fn a_shadowed_custom_provider_is_not_listed_as_the_built_in() {
+    let doc = ConfigDocument::parse(
+        "[providers.custom.ollama]\nbase_url = \"http://127.0.0.1:11434/v1\"\n\n[providers.custom.local]\nbase_url = \"http://127.0.0.1:8080/v1\"\n",
+    )
+    .unwrap();
+    assert_eq!(
+        table_entries(&doc, EditableTable::Providers),
+        [TableEntry::new(
+            "local".into(),
+            json!({"base_url": "http://127.0.0.1:8080/v1"})
+        )]
+    );
+}
+
 // Covers: favorites keep their order as the loader reads them: a new one
 // goes last, one already listed, however it is spelled, keeps its place, and
 // a removed one leaves the rest in order.

@@ -97,7 +97,15 @@ fn table_entries(doc: &ConfigDocument, table: EditableTable) -> Vec<TableEntry> 
     };
     match table {
         EditableTable::Providers => {
+            // A custom table named after a built-in provider is shadowed by
+            // it and never loaded, and its name would read as the built-in's
+            // own entry, such as `[providers.ollama]`.
             let mut providers = entries::keyed_entries(doc, &CUSTOM_PROVIDERS);
+            providers.retain(|name, _| {
+                !rho_providers::provider::builtin_providers()
+                    .iter()
+                    .any(|builtin| builtin.name == name)
+            });
             if let Some(ollama) = doc.get_at(&[PROVIDERS, OLLAMA]) {
                 providers.insert(OLLAMA.to_owned(), entries::to_json(ollama));
             }
