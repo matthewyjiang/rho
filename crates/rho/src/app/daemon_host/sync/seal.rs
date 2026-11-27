@@ -50,19 +50,30 @@ pub(super) enum OpenError {
     /// expired, or issued before the process restarted.
     #[error("this daemon holds no key for that recipient; it expired, was used, or the daemon restarted")]
     Gone,
-    /// The key was held, and is now used up, but the bundle did not open:
-    /// it was not sealed to it, or was altered.
+    /// The key was held, and is now used up, but the bundle did not open.
     #[error("the sealed bundle does not open: {0}")]
-    Invalid(&'static str),
+    Invalid(InvalidBundle),
+}
+
+/// Why a bundle sealed to a held key did not open.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub(super) enum InvalidBundle {
+    #[error("the encapsulated key is malformed")]
+    EncappedKey,
+    #[error("the ciphertext is not standard base64")]
+    Ciphertext,
+    /// Sealed to another key, with other `info` or `aad`, or altered.
+    #[error("it was not sealed to this recipient, or was altered")]
+    Unauthentic,
 }
 
 /// Why [`seal`] sealed nothing.
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
 pub(super) enum SealError {
-    #[error("the recipient is not an X25519 public key in standard base64")]
+    /// Not standard base64 of an X25519 public key, or a key no secret
+    /// can be agreed with (a low-order point).
+    #[error("the recipient is not a usable X25519 public key in standard base64")]
     InvalidRecipient,
-    #[error("sealing failed")]
-    Failed,
 }
 
 /// The keys this process issued that have not been used up or expired,
@@ -114,10 +125,10 @@ impl Recipients {
             .decode(&sealed.encapped_key)
             .ok()
             .and_then(|bytes| EncappedKey::from_bytes(&bytes).ok())
-            .ok_or(OpenError::Invalid("the encapsulated key is malformed"))?;
+            .ok_or(OpenError::Invalid(InvalidBundle::EncappedKey))?;
         let ciphertext = BASE64
             .decode(&sealed.ciphertext)
-            .map_err(|_| OpenError::Invalid("the ciphertext is not standard base64"))?;
+            .map_err(|_| OpenError::Invalid(InvalidBundle::Ciphertext))?;
         hpke::single_shot_open::<ChaCha20Poly1305, HkdfSha256, Kem>(
             &OpModeR::Base,
             &key.private,
@@ -127,7 +138,7 @@ impl Recipients {
             aad,
         )
         .map(Zeroizing::new)
-        .map_err(|_| OpenError::Invalid("it was not sealed to this recipient, or was altered"))
+        .map_err(|_| OpenError::Invalid(InvalidBundle::Unauthentic))
     }
 }
 
@@ -151,7 +162,7 @@ pub(super) fn seal(
         plaintext,
         aad,
     )
-    .map_err(|_| SealError::Failed)?;
+    .map_err(|_| SealError::InvalidRecipient)?;
     Ok(Sealed {
         encapped_key: BASE64.encode(encapped.to_bytes()),
         ciphertext: BASE64.encode(ciphertext),

@@ -56,12 +56,21 @@ pub enum SecretItem {
     /// [`crate::AuthKind::ApiKey`], as [`super::AUTH_KEY`] takes it. A key
     /// held only in the daemon's environment is not saved, so it is not
     /// exported. Interactive logins are never exported: copying a refresh
-    /// token the provider rotates can sign both machines out.
+    /// token the provider rotates can sign both machines out. Built with
+    /// [`SecretItem::api_key`].
+    #[non_exhaustive]
     ApiKey { auth: String },
     /// A kind a newer peer sends that this crate does not know.
     #[serde(other)]
     #[schemars(extend("x-rho-other" = true))]
     Unknown,
+}
+
+impl SecretItem {
+    /// The saved API key of auth profile `auth`.
+    pub fn api_key(auth: impl Into<String>) -> Self {
+        Self::ApiKey { auth: auth.into() }
+    }
 }
 
 /// A one-time public key that secrets can be sealed to.
@@ -184,8 +193,10 @@ impl SyncExportResponse {
 pub struct SyncCompareParams {
     /// A bundle sealed to a recipient this daemon issued. A recipient it no
     /// longer holds is [`crate::ErrorCode::SealRecipientGone`]; a bundle
-    /// that does not open is [`crate::ErrorCode::InvalidParams`]. Either
-    /// way the recipient is used up.
+    /// that does not open is [`crate::ErrorCode::InvalidParams`], and the
+    /// recipient is used up either way. A suite or item kind this daemon
+    /// does not know is refused with `InvalidParams` before opening, which
+    /// keeps the recipient.
     pub sealed: SealedSecrets,
 }
 
@@ -236,7 +247,8 @@ pub enum CompareState {
     Same,
     /// This daemon holds another value.
     Differs,
-    /// This daemon holds no value for it.
+    /// This daemon holds no value for it, or does not know its auth
+    /// profile yet, as for a custom provider only the source defines.
     Absent,
     /// A state a newer daemon sends that this crate does not know.
     #[serde(other)]

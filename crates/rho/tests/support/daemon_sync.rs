@@ -14,7 +14,7 @@ use rho_providers::credentials::CredentialStore;
 use super::auth::{rpc_error, Fixture, FIRST_KEY, KEY_ACCOUNT};
 
 fn api_key(auth: &str) -> SecretItem {
-    SecretItem::ApiKey { auth: auth.into() }
+    SecretItem::api_key(auth)
 }
 
 // Covers: a key saved in one daemon's store, for a provider its config

@@ -22,10 +22,7 @@ use rho_protocol::{
     SecretComparison, SecretItem, SyncCompareParams, SyncCompareResponse, SyncExportParams,
     SyncExportResponse, SyncRecipientResponse,
 };
-use rho_providers::{
-    credentials::CredentialStore,
-    provider::{self, ProviderAuthKind},
-};
+use rho_providers::credentials::CredentialStore;
 use sha2::{Digest, Sha256};
 use zeroize::Zeroizing;
 
@@ -107,20 +104,16 @@ struct Saved {
     missing: Vec<SecretItem>,
 }
 
-/// Reads each item's saved value from `store`. An item this daemon cannot
-/// export is refused before anything is read.
+/// Reads each item's saved value from `store`, refusing an item this
+/// daemon cannot export.
 fn saved_values(store: &dyn CredentialStore, items: Vec<SecretItem>) -> Result<Saved, RpcError> {
-    let accounts = items
-        .iter()
-        .map(saved_account)
-        .collect::<Result<Vec<_>, _>>()?;
     let mut saved = Saved {
         items: Vec::new(),
         values: Zeroizing::new(Vec::new()),
         missing: Vec::new(),
     };
-    for (item, account) in items.into_iter().zip(accounts) {
-        match store.get_secret(account).map_err(store_error)? {
+    for item in items {
+        match credential_writes::saved_api_key(api_key_auth(&item)?, store)? {
             Some(value) => {
                 saved.items.push(item);
                 saved.values.push(value);
@@ -137,16 +130,16 @@ fn seal_values(
     items: Vec<SecretItem>,
     values: &[String],
 ) -> Result<SealedSecrets, RpcError> {
-    let plaintext = Zeroizing::new(serde_json::to_vec(values).map_err(internal)?);
-    let sealed =
-        seal::seal(&recipient.public_key, INFO, &aad(&items)?, &plaintext).map_err(|error| {
-            match error {
-                seal::SealError::InvalidRecipient => {
-                    RpcError::new(ErrorCode::InvalidParams, error.to_string())
-                }
-                seal::SealError::Failed => internal(error),
-            }
-        })?;
+    // Sized up front so growing the buffer leaves no unzeroized copy: a key
+    // is printable ASCII, so its JSON adds only quotes and a comma.
+    let capacity = 2 + values
+        .iter()
+        .map(|value| 2 * value.len() + 3)
+        .sum::<usize>();
+    let mut plaintext = Zeroizing::new(Vec::with_capacity(capacity));
+    serde_json::to_writer(&mut *plaintext, values).map_err(internal)?;
+    let sealed = seal::seal(&recipient.public_key, INFO, &aad(&items)?, &plaintext)
+        .map_err(|error| RpcError::new(ErrorCode::InvalidParams, error.to_string()))?;
     Ok(SealedSecrets::new(
         SUITE,
         recipient.public_key.clone(),
@@ -164,6 +157,13 @@ fn open_values(
     sealed: &SealedSecrets,
 ) -> Result<Zeroizing<Vec<String>>, RpcError> {
     known_suite(sealed.suite)?;
+    // Refused before opening, which would fail anyway: an unknown kind
+    // reads back as `Unknown`, so the `aad` would not match.
+    if sealed.items.contains(&SecretItem::Unknown) {
+        return Err(invalid(
+            "the bundle holds a kind of secret this daemon does not know",
+        ));
+    }
     let bundle = seal::Sealed {
         encapped_key: sealed.encapped_key.clone(),
         ciphertext: sealed.ciphertext.clone(),
@@ -198,10 +198,15 @@ fn compare_values(
         .into_iter()
         .zip(values)
         .map(|(item, value)| {
-            let account = saved_account(&item)?;
+            // A profile the target does not know yet, such as a custom
+            // provider only the source defines, holds nothing here.
+            let held = match credential_writes::saved_api_key(api_key_auth(&item)?, store) {
+                Err(CredentialWriteError::UnknownAuth { .. }) => None,
+                held => held?.map(Zeroizing::new),
+            };
             // Comparing digests keeps the time it takes from telling how
             // much of a guessed key is right.
-            let state = match store.get_secret(account).map_err(store_error)? {
+            let state = match held {
                 None => CompareState::Absent,
                 Some(held) if digest(&held) == digest(value) => CompareState::Same,
                 Some(_) => CompareState::Differs,
@@ -211,20 +216,13 @@ fn compare_values(
         .collect()
 }
 
-/// The credential store account `item` is saved under. Only an API key
-/// auth profile's key can be exported.
-fn saved_account(item: &SecretItem) -> Result<&'static str, RpcError> {
-    let auth = match item {
-        SecretItem::ApiKey { auth } => auth,
+/// The auth profile whose saved API key `item` names: the only kind this
+/// daemon exports.
+fn api_key_auth(item: &SecretItem) -> Result<&str, RpcError> {
+    match item {
+        SecretItem::ApiKey { auth, .. } => Ok(auth),
         // `Unknown`, or a kind a newer protocol adds.
-        _ => return Err(invalid("this daemon cannot export that kind of secret")),
-    };
-    let Some((_, mode)) = provider::resolve_auth_mode(auth) else {
-        return Err(CredentialWriteError::UnknownAuth { auth: auth.clone() }.into());
-    };
-    match mode.auth_kind {
-        ProviderAuthKind::ApiKey { account, .. } => Ok(account),
-        _ => Err(CredentialWriteError::NotAnApiKey { auth: auth.clone() }.into()),
+        _ => Err(invalid("this daemon cannot export that kind of secret")),
     }
 }
 
@@ -250,13 +248,6 @@ fn invalid(message: &str) -> RpcError {
 
 fn internal(error: impl std::fmt::Display) -> RpcError {
     RpcError::new(ErrorCode::InternalError, error.to_string())
-}
-
-fn store_error(error: impl std::fmt::Display) -> RpcError {
-    RpcError::new(
-        ErrorCode::CredentialStoreUnavailable,
-        format!("could not read the credential store: {error}"),
-    )
 }
 
 #[cfg(test)]

@@ -9,9 +9,7 @@ use super::*;
 // Owner: protocol wire contract.
 #[test]
 fn sync_messages_travel_in_their_wire_form() {
-    let item = SecretItem::ApiKey {
-        auth: "openai".into(),
-    };
+    let item = SecretItem::api_key("openai");
     let sealed = SealedSecrets::new(
         SealSuite::X25519HkdfSha256ChaCha20Poly1305,
         "cGs=".into(),

@@ -724,24 +724,6 @@ impl Service for DaemonHost {
     ) -> Result<AuthChooseStoreResponse, RpcError> {
         store::choose(params, self.store_environment, &self.sessions).await
     }
-
-    async fn sync_recipient(
-        &self,
-        _params: SyncRecipientParams,
-    ) -> Result<SyncRecipientResponse, RpcError> {
-        Ok(self.sync.recipient())
-    }
-
-    async fn sync_export(&self, params: SyncExportParams) -> Result<SyncExportResponse, RpcError> {
-        self.sync.export(params).await
-    }
-
-    async fn sync_compare(
-        &self,
-        params: SyncCompareParams,
-    ) -> Result<SyncCompareResponse, RpcError> {
-        self.sync.compare(params).await
-    }
 }
 
 impl SettingsService for DaemonHost {
@@ -844,5 +826,23 @@ impl SettingsService for DaemonHost {
         params: PluginsRemoveParams,
     ) -> Result<PluginsRemoveResponse, RpcError> {
         self.plugins.remove(params).await
+    }
+
+    async fn sync_recipient(
+        &self,
+        _params: SyncRecipientParams,
+    ) -> Result<SyncRecipientResponse, RpcError> {
+        Ok(self.sync.recipient())
+    }
+
+    async fn sync_export(&self, params: SyncExportParams) -> Result<SyncExportResponse, RpcError> {
+        self.sync.export(params).await
+    }
+
+    async fn sync_compare(
+        &self,
+        params: SyncCompareParams,
+    ) -> Result<SyncCompareResponse, RpcError> {
+        self.sync.compare(params).await
     }
 }

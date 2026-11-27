@@ -246,12 +246,7 @@ impl ApiKeyAuth {
         auth: &str,
         credentials: &dyn CredentialStore,
     ) -> Result<Self, CredentialWriteError> {
-        let Some((descriptor, mode)) = provider::resolve_auth_mode(auth) else {
-            return Err(CredentialWriteError::UnknownAuth { auth: auth.into() });
-        };
-        let ProviderAuthKind::ApiKey { .. } = mode.auth_kind else {
-            return Err(CredentialWriteError::NotAnApiKey { auth: auth.into() });
-        };
+        let (descriptor, mode, _) = api_key_profile(auth)?;
         // The variable wins over a saved key in that party's sessions, so
         // saving one would change nothing for them.
         refuse_environment_override(auth, CredentialWrite::SignIn, credentials)?;
@@ -353,6 +348,46 @@ impl ApiKeyAuth {
             .context("saved the key, but could not record the login")
             .map_err(CredentialWriteError::Config)
     }
+}
+
+/// Auth profile `auth`, refused unless it takes an API key, with the
+/// store account its key is saved under.
+fn api_key_profile(
+    auth: &str,
+) -> Result<
+    (
+        &'static ProviderDescriptor,
+        provider::AuthMode,
+        &'static str,
+    ),
+    CredentialWriteError,
+> {
+    let Some((descriptor, mode)) = provider::resolve_auth_mode(auth) else {
+        return Err(CredentialWriteError::UnknownAuth { auth: auth.into() });
+    };
+    let ProviderAuthKind::ApiKey { account, .. } = mode.auth_kind else {
+        return Err(CredentialWriteError::NotAnApiKey { auth: auth.into() });
+    };
+    Ok((descriptor, mode, account))
+}
+
+/// The key saved in `store` for auth profile `auth`, which must take an
+/// API key. A blank value counts as none, as it does for sessions and
+/// `rho/auth/list`. A key in an environment variable is not saved, so it
+/// is not read. Used by `rho/sync/*`, which copies saved keys.
+pub(crate) fn saved_api_key(
+    auth: &str,
+    store: &dyn CredentialStore,
+) -> Result<Option<String>, CredentialWriteError> {
+    let (_, _, account) = api_key_profile(auth)?;
+    // Fresh: the OS store caches reads, misses included, for the life of
+    // the process, and a key copied elsewhere must be the one saved now.
+    let saved = store.get_secret_fresh(account).map_err(|error| {
+        CredentialWriteError::Store(anyhow::anyhow!(
+            "could not read the credential store: {error}"
+        ))
+    })?;
+    Ok(saved.filter(|key| !key.trim().is_empty()))
 }
 
 /// What a failing `status` from `provider`'s models endpoint says about the

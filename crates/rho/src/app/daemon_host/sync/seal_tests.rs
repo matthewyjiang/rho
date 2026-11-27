@@ -33,9 +33,7 @@ fn a_recipient_opens_one_bundle_once_within_its_lifetime() {
             name: "an altered aad does not open",
             after: Duration::ZERO,
             aad: b"other aad",
-            opened: Err(OpenError::Invalid(
-                "it was not sealed to this recipient, or was altered",
-            )),
+            opened: Err(OpenError::Invalid(InvalidBundle::Unauthentic)),
         },
         Case {
             name: "an expired key is gone",

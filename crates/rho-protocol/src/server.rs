@@ -57,10 +57,6 @@ use crate::{
         SESSION_RENAME, SESSION_REPORT, SESSION_SEARCH, SESSION_STEER, SESSION_SURFACE_ACTION,
         SESSION_UNSTEER, WORKTREE_PRUNE,
     },
-    methods::{
-        SyncCompareParams, SyncCompareResponse, SyncExportParams, SyncExportResponse,
-        SyncRecipientParams, SyncRecipientResponse, SYNC_COMPARE, SYNC_EXPORT, SYNC_RECIPIENT,
-    },
     subscription::Subscription,
     BuildId, BuildSkew, DaemonInfo, DaemonStatus, ErrorCode, FrameError, HelloResponse, Message,
     MessageReader, MessageWriter, ProtocolVersion, Request, Response, RestartCost, RpcError,
@@ -555,36 +551,6 @@ pub trait Service: SettingsService + Send + Sync {
     ) -> impl Future<Output = Result<AuthChooseStoreResponse, RpcError>> + Send {
         let _ = params;
         unsupported(AUTH_CHOOSE_STORE)
-    }
-
-    /// Handles `rho/sync/recipient`: issue a one-time key that another
-    /// daemon can seal secrets to.
-    fn sync_recipient(
-        &self,
-        params: SyncRecipientParams,
-    ) -> impl Future<Output = Result<SyncRecipientResponse, RpcError>> + Send {
-        let _ = params;
-        unsupported(SYNC_RECIPIENT)
-    }
-
-    /// Handles `rho/sync/export`: seal saved secrets to another daemon's
-    /// recipient key.
-    fn sync_export(
-        &self,
-        params: SyncExportParams,
-    ) -> impl Future<Output = Result<SyncExportResponse, RpcError>> + Send {
-        let _ = params;
-        unsupported(SYNC_EXPORT)
-    }
-
-    /// Handles `rho/sync/compare`: open a bundle sealed to this daemon and
-    /// compare its values with this daemon's own.
-    fn sync_compare(
-        &self,
-        params: SyncCompareParams,
-    ) -> impl Future<Output = Result<SyncCompareResponse, RpcError>> + Send {
-        let _ = params;
-        unsupported(SYNC_COMPARE)
     }
 }
 
