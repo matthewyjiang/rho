@@ -482,3 +482,7 @@ pub struct ConfigChangedParams {
     /// The whole error list, which replaces the last one.
     pub errors: Vec<ConfigError>,
 }
+
+#[cfg(test)]
+#[path = "config_tests.rs"]
+mod tests;
