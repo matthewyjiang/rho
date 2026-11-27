@@ -27,7 +27,8 @@ use futures_util::{
 use rho_protocol::{
     methods::{
         AUTH_CHOOSE_STORE, AUTH_KEY, AUTH_LIST, AUTH_LOGIN, AUTH_LOGOUT, HOOKS_LIST, MCP_LIST,
-        MODEL_LIST, MODEL_REFRESH, SESSION_ATTACH, SESSION_FORK, SESSION_NEW, SESSION_PROMPT,
+        MODEL_LIST, MODEL_REFRESH, PLUGINS_INSTALL, PLUGINS_LIST, PLUGINS_SET_ENABLED,
+        PLUGINS_UPDATE, SESSION_ATTACH, SESSION_FORK, SESSION_NEW, SESSION_PROMPT,
     },
     FrameError, MessageReader, MAX_LINE_BYTES,
 };
@@ -72,7 +73,7 @@ const IDLE_TIMEOUT: Duration = PING_INTERVAL.saturating_mul(2);
 
 /// Protocol methods whose `params` include `environment: ClientEnvironment`.
 /// A test holds this to the protocol schema.
-const ENVIRONMENT_METHODS: [&str; 13] = [
+const ENVIRONMENT_METHODS: [&str; 17] = [
     SESSION_NEW,
     SESSION_FORK,
     SESSION_PROMPT,
@@ -86,6 +87,10 @@ const ENVIRONMENT_METHODS: [&str; 13] = [
     MODEL_REFRESH,
     MCP_LIST,
     HOOKS_LIST,
+    PLUGINS_LIST,
+    PLUGINS_INSTALL,
+    PLUGINS_UPDATE,
+    PLUGINS_SET_ENABLED,
 ];
 
 /// WebSocket configuration sized to match `rho-protocol`'s 16 MiB message cap.

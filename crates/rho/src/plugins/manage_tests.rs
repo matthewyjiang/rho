@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use tempfile::TempDir;
 
-use super::{install, remove, set_enabled, InstallMode};
+use super::{install, remove, set_enabled, InstallMode, NamedPlugin};
 use crate::plugins::{
     discover_with_trust, state::PluginScope, PluginOrigin, PluginStatus, ProjectTrust,
 };
@@ -261,7 +261,7 @@ fn dotfiles_nested_project_plugin_disable_applies() {
     };
 
     set_enabled(
-        "nested",
+        NamedPlugin::any_scope("nested"),
         /* enabled */ false,
         &cwd,
         Some(home.path()),
@@ -307,7 +307,7 @@ fn home_project_state_from_older_builds() {
 
         let initial = status();
         set_enabled(
-            "demo",
+            NamedPlugin::any_scope("demo"),
             /* enabled */ true,
             home.path(),
             Some(home.path()),
@@ -358,6 +358,61 @@ fn link_creates_managed_symlink() {
     );
 }
 
+// Covers: linking an installed package's own directory onto itself with
+// `force` is refused and leaves the package, rather than deleting it and
+// leaving a link to itself.
+// Owner: plugin install policy.
+#[test]
+fn link_onto_itself_keeps_the_package() {
+    let env = env();
+    let installed = write_source(&env.home.path().join(".agents/plugins"), "demo");
+
+    let error = install(
+        &installed,
+        PluginScope::User,
+        InstallMode::Link,
+        /* force */ true,
+        env.project.path(),
+        env.home.path(),
+        Some(env.rho_home.path()),
+    )
+    .unwrap_err();
+
+    assert!(matches!(error, super::ManageError::Refused(_)), "{error}");
+    assert!(installed.join("plugin.json").is_file());
+}
+
+// Covers: a package whose plugin.json does not load is removed by its
+// directory's name, the name its rejected row shows, even when that is no
+// plugin name; a loadable package is not found by an invalid name, and a
+// name that leaves the root is refused before anything is touched.
+// Owner: plugin remove policy.
+#[test]
+fn remove_finds_a_rejected_package_by_its_directory_name() {
+    let env = env();
+    let root = env.home.path().join(".agents/plugins");
+    std::fs::create_dir_all(root.join("My_Plugin")).unwrap();
+    std::fs::write(root.join("My_Plugin/plugin.json"), "{").unwrap();
+    let loadable = write_source(&root, "demo");
+    std::fs::rename(&loadable, root.join("Demo_Dir")).unwrap();
+    let remove_named = |name: &str| {
+        remove(
+            NamedPlugin::in_scope(name, PluginScope::User),
+            env.project.path(),
+            Some(env.home.path()),
+            Some(env.rho_home.path()),
+        )
+        .map(|package| package.name)
+        .map_err(|error| matches!(error, super::ManageError::Refused(_)))
+    };
+
+    let outcomes = ["My_Plugin", "Demo_Dir", "../My_Plugin"].map(remove_named);
+
+    assert_eq!(outcomes, [Ok("My_Plugin".to_owned()), Err(true), Err(true)]);
+    assert!(!root.join("My_Plugin").exists());
+    assert!(root.join("Demo_Dir/plugin.json").is_file());
+}
+
 // Covers: disable keeps package files but drops components from discovery.
 // Owner: plugin activation policy.
 #[test]
@@ -377,7 +432,7 @@ fn disable_keeps_package_and_drops_session_components() {
     .unwrap();
 
     set_enabled(
-        "demo",
+        NamedPlugin::any_scope("demo"),
         /* enabled */ false,
         env.project.path(),
         Some(env.home.path()),
@@ -429,7 +484,7 @@ fn remove_deletes_package_but_keeps_data_directory() {
     std::fs::write(data.join("state.json"), "{}").unwrap();
 
     remove(
-        "demo",
+        NamedPlugin::any_scope("demo"),
         env.project.path(),
         Some(env.home.path()),
         Some(env.rho_home.path()),

@@ -281,6 +281,12 @@ Behavior:
 - Destination paths must be immediate children of a managed root. The reserved
   `data/` directory is never a package slot.
 
+Daemon clients, such as a desktop settings page, run the same operations on the
+daemon's machine with the
+[`rho/plugins/*` methods](/protocol#agent-plugins). Those methods take a scope
+with every plugin name, so a user plugin is never mistaken for a project plugin
+of the same name.
+
 ### Installing from git
 
 `rho plugins install` accepts GitHub links copied from the browser and other

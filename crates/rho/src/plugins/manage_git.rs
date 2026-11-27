@@ -9,22 +9,22 @@ use std::path::{Path, PathBuf};
 
 use super::{
     inspect_source, install_validated, managed_root, package_exists, place, resolve_named_package,
-    InstallMode, ManagedPackage, SourcePackage,
+    BrokenManifest, InstallMode, ManageError, ManagedPackage, NamedPlugin, SourcePackage,
 };
 use crate::plugins::{
-    git_source::{self, Checkout, GitSource},
+    git_source::{self, Checkout, GitPrompts, GitSource},
     state::{
         project_plugins_root, same_location, user_plugins_root, InstallRecord, PluginScope,
         PluginStateStore,
     },
-    ProjectTrust, TRUST_PROJECT_PLUGINS_ENV,
+    ProjectTrust,
 };
 
 /// Which git-installed packages `rho plugins update` refreshes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum UpdateSelection<'a> {
     All,
-    Named(&'a str),
+    Named(NamedPlugin<'a>),
 }
 
 /// Result of `rho plugins update` for one package.
@@ -46,7 +46,7 @@ pub(crate) struct UpdateTarget {
 #[derive(Debug, Default)]
 pub(crate) struct UpdateReport {
     /// Per-package results; one failed fetch does not stop the rest.
-    pub(crate) results: Vec<(UpdateTarget, anyhow::Result<UpdateOutcome>)>,
+    pub(crate) results: Vec<(UpdateTarget, Result<UpdateOutcome, ManageError>)>,
     /// Project packages left alone because the workspace is not trusted.
     pub(crate) untrusted: Vec<String>,
 }
@@ -61,15 +61,17 @@ pub(crate) struct GitInstall {
 /// Fetch a git source and copy its package into a managed root.
 pub(crate) fn install_git(
     source: &GitSource,
+    prompts: GitPrompts,
     scope: PluginScope,
     force: bool,
     cwd: &Path,
     home: &Path,
     rho_home: Option<&Path>,
-) -> anyhow::Result<GitInstall> {
+) -> Result<GitInstall, ManageError> {
     let root = managed_root(scope, cwd, home)?;
     let mut state = PluginStateStore::load(cwd, Some(home), rho_home)?;
-    let checkout = git_source::fetch(source)?;
+    let checkout =
+        git_source::fetch(source, prompts).map_err(|error| ManageError::fetch(&error))?;
     let package = inspect_checkout(&checkout, source)?;
     let record = InstallRecord::Git(source.record(checkout.commit.clone()));
     let package = install_validated(package, &record, scope, &root, force, &mut state)?;
@@ -86,40 +88,45 @@ pub(crate) fn install_git(
 pub(crate) fn update(
     selection: UpdateSelection<'_>,
     trust: ProjectTrust,
+    prompts: GitPrompts,
     cwd: &Path,
     home: &Path,
     rho_home: Option<&Path>,
-) -> anyhow::Result<UpdateReport> {
+) -> Result<UpdateReport, ManageError> {
     let mut state = PluginStateStore::load(cwd, Some(home), rho_home)?;
     let mut report = UpdateReport::default();
     for (scope, root) in update_scopes(&state, cwd, home) {
         for name in state.git_installed(scope) {
-            if matches!(selection, UpdateSelection::Named(wanted) if wanted != name) {
+            if matches!(selection, UpdateSelection::Named(wanted)
+                if wanted.name != name || !wanted.covers(scope))
+            {
                 continue;
             }
             if scope == PluginScope::Project && !trust.is_trusted() {
                 report.untrusted.push(name);
                 continue;
             }
-            let result = update_one(scope, &root, &name, &mut state);
+            let result = update_one(scope, &root, &name, prompts, &mut state);
             report.results.push((UpdateTarget { name, scope }, result));
         }
     }
 
-    if let UpdateSelection::Named(name) = selection {
+    if let UpdateSelection::Named(target) = selection {
+        let name = target.name;
         if !report.results.is_empty() {
             return Ok(report);
         }
         if !report.untrusted.is_empty() {
-            anyhow::bail!(
-                "`{name}` is a project plugin and the workspace is not trusted; set {TRUST_PROJECT_PLUGINS_ENV}=1 to update it"
-            );
+            return Err(ManageError::Untrusted {
+                name: name.to_owned(),
+            });
         }
-        let resolved = resolve_named_package(name, cwd, Some(home), rho_home)?;
-        anyhow::bail!(
+        let resolved =
+            resolve_named_package(target, BrokenManifest::Refuse, cwd, Some(home), rho_home)?;
+        return Err(ManageError::Refused(format!(
             "`{name}` has {} origin, not git; reinstall it from a repository with `rho plugins install <url> --force`",
             resolved.package.origin.as_str()
-        );
+        )));
     }
     Ok(report)
 }
@@ -149,22 +156,27 @@ fn update_one(
     scope: PluginScope,
     root: &Path,
     name: &str,
+    prompts: GitPrompts,
     state: &mut PluginStateStore,
-) -> anyhow::Result<UpdateOutcome> {
+) -> Result<UpdateOutcome, ManageError> {
     let Some(record) = state.git_record(scope, name).cloned() else {
-        anyhow::bail!("`{name}` has no recorded git source");
+        return Err(ManageError::Other(anyhow::anyhow!(
+            "`{name}` has no recorded git source"
+        )));
     };
-    let source = GitSource::try_from(&record)?;
+    let source =
+        GitSource::try_from(&record).map_err(|error| ManageError::invalid_package(&error))?;
     let path = root.join(name);
     if !package_exists(&path) {
-        anyhow::bail!(
+        return Err(ManageError::NotFound(format!(
             "`{name}` was installed from {} but {} is missing; reinstall it with `rho plugins install`",
             source.describe(),
             crate::paths::display(&path)
-        );
+        )));
     }
 
-    let checkout = git_source::fetch(&source)?;
+    let checkout =
+        git_source::fetch(&source, prompts).map_err(|error| ManageError::fetch(&error))?;
     if checkout.commit == record.commit {
         return Ok(UpdateOutcome::UpToDate {
             commit: record.commit,
@@ -173,11 +185,11 @@ fn update_one(
 
     let fetched = inspect_checkout(&checkout, &source)?;
     if fetched.manifest.name != name {
-        anyhow::bail!(
+        return Err(ManageError::InvalidPackage(format!(
             "refusing to update `{name}`: {} now contains package `{}`",
             source.describe(),
             fetched.manifest.name
-        );
+        )));
     }
     place(&fetched, root, InstallMode::Copy, /* force */ true)?;
     state.record_git_update(scope, name, source.record(checkout.commit.clone()))?;
@@ -188,8 +200,10 @@ fn update_one(
 }
 
 /// Validate the package directory inside a fresh checkout.
-fn inspect_checkout(checkout: &Checkout, source: &GitSource) -> anyhow::Result<SourcePackage> {
-    let dir = checkout.package_dir(source)?;
+fn inspect_checkout(checkout: &Checkout, source: &GitSource) -> Result<SourcePackage, ManageError> {
+    let dir = checkout
+        .package_dir(source)
+        .map_err(|error| ManageError::invalid_package(&error))?;
     if !dir.join("plugin.json").is_file() {
         let commit = git_source::short_commit(&checkout.commit);
         let location = source.subdir().unwrap_or("the repository root");
@@ -198,10 +212,10 @@ fn inspect_checkout(checkout: &Checkout, source: &GitSource) -> anyhow::Result<S
         } else {
             ""
         };
-        anyhow::bail!(
+        return Err(ManageError::InvalidPackage(format!(
             "no plugin.json at {location} in {} at {commit}{hint}",
             source.url()
-        );
+        )));
     }
     inspect_source(&dir)
 }

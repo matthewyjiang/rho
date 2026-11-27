@@ -177,6 +177,29 @@ error_codes! {
         /// was done. A connection keeps what it declared: connect again as a
         /// client that declares the capability.
         CapabilityRequired = -32023,
+        /// No plugin of that name is in the plugins roots of the scope the
+        /// request names (`rho/plugins/*`), or a git-installed plugin's
+        /// package is gone from its root.
+        PluginNotFound = -32024,
+        /// A plugin of the same name is already where an install would put
+        /// it, so the daemon installed nothing. Send the install again with
+        /// `force` to replace it. `data` is a [`crate::PluginConflict`]
+        /// naming it.
+        PluginExists = -32025 => crate::PluginConflict,
+        /// The request names a project plugin to update, and the client's
+        /// environment does not trust the project
+        /// (`RHO_TRUST_PROJECT_PLUGINS`), so the daemon fetched nothing.
+        PluginUntrusted = -32026,
+        /// What an install or update fetched or names is not a plugin
+        /// package: the path is missing or has no `plugin.json`, the
+        /// manifest is invalid, the repository has no package where the
+        /// source says, or an update would bring a package of another name.
+        /// Nothing was changed.
+        PluginInvalid = -32027,
+        /// `git` is not installed on the daemon's machine, or could not
+        /// fetch or check out the plugin's repository; the message carries
+        /// what `git` said. Nothing was changed.
+        PluginFetchFailed = -32028,
     }
 }
 

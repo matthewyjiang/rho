@@ -24,6 +24,65 @@ const REMOTE_PREFIXES: &[&str] = &["https://", "http://", "ssh://", "git://", "f
 /// Hosts whose browser links parse as `<owner>/<repo>[/tree/<ref>[/<path>]]`.
 const GITHUB_HOSTS: &[&str] = &["github.com", "www.github.com"];
 
+/// Whether `git` may ask the user for credentials or to trust a host key.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum GitPrompts {
+    /// Through the terminal, as `rho plugins` in a shell lets it.
+    Terminal,
+    /// Never: git and the ssh it runs fail instead of asking, on a terminal or
+    /// through an askpass program or credential manager window
+    /// ([`forbid_prompts`]). The daemon fetches this way, so a login prompt
+    /// can neither stop git on the terminal that started the daemon nor wait
+    /// on a dialog nobody is watching.
+    Never,
+}
+
+/// Whose ssh command git runs for an ssh remote.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SshCommand {
+    /// git's default `ssh`, which [`forbid_prompts`] runs in batch mode.
+    Default,
+    /// One the user set with `GIT_SSH_COMMAND`, `core.sshCommand`, or
+    /// `GIT_SSH`, left as it is: it may be a wrapper that takes no ssh
+    /// options. Without a terminal, a display, or an askpass program, an ssh
+    /// it runs still has nothing to prompt with.
+    UserConfigured,
+}
+
+/// Variables naming a program that asks the user something, or a display
+/// one would open a window on: an ssh older than 8.4, which ignores
+/// `SSH_ASKPASS_REQUIRE`, runs its built-in askpass when a display is set.
+const PROMPT_ENV: [&str; 4] = ["GIT_ASKPASS", "SSH_ASKPASS", "DISPLAY", "WAYLAND_DISPLAY"];
+
+/// The ssh command git runs for [`SshCommand::Default`].
+const BATCH_SSH_COMMAND: &str = "ssh -o BatchMode=yes";
+
+/// Make `command`, a git command line before its subcommand, fail rather
+/// than prompt: no terminal (its own session on Unix, and
+/// `GIT_TERMINAL_PROMPT=0`), no askpass program (`core.askPass` empty, which
+/// also keeps git from falling back to `SSH_ASKPASS`), no ssh askpass
+/// (`SSH_ASKPASS_REQUIRE=never`, and no display for an older ssh), no Git
+/// Credential Manager window, and ssh in batch mode unless the user chose
+/// the ssh command. Credential helpers still answer from what they stored.
+fn forbid_prompts(command: &mut Command, ssh: SshCommand) {
+    for name in PROMPT_ENV {
+        command.env_remove(name);
+    }
+    command
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("SSH_ASKPASS_REQUIRE", "never")
+        .env("GCM_INTERACTIVE", "never")
+        .args(["-c", "core.askPass="]);
+    match ssh {
+        SshCommand::Default => {
+            command.env("GIT_SSH_COMMAND", BATCH_SSH_COMMAND);
+        }
+        SshCommand::UserConfigured => {}
+    }
+    #[cfg(unix)]
+    rho_tools::process_session::start_new_session(command);
+}
+
 /// Where `rho plugins install` reads a package from.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum InstallSource {
@@ -47,10 +106,8 @@ impl InstallSource {
         };
         // Explicit remotes never consult the filesystem, so a planted
         // `https:/...` directory cannot stand in for a URL.
-        if let Some(remote) = remote_spelling(arg) {
-            return github_source(&remote)
-                .unwrap_or_else(|| GitSource::new(remote, None, None))
-                .map(Self::Git);
+        if let Some(source) = GitSource::parse_remote(arg) {
+            return source.map(Self::Git);
         }
         if cwd.join(path).exists() {
             return local();
@@ -119,6 +176,27 @@ impl GitSource {
             git_ref,
             subdir,
         })
+    }
+
+    /// Parse `url` as `rho plugins install` reads a git source, without
+    /// ever reading it as a local path: an explicit remote, or a GitHub
+    /// link with its scheme left off.
+    pub(crate) fn parse(url: &str) -> anyhow::Result<Self> {
+        Self::parse_remote(url)
+            .or_else(|| github_source(url))
+            .unwrap_or_else(|| {
+                anyhow::bail!(
+                    "`{url}` is not a git URL: expected one of {}, or a github.com link",
+                    REMOTE_PREFIXES.join(", ")
+                )
+            })
+    }
+
+    /// `arg` as a source when it is spelled as a remote (a URL scheme in
+    /// any case, or `git@`); `None` otherwise.
+    fn parse_remote(arg: &str) -> Option<anyhow::Result<Self>> {
+        let remote = remote_spelling(arg)?;
+        Some(github_source(&remote).unwrap_or_else(|| Self::new(remote, None, None)))
     }
 
     pub(crate) fn url(&self) -> &str {
@@ -323,18 +401,23 @@ impl Checkout {
 /// Git runs with an empty template and hooks directory, so user-level
 /// `post-checkout` hooks (which can act on repository config such as
 /// `.pre-commit-config.yaml`) never run against fetched content.
-pub(crate) fn fetch(source: &GitSource) -> anyhow::Result<Checkout> {
+pub(crate) fn fetch(source: &GitSource, prompts: GitPrompts) -> anyhow::Result<Checkout> {
     let dir = tempfile::Builder::new().prefix("rho-plugin-").tempdir()?;
     let no_hooks = dir.path().join("no-hooks");
     let repo = dir.path().join("repo");
     std::fs::create_dir(&no_hooks)?;
     std::fs::create_dir(&repo)?;
-    let git = Git {
+    let mut git = Git {
         repo: &repo,
         no_hooks: &no_hooks,
+        prompts: None,
     };
     let template = format!("--template={}", no_hooks.display());
     git.run(&["init", "--quiet", &template])?;
+    git.prompts = match prompts {
+        GitPrompts::Terminal => None,
+        GitPrompts::Never => Some(git.ssh_command()?),
+    };
     let target = source.git_ref.as_deref().unwrap_or("HEAD");
     git.run(&[
         "fetch",
@@ -371,28 +454,57 @@ pub(crate) fn short_commit(commit: &str) -> &str {
 struct Git<'a> {
     repo: &'a Path,
     no_hooks: &'a Path,
+    /// Set to forbid prompts ([`GitPrompts::Never`]), with whose ssh
+    /// command runs.
+    prompts: Option<SshCommand>,
 }
 
 impl Git<'_> {
-    /// Run `git -C <repo> <args>` and return trimmed stdout.
-    fn run(&self, args: &[&str]) -> anyhow::Result<String> {
+    /// `git -C <repo> <args>`, as [`Git::run`] runs it.
+    fn command(&self, args: &[&str]) -> Command {
         let mut command = Command::new("git");
         for name in crate::git::LOCATION_ENV {
             command.env_remove(name);
         }
-        let output = command
+        if let Some(ssh) = self.prompts {
+            forbid_prompts(&mut command, ssh);
+        }
+        command
             .arg("-C")
             .arg(self.repo)
             .arg("-c")
             .arg(format!("core.hooksPath={}", self.no_hooks.display()))
-            .args(args)
+            .args(args);
+        command
+    }
+
+    /// Whose ssh command git would run: the user's when their environment
+    /// or git configuration sets one.
+    fn ssh_command(&self) -> anyhow::Result<SshCommand> {
+        if ["GIT_SSH_COMMAND", "GIT_SSH"]
+            .iter()
+            .any(|name| std::env::var_os(name).is_some())
+        {
+            return Ok(SshCommand::UserConfigured);
+        }
+        // `git config --get` exits 1 when the key is unset.
+        let output = self
+            .command(&["config", "--get", "core.sshCommand"])
             .output()
-            .map_err(|error| match error.kind() {
-                std::io::ErrorKind::NotFound => anyhow::anyhow!(
-                    "git is not installed; install git to use repository plugin sources"
-                ),
-                _ => anyhow::anyhow!("could not run git: {error}"),
-            })?;
+            .map_err(spawn_error)?;
+        match output.status.code() {
+            Some(0) => Ok(SshCommand::UserConfigured),
+            Some(1) => Ok(SshCommand::Default),
+            _ => anyhow::bail!(
+                "git config failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ),
+        }
+    }
+
+    /// Run `git -C <repo> <args>` and return trimmed stdout.
+    fn run(&self, args: &[&str]) -> anyhow::Result<String> {
+        let output = self.command(args).output().map_err(spawn_error)?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             anyhow::bail!(
@@ -402,6 +514,15 @@ impl Git<'_> {
             );
         }
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    }
+}
+
+fn spawn_error(error: std::io::Error) -> anyhow::Error {
+    match error.kind() {
+        std::io::ErrorKind::NotFound => {
+            anyhow::anyhow!("git is not installed; install git to use repository plugin sources")
+        }
+        _ => anyhow::anyhow!("could not run git: {error}"),
     }
 }
 

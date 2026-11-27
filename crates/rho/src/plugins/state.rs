@@ -324,6 +324,24 @@ impl PluginStateStore {
         }
     }
 
+    /// Where a linked package points: the recorded target, or for a
+    /// hand-made symlink the link's own target. `None` for other packages.
+    pub(crate) fn link_target(
+        &self,
+        scope: PluginScope,
+        name: &str,
+        package_path: &Path,
+    ) -> Option<PathBuf> {
+        match self.install_record(scope, name) {
+            Some(InstallRecord::Link { target }) => Some(PathBuf::from(target)),
+            Some(InstallRecord::Copy | InstallRecord::Git(_)) => None,
+            None if self.origin(scope, name, package_path) == PluginOrigin::Link => {
+                std::fs::read_link(package_path).ok()
+            }
+            None => None,
+        }
+    }
+
     pub(crate) fn set_enabled(
         &mut self,
         scope: PluginScope,
@@ -430,7 +448,9 @@ impl PluginStateStore {
         self.persist_locked(scope)
     }
 
-    fn path(&self, scope: PluginScope) -> &Path {
+    /// The `plugins.toml` that holds `scope`'s enable state and install
+    /// records.
+    pub(crate) fn path(&self, scope: PluginScope) -> &Path {
         match scope {
             PluginScope::User => &self.user_path,
             PluginScope::Project => &self.project_path,

@@ -12,8 +12,8 @@ use crate::{
     cli::{Cli, PluginsCommand, PluginsScope},
     plugins::{
         discover_with_trust,
-        git_source::{short_commit, InstallSource},
-        manage::{self, InstallMode, UpdateOutcome, UpdateReport, UpdateSelection},
+        git_source::{short_commit, GitPrompts, InstallSource},
+        manage::{self, InstallMode, NamedPlugin, UpdateOutcome, UpdateReport, UpdateSelection},
         PluginLoadReport, PluginScope, PluginStatus, TRUST_PROJECT_PLUGINS_ENV,
     },
 };
@@ -62,8 +62,15 @@ pub(super) fn run(command: &PluginsCommand, _cli: &Cli) -> anyhow::Result<()> {
                 }
                 InstallSource::Git(git) => {
                     eprintln!("fetching {}", git.describe());
-                    let installed =
-                        manage::install_git(&git, scope, *force, &cwd, home, rho_home.as_deref())?;
+                    let installed = manage::install_git(
+                        &git,
+                        GitPrompts::Terminal,
+                        scope,
+                        *force,
+                        &cwd,
+                        home,
+                        rho_home.as_deref(),
+                    )?;
                     println!(
                         "installed {} ({}) to {} from {} at {}",
                         installed.package.name,
@@ -103,15 +110,22 @@ pub(super) fn run(command: &PluginsCommand, _cli: &Cli) -> anyhow::Result<()> {
         PluginsCommand::Update { name } => {
             let home = require_home(home.as_deref())?;
             let selection = match name {
-                Some(name) => UpdateSelection::Named(name),
+                Some(name) => UpdateSelection::Named(NamedPlugin::any_scope(name)),
                 None => UpdateSelection::All,
             };
-            let report = manage::update(selection, trust, &cwd, home, rho_home.as_deref())?;
+            let report = manage::update(
+                selection,
+                trust,
+                GitPrompts::Terminal,
+                &cwd,
+                home,
+                rho_home.as_deref(),
+            )?;
             print_update_report(report)
         }
         PluginsCommand::Enable { name } => {
             let package = manage::set_enabled(
-                name,
+                NamedPlugin::any_scope(name),
                 /* enabled */ true,
                 &cwd,
                 home.as_deref(),
@@ -132,7 +146,7 @@ pub(super) fn run(command: &PluginsCommand, _cli: &Cli) -> anyhow::Result<()> {
         }
         PluginsCommand::Disable { name } => {
             let package = manage::set_enabled(
-                name,
+                NamedPlugin::any_scope(name),
                 /* enabled */ false,
                 &cwd,
                 home.as_deref(),
@@ -152,7 +166,12 @@ pub(super) fn run(command: &PluginsCommand, _cli: &Cli) -> anyhow::Result<()> {
                 println!("remove cancelled");
                 return Ok(());
             }
-            let package = manage::remove(name, &cwd, home.as_deref(), rho_home.as_deref())?;
+            let package = manage::remove(
+                NamedPlugin::any_scope(name),
+                &cwd,
+                home.as_deref(),
+                rho_home.as_deref(),
+            )?;
             println!(
                 "removed {} ({}) from {}",
                 package.name,

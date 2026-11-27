@@ -45,6 +45,11 @@ use rho_protocol::{
     SessionSurfaceActionResponse, SessionUnsteerParams, SessionUnsteerResponse, SettingsService,
     Subscription, WorktreePruneParams, WorktreePruneResponse, PROTOCOL_VERSION,
 };
+use rho_protocol::{
+    PluginsInstallParams, PluginsInstallResponse, PluginsListParams, PluginsListResponse,
+    PluginsRemoveParams, PluginsRemoveResponse, PluginsSetEnabledParams, PluginsSetEnabledResponse,
+    PluginsUpdateParams, PluginsUpdateResponse,
+};
 use rho_providers::credentials::CredentialStoreBackend;
 
 use crate::{
@@ -57,6 +62,7 @@ mod configured;
 mod jobs;
 mod logins;
 mod models;
+mod plugins;
 mod sessions;
 mod settings;
 mod store;
@@ -143,6 +149,7 @@ pub(super) struct DaemonHost {
     /// they saved a credential.
     sessions: Arc<Sessions>,
     logins: Arc<Logins>,
+    plugins: plugins::Plugins,
     upgrades: Upgrades,
     /// Connections whose handshake the daemon accepted and that have not
     /// left: the clients a restart would disconnect.
@@ -179,6 +186,7 @@ impl DaemonHost {
             started: Instant::now(),
             sessions,
             logins: Arc::new(Logins::new()),
+            plugins: plugins::Plugins::new(rho_home.to_path_buf()),
             upgrades: Upgrades::default(),
             clients: AtomicU64::new(0),
             shutdown,
@@ -742,5 +750,40 @@ impl SettingsService for DaemonHost {
 
     async fn list_hooks(&self, params: HooksListParams) -> Result<HooksListResponse, RpcError> {
         configured::hooks(params)
+    }
+
+    async fn list_plugins(
+        &self,
+        params: PluginsListParams,
+    ) -> Result<PluginsListResponse, RpcError> {
+        self.plugins.list(params).await
+    }
+
+    async fn install_plugin(
+        &self,
+        params: PluginsInstallParams,
+    ) -> Result<PluginsInstallResponse, RpcError> {
+        self.plugins.install(params).await
+    }
+
+    async fn update_plugins(
+        &self,
+        params: PluginsUpdateParams,
+    ) -> Result<PluginsUpdateResponse, RpcError> {
+        self.plugins.update(params).await
+    }
+
+    async fn set_plugin_enabled(
+        &self,
+        params: PluginsSetEnabledParams,
+    ) -> Result<PluginsSetEnabledResponse, RpcError> {
+        self.plugins.set_enabled(params).await
+    }
+
+    async fn remove_plugin(
+        &self,
+        params: PluginsRemoveParams,
+    ) -> Result<PluginsRemoveResponse, RpcError> {
+        self.plugins.remove(params).await
     }
 }

@@ -39,6 +39,12 @@ use crate::{
         SESSION_PULL_REQUEST_SHOW, SESSION_PULL_REQUEST_UNLINK, SESSION_RENAME, SESSION_REPORT,
         SESSION_SEARCH, SESSION_STEER, SESSION_SURFACE_ACTION, SESSION_UNSTEER, WORKTREE_PRUNE,
     },
+    methods::{
+        PluginsInstall, PluginsInstallParams, PluginsList, PluginsListParams, PluginsRemove,
+        PluginsRemoveParams, PluginsSetEnabled, PluginsSetEnabledParams, PluginsUpdate,
+        PluginsUpdateParams, PLUGINS_INSTALL, PLUGINS_LIST, PLUGINS_REMOVE, PLUGINS_SET_ENABLED,
+        PLUGINS_UPDATE,
+    },
     server::Service,
     server_codec::{decode_params, encode_result},
     ErrorCode, RpcError, StatusParams, StopParams, StopResponse,
@@ -87,6 +93,11 @@ pub(crate) enum ServiceCall {
     ListAuths(AuthListParams),
     ListMcpServers(McpListParams),
     ListHooks(HooksListParams),
+    ListPlugins(PluginsListParams),
+    InstallPlugin(PluginsInstallParams),
+    UpdatePlugins(PluginsUpdateParams),
+    SetPluginEnabled(PluginsSetEnabledParams),
+    RemovePlugin(PluginsRemoveParams),
     CancelLogin(AuthLoginCancelParams),
     ChooseStore(AuthChooseStoreParams),
     ConfigSchema,
@@ -171,6 +182,13 @@ impl ServiceCall {
             AUTH_LIST => decode_params::<AuthList>(params).map(Self::ListAuths),
             MCP_LIST => decode_params::<McpList>(params).map(Self::ListMcpServers),
             HOOKS_LIST => decode_params::<HooksList>(params).map(Self::ListHooks),
+            PLUGINS_LIST => decode_params::<PluginsList>(params).map(Self::ListPlugins),
+            PLUGINS_INSTALL => decode_params::<PluginsInstall>(params).map(Self::InstallPlugin),
+            PLUGINS_UPDATE => decode_params::<PluginsUpdate>(params).map(Self::UpdatePlugins),
+            PLUGINS_SET_ENABLED => {
+                decode_params::<PluginsSetEnabled>(params).map(Self::SetPluginEnabled)
+            }
+            PLUGINS_REMOVE => decode_params::<PluginsRemove>(params).map(Self::RemovePlugin),
             AUTH_LOGIN_CANCEL => decode_params::<AuthLoginCancel>(params).map(Self::CancelLogin),
             AUTH_CHOOSE_STORE => decode_params::<AuthChooseStore>(params).map(Self::ChooseStore),
             CONFIG_SCHEMA => decode_params::<ConfigSchemaMethod>(params)
@@ -232,6 +250,11 @@ impl ServiceCall {
             | Self::ListAuths(_)
             | Self::ListMcpServers(_)
             | Self::ListHooks(_)
+            | Self::ListPlugins(_)
+            | Self::InstallPlugin(_)
+            | Self::UpdatePlugins(_)
+            | Self::SetPluginEnabled(_)
+            | Self::RemovePlugin(_)
             | Self::CancelLogin(_)
             | Self::ChooseStore(_)
             | Self::ConfigSchema
@@ -364,6 +387,21 @@ impl ServiceCall {
             }
             Self::ListHooks(params) => {
                 encode_result::<HooksList>(&service.list_hooks(params).await?)
+            }
+            Self::ListPlugins(params) => {
+                encode_result::<PluginsList>(&service.list_plugins(params).await?)
+            }
+            Self::InstallPlugin(params) => {
+                encode_result::<PluginsInstall>(&service.install_plugin(params).await?)
+            }
+            Self::UpdatePlugins(params) => {
+                encode_result::<PluginsUpdate>(&service.update_plugins(params).await?)
+            }
+            Self::SetPluginEnabled(params) => {
+                encode_result::<PluginsSetEnabled>(&service.set_plugin_enabled(params).await?)
+            }
+            Self::RemovePlugin(params) => {
+                encode_result::<PluginsRemove>(&service.remove_plugin(params).await?)
             }
             Self::CancelLogin(params) => {
                 encode_result::<AuthLoginCancel>(&service.cancel_login(params).await?)
