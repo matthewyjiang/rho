@@ -383,6 +383,8 @@ struct CliSelection {
     provider: String,
     model: String,
     auth: String,
+    /// So `--auth` naming the auth that was only filled in still saves it.
+    auth_origin: crate::config::AuthOrigin,
     reasoning: rho_providers::reasoning::ReasoningLevel,
     model_alias: Option<String>,
 }
@@ -393,6 +395,7 @@ impl CliSelection {
             provider: config.provider.clone(),
             model: config.model.clone(),
             auth: config.auth.clone(),
+            auth_origin: config.auth_origin,
             reasoning: config.reasoning,
             model_alias: config.model_alias.clone(),
         }
@@ -560,6 +563,7 @@ fn apply_provider_override(
     store: &dyn CredentialStore,
     cached_models: CachedModelRequirement,
 ) -> anyhow::Result<()> {
+    let reference_provider = provider;
     let profile = inferred_auth(provider, &config.auth, store)
         .ok_or_else(|| anyhow::anyhow!("unknown provider '{provider}' for --provider"))?;
     let provider = profile.provider_name();
@@ -576,8 +580,7 @@ fn apply_provider_override(
             ),
         }
     };
-    config.provider = provider.to_string();
-    config.auth = profile.auth_id().to_string();
+    take_unnamed_auth(config, reference_provider, provider, profile.auth_id());
     if let Some(model) = model {
         config.model = model;
     }
@@ -618,11 +621,27 @@ fn apply_model_override(
             std::slice::from_ref(&config.auth),
         )?,
     };
-    config.provider = selection.provider;
+    let reference = qualified.map_or_else(|| selection.provider.clone(), |(name, _)| name.into());
+    take_unnamed_auth(config, &reference, &selection.provider, &selection.auth);
     config.model = selection.model;
-    config.auth = selection.auth;
     config.model_alias = model_override.alias;
     Ok(())
+}
+
+/// Moves `config` onto `provider` and `auth`, which the CLI picked for
+/// want of `--auth` from the provider `reference` named: a retired name
+/// such as `xai-oauth` chose its auth; another provider's auth was only
+/// filled in, as nothing chose one for it; the same provider keeps where
+/// its auth came from.
+fn take_unnamed_auth(config: &mut Config, reference: &str, provider: &str, auth: &str) {
+    if provider::legacy_provider_alias(reference).is_some() {
+        config.choose_auth(auth);
+    } else if config.provider != provider {
+        config.infer_auth(auth);
+    } else {
+        config.auth = auth.to_owned();
+    }
+    config.provider = provider.to_owned();
 }
 
 /// Auth the CLI selects for `provider` when `--auth` is omitted, shared by

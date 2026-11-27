@@ -794,11 +794,16 @@ fn apply_bound_provider_auth(
                     return Ok(());
                 }
             }
-            // Picked with credentials now; a session settles it again.
+            // A retired name such as `xai-oauth` chose its auth. Otherwise
+            // it is picked with credentials now; a session settles it again.
             let profile = resolve_provider_reference_with_credentials(provider, store)
                 .map_err(|error| bind_profile_error(agent_id, provider, None, error))?;
             config.provider = profile.provider_name().to_string();
-            config.infer_auth(profile.auth_id());
+            if legacy_provider_alias(provider).is_some() {
+                config.choose_auth(profile.auth_id());
+            } else {
+                config.infer_auth(profile.auth_id());
+            }
             Ok(())
         }
         (Some(provider), Some(auth)) => {

@@ -28,15 +28,16 @@ impl SessionRuntime {
     /// `available` are the auths with credentials (see
     /// [`Config::settle_inferred_auth`]), as a credential write calls for:
     /// only while it follows `process_config`, whose auth nothing chose,
-    /// and only off an auth that lost its credentials, since the rules keep
-    /// the current one while it has them. A session a host changed a
-    /// setting of keeps what it runs on.
+    /// and only when the rules now pick another: off an auth that lost its
+    /// credentials, or off keyless access once a key is saved. A session a host changed a
+    /// setting of keeps what it runs on, as does one whose agent names its
+    /// own model, which `process_config` does not describe.
     pub(crate) async fn follow_credentials(
         &mut self,
         process_config: &Config,
         available: &[String],
     ) -> Result<(), SettingChangeError> {
-        if self.settings == SettingsPolicy::Keep {
+        if self.settings == SettingsPolicy::Keep || self.agent_pins_model() {
             return Ok(());
         }
         let current = self.current_model();

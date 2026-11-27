@@ -92,6 +92,27 @@ fn agent_changes_write_by_setting_or_name_what_they_refuse() {
     }
 }
 
+// Covers: a model picked in settings on the provider a file names without
+// an auth leaves the auth out, for a session to settle on the one with
+// credentials, while a retired provider name such as `xai-oauth`, which
+// chose its auth, keeps that choice as `auth`.
+// Owner: config wire changes (model auth origin).
+#[test]
+fn a_model_write_keeps_only_a_chosen_auth() {
+    let cases = [
+        ("xai", "[model]\nprovider = \"xai\"\nmodel = \"grok-4.7\"\n"),
+        (
+            "xai-oauth",
+            "[model]\nprovider = \"xai\"\nmodel = \"grok-4.7\"\nauth = \"xai-oauth\"\n",
+        ),
+    ];
+    for (provider, expected) in cases {
+        let before = format!("[model]\nprovider = \"{provider}\"\nmodel = \"grok-4.5\"\n");
+        let written = applied(&before, &[set("model", rho_model("xai", "grok-4.7"))]);
+        assert_eq!(written, Ok(expected.to_owned()), "{provider}");
+    }
+}
+
 /// The file after the changes, or each error that refused them.
 type Written = Result<String, Vec<&'static str>>;
 

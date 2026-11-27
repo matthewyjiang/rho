@@ -463,6 +463,10 @@ impl Config {
     pub(crate) fn normalize_provider_profiles(&mut self) -> anyhow::Result<()> {
         // Auth ids such as `{name}-api-key` exist only after intern.
         let _ = self.providers.intern_names()?;
+        // A retired provider name such as `xai-oauth` names its auth too.
+        if rho_providers::provider::legacy_provider_alias(&self.provider).is_some() {
+            self.auth_origin = crate::config::AuthOrigin::Configured;
+        }
         normalize_selection(
             &self.providers,
             &mut self.provider,

@@ -291,7 +291,8 @@ impl AgentExecutor {
     }
 
     /// Atomically updates the parent session's provider selection inherited by
-    /// future **Rho** runtime delegated agents.
+    /// future **Rho** runtime delegated agents. The parent runs on `auth`,
+    /// so a child starts on it as chosen rather than settling it again.
     ///
     /// Claude-cli agents never read this snapshot for spawn: binding copies
     /// Claude model/tools/inherit from the definition only, byte-for-byte.
@@ -306,7 +307,7 @@ impl AgentExecutor {
         config.provider = provider.to_string();
         config.model = model.to_string();
         config.reasoning = reasoning;
-        config.auth = auth.to_string();
+        config.choose_auth(auth);
     }
 
     /// Updates the added directories future launches inherit. Already-spawned

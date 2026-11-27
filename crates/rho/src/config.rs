@@ -230,6 +230,16 @@ pub(crate) fn default_inline_shell() -> String {
     if cfg!(windows) { "powershell" } else { "bash" }.into()
 }
 
+/// The auth `provider` runs on when nothing chose one: its default, or
+/// the placeholder loading resolves for a provider rho does not describe,
+/// such as a custom host.
+pub(super) fn provider_default_auth(provider: &str) -> String {
+    provider::provider_descriptor(provider).map_or_else(
+        || DEFAULT_AUTH.into(),
+        |descriptor| descriptor.default_auth().id.into(),
+    )
+}
+
 pub(super) fn inferred_provider_auth(
     provider: &str,
     current_provider: &str,

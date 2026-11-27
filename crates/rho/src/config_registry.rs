@@ -128,10 +128,9 @@ static MODEL: Setting<Config, ModelSetting> = Setting {
         } => {
             config.provider = provider;
             config.model = model;
-            // Loading normalizes the placeholder to the provider's default.
             match auth {
                 Some(auth) => config.choose_auth(auth),
-                None => config.infer_auth(crate::config::DEFAULT_AUTH),
+                None => config.infer_auth(crate::config::provider_default_auth(&config.provider)),
             }
             // A chosen model replaces the alias it was resolved from;
             // loading resolves an `@alias` model again.
@@ -706,10 +705,10 @@ fn set_internal_agent_model(config: &mut Config, id: &str, model: Option<ModelSe
             model,
             auth,
         } => {
-            // The auth loading fills in for an entry that names none.
-            let auth = auth.unwrap_or_else(|| {
-                crate::config::inferred_provider_auth(&provider, &config.provider, &config.auth)
-            });
+            // A row always names its auth: `model_from_wire` keeps the
+            // row's own on the same provider, so `None` is another
+            // provider's default.
+            let auth = auth.unwrap_or_else(|| crate::config::provider_default_auth(&provider));
             InternalAgentModelConfig::new(provider, model, auth)
         }
         ModelSetting::ClaudeCli { model } => InternalAgentModelConfig::claude_cli(model),
