@@ -281,6 +281,48 @@ async fn a_sessions_tools_run_with_the_prompting_clients_environment() {
     );
 }
 
+// Covers: each daemon session's shell commands get a temp dir of their
+// own as `TMPDIR`, in place of the client's, so two sessions writing the
+// same scratch file name, or one `mktemp` picks, never write each other's.
+// Owner: daemon session environment.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn each_sessions_commands_get_their_own_temp_dir() {
+    let sandbox = Sandbox::new();
+    sandbox.set_permission_mode("bypass");
+    let client = sandbox.start_daemon("tool-call").await;
+    let clients = sandbox
+        .client_environment()
+        .iter()
+        .find_map(|(name, value)| (name == "TMPDIR").then(|| value.to_owned()))
+        .unwrap_or_default();
+    let sessions = [
+        sandbox.new_session(&client).await,
+        sandbox.new_session(&client).await,
+    ];
+    let mut dirs = Vec::new();
+    for (index, session) in sessions.iter().enumerate() {
+        let record = format!("printf '%s' \"$TMPDIR\" > tmpdir-{index}.txt");
+        let call = json!({"id": "bash", "name": "bash", "arguments": {"command": record}});
+        sandbox.prompt_tool_call(&client, session, &call).await;
+        settled_job(&sandbox, &client, session).await;
+        dirs.push(
+            std::fs::read_to_string(sandbox.workspace.join(format!("tmpdir-{index}.txt"))).unwrap(),
+        );
+    }
+
+    assert_eq!(
+        (
+            dirs[0] != dirs[1],
+            dirs.iter()
+                .map(|dir| dir != &clients && Path::new(dir).is_dir())
+                .collect::<Vec<_>>(),
+        ),
+        (true, vec![true, true]),
+        "{dirs:?}, client's {clients}, log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
 /// A client environment: the sandbox's, with `PATH` led by `bin` and the
 /// `extra` variables.
 fn client_environment_with_bin(

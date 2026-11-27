@@ -60,6 +60,7 @@ mod questionnaire;
 mod run_artifacts;
 mod session;
 mod session_environment;
+mod session_temp_dir;
 mod skills;
 mod sqlite_support;
 mod stdio;

@@ -68,7 +68,7 @@ pub(crate) fn create_private_dir(path: &Path) -> io::Result<()> {
 
 /// Creates `path` with mode 0700, or verifies an existing one is a real
 /// directory owned by this user and closed to everyone else.
-pub(in crate::daemon) fn prepare_private_dir(path: &Path) -> Result<(), DaemonPathError> {
+pub(crate) fn prepare_private_dir(path: &Path) -> Result<(), DaemonPathError> {
     let io_error = |error: io::Error| DaemonPathError::Io {
         path: path.to_path_buf(),
         message: error.to_string(),

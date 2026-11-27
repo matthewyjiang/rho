@@ -18,7 +18,11 @@ impl Bash {
 
 impl Tool for Bash {
     fn spec(&self) -> ToolSpec {
-        shell_process::shell_tool_spec("bash", "Runs a bash command with `bash -lc`")
+        shell_process::shell_tool_spec(
+            "bash",
+            "Runs a bash command with `bash -lc`",
+            "`mktemp` or `mktemp -d`, never to a fixed path such as `/tmp/out.md`",
+        )
     }
 
     fn call<'a>(
