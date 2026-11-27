@@ -434,9 +434,10 @@ pub enum PluginUpdateOutcome {
     /// Its ref still points at `commit`, the one installed.
     UpToDate { commit: String },
     /// It could not be updated and was left as it was. `code` is the
-    /// [`crate::ErrorCode`] a request to update only it would have failed
-    /// with, such as [`crate::ErrorCode::PluginFetchFailed`], and
-    /// `message` says why.
+    /// [`crate::ErrorCode`] that stopped it, such as
+    /// [`crate::ErrorCode::PluginFetchFailed`], and `message` says why. An
+    /// update of one named plugin reports its fetch this way too; the
+    /// request fails only when nothing can be fetched.
     Failed { code: i64, message: String },
     /// A value a newer daemon sends that this crate does not know; daemons
     /// never send it.

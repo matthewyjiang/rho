@@ -382,6 +382,37 @@ fn link_onto_itself_keeps_the_package() {
     assert!(installed.join("plugin.json").is_file());
 }
 
+// Covers: a package whose plugin.json does not load is removed by its
+// directory's name, the name its rejected row shows, even when that is no
+// plugin name; a loadable package is not found by an invalid name, and a
+// name that leaves the root is refused before anything is touched.
+// Owner: plugin remove policy.
+#[test]
+fn remove_finds_a_rejected_package_by_its_directory_name() {
+    let env = env();
+    let root = env.home.path().join(".agents/plugins");
+    std::fs::create_dir_all(root.join("My_Plugin")).unwrap();
+    std::fs::write(root.join("My_Plugin/plugin.json"), "{").unwrap();
+    let loadable = write_source(&root, "demo");
+    std::fs::rename(&loadable, root.join("Demo_Dir")).unwrap();
+    let remove_named = |name: &str| {
+        remove(
+            NamedPlugin::in_scope(name, PluginScope::User),
+            env.project.path(),
+            Some(env.home.path()),
+            Some(env.rho_home.path()),
+        )
+        .map(|package| package.name)
+        .map_err(|error| matches!(error, super::ManageError::Refused(_)))
+    };
+
+    let outcomes = ["My_Plugin", "Demo_Dir", "../My_Plugin"].map(remove_named);
+
+    assert_eq!(outcomes, [Ok("My_Plugin".to_owned()), Err(true), Err(true)]);
+    assert!(!root.join("My_Plugin").exists());
+    assert!(root.join("Demo_Dir/plugin.json").is_file());
+}
+
 // Covers: disable keeps package files but drops components from discovery.
 // Owner: plugin activation policy.
 #[test]

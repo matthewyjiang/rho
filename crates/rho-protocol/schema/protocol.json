@@ -6082,7 +6082,7 @@
           "type": "object"
         },
         {
-          "description": "It could not be updated and was left as it was. `code` is the\n[`crate::ErrorCode`] a request to update only it would have failed\nwith, such as [`crate::ErrorCode::PluginFetchFailed`], and\n`message` says why.",
+          "description": "It could not be updated and was left as it was. `code` is the\n[`crate::ErrorCode`] that stopped it, such as\n[`crate::ErrorCode::PluginFetchFailed`], and `message` says why. An\nupdate of one named plugin reports its fetch this way too; the\nrequest fails only when nothing can be fetched.",
           "properties": {
             "code": {
               "format": "int64",

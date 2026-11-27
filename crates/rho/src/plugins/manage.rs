@@ -255,7 +255,15 @@ fn resolve_named_package(
     rho_home: Option<&Path>,
 ) -> Result<ResolvedPackage, ManageError> {
     let name = target.name;
-    manifest::validate_plugin_name(name).map_err(ManageError::Refused)?;
+    // A rejected package is listed by its directory's name, which need not
+    // be a plugin name; it is still found by that name, as long as the name
+    // stays inside a root.
+    let invalid_name = manifest::validate_plugin_name(name).err();
+    match (&invalid_name, broken) {
+        (None, _) => {}
+        (Some(_), BrokenManifest::ByDirectory) if is_directory_name(name) => {}
+        (Some(error), _) => return Err(ManageError::Refused(error.clone())),
+    }
     let roots: Vec<(PluginScope, PathBuf)> = discovery_roots(cwd, home)
         .into_iter()
         .filter(|(scope, _)| target.covers(*scope))
@@ -325,7 +333,14 @@ fn resolve_named_package(
                 path: path.clone(),
             }
         }
-        (package, _) => package?,
+        (package, _) => {
+            let package = package?;
+            // Only a package that does not load goes by an invalid name.
+            if let Some(error) = invalid_name {
+                return Err(ManageError::Refused(error));
+            }
+            package
+        }
     };
     Ok(ResolvedPackage {
         package,
@@ -348,6 +363,16 @@ fn package_at(
         scope,
         path: path.to_path_buf(),
     })
+}
+
+/// Whether `name` is one directory's name, so a root joined with it stays
+/// that root's child.
+fn is_directory_name(name: &str) -> bool {
+    let mut components = Path::new(name).components();
+    matches!(
+        (components.next(), components.next()),
+        (Some(std::path::Component::Normal(_)), None)
+    ) && !name.ends_with(['/', '\\'])
 }
 
 /// Plugins root that `scope` manages.
