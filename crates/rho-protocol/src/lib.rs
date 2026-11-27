@@ -106,6 +106,7 @@ mod server_codec;
 mod server_outbox;
 mod server_settings;
 mod server_streams;
+mod server_sync;
 mod subscription;
 mod transport;
 mod version;
@@ -207,8 +208,11 @@ pub use methods::{
     SESSION_REPORT,
 };
 pub use methods::{
-    ConfigTable, ConfigTableGetParams, ConfigTableGetResponse, ConfigTableSetParams,
-    ConfigTableSetResponse, TableChange, TableEntry, CONFIG_TABLE_GET, CONFIG_TABLE_SET,
+    CompareState, ConfigTable, ConfigTableGetParams, ConfigTableGetResponse, ConfigTableSetParams,
+    ConfigTableSetResponse, SealRecipient, SealSuite, SealedSecrets, SecretComparison, SecretItem,
+    SyncCompareParams, SyncCompareResponse, SyncExportParams, SyncExportResponse,
+    SyncRecipientParams, SyncRecipientResponse, TableChange, TableEntry, CONFIG_TABLE_GET,
+    CONFIG_TABLE_SET, SYNC_COMPARE, SYNC_EXPORT, SYNC_RECIPIENT,
 };
 pub use methods::{
     ConfiguredMcpServer, McpListParams, McpListResponse, McpServerSource, McpTransport, MCP_LIST,

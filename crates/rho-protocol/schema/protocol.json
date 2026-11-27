@@ -1632,6 +1632,31 @@
       ],
       "description": "What started a compaction."
     },
+    "CompareState": {
+      "anyOf": [
+        {
+          "const": "same",
+          "description": "This daemon holds the same value.",
+          "type": "string"
+        },
+        {
+          "const": "differs",
+          "description": "This daemon holds another value.",
+          "type": "string"
+        },
+        {
+          "const": "absent",
+          "description": "This daemon holds no value for it.",
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "How a sealed value compares with the one this daemon holds. Protocol\nminors may add states."
+    },
     "CompletedCompactions": {
       "description": "What a session's committed compactions removed, in total.",
       "properties": {
@@ -7786,6 +7811,80 @@
       ],
       "description": "Why a turn asks the provider again ([`SessionEvent::ProviderRetry`])."
     },
+    "SealRecipient": {
+      "description": "A one-time public key that secrets can be sealed to.",
+      "properties": {
+        "expires_at": {
+          "description": "Unix time, in seconds, after which the daemon has forgotten the key.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "public_key": {
+          "description": "The public key, standard base64.",
+          "type": "string"
+        },
+        "suite": {
+          "$ref": "#/$defs/SealSuite"
+        }
+      },
+      "required": [
+        "suite",
+        "public_key",
+        "expires_at"
+      ],
+      "type": "object"
+    },
+    "SealSuite": {
+      "anyOf": [
+        {
+          "const": "x25519-hkdf-sha256-chacha20poly1305",
+          "description": "HPKE with DHKEM(X25519, HKDF-SHA256), HKDF-SHA256, and\nChaCha20-Poly1305.",
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "How a bundle is sealed. Protocol minors may add suites."
+    },
+    "SealedSecrets": {
+      "description": "Secrets sealed to one [`SealRecipient`]. Only the daemon that issued the\nrecipient can open it, and only once.",
+      "properties": {
+        "ciphertext": {
+          "description": "The sealed values with their tag, standard base64.",
+          "type": "string"
+        },
+        "encapped_key": {
+          "description": "HPKE's encapsulated key, standard base64.",
+          "type": "string"
+        },
+        "items": {
+          "description": "What it carries, in the order of the sealed values.",
+          "items": {
+            "$ref": "#/$defs/SecretItem"
+          },
+          "type": "array"
+        },
+        "recipient": {
+          "description": "The [`SealRecipient::public_key`] it is sealed to.",
+          "type": "string"
+        },
+        "suite": {
+          "$ref": "#/$defs/SealSuite"
+        }
+      },
+      "required": [
+        "suite",
+        "recipient",
+        "items",
+        "encapped_key",
+        "ciphertext"
+      ],
+      "type": "object"
+    },
     "SearchExcerpt": {
       "description": "A message [`SESSION_SEARCH`] matched, around its first match.",
       "properties": {
@@ -7882,6 +7981,57 @@
         }
       ],
       "description": "The replayed event that shows a message."
+    },
+    "SecretComparison": {
+      "description": "How one sealed item compares with this daemon's.",
+      "properties": {
+        "item": {
+          "$ref": "#/$defs/SecretItem"
+        },
+        "state": {
+          "$ref": "#/$defs/CompareState"
+        }
+      },
+      "required": [
+        "item",
+        "state"
+      ],
+      "type": "object"
+    },
+    "SecretItem": {
+      "anyOf": [
+        {
+          "description": "The saved API key of `auth`, an auth profile of kind\n[`crate::AuthKind::ApiKey`], as [`super::AUTH_KEY`] takes it. A key\nheld only in the daemon's environment is not saved, so it is not\nexported. Interactive logins are never exported: copying a refresh\ntoken the provider rotates can sign both machines out.",
+          "properties": {
+            "auth": {
+              "type": "string"
+            },
+            "type": {
+              "const": "api_key",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "auth"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "properties": {
+            "type": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object",
+          "x-rho-other": true
+        }
+      ],
+      "description": "One secret a bundle carries, named without its value. Protocol minors\nmay add kinds."
     },
     "SecretMap": {
       "additionalProperties": {
@@ -11698,6 +11848,92 @@
         }
       ]
     },
+    "SyncCompareParams": {
+      "description": "Params of [`SYNC_COMPARE`].",
+      "properties": {
+        "sealed": {
+          "$ref": "#/$defs/SealedSecrets",
+          "description": "A bundle sealed to a recipient this daemon issued. A recipient it no\nlonger holds is [`crate::ErrorCode::SealRecipientGone`]; a bundle\nthat does not open is [`crate::ErrorCode::InvalidParams`]. Either\nway the recipient is used up."
+        }
+      },
+      "required": [
+        "sealed"
+      ],
+      "type": "object"
+    },
+    "SyncCompareResponse": {
+      "description": "Result of [`SYNC_COMPARE`]: each sealed item, in order, with how it\ncompares.",
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/SecretComparison"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "SyncExportParams": {
+      "description": "Params of [`SYNC_EXPORT`]. The secrets come from the daemon's own\ncredential store.",
+      "properties": {
+        "items": {
+          "description": "The secrets to seal. An item of a kind the daemon does not know, or\nan auth profile that does not take an API key, is refused with\n[`crate::ErrorCode::InvalidParams`].",
+          "items": {
+            "$ref": "#/$defs/SecretItem"
+          },
+          "type": "array"
+        },
+        "recipient": {
+          "$ref": "#/$defs/SealRecipient",
+          "description": "The key another daemon issued with [`SYNC_RECIPIENT`]. The exporting\ndaemon cannot tell who issued it: the client vouches for it."
+        }
+      },
+      "required": [
+        "recipient",
+        "items"
+      ],
+      "type": "object"
+    },
+    "SyncExportResponse": {
+      "description": "Result of [`SYNC_EXPORT`].",
+      "properties": {
+        "missing": {
+          "description": "The items that have none saved, left out of `sealed`.",
+          "items": {
+            "$ref": "#/$defs/SecretItem"
+          },
+          "type": "array"
+        },
+        "sealed": {
+          "$ref": "#/$defs/SealedSecrets",
+          "description": "The items that have a value, sealed."
+        }
+      },
+      "required": [
+        "sealed",
+        "missing"
+      ],
+      "type": "object"
+    },
+    "SyncRecipientParams": {
+      "description": "Params of [`SYNC_RECIPIENT`].",
+      "type": "object"
+    },
+    "SyncRecipientResponse": {
+      "description": "Result of [`SYNC_RECIPIENT`].",
+      "properties": {
+        "recipient": {
+          "$ref": "#/$defs/SealRecipient"
+        }
+      },
+      "required": [
+        "recipient"
+      ],
+      "type": "object"
+    },
     "TableChange": {
       "description": "One change of a [`CONFIG_TABLE_SET`]. The daemon reads it, so it has no\n`Unknown`.",
       "oneOf": [
@@ -13121,6 +13357,9 @@
     "-32028": {
       "name": "PluginFetchFailed"
     },
+    "-32029": {
+      "name": "SealRecipientGone"
+    },
     "-32600": {
       "name": "InvalidRequest"
     },
@@ -13632,6 +13871,30 @@
       },
       "result": {
         "$ref": "#/$defs/SessionUnsteerResponse"
+      }
+    },
+    "rho/sync/compare": {
+      "params": {
+        "$ref": "#/$defs/SyncCompareParams"
+      },
+      "result": {
+        "$ref": "#/$defs/SyncCompareResponse"
+      }
+    },
+    "rho/sync/export": {
+      "params": {
+        "$ref": "#/$defs/SyncExportParams"
+      },
+      "result": {
+        "$ref": "#/$defs/SyncExportResponse"
+      }
+    },
+    "rho/sync/recipient": {
+      "params": {
+        "$ref": "#/$defs/SyncRecipientParams"
+      },
+      "result": {
+        "$ref": "#/$defs/SyncRecipientResponse"
       }
     },
     "rho/worktree/prune": {

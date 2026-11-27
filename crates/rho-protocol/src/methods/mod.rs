@@ -69,6 +69,9 @@
 //! | [`PLUGINS_UPDATE`] | [`PluginsUpdateParams`] | [`PluginsUpdateResponse`] |
 //! | [`PLUGINS_SET_ENABLED`] | [`PluginsSetEnabledParams`] | [`PluginsSetEnabledResponse`] |
 //! | [`PLUGINS_REMOVE`] | [`PluginsRemoveParams`] | [`PluginsRemoveResponse`] |
+//! | [`SYNC_RECIPIENT`] | [`SyncRecipientParams`] | [`SyncRecipientResponse`] |
+//! | [`SYNC_EXPORT`] | [`SyncExportParams`] | [`SyncExportResponse`] |
+//! | [`SYNC_COMPARE`] | [`SyncCompareParams`] | [`SyncCompareResponse`] |
 //!
 //! The daemon sends these notifications; clients send none.
 //!
@@ -120,6 +123,7 @@ mod session_hooks;
 mod setup;
 mod store;
 mod surface;
+mod sync;
 mod worktree;
 
 pub use auth::{
@@ -270,6 +274,11 @@ pub use store::{
 pub use surface::{
     SessionSurfaceActionParams, SessionSurfaceActionResponse, SESSION_SURFACE_ACTION,
 };
+pub use sync::{
+    CompareState, SealRecipient, SealSuite, SealedSecrets, SecretComparison, SecretItem,
+    SyncCompareParams, SyncCompareResponse, SyncExportParams, SyncExportResponse,
+    SyncRecipientParams, SyncRecipientResponse, SYNC_COMPARE, SYNC_EXPORT, SYNC_RECIPIENT,
+};
 pub use worktree::{
     WorktreePruneParams, WorktreePruneResponse, WorktreeReport, WorktreeVerdict, WORKTREE_PRUNE,
 };
@@ -415,6 +424,9 @@ protocol! {
         PluginsUpdate = PLUGINS_UPDATE: PluginsUpdateParams => PluginsUpdateResponse,
         PluginsSetEnabled = PLUGINS_SET_ENABLED: PluginsSetEnabledParams => PluginsSetEnabledResponse,
         PluginsRemove = PLUGINS_REMOVE: PluginsRemoveParams => PluginsRemoveResponse,
+        SyncRecipient = SYNC_RECIPIENT: SyncRecipientParams => SyncRecipientResponse,
+        SyncExport = SYNC_EXPORT: SyncExportParams => SyncExportResponse,
+        SyncCompare = SYNC_COMPARE: SyncCompareParams => SyncCompareResponse,
     }
     notifications {
         // NEXT_MAJOR(rho-protocol): add an optional unix-ms at field to SessionEventParams and remove SessionEventEnvelope.
