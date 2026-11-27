@@ -15,7 +15,8 @@ use super::{
     watch::{COMMENT_WAKE_LIMIT, READ_FAILURE_LIMIT},
 };
 use crate::{
-    display_transcript::NotificationRow, tools::notification_format::join_budgeted_sections,
+    display_transcript::NotificationRow, notification_info::notification_item,
+    tools::notification_format::join_budgeted_sections,
 };
 
 /// The most one wake's text may take: the budget process and subagent
@@ -92,7 +93,7 @@ impl News {
             id: PullRequestId::from(&self.pr),
             url: self.url.clone(),
         };
-        let item = |outcome, text: String| NotificationItem::new(outcome, subject.clone(), text);
+        let item = |outcome, text: String| notification_item(outcome, subject.clone(), text);
         let commit = on_head(self);
         let pushed = self.pushed.then(|| {
             let head = self.head.as_deref().map_or("", short);

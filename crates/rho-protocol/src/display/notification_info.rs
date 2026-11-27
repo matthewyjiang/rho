@@ -51,7 +51,8 @@ impl fmt::Display for NotificationId {
 #[non_exhaustive]
 pub struct NotificationInfo {
     pub id: NotificationId,
-    /// What the card asks of the reader: that of its most urgent item.
+    /// What the card asks of the reader: that of its most urgent item
+    /// ([`NotificationItem::urgency`]).
     pub urgency: NotificationUrgency,
     /// What the card as a whole is about.
     pub subject: NotificationSubject,
@@ -82,6 +83,10 @@ impl NotificationInfo {
 #[non_exhaustive]
 pub struct NotificationItem {
     pub outcome: NotificationOutcome,
+    /// What this event asks of the reader, by the policy that gives the
+    /// card its [`NotificationInfo::urgency`], so a card that bundles a
+    /// routine event with an urgent one can tell them apart.
+    pub urgency: NotificationUrgency,
     /// What this event is about, which may be narrower than the card's.
     pub subject: NotificationSubject,
     /// The event in words, one line of plain text.
@@ -92,11 +97,13 @@ impl NotificationItem {
     /// Builds it from each of its fields.
     pub fn new(
         outcome: NotificationOutcome,
+        urgency: NotificationUrgency,
         subject: NotificationSubject,
         text: impl Into<String>,
     ) -> Self {
         Self {
             outcome,
+            urgency,
             subject,
             text: text.into(),
         }
@@ -135,8 +142,8 @@ pub enum NotificationSubject {
     Unknown,
 }
 
-/// What a notification card asks of the reader. Protocol minors may add
-/// values.
+/// What a notification card, or one of its items, asks of the reader.
+/// Protocol minors may add values.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]

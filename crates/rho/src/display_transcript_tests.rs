@@ -97,6 +97,7 @@ fn a_typed_card_round_trips_and_reads_as_a_plain_card() {
         subject.clone(),
         vec![NotificationItem::new(
             NotificationOutcome::Failed,
+            rho_protocol::display::NotificationUrgency::NeedsYou,
             subject,
             "Failed · Fix the build",
         )],

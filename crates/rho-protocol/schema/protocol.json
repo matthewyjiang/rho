@@ -4909,7 +4909,7 @@
         },
         "urgency": {
           "$ref": "#/$defs/NotificationUrgency",
-          "description": "What the card asks of the reader: that of its most urgent item."
+          "description": "What the card asks of the reader: that of its most urgent item\n([`NotificationItem::urgency`])."
         }
       },
       "required": [
@@ -4933,10 +4933,15 @@
         "text": {
           "description": "The event in words, one line of plain text.",
           "type": "string"
+        },
+        "urgency": {
+          "$ref": "#/$defs/NotificationUrgency",
+          "description": "What this event asks of the reader, by the policy that gives the\ncard its [`NotificationInfo::urgency`], so a card that bundles a\nroutine event with an urgent one can tell them apart."
         }
       },
       "required": [
         "outcome",
+        "urgency",
         "subject",
         "text"
       ],
@@ -5268,7 +5273,7 @@
           "x-rho-other": true
         }
       ],
-      "description": "What a notification card asks of the reader. Protocol minors may add\nvalues."
+      "description": "What a notification card, or one of its items, asks of the reader.\nProtocol minors may add values."
     },
     "NotificationVisibility": {
       "anyOf": [

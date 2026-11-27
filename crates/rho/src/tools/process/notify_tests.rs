@@ -34,8 +34,9 @@ fn failed_process_card_shows_outcome_command_and_verbatim_output() {
             process(),
             vec![NotificationItem::new(
                 NotificationOutcome::Failed,
+                NotificationUrgency::NeedsYou,
                 process(),
-                "Failed (exit 101) · cargo test",
+                "Failed (exit 101) · cargo test"
             )],
         )
     );

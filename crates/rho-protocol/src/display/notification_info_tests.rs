@@ -12,8 +12,9 @@ fn pull_request() -> NotificationSubject {
 }
 
 // Covers: a card's typed side keeps the wire form clients build chips and
-// timeline rows from: snake_case values, each subject tagged by `kind`, and
-// a subagent's absent session left out; it reads back as written.
+// timeline rows from: snake_case values, each subject tagged by `kind`, each
+// item with its own urgency, which may be less than the card's, and a
+// subagent's absent session left out; it reads back as written.
 // Owner: protocol wire contract.
 #[test]
 fn notification_info_wire_form() {
@@ -26,11 +27,13 @@ fn notification_info_wire_form() {
                 vec![
                     NotificationItem::new(
                         NotificationOutcome::ChecksFailed,
+                        NotificationUrgency::NeedsYou,
                         pull_request(),
                         "Checks failed: lint",
                     ),
                     NotificationItem::new(
                         NotificationOutcome::NewComments,
+                        NotificationUrgency::Notable,
                         pull_request(),
                         "1 new comment",
                     ),
@@ -47,6 +50,7 @@ fn notification_info_wire_form() {
                 "items": [
                     {
                         "outcome": "checks_failed",
+                        "urgency": "needs_you",
                         "subject": {
                             "kind": "pull_request",
                             "id": {"host": "github.com", "owner": "o", "name": "r", "number": 12},
@@ -56,6 +60,7 @@ fn notification_info_wire_form() {
                     },
                     {
                         "outcome": "new_comments",
+                        "urgency": "notable",
                         "subject": {
                             "kind": "pull_request",
                             "id": {"host": "github.com", "owner": "o", "name": "r", "number": 12},
@@ -76,6 +81,7 @@ fn notification_info_wire_form() {
                 },
                 vec![NotificationItem::new(
                     NotificationOutcome::Update,
+                    NotificationUrgency::Routine,
                     NotificationSubject::Subagent {
                         run: "run-1".into(),
                         session: None,
@@ -89,6 +95,7 @@ fn notification_info_wire_form() {
                 "subject": {"kind": "subagent", "run": "run-1"},
                 "items": [{
                     "outcome": "update",
+                    "urgency": "routine",
                     "subject": {"kind": "subagent", "run": "run-1"},
                     "text": "halfway",
                 }],
@@ -103,6 +110,7 @@ fn notification_info_wire_form() {
                 },
                 vec![NotificationItem::new(
                     NotificationOutcome::Completed,
+                    NotificationUrgency::Notable,
                     NotificationSubject::Session {
                         id: SessionId::new("s2"),
                     },
@@ -115,6 +123,7 @@ fn notification_info_wire_form() {
                 "subject": {"kind": "session", "id": "s2"},
                 "items": [{
                     "outcome": "completed",
+                    "urgency": "notable",
                     "subject": {"kind": "session", "id": "s2"},
                     "text": "done",
                 }],
@@ -130,10 +139,11 @@ fn notification_info_wire_form() {
     }
 }
 
-// Covers: a card from a newer daemon, with an urgency, outcome and subject
-// kind this crate does not know, still reads, as `Unknown` each, though the
-// unknown subject carries fields of its own, so a client keeps the card
-// rather than failing the event. The open-enum table reads bare kinds only.
+// Covers: a card from a newer daemon, with urgencies, an outcome and a
+// subject kind this crate does not know, still reads, as `Unknown` each,
+// though the unknown subject carries fields of its own, so a client keeps
+// the card rather than failing the event. The open-enum table reads bare
+// kinds only.
 // Owner: protocol wire contract.
 #[test]
 fn a_newer_daemons_card_reads_with_unknown_values() {
@@ -143,6 +153,7 @@ fn a_newer_daemons_card_reads_with_unknown_values() {
         "subject": {"kind": "deployment", "id": "d1"},
         "items": [{
             "outcome": "rolled_back",
+            "urgency": "on_fire",
             "subject": {"kind": "deployment", "id": "d1"},
             "text": "rolled back",
         }],
@@ -153,6 +164,7 @@ fn a_newer_daemons_card_reads_with_unknown_values() {
         NotificationSubject::Unknown,
         vec![NotificationItem::new(
             NotificationOutcome::Unknown,
+            NotificationUrgency::Unknown,
             NotificationSubject::Unknown,
             "rolled back",
         )],
