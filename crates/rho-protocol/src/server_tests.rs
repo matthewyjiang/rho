@@ -21,9 +21,9 @@ use crate::{
         PermissionModeOptions, Replay, Seq, SessionAttach, SessionAttachParams,
         SessionDetachedParams, SessionEvent, SessionEventEnvelope, SessionEventParams, SessionId,
         SessionOptions, StreamId, AUTH_LOGIN_FINISHED, AUTH_LOGIN_PROMPT, CONFIG_CHANGED,
-        DAEMON_STATUS, DAEMON_STOP, MODEL_CHANGED, MODEL_LIST, SESSION_ANSWER,
-        SESSION_ANSWER_QUESTION, SESSION_DETACHED, SESSION_EVENT, SESSION_FORK, SESSION_HOLD,
-        SESSION_LIST, SESSION_NEW, SESSION_PROMPT,
+        CONFIG_TABLE_GET, CONFIG_TABLE_SET, DAEMON_STATUS, DAEMON_STOP, MODEL_CHANGED, MODEL_LIST,
+        SESSION_ANSWER, SESSION_ANSWER_QUESTION, SESSION_DETACHED, SESSION_EVENT, SESSION_FORK,
+        SESSION_HOLD, SESSION_LIST, SESSION_NEW, SESSION_PROMPT,
     },
     subscription, Client, ClientRole, ConfigChangedParams, ConfigGetParams, ConfigGetResponse,
     ConfigNamespace, ConfigRevision, ConfigWatch, CredentialStoreKind, CredentialStoreStatus,
@@ -426,6 +426,23 @@ async fn dispatch_enforces_the_handshake_and_rejects_unknown_requests() {
                 (id(2), Err(Some(ErrorCode::CapabilityRequired))),
                 (id(3), Err(Some(ErrorCode::CapabilityRequired))),
                 (id(4), Ok(())),
+            ],
+        ),
+        (
+            "an agent's connection may read a config table but not write one",
+            vec![
+                hello_as(1, PROTOCOL_VERSION, "agent", &[]),
+                request_with_params(
+                    2,
+                    CONFIG_TABLE_SET,
+                    serde_json::json!({"table": "providers", "revision": "absent", "changes": []}),
+                ),
+                request_with_params(3, CONFIG_TABLE_GET, serde_json::json!({"table": "providers"})),
+            ],
+            vec![
+                (id(1), Ok(())),
+                (id(2), Err(Some(ErrorCode::CapabilityRequired))),
+                (id(3), Err(Some(ErrorCode::MethodNotFound))),
             ],
         ),
         (

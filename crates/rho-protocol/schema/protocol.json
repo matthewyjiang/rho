@@ -948,7 +948,7 @@
       "oneOf": [
         {
           "const": "answer",
-          "description": "Answer a session's open requests, its approvals and questions, and\nhold their timeouts: [`super::SESSION_ANSWER`] and\n[`super::SESSION_HOLD`]. Acting on a surface it shows needs it too:\n[`super::SESSION_SURFACE_ACTION`].",
+          "description": "Answer a session's open requests, its approvals and questions, and\nhold their timeouts: [`super::SESSION_ANSWER`] and\n[`super::SESSION_HOLD`]. Acting on a surface it shows needs it too:\n[`super::SESSION_SURFACE_ACTION`], and so does writing a config\ntable, which can send a provider's saved key to a new `base_url`:\n[`super::CONFIG_TABLE_SET`].",
           "type": "string"
         }
       ]

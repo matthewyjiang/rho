@@ -12,7 +12,9 @@ use super::ConfigRevision;
 /// back. A daemon that predates it answers
 /// [`crate::ErrorCode::MethodNotFound`].
 pub const CONFIG_TABLE_GET: &str = "rho/config/table/get";
-/// Put or remove entries of one table in one atomic write.
+/// Put or remove entries of one table in one atomic write. Needs
+/// [`crate::ClientCapability::Answer`]: a put can send a provider's saved key
+/// to a new `base_url`, which a model driving session control must not do.
 pub const CONFIG_TABLE_SET: &str = "rho/config/table/set";
 
 /// A table of `config.toml` that [`CONFIG_TABLE_GET`] and
