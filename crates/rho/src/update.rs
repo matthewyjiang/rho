@@ -29,6 +29,7 @@ const RELEASES_PER_PAGE: u64 = 100;
 const CRATE_NAME: &str = "rho-coding-agent";
 const RELEASE_TAG_PREFIX: &str = "rho-coding-agent-v";
 const PACMAN_PACKAGE_TARGET: &str = "mjiang-extras/rho-coding-agent";
+const DNF_PACKAGE: &str = "rho-coding-agent";
 const SCOOP_PACKAGE: &str = "rho";
 /// Shell command that fetches and runs `install.sh` from `git_ref`. Pinned to
 /// the release tag being installed so an update runs reviewed, released code
@@ -89,6 +90,7 @@ pub enum InstallMethod {
     Cargo,
     Mise,
     Pacman,
+    Dnf,
     Scoop,
     ScoopGlobal,
     Script,
@@ -100,6 +102,7 @@ impl InstallMethod {
             Self::Cargo => "Cargo",
             Self::Mise => "mise",
             Self::Pacman => "pacman",
+            Self::Dnf => "dnf",
             Self::Scoop => "Scoop",
             Self::ScoopGlobal => "Scoop (global)",
             Self::Script => "install script",
@@ -110,16 +113,17 @@ impl InstallMethod {
     /// a running daemon can re-execute it in place.
     fn installs(self) -> Installed {
         match self {
-            Self::Cargo | Self::Pacman | Self::Script => Installed::OverTheExecutable,
+            Self::Cargo | Self::Pacman | Self::Dnf | Self::Script => Installed::OverTheExecutable,
             Self::Mise | Self::Scoop | Self::ScoopGlobal => Installed::AtAnotherPath,
         }
     }
 
     /// Whether `rho update` needs a person at a terminal to finish: pacman
-    /// asks for sudo's password, and on Windows rho only prints the command.
+    /// and dnf ask for sudo's password, and on Windows rho only prints the
+    /// command.
     fn needs_terminal(self) -> bool {
         match self {
-            Self::Pacman => true,
+            Self::Pacman | Self::Dnf => true,
             Self::Cargo | Self::Mise | Self::Scoop | Self::ScoopGlobal | Self::Script => {
                 cfg!(windows)
             }
@@ -133,6 +137,7 @@ impl InstallMethod {
             Self::Cargo => cargo_update_command_display(),
             Self::Mise => mise_update_command_display(current_mise_tool()?),
             Self::Pacman => pacman_update_command_display(),
+            Self::Dnf => dnf_update_command_display(),
             Self::Scoop => scoop_update_command_display(ScoopInstallScope::User),
             Self::ScoopGlobal => scoop_update_command_display(ScoopInstallScope::Global),
             Self::Script => script_update_command_display(git_ref),
@@ -214,6 +219,7 @@ pub async fn run_update(current_version: &str) -> anyhow::Result<()> {
     println!("update command: {}", method.update_command(&git_ref)?);
     match method {
         InstallMethod::Pacman => println!("pacman may prompt for your sudo password."),
+        InstallMethod::Dnf => println!("dnf may prompt for your sudo password."),
         InstallMethod::Mise => {
             println!("mise upgrades within your configured version request; a pinned version stays pinned.")
         }
@@ -306,6 +312,11 @@ fn update_command(method: InstallMethod, git_ref: &str) -> anyhow::Result<Comman
             command.args(["pacman", "-Sy", PACMAN_PACKAGE_TARGET]);
             command
         }
+        InstallMethod::Dnf => {
+            let mut command = Command::new("sudo");
+            command.args(["dnf", "upgrade", "--refresh", DNF_PACKAGE]);
+            command
+        }
         InstallMethod::Scoop | InstallMethod::ScoopGlobal => {
             let mut command = Command::new("sh");
             command.args(["-c", &method.update_command(git_ref)?]);
@@ -334,6 +345,12 @@ fn mise_update_command_display(tool: &str) -> String {
 
 fn pacman_update_command_display() -> String {
     format!("sudo pacman -Sy {PACMAN_PACKAGE_TARGET}")
+}
+
+// `--refresh` expires cached metadata first, so a release published within
+// the repo's `metadata_expire` window is visible.
+fn dnf_update_command_display() -> String {
+    format!("sudo dnf upgrade --refresh {DNF_PACKAGE}")
 }
 
 fn scoop_update_command_display(scope: ScoopInstallScope) -> String {
@@ -392,6 +409,7 @@ pub fn detect_install_method() -> InstallMethod {
         match installation::install_hint(&method) {
             InstallHint::Cargo => return InstallMethod::Cargo,
             InstallHint::Pacman => return InstallMethod::Pacman,
+            InstallHint::Dnf => return InstallMethod::Dnf,
             InstallHint::Scoop(ScoopInstallScope::User) => return InstallMethod::Scoop,
             InstallHint::Scoop(ScoopInstallScope::Global) => return InstallMethod::ScoopGlobal,
             InstallHint::Script => return InstallMethod::Script,
@@ -407,6 +425,7 @@ pub fn detect_install_method() -> InstallMethod {
         Some(ManagedInstallation::Cargo { .. }) => InstallMethod::Cargo,
         Some(ManagedInstallation::Mise { .. }) => InstallMethod::Mise,
         Some(ManagedInstallation::Pacman) => InstallMethod::Pacman,
+        Some(ManagedInstallation::Dnf) => InstallMethod::Dnf,
         Some(ManagedInstallation::Scoop(ScoopInstallScope::User)) => InstallMethod::Scoop,
         Some(ManagedInstallation::Scoop(ScoopInstallScope::Global)) => InstallMethod::ScoopGlobal,
         None => InstallMethod::Script,

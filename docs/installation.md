@@ -69,6 +69,15 @@ mise use -g 'github:matthewyjiang/rho[version_prefix=rho-coding-agent-v]'
 
 `rho update` recognizes mise installs, including `MISE_DATA_DIR` and `MISE_INSTALLS_DIR` overrides, and uses `mise upgrade --global` (mise 2026.10.7 or newer) for that tool instead of overwriting mise's copy with the standalone installer. `rho uninstall` prints the matching `mise unuse -g` command, which also removes versions no other config needs.
 
+On Fedora (x86_64), install from the mjiang-extras dnf repository:
+
+```bash
+sudo dnf config-manager addrepo --from-repofile=https://repo.matthewyjiang.com/mjiang-extras.repo
+sudo dnf install rho-coding-agent
+```
+
+The RPM is built on Fedora 44 and runs on Fedora 44 and newer. dnf checks the signatures on the package and the repository metadata. `rho update` recognizes the RPM and runs `sudo dnf upgrade --refresh rho-coding-agent` instead of overwriting `/usr/bin/rho` with the standalone installer, and `rho uninstall` prints `sudo dnf remove rho-coding-agent`.
+
 If your platform has no prebuilt binary, such as Intel macOS, install from crates.io with Cargo:
 
 ```bash
@@ -101,7 +110,7 @@ What an update does to a running daemon depends on how you installed Rho:
 
 | Install method | After `rho update` |
 | --- | --- |
-| `install.sh`, a release archive on macOS or Linux, `cargo install`, or the Arch `PKGBUILD` | The daemon [restarts on the new binary](/daemon#upgrading-in-place) once no work would be cut short. `rho update` reports the restart or what the daemon waits for. |
+| `install.sh`, a release archive on macOS or Linux, `cargo install`, the Arch `PKGBUILD`, or the Fedora RPM | The daemon [restarts on the new binary](/daemon#upgrading-in-place) once no work would be cut short. `rho update` reports the restart or what the daemon waits for. |
 | mise | `rho update` stops an idle daemon, and the next `rho` command starts the new one. If work is in progress, run `rho daemon restart` when it finishes. |
 | Scoop | `rho update` stops an idle daemon and prints the update command to run. The daemon runs from a copy under `~/.rho/daemon/bin`, so `scoop update` works while it runs, and the next `rho` command replaces the old daemon once it is idle. Scoop still skips Rho while a `rho` session or other `rho` command runs, so close those first. Updating from 3.3.0 or earlier also needs `rho daemon stop` first, because those daemons run from Scoop's app directory. |
 | `install.ps1` or a release archive on Windows | `rho update` stops an idle daemon and prints the update command to run. If work is in progress, run `rho daemon stop` when it finishes, then the command. |

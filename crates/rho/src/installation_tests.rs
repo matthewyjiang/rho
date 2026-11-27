@@ -2,30 +2,55 @@ use super::*;
 use pretty_assertions::assert_eq;
 
 // Covers: shared detection must distinguish package ownership from unrelated
-// Cargo receipts, preserve custom roots, and route pacman-owned binaries.
+// Cargo receipts, preserve custom roots, and route pacman- and RPM-owned
+// binaries to their package manager, but not an unrelated owning package.
 // Owner: installation evidence, with injected package-manager probes.
 #[test]
 fn detects_package_evidence() {
-    for (path, cargo_owns, pacman_owns, expected) in [
+    let owner = |manager, package: &str| {
+        Some(SystemPackageOwner {
+            manager,
+            package: package.into(),
+        })
+    };
+    for (path, cargo_owns, system_owner, expected) in [
         (
             "/opt/rho/bin/rho",
             true,
-            false,
+            None,
             Some(ManagedInstallation::Cargo {
                 root: Some("/opt/rho".into()),
             }),
         ),
-        ("/home/me/.local/bin/rho", false, false, None),
+        ("/home/me/.local/bin/rho", false, None, None),
         (
-            "/home/me/.local/bin/rho",
+            "/usr/bin/rho",
             false,
-            true,
+            owner(SystemPackageManager::Pacman, "rho-coding-agent"),
             Some(ManagedInstallation::Pacman),
+        ),
+        (
+            "/usr/bin/rho",
+            false,
+            owner(SystemPackageManager::Rpm, "rho-coding-agent"),
+            Some(ManagedInstallation::Dnf),
+        ),
+        (
+            "/usr/bin/rho",
+            false,
+            owner(SystemPackageManager::Rpm, "coreutils"),
+            None,
+        ),
+        (
+            "/usr/bin/rho",
+            false,
+            owner(SystemPackageManager::Rpm, "rhodes-tools"),
+            None,
         ),
         (
             "/home/me/.cargo/bin/rho",
             false,
-            false,
+            None,
             Some(ManagedInstallation::Cargo {
                 root: Some("/home/me/.cargo".into()),
             }),
@@ -37,9 +62,10 @@ fn detects_package_evidence() {
                 &[],
                 &ScoopRoots::default(),
                 |_| cargo_owns,
-                |_| pacman_owns,
+                |_| system_owner,
             ),
-            expected
+            expected,
+            "{path}",
         );
     }
     for (output, expected) in [
@@ -95,7 +121,7 @@ fn detects_mise_installs() {
                 roots,
                 &ScoopRoots::default(),
                 |_| true,
-                |_| false,
+                |_| None,
             ),
             expected.map(|install_path| ManagedInstallation::Mise {
                 install_path: install_path.into(),
@@ -235,7 +261,7 @@ fn detects_scoop_scope() {
                     global: global.map(str::to_owned),
                 },
                 |_| false,
-                |_| false,
+                |_| None,
             ),
             expected.map(ManagedInstallation::Scoop),
             "{path}",

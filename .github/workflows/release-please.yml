@@ -640,7 +640,7 @@ jobs:
         with:
           persist-credentials: false
           sparse-checkout: |
-            scripts/publish_arch_to_extras.sh
+            scripts/publish_to_extras.sh
           sparse-checkout-cone-mode: false
 
       - name: Download package artifact
@@ -661,13 +661,76 @@ jobs:
           SOURCE_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          chmod +x scripts/publish_arch_to_extras.sh
           mapfile -t packages < <(find packages -maxdepth 1 -type f -name '*.pkg.tar.zst' | sort)
           if [[ ${#packages[@]} -eq 0 ]]; then
             echo "No Arch packages found in the artifact" >&2
             exit 1
           fi
-          ./scripts/publish_arch_to_extras.sh \
+          bash scripts/publish_to_extras.sh \
+            --kind arch \
+            --extras-dir mjiang-extras \
+            --source-repo "$SOURCE_REPO" \
+            "${packages[@]}"
+
+  # Fedora mirrors Arch: start rpmbuild beside binaries; keep the public
+  # mjiang-extras push gated on crates.io success (no draft channel).
+  build-fedora-package:
+    needs: release
+    if: ${{ needs.release.outputs.release_created == 'true' }}
+    uses: ./.github/workflows/publish-fedora-package.yml
+    with:
+      app-tag: ${{ needs.release.outputs.tag_name }}
+      publish: false
+
+  publish-fedora-package:
+    needs: [release, publish-crates, build-fedora-package]
+    if: ${{ needs.release.outputs.release_created == 'true' && needs.publish-crates.result == 'success' && needs.build-fedora-package.result == 'success' }}
+    runs-on: ubuntu-latest
+    # Match publish-fedora-package.yml: oldest supported Fedora.
+    container: fedora:44
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Install publish tools
+        run: |
+          dnf -y install --setopt=install_weak_deps=False createrepo_c git rpm
+
+      - name: Checkout publish helper
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/publish_to_extras.sh
+          sparse-checkout-cone-mode: false
+
+      - name: Download package artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ needs.build-fedora-package.outputs.artifact-name }}
+          path: packages
+
+      - name: Checkout mjiang-extras
+        uses: actions/checkout@v7
+        with:
+          repository: matthewyjiang/mjiang-extras
+          token: ${{ secrets.MJIANG_EXTRAS_PUSH_TOKEN }}
+          path: mjiang-extras
+
+      - name: Publish package files
+        env:
+          SOURCE_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # The container runs as root; git refuses the checkout without this.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE/mjiang-extras"
+          mapfile -t packages < <(find packages -maxdepth 1 -type f -name '*.rpm' | sort)
+          if [[ ${#packages[@]} -eq 0 ]]; then
+            echo "No RPMs found in the artifact" >&2
+            exit 1
+          fi
+          bash scripts/publish_to_extras.sh \
+            --kind fedora \
             --extras-dir mjiang-extras \
             --source-repo "$SOURCE_REPO" \
             "${packages[@]}"

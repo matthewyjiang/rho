@@ -42,8 +42,8 @@ const STATUS_POLL_INTERVAL: Duration = Duration::from_millis(50);
 /// Where an installer put the new rho.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Installed {
-    /// At the path the old one had, as the install script, Cargo, and
-    /// pacman do.
+    /// At the path the old one had, as the install script, Cargo, pacman,
+    /// and dnf do.
     OverTheExecutable,
     /// In a directory of its own, as mise and Scoop keep each version.
     AtAnotherPath,

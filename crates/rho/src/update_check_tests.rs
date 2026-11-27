@@ -33,6 +33,18 @@ fn check_report_is_the_client_contract() {
             }),
         ),
         (
+            update("3.1.0"),
+            InstallMethod::Dnf,
+            json!({
+                "current": "3.1.0",
+                "latest": "3.1.1",
+                "update_available": true,
+                "method": "dnf",
+                "command": "sudo dnf upgrade --refresh rho-coding-agent",
+                "needs_terminal": true,
+            }),
+        ),
+        (
             update("3.1.1"),
             InstallMethod::ScoopGlobal,
             json!({

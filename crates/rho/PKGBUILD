@@ -5,7 +5,7 @@ pkgrel=1
 pkgdesc="A fast Rust agent harness with a small footprint and opinionated defaults"
 arch=('x86_64')
 url="https://github.com/matthewyjiang/rho"
-license=('MIT')
+license=('MIT' 'Apache-2.0')
 depends=('gcc-libs' 'glibc' 'sqlite')
 makedepends=('cargo')
 options=(!lto)
@@ -37,4 +37,5 @@ package() {
     cd "rho-$_tagname"
     install -Dm755 "target/release/rho" "$pkgdir/usr/bin/rho"
     install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+    install -Dm644 crates/rho/THIRD-PARTY-NOTICES "$pkgdir/usr/share/licenses/$pkgname/THIRD-PARTY-NOTICES"
 }

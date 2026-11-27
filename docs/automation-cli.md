@@ -370,14 +370,15 @@ API-key providers are usually easier to configure interactively with `/login` in
 - Cargo installs run `cargo install rho-coding-agent --locked`, adding `--root <cargo-root>` when the current executable is from a non-default Cargo install root.
 - mise installs run `mise upgrade --global <tool>` for the tool that installed the current executable, such as `github:matthewyjiang/rho`, found with `mise ls --installed --json`. mise keeps that tool's configured version request, so a pinned version stays pinned, and `--global` (mise 2026.10.7 or newer) ignores a project's own request for the same tool.
 - pacman installs run `sudo pacman -Sy mjiang-extras/rho-coding-agent` so pacman can refresh package databases and sync only `rho-coding-agent` from `mjiang-extras`, without performing a full system upgrade. Pacman may prompt for your password.
+- dnf installs, where rpm owns the running executable, run `sudo dnf upgrade --refresh rho-coding-agent`. `--refresh` expires cached repository metadata first, so a just-published release is visible. dnf may prompt for your password.
 - Scoop installs show `scoop update; scoop update rho`, or `scoop update; scoop update -g rho` for global installs, so Scoop refreshes buckets before updating the package.
 - install-script installs download the official install script to a temporary file and run it with `RHO_INSTALL_DIR` set to the current executable directory.
 
 On Windows, `rho update` prints the detected update command instead of running it automatically.
 
-A running [daemon](/daemon) moves to the new version without interrupting work. After a Cargo, pacman, or install-script update, the daemon restarts itself once nothing would be cut short. `rho update` reports the restart, or says what a busy daemon is waiting for. After a mise update, or on Windows, `rho update` stops an idle daemon, so the next `rho` command starts the new one. For a busy daemon, it tells you what to run. See [The daemon and services](/installation#the-daemon-and-services).
+A running [daemon](/daemon) moves to the new version without interrupting work. After a Cargo, pacman, dnf, or install-script update, the daemon restarts itself once nothing would be cut short. `rho update` reports the restart, or says what a busy daemon is waiting for. After a mise update, or on Windows, `rho update` stops an idle daemon, so the next `rho` command starts the new one. For a busy daemon, it tells you what to run. See [The daemon and services](/installation#the-daemon-and-services).
 
-Set `RHO_INSTALL_METHOD` to `cargo`, `pacman`, `scoop`, `scoop-global`, or `script` to override detection.
+Set `RHO_INSTALL_METHOD` to `cargo`, `pacman`, `dnf`, `scoop`, `scoop-global`, or `script` to override detection.
 
 `rho update --check` reports the latest release, the detected install method, and the update command without installing anything or touching the daemon. Add `--json` for one JSON object on stdout:
 
@@ -385,7 +386,7 @@ Set `RHO_INSTALL_METHOD` to `cargo`, `pacman`, `scoop`, `scoop-global`, or `scri
 {"current":"3.1.0","latest":"3.1.1","update_available":true,"method":"script","command":"RHO_INSTALL_DIR=... sh -c '...'","needs_terminal":false}
 ```
 
-`method` is `cargo`, `mise`, `pacman`, `scoop`, `scoop-global`, or `script`. `command` is `null` when no update is available. `needs_terminal` is `true` when `rho update` cannot finish unattended: pacman asks for your sudo password, and on Windows it only prints the command. Unlike `rho update`, which goes on when the release lookup fails, `--check` exits with status 1.
+`method` is `cargo`, `mise`, `pacman`, `dnf`, `scoop`, `scoop-global`, or `script`. `command` is `null` when no update is available. `needs_terminal` is `true` when `rho update` cannot finish unattended: pacman and dnf ask for your sudo password, and on Windows it only prints the command. Unlike `rho update`, which goes on when the release lookup fails, `--check` exits with status 1.
 
 ## `rho uninstall`
 

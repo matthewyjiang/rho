@@ -22,6 +22,8 @@ pub(crate) enum ManagedInstallation {
         install_path: PathBuf,
     },
     Pacman,
+    /// An RPM package, updated through dnf.
+    Dnf,
     Scoop(ScoopInstallScope),
 }
 
@@ -29,6 +31,7 @@ pub(crate) enum ManagedInstallation {
 pub(crate) enum InstallHint {
     Cargo,
     Pacman,
+    Dnf,
     Scoop(ScoopInstallScope),
     Script,
     Unknown,
@@ -38,6 +41,7 @@ pub(crate) fn install_hint(value: &str) -> InstallHint {
     match value.trim().to_ascii_lowercase().as_str() {
         "cargo" => InstallHint::Cargo,
         "pacman" => InstallHint::Pacman,
+        "dnf" => InstallHint::Dnf,
         "scoop" => InstallHint::Scoop(ScoopInstallScope::User),
         "scoop-global" | "scoop_global" => InstallHint::Scoop(ScoopInstallScope::Global),
         "script" | "install-script" => InstallHint::Script,
@@ -50,8 +54,23 @@ pub(crate) struct InstallationEvidence {
     /// A Cargo receipt without confirmed ownership cannot authorize deletion.
     /// Update may still use its script fallback when Cargo cannot identify Rho.
     pub cargo_metadata: bool,
-    /// Even an unrecognized pacman package owns its executable, not uninstall.
-    pub pacman_owned: bool,
+    /// Even an unrecognized pacman or RPM package owns its executable, not uninstall.
+    pub system_package_owned: bool,
+}
+
+/// A system package database that can own an executable.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SystemPackageManager {
+    Pacman,
+    Rpm,
+}
+
+/// The package a system package database names as an executable's owner.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SystemPackageOwner {
+    manager: SystemPackageManager,
+    /// Owning package names, one per line when several packages own the path.
+    package: String,
 }
 
 #[derive(Default)]
@@ -80,22 +99,22 @@ pub(crate) fn detect(path: &Path) -> InstallationEvidence {
     let cargo_metadata = cargo_root_from_bin_path(path).is_some_and(|root| {
         root.join(".crates.toml").exists() || root.join(".crates2.json").exists()
     });
-    let mut pacman_owned = false;
+    let mut system_package_owned = false;
     let managed = detect_with(
         path,
         &mise_installs_roots(|name| std::env::var_os(name)),
         &ScoopRoots::of_environment(),
         cargo_install_root_contains_crate,
         |path| {
-            let owner = pacman_owner(path);
-            pacman_owned = owner.is_some();
-            owner.is_some_and(|owner| owner.contains("rho"))
+            let owner = system_package_owner(path);
+            system_package_owned = owner.is_some();
+            owner
         },
     );
     InstallationEvidence {
         managed,
         cargo_metadata,
-        pacman_owned,
+        system_package_owned,
     }
 }
 
@@ -104,7 +123,7 @@ fn detect_with(
     mise_roots: &[PathBuf],
     scoop_roots: &ScoopRoots,
     cargo_owns: impl FnOnce(&Path) -> bool,
-    pacman_owns: impl FnOnce(&Path) -> bool,
+    system_package_owner: impl FnOnce(&Path) -> Option<SystemPackageOwner>,
 ) -> Option<ManagedInstallation> {
     // Before Cargo: mise's cargo backend installs into `<version>/bin/rho`
     // with a Cargo receipt, but mise owns that directory.
@@ -119,8 +138,21 @@ fn detect_with(
     if let Some(root) = cargo_update_root_for_exe(path, cargo_owns) {
         return Some(ManagedInstallation::Cargo { root: Some(root) });
     }
-    if pacman_owns(path) {
-        return Some(ManagedInstallation::Pacman);
+    // pacman matches loosely so AUR variants (`-git`, `-bin`) count; the only
+    // RPM is mjiang-extras' own, so match its exact name.
+    let system_managed = system_package_owner(path).and_then(|owner| match owner.manager {
+        SystemPackageManager::Pacman if owner.package.contains("rho") => {
+            Some(ManagedInstallation::Pacman)
+        }
+        SystemPackageManager::Rpm
+            if owner.package.lines().any(|name| name == "rho-coding-agent") =>
+        {
+            Some(ManagedInstallation::Dnf)
+        }
+        SystemPackageManager::Pacman | SystemPackageManager::Rpm => None,
+    });
+    if system_managed.is_some() {
+        return system_managed;
     }
     scoop_install_scope_for_path(path, scoop_roots).map(ManagedInstallation::Scoop)
 }
@@ -164,22 +196,32 @@ fn cargo_install_list_contains_crate(output: &str) -> bool {
         .any(|line| line.split_whitespace().next() == Some("rho-coding-agent"))
 }
 
-#[cfg(target_os = "linux")]
-fn pacman_owner(path: &Path) -> Option<String> {
-    std::process::Command::new("pacman")
-        .arg("-Qqo")
-        .arg(path)
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .and_then(|output| String::from_utf8(output.stdout).ok())
-        .map(|owner| owner.trim().to_owned())
-        .filter(|owner| !owner.is_empty())
-}
-
-#[cfg(not(target_os = "linux"))]
-fn pacman_owner(_path: &Path) -> Option<String> {
-    None
+/// Asks pacman, then rpm, which package owns `path`. A missing tool or an
+/// unowned path answers `None` (both exit nonzero for an unowned path).
+/// Linux only: neither database owns a macOS or Windows install.
+fn system_package_owner(path: &Path) -> Option<SystemPackageOwner> {
+    if !cfg!(target_os = "linux") {
+        return None;
+    }
+    let query = |manager, program: &str, args: &[&str]| {
+        std::process::Command::new(program)
+            .args(args)
+            .arg(path)
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .and_then(|output| String::from_utf8(output.stdout).ok())
+            .map(|package| package.trim().to_owned())
+            .filter(|package| !package.is_empty())
+            .map(|package| SystemPackageOwner { manager, package })
+    };
+    query(SystemPackageManager::Pacman, "pacman", &["-Qqo"]).or_else(|| {
+        query(
+            SystemPackageManager::Rpm,
+            "rpm",
+            &["-qf", "--queryformat", "%{NAME}\n"],
+        )
+    })
 }
 
 fn scoop_install_scope_for_path(path: &Path, roots: &ScoopRoots) -> Option<ScoopInstallScope> {
