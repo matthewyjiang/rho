@@ -87,13 +87,16 @@ impl News {
     /// Transcript card for this news: what happened and which pull request
     /// up front, the head beneath, the same lines the model reads as the
     /// body. The tone is that of its most pressing item. Typed with one item
-    /// per change, in the body's order: new commits, each change, the end.
+    /// per change, in the body's order: new commits, each change, the end,
+    /// each in its own tone.
     pub(crate) fn row(&self) -> NotificationRow {
         let subject = NotificationSubject::PullRequest {
             id: PullRequestId::from(&self.pr),
             url: self.url.clone(),
         };
-        let item = |outcome, text: String| notification_item(outcome, subject.clone(), text);
+        let item = |outcome, text: String| {
+            notification_item(outcome, tone(outcome), subject.clone(), text)
+        };
         let commit = on_head(self);
         let pushed = self.pushed.then(|| {
             let head = self.head.as_deref().map_or("", short);
@@ -121,7 +124,7 @@ impl News {
         outcomes.extend(self.end.as_ref().map(end_summary));
         let tone = items
             .iter()
-            .map(|item| tone(item.outcome))
+            .map(|item| item.tone)
             .max_by_key(|tone| pressing(*tone))
             .unwrap_or(NotificationTone::Neutral);
         let mut body = change_lines(self);

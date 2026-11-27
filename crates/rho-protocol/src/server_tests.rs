@@ -11,7 +11,7 @@ use super::*;
 use crate::{
     display::{
         NotificationId, NotificationInfo, NotificationItem, NotificationOutcome,
-        NotificationSubject, NotificationUrgency,
+        NotificationSubject, NotificationTone, NotificationUrgency,
     },
     jsonrpc, login_relay,
     methods::{
@@ -1156,6 +1156,7 @@ fn card_notification() -> NotificationInfo {
         vec![NotificationItem::new(
             NotificationOutcome::Failed,
             NotificationUrgency::NeedsYou,
+            NotificationTone::Error,
             NotificationSubject::Process { id: "p1".into() },
             "exit 1",
         )],

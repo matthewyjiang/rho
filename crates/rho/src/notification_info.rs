@@ -1,12 +1,12 @@
 //! The typed side of the notification cards a turn boundary delivers
 //! ([`NotificationInfo`]): what each card is about, one item per event it
 //! tells of, and how urgently it wants the reader. Each source names its
-//! subjects and outcomes; the urgency an outcome carries is decided here
-//! once, so every source reads the same way.
+//! subjects, outcomes and tones; the urgency an outcome carries is decided
+//! here once, so every source reads the same way.
 
 use rho_protocol::display::{
     NotificationCard, NotificationId, NotificationInfo, NotificationItem, NotificationOutcome,
-    NotificationSubject, NotificationUrgency,
+    NotificationSubject, NotificationTone, NotificationUrgency,
 };
 
 use crate::display_transcript::NotificationRow;
@@ -33,25 +33,27 @@ impl NotificationRow {
     }
 
     /// `card`, about `subject`, telling of one event that ended as
-    /// `outcome`, which its title says.
+    /// `outcome`, which its title says, in the card's tone.
     pub(crate) fn single(
         card: NotificationCard,
         subject: NotificationSubject,
         outcome: NotificationOutcome,
     ) -> Self {
-        let item = notification_item(outcome, subject.clone(), card.title.clone());
+        let item = notification_item(outcome, card.tone, subject.clone(), card.title.clone());
         Self::typed(card, subject, vec![item])
     }
 }
 
 /// One event a card tells of, that ended as `outcome`, as urgent as that
-/// outcome is: how every source builds its items.
+/// outcome is, in the `tone` its source gives it: how every source builds
+/// its items.
 pub(crate) fn notification_item(
     outcome: NotificationOutcome,
+    tone: NotificationTone,
     subject: NotificationSubject,
     text: impl Into<String>,
 ) -> NotificationItem {
-    NotificationItem::new(outcome, urgency(outcome), subject, text)
+    NotificationItem::new(outcome, urgency(outcome), tone, subject, text)
 }
 
 /// What an event that ended as `outcome` asks of the reader: to act on a
