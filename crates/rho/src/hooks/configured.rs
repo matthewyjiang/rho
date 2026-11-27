@@ -15,6 +15,7 @@ use rho_protocol::{HookStatus, HooksFile, HooksFileScope, HooksFileStatus};
 use super::{
     catalog::{spawn_contract, HooksFileOutcome, HooksFileRead},
     diagnostics::contract,
+    HookConfigError,
 };
 use crate::workspace::ProjectTrust;
 
@@ -42,7 +43,8 @@ pub(crate) fn configured_files(
 }
 
 /// `file` as `rho/hooks/list` lists it, `disabled` by the file at
-/// `invalid` when it would load.
+/// `invalid` when it would load. An error leaves out the path, which the
+/// listing gives on its own, as the session hooks report does.
 fn listed(scope: HooksFileScope, file: HooksFileRead, invalid: Option<&Path>) -> HooksFile {
     let (status, definitions, hook_status) = match file.outcome {
         HooksFileOutcome::Absent => (HooksFileStatus::Absent, Vec::new(), HookStatus::Active),
@@ -58,14 +60,14 @@ fn listed(scope: HooksFileScope, file: HooksFileRead, invalid: Option<&Path>) ->
         },
         HooksFileOutcome::Untrusted { definitions, error } => (
             HooksFileStatus::Untrusted {
-                error: error.map(|error| error.to_string()),
+                error: error.as_ref().map(HookConfigError::detail),
             },
             definitions,
             HookStatus::Untrusted,
         ),
         HooksFileOutcome::Invalid(error) => (
             HooksFileStatus::Invalid {
-                error: error.to_string(),
+                error: error.detail(),
             },
             Vec::new(),
             HookStatus::Active,

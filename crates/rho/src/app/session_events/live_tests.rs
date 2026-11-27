@@ -38,8 +38,8 @@ use crate::{
 };
 use rho_protocol::display::{
     NotificationCard, NotificationDelivery, NotificationItem, NotificationOutcome,
-    NotificationPreview, NotificationSubject, NotificationTone, NotificationVisibility,
-    Presentation,
+    NotificationPreview, NotificationSubject, NotificationTone, NotificationUrgency,
+    NotificationVisibility, Presentation,
 };
 
 fn live(tool_set: &AppToolSet) -> LiveEvents {
@@ -1040,6 +1040,7 @@ fn background_cards_carry_plain_text_and_tone() {
         subject.clone(),
         vec![NotificationItem::new(
             NotificationOutcome::Failed,
+            NotificationUrgency::NeedsYou,
             subject,
             "exited 1".to_owned(),
         )],

@@ -1155,6 +1155,7 @@ fn card_notification() -> NotificationInfo {
         NotificationSubject::Process { id: "p1".into() },
         vec![NotificationItem::new(
             NotificationOutcome::Failed,
+            NotificationUrgency::NeedsYou,
             NotificationSubject::Process { id: "p1".into() },
             "exit 1",
         )],

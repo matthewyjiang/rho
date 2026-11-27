@@ -51,8 +51,10 @@ fn remark(body: &str) -> Remark {
 
 // Covers: a card's color and urgency say the most pressing thing that
 // happened, and it holds one item per thing, in the body's order: new
-// commits, each change, the end. A miss files failing checks among routine
-// cards, or hides a merge behind the comments that came with it.
+// commits, each change, the end, each as urgent as it is on its own. A miss
+// files failing checks among routine cards, hides a merge behind the
+// comments that came with it, or draws routine new commits as urgent as the
+// failing checks beside them.
 // Owner: news rendering.
 #[test]
 fn a_cards_tone_and_urgency_are_its_most_pressing_outcome() {
@@ -126,13 +128,30 @@ fn a_cards_tone_and_urgency_are_its_most_pressing_outcome() {
                 ..news(12, vec![], None)
             },
         ),
+        (
+            "pushed with checks failed",
+            News {
+                pushed: true,
+                ..news(
+                    12,
+                    vec![Change::ChecksFailed {
+                        failed: vec![failed("ci")],
+                    }],
+                    None,
+                )
+            },
+        ),
     ];
     let read: Vec<_> = cases
         .iter()
         .map(|(name, news)| {
             let row = news.row();
             let info = row.info.expect("news is typed");
-            let outcomes: Vec<_> = info.items.iter().map(|item| item.outcome).collect();
+            let outcomes: Vec<_> = info
+                .items
+                .iter()
+                .map(|item| (item.outcome, item.urgency))
+                .collect();
             (*name, row.card.tone, info.urgency, outcomes)
         })
         .collect();
@@ -143,67 +162,85 @@ fn a_cards_tone_and_urgency_are_its_most_pressing_outcome() {
                 "checks failed",
                 Tone::Error,
                 Urgency::NeedsYou,
-                vec![Outcome::ChecksFailed]
+                vec![(Outcome::ChecksFailed, Urgency::NeedsYou)]
             ),
             (
                 "checks passed",
                 Tone::Success,
                 Urgency::Notable,
-                vec![Outcome::ChecksPassed]
+                vec![(Outcome::ChecksPassed, Urgency::Notable)]
             ),
             (
                 "owed checks finished, one failing",
                 Tone::Error,
                 Urgency::NeedsYou,
-                vec![Outcome::ChecksFailed]
+                vec![(Outcome::ChecksFailed, Urgency::NeedsYou)]
             ),
             (
                 "remarks",
                 Tone::Accent,
                 Urgency::Notable,
-                vec![Outcome::NewComments]
+                vec![(Outcome::NewComments, Urgency::Notable)]
             ),
             (
                 "remarks with a conflict",
                 Tone::Error,
                 Urgency::NeedsYou,
-                vec![Outcome::NewComments, Outcome::MergeConflict]
+                vec![
+                    (Outcome::NewComments, Urgency::Notable),
+                    (Outcome::MergeConflict, Urgency::NeedsYou)
+                ]
             ),
             (
                 "merged",
                 Tone::Success,
                 Urgency::Notable,
-                vec![Outcome::Merged]
+                vec![(Outcome::Merged, Urgency::Notable)]
             ),
             (
                 "merged with remarks",
                 Tone::Accent,
                 Urgency::Notable,
-                vec![Outcome::NewComments, Outcome::Merged]
+                vec![
+                    (Outcome::NewComments, Urgency::Notable),
+                    (Outcome::Merged, Urgency::Notable)
+                ]
             ),
             (
                 "closed",
                 Tone::Warning,
                 Urgency::Notable,
-                vec![Outcome::Closed]
+                vec![(Outcome::Closed, Urgency::Notable)]
             ),
             (
                 "comment loop",
                 Tone::Warning,
                 Urgency::Notable,
-                vec![Outcome::NewComments, Outcome::WatchStopped]
+                vec![
+                    (Outcome::NewComments, Urgency::Notable),
+                    (Outcome::WatchStopped, Urgency::Routine)
+                ]
             ),
             (
                 "unreadable",
                 Tone::Warning,
                 Urgency::NeedsYou,
-                vec![Outcome::Unreadable]
+                vec![(Outcome::Unreadable, Urgency::NeedsYou)]
             ),
             (
                 "pushed",
                 Tone::Neutral,
                 Urgency::Routine,
-                vec![Outcome::NewCommits]
+                vec![(Outcome::NewCommits, Urgency::Routine)]
+            ),
+            (
+                "pushed with checks failed",
+                Tone::Error,
+                Urgency::NeedsYou,
+                vec![
+                    (Outcome::NewCommits, Urgency::Routine),
+                    (Outcome::ChecksFailed, Urgency::NeedsYou),
+                ]
             ),
         ]
     );

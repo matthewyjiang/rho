@@ -98,3 +98,108 @@ fn inventory_summary_matches_the_session_report() {
     inventory.mode = SessionMcpMode::Unknown;
     assert_eq!(McpSessionSummary::of_inventory(&inventory), None);
 }
+
+// Covers: a daemon session's inventory gives each failed, timed-out or
+// invalid server its error as one line beside `detail`, and none to a server
+// without one or with a blank one, so a client can lead with it without
+// parsing `detail`.
+// Owner: MCP inventory
+#[test]
+fn inventory_rows_carry_each_problem_servers_error() {
+    let http = || McpTransportSummary::StreamableHttp {
+        url: "https://example.com/mcp".into(),
+    };
+    let report = McpSessionReport {
+        mode: McpLoadMode::Native,
+        servers: vec![
+            McpServerReport::connecting("slow", &stdio_server(true)),
+            McpServerReport::disabled("off", &stdio_server(false)),
+            McpServerReport::not_loaded("later", &stdio_server(true)),
+            McpServerReport::invalid("bad", "missing field `command`\n"),
+            McpServerReport::failed("down", http(), "connection refused:\n  port 443"),
+            McpServerReport::timed_out("stuck", http(), 30),
+            McpServerReport::failed("mute", http(), " \n"),
+        ],
+    };
+
+    let inventory =
+        session_mcp_inventory(&report, &McpCatalog::default(), Path::new("config.toml"));
+
+    let rows: Vec<_> = inventory
+        .servers
+        .iter()
+        .map(|server| {
+            (
+                server.identity.as_str(),
+                server.status,
+                server.error.as_deref(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        rows,
+        vec![
+            ("slow", SessionMcpStatus::Connecting, None),
+            ("off", SessionMcpStatus::Disabled, None),
+            ("later", SessionMcpStatus::NotLoaded, None),
+            (
+                "bad",
+                SessionMcpStatus::InvalidConfig,
+                Some("missing field `command`")
+            ),
+            (
+                "down",
+                SessionMcpStatus::Failed,
+                Some("connection refused: port 443")
+            ),
+            (
+                "stuck",
+                SessionMcpStatus::TimedOut,
+                Some("exceeded 30s startup budget")
+            ),
+            ("mute", SessionMcpStatus::Failed, None),
+        ]
+    );
+}
+
+// Covers: a deferred connect that never reports back fails each server still
+// connecting with its error on one line, as every other recorded error is,
+// and leaves the servers that settled alone.
+// Owner: MCP inventory
+#[test]
+fn a_connect_that_never_finished_fails_each_connecting_server_on_one_line() {
+    let mut report = McpSessionReport {
+        mode: McpLoadMode::Native,
+        servers: vec![
+            McpServerReport::connecting("slow", &stdio_server(true)),
+            McpServerReport::disabled("off", &stdio_server(false)),
+        ],
+    };
+
+    report.fail_connecting("MCP connect did not finish: task panicked\n  at src/lib.rs:1\n");
+
+    let inventory =
+        session_mcp_inventory(&report, &McpCatalog::default(), Path::new("config.toml"));
+    let rows: Vec<_> = inventory
+        .servers
+        .iter()
+        .map(|server| {
+            (
+                server.identity.as_str(),
+                server.status,
+                server.error.as_deref(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        rows,
+        vec![
+            (
+                "slow",
+                SessionMcpStatus::Failed,
+                Some("MCP connect did not finish: task panicked at src/lib.rs:1")
+            ),
+            ("off", SessionMcpStatus::Disabled, None),
+        ]
+    );
+}

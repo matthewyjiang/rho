@@ -68,6 +68,12 @@ pub struct SessionMcpServer {
     /// Human-readable transport, errors, exported tools, live changes, prompts
     /// and resources. Presentation only: clients must not parse this text.
     pub detail: String,
+    /// Why the server failed, timed out, or has an invalid configuration, in
+    /// one line of plain text, for a client to lead with; `detail` also
+    /// shows it. Absent for every other status, when rho has no words for
+    /// it, and from a daemon that predates it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 /// A server's startup outcome in a session.
@@ -249,3 +255,7 @@ pub struct SessionMcpCompleteResponse {
     /// Suggested values, best first, as the server ordered them.
     pub values: Vec<String>,
 }
+
+#[cfg(test)]
+#[path = "mcp_tests.rs"]
+mod tests;

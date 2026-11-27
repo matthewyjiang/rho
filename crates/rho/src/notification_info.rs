@@ -12,23 +12,23 @@ use rho_protocol::display::{
 use crate::display_transcript::NotificationRow;
 
 impl NotificationRow {
-    /// `card`, about `subject`, telling of `items`: under a new id, which
-    /// the row keeps wherever it is saved and replayed, as urgent as its
-    /// most urgent item.
+    /// `card`, about `subject`, telling of `items`, each built with
+    /// [`notification_item`]: under a new id, which the row keeps wherever it
+    /// is saved and replayed, as urgent as its most urgent item.
     pub(crate) fn typed(
         card: NotificationCard,
         subject: NotificationSubject,
         items: Vec<NotificationItem>,
     ) -> Self {
-        let urgency = items
+        let most_urgent = items
             .iter()
-            .map(|item| urgency(item.outcome))
+            .map(|item| item.urgency)
             .max_by_key(|urgency| rank(*urgency))
             .unwrap_or(NotificationUrgency::Routine);
         let id = NotificationId::new(uuid::Uuid::new_v4().to_string());
         Self {
             card,
-            info: Some(NotificationInfo::new(id, urgency, subject, items)),
+            info: Some(NotificationInfo::new(id, most_urgent, subject, items)),
         }
     }
 
@@ -39,9 +39,19 @@ impl NotificationRow {
         subject: NotificationSubject,
         outcome: NotificationOutcome,
     ) -> Self {
-        let item = NotificationItem::new(outcome, subject.clone(), card.title.clone());
+        let item = notification_item(outcome, subject.clone(), card.title.clone());
         Self::typed(card, subject, vec![item])
     }
+}
+
+/// One event a card tells of, that ended as `outcome`, as urgent as that
+/// outcome is: how every source builds its items.
+pub(crate) fn notification_item(
+    outcome: NotificationOutcome,
+    subject: NotificationSubject,
+    text: impl Into<String>,
+) -> NotificationItem {
+    NotificationItem::new(outcome, urgency(outcome), subject, text)
 }
 
 /// What an event that ended as `outcome` asks of the reader: to act on a

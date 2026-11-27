@@ -3264,7 +3264,7 @@
           "type": "object"
         },
         {
-          "description": "The project's file, which a session skips because the client does\nnot trust the project; `error` says why it could not be read or\nparsed, when it could not.",
+          "description": "The project's file, which a session skips because the client does\nnot trust the project; `error` says why it could not be read or\nparsed, when it could not, without the path [`HooksFile::path`]\ngives.",
           "properties": {
             "error": {
               "type": [
@@ -3283,7 +3283,7 @@
           "type": "object"
         },
         {
-          "description": "A file a session would load could not be read or parsed. A session\nthen runs no hooks at all: the other file, if it would load, is\n`disabled`.",
+          "description": "A file a session would load could not be read or parsed; `error`\nsays why, without the path [`HooksFile::path`] gives. A session then\nruns no hooks at all: the other file, if it would load, is\n`disabled`.",
           "properties": {
             "error": {
               "type": "string"
@@ -3672,7 +3672,7 @@
       "description": "A hooks file that loads but could not be read or validated.",
       "properties": {
         "error": {
-          "description": "What is wrong with it, as rho words it.",
+          "description": "What is wrong with it, as rho words it, without its `path`.",
           "type": "string"
         },
         "path": {
@@ -4909,7 +4909,7 @@
         },
         "urgency": {
           "$ref": "#/$defs/NotificationUrgency",
-          "description": "What the card asks of the reader: that of its most urgent item."
+          "description": "What the card asks of the reader: that of its most urgent item\n([`NotificationItem::urgency`])."
         }
       },
       "required": [
@@ -4933,6 +4933,10 @@
         "text": {
           "description": "The event in words, one line of plain text.",
           "type": "string"
+        },
+        "urgency": {
+          "$ref": "#/$defs/NotificationUrgency",
+          "description": "What this event asks of the reader, by the policy that gives the\ncard its [`NotificationInfo::urgency`], so a card that bundles a\nroutine event with an urgent one can tell them apart. A daemon built\nbefore items had it leaves it out, which reads as\n[`NotificationUrgency::Unknown`]: show such an item, like one whose\nurgency this crate does not know, as urgent as its card."
         }
       },
       "required": [
@@ -5268,7 +5272,7 @@
           "x-rho-other": true
         }
       ],
-      "description": "What a notification card asks of the reader. Protocol minors may add\nvalues."
+      "description": "What a notification card, or one of its items, asks of the reader.\nProtocol minors may add values."
     },
     "NotificationVisibility": {
       "anyOf": [
@@ -9196,6 +9200,13 @@
           "description": "Whether the session enabled this server.",
           "type": "boolean"
         },
+        "error": {
+          "description": "Why the server failed, timed out, or has an invalid configuration, in\none line of plain text, for a client to lead with; `detail` also\nshows it. Absent for every other status, when rho has no words for\nit, and from a daemon that predates it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "identity": {
           "description": "Qualified server identity, including its plugin namespace when present.",
           "type": "string"
@@ -10509,7 +10520,7 @@
       "description": "A hooks file the session did not load because it does not trust the\nproject.",
       "properties": {
         "error": {
-          "description": "Why the file could not be read or parsed, when it could not. Its\nhooks are then not listed.",
+          "description": "Why the file could not be read or parsed, when it could not, without\nits `path`. Its hooks are then not listed.",
           "type": [
             "string",
             "null"

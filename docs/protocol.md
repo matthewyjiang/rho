@@ -116,7 +116,7 @@ What a session runs, and what its job states mean, is described in [Sessions and
 
 - `config_path`: the configuration file the daemon opened the session with.
 - `mode`: `native`, `unsupported_agent`, or `tools_disabled`.
-- `servers`: configured servers, including disabled and failed entries. Each has its qualified `identity`, `enabled`, startup `status` (`connected`, `connecting`, `disabled`, `invalid_config`, `failed`, `timed_out`, or `not_loaded`), exported `tool_count`, and human-readable `detail`.
+- `servers`: configured servers, including disabled and failed entries. Each has its qualified `identity`, `enabled`, startup `status` (`connected`, `connecting`, `disabled`, `invalid_config`, `failed`, `timed_out`, or `not_loaded`), exported `tool_count`, and human-readable `detail`. A server that is `failed`, `timed_out`, or `invalid_config` also has its `error`, one line saying why, which `detail` also shows; a daemon that predates `error` leaves it out.
 - `tool_sources_loading`: `true` while the session still loads the tool sources it opened with, its MCP servers and OpenAPI sources. Its prompts wait until it has. An OpenAPI source is not a server, so with only OpenAPI sources this is the one sign that the session loads. Omitted when `false`.
 
 Details include transport, startup errors, exported tools, tools added or withdrawn since startup, the last failed keepalive ping, current MCP prompt commands, and resource counts. Treat `detail` as presentation text, not a machine-readable contract. `status` describes startup; subsequent reachability is reported in the details. Reissue the request for a fresh snapshot; no inventory subscription is created. It reads shared maintenance handles rather than locking the runtime, so a running model turn or a queued configure does not delay it.
@@ -274,9 +274,9 @@ A `card` that is a notification, such as a subagent's result, a background proce
 - `id`: the card's id, the same whenever it is replayed. A fork keeps the ids of the cards it copies.
 - `urgency`: how much it wants the reader: `needs_you` (a question, a failure, failing checks, a merge conflict), `notable` (finished work, new comments, a merge), or `routine` (progress, work stopped before it finished, new commits). A card is as urgent as its most urgent item.
 - `subject`: what the card is about, with a `kind`: `pull_request` (`id`, `url`), `session` (`id`), `subagent` (`run`, and the run's `session` when it keeps one), `workflow` (`run`), `process` (`id`), or `other`.
-- `items`: one per thing the card tells of, at least one, in the order its body does: the item's `outcome`, its `subject`, and its `text`, one line.
+- `items`: one per thing the card tells of, at least one, in the order its body does: the item's `outcome`, its own `urgency`, its `subject`, and its `text`, one line. A card that bundles routine new commits with failing checks has a `routine` item and a `needs_you` one. A daemon built before items had an `urgency` leaves it out: show such an item, and one whose urgency you do not know, as urgent as its card.
 
-An item's `outcome` is one of `update`, `question`, `action_requested`, `running`, `completed`, `failed`, `failed_to_start`, `exited`, `stopped`, `cancelled`, `timed_out`, `interrupted`, `cut_off`, `refused`, `out_of_steps`, `new_commits`, `checks_failed`, `checks_passed`, `checks_finished`, `new_comments`, `merge_conflict`, `merged`, `closed`, `watch_stopped`, or `unreadable`. A newer daemon may send kinds, urgencies, and outcomes not listed here: read an unknown urgency as `routine`, and show an unknown subject or outcome by its text. A card saved before Rho typed notifications carries none.
+An item's `outcome` is one of `update`, `question`, `action_requested`, `running`, `completed`, `failed`, `failed_to_start`, `exited`, `stopped`, `cancelled`, `timed_out`, `interrupted`, `cut_off`, `refused`, `out_of_steps`, `new_commits`, `checks_failed`, `checks_passed`, `checks_finished`, `new_comments`, `merge_conflict`, `merged`, `closed`, `watch_stopped`, or `unreadable`. A newer daemon may send kinds, urgencies, and outcomes not listed here: read a card's unknown urgency as `routine` and an item's as its card's, and show an unknown subject or outcome by its text. A card saved before Rho typed notifications carries none.
 
 `NEXT_MAJOR(rho-protocol): fold NotificationInfo's id, urgency, subject and items into NotificationCard and remove SessionEventEnvelope::notification.` Until then, read them from `notification` beside the card's `event`.
 
@@ -534,6 +534,8 @@ A settings screen shows what the daemon's configuration sets up with `rho/mcp/li
 - `untrusted`: the project's file, which a session skips because the client does not trust the project; its hooks are `untrusted`. An `error` says why it could not be read or parsed, when it could not.
 - `invalid`: a file a session would load could not be read or parsed; its `error` says why. A session then runs no hooks at all.
 - `disabled`: a file that would load, but `by` names the `invalid` file that stops a session loading any hooks; its hooks are `disabled`.
+
+An `error` leaves out the file's path, which `path` gives, as the `invalid` and `skipped_untrusted` files of `rho/session/report`'s `hooks` report do.
 
 A daemon that predates either method answers `MethodNotFound`.
 

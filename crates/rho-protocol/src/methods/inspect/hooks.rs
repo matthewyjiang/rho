@@ -52,8 +52,8 @@ pub struct SessionHooksReport {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SkippedHooksFile {
     pub path: PathBuf,
-    /// Why the file could not be read or parsed, when it could not. Its
-    /// hooks are then not listed.
+    /// Why the file could not be read or parsed, when it could not, without
+    /// its `path`. Its hooks are then not listed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -62,7 +62,7 @@ pub struct SkippedHooksFile {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct InvalidHooksFile {
     pub path: PathBuf,
-    /// What is wrong with it, as rho words it.
+    /// What is wrong with it, as rho words it, without its `path`.
     pub error: String,
 }
 
