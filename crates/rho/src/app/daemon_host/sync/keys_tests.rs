@@ -260,6 +260,32 @@ fn a_refused_write_replaces_nothing_in_the_journal() {
     assert_eq!(saved(&store, ANTHROPIC).as_deref(), Some("sk-old"));
 }
 
+// Covers: a revert whose journal update the store refuses still reports,
+// and keeps, the keys it restored.
+// Owner: sync keys policy (`sync/keys.rs`).
+#[test]
+fn a_revert_reports_what_it_restored_even_if_the_journal_stays() {
+    let store = MemoryCredentialStore::default();
+    store.set_secret(account(ANTHROPIC), "sk-old").unwrap();
+    let sync = SyncId::new("s");
+    import_keys(&store, &sync, &[(ANTHROPIC, "sk-new"), (MOONSHOT, "sk-m")]);
+    let refusing = Refusing {
+        inner: &store,
+        account: journal::JOURNAL_ACCOUNT,
+    };
+    let stores = Stores {
+        keys: &store,
+        journal: &refusing,
+    };
+    let anthropic = SyncItem::api_key(ANTHROPIC);
+
+    assert_eq!(
+        revert(stores, &sync, vec![anthropic.clone()], &[], NOW).unwrap(),
+        vec![RevertedItem::new(anthropic, RevertOutcome::Restored)]
+    );
+    assert_eq!(saved(&store, ANTHROPIC).as_deref(), Some("sk-old"));
+}
+
 // Covers: the journal holds only the last sync, so an import under another
 // sync makes the earlier one not found, and it expires a lifetime after
 // the sync's last write, when reading it deletes it.

@@ -178,7 +178,11 @@ pub(super) fn revert(
         .iter()
         .any(|reverted| reverted.outcome == RevertOutcome::Restored)
     {
-        journal::save(stores.journal, &journal).map_err(store_error)?;
+        if let Err(error) = journal::save(stores.journal, &journal) {
+            // The keys are restored; their entries stay and read as changed,
+            // and restoring one again with `overwrite` writes the same value.
+            tracing::warn!(%error, "could not update the sync journal after a revert");
+        }
     }
     Ok(reverted)
 }
