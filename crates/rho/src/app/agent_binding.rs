@@ -779,7 +779,7 @@ fn apply_bound_provider_auth(
                 anyhow::anyhow!("agent '{agent_id}': unknown auth profile '{auth}'")
             })?;
             config.provider = descriptor.name.to_string();
-            config.auth = mode.id.to_string();
+            config.choose_auth(mode.id);
             Ok(())
         }
         (Some(provider), None) => {
@@ -794,17 +794,23 @@ fn apply_bound_provider_auth(
                     return Ok(());
                 }
             }
+            // A retired name such as `xai-oauth` chose its auth. Otherwise
+            // it is picked with credentials now; a session settles it again.
             let profile = resolve_provider_reference_with_credentials(provider, store)
                 .map_err(|error| bind_profile_error(agent_id, provider, None, error))?;
             config.provider = profile.provider_name().to_string();
-            config.auth = profile.auth_id().to_string();
+            if legacy_provider_alias(provider).is_some() {
+                config.choose_auth(profile.auth_id());
+            } else {
+                config.infer_auth(profile.auth_id());
+            }
             Ok(())
         }
         (Some(provider), Some(auth)) => {
             let profile = resolve_profile_exact(provider, auth)
                 .map_err(|error| bind_profile_error(agent_id, provider, Some(auth), error))?;
             config.provider = profile.provider_name().to_string();
-            config.auth = profile.auth_id().to_string();
+            config.choose_auth(profile.auth_id());
             Ok(())
         }
     }

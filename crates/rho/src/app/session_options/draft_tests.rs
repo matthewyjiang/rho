@@ -4,7 +4,10 @@ use rho_protocol as wire;
 use std::sync::Arc;
 
 use super::{DraftOptions, LaunchFlag, SettingOrigin, SettingOrigins};
-use crate::{config::Config, permission::PermissionMode};
+use crate::{
+    config::{AuthOrigin, Config},
+    permission::PermissionMode,
+};
 
 fn draft(provider: &str, model: &str, auth: &str) -> DraftOptions {
     let config = Config {
@@ -80,6 +83,75 @@ fn applied_settings_show_in_the_options_and_carry() {
     );
     carried.carry(&options, draft.origins());
     assert_eq!(carried.options(), options);
+}
+
+// Covers: a draft whose config chose no auth shows the provider's auth
+// with credentials, as the daemon starts the session, and moves with a
+// sign-in or sign-out while it is open; one whose config chose the auth,
+// or whose model was picked, keeps it.
+// Owner: session options (starting auth)
+#[test]
+fn a_draft_on_an_auth_nothing_chose_follows_the_credentials() {
+    let (key, oauth) = ("xai-api-key", "xai-oauth");
+    let auths = |auths: &[&str]| {
+        auths
+            .iter()
+            .map(|auth| auth.to_string())
+            .collect::<Vec<_>>()
+    };
+    let cases = [
+        (
+            "inferred",
+            AuthOrigin::Inferred,
+            false,
+            [&[oauth][..], &[key]],
+            [oauth, key],
+        ),
+        (
+            "signed out",
+            AuthOrigin::Inferred,
+            false,
+            [&[oauth][..], &[]],
+            [oauth, key],
+        ),
+        (
+            "chosen",
+            AuthOrigin::Configured,
+            false,
+            [&[oauth][..], &[]],
+            [key, key],
+        ),
+        (
+            "picked",
+            AuthOrigin::Inferred,
+            true,
+            [&[oauth][..], &[key]],
+            [oauth, oauth],
+        ),
+    ];
+    for (case, auth_origin, pick, [before, after], expected) in cases {
+        let config = Config {
+            provider: "xai".into(),
+            model: "grok-4.7".into(),
+            auth: key.into(),
+            auth_origin,
+            ..Config::default()
+        };
+        let mut draft = DraftOptions::new(config, auths(before), Vec::new(), Vec::new());
+        if pick {
+            draft
+                .set_model(&draft.options().model.current, /*auth*/ None)
+                .unwrap();
+        }
+        let started = draft.options().model.auth;
+        draft.set_available_auths(&auths(after));
+
+        assert_eq!(
+            [started, draft.options().model.auth],
+            expected.map(str::to_owned),
+            "{case}"
+        );
+    }
 }
 
 // Covers: a setting the daemon would refuse is refused before the session

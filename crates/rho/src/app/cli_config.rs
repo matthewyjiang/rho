@@ -353,7 +353,7 @@ fn apply_cli_overrides(
             && current.is_some_and(|descriptor| descriptor.shares_auth_family(*profile))
         {
             config.provider = profile.name.into();
-            config.auth = auth.into();
+            config.choose_auth(auth);
         } else {
             apply_provider_override(
                 config,
@@ -362,7 +362,7 @@ fn apply_cli_overrides(
                 store,
                 cached_models,
             )?;
-            config.auth = auth.into();
+            config.choose_auth(auth);
         }
         flags_present = true;
     }
@@ -383,6 +383,8 @@ struct CliSelection {
     provider: String,
     model: String,
     auth: String,
+    /// So `--auth` naming the auth that was only filled in still saves it.
+    auth_origin: crate::config::AuthOrigin,
     reasoning: rho_providers::reasoning::ReasoningLevel,
     model_alias: Option<String>,
 }
@@ -393,6 +395,7 @@ impl CliSelection {
             provider: config.provider.clone(),
             model: config.model.clone(),
             auth: config.auth.clone(),
+            auth_origin: config.auth_origin,
             reasoning: config.reasoning,
             model_alias: config.model_alias.clone(),
         }
@@ -487,6 +490,9 @@ pub(super) struct SettledConfig {
 /// launch settles its bound agent here: the CLI, ACP, subagents, and daemon
 /// sessions.
 ///
+/// An auth nothing chose is first settled on the provider's auth that
+/// `credentials` can use ([`Config::settle_inferred_auth`]).
+///
 /// The model's capabilities are fetched when the cache lacks them and
 /// `provider_refresh` did not just fetch them, and the reasoning is
 /// normalized to what the model supports, or refused when an `Explicit`
@@ -499,6 +505,10 @@ pub(super) async fn settle_bound_config(
     provider_refresh: &ProviderRefreshStatus,
     reasoning: rho_providers::model::ReasoningRequestSource,
 ) -> anyhow::Result<SettledConfig> {
+    config.settle_inferred_auth(&provider_auths_with_credentials(
+        &config.provider,
+        credentials,
+    ));
     prepare_model_metadata(&config, credentials, provider_refresh).await;
     normalize_reasoning(&mut config, reasoning)?;
     let diagnostics = RuntimeDiagnostics::new(&config);
@@ -507,6 +517,17 @@ pub(super) async fn settle_bound_config(
         config,
         diagnostics,
     })
+}
+
+/// The auth modes of `provider` that `store` has credentials for. Only
+/// that provider's are read, so the store is not asked for every provider.
+fn provider_auths_with_credentials(provider: &str, store: &dyn CredentialStore) -> Vec<String> {
+    provider::provider_descriptor(provider)
+        .into_iter()
+        .flat_map(|descriptor| descriptor.auth_modes())
+        .filter(|mode| credentials::auth_has_credentials(store, mode.id).unwrap_or(false))
+        .map(|mode| mode.id.to_string())
+        .collect()
 }
 
 fn needs_startup_capability_refresh(
@@ -542,6 +563,7 @@ fn apply_provider_override(
     store: &dyn CredentialStore,
     cached_models: CachedModelRequirement,
 ) -> anyhow::Result<()> {
+    let reference_provider = provider;
     let profile = inferred_auth(provider, &config.auth, store)
         .ok_or_else(|| anyhow::anyhow!("unknown provider '{provider}' for --provider"))?;
     let provider = profile.provider_name();
@@ -558,8 +580,7 @@ fn apply_provider_override(
             ),
         }
     };
-    config.provider = provider.to_string();
-    config.auth = profile.auth_id().to_string();
+    take_unnamed_auth(config, reference_provider, provider, profile.auth_id());
     if let Some(model) = model {
         config.model = model;
     }
@@ -600,11 +621,27 @@ fn apply_model_override(
             std::slice::from_ref(&config.auth),
         )?,
     };
-    config.provider = selection.provider;
+    let reference = qualified.map_or_else(|| selection.provider.clone(), |(name, _)| name.into());
+    take_unnamed_auth(config, &reference, &selection.provider, &selection.auth);
     config.model = selection.model;
-    config.auth = selection.auth;
     config.model_alias = model_override.alias;
     Ok(())
+}
+
+/// Moves `config` onto `provider` and `auth`, which the CLI picked for
+/// want of `--auth` from the provider `reference` named: a retired name
+/// such as `xai-oauth` chose its auth; another provider's auth was only
+/// filled in, as nothing chose one for it; the same provider keeps where
+/// its auth came from.
+fn take_unnamed_auth(config: &mut Config, reference: &str, provider: &str, auth: &str) {
+    if provider::legacy_provider_alias(reference).is_some() {
+        config.choose_auth(auth);
+    } else if config.provider != provider {
+        config.infer_auth(auth);
+    } else {
+        config.auth = auth.to_owned();
+    }
+    config.provider = provider.to_owned();
 }
 
 /// Auth the CLI selects for `provider` when `--auth` is omitted, shared by

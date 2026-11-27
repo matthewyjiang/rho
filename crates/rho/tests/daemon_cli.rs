@@ -77,6 +77,9 @@ mod auth;
 #[path = "support/daemon_login.rs"]
 mod login;
 
+#[path = "support/daemon_starting_auth.rs"]
+mod starting_auth;
+
 #[path = "support/daemon_headless.rs"]
 mod headless;
 

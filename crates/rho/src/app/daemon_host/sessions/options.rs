@@ -54,7 +54,11 @@ impl Sessions {
     /// Follows a credential write or a refreshed model list, which may
     /// change the models clients may pick: each `rho/model/list`
     /// subscriber builds its list again (see [`Self::model_changes`]), and
-    /// every loaded session refreshes its options. Each refresh waits in
+    /// every loaded session refreshes its options, first moving one that
+    /// follows a config whose auth nothing chose to the auth it would start
+    /// on now ([`SessionRuntime::follow_credentials`]), so a sign-in or
+    /// sign-out while it waits for its first prompt, as rho-ui's draft
+    /// does, changes the auth it asks to sign in to. Each refresh waits in
     /// its own task for the session's runtime, so a session in a turn or a
     /// configure refreshes once it lets the runtime go, even when its own
     /// refresh there read the auths before the write. The runtime's lock
@@ -65,9 +69,16 @@ impl Sessions {
         for session in sessions {
             tokio::spawn(async move {
                 // `None` once the daemon's stop or the idle unload took it.
-                if let Some(runtime) = session.runtime.lock().await.as_ref() {
+                if let Some(runtime) = session.runtime.lock().await.as_mut() {
                     // Each session's own: their clients' credentials differ.
                     let auths = available_auths(runtime.credentials()).await;
+                    if let Err(error) = runtime.follow_credentials(&session.config(), &auths).await
+                    {
+                        tracing::warn!(
+                            %error,
+                            "could not move the session to the auth with credentials"
+                        );
+                    }
                     session.refresh_options(runtime, &auths);
                 }
             });

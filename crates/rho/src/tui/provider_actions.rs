@@ -10,7 +10,7 @@ impl App {
         }
         let result = self.info.services.config_repository.update(|config| {
             if config.provider == target.provider {
-                config.auth = target.auth.clone();
+                config.choose_auth(target.auth.clone());
             }
         });
         if let Err(err) = result {

@@ -23,8 +23,9 @@ fn reset(key: &str) -> SettingChange {
 // Covers: a protocol change lands in `config.toml` through its typed
 // setting, keeping the rest of the file; every key no setting has, then
 // every value a setting refuses, is an error naming the key, the limit,
-// and the value, and the file is left as it was; a model on another provider takes
-// that provider's default auth; resetting an internal agent's model drops
+// and the value, and the file is left as it was; a model on another provider
+// names no auth, which a session then settles on the auth with credentials,
+// while one on the same provider keeps the auth chosen for it; resetting an internal agent's model drops
 // its whole table, reasoning included, so the agent falls back as a fresh
 // file would; its reasoning cannot be set while it has no model.
 // Owner: config wire changes.
@@ -46,15 +47,14 @@ fn agent_changes_write_by_setting_or_name_what_they_refuse() {
             Ok(before.replace("rtk = true\n", "")),
         ),
         (
-            "another provider takes its default auth",
-            vec![set(
-                "model",
-                SettingValue::Model(ModelSelection::Rho {
-                    provider: "anthropic".into(),
-                    model: "claude-opus-4-8".into(),
-                }),
-            )],
-            Ok(format!("{head}[model]\nprovider = \"anthropic\"\nmodel = \"claude-opus-4-8\"\nauth = \"anthropic-api-key\"\n{advisor}")),
+            "another provider names no auth",
+            vec![set("model", rho_model("anthropic", "claude-opus-4-8"))],
+            Ok(format!("{head}[model]\nprovider = \"anthropic\"\nmodel = \"claude-opus-4-8\"\n{advisor}")),
+        ),
+        (
+            "the same provider keeps the chosen auth",
+            vec![set("model", rho_model("openai", "gpt-5.5-mini"))],
+            Ok(before.replacen("model = \"gpt-5.5\"\n", "model = \"gpt-5.5-mini\"\n", 1)),
         ),
         (
             "resetting an internal agent's model drops its reasoning too",
@@ -89,6 +89,47 @@ fn agent_changes_write_by_setting_or_name_what_they_refuse() {
     ];
     for (name, changes, expected) in cases {
         assert_eq!(applied(&before, &changes), expected, "{name}");
+    }
+}
+
+// Covers: a model picked in settings without an auth chosen leaves the
+// auth out, so loading fills in the provider's own default (`codex` for
+// `openai-codex`, not OpenAI's key) for a session to settle on the one with
+// credentials, while a retired provider name such as `xai-oauth`, which
+// chose its auth, keeps that choice as `auth`.
+// Owner: config wire changes (model auth origin).
+#[test]
+fn a_model_write_keeps_only_a_chosen_auth() {
+    let cases = [
+        ("xai", ("xai", "grok-4.7"), None, ("xai", "xai-api-key")),
+        (
+            "xai-oauth",
+            ("xai", "grok-4.7"),
+            Some("xai-oauth"),
+            ("xai", "xai-oauth"),
+        ),
+        (
+            "xai",
+            ("openai-codex", "gpt-5.6-sol"),
+            None,
+            ("openai-codex", "codex"),
+        ),
+    ];
+    for (provider, (picked, model), auth, loaded) in cases {
+        let before = format!("[model]\nprovider = \"{provider}\"\nmodel = \"grok-4.5\"\n");
+        let auth_line = auth
+            .map(|auth| format!("auth = \"{auth}\"\n"))
+            .unwrap_or_default();
+        let expected =
+            format!("[model]\nprovider = \"{picked}\"\nmodel = \"{model}\"\n{auth_line}");
+        let written = applied(&before, &[set("model", rho_model(picked, model))]).unwrap();
+        let (config, _) = resolve(&ConfigDocument::parse(&written).unwrap()).unwrap();
+
+        assert_eq!(
+            (written, (config.provider.as_str(), config.auth.as_str())),
+            (expected, loaded),
+            "{provider} -> {picked}"
+        );
     }
 }
 

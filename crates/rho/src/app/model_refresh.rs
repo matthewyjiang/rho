@@ -8,7 +8,6 @@ use rho_protocol as wire;
 use rho_providers::{
     credentials::CredentialStore,
     model::{
-        catalog::SelectionAuthContext,
         decision_models::{lists_decision_models, refresh_decision_models_with_store},
         force_refresh_models_dev_catalog,
         provider_models::{refresh_provider_models_with_store, ProviderModelEndpoint},
@@ -17,31 +16,7 @@ use rho_providers::{
     provider::{self, ProviderDescriptor},
 };
 
-use crate::config::{Config, ProviderConfigs};
-
-/// The auth a refresh of `descriptor`'s lists runs on: of the provider's
-/// modes in `available_auths`, the one the selection rules pick with
-/// `preferred_auth` first, so a stored key wins over keyless access; the
-/// provider's default mode when none is available.
-pub(crate) fn refresh_auth_for_provider(
-    descriptor: &'static ProviderDescriptor,
-    preferred_auth: &str,
-    available_auths: &[String],
-) -> &'static str {
-    let modes: Vec<String> = descriptor
-        .auth_modes()
-        .map(|mode| mode.id.to_string())
-        .collect();
-    let selected = SelectionAuthContext {
-        current: Some(preferred_auth),
-        available: available_auths,
-    }
-    .select(&modes);
-    descriptor
-        .auth_mode(&selected)
-        .unwrap_or_else(|| descriptor.default_auth())
-        .id
-}
+use crate::config::{provider_auth_with_credentials, Config, ProviderConfigs};
 
 /// The providers a full refresh fetches: each has a model or decision-model
 /// list and an available auth mode, and none awaits its endpoint login.
@@ -66,7 +41,7 @@ fn refreshable_providers(
 }
 
 /// Fetches every list of every provider `available_auths` reach, each on
-/// the auth [`refresh_auth_for_provider`] picks with `config`'s own auth
+/// the auth [`provider_auth_with_credentials`] picks with `config`'s own auth
 /// preferred, then the models.dev catalog.
 pub(crate) async fn refresh_all(
     store: &dyn CredentialStore,
@@ -75,7 +50,7 @@ pub(crate) async fn refresh_all(
 ) -> wire::ModelRefreshResponse {
     let mut lists = Vec::new();
     for descriptor in refreshable_providers(available_auths, &config.providers) {
-        let auth = refresh_auth_for_provider(descriptor, &config.auth, available_auths);
+        let auth = provider_auth_with_credentials(descriptor, &config.auth, available_auths);
         lists.extend(refresh_provider(descriptor.name, auth, store, config).await);
     }
     let catalog = match force_refresh_models_dev_catalog().await {

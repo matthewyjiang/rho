@@ -3,7 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use {
     crate::cli::{Cli, Command},
-    crate::config::Config,
+    crate::config::{AuthOrigin, Config},
     rho_providers::credentials::{
         save_github_copilot_tokens, GitHubCopilotTokens, MemoryCredentialStore,
     },
@@ -199,6 +199,8 @@ fn validate_cli_rejects_no_save_with_subcommands() {
 // a bare --provider takes the cached or built-in default, slash-containing
 // model ids stay whole under an explicit provider, an unqualified model keeps
 // the configured provider, and --auth wins (alone, it selects its provider).
+// An auth --auth or a retired provider name such as `xai-oauth` names is
+// chosen; one filled in for another provider is not, whatever the file chose.
 // Owner: cli config overrides
 #[test]
 fn cli_selection_overrides_resolve_provider_model_and_auth() {
@@ -210,6 +212,7 @@ fn cli_selection_overrides_resolve_provider_model_and_auth() {
         args: &'a [&'a str],
         /// provider, model, auth
         expected: [&'a str; 3],
+        origin: AuthOrigin,
     }
     let cases = [
         Case {
@@ -218,6 +221,7 @@ fn cli_selection_overrides_resolve_provider_model_and_auth() {
             configured: None,
             args: &["--model", "poolside/laguna-m.1"],
             expected: ["poolside", "laguna-m.1", "poolside-api-key"],
+            origin: AuthOrigin::Inferred,
         },
         Case {
             name: "legacy xai-oauth provider normalizes to xai",
@@ -225,6 +229,7 @@ fn cli_selection_overrides_resolve_provider_model_and_auth() {
             configured: None,
             args: &["--provider", "xai-oauth"],
             expected: ["xai", "grok-4.7", "xai-oauth"],
+            origin: AuthOrigin::Configured,
         },
         Case {
             name: "qualified model selects its provider auth",
@@ -232,6 +237,7 @@ fn cli_selection_overrides_resolve_provider_model_and_auth() {
             configured: None,
             args: &["--model", "openai-codex/gpt-5.6-sol"],
             expected: ["openai-codex", "gpt-5.6-sol", "codex"],
+            origin: AuthOrigin::Inferred,
         },
         Case {
             name: "bare anthropic provider takes the built-in default",
@@ -239,6 +245,7 @@ fn cli_selection_overrides_resolve_provider_model_and_auth() {
             configured: None,
             args: &["--provider", "anthropic"],
             expected: ["anthropic", "claude-sonnet-4-5", "anthropic-api-key"],
+            origin: AuthOrigin::Inferred,
         },
         Case {
             name: "bare copilot provider takes the cached default",
@@ -246,6 +253,7 @@ fn cli_selection_overrides_resolve_provider_model_and_auth() {
             configured: None,
             args: &["--provider", "github-copilot"],
             expected: ["github-copilot", "copilot-cached-model", "github-copilot"],
+            origin: AuthOrigin::Inferred,
         },
         Case {
             name: "explicit provider keeps a slash-containing model id",
@@ -262,6 +270,7 @@ fn cli_selection_overrides_resolve_provider_model_and_auth() {
                 "anthropic/claude-sonnet-4",
                 "openrouter-api-key",
             ],
+            origin: AuthOrigin::Inferred,
         },
         Case {
             name: "unqualified model keeps the configured provider",
@@ -269,6 +278,7 @@ fn cli_selection_overrides_resolve_provider_model_and_auth() {
             configured: Some(("openai-codex", "codex")),
             args: &["--model", "gpt-5.6-sol"],
             expected: ["openai-codex", "gpt-5.6-sol", "codex"],
+            origin: AuthOrigin::Configured,
         },
         Case {
             name: "--auth wins over the model provider auth",
@@ -276,6 +286,7 @@ fn cli_selection_overrides_resolve_provider_model_and_auth() {
             configured: None,
             args: &["--model", "openai-codex/gpt-5.6-sol", "--auth", "api-key"],
             expected: ["openai", "gpt-5.6-sol", "api-key"],
+            origin: AuthOrigin::Configured,
         },
         Case {
             name: "--auth alone selects its provider",
@@ -287,6 +298,7 @@ fn cli_selection_overrides_resolve_provider_model_and_auth() {
                 "anthropic/claude-sonnet-4",
                 "openrouter-oauth",
             ],
+            origin: AuthOrigin::Configured,
         },
         Case {
             name: "--auth profile matches an explicit provider",
@@ -305,6 +317,15 @@ fn cli_selection_overrides_resolve_provider_model_and_auth() {
                 "anthropic/claude-sonnet-4",
                 "openrouter-oauth",
             ],
+            origin: AuthOrigin::Configured,
+        },
+        Case {
+            name: "another provider fills in its auth for want of --auth",
+            cached: None,
+            configured: Some(("openai", "api-key")),
+            args: &["--provider", "xai"],
+            expected: ["xai", "grok-4.7", "xai-api-key"],
+            origin: AuthOrigin::Inferred,
         },
     ];
     for Case {
@@ -313,17 +334,18 @@ fn cli_selection_overrides_resolve_provider_model_and_auth() {
         configured,
         args,
         expected,
+        origin,
     } in cases
     {
         let resolve = || {
             let mut cfg = Config::default();
             if let Some((provider, auth)) = configured {
                 cfg.provider = provider.into();
-                cfg.auth = auth.into();
+                cfg.choose_auth(auth);
             }
             let cli = Cli::try_parse_from([&["rho"][..], args].concat()).unwrap();
             apply_overrides(&mut cfg, &cli, &MemoryCredentialStore::default()).unwrap();
-            [cfg.provider, cfg.model, cfg.auth]
+            ([cfg.provider, cfg.model, cfg.auth], cfg.auth_origin)
         };
         let resolved = match cached {
             Some((provider, models)) => {
@@ -336,7 +358,11 @@ fn cli_selection_overrides_resolve_provider_model_and_auth() {
                 resolved
             }
         };
-        assert_eq!(resolved, expected.map(String::from), "{name}: {args:?}");
+        assert_eq!(
+            resolved,
+            (expected.map(String::from), origin),
+            "{name}: {args:?}"
+        );
     }
 }
 

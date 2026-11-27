@@ -20,7 +20,9 @@ pub(crate) enum ModelSetting {
         provider: String,
         /// A concrete model id, or `@alias`.
         model: String,
-        auth: String,
+        /// The auth someone chose; `None` leaves it out of the file, for
+        /// the loader to fill in from the provider.
+        auth: Option<String>,
     },
     ClaudeCli {
         model: Option<String>,
@@ -53,7 +55,7 @@ fn read_model(
             Ok(Some(ModelSetting::Rho {
                 provider: provider.unwrap_or_else(|| crate::config::DEFAULT_PROVIDER.into()),
                 model: model.unwrap_or_else(|| crate::config::DEFAULT_MODEL.into()),
-                auth: auth.unwrap_or_else(|| crate::config::DEFAULT_AUTH.into()),
+                auth,
             }))
         }
         crate::config::CLAUDE_CLI_RUNTIME_KEY if runtime_allowed(ModelRuntime::ClaudeCli) => {
@@ -93,7 +95,10 @@ fn write_model(model: &ModelSetting, doc: &mut ConfigDocument, key: &str) {
             doc.remove(&format!("{key}.runtime"));
             doc.set_value(&format!("{key}.provider"), Value::from(provider.as_str()));
             doc.set_value(&format!("{key}.model"), Value::from(model.as_str()));
-            doc.set_value(&format!("{key}.auth"), Value::from(auth.as_str()));
+            match auth {
+                Some(auth) => doc.set_value(&format!("{key}.auth"), Value::from(auth.as_str())),
+                None => doc.remove(&format!("{key}.auth")),
+            }
         }
         ModelSetting::ClaudeCli { model } => {
             doc.set_value(
@@ -125,8 +130,9 @@ fn model_wire(model: &ModelSetting) -> SettingValue {
 }
 
 /// The protocol `value` as a model `spec` allows. A Rho model keeps
-/// `current`'s auth while its provider stays, else takes the new provider's
-/// default auth.
+/// `current`'s auth while its provider stays, else names none: the
+/// protocol picks no auth, so the loader fills one in, which a session
+/// settles on the provider's auth with credentials.
 fn model_from_wire(
     value: &SettingValue,
     spec: &ModelSpec,
@@ -144,20 +150,18 @@ fn model_from_wire(
     }
     Ok(match selection {
         rho_protocol::ModelSelection::Rho { provider, model } => {
-            let (current_provider, current_auth) = match current {
-                Some(ModelSetting::Rho { provider, auth, .. }) => {
-                    (provider.as_str(), auth.as_str())
-                }
-                _ => (crate::config::DEFAULT_PROVIDER, crate::config::DEFAULT_AUTH),
+            let auth = match current {
+                Some(ModelSetting::Rho {
+                    provider: current,
+                    auth,
+                    ..
+                }) if current == provider => auth.clone(),
+                _ => None,
             };
             ModelSetting::Rho {
                 provider: provider.clone(),
                 model: model.clone(),
-                auth: crate::config::inferred_provider_auth(
-                    provider,
-                    current_provider,
-                    current_auth,
-                ),
+                auth,
             }
         }
         rho_protocol::ModelSelection::ClaudeCli { model } => ModelSetting::ClaudeCli {

@@ -24,7 +24,9 @@ use rho_sdk::ReasoningLevel;
 use super::{build, models::AuthPick, reasoning_from_wire, resolve_model};
 use crate::{
     agent::AgentDefinition,
-    app::session_runtime::{resolve_switch_reasoning, CurrentModel, SettingChangeError},
+    app::session_runtime::{
+        model_scoped_config, resolve_switch_reasoning, CurrentModel, SettingChangeError,
+    },
     config::Config,
     permission::PermissionMode,
 };
@@ -295,13 +297,15 @@ pub(crate) struct DraftOptions {
 impl DraftOptions {
     /// The options a session opened on `process_config` starts with, with
     /// the models of `available_auths`, listing `commands`, its tools
-    /// reaching `added_dirs`.
+    /// reaching `added_dirs`: on the auth with credentials when nothing
+    /// chose one, as the daemon settles the session it opens.
     pub(crate) fn new(
-        process_config: Config,
+        mut process_config: Config,
         available_auths: Vec<String>,
         commands: Vec<wire::SessionCommand>,
         added_dirs: Vec<PathBuf>,
     ) -> Self {
+        process_config.settle_inferred_auth(&available_auths);
         Self {
             current: CurrentModel {
                 provider: process_config.provider.clone(),
@@ -400,11 +404,19 @@ impl DraftOptions {
     }
 
     /// Lists the models of `available_auths` from now on, as a session's
-    /// options follow a credential write; whether that changed them.
+    /// options follow a credential write; whether that changed them. A
+    /// model the draft took from config moves to the auth it would start
+    /// on now, as the daemon moves its sessions
+    /// (`SessionRuntime::follow_credentials`).
     pub(crate) fn set_available_auths(&mut self, available_auths: &[String]) -> bool {
         let changed = self.available_auths != available_auths;
         if changed {
             self.available_auths = available_auths.to_vec();
+            if !self.switched_model && self.origins.model.from == SettingOrigin::Config {
+                let mut settled = model_scoped_config(&self.current, &self.process_config);
+                settled.settle_inferred_auth(&self.available_auths);
+                self.current.auth = settled.auth;
+            }
         }
         changed
     }

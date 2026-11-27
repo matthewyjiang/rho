@@ -118,7 +118,7 @@ static MODEL: Setting<Config, ModelSetting> = Setting {
             Some(alias) => format!("@{alias}"),
             None => config.model.clone(),
         },
-        auth: config.auth.clone(),
+        auth: config.configured_auth(),
     },
     set: |config, model| match model {
         ModelSetting::Rho {
@@ -128,7 +128,10 @@ static MODEL: Setting<Config, ModelSetting> = Setting {
         } => {
             config.provider = provider;
             config.model = model;
-            config.auth = auth;
+            match auth {
+                Some(auth) => config.choose_auth(auth),
+                None => config.infer_auth(crate::config::provider_default_auth(&config.provider)),
+            }
             // A chosen model replaces the alias it was resolved from;
             // loading resolves an `@alias` model again.
             config.model_alias = None;
@@ -678,7 +681,7 @@ fn internal_agent_model(config: &Config, id: &str) -> Option<ModelSetting> {
                 Some(alias) => format!("@{alias}"),
                 None => rho.model.clone(),
             },
-            auth: rho.auth.clone(),
+            auth: Some(rho.auth.clone()),
         },
         InternalAgentTarget::ClaudeCli { model } => ModelSetting::ClaudeCli {
             model: model.clone(),
@@ -701,7 +704,13 @@ fn set_internal_agent_model(config: &mut Config, id: &str, model: Option<ModelSe
             provider,
             model,
             auth,
-        } => InternalAgentModelConfig::new(provider, model, auth),
+        } => {
+            // A row always names its auth: `model_from_wire` keeps the
+            // row's own on the same provider, so `None` is another
+            // provider's default.
+            let auth = auth.unwrap_or_else(|| crate::config::provider_default_auth(&provider));
+            InternalAgentModelConfig::new(provider, model, auth)
+        }
         ModelSetting::ClaudeCli { model } => InternalAgentModelConfig::claude_cli(model),
     };
     selection.reasoning = reasoning;

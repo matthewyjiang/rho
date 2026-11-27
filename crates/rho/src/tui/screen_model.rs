@@ -132,7 +132,7 @@ impl App {
     fn screen_auth(&self, provider: &str) -> String {
         provider::provider_descriptor(provider)
             .map(|descriptor| {
-                crate::app::model_refresh::refresh_auth_for_provider(
+                crate::config::provider_auth_with_credentials(
                     descriptor,
                     &self.info.runtime.auth,
                     &self.available_auths,

@@ -311,7 +311,7 @@ pub(crate) fn initialize_from_config(
             // A CLI override may have picked another provider; promote only
             // the saved one.
             if promoted && saved.provider == provider {
-                saved.auth = auth;
+                saved.choose_auth(auth);
             }
         })?;
     }
