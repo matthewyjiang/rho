@@ -267,6 +267,9 @@ impl SdkTool for QuestionnaireTool {
                 .unwrap_or_else(|| "questionnaire".into());
             let mut host_request =
                 HostInputRequest::questionnaire(title, questions).map_err(map_sdk_error)?;
+            if let Some(reason) = request.reason {
+                host_request = host_request.with_reason(reason);
+            }
             if let Some(fallback) = request.on_timeout {
                 host_request = host_request
                     .with_timeout_fallback(fallback.host_response(), fallback.reason)

@@ -80,6 +80,9 @@ fn push_header_lines(
     if let Some(title) = request_title(request) {
         push_hanging_text(lines, "", title, width, Theme::input_prompt());
     }
+    if let Some(reason) = request.reason() {
+        push_hanging_text(lines, "", reason, width, Theme::text());
+    }
     if let Some(notice) = questionnaire.timeout_notice(std::time::Instant::now()) {
         push_hanging_text(lines, "", &notice, width, Theme::input_prompt());
         if let Some(reason) = request.timeout_reason() {

@@ -48,12 +48,14 @@ fn choice(value: &str, label: &str, description: Option<&str>) -> Choice {
     }
 }
 
-/// Which database, one of two, required; which features, any of three or
-/// the user's own, optional, defaulting to "docs" in `default_style`; and a
-/// name, a text field as the questionnaire tool sends one.
+/// Asked because CI runs on Linux: which database, one of two, required;
+/// which features, any of three or the user's own, optional, defaulting to
+/// "docs" in `default_style`; and a name, a text field as the questionnaire
+/// tool sends one.
 fn questions(default_style: DefaultStyle) -> Ask {
     Ask::Question(QuestionAsk {
         title: "Setup".into(),
+        reason: Some("CI runs on Linux.".into()),
         questions: vec![
             Question {
                 id: "db".into(),
@@ -242,10 +244,10 @@ fn a_prompt_turns_typed_lines_into_its_answer() {
 }
 
 // Covers: what a prompt shows: an approval's options; a plan approval's
-// plan above its options, its unknown mode left out; each question with
-// its help, choices and their descriptions, and how to answer it, a text
-// field showing no placeholder choice; and no prompt for an empty question
-// request.
+// plan above its options, its unknown mode left out; the questions' reason
+// above the first question; each question with its help, choices and their
+// descriptions, and how to answer it, a text field showing no placeholder
+// choice; and no prompt for an empty question request.
 // Owner: rho attach prompt (unit).
 #[test]
 fn a_prompt_shows_what_it_asks() {
@@ -257,6 +259,7 @@ fn a_prompt_shows_what_it_asks() {
     }
     let empty = Ask::Question(QuestionAsk {
         title: "Nothing".into(),
+        reason: None,
         questions: Vec::new(),
     });
 
@@ -272,7 +275,7 @@ fn a_prompt_shows_what_it_asks() {
             "1. edit\n2. test\n  1 approve in auto · 2 approve in allow_edits · 3 keep planning\n"
                 .to_owned(),
             vec![
-                "  1/3 Which database?\n  pick what CI runs\n    1 postgres — the server\n    2 sqlite\n  pick one; /decline or /dismiss closes the questions\n".to_owned(),
+                "CI runs on Linux.\n  1/3 Which database?\n  pick what CI runs\n    1 postgres — the server\n    2 sqlite\n  pick one; /decline or /dismiss closes the questions\n".to_owned(),
                 "  2/3 Features: Which features? (optional)\n    1 docs\n    2 CI\n    3 benchmarks\n  pick any, like 1,3; or type your own answer; Enter takes docs; /decline or /dismiss closes the questions\n".to_owned(),
                 "  3/3 Project name?\n  type your answer; /decline or /dismiss closes the questions\n".to_owned(),
             ],

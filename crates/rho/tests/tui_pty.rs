@@ -1073,8 +1073,9 @@ fn surface_stays_in_zen_mode() {
     assert_pass("surface_zen");
 }
 
-// Covers: hover lifts and drops a questionnaire choice, a click selects it
-// without submitting, and a double click confirms it like Enter.
+// Covers: the questionnaire shows the agent's reason; hover lifts and drops
+// a choice, a click selects it without submitting, and a double click
+// confirms it like Enter.
 // Owner: interactive TUI
 #[test]
 fn questionnaire_choice_hover_click_and_double_click_submit() {

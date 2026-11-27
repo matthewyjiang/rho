@@ -249,6 +249,16 @@ Keep `is_advertised` cheap and non-blocking. It runs once per registered tool pe
 
 Use a tool host for host-driven automation (for example a workflow command step) that must still pass policy and hooks. `ToolHost::child_builder(&context)` returns a `ChildToolHostBuilder` with only tool registration, execution limit, and build methods. It inherits the parent's authorization, session identity, live history, and hook run id; nested calls cannot override security settings. `ChildToolHostBuilder::max_parallel_tools` bounds the child's executing calls like `RhoBuilder::max_parallel_tools`: calls started together still prepare and await approval together. Unset, independent calls all execute at once.
 
+## Questionnaire reason
+
+Available in `rho-sdk` **6.2.0** and later.
+
+`HostInputRequest::with_reason(reason)` says why a questionnaire asks: the
+context whoever answers needs to choose. Hosts read it with `request.reason()`
+and show it beside the title. A blank reason leaves the request without one.
+The application's `questionnaire` tool sets it from its top-level `reason`, and
+Rho's daemon sends it to clients as the question's `reason`.
+
 ## Questionnaire fallback provenance
 
 Available in `rho-sdk` **5.3.0** and later.

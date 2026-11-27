@@ -200,6 +200,7 @@ impl HostQuestion {
 pub struct HostInputRequest {
     id: HostInputId,
     title: String,
+    reason: Option<String>,
     questions: Vec<HostQuestion>,
     timeout_fallback: Option<(HostInputResponse, String)>,
     user_only: bool,
@@ -230,10 +231,26 @@ impl HostInputRequest {
         Ok(Self {
             id: HostInputId::new(),
             title: title.into(),
+            reason: None,
             questions,
             timeout_fallback: None,
             user_only: false,
         })
+    }
+
+    /// Says why the questionnaire asks, for a host to show beside its
+    /// title: the context whoever answers needs to choose. A blank `reason`
+    /// leaves the request without one.
+    #[must_use]
+    pub fn with_reason(mut self, reason: impl Into<String>) -> Self {
+        let reason = reason.into();
+        self.reason = (!reason.trim().is_empty()).then_some(reason);
+        self
+    }
+
+    /// Why the questionnaire asks ([`Self::with_reason`]), if it says.
+    pub fn reason(&self) -> Option<&str> {
+        self.reason.as_deref()
     }
 
     /// Marks the request as one only the user may answer. A host must not
