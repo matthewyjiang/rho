@@ -4936,12 +4936,11 @@
         },
         "urgency": {
           "$ref": "#/$defs/NotificationUrgency",
-          "description": "What this event asks of the reader, by the policy that gives the\ncard its [`NotificationInfo::urgency`], so a card that bundles a\nroutine event with an urgent one can tell them apart."
+          "description": "What this event asks of the reader, by the policy that gives the\ncard its [`NotificationInfo::urgency`], so a card that bundles a\nroutine event with an urgent one can tell them apart. A daemon built\nbefore items had it leaves it out, which reads as\n[`NotificationUrgency::Unknown`]: show such an item, like one whose\nurgency this crate does not know, as urgent as its card."
         }
       },
       "required": [
         "outcome",
-        "urgency",
         "subject",
         "text"
       ],

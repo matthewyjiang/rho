@@ -85,7 +85,14 @@ pub struct NotificationItem {
     pub outcome: NotificationOutcome,
     /// What this event asks of the reader, by the policy that gives the
     /// card its [`NotificationInfo::urgency`], so a card that bundles a
-    /// routine event with an urgent one can tell them apart.
+    /// routine event with an urgent one can tell them apart. A daemon built
+    /// before items had it leaves it out, which reads as
+    /// [`NotificationUrgency::Unknown`]: show such an item, like one whose
+    /// urgency this crate does not know, as urgent as its card.
+    #[serde(
+        default = "NotificationUrgency::unknown",
+        skip_serializing_if = "NotificationUrgency::is_unknown"
+    )]
     pub urgency: NotificationUrgency,
     /// What this event is about, which may be narrower than the card's.
     pub subject: NotificationSubject,
@@ -160,6 +167,19 @@ pub enum NotificationUrgency {
     #[serde(other)]
     #[schemars(extend("x-rho-other" = true))]
     Unknown,
+}
+
+impl NotificationUrgency {
+    /// What an item that names no urgency reads as.
+    fn unknown() -> Self {
+        Self::Unknown
+    }
+
+    /// An `Unknown` item urgency is left off the wire, so it reads back the
+    /// same. Daemons never send it.
+    fn is_unknown(&self) -> bool {
+        *self == Self::Unknown
+    }
 }
 
 /// What happened in one notification item, for a client's icon or label;

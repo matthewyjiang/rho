@@ -174,3 +174,38 @@ fn a_newer_daemons_card_reads_with_unknown_values() {
         expected
     );
 }
+
+// Covers: a card from a daemon built before items had an urgency still
+// reads, each item as `Unknown`, which a client shows as urgent as the card;
+// it serializes back without one, as it came. A miss drops every live card
+// event from such a daemon.
+// Owner: protocol wire contract.
+#[test]
+fn an_item_without_an_urgency_reads_as_unknown() {
+    let wire = json!({
+        "id": "card-1",
+        "urgency": "needs_you",
+        "subject": {"kind": "process", "id": "p1"},
+        "items": [{
+            "outcome": "failed",
+            "subject": {"kind": "process", "id": "p1"},
+            "text": "exit 1",
+        }],
+    });
+    let info = NotificationInfo::new(
+        NotificationId::new("card-1"),
+        NotificationUrgency::NeedsYou,
+        NotificationSubject::Process { id: "p1".into() },
+        vec![NotificationItem::new(
+            NotificationOutcome::Failed,
+            NotificationUrgency::Unknown,
+            NotificationSubject::Process { id: "p1".into() },
+            "exit 1",
+        )],
+    );
+    assert_eq!(
+        serde_json::from_value::<NotificationInfo>(wire.clone()).unwrap(),
+        info
+    );
+    assert_eq!(serde_json::to_value(&info).unwrap(), wire);
+}
