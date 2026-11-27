@@ -15,7 +15,10 @@
 
 mod seal;
 
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::{
+    sync::Arc,
+    time::{Instant, SystemTime, UNIX_EPOCH},
+};
 
 use rho_protocol::{
     ClientEnvironment, CompareState, ErrorCode, RpcError, SealRecipient, SealSuite, SealedSecrets,
@@ -38,13 +41,19 @@ const SUITE: SealSuite = SealSuite::X25519HkdfSha256ChaCha20Poly1305;
 /// The daemon's sync state: the recipient keys it issued.
 #[derive(Default)]
 pub(super) struct SecretSync {
-    recipients: seal::Recipients,
+    recipients: Arc<seal::Recipients>,
 }
 
 impl SecretSync {
-    /// Answers `rho/sync/recipient`.
+    /// Answers `rho/sync/recipient`, and drops the key once it expires even
+    /// if no later sync request comes to sweep it.
     pub(super) fn recipient(&self) -> SyncRecipientResponse {
         let public_key = self.recipients.issue(Instant::now());
+        let recipients = Arc::clone(&self.recipients);
+        tokio::spawn(async move {
+            tokio::time::sleep(seal::RECIPIENT_LIFETIME).await;
+            recipients.sweep(Instant::now());
+        });
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default();
@@ -130,11 +139,11 @@ fn seal_values(
     items: Vec<SecretItem>,
     values: &[String],
 ) -> Result<SealedSecrets, RpcError> {
-    // Sized up front so growing the buffer leaves no unzeroized copy: a key
-    // is printable ASCII, so its JSON adds only quotes and a comma.
+    // Sized up front so growing the buffer leaves no unzeroized copy: JSON
+    // writes a byte as at most six (`\u0001`), plus quotes and a comma.
     let capacity = 2 + values
         .iter()
-        .map(|value| 2 * value.len() + 3)
+        .map(|value| 6 * value.len() + 3)
         .sum::<usize>();
     let mut plaintext = Zeroizing::new(Vec::with_capacity(capacity));
     serde_json::to_writer(&mut *plaintext, values).map_err(internal)?;

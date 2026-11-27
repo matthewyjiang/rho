@@ -7,8 +7,9 @@
 //!
 //! A private key lives only in [`Recipients`], in memory, and goes at the
 //! first attempt to open a bundle sealed to it, whether the bundle opens or
-//! not, once [`RECIPIENT_LIFETIME`] passes, or when the process ends. A key
-//! that is used up or expired is dropped, which zeroizes it.
+//! not, once [`RECIPIENT_LIFETIME`] passes and its owner calls
+//! [`Recipients::sweep`], or when the process ends. A key that is used up
+//! or expired is dropped, which zeroizes it.
 
 use std::{
     collections::HashMap,
@@ -95,7 +96,7 @@ impl Recipients {
         let (private, public) = Kem::gen_keypair();
         let public = BASE64.encode(public.to_bytes());
         let mut held = self.held.lock().expect("recipients lock");
-        held.retain(|_, key| key.expires > now);
+        sweep(&mut held, now);
         held.insert(
             public.clone(),
             Held {
@@ -104,6 +105,12 @@ impl Recipients {
             },
         );
         public
+    }
+
+    /// Drops the keys expired at `now`. The owner calls it once a key's
+    /// lifetime passes; [`Self::issue`] and [`Self::open`] sweep too.
+    pub(super) fn sweep(&self, now: Instant) {
+        sweep(&mut self.held.lock().expect("recipients lock"), now);
     }
 
     /// Opens `sealed`, sealed to `recipient` with `info` and `aad`. Any
@@ -118,7 +125,7 @@ impl Recipients {
     ) -> Result<Zeroizing<Vec<u8>>, OpenError> {
         let key = {
             let mut held = self.held.lock().expect("recipients lock");
-            held.retain(|_, key| key.expires > now);
+            sweep(&mut held, now);
             held.remove(recipient).ok_or(OpenError::Gone)?
         };
         let encapped = BASE64
@@ -140,6 +147,10 @@ impl Recipients {
         .map(Zeroizing::new)
         .map_err(|_| OpenError::Invalid(InvalidBundle::Unauthentic))
     }
+}
+
+fn sweep(held: &mut HashMap<String, Held>, now: Instant) {
+    held.retain(|_, key| key.expires > now);
 }
 
 /// Seals `plaintext` to `recipient`, a public key [`Recipients::issue`]

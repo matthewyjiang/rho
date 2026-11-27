@@ -1,12 +1,13 @@
-//! Copying saved secrets from one daemon to another without the client
-//! that relays them seeing them: `rho/sync/*`.
+//! Comparing saved secrets between two daemons without the client that
+//! relays them seeing them: `rho/sync/*`.
 //!
 //! A client copying settings from a source daemon to a target asks the
 //! target for a one-time public key ([`SYNC_RECIPIENT`]), has the source
 //! seal the chosen secrets to it ([`SYNC_EXPORT`]), and hands the sealed
-//! bundle back to the target, which opens it once: to compare the values
-//! with its own ([`SYNC_COMPARE`]), or to save them. The client only ever
-//! holds ciphertext. Daemons never talk to each other.
+//! bundle back to the target, which opens it once to compare the values
+//! with its own ([`SYNC_COMPARE`]). Nothing here saves a value on the
+//! target. The client only ever holds ciphertext. Daemons never talk to
+//! each other.
 //!
 //! Sealing is HPKE (RFC 9180) in base mode with the suite
 //! [`SealSuite::X25519HkdfSha256ChaCha20Poly1305`], `info`
