@@ -242,6 +242,9 @@ pub(crate) fn refresh(
         let transaction =
             connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         refresh_file(&transaction, root, &path, locate, cancellation, &mut report)?;
+        // A cancel during a long load rolls that file back; the files
+        // committed before it stay.
+        anyhow::ensure!(!cancellation.is_cancelled(), "sessions indexing cancelled");
         transaction.commit()?;
     }
     let transaction =
@@ -250,11 +253,22 @@ pub(crate) fn refresh(
         transaction.query_row("select coalesce(sum(omitted),0) from files", [], |row| {
             row.get(0)
         })?;
-    transaction.execute("delete from cursor", [])?;
-    transaction.execute(
-        "insert into cursor values(?1,?2)",
-        params![changes.identity, changes.through],
-    )?;
+    // Refreshes run side by side (the daemon's build, an agent's `sessions`
+    // tool), so one that read the journal earlier must not move the
+    // cursor back past what a faster one covered.
+    let stored = transaction
+        .query_row("select identity,seq from cursor", [], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })
+        .optional()?;
+    if !stored.is_some_and(|(identity, seq)| identity == changes.identity && seq >= changes.through)
+    {
+        transaction.execute("delete from cursor", [])?;
+        transaction.execute(
+            "insert into cursor values(?1,?2)",
+            params![changes.identity, changes.through],
+        )?;
+    }
     transaction.commit()?;
     if let Err(error) = vacuum_if_bloated(connection, VACUUM_MIN_FREE_BYTES) {
         // Compaction is an optimization; the committed index is still valid.
@@ -263,15 +277,22 @@ pub(crate) fn refresh(
     Ok(report)
 }
 
-/// Whether a refresh has read every transcript: false before the first
-/// finishes, as after a schema change, while what the index holds may miss
-/// sessions.
+/// Whether the index holds every transcript: false before the first
+/// refresh finishes, as after a schema change, and while a transcript
+/// waits to be read again (`pending`), as one that changed while it was
+/// read. Until then a search may miss sessions.
 pub(crate) fn complete(connection: &Connection) -> rusqlite::Result<bool> {
-    connection.query_row("select exists(select 1 from cursor)", [], |row| row.get(0))
+    connection.query_row(
+        "select exists(select 1 from cursor) and not exists(select 1 from pending)",
+        [],
+        |row| row.get(0),
+    )
 }
 
 /// Brings one transcript's evidence up to date, or drops it when the file is
-/// gone. A file that fails to index is left out and retried next refresh.
+/// gone. A file whose read failed, or that changed while it was read, is
+/// left out and retried next refresh (`pending`); a path that is no session
+/// transcript is left out for good.
 fn refresh_file(
     transaction: &Transaction<'_>,
     root: &Path,
@@ -365,10 +386,14 @@ fn refresh_file(
         Err(error) => {
             anyhow::ensure!(!cancellation.is_cancelled(), "{error}");
             transaction.execute("delete from files where path=?1", [&path_string])?;
-            transaction.execute(
-                "insert or ignore into pending(path) values(?1)",
-                [&path_string],
-            )?;
+            if transient(&error) {
+                transaction.execute(
+                    "insert or ignore into pending(path) values(?1)",
+                    [&path_string],
+                )?;
+            } else {
+                tracing::debug!(%error, path = %path.display(), "not a session transcript; not indexed");
+            }
             report.skipped_files += 1;
         }
     }
@@ -450,7 +475,10 @@ fn discover(root: &Path) -> anyhow::Result<BTreeSet<PathBuf>> {
 
 /// Indexes the transcript at `path`, as a load of it shows it: the display
 /// rows along its active branch, each with where `locate` says replay shows
-/// it. A file that does not load is not indexed, as it does not open.
+/// it. A transcript that does not load is not indexed, as it does not open:
+/// its stamp is kept with no evidence, reported omitted, so it is not read
+/// again until it changes. A read that fails is an error, which the caller
+/// retries.
 fn index_file(
     connection: &Connection,
     root: &Path,
@@ -460,63 +488,34 @@ fn index_file(
     indexed: Option<&IndexedFile>,
     locate: Locate,
 ) -> anyhow::Result<u64> {
-    let mut reader = BufReader::new(File::open(path)?);
-    let mut line = String::new();
-    reader.read_line(&mut line)?;
-    let header: serde_json::Value = serde_json::from_str(&line)?;
-    anyhow::ensure!(header["type"] == "session", "missing session header");
-    let version = header["version"].as_u64().unwrap_or(0);
-    anyhow::ensure!(
-        super::persistence::SUPPORTED_SESSION_VERSIONS.contains(&version),
-        "unsupported session format {version}"
-    );
-    anyhow::ensure!(
-        header["id"].as_str() == Some(id),
-        "session identity mismatch"
-    );
-    let cwd = PathBuf::from(
-        header["cwd"]
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("missing session workspace"))?,
-    );
-    anyhow::ensure!(
-        path.starts_with(layout::session_dir_in_root(root, &cwd)),
-        "session workspace mismatch"
-    );
-    // A header without an origin predates them, so its evidence stays in
-    // person-facing scopes, like an unreadable one's.
-    let person_facing = serde_json::from_value::<SessionOrigin>(header["origin"].clone())
-        .ok()
-        .is_none_or(SessionOrigin::is_person_facing);
-    let (rows, omitted) = match SessionTree::load(path)
-        .and_then(|tree| active_display_from_tree(&tree))
-    {
-        // A load skips a last record still being written, which the index
-        // reports as omitted until it ends.
-        Ok(rows) => {
-            let torn = torn_tail(&mut reader.into_inner(), stamp.size)?;
-            (rows, usize::from(torn))
-        }
-        // Nor does the session open. Its stamp is kept with no evidence, so
-        // it is not read again until it changes, and it is reported omitted.
+    let transcript = match Transcript::load(root, path, id, stamp) {
+        Ok(transcript) => transcript,
+        Err(error) if transient(&error) => return Err(error),
         Err(error) => {
             tracing::debug!(%error, path = %path.display(), "session does not load; not indexed");
-            (Vec::new(), 1)
+            Transcript::unloadable()
         }
     };
-    let workspace = resolve_workspace(&cwd, indexed);
+    let workspace = if transcript.cwd.as_os_str().is_empty() {
+        Workspace {
+            worktree: PathBuf::new(),
+            repo: PathBuf::new(),
+        }
+    } else {
+        resolve_workspace(&transcript.cwd, indexed)
+    };
     let path_string = path.to_string_lossy();
     let key = hex::encode(Sha256::digest(path_string.as_bytes()));
     connection.execute(
         "insert into files(key,path,id,cwd,worktree,repo,size,stamp,omitted,person_facing) values(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
-        params![key, path_string, id, cwd.to_string_lossy(), workspace.worktree.to_string_lossy(), workspace.repo.to_string_lossy(), stamp.size, stamp.modified, omitted, person_facing],
+        params![key, path_string, id, transcript.cwd.to_string_lossy(), workspace.worktree.to_string_lossy(), workspace.repo.to_string_lossy(), stamp.size, stamp.modified, transcript.omitted, transcript.person_facing],
     )?;
     let mut insert = connection.prepare(
         "insert into evidence(session,anchor,role,text,omitted,at_kind,at_id,saved_at)
          values(?1,?2,?3,?4,?5,?6,?7,?8)",
     )?;
-    let locations = locate(&rows);
-    for evidence in search_evidence::extract(&rows, locations) {
+    let locations = locate(&transcript.rows);
+    for evidence in search_evidence::extract(&transcript.rows, locations) {
         let (at_kind, at_id) = match &evidence.at {
             Some(SearchLocation::Message { id }) => (Some("message"), Some(id.as_str())),
             Some(SearchLocation::ToolCall { id }) => (Some("tool_call"), Some(id.as_str())),
@@ -534,11 +533,97 @@ fn index_file(
         ])?;
     }
     let after = Stamp::read(path)?;
-    anyhow::ensure!(
-        after.size == stamp.size && after.modified == stamp.modified,
-        "session changed during indexing; retry"
-    );
+    if after.size != stamp.size || after.modified != stamp.modified {
+        return Err(ChangedWhileRead.into());
+    }
     Ok(stamp.size)
+}
+
+/// A transcript as the index reads it.
+struct Transcript {
+    /// The workspace its header names; empty for one that does not load.
+    cwd: PathBuf,
+    person_facing: bool,
+    /// Its display rows along the active branch.
+    rows: Vec<ProjectedMessage>,
+    /// Records left out: a last one still being written, or the whole
+    /// transcript when it does not load.
+    omitted: usize,
+}
+
+impl Transcript {
+    /// Reads session `id`'s transcript at `path`, `stamp.size` bytes long,
+    /// in session root `root`. Fails for a transcript that does not load,
+    /// or a read that failed ([`transient`]).
+    fn load(root: &Path, path: &Path, id: &str, stamp: &Stamp) -> anyhow::Result<Self> {
+        let mut reader = BufReader::new(File::open(path)?);
+        let mut line = String::new();
+        reader.read_line(&mut line)?;
+        let header: serde_json::Value = serde_json::from_str(&line)?;
+        anyhow::ensure!(header["type"] == "session", "missing session header");
+        let version = header["version"].as_u64().unwrap_or(0);
+        anyhow::ensure!(
+            super::persistence::SUPPORTED_SESSION_VERSIONS.contains(&version),
+            "unsupported session format {version}"
+        );
+        anyhow::ensure!(
+            header["id"].as_str() == Some(id),
+            "session identity mismatch"
+        );
+        let cwd = PathBuf::from(
+            header["cwd"]
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("missing session workspace"))?,
+        );
+        anyhow::ensure!(
+            path.starts_with(layout::session_dir_in_root(root, &cwd)),
+            "session workspace mismatch"
+        );
+        // A header without an origin predates them, so its evidence stays in
+        // person-facing scopes, like an unreadable one's.
+        let person_facing = serde_json::from_value::<SessionOrigin>(header["origin"].clone())
+            .ok()
+            .is_none_or(SessionOrigin::is_person_facing);
+        let rows = active_display_from_tree(&SessionTree::load(path)?)?;
+        // A load skips a last record still being written, which the index
+        // reports as omitted until it ends.
+        let torn = torn_tail(&mut reader.into_inner(), stamp.size)?;
+        Ok(Self {
+            cwd,
+            person_facing,
+            rows,
+            omitted: usize::from(torn),
+        })
+    }
+
+    /// One that does not load: no evidence, the whole of it omitted.
+    fn unloadable() -> Self {
+        Self {
+            cwd: PathBuf::new(),
+            person_facing: false,
+            rows: Vec::new(),
+            omitted: 1,
+        }
+    }
+}
+
+/// A transcript that changed while the index read it, which the next
+/// refresh reads again.
+#[derive(Debug, thiserror::Error)]
+#[error("session changed during indexing; retry")]
+struct ChangedWhileRead;
+
+/// Whether indexing failed in a way a later refresh may not: a read that
+/// failed, as on a full or unmounted disk, or a transcript that changed
+/// while it was read. Text that is not UTF-8 reads as a failed read but is
+/// a malformed transcript.
+fn transient(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause.is::<ChangedWhileRead>()
+            || cause
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|io| io.kind() != std::io::ErrorKind::InvalidData)
+    })
 }
 
 /// Whether the last record of the transcript `file`, `size` bytes long, is
@@ -546,22 +631,24 @@ fn index_file(
 /// which a load skips (`SessionTree::load`).
 fn torn_tail(file: &mut File, size: u64) -> std::io::Result<bool> {
     const CHUNK: u64 = 64 * 1024;
-    let mut tail = Vec::new();
+    // Find where the last record starts, then read it once.
+    let mut start = 0;
     let mut end = size;
+    let mut chunk = Vec::new();
     while end > 0 {
-        let start = end.saturating_sub(CHUNK);
-        let mut chunk = vec![0; (end - start) as usize];
-        file.seek(SeekFrom::Start(start))?;
+        let from = end.saturating_sub(CHUNK);
+        chunk.resize((end - from) as usize, 0);
+        file.seek(SeekFrom::Start(from))?;
         file.read_exact(&mut chunk)?;
-        let newline = chunk.iter().rposition(|&byte| byte == b'\n');
-        chunk.drain(..newline.map_or(0, |newline| newline + 1));
-        chunk.append(&mut tail);
-        tail = chunk;
-        if newline.is_some() {
+        if let Some(newline) = chunk.iter().rposition(|&byte| byte == b'\n') {
+            start = from + newline as u64 + 1;
             break;
         }
-        end = start;
+        end = from;
     }
+    let mut tail = vec![0; (size - start) as usize];
+    file.seek(SeekFrom::Start(start))?;
+    file.read_exact(&mut tail)?;
     Ok(!tail.trim_ascii().is_empty()
         && serde_json::from_slice::<serde::de::IgnoredAny>(&tail)
             .is_err_and(|error| error.is_eof()))

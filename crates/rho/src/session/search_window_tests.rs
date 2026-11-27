@@ -81,6 +81,30 @@ fn a_window_shows_the_first_match_with_byte_highlights() {
             },
         ),
         (
+            "a close marker right after a match ends it at the match",
+            format!("needle{CLOSE} x"),
+            format!("{OPEN}needle{CLOSE}{CLOSE} x"),
+            Window {
+                start: 0,
+                end: 9,
+                total_chars: 9,
+                text: format!("needle{CLOSE} x"),
+                highlights: vec![0..6],
+            },
+        ),
+        (
+            "an open marker right before a match is text",
+            format!("{OPEN}needle"),
+            format!("{OPEN}{OPEN}needle{CLOSE}"),
+            Window {
+                start: 0,
+                end: 7,
+                total_chars: 7,
+                text: format!("{OPEN}needle"),
+                highlights: vec![1..7],
+            },
+        ),
+        (
             "highlighted text of another message marks nothing",
             "abc".to_owned(),
             "xyz".to_owned(),

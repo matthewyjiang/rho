@@ -450,7 +450,7 @@ A client that groups sessions under the one that started them, or sorts them by 
 
 `query` is literal words, not an expression: a message matches when it holds every word, ignoring case, with words stemmed as the index stems them (`indexing` finds `index`), and the last word also matches as a prefix, so results follow typing (`daem` finds `daemon`). Prefixes match stems, so one typed past a word's stem finds it again only once the word is whole: `deplo` and `deployment` find `deployment`, `deploym` does not. A blank `query`, or one over 1000 characters, gets `InvalidParams`, which names the limit. `cwd` limits the search to one workspace as it limits `rho/session/list`.
 
-Sessions come newest `updated_at` first, the more relevant first among those saved in the same second. A page holds `limit` sessions, 20 by default and at most 100, and a larger `limit` gets `InvalidParams` naming the limit; `next_cursor` and `cursor` page as `rho/session/list`'s do, and a `cursor` no search returned gets `InvalidParams`. `total` is how many sessions match in all. Each entry has:
+Sessions come newest `updated_at` first, the more relevant first among those saved in the same second. A page holds `limit` sessions, 20 by default and at most 100, and a larger `limit` gets `InvalidParams` naming the limit; `next_cursor` and `cursor` page as `rho/session/list`'s do, and a `cursor` no search returned gets `InvalidParams`. Relevance moves as the index changes, so a session saved in the same second as the last one a page returned may be repeated or missed on the next. `total` is how many sessions match in all. Each entry has:
 
 | Field | Meaning |
 | --- | --- |
@@ -468,7 +468,7 @@ Each excerpt has:
 | `at`? | Where an attach's replay shows the message: `{"kind": "message", "id"}`, the `MessageId` of the first event that shows it (`saved-{node}-{row}-0` today), or `{"kind": "tool_call", "id"}`, the `ToolCallId` of the call that shows a tool result, or of the first call an agent message that only calls tools opens. Absent when no replayed event shows the message. |
 | `saved_at`? | When the message was saved, in Unix seconds, the clock of `updated_at`; absent when its time does not read. |
 
-The index reads every transcript once before it can answer in full: on a daemon's first search, and again after an upgrade changes the index's layout. That read runs in the background, seconds for a store of a gigabyte or more, and meanwhile a search answers from what the index holds so far with `indexing: true`, which may miss matches; search again later. A daemon from before this method answers `MethodNotFound`.
+The index reads every transcript once before it can answer in full: on a daemon's first search, and again after an upgrade changes the index's layout. That read runs in the background, seconds for a store of a gigabyte or more, and meanwhile a search answers from what the index holds so far with `indexing: true`, which may miss matches; search again later. A search also says `indexing: true` while a transcript that changed as the index read it, or whose read failed, waits to be read again. A daemon from before this method answers `MethodNotFound`.
 
 ### Session marks {#session-marks}
 

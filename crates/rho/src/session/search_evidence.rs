@@ -71,13 +71,15 @@ pub(super) fn extract(
 }
 
 /// A message's role, searchable text and how many blocks it has that are
-/// not text, or `None` when it holds no evidence. Remembers the sessions
-/// tool's call ids in `sessions_calls` to drop their later results.
+/// not text, or `None` when it holds no evidence. Remembers the ids whose
+/// latest call is the sessions tool's in `sessions_calls`, to drop their
+/// later results. An aborted reply's partial calls are left out: replay
+/// shows only its content.
 fn row_text(
     message: &Message,
     sessions_calls: &mut HashSet<String>,
 ) -> Option<(&'static str, String, usize)> {
-    let (role, blocks, partial_calls) = match message {
+    let (role, blocks) = match message {
         Message::ToolResult(result) => {
             if sessions_calls.contains(&result.id) {
                 return None;
@@ -89,14 +91,10 @@ fn row_text(
             };
             return Some((role, result.content.clone(), 0));
         }
-        Message::User(blocks) | Message::BoundaryInput(blocks) => ("user", &blocks[..], &[][..]),
-        Message::Assistant(blocks) => ("assistant", &blocks[..], &[][..]),
-        Message::EnrichedAssistant(message) => ("assistant", &message.content[..], &[][..]),
-        Message::AbortedAssistant(message) => (
-            "assistant_aborted",
-            &message.content[..],
-            &message.tool_calls[..],
-        ),
+        Message::User(blocks) | Message::BoundaryInput(blocks) => ("user", &blocks[..]),
+        Message::Assistant(blocks) => ("assistant", &blocks[..]),
+        Message::EnrichedAssistant(message) => ("assistant", &message.content[..]),
+        Message::AbortedAssistant(message) => ("assistant_aborted", &message.content[..]),
         // Display rows of these hold no conversation text: cards, notices
         // and model-only entries.
         Message::System(_)
@@ -113,21 +111,13 @@ fn row_text(
                 sessions_calls.insert(call.id.clone());
             }
             ContentBlock::ToolCall(call) => {
+                // Replay supports a reused id: its results are this call's.
+                sessions_calls.remove(&call.id);
                 parts.push(format!("tool_call {} {}", call.name, call.arguments));
             }
             // Image bytes are not textual evidence. Reads report omissions.
             ContentBlock::Image(_) => omitted_blocks += 1,
         }
-    }
-    for call in partial_calls
-        .iter()
-        .filter(|call| call.name.as_deref() != Some(TOOL_NAME))
-    {
-        parts.push(format!(
-            "partial_tool_call {} {}",
-            call.name.as_deref().unwrap_or("unknown"),
-            call.arguments
-        ));
     }
     // A message holding only a `sessions` call has no evidence left.
     if parts.is_empty() && omitted_blocks == 0 {

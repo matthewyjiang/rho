@@ -1,7 +1,7 @@
 use std::{fs, path::Path};
 
 use pretty_assertions::assert_eq;
-use rho_providers::model::Message;
+use rho_providers::model::{ContentBlock, Message};
 use serde_json::{json, Value};
 use tempfile::TempDir;
 
@@ -628,20 +628,36 @@ fn focused_read_preserves_errors_and_expands_unicode_match_windows() {
 // Covers: display evidence must keep roles and visible omissions, and must
 // not index the sessions tool's own calls and results (which would make every
 // later search find its predecessors) or rows a load adds, which no saved row
-// holds. One table owns extraction.
+// holds, nor partial calls replay does not show. A reused call id belongs to
+// its latest call. One table owns extraction.
 #[test]
 fn display_rows_preserve_roles_and_visible_omissions() {
     let message = |value: Value| serde_json::from_value::<Message>(value).unwrap();
     let call = |id: &str, name: &str| json!({"ToolCall":{"id":id,"name":name,"arguments":{}}});
-    let result = |id: &str| message(json!({"ToolResult":{"id":id,"ok":true,"content":"out"}}));
+    let result = |id: &str, content: &str| {
+        message(json!({"ToolResult":{"id":id,"ok":true,"content":content}}))
+    };
     let image = json!({"Image":{"data":"","mime_type":"image/png"}});
     let saved = [
         message(json!({"EnrichedAssistant":{"content":[{"Text":"answer"}, image]}})),
         message(json!({"Assistant":[call("s1", "sessions")]})),
         message(json!({"Assistant":[{"Text":"note"}, call("s2", "sessions"), call("b1", "bash")]})),
-        result("s1"),
-        result("s2"),
-        result("b1"),
+        result("s1", "out"),
+        result("s2", "out"),
+        result("b1", "out"),
+        // A later call that reuses a sessions call's id has its own results.
+        message(json!({"Assistant":[call("s1", "bash")]})),
+        result("s1", "reused"),
+        // Replay shows an aborted reply's content, not its partial calls.
+        Message::AbortedAssistant(std::sync::Arc::new(rho_sdk::model::AbortedAssistant {
+            content: vec![ContentBlock::Text("partial".into())],
+            tool_calls: vec![rho_sdk::model::PartialToolCall {
+                id: Some("p1".into()),
+                name: Some("bash".into()),
+                arguments: "{\"command\":\"partialneedle\"}".into(),
+            }],
+            ..Default::default()
+        })),
     ];
     let node = tree::NodeId::from_string("node").unwrap();
     let mut rows = saved
@@ -677,6 +693,9 @@ fn display_rows_preserve_roles_and_visible_omissions() {
             ("assistant", "answer".into(), 1, Some(7)),
             ("assistant", "note\ntool_call bash {}".into(), 0, Some(7)),
             ("tool_result", "out".into(), 0, Some(7)),
+            ("assistant", "tool_call bash {}".into(), 0, Some(7)),
+            ("tool_result", "reused".into(), 0, Some(7)),
+            ("assistant_aborted", "partial".into(), 0, Some(7)),
         ]
     );
 }

@@ -92,7 +92,9 @@ impl Daemon {
 }
 
 fn query(query: &str) -> SessionSearchParams {
-    SessionSearchParams::new(query, None, None, None)
+    SessionSearchParams::new(
+        query, /*cwd*/ None, /*cursor*/ None, /*limit*/ None,
+    )
 }
 
 fn ids(page: &SessionSearchResponse) -> Vec<String> {
@@ -158,7 +160,12 @@ async fn search_matches_the_listed_sessions_current_branch() {
     );
 
     let in_workspace = |text: &str, cwd: &Path| {
-        SessionSearchParams::new(text, Some(cwd.to_path_buf()), None, None)
+        SessionSearchParams::new(
+            text,
+            Some(cwd.to_path_buf()),
+            /*cursor*/ None,
+            /*limit*/ None,
+        )
     };
     let cases = [
         (
@@ -207,8 +214,8 @@ async fn following_cursors_pages_through_every_match_once() {
     let all = daemon
         .search(SessionSearchParams::new(
             "pageword",
-            None,
-            None,
+            /*cwd*/ None,
+            /*cursor*/ None,
             NonZeroU32::new(100),
         ))
         .await
@@ -221,7 +228,7 @@ async fn following_cursors_pages_through_every_match_once() {
         let page = daemon
             .search(SessionSearchParams::new(
                 "pageword",
-                None,
+                /*cwd*/ None,
                 cursor,
                 NonZeroU32::new(2),
             ))
@@ -258,8 +265,10 @@ async fn following_cursors_pages_through_every_match_once() {
 }
 
 // Covers: a request the daemon cannot serve as asked is the client's to fix,
-// and says so as InvalidParams rather than an empty page or a store failure.
-// Owner: daemon session search params.
+// and says so as InvalidParams rather than an empty page or a store failure,
+// before it builds or refreshes the index: on a cold daemon, a bad request
+// must not start reading every transcript. Owner: daemon session search
+// params.
 #[tokio::test]
 async fn malformed_searches_are_invalid_params() {
     let daemon = Daemon::new();
@@ -268,15 +277,30 @@ async fn malformed_searches_are_invalid_params() {
         ("query over the limit", query(&"a".repeat(1001))),
         (
             "cursor the daemon never issued",
-            SessionSearchParams::new("word", None, Some("page-2".into()), None),
+            SessionSearchParams::new(
+                "word",
+                /*cwd*/ None,
+                Some("page-2".into()),
+                /*limit*/ None,
+            ),
         ),
         (
             "limit over the page limit",
-            SessionSearchParams::new("word", None, None, NonZeroU32::new(101)),
+            SessionSearchParams::new(
+                "word",
+                /*cwd*/ None,
+                /*cursor*/ None,
+                NonZeroU32::new(101),
+            ),
         ),
         (
             "relative workspace",
-            SessionSearchParams::new("word", Some("relative".into()), None, None),
+            SessionSearchParams::new(
+                "word",
+                Some("relative".into()),
+                /*cursor*/ None,
+                /*limit*/ None,
+            ),
         ),
     ];
     let mut actual = Vec::new();
@@ -292,7 +316,8 @@ async fn malformed_searches_are_invalid_params() {
         .iter()
         .map(|(name, _)| (*name, Err(Some(ErrorCode::InvalidParams))))
         .collect();
-    assert_eq!(actual, expected);
+    let index = session_root_in(daemon.home.path()).join("search.sqlite3");
+    assert_eq!((actual, index.exists()), (expected, false));
 }
 
 /// Where each event of `events` says it shows a message or call, as a

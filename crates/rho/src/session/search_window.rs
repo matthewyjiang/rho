@@ -31,15 +31,24 @@ pub(super) struct Window {
 /// same text with [`OPEN`] and [`CLOSE`] around each match, marks.
 ///
 /// Markers are found by walking both strings: a character `highlighted`
-/// has where `text` does not is a marker. A marker character that `text`
-/// itself holds at that place reads as text first, which at worst puts a
-/// match one character off; it never splits a character.
+/// has where `text` does not is a marker. A matched token never holds a
+/// marker character (the tokenizer splits words on control characters), so
+/// the first [`CLOSE`] after an open is always the marker. Outside a match,
+/// a marker character that `text` itself holds there reads as text, which
+/// is right: FTS5 puts its [`OPEN`] right before the token, after any
+/// literal one.
 pub(super) fn window(text: &str, highlighted: &str) -> Window {
     let mut matches = Vec::new();
     let mut source = text.char_indices().peekable();
     let mut at = 0;
     let mut open = None;
     for marked in highlighted.chars() {
+        if marked == CLOSE {
+            if let Some(start) = open.take() {
+                matches.push(start..at);
+                continue;
+            }
+        }
         if let Some(&(index, char)) = source.peek() {
             if char == marked {
                 source.next();
@@ -49,11 +58,8 @@ pub(super) fn window(text: &str, highlighted: &str) -> Window {
         }
         match marked {
             OPEN => open = Some(at),
-            CLOSE => {
-                if let Some(start) = open.take() {
-                    matches.push(start..at);
-                }
-            }
+            // Closes nothing: `open` was taken above.
+            CLOSE => {}
             // `highlighted` is not `text` marked; show the start unmarked.
             _ => {
                 matches.clear();

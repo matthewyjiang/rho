@@ -1,7 +1,10 @@
 //! One page of the catalog's sessions whose conversation matches a query:
 //! the query behind the daemon's `rho/session/search`. The sessions are the
 //! ones [`super::catalog`] lists, so every hit opens; their evidence is the
-//! search index's ([`super::search_index`]), which callers refresh first.
+//! search index's ([`super::search_index`]). Callers [`check`] a request,
+//! list its sessions ([`listed`]), refresh the index, then [`search`]:
+//! listing first journals transcripts the catalog only now found, so the
+//! refresh reads them.
 
 use std::{cmp::Ordering, collections::HashMap, num::NonZeroUsize, path::Path};
 
@@ -22,13 +25,23 @@ use super::{
 /// index, where one common word takes 10-70 ms.
 pub(crate) const MAX_QUERY_CHARS: usize = 1000;
 
-/// A search, as [`search`] takes it.
+/// A search as a client asked for it.
 pub(crate) struct SearchRequest<'a> {
     pub(crate) query: &'a str,
     pub(crate) cwd: Option<&'a Path>,
     pub(crate) cursor: Option<&'a str>,
     pub(crate) limit: NonZeroUsize,
 }
+
+/// A request [`check`] accepted, as [`search`] takes it.
+pub(crate) struct CheckedSearch {
+    query: String,
+    after: Option<Cursor<'static>>,
+    limit: NonZeroUsize,
+}
+
+/// The sessions a search may find, by transcript path: the catalog's.
+pub(crate) struct Listed(HashMap<String, SessionSummary>);
 
 /// One page of matching sessions, newest first.
 #[derive(Debug)]
@@ -65,42 +78,71 @@ pub(crate) enum SearchError {
     Store(anyhow::Error),
 }
 
-/// The page of at most `limit` sessions in session root `root` after
-/// `cursor` whose evidence in the search index `connection` holds every word
-/// of `query`, the last as a prefix too. Blocking: reads SQLite and walks
-/// session directories.
-pub(crate) fn search(
-    connection: &Connection,
-    root: &Path,
-    request: SearchRequest<'_>,
-) -> Result<SearchPage, SearchError> {
+/// Refuses what is wrong with `request` itself, before anything reads the
+/// store: a query without a word or over [`MAX_QUERY_CHARS`], a relative
+/// `cwd`, or a cursor that does not parse.
+pub(crate) fn check(request: SearchRequest<'_>) -> Result<CheckedSearch, SearchError> {
     let SearchRequest {
         query,
         cwd,
         cursor,
         limit,
     } = request;
-    check_query(query)?;
-    let store = |error: rusqlite::Error| SearchError::Store(error.into());
-    // One snapshot for ranking and excerpts: a refresh committing between
-    // them gives a file's evidence new rowids.
-    let connection = &connection.unchecked_transaction().map_err(store)?;
+    if query.trim().is_empty() {
+        return Err(SearchError::BlankQuery);
+    }
+    let chars = query.chars().count();
+    if chars > MAX_QUERY_CHARS {
+        return Err(SearchError::LongQuery(chars));
+    }
+    if cwd.is_some_and(|cwd| !cwd.is_absolute()) {
+        return Err(SearchError::RelativeCwd);
+    }
     let after = cursor
         .map(|cursor| {
             Cursor::parse(cursor).ok_or_else(|| SearchError::UnknownCursor(cursor.into()))
         })
         .transpose()?;
-    let mut listed: HashMap<String, SessionSummary> = catalog::listable_in_root(root, cwd)
-        .map_err(|error| match error {
-            CatalogError::RelativeCwd => SearchError::RelativeCwd,
-            CatalogError::UnknownCursor(_) | CatalogError::Store(_) => {
-                SearchError::Store(error.into())
-            }
-        })?
-        .into_iter()
-        .map(|summary| (summary.path.to_string_lossy().into_owned(), summary))
-        .collect();
-    let query = fts_query(query, LastTerm::Prefix);
+    Ok(CheckedSearch {
+        query: fts_query(query, LastTerm::Prefix),
+        after,
+        limit,
+    })
+}
+
+/// The sessions the catalog of session root `root` lists in workspace
+/// `cwd`, an absolute path, or in every workspace without one. Blocking:
+/// reads SQLite and walks session directories.
+pub(crate) fn listed(root: &Path, cwd: Option<&Path>) -> Result<Listed, SearchError> {
+    let summaries = catalog::listable_in_root(root, cwd).map_err(|error| match error {
+        CatalogError::RelativeCwd => SearchError::RelativeCwd,
+        CatalogError::UnknownCursor(_) | CatalogError::Store(_) => SearchError::Store(error.into()),
+    })?;
+    Ok(Listed(
+        summaries
+            .into_iter()
+            .map(|summary| (summary.path.to_string_lossy().into_owned(), summary))
+            .collect(),
+    ))
+}
+
+/// The page of `request` among the `listed` sessions whose evidence in the
+/// search index `connection` holds every word of its query, the last as a
+/// prefix too. Blocking: reads SQLite.
+pub(crate) fn search(
+    connection: &Connection,
+    Listed(mut listed): Listed,
+    request: CheckedSearch,
+) -> Result<SearchPage, SearchError> {
+    let CheckedSearch {
+        query,
+        after,
+        limit,
+    } = request;
+    let store = |error: rusqlite::Error| SearchError::Store(error.into());
+    // One snapshot for ranking and excerpts: a refresh committing between
+    // them gives a file's evidence new rowids.
+    let connection = &connection.unchecked_transaction().map_err(store)?;
     let mut found = Vec::new();
     {
         // Materialized so SQLite cannot flatten bm25() into the windows.
@@ -211,19 +253,6 @@ pub(crate) fn search(
     })
 }
 
-/// Refuses a query [`search`] would: one without a word, or longer than
-/// [`MAX_QUERY_CHARS`]. Callers check before refreshing the index.
-pub(crate) fn check_query(query: &str) -> Result<(), SearchError> {
-    if query.trim().is_empty() {
-        return Err(SearchError::BlankQuery);
-    }
-    let chars = query.chars().count();
-    if chars > MAX_QUERY_CHARS {
-        return Err(SearchError::LongQuery(chars));
-    }
-    Ok(())
-}
-
 /// A matching session before its page is cut.
 struct Found {
     summary: SessionSummary,
@@ -249,8 +278,11 @@ impl Found {
 /// more relevant, then id and workspace, as the catalog orders. A cursor is
 /// the place of the last session a page returned, so a walk repeats none
 /// and skips none deleted between pages. Relevance moves as the index
-/// changes; a cursor follows its session's, but a session saved in the same
-/// second as the cursor's may still move across it.
+/// changes; a cursor follows its session's while that still matches, else
+/// keeps the score it had. So a session saved in the same second as the
+/// cursor's may move across it, repeated or skipped: ordering those by
+/// anything but relevance would hold still, but relevance is the order
+/// asked for, and a tie to the second is rare.
 #[derive(Debug)]
 struct Cursor<'a> {
     updated_at: u64,

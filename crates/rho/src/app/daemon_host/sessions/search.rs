@@ -8,7 +8,9 @@
 //! changed the index's layout, a background thread builds it, committing a
 //! file at a time, and each search answers from what it holds so far with
 //! `indexing` set. Once it is built, a search first reads the transcripts
-//! changed since the last one, on its own blocking thread.
+//! changed since the last one, on its own blocking thread, and says
+//! `indexing` while one waits to be read again, as one that changed while
+//! it was read.
 
 use std::{
     num::{NonZeroU32, NonZeroUsize},
@@ -116,11 +118,20 @@ impl Sessions {
         params: SessionSearchParams,
     ) -> Result<SessionSearchResponse, RpcError> {
         let limit = page_size(params.limit)?;
-        search_page::check_query(&params.query).map_err(refused)?;
+        let request = search_page::check(SearchRequest {
+            query: &params.query,
+            cwd: params.cwd.as_deref(),
+            cursor: params.cursor.as_deref(),
+            limit,
+        })
+        .map_err(refused)?;
         let root = crate::session::session_root_in(&self.rho_home);
         let build = self.index_build.clone();
         let stopping = self.stopping.clone();
         let searched = tokio::task::spawn_blocking(move || {
+            // Listing reconciles the catalog, which journals transcripts it
+            // only now found for the refresh below to read.
+            let listed = search_page::listed(&root, params.cwd.as_deref())?;
             let mut connection = search_index::open(&root).map_err(SearchError::Store)?;
             let indexing = build.running()
                 || !search_index::complete(&connection)
@@ -136,7 +147,8 @@ impl Sessions {
                     row_locations,
                     &stopping,
                 ) {
-                    Ok(_) => false,
+                    Ok(_) => !search_index::complete(&connection)
+                        .map_err(|error| SearchError::Store(error.into()))?,
                     // Another process may hold the index a while; answer
                     // from what it holds, saying it may miss matches.
                     Err(error) => {
@@ -145,16 +157,7 @@ impl Sessions {
                     }
                 }
             };
-            let page = search_page::search(
-                &connection,
-                &root,
-                SearchRequest {
-                    query: &params.query,
-                    cwd: params.cwd.as_deref(),
-                    cursor: params.cursor.as_deref(),
-                    limit,
-                },
-            )?;
+            let page = search_page::search(&connection, listed, request)?;
             Ok::<_, SearchError>((page, indexing))
         })
         .await

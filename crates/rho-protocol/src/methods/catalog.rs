@@ -216,6 +216,8 @@ impl SessionSearchParams {
 /// `updated_at` first, the more relevant first among those saved in the
 /// same second. Following `next_cursor` pages as [`SESSION_LIST`] does: a
 /// session saved during the walk moves ahead of the cursor and is missed.
+/// Relevance moves as the index changes, so a session saved in the same
+/// second as the last one a page returned may be repeated or missed.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[non_exhaustive]
 pub struct SessionSearchResponse {
@@ -225,9 +227,9 @@ pub struct SessionSearchResponse {
     pub next_cursor: Option<String>,
     /// How many sessions match in all.
     pub total: u64,
-    /// The index has not read every transcript yet (first use, or after
-    /// its schema changed), so this page may miss matches. Search again
-    /// later.
+    /// The index has not read every transcript yet (first use, after its
+    /// schema changed, or while one that changed as it was read waits to
+    /// be read again), so this page may miss matches. Search again later.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub indexing: bool,
 }
