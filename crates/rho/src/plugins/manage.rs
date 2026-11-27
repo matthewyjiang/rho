@@ -71,6 +71,11 @@ impl<'a> NamedPlugin<'a> {
             scope: Some(scope),
         }
     }
+
+    /// Whether a plugin in `scope` may be this one.
+    pub(crate) fn covers(&self, scope: PluginScope) -> bool {
+        self.scope.is_none_or(|wanted| wanted == scope)
+    }
 }
 
 struct ResolvedPackage {
@@ -158,6 +163,18 @@ fn place(
 ) -> Result<PathBuf, ManageError> {
     let destination = root.join(&source.manifest.name);
     ensure_destination_replaceable(&source.manifest.name, &destination, root, force)?;
+    // Linking the installed directory onto itself would leave a link to
+    // itself once the swap deletes the directory it replaced.
+    if mode == InstallMode::Link
+        && !is_symlink(&destination)
+        && destination.exists()
+        && fs::canonicalize(&source.path)? == fs::canonicalize(&destination)?
+    {
+        return Err(ManageError::Refused(format!(
+            "refusing to link {} onto itself",
+            crate::paths::display(&destination)
+        )));
+    }
     fs::create_dir_all(root)?;
     // Re-check after creating the root so canonicalize can run.
     ensure_path_is_managed_child(&destination, root)?;
@@ -186,7 +203,7 @@ pub(crate) fn set_enabled(
     home: Option<&Path>,
     rho_home: Option<&Path>,
 ) -> Result<ManagedPackage, ManageError> {
-    let resolved = resolve_named_package(target, cwd, home, rho_home)?;
+    let resolved = resolve_named_package(target, BrokenManifest::Refuse, cwd, home, rho_home)?;
     let mut state = PluginStateStore::load(cwd, home, rho_home)?;
     // State keys follow the manifest name used by discovery.
     state.set_enabled(resolved.package.scope, &resolved.package.name, enabled)?;
@@ -199,7 +216,7 @@ pub(crate) fn remove(
     home: Option<&Path>,
     rho_home: Option<&Path>,
 ) -> Result<ManagedPackage, ManageError> {
-    let resolved = resolve_named_package(target, cwd, home, rho_home)?;
+    let resolved = resolve_named_package(target, BrokenManifest::ByDirectory, cwd, home, rho_home)?;
     ensure_path_is_managed_child(&resolved.package.path, &resolved.root)?;
 
     let metadata = fs::symlink_metadata(&resolved.package.path)?;
@@ -219,8 +236,20 @@ pub(crate) fn remove(
     Ok(resolved.package)
 }
 
+/// How [`resolve_named_package`] treats a package whose `plugin.json` does
+/// not load.
+#[derive(Clone, Copy)]
+pub(super) enum BrokenManifest {
+    /// Fail with the manifest's error.
+    Refuse,
+    /// Take the package in a directory named for the target as that plugin,
+    /// as discovery names its rejected entry, so it can still be removed.
+    ByDirectory,
+}
+
 fn resolve_named_package(
     target: NamedPlugin<'_>,
+    broken: BrokenManifest,
     cwd: &Path,
     home: Option<&Path>,
     rho_home: Option<&Path>,
@@ -229,7 +258,7 @@ fn resolve_named_package(
     manifest::validate_plugin_name(name).map_err(ManageError::Refused)?;
     let roots: Vec<(PluginScope, PathBuf)> = discovery_roots(cwd, home)
         .into_iter()
-        .filter(|(scope, _)| target.scope.is_none_or(|wanted| wanted == *scope))
+        .filter(|(scope, _)| target.covers(*scope))
         .collect();
     let mut matches = Vec::new();
     for (scope, root) in &roots {
@@ -282,8 +311,24 @@ fn resolve_named_package(
             "multiple managed packages matched; using higher-precedence root"
         );
     }
+    let package = match (package_at(*scope, path, &state), broken) {
+        (Err(ManageError::InvalidPackage(_)), BrokenManifest::ByDirectory)
+            if path.file_name() == Some(std::ffi::OsStr::new(name)) =>
+        {
+            ManagedPackage {
+                origin: state.origin(*scope, name, path),
+                link_target: state.link_target(*scope, name, path),
+                name: name.to_owned(),
+                version: None,
+                description: None,
+                scope: *scope,
+                path: path.clone(),
+            }
+        }
+        (package, _) => package?,
+    };
     Ok(ResolvedPackage {
-        package: package_at(*scope, path, &state)?,
+        package,
         root: root.clone(),
     })
 }

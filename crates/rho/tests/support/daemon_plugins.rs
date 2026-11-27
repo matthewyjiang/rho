@@ -107,7 +107,8 @@ async fn install(
 // error; installs a local package and links another, a second install of
 // a name refused without `force` with the plugin there named; disables a
 // plugin so a later list still shows it disabled; and removes one by
-// scope, leaving a same-named project plugin alone.
+// scope, leaving a same-named project plugin alone, and the broken one by
+// the name its row shows.
 // Owner: daemon plugin management.
 #[tokio::test]
 async fn a_client_manages_local_plugins_without_a_session() {
@@ -292,19 +293,21 @@ async fn a_client_manages_local_plugins_without_a_session() {
         ))
     );
 
-    let remove = async |scope| {
+    let remove = async |name: &str, scope| {
         let params = PluginsRemoveParams::new(
-            PluginTarget::new("demo".into(), scope),
+            PluginTarget::new(name.into(), scope),
             Some(sandbox.workspace.clone()),
         );
         client.request::<PluginsRemove>(&params).await
     };
-    let removed = remove(PluginScope::User).await.unwrap();
+    let removed = remove("demo", PluginScope::User).await.unwrap();
     assert_eq!(removed.path.file_name(), user_demo.file_name());
     assert!(!user_demo.exists());
     assert!(project_plugins.join("demo").exists());
-    let again = rpc_error(remove(PluginScope::User).await.unwrap_err());
+    let again = rpc_error(remove("demo", PluginScope::User).await.unwrap_err());
     assert_eq!(again.error_code(), Some(ErrorCode::PluginNotFound));
+    remove("broken", PluginScope::Project).await.unwrap();
+    assert!(!project_plugins.join("broken").exists());
 
     let no_workspace = install(
         &client,

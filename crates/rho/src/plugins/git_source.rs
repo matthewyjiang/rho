@@ -24,6 +24,18 @@ const REMOTE_PREFIXES: &[&str] = &["https://", "http://", "ssh://", "git://", "f
 /// Hosts whose browser links parse as `<owner>/<repo>[/tree/<ref>[/<path>]]`.
 const GITHUB_HOSTS: &[&str] = &["github.com", "www.github.com"];
 
+/// Whether `git` may ask the user for credentials or to trust a host key.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum GitPrompts {
+    /// Through the terminal, as `rho plugins` in a shell lets it.
+    Terminal,
+    /// Never: on Unix git runs in a session of its own, with no controlling
+    /// terminal, and fails instead of asking. The daemon fetches this way, so
+    /// a login prompt can neither stop git on the terminal that started the
+    /// daemon nor wait on it.
+    Never,
+}
+
 /// Where `rho plugins install` reads a package from.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum InstallSource {
@@ -342,7 +354,7 @@ impl Checkout {
 /// Git runs with an empty template and hooks directory, so user-level
 /// `post-checkout` hooks (which can act on repository config such as
 /// `.pre-commit-config.yaml`) never run against fetched content.
-pub(crate) fn fetch(source: &GitSource) -> anyhow::Result<Checkout> {
+pub(crate) fn fetch(source: &GitSource, prompts: GitPrompts) -> anyhow::Result<Checkout> {
     let dir = tempfile::Builder::new().prefix("rho-plugin-").tempdir()?;
     let no_hooks = dir.path().join("no-hooks");
     let repo = dir.path().join("repo");
@@ -351,6 +363,7 @@ pub(crate) fn fetch(source: &GitSource) -> anyhow::Result<Checkout> {
     let git = Git {
         repo: &repo,
         no_hooks: &no_hooks,
+        prompts,
     };
     let template = format!("--template={}", no_hooks.display());
     git.run(&["init", "--quiet", &template])?;
@@ -390,6 +403,7 @@ pub(crate) fn short_commit(commit: &str) -> &str {
 struct Git<'a> {
     repo: &'a Path,
     no_hooks: &'a Path,
+    prompts: GitPrompts,
 }
 
 impl Git<'_> {
@@ -398,6 +412,14 @@ impl Git<'_> {
         let mut command = Command::new("git");
         for name in crate::git::LOCATION_ENV {
             command.env_remove(name);
+        }
+        match self.prompts {
+            GitPrompts::Terminal => {}
+            GitPrompts::Never => {
+                command.env("GIT_TERMINAL_PROMPT", "0");
+                #[cfg(unix)]
+                rho_tools::process_session::start_new_session(&mut command);
+            }
         }
         let output = command
             .arg("-C")

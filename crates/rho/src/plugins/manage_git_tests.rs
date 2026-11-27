@@ -8,7 +8,7 @@ use tempfile::TempDir;
 use super::{install_git, update, UpdateOutcome, UpdateSelection, UpdateTarget};
 use crate::plugins::{
     discover_with_trust,
-    git_source::GitSource,
+    git_source::{GitPrompts, GitSource},
     manage::{
         install, set_enabled,
         tests::{env, write_source, Env},
@@ -74,6 +74,7 @@ fn repo_source(repo: &Path, subdir: Option<&str>) -> GitSource {
 fn install_from(env: &Env, source: &GitSource, scope: PluginScope) {
     install_git(
         source,
+        GitPrompts::Never,
         scope,
         /* force */ false,
         env.project.path(),
@@ -91,6 +92,7 @@ fn run_update(
     update(
         selection,
         trust,
+        GitPrompts::Never,
         env.project.path(),
         env.home.path(),
         Some(env.rho_home.path()),
@@ -126,6 +128,7 @@ fn git_install_then_update_follows_recorded_ref() {
     let (repo, first) = plugin_repo("demo");
     let installed = install_git(
         &repo_source(repo.path(), Some("plugins/demo")),
+        GitPrompts::Never,
         PluginScope::User,
         /* force */ false,
         env.project.path(),
@@ -310,6 +313,7 @@ fn git_install_copies_package_files_only() {
     let missing = repo_source(&repo, Some("plugins/nope"));
     let error = install_git(
         &missing,
+        GitPrompts::Never,
         PluginScope::User,
         /* force */ false,
         env.project.path(),
@@ -347,6 +351,7 @@ fn update_from_home_directory_walks_each_state_file_once() {
         let (repo, commit) = plugin_repo("demo");
         install_git(
             &repo_source(repo.path(), Some("plugins/demo")),
+            GitPrompts::Never,
             PluginScope::User,
             /* force */ false,
             home.path(),
@@ -369,6 +374,7 @@ fn update_from_home_directory_walks_each_state_file_once() {
         let report = update(
             UpdateSelection::All,
             ProjectTrust::Untrusted,
+            GitPrompts::Never,
             home.path(),
             home.path(),
             Some(&rho_home),

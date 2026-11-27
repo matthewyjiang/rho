@@ -34,9 +34,10 @@ pub(crate) enum ManageError {
     /// `git` is missing, or could not fetch or check out the source.
     #[error("{0}")]
     Fetch(String),
-    /// The request cannot be carried out as asked: a scope with no plugins
-    /// root here, a destination outside the managed root, or an update of
-    /// a package not installed from git.
+    /// The request cannot be carried out as asked: an invalid plugin name, a
+    /// scope with no plugins root here, a destination outside the managed
+    /// root or holding something other than a plugin package, a package
+    /// linked onto itself, or an update of a package not installed from git.
     #[error("{0}")]
     Refused(String),
     #[error(transparent)]

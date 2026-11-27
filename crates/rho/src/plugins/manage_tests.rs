@@ -358,6 +358,30 @@ fn link_creates_managed_symlink() {
     );
 }
 
+// Covers: linking an installed package's own directory onto itself with
+// `force` is refused and leaves the package, rather than deleting it and
+// leaving a link to itself.
+// Owner: plugin install policy.
+#[test]
+fn link_onto_itself_keeps_the_package() {
+    let env = env();
+    let installed = write_source(&env.home.path().join(".agents/plugins"), "demo");
+
+    let error = install(
+        &installed,
+        PluginScope::User,
+        InstallMode::Link,
+        /* force */ true,
+        env.project.path(),
+        env.home.path(),
+        Some(env.rho_home.path()),
+    )
+    .unwrap_err();
+
+    assert!(matches!(error, super::ManageError::Refused(_)), "{error}");
+    assert!(installed.join("plugin.json").is_file());
+}
+
 // Covers: disable keeps package files but drops components from discovery.
 // Owner: plugin activation policy.
 #[test]

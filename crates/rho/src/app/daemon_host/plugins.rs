@@ -3,8 +3,9 @@
 //! machine. Each method runs the `plugins::manage` function its `rho
 //! plugins` command runs, so the daemon keeps every guard the CLI has
 //! (containment in the managed roots, git without hooks or credentials in
-//! URLs, no package code run), on a blocking thread: a git fetch holds up
-//! no other request.
+//! URLs, no package code run), on a blocking thread, and git never asks
+//! for credentials. A git fetch holds up no other request but the changes
+//! queued behind it, which run one at a time.
 //!
 //! As for `rho/mcp/list`, the params' workspace picks the project and the
 //! client's environment its trust; without a workspace the daemon user's
@@ -23,7 +24,7 @@ use rho_protocol::{
 
 use crate::plugins::{
     discover_with_trust,
-    git_source::GitSource,
+    git_source::{GitPrompts, GitSource},
     manage::{
         self, InstallMode, ManageError, ManagedPackage, NamedPlugin, UpdateOutcome, UpdateSelection,
     },
@@ -70,7 +71,7 @@ impl Plugins {
     ) -> Result<PluginsInstallResponse, RpcError> {
         let place = Place::parse(params.workspace.as_deref(), &params.environment)?;
         let scope = place.managed_scope(params.scope)?;
-        let source = InstallSource::parse(params.source)?;
+        let source = RequestedSource::parse(params.source)?;
         let force = params.force;
         let rho_home = self.rho_home.clone();
         let _changing = self.changing.lock().await;
@@ -78,13 +79,19 @@ impl Plugins {
             let home = place.home()?;
             let (cwd, rho_home_ref) = (place.cwd.as_path(), Some(rho_home.as_path()));
             let package = match &source {
-                InstallSource::Local(path, mode) => {
+                RequestedSource::Local(path, mode) => {
                     manage::install(path, scope, *mode, force, cwd, home, rho_home_ref)
                 }
-                InstallSource::Git(git) => {
-                    manage::install_git(git, scope, force, cwd, home, rho_home_ref)
-                        .map(|installed| installed.package)
-                }
+                RequestedSource::Git(git) => manage::install_git(
+                    git,
+                    GitPrompts::Never,
+                    scope,
+                    force,
+                    cwd,
+                    home,
+                    rho_home_ref,
+                )
+                .map(|installed| installed.package),
             }
             .map_err(rpc_error)?;
             Ok(PluginsInstallResponse::new(
@@ -109,8 +116,15 @@ impl Plugins {
                 Some(target) => UpdateSelection::Named(target.named()),
                 None => UpdateSelection::All,
             };
-            let report = manage::update(selection, place.trust, &place.cwd, home, Some(&rho_home))
-                .map_err(rpc_error)?;
+            let report = manage::update(
+                selection,
+                place.trust,
+                GitPrompts::Never,
+                &place.cwd,
+                home,
+                Some(&rho_home),
+            )
+            .map_err(rpc_error)?;
             let results = report.results.into_iter().map(|(target, result)| {
                 let outcome = match result {
                     Ok(UpdateOutcome::Updated { previous, current }) => {
@@ -263,12 +277,12 @@ impl Place {
 }
 
 /// An install's source, checked before anything is written.
-enum InstallSource {
+enum RequestedSource {
     Local(PathBuf, InstallMode),
     Git(GitSource),
 }
 
-impl InstallSource {
+impl RequestedSource {
     fn parse(source: PluginInstallSource) -> Result<Self, RpcError> {
         let local = |path: PathBuf, mode| {
             // Never resolved against the daemon's own directory.

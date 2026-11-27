@@ -12,7 +12,7 @@ use crate::{
     cli::{Cli, PluginsCommand, PluginsScope},
     plugins::{
         discover_with_trust,
-        git_source::{short_commit, InstallSource},
+        git_source::{short_commit, GitPrompts, InstallSource},
         manage::{self, InstallMode, NamedPlugin, UpdateOutcome, UpdateReport, UpdateSelection},
         PluginLoadReport, PluginScope, PluginStatus, TRUST_PROJECT_PLUGINS_ENV,
     },
@@ -62,8 +62,15 @@ pub(super) fn run(command: &PluginsCommand, _cli: &Cli) -> anyhow::Result<()> {
                 }
                 InstallSource::Git(git) => {
                     eprintln!("fetching {}", git.describe());
-                    let installed =
-                        manage::install_git(&git, scope, *force, &cwd, home, rho_home.as_deref())?;
+                    let installed = manage::install_git(
+                        &git,
+                        GitPrompts::Terminal,
+                        scope,
+                        *force,
+                        &cwd,
+                        home,
+                        rho_home.as_deref(),
+                    )?;
                     println!(
                         "installed {} ({}) to {} from {} at {}",
                         installed.package.name,
@@ -106,7 +113,14 @@ pub(super) fn run(command: &PluginsCommand, _cli: &Cli) -> anyhow::Result<()> {
                 Some(name) => UpdateSelection::Named(NamedPlugin::any_scope(name)),
                 None => UpdateSelection::All,
             };
-            let report = manage::update(selection, trust, &cwd, home, rho_home.as_deref())?;
+            let report = manage::update(
+                selection,
+                trust,
+                GitPrompts::Terminal,
+                &cwd,
+                home,
+                rho_home.as_deref(),
+            )?;
             print_update_report(report)
         }
         PluginsCommand::Enable { name } => {

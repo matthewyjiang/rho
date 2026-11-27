@@ -9,10 +9,10 @@ use std::path::{Path, PathBuf};
 
 use super::{
     inspect_source, install_validated, managed_root, package_exists, place, resolve_named_package,
-    InstallMode, ManageError, ManagedPackage, NamedPlugin, SourcePackage,
+    BrokenManifest, InstallMode, ManageError, ManagedPackage, NamedPlugin, SourcePackage,
 };
 use crate::plugins::{
-    git_source::{self, Checkout, GitSource},
+    git_source::{self, Checkout, GitPrompts, GitSource},
     state::{
         project_plugins_root, same_location, user_plugins_root, InstallRecord, PluginScope,
         PluginStateStore,
@@ -61,6 +61,7 @@ pub(crate) struct GitInstall {
 /// Fetch a git source and copy its package into a managed root.
 pub(crate) fn install_git(
     source: &GitSource,
+    prompts: GitPrompts,
     scope: PluginScope,
     force: bool,
     cwd: &Path,
@@ -69,7 +70,8 @@ pub(crate) fn install_git(
 ) -> Result<GitInstall, ManageError> {
     let root = managed_root(scope, cwd, home)?;
     let mut state = PluginStateStore::load(cwd, Some(home), rho_home)?;
-    let checkout = git_source::fetch(source).map_err(|error| ManageError::fetch(&error))?;
+    let checkout =
+        git_source::fetch(source, prompts).map_err(|error| ManageError::fetch(&error))?;
     let package = inspect_checkout(&checkout, source)?;
     let record = InstallRecord::Git(source.record(checkout.commit.clone()));
     let package = install_validated(package, &record, scope, &root, force, &mut state)?;
@@ -86,6 +88,7 @@ pub(crate) fn install_git(
 pub(crate) fn update(
     selection: UpdateSelection<'_>,
     trust: ProjectTrust,
+    prompts: GitPrompts,
     cwd: &Path,
     home: &Path,
     rho_home: Option<&Path>,
@@ -95,7 +98,7 @@ pub(crate) fn update(
     for (scope, root) in update_scopes(&state, cwd, home) {
         for name in state.git_installed(scope) {
             if matches!(selection, UpdateSelection::Named(wanted)
-                if wanted.name != name || wanted.scope.is_some_and(|wanted| wanted != scope))
+                if wanted.name != name || !wanted.covers(scope))
             {
                 continue;
             }
@@ -103,7 +106,7 @@ pub(crate) fn update(
                 report.untrusted.push(name);
                 continue;
             }
-            let result = update_one(scope, &root, &name, &mut state);
+            let result = update_one(scope, &root, &name, prompts, &mut state);
             report.results.push((UpdateTarget { name, scope }, result));
         }
     }
@@ -118,7 +121,8 @@ pub(crate) fn update(
                 name: name.to_owned(),
             });
         }
-        let resolved = resolve_named_package(target, cwd, Some(home), rho_home)?;
+        let resolved =
+            resolve_named_package(target, BrokenManifest::Refuse, cwd, Some(home), rho_home)?;
         return Err(ManageError::Refused(format!(
             "`{name}` has {} origin, not git; reinstall it from a repository with `rho plugins install <url> --force`",
             resolved.package.origin.as_str()
@@ -152,12 +156,16 @@ fn update_one(
     scope: PluginScope,
     root: &Path,
     name: &str,
+    prompts: GitPrompts,
     state: &mut PluginStateStore,
 ) -> Result<UpdateOutcome, ManageError> {
     let Some(record) = state.git_record(scope, name).cloned() else {
-        return Err(anyhow::anyhow!("`{name}` has no recorded git source").into());
+        return Err(ManageError::Other(anyhow::anyhow!(
+            "`{name}` has no recorded git source"
+        )));
     };
-    let source = GitSource::try_from(&record)?;
+    let source =
+        GitSource::try_from(&record).map_err(|error| ManageError::invalid_package(&error))?;
     let path = root.join(name);
     if !package_exists(&path) {
         return Err(ManageError::NotFound(format!(
@@ -167,7 +175,8 @@ fn update_one(
         )));
     }
 
-    let checkout = git_source::fetch(&source).map_err(|error| ManageError::fetch(&error))?;
+    let checkout =
+        git_source::fetch(&source, prompts).map_err(|error| ManageError::fetch(&error))?;
     if checkout.commit == record.commit {
         return Ok(UpdateOutcome::UpToDate {
             commit: record.commit,
