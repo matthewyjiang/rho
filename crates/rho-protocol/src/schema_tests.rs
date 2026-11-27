@@ -27,8 +27,8 @@ use crate::methods::{
 use crate::methods::{
     CompactionExtent, CompactionRunOutcome, CompactionRunTrigger, CompactionSkipReason,
     CompactionThreshold, CompactionTier, ContextBasis, ContextMessageKind, HookEvent, HookOutcome,
-    HookStatus, HookTools, HookWarning, PromptSourceKind, SessionReportData, SummaryRequestPath,
-    ToolSchemaOrigin,
+    HookStatus, HookTools, HookWarning, HooksReloadOutcome, PromptSourceKind, SessionReportData,
+    SummaryRequestPath, ToolSchemaOrigin,
 };
 use crate::methods::{HooksFileScope, HooksFileStatus, McpServerSource, McpTransport};
 
@@ -69,7 +69,7 @@ fn enums_marked_open_read_unknown_values_as_unknown() {
     let unseen = || json!("from_a_newer_daemon");
     let unseen_tag = || json!({ "type": "from_a_newer_daemon" });
     let unseen_kind = || json!({ "kind": "from_a_newer_daemon" });
-    let cases: [(&str, bool); 98] = [
+    let cases: [(&str, bool); 99] = [
         ("ContextBasis", reads_as(unseen(), ContextBasis::Unknown)),
         (
             "PromptSourceKind",
@@ -116,6 +116,10 @@ fn enums_marked_open_read_unknown_values_as_unknown() {
         ("HookTools", reads_as(unseen_tag(), HookTools::Unknown)),
         ("HookWarning", reads_as(unseen_tag(), HookWarning::Unknown)),
         ("HookOutcome", reads_as(unseen_tag(), HookOutcome::Unknown)),
+        (
+            "HooksReloadOutcome",
+            reads_as(unseen_tag(), HooksReloadOutcome::Unknown),
+        ),
         (
             "CompactionThreshold",
             reads_as(unseen_tag(), CompactionThreshold::Unknown),

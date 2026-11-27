@@ -7,18 +7,18 @@ use std::{future::Future, sync::Arc, time::Duration};
 use serde_json::Value;
 use tokio::{
     io::{AsyncRead, AsyncWrite},
-    sync::{mpsc, watch, OwnedSemaphorePermit},
+    sync::{mpsc, watch},
     task::JoinSet,
 };
 
 use crate::server_calls::ServiceCall;
 use crate::server_codec::{decode_params, encode, encode_result, unsupported};
+use crate::server_outbox::{Outbox, Outgoing, Responder};
 use crate::server_settings::{self, SettingsService, WatchRequest};
 use crate::server_streams::{attach, login, AttachRequest};
 use crate::{
     declared::{hello_protocol, Declared},
     forward::Forwarders,
-    jsonrpc,
     login_relay::LoginStream,
     methods::{
         AuthChooseStoreParams, AuthChooseStoreResponse, AuthKeyParams, AuthKeyResponse,
@@ -31,7 +31,8 @@ use crate::{
         SessionCancelParams, SessionCancelResponse, SessionConfigureParams,
         SessionConfigureResponse, SessionDeleteParams, SessionDeleteResponse, SessionDetach,
         SessionDetachParams, SessionDetachResponse, SessionForkParams, SessionForkResponse,
-        SessionHoldParams, SessionHoldResponse, SessionInspectParams, SessionInspectResponse,
+        SessionHoldParams, SessionHoldResponse, SessionHooksReloadParams,
+        SessionHooksReloadResponse, SessionInspectParams, SessionInspectResponse,
         SessionListDetailedResponse, SessionListParams, SessionListResponse, SessionMarkParams,
         SessionMarkResponse, SessionMcpCatalog, SessionMcpCatalogParams, SessionMcpCompleteParams,
         SessionMcpCompleteResponse, SessionMcpInventory, SessionMcpParams,
@@ -48,17 +49,18 @@ use crate::{
         AUTH_KEY, AUTH_LIST, AUTH_LOGIN, AUTH_LOGIN_CANCEL, AUTH_LOGOUT, CONFIG_GET, HELLO,
         MODEL_LIST, SESSION_ANSWER, SESSION_ANSWER_QUESTION, SESSION_ATTACH,
         SESSION_BACKGROUND_LIST, SESSION_BACKGROUND_STOP, SESSION_CANCEL, SESSION_CONFIGURE,
-        SESSION_DELETE, SESSION_DETACH, SESSION_FORK, SESSION_HOLD, SESSION_INSPECT, SESSION_LIST,
-        SESSION_LIST_DETAILED, SESSION_MARK, SESSION_MCP, SESSION_MCP_CATALOG,
-        SESSION_MCP_COMPLETE, SESSION_MCP_RESOURCE, SESSION_NEW, SESSION_OBSERVE,
-        SESSION_PROCESSES, SESSION_PROMPT, SESSION_PULL_REQUEST_LINK, SESSION_PULL_REQUEST_LIST,
-        SESSION_PULL_REQUEST_SHOW, SESSION_PULL_REQUEST_UNLINK, SESSION_RENAME, SESSION_REPORT,
-        SESSION_STEER, SESSION_SURFACE_ACTION, SESSION_UNSTEER, WORKTREE_PRUNE,
+        SESSION_DELETE, SESSION_DETACH, SESSION_FORK, SESSION_HOLD, SESSION_HOOKS_RELOAD,
+        SESSION_INSPECT, SESSION_LIST, SESSION_LIST_DETAILED, SESSION_MARK, SESSION_MCP,
+        SESSION_MCP_CATALOG, SESSION_MCP_COMPLETE, SESSION_MCP_RESOURCE, SESSION_NEW,
+        SESSION_OBSERVE, SESSION_PROCESSES, SESSION_PROMPT, SESSION_PULL_REQUEST_LINK,
+        SESSION_PULL_REQUEST_LIST, SESSION_PULL_REQUEST_SHOW, SESSION_PULL_REQUEST_UNLINK,
+        SESSION_RENAME, SESSION_REPORT, SESSION_STEER, SESSION_SURFACE_ACTION, SESSION_UNSTEER,
+        WORKTREE_PRUNE,
     },
     subscription::Subscription,
     BuildId, BuildSkew, DaemonInfo, DaemonStatus, ErrorCode, FrameError, HelloResponse, Message,
-    MessageReader, MessageWriter, ProtocolVersion, Request, RequestId, Response, RestartCost,
-    RpcError, VersionFix, VersionMismatch, PROTOCOL_VERSION,
+    MessageReader, MessageWriter, ProtocolVersion, Request, Response, RestartCost, RpcError,
+    VersionFix, VersionMismatch, PROTOCOL_VERSION,
 };
 
 /// The daemon's answers to post-handshake requests, one method per protocol
@@ -375,6 +377,16 @@ pub trait Service: SettingsService + Send + Sync {
         unsupported(SESSION_REPORT)
     }
 
+    /// Handles `rho/session/hooks/reload`: reload the loaded session's
+    /// hooks from their files, between its turns, refusing while one runs.
+    fn reload_session_hooks(
+        &self,
+        params: SessionHooksReloadParams,
+    ) -> impl Future<Output = Result<SessionHooksReloadResponse, RpcError>> + Send {
+        let _ = params;
+        unsupported(SESSION_HOOKS_RELOAD)
+    }
+
     /// Handles `rho/session/attach`: subscribe this connection to the
     /// session's events (see [`crate::subscription()`]). The connection sends
     /// the response, then forwards the subscription's events until the
@@ -529,28 +541,6 @@ pub trait Service: SettingsService + Send + Sync {
         let _ = params;
         unsupported(AUTH_CHOOSE_STORE)
     }
-}
-
-/// Messages queued for the connection's writer, written in queue order.
-///
-/// Responses are unbounded: each answers a request the peer sent, so they
-/// grow only while the peer sends requests faster than it reads the answers.
-/// The socket is private to the daemon's user, so only a buggy frontend does
-/// that, and it costs memory rather than correctness. A request's answer
-/// never waits behind events.
-///
-/// Notifications are bounded: each holds one of the connection's
-/// [`crate::forward::NOTIFICATION_QUEUE`] permits until written, so a client
-/// that stops reading stalls its forwarders, and their publishers report
-/// the lag, instead of growing this queue. One queue for both keeps write
-/// order equal to queue order, which the forwarders' ordering rests on.
-pub(crate) type Outbox = mpsc::UnboundedSender<Outgoing>;
-
-/// One message for the connection's writer.
-pub(crate) enum Outgoing {
-    Response(Response),
-    /// Holds its queue permit until written.
-    Notification(jsonrpc::Notification, OwnedSemaphorePermit),
 }
 
 /// How long a closing connection waits for its peer to take each message
@@ -945,49 +935,6 @@ impl Connection {
                 }
             }
         }
-    }
-}
-
-/// The duty to answer one request handed to the service.
-///
-/// A call that ends without answering, because its handler panicked or the
-/// connection cancelled it, answers with an internal error on drop, so the
-/// peer never waits on a request that will not finish.
-pub(crate) struct Responder {
-    /// `None` once answered.
-    id: Option<RequestId>,
-    pub(crate) outbox: Outbox,
-}
-
-impl Responder {
-    fn new(id: RequestId, outbox: &Outbox) -> Self {
-        Self {
-            id: Some(id),
-            outbox: outbox.clone(),
-        }
-    }
-
-    pub(crate) fn send(mut self, outcome: Result<Value, RpcError>) {
-        self.answer(outcome);
-    }
-
-    fn answer(&mut self, outcome: Result<Value, RpcError>) {
-        if let Some(id) = self.id.take() {
-            // Fails only once the writer is gone; then nobody can hear it.
-            let _ = self.outbox.send(Outgoing::Response(Response {
-                id: Some(id),
-                outcome,
-            }));
-        }
-    }
-}
-
-impl Drop for Responder {
-    fn drop(&mut self) {
-        self.answer(Err(RpcError::new(
-            ErrorCode::InternalError,
-            "the daemon failed while handling this request",
-        )));
     }
 }
 

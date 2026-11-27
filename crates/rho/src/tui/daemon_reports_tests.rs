@@ -1,7 +1,7 @@
 use pretty_assertions::assert_eq;
 use rho_protocol::SessionReport;
 
-use crate::tui::{tests::test_app, ComposerMode, PanelOverlay};
+use crate::tui::{tests::test_app, ComposerMode, Entry, PanelOverlay};
 
 // Covers: a report's answer opens its overlay only while the person still
 // waits on that report. One they asked for before another, or before
@@ -34,6 +34,42 @@ fn only_the_awaited_report_opens_its_overlay() {
     .collect();
 
     assert_eq!(opened, vec![true, false, false]);
+}
+
+// Covers: why `/hooks` could not reload the hooks shows only while the
+// person still waits on the hooks report it precedes, as that report's
+// overlay does.
+// Owner: daemon TUI report overlays.
+#[test]
+fn a_refused_hooks_reload_shows_with_its_awaited_report() {
+    let hooks = serde_json::json!({
+        "enabled": true,
+        "files": [],
+        "hooks": [],
+        "recent_activity": [],
+    });
+    let shown: Vec<_> = [Some(SessionReport::Hooks), None]
+        .into_iter()
+        .map(|awaited| {
+            let mut app = test_app();
+            app.awaited_daemon_report = awaited;
+            app.show_hooks_not_reloaded("blocking hooks were added");
+            app.show_daemon_report(SessionReport::Hooks, Ok(hooks.clone()));
+            let errors = app
+                .history
+                .entries()
+                .iter()
+                .filter(|entry| matches!(entry, Entry::Error(_)))
+                .count();
+            let overlay = matches!(
+                app.input_ui.composer(),
+                ComposerMode::Panel(PanelOverlay::Hooks(_))
+            );
+            (errors, overlay)
+        })
+        .collect();
+
+    assert_eq!(shown, vec![(1, true), (0, false)]);
 }
 
 // Covers: `/info`'s read of a daemon session's compaction, which the daemon

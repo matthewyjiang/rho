@@ -86,11 +86,24 @@ impl SessionRuntime {
         )
     }
 
-    /// Reads the session's hooks again from their files and reports them
-    /// (see [`crate::hooks::reload_snapshot`]).
-    pub(crate) fn reload_hooks(&self) -> anyhow::Result<HookSnapshot> {
+    /// The session's hooks report: its hooks files read again and checked
+    /// against the hooks it runs, which stay as they are (see
+    /// [`crate::hooks::read_snapshot`]).
+    pub(crate) fn hooks_report(&self) -> HookSnapshot {
         let environment = &self.build.host.environment;
-        crate::hooks::reload_snapshot(
+        crate::hooks::read_snapshot(
+            self.built.hooks.as_ref(),
+            self.cwd(),
+            environment.project_trust(),
+            crate::hooks::running_inside_hook(&environment.current()),
+        )
+    }
+
+    /// Reloads the session's hooks from their files, as `/hooks` asks (see
+    /// [`crate::hooks::reload_for_session`]).
+    pub(crate) fn reload_hooks(&self) -> Result<(), crate::hooks::HookReloadError> {
+        let environment = &self.build.host.environment;
+        crate::hooks::reload_for_session(
             self.built.hooks.as_ref(),
             self.cwd(),
             environment.project_trust(),

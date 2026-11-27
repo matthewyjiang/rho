@@ -3059,6 +3059,21 @@
           "type": "string"
         },
         {
+          "const": "pending",
+          "description": "Its file defines it, but the session does not run it as defined: the\nfile changed since the session loaded its hooks. Reloading them loads\nit.",
+          "type": "string"
+        },
+        {
+          "const": "needs_reopen",
+          "description": "Its file defines it, but the session does not run it as defined, and\na reload would be refused: the files define a hook of a kind\n(blocking or observing) the session started without, which a reload\ncannot add. It runs once the session is opened again.",
+          "type": "string"
+        },
+        {
+          "const": "stale",
+          "description": "The session runs it as its file defined it when the session loaded\nits hooks, but the file no longer does. Reloading them drops it,\nunless a [`HookStatus::NeedsReopen`] hook refuses the reload.",
+          "type": "string"
+        },
+        {
           "description": "Any other value: one a later protocol minor adds.",
           "type": "string",
           "x-rho-other": true
@@ -3333,6 +3348,54 @@
       ],
       "type": "object"
     },
+    "HooksReloadOutcome": {
+      "anyOf": [
+        {
+          "description": "The session now runs what its hooks files define.",
+          "properties": {
+            "type": {
+              "const": "reloaded",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The session keeps the hooks it ran: a hooks file does not load, the\nfiles add a kind of hook it started without, or a hook started it, so\nit runs none. `reason` says which, as rho words it.",
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "type": {
+              "const": "refused",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "properties": {
+            "type": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object",
+          "x-rho-other": true
+        }
+      ],
+      "description": "What a [`SESSION_HOOKS_RELOAD`] did."
+    },
     "IdempotencyKey": {
       "description": "A client's own name for one prompt, which makes sending it again\nsafe ([`super::SessionPromptParams::idempotency_key`]). Any\nnon-empty string the client will not reuse for another prompt of\nthe session, such as a UUID.",
       "type": "string"
@@ -3604,6 +3667,23 @@
         }
       ],
       "description": "What a [`SettingKind::Integer`] counts."
+    },
+    "InvalidHooksFile": {
+      "description": "A hooks file that loads but could not be read or validated.",
+      "properties": {
+        "error": {
+          "description": "What is wrong with it, as rho words it.",
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "error"
+      ],
+      "type": "object"
     },
     "JobId": {
       "description": "A job's id. Opaque to clients: send back the string the daemon gave.",
@@ -8041,26 +8121,62 @@
       "description": "Result of [`SESSION_HOLD`]: the request no longer times out, and every\nattached client saw [`super::SessionEvent::InputHeld`]. Holding a\nrequest that has no timeout, or one already held, changes nothing. A\nrequest that closed is [`crate::ErrorCode::InputNotOpen`].",
       "type": "object"
     },
+    "SessionHooksReloadParams": {
+      "description": "Params of [`SESSION_HOOKS_RELOAD`].",
+      "properties": {
+        "session": {
+          "$ref": "#/$defs/SessionId"
+        }
+      },
+      "required": [
+        "session"
+      ],
+      "type": "object"
+    },
+    "SessionHooksReloadResponse": {
+      "description": "Result of [`SESSION_HOOKS_RELOAD`].",
+      "properties": {
+        "outcome": {
+          "$ref": "#/$defs/HooksReloadOutcome",
+          "description": "Whether the session now runs what its hooks files define, or why not."
+        }
+      },
+      "required": [
+        "outcome"
+      ],
+      "type": "object"
+    },
     "SessionHooksReport": {
-      "description": "The session's hooks and their recent activity.",
+      "description": "The session's hooks and their recent activity.\n\nThe report reads the hooks files again but leaves the session's hooks as\nthey are: a session runs the hooks it loaded when it opened, or when its\nhooks were last reloaded. Each hook's [`HookStatus`] says whether the\nsession runs it as its file now defines it.",
       "properties": {
         "enabled": {
-          "description": "Whether the session runs hooks: false when it started without them,\nbecause none were configured, they failed to load, or a hook started\nthe session. Its report still lists an untrusted project file.",
+          "description": "Whether the session runs hooks: false when it started without them,\nbecause none were configured, they failed to load, or a hook started\nthe session. Its report still lists what its files define.",
           "type": "boolean"
         },
         "files": {
-          "description": "The hooks files the session loaded, in load order: the user's, then\nthe project's.",
+          "description": "The hooks files that load, in load order: the user's, then the\nproject's. While a file is [`Self::invalid`], the files the session\nloaded its hooks from instead.",
           "items": {
             "type": "string"
           },
           "type": "array"
         },
         "hooks": {
-          "description": "Every hook the files define: the active ones in the order they run,\nthe user's file then the project's, each in file order; then those of\nthe skipped file.",
+          "description": "Every hook the files define: those that load in the order they run,\nthe user's file then the project's, each in file order; then those of\nthe skipped file; then the [`HookStatus::Stale`] ones the session\nstill runs. An edited hook is listed twice under its id, pending and\nstale, so key hooks by more than their id. Each hook is checked on its\nown: hooks the session runs in another order than the file now lists\nthem stay active.",
           "items": {
             "$ref": "#/$defs/HookContract"
           },
           "type": "array"
+        },
+        "invalid": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InvalidHooksFile"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "A hooks file that loads but could not be read or validated now. A\nsession runs no part of a policy it cannot read whole, so while it is\ninvalid the session keeps the hooks it runs, and the report lists\nthose."
         },
         "recent_activity": {
           "description": "The latest hook invocations, oldest first. rho keeps a bounded\nnumber of them.",
@@ -8078,7 +8194,7 @@
               "type": "null"
             }
           ],
-          "description": "The project's hooks file, when the session skipped it because it\ndoes not trust the project."
+          "description": "The project's hooks file, when it is skipped because the session\ndoes not trust the project."
         }
       },
       "required": [
@@ -9395,7 +9511,7 @@
         },
         {
           "const": "hooks",
-          "description": "The session's hooks, read again from their files, and their recent\nactivity.",
+          "description": "The session's hooks files read again, checked against the hooks the\nsession runs, and their recent activity. Reading it leaves the\nsession's hooks as they are; [`super::SESSION_HOOKS_RELOAD`] reloads\nthem.",
           "type": "string"
         },
         {
@@ -11756,6 +11872,14 @@
       },
       "result": {
         "$ref": "#/$defs/SessionHoldResponse"
+      }
+    },
+    "rho/session/hooks/reload": {
+      "params": {
+        "$ref": "#/$defs/SessionHooksReloadParams"
+      },
+      "result": {
+        "$ref": "#/$defs/SessionHooksReloadResponse"
       }
     },
     "rho/session/inspect": {

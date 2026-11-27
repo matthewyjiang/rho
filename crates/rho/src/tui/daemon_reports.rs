@@ -1,5 +1,7 @@
 //! `/context` and `/hooks` against a daemon session: the daemon reads the
 //! report from the session it owns, and the overlay opens when it answers.
+//! `/hooks` first asks the daemon to reload the session's hooks; reading a
+//! report alone never changes the session.
 //!
 //! An answer opens its overlay only while the person still waits on it:
 //! [`App::awaited_daemon_report`] names the report asked for last, and a
@@ -75,7 +77,27 @@ fn name(report: SessionReport) -> &'static str {
 impl App {
     /// Asks the daemon for `report` on the followed session.
     pub(super) fn request_daemon_report(&mut self, report: SessionReport) {
-        match self.info.session.daemon.inspect(report) {
+        let asked = self.info.session.daemon.inspect(report);
+        self.await_daemon_report(report, asked);
+    }
+
+    /// Asks the daemon to reload the followed session's hooks, then for its
+    /// hooks report, for `/hooks`.
+    pub(super) fn reload_daemon_hooks(&mut self) {
+        let asked = self.info.session.daemon.reload_hooks();
+        self.await_daemon_report(SessionReport::Hooks, asked);
+    }
+
+    /// `/hooks` could not reload the hooks; the report that follows shows
+    /// the hooks the session keeps. Dropped once the person moved on.
+    pub(super) fn show_hooks_not_reloaded(&mut self, reason: &str) {
+        if self.awaited_daemon_report == Some(SessionReport::Hooks) {
+            self.insert_entry(&Entry::Error(format!("could not reload hooks: {reason}")));
+        }
+    }
+
+    fn await_daemon_report(&mut self, report: SessionReport, asked: anyhow::Result<()>) {
+        match asked {
             Ok(()) => {
                 self.awaited_daemon_report = Some(report);
                 self.set_status_quiet(format!("reading {}", name(report)));

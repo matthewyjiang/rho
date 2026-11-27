@@ -99,6 +99,7 @@ pub mod schema;
 mod server;
 mod server_calls;
 mod server_codec;
+mod server_outbox;
 mod server_settings;
 mod server_streams;
 mod subscription;
@@ -194,10 +195,11 @@ pub use methods::{
     CompactionThreshold, CompactionTier, CompletedCompactions, ContextBasis, ContextMessageKind,
     ContextMessagePart, ContextPromptPart, ContextToolResultPart, ContextToolSchemaPart,
     HookActivityRecord, HookContract, HookEvent, HookOutcome, HookStatus, HookTools, HookWarning,
-    PromptSourceKind, ProviderContextBlockId, SessionCompactionReport, SessionContextReport,
-    SessionHooksReport, SessionInspectParams, SessionInspectResponse, SessionProviderContextReport,
-    SessionReport, SessionReportData, SessionReportParams, SessionReportResponse, SkippedHooksFile,
-    SummaryRequestPath, ToolSchemaOrigin, SESSION_INSPECT, SESSION_REPORT,
+    InvalidHooksFile, PromptSourceKind, ProviderContextBlockId, SessionCompactionReport,
+    SessionContextReport, SessionHooksReport, SessionInspectParams, SessionInspectResponse,
+    SessionProviderContextReport, SessionReport, SessionReportData, SessionReportParams,
+    SessionReportResponse, SkippedHooksFile, SummaryRequestPath, ToolSchemaOrigin, SESSION_INSPECT,
+    SESSION_REPORT,
 };
 pub use methods::{
     ConfiguredMcpServer, McpListParams, McpListResponse, McpServerSource, McpTransport, MCP_LIST,
@@ -210,6 +212,9 @@ pub use methods::{
 };
 pub use methods::{
     HooksFile, HooksFileScope, HooksFileStatus, HooksListParams, HooksListResponse, HOOKS_LIST,
+};
+pub use methods::{
+    HooksReloadOutcome, SessionHooksReloadParams, SessionHooksReloadResponse, SESSION_HOOKS_RELOAD,
 };
 pub use methods::{
     NewSessionMark, SessionMark, SessionMarkParams, SessionMarkResponse, SESSION_MARK,

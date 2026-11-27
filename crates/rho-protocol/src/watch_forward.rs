@@ -26,7 +26,7 @@ use crate::{
         ConfigChangedNotification, ConfigChangedParams, ConfigGetResponse, ConfigNamespace,
         ModelChangedNotification, ModelList,
     },
-    server::{Outbox, Outgoing},
+    server_outbox::{Outbox, Outgoing},
 };
 
 /// The daemon's state of one settings namespace, published whole each time

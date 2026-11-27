@@ -86,6 +86,7 @@ mod fork;
 mod grant;
 mod held_context;
 mod hold;
+mod hooks;
 mod idle_wake;
 mod inputs;
 mod inspect;

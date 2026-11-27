@@ -150,6 +150,9 @@ pub(super) enum DaemonView {
         report: rho_protocol::SessionReport,
         result: Result<serde_json::Value, ReportRefusal>,
     },
+    /// `/hooks` could not reload the session's hooks, which it keeps, and
+    /// why; the hooks report follows.
+    HooksNotReloaded(String),
     /// What the interactive login the TUI started in the daemon did.
     Login(LoginUpdate),
     /// The daemon's jobs, asked for to refresh the subagent rail.

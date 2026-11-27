@@ -10,6 +10,7 @@ fn line_text(line: &Line<'_>) -> String {
 fn hook(command: Vec<String>) -> HookContractView {
     HookContractView {
         active: true,
+        drift: None,
         id: "user:check".into(),
         event: "before_tool_use".into(),
         tools: "bash".into(),

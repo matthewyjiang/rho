@@ -17,7 +17,7 @@ use super::{
     theme::Theme,
     App, ComposerMode, PanelOverlay,
 };
-use crate::hooks::{HookContractView, HookReport};
+use crate::hooks::{HookContractView, HookDrift, HookReport};
 
 const TITLE: &str = "Hooks";
 const FOOTER: &str = "Enter/Esc close";
@@ -92,8 +92,20 @@ fn hooks_body_lines(report: &HookReport, width: usize) -> Vec<Line<'static>> {
             ));
         }
     }
-    if report.skipped_untrusted.is_some() || report.skipped_untrusted_error.is_some() {
+    if report.skipped_untrusted.is_some()
+        || report.skipped_untrusted_error.is_some()
+        || report.invalid.is_some()
+    {
         lines.push(Line::default());
+    }
+    if let Some(invalid) = &report.invalid {
+        // The session keeps the hooks it runs, which the list below shows.
+        lines.extend(indented_wrapped_lines(
+            &format!("could not load {}: {}", invalid.path, invalid.error),
+            ROW_INDENT,
+            width,
+            Theme::error(),
+        ));
     }
     if let Some(skipped) = &report.skipped_untrusted {
         lines.extend(indented_wrapped_lines(
@@ -155,6 +167,21 @@ fn hook_lines(hook: &HookContractView, width: usize) -> Vec<Line<'static>> {
     if !hook.active {
         lines.extend(indented_wrapped_lines(
             "inactive",
+            FIELD_INDENT,
+            width,
+            Theme::warning(),
+        ));
+    }
+    if let Some(drift) = hook.drift {
+        let note = match drift {
+            HookDrift::Pending => "not loaded: its file changed since the session loaded its hooks",
+            HookDrift::NeedsReopen => {
+                "not loaded: the session started without hooks of its kind; open it again to load it"
+            }
+            HookDrift::Stale => "still runs: its file no longer defines it this way",
+        };
+        lines.extend(indented_wrapped_lines(
+            note,
             FIELD_INDENT,
             width,
             Theme::warning(),

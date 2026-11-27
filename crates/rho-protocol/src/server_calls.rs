@@ -16,27 +16,28 @@ use crate::{
         SessionBackgroundList, SessionBackgroundListParams, SessionBackgroundStop,
         SessionBackgroundStopParams, SessionCancel, SessionCancelParams, SessionConfigure,
         SessionConfigureParams, SessionDelete, SessionDeleteParams, SessionFork, SessionForkParams,
-        SessionHold, SessionHoldParams, SessionId, SessionInspect, SessionInspectParams,
-        SessionList, SessionListDetailed, SessionListParams, SessionMarkMethod, SessionMarkParams,
-        SessionMcp, SessionMcpCatalogParams, SessionMcpCatalogRead, SessionMcpComplete,
-        SessionMcpCompleteParams, SessionMcpParams, SessionMcpResourceParams,
-        SessionMcpResourceRead, SessionNew, SessionNewParams, SessionProcesses,
-        SessionProcessesParams, SessionPrompt, SessionPromptParams, SessionPullRequestLink,
-        SessionPullRequestLinkParams, SessionPullRequestList, SessionPullRequestListParams,
-        SessionPullRequestShow, SessionPullRequestShowParams, SessionPullRequestUnlink,
-        SessionPullRequestUnlinkParams, SessionRename, SessionRenameParams, SessionReportParams,
-        SessionReportRead, SessionSteer, SessionSteerParams, SessionSurfaceAction,
-        SessionSurfaceActionParams, SessionUnsteer, SessionUnsteerParams, Status, Stop,
-        WorktreePrune, WorktreePruneParams, AUTH_CHOOSE_STORE, AUTH_KEY, AUTH_LIST,
-        AUTH_LOGIN_CANCEL, AUTH_LOGOUT, CONFIG_REGISTER, CONFIG_SCHEMA, CONFIG_SET, DAEMON_RESTART,
-        DAEMON_STATUS, DAEMON_STOP, HOOKS_LIST, JOB_LIST, MCP_LIST, MODEL_REFRESH, SESSION_ANSWER,
-        SESSION_ANSWER_QUESTION, SESSION_BACKGROUND_LIST, SESSION_BACKGROUND_STOP, SESSION_CANCEL,
-        SESSION_CONFIGURE, SESSION_DELETE, SESSION_FORK, SESSION_HOLD, SESSION_INSPECT,
-        SESSION_LIST, SESSION_LIST_DETAILED, SESSION_MARK, SESSION_MCP, SESSION_MCP_CATALOG,
-        SESSION_MCP_COMPLETE, SESSION_MCP_RESOURCE, SESSION_NEW, SESSION_PROCESSES, SESSION_PROMPT,
-        SESSION_PULL_REQUEST_LINK, SESSION_PULL_REQUEST_LIST, SESSION_PULL_REQUEST_SHOW,
-        SESSION_PULL_REQUEST_UNLINK, SESSION_RENAME, SESSION_REPORT, SESSION_STEER,
-        SESSION_SURFACE_ACTION, SESSION_UNSTEER, WORKTREE_PRUNE,
+        SessionHold, SessionHoldParams, SessionHooksReload, SessionHooksReloadParams, SessionId,
+        SessionInspect, SessionInspectParams, SessionList, SessionListDetailed, SessionListParams,
+        SessionMarkMethod, SessionMarkParams, SessionMcp, SessionMcpCatalogParams,
+        SessionMcpCatalogRead, SessionMcpComplete, SessionMcpCompleteParams, SessionMcpParams,
+        SessionMcpResourceParams, SessionMcpResourceRead, SessionNew, SessionNewParams,
+        SessionProcesses, SessionProcessesParams, SessionPrompt, SessionPromptParams,
+        SessionPullRequestLink, SessionPullRequestLinkParams, SessionPullRequestList,
+        SessionPullRequestListParams, SessionPullRequestShow, SessionPullRequestShowParams,
+        SessionPullRequestUnlink, SessionPullRequestUnlinkParams, SessionRename,
+        SessionRenameParams, SessionReportParams, SessionReportRead, SessionSteer,
+        SessionSteerParams, SessionSurfaceAction, SessionSurfaceActionParams, SessionUnsteer,
+        SessionUnsteerParams, Status, Stop, WorktreePrune, WorktreePruneParams, AUTH_CHOOSE_STORE,
+        AUTH_KEY, AUTH_LIST, AUTH_LOGIN_CANCEL, AUTH_LOGOUT, CONFIG_REGISTER, CONFIG_SCHEMA,
+        CONFIG_SET, DAEMON_RESTART, DAEMON_STATUS, DAEMON_STOP, HOOKS_LIST, JOB_LIST, MCP_LIST,
+        MODEL_REFRESH, SESSION_ANSWER, SESSION_ANSWER_QUESTION, SESSION_BACKGROUND_LIST,
+        SESSION_BACKGROUND_STOP, SESSION_CANCEL, SESSION_CONFIGURE, SESSION_DELETE, SESSION_FORK,
+        SESSION_HOLD, SESSION_HOOKS_RELOAD, SESSION_INSPECT, SESSION_LIST, SESSION_LIST_DETAILED,
+        SESSION_MARK, SESSION_MCP, SESSION_MCP_CATALOG, SESSION_MCP_COMPLETE, SESSION_MCP_RESOURCE,
+        SESSION_NEW, SESSION_PROCESSES, SESSION_PROMPT, SESSION_PULL_REQUEST_LINK,
+        SESSION_PULL_REQUEST_LIST, SESSION_PULL_REQUEST_SHOW, SESSION_PULL_REQUEST_UNLINK,
+        SESSION_RENAME, SESSION_REPORT, SESSION_STEER, SESSION_SURFACE_ACTION, SESSION_UNSTEER,
+        WORKTREE_PRUNE,
     },
     server::Service,
     server_codec::{decode_params, encode_result},
@@ -72,6 +73,7 @@ pub(crate) enum ServiceCall {
     UnlinkSessionPullRequest(SessionPullRequestUnlinkParams),
     InspectSession(SessionInspectParams),
     ReportSession(SessionReportParams),
+    ReloadSessionHooks(SessionHooksReloadParams),
     ListSessions(SessionListParams),
     ListSessionsDetailed(SessionListParams),
     RenameSession(SessionRenameParams),
@@ -150,6 +152,9 @@ impl ServiceCall {
                 .map(Self::UnlinkSessionPullRequest),
             SESSION_INSPECT => decode_params::<SessionInspect>(params).map(Self::InspectSession),
             SESSION_REPORT => decode_params::<SessionReportRead>(params).map(Self::ReportSession),
+            SESSION_HOOKS_RELOAD => {
+                decode_params::<SessionHooksReload>(params).map(Self::ReloadSessionHooks)
+            }
             SESSION_LIST => decode_params::<SessionList>(params).map(Self::ListSessions),
             SESSION_LIST_DETAILED => {
                 decode_params::<SessionListDetailed>(params).map(Self::ListSessionsDetailed)
@@ -201,6 +206,7 @@ impl ServiceCall {
             | Self::UnlinkSessionPullRequest(SessionPullRequestUnlinkParams { session, .. })
             | Self::InspectSession(SessionInspectParams { session, .. })
             | Self::ReportSession(SessionReportParams { session, .. })
+            | Self::ReloadSessionHooks(SessionHooksReloadParams { session, .. })
             | Self::ConfigureSession(SessionConfigureParams { session, .. })
             | Self::RenameSession(SessionRenameParams { session, .. })
             | Self::MarkSession(SessionMarkParams { session, .. }) => Some(session),
@@ -315,6 +321,9 @@ impl ServiceCall {
             }
             Self::ReportSession(params) => {
                 encode_result::<SessionReportRead>(&service.report_session(params).await?)
+            }
+            Self::ReloadSessionHooks(params) => {
+                encode_result::<SessionHooksReload>(&service.reload_session_hooks(params).await?)
             }
             Self::ListSessions(params) => {
                 encode_result::<SessionList>(&service.list_sessions(params).await?)

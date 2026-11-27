@@ -52,7 +52,7 @@ use crate::{
 
 pub use catalog::{HookCatalog, TRUST_PROJECT_HOOKS_ENV};
 pub use config::HookConfigError;
-pub(crate) use diagnostics::HookContractView;
+pub(crate) use diagnostics::{HookContractView, HookDrift};
 pub use diagnostics::{HookInspector, HookReport, HookSnapshot};
 pub use dispatch::HookEngine;
 pub(crate) use dispatch::WorkflowNodeFinished;
@@ -184,26 +184,16 @@ impl HookPipeline {
     /// Re-reads the hooks files for the workspace containing `cwd`.
     ///
     /// The swap is atomic and applies to dispatches that have not started, so a
-    /// reload can never change the hook set halfway through one decision. On a
-    /// validation error the previous hook set stays in force.
+    /// reload can never change the hook set halfway through one decision. On an
+    /// error the previous hook set stays in force.
     ///
-    /// Reload cannot install a gate or observer that was absent at start. If the
-    /// new catalog needs a port this session never attached, the caller should
-    /// tell the user to restart.
-    pub fn reload_for_cwd(&self, cwd: &std::path::Path) -> Result<(), HookConfigError> {
+    /// Reload cannot install a gate or observer that was absent at start, so a
+    /// catalog that needs one is refused (see [`HookPorts`]).
+    pub fn reload_for_cwd(&self, cwd: &std::path::Path) -> Result<(), HookReloadError> {
         let mut discard = |_message: String| {};
         let catalog = discover_for_cwd(cwd, self.engine.project_trust(), &mut discard)?;
-        if catalog.has_blocking_hooks() && self.gate.is_none() {
-            return Err(HookConfigError::at_file(
-                cwd,
-                "blocking hooks were added since this session started; restart Rho to load them",
-            ));
-        }
-        if catalog.has_observational_hooks() && self.observer.is_none() {
-            return Err(HookConfigError::at_file(
-                cwd,
-                "observational hooks were added since this session started; restart Rho to load them",
-            ));
+        if let Some(kind) = HookPorts::of(Some(self)).missing(&catalog) {
+            return Err(HookReloadError::NeedsReopen(kind));
         }
         self.engine.reload(catalog);
         Ok(())
@@ -221,6 +211,71 @@ impl HookPipeline {
     }
 }
 
+/// Which kinds of hook a session can run. Each kind needs a port the
+/// session's SDK runtime installs when it is built (the gate for blocking
+/// hooks, the observer for observing ones), so a kind the session started
+/// without runs only once it is opened again.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct HookPorts {
+    blocking: bool,
+    observing: bool,
+}
+
+impl HookPorts {
+    /// The ports of a session running `hooks`; none without a hook runtime.
+    pub(crate) fn of(hooks: Option<&HookPipeline>) -> Self {
+        hooks.map_or_else(Self::default, |hooks| Self {
+            blocking: hooks.gate.is_some(),
+            observing: hooks.observer.is_some(),
+        })
+    }
+
+    /// A kind of hook `catalog` has that cannot run here.
+    pub(crate) fn missing(self, catalog: &HookCatalog) -> Option<HookKind> {
+        if catalog.has_blocking_hooks() && !self.blocking {
+            Some(HookKind::Blocking)
+        } else if catalog.has_observational_hooks() && !self.observing {
+            Some(HookKind::Observing)
+        } else {
+            None
+        }
+    }
+}
+
+/// A kind of hook, by the port it runs through.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HookKind {
+    /// `before_tool_use` hooks, which may deny what follows.
+    Blocking,
+    /// Every other hook, which only hears of what happened.
+    Observing,
+}
+
+impl std::fmt::Display for HookKind {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Blocking => "blocking",
+            Self::Observing => "observing",
+        })
+    }
+}
+
+/// Why a session's hooks were not reloaded; it keeps the hooks it ran.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum HookReloadError {
+    /// A hooks file that loads could not be read or validated.
+    #[error(transparent)]
+    Invalid(#[from] HookConfigError),
+    /// The files add a kind of hook the session started without.
+    #[error(
+        "{0} hooks were added since this session started; open the session again to load them"
+    )]
+    NeedsReopen(HookKind),
+    /// A hook program started the session, which runs no hooks (#1659).
+    #[error("a hook started this session, so it runs no hooks")]
+    InsideHook,
+}
+
 /// Whether `environment` is a hook program's: [`IN_HOOK_ENV`] is set in it.
 ///
 /// A hook may legitimately run `rho`; it must not make that nested Rho, or a
@@ -229,38 +284,56 @@ pub fn running_inside_hook(environment: &Ambient) -> bool {
     environment.read_os(IN_HOOK_ENV).is_some()
 }
 
-/// Reads the hooks for the workspace containing `cwd` again and reports
-/// what a session running `hooks` there now has. `inside_hook` is
+/// Reports the hooks of a session running `hooks` in the workspace
+/// containing `cwd`: its hooks files read again and checked against what it
+/// runs, without changing what it runs. `inside_hook` is
 /// [`running_inside_hook`] for the session's environment, and `trust` its
 /// project trust.
 ///
-/// The swap is atomic, so a blocking decision already in flight keeps the
-/// hook set it started with. A session that started without hooks, or
-/// without a whole class of hooks (blocking vs observational), stays that
-/// way until it is opened again: installing a gate or worker means
-/// rebuilding the SDK runtime, which a report should not do behind the
-/// user's back.
-pub fn reload_snapshot(
+/// A file that does not load is reported, not raised: the report shows it
+/// with the hooks the session runs.
+pub fn read_snapshot(
     hooks: Option<&HookPipeline>,
     cwd: &std::path::Path,
     trust: ProjectTrusts,
     inside_hook: bool,
-) -> anyhow::Result<HookSnapshot> {
-    let Some(hooks) = hooks else {
-        // A Rho a hook started runs without hooks (#1659).
-        if inside_hook {
-            return Ok(HookSnapshot::disabled());
-        }
-        let mut discard = |_message: String| {};
-        let catalog = discover_for_cwd(cwd, trust, &mut discard)?;
-        anyhow::ensure!(
-            catalog.is_empty(),
-            "hooks were added since this session started; restart Rho to load them"
-        );
-        return Ok(HookSnapshot::untrusted_only(&catalog));
-    };
-    hooks.reload_for_cwd(cwd)?;
-    Ok(HookInspector::new(hooks).snapshot())
+) -> HookSnapshot {
+    // A Rho a hook started runs without hooks (#1659).
+    if hooks.is_none() && inside_hook {
+        return HookSnapshot::disabled();
+    }
+    let mut discard = |_message: String| {};
+    HookSnapshot::checked(hooks, discover_for_cwd(cwd, trust, &mut discard))
+}
+
+/// Reloads the hooks of a session running `hooks` in the workspace
+/// containing `cwd` from their files, as `/hooks` asks
+/// (`rho/session/hooks/reload`). `inside_hook` and `trust` are as for
+/// [`read_snapshot`].
+///
+/// On an error the session keeps the hooks it ran (see
+/// [`HookPipeline::reload_for_cwd`]). A session that started without hooks
+/// cannot start them here: installing a gate or worker means rebuilding its
+/// SDK runtime, so hooks added since load when it is opened again.
+pub fn reload_for_session(
+    hooks: Option<&HookPipeline>,
+    cwd: &std::path::Path,
+    trust: ProjectTrusts,
+    inside_hook: bool,
+) -> Result<(), HookReloadError> {
+    if let Some(hooks) = hooks {
+        return hooks.reload_for_cwd(cwd);
+    }
+    // A Rho a hook started runs without hooks (#1659).
+    if inside_hook {
+        return Err(HookReloadError::InsideHook);
+    }
+    let mut discard = |_message: String| {};
+    let catalog = discover_for_cwd(cwd, trust, &mut discard)?;
+    match HookPorts::default().missing(&catalog) {
+        Some(kind) => Err(HookReloadError::NeedsReopen(kind)),
+        None => Ok(()),
+    }
 }
 
 /// How long queued observational hooks may finish after a session ends.

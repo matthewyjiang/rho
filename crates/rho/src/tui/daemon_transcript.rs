@@ -183,6 +183,7 @@ impl App {
                 DaemonView::McpInventory(result) => self.show_daemon_mcp(result),
                 DaemonView::ToolSourcesLoaded => self.show_daemon_tool_sources_loaded(),
                 DaemonView::Report { report, result } => self.show_daemon_report(report, result),
+                DaemonView::HooksNotReloaded(reason) => self.show_hooks_not_reloaded(&reason),
                 DaemonView::Login(update) => self.show_daemon_login(update, terminal).await?,
                 DaemonView::Jobs(jobs) => {
                     if let Ok(jobs) = &jobs {

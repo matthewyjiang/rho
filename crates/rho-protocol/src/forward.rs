@@ -48,7 +48,7 @@ use crate::{
         SessionDetachedParams, SessionEvent, SessionEventNotification, SessionEventParams,
         SessionId,
     },
-    server::{Outbox, Outgoing},
+    server_outbox::{Outbox, Outgoing},
     subscription::{Next, Subscription},
 };
 

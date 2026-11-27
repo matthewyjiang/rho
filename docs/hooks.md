@@ -67,6 +67,14 @@ fi
 
 Run `/hooks` in the interactive TUI to reload hooks and open a single-pane
 overlay showing exactly what each one will execute. Press Enter or Esc to close.
+A session otherwise keeps the hooks it loaded when it opened: editing a hooks
+file changes nothing until `/hooks` reloads it or the session is opened again.
+If a file does not load, `/hooks` keeps the hooks the session runs and shows
+why. Hooks of a kind (blocking `before_tool_use`, or observing) the session
+started without load only when it is opened again, and until then `/hooks`
+says so and reloads nothing. Clients of the
+[daemon protocol](/protocol) reload with `rho/session/hooks/reload`; reading
+the session's hooks report never does.
 
 ## Fields
 
