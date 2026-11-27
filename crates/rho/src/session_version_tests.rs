@@ -100,11 +100,11 @@ fn display_row_references_restore_the_same_transcript_as_full_rows() {
         let display = tree
             .projected_display(tree.active_leaf_id().unwrap())
             .unwrap();
-        let mut extractor = search_evidence::Extractor::default();
-        let evidence = fixture
-            .lines()
-            .flat_map(|line| extractor.extract(&serde_json::from_str(line).unwrap(), 0))
-            .map(|evidence| (evidence.role, evidence.text))
+        let rows = persistence::active_display_from_tree(&tree).unwrap();
+        let locations = vec![None; rows.len()];
+        let evidence = search_evidence::extract(&rows, locations)
+            .into_iter()
+            .map(|evidence| (evidence.role.to_owned(), evidence.text))
             .collect::<Vec<_>>();
         (serde_json::to_value(display).unwrap(), evidence)
     };

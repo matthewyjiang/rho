@@ -1,154 +1,137 @@
 //! Display evidence only: snapshots, provider envelopes and token accounting
-//! never enter the retrieval index. Anchors bind a JSONL position to its evidence.
+//! never enter the retrieval index. Evidence is the display rows a load of a
+//! session replays, along its active branch, so a match is always one a
+//! client that opens the session can see. Anchors bind a saved row to its
+//! evidence.
 
 use std::collections::HashSet;
 
-use serde::Serialize;
-
-use super::search::TOOL_NAME;
-use serde_json::Value;
+use rho_protocol::SearchLocation;
+use rho_providers::model::{ContentBlock, Message};
 use sha2::{Digest, Sha256};
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+use super::{search::TOOL_NAME, tree::ProjectedMessage};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct Evidence {
     pub anchor: String,
-    pub role: String,
+    pub role: &'static str,
     pub text: String,
     pub omitted_blocks: usize,
+    /// Where an attach's replay shows the row.
+    pub at: Option<SearchLocation>,
+    /// When the row was saved, in unix seconds.
+    pub saved_at: Option<u64>,
 }
 
 impl Evidence {
-    /// Appends preserve anchors; replacement evidence at the same position does
+    /// Appends preserve anchors; replacement evidence at the same row does
     /// not. Hash field boundaries explicitly, including a fixed-width count.
-    fn new(position: String, role: &str, text: String, omitted_blocks: usize) -> Self {
+    fn anchor(position: String, role: &str, text: &str, omitted_blocks: usize) -> String {
         let mut digest = Sha256::new();
         digest.update(role.as_bytes());
         digest.update([0]);
         digest.update(text.as_bytes());
         digest.update((omitted_blocks as u64).to_le_bytes());
-        Self {
-            anchor: format!("{position}:{}", hex::encode(digest.finalize())),
-            role: role.into(),
-            text,
-            omitted_blocks,
+        format!("{position}:{}", hex::encode(digest.finalize()))
+    }
+}
+
+/// The evidence of `rows`, a session's display rows as a load replays them,
+/// each with where replay shows it: `locations`, one per row. Rows the load
+/// added, which no saved row holds, are left out. The sessions tool's calls
+/// and results only echo queries and other evidence, so they are dropped
+/// too.
+pub(super) fn extract(
+    rows: &[ProjectedMessage],
+    locations: Vec<Option<SearchLocation>>,
+) -> Vec<Evidence> {
+    debug_assert_eq!(rows.len(), locations.len());
+    let mut sessions_calls = HashSet::new();
+    rows.iter()
+        .zip(locations)
+        .filter_map(|(row, at)| {
+            let origin = row.origin.as_ref()?;
+            let (role, text, omitted_blocks) = row_text(&row.message, &mut sessions_calls)?;
+            Some(Evidence {
+                anchor: Evidence::anchor(
+                    format!("{}:{}", origin.node, origin.row),
+                    role,
+                    &text,
+                    omitted_blocks,
+                ),
+                role,
+                text,
+                omitted_blocks,
+                at,
+                saved_at: row.saved_at.map(|millis| millis / 1000),
+            })
+        })
+        .collect()
+}
+
+/// A message's role, searchable text and how many blocks it has that are
+/// not text, or `None` when it holds no evidence. Remembers the sessions
+/// tool's call ids in `sessions_calls` to drop their later results.
+fn row_text(
+    message: &Message,
+    sessions_calls: &mut HashSet<String>,
+) -> Option<(&'static str, String, usize)> {
+    let (role, blocks, partial_calls) = match message {
+        Message::ToolResult(result) => {
+            if sessions_calls.contains(&result.id) {
+                return None;
+            }
+            let role = if result.is_failure() {
+                "tool_error"
+            } else {
+                "tool_result"
+            };
+            return Some((role, result.content.clone(), 0));
+        }
+        Message::User(blocks) | Message::BoundaryInput(blocks) => ("user", &blocks[..], &[][..]),
+        Message::Assistant(blocks) => ("assistant", &blocks[..], &[][..]),
+        Message::EnrichedAssistant(message) => ("assistant", &message.content[..], &[][..]),
+        Message::AbortedAssistant(message) => (
+            "assistant_aborted",
+            &message.content[..],
+            &message.tool_calls[..],
+        ),
+        // Display rows of these hold no conversation text: cards, notices
+        // and model-only entries.
+        Message::System(_)
+        | Message::CompactionSummary(_)
+        | Message::ModelContext(_)
+        | Message::ReasoningShift(_) => return None,
+    };
+    let mut parts = Vec::new();
+    let mut omitted_blocks = 0;
+    for block in blocks {
+        match block {
+            ContentBlock::Text(text) => parts.push(text.clone()),
+            ContentBlock::ToolCall(call) if call.name == TOOL_NAME => {
+                sessions_calls.insert(call.id.clone());
+            }
+            ContentBlock::ToolCall(call) => {
+                parts.push(format!("tool_call {} {}", call.name, call.arguments));
+            }
+            // Image bytes are not textual evidence. Reads report omissions.
+            ContentBlock::Image(_) => omitted_blocks += 1,
         }
     }
-}
-
-/// Extracts one transcript's evidence, record by record in file order. The
-/// sessions tool's calls and results only echo queries and other evidence, so
-/// they are dropped; call ids are remembered to drop their later results.
-#[derive(Default)]
-pub(super) struct Extractor {
-    sessions_calls: HashSet<String>,
-}
-
-impl Extractor {
-    /// Extract one record without replaying model snapshots or inventing summaries.
-    /// Node evidence includes abandoned branches; the anchor identifies its source,
-    /// rather than pretending it is all part of the current conversation branch.
-    pub(super) fn extract(&mut self, record: &Value, offset: u64) -> Vec<Evidence> {
-        let messages: Vec<&Value> = match record["type"].as_str() {
-            Some("node") => {
-                // Version 5 rows may name a message of this record's own
-                // transition instead of repeating it (see `display_rows`).
-                // Search is best effort: a dangling index reads as JSON null
-                // and yields no evidence, while tree loads reject the file.
-                let model = match record["transition"]["type"].as_str() {
-                    Some("snapshot_delta") => &record["transition"]["delta"]["appended_history"],
-                    _ => &record["transition"]["snapshot"]["history"],
-                };
-                record["display_messages"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .map(|entry| match entry["model"].as_u64() {
-                        Some(index) => &model[index as usize],
-                        None => &entry["message"],
-                    })
-                    .collect()
-            }
-            _ => Vec::new(),
-        };
-        messages
-            .into_iter()
-            .enumerate()
-            .filter_map(|(index, message)| {
-                let (kind, body) = message.as_object()?.iter().next()?;
-                let anchor = format!("{offset:x}:{index}");
-                if kind == "ToolResult" {
-                    if body["id"]
-                        .as_str()
-                        .is_some_and(|id| self.sessions_calls.contains(id))
-                    {
-                        return None;
-                    }
-                    return Some(Evidence::new(
-                        anchor,
-                        if body["ok"].as_bool() == Some(false) {
-                            "tool_error"
-                        } else {
-                            "tool_result"
-                        },
-                        body["content"].as_str()?.to_owned(),
-                        /*omitted_blocks*/ 0,
-                    ));
-                }
-                let (role, blocks) = match kind.as_str() {
-                    "User" => ("user", body.as_array()?),
-                    "Assistant" => ("assistant", body.as_array()?),
-                    "EnrichedAssistant" => ("assistant", body["content"].as_array()?),
-                    "AbortedAssistant" => ("assistant_aborted", body["content"].as_array()?),
-                    _ => return None,
-                };
-                let mut parts = Vec::new();
-                let mut omitted_blocks = 0;
-                for block in blocks {
-                    if let Some(text) = block["Text"].as_str() {
-                        parts.push(text.to_owned());
-                    } else if let Some(call) = block.get("ToolCall") {
-                        if call["name"] == TOOL_NAME {
-                            if let Some(id) = call["id"].as_str() {
-                                self.sessions_calls.insert(id.to_owned());
-                            }
-                            continue;
-                        }
-                        parts.push(format!(
-                            "tool_call {} {}",
-                            call["name"].as_str().unwrap_or("unknown"),
-                            call["arguments"]
-                        ));
-                    } else {
-                        // Reasoning, image/audio bytes and provider-private blocks
-                        // are not textual evidence. Report omissions on reads.
-                        omitted_blocks += 1;
-                    }
-                }
-                if kind == "AbortedAssistant" {
-                    for call in body["tool_calls"]
-                        .as_array()
-                        .into_iter()
-                        .flatten()
-                        .filter(|call| call["name"] != TOOL_NAME)
-                    {
-                        parts.push(format!(
-                            "partial_tool_call {} {}",
-                            call["name"].as_str().unwrap_or("unknown"),
-                            call["arguments"].as_str().unwrap_or("")
-                        ));
-                    }
-                }
-                // A message holding only a `sessions` call has no evidence left.
-                if parts.is_empty() && omitted_blocks == 0 {
-                    return None;
-                }
-                Some(Evidence::new(
-                    anchor,
-                    role,
-                    parts.join("\n"),
-                    omitted_blocks,
-                ))
-            })
-            .collect()
+    for call in partial_calls
+        .iter()
+        .filter(|call| call.name.as_deref() != Some(TOOL_NAME))
+    {
+        parts.push(format!(
+            "partial_tool_call {} {}",
+            call.name.as_deref().unwrap_or("unknown"),
+            call.arguments
+        ));
     }
+    // A message holding only a `sessions` call has no evidence left.
+    if parts.is_empty() && omitted_blocks == 0 {
+        return None;
+    }
+    Some((role, parts.join("\n"), omitted_blocks))
 }

@@ -378,7 +378,7 @@ fn page_size(limit: Option<NonZeroU32>) -> Result<NonZeroUsize, RpcError> {
 
 /// `summary` as `rho/session/list_detailed` sends it; its `summary` is what
 /// `rho/session/list` sends.
-fn summary_to_wire(summary: SessionSummary) -> wire::DetailedSessionSummary {
+pub(super) fn summary_to_wire(summary: SessionSummary) -> wire::DetailedSessionSummary {
     let SessionSummary {
         id,
         path: _,

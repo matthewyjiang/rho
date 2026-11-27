@@ -47,7 +47,7 @@ mod test_support;
 mod tools;
 
 pub(crate) use live::{CompactionEnd, LiveEvents};
-pub(crate) use replay::{SavedTranscript, SavedTurn};
+pub(crate) use replay::{row_locations, SavedTranscript, SavedTurn};
 
 /// A wire event, with what a client is sent beside it
 /// ([`rho_protocol::SessionEventEnvelope`]): when it happened, in unix

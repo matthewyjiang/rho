@@ -148,7 +148,7 @@ pub(super) fn session_root() -> anyhow::Result<PathBuf> {
 }
 
 /// Where the Rho home `rho_home` keeps its sessions.
-pub(super) fn session_root_in(rho_home: &Path) -> PathBuf {
+pub(crate) fn session_root_in(rho_home: &Path) -> PathBuf {
     rho_home.join("sessions")
 }
 

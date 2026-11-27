@@ -1,4 +1,4 @@
-use std::{fs, io::Write, path::Path};
+use std::{fs, path::Path};
 
 use pretty_assertions::assert_eq;
 use rho_providers::model::Message;
@@ -6,7 +6,10 @@ use serde_json::{json, Value};
 use tempfile::TempDir;
 
 use super::*;
-use crate::session::{search_evidence, Session, SessionOrigin};
+use crate::{
+    app::row_locations,
+    session::{search_evidence, tree, Session, SessionOrigin},
+};
 
 fn run(root: &Path, cwd: &Path, current: &str, args: Value) -> Value {
     serde_json::from_str(
@@ -16,6 +19,7 @@ fn run(root: &Path, cwd: &Path, current: &str, args: Value) -> Value {
             current,
             serde_json::from_value(args).unwrap(),
             rho_tools::DEFAULT_MAX_OUTPUT_BYTES,
+            row_locations,
             &CancellationToken::new(),
         )
         .unwrap(),
@@ -77,6 +81,7 @@ fn paginated_groups_keep_total_and_budget_omissions_visible() {
         "current",
         serde_json::from_value(json!({"action":"search","query":"pageword"})).unwrap(),
         budget,
+        row_locations,
         &CancellationToken::new(),
     )
     .unwrap();
@@ -150,6 +155,7 @@ fn indexed_evidence_tracks_source_changes_without_mutating_transcripts() {
         "current",
         serde_json::from_value(json!({"action":"search","query":"E0308"})).unwrap(),
         rho_tools::DEFAULT_MAX_OUTPUT_BYTES,
+        row_locations,
         &cancelled
     )
     .is_err());
@@ -187,6 +193,7 @@ fn indexed_evidence_tracks_source_changes_without_mutating_transcripts() {
         "current",
         serde_json::from_value(original_read).unwrap(),
         rho_tools::DEFAULT_MAX_OUTPUT_BYTES,
+        row_locations,
         &CancellationToken::new(),
     )
     .is_err());
@@ -204,15 +211,13 @@ fn indexed_evidence_tracks_source_changes_without_mutating_transcripts() {
         "replacement evidence"
     );
 
-    let tail = serde_json::to_string(
-        &json!({"type":"node","display_messages":[{"message":{"User":[{"Text":"tailneedle"}]}}]}),
-    )
-    .unwrap();
-    let mut file = fs::OpenOptions::new()
-        .append(true)
-        .open(session.path())
+    // A record still being written: cut short, without its newline.
+    let before = fs::read(session.path()).unwrap();
+    session
+        .append_message(&Message::user_text("tailneedle"))
         .unwrap();
-    file.write_all(tail.as_bytes()).unwrap();
+    let whole = fs::read(session.path()).unwrap();
+    fs::write(session.path(), &whole[..before.len() + 40]).unwrap();
     let partial = run(
         root.path(),
         cwd.path(),
@@ -223,7 +228,7 @@ fn indexed_evidence_tracks_source_changes_without_mutating_transcripts() {
         (ids(&partial), partial["index"]["omitted_records"].clone()),
         (vec![], json!(1))
     );
-    file.write_all(b"\n").unwrap();
+    fs::write(session.path(), &whole).unwrap();
     assert_eq!(
         ids(&run(
             root.path(),
@@ -470,6 +475,7 @@ fn scope_and_current_exclusion_apply_to_search_and_read() {
         current.id(),
         serde_json::from_value(args.clone()).unwrap(),
         rho_tools::DEFAULT_MAX_OUTPUT_BYTES,
+        row_locations,
         &CancellationToken::new()
     )
     .is_err());
@@ -487,6 +493,7 @@ fn scope_and_current_exclusion_apply_to_search_and_read() {
         sessions[0].id(),
         serde_json::from_value(args).unwrap(),
         rho_tools::DEFAULT_MAX_OUTPUT_BYTES,
+        row_locations,
         &CancellationToken::new()
     )
     .is_err());
@@ -556,6 +563,7 @@ fn current_scope_pages_only_this_sessions_messages() {
             current.id(),
             serde_json::from_value(read).unwrap(),
             rho_tools::DEFAULT_MAX_OUTPUT_BYTES,
+            row_locations,
             &CancellationToken::new()
         )
         .is_err());
@@ -570,16 +578,14 @@ fn focused_read_preserves_errors_and_expands_unicode_match_windows() {
     let cwd = TempDir::new().unwrap();
     let session = Session::create_in_root(root.path(), cwd.path()).unwrap();
     let text = format!("{} E0308 {}\0tail", "é🚀 ".repeat(200), "尾".repeat(800));
-    let record = json!({"type":"node","transition":{"snapshot":{"private":"envelopesecret"}},
-        "display_messages":[{"message":{"ToolResult":{"id":"call","ok":false,"content":text}}}]});
-    writeln!(
-        fs::OpenOptions::new()
-            .append(true)
-            .open(session.path())
-            .unwrap(),
-        "{record}"
+    // The model's copy is not what the transcript shows.
+    let shown = serde_json::from_value::<Message>(
+        json!({"ToolResult":{"id":"call","ok":false,"content":text}}),
     )
     .unwrap();
+    session
+        .append_message_with_display(&Message::user_text("envelopesecret"), &shown)
+        .unwrap();
     let found = run(
         root.path(),
         cwd.path(),
@@ -619,51 +625,60 @@ fn focused_read_preserves_errors_and_expands_unicode_match_windows() {
     );
 }
 
-// Covers: format-specific display evidence must not accidentally index model
-// replacements, hidden reasoning or provider state. One table owns extraction.
+// Covers: display evidence must keep roles and visible omissions, and must
+// not index the sessions tool's own calls and results (which would make every
+// later search find its predecessors) or rows a load adds, which no saved row
+// holds. One table owns extraction.
 #[test]
-fn display_record_formats_preserve_roles_and_visible_omissions() {
-    let record = json!({"type":"node","display_messages":[{"message":{"EnrichedAssistant":{
-        "content":[{"Text":"answer"},{"Thinking":"secret"}],"provider_context":["secret"]}}}]});
-    assert_eq!(
-        search_evidence::Extractor::default()
-            .extract(&record, 16)
-            .into_iter()
-            .map(|evidence| (evidence.role, evidence.text, evidence.omitted_blocks))
-            .collect::<Vec<_>>(),
-        vec![("assistant".into(), "answer".into(), 1)]
-    );
-    // The sessions tool's own calls and results (here split across records)
-    // would make every later search find its predecessors.
+fn display_rows_preserve_roles_and_visible_omissions() {
+    let message = |value: Value| serde_json::from_value::<Message>(value).unwrap();
     let call = |id: &str, name: &str| json!({"ToolCall":{"id":id,"name":name,"arguments":{}}});
-    let result = |id: &str| json!({"message":{"ToolResult":{"id":id,"ok":true,"content":"out"}}});
-    let mut extractor = search_evidence::Extractor::default();
-    let records = [
-        json!({"type":"node","display_messages":[
-            {"message":{"Assistant":[call("s1", "sessions")]}},
-            {"message":{"Assistant":[{"Text":"note"}, call("s2", "sessions"), call("b1", "bash")]}}]}),
-        json!({"type":"node","display_messages":[result("s1"), result("s2"), result("b1")]}),
+    let result = |id: &str| message(json!({"ToolResult":{"id":id,"ok":true,"content":"out"}}));
+    let image = json!({"Image":{"data":"","mime_type":"image/png"}});
+    let saved = [
+        message(json!({"EnrichedAssistant":{"content":[{"Text":"answer"}, image]}})),
+        message(json!({"Assistant":[call("s1", "sessions")]})),
+        message(json!({"Assistant":[{"Text":"note"}, call("s2", "sessions"), call("b1", "bash")]})),
+        result("s1"),
+        result("s2"),
+        result("b1"),
     ];
+    let node = tree::NodeId::from_string("node").unwrap();
+    let mut rows = saved
+        .into_iter()
+        .enumerate()
+        .map(|(row, message)| tree::ProjectedMessage {
+            origin: Some(tree::DisplayRowOrigin {
+                node: node.clone(),
+                row,
+            }),
+            message,
+            saved_at: Some(7_000),
+        })
+        .collect::<Vec<_>>();
+    rows.push(tree::ProjectedMessage {
+        origin: None,
+        message: Message::user_text("added by the load"),
+        saved_at: None,
+    });
+    let locations = vec![None; rows.len()];
+
     assert_eq!(
-        records
-            .iter()
-            .flat_map(|record| extractor.extract(record, 0))
-            .map(|evidence| (evidence.role, evidence.text))
+        search_evidence::extract(&rows, locations)
+            .into_iter()
+            .map(|evidence| (
+                evidence.role,
+                evidence.text,
+                evidence.omitted_blocks,
+                evidence.saved_at
+            ))
             .collect::<Vec<_>>(),
         vec![
-            ("assistant".into(), "note\ntool_call bash {}".into()),
-            ("tool_result".into(), "out".into())
+            ("assistant", "answer".into(), 1, Some(7)),
+            ("assistant", "note\ntool_call bash {}".into(), 0, Some(7)),
+            ("tool_result", "out".into(), 0, Some(7)),
         ]
     );
-    for kind in ["session", "set_leaf"] {
-        assert_eq!(
-            search_evidence::Extractor::default().extract(
-                &json!({"type":kind,"messages":[{"User":[{"Text":"secret"}]}]}),
-                0
-            ),
-            vec![]
-        );
-    }
 }
 
 #[cfg(unix)]

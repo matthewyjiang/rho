@@ -29,9 +29,11 @@ mod persistence;
 pub(crate) mod recall;
 pub(crate) mod search;
 mod search_evidence;
-mod search_index;
+pub(crate) mod search_index;
 mod search_journal;
+pub(crate) mod search_page;
 mod search_scope;
+mod search_window;
 mod snapshot_delta;
 mod snapshot_store;
 #[cfg(test)]
@@ -54,6 +56,7 @@ mod workspace_scope;
 use append_cursor::AppendCursor;
 #[cfg(test)]
 use layout::encode_cwd;
+pub(crate) use layout::session_root_in;
 use persistence::{parse_timestamp, session_root, unix_timestamp_secs, SessionStore};
 #[cfg(test)]
 use persistence::{
@@ -842,12 +845,22 @@ impl Session {
 
     #[cfg(test)]
     pub(crate) fn create_in_root(session_root: &Path, cwd: &Path) -> anyhow::Result<Self> {
+        Self::create_in_root_from(session_root, cwd, SessionOrigin::Interactive)
+    }
+
+    /// [`Self::create_in_root`], for a session that came from `origin`.
+    #[cfg(test)]
+    pub(crate) fn create_in_root_from(
+        session_root: &Path,
+        cwd: &Path,
+        origin: SessionOrigin,
+    ) -> anyhow::Result<Self> {
         Self::create_with_id_in_root(
             session_root,
             cwd,
             &Uuid::new_v4().to_string(),
             None,
-            SessionOrigin::Interactive.into(),
+            origin.into(),
         )
     }
 

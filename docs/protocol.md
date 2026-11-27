@@ -73,6 +73,7 @@ When the client stops sending, the daemon answers every request it has already r
 | `rho/session/hold` | `session`, `request` | Stops an open input request's timeout, so it waits for an answer ([below](#timeouts)), and returns `{}`. Needs the `answer` capability. |
 | `rho/session/list` | `cwd`?, `cursor`?, `limit`? | One page of the saved sessions, newest first: `sessions` and, when more follow, `next_cursor` ([below](#listing-renaming-and-deleting-sessions)). |
 | `rho/session/list_detailed` | `cwd`?, `cursor`?, `limit`? | `rho/session/list`'s page, each entry with the agent the session runs as, the session that started it, and its mark ([below](#listing-renaming-and-deleting-sessions)). |
+| `rho/session/search` | `query`, `cwd`?, `cursor`?, `limit`? | One page of the listed sessions whose conversation holds every word of `query`, newest first, each with its best matching messages: `sessions`, `total`, `indexing`? and, when more follow, `next_cursor` ([below](#searching-sessions)). |
 | `rho/session/rename` | `session`, `title` | Saves the session's title and returns `{}`; clients attached to it receive `title_changed`. |
 | `rho/session/mark` | `session`, `mark`? | Saves `mark` as the session's [mark](#session-marks), or clears it when `mark` is absent, and returns the `mark` as saved; clients attached to the session receive `mark_changed`. |
 | `rho/session/delete` | `session` | Deletes the saved session and the sessions it owns, its subagents' and forks', unloading it first, and returns `{}`; the sessions it started through session control stay ([below](#listing-renaming-and-deleting-sessions)). |
@@ -442,6 +443,32 @@ A client that groups sessions under the one that started them, or sorts them by 
 `rho/session/rename` saves `title`, trimmed, as the session's title, as `rho sessions rename` does. A title that is empty, holds a control character such as a newline or an escape, or runs over 500 characters gets `InvalidParams` naming why. A title it saves is never replaced by a generated one. An id nothing is saved under gets `SessionNotFound`. Ids are chosen by clients, so one id can be saved in two workspaces; a rename or delete of such an id gets `InvalidParams`.
 
 `rho/session/delete` deletes the session's files, with those of the sessions it owns, its subagents' and its forks', as `rho sessions rm` does. A workflow's node sessions are kept. The sessions it started through session control are not deleted: they stay listed, their `parent` still naming it. The daemon unloads a loaded session and its loaded forks first, and detaches their clients with `deleted`; each loaded fork is checked as the session is, and one that refuses, such as one with a turn under way, refuses the delete; a session it loaded that has saved nothing yet has no files, so it is unloaded, its clients detached with `deleted`, and the delete returns `{}`. It refuses with `SessionBusy` while the session's turn is under way, waiting for input included, while a settings change waits to apply or applies, while a subagent, workflow run, or background process it started is still running or holding a result, while a run it started has not finished, or while another job writes it. Another process, such as a foreground `rho run`, holding the session or a session it started gets `SessionInUse`. A loaded session and its loaded forks are checked against all of these before the daemon unloads any of them, so a refused delete leaves them loaded; should the delete still fail after the unload, as on a disk error, their clients are detached with `lagged` and attaching again reopens each that saved anything. While the delete runs, a request for the session may get `SessionBusy`, or, once the session is unloaded, `SessionNotFound` or `SessionNotLoaded`. An id the daemon has not loaded and nothing is saved under gets `SessionNotFound`. The session's job record stays.
+
+### Searching sessions {#searching-sessions}
+
+`rho/session/search` finds the sessions `rho/session/list` lists whose conversation holds every word of `query`, so a client can open the session where something was said or done. It searches the session store's full-text index, the one the agent's `sessions` tool searches, kept beside the sessions as `search.sqlite3`; the daemon reads only the transcripts that changed since its last search. Each session is searched along the branch an attach replays: messages on a branch the conversation left are not found.
+
+`query` is literal words, not an expression: a message matches when it holds every word, ignoring case, with words stemmed as the index stems them (`indexing` finds `index`), and the last word also matches as a prefix, so results follow typing (`daem` finds `daemon`). Prefixes match stems, so one typed past a word's stem finds it again only once the word is whole: `deplo` and `deployment` find `deployment`, `deploym` does not. A blank `query`, or one over 1000 characters, gets `InvalidParams`, which names the limit. `cwd` limits the search to one workspace as it limits `rho/session/list`.
+
+Sessions come newest `updated_at` first, the more relevant first among those saved in the same second. A page holds `limit` sessions, 20 by default and at most 100, and a larger `limit` gets `InvalidParams` naming the limit; `next_cursor` and `cursor` page as `rho/session/list`'s do, and a `cursor` no search returned gets `InvalidParams`. `total` is how many sessions match in all. Each entry has:
+
+| Field | Meaning |
+| --- | --- |
+| `session` | The session as `rho/session/list_detailed` lists it. |
+| `matching_messages` | How many of its messages match. |
+| `excerpts` | Its best one or two matching messages, best first, a second with the same text left out. |
+
+Each excerpt has:
+
+| Field | Meaning |
+| --- | --- |
+| `role` | `user`, `agent` (its text and the tool calls it wrote), `tool_result`, or `tool_error`; a client reads a role it does not know as `unknown`. |
+| `text` | At most 320 characters of the message, starting 80 before its first match. |
+| `highlights` | The matched words in `text`, in order, as `{start, end}` byte ranges on character boundaries. |
+| `at`? | Where an attach's replay shows the message: `{"kind": "message", "id"}`, the `MessageId` of the first event that shows it (`saved-{node}-{row}-0` today), or `{"kind": "tool_call", "id"}`, the `ToolCallId` of the call that shows a tool result, or of the first call an agent message that only calls tools opens. Absent when no replayed event shows the message. |
+| `saved_at`? | When the message was saved, in Unix seconds, the clock of `updated_at`; absent when its time does not read. |
+
+The index reads every transcript once before it can answer in full: on a daemon's first search, and again after an upgrade changes the index's layout. That read runs in the background, taking about 10 seconds for 1.4 GB of sessions on a dev machine, and meanwhile a search answers from what the index holds so far with `indexing: true`, which may miss matches; search again later. A daemon from before this method answers `MethodNotFound`.
 
 ### Session marks {#session-marks}
 

@@ -5,7 +5,7 @@ use rho_providers::model::Message;
 use tempfile::TempDir;
 
 use super::*;
-use crate::session::Session;
+use crate::{app::row_locations, session::Session};
 
 struct MigrationWait {
     blocked: mpsc::Sender<()>,
@@ -28,7 +28,7 @@ fn concurrent_migration_preserves_rebuilt_cache() {
         .unwrap();
     let cancellation = CancellationToken::new();
     let mut first = open(root.path()).unwrap();
-    refresh(&mut first, root.path(), false, &cancellation).unwrap();
+    refresh(&mut first, root.path(), false, row_locations, &cancellation).unwrap();
     first.pragma_update(None, "user_version", 1).unwrap();
     let (blocked_tx, blocked_rx) = mpsc::channel();
     let (resume_tx, resume_rx) = mpsc::channel();
@@ -62,14 +62,21 @@ fn concurrent_migration_preserves_rebuilt_cache() {
                 }))
                 .unwrap();
             migrate(&mut connection).unwrap();
-            refresh(&mut connection, root, false, &CancellationToken::new()).unwrap()
+            refresh(
+                &mut connection,
+                root,
+                false,
+                row_locations,
+                &CancellationToken::new(),
+            )
+            .unwrap()
         });
         blocked_rx
             .recv_timeout(crate::sqlite_support::BUSY_TIMEOUT)
             .unwrap();
         lock.rollback().unwrap();
         migrate(&mut first).unwrap();
-        let rebuilt = refresh(&mut first, root, false, &cancellation).unwrap();
+        let rebuilt = refresh(&mut first, root, false, row_locations, &cancellation).unwrap();
         assert_eq!(rebuilt.files_updated, 1);
         resume_tx.send(()).unwrap();
         let warm = second.join().unwrap();
@@ -133,12 +140,26 @@ fn vacuum_returns_deleted_session_pages_to_the_filesystem() {
         })
         .collect();
     let mut connection = open(root.path()).unwrap();
-    refresh(&mut connection, root.path(), false, &cancellation).unwrap();
+    refresh(
+        &mut connection,
+        root.path(),
+        false,
+        row_locations,
+        &cancellation,
+    )
+    .unwrap();
     for session in &sessions[1..] {
         fs::remove_file(session.path()).unwrap();
     }
     // Real refreshes vacuum past 50 MiB free; this cache stays below that.
-    refresh(&mut connection, root.path(), true, &cancellation).unwrap();
+    refresh(
+        &mut connection,
+        root.path(),
+        true,
+        row_locations,
+        &cancellation,
+    )
+    .unwrap();
     // Flush WAL frames so the file size reflects every allocated page.
     connection
         .query_row("pragma wal_checkpoint(truncate)", [], |_| Ok(()))
@@ -201,7 +222,14 @@ fn schema_upgrade_drops_evidence_from_pre_tree_sessions() {
             .unwrap()
     };
     let mut connection = open(root.path()).unwrap();
-    refresh(&mut connection, root.path(), false, &cancellation).unwrap();
+    refresh(
+        &mut connection,
+        root.path(),
+        false,
+        row_locations,
+        &cancellation,
+    )
+    .unwrap();
     assert_eq!(matches(&connection), 1);
 
     // The cache an earlier rho 3 left: schema 4, with evidence from a file
@@ -223,6 +251,13 @@ fn schema_upgrade_drops_evidence_from_pre_tree_sessions() {
     drop(connection);
 
     let mut connection = open(root.path()).unwrap();
-    refresh(&mut connection, root.path(), false, &cancellation).unwrap();
+    refresh(
+        &mut connection,
+        root.path(),
+        false,
+        row_locations,
+        &cancellation,
+    )
+    .unwrap();
     assert_eq!(matches(&connection), 0);
 }
