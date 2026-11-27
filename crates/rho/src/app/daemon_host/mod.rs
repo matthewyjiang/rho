@@ -53,8 +53,10 @@ use rho_protocol::{
     PluginsUpdateParams, PluginsUpdateResponse,
 };
 use rho_protocol::{
-    SyncCompareParams, SyncCompareResponse, SyncExportParams, SyncExportResponse,
-    SyncRecipientParams, SyncRecipientResponse,
+    SyncCompareParams, SyncCompareResponse, SyncDiscardParams, SyncDiscardResponse,
+    SyncExportParams, SyncExportResponse, SyncImportKeysParams, SyncImportKeysResponse,
+    SyncRecipientParams, SyncRecipientResponse, SyncRevertParams, SyncRevertResponse,
+    SyncStatusParams, SyncStatusResponse,
 };
 use rho_providers::credentials::CredentialStoreBackend;
 
@@ -305,6 +307,11 @@ impl DaemonHost {
     /// when it saved nothing, until the daemon starts stopping (#1661).
     pub(super) async fn unload_idle_sessions(&self, grace: Duration) {
         self.sessions.unload_idle(grace).await;
+    }
+
+    /// Deletes the sync journal if it expired while the daemon was down.
+    pub(super) async fn sweep_sync_journal(&self) {
+        self.sync.sweep_journal().await;
     }
 
     /// Polls the sessions' pull requests, tells their clients when they
@@ -844,5 +851,27 @@ impl SettingsService for DaemonHost {
         params: SyncCompareParams,
     ) -> Result<SyncCompareResponse, RpcError> {
         self.sync.compare(params).await
+    }
+
+    async fn sync_import_keys(
+        &self,
+        params: SyncImportKeysParams,
+    ) -> Result<SyncImportKeysResponse, RpcError> {
+        self.sync.import_keys(params, &self.sessions).await
+    }
+
+    async fn sync_status(&self, params: SyncStatusParams) -> Result<SyncStatusResponse, RpcError> {
+        self.sync.status(params).await
+    }
+
+    async fn sync_revert(&self, params: SyncRevertParams) -> Result<SyncRevertResponse, RpcError> {
+        self.sync.revert(params, &self.sessions).await
+    }
+
+    async fn sync_discard(
+        &self,
+        params: SyncDiscardParams,
+    ) -> Result<SyncDiscardResponse, RpcError> {
+        self.sync.discard(params).await
     }
 }

@@ -1,7 +1,9 @@
-//! `rho/sync/recipient`, `rho/sync/export`, and `rho/sync/compare`: saved
-//! API keys copied from one daemon to another through a client that sees
-//! only ciphertext. [`seal`] owns the keys and the crypto; this module
-//! decides what is sealed, from where, and how it compares.
+//! `rho/sync/*`: saved API keys copied from one daemon to another through
+//! a client that sees only ciphertext, and reverted. [`seal`] owns the
+//! recipient keys and the crypto, [`journal`] what a sync replaced, and
+//! [`keys`] saving and restoring; this module decides what is sealed, from
+//! where, and how it compares, and runs each request off the async
+//! workers.
 //!
 //! Keys are read from the daemon's own credential store, the one its config
 //! selects, with no client environment: a key held only in a variable is
@@ -13,6 +15,8 @@
 //! and the `aad` is the JSON of `items`, so the list a bundle shows in the
 //! clear is the list it holds. Nothing here logs a value.
 
+mod journal;
+mod keys;
 mod seal;
 
 use std::{
@@ -22,14 +26,19 @@ use std::{
 
 use rho_protocol::{
     ClientEnvironment, CompareState, ErrorCode, RpcError, SealRecipient, SealSuite, SealedSecrets,
-    SecretComparison, SecretItem, SyncCompareParams, SyncCompareResponse, SyncExportParams,
-    SyncExportResponse, SyncRecipientResponse,
+    SecretComparison, SecretItem, SyncCompareParams, SyncCompareResponse, SyncDiscardParams,
+    SyncDiscardResponse, SyncExportParams, SyncExportResponse, SyncImportKeysParams,
+    SyncImportKeysResponse, SyncRecipientResponse, SyncRevertParams, SyncRevertResponse,
+    SyncStatusParams, SyncStatusResponse,
 };
 use rho_providers::credentials::CredentialStore;
 use sha2::{Digest, Sha256};
 use zeroize::Zeroizing;
 
-use super::auth::{client_credentials, off_workers, repository};
+use super::{
+    auth::{client_credentials, credentials_changed, off_workers, repository},
+    sessions::Sessions,
+};
 use crate::app::credential_writes::{self, CredentialWriteError};
 
 /// HPKE `info` for every bundle, which binds it to this use and version.
@@ -38,10 +47,13 @@ const INFO: &[u8] = b"rho sync secrets v1";
 /// The one suite [`seal`] speaks.
 const SUITE: SealSuite = SealSuite::X25519HkdfSha256ChaCha20Poly1305;
 
-/// The daemon's sync state: the recipient keys it issued.
+/// The daemon's sync state: the recipient keys it issued, and the lock
+/// every journal read and write takes, so a revert's check and its write
+/// see no import between them.
 #[derive(Default)]
 pub(super) struct SecretSync {
     recipients: Arc<seal::Recipients>,
+    journal: tokio::sync::Mutex<()>,
 }
 
 impl SecretSync {
@@ -57,10 +69,7 @@ impl SecretSync {
                 recipients.sweep(Instant::now());
             }
         });
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default();
-        let expires_at = (now + seal::RECIPIENT_LIFETIME).as_secs();
+        let expires_at = unix_now() + seal::RECIPIENT_LIFETIME.as_secs();
         SyncRecipientResponse::new(SealRecipient::new(SUITE, public_key, expires_at))
     }
 
@@ -106,6 +115,106 @@ impl SecretSync {
         .await??;
         Ok(SyncCompareResponse::new(compared))
     }
+
+    /// Answers `rho/sync/import_keys`: opens the bundle, saves its keys and
+    /// journals what they replaced, then refreshes the sessions, whose
+    /// models follow the store.
+    pub(super) async fn import_keys(
+        &self,
+        params: SyncImportKeysParams,
+        sessions: &Sessions,
+    ) -> Result<SyncImportKeysResponse, RpcError> {
+        let SyncImportKeysParams { sealed, sync, .. } = params;
+        let values = open_values(&self.recipients, Instant::now(), &sealed)?;
+        let items = sealed.items;
+        let imported = self
+            .with_journal(move |store, now| {
+                keys::import(store, &sync, items, &values, now, |name| {
+                    std::env::var(name).ok()
+                })
+            })
+            .await?;
+        credentials_changed(sessions).await;
+        tracing::info!(items = imported.len(), "imported sealed API keys");
+        Ok(SyncImportKeysResponse::new(imported))
+    }
+
+    /// Answers `rho/sync/status`.
+    pub(super) async fn status(
+        &self,
+        params: SyncStatusParams,
+    ) -> Result<SyncStatusResponse, RpcError> {
+        let SyncStatusParams { sync, .. } = params;
+        self.with_journal(move |store, now| keys::status(store, &sync, now))
+            .await
+    }
+
+    /// Answers `rho/sync/revert`, then refreshes the sessions.
+    pub(super) async fn revert(
+        &self,
+        params: SyncRevertParams,
+        sessions: &Sessions,
+    ) -> Result<SyncRevertResponse, RpcError> {
+        let SyncRevertParams {
+            sync,
+            items,
+            overwrite,
+            ..
+        } = params;
+        let reverted = self
+            .with_journal(move |store, now| keys::revert(store, &sync, items, &overwrite, now))
+            .await?;
+        credentials_changed(sessions).await;
+        Ok(SyncRevertResponse::new(reverted))
+    }
+
+    /// Answers `rho/sync/discard`.
+    pub(super) async fn discard(
+        &self,
+        params: SyncDiscardParams,
+    ) -> Result<SyncDiscardResponse, RpcError> {
+        let SyncDiscardParams { sync, .. } = params;
+        self.with_journal(move |store, now| keys::discard(store, &sync, now))
+            .await?;
+        Ok(SyncDiscardResponse::default())
+    }
+
+    /// Deletes the journal if it expired, as the daemon starts.
+    pub(super) async fn sweep_journal(&self) {
+        let swept = self
+            .with_journal(|store, now| {
+                journal::load(store, now)
+                    .map(|_| ())
+                    .map_err(|error| internal(format!("could not read the sync journal: {error}")))
+            })
+            .await;
+        if let Err(error) = swept {
+            tracing::warn!(error = %error.message, "could not sweep the sync journal");
+        }
+    }
+
+    /// Runs `operation` on the daemon's own credential store, the one its
+    /// config selects, off the async workers, holding the journal lock.
+    async fn with_journal<T: Send + 'static>(
+        &self,
+        operation: impl FnOnce(&dyn CredentialStore, u64) -> Result<T, RpcError> + Send + 'static,
+    ) -> Result<T, RpcError> {
+        let _held = self.journal.lock().await;
+        let credentials = client_credentials(&ClientEnvironment::default())?;
+        off_workers(move || {
+            credential_writes::load_config_and_store(&repository())?;
+            operation(credentials.as_ref(), unix_now())
+        })
+        .await?
+    }
+}
+
+/// The time now, in Unix seconds.
+fn unix_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 /// What [`saved_values`] found: the items that have a saved value, with

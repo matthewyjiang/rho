@@ -371,6 +371,12 @@ fn api_key_profile(
     Ok((descriptor, mode, account))
 }
 
+/// The store account auth profile `auth`'s API key is saved under,
+/// refused unless it takes one.
+pub(crate) fn api_key_account(auth: &str) -> Result<&'static str, CredentialWriteError> {
+    api_key_profile(auth).map(|(_, _, account)| account)
+}
+
 /// The key saved in `store` for auth profile `auth`, which must take an
 /// API key. A blank value counts as none, as it does for sessions and
 /// `rho/auth/list`. A key in an environment variable is not saved, so it
@@ -379,7 +385,7 @@ pub(crate) fn saved_api_key(
     auth: &str,
     store: &dyn CredentialStore,
 ) -> Result<Option<String>, CredentialWriteError> {
-    let (_, _, account) = api_key_profile(auth)?;
+    let account = api_key_account(auth)?;
     // Fresh: the OS store caches reads, misses included, for the life of
     // the process, and a key copied elsewhere must be the one saved now.
     let saved = store.get_secret_fresh(account).map_err(|error| {
