@@ -115,7 +115,7 @@ async fn delegation_over_stdio_stops_at_max_depth_even_through_a_reused_session(
         "prompt",
         json!({
             "session": first,
-            "text": delegate(json!({"workspace": workspace, "prompt": "hello"})),
+            "prompt": delegate(json!({"workspace": workspace, "prompt": "hello"})),
         }),
     )
     .await;
@@ -238,7 +238,7 @@ async fn a_restricted_token_gains_nothing_through_the_sessions_it_starts() {
     let prompted = call(
         &write,
         "prompt",
-        json!({"session": persons, "text": escape()}),
+        json!({"session": persons, "prompt": escape()}),
     )
     .await;
     let through_reused = answer(&write, &persons).await;

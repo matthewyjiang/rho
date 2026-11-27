@@ -54,8 +54,8 @@ pub(crate) use platform::Stream as RawStream;
 pub(crate) use platform::DaemonPathError;
 pub(crate) use platform::{
     account_lock_path, create_private_dir, create_private_file, lock_account_file,
-    release_freed_memory, stderr_is_journal_stream, sync_dir, FileIdentity, StopRequests,
-    REPLACEABLE_WHILE_RUNNING,
+    prepare_private_dir, release_freed_memory, stderr_is_journal_stream, sync_dir, FileIdentity,
+    StopRequests, REPLACEABLE_WHILE_RUNNING,
 };
 #[cfg(unix)]
 pub(crate) use platform::{adopt, reap_exited_children, set_close_on_exec};

@@ -11,12 +11,14 @@ The server speaks stdio by default. For hosts that connect by URL, use [`--http`
 | `list` | Lists sessions with their id, workspace, state, who opened them, title, and parent session. Filter by `workspace`, `state`, or `opened_by`; `hide_idle` leaves out sessions in state `idle`. See [Sessions you opened yourself](#sessions-you-opened-yourself). | read |
 | `read` | Returns a session's transcript as text, a page at a time. | read |
 | `new` | Starts a session in `workspace` (an absolute path) with a first `prompt`. Optional `agent` and `model`. `worktree: true` runs it in a new [git worktree](/daemon#sessions-in-worktrees). | write |
-| `prompt` | Starts the session's next turn with `text`. | write |
-| `steer` | Sends `text` to the running turn. | write |
+| `prompt` | Starts the session's next turn with `prompt`. | write |
+| `steer` | Sends `prompt` to the running turn. | write |
 | `cancel` | Stops the turn in progress. | write |
 | `wait` | Waits for the turn to end or ask for input. See [Following a turn](#following-a-turn). | read |
 | `watch` | HTTP only. POSTs the session's news to a [webhook](#webhooks) until it settles. Returns where the session is now, as `wait` does. | read |
 | `unwatch` | HTTP only. Stops watching the session. | read |
+
+`prompt` and `steer` still accept `text`, the name earlier releases gave their message, as a deprecated alias of `prompt`.
 
 Over HTTP, `new` and `prompt` also take `notify`, a [webhook](#webhooks) name, to watch the session from that turn on.
 

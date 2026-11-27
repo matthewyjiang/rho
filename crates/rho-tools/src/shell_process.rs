@@ -59,15 +59,18 @@ pub fn parent_path_for(environment: &ProcessEnvironment) -> Option<OsString> {
     inherits_path.then(|| std::env::var_os("PATH")).flatten()
 }
 
-/// Spec for a shell tool whose `launch` clause names how the command runs.
-/// Execution rules shared by every shell live here with [`ShellArgs`].
-pub(crate) fn shell_tool_spec(name: &str, launch: &str) -> ToolSpec {
+/// Spec for a shell tool whose `launch` clause names how the command runs
+/// and whose `scratch` clause how its commands make a temp file rather
+/// than write a fixed path. Execution
+/// rules shared by every shell live here with [`ShellArgs`].
+pub(crate) fn shell_tool_spec(name: &str, launch: &str, scratch: &str) -> ToolSpec {
     ToolSpec {
         name: name.into(),
         description: format!(
             "{launch} in the session working directory and returns stdout, stderr, and the exit code when nonzero. \
 Each call is a fresh process: `cd`, variables, and other shell state do not carry over to the next call. \
 The call blocks until the command exits; there is no timeout unless `timeout_seconds` is set, and a timeout kills the whole process tree. \
+Write scratch files with {scratch}, which another session can overwrite. \
 Output beyond the tool-output limit is truncated."
         ),
         input_schema: serde_json::json!({

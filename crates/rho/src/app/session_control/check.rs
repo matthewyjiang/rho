@@ -127,12 +127,12 @@ impl SessionControl {
             Action::Prompt => {
                 let params: PromptParams = parse_arguments(action.name(), arguments)?;
                 let workspace = self.reach_session(caller, &params.session).await?;
-                prompt_content(&params.text)?;
+                prompt_content(&params.prompt)?;
                 self.check_depth(caller)?;
                 let target = target(
                     Some(params.session.clone()),
                     workspace,
-                    Some(params.text.clone()),
+                    Some(params.prompt.clone()),
                 );
                 (CheckedCall::Prompt(params), target)
             }
@@ -142,7 +142,7 @@ impl SessionControl {
                 let target = target(
                     Some(params.session.clone()),
                     workspace,
-                    Some(params.text.clone()),
+                    Some(params.prompt.clone()),
                 );
                 (CheckedCall::Steer(params), target)
             }

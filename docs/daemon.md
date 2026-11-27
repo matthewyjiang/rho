@@ -156,6 +156,7 @@ Commands a session runs use the environment of the terminal or editor you prompt
 - A background process keeps the environment it started with.
 - If a prompt brings a different environment, Rho asks again about commands you allowed for the session.
 - Rho removes provider API keys, such as `OPENAI_API_KEY`, from the environment of commands, as in Rho 2.
+- Each session's commands get a temp directory of their own as `TMPDIR` (`TMP` and `TEMP` on Windows), so sessions never overwrite each other's scratch files. It is `rho-<uid>/<16 hex digits from the session id>` in the daemon's temp directory (`/tmp` on macOS; `rho\...` on Windows), stays the same across turns, and is left for the OS to clear. Hooks, MCP servers, and Claude Code, Cursor, and Antigravity subagents keep your own temp directory.
 - MCP servers and OpenAPI sources use the environment from when the session opened. Hooks use the environment of the prompt that runs them.
 - [Claude Code](/subagents/claude-cli), [Cursor](/subagents/cursor), and [Antigravity](/subagents/antigravity) subagents get the full environment, API keys included, since they sign in on their own.
 - A workflow run keeps the environment it started with. If a later resume finds a different interpreter for a script on its `PATH`, the run fails with `frozen filesystem identity drift`.

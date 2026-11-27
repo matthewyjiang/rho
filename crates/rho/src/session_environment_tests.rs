@@ -42,7 +42,7 @@ fn a_clients_process_environment_loses_only_provider_credentials() {
         ),
     ];
     for (name, ambient, expected) in cases {
-        assert_eq!(ambient.process_environment(), expected, "{name}");
+        assert_eq!(ambient.process_environment(None), expected, "{name}");
     }
 }
 

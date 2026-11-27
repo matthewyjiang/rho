@@ -24,7 +24,7 @@ use std::{
     collections::BTreeMap,
     ffi::OsString,
     fmt,
-    sync::{Arc, PoisonError, RwLock},
+    sync::{Arc, OnceLock, PoisonError, RwLock},
 };
 
 use rho_providers::credentials::CredentialStore;
@@ -32,6 +32,7 @@ use rho_sdk::ProcessEnvironment;
 
 use crate::{
     credential_store::{AppCredentialStore, ClientCredentialStore},
+    session_temp_dir::SessionTempDir,
     workspace::ProjectTrusts,
 };
 
@@ -116,10 +117,13 @@ impl Ambient {
     }
 
     /// The environment tools' processes start with: this one without
-    /// provider credentials, so commands cannot read API keys. This
-    /// process's credential names are the ones set when this is called.
-    fn process_environment(&self) -> ProcessEnvironment {
+    /// provider credentials, so commands cannot read API keys, and with
+    /// `temp_dir` as their temp directory. This process's credential names
+    /// are the ones set when this is called.
+    fn process_environment(&self, temp_dir: Option<&SessionTempDir>) -> ProcessEnvironment {
         match self {
+            // Only a daemon session has a temp dir of its own, and each runs
+            // in a client's variables.
             Self::ThisProcess => {
                 ProcessEnvironment::inherit_except(rho_providers::credential_env_vars())
             }
@@ -128,6 +132,8 @@ impl Ambient {
                     .iter()
                     .filter(|(name, _)| !rho_providers::is_credential_env_var(name))
                     .map(|(name, value)| (name.clone(), value.clone()))
+                    // Later pairs win.
+                    .chain(temp_dir.into_iter().flat_map(SessionTempDir::variables))
                     .collect(),
             },
         }
@@ -189,6 +195,11 @@ pub(crate) struct SessionEnvironment {
     ambient: Arc<RwLock<Ambient>>,
     /// `ambient`'s process environment, the handle process tools snapshot.
     process: rho_tools::SharedProcessEnvironment,
+    /// The session's own temp directory, which its process environment
+    /// names in place of the client's once set (see [`Self::use_temp_dir`]).
+    /// Shared with clones and snapshots, as `ambient` is, so a
+    /// [`Self::replace`] through any of them keeps it.
+    temp_dir: Arc<OnceLock<SessionTempDir>>,
     /// The trust the opening [`Ambient`] granted, which [`Self::replace`]
     /// keeps.
     project_trust: ProjectTrusts,
@@ -202,7 +213,8 @@ impl SessionEnvironment {
     /// trust `ambient` grants for as long as the session is open.
     pub(crate) fn new(ambient: Ambient) -> Self {
         Self {
-            process: ambient.process_environment().into(),
+            process: ambient.process_environment(None).into(),
+            temp_dir: Arc::default(),
             project_trust: ambient.project_trusts(),
             opened_with: ambient.clone(),
             ambient: Arc::new(RwLock::new(ambient)),
@@ -213,11 +225,41 @@ impl SessionEnvironment {
     /// prompt replaces, with the session's project trust: what a workflow
     /// run the session starts or resumes runs in (#1659).
     pub(crate) fn snapshot(&self) -> Self {
+        let current = self.current();
         Self {
+            process: self.process_environment_of(&current).into(),
+            temp_dir: Arc::clone(&self.temp_dir),
             project_trust: self.project_trust,
             opened_with: self.opened_with.clone(),
-            ..Self::new(self.current())
+            ambient: Arc::new(RwLock::new(current)),
         }
+    }
+
+    /// Makes `temp_dir` its processes' temp directory, through every later
+    /// [`Self::replace`]: a daemon session's own (see
+    /// [`crate::session_temp_dir`]). A session has one temp dir; a second
+    /// call changes nothing.
+    pub(crate) fn use_temp_dir(&self, temp_dir: SessionTempDir) {
+        let current = self.ambient.write().unwrap_or_else(PoisonError::into_inner);
+        if self.temp_dir.set(temp_dir).is_ok() {
+            self.process.replace(self.process_environment_of(&current));
+        }
+    }
+
+    /// `ambient`'s process environment, with the session's temp dir when it
+    /// is there: made again if a temp cleaner removed it.
+    fn process_environment_of(&self, ambient: &Ambient) -> ProcessEnvironment {
+        let temp_dir = self.temp_dir.get().filter(|temp_dir| match temp_dir.ensure() {
+            Ok(()) => true,
+            Err(error) => {
+                tracing::warn!(
+                    error = %format!("{error:#}"),
+                    "could not make the session's temp dir again; its processes keep the client's"
+                );
+                false
+            }
+        });
+        ambient.process_environment(temp_dir)
     }
 
     /// The environment of a session opened only to read what it saved: no
@@ -285,7 +327,7 @@ impl SessionEnvironment {
     /// a host first refuses an `ambient` with a [`Self::trust_mismatch`].
     pub(crate) fn replace(&self, ambient: Ambient) {
         let mut current = self.ambient.write().unwrap_or_else(PoisonError::into_inner);
-        self.process.replace(ambient.process_environment());
+        self.process.replace(self.process_environment_of(&ambient));
         *current = ambient;
     }
 }

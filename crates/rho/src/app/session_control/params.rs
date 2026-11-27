@@ -284,12 +284,16 @@ pub(crate) struct NewResult {
     pub(crate) worktree: Option<SessionWorktree>,
 }
 
-/// Params of `prompt`.
+/// Params of `prompt`. Its message is `prompt`, as `new`'s and `steer`'s
+/// are, so every action that sends a message names it the same way.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct PromptParams {
     pub(crate) session: SessionId,
-    pub(crate) text: String,
+    /// The prompt, which starts the session's next turn.
+    // NEXT_MAJOR(rho mcp serve): drop the `text` alias of `prompt` and `steer`'s `prompt`.
+    #[serde(alias = "text")]
+    pub(crate) prompt: String,
 }
 
 /// Result of `prompt`: the turn began.
@@ -304,7 +308,9 @@ pub(crate) struct PromptResult {
 pub(crate) struct SteerParams {
     pub(crate) session: SessionId,
     /// Input for the running turn's next model request.
-    pub(crate) text: String,
+    // NEXT_MAJOR(rho mcp serve): drop the `text` alias of `steer`'s and `prompt`'s `prompt`.
+    #[serde(alias = "text")]
+    pub(crate) prompt: String,
 }
 
 /// Result of `steer`: the running turn took the input.

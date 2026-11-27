@@ -80,7 +80,7 @@ async fn a_token_drives_a_session_a_person_opened_within_its_workspaces() {
     let (_server, url) = http_server(&sandbox, &[], &[]).await;
     let bot = http_client(&url, &everywhere).await;
     let outsider = http_client(&url, &narrow).await;
-    let steer = json!({"session": session, "text": "hurry"});
+    let steer = json!({"session": session, "prompt": "hurry"});
     let own = call(
         &bot,
         "new",
@@ -131,7 +131,7 @@ async fn a_token_drives_a_session_a_person_opened_within_its_workspaces() {
     let prompted = call(
         &bot,
         "prompt",
-        json!({"session": session, "text": bash("echo adopted")}),
+        json!({"session": session, "prompt": bash("echo adopted")}),
     )
     .await;
     let again = call(

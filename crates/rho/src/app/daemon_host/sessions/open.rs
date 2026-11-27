@@ -72,6 +72,7 @@ use crate::{
     config::Config,
     session::Session as StoredSession,
     session_environment::{Ambient, SessionEnvironment},
+    session_temp_dir::{self, SessionTempDir},
     tools::mcp::McpAuthorizationMode,
     workspace::{ProjectTrust, ProjectTrusts},
 };
@@ -447,11 +448,22 @@ async fn open_runtime(
         IdleTurns::Host | IdleTurns::Never => CacheWarming::None,
     };
     // Bound before the tools are built, so the session's pull request inbox
-    // is keyed by the id it opens with.
+    // is keyed by the id it opens with, and its processes' temp dir named
+    // by it.
     let id = match &opening {
         Opening::New { .. } | Opening::Fork(_) => rho_sdk::SessionId::new(),
         Opening::Saved(stored) => rho_sdk::SessionId::from_string(stored.id())?,
     };
+    if let SessionUse::Run(_) = session_use {
+        match SessionTempDir::prepare(&session_temp_dir::temp_root(), &id) {
+            Ok(temp_dir) => environment.use_temp_dir(temp_dir),
+            Err(error) => tracing::warn!(
+                session = %id,
+                error = %format!("{error:#}"),
+                "could not make the session's temp dir; its processes keep the client's"
+            ),
+        }
+    }
     // Only a session whose idle turns the daemon starts links and watches
     // pull requests, since news could wake no other: one whose wait
     // `BackgroundWait::of` (session_runtime/delegation.rs) makes `HostTurns`.

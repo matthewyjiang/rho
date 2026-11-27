@@ -16,12 +16,10 @@ pub(in crate::daemon) use endpoint::{
     connect, connect_restarting, inspect_endpoint, remove_endpoint, Listener,
 };
 pub(crate) use files::{
-    create_private_dir, create_private_file, sync_dir, DaemonPathError, FileIdentity,
-    REPLACEABLE_WHILE_RUNNING,
+    create_private_dir, create_private_file, prepare_private_dir, sync_dir, DaemonPathError,
+    FileIdentity, REPLACEABLE_WHILE_RUNNING,
 };
-pub(in crate::daemon) use files::{
-    open_lock_file, open_log_file, prepare_private_dir, running_identity,
-};
+pub(in crate::daemon) use files::{open_lock_file, open_log_file, running_identity};
 pub(crate) use handoff::{adopt, reap_exited_children, set_close_on_exec};
 pub(in crate::daemon) use handoff::{relaunch, take_handoff};
 pub(crate) use memory::release_freed_memory;

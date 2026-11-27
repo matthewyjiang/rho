@@ -21,6 +21,7 @@ impl Tool for PowerShell {
         shell_process::shell_tool_spec(
             "powershell",
             "Runs a PowerShell command with `powershell.exe -NoProfile -NonInteractive -Command`",
+            "`New-TemporaryFile` or under `$env:TEMP`, never to a fixed path such as `C:\\Temp\\out.md`",
         )
     }
 

@@ -136,3 +136,32 @@ fn tools_take_a_server_once_there_are_remotes() {
         ]
     );
 }
+
+// Covers: a hub forwards the message of `prompt` and `steer` as `text`,
+// which a remote of any release takes, and refuses a call that gives both
+// `prompt` and `text` with the error a local session gives it, rather than
+// let the rename hide the conflict.
+// Owner: hub routing.
+#[test]
+fn a_hub_forwards_messages_as_text_and_refuses_both() {
+    let both = json!({"session": "s", "prompt": "hello", "text": "hi"});
+    let forwarded = |action: Action, value: Value| {
+        for_any_release(action, arguments(value)).map_err(|error| error.to_string())
+    };
+    let local = |action: Action| {
+        action
+            .check_arguments(&arguments(both.clone()))
+            .map_err(|error| error.to_string())
+    };
+
+    assert_eq!(
+        [Action::Prompt, Action::Steer].map(|action| (
+            forwarded(action, json!({"session": "s", "prompt": "hello"})),
+            forwarded(action, both.clone()),
+        )),
+        [Action::Prompt, Action::Steer].map(|action| (
+            Ok(arguments(json!({"session": "s", "text": "hello"}))),
+            Err(local(action).unwrap_err()),
+        ))
+    );
+}
