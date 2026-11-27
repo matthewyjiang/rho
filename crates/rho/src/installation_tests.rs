@@ -42,6 +42,12 @@ fn detects_package_evidence() {
             None,
         ),
         (
+            "/usr/bin/rho",
+            false,
+            owner(SystemPackageManager::Rpm, "rhodes-tools"),
+            None,
+        ),
+        (
             "/home/me/.cargo/bin/rho",
             false,
             None,

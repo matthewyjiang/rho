@@ -18,7 +18,8 @@ Version:        3.5.0
 # x-release-please-end
 Release:        1%{?dist}
 Summary:        A fast Rust agent harness with a small footprint and opinionated defaults
-License:        MIT
+# Cargo.toml: MIT AND Apache-2.0 (bundled starlark and others, see THIRD-PARTY-NOTICES).
+License:        MIT AND Apache-2.0
 URL:            https://github.com/matthewyjiang/rho
 %global tag rho-coding-agent-v%{version}
 Source0:        %{url}/archive/refs/tags/%{tag}.tar.gz#/%{name}-%{version}.tar.gz
@@ -54,5 +55,5 @@ export CARGO_HOME=%{cargo_home}
 cargo test --locked --no-default-features
 
 %files
-%license LICENSE
+%license LICENSE crates/rho/THIRD-PARTY-NOTICES
 %{_bindir}/rho

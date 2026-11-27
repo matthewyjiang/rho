@@ -138,11 +138,21 @@ fn detect_with(
     if let Some(root) = cargo_update_root_for_exe(path, cargo_owns) {
         return Some(ManagedInstallation::Cargo { root: Some(root) });
     }
-    if let Some(owner) = system_package_owner(path).filter(|owner| owner.package.contains("rho")) {
-        return Some(match owner.manager {
-            SystemPackageManager::Pacman => ManagedInstallation::Pacman,
-            SystemPackageManager::Rpm => ManagedInstallation::Dnf,
-        });
+    // pacman matches loosely so AUR variants (`-git`, `-bin`) count; the only
+    // RPM is mjiang-extras' own, so match its exact name.
+    let system_managed = system_package_owner(path).and_then(|owner| match owner.manager {
+        SystemPackageManager::Pacman if owner.package.contains("rho") => {
+            Some(ManagedInstallation::Pacman)
+        }
+        SystemPackageManager::Rpm
+            if owner.package.lines().any(|name| name == "rho-coding-agent") =>
+        {
+            Some(ManagedInstallation::Dnf)
+        }
+        SystemPackageManager::Pacman | SystemPackageManager::Rpm => None,
+    });
+    if system_managed.is_some() {
+        return system_managed;
     }
     scoop_install_scope_for_path(path, scoop_roots).map(ManagedInstallation::Scoop)
 }

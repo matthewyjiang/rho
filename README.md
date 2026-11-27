@@ -45,7 +45,7 @@ scoop bucket add rho https://github.com/matthewyjiang/rho
 scoop install rho
 ```
 
-Or on Fedora with dnf:
+Or on Fedora 44 or newer (x86_64) with dnf:
 
 ```bash
 sudo dnf config-manager addrepo --from-repofile=https://repo.matthewyjiang.com/mjiang-extras.repo
