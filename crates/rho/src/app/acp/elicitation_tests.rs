@@ -38,6 +38,7 @@ fn choice(value: impl Into<String>, label: impl Into<String>) -> Choice {
 fn ask(title: &str, questions: Vec<Question>) -> QuestionAsk {
     QuestionAsk {
         title: title.to_owned(),
+        reason: None,
         questions,
     }
 }
@@ -166,12 +167,16 @@ fn request() -> QuestionAsk {
         )
         .allow_other(),
     ];
-    ask("Before I start", questions)
+    QuestionAsk {
+        reason: Some("The release branch is frozen.".into()),
+        ..ask("Before I start", questions)
+    }
 }
 
 // Covers: the standard form carries every question in the ACP schema (titled
 // `oneOf`, string arrays, a free-text companion), scoped to the asking tool
-// call, with selected defaults
+// call, with selected defaults, under a message that gives the ask's title
+// and then its reason
 // Owner: ACP elicitation mapping
 #[test]
 fn questions_become_one_form_scoped_to_the_tool_call() {
@@ -188,7 +193,7 @@ fn questions_become_one_form_scoped_to_the_tool_call() {
             "mode": "form",
             "sessionId": "session-1",
             "toolCallId": "call-1",
-            "message": "Before I start",
+            "message": "Before I start\n\nThe release branch is frozen.",
             "requestedSchema": {
                 "type": "object",
                 "properties": {

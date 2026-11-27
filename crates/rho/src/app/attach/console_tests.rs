@@ -40,6 +40,7 @@ fn question(id: u64, default: Option<&str>) -> InputRequest {
         id: InputRequestId(id),
         ask: Ask::Question(QuestionAsk {
             title: "Name".into(),
+            reason: None,
             questions: vec![Question {
                 id: "name".into(),
                 prompt: "Which name?".into(),

@@ -161,3 +161,16 @@ fn questionnaire_requires_unique_question_ids() {
         HostInputRequest::questionnaire("duplicate", vec![question.clone(), question]).is_err()
     );
 }
+
+// Covers: a questionnaire keeps the reason it was given, and a blank one
+// leaves it without a reason, so no host shows an empty line for it.
+// Owner: SDK host-input contract.
+#[test]
+fn a_blank_reason_leaves_the_questionnaire_without_one() {
+    let reasons = ["staging is down", "  \n"].map(|reason| request().with_reason(reason));
+
+    assert_eq!(
+        reasons.each_ref().map(HostInputRequest::reason),
+        [Some("staging is down"), None]
+    );
+}

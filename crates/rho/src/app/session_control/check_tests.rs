@@ -12,6 +12,7 @@ use super::*;
 fn ask(prompt: &str) -> QuestionAsk {
     QuestionAsk {
         title: "questionnaire".into(),
+        reason: None,
         questions: vec![Question {
             id: "q1".into(),
             prompt: prompt.into(),

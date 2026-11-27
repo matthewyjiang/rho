@@ -107,7 +107,10 @@ fn questions(
         .iter()
         .map(question)
         .collect::<Result<Vec<_>, _>>()?;
-    let form = HostInputRequest::questionnaire(&ask.title, questions)?;
+    let mut form = HostInputRequest::questionnaire(&ask.title, questions)?;
+    if let Some(reason) = &ask.reason {
+        form = form.with_reason(reason);
+    }
     let Some((answers, reason)) = timeout.and_then(|timeout| match &timeout.answer {
         InputAnswer::Answers { answers } => Some((answers, &timeout.reason)),
         _ => None,

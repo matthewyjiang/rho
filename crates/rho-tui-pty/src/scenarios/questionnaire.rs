@@ -115,6 +115,11 @@ const QUESTIONNAIRE_CLICK_STEPS: &[Step] = &[
         text: "A cool primary color",
         timeout: STREAM,
     },
+    // The fixture's `reason`, which only the questionnaire composer shows.
+    Step::WaitText {
+        text: "Validate exactly-once host input delivery.",
+        timeout: STREAM,
+    },
     Step::Phase("click_choice"),
     Step::Custom(click_then_double_click_questionnaire_choice),
     Step::ExitCommand,

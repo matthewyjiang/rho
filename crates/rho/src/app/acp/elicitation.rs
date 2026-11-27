@@ -86,9 +86,13 @@ pub(super) fn elicitation_request(
             FormDialect::T3Code => add_t3_question(schema, question),
         };
     }
-    let message = match ask.title.as_str() {
+    let title = match ask.title.as_str() {
         "" => "Rho needs your input",
         title => title,
+    };
+    let message = match &ask.reason {
+        Some(reason) => format!("{title}\n\n{reason}"),
+        None => title.to_owned(),
     };
     CreateElicitationRequest::new(ElicitationFormMode::new(scope, schema), message)
 }

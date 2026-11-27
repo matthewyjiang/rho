@@ -852,6 +852,7 @@ fn timed_question(id: u64) -> InputRequest {
         id: InputRequestId(id),
         ask: Ask::Question(QuestionAsk {
             title: "Colour".into(),
+            reason: None,
             questions: vec![Question {
                 id: "colour".into(),
                 prompt: "Pick a colour".into(),

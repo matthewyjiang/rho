@@ -133,6 +133,7 @@ pub(super) fn timeout(request: &HostInputRequest, deadline_ms: u64) -> Option<wi
 pub(super) fn question(request: &HostInputRequest) -> Ask {
     Ask::Question(QuestionAsk {
         title: request.title().to_owned(),
+        reason: request.reason().map(str::to_owned),
         questions: request.questions().iter().map(question_to_wire).collect(),
     })
 }

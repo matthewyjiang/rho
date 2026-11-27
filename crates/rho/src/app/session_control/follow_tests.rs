@@ -114,6 +114,7 @@ fn question(id: u64, asker: InputAsker) -> InputRequest {
         id: InputRequestId(id),
         ask: Ask::Question(QuestionAsk {
             title: "Color".into(),
+            reason: None,
             questions: vec![Question {
                 id: "color".into(),
                 prompt: "Which color?".into(),

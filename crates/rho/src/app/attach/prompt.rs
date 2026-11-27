@@ -107,15 +107,19 @@ impl Prompt {
         self.id
     }
 
-    /// What the prompt shows first: a plan approval's plan, then what it
-    /// asks.
+    /// What the prompt shows first: a plan approval's plan, or why the
+    /// questions are asked, then what it asks.
     pub(super) fn opening(&self) -> String {
-        match &self.kind {
-            Kind::Pick {
-                preface: Some(preface),
-                ..
-            } => format!("{preface}\n{}", self.asking()),
-            Kind::Pick { preface: None, .. } | Kind::Questions { .. } => self.asking(),
+        let preface = match &self.kind {
+            Kind::Pick { preface, .. } => preface.clone(),
+            Kind::Questions { ask, .. } => ask
+                .reason
+                .as_deref()
+                .map(|reason| escape_controls(reason.trim_end(), LineBreaks::Keep)),
+        };
+        match preface {
+            Some(preface) => format!("{preface}\n{}", self.asking()),
+            None => self.asking(),
         }
     }
 

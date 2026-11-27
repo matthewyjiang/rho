@@ -359,8 +359,9 @@ async fn a_started_session_that_asks_waits_for_a_person() {
     );
 }
 
-// Covers: a session's question reaches the session that started it, whose
-// `answer` hands the asker's tool the answers as a questionnaire result
+// Covers: a session's question, with the reason its agent gave, reaches the
+// session that started it through `wait` and an attached client alike; that
+// session's `answer` hands the asker's tool the answers as a questionnaire result
 // whose source says a session answered; clients see the request closed by a
 // session; a session that did not start the asker is refused by the tool and
 // by the daemon alike; a second answer finds the question closed (#1714).
@@ -378,6 +379,7 @@ async fn the_session_that_started_another_answers_its_question() {
         "id": "ask",
         "name": "questionnaire",
         "arguments": {
+            "reason": "The logo needs one.",
             "questions": [{"id": "color", "question": "Which color?", "choices": ["Red", "Blue"]}],
         },
     })
@@ -395,7 +397,14 @@ async fn the_session_that_started_another_answers_its_question() {
     let asked = stopped(&host, &worker).await;
     let request: InputRequestId = serde_json::from_value(asked["inputs"][0]["id"].clone())
         .unwrap_or_else(|_| panic!("the worker to ask, not {asked}"));
-    let (mut watcher, _) = Follower::attach(&sandbox, &worker, Vec::new(), None).await;
+    let (mut watcher, attached) = Follower::attach(&sandbox, &worker, Vec::new(), None).await;
+    let asks = (
+        asked["inputs"][0]["ask"].clone(),
+        attached
+            .inputs
+            .first()
+            .map(|input| serde_json::to_value(&input.ask).unwrap()),
+    );
     let answer_with = |answers| json!({"action": "answer", "session": worker, "request": request, "answers": answers});
 
     let outsiders = ask(
@@ -440,8 +449,25 @@ async fn the_session_that_started_another_answers_its_question() {
     let result: Value = serde_json::from_str(&answer(&host, &worker).await).unwrap();
     let closed = watcher.events.last().map(|(_, event)| event.clone());
 
+    let ask = json!({
+        "kind": "question",
+        "title": "questionnaire",
+        "reason": "The logo needs one.",
+        "questions": [{
+            "id": "color",
+            "prompt": "Which color?",
+            "choices": [
+                {"value": "Red", "label": "Red"},
+                {"value": "Blue", "label": "Blue"},
+            ],
+            "selection": "one",
+            "allow_other": false,
+            "required": true,
+        }],
+    });
     assert_eq!(
         (
+            asks,
             outsiders.map_err(drop),
             declared,
             answered,
@@ -450,6 +476,7 @@ async fn the_session_that_started_another_answers_its_question() {
             result
         ),
         (
+            (ask.clone(), Some(ask)),
             // The tool hands the model the daemon's refusal.
             Err(()),
             Err(Some(ErrorCode::InvalidParams)),
