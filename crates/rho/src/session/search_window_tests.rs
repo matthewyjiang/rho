@@ -14,6 +14,8 @@ fn marked(text: &str, words: &[&str]) -> String {
 // boundaries, clipped to the window, and unmoved by marker characters the
 // message itself holds. Owner: session search excerpts.
 #[test]
+// Highlights are a list of byte ranges; one match is a list of one.
+#[allow(clippy::single_range_in_vec_init)]
 fn a_window_shows_the_first_match_with_byte_highlights() {
     let long_lead = format!("{} needle", "a".repeat(100));
     let clipped = format!("needle{}needle tail", "x".repeat(312));

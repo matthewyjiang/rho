@@ -106,6 +106,8 @@ fn a_detailed_row_holds_its_details_beside_its_summary() {
 // tagged by `kind`, and absent optionals and a false `indexing` left out.
 // Owner: protocol wire contract.
 #[test]
+// Highlights are a list of byte ranges; one match is a list of one.
+#[allow(clippy::single_range_in_vec_init)]
 fn a_search_page_round_trips_through_its_wire_form() {
     let session = DetailedSessionSummary::new(
         SessionSummary {
