@@ -12,7 +12,7 @@ use crate::plugins::{
     manage::{
         install, set_enabled,
         tests::{env, write_source, Env},
-        InstallMode,
+        InstallMode, ManageError, NamedPlugin,
     },
     state::{PluginScope, PluginStateStore},
     PluginOrigin, PluginStatus, ProjectTrust,
@@ -87,7 +87,7 @@ fn run_update(
     env: &Env,
     selection: UpdateSelection<'_>,
     trust: ProjectTrust,
-) -> anyhow::Result<super::UpdateReport> {
+) -> Result<super::UpdateReport, ManageError> {
     update(
         selection,
         trust,
@@ -149,12 +149,16 @@ fn git_install_then_update_follows_recorded_ref() {
         Some(env.rho_home.path()),
     )
     .unwrap();
-    let error =
-        run_update(&env, UpdateSelection::Named("local"), ProjectTrust::Trusted).unwrap_err();
+    let error = run_update(
+        &env,
+        UpdateSelection::Named(NamedPlugin::any_scope("local")),
+        ProjectTrust::Trusted,
+    )
+    .unwrap_err();
     assert!(error.to_string().contains("not git"), "{error}");
 
     set_enabled(
-        "demo",
+        NamedPlugin::any_scope("demo"),
         /* enabled */ false,
         env.project.path(),
         Some(env.home.path()),
@@ -186,7 +190,12 @@ fn git_install_then_update_follows_recorded_ref() {
 
     edit_manifest(repo.path(), "1.2.3", "2.0.0");
     let second = commit_all(repo.path(), "bump");
-    let report = run_update(&env, UpdateSelection::Named("demo"), ProjectTrust::Trusted).unwrap();
+    let report = run_update(
+        &env,
+        UpdateSelection::Named(NamedPlugin::any_scope("demo")),
+        ProjectTrust::Trusted,
+    )
+    .unwrap();
     assert_eq!(
         outcomes(report),
         [(
@@ -204,7 +213,12 @@ fn git_install_then_update_follows_recorded_ref() {
 
     edit_manifest(repo.path(), r#""name":"demo""#, r#""name":"renamed""#);
     commit_all(repo.path(), "rename");
-    let report = run_update(&env, UpdateSelection::Named("demo"), ProjectTrust::Trusted).unwrap();
+    let report = run_update(
+        &env,
+        UpdateSelection::Named(NamedPlugin::any_scope("demo")),
+        ProjectTrust::Trusted,
+    )
+    .unwrap();
     assert_eq!(outcomes(report), [(demo, None)]);
     assert!(std::fs::read_to_string(&manifest)
         .unwrap()
@@ -269,11 +283,16 @@ fn update_all_isolates_failures_and_skips_untrusted_project_sources() {
 
     assert!(run_update(
         &env,
-        UpdateSelection::Named("proj"),
+        UpdateSelection::Named(NamedPlugin::any_scope("proj")),
         ProjectTrust::Untrusted
     )
     .is_err());
-    let trusted = run_update(&env, UpdateSelection::Named("proj"), ProjectTrust::Trusted).unwrap();
+    let trusted = run_update(
+        &env,
+        UpdateSelection::Named(NamedPlugin::any_scope("proj")),
+        ProjectTrust::Trusted,
+    )
+    .unwrap();
     assert!(trusted.results[0].1.is_ok());
 }
 

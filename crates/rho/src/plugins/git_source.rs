@@ -47,10 +47,8 @@ impl InstallSource {
         };
         // Explicit remotes never consult the filesystem, so a planted
         // `https:/...` directory cannot stand in for a URL.
-        if let Some(remote) = remote_spelling(arg) {
-            return github_source(&remote)
-                .unwrap_or_else(|| GitSource::new(remote, None, None))
-                .map(Self::Git);
+        if let Some(source) = GitSource::parse_remote(arg) {
+            return source.map(Self::Git);
         }
         if cwd.join(path).exists() {
             return local();
@@ -119,6 +117,27 @@ impl GitSource {
             git_ref,
             subdir,
         })
+    }
+
+    /// Parse `url` as `rho plugins install` reads a git source, without
+    /// ever reading it as a local path: an explicit remote, or a GitHub
+    /// link with its scheme left off.
+    pub(crate) fn parse(url: &str) -> anyhow::Result<Self> {
+        Self::parse_remote(url)
+            .or_else(|| github_source(url))
+            .unwrap_or_else(|| {
+                anyhow::bail!(
+                    "`{url}` is not a git URL: expected one of {}, or a github.com link",
+                    REMOTE_PREFIXES.join(", ")
+                )
+            })
+    }
+
+    /// `arg` as a source when it is spelled as a remote (a URL scheme in
+    /// any case, or `git@`); `None` otherwise.
+    fn parse_remote(arg: &str) -> Option<anyhow::Result<Self>> {
+        let remote = remote_spelling(arg)?;
+        Some(github_source(&remote).unwrap_or_else(|| Self::new(remote, None, None)))
     }
 
     pub(crate) fn url(&self) -> &str {

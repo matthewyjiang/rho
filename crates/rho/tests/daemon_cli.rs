@@ -92,6 +92,8 @@ mod mcp;
 mod config;
 #[path = "support/daemon_configured.rs"]
 mod configured;
+#[path = "support/daemon_plugins.rs"]
+mod plugins;
 // Unix: its sessions run shell commands.
 #[cfg(unix)]
 #[path = "support/daemon_started.rs"]

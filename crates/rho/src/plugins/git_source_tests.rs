@@ -159,3 +159,37 @@ fn local_paths_win_only_without_a_scheme() {
         }
     }
 }
+
+// Covers: a git source the daemon parses from `rho/plugins/install`'s
+// `url` reads as the CLI reads it, but a path never stands in for a URL,
+// so a client's URL cannot name a directory on the daemon's machine.
+// Owner: plugin install source parsing.
+#[test]
+fn git_urls_parse_without_reading_paths() {
+    let repo = "https://github.com/owner/repo";
+    for (url, expected) in [
+        ("github.com/owner/repo", git(repo, None, None)),
+        (
+            "HTTPS://github.com/owner/repo/tree/main/plugins/demo",
+            git(repo, Some("main"), Some("plugins/demo")),
+        ),
+        (
+            "file:///srv/plugins.git",
+            git("file:///srv/plugins.git", None, None),
+        ),
+    ] {
+        assert_eq!(
+            GitSource::parse(url).map(InstallSource::Git).unwrap(),
+            expected,
+            "{url}"
+        );
+    }
+    for url in [
+        "./plugins/demo",
+        "/abs/plugin",
+        "ftp://example.com/owner/repo.git",
+        "https://ghp_secret@github.com/owner/repo",
+    ] {
+        assert!(GitSource::parse(url).is_err(), "{url}");
+    }
+}

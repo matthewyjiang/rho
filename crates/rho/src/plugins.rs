@@ -128,13 +128,26 @@ pub(crate) struct PluginReportEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) description: Option<String>,
     pub(crate) root: String,
+    /// The package directory `root` displays.
+    #[serde(skip)]
+    pub(crate) path: PathBuf,
     pub(crate) scope: PluginScope,
     pub(crate) origin: PluginOrigin,
+    /// Where a linked package points.
+    #[serde(skip)]
+    pub(crate) link_target: Option<PathBuf>,
     pub(crate) enabled: bool,
+    /// The `plugins.toml` holding `scope`'s enable state.
+    #[serde(skip)]
+    pub(crate) state_path: PathBuf,
     /// Recorded repository source for git-installed packages.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) git: Option<state::GitRecord>,
     pub(crate) status: PluginStatus,
+    /// Why a [`PluginStatus::Rejected`] package was rejected, which is also
+    /// its only entry in `problems`.
+    #[serde(skip)]
+    pub(crate) rejection: Option<String>,
     /// Manifest warnings plus component-level problems; empty when clean.
     pub(crate) problems: Vec<String>,
     pub(crate) skill_count: usize,
@@ -374,11 +387,15 @@ fn load_candidate(
             version: None,
             description: None,
             root: crate::paths::display(candidate),
+            path: candidate.to_path_buf(),
             scope,
             origin: state.origin(scope, &directory_name, candidate),
+            link_target: state.link_target(scope, &directory_name, candidate),
             enabled: true,
+            state_path: state.path(scope).to_path_buf(),
             git: state.git_record(scope, &directory_name).cloned(),
             status: PluginStatus::Rejected,
+            rejection: Some(reason.clone()),
             problems: vec![reason],
             skill_count: 0,
             mcp_server_count: 0,
@@ -413,6 +430,8 @@ fn load_candidate(
 
     let enabled = state.is_enabled(scope, &manifest.name);
     let origin = state.origin(scope, &manifest.name, candidate);
+    let link_target = state.link_target(scope, &manifest.name, candidate);
+    let state_path = state.path(scope).to_path_buf();
     let git = state.git_record(scope, &manifest.name).cloned();
     let status = PluginStatus::for_package(enabled, scope, trust);
 
@@ -427,11 +446,15 @@ fn load_candidate(
             version: manifest.version.clone(),
             description: manifest.description.clone(),
             root: crate::paths::display(candidate),
+            path: candidate.to_path_buf(),
             scope,
             origin,
+            link_target,
             enabled,
+            state_path,
             git: git.clone(),
             status: PluginStatus::Shadowed,
+            rejection: None,
             problems: vec![format!(
                 "shadowed by a higher-precedence plugin root ({} root skipped)",
                 scope.as_str()
@@ -508,11 +531,15 @@ fn load_candidate(
         version: manifest.version,
         description: manifest.description,
         root: crate::paths::display(candidate),
+        path: candidate.to_path_buf(),
         scope,
         origin,
+        link_target,
         enabled,
+        state_path,
         git,
         status,
+        rejection: None,
         problems,
         skill_count,
         mcp_server_count,

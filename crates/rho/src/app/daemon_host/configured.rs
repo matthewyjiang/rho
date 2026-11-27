@@ -49,7 +49,7 @@ pub(super) fn hooks(params: HooksListParams) -> Result<HooksListResponse, RpcErr
 
 /// The workspace a session would open in, parsed as `rho/session/new`
 /// parses its `cwd`, and the project trust `environment` grants a session.
-fn parse(
+pub(super) fn parse(
     workspace: Option<&Path>,
     environment: &ClientEnvironment,
 ) -> Result<(Option<PathBuf>, ProjectTrusts), RpcError> {

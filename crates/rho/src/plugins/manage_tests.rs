@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use tempfile::TempDir;
 
-use super::{install, remove, set_enabled, InstallMode};
+use super::{install, remove, set_enabled, InstallMode, NamedPlugin};
 use crate::plugins::{
     discover_with_trust, state::PluginScope, PluginOrigin, PluginStatus, ProjectTrust,
 };
@@ -261,7 +261,7 @@ fn dotfiles_nested_project_plugin_disable_applies() {
     };
 
     set_enabled(
-        "nested",
+        NamedPlugin::any_scope("nested"),
         /* enabled */ false,
         &cwd,
         Some(home.path()),
@@ -307,7 +307,7 @@ fn home_project_state_from_older_builds() {
 
         let initial = status();
         set_enabled(
-            "demo",
+            NamedPlugin::any_scope("demo"),
             /* enabled */ true,
             home.path(),
             Some(home.path()),
@@ -377,7 +377,7 @@ fn disable_keeps_package_and_drops_session_components() {
     .unwrap();
 
     set_enabled(
-        "demo",
+        NamedPlugin::any_scope("demo"),
         /* enabled */ false,
         env.project.path(),
         Some(env.home.path()),
@@ -429,7 +429,7 @@ fn remove_deletes_package_but_keeps_data_directory() {
     std::fs::write(data.join("state.json"), "{}").unwrap();
 
     remove(
-        "demo",
+        NamedPlugin::any_scope("demo"),
         env.project.path(),
         Some(env.home.path()),
         Some(env.rho_home.path()),

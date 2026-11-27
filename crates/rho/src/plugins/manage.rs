@@ -19,8 +19,11 @@ use super::{
     },
 };
 
+#[path = "manage_error.rs"]
+mod error;
 #[path = "manage_git.rs"]
 mod git;
+pub(crate) use error::ManageError;
 pub(crate) use git::{install_git, update, UpdateOutcome, UpdateReport, UpdateSelection};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -46,27 +49,49 @@ pub(crate) struct SourcePackage {
     pub(crate) manifest: PluginManifest,
 }
 
+/// The installed plugin a command names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct NamedPlugin<'a> {
+    pub(crate) name: &'a str,
+    /// The scope whose roots to search; `None` searches every root, nearest
+    /// project root first, as the CLI does.
+    pub(crate) scope: Option<PluginScope>,
+}
+
+impl<'a> NamedPlugin<'a> {
+    /// `name` in whichever root holds it first.
+    pub(crate) fn any_scope(name: &'a str) -> Self {
+        Self { name, scope: None }
+    }
+
+    /// `name` in `scope`'s roots only.
+    pub(crate) fn in_scope(name: &'a str, scope: PluginScope) -> Self {
+        Self {
+            name,
+            scope: Some(scope),
+        }
+    }
+}
+
 struct ResolvedPackage {
     package: ManagedPackage,
     root: PathBuf,
 }
 
 /// Validate a local package directory without executing any component code.
-pub(crate) fn inspect_source(path: &Path) -> anyhow::Result<SourcePackage> {
-    let canonical = contain::canonical_root(path)
-        .map_err(|error| anyhow::anyhow!("invalid plugin package: {error}"))?;
+pub(crate) fn inspect_source(path: &Path) -> Result<SourcePackage, ManageError> {
+    let invalid = |error| ManageError::InvalidPackage(format!("invalid plugin package: {error}"));
+    let canonical = contain::canonical_root(path).map_err(invalid)?;
     let manifest_path = canonical.join("plugin.json");
     if !manifest_path.is_file() {
-        anyhow::bail!(
-            "invalid plugin package: {} has no plugin.json",
+        return Err(invalid(format!(
+            "{} has no plugin.json",
             crate::paths::display(&canonical)
-        );
+        )));
     }
-    let contained = contain::contained_path(&canonical, &manifest_path)
-        .map_err(|error| anyhow::anyhow!("invalid plugin package: {error}"))?;
+    let contained = contain::contained_path(&canonical, &manifest_path).map_err(invalid)?;
     let text = fs::read_to_string(&contained)?;
-    let manifest = manifest::parse_manifest(&text)
-        .map_err(|error| anyhow::anyhow!("invalid plugin package: {error}"))?;
+    let manifest = manifest::parse_manifest(&text).map_err(invalid)?;
     Ok(SourcePackage {
         path: canonical,
         manifest,
@@ -81,7 +106,7 @@ pub(crate) fn install(
     cwd: &Path,
     home: &Path,
     rho_home: Option<&Path>,
-) -> anyhow::Result<ManagedPackage> {
+) -> Result<ManagedPackage, ManageError> {
     let root = managed_root(scope, cwd, home)?;
     let mut state = PluginStateStore::load(cwd, Some(home), rho_home)?;
     // Relative CLI paths resolve against the invocation directory.
@@ -104,7 +129,7 @@ fn install_validated(
     root: &Path,
     force: bool,
     state: &mut PluginStateStore,
-) -> anyhow::Result<ManagedPackage> {
+) -> Result<ManagedPackage, ManageError> {
     let (mode, link_target) = match record {
         InstallRecord::Copy | InstallRecord::Git(_) => (InstallMode::Copy, None),
         InstallRecord::Link { target } => (InstallMode::Link, Some(PathBuf::from(target))),
@@ -130,9 +155,9 @@ fn place(
     root: &Path,
     mode: InstallMode,
     force: bool,
-) -> anyhow::Result<PathBuf> {
+) -> Result<PathBuf, ManageError> {
     let destination = root.join(&source.manifest.name);
-    ensure_destination_replaceable(&destination, root, force)?;
+    ensure_destination_replaceable(&source.manifest.name, &destination, root, force)?;
     fs::create_dir_all(root)?;
     // Re-check after creating the root so canonicalize can run.
     ensure_path_is_managed_child(&destination, root)?;
@@ -144,24 +169,24 @@ fn place(
     };
     if let Err(error) = staged {
         let _ = remove_path(&staging);
-        return Err(error);
+        return Err(error.into());
     }
 
     if let Err(error) = swap_staged_into_destination(&staging, &destination) {
         let _ = remove_path(&staging);
-        return Err(error);
+        return Err(error.into());
     }
     Ok(destination)
 }
 
 pub(crate) fn set_enabled(
-    name: &str,
+    target: NamedPlugin<'_>,
     enabled: bool,
     cwd: &Path,
     home: Option<&Path>,
     rho_home: Option<&Path>,
-) -> anyhow::Result<ManagedPackage> {
-    let resolved = resolve_named_package(name, cwd, home, rho_home)?;
+) -> Result<ManagedPackage, ManageError> {
+    let resolved = resolve_named_package(target, cwd, home, rho_home)?;
     let mut state = PluginStateStore::load(cwd, home, rho_home)?;
     // State keys follow the manifest name used by discovery.
     state.set_enabled(resolved.package.scope, &resolved.package.name, enabled)?;
@@ -169,12 +194,12 @@ pub(crate) fn set_enabled(
 }
 
 pub(crate) fn remove(
-    name: &str,
+    target: NamedPlugin<'_>,
     cwd: &Path,
     home: Option<&Path>,
     rho_home: Option<&Path>,
-) -> anyhow::Result<ManagedPackage> {
-    let resolved = resolve_named_package(name, cwd, home, rho_home)?;
+) -> Result<ManagedPackage, ManageError> {
+    let resolved = resolve_named_package(target, cwd, home, rho_home)?;
     ensure_path_is_managed_child(&resolved.package.path, &resolved.root)?;
 
     let metadata = fs::symlink_metadata(&resolved.package.path)?;
@@ -183,10 +208,10 @@ pub(crate) fn remove(
     } else if metadata.is_dir() {
         fs::remove_dir_all(&resolved.package.path)?;
     } else {
-        anyhow::bail!(
+        return Err(ManageError::Refused(format!(
             "refusing to remove {}: not a plugin directory",
             crate::paths::display(&resolved.package.path)
-        );
+        )));
     }
 
     let mut state = PluginStateStore::load(cwd, home, rho_home)?;
@@ -195,23 +220,28 @@ pub(crate) fn remove(
 }
 
 fn resolve_named_package(
-    name: &str,
+    target: NamedPlugin<'_>,
     cwd: &Path,
     home: Option<&Path>,
     rho_home: Option<&Path>,
-) -> anyhow::Result<ResolvedPackage> {
-    manifest::validate_plugin_name(name).map_err(|error| anyhow::anyhow!(error))?;
+) -> Result<ResolvedPackage, ManageError> {
+    let name = target.name;
+    manifest::validate_plugin_name(name).map_err(ManageError::Refused)?;
+    let roots: Vec<(PluginScope, PathBuf)> = discovery_roots(cwd, home)
+        .into_iter()
+        .filter(|(scope, _)| target.scope.is_none_or(|wanted| wanted == *scope))
+        .collect();
     let mut matches = Vec::new();
-    for (scope, root) in discovery_roots(cwd, home) {
+    for (scope, root) in &roots {
         let candidate = root.join(name);
         if package_exists(&candidate) {
-            matches.push((scope, candidate, root));
+            matches.push((*scope, candidate, root.clone()));
         }
     }
     // Also match by manifest name when the directory name differs.
     if matches.is_empty() {
-        for (scope, root) in discovery_roots(cwd, home) {
-            let Ok(entries) = fs::read_dir(&root) else {
+        for (scope, root) in &roots {
+            let Ok(entries) = fs::read_dir(root) else {
                 continue;
             };
             for entry in entries.filter_map(Result::ok) {
@@ -221,7 +251,7 @@ fn resolve_named_package(
                 }
                 if let Ok(source) = inspect_source(&path) {
                     if source.manifest.name == name {
-                        matches.push((scope, path, root.clone()));
+                        matches.push((*scope, path, root.clone()));
                     }
                 }
             }
@@ -231,7 +261,13 @@ fn resolve_named_package(
     let state = PluginStateStore::load(cwd, home, rho_home)
         .unwrap_or_else(|_| PluginStateStore::empty(cwd, rho_home));
     let Some((scope, path, root)) = matches.first() else {
-        anyhow::bail!("no plugin named `{name}` in the managed plugin roots");
+        let roots = match target.scope {
+            None => "managed",
+            Some(scope) => scope.as_str(),
+        };
+        return Err(ManageError::NotFound(format!(
+            "no plugin named `{name}` in the {roots} plugin roots"
+        )));
     };
     if matches.len() > 1 {
         let ignored = matches[1..]
@@ -256,23 +292,16 @@ fn package_at(
     scope: PluginScope,
     path: &Path,
     state: &PluginStateStore,
-) -> anyhow::Result<ManagedPackage> {
+) -> Result<ManagedPackage, ManageError> {
     let source = inspect_source(path)?;
-    let origin = state.origin(scope, &source.manifest.name, path);
-    let link_target = match state.install_record(scope, &source.manifest.name) {
-        Some(InstallRecord::Link { target }) => Some(PathBuf::from(target)),
-        Some(InstallRecord::Copy | InstallRecord::Git(_)) => None,
-        None if origin == PluginOrigin::Link => fs::read_link(path).ok(),
-        None => None,
-    };
     Ok(ManagedPackage {
+        origin: state.origin(scope, &source.manifest.name, path),
+        link_target: state.link_target(scope, &source.manifest.name, path),
         name: source.manifest.name,
         version: source.manifest.version,
         description: source.manifest.description,
         scope,
-        origin,
         path: path.to_path_buf(),
-        link_target,
     })
 }
 
@@ -280,75 +309,80 @@ fn package_at(
 ///
 /// Refuses project scope when the project shares the user plugins root, which
 /// discovery reports as user scope only.
-fn managed_root(scope: PluginScope, cwd: &Path, home: &Path) -> anyhow::Result<PathBuf> {
+fn managed_root(scope: PluginScope, cwd: &Path, home: &Path) -> Result<PathBuf, ManageError> {
     match scope {
         PluginScope::User => Ok(user_plugins_root(home)),
         PluginScope::Project => project_plugins_root(cwd, home).ok_or_else(|| {
-            anyhow::anyhow!(
+            ManageError::Refused(format!(
                 "project scope is unavailable here: this project's plugins root is the user plugins root {}; use --scope user",
                 crate::paths::display(&user_plugins_root(home))
-            )
+            ))
         }),
     }
 }
 
 /// Validate that `destination` may be installed, without destroying it yet.
 fn ensure_destination_replaceable(
+    name: &str,
     destination: &Path,
     root: &Path,
     force: bool,
-) -> anyhow::Result<()> {
+) -> Result<(), ManageError> {
     ensure_path_is_managed_child(destination, root)?;
     match fs::symlink_metadata(destination) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(error.into()),
         Ok(metadata) => {
             if !force {
-                anyhow::bail!(
-                    "plugin already exists at {} (pass --force to replace)",
-                    crate::paths::display(destination)
-                );
+                return Err(ManageError::Exists {
+                    name: name.to_owned(),
+                    path: destination.to_path_buf(),
+                });
             }
             if metadata.file_type().is_symlink() || metadata.is_file() {
                 Ok(())
             } else if metadata.is_dir() {
                 // Only replace a directory that looks like a plugin package.
                 if !destination.join("plugin.json").exists() {
-                    anyhow::bail!(
+                    return Err(ManageError::Refused(format!(
                         "refusing to replace {}: directory has no plugin.json",
                         crate::paths::display(destination)
-                    );
+                    )));
                 }
                 Ok(())
             } else {
-                anyhow::bail!(
+                Err(ManageError::Refused(format!(
                     "refusing to replace {}: unsupported file type",
                     crate::paths::display(destination)
-                );
+                )))
             }
         }
     }
 }
 
 /// Non-mutating containment check. Does not create directories.
-fn ensure_path_is_managed_child(path: &Path, root: &Path) -> anyhow::Result<()> {
-    let file_name = path
-        .file_name()
-        .ok_or_else(|| anyhow::anyhow!("plugin destination is missing a final path component"))?;
+fn ensure_path_is_managed_child(path: &Path, root: &Path) -> Result<(), ManageError> {
+    let refuse = |message: String| Err(ManageError::Refused(message));
+    let Some(file_name) = path.file_name() else {
+        return refuse("plugin destination is missing a final path component".to_owned());
+    };
     if file_name == "data" {
-        anyhow::bail!("refusing to use the reserved plugin data directory");
+        return refuse("refusing to use the reserved plugin data directory".to_owned());
     }
-    let parent = path
-        .parent()
-        .ok_or_else(|| anyhow::anyhow!("plugin destination has no parent"))?;
+    let Some(parent) = path.parent() else {
+        return refuse("plugin destination has no parent".to_owned());
+    };
+    let not_managed_root = || {
+        refuse(format!(
+            "plugin destination parent {} is not the managed root",
+            crate::paths::display(parent)
+        ))
+    };
 
     if !root.exists() {
         // Install into a not-yet-created root: accept exact parent equality.
         if parent != root {
-            anyhow::bail!(
-                "plugin destination parent {} is not the managed root",
-                crate::paths::display(parent)
-            );
+            return not_managed_root();
         }
         return Ok(());
     }
@@ -365,17 +399,14 @@ fn ensure_path_is_managed_child(path: &Path, root: &Path) -> anyhow::Result<()> 
     } else if parent == root {
         canonical_root.clone()
     } else {
-        anyhow::bail!(
-            "plugin destination parent {} is not the managed root",
-            crate::paths::display(parent)
-        );
+        return not_managed_root();
     };
     if canonical_parent != canonical_root {
-        anyhow::bail!(
+        return refuse(format!(
             "refusing path outside managed plugins root {}: {}",
             crate::paths::display(&canonical_root),
             crate::paths::display(path)
-        );
+        ));
     }
     Ok(())
 }
