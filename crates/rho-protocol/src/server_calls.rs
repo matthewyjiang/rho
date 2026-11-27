@@ -10,7 +10,8 @@ use crate::{
         AuthChooseStore, AuthChooseStoreParams, AuthKey, AuthKeyParams, AuthList, AuthListParams,
         AuthLoginCancel, AuthLoginCancelParams, AuthLogout, AuthLogoutParams, ConfigRegister,
         ConfigRegisterParams, ConfigSchemaMethod, ConfigSchemaParams, ConfigSet, ConfigSetParams,
-        HooksList, HooksListParams, JobList, JobListParams, McpList, McpListParams, ModelRefresh,
+        HooksFileGet, HooksFileGetParams, HooksFileSet, HooksFileSetParams, HooksList,
+        HooksListParams, JobList, JobListParams, McpList, McpListParams, ModelRefresh,
         ModelRefreshParams, Restart, RestartParams, RestartResponse, SessionAnswer,
         SessionAnswerParams, SessionAnswerQuestion, SessionAnswerQuestionParams,
         SessionBackgroundList, SessionBackgroundListParams, SessionBackgroundStop,
@@ -30,14 +31,15 @@ use crate::{
         SessionSurfaceActionParams, SessionUnsteer, SessionUnsteerParams, Status, Stop,
         WorktreePrune, WorktreePruneParams, AUTH_CHOOSE_STORE, AUTH_KEY, AUTH_LIST,
         AUTH_LOGIN_CANCEL, AUTH_LOGOUT, CONFIG_REGISTER, CONFIG_SCHEMA, CONFIG_SET, DAEMON_RESTART,
-        DAEMON_STATUS, DAEMON_STOP, HOOKS_LIST, JOB_LIST, MCP_LIST, MODEL_REFRESH, SESSION_ANSWER,
-        SESSION_ANSWER_QUESTION, SESSION_BACKGROUND_LIST, SESSION_BACKGROUND_STOP, SESSION_CANCEL,
-        SESSION_CONFIGURE, SESSION_DELETE, SESSION_FORK, SESSION_HOLD, SESSION_HOOKS_RELOAD,
-        SESSION_INSPECT, SESSION_LIST, SESSION_LIST_DETAILED, SESSION_MARK, SESSION_MCP,
-        SESSION_MCP_CATALOG, SESSION_MCP_COMPLETE, SESSION_MCP_RESOURCE, SESSION_NEW,
-        SESSION_PROCESSES, SESSION_PROMPT, SESSION_PULL_REQUEST_LINK, SESSION_PULL_REQUEST_LIST,
-        SESSION_PULL_REQUEST_SHOW, SESSION_PULL_REQUEST_UNLINK, SESSION_RENAME, SESSION_REPORT,
-        SESSION_SEARCH, SESSION_STEER, SESSION_SURFACE_ACTION, SESSION_UNSTEER, WORKTREE_PRUNE,
+        DAEMON_STATUS, DAEMON_STOP, HOOKS_FILE_GET, HOOKS_FILE_SET, HOOKS_LIST, JOB_LIST, MCP_LIST,
+        MODEL_REFRESH, SESSION_ANSWER, SESSION_ANSWER_QUESTION, SESSION_BACKGROUND_LIST,
+        SESSION_BACKGROUND_STOP, SESSION_CANCEL, SESSION_CONFIGURE, SESSION_DELETE, SESSION_FORK,
+        SESSION_HOLD, SESSION_HOOKS_RELOAD, SESSION_INSPECT, SESSION_LIST, SESSION_LIST_DETAILED,
+        SESSION_MARK, SESSION_MCP, SESSION_MCP_CATALOG, SESSION_MCP_COMPLETE, SESSION_MCP_RESOURCE,
+        SESSION_NEW, SESSION_PROCESSES, SESSION_PROMPT, SESSION_PULL_REQUEST_LINK,
+        SESSION_PULL_REQUEST_LIST, SESSION_PULL_REQUEST_SHOW, SESSION_PULL_REQUEST_UNLINK,
+        SESSION_RENAME, SESSION_REPORT, SESSION_SEARCH, SESSION_STEER, SESSION_SURFACE_ACTION,
+        SESSION_UNSTEER, WORKTREE_PRUNE,
     },
     methods::{
         PluginsInstall, PluginsInstallParams, PluginsList, PluginsListParams, PluginsRemove,
@@ -93,6 +95,8 @@ pub(crate) enum ServiceCall {
     ListAuths(AuthListParams),
     ListMcpServers(McpListParams),
     ListHooks(HooksListParams),
+    ReadHooksFile(HooksFileGetParams),
+    WriteHooksFile(HooksFileSetParams),
     ListPlugins(PluginsListParams),
     InstallPlugin(PluginsInstallParams),
     UpdatePlugins(PluginsUpdateParams),
@@ -182,6 +186,8 @@ impl ServiceCall {
             AUTH_LIST => decode_params::<AuthList>(params).map(Self::ListAuths),
             MCP_LIST => decode_params::<McpList>(params).map(Self::ListMcpServers),
             HOOKS_LIST => decode_params::<HooksList>(params).map(Self::ListHooks),
+            HOOKS_FILE_GET => decode_params::<HooksFileGet>(params).map(Self::ReadHooksFile),
+            HOOKS_FILE_SET => decode_params::<HooksFileSet>(params).map(Self::WriteHooksFile),
             PLUGINS_LIST => decode_params::<PluginsList>(params).map(Self::ListPlugins),
             PLUGINS_INSTALL => decode_params::<PluginsInstall>(params).map(Self::InstallPlugin),
             PLUGINS_UPDATE => decode_params::<PluginsUpdate>(params).map(Self::UpdatePlugins),
@@ -250,6 +256,8 @@ impl ServiceCall {
             | Self::ListAuths(_)
             | Self::ListMcpServers(_)
             | Self::ListHooks(_)
+            | Self::ReadHooksFile(_)
+            | Self::WriteHooksFile(_)
             | Self::ListPlugins(_)
             | Self::InstallPlugin(_)
             | Self::UpdatePlugins(_)
@@ -387,6 +395,12 @@ impl ServiceCall {
             }
             Self::ListHooks(params) => {
                 encode_result::<HooksList>(&service.list_hooks(params).await?)
+            }
+            Self::ReadHooksFile(params) => {
+                encode_result::<HooksFileGet>(&service.read_hooks_file(params).await?)
+            }
+            Self::WriteHooksFile(params) => {
+                encode_result::<HooksFileSet>(&service.write_hooks_file(params).await?)
             }
             Self::ListPlugins(params) => {
                 encode_result::<PluginsList>(&service.list_plugins(params).await?)

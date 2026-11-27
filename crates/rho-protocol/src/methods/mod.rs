@@ -60,6 +60,8 @@
 //! | [`MODEL_REFRESH`] | [`ModelRefreshParams`] | [`ModelRefreshResponse`] |
 //! | [`MCP_LIST`] | [`McpListParams`] | [`McpListResponse`] |
 //! | [`HOOKS_LIST`] | [`HooksListParams`] | [`HooksListResponse`] |
+//! | [`HOOKS_FILE_GET`] | [`HooksFileGetParams`] | [`HooksFileGetResponse`] |
+//! | [`HOOKS_FILE_SET`] | [`HooksFileSetParams`] | [`HooksFileSetResponse`] |
 //! | [`PLUGINS_LIST`] | [`PluginsListParams`] | [`PluginsListResponse`] |
 //! | [`PLUGINS_INSTALL`] | [`PluginsInstallParams`] | [`PluginsInstallResponse`] |
 //! | [`PLUGINS_UPDATE`] | [`PluginsUpdateParams`] | [`PluginsUpdateResponse`] |
@@ -94,6 +96,7 @@ mod config;
 mod daemon;
 mod event;
 mod grant;
+mod hooks_file;
 mod hooks_list;
 mod input;
 mod inspect;
@@ -153,6 +156,10 @@ pub use event::{
     ToolCallUpdate, ToolContent, ToolKind, ToolStatus, TurnId,
 };
 pub use grant::{GrantAccess, GrantWorkspaces, SessionGrant};
+pub use hooks_file::{
+    HooksFileGetParams, HooksFileGetResponse, HooksFileSetParams, HooksFileSetResponse,
+    HOOKS_FILE_GET, HOOKS_FILE_SET,
+};
 pub use hooks_list::{
     HooksFile, HooksFileScope, HooksFileStatus, HooksListParams, HooksListResponse, HOOKS_LIST,
 };
@@ -392,6 +399,8 @@ protocol! {
         ModelRefresh = MODEL_REFRESH: ModelRefreshParams => ModelRefreshResponse,
         McpList = MCP_LIST: McpListParams => McpListResponse,
         HooksList = HOOKS_LIST: HooksListParams => HooksListResponse,
+        HooksFileGet = HOOKS_FILE_GET: HooksFileGetParams => HooksFileGetResponse,
+        HooksFileSet = HOOKS_FILE_SET: HooksFileSetParams => HooksFileSetResponse,
         PluginsList = PLUGINS_LIST: PluginsListParams => PluginsListResponse,
         PluginsInstall = PLUGINS_INSTALL: PluginsInstallParams => PluginsInstallResponse,
         PluginsUpdate = PLUGINS_UPDATE: PluginsUpdateParams => PluginsUpdateResponse,

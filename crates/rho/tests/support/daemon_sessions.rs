@@ -2292,7 +2292,7 @@ async fn a_held_question_waits_for_the_users_answer() {
 
 /// `path` canonicalized, on Windows without the verbatim prefix, as the
 /// daemon shows the paths it resolved.
-fn plain_canonical(path: &Path) -> PathBuf {
+pub(super) fn plain_canonical(path: &Path) -> PathBuf {
     let path = path.canonicalize().unwrap();
     #[cfg(windows)]
     let path = PathBuf::from(
