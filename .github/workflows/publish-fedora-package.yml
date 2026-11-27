@@ -1,0 +1,220 @@
+name: publish-fedora-package
+
+# Build is safe as soon as the app tag exists. Public push to mjiang-extras is a
+# separate job gated by the publish input so release-please can start rpmbuild
+# beside binaries and only open the dnf channel after crates.io succeeds.
+# mjiang-extras signs the RPMs and repodata after the push; this repo never signs.
+on:
+  workflow_call:
+    inputs:
+      app-tag:
+        description: rho-coding-agent tag to package
+        required: true
+        type: string
+      publish:
+        description: Push the built package to mjiang-extras
+        required: false
+        type: boolean
+        default: false
+    outputs:
+      artifact-name:
+        description: Exact artifact name uploaded by the build job
+        value: ${{ jobs.build.outputs.artifact-name }}
+    secrets:
+      MJIANG_EXTRAS_PUSH_TOKEN:
+        description: Token with push access to matthewyjiang/mjiang-extras
+        required: false
+  workflow_dispatch:
+    inputs:
+      app-tag:
+        description: rho-coding-agent tag to package
+        required: true
+        type: string
+      publish:
+        description: Push the built package to mjiang-extras
+        required: false
+        type: boolean
+        default: true
+
+  # Build-only on PRs touching packaging (inputs are empty, so publish is
+  # false); packages the release the spec currently names.
+  pull_request:
+    paths:
+      - crates/rho/rho-coding-agent.spec
+      - .github/workflows/publish-fedora-package.yml
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # Oldest Fedora still supported once F43 reaches EOL on 2026-12-01
+    # (endoflife.date/fedora). An RPM linked against its glibc runs on 44 and
+    # 45. Bump when F44 reaches EOL (2027-06-02).
+    container: fedora:44
+    permissions:
+      actions: write
+      contents: read
+    outputs:
+      artifact-name: ${{ steps.artifact.outputs.name }}
+    steps:
+      - name: Install build tools
+        run: |
+          dnf -y install --setopt=install_weak_deps=False dnf5-plugins git rpm-build rpmdevtools
+
+      - name: Checkout spec
+        uses: actions/checkout@v7
+        with:
+          # Use the workflow revision, not the package tag: the spec downloads
+          # the tag's source itself, and tags cut before the spec existed can
+          # still be packaged.
+          persist-credentials: false
+          sparse-checkout: |
+            crates/rho/rho-coding-agent.spec
+          sparse-checkout-cone-mode: false
+
+      - name: Validate app tag
+        id: artifact
+        env:
+          APP_TAG: ${{ inputs.app-tag }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
+            APP_TAG="rho-coding-agent-v$(sed -n 's/^Version: *//p' crates/rho/rho-coding-agent.spec)"
+          fi
+          if [[ ! "$APP_TAG" =~ ^rho-coding-agent-v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
+            echo "app-tag must be rho-coding-agent-vMAJOR.MINOR.PATCH with optional prerelease, got: $APP_TAG" >&2
+            exit 1
+          fi
+          # Artifact names may contain dots and hyphens; keep the tag verbatim.
+          echo "name=fedora-package-${APP_TAG}" >> "$GITHUB_OUTPUT"
+          echo "tag=${APP_TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Build package
+        env:
+          APP_TAG: ${{ steps.artifact.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          spec=crates/rho/rho-coding-agent.spec
+          version="${APP_TAG#rho-coding-agent-v}"
+          # RPM versions cannot contain `-`, so a pre-release tag fails here,
+          # as it does for makepkg. rho has never cut one.
+          sed -i "s/^Version:.*/Version:        $version/" "$spec"
+
+          dnf -y builddep --setopt=install_weak_deps=False "$spec"
+          topdir="$GITHUB_WORKSPACE/rpmbuild"
+          mkdir -p "$topdir/SOURCES"
+          spectool --get-files --directory "$topdir/SOURCES" "$spec"
+          # _binary_payload pins Fedora's default (zstd level 19) so the size
+          # budget below stays tied to a known setting. Not yet measured for
+          # rho: makepkg's zstd level 3 left 2.19.0 at 26.8 MB and --ultra -20
+          # packed it to 20.1 MB, so level 19 should land near the latter.
+          #
+          # CI already ran the full test suite. --nocheck skips %check so
+          # packaging does not recompile the workspace under the test profile.
+          rpmbuild -bb --nocheck \
+            --define "_topdir $topdir" \
+            --define "_binary_payload w19.zstdio" \
+            "$spec"
+
+          mkdir -p dist
+          find "$topdir/RPMS" -type f -name '*.rpm' -exec cp -t dist {} +
+
+      # mjiang-extras is served by Cloudflare Pages, which rejects files over
+      # 25 MiB. An oversized package still pushes to git but the site deploy
+      # fails silently and keeps serving the previous release, so fail here.
+      - name: Check package size budget
+        run: |
+          set -euo pipefail
+          limit=$((25 * 1024 * 1024))
+          status=0
+          for pkg in dist/*.rpm; do
+            size=$(stat -c %s "$pkg")
+            echo "$pkg: $size bytes (Cloudflare Pages file limit: $limit)"
+            if ((size > limit)); then
+              echo "::error::$pkg is $size bytes, over the Cloudflare Pages 25 MiB ($limit byte) file limit"
+              status=1
+            fi
+          done
+          exit "$status"
+
+      # Proves the automatic Requires resolve and the binary runs on Fedora.
+      - name: Install built RPM
+        if: github.event_name == 'pull_request'
+        run: |
+          set -euo pipefail
+          dnf -y install dist/*.rpm
+          rho --version
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.artifact.outputs.name }}
+          path: dist/*.rpm
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    if: ${{ inputs.publish }}
+    runs-on: ubuntu-latest
+    container: fedora:44
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Require extras push token
+        env:
+          TOKEN: ${{ secrets.MJIANG_EXTRAS_PUSH_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${TOKEN}" ]]; then
+            echo "MJIANG_EXTRAS_PUSH_TOKEN is required when publish=true" >&2
+            exit 1
+          fi
+
+      - name: Install publish tools
+        run: |
+          dnf -y install --setopt=install_weak_deps=False createrepo_c git rpm
+
+      - name: Checkout publish helper
+        uses: actions/checkout@v7
+        with:
+          # Use the workflow revision, not the package tag, so recovery keeps the
+          # latest publish helper even when packaging an older tag.
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/publish_to_extras.sh
+          sparse-checkout-cone-mode: false
+
+      - name: Download package artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ needs.build.outputs.artifact-name }}
+          path: packages
+
+      - name: Checkout mjiang-extras
+        uses: actions/checkout@v7
+        with:
+          repository: matthewyjiang/mjiang-extras
+          token: ${{ secrets.MJIANG_EXTRAS_PUSH_TOKEN }}
+          path: mjiang-extras
+
+      - name: Publish package files
+        env:
+          SOURCE_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # The container runs as root; git refuses the checkout without this.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE/mjiang-extras"
+          mapfile -t packages < <(find packages -maxdepth 1 -type f -name '*.rpm' | sort)
+          if [[ ${#packages[@]} -eq 0 ]]; then
+            echo "No RPMs found in the artifact" >&2
+            exit 1
+          fi
+          bash scripts/publish_to_extras.sh \
+            --kind fedora \
+            --extras-dir mjiang-extras \
+            --source-repo "$SOURCE_REPO" \
+            "${packages[@]}"

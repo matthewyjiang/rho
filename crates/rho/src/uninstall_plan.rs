@@ -45,7 +45,7 @@ pub(super) fn installation_with_evidence(
     if let Some(managed) = evidence.managed {
         return Installation::Managed(managed);
     }
-    if evidence.cargo_metadata || evidence.pacman_owned {
+    if evidence.cargo_metadata || evidence.system_package_owned {
         return Installation::Unknown;
     }
     match paths
@@ -59,6 +59,7 @@ pub(super) fn installation_with_evidence(
             })
         }
         Some(InstallHint::Pacman) => return Installation::Managed(ManagedInstallation::Pacman),
+        Some(InstallHint::Dnf) => return Installation::Managed(ManagedInstallation::Dnf),
         Some(InstallHint::Scoop(scope)) => {
             return Installation::Managed(ManagedInstallation::Scoop(scope))
         }

@@ -189,11 +189,12 @@ than transactionally atomic across registries:
 3. `scripts/publish_workspace_crates.sh` publishes crates in dependency order
    and waits for crates.io indexing before continuing
 4. only after crates succeed are draft GitHub crate releases published
-5. binary assets and the Arch package **build** start after the app draft tag
-   exists, beside crate publication
-6. Arch package **publication** to mjiang-extras starts only after crates succeed
+5. binary assets and the Arch and Fedora package **builds** start after the
+   app draft tag exists, beside crate publication
+6. Arch and Fedora package **publication** to mjiang-extras starts only after
+   crates succeed
 7. the app GitHub release is undrafted only after crates succeed and every
-   binary asset uploads; Arch publication stays asynchronous and does not
+   binary asset uploads; package publication stays asynchronous and does not
    block that flip
 
 `release-please.yml` and the manual `publish-crates.yml` recovery workflow

@@ -45,6 +45,13 @@ scoop bucket add rho https://github.com/matthewyjiang/rho
 scoop install rho
 ```
 
+Or on Fedora with dnf:
+
+```bash
+sudo dnf config-manager addrepo --from-repofile=https://repo.matthewyjiang.com/mjiang-extras.repo
+sudo dnf install rho-coding-agent
+```
+
 Or install from crates.io with Cargo:
 
 ```bash

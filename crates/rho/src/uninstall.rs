@@ -117,6 +117,7 @@ fn managed_instruction(managed: &ManagedInstallation, paths: &Paths) -> String {
             Err(err) => format!("uninstall it with mise, which installed it at {install_path:?} ({err:#})"),
         },
         ManagedInstallation::Pacman => "run sudo pacman -R rho-coding-agent".into(),
+        ManagedInstallation::Dnf => "run sudo dnf remove rho-coding-agent".into(),
         ManagedInstallation::Scoop(ScoopInstallScope::User) => "run scoop uninstall rho".into(),
         ManagedInstallation::Scoop(ScoopInstallScope::Global) => "run scoop uninstall rho --global".into(),
     }

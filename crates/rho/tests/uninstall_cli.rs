@@ -18,13 +18,13 @@ fn installation_root() -> TempDir {
     TempDir::new_in(Path::new(env!("CARGO_BIN_EXE_rho")).parent().unwrap()).unwrap()
 }
 
-/// Stub `cargo`/`pacman` probes answering per `RHO_TEST_PACKAGE_OWNER`; unset
+/// Stub `cargo`/`pacman`/`rpm` probes answering per `RHO_TEST_PACKAGE_OWNER`; unset
 /// means neither owns the binary. Keeps tests off the host's real package
 /// managers (a real `cargo install --list` costs ~1s per launch).
 fn package_manager_stubs(root: &Path) -> PathBuf {
     let tools = root.join("tools");
     fs::create_dir(&tools).unwrap();
-    for tool in ["cargo", "pacman"] {
+    for tool in ["cargo", "pacman", "rpm"] {
         // Keep probe executables read-only during parallel process launches too.
         symlink(
             concat!(
@@ -47,6 +47,8 @@ fn package_ownership_overrides_script_deletion_hint() {
         ("cargo", "rho-coding-agent"),
         ("pacman", "rho-coding-agent"),
         ("pacman", "other-package"),
+        ("rpm", "rho-coding-agent"),
+        ("rpm", "other-package"),
     ] {
         let temp = installation_root();
         let home = temp.path().canonicalize().unwrap();
@@ -54,8 +56,8 @@ fn package_ownership_overrides_script_deletion_hint() {
         fs::create_dir_all(bin.parent().unwrap()).unwrap();
         let tools = package_manager_stubs(&home);
         fs::hard_link(env!("CARGO_BIN_EXE_rho"), &bin).unwrap();
-        // pacman probing is Linux-only, matching production detection.
-        if owner == "pacman" && !cfg!(target_os = "linux") {
+        // pacman and rpm probing is Linux-only, matching production detection.
+        if matches!(owner, "pacman" | "rpm") && !cfg!(target_os = "linux") {
             continue;
         }
         let mut child = Command::new(&bin)

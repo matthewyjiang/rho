@@ -12,6 +12,10 @@
         {
           "type": "generic",
           "path": "PKGBUILD"
+        },
+        {
+          "type": "generic",
+          "path": "rho-coding-agent.spec"
         }
       ]
     },

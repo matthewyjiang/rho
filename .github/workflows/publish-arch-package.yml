@@ -153,7 +153,7 @@ jobs:
           # latest publish helper even when packaging an older tag.
           persist-credentials: false
           sparse-checkout: |
-            scripts/publish_arch_to_extras.sh
+            scripts/publish_to_extras.sh
           sparse-checkout-cone-mode: false
 
       - name: Download package artifact
@@ -174,13 +174,13 @@ jobs:
           SOURCE_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          chmod +x scripts/publish_arch_to_extras.sh
           mapfile -t packages < <(find packages -maxdepth 1 -type f -name '*.pkg.tar.zst' | sort)
           if [[ ${#packages[@]} -eq 0 ]]; then
             echo "No Arch packages found in the artifact" >&2
             exit 1
           fi
-          ./scripts/publish_arch_to_extras.sh \
+          bash scripts/publish_to_extras.sh \
+            --kind arch \
             --extras-dir mjiang-extras \
             --source-repo "$SOURCE_REPO" \
             "${packages[@]}"

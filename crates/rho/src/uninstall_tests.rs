@@ -23,6 +23,11 @@ fn only_default_script_location_authorizes_executable_removal() {
             Some("pacman"),
             Installation::Managed(ManagedInstallation::Pacman),
         ),
+        (
+            ".local/bin/rho",
+            Some("dnf"),
+            Installation::Managed(ManagedInstallation::Dnf),
+        ),
     ] {
         let paths = Paths {
             home: home.clone(),
@@ -42,7 +47,7 @@ fn only_default_script_location_authorizes_executable_removal() {
                 InstallationEvidence {
                     managed: None,
                     cargo_metadata: false,
-                    pacman_owned: false
+                    system_package_owned: false
                 }
             ),
             expected
@@ -54,6 +59,7 @@ fn only_default_script_location_authorizes_executable_removal() {
             root: Some(home.join(".local")),
         },
         ManagedInstallation::Pacman,
+        ManagedInstallation::Dnf,
         ManagedInstallation::Scoop(ScoopInstallScope::Global),
     ] {
         for hint in [None, Some("script"), Some("unknown"), Some("cargo")] {
@@ -70,7 +76,7 @@ fn only_default_script_location_authorizes_executable_removal() {
                     InstallationEvidence {
                         managed: Some(evidence.clone()),
                         cargo_metadata: false,
-                        pacman_owned: false
+                        system_package_owned: false
                     }
                 ),
                 Installation::Managed(evidence.clone())
@@ -90,7 +96,7 @@ fn only_default_script_location_authorizes_executable_removal() {
             InstallationEvidence {
                 managed: None,
                 cargo_metadata: true,
-                pacman_owned: false
+                system_package_owned: false
             }
         ),
         Installation::Unknown
