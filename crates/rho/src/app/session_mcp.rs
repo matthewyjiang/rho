@@ -152,6 +152,10 @@ pub(crate) fn session_mcp_inventory(
                     },
                     tool_count: server.tool_count() as u64,
                     detail,
+                    error: server
+                        .error()
+                        .filter(|error| !error.is_empty())
+                        .map(str::to_owned),
                 }
             })
             .collect(),

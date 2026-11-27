@@ -9196,6 +9196,13 @@
           "description": "Whether the session enabled this server.",
           "type": "boolean"
         },
+        "error": {
+          "description": "Why the server failed, timed out, or has an invalid configuration, in\none line of plain text, for a client to lead with; `detail` also\nshows it. Absent for every other status, when rho has no words for\nit, and from a daemon that predates it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "identity": {
           "description": "Qualified server identity, including its plugin namespace when present.",
           "type": "string"

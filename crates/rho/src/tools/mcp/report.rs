@@ -335,12 +335,12 @@ impl McpServerReport {
         }
     }
 
-    pub(crate) fn invalid(identity: impl Into<String>, error: impl Into<String>) -> Self {
+    pub(crate) fn invalid(identity: impl Into<String>, error: impl AsRef<str>) -> Self {
         Self {
             identity: identity.into(),
             transport: None,
             state: McpServerState::InvalidConfig {
-                error: error.into(),
+                error: one_line(error.as_ref()),
             },
         }
     }
@@ -386,13 +386,13 @@ impl McpServerReport {
     pub(crate) fn failed(
         identity: impl Into<String>,
         transport: McpTransportSummary,
-        error: impl Into<String>,
+        error: impl AsRef<str>,
     ) -> Self {
         Self {
             identity: identity.into(),
             transport: Some(transport),
             state: McpServerState::Failed {
-                error: error.into(),
+                error: one_line(error.as_ref()),
             },
         }
     }
@@ -511,6 +511,12 @@ impl McpServerReport {
         lines.extend(live_lines(&self.live()));
         lines.join("\n")
     }
+}
+
+/// A server's error as every report shows it, on one line: a TOML error may
+/// span several, or end in a newline.
+fn one_line(error: &str) -> String {
+    error.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// Inventory lines for changes a server made after startup. The tool registry
