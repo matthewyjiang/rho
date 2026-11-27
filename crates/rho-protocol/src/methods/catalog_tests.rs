@@ -100,3 +100,90 @@ fn a_detailed_row_holds_its_details_beside_its_summary() {
         page
     );
 }
+
+// Covers: a search page's wire form, which rho-ui's fake daemon builds and
+// its client reads: highlights as `{start,end}` byte ranges, locations
+// tagged by `kind`, and absent optionals and a false `indexing` left out.
+// Owner: protocol wire contract.
+#[test]
+fn a_search_page_round_trips_through_its_wire_form() {
+    let session = DetailedSessionSummary::new(
+        SessionSummary {
+            session: SessionId::new("s1"),
+            cwd: "/w/app".into(),
+            added_dirs: Vec::new(),
+            title: Some("Fix login".into()),
+            first_user_message: None,
+            last_user_message: None,
+            updated_at: 1_792_133_984,
+        },
+        None,
+        None,
+        None,
+    );
+    let page = SessionSearchResponse::new(
+        vec![SessionSearchHit::new(
+            session,
+            3,
+            vec![
+                SearchExcerpt::new(
+                    ExcerptRole::User,
+                    "fix the login bug",
+                    vec![4..7, 8..13],
+                    Some(SearchLocation::Message {
+                        id: MessageId::new("saved-n1-0-0"),
+                    }),
+                    Some(1_792_133_000),
+                ),
+                SearchExcerpt::new(
+                    ExcerptRole::ToolError,
+                    "login: not found",
+                    vec![0..5],
+                    Some(SearchLocation::ToolCall {
+                        id: ToolCallId::new("call_1#2"),
+                    }),
+                    None,
+                ),
+                SearchExcerpt::new(ExcerptRole::Agent, "login", vec![0..5], None, None),
+            ],
+        )],
+        Some("opaque".into()),
+        7,
+        false,
+    );
+    let wire = json!({
+        "sessions": [{
+            "session": {
+                "session": "s1",
+                "cwd": "/w/app",
+                "added_dirs": [],
+                "title": "Fix login",
+                "updated_at": 1_792_133_984,
+            },
+            "matching_messages": 3,
+            "excerpts": [
+                {
+                    "role": "user",
+                    "text": "fix the login bug",
+                    "highlights": [{"start": 4, "end": 7}, {"start": 8, "end": 13}],
+                    "at": {"kind": "message", "id": "saved-n1-0-0"},
+                    "saved_at": 1_792_133_000,
+                },
+                {
+                    "role": "tool_error",
+                    "text": "login: not found",
+                    "highlights": [{"start": 0, "end": 5}],
+                    "at": {"kind": "tool_call", "id": "call_1#2"},
+                },
+                {"role": "agent", "text": "login", "highlights": [{"start": 0, "end": 5}]},
+            ],
+        }],
+        "next_cursor": "opaque",
+        "total": 7,
+    });
+    assert_eq!(serde_json::to_value(&page).unwrap(), wire);
+    assert_eq!(
+        serde_json::from_value::<SessionSearchResponse>(wire).unwrap(),
+        page
+    );
+}

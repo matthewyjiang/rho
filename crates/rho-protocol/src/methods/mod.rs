@@ -40,6 +40,7 @@
 //! | [`SESSION_CONFIGURE`] | [`SessionConfigureParams`] | [`SessionConfigureResponse`] |
 //! | [`SESSION_LIST`] | [`SessionListParams`] | [`SessionListResponse`] |
 //! | [`SESSION_LIST_DETAILED`] | [`SessionListParams`] | [`SessionListDetailedResponse`] |
+//! | [`SESSION_SEARCH`] | [`SessionSearchParams`] | [`SessionSearchResponse`] |
 //! | [`SESSION_RENAME`] | [`SessionRenameParams`] | [`SessionRenameResponse`] |
 //! | [`SESSION_MARK`] | [`SessionMarkParams`] | [`SessionMarkResponse`] |
 //! | [`SESSION_DELETE`] | [`SessionDeleteParams`] | [`SessionDeleteResponse`] |
@@ -120,10 +121,11 @@ pub use background::{
     SessionBackgroundStopResponse, SESSION_BACKGROUND_LIST, SESSION_BACKGROUND_STOP,
 };
 pub use catalog::{
-    DetailedSessionSummary, SessionDeleteParams, SessionDeleteResponse,
-    SessionListDetailedResponse, SessionListParams, SessionListResponse, SessionRenameParams,
-    SessionRenameResponse, SessionSummary, SESSION_DELETE, SESSION_LIST, SESSION_LIST_DETAILED,
-    SESSION_RENAME,
+    DetailedSessionSummary, ExcerptRole, SearchExcerpt, SearchLocation, SessionDeleteParams,
+    SessionDeleteResponse, SessionListDetailedResponse, SessionListParams, SessionListResponse,
+    SessionRenameParams, SessionRenameResponse, SessionSearchHit, SessionSearchParams,
+    SessionSearchResponse, SessionSummary, SESSION_DELETE, SESSION_LIST, SESSION_LIST_DETAILED,
+    SESSION_RENAME, SESSION_SEARCH,
 };
 pub use config::{
     Applies, ClientName, ConfigCategory, ConfigChangedParams, ConfigError, ConfigGetParams,
@@ -357,6 +359,7 @@ protocol! {
         SessionHooksReload = SESSION_HOOKS_RELOAD: SessionHooksReloadParams => SessionHooksReloadResponse,
         SessionList = SESSION_LIST: SessionListParams => SessionListResponse,
         SessionListDetailed = SESSION_LIST_DETAILED: SessionListParams => SessionListDetailedResponse,
+        SessionSearch = SESSION_SEARCH: SessionSearchParams => SessionSearchResponse,
         SessionRename = SESSION_RENAME: SessionRenameParams => SessionRenameResponse,
         SessionMarkMethod = SESSION_MARK: SessionMarkParams => SessionMarkResponse,
         SessionDelete = SESSION_DELETE: SessionDeleteParams => SessionDeleteResponse,
