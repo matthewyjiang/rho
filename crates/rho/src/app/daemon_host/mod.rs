@@ -34,7 +34,8 @@ use rho_protocol::{
     ConfigTableGetParams, ConfigTableGetResponse, ConfigTableSetParams, ConfigTableSetResponse,
     ConfigWatch, DaemonStatus, DetachReason, HooksFileGetParams, HooksFileGetResponse,
     HooksFileSetParams, HooksFileSetResponse, HooksListParams, HooksListResponse, JobListResponse,
-    LoginStream, McpListParams, McpListResponse, ModelListParams, ModelRefreshParams,
+    LoginStream, McpConfigGetParams, McpConfigGetResponse, McpConfigSetParams,
+    McpConfigSetResponse, McpListParams, McpListResponse, ModelListParams, ModelRefreshParams,
     ModelRefreshResponse, ModelWatch, PendingUpgrade, ProtocolVersion, RestartCost, RpcError,
     Service, SessionAnswerParams, SessionAnswerResponse, SessionAttachParams,
     SessionAttachResponse, SessionCancelParams, SessionCancelResponse, SessionConfigureParams,
@@ -843,14 +844,14 @@ impl SettingsService for DaemonHost {
     }
 
     async fn sync_export(&self, params: SyncExportParams) -> Result<SyncExportResponse, RpcError> {
-        self.sync.export(params).await
+        self.sync.export(params, self.sessions.settings()).await
     }
 
     async fn sync_compare(
         &self,
         params: SyncCompareParams,
     ) -> Result<SyncCompareResponse, RpcError> {
-        self.sync.compare(params).await
+        self.sync.compare(params, self.sessions.settings()).await
     }
 
     async fn sync_import_keys(
@@ -861,11 +862,15 @@ impl SettingsService for DaemonHost {
     }
 
     async fn sync_status(&self, params: SyncStatusParams) -> Result<SyncStatusResponse, RpcError> {
-        self.sync.status(params).await
+        self.sync.status(params, self.sessions.settings()).await
     }
 
     async fn sync_revert(&self, params: SyncRevertParams) -> Result<SyncRevertResponse, RpcError> {
-        self.sync.revert(params, &self.sessions).await
+        let reverted = self.sync.revert(params, self.sessions.settings()).await?;
+        if reverted.key_restored {
+            auth::credentials_changed(&self.sessions).await;
+        }
+        Ok(reverted.response)
     }
 
     async fn sync_discard(
@@ -873,5 +878,19 @@ impl SettingsService for DaemonHost {
         params: SyncDiscardParams,
     ) -> Result<SyncDiscardResponse, RpcError> {
         self.sync.discard(params).await
+    }
+
+    async fn mcp_config_get(
+        &self,
+        _params: McpConfigGetParams,
+    ) -> Result<McpConfigGetResponse, RpcError> {
+        self.sessions.settings().mcp_config()
+    }
+
+    async fn mcp_config_set(
+        &self,
+        params: McpConfigSetParams,
+    ) -> Result<McpConfigSetResponse, RpcError> {
+        self.sync.set_mcp(params, self.sessions.settings()).await
     }
 }

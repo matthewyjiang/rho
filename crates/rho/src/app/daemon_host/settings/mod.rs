@@ -21,6 +21,8 @@
 
 mod clients;
 mod file;
+mod mcp;
+pub(super) use mcp::AppliedMcpEdit;
 mod tables;
 mod writer_run;
 

@@ -7,9 +7,23 @@ use rho_providers::{
 };
 
 use super::*;
+use crate::config::ConfigDocument;
 
 fn api_key(auth: &str) -> SecretItem {
     SecretItem::api_key(auth)
+}
+
+/// A `config.toml` holding one MCP server, `docs`, with the
+/// `Authorization` header `header`.
+fn mcp_file(header: &str) -> ConfigDocument {
+    ConfigDocument::parse(&format!(
+        "[mcp.servers.docs]\nurl = \"https://docs.example/mcp\"\nheaders = {{ Authorization = \"{header}\" }}\n"
+    ))
+    .unwrap()
+}
+
+fn none() -> ConfigDocument {
+    ConfigDocument::parse("").unwrap()
 }
 
 fn store(saved: &[(&str, &str)]) -> MemoryCredentialStore {
@@ -20,10 +34,11 @@ fn store(saved: &[(&str, &str)]) -> MemoryCredentialStore {
     store
 }
 
-// Covers: a source seals its saved keys and reports the unsaved ones, and
-// blank ones, as missing; the target opens the bundle and says, per key, whether it holds
-// the same value, another, or none.
-// Owner: sync policy (`sync/mod.rs`).
+// Covers: a source seals its saved keys and MCP server values and reports
+// the unsaved ones, and blank keys, as missing; the target opens the
+// bundle and says, per item, whether it holds the same value, another, or
+// none.
+// Owner: sync policy (`sync/mod.rs`, `sync/values.rs`).
 #[test]
 fn sealed_keys_compare_with_the_targets() {
     let source = store(&[
@@ -39,32 +54,45 @@ fn sealed_keys_compare_with_the_targets() {
     let recipients = seal::Recipients::default();
     let recipient = SealRecipient::new(SUITE, recipients.issue(Instant::now()), 0);
 
-    let saved = saved_values(
+    let header = SecretItem::mcp_header("docs", "Authorization");
+    let unset = SecretItem::mcp_env("docs", "TOKEN");
+
+    let saved = values::saved_values(
         &source,
+        &mcp_file("Bearer source"),
         vec![
             api_key("anthropic-api-key"),
             api_key("google-api-key"),
             api_key("openrouter-api-key"),
             api_key("moonshot-api-key"),
+            header.clone(),
+            unset.clone(),
         ],
     )
     .unwrap();
-    assert_eq!(saved.missing, vec![api_key("google-api-key")]);
+    assert_eq!(saved.missing, vec![api_key("google-api-key"), unset]);
     let sealed = seal_values(&recipient, saved.items, &saved.values).unwrap();
     let values = open_values(&recipients, Instant::now(), &sealed).unwrap();
 
     assert_eq!(
-        compare_values(&target, sealed.items, &values).unwrap(),
+        values::compare_values(&target, &mcp_file("Bearer target"), sealed.items, &values).unwrap(),
         vec![
             SecretComparison::new(api_key("anthropic-api-key"), CompareState::Same),
             SecretComparison::new(api_key("openrouter-api-key"), CompareState::Differs),
             SecretComparison::new(api_key("moonshot-api-key"), CompareState::Absent),
+            SecretComparison::new(header, CompareState::Differs),
         ]
     );
     // A profile only the source defines, such as its custom provider,
     // which the target does not know until settings sync writes it.
     assert_eq!(
-        compare_values(&target, vec![api_key("only-on-source")], &["sk".into()]).unwrap(),
+        values::compare_values(
+            &target,
+            &none(),
+            vec![api_key("only-on-source")],
+            &["sk".into()]
+        )
+        .unwrap(),
         vec![SecretComparison::new(
             api_key("only-on-source"),
             CompareState::Absent
@@ -105,18 +133,19 @@ fn a_bundle_it_cannot_take_is_refused_without_using_the_recipient() {
     );
 }
 
-// Covers: only an API key auth profile's saved key may be exported; a
-// login's credential, an unknown profile, or an unknown kind is refused.
-// Owner: sync policy (`sync/mod.rs`).
+// Covers: of the credentials, only an API key auth profile's saved key may
+// be exported; a login's credential, an unknown profile, or an unknown kind
+// is refused.
+// Owner: sync values (`sync/values.rs`).
 #[test]
-fn only_api_keys_are_exported() {
+fn only_api_keys_are_exported_of_the_credentials() {
     for item in [
         api_key("codex"),
         api_key("no-such-auth"),
         SecretItem::Unknown,
     ] {
         assert_eq!(
-            saved_values(&store(&[]), vec![item.clone()])
+            values::saved_values(&store(&[]), &none(), vec![item.clone()])
                 .err()
                 .and_then(|error| error.error_code()),
             Some(ErrorCode::InvalidParams),

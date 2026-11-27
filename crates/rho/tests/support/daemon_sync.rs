@@ -1,16 +1,21 @@
-//! Copying a saved API key from one daemon to another sealed
-//! (`rho/sync/*`): the client relays only ciphertext.
+//! Copying a saved API key, or an MCP server with its secret values, from
+//! one daemon to another sealed (`rho/sync/*`, `rho/mcp/config/*`): the
+//! client relays only ciphertext.
 
 use std::sync::{Arc, Mutex};
 
 use pretty_assertions::assert_eq;
 use rho_protocol::{
-    methods::{SyncCompare, SyncExport, SyncImportKeys, SyncRecipient, SyncRevert, SyncStatus},
-    Client, CompareState, ErrorCode, ImportOutcome, ImportedSecret, RevertOutcome, RevertedItem,
-    SealedSecrets, SecretComparison, SecretItem, SyncCompareParams, SyncCompareResponse,
-    SyncExportParams, SyncId, SyncImportKeysParams, SyncImportKeysResponse, SyncItem,
-    SyncItemState, SyncItemStatus, SyncRecipientParams, SyncRevertParams, SyncRevertResponse,
-    SyncStatusParams,
+    methods::{
+        McpConfigGet, McpConfigSet, SyncCompare, SyncExport, SyncImportKeys, SyncRecipient,
+        SyncRevert, SyncStatus,
+    },
+    Client, CompareState, ErrorCode, ImportOutcome, ImportedSecret, McpConfigGetParams,
+    McpConfigSetParams, McpSecret, McpSecretKind, McpSecretSlot, McpServerChange, RevertOutcome,
+    RevertedItem, SealedSecrets, SecretComparison, SecretItem, SecretSource, SyncCompareParams,
+    SyncCompareResponse, SyncExportParams, SyncId, SyncImportKeysParams, SyncImportKeysResponse,
+    SyncItem, SyncItemState, SyncItemStatus, SyncRecipientParams, SyncRevertParams,
+    SyncRevertResponse, SyncStatusParams,
 };
 use rho_providers::credentials::CredentialStore;
 
@@ -142,5 +147,98 @@ async fn an_imported_key_reverts_to_the_targets_own() {
             .unwrap_err()
             .error_code(),
         Some(ErrorCode::SyncNotFound)
+    );
+}
+
+// Covers: an MCP server's header travels sealed: the source reads the
+// server without the value and seals it to the target, which writes the
+// server with it under a sync, and a revert removes the server again.
+// Owner: daemon e2e (two daemons over their sockets).
+#[tokio::test]
+async fn an_mcp_server_travels_with_its_header_sealed_and_reverts() {
+    let valid = Arc::new(Mutex::new(FIRST_KEY.to_owned()));
+    let source = Fixture::start_with(&valid, |_| {}).await;
+    let target = Fixture::start_with(&valid, |_| {}).await;
+    let source_file = &source.sandbox.isolated.config_path;
+    let mut config = std::fs::read_to_string(source_file).unwrap();
+    config.push_str(
+        "\n[mcp.servers.docs]\ntransport = \"streamable_http\"\nurl = \"https://docs.example/mcp\"\nheaders = { Authorization = \"Bearer source\" }\n",
+    );
+    std::fs::write(source_file, config).unwrap();
+    let from = source.sandbox.connect().await;
+    let to = target.sandbox.connect().await;
+    let sync = SyncId::new("press-1");
+    let authorization = McpSecretSlot::new(McpSecretKind::Header, "Authorization");
+
+    let read = from
+        .request::<McpConfigGet>(&McpConfigGetParams::default())
+        .await
+        .unwrap();
+    assert!(!serde_json::to_string(&read)
+        .unwrap()
+        .contains("Bearer source"));
+    let [docs] = &read.servers[..] else {
+        panic!("{read:?}");
+    };
+    assert_eq!(docs.secrets, vec![authorization.clone()]);
+    let recipient = to
+        .request::<SyncRecipient>(&SyncRecipientParams::default())
+        .await
+        .unwrap()
+        .recipient;
+    let exported = from
+        .request::<SyncExport>(&SyncExportParams::new(
+            recipient,
+            vec![SecretItem::mcp_header("docs", "Authorization")],
+        ))
+        .await
+        .unwrap();
+    assert_eq!(exported.missing, vec![]);
+
+    let revision = to
+        .request::<McpConfigGet>(&McpConfigGetParams::default())
+        .await
+        .unwrap()
+        .revision;
+    let put = McpServerChange::Put {
+        identity: "docs".into(),
+        value: docs.value.clone(),
+        secrets: vec![McpSecret::new(authorization, SecretSource::Sealed)],
+    };
+    to.request::<McpConfigSet>(
+        &McpConfigSetParams::new(revision, vec![put])
+            .with_sealed(exported.sealed)
+            .with_sync(sync.clone()),
+    )
+    .await
+    .unwrap();
+    let written: toml::Table =
+        toml::from_str(&std::fs::read_to_string(&target.sandbox.isolated.config_path).unwrap())
+            .unwrap();
+    assert_eq!(
+        written["mcp"]["servers"]["docs"]["headers"]["Authorization"].as_str(),
+        Some("Bearer source")
+    );
+
+    let item = SyncItem::mcp_server("docs");
+    assert_eq!(
+        to.request::<SyncStatus>(&SyncStatusParams::new(sync.clone()))
+            .await
+            .unwrap()
+            .items,
+        vec![SyncItemStatus::new(item.clone(), SyncItemState::Unchanged)]
+    );
+    assert_eq!(
+        to.request::<SyncRevert>(&SyncRevertParams::new(sync, vec![item.clone()]))
+            .await
+            .unwrap(),
+        SyncRevertResponse::new(vec![RevertedItem::new(item, RevertOutcome::Restored)])
+    );
+    assert_eq!(
+        to.request::<McpConfigGet>(&McpConfigGetParams::default())
+            .await
+            .unwrap()
+            .servers,
+        vec![]
     );
 }

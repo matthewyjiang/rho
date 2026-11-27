@@ -39,6 +39,13 @@ pub(crate) use document::ConfigDocument;
 #[path = "config_entries.rs"]
 pub(crate) mod entries;
 
+#[path = "config_mcp_servers.rs"]
+mod mcp_servers;
+pub(crate) use mcp_servers::{
+    apply_mcp_changes, mcp_secret, mcp_server, mcp_server_entries, mcp_servers_revision,
+    restore_mcp_servers, SealedValues,
+};
+
 #[path = "config_tables.rs"]
 mod tables;
 pub(crate) use entries::ChangeError;
