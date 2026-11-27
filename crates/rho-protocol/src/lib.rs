@@ -210,10 +210,11 @@ pub use methods::{
     ConfiguredMcpServer, McpListParams, McpListResponse, McpServerSource, McpTransport, MCP_LIST,
 };
 pub use methods::{
-    DetailedSessionSummary, SessionDeleteParams, SessionDeleteResponse,
-    SessionListDetailedResponse, SessionListParams, SessionListResponse, SessionRenameParams,
-    SessionRenameResponse, SessionSummary, SESSION_DELETE, SESSION_LIST, SESSION_LIST_DETAILED,
-    SESSION_RENAME,
+    DetailedSessionSummary, ExcerptRole, SearchExcerpt, SearchLocation, SessionDeleteParams,
+    SessionDeleteResponse, SessionListDetailedResponse, SessionListParams, SessionListResponse,
+    SessionRenameParams, SessionRenameResponse, SessionSearchHit, SessionSearchParams,
+    SessionSearchResponse, SessionSummary, SESSION_DELETE, SESSION_LIST, SESSION_LIST_DETAILED,
+    SESSION_RENAME, SESSION_SEARCH,
 };
 pub use methods::{
     HooksFile, HooksFileScope, HooksFileStatus, HooksListParams, HooksListResponse, HOOKS_LIST,

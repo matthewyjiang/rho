@@ -7,7 +7,11 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::Deserialize;
 
 pub(crate) use super::search_scope::Scope;
-use super::{search_index, workspace_scope::Workspace};
+use super::{
+    search_index::{self, Locate},
+    search_window::window,
+    workspace_scope::Workspace,
+};
 
 /// Model-facing name of the tool serving this module. Search excludes that
 /// tool's own calls and results from evidence, so the name lives here.
@@ -93,6 +97,7 @@ pub(crate) fn execute(
     current: &str,
     request: Request,
     max_output_bytes: usize,
+    locate: Locate,
     cancellation: &CancellationToken,
 ) -> anyhow::Result<String> {
     anyhow::ensure!(!cancellation.is_cancelled(), "sessions lookup cancelled");
@@ -106,7 +111,7 @@ pub(crate) fn execute(
     };
     let workspace = Workspace::resolve(cwd);
     let mut connection = search_index::open(root)?;
-    let refresh = search_index::refresh(&mut connection, root, reconcile, cancellation)?;
+    let refresh = search_index::refresh(&mut connection, root, reconcile, locate, cancellation)?;
     let transaction = connection.transaction()?;
     let context = Context::new(refresh);
     let output = match request {
@@ -193,14 +198,26 @@ fn scoped(scope: Scope, workspace: &Workspace) -> (&'static str, String) {
     }
 }
 
+/// Whether a query's last word matches whole words only, or any word it
+/// starts, as a search that follows typing wants.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum LastTerm {
+    Whole,
+    Prefix,
+}
+
 /// Literal AND terms, not an FTS expression supplied by a caller. Quoting
 /// preserves identifier punctuation without allowing operators/injection.
-fn fts_query(query: &str) -> String {
-    query
+pub(super) fn fts_query(query: &str, last: LastTerm) -> String {
+    let mut query = query
         .split_whitespace()
         .map(|term| format!("\"{}\"", term.replace('"', "\"\"")))
         .collect::<Vec<_>>()
-        .join(" AND ")
+        .join(" AND ");
+    if last == LastTerm::Prefix {
+        query.push('*');
+    }
+    query
 }
 
 const EXCERPT_SQL: &str =
@@ -208,25 +225,19 @@ const EXCERPT_SQL: &str =
      from evidence_fts join evidence e on e.rowid=evidence_fts.rowid
      where evidence_fts.rowid=?1 and evidence_fts match ?2";
 
-/// One median-sized message is already too much per hit: show half that,
-/// centered on the first match, and return a read offset. Reads `EXCERPT_SQL` rows.
+/// One median-sized message is already too much per hit: show a window of it
+/// around the first match, and return a read offset. Reads `EXCERPT_SQL` rows.
 fn excerpt(row: &rusqlite::Row<'_>) -> rusqlite::Result<Excerpt> {
     let text: String = row.get(2)?;
     let highlighted: String = row.get(3)?;
-    let position = highlighted
-        .find('\u{1e}')
-        .map(|index| highlighted[..index].chars().count())
-        .unwrap_or(0);
-    let start = position.saturating_sub(80);
-    let excerpt: String = text.chars().skip(start).take(320).collect();
-    let end = start + excerpt.chars().count();
+    let shown = window(&text, &highlighted);
     Ok(Excerpt {
         anchor: row.get(0)?,
         role: row.get(1)?,
-        start,
-        end,
-        total_chars: text.chars().count(),
-        text: excerpt,
+        start: shown.start,
+        end: shown.end,
+        total_chars: shown.total_chars,
+        text: shown.text,
         omitted_blocks: row.get(4)?,
     })
 }
@@ -253,7 +264,7 @@ fn search(
         limit,
         offset,
     } = target;
-    let query = fts_query(query);
+    let query = fts_query(query, LastTerm::Whole);
     let (predicate, scope_value) = scoped(scope, workspace);
     let sql = format!(
         "with matches as materialized (
@@ -351,7 +362,7 @@ fn search_current(
         limit,
         offset,
     } = target;
-    let query = fts_query(query);
+    let query = fts_query(query, LastTerm::Whole);
     // Unsaved or not yet indexed sessions have no handle and no matches.
     let session: Option<String> = connection
         .query_row(

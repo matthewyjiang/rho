@@ -25,19 +25,19 @@ use crate::{
         SessionPullRequestLink, SessionPullRequestLinkParams, SessionPullRequestList,
         SessionPullRequestListParams, SessionPullRequestShow, SessionPullRequestShowParams,
         SessionPullRequestUnlink, SessionPullRequestUnlinkParams, SessionRename,
-        SessionRenameParams, SessionReportParams, SessionReportRead, SessionSteer,
-        SessionSteerParams, SessionSurfaceAction, SessionSurfaceActionParams, SessionUnsteer,
-        SessionUnsteerParams, Status, Stop, WorktreePrune, WorktreePruneParams, AUTH_CHOOSE_STORE,
-        AUTH_KEY, AUTH_LIST, AUTH_LOGIN_CANCEL, AUTH_LOGOUT, CONFIG_REGISTER, CONFIG_SCHEMA,
-        CONFIG_SET, DAEMON_RESTART, DAEMON_STATUS, DAEMON_STOP, HOOKS_LIST, JOB_LIST, MCP_LIST,
-        MODEL_REFRESH, SESSION_ANSWER, SESSION_ANSWER_QUESTION, SESSION_BACKGROUND_LIST,
-        SESSION_BACKGROUND_STOP, SESSION_CANCEL, SESSION_CONFIGURE, SESSION_DELETE, SESSION_FORK,
-        SESSION_HOLD, SESSION_HOOKS_RELOAD, SESSION_INSPECT, SESSION_LIST, SESSION_LIST_DETAILED,
-        SESSION_MARK, SESSION_MCP, SESSION_MCP_CATALOG, SESSION_MCP_COMPLETE, SESSION_MCP_RESOURCE,
-        SESSION_NEW, SESSION_PROCESSES, SESSION_PROMPT, SESSION_PULL_REQUEST_LINK,
-        SESSION_PULL_REQUEST_LIST, SESSION_PULL_REQUEST_SHOW, SESSION_PULL_REQUEST_UNLINK,
-        SESSION_RENAME, SESSION_REPORT, SESSION_STEER, SESSION_SURFACE_ACTION, SESSION_UNSTEER,
-        WORKTREE_PRUNE,
+        SessionRenameParams, SessionReportParams, SessionReportRead, SessionSearch,
+        SessionSearchParams, SessionSteer, SessionSteerParams, SessionSurfaceAction,
+        SessionSurfaceActionParams, SessionUnsteer, SessionUnsteerParams, Status, Stop,
+        WorktreePrune, WorktreePruneParams, AUTH_CHOOSE_STORE, AUTH_KEY, AUTH_LIST,
+        AUTH_LOGIN_CANCEL, AUTH_LOGOUT, CONFIG_REGISTER, CONFIG_SCHEMA, CONFIG_SET, DAEMON_RESTART,
+        DAEMON_STATUS, DAEMON_STOP, HOOKS_LIST, JOB_LIST, MCP_LIST, MODEL_REFRESH, SESSION_ANSWER,
+        SESSION_ANSWER_QUESTION, SESSION_BACKGROUND_LIST, SESSION_BACKGROUND_STOP, SESSION_CANCEL,
+        SESSION_CONFIGURE, SESSION_DELETE, SESSION_FORK, SESSION_HOLD, SESSION_HOOKS_RELOAD,
+        SESSION_INSPECT, SESSION_LIST, SESSION_LIST_DETAILED, SESSION_MARK, SESSION_MCP,
+        SESSION_MCP_CATALOG, SESSION_MCP_COMPLETE, SESSION_MCP_RESOURCE, SESSION_NEW,
+        SESSION_PROCESSES, SESSION_PROMPT, SESSION_PULL_REQUEST_LINK, SESSION_PULL_REQUEST_LIST,
+        SESSION_PULL_REQUEST_SHOW, SESSION_PULL_REQUEST_UNLINK, SESSION_RENAME, SESSION_REPORT,
+        SESSION_SEARCH, SESSION_STEER, SESSION_SURFACE_ACTION, SESSION_UNSTEER, WORKTREE_PRUNE,
     },
     server::Service,
     server_codec::{decode_params, encode_result},
@@ -76,6 +76,7 @@ pub(crate) enum ServiceCall {
     ReloadSessionHooks(SessionHooksReloadParams),
     ListSessions(SessionListParams),
     ListSessionsDetailed(SessionListParams),
+    SearchSessions(SessionSearchParams),
     RenameSession(SessionRenameParams),
     MarkSession(SessionMarkParams),
     DeleteSession(SessionDeleteParams),
@@ -159,6 +160,7 @@ impl ServiceCall {
             SESSION_LIST_DETAILED => {
                 decode_params::<SessionListDetailed>(params).map(Self::ListSessionsDetailed)
             }
+            SESSION_SEARCH => decode_params::<SessionSearch>(params).map(Self::SearchSessions),
             SESSION_RENAME => decode_params::<SessionRename>(params).map(Self::RenameSession),
             SESSION_MARK => decode_params::<SessionMarkMethod>(params).map(Self::MarkSession),
             SESSION_DELETE => decode_params::<SessionDelete>(params).map(Self::DeleteSession),
@@ -219,6 +221,7 @@ impl ServiceCall {
             | Self::ForkSession(_)
             | Self::ListSessions(_)
             | Self::ListSessionsDetailed(_)
+            | Self::SearchSessions(_)
             | Self::DeleteSession(_)
             | Self::ListJobs
             | Self::ListSessionBackground
@@ -330,6 +333,9 @@ impl ServiceCall {
             }
             Self::ListSessionsDetailed(params) => {
                 encode_result::<SessionListDetailed>(&service.list_sessions_detailed(params).await?)
+            }
+            Self::SearchSessions(params) => {
+                encode_result::<SessionSearch>(&service.search_sessions(params).await?)
             }
             Self::RenameSession(params) => {
                 encode_result::<SessionRename>(&service.rename_session(params).await?)

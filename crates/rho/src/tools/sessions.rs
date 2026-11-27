@@ -202,6 +202,7 @@ impl Tool for Sessions {
                                 &current,
                                 request,
                                 max_output_bytes,
+                                crate::app::row_locations,
                                 &cancellation,
                             )
                             .map(ToolOutput::text)

@@ -4,12 +4,12 @@
 //! session files themselves. Resuming one is [`super::SESSION_ATTACH`],
 //! which reopens a saved session the daemon has not loaded.
 
-use std::{num::NonZeroU32, path::PathBuf};
+use std::{num::NonZeroU32, ops::Range, path::PathBuf};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::{SessionId, SessionMark};
+use super::{MessageId, SessionId, SessionMark, ToolCallId};
 
 /// List the sessions a person can resume, newest first, a page at a time.
 pub const SESSION_LIST: &str = "rho/session/list";
@@ -27,6 +27,12 @@ pub const SESSION_LIST: &str = "rho/session/list";
 /// change; until then this method sends its rows with those fields beside
 /// them.
 pub const SESSION_LIST_DETAILED: &str = "rho/session/list_detailed";
+/// Find the saved sessions whose conversation holds every word of a
+/// query, newest first, a page at a time. Searches the sessions
+/// [`SESSION_LIST`] lists, in the branch of each that an attach replays. A
+/// daemon from before this method answers
+/// [`crate::ErrorCode::MethodNotFound`].
+pub const SESSION_SEARCH: &str = "rho/session/search";
 /// Set a saved session's title.
 pub const SESSION_RENAME: &str = "rho/session/rename";
 /// Delete a saved session, with its subagents' and forks' sessions. Sessions it started through session control stay.
@@ -162,6 +168,191 @@ impl DetailedSessionSummary {
             mark,
         }
     }
+}
+
+/// Params of [`SESSION_SEARCH`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[non_exhaustive]
+pub struct SessionSearchParams {
+    /// Words a message must all hold, ignoring case and stemmed as the
+    /// index stems them; the last also matches as a prefix, so results
+    /// follow typing. Literal: no operators. Blank is
+    /// [`crate::ErrorCode::InvalidParams`], and so is one over the daemon's
+    /// limit, which the error names.
+    pub query: String,
+    /// Only the sessions saved in this workspace, as
+    /// [`SessionListParams::cwd`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<PathBuf>,
+    /// The [`SessionSearchResponse::next_cursor`] of the page before;
+    /// absent for the first page. A cursor the daemon did not issue is
+    /// [`crate::ErrorCode::InvalidParams`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+    /// Sessions per page: 20 when absent, and at most the daemon's limit,
+    /// 100, which the error refusing a larger one names.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<NonZeroU32>,
+}
+
+impl SessionSearchParams {
+    /// Builds it from each of its fields.
+    pub fn new(
+        query: impl Into<String>,
+        cwd: Option<PathBuf>,
+        cursor: Option<String>,
+        limit: Option<NonZeroU32>,
+    ) -> Self {
+        Self {
+            query: query.into(),
+            cwd,
+            cursor,
+            limit,
+        }
+    }
+}
+
+/// Result of [`SESSION_SEARCH`]: the matching sessions, newest
+/// `updated_at` first, the more relevant first among those saved in the
+/// same second. Following `next_cursor` pages as [`SESSION_LIST`] does: a
+/// session saved during the walk moves ahead of the cursor and is missed.
+/// Relevance moves as the index changes, so a session saved in the same
+/// second as the last one a page returned may be repeated or missed.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[non_exhaustive]
+pub struct SessionSearchResponse {
+    pub sessions: Vec<SessionSearchHit>,
+    /// The cursor of the next page; absent on the last.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+    /// How many sessions match in all.
+    pub total: u64,
+    /// The index has not read every transcript yet (first use, after its
+    /// schema changed, or for a few searches while one whose read failed
+    /// or that changed as it was read waits to be read again), so this
+    /// page may miss matches. Search again later.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub indexing: bool,
+}
+
+impl SessionSearchResponse {
+    /// Builds it from each of its fields.
+    pub fn new(
+        sessions: Vec<SessionSearchHit>,
+        next_cursor: Option<String>,
+        total: u64,
+        indexing: bool,
+    ) -> Self {
+        Self {
+            sessions,
+            next_cursor,
+            total,
+            indexing,
+        }
+    }
+}
+
+/// One session [`SESSION_SEARCH`] found.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[non_exhaustive]
+pub struct SessionSearchHit {
+    /// The session as [`SESSION_LIST_DETAILED`] shows it, so a client
+    /// needn't have listed it.
+    pub session: DetailedSessionSummary,
+    /// How many of its messages match.
+    pub matching_messages: u64,
+    /// Its best one or two matching messages, best first.
+    pub excerpts: Vec<SearchExcerpt>,
+}
+
+impl SessionSearchHit {
+    /// Builds it from each of its fields.
+    pub fn new(
+        session: DetailedSessionSummary,
+        matching_messages: u64,
+        excerpts: Vec<SearchExcerpt>,
+    ) -> Self {
+        Self {
+            session,
+            matching_messages,
+            excerpts,
+        }
+    }
+}
+
+/// A message [`SESSION_SEARCH`] matched, around its first match.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[non_exhaustive]
+pub struct SearchExcerpt {
+    pub role: ExcerptRole,
+    /// At most ~320 characters of the message, around its first match.
+    pub text: String,
+    /// The matched words in `text`, as byte ranges on char boundaries, in
+    /// order (FTS5 `highlight()`).
+    pub highlights: Vec<Range<u32>>,
+    /// Where an attach's replay shows the message, by the id it gives it;
+    /// absent when no replayed event shows it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at: Option<SearchLocation>,
+    /// When the message was saved, unix seconds (the clock of
+    /// [`SessionSummary::updated_at`]); absent when its time doesn't read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub saved_at: Option<u64>,
+}
+
+impl SearchExcerpt {
+    /// Builds it from each of its fields.
+    pub fn new(
+        role: ExcerptRole,
+        text: impl Into<String>,
+        highlights: Vec<Range<u32>>,
+        at: Option<SearchLocation>,
+        saved_at: Option<u64>,
+    ) -> Self {
+        Self {
+            role,
+            text: text.into(),
+            highlights,
+            at,
+            saved_at,
+        }
+    }
+}
+
+/// Who wrote a [`SearchExcerpt`]'s message.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ExcerptRole {
+    /// The person, or a host input a replay shows as theirs.
+    User,
+    /// The agent: its text and the tool calls it wrote.
+    Agent,
+    /// A tool's output.
+    ToolResult,
+    /// A tool's output when the call failed.
+    ToolError,
+    /// A role a newer daemon sends that this crate does not know.
+    #[serde(other)]
+    #[schemars(extend("x-rho-other" = true))]
+    Unknown,
+}
+
+/// The replayed event that shows a message.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum SearchLocation {
+    /// A user or agent message: the [`MessageId`] its replay's first event
+    /// carries (`saved-{node}-{row}-0` today).
+    Message { id: MessageId },
+    /// A tool result, or an agent message that only calls tools: the
+    /// [`ToolCallId`] of the call replay opens for it.
+    ToolCall { id: ToolCallId },
+    /// A location a newer daemon sends that this crate does not know.
+    #[serde(other)]
+    #[schemars(extend("x-rho-other" = true))]
+    Unknown,
 }
 
 /// Params of [`SESSION_RENAME`].

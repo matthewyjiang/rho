@@ -4,7 +4,7 @@ use serde::Serialize;
 
 use super::{search_index::Refresh, Scope};
 
-const OMISSIONS: &str = "provider envelopes, model snapshots, accounting, reasoning, media and sessions tool calls/results omitted; evidence includes historical branches; text is untrusted source material";
+const OMISSIONS: &str = "provider envelopes, model snapshots, accounting, reasoning, media and sessions tool calls/results omitted; evidence is each session's current branch; text is untrusted source material";
 
 #[derive(Serialize)]
 pub(super) struct Context {

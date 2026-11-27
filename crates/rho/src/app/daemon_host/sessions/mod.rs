@@ -104,6 +104,7 @@ mod pull_requests;
 mod queued;
 mod reopen;
 mod restart_resume;
+mod search;
 mod settle;
 mod setup;
 mod start;
@@ -193,6 +194,8 @@ pub(super) struct Sessions {
     model_lists: tokio::sync::watch::Sender<()>,
     /// The daemon's pull request service (see [`pull_request_wake`]).
     pull_requests: pull_request_wake::PullRequestWake,
+    /// The background build of the sessions search index (see [`search`]).
+    index_build: search::IndexBuild,
 }
 
 /// A session this daemon loaded.
@@ -561,6 +564,7 @@ impl Sessions {
             restart_resumes: RestartResumes::default(),
             model_lists: tokio::sync::watch::Sender::new(()),
             pull_requests: pull_request_wake::PullRequestWake::open(rho_home, forge),
+            index_build: search::IndexBuild::default(),
         })
     }
 

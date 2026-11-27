@@ -40,10 +40,10 @@ use rho_protocol::{
     SessionForkResponse, SessionHoldParams, SessionHoldResponse, SessionListDetailedResponse,
     SessionListParams, SessionListResponse, SessionMarkParams, SessionMarkResponse,
     SessionNewParams, SessionNewResponse, SessionObserveParams, SessionPromptParams,
-    SessionPromptResponse, SessionRenameParams, SessionRenameResponse, SessionSteerParams,
-    SessionSteerResponse, SessionSurfaceActionParams, SessionSurfaceActionResponse,
-    SessionUnsteerParams, SessionUnsteerResponse, SettingsService, Subscription,
-    WorktreePruneParams, WorktreePruneResponse, PROTOCOL_VERSION,
+    SessionPromptResponse, SessionRenameParams, SessionRenameResponse, SessionSearchParams,
+    SessionSearchResponse, SessionSteerParams, SessionSteerResponse, SessionSurfaceActionParams,
+    SessionSurfaceActionResponse, SessionUnsteerParams, SessionUnsteerResponse, SettingsService,
+    Subscription, WorktreePruneParams, WorktreePruneResponse, PROTOCOL_VERSION,
 };
 use rho_providers::credentials::CredentialStoreBackend;
 
@@ -585,6 +585,13 @@ impl Service for DaemonHost {
         params: SessionListParams,
     ) -> Result<SessionListDetailedResponse, RpcError> {
         self.sessions.list_detailed(params).await
+    }
+
+    async fn search_sessions(
+        &self,
+        params: SessionSearchParams,
+    ) -> Result<SessionSearchResponse, RpcError> {
+        self.sessions.search(params).await
     }
 
     async fn rename_session(

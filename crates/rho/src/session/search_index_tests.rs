@@ -5,7 +5,7 @@ use rho_providers::model::Message;
 use tempfile::TempDir;
 
 use super::*;
-use crate::session::Session;
+use crate::{app::row_locations, session::Session};
 
 struct MigrationWait {
     blocked: mpsc::Sender<()>,
@@ -28,7 +28,14 @@ fn concurrent_migration_preserves_rebuilt_cache() {
         .unwrap();
     let cancellation = CancellationToken::new();
     let mut first = open(root.path()).unwrap();
-    refresh(&mut first, root.path(), false, &cancellation).unwrap();
+    refresh(
+        &mut first,
+        root.path(),
+        /*reconcile*/ false,
+        row_locations,
+        &cancellation,
+    )
+    .unwrap();
     first.pragma_update(None, "user_version", 1).unwrap();
     let (blocked_tx, blocked_rx) = mpsc::channel();
     let (resume_tx, resume_rx) = mpsc::channel();
@@ -62,14 +69,28 @@ fn concurrent_migration_preserves_rebuilt_cache() {
                 }))
                 .unwrap();
             migrate(&mut connection).unwrap();
-            refresh(&mut connection, root, false, &CancellationToken::new()).unwrap()
+            refresh(
+                &mut connection,
+                root,
+                /*reconcile*/ false,
+                row_locations,
+                &CancellationToken::new(),
+            )
+            .unwrap()
         });
         blocked_rx
             .recv_timeout(crate::sqlite_support::BUSY_TIMEOUT)
             .unwrap();
         lock.rollback().unwrap();
         migrate(&mut first).unwrap();
-        let rebuilt = refresh(&mut first, root, false, &cancellation).unwrap();
+        let rebuilt = refresh(
+            &mut first,
+            root,
+            /*reconcile*/ false,
+            row_locations,
+            &cancellation,
+        )
+        .unwrap();
         assert_eq!(rebuilt.files_updated, 1);
         resume_tx.send(()).unwrap();
         let warm = second.join().unwrap();
@@ -133,12 +154,26 @@ fn vacuum_returns_deleted_session_pages_to_the_filesystem() {
         })
         .collect();
     let mut connection = open(root.path()).unwrap();
-    refresh(&mut connection, root.path(), false, &cancellation).unwrap();
+    refresh(
+        &mut connection,
+        root.path(),
+        /*reconcile*/ false,
+        row_locations,
+        &cancellation,
+    )
+    .unwrap();
     for session in &sessions[1..] {
         fs::remove_file(session.path()).unwrap();
     }
     // Real refreshes vacuum past 50 MiB free; this cache stays below that.
-    refresh(&mut connection, root.path(), true, &cancellation).unwrap();
+    refresh(
+        &mut connection,
+        root.path(),
+        /*reconcile*/ true,
+        row_locations,
+        &cancellation,
+    )
+    .unwrap();
     // Flush WAL frames so the file size reflects every allocated page.
     connection
         .query_row("pragma wal_checkpoint(truncate)", [], |_| Ok(()))
@@ -201,7 +236,14 @@ fn schema_upgrade_drops_evidence_from_pre_tree_sessions() {
             .unwrap()
     };
     let mut connection = open(root.path()).unwrap();
-    refresh(&mut connection, root.path(), false, &cancellation).unwrap();
+    refresh(
+        &mut connection,
+        root.path(),
+        /*reconcile*/ false,
+        row_locations,
+        &cancellation,
+    )
+    .unwrap();
     assert_eq!(matches(&connection), 1);
 
     // The cache an earlier rho 3 left: schema 4, with evidence from a file
@@ -223,6 +265,172 @@ fn schema_upgrade_drops_evidence_from_pre_tree_sessions() {
     drop(connection);
 
     let mut connection = open(root.path()).unwrap();
-    refresh(&mut connection, root.path(), false, &cancellation).unwrap();
+    refresh(
+        &mut connection,
+        root.path(),
+        /*reconcile*/ false,
+        row_locations,
+        &cancellation,
+    )
+    .unwrap();
     assert_eq!(matches(&connection), 0);
+}
+
+// Covers: a transcript that does not load is not indexed, and is not read
+// again on every refresh, which a search runs before each query, until it
+// changes. Owner: search index refresh.
+#[test]
+fn a_transcript_that_does_not_load_is_read_once() {
+    let root = TempDir::new().unwrap();
+    let cwd = TempDir::new().unwrap();
+    let session = Session::create_in_root(root.path(), cwd.path()).unwrap();
+    session
+        .append_message(&Message::user_text("brokenneedle"))
+        .unwrap();
+    let mut file = fs::OpenOptions::new()
+        .append(true)
+        .open(session.path())
+        .unwrap();
+    std::io::Write::write_all(&mut file, b"{\"type\":\"node\",\n").unwrap();
+    let cancellation = CancellationToken::new();
+    let mut connection = open(root.path()).unwrap();
+    let report = |refresh: Refresh| {
+        (
+            refresh.files_checked,
+            refresh.files_updated,
+            refresh.skipped_files,
+            refresh.omitted_records,
+        )
+    };
+
+    let first = refresh(
+        &mut connection,
+        root.path(),
+        /*reconcile*/ false,
+        row_locations,
+        &cancellation,
+    )
+    .unwrap();
+    let second = refresh(
+        &mut connection,
+        root.path(),
+        /*reconcile*/ false,
+        row_locations,
+        &cancellation,
+    )
+    .unwrap();
+
+    let matches: usize = connection
+        .query_row(
+            "select count(*) from evidence_fts where evidence_fts match 'brokenneedle'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+
+    assert_eq!(
+        (report(first), report(second), matches),
+        ((1, 1, 0, 1), (0, 0, 0, 1), 0)
+    );
+}
+
+// Covers: a transcript whose read failed, as on a full or unmounted disk,
+// is read again once reads work, not cached as one that does not load, and
+// the index reports itself incomplete meanwhile, which a daemon search
+// answers as `indexing`. Owner: search index refresh.
+#[cfg(unix)]
+#[test]
+fn a_transcript_whose_read_failed_is_read_again() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = TempDir::new().unwrap();
+    let cwd = TempDir::new().unwrap();
+    let session = Session::create_in_root(root.path(), cwd.path()).unwrap();
+    session
+        .append_message(&Message::user_text("retryneedle"))
+        .unwrap();
+    let readable = |mode| fs::set_permissions(session.path(), fs::Permissions::from_mode(mode));
+    readable(0o000).unwrap();
+    // Root or CAP_DAC_OVERRIDE can still open 0o000 files; skip if this process can.
+    if fs::File::open(session.path()).is_ok() {
+        readable(0o600).unwrap();
+        return;
+    }
+    let cancellation = CancellationToken::new();
+    let mut connection = open(root.path()).unwrap();
+    let state = |connection: &mut Connection| {
+        refresh(
+            connection,
+            root.path(),
+            /*reconcile*/ false,
+            row_locations,
+            &cancellation,
+        )
+        .unwrap();
+        let matches: usize = connection
+            .query_row(
+                "select count(*) from evidence_fts where evidence_fts match 'retryneedle'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        (complete(connection).unwrap(), matches)
+    };
+
+    let failed = state(&mut connection);
+    readable(0o600).unwrap();
+    let recovered = state(&mut connection);
+
+    assert_eq!((failed, recovered), ((false, 0), (true, 1)));
+}
+
+// Covers: which indexing failures a later refresh retries: failed reads and
+// a transcript that changed while read, wrapped or not, but not a
+// transcript that is malformed, text that is not UTF-8 included, which
+// would otherwise keep a search `indexing` for good. Owner: search index
+// refresh.
+#[test]
+fn only_failed_reads_and_changes_are_retried() {
+    use std::io::{Error, ErrorKind};
+
+    let cases: [(&str, anyhow::Error, bool); 6] = [
+        (
+            "failed read",
+            Error::from(ErrorKind::PermissionDenied).into(),
+            true,
+        ),
+        (
+            "failed read with context",
+            anyhow::Error::from(Error::from(ErrorKind::Other)).context("loading"),
+            true,
+        ),
+        ("changed while read", ChangedWhileRead.into(), true),
+        (
+            "not UTF-8",
+            Error::from(ErrorKind::InvalidData).into(),
+            false,
+        ),
+        (
+            "malformed record",
+            serde_json::from_str::<serde_json::Value>("{")
+                .unwrap_err()
+                .into(),
+            false,
+        ),
+        (
+            "invalid header",
+            anyhow::anyhow!("missing session header"),
+            false,
+        ),
+    ];
+
+    let actual: Vec<_> = cases
+        .iter()
+        .map(|(name, error, _)| (*name, transient(error)))
+        .collect();
+    let expected: Vec<_> = cases
+        .iter()
+        .map(|(name, _, retried)| (*name, *retried))
+        .collect();
+    assert_eq!(actual, expected);
 }

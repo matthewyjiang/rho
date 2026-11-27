@@ -69,7 +69,27 @@ fn list_in_root(
             Cursor::parse(cursor).ok_or_else(|| CatalogError::UnknownCursor(cursor.into()))
         })
         .transpose()?;
-    let summaries = match cwd {
+    Ok(page(saved_in_root(root, cwd)?, after.as_ref(), limit))
+}
+
+/// Every session the catalog lists, in no order: [`list`]'s sessions,
+/// unpaged. Blocking, as [`list`] is.
+pub(crate) fn listable_in_root(
+    root: &Path,
+    cwd: Option<&Path>,
+) -> Result<Vec<SessionSummary>, CatalogError> {
+    if cwd.is_some_and(|cwd| !cwd.is_absolute()) {
+        return Err(CatalogError::RelativeCwd);
+    }
+    let mut summaries = saved_in_root(root, cwd)?;
+    summaries.retain(listable);
+    Ok(summaries)
+}
+
+/// The person-facing sessions saved in workspace `cwd`, or in every
+/// workspace without one, listable or not.
+fn saved_in_root(root: &Path, cwd: Option<&Path>) -> Result<Vec<SessionSummary>, CatalogError> {
+    match cwd {
         // In the form a session's workspace is saved under.
         Some(cwd) => match crate::paths::canonicalize(cwd) {
             // Checked before listing, which creates the workspace's session
@@ -81,25 +101,27 @@ fn list_in_root(
         },
         None => Session::list_all_in_root(root, SessionListing::PersonFacing),
     }
-    .map_err(CatalogError::Store)?;
-    Ok(page(summaries, after.as_ref(), limit))
+    .map_err(CatalogError::Store)
 }
 
-/// The page of at most `limit` of `summaries` after `after`, newest first.
-/// Sessions `/resume` hides, those with nothing saved yet, are left out, as
-/// are sessions whose workspace directory is gone, which neither ACP's
-/// `session/load` nor the daemon's attach reopens.
+/// Whether the catalog lists `summary`: sessions `/resume` hides, those with
+/// nothing saved yet, are left out, as are sessions whose workspace
+/// directory is gone, which neither ACP's `session/load` nor the daemon's
+/// attach reopens.
+fn listable(summary: &SessionSummary) -> bool {
+    summary.has_messages() && summary.cwd.is_dir()
+}
+
+/// The page of at most `limit` of the [`listable`] `summaries` after
+/// `after`, newest first.
 fn page(
     mut summaries: Vec<SessionSummary>,
     after: Option<&Cursor<'_>>,
     limit: NonZeroUsize,
 ) -> CatalogPage {
     let limit = limit.get();
-    summaries.retain(|summary| {
-        summary.has_messages()
-            && summary.cwd.is_dir()
-            && after.is_none_or(|after| after.precedes(summary))
-    });
+    summaries
+        .retain(|summary| listable(summary) && after.is_none_or(|after| after.precedes(summary)));
     summaries.sort_by(|left, right| Cursor::at(left).cmp_list_order(&Cursor::at(right)));
     let next_cursor = summaries
         .get(limit)

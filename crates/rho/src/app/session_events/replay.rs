@@ -8,7 +8,7 @@ use std::{
 };
 
 use rho_protocol::{
-    display::Presentation, CompactionId, CompactionStatus, MessageId, PlanEntry,
+    display::Presentation, CompactionId, CompactionStatus, MessageId, PlanEntry, SearchLocation,
     SessionEvent as WireEvent, ToolCallId, ToolCallUpdate, ToolStatus,
 };
 use rho_sdk::{
@@ -316,6 +316,38 @@ impl CallSource for Recorded<'_> {
     }
 }
 
+/// Opens calls numbered from the session's first, with no start metadata:
+/// enough to name them, which is all [`row_locations`] reads.
+struct Numbered(CallIds);
+
+impl CallSource for Numbered {
+    fn open(&mut self, saved: &str, _call: Option<&model::ToolCall>) -> OpenedCall {
+        OpenedCall {
+            id: self.0.open(saved),
+            start: ToolMetadata::default(),
+            surface: None,
+        }
+    }
+}
+
+/// Where a reset's replay shows each of `rows`, a saved session's display
+/// rows as a load replays them (`SavedHistory::display_rows`): the id of
+/// the first event that shows the row, or `None` when no event with an id
+/// does, as for a card. Renders the rows as [`SavedTurn::capture`] does,
+/// calls numbered from the session's first, so session search can point a
+/// client at the event its replay sent.
+pub(crate) fn row_locations(rows: &[ProjectedMessage]) -> Vec<Option<SearchLocation>> {
+    let mut replay = Replay::new(Path::new(""), &McpToolNames::default());
+    let mut calls = Numbered(CallIds::default());
+    rows.iter()
+        .map(|row| {
+            replay.row(row, &mut calls);
+            replay.take_events();
+            replay.shown.take()
+        })
+        .collect()
+}
+
 /// The id replay gives the first message of the display row saved at
 /// `origin`: a live user message saved there takes it too, so a client sees
 /// one message whether it watched the prompt live or got it replayed.
@@ -342,6 +374,9 @@ struct Replay {
     /// When the row being rendered was saved, which the events that show
     /// it carry ([`Self::push`]).
     saved_at: Option<u64>,
+    /// The id of the first event that showed the row being rendered, for
+    /// [`row_locations`].
+    shown: Option<SearchLocation>,
     /// Rendered since the last [`Self::take_events`].
     events: Vec<FeedEvent>,
 }
@@ -391,6 +426,7 @@ impl Replay {
             opened: 0,
             message_ids: MessageIds::default(),
             saved_at: None,
+            shown: None,
             events: Vec::new(),
         }
     }
@@ -399,6 +435,7 @@ impl Replay {
     fn row(&mut self, row: &ProjectedMessage, calls: &mut dyn CallSource) {
         self.message_ids.enter(row.origin.as_ref());
         self.saved_at = row.saved_at;
+        self.shown = None;
         self.message(&row.message, calls);
     }
 
@@ -408,6 +445,9 @@ impl Replay {
     fn push(&mut self, event: impl Into<FeedEvent>) {
         let mut event = event.into();
         event.at = self.saved_at;
+        if self.shown.is_none() {
+            self.shown = location(&event.event);
+        }
         self.events.push(event);
     }
 
@@ -635,6 +675,21 @@ impl Replay {
             }
         }
         self.push(WireEvent::tool_call(opened));
+    }
+}
+
+/// The id `event` gives what it shows, as session search names it.
+fn location(event: &WireEvent) -> Option<SearchLocation> {
+    match event {
+        WireEvent::UserMessage { message, .. }
+        | WireEvent::AgentMessageChunk { message, .. }
+        | WireEvent::ThoughtChunk { message, .. } => Some(SearchLocation::Message {
+            id: message.clone(),
+        }),
+        WireEvent::ToolCall(update) => Some(SearchLocation::ToolCall {
+            id: update.id.clone(),
+        }),
+        _ => None,
     }
 }
 

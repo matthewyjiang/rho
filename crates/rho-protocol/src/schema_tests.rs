@@ -15,15 +15,16 @@ use crate::methods::{
     AnswerStop, Applies, ApprovalSource, Ask, AuthKind, AuthStatus, BackgroundItem,
     BackgroundStatus, BranchLookup, Budget, CardTone, CommandKind, CompactionStatus,
     CompactionTrigger, ConfigLayer, ConfigNamespace, ContentBlock, CredentialStoreKind,
-    DefaultStyle, DetachReason, InputAsker, IntegerUnit, JobKind, JobState, LoginOutcome,
-    ModelListKind, ModelRefreshOutcome, ModelRuntime, Operation, PathScope, PermissionMode,
-    PlanStatus, ProcessState, ProcessStream, PromptAuthor, PullRequestCheckStatus,
+    DefaultStyle, DetachReason, ExcerptRole, InputAsker, IntegerUnit, JobKind, JobState,
+    LoginOutcome, ModelListKind, ModelRefreshOutcome, ModelRuntime, Operation, PathScope,
+    PermissionMode, PlanStatus, ProcessState, ProcessStream, PromptAuthor, PullRequestCheckStatus,
     PullRequestLinkOrigin, PullRequestMergeMethod, PullRequestMergeable, PullRequestReview,
     PullRequestRollup, PullRequestState, PullRequestThreadState, PullRequestTrouble,
-    PullRequestVerdict, ReasoningLevel, Resolution, RetryReason, Selection, SessionActivity,
-    SessionControlAction, SessionEvent, SessionMark, SessionMcpMode, SessionMcpResourceContent,
-    SessionMcpStatus, SettingKind, StoreSelectedBy, ToolContent, ToolKind, ToolStatus,
-    TurnErrorKind, TurnOutcome, UncheckedReason, UnsteerOutcome, ValueSource, WorktreeVerdict,
+    PullRequestVerdict, ReasoningLevel, Resolution, RetryReason, SearchLocation, Selection,
+    SessionActivity, SessionControlAction, SessionEvent, SessionMark, SessionMcpMode,
+    SessionMcpResourceContent, SessionMcpStatus, SettingKind, StoreSelectedBy, ToolContent,
+    ToolKind, ToolStatus, TurnErrorKind, TurnOutcome, UncheckedReason, UnsteerOutcome, ValueSource,
+    WorktreeVerdict,
 };
 use crate::methods::{
     CompactionExtent, CompactionRunOutcome, CompactionRunTrigger, CompactionSkipReason,
@@ -70,7 +71,7 @@ fn enums_marked_open_read_unknown_values_as_unknown() {
     let unseen = || json!("from_a_newer_daemon");
     let unseen_tag = || json!({ "type": "from_a_newer_daemon" });
     let unseen_kind = || json!({ "kind": "from_a_newer_daemon" });
-    let cases: [(&str, bool); 102] = [
+    let cases: [(&str, bool); 104] = [
         ("ContextBasis", reads_as(unseen(), ContextBasis::Unknown)),
         (
             "PromptSourceKind",
@@ -141,6 +142,11 @@ fn enums_marked_open_read_unknown_values_as_unknown() {
         (
             "BackgroundItem",
             reads_as(unseen_kind(), BackgroundItem::Unknown),
+        ),
+        ("ExcerptRole", reads_as(unseen(), ExcerptRole::Unknown)),
+        (
+            "SearchLocation",
+            reads_as(unseen_kind(), SearchLocation::Unknown),
         ),
         (
             "BackgroundStatus",
