@@ -535,6 +535,8 @@ A settings screen shows what the daemon's configuration sets up with `rho/mcp/li
 - `invalid`: a file a session would load could not be read or parsed; its `error` says why. A session then runs no hooks at all.
 - `disabled`: a file that would load, but `by` names the `invalid` file that stops a session loading any hooks; its hooks are `disabled`.
 
+An `error` leaves out the file's path, which `path` gives, as the `invalid` and `skipped_untrusted` files of `rho/session/report`'s `hooks` report do.
+
 A daemon that predates either method answers `MethodNotFound`.
 
 ### Client settings

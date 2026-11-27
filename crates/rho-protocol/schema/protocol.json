@@ -3264,7 +3264,7 @@
           "type": "object"
         },
         {
-          "description": "The project's file, which a session skips because the client does\nnot trust the project; `error` says why it could not be read or\nparsed, when it could not.",
+          "description": "The project's file, which a session skips because the client does\nnot trust the project; `error` says why it could not be read or\nparsed, when it could not, without the path [`HooksFile::path`]\ngives.",
           "properties": {
             "error": {
               "type": [
@@ -3283,7 +3283,7 @@
           "type": "object"
         },
         {
-          "description": "A file a session would load could not be read or parsed. A session\nthen runs no hooks at all: the other file, if it would load, is\n`disabled`.",
+          "description": "A file a session would load could not be read or parsed; `error`\nsays why, without the path [`HooksFile::path`] gives. A session then\nruns no hooks at all: the other file, if it would load, is\n`disabled`.",
           "properties": {
             "error": {
               "type": "string"
@@ -3672,7 +3672,7 @@
       "description": "A hooks file that loads but could not be read or validated.",
       "properties": {
         "error": {
-          "description": "What is wrong with it, as rho words it.",
+          "description": "What is wrong with it, as rho words it, without its `path`.",
           "type": "string"
         },
         "path": {
@@ -10521,7 +10521,7 @@
       "description": "A hooks file the session did not load because it does not trust the\nproject.",
       "properties": {
         "error": {
-          "description": "Why the file could not be read or parsed, when it could not. Its\nhooks are then not listed.",
+          "description": "Why the file could not be read or parsed, when it could not, without\nits `path`. Its hooks are then not listed.",
           "type": [
             "string",
             "null"

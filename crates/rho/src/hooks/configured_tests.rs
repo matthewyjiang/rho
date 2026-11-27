@@ -157,3 +157,83 @@ fn each_hooks_file_is_listed_with_its_own_status() {
         );
     }
 }
+
+// Covers: a broken hooks file's error reads the same in `rho/hooks/list` as
+// in a session's hooks report, and neither repeats the file's path, which
+// both give in a field of its own, so a client shows it once.
+// Owner: host hook discovery.
+#[test]
+fn a_broken_files_error_leaves_out_its_path_as_the_session_report_does() {
+    use super::super::{HookCatalog, HookSnapshot};
+
+    struct Case {
+        name: &'static str,
+        user: &'static str,
+        project: &'static str,
+        trust: ProjectTrust,
+    }
+    let cases = [
+        Case {
+            name: "a broken user file",
+            user: BROKEN,
+            project: PROJECT_HOOKS,
+            trust: ProjectTrust::Trusted,
+        },
+        Case {
+            name: "a broken trusted project file",
+            user: USER_HOOKS,
+            project: BROKEN,
+            trust: ProjectTrust::Trusted,
+        },
+        Case {
+            name: "a broken untrusted project file",
+            user: USER_HOOKS,
+            project: BROKEN,
+            trust: ProjectTrust::Untrusted,
+        },
+    ];
+
+    for case in cases {
+        let home = TempDir::new().unwrap();
+        let project = TempDir::new().unwrap();
+        write(&home.path().join("hooks.toml"), case.user);
+        write(&project.path().join(".rho/hooks.toml"), case.project);
+        write(&project.path().join("x"), "#!/bin/sh\n");
+
+        let listed: Vec<_> = configured_files(Some(home.path()), Some(project.path()), case.trust)
+            .into_iter()
+            .filter_map(|file| match file.status {
+                HooksFileStatus::Invalid { error }
+                | HooksFileStatus::Untrusted { error: Some(error) } => Some((file.path, error)),
+                _ => None,
+            })
+            .collect();
+        let report = HookSnapshot::checked(
+            None,
+            HookCatalog::discover(Some(home.path()), Some(project.path()), case.trust),
+        )
+        .session_report();
+        let reported = report
+            .invalid
+            .map(|file| (file.path, file.error))
+            .or_else(|| {
+                let skipped = report.skipped_untrusted?;
+                Some((skipped.path, skipped.error?))
+            });
+
+        let [(path, error)] = &listed[..] else {
+            panic!("{}: one broken file, listed {listed:?}", case.name);
+        };
+        assert_eq!(
+            Some((path.clone(), error.clone())),
+            reported,
+            "{}",
+            case.name
+        );
+        assert!(
+            !error.contains(&*path.to_string_lossy()),
+            "{}: {error}",
+            case.name
+        );
+    }
+}

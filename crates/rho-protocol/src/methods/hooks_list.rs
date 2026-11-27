@@ -120,13 +120,15 @@ pub enum HooksFileStatus {
     Disabled { by: PathBuf },
     /// The project's file, which a session skips because the client does
     /// not trust the project; `error` says why it could not be read or
-    /// parsed, when it could not.
+    /// parsed, when it could not, without the path [`HooksFile::path`]
+    /// gives.
     Untrusted {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
     },
-    /// A file a session would load could not be read or parsed. A session
-    /// then runs no hooks at all: the other file, if it would load, is
+    /// A file a session would load could not be read or parsed; `error`
+    /// says why, without the path [`HooksFile::path`] gives. A session then
+    /// runs no hooks at all: the other file, if it would load, is
     /// `disabled`.
     Invalid { error: String },
     /// A value a newer daemon sends that this crate does not know; daemons

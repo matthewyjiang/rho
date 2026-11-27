@@ -301,7 +301,7 @@ impl HookSnapshot {
 fn skipped_untrusted(catalog: &HookCatalog) -> Option<SkippedHooksFile> {
     catalog.skipped_untrusted().map(|skipped| SkippedHooksFile {
         path: skipped.path.clone(),
-        error: skipped.error().map(ToString::to_string),
+        error: skipped.error().map(HookConfigError::detail),
     })
 }
 
