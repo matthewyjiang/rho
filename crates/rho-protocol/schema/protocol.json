@@ -3236,7 +3236,7 @@
       "description": "Result of [`HOOKS_FILE_GET`].",
       "properties": {
         "path": {
-          "description": "Where the file is, or would be, on the daemon's machine, with its\nlinks resolved.",
+          "description": "Where the file is, or would be, on the daemon's machine: `hooks.toml`\nin the Rho home as the daemon resolved it when it started, so a link\nto the home is resolved, but a link at the file itself is not.",
           "type": "string"
         },
         "revision": {

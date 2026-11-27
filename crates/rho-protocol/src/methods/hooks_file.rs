@@ -32,8 +32,9 @@ impl HooksFileGetParams {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[non_exhaustive]
 pub struct HooksFileGetResponse {
-    /// Where the file is, or would be, on the daemon's machine, with its
-    /// links resolved.
+    /// Where the file is, or would be, on the daemon's machine: `hooks.toml`
+    /// in the Rho home as the daemon resolved it when it started, so a link
+    /// to the home is resolved, but a link at the file itself is not.
     pub path: PathBuf,
     /// Send it with the next [`HOOKS_FILE_SET`]. It changes with any byte of
     /// the file, comments included, and an absent file has its own.
