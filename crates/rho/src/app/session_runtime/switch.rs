@@ -17,7 +17,7 @@ use crate::{
         apply_conversation_switch, resolve_model_switch_reasoning, ConversationSwitch,
     },
     compaction::CompactionConfig,
-    config::Config,
+    config::{AuthOrigin, Config},
     credential_store::{
         build_provider_from_config_ensuring_catalog, AppCredentialStore, CredentialGeneration,
     },
@@ -27,21 +27,22 @@ impl SessionRuntime {
     /// Moves the session to the auth it would start on now that
     /// `available` are the auths with credentials (see
     /// [`Config::settle_inferred_auth`]), as a credential write calls for:
-    /// only while it follows `process_config`, whose auth nothing chose,
-    /// and only when the rules now pick another: off an auth that lost its
-    /// credentials, or off keyless access once a key is saved. A session a host changed a
-    /// setting of keeps what it runs on, as does one whose agent names its
-    /// own model, which `process_config` does not describe.
+    /// only while it follows its config and that config, as bound for the
+    /// session's agent, chose no auth, and only when the rules now pick
+    /// another: off an auth that lost its credentials, or off keyless
+    /// access once a key is saved. A session a host changed a setting of
+    /// keeps what it runs on.
     pub(crate) async fn follow_credentials(
         &mut self,
         process_config: &Config,
         available: &[String],
     ) -> Result<(), SettingChangeError> {
-        if self.settings == SettingsPolicy::Keep || self.agent_pins_model() {
+        if self.settings == SettingsPolicy::Keep || self.auth_origin == AuthOrigin::Configured {
             return Ok(());
         }
         let current = self.current_model();
         let mut settled = model_scoped_config(&current, process_config);
+        settled.infer_auth(current.auth.clone());
         settled.settle_inferred_auth(available);
         if settled.auth == current.auth {
             return Ok(());

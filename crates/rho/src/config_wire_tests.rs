@@ -92,24 +92,44 @@ fn agent_changes_write_by_setting_or_name_what_they_refuse() {
     }
 }
 
-// Covers: a model picked in settings on the provider a file names without
-// an auth leaves the auth out, for a session to settle on the one with
+// Covers: a model picked in settings without an auth chosen leaves the
+// auth out, so loading fills in the provider's own default (`codex` for
+// `openai-codex`, not OpenAI's key) for a session to settle on the one with
 // credentials, while a retired provider name such as `xai-oauth`, which
 // chose its auth, keeps that choice as `auth`.
 // Owner: config wire changes (model auth origin).
 #[test]
 fn a_model_write_keeps_only_a_chosen_auth() {
     let cases = [
-        ("xai", "[model]\nprovider = \"xai\"\nmodel = \"grok-4.7\"\n"),
+        ("xai", ("xai", "grok-4.7"), None, ("xai", "xai-api-key")),
         (
             "xai-oauth",
-            "[model]\nprovider = \"xai\"\nmodel = \"grok-4.7\"\nauth = \"xai-oauth\"\n",
+            ("xai", "grok-4.7"),
+            Some("xai-oauth"),
+            ("xai", "xai-oauth"),
+        ),
+        (
+            "xai",
+            ("openai-codex", "gpt-5.6-sol"),
+            None,
+            ("openai-codex", "codex"),
         ),
     ];
-    for (provider, expected) in cases {
+    for (provider, (picked, model), auth, loaded) in cases {
         let before = format!("[model]\nprovider = \"{provider}\"\nmodel = \"grok-4.5\"\n");
-        let written = applied(&before, &[set("model", rho_model("xai", "grok-4.7"))]);
-        assert_eq!(written, Ok(expected.to_owned()), "{provider}");
+        let auth_line = auth
+            .map(|auth| format!("auth = \"{auth}\"\n"))
+            .unwrap_or_default();
+        let expected =
+            format!("[model]\nprovider = \"{picked}\"\nmodel = \"{model}\"\n{auth_line}");
+        let written = applied(&before, &[set("model", rho_model(picked, model))]).unwrap();
+        let (config, _) = resolve(&ConfigDocument::parse(&written).unwrap()).unwrap();
+
+        assert_eq!(
+            (written, (config.provider.as_str(), config.auth.as_str())),
+            (expected, loaded),
+            "{provider} -> {picked}"
+        );
     }
 }
 

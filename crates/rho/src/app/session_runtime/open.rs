@@ -243,6 +243,7 @@ impl SessionRuntime {
             storage,
             agent,
             auth: config.auth,
+            auth_origin: config.auth_origin,
             host_mcp,
             added_dirs,
             permission,
@@ -315,6 +316,7 @@ impl SessionRuntime {
             // The restored child may use a different auth family than
             // the process.
             auth: config.auth,
+            auth_origin: config.auth_origin,
             host_mcp,
             added_dirs,
             permission,

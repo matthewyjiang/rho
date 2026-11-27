@@ -266,6 +266,7 @@ impl SessionRuntime {
         old.teardown().await;
         self.permission = permission;
         self.auth = config.auth.clone();
+        self.auth_origin = config.auth_origin;
         tracing::debug!(previous = %self.agent.id(), agent = %bound.id(), "rebound session agent");
         self.agent = bound;
         self.built.tools.bind_recall(self.storage.file());

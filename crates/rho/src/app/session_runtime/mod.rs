@@ -162,6 +162,8 @@ struct OpenedSession {
     /// The auth profile the session's provider uses, which a reopened child
     /// may take from its saved selection.
     auth: String,
+    /// Whether the session's bound config chose `auth` or filled it in.
+    auth_origin: crate::config::AuthOrigin,
     /// The host's own MCP servers, overlaid on the process config whenever
     /// the session is built again.
     host_mcp: McpConfig,
@@ -190,6 +192,10 @@ pub(crate) struct SessionRuntime {
     added_dirs: AddedDirs,
     permission: SessionPermission,
     auth: String,
+    /// Whether the config the session was bound on chose `auth`; a session
+    /// follows credential writes only on an auth nothing chose (see
+    /// [`Self::follow_credentials`]).
+    auth_origin: crate::config::AuthOrigin,
     credentials: SessionCredentials,
     /// The configured providers the session's provider, compactor, advisor
     /// and classifier were built on (see `providers.rs`).
@@ -233,6 +239,7 @@ impl SessionRuntime {
             storage,
             agent,
             auth,
+            auth_origin,
             host_mcp,
             added_dirs,
             permission,
@@ -251,6 +258,7 @@ impl SessionRuntime {
             added_dirs,
             permission,
             auth,
+            auth_origin,
             credentials,
             providers,
             handle: SessionHandle::new(),

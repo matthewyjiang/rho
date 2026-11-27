@@ -334,6 +334,7 @@ impl SessionRuntime {
             storage,
             agent,
             auth,
+            auth_origin: Default::default(),
             host_mcp: Default::default(),
             added_dirs: Default::default(),
             permission,
