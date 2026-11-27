@@ -96,11 +96,10 @@ pub struct NotificationItem {
     )]
     pub urgency: NotificationUrgency,
     /// How this event reads, which picks its accent color, by the policy
-    /// that gives the card its tone, so a card's
-    /// rows can each take their own event's color. A daemon built before
-    /// items had it leaves it out, which reads as
-    /// [`NotificationTone::Unknown`]: show such an item, like one whose tone
-    /// this crate does not know, in its card's tone.
+    /// that gives the card its tone, so a card's rows can each take their
+    /// own event's color. A daemon built before items had it leaves it out,
+    /// which reads as [`NotificationTone::Unknown`]: show such an item, like
+    /// one whose tone this crate does not know, in its card's tone.
     #[serde(
         default = "NotificationTone::unknown",
         skip_serializing_if = "NotificationTone::is_unknown"

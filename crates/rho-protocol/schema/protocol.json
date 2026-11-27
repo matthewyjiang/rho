@@ -4936,7 +4936,7 @@
         },
         "tone": {
           "$ref": "#/$defs/NotificationTone",
-          "description": "How this event reads, which picks its accent color, by the policy\nthat gives the card its tone, so a card's\nrows can each take their own event's color. A daemon built before\nitems had it leaves it out, which reads as\n[`NotificationTone::Unknown`]: show such an item, like one whose tone\nthis crate does not know, in its card's tone."
+          "description": "How this event reads, which picks its accent color, by the policy\nthat gives the card its tone, so a card's rows can each take their\nown event's color. A daemon built before items had it leaves it out,\nwhich reads as [`NotificationTone::Unknown`]: show such an item, like\none whose tone this crate does not know, in its card's tone."
         },
         "urgency": {
           "$ref": "#/$defs/NotificationUrgency",
