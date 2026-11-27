@@ -1,5 +1,24 @@
 # Changelog
 
+## [2.6.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v2.5.0...rho-agent-tools-v2.6.0) (2026-11-27)
+
+
+### Features
+
+* **protocol:** type the session inspect reports ([#2040](https://github.com/matthewyjiang/rho/issues/2040)) ([51013f4](https://github.com/matthewyjiang/rho/commit/51013f45787dcf22050c551018a1ff9a905a5493))
+
+
+### Bug Fixes
+
+* take every sessions message as prompt and give each session its own temp dir ([#2057](https://github.com/matthewyjiang/rho/issues/2057)) ([a259250](https://github.com/matthewyjiang/rho/commit/a259250df2632c7e0e5f109816f197d8d92020b0))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 6.1.0 to 6.2.0
+
 ## [2.5.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v2.4.0...rho-agent-tools-v2.5.0) (2026-11-25)
 
 

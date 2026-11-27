@@ -1,5 +1,17 @@
 # Changelog
 
+## [6.2.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v6.1.0...rho-sdk-v6.2.0) (2026-11-27)
+
+
+### Features
+
+* **protocol:** carry a questionnaire's reason to whoever answers it ([#2056](https://github.com/matthewyjiang/rho/issues/2056)) ([048d5ea](https://github.com/matthewyjiang/rho/commit/048d5ea5afbf92e8f4120c06db698ab5c39077a9))
+
+
+### Bug Fixes
+
+* **sdk:** answer a steer while the run waits on its host ([#2044](https://github.com/matthewyjiang/rho/issues/2044)) ([deba19b](https://github.com/matthewyjiang/rho/commit/deba19b1dc59f78c0cc4ef3d5e6a21c939c09cc9))
+
 ## [6.1.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v6.0.1...rho-sdk-v6.1.0) (2026-11-25)
 
 

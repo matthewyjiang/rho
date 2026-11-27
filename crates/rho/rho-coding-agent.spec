@@ -14,7 +14,7 @@
 
 Name:           rho-coding-agent
 # x-release-please-start-version
-Version:        3.5.0
+Version:        3.6.0
 # x-release-please-end
 Release:        1%{?dist}
 Summary:        A fast Rust agent harness with a small footprint and opinionated defaults

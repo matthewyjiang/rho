@@ -1,5 +1,42 @@
 # Changelog
 
+## [3.6.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v3.5.0...rho-coding-agent-v3.6.0) (2026-11-27)
+
+
+### Features
+
+* **lead:** report only what changed at the end of a turn ([#2042](https://github.com/matthewyjiang/rho/issues/2042)) ([200d7b4](https://github.com/matthewyjiang/rho/commit/200d7b4968d3611e0ca235b270ece901f368583d))
+* **lead:** reread the brief only after compaction ([#2039](https://github.com/matthewyjiang/rho/issues/2039)) ([c52a705](https://github.com/matthewyjiang/rho/commit/c52a70562a5c63247550268b374d04c6ce32c072))
+* **protocol:** carry a questionnaire's reason to whoever answers it ([#2056](https://github.com/matthewyjiang/rho/issues/2056)) ([048d5ea](https://github.com/matthewyjiang/rho/commit/048d5ea5afbf92e8f4120c06db698ab5c39077a9))
+* **protocol:** give each notification item its own tone ([#2054](https://github.com/matthewyjiang/rho/issues/2054)) ([551667b](https://github.com/matthewyjiang/rho/commit/551667b497f4d50f71a22adfe4dabf9b7435e8f0))
+* **protocol:** manage agent plugins over the daemon ([#2055](https://github.com/matthewyjiang/rho/issues/2055)) ([8e7a278](https://github.com/matthewyjiang/rho/commit/8e7a278d440e339ec81cf9c0586d0dfa11fe60b0))
+* **protocol:** polish session MCP errors, notification item urgency and hooks errors before 1.6.0 ([#2052](https://github.com/matthewyjiang/rho/issues/2052)) ([65fff27](https://github.com/matthewyjiang/rho/commit/65fff27a677c64e6de7122bbf8553a7651001839))
+* **protocol:** read configured MCP servers and hooks without a session ([#2045](https://github.com/matthewyjiang/rho/issues/2045)) ([2fa1597](https://github.com/matthewyjiang/rho/commit/2fa159719ab0577e0b4fc98da3144c80f65123f1))
+* **protocol:** search saved sessions' transcripts ([#2053](https://github.com/matthewyjiang/rho/issues/2053)) ([ba586be](https://github.com/matthewyjiang/rho/commit/ba586bec824a02bece67af51989377c72afad239))
+* **protocol:** time session events and structure notification cards ([#2048](https://github.com/matthewyjiang/rho/issues/2048)) ([fed8b6b](https://github.com/matthewyjiang/rho/commit/fed8b6ba282e0ee00a08718e0e3d7e35c78d84d1))
+* **protocol:** type the session inspect reports ([#2040](https://github.com/matthewyjiang/rho/issues/2040)) ([51013f4](https://github.com/matthewyjiang/rho/commit/51013f45787dcf22050c551018a1ff9a905a5493))
+* **update:** ship rho as a Fedora RPM and update it through dnf ([#2051](https://github.com/matthewyjiang/rho/issues/2051)) ([d4a0fe1](https://github.com/matthewyjiang/rho/commit/d4a0fe131b2ed4334964000efe84323e20bc8666))
+
+
+### Bug Fixes
+
+* **auth:** start a session on the provider auth that has credentials ([#2050](https://github.com/matthewyjiang/rho/issues/2050)) ([b5a3d8d](https://github.com/matthewyjiang/rho/commit/b5a3d8d61b7ecada2574eb06e1aa52c0a84a008c))
+* **hooks:** read the hooks report without reloading the session's hooks ([#2049](https://github.com/matthewyjiang/rho/issues/2049)) ([d70d6ed](https://github.com/matthewyjiang/rho/commit/d70d6ed41ef78b56fafa0d0f18f23abfd8ca53a1))
+* **pull-requests:** find a mise-installed gh ([#2043](https://github.com/matthewyjiang/rho/issues/2043)) ([cb55b47](https://github.com/matthewyjiang/rho/commit/cb55b47e978ec344857bcfe58e65abf68c3ed004))
+* **pull-requests:** wait for queued workflows before reporting checks passed ([#2047](https://github.com/matthewyjiang/rho/issues/2047)) ([4615cdb](https://github.com/matthewyjiang/rho/commit/4615cdb8e9431f658c6ca3fb999f0412eef9318a))
+* **sdk:** answer a steer while the run waits on its host ([#2044](https://github.com/matthewyjiang/rho/issues/2044)) ([deba19b](https://github.com/matthewyjiang/rho/commit/deba19b1dc59f78c0cc4ef3d5e6a21c939c09cc9))
+* **session:** keep a message's live id on replay ([#2058](https://github.com/matthewyjiang/rho/issues/2058)) ([149f21c](https://github.com/matthewyjiang/rho/commit/149f21c44b4c8924736234ace03a948852378eec))
+* **sessions:** size the sessions budget from agent_concurrency ([#2046](https://github.com/matthewyjiang/rho/issues/2046)) ([009f17f](https://github.com/matthewyjiang/rho/commit/009f17f08b0004332c28d92442d9db087c40764f))
+* take every sessions message as prompt and give each session its own temp dir ([#2057](https://github.com/matthewyjiang/rho/issues/2057)) ([a259250](https://github.com/matthewyjiang/rho/commit/a259250df2632c7e0e5f109816f197d8d92020b0))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 6.1.0 to 6.2.0
+    * rho-providers bumped from 3.3.0 to 3.3.1
+
 ## [3.5.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v3.4.0...rho-coding-agent-v3.5.0) (2026-11-25)
 
 
