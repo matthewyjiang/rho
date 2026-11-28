@@ -192,7 +192,7 @@ impl HooksFileRead {
     /// The user's `hooks.toml` under `rho_home`, which needs no trust.
     pub(super) fn user(rho_home: &Path) -> Self {
         Self::read(
-            rho_home.join("hooks.toml"),
+            user_hooks_path(rho_home),
             HookSource::User,
             None,
             ProjectTrust::Trusted,
@@ -249,6 +249,17 @@ pub struct HookSpawnContract {
     /// Edit tools `tools` misses while it names others: a load-time
     /// problem that does not stop the hook from running.
     pub missing_edit_tools: Vec<&'static str>,
+}
+
+/// The user's hooks file of the Rho home `rho_home`.
+pub(crate) fn user_hooks_path(rho_home: &Path) -> PathBuf {
+    rho_home.join("hooks.toml")
+}
+
+/// Checks `text` as a session would load it from the user's hooks file at
+/// `path`, before `rho/hooks/file/set` writes it there.
+pub(crate) fn check_user_hooks(path: &Path, text: &str) -> Result<(), HookConfigError> {
+    parse_hooks_file(path, text, HookSource::User, None, canonical_tool_names()).map(drop)
 }
 
 fn read_definitions(

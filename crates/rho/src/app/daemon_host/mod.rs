@@ -31,7 +31,8 @@ use rho_protocol::{
     AuthListResponse, AuthLoginCancelParams, AuthLoginCancelResponse, AuthLoginParams,
     AuthLoginResponse, AuthLogoutParams, AuthLogoutResponse, BuildId, ClientInfo, ConfigGetParams,
     ConfigRegisterParams, ConfigRegisterResponse, ConfigSchema, ConfigSetParams, ConfigSetResponse,
-    ConfigWatch, DaemonStatus, DetachReason, HooksListParams, HooksListResponse, JobListResponse,
+    ConfigWatch, DaemonStatus, DetachReason, HooksFileGetParams, HooksFileGetResponse,
+    HooksFileSetParams, HooksFileSetResponse, HooksListParams, HooksListResponse, JobListResponse,
     LoginStream, McpListParams, McpListResponse, ModelListParams, ModelRefreshParams,
     ModelRefreshResponse, ModelWatch, PendingUpgrade, ProtocolVersion, RestartCost, RpcError,
     Service, SessionAnswerParams, SessionAnswerResponse, SessionAttachParams,
@@ -59,6 +60,7 @@ use crate::{
 
 mod auth;
 mod configured;
+mod hooks_file;
 mod jobs;
 mod logins;
 mod models;
@@ -150,6 +152,7 @@ pub(super) struct DaemonHost {
     sessions: Arc<Sessions>,
     logins: Arc<Logins>,
     plugins: plugins::Plugins,
+    hooks_file: hooks_file::HooksFileStore,
     upgrades: Upgrades,
     /// Connections whose handshake the daemon accepted and that have not
     /// left: the clients a restart would disconnect.
@@ -187,6 +190,7 @@ impl DaemonHost {
             sessions,
             logins: Arc::new(Logins::new()),
             plugins: plugins::Plugins::new(rho_home.to_path_buf()),
+            hooks_file: hooks_file::HooksFileStore::new(rho_home),
             upgrades: Upgrades::default(),
             clients: AtomicU64::new(0),
             shutdown,
@@ -750,6 +754,20 @@ impl SettingsService for DaemonHost {
 
     async fn list_hooks(&self, params: HooksListParams) -> Result<HooksListResponse, RpcError> {
         configured::hooks(params)
+    }
+
+    async fn read_hooks_file(
+        &self,
+        _params: HooksFileGetParams,
+    ) -> Result<HooksFileGetResponse, RpcError> {
+        self.hooks_file.get()
+    }
+
+    async fn write_hooks_file(
+        &self,
+        params: HooksFileSetParams,
+    ) -> Result<HooksFileSetResponse, RpcError> {
+        self.hooks_file.set(params).await
     }
 
     async fn list_plugins(

@@ -220,6 +220,10 @@ pub use methods::{
     HooksFile, HooksFileScope, HooksFileStatus, HooksListParams, HooksListResponse, HOOKS_LIST,
 };
 pub use methods::{
+    HooksFileGetParams, HooksFileGetResponse, HooksFileSetParams, HooksFileSetResponse,
+    HOOKS_FILE_GET, HOOKS_FILE_SET,
+};
+pub use methods::{
     HooksReloadOutcome, SessionHooksReloadParams, SessionHooksReloadResponse, SESSION_HOOKS_RELOAD,
 };
 pub use methods::{

@@ -1864,7 +1864,7 @@
       "type": "object"
     },
     "ConfigRevision": {
-      "description": "Identifies one state of a namespace's values. Opaque: compare it only\nfor equality, and send back the one [`CONFIG_GET`] or\n[`CONFIG_CHANGED`] gave.",
+      "description": "Identifies one state of what a read returned, such as a namespace's\nvalues. Opaque: compare it only for equality, and send back the one the\nread, or its change notification, gave. Each method that returns one\nsays what changes it.",
       "type": "string"
     },
     "ConfigSchema": {
@@ -3228,6 +3228,35 @@
       ],
       "type": "object"
     },
+    "HooksFileGetParams": {
+      "description": "Params of [`HOOKS_FILE_GET`].",
+      "type": "object"
+    },
+    "HooksFileGetResponse": {
+      "description": "Result of [`HOOKS_FILE_GET`].",
+      "properties": {
+        "path": {
+          "description": "Where the file is, or would be, on the daemon's machine: `hooks.toml`\nin the Rho home as the daemon resolved it when it started, so a link\nto the home is resolved, but a link at the file itself is not.",
+          "type": "string"
+        },
+        "revision": {
+          "$ref": "#/$defs/ConfigRevision",
+          "description": "Send it with the next [`HOOKS_FILE_SET`]. It changes with any byte of\nthe file, comments included, and an absent file has its own."
+        },
+        "text": {
+          "description": "The file's whole text; absent when there is no file.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "path",
+        "revision"
+      ],
+      "type": "object"
+    },
     "HooksFileScope": {
       "anyOf": [
         {
@@ -3247,6 +3276,39 @@
         }
       ],
       "description": "Whose hooks file it is."
+    },
+    "HooksFileSetParams": {
+      "description": "Params of [`HOOKS_FILE_SET`].",
+      "properties": {
+        "revision": {
+          "$ref": "#/$defs/ConfigRevision",
+          "description": "The revision the text replaces. A stale one is refused with\n[`crate::ErrorCode::ConfigConflict`]."
+        },
+        "text": {
+          "description": "The file's new text, written atomically once it loads as a session\nwould load it, which includes finding each hook's program when it is\nnamed by an absolute path. Text that does not load is refused with\n[`crate::ErrorCode::InvalidParams`] naming the problem. Absent or\n`null` deletes the file.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "revision"
+      ],
+      "type": "object"
+    },
+    "HooksFileSetResponse": {
+      "description": "Result of [`HOOKS_FILE_SET`].",
+      "properties": {
+        "revision": {
+          "$ref": "#/$defs/ConfigRevision",
+          "description": "The file's revision with the new text."
+        }
+      },
+      "required": [
+        "revision"
+      ],
+      "type": "object"
     },
     "HooksFileStatus": {
       "anyOf": [
@@ -13033,6 +13095,22 @@
       },
       "result": {
         "$ref": "#/$defs/HelloResponse"
+      }
+    },
+    "rho/hooks/file/get": {
+      "params": {
+        "$ref": "#/$defs/HooksFileGetParams"
+      },
+      "result": {
+        "$ref": "#/$defs/HooksFileGetResponse"
+      }
+    },
+    "rho/hooks/file/set": {
+      "params": {
+        "$ref": "#/$defs/HooksFileSetParams"
+      },
+      "result": {
+        "$ref": "#/$defs/HooksFileSetResponse"
       }
     },
     "rho/hooks/list": {

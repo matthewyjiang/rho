@@ -281,9 +281,10 @@ impl fmt::Display for ClientName {
 )]
 pub struct InvalidClientName(String);
 
-/// Identifies one state of a namespace's values. Opaque: compare it only
-/// for equality, and send back the one [`CONFIG_GET`] or
-/// [`CONFIG_CHANGED`] gave.
+/// Identifies one state of what a read returned, such as a namespace's
+/// values. Opaque: compare it only for equality, and send back the one the
+/// read, or its change notification, gave. Each method that returns one
+/// says what changes it.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(transparent)]
 pub struct ConfigRevision(String);

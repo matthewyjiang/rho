@@ -93,6 +93,8 @@ When the client stops sending, the daemon answers every request it has already r
 | `rho/model/refresh` | `environment`, `only`? | Fetches the provider model lists again, and the models.dev catalog, and returns how each fetch went ([below](#models)). |
 | `rho/mcp/list` | `workspace`?, `environment`? | The MCP servers a session would configure, without loading a session or starting a server: `config_path` and `servers` ([below](#configured-mcp-servers-and-hooks)). |
 | `rho/hooks/list` | `workspace`?, `environment`? | The hooks files a session would load, each with its `status` and the `hooks` it defines, without loading a session or running a hook ([below](#configured-mcp-servers-and-hooks)). |
+| `rho/hooks/file/get` | | The user's `~/.rho/hooks.toml` as text: its `path`, its `revision`, and its `text`, absent when there is no file ([below](#the-user-s-hooks-file)). |
+| `rho/hooks/file/set` | `revision`, `text`? | Replaces the user's hooks file with `text`, or deletes it when `text` is absent or `null`, and returns the new `revision` ([below](#the-user-s-hooks-file)). |
 | `rho/plugins/list` | `workspace`?, `environment`? | The agent plugins a session would find, loaded or not: `plugins` ([below](#agent-plugins)). |
 | `rho/plugins/install` | `source`, `scope`, `force`?, `workspace`?, `environment`? | Copies, links, or fetches a plugin package into the user's or the project's plugins root and returns the `plugin` as listed ([below](#agent-plugins)). |
 | `rho/plugins/update` | `plugin`?, `workspace`?, `environment`? | Fetches git-installed plugins again and returns each one's `outcome` in `results`, with the project plugins skipped as `untrusted` ([below](#agent-plugins)). |
@@ -579,6 +581,16 @@ An `error` leaves out the file's path, which `path` gives, as the `invalid` and 
 
 A daemon that predates either method answers `MethodNotFound`.
 
+### The user's hooks file
+
+A client that copies settings from one daemon to another reads and writes the user's `~/.rho/hooks.toml` whole, as text, with `rho/hooks/file/get` and `rho/hooks/file/set`. A project's `.rho/hooks.toml` is never read or written. The text is the whole file, comments included. A script a hook names by path is not part of it.
+
+`rho/hooks/file/get` takes no params and returns `path`, where the file is or would be on the daemon's machine (`hooks.toml` in the Rho home as the daemon resolved it at startup, so a link to the home is resolved but a link at the file itself is not), `revision`, and `text`, absent when there is no file. `revision` is opaque: any byte of the file changes it, and an absent file has a revision of its own. A file that is not UTF-8 text gets `InternalError`; fix it by hand.
+
+`rho/hooks/file/set` takes the `revision` the client read and the new `text`, absent or `null` to delete the file, and returns the new `revision`. The text is checked first as a session loads the file, which includes finding each hook's program when the hook names it by an absolute path. Text that does not load gets `InvalidParams` naming the problem, and nothing is written, so copy a hook's script to the daemon's machine before the file that runs it. A `revision` the file no longer has, because a hand edit or another client changed it, gets `ConfigConflict`: read the file again. So does a write while another rho process holds the file's edit lock, as a `config.toml` write does. The file is replaced atomically, as `rho/config/set` replaces `config.toml`, so a session opening meanwhile reads the old text or the new, never a mix; a link at its path is replaced by the file. Sessions read the file as they open and on `rho/session/hooks/reload`, so a write changes no loaded session's hooks.
+
+A daemon that predates either method answers `MethodNotFound`.
+
 ### Agent plugins
 
 A settings screen manages [agent plugins](/integrations/plugins) with `rho/plugins/*`, as `rho plugins` does in a terminal, without loading a session. Every method acts on the daemon's machine: a path names a directory there, an install from a URL runs that machine's `git`, and files are written there. A change applies to sessions opened afterwards; a loaded session keeps the plugins it loaded, and nothing is reloaded. Each request reads the plugin roots and `plugins.toml` files again.
@@ -661,7 +673,7 @@ Errors use the JSON-RPC `code` and `message`. The first five codes are JSON-RPC'
 | -32018 | `LoginNotFound` | No login under way has the id: it ended, or never started. |
 | -32019 | `SignInRequired` | The daemon could not open the session because its model's auth profile has no usable credentials: none are saved or set, they could not be read, or the provider refused them. Sign in, then try again. A session whose setup's `sign_in` is `later` opens signed out instead. |
 | -32020 | `ProjectTrustMismatch` | The prompting client's project trust (the `RHO_TRUST_PROJECT_*` variables in its `environment`) is not the session's, so no turn started and the session is as it was. `data` names the variables only the session's trust has (`session_only`) and those only the client's has (`client_only`). Open another session, or prompt with the session's trust. |
-| -32021 | `ConfigConflict` | The settings changed since the `revision` a `rho/config/set` sent, so nothing was written. Read them again, then resend. |
+| -32021 | `ConfigConflict` | The settings changed since the `revision` a `rho/config/set` sent, or the user's hooks file since the one a `rho/hooks/file/set` sent, so nothing was written. Read them again, then resend. |
 | -32022 | `ConfigInvalid` | The settings file is not valid TOML, so the daemon cannot merge a change into it and wrote nothing. Fix it by hand; `rho/config/get` lists where it fails. |
 | -32023 | `CapabilityRequired` | The method needs a capability this connection's `rho/hello` did not declare, such as `rho/session/answer` from a connection of role `agent`. Nothing was done; a connection keeps what it declared. |
 | -32024 | `PluginNotFound` | No plugin of that name is in the plugins roots of the scope the request names, or a git-installed plugin's package is gone from its root. |

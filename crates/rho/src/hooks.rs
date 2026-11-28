@@ -50,6 +50,7 @@ use crate::{
     workspace::ProjectTrusts,
 };
 
+pub(crate) use catalog::{check_user_hooks, user_hooks_path};
 pub use catalog::{HookCatalog, TRUST_PROJECT_HOOKS_ENV};
 pub use config::HookConfigError;
 pub(crate) use diagnostics::{HookContractView, HookDrift};

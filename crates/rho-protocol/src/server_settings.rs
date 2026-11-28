@@ -1,7 +1,8 @@
 //! The settings part of the daemon's protocol: `rho/config/*` (#1720),
 //! `rho/model/*`, the models a model setting may take, `rho/mcp/list`
 //! and `rho/hooks/list`, the MCP servers and hooks the configuration sets
-//! up, and `rho/plugins/*`, the agent plugins and managing them. The
+//! up, `rho/hooks/file/*`, the user's hooks file as text, and
+//! `rho/plugins/*`, the agent plugins and managing them. The
 //! [`SettingsService`] methods every [`crate::Service`] answers, and
 //! forwarding a namespace's changes, or the models', once a client reads
 //! them.
@@ -12,10 +13,11 @@ use crate::{
     forward::{ConfigWatch, Forwarders, ModelWatch},
     methods::{
         ConfigGet, ConfigGetParams, ConfigRegisterParams, ConfigRegisterResponse, ConfigSchema,
-        ConfigSetParams, ConfigSetResponse, HooksListParams, HooksListResponse, McpListParams,
-        McpListResponse, ModelListMethod, ModelListParams, ModelRefreshParams,
-        ModelRefreshResponse, CONFIG_GET, CONFIG_REGISTER, CONFIG_SCHEMA, CONFIG_SET, HOOKS_LIST,
-        MCP_LIST, MODEL_LIST, MODEL_REFRESH,
+        ConfigSetParams, ConfigSetResponse, HooksFileGetParams, HooksFileGetResponse,
+        HooksFileSetParams, HooksFileSetResponse, HooksListParams, HooksListResponse,
+        McpListParams, McpListResponse, ModelListMethod, ModelListParams, ModelRefreshParams,
+        ModelRefreshResponse, CONFIG_GET, CONFIG_REGISTER, CONFIG_SCHEMA, CONFIG_SET,
+        HOOKS_FILE_GET, HOOKS_FILE_SET, HOOKS_LIST, MCP_LIST, MODEL_LIST, MODEL_REFRESH,
     },
     methods::{
         PluginsInstallParams, PluginsInstallResponse, PluginsListParams, PluginsListResponse,
@@ -29,7 +31,7 @@ use crate::{
 };
 
 /// The daemon's answers to `rho/config/*`, `rho/model/*`, `rho/mcp/list`,
-/// `rho/hooks/list`, and `rho/plugins/*`, which
+/// `rho/hooks/list`, `rho/hooks/file/*`, and `rho/plugins/*`, which
 /// [`crate::Service`] requires. Calls run as [`crate::Service`]'s do: each
 /// in its own task, overlapping within a connection and across
 /// connections. Each method answers [`crate::ErrorCode::MethodNotFound`]
@@ -113,6 +115,26 @@ pub trait SettingsService: Send + Sync {
     ) -> impl Future<Output = Result<HooksListResponse, RpcError>> + Send {
         let _ = params;
         unsupported(HOOKS_LIST)
+    }
+
+    /// Answers `rho/hooks/file/get`: the user's hooks file as text, with its
+    /// revision.
+    fn read_hooks_file(
+        &self,
+        params: HooksFileGetParams,
+    ) -> impl Future<Output = Result<HooksFileGetResponse, RpcError>> + Send {
+        let _ = params;
+        unsupported(HOOKS_FILE_GET)
+    }
+
+    /// Handles `rho/hooks/file/set`: replace or delete the user's hooks file
+    /// when the params' revision is current and the text parses.
+    fn write_hooks_file(
+        &self,
+        params: HooksFileSetParams,
+    ) -> impl Future<Output = Result<HooksFileSetResponse, RpcError>> + Send {
+        let _ = params;
+        unsupported(HOOKS_FILE_SET)
     }
 
     /// Answers `rho/plugins/list`: the agent plugins a session would find.
