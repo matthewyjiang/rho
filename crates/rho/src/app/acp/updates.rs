@@ -104,7 +104,11 @@ impl Updates {
                 used_tokens,
                 window_tokens,
                 cost_usd_micros,
-            } => vec![usage(*used_tokens, *window_tokens, *cost_usd_micros)],
+            } => vec![SessionUpdate::UsageUpdate(usage_update(
+                *used_tokens,
+                *window_tokens,
+                *cost_usd_micros,
+            ))],
             SessionEvent::TitleChanged { title } => vec![SessionUpdate::SessionInfoUpdate(
                 SessionInfoUpdate::new().title(title.clone()),
             )],
@@ -481,9 +485,14 @@ fn plan_entry(entry: &wire::PlanEntry) -> PlanEntry {
 /// Context fill and cumulative cost. ACP's `size` is required; 0 means the
 /// window is unknown, which clients render as no maximum. Cost is omitted,
 /// never sent as 0, while no request has a price.
-fn usage(used: u64, window: Option<u64>, cost_usd_micros: Option<u64>) -> SessionUpdate {
+/// The `usage_update` of a daemon `Usage` event.
+pub(super) fn usage_update(
+    used: u64,
+    window: Option<u64>,
+    cost_usd_micros: Option<u64>,
+) -> UsageUpdate {
     let cost = cost_usd_micros.map(|micros| Cost::new(micros as f64 / 1_000_000.0, "USD"));
-    SessionUpdate::UsageUpdate(UsageUpdate::new(used, window.unwrap_or(0)).cost(cost))
+    UsageUpdate::new(used, window.unwrap_or(0)).cost(cost)
 }
 
 #[cfg(test)]

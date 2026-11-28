@@ -255,8 +255,12 @@ fn v2_holds_a_prompt_behind_another_clients_turn() {
         json!({"sessionId": session_id, "cwd": workspace.project}),
     );
     resumed.unwrap();
+    // The session's info and usage follow the state.
     assert_eq!(
-        snapshot.last().unwrap(),
+        snapshot
+            .iter()
+            .rfind(|update| update["sessionUpdate"] == "state_update")
+            .unwrap(),
         &json!({"sessionUpdate": "state_update", "state": "running", "background": []})
     );
     let mut log = Vec::new();

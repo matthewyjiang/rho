@@ -297,9 +297,13 @@ pub(super) fn agent(agent: Arc<Adapter>) -> impl ConnectTo<Client> {
         })
 }
 
-/// `session/resume`, replaying history through `replay` first when asked.
-/// v2 requires a current-state snapshot before a successful response, with
-/// an announcement before it of each piece of background work it lists.
+/// `session/resume`, replaying history through `replay` first when asked
+/// and marking its end with `replay_complete`. The session's live updates
+/// and requests wait until the response: the session's pump holds them
+/// behind the attach's replay (`sessions::Started::open`). Before the
+/// response, v2 requires a current-state snapshot, with an announcement
+/// before it of each piece of background work it lists, and asks for the
+/// session's current info and usage, which the replay leaves out.
 async fn resume(
     agent: &Adapter,
     request: v2::ResumeSessionRequest,
@@ -308,8 +312,13 @@ async fn resume(
     port: &V2Port,
 ) -> Result<(), AcpError> {
     let session_id = request.session_id.clone();
+    let reattach = match requests::resume_session_request(&request) {
+        Ok(reattach) => reattach,
+        Err(error) => return responder.respond_with_error(error),
+    };
+    let replayed = matches!(reattach, Reattach::Replay(_));
     let started = async {
-        let started = match requests::resume_session_request(&request)? {
+        let started = match reattach {
             Reattach::Replay(request) => agent.load_session(&request, replay).await?,
             Reattach::Resume(request) => agent.resume_session(&request).await?,
         };
@@ -320,10 +329,15 @@ async fn resume(
         Ok(started) => started,
         Err(error) => return responder.respond_with_error(error),
     };
-    for update in background::announcements(&started.background) {
+    if replayed {
+        port.send_update(
+            &session_id,
+            v2::SessionUpdate::ReplayComplete(v2::ReplayComplete::new()),
+        )?;
+    }
+    for update in current_state(&started) {
         port.send_update(&session_id, update)?;
     }
-    port.send_update(&session_id, state(&started))?;
     responder.respond(
         v2::ResumeSessionResponse::new()
             .config_options(setup.config_options)
@@ -331,6 +345,27 @@ async fn resume(
     )?;
     started.open();
     Ok(())
+}
+
+/// What a resume reports of the session's current state, in order: each
+/// piece of background work, the `state_update` that lists it, the
+/// session's info, and its last usage. A session without a title yet
+/// leaves the host's as it is.
+fn current_state(started: &Started) -> Vec<v2::SessionUpdate> {
+    let super::sessions::Current { title, usage } = &started.current;
+    let mut updates = background::announcements(&started.background);
+    updates.push(state(started));
+    let mut info = v2::SessionInfoUpdate::new();
+    if let Some(title) = title {
+        info = info.title(title.clone());
+    }
+    updates.push(v2::SessionUpdate::SessionInfoUpdate(info));
+    // Usage the host cannot read must not fail the resume.
+    match usage.as_ref().map(bridge).transpose() {
+        Ok(usage) => updates.extend(usage.map(v2::SessionUpdate::UsageUpdate)),
+        Err(error) => tracing::warn!(%error, "could not report a session's usage over ACP v2"),
+    }
+    updates
 }
 
 /// The session's state when the attachment began: a turn another client

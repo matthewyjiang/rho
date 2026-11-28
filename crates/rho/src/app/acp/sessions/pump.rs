@@ -16,11 +16,15 @@
 //! ([`Shared`]'s): each attach's, once its replay is through, and each
 //! change the daemon sends, which it tells the host through
 //! [`AcpClientPort::background_changed`].
+//!
+//! When the daemon link is lost, the host hears that the session can no
+//! longer be observed ([`AcpClientPort::unobservable`]), and once the pump
+//! attaches again, the session's state.
 
 use std::sync::{Arc, PoisonError};
 
 use agent_client_protocol::{
-    v1::schema::{MessageId, SessionInfoUpdate, SessionUpdate},
+    v1::schema::{MessageId, SessionInfoUpdate, SessionUpdate, UsageUpdate},
     Error as AcpError,
 };
 use rho_protocol::{
@@ -33,7 +37,8 @@ use tokio::{
 };
 
 use super::{
-    busy, lock, Attacher, Attachment, Control, Inbound, Opening, Replayed, Shared, Show, Waiter,
+    busy, lock, Attacher, Attachment, Control, Current, Inbound, Opening, Replayed, Shared, Show,
+    Waiter,
 };
 use crate::{
     app::{
@@ -76,6 +81,7 @@ pub(super) fn spawn(
             .map(Following::Announced),
         inputs: Inputs::default(),
         replaying: None,
+        observed: Observed::Yes,
     };
     tokio::spawn(pump.run(opening))
 }
@@ -83,9 +89,14 @@ pub(super) fn spawn(
 /// An attachment's replay in progress.
 struct Replaying {
     show: Show,
-    /// The title to send a host shown history once it is through; cleared
-    /// when the history carried one.
+    /// The session's title when the attachment began: the [`Current`]
+    /// title, which a host shown history also gets once it is through
+    /// unless the history carried one.
     title: Option<String>,
+    /// Whether the history shown carried a title.
+    titled: bool,
+    /// The last usage the replay reported.
+    usage: Option<UsageUpdate>,
     /// The input requests open when the attachment began.
     inputs: Vec<InputRequest>,
     /// The background work the replay ends with, as the attach answered.
@@ -98,6 +109,14 @@ struct Replaying {
     /// Released once the host has the response that names the session;
     /// only the attach that opened it has one.
     gate: Option<oneshot::Receiver<()>>,
+}
+
+impl Replaying {
+    /// Whether this is the replay of the attach that opened the session,
+    /// whose host has yet to hear of it.
+    fn opening(&self) -> bool {
+        self.gate.is_some()
+    }
 }
 
 /// The turn the pump follows for the host, whose end it must report.
@@ -149,6 +168,22 @@ struct Pump {
     inputs: Inputs,
     position: StreamPosition,
     replaying: Option<Replaying>,
+    observed: Observed,
+}
+
+/// Whether the host can tell what the session does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Observed {
+    Yes,
+    /// The host was told it can no longer observe the session
+    /// ([`AcpClientPort::unobservable`]) and awaits its state again.
+    Lost,
+    /// Attached again with the session idle. The host hears that before
+    /// whatever the pump handles next, unless that is a prompt's
+    /// [`Control::Arm`]: the prompt's acknowledgement then reports
+    /// `running` instead, as an `idle` first would end T3 Code's pending
+    /// prompt (see [`Pump::told_foreground`]).
+    IdleOwed,
 }
 
 impl Pump {
@@ -161,6 +196,11 @@ impl Pump {
         } = opening;
         self.begin(response, show, replayed, Some(gate)).await;
         while let Some(next) = self.inbound.recv().await {
+            if self.observed == Observed::IdleOwed
+                && !matches!(next, Inbound::Control(Control::Arm { .. }))
+            {
+                self.report_state(Foreground::Idle);
+            }
             match next {
                 Inbound::Routed(routed) => self.routed(routed).await,
                 Inbound::Control(control) => self.control(control).await,
@@ -198,8 +238,11 @@ impl Pump {
             // from every other turn's by its id. A prompt the daemon
             // refused, or one that ended before it began, has no turn to
             // wait on.
-            Control::Arm { waiter, turn } if self.attached() => {
-                if let Ok(turn) = turn.await {
+            Control::Arm { waiter, turn } if self.attached() => match turn.await {
+                Ok(turn) => {
+                    if self.observed == Observed::IdleOwed {
+                        self.observed = Observed::Yes;
+                    }
                     self.following = Some(Following::Prompt(Armed {
                         turn,
                         waiter,
@@ -207,7 +250,11 @@ impl Pump {
                         withheld: false,
                     }));
                 }
-            }
+                Err(_) if self.observed == Observed::IdleOwed => {
+                    self.report_state(Foreground::Idle);
+                }
+                Err(_) => {}
+            },
             // The attachment ended between the prompt's reattach and now.
             Control::Arm { waiter, .. } => {
                 let _ = waiter.outcome.send(Err(daemon::lost()));
@@ -256,6 +303,8 @@ impl Pump {
         self.replaying = Some(Replaying {
             show,
             title: response.title,
+            titled: false,
+            usage: None,
             inputs: response.inputs,
             background: response.background,
             state: response.state,
@@ -276,10 +325,22 @@ impl Pump {
         let Some(replaying) = self.replaying.as_mut() else {
             return;
         };
+        if let SessionEvent::Usage {
+            used_tokens,
+            window_tokens,
+            cost_usd_micros,
+        } = &event
+        {
+            replaying.usage = Some(updates::usage_update(
+                *used_tokens,
+                *window_tokens,
+                *cost_usd_micros,
+            ));
+        }
         match replaying.show.clone() {
             Show::History(port) => {
                 if matches!(event, SessionEvent::TitleChanged { .. }) {
-                    replaying.title = None;
+                    replaying.titled = true;
                 }
                 for update in self.updates.map(&event) {
                     self.send(&*port, update, Delivery::Replay).await;
@@ -298,12 +359,16 @@ impl Pump {
 
     /// Sends the title a history may lack, fails a prompt whose turn's
     /// end a skipped replay no longer held, takes the attach's background
-    /// work, answers whoever waits for the replay, waits for the host's
-    /// response, then puts the open input requests to the host.
+    /// work, tells a host that could not observe the session its state,
+    /// answers whoever waits for the replay with the session's info, waits
+    /// for the host's response, then puts the open input requests to the
+    /// host.
     async fn end_replay(&mut self) {
         let Some(Replaying {
             show,
             title,
+            titled,
+            usage,
             inputs,
             background,
             state,
@@ -314,20 +379,34 @@ impl Pump {
         else {
             return;
         };
-        self.turn = turn;
-        match (show, title) {
-            (Show::History(port), Some(title)) => {
+        self.turn.clone_from(&turn);
+        match (&show, &title) {
+            // An ACP v2 replay port drops it: v2 replays no titles, and its
+            // resume reports the `Current` title instead.
+            (Show::History(port), Some(title)) if !titled => {
                 let update =
-                    SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new().title(title));
-                self.send(&*port, update, Delivery::Replay).await;
+                    SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new().title(title.clone()));
+                self.send(&**port, update, Delivery::Replay).await;
             }
             (Show::Skip, _) => self.fail_unreplayed(state),
             (Show::History(_) | Show::Missed, _) => {}
         }
         // A reattach tells the host what changed meanwhile; the attach that
-        // opened the session already holds this work.
+        // opened the session already holds this work. A host that could
+        // not observe the session hears no state with it, only the
+        // snapshot after.
         self.background_changed(background);
-        let _ = done.send(Ok(()));
+        if self.observed == Observed::Lost {
+            if !busy(state) {
+                self.observed = Observed::IdleOwed;
+            } else {
+                if self.following.is_none() {
+                    self.following = turn.map(Following::Announced);
+                }
+                self.report_state(Foreground::of(state));
+            }
+        }
+        let _ = done.send(Ok(Current { title, usage }));
         if let Some(gate) = gate {
             // A request that failed to respond drops the gate; the events
             // still belong to the session.
@@ -515,8 +594,13 @@ impl Pump {
     /// host hears of no other turn. `None` while a prompt of the host's
     /// waits to be acknowledged: the host was told idle, but T3 Code ends
     /// its pending prompt on any `idle`, and the acknowledgement's
-    /// `running` comes next.
+    /// `running` comes next. `None` too while the host awaits the
+    /// session's state after a loss ([`Observed`]), which the pump reports
+    /// itself.
     fn told_foreground(&self) -> Option<Foreground> {
+        if self.observed != Observed::Yes {
+            return None;
+        }
         match &self.following {
             Some(Following::Announced(_) | Following::Prompt(Armed { shown: true, .. })) => {
                 Some(self.shared.attachment.borrow().foreground())
@@ -596,10 +680,14 @@ impl Pump {
     }
 
     /// Ends the attachment as `attachment`: the prompt waiting on it fails
-    /// with `error`, an announced turn ends unseen, and the host's input
-    /// prompts are withdrawn.
+    /// with `error`, and the host's input prompts are withdrawn. A deleted
+    /// session's announced turn ends unseen; a stale one's goes on unseen
+    /// ([`Self::lose`]).
     fn end(&mut self, attachment: Attachment, error: AcpError) {
-        self.fail(error);
+        match attachment {
+            Attachment::Stale => self.lose(error),
+            Attachment::Deleted | Attachment::Attached(_) => self.fail(error),
+        }
         self.inputs.abort_all();
         self.replaying = None;
         self.shared.attachment.send_replace(attachment);
@@ -608,6 +696,30 @@ impl Pump {
     /// Fails the followed turn, if any, with `error`.
     fn fail(&mut self, error: AcpError) {
         self.settle(Err(error));
+    }
+
+    /// The daemon link is gone, so nothing the session does can be seen
+    /// until the pump attaches again: the host hears that, instead of an
+    /// end of the followed turn, which may run on, and the prompt waiting
+    /// on that turn fails with `error`. A host still waiting for the
+    /// response that names the session hears nothing.
+    fn lose(&mut self, error: AcpError) {
+        if !self.replaying.as_ref().is_some_and(Replaying::opening) {
+            self.context.port.unobservable(&self.context.acp_id);
+            self.observed = Observed::Lost;
+        }
+        if let Some(Following::Prompt(armed)) = self.following.take() {
+            let _ = armed.waiter.outcome.send(Err(error));
+        }
+    }
+
+    /// Reports the session's state to a host that could not observe it.
+    fn report_state(&mut self, foreground: Foreground) {
+        self.observed = Observed::Yes;
+        let background = lock(&self.shared.background);
+        self.context
+            .port
+            .foreground_changed(&self.context.acp_id, foreground, &background);
     }
 
     async fn send_mapped(&mut self, event: &SessionEvent) {

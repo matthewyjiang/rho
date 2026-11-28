@@ -33,7 +33,7 @@ use agent_client_protocol::{
         CloseSessionRequest, CloseSessionResponse, DeleteSessionRequest, DeleteSessionResponse,
         LoadSessionRequest, McpServer, MessageId, NewSessionRequest, ResumeSessionRequest,
         SessionId as AcpSessionId, SetSessionConfigOptionRequest, SetSessionConfigOptionResponse,
-        SetSessionModeRequest, SetSessionModeResponse,
+        SetSessionModeRequest, SetSessionModeResponse, UsageUpdate,
     },
     Error as AcpError, RequestCancellation,
 };
@@ -90,8 +90,19 @@ pub(super) enum Control {
     Flush(oneshot::Sender<()>),
 }
 
-/// Told once an attachment's replay is through, or why it never started.
-pub(super) type Replayed = oneshot::Sender<Result<(), AcpError>>;
+/// Told once an attachment's replay is through, with the session's
+/// [`Current`] info, or why it never started.
+pub(super) type Replayed = oneshot::Sender<Result<Current, AcpError>>;
+
+/// What a session's info is as its replay ends. ACP v2 replays no past info,
+/// so a v2 resume reports this after the replay.
+#[derive(Debug)]
+pub(super) struct Current {
+    /// The session's title, once it has one.
+    pub(super) title: Option<String>,
+    /// The session's last usage report, if it has one.
+    pub(super) usage: Option<UsageUpdate>,
+}
 
 /// The attach that opened a session, which its pump starts on.
 struct Opening {
@@ -314,6 +325,8 @@ pub(super) struct Started {
     pub(super) state: JobState,
     /// The session's background work when the attachment began.
     pub(super) background: Vec<BackgroundWork>,
+    /// The session's info when the attachment began.
+    pub(super) current: Current,
     gate: oneshot::Sender<()>,
 }
 
@@ -583,16 +596,20 @@ impl Adapter {
             pump,
         });
         lock(&self.sessions.live).insert(acp_id.0.to_string(), Arc::clone(&live));
-        if let Err(error) = through.await.unwrap_or_else(|_| Err(daemon::lost())) {
-            self.sessions.remove(&acp_id.0);
-            self.detach(&live, Wait::Prompt).await;
-            return Err(error);
-        }
+        let current = match through.await.unwrap_or_else(|_| Err(daemon::lost())) {
+            Ok(current) => current,
+            Err(error) => {
+                self.sessions.remove(&acp_id.0);
+                self.detach(&live, Wait::Prompt).await;
+                return Err(error);
+            }
+        };
         Ok(Started {
             session_id: acp_id,
             options,
             state,
             background,
+            current,
             gate,
         })
     }
@@ -606,7 +623,8 @@ impl Adapter {
         live.inbound
             .send(Inbound::Control(Control::Resume(replayed)))
             .map_err(|_| daemon::lost())?;
-        through.await.unwrap_or_else(|_| Err(daemon::lost()))
+        through.await.unwrap_or_else(|_| Err(daemon::lost()))?;
+        Ok(())
     }
 
     /// Stops relaying `live`: cancels this host's prompt and waits as

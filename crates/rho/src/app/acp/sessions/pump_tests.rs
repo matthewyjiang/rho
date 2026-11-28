@@ -46,8 +46,8 @@ struct Host {
     sent: Mutex<Vec<SessionNotification>>,
     /// What the host was told of turns, in order: the foreground
     /// `foreground_changed` reported, how each ended, as `turn_ended` told
-    /// (a stop reason, `failed`, or `unseen`), and `background` for each
-    /// background change.
+    /// (a stop reason, `failed`, or `unseen`), `background` for each
+    /// background change, and `unobservable` for each loss of the session.
     turns: Mutex<Vec<String>>,
     /// Each background list `background_changed` reported, with the
     /// foreground the repeated state carried, if one was repeated.
@@ -122,6 +122,10 @@ impl AcpClientPort for Host {
         _background: &[BackgroundWork],
     ) {
         self.turns.lock().unwrap().push(format!("{foreground:?}"));
+    }
+
+    fn unobservable(&self, _session_id: &AcpSessionId) {
+        self.turns.lock().unwrap().push("unobservable".to_owned());
     }
 
     fn background_changed(&self, _session_id: &AcpSessionId, change: BackgroundChanged<'_>) {
@@ -428,7 +432,9 @@ async fn armed_prompts_match_their_own_turn() {
 // the pump lost track of it; otherwise the host shows the session running
 // forever. A prompt of the host's takes over, and only its own end is told:
 // T3 Code closes its pending prompt on any `idle`, so one for the old turn
-// would end the new prompt early.
+// would end the new prompt early. A pump that loses the daemon tells the
+// host it can no longer observe the session, not that the turn ended, and
+// once it attaches again, the session's state and the running turn's end.
 // Owner: ACP session pump
 #[tokio::test]
 async fn the_turn_running_at_attach_reports_its_end() {
@@ -441,8 +447,11 @@ async fn the_turn_running_at_attach_reports_its_end() {
         /// An event of the reattach's replay, by its sequence number.
         Replayed(u64, SessionEvent),
         Detached(DetachReason),
+        /// A request found the session stale and attached again with this
+        /// answer.
+        Resumed(Box<SessionAttachResponse>),
     }
-    use Step::{Arm, Detached, Lagged, Live, Replayed};
+    use Step::{Arm, Detached, Lagged, Live, Replayed, Resumed};
     let failed = TurnOutcome::Failed {
         error: wire::TurnError {
             kind: wire::TurnErrorKind::Provider,
@@ -506,7 +515,73 @@ async fn the_turn_running_at_attach_reports_its_end() {
             "an attachment that ends loses track of it",
             Some("t0"),
             vec![Detached(DetachReason::DaemonStopping)],
-            vec!["unseen"],
+            vec!["unobservable"],
+        ),
+        (
+            "attaching again after a loss reports the state and follows the turn",
+            Some("t0"),
+            vec![
+                Detached(DetachReason::Restarting),
+                Resumed(Box::new(attach_response(
+                    Replay::Reset,
+                    0,
+                    JobState::Running,
+                    Some("t0"),
+                ))),
+                Live(ended("t0", answered("a"))),
+            ],
+            vec!["unobservable", "Running", "EndTurn"],
+        ),
+        (
+            "attaching again after a loss finds the session idle",
+            Some("t0"),
+            vec![
+                Detached(DetachReason::Restarting),
+                Resumed(Box::new(attach_response(
+                    Replay::Reset,
+                    0,
+                    JobState::Completed,
+                    Some("t0"),
+                ))),
+            ],
+            vec!["unobservable", "Idle"],
+        ),
+        (
+            "a prompt after a loss reports its own turn, with no idle first",
+            Some("t0"),
+            vec![
+                Detached(DetachReason::Restarting),
+                Resumed(Box::new(attach_response(
+                    Replay::Reset,
+                    0,
+                    JobState::Completed,
+                    Some("t0"),
+                ))),
+                Arm("t1"),
+                Live(running("t1")),
+                Live(user("m1")),
+                Live(ended("t1", answered("a"))),
+            ],
+            vec!["unobservable", "EndTurn"],
+        ),
+        (
+            "work that changed during a loss is announced before the state",
+            Some("t0"),
+            vec![
+                Detached(DetachReason::Restarting),
+                Resumed(Box::new({
+                    let mut resumed =
+                        attach_response(Replay::Reset, 0, JobState::Completed, Some("t0"));
+                    resumed.background = vec![BackgroundWork {
+                        item: BackgroundItem::Process { id: "p".into() },
+                        title: "serve".into(),
+                        status: BackgroundStatus::Running,
+                        exit_code: None,
+                    }];
+                    resumed
+                })),
+            ],
+            vec!["unobservable", "background", "Idle"],
         ),
         (
             "a prompt of this host's takes over, and only its own end is told",
@@ -549,6 +624,13 @@ async fn the_turn_running_at_attach_reports_its_end() {
                 }
                 Replayed(seq, event) => pump.event(seq, event),
                 Detached(reason) => pump.routed(Routed::Detached(reason)),
+                Resumed(resumed) => {
+                    pump.script.answers.lock().unwrap().push_back(Ok(*resumed));
+                    let (replayed, _) = oneshot::channel();
+                    pump.inbound
+                        .send(Inbound::Control(Control::Resume(replayed)))
+                        .unwrap();
+                }
             }
         }
         pump.flush().await;

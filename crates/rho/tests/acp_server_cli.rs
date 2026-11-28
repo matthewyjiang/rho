@@ -76,6 +76,8 @@ mod usage_cost;
 
 #[path = "support/acp_v2_errors_tests.rs"]
 mod v2_errors;
+#[path = "support/acp_v2_replay_tests.rs"]
+mod v2_replay;
 
 #[path = "support/acp_v2_prompt_tests.rs"]
 mod v2_prompt;
