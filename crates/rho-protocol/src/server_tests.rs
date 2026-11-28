@@ -23,7 +23,8 @@ use crate::{
         SessionOptions, StreamId, AUTH_LOGIN_FINISHED, AUTH_LOGIN_PROMPT, CONFIG_CHANGED,
         CONFIG_TABLE_GET, CONFIG_TABLE_SET, DAEMON_STATUS, DAEMON_STOP, MODEL_CHANGED, MODEL_LIST,
         SESSION_ANSWER, SESSION_ANSWER_QUESTION, SESSION_DETACHED, SESSION_EVENT, SESSION_FORK,
-        SESSION_HOLD, SESSION_LIST, SESSION_NEW, SESSION_PROMPT,
+        SESSION_HOLD, SESSION_LIST, SESSION_NEW, SESSION_PROMPT, SYNC_COMPARE, SYNC_EXPORT,
+        SYNC_RECIPIENT,
     },
     subscription, Client, ClientRole, ConfigChangedParams, ConfigGetParams, ConfigGetResponse,
     ConfigNamespace, ConfigRevision, ConfigWatch, CredentialStoreKind, CredentialStoreStatus,
@@ -414,18 +415,26 @@ async fn dispatch_enforces_the_handshake_and_rejects_unknown_requests() {
             ],
         ),
         (
-            "an agent's connection may neither answer nor hold, and keeps its other methods",
+            "an agent's connection may not answer, hold, or export or compare secrets, and keeps its other methods",
+            // The double serves no sync method, so a recipient request that
+            // passes the gate is refused by the service.
             vec![
                 hello_as(1, PROTOCOL_VERSION, "agent", &[]),
                 request_line(2, SESSION_ANSWER),
                 request_line(3, SESSION_HOLD),
-                request_line(4, DAEMON_STATUS),
+                request_line(4, SYNC_EXPORT),
+                request_line(5, SYNC_COMPARE),
+                request_line(6, DAEMON_STATUS),
+                request_line(7, SYNC_RECIPIENT),
             ],
             vec![
                 (id(1), Ok(())),
                 (id(2), Err(Some(ErrorCode::CapabilityRequired))),
                 (id(3), Err(Some(ErrorCode::CapabilityRequired))),
-                (id(4), Ok(())),
+                (id(4), Err(Some(ErrorCode::CapabilityRequired))),
+                (id(5), Err(Some(ErrorCode::CapabilityRequired))),
+                (id(6), Ok(())),
+                (id(7), Err(Some(ErrorCode::MethodNotFound))),
             ],
         ),
         (

@@ -49,6 +49,7 @@ use crate::{
     },
     server::Service,
     server_codec::{decode_params, encode_result},
+    server_sync::SyncCall,
     ErrorCode, RpcError, StatusParams, StopParams, StopResponse,
 };
 
@@ -110,6 +111,7 @@ pub(crate) enum ServiceCall {
     GetConfigTable(ConfigTableGetParams),
     SetConfigTable(ConfigTableSetParams),
     RefreshModels(ModelRefreshParams),
+    Sync(SyncCall),
 }
 
 impl ServiceCall {
@@ -117,6 +119,9 @@ impl ServiceCall {
     /// the protocol does not define.
     pub(crate) fn decode(method: &str, params: Option<Value>) -> Result<Self, RpcError> {
         match method {
+            method if method.starts_with(SyncCall::PREFIX) => {
+                SyncCall::decode(method, params).map(Self::Sync)
+            }
             DAEMON_STATUS => decode_params::<Status>(params).map(|StatusParams {}| Self::Status),
             DAEMON_STOP => decode_params::<Stop>(params).map(|StopParams {}| Self::Stop),
             DAEMON_RESTART => {
@@ -274,7 +279,8 @@ impl ServiceCall {
             | Self::SetConfig(_)
             | Self::GetConfigTable(_)
             | Self::SetConfigTable(_)
-            | Self::RefreshModels(_) => None,
+            | Self::RefreshModels(_)
+            | Self::Sync(_) => None,
         }
     }
 
@@ -447,6 +453,7 @@ impl ServiceCall {
             Self::RefreshModels(params) => {
                 encode_result::<ModelRefresh>(&service.refresh_models(params).await?)
             }
+            Self::Sync(call) => call.run(service).await,
         }
     }
 }

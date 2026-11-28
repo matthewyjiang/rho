@@ -98,6 +98,8 @@ mod configured;
 mod hooks_file;
 #[path = "support/daemon_plugins.rs"]
 mod plugins;
+#[path = "support/daemon_sync.rs"]
+mod sync;
 // Unix: its sessions run shell commands.
 #[cfg(unix)]
 #[path = "support/daemon_started.rs"]

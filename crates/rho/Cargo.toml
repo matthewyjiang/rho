@@ -61,7 +61,10 @@ rusqlite = { version = "0.41", features = ["fallible_uint"] }
 keyring = "4.1.2"
 rand = "0.10"
 sha2 = "0.11"
+# HPKE (RFC 9180) seals saved secrets copied between daemons (`rho/sync/*`).
+hpke = { version = "0.15", default-features = false, features = ["alloc", "getrandom", "x25519", "chacha"] }
 hex = "0.4"
+zeroize = "1"
 digest-io = "0.1"
 starlark = "=0.14.2"
 schemars = "1"

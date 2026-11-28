@@ -52,6 +52,10 @@ use rho_protocol::{
     PluginsRemoveParams, PluginsRemoveResponse, PluginsSetEnabledParams, PluginsSetEnabledResponse,
     PluginsUpdateParams, PluginsUpdateResponse,
 };
+use rho_protocol::{
+    SyncCompareParams, SyncCompareResponse, SyncExportParams, SyncExportResponse,
+    SyncRecipientParams, SyncRecipientResponse,
+};
 use rho_providers::credentials::CredentialStoreBackend;
 
 use crate::{
@@ -70,6 +74,7 @@ mod sessions;
 mod settings;
 mod store;
 mod subagents;
+mod sync;
 mod upgrade;
 mod wire;
 
@@ -161,6 +166,8 @@ pub(super) struct DaemonHost {
     /// `RHO_CREDENTIAL_STORE` in the daemon's environment, parsed once at
     /// startup, which refuses a value it does not know.
     store_environment: Option<CredentialStoreBackend>,
+    /// The one-time keys `rho/sync/recipient` issued.
+    sync: sync::SecretSync,
 }
 
 impl DaemonHost {
@@ -197,6 +204,7 @@ impl DaemonHost {
             shutdown,
             jobs,
             store_environment,
+            sync: sync::SecretSync::default(),
         }
     }
 
@@ -818,5 +826,23 @@ impl SettingsService for DaemonHost {
         params: PluginsRemoveParams,
     ) -> Result<PluginsRemoveResponse, RpcError> {
         self.plugins.remove(params).await
+    }
+
+    async fn sync_recipient(
+        &self,
+        _params: SyncRecipientParams,
+    ) -> Result<SyncRecipientResponse, RpcError> {
+        Ok(self.sync.recipient())
+    }
+
+    async fn sync_export(&self, params: SyncExportParams) -> Result<SyncExportResponse, RpcError> {
+        self.sync.export(params).await
+    }
+
+    async fn sync_compare(
+        &self,
+        params: SyncCompareParams,
+    ) -> Result<SyncCompareResponse, RpcError> {
+        self.sync.compare(params).await
     }
 }

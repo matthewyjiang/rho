@@ -201,6 +201,11 @@ error_codes! {
         /// fetch or check out the plugin's repository; the message carries
         /// what `git` said. Nothing was changed.
         PluginFetchFailed = -32028,
+        /// The daemon holds no private key for the sealed bundle's
+        /// recipient (`rho/sync/*`): it expired, a request already opened a
+        /// bundle sealed to it, or the daemon restarted. Nothing was opened.
+        /// Ask this daemon for a new recipient and export again.
+        SealRecipientGone = -32029,
     }
 }
 

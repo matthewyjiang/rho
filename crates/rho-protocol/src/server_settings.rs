@@ -1,8 +1,9 @@
 //! The settings part of the daemon's protocol: `rho/config/*` (#1720),
 //! `rho/model/*`, the models a model setting may take, `rho/mcp/list`
 //! and `rho/hooks/list`, the MCP servers and hooks the configuration sets
-//! up, `rho/hooks/file/*`, the user's hooks file as text, and
-//! `rho/plugins/*`, the agent plugins and managing them. The
+//! up, `rho/hooks/file/*`, the user's hooks file as text,
+//! `rho/plugins/*`, the agent plugins and managing them, and
+//! `rho/sync/*`, copying saved keys to another daemon sealed. The
 //! [`SettingsService`] methods every [`crate::Service`] answers, and
 //! forwarding a namespace's changes, or the models', once a client reads
 //! them.
@@ -27,13 +28,18 @@ use crate::{
         PluginsSetEnabledResponse, PluginsUpdateParams, PluginsUpdateResponse, PLUGINS_INSTALL,
         PLUGINS_LIST, PLUGINS_REMOVE, PLUGINS_SET_ENABLED, PLUGINS_UPDATE,
     },
+    methods::{
+        SyncCompareParams, SyncCompareResponse, SyncExportParams, SyncExportResponse,
+        SyncRecipientParams, SyncRecipientResponse, SYNC_COMPARE, SYNC_EXPORT, SYNC_RECIPIENT,
+    },
     server_codec::{encode_result, unsupported},
     server_outbox::Responder,
     RpcError,
 };
 
 /// The daemon's answers to `rho/config/*`, `rho/model/*`, `rho/mcp/list`,
-/// `rho/hooks/list`, `rho/hooks/file/*`, and `rho/plugins/*`, which
+/// `rho/hooks/list`, `rho/hooks/file/*`, `rho/plugins/*`, and
+/// `rho/sync/*`, which
 /// [`crate::Service`] requires. Calls run as [`crate::Service`]'s do: each
 /// in its own task, overlapping within a connection and across
 /// connections. Each method answers [`crate::ErrorCode::MethodNotFound`]
@@ -206,6 +212,36 @@ pub trait SettingsService: Send + Sync {
     ) -> impl Future<Output = Result<PluginsRemoveResponse, RpcError>> + Send {
         let _ = params;
         unsupported(PLUGINS_REMOVE)
+    }
+
+    /// Handles `rho/sync/recipient`: issue a one-time key that another
+    /// daemon can seal secrets to.
+    fn sync_recipient(
+        &self,
+        params: SyncRecipientParams,
+    ) -> impl Future<Output = Result<SyncRecipientResponse, RpcError>> + Send {
+        let _ = params;
+        unsupported(SYNC_RECIPIENT)
+    }
+
+    /// Handles `rho/sync/export`: seal saved secrets to another daemon's
+    /// recipient key.
+    fn sync_export(
+        &self,
+        params: SyncExportParams,
+    ) -> impl Future<Output = Result<SyncExportResponse, RpcError>> + Send {
+        let _ = params;
+        unsupported(SYNC_EXPORT)
+    }
+
+    /// Handles `rho/sync/compare`: open a bundle sealed to this daemon and
+    /// compare its values with this daemon's own.
+    fn sync_compare(
+        &self,
+        params: SyncCompareParams,
+    ) -> impl Future<Output = Result<SyncCompareResponse, RpcError>> + Send {
+        let _ = params;
+        unsupported(SYNC_COMPARE)
     }
 }
 
