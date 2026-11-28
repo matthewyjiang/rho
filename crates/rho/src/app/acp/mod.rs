@@ -457,7 +457,12 @@ fn v1_agent(adapter: Arc<Adapter>) -> impl ConnectTo<Client> {
                     let adapter = Arc::clone(&adapter);
                     spawn_response(&cx, responder, async move {
                         let stop = adapter
-                            .prompt(&request.session_id, &request.prompt, /*accept*/ None)
+                            .prompt(
+                                &request.session_id,
+                                &request.prompt,
+                                /*accept*/ None,
+                                prompt::BusyPrompt::Reject,
+                            )
                             .await?;
                         Ok(PromptResponse::new(stop))
                     })

@@ -35,7 +35,7 @@ use agent_client_protocol::{
         SessionId as AcpSessionId, SetSessionConfigOptionRequest, SetSessionConfigOptionResponse,
         SetSessionModeRequest, SetSessionModeResponse,
     },
-    Error as AcpError,
+    Error as AcpError, RequestCancellation,
 };
 use rho_protocol::{
     methods::{
@@ -52,7 +52,13 @@ use tokio::{
     task::JoinHandle,
 };
 
-use super::{daemon, inputs::InputContext, options, requests, AcpClientPort, Adapter, Foreground};
+use super::{
+    daemon,
+    inputs::InputContext,
+    options,
+    prompt::{Holds, Place},
+    requests, AcpClientPort, Adapter, Foreground,
+};
 use crate::app::daemon_client::{Daemon, Link, Routed, SessionRoute};
 
 /// What a session's pump reads, in order: what the router read for the
@@ -216,9 +222,13 @@ pub(super) struct Live {
     shared: Arc<Shared>,
     /// Held while a prompt of this host's runs.
     pub(super) prompt: tokio::sync::Mutex<()>,
-    /// Set by `session/cancel` until the prompt ends, so a prompt sent
-    /// right after a cancel waits for the cancelled one.
+    /// Set by `session/cancel` until the prompt ends, so an ACP v1 prompt
+    /// sent right after a cancel waits for the cancelled one; ACP v2
+    /// prompts are held instead ([`Self::held`]).
     pub(super) cancelling: AtomicBool,
+    /// ACP v2 prompts waiting for the session, and its cancels, which drop
+    /// the prompts held when they arrive.
+    pub(super) held: Holds,
     /// Set once the host closes the session, before its prompt is
     /// cancelled, so a prompt queued behind the cancelled one ends
     /// cancelled instead of starting a turn the close would wait out.
@@ -237,6 +247,44 @@ impl Live {
         self.inbound
             .send(Inbound::Control(control))
             .map_err(|_| super::resource_not_found(Some(self.id.as_str().to_owned())))
+    }
+
+    /// Starts watching the session's job just before a prompt is sent, so
+    /// a prompt the daemon refuses as busy can wait for the turn in its way
+    /// ([`Busy::ended`]).
+    pub(super) fn watch_busy(&self) -> Busy {
+        Busy(self.shared.attachment.subscribe())
+    }
+}
+
+/// The session's job, as its pump saw it from just before a prompt was
+/// sent.
+pub(super) struct Busy(watch::Receiver<Attachment>);
+
+impl Busy {
+    /// Waits for the turn that kept the daemon from taking the prompt to
+    /// end, once the pump handled everything read before the refusal: the
+    /// daemon reports a turn `running` before it refuses a prompt for it,
+    /// but that report may reach the pump later. Returns at once when the
+    /// turn already ended, and on the first change when the pump has yet
+    /// to hear of it, so the caller tries again and is refused again if
+    /// the turn still runs. Also returns once the attachment ends.
+    pub(super) async fn ended(mut self) {
+        // One read: a state the pump sends between two reads would be
+        // marked seen without counting as a change, and wait forever.
+        let (busy, changed) = {
+            let seen = self.0.borrow_and_update();
+            (seen.busy(), seen.has_changed())
+        };
+        let _ = match (busy, changed) {
+            (true, _) => self
+                .0
+                .wait_for(|attachment| !attachment.busy())
+                .await
+                .map(drop),
+            (false, true) => Ok(()),
+            (false, false) => self.0.changed().await,
+        };
     }
 }
 
@@ -364,12 +412,16 @@ impl Adapter {
         Ok(())
     }
 
+    /// The open session `id`, attached or not.
+    fn open_live(&self, id: &AcpSessionId) -> Result<Arc<Live>, AcpError> {
+        self.sessions
+            .get(&id.0)
+            .ok_or_else(|| super::resource_not_found(Some(id.0.to_string())))
+    }
+
     /// The open session `id`, attached.
     pub(super) async fn live(&self, id: &AcpSessionId) -> Result<Arc<Live>, AcpError> {
-        let live = self
-            .sessions
-            .get(&id.0)
-            .ok_or_else(|| super::resource_not_found(Some(id.0.to_string())))?;
+        let live = self.open_live(id)?;
         {
             // Held across the reattach, so concurrent requests reattach once.
             let _attaching = live.attaching.lock().await;
@@ -525,6 +577,7 @@ impl Adapter {
             shared,
             prompt: tokio::sync::Mutex::new(()),
             cancelling: AtomicBool::new(false),
+            held: Holds::default(),
             closing: AtomicBool::new(false),
             attaching: tokio::sync::Mutex::new(()),
             pump,
@@ -686,7 +739,20 @@ impl Adapter {
         Ok(response.options)
     }
 
-    /// `session/cancel`: asks the daemon to stop the session's turn.
+    /// Takes a place in open session `id`'s line for an ACP v2 prompt the
+    /// connection just read, before it reads the next message, so cancels
+    /// read later cover it while it is held.
+    pub(super) fn hold(
+        &self,
+        id: &AcpSessionId,
+        cancellation: RequestCancellation,
+    ) -> Result<Place, AcpError> {
+        Ok(Place::new(self.open_live(id)?, cancellation))
+    }
+
+    /// `session/cancel`: drops the session's held prompts and asks the
+    /// daemon to stop its turn, which withdraws the turn's open input
+    /// requests from the host.
     pub(super) async fn cancel(&self, session_id: &AcpSessionId) {
         if let Some(live) = self.sessions.get(&session_id.0) {
             self.cancel_live(&live).await;
@@ -694,7 +760,13 @@ impl Adapter {
     }
 
     async fn cancel_live(&self, live: &Live) {
+        live.held.cancel();
         live.cancelling.store(true, Ordering::Release);
+        self.stop_turn(live).await;
+    }
+
+    /// Asks the daemon to stop `live`'s turn under way.
+    pub(super) async fn stop_turn(&self, live: &Live) {
         // A closed connection already failed the prompt; the turn runs on in
         // the daemon, as when this process is killed.
         let Some(link) = self.daemon.current().await else {
