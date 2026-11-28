@@ -94,10 +94,12 @@ fn lifecycle(log: &[Value]) -> Vec<String> {
                 (Some("session/update"), Some("user_message")) => {
                     Some(format!("user_message {}", update["messageId"].as_str()?))
                 }
-                (Some("session/update"), Some("state_update")) => Some(match update["stopReason"].as_str() {
-                    Some(stop) => format!("{} {stop}", update["state"].as_str()?),
-                    None => update["state"].as_str()?.to_owned(),
-                }),
+                (Some("session/update"), Some("state_update")) => {
+                    Some(match update["stopReason"].as_str() {
+                        Some(stop) => format!("{} {stop}", update["state"].as_str()?),
+                        None => update["state"].as_str()?.to_owned(),
+                    })
+                }
                 (None, _) if message["id"] != "barrier" => {
                     let answer = match message.get("error") {
                         Some(error) => error["code"].to_string(),
@@ -184,7 +186,12 @@ fn v2_cancels_answer_held_prompts_cancelled_and_never_insert_them() {
     send_prompt(&mut server, "p1", &session_id, &blocking_prompt(&release));
     read_until(&server, &mut log, |message| message["id"] == "p1");
     send_prompt(&mut server, "p2", &session_id, "dropped by session/cancel");
-    send_prompt(&mut server, "p3", &session_id, "dropped by $/cancel_request");
+    send_prompt(
+        &mut server,
+        "p3",
+        &session_id,
+        "dropped by $/cancel_request",
+    );
     server.send(&json!({
         "jsonrpc": "2.0", "method": "$/cancel_request", "params": {"requestId": "p3"},
     }));
@@ -251,7 +258,12 @@ fn v2_holds_a_prompt_behind_another_clients_turn() {
         &json!({"sessionUpdate": "state_update", "state": "running", "background": []})
     );
     let mut log = Vec::new();
-    send_prompt(&mut second, "p2", &session_id, "after the other client's turn");
+    send_prompt(
+        &mut second,
+        "p2",
+        &session_id,
+        "after the other client's turn",
+    );
     barrier(&mut second, &mut log);
     std::fs::write(&release, "").unwrap();
     let mut idles = 0;
@@ -297,7 +309,13 @@ fn v1_refuses_a_prompt_sent_during_a_turn() {
     let replies: Vec<_> = log
         .iter()
         .filter(|message| message.get("method").is_none())
-        .map(|reply| (reply["id"].clone(), reply["error"]["code"].clone(), reply["result"].clone()))
+        .map(|reply| {
+            (
+                reply["id"].clone(),
+                reply["error"]["code"].clone(),
+                reply["result"].clone(),
+            )
+        })
         .collect();
     assert_eq!(
         replies,

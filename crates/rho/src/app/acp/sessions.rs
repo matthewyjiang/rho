@@ -272,7 +272,11 @@ impl Busy {
         let changed = self.0.has_changed().unwrap_or(true);
         let busy = self.0.borrow_and_update().busy();
         let _ = match (busy, changed) {
-            (true, _) => self.0.wait_for(|attachment| !attachment.busy()).await.map(drop),
+            (true, _) => self
+                .0
+                .wait_for(|attachment| !attachment.busy())
+                .await
+                .map(drop),
             (false, true) => Ok(()),
             (false, false) => self.0.changed().await,
         };
