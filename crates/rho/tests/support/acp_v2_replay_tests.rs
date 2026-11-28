@@ -298,6 +298,110 @@ fn v2_resume_during_another_clients_turn_cuts_at_replay_complete() {
     );
 }
 
+// Covers: a v2 host that resumes, with replay, the session whose prompt it
+// is running gets the same cut as any other host, and its prompts run on:
+// the permission it was asked stays the one to answer, the turn ends
+// `end_turn`, not cancelled, and a prompt held behind it is inserted next.
+// Owner: ACP sessions (in-place resync) and session pump, over the real
+// stdio server
+#[test]
+fn v2_resume_of_its_own_running_prompt_keeps_the_prompt() {
+    let workspace = Workspace::new();
+    let mut server = AcpServer::spawn(&workspace.home, "tool-call", &workspace.project);
+    initialize_v2(&mut server);
+    let session_id = new_session(&mut server, &workspace);
+    // The session opens in plan mode, where leaving it asks the host.
+    let call = json!({
+        "id": "plan", "name": "exit_plan_mode",
+        "arguments": {"plan": "1. Change the thing."},
+    });
+    server.next_id += 1;
+    server.send(&json!({
+        "jsonrpc": "2.0", "id": server.next_id, "method": "session/prompt",
+        "params": {"sessionId": session_id, "prompt": [{"type": "text", "text": call.to_string()}]},
+    }));
+    let asked = loop {
+        let message = server.recv("the prompt's permission request");
+        if message["method"] == "session/request_permission" {
+            break message;
+        }
+    };
+    server.next_id += 1;
+    let held = server.next_id;
+    server.send(&json!({
+        "jsonrpc": "2.0", "id": held, "method": "session/prompt",
+        "params": {"sessionId": session_id, "prompt": [{"type": "text", "text": "hello"}]},
+    }));
+
+    let (resumed, before) = exchange(
+        &mut server,
+        "session/resume",
+        json!({"sessionId": session_id, "cwd": workspace.project, "replayFrom": {"type": "start"}}),
+    );
+    resumed.unwrap();
+    let (replayed, current) = split_at_marker(&before);
+    assert_history(replayed);
+    let resynced = (kinds(replayed), kinds(current));
+
+    server.send(&json!({
+        "jsonrpc": "2.0", "id": asked["id"],
+        "result": {"outcome": {"outcome": "selected", "optionId": "keep_planning"}},
+    }));
+    // Both turns' traffic, through the held prompt's end.
+    let mut live = Vec::new();
+    let mut idles = 0;
+    while idles < 2 {
+        let message = server.recv("the turns' live traffic");
+        idles += usize::from(kind(&message) == "state:idle");
+        live.push(message);
+    }
+    let held_reply = live
+        .iter()
+        .position(|message| message["id"] == held && message.get("method").is_none())
+        .expect("the held prompt is answered");
+    let first_idle = live
+        .iter()
+        .position(|message| kind(message) == "state:idle")
+        .unwrap();
+    assert!(
+        !kinds(&live).contains(&"session/request_permission".to_owned()),
+        "the pending permission was asked again: {:#?}",
+        kinds(&live)
+    );
+    assert_eq!(
+        resynced,
+        (
+            vec![
+                "user_message".to_owned(),
+                "user_message_chunk".to_owned(),
+                "tool_call_update".to_owned()
+            ],
+            vec![
+                "state:requires_action".to_owned(),
+                "session_info_update".to_owned(),
+                "usage_update".to_owned()
+            ],
+        )
+    );
+    let end_turn = json!({
+        "sessionUpdate": "state_update", "state": "idle", "stopReason": "end_turn",
+        "background": [],
+    });
+    let idles: Vec<_> = live
+        .iter()
+        .filter(|message| kind(message) == "state:idle")
+        .map(|message| message["params"]["update"].clone())
+        .collect();
+    assert_eq!(
+        (
+            idles,
+            held_reply > first_idle,
+            live[held_reply]["result"]["messageId"].is_string()
+        ),
+        (vec![end_turn.clone(), end_turn], true, true)
+    );
+}
+
 // Covers: a v2 host whose `rho acp` loses the daemon must hear `unknown`,
 // with no background list, not a made-up end. Once a request attaches
 // again, the host hears the session's state before that request's answer;

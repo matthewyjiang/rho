@@ -26,7 +26,11 @@ use agent_client_protocol::{
 };
 use serde::{de::DeserializeOwned, Serialize};
 
-use super::{host_features::Turns, sessions::Started, Adapter, Foreground};
+use super::{
+    host_features::Turns,
+    sessions::{IfOpen, Started},
+    Adapter, Foreground,
+};
 use port::V2Port;
 use requests::Reattach;
 
@@ -319,8 +323,10 @@ async fn resume(
     let replayed = matches!(reattach, Reattach::Replay(_));
     let started = async {
         let started = match reattach {
-            Reattach::Replay(request) => agent.load_session(&request, replay).await?,
-            Reattach::Resume(request) => agent.resume_session(&request).await?,
+            Reattach::Replay(request) => {
+                agent.load_session(&request, replay, IfOpen::Resync).await?
+            }
+            Reattach::Resume(request) => agent.resume_session(&request, IfOpen::Resync).await?,
         };
         let setup = requests::setup(&started.options, agent.toggles())?;
         Ok::<_, AcpError>((setup, started))

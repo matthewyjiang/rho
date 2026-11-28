@@ -70,6 +70,17 @@ impl Inputs {
         self.open.insert(id, task);
     }
 
+    /// Withdraws every open request but those of `requests`.
+    pub(super) fn retain(&mut self, requests: &[InputRequest]) {
+        self.open.retain(|id, task| {
+            let open = requests.iter().any(|request| request.id == *id);
+            if !open {
+                task.abort();
+            }
+            open
+        });
+    }
+
     /// Withdraws request `id` from the host: answered, here or elsewhere,
     /// withdrawn, or timed out.
     pub(super) fn resolve(&mut self, id: InputRequestId) {

@@ -57,7 +57,7 @@ use crate::{
 use auth::LoginFlight;
 use host_features::{NegotiatedFeatures, Turns};
 use requests::{Launch, LaunchHost};
-use sessions::{Sessions, Started};
+use sessions::{IfOpen, Sessions, Started};
 
 /// Outbound ACP host port: session updates, permission prompts, and
 /// elicitations, as one connection's protocol version sends them.
@@ -429,7 +429,9 @@ fn v1_agent(adapter: Arc<Adapter>) -> impl ConnectTo<Client> {
                     let adapter = Arc::clone(&adapter);
                     let port: Arc<dyn AcpClientPort> = Arc::new(ConnectionPort { cx: cx.clone() });
                     cx.spawn(async move {
-                        let started = adapter.load_session(&request, Arc::clone(&port)).await;
+                        let started = adapter
+                            .load_session(&request, Arc::clone(&port), IfOpen::Restart)
+                            .await;
                         let toggles = adapter.toggles();
                         respond_started(responder, &port, started, |started| {
                             started.load_session_response(toggles)
@@ -447,7 +449,7 @@ fn v1_agent(adapter: Arc<Adapter>) -> impl ConnectTo<Client> {
                     let adapter = Arc::clone(&adapter);
                     let port: Arc<dyn AcpClientPort> = Arc::new(ConnectionPort { cx: cx.clone() });
                     cx.spawn(async move {
-                        let started = adapter.resume_session(&request).await;
+                        let started = adapter.resume_session(&request, IfOpen::Restart).await;
                         let toggles = adapter.toggles();
                         respond_started(responder, &port, started, |started| {
                             started.resume_session_response(toggles)

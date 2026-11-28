@@ -29,7 +29,8 @@ use crate::{
             host_features::HostFeatures,
             inputs::InputContext,
             sessions::{
-                Accept, Attacher, Attachment, Control, Inbound, Opening, Shared, Show, Waiter,
+                Accept, Attacher, Attachment, Control, Inbound, Opening, ReplayFrom, Resync,
+                Shared, Show, Waiter,
             },
             AcpClientPort, BackgroundChanged, Foreground, TurnEnd,
         },
@@ -164,6 +165,13 @@ impl Attacher for Script {
             .expect("an attach the test did not script");
         Box::pin(std::future::ready(answer))
     }
+
+    fn detach<'a>(
+        &'a self,
+        _session: &'a SessionId,
+    ) -> Pin<Box<dyn Future<Output = Result<(), AcpError>> + Send + 'a>> {
+        Box::pin(std::future::ready(Ok(())))
+    }
 }
 
 fn user(id: &str) -> SessionEvent {
@@ -249,7 +257,7 @@ impl Pump {
         spawn(
             context,
             attacher,
-            receiver,
+            (inbound.downgrade(), receiver),
             Arc::clone(&shared),
             SessionSetup::default(),
             &HerdrReporter::from_env_vars(|_| None),
@@ -435,6 +443,9 @@ async fn armed_prompts_match_their_own_turn() {
 // would end the new prompt early. A pump that loses the daemon tells the
 // host it can no longer observe the session, not that the turn ended, and
 // once it attaches again, the session's state and the running turn's end.
+// A host's resume of the open session resyncs in place: the prompt's turn
+// ending in the replayed history settles it, and a turn the resume reports
+// running is followed to its end.
 // Owner: ACP session pump
 #[tokio::test]
 async fn the_turn_running_at_attach_reports_its_end() {
@@ -450,8 +461,16 @@ async fn the_turn_running_at_attach_reports_its_end() {
         /// A request found the session stale and attached again with this
         /// answer.
         Resumed(Box<SessionAttachResponse>),
+        /// The host resumed the open session, which attached again in place
+        /// from here, with this answer, and the host has the response.
+        Resynced(From, Box<SessionAttachResponse>),
     }
-    use Step::{Arm, Detached, Lagged, Live, Replayed, Resumed};
+    /// Where a resync replays from.
+    enum From {
+        Start,
+        Cursor,
+    }
+    use Step::{Arm, Detached, Lagged, Live, Replayed, Resumed, Resynced};
     let failed = TurnOutcome::Failed {
         error: wire::TurnError {
             kind: wire::TurnErrorKind::Provider,
@@ -584,6 +603,44 @@ async fn the_turn_running_at_attach_reports_its_end() {
             vec!["unobservable", "background", "Idle"],
         ),
         (
+            "a resync whose history ends the prompt's turn settles it",
+            None,
+            vec![
+                Arm("t1"),
+                Live(running("t1")),
+                Live(user("m1")),
+                Resynced(
+                    From::Start,
+                    Box::new(attach_response(
+                        Replay::Reset,
+                        1,
+                        JobState::Completed,
+                        Some("t1"),
+                    )),
+                ),
+                Replayed(0, ended("t1", answered("a"))),
+            ],
+            vec!["EndTurn"],
+        ),
+        (
+            "a resync of a stale session follows the turn it reports running",
+            None,
+            vec![
+                Detached(DetachReason::Restarting),
+                Resynced(
+                    From::Cursor,
+                    Box::new(attach_response(
+                        Replay::Reset,
+                        0,
+                        JobState::Running,
+                        Some("t2"),
+                    )),
+                ),
+                Live(ended("t2", answered("a"))),
+            ],
+            vec!["unobservable", "EndTurn"],
+        ),
+        (
             "a prompt of this host's takes over, and only its own end is told",
             Some("t0"),
             vec![
@@ -630,6 +687,29 @@ async fn the_turn_running_at_attach_reports_its_end() {
                     pump.inbound
                         .send(Inbound::Control(Control::Resume(replayed)))
                         .unwrap();
+                }
+                Resynced(from, resumed) => {
+                    pump.script.answers.lock().unwrap().push_back(Ok(*resumed));
+                    let from = match from {
+                        From::Start => ReplayFrom::Start(pump.host.clone()),
+                        From::Cursor => ReplayFrom::Cursor,
+                    };
+                    let (replayed, _) = oneshot::channel();
+                    let (gate, gate_receiver) = oneshot::channel();
+                    let _ = gate.send(());
+                    let resync = Resync {
+                        from,
+                        setup: SessionSetup::default(),
+                        replayed,
+                        gate: gate_receiver,
+                    };
+                    pump.inbound
+                        .send(Inbound::Control(Control::Resync(Box::new(resync))))
+                        .unwrap();
+                    // The pump attaches after what it read before the
+                    // detach, as `Inbound::Drained` it sends itself says.
+                    pump.flush().await;
+                    pump.flush().await;
                 }
             }
         }

@@ -3,8 +3,9 @@
 //!
 //! The pump owns the session's place in the stream ([`StreamPosition`]),
 //! so it alone attaches again: when a request finds the session stale
-//! ([`Control::Resume`]), and at once when the daemon drops an attachment
-//! that fell behind (`Lagged`).
+//! ([`Control::Resume`]), when an ACP v2 host resumes the session it has
+//! open ([`Control::Resync`]), keeping the turn it follows, and at once
+//! when the daemon drops an attachment that fell behind (`Lagged`).
 //!
 //! A prompt of this host's is matched to its turn by the turn's id, which
 //! the daemon answers the prompt with ([`Armed`]): the pump reads nothing
@@ -37,8 +38,8 @@ use tokio::{
 };
 
 use super::{
-    busy, lock, Attacher, Attachment, Control, Current, Inbound, Opening, Replayed, Shared, Show,
-    Waiter,
+    busy, lock, Attacher, Attachment, Control, Current, Inbound, Opening, ReplayFrom, Replayed,
+    Resync, Shared, Show, Waiter,
 };
 use crate::{
     app::{
@@ -59,7 +60,10 @@ use crate::{
 pub(super) fn spawn(
     context: InputContext,
     attacher: Arc<dyn Attacher>,
-    inbound: mpsc::UnboundedReceiver<Inbound>,
+    (sender, inbound): (
+        mpsc::WeakUnboundedSender<Inbound>,
+        mpsc::UnboundedReceiver<Inbound>,
+    ),
     shared: Arc<Shared>,
     setup: SessionSetup,
     herdr: &HerdrReporter,
@@ -71,17 +75,17 @@ pub(super) fn spawn(
         position: StreamPosition::attached(&opening.response),
         context,
         attacher,
+        sender,
         inbound,
         shared,
         setup,
         turn: None,
-        following: busy(opening.response.state)
-            .then(|| opening.response.turn.clone())
-            .flatten()
-            .map(Following::Announced),
+        following: None,
         inputs: Inputs::default(),
         replaying: None,
         observed: Observed::Yes,
+        usage: None,
+        resync: None,
     };
     tokio::spawn(pump.run(opening))
 }
@@ -95,8 +99,9 @@ struct Replaying {
     title: Option<String>,
     /// Whether the history shown carried a title.
     titled: bool,
-    /// The last usage the replay reported.
-    usage: Option<UsageUpdate>,
+    /// How the followed turn ended, if a history shown ends it: settled
+    /// once the host has the response, as the replay may hold no states.
+    ended: Option<TurnOutcome>,
     /// The input requests open when the attachment began.
     inputs: Vec<InputRequest>,
     /// The background work the replay ends with, as the attach answered.
@@ -106,16 +111,37 @@ struct Replaying {
     state: JobState,
     turn: Option<TurnId>,
     done: Replayed,
-    /// Released once the host has the response that names the session;
-    /// only the attach that opened it has one.
-    gate: Option<oneshot::Receiver<()>>,
+    reporter: Reporter,
 }
 
 impl Replaying {
     /// Whether this is the replay of the attach that opened the session,
     /// whose host has yet to hear of it.
     fn opening(&self) -> bool {
-        self.gate.is_some()
+        matches!(self.reporter, Reporter::Opening(_))
+    }
+}
+
+/// Who tells the host what an attachment found: the session's options,
+/// background work, and state.
+enum Reporter {
+    /// The response of the request that opened the session, released once
+    /// the host has it.
+    Opening(oneshot::Receiver<()>),
+    /// The response of a resume's resync, released once the host has it.
+    Resync(oneshot::Receiver<()>),
+    /// The pump, as the attach is its own: a reattach after the cursor.
+    Pump,
+}
+
+impl Reporter {
+    /// Released once the host has the response that reports the
+    /// attachment, if a request answers it.
+    fn gate(self) -> Option<oneshot::Receiver<()>> {
+        match self {
+            Self::Opening(gate) | Self::Resync(gate) => Some(gate),
+            Self::Pump => None,
+        }
     }
 }
 
@@ -124,7 +150,7 @@ enum Following {
     /// The prompt of this host's that the pump waits on.
     Prompt(Armed),
     /// A turn the host was told is running that no prompt of its own runs:
-    /// the one under way when the opening attach began, as ACP v2
+    /// the one under way when a request's attach began, as ACP v2
     /// `session/resume` reports `running` from the same attach state
     /// (`v2::state`), or one that began while the pump followed none.
     /// A prompt of this host's replaces it unreported, since that prompt's
@@ -156,6 +182,8 @@ struct Armed {
 struct Pump {
     context: InputContext,
     attacher: Arc<dyn Attacher>,
+    /// The pump's own inbound, for [`Inbound::Drained`].
+    sender: mpsc::WeakUnboundedSender<Inbound>,
     inbound: mpsc::UnboundedReceiver<Inbound>,
     updates: Updates,
     shared: Arc<Shared>,
@@ -169,6 +197,10 @@ struct Pump {
     position: StreamPosition,
     replaying: Option<Replaying>,
     observed: Observed,
+    /// The session's last usage report, which a resume reports again.
+    usage: Option<UsageUpdate>,
+    /// A resync waiting for its detached attachment's events.
+    resync: Option<Resync>,
 }
 
 /// Whether the host can tell what the session does.
@@ -194,16 +226,26 @@ impl Pump {
             replayed,
             gate,
         } = opening;
-        self.begin(response, show, replayed, Some(gate)).await;
+        self.begin(response, show, replayed, Reporter::Opening(gate))
+            .await;
         while let Some(next) = self.inbound.recv().await {
+            // A resume reports the state itself.
             if self.observed == Observed::IdleOwed
-                && !matches!(next, Inbound::Control(Control::Arm { .. }))
+                && !matches!(
+                    next,
+                    Inbound::Control(Control::Arm { .. } | Control::Resync(_)) | Inbound::Drained
+                )
             {
                 self.report_state(Foreground::Idle);
             }
             match next {
                 Inbound::Routed(routed) => self.routed(routed).await,
                 Inbound::Control(control) => self.control(control).await,
+                Inbound::Drained => {
+                    if let Some(resync) = self.resync.take() {
+                        self.resync(resync).await;
+                    }
+                }
             }
         }
     }
@@ -228,11 +270,12 @@ impl Pump {
     async fn control(&mut self, control: Control) {
         match control {
             Control::Resume(replayed) => match self.reattach().await {
-                Ok((response, show)) => self.begin(response, show, replayed, /*gate*/ None).await,
+                Ok((response, show)) => self.begin(response, show, replayed, Reporter::Pump).await,
                 Err(error) => {
                     let _ = replayed.send(Err(error));
                 }
             },
+            Control::Resync(resync) => self.detach_for(*resync).await,
             // Waits for the daemon's answer to the prompt before it reads
             // on: the turn's events, which queue behind this, are then told
             // from every other turn's by its id. A prompt the daemon
@@ -281,16 +324,76 @@ impl Pump {
         Ok((response, show))
     }
 
+    /// Detaches for `resync`, which attaches once the pump read every event
+    /// the detached attachment sent.
+    async fn detach_for(&mut self, resync: Resync) {
+        if self.attached() {
+            if let Err(error) = self.attacher.detach(&self.context.session).await {
+                let _ = resync.replayed.send(Err(error));
+                return;
+            }
+        }
+        // A pump that is still running holds a sender in its session.
+        if let Some(sender) = self.sender.upgrade() {
+            self.resync = Some(resync);
+            let _ = sender.send(Inbound::Drained);
+        }
+    }
+
+    /// Attaches again in place for a host's resume: a history replays from
+    /// the start, and otherwise the events after the cursor show as
+    /// missed. The followed turn is kept. An attach that fails leaves the
+    /// session stale, as its earlier attachment is detached.
+    async fn resync(&mut self, resync: Resync) {
+        let Resync {
+            from,
+            setup,
+            replayed,
+            gate,
+        } = resync;
+        self.setup = setup;
+        let attached = match from {
+            ReplayFrom::Start(port) => self
+                .attacher
+                .attach(&self.context.session, /*after*/ None, &self.setup)
+                .await
+                .map(|response| (response, Show::History(port))),
+            ReplayFrom::Cursor => self.reattach().await,
+        };
+        match attached {
+            Ok((response, show)) => {
+                self.begin(response, show, replayed, Reporter::Resync(gate))
+                    .await;
+            }
+            Err(error) => {
+                if self.attached() {
+                    self.end(Attachment::Stale, error.clone());
+                }
+                let _ = replayed.send(Err(error));
+            }
+        }
+    }
+
     /// Starts relaying the attachment `response` began.
     async fn begin(
         &mut self,
         response: SessionAttachResponse,
         show: Show,
         done: Replayed,
-        gate: Option<oneshot::Receiver<()>>,
+        reporter: Reporter,
     ) {
         self.position.reattached(&response);
-        self.options_changed(response.options).await;
+        match reporter {
+            Reporter::Opening(_) | Reporter::Resync(_) => {
+                *lock(&self.shared.options) = response.options;
+                self.observed = Observed::Yes;
+            }
+            Reporter::Pump => self.options_changed(response.options).await,
+        }
+        // A history shown starts the host's transcript over.
+        if matches!(show, Show::History(_)) {
+            self.updates = Updates::new(self.context.features);
+        }
         self.shared
             .attachment
             .send_replace(Attachment::Attached(response.state));
@@ -299,18 +402,19 @@ impl Pump {
         // are of turns its states have yet to name.
         if response.replay == Replay::Reset {
             self.turn = None;
+            self.usage = None;
         }
         self.replaying = Some(Replaying {
             show,
             title: response.title,
             titled: false,
-            usage: None,
+            ended: None,
             inputs: response.inputs,
             background: response.background,
             state: response.state,
             turn: response.turn,
             done,
-            gate,
+            reporter,
         });
         if !self.position.replaying() {
             self.end_replay().await;
@@ -318,6 +422,18 @@ impl Pump {
     }
 
     async fn event(&mut self, seq: Seq, event: SessionEvent) {
+        if let SessionEvent::Usage {
+            used_tokens,
+            window_tokens,
+            cost_usd_micros,
+        } = &event
+        {
+            self.usage = Some(updates::usage_update(
+                *used_tokens,
+                *window_tokens,
+                *cost_usd_micros,
+            ));
+        }
         let left = match self.position.observe(seq) {
             Part::Live => return self.live(event).await,
             Part::Replayed { left, .. } => left,
@@ -325,22 +441,19 @@ impl Pump {
         let Some(replaying) = self.replaying.as_mut() else {
             return;
         };
-        if let SessionEvent::Usage {
-            used_tokens,
-            window_tokens,
-            cost_usd_micros,
-        } = &event
-        {
-            replaying.usage = Some(updates::usage_update(
-                *used_tokens,
-                *window_tokens,
-                *cost_usd_micros,
-            ));
-        }
         match replaying.show.clone() {
             Show::History(port) => {
-                if matches!(event, SessionEvent::TitleChanged { .. }) {
-                    replaying.titled = true;
+                match &event {
+                    SessionEvent::TitleChanged { .. } => replaying.titled = true,
+                    SessionEvent::TurnEnded { turn, outcome }
+                        if self
+                            .following
+                            .as_ref()
+                            .is_some_and(|following| following.turn() == turn) =>
+                    {
+                        replaying.ended = Some(outcome.clone());
+                    }
+                    _ => {}
                 }
                 for update in self.updates.map(&event) {
                     self.send(&*port, update, Delivery::Replay).await;
@@ -361,41 +474,59 @@ impl Pump {
     /// end a skipped replay no longer held, takes the attach's background
     /// work, tells a host that could not observe the session its state,
     /// answers whoever waits for the replay with the session's info, waits
-    /// for the host's response, then puts the open input requests to the
-    /// host.
+    /// for the host's response, settles a followed turn a history ended or
+    /// no longer holds, then puts the open input requests to the host.
     async fn end_replay(&mut self) {
         let Some(Replaying {
             show,
             title,
             titled,
-            usage,
+            ended,
             inputs,
             background,
             state,
             turn,
             done,
-            gate,
+            reporter,
         }) = self.replaying.take()
         else {
             return;
         };
         self.turn.clone_from(&turn);
-        match (&show, &title) {
-            // An ACP v2 replay port drops it: v2 replays no titles, and its
-            // resume reports the `Current` title instead.
-            (Show::History(port), Some(title)) if !titled => {
+        let gate = reporter.gate();
+        let answers_request = gate.is_some();
+        let mut settled = match (ended, &show) {
+            (Some(outcome), _) => Some(Ok(outcome)),
+            // A missed tail went by live, the followed turn's end with it.
+            (None, Show::Missed) => None,
+            (None, Show::History(_) | Show::Skip) => {
+                self.ended_unseen(state).then(unreplayed).map(Err)
+            }
+        };
+        // An ACP v2 replay port drops it: v2 replays no titles, and its
+        // resume reports the `Current` title instead.
+        if let (Show::History(port), Some(title)) = (&show, &title) {
+            if !titled {
                 let update =
                     SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new().title(title.clone()));
                 self.send(&**port, update, Delivery::Replay).await;
             }
-            (Show::Skip, _) => self.fail_unreplayed(state),
-            (Show::History(_) | Show::Missed, _) => {}
         }
-        // A reattach tells the host what changed meanwhile; the attach that
-        // opened the session already holds this work. A host that could
-        // not observe the session hears no state with it, only the
-        // snapshot after.
-        self.background_changed(background);
+        // The host hears the end at once unless a request awaits its
+        // response, which must come first, as the replay holds no states.
+        if !answers_request {
+            if let Some(end) = settled.take() {
+                self.settle(end);
+            }
+        }
+        // A reattach tells the host what changed meanwhile; a request's
+        // response reports this work itself. A host that could not observe
+        // the session hears no state with it, only the snapshot after.
+        if answers_request {
+            *lock(&self.shared.background) = background;
+        } else {
+            self.background_changed(background);
+        }
         if self.observed == Observed::Lost {
             if !busy(state) {
                 self.observed = Observed::IdleOwed;
@@ -406,32 +537,39 @@ impl Pump {
                 self.report_state(Foreground::of(state));
             }
         }
+        let usage = self.usage.clone();
         let _ = done.send(Ok(Current { title, usage }));
         if let Some(gate) = gate {
             // A request that failed to respond drops the gate; the events
             // still belong to the session.
             let _ = gate.await;
         }
+        if let Some(end) = settled {
+            self.settle(end);
+        }
+        // The response reported the turn under way as running, so the pump
+        // reports its end.
+        if answers_request && self.following.is_none() && busy(state) {
+            self.following = self.turn.clone().map(Following::Announced);
+        }
+        // The attach lists every request still open; a skipped replay did
+        // not say how the others were resolved.
+        self.inputs.retain(&inputs);
         for request in inputs {
             self.inputs.open(request, &self.context);
         }
     }
 
-    /// A skipped reset replay is over, ending with the job in `state`, of
-    /// the turn the attach named, now `self.turn`. It held the followed
-    /// turn's end unless another turn saved since: a followed turn that is
-    /// no longer the one under way ended unseen, and fails.
-    fn fail_unreplayed(&mut self, state: JobState) {
+    /// Whether the followed turn ended unseen, once a replay ending with
+    /// the job in `state`, of the turn the attach named (now `self.turn`),
+    /// is over: a skipped reset or a history held its end unless another
+    /// turn saved since, so a followed turn no longer under way ended where
+    /// the daemon no longer replays it.
+    fn ended_unseen(&self, state: JobState) -> bool {
         let under_way = busy(state).then_some(self.turn.as_ref()).flatten();
-        if self
-            .following
+        self.following
             .as_ref()
             .is_some_and(|following| under_way != Some(following.turn()))
-        {
-            self.fail(AcpError::internal_error().data(
-                "the prompt's turn ended while this client was behind, and the rho daemon no longer replays how",
-            ));
-        }
     }
 
     async fn live(&mut self, event: SessionEvent) {
@@ -648,12 +786,14 @@ impl Pump {
 
     async fn detached(&mut self, reason: DetachReason) {
         match reason {
+            // A pending resync attaches instead.
+            DetachReason::Lagged if self.resync.is_some() => {}
             // Fell behind: resume after the cursor at once. Nobody waits
             // for this replay.
             DetachReason::Lagged => match self.reattach().await {
                 Ok((response, show)) => {
                     let (replayed, _) = oneshot::channel();
-                    self.begin(response, show, replayed, /*gate*/ None).await;
+                    self.begin(response, show, replayed, Reporter::Pump).await;
                 }
                 Err(error) => self.end(Attachment::Stale, error),
             },
@@ -735,6 +875,13 @@ impl Pump {
             tracing::warn!(%error, "could not send an ACP session update");
         }
     }
+}
+
+/// Why a followed turn fails whose end the replay no longer held.
+fn unreplayed() -> AcpError {
+    AcpError::internal_error().data(
+        "the prompt's turn ended while this client was behind, and the rho daemon no longer replays how",
+    )
 }
 
 #[cfg(test)]
