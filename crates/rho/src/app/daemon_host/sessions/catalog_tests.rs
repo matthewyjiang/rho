@@ -35,7 +35,7 @@ async fn a_client_that_attaches_while_a_sparing_delete_waits_keeps_its_session()
     let delete = sessions.delete(SessionDeleteParams {
         session: session_to_wire(session.id.clone()),
         unless_attached: true,
-        background: rho_protocol::DeleteBackground::Refuse,
+        work: rho_protocol::DeleteWork::Refuse,
     });
     tokio::pin!(delete);
     // Past its first look for clients, waiting for the runtime.

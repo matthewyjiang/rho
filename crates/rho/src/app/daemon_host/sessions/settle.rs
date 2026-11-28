@@ -21,7 +21,7 @@
 
 use std::sync::atomic::Ordering;
 
-use super::LoadedSession;
+use super::{LoadedSession, TurnSlot};
 
 impl LoadedSession {
     /// Tells the session's clients whether it is settled, if that changed
@@ -55,9 +55,16 @@ impl LoadedSession {
         // either never starts, or started already and leaves the hold set
         // for its end, so cancelling it delivers nothing either.
         let turn = self.turn();
-        self.wake_held.store(true, Ordering::Relaxed);
+        self.hold_wake_under(&turn);
         drop(turn);
         self.give_up_waking();
+    }
+
+    /// As [`Self::hold_wake`], for a caller that holds the turn lock, its
+    /// guard's slot passed as proof, and gives up waking the session itself
+    /// once it lets go.
+    pub(super) fn hold_wake_under(&self, _turn: &TurnSlot) {
+        self.wake_held.store(true, Ordering::Relaxed);
     }
 
     /// Whether the session's results wait for its next turn (see

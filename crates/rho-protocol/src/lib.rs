@@ -219,7 +219,7 @@ pub use methods::{
     ConfiguredMcpServer, McpListParams, McpListResponse, McpServerSource, McpTransport, MCP_LIST,
 };
 pub use methods::{
-    DeleteBackground, DetailedSessionSummary, ExcerptRole, SearchExcerpt, SearchLocation,
+    DeleteWork, DetailedSessionSummary, ExcerptRole, SearchExcerpt, SearchLocation,
     SessionDeleteParams, SessionDeleteResponse, SessionListDetailedResponse, SessionListParams,
     SessionListResponse, SessionRenameParams, SessionRenameResponse, SessionSearchHit,
     SessionSearchParams, SessionSearchResponse, SessionSummary, SESSION_DELETE, SESSION_LIST,

@@ -145,7 +145,7 @@ pub use background::{
     SESSION_BACKGROUND_HOLD, SESSION_BACKGROUND_LIST, SESSION_BACKGROUND_STOP,
 };
 pub use catalog::{
-    DeleteBackground, DetailedSessionSummary, ExcerptRole, SearchExcerpt, SearchLocation,
+    DeleteWork, DetailedSessionSummary, ExcerptRole, SearchExcerpt, SearchLocation,
     SessionDeleteParams, SessionDeleteResponse, SessionListDetailedResponse, SessionListParams,
     SessionListResponse, SessionRenameParams, SessionRenameResponse, SessionSearchHit,
     SessionSearchParams, SessionSearchResponse, SessionSummary, SESSION_DELETE, SESSION_LIST,

@@ -20,6 +20,21 @@ fn v2_session(workspace: &Workspace) -> (AcpServer, String) {
         .unwrap()
         .replace("permission_mode = \"plan\"", "permission_mode = \"bypass\"");
     std::fs::write(config, settings).unwrap();
+    let mut server = v2_server(workspace);
+    let created = server
+        .request(
+            "session/new",
+            json!({"cwd": workspace.project, "mcpServers": []}),
+        )
+        .0
+        .unwrap();
+    let session_id = created["sessionId"].as_str().unwrap().to_owned();
+    (server, session_id)
+}
+
+/// Another `rho acp` connection in `workspace`, on the same daemon,
+/// initialized for ACP v2 as [`v2_session`]'s.
+fn v2_server(workspace: &Workspace) -> AcpServer {
     let mut server = AcpServer::spawn(&workspace.home, "tool-call", &workspace.project);
     let initialized = server
         .request(
@@ -33,15 +48,7 @@ fn v2_session(workspace: &Workspace) -> (AcpServer, String) {
         .0
         .unwrap();
     assert_eq!(initialized["protocolVersion"], 2);
-    let created = server
-        .request(
-            "session/new",
-            json!({"cwd": workspace.project, "mcpServers": []}),
-        )
-        .0
-        .unwrap();
-    let session_id = created["sessionId"].as_str().unwrap().to_owned();
-    (server, session_id)
+    server
 }
 
 /// Sends request `id` without waiting for its answer.
@@ -251,5 +258,63 @@ fn v2_close_cancels_the_turn_and_stops_background_work_before_answering() {
             false,
         ),
         "close traffic: {close:#?}"
+    );
+}
+
+// Covers: ACP v2 `session/delete` of a session another connection is
+// prompting cancels that connection's turn, as if `session/close` had been
+// called, and deletes the session: the delete answers `{}`, the other
+// connection sees its turn end `cancelled`, the turn's command is killed,
+// and both connections then find the session gone (`-32002`). A miss
+// refuses the delete while the other connection's turn runs, which the
+// spec's "if the session is active on any connection" rule forbids.
+// Owner: ACP v2 session delete, over two real stdio servers on one daemon
+#[test]
+fn v2_delete_cancels_a_turn_another_connection_runs() {
+    let workspace = Workspace::new();
+    let pid_file = workspace.project.join("foreground.pid");
+    let (mut prompting, session_id) = v2_session(&workspace);
+    let mut log = Vec::new();
+    let command = format!("echo $$ > '{}' && exec sleep 600", pid_file.display());
+    send_prompt(
+        &mut prompting,
+        "foreground",
+        &session_id,
+        &tool_call("bash", json!({"command": command})),
+    );
+    read_until(&prompting, &mut log, reply_to("foreground"));
+    let pid = wait_for_pid(&pid_file);
+    let _leftover = Sleeper(pid);
+    let mut deleting = v2_server(&workspace);
+
+    let deleted = deleting
+        .request("session/delete", json!({"sessionId": session_id}))
+        .0;
+    read_until(&prompting, &mut log, |message| {
+        message["params"]["update"]["state"] == "idle"
+    });
+    let deadline = Instant::now() + EXIT_TIMEOUT;
+    while running(pid) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let resume = json!({"sessionId": session_id, "cwd": workspace.project, "mcpServers": []});
+    let gone = |server: &mut AcpServer| {
+        server
+            .request("session/resume", resume.clone())
+            .0
+            .map_err(|error| error["code"].clone())
+    };
+    let resumed = (gone(&mut deleting), gone(&mut prompting));
+
+    let ended = log.last().unwrap()["params"]["update"]["stopReason"].clone();
+    assert_eq!(
+        (deleted, ended, running(pid), resumed),
+        (
+            Ok(json!({})),
+            json!("cancelled"),
+            false,
+            (Err(json!(-32002)), Err(json!(-32002))),
+        ),
+        "prompting connection's traffic: {log:#?}"
     );
 }

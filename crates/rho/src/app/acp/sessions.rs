@@ -45,8 +45,8 @@ use rho_protocol::{
         SessionAttach, SessionBackgroundHold, SessionBackgroundStop, SessionCancel,
         SessionConfigure, SessionDelete, SessionDetach, SessionNew,
     },
-    BackgroundItem, BackgroundWork, ClientEnvironment, Cursor, DeleteBackground, ErrorCode,
-    JobState, Replay, SessionAttachParams, SessionAttachResponse, SessionBackgroundHoldParams,
+    BackgroundItem, BackgroundWork, ClientEnvironment, Cursor, DeleteWork, ErrorCode, JobState,
+    Replay, SessionAttachParams, SessionAttachResponse, SessionBackgroundHoldParams,
     SessionBackgroundStopParams, SessionCancelParams, SessionChange, SessionConfigureParams,
     SessionDeleteParams, SessionDetachParams, SessionId, SessionNewParams, SessionOptions,
     SessionSetup, TurnId, TurnOutcome,
@@ -309,12 +309,13 @@ pub(super) enum Close {
 }
 
 impl Close {
-    /// What deleting the session does with the background work the daemon
-    /// still has once it is closed so.
-    fn delete_background(self) -> DeleteBackground {
+    /// What deleting the session does with the work the daemon still has
+    /// once it is closed so: a turn another client runs, and background
+    /// work.
+    fn delete_work(self) -> DeleteWork {
         match self {
-            Self::Detach => DeleteBackground::Refuse,
-            Self::Stop => DeleteBackground::Stop,
+            Self::Detach => DeleteWork::Refuse,
+            Self::Stop => DeleteWork::Stop,
         }
     }
 }
@@ -784,8 +785,9 @@ impl Adapter {
     /// `session/delete`. Hosts such as Zed delete from history without
     /// closing the thread, so a session open here is closed first, as
     /// `close` says: detached once its turn ends, or stopped. A stopped
-    /// session's delete ends the background work the daemon still has,
-    /// where a detached one's refuses while there is any. Deleting
+    /// session's delete, open here or not, has the daemon cancel a turn
+    /// another client runs and end the background work it still has, where
+    /// a detached one's refuses while there is either. Deleting
     /// converges: a session that is already gone, or never was, is deleted.
     pub(super) async fn delete_session(
         &self,
@@ -801,7 +803,7 @@ impl Adapter {
         let params = SessionDeleteParams {
             session: SessionId::new(request.session_id.0.as_ref()),
             unless_attached: false,
-            background: close.delete_background(),
+            work: close.delete_work(),
         };
         let link = self.daemon.link().await?;
         match link.request::<SessionDelete>(&params).await {

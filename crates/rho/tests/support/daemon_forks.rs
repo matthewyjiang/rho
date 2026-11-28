@@ -70,7 +70,7 @@ async fn delete(
         .request::<SessionDelete>(&SessionDeleteParams {
             session: session.clone(),
             unless_attached,
-            background: rho_protocol::DeleteBackground::Refuse,
+            work: rho_protocol::DeleteWork::Refuse,
         })
         .await
         .map(|_| ())

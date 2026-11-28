@@ -11,7 +11,7 @@ use rho_protocol::{
         SessionBackgroundHold, SessionBackgroundList, SessionBackgroundStop, SessionCancel,
         SessionDelete,
     },
-    BackgroundStatus, DeleteBackground, ErrorCode, IdleWake, JobState, SessionBackgroundHoldParams,
+    BackgroundStatus, DeleteWork, ErrorCode, IdleWake, JobState, SessionBackgroundHoldParams,
     SessionBackgroundListParams, SessionBackgroundStopParams, SessionCancelParams,
     SessionDeleteParams, SessionSetup,
 };
@@ -145,60 +145,81 @@ async fn the_background_list_shows_work_that_outlives_the_turn() {
     settled_job(&sandbox, &client, &session).await;
 }
 
-// Covers: a delete refuses a session whose background process runs, unless
-// the client asks it to stop the session's work (`DeleteBackground::Stop`,
-// as an ACP v2 `session/delete` does), which deletes the session and ends
-// the process, children included. A miss leaves ACP v2 deletes failing for
-// any session that ever ran a background process.
+// Covers: a delete refuses a session with work, a background process that
+// outlived its turn or a turn under way that another client started,
+// unless the client asks it to stop the session's work
+// (`DeleteWork::Stop`, as an ACP v2 `session/delete` does): then it
+// cancels the turn, which ends cancelled, deletes the session and ends the
+// process, children included. A miss leaves ACP v2 deletes failing for a
+// session that ran a background process or that another connection is
+// prompting, which the spec requires to succeed.
 // Owner: daemon session catalog.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_delete_that_stops_background_work_ends_the_sessions_processes() {
-    let sandbox = Sandbox::new();
-    sandbox.set_permission_mode("bypass");
-    let client = sandbox.start_daemon("tool-call").await;
-    // Woken by the daemon, so its turn ends while the process runs on.
-    let setup = SessionSetup {
-        idle_wake: IdleWake::Turn,
-        ..SessionSetup::default()
-    };
-    let session = sandbox.new_session_with_setup(&client, setup).await;
-    let process = json!({
-        "id": "background",
-        "name": "process",
-        "arguments": {"action": "start", "command": sleeper("background.pid")},
-    });
-    sandbox.prompt_tool_call(&client, &session, &process).await;
-    let pid = sandbox
-        .poll_until("the process to start", async || {
-            recorded_pid(&sandbox.workspace, "background.pid")
+async fn a_delete_that_stops_the_sessions_work_cancels_its_turn_and_ends_its_processes() {
+    // (the tool whose sleeper is the work, and how the job ends)
+    let cases = [
+        ("process", JobState::Completed),
+        ("bash", JobState::Cancelled),
+    ];
+    let (mut outcomes, mut logs) = (Vec::new(), String::new());
+    for (tool, _) in cases {
+        let sandbox = Sandbox::new();
+        sandbox.set_permission_mode("bypass");
+        let client = sandbox.start_daemon("tool-call").await;
+        // Woken by the daemon, so a turn ends while its process runs on.
+        let setup = SessionSetup {
+            idle_wake: IdleWake::Turn,
+            ..SessionSetup::default()
+        };
+        let session = sandbox.new_session_with_setup(&client, setup).await;
+        let arguments = match tool {
+            "process" => json!({"action": "start", "command": sleeper("work.pid")}),
+            _ => json!({"command": sleeper("work.pid")}),
+        };
+        let call = json!({"id": "work", "name": tool, "arguments": arguments});
+        sandbox.prompt_tool_call(&client, &session, &call).await;
+        let pid = sandbox
+            .poll_until("the sleeper to start", async || {
+                recorded_pid(&sandbox.workspace, "work.pid")
+            })
+            .await;
+        let _leftover = Sleepers(vec![pid]);
+        if tool == "process" {
+            settled_job(&sandbox, &client, &session).await;
+        }
+        let delete = |work| SessionDeleteParams {
+            session: session.clone(),
+            unless_attached: false,
+            work,
+        };
+
+        let refused = client
+            .request::<SessionDelete>(&delete(DeleteWork::Refuse))
+            .await
+            .map_err(|error| error.error_code());
+        let stopped = client
+            .request::<SessionDelete>(&delete(DeleteWork::Stop))
+            .await
+            .map_err(|error| error.error_code());
+        sandbox
+            .poll_until("the sleeper to end", async || (!running(pid)).then_some(()))
+            .await;
+        let ended = settled_job(&sandbox, &client, &session).await.state;
+        outcomes.push((refused, stopped, ended));
+        logs += &format!("{tool} log:\n{}\n", sandbox.isolated.daemon_log());
+    }
+
+    let expected: Vec<_> = cases
+        .iter()
+        .map(|&(_, ended)| {
+            (
+                Err(Some(ErrorCode::SessionBusy)),
+                Ok(Default::default()),
+                ended,
+            )
         })
-        .await;
-    let _leftover = Sleepers(vec![pid]);
-    settled_job(&sandbox, &client, &session).await;
-    let delete = |background| SessionDeleteParams {
-        session: session.clone(),
-        unless_attached: false,
-        background,
-    };
-
-    let refused = client
-        .request::<SessionDelete>(&delete(DeleteBackground::Refuse))
-        .await
-        .map_err(|error| error.error_code());
-    let stopped = client
-        .request::<SessionDelete>(&delete(DeleteBackground::Stop))
-        .await
-        .map_err(|error| error.error_code());
-    sandbox
-        .poll_until("the process to end", async || (!running(pid)).then_some(()))
-        .await;
-
-    assert_eq!(
-        (refused, stopped),
-        (Err(Some(ErrorCode::SessionBusy)), Ok(Default::default())),
-        "log:\n{}",
-        sandbox.isolated.daemon_log()
-    );
+        .collect();
+    assert_eq!(outcomes, expected, "{logs}");
 }
 
 // Covers: a client that holds a session's results, then stops its
