@@ -124,6 +124,7 @@ fn session_new(
             sign_in: rho_protocol::SignIn::Required,
             // Nobody watches a detached run.
             surfaces: rho_protocol::Surfaces::Unsupported,
+            system_prompt: None,
         },
         parent: None,
         grant: None,

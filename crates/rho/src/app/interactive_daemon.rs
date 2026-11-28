@@ -131,6 +131,7 @@ pub(super) async fn open(
             // tool. It attaches with this setup too, which counts it among
             // the clients a waiting `ui` call can be answered in.
             surfaces: rho_protocol::Surfaces::Drawn,
+            system_prompt: None,
         },
         config: std::sync::Arc::new(config.clone()),
         definition: std::sync::Arc::new(bound.definition().clone()),

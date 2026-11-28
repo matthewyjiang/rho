@@ -185,6 +185,7 @@ pub use methods::{
 };
 pub use methods::{
     ChildThreads, IdleWake, McpServer, SecretMap, SessionPart, SessionSetup, SignIn, Surfaces,
+    SystemPrompt, SystemPromptMode,
 };
 pub use methods::{
     ClaudeCliModel, ModelList, ModelListKind, ModelListParams, ModelListRefresh,

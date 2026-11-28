@@ -7024,6 +7024,11 @@
           "type": "string"
         },
         {
+          "const": "host",
+          "description": "Instructions the session's client gave\n([`crate::SessionSetup::system_prompt`]).",
+          "type": "string"
+        },
+        {
           "const": "unattributed",
           "description": "The whole system prompt, when the session did not record its\nsources.",
           "type": "string"
@@ -11644,6 +11649,17 @@
           "$ref": "#/$defs/Surfaces",
           "description": "Whether the client draws A2UI surfaces: not, when absent, so the\nsession has no `ui` tool. Like [`Self::child_threads`], it is the\nopening client's and never saved. Unlike the rest of a setup, the\ndaemon also reads it from an attach to a session it has loaded\n([`Surfaces::Drawn`])."
         },
+        "system_prompt": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SystemPrompt"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Instructions the client gives the session's model at system level,\nas an ACP host's `systemPrompt` does: Rho's own prompt alone, when\nabsent. One without text, or in a mode the daemon does not know, is\n[`crate::ErrorCode::InvalidParams`], and the session does not open.\nThe session saves the last one a request brought: a reopen without\none keeps it, and one with another replaces it. Unlike the rest of a\nsetup, the daemon also reads it from an attach to a session it has\nloaded, which takes it from its next turn: a turn under way keeps\nthe prompt it started with."
+        },
         "without": {
           "description": "Parts of the session left out, as `rho`'s `--no-tools`,\n`--no-system-prompt`, and `--no-subagents` leave them out, and\nquestions a client cannot show. The session saves all but\n[`SessionPart::Questions`] and [`SessionPart::Saving`]; a reopen\nleaves out the saved parts and these, except\n[`SessionPart::Saving`], which only a new session takes.",
           "items": {
@@ -12565,6 +12581,39 @@
         "items"
       ],
       "type": "object"
+    },
+    "SystemPrompt": {
+      "description": "Instructions a client gives a session's model at system level\n([`SessionSetup::system_prompt`]). Built with [`SystemPrompt::new`], so a\nlater minor can add an optional field.",
+      "properties": {
+        "mode": {
+          "$ref": "#/$defs/SystemPromptMode",
+          "description": "How the instructions combine with Rho's own prompt."
+        },
+        "text": {
+          "description": "The instructions.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "mode",
+        "text"
+      ],
+      "type": "object"
+    },
+    "SystemPromptMode": {
+      "description": "How a client's [`SystemPrompt`] combines with Rho's own prompt. Neither\nmode changes the session's tools.",
+      "oneOf": [
+        {
+          "const": "append",
+          "description": "After Rho's whole prompt.",
+          "type": "string"
+        },
+        {
+          "const": "override",
+          "description": "In place of Rho's default instructions: its base prompt, a per-model\nprompt file, and its tool-usage guidance. What describes the\nsession's workspace and environment stays: the working directory,\nthe running model and the advisor's, MCP and OpenAPI context,\n`AGENTS.md` files, the skill listing, and the instructions an agent\ndefinition adds to Rho's prompt.",
+          "type": "string"
+        }
+      ]
     },
     "TableChange": {
       "description": "One change of a [`CONFIG_TABLE_SET`]. The daemon reads it, so it has no\n`Unknown`.",

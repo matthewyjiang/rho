@@ -75,6 +75,9 @@ pub enum PromptSourceKind {
     InstructionFile,
     /// The listing of the skills the session offers.
     Skills,
+    /// Instructions the session's client gave
+    /// ([`crate::SessionSetup::system_prompt`]).
+    Host,
     /// The whole system prompt, when the session did not record its
     /// sources.
     Unattributed,

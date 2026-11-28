@@ -258,6 +258,7 @@ pub(in crate::app) fn test_build(config: &Config, workspace_root: &Path) -> Sess
             diagnostics: RuntimeDiagnostics::new(config),
             agent: root_agent(config),
             prompt_suffix: None,
+            host_prompt: None,
         },
         host: HostCapabilities {
             surfaces: None,

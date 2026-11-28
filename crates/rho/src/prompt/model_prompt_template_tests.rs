@@ -2,6 +2,7 @@ use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 
 use super::*;
+use crate::prompt::HostPromptMode;
 
 // Covers: switching append/replace/default must discard previous model text while
 // retaining host-owned instructions and reporting exact source contributions.
@@ -204,4 +205,75 @@ fn added_dirs_load_their_instruction_chains_once() {
         .filter(|source| source.kind == PromptSourceKind::Agents)
         .count();
     assert_eq!(agents_sources, 3);
+}
+
+// Covers: a host's appended prompt follows everything Rho's prompt holds, and
+// its override takes the place of the base prompt, the model prompt file
+// and Rho's guidance while the session's context (the advisor's model,
+// AGENTS.md, the agent's retained instructions) stays, with exact source
+// accounting either way.
+// Owner: prompt assembly; daemon and ACP tests cover delivering it.
+#[test]
+fn host_prompts_append_to_or_override_rhos_defaults() {
+    let home = TempDir::new().unwrap();
+    let project = TempDir::new().unwrap();
+    std::fs::write(project.path().join("AGENTS.md"), "project rules").unwrap();
+    let directory = home.path().join(".rho/model-prompts");
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(
+        directory.join("append.md"),
+        "---\nprovider: test\nmodel: model\nmode: append\n---\nappend behavior",
+    )
+    .unwrap();
+    let mut template = ModelPromptTemplate::new(
+        Some(home.path()),
+        "\ncwd\n".into(),
+        "\nguidance\n".into(),
+        vec![PromptSource {
+            kind: PromptSourceKind::Base,
+            path: None,
+            bytes: "\nguidance\n".len(),
+        }],
+    )
+    .with_context_before_guidance("\nadvisor model\n".into())
+    .with_project_instructions(project.path());
+    template.append_retained("\nagent instructions");
+    let running = PromptModel::Rho {
+        provider: "test".into(),
+        model: "model".into(),
+    };
+    let default = template.build(&running).unwrap().text;
+    let host = |mode| HostPrompt {
+        mode,
+        text: "host rules".into(),
+    };
+    let cases = [
+        (
+            HostPromptMode::Append,
+            format!("{default}\n\n# Host instructions\n\nhost rules\n"),
+        ),
+        (
+            HostPromptMode::Override,
+            default
+                .replace(
+                    &format!("{BASE_SYSTEM_PROMPT}\n\nappend behavior"),
+                    "host rules",
+                )
+                .replace("\nguidance\n", ""),
+        ),
+    ];
+    for (mode, expected) in cases {
+        template.set_host_prompt(Some(host(mode)));
+        let built = template.build(&running).unwrap();
+        assert_eq!(built.text, expected, "{mode:?}");
+        assert_eq!(
+            built
+                .sources
+                .iter()
+                .map(|source| source.bytes)
+                .sum::<usize>(),
+            built.text.len(),
+            "{mode:?}"
+        );
+    }
 }

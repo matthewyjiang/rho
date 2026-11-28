@@ -79,6 +79,13 @@ pub(super) fn initialize_response(
         session =
             session.additional_directories(v2::SessionAdditionalDirectoriesCapabilities::new());
     }
+    // v2 alone takes a host's system prompt: `system_prompt` below.
+    session = session.system_prompt(
+        v2::SessionSystemPromptCapabilities::new().mode(
+            v2::SessionSystemPromptModeCapabilities::new()
+                .override_(v2::SessionSystemPromptOverrideCapabilities::new()),
+        ),
+    );
     let info = match &response.agent_info {
         Some(info) => bridge(info)?,
         None => v2::Implementation::new("rho", env!("CARGO_PKG_VERSION")),
@@ -127,22 +134,18 @@ struct Environment {
     cwd: std::path::PathBuf,
     additional_directories: Vec<std::path::PathBuf>,
     mcp_servers: Vec<v1::McpServer>,
+    system_prompt: Option<rho_protocol::SystemPrompt>,
 }
 
-/// Refuses what v2 forbids before the session exists: a `systemPrompt`,
-/// which Rho doesn't advertise (`session.systemPrompt`), and MCP servers
-/// that share a `name`.
+/// Refuses what v2 forbids before the session exists: a `systemPrompt` Rho
+/// can't apply, and MCP servers that share a `name`.
 fn environment(
     cwd: &v2::AbsolutePath,
     additional_directories: &[v2::AbsolutePath],
     mcp_servers: &[v2::McpServer],
     system_prompt: Option<&v2::SystemPrompt>,
 ) -> Result<Environment, AcpError> {
-    if system_prompt.is_some() {
-        return Err(AcpError::invalid_params().data(
-            "Rho does not support systemPrompt; it does not advertise session.systemPrompt",
-        ));
-    }
+    let system_prompt = system_prompt.map(self::system_prompt).transpose()?;
     let mut names = std::collections::HashSet::new();
     if let Some(name) = mcp_servers
         .iter()
@@ -162,7 +165,36 @@ fn environment(
             .iter()
             .map(mcp_server)
             .collect::<Result<_, _>>()?,
+        system_prompt,
     })
+}
+
+/// The daemon's form of a host's `systemPrompt`: an advertised mode and at
+/// least one text block, whose texts join as paragraphs. Anything else is
+/// `-32602`, as v2 requires of a prompt the agent can't apply.
+fn system_prompt(prompt: &v2::SystemPrompt) -> Result<rho_protocol::SystemPrompt, AcpError> {
+    let mode = match &prompt.mode {
+        v2::SystemPromptMode::Append => rho_protocol::SystemPromptMode::Append,
+        v2::SystemPromptMode::Override => rho_protocol::SystemPromptMode::Override,
+        _ => {
+            return Err(AcpError::invalid_params()
+                .data("Rho supports the systemPrompt modes append and override"))
+        }
+    };
+    let texts = prompt
+        .content
+        .iter()
+        .map(|block| match block {
+            v2::ContentBlock::Text(text) => Ok(text.text.as_str()),
+            _ => Err(AcpError::invalid_params()
+                .data("Rho supports only text content blocks in systemPrompt")),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let text = texts.join("\n\n");
+    if text.trim().is_empty() {
+        return Err(AcpError::invalid_params().data("systemPrompt needs text"));
+    }
+    Ok(rho_protocol::SystemPrompt::new(mode, text))
 }
 
 fn mcp_server_name(server: &v2::McpServer) -> Option<&str> {
@@ -202,19 +234,22 @@ fn mcp_server(server: &v2::McpServer) -> Result<v1::McpServer, AcpError> {
     })
 }
 
+/// The v1 `session/new` and the host's system prompt, which v1's request
+/// doesn't carry for Rho.
 pub(super) fn new_session_request(
     request: &v2::NewSessionRequest,
-) -> Result<v1::NewSessionRequest, AcpError> {
+) -> Result<(v1::NewSessionRequest, Option<rho_protocol::SystemPrompt>), AcpError> {
     let env = environment(
         &request.cwd,
         &request.additional_directories,
         &request.mcp_servers,
         request.system_prompt.as_ref(),
     )?;
-    Ok(v1::NewSessionRequest::new(env.cwd)
+    let v1 = v1::NewSessionRequest::new(env.cwd)
         .additional_directories(env.additional_directories)
         .mcp_servers(env.mcp_servers)
-        .meta(request.meta.clone()))
+        .meta(request.meta.clone());
+    Ok((v1, env.system_prompt))
 }
 
 /// How a v2 `session/resume` reattaches, by its replay cursor.
@@ -225,9 +260,11 @@ pub(super) enum Reattach {
     Resume(v1::ResumeSessionRequest),
 }
 
+/// The v1 reattach and the host's system prompt, which v1's requests don't
+/// carry for Rho: none keeps the one the session saved.
 pub(super) fn resume_session_request(
     request: &v2::ResumeSessionRequest,
-) -> Result<Reattach, AcpError> {
+) -> Result<(Reattach, Option<rho_protocol::SystemPrompt>), AcpError> {
     let env = environment(
         &request.cwd,
         &request.additional_directories,
@@ -235,7 +272,7 @@ pub(super) fn resume_session_request(
         request.system_prompt.as_ref(),
     )?;
     let session_id = bridge::<_, v1::SessionId>(&request.session_id)?;
-    Ok(match &request.replay_from {
+    let reattach = match &request.replay_from {
         None => Reattach::Resume(
             v1::ResumeSessionRequest::new(session_id, env.cwd)
                 .additional_directories(env.additional_directories)
@@ -251,7 +288,8 @@ pub(super) fn resume_session_request(
         Some(_) => {
             return Err(AcpError::invalid_params().data("Rho replays only from the start"));
         }
-    })
+    };
+    Ok((reattach, env.system_prompt))
 }
 
 /// The config options and commands a v2 session setup response carries. v1

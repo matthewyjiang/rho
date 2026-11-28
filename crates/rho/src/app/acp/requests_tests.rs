@@ -114,12 +114,18 @@ fn launch_flags_and_host_request_make_the_session_setup() {
     let with_forms = launch.setup(
         &directories,
         &servers,
+        /*system_prompt*/ None,
         HostFeatures {
             forms: Forms::Available(FormDialect::Standard),
             ..HostFeatures::default()
         },
     );
-    let without_forms = launch.setup(&[], &[], HostFeatures::default());
+    let without_forms = launch.setup(
+        &[],
+        &[],
+        /*system_prompt*/ None,
+        HostFeatures::default(),
+    );
 
     assert_eq!(
         with_forms,
@@ -145,6 +151,7 @@ fn launch_flags_and_host_request_make_the_session_setup() {
             idle_wake: rho_protocol::IdleWake::Never,
             sign_in: rho_protocol::SignIn::Required,
             surfaces: rho_protocol::Surfaces::Unsupported,
+            system_prompt: None,
         }
     );
     assert_eq!(

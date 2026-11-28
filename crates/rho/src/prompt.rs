@@ -5,11 +5,13 @@ use serde::{Deserialize, Serialize};
 use {crate::model_identity::PromptModel, crate::skills, rho_tools::tool::ToolSpec};
 
 pub(crate) mod agents_md;
+mod host_prompt;
 mod mcp_context;
 pub(crate) mod model_prompt_edit;
 mod model_prompt_template;
 pub(crate) mod model_prompts;
 mod project_instructions;
+pub(crate) use host_prompt::{HostPrompt, HostPromptMode};
 pub(crate) use mcp_context::{tool_sources_context, UiTool};
 pub(crate) use model_prompt_template::ModelPromptTemplate;
 pub(crate) use project_instructions::added_dir_context;
@@ -31,6 +33,8 @@ pub enum PromptSourceKind {
     ModelReplace,
     Agents,
     Skills,
+    /// Instructions the session's host gave (see [`HostPrompt`]).
+    Host,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
@@ -144,13 +148,11 @@ fn system_prompt_template_with_home_and_plugin_skills(
     let before_model = std::mem::take(&mut text);
     // The advisor's model belongs here rather than on the `advisor` tool
     // description, which must stay fixed once written: `/advisor` can change the
-    // reviewer without rebuilding the tool list.
-    if let Some(advisor) = advisor {
-        text.push_str(&format!(
-            "The `advisor` tool consults {}.\n",
-            advisor.describe(),
-        ));
-    }
+    // reviewer without rebuilding the tool list. Not guidance: a host's
+    // override keeps it.
+    let advisor_line = advisor
+        .map(|advisor| format!("The `advisor` tool consults {}.\n", advisor.describe()))
+        .unwrap_or_default();
     text.push_str(
         r#"
 Use tools only when needed. For questions answerable from context, reply directly.
@@ -239,8 +241,9 @@ Compaction summarizes older turns, so earlier details can drop out of context. W
         path: None,
         bytes: text.len(),
     }];
-    let mut template =
-        ModelPromptTemplate::new(home, before_model, text, sources).with_project_instructions(cwd);
+    let mut template = ModelPromptTemplate::new(home, before_model, text, sources)
+        .with_context_before_guidance(advisor_line)
+        .with_project_instructions(cwd);
     let mut text = String::new();
     let mut sources = Vec::new();
 

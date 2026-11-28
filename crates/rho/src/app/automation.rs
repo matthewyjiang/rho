@@ -292,6 +292,7 @@ async fn run_session(
             diagnostics: startup.diagnostics.clone(),
             agent: startup.agent.clone(),
             prompt_suffix: None,
+            host_prompt: None,
         },
         host: HostCapabilities::unattended(UnattendedApprovals::Alone),
         run: RunShape {

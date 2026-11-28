@@ -13,6 +13,9 @@
 //! and no request can reopen it. A fork starts from what the file of the
 //! session it forks keeps, so it has the same tools, and adds to it as a
 //! new session does.
+//! The session owns the system prompt a client gave it too: its file keeps
+//! the last one a request brought, a reopen that brings none keeps it, one
+//! that brings another replaces it, and a fork starts with it.
 //! The opening client owns its MCP servers, whose `env` and `headers` may
 //! hold secrets, whether it shows questions and draws surfaces, and whether
 //! its own threads run the session's children, which goes with the MCP server they go
@@ -23,6 +26,7 @@ use std::path::Path;
 
 use rho_protocol::{
     ChildThreads, ErrorCode, IdleWake, RpcError, SessionPart, SessionSetup, Surfaces,
+    SystemPromptMode,
 };
 
 use super::open_failed;
@@ -30,8 +34,9 @@ use crate::{
     added_dirs::{session_added_dirs, AddedDirs},
     app::{
         host_mcp::host_mcp_config,
-        session_runtime::{ChildAgents, IdleTurns, LeftOut, QuestionSupport},
+        session_runtime::{saved_host_prompt, ChildAgents, IdleTurns, LeftOut, QuestionSupport},
     },
+    prompt::{HostPrompt, HostPromptMode},
     session::{Session as StoredSession, SessionPersistence},
     tools::{mcp::config::McpConfig, ui::SurfaceHost},
 };
@@ -40,6 +45,9 @@ use crate::{
 pub(super) struct Setup {
     /// The parts it leaves out: those its file keeps, and the request's.
     pub(super) left_out: LeftOut,
+    /// Its client's system prompt: the request's, else the one its file
+    /// keeps.
+    pub(super) host_prompt: Option<HostPrompt>,
     /// Whether its client shows questions.
     pub(super) questions: QuestionSupport,
     /// Its A2UI surfaces, when the request says its client draws them.
@@ -56,7 +64,8 @@ pub(super) struct Setup {
     pub(super) host_mcp: McpConfig,
     /// Whether it has a file: not when the request leaves saving out.
     pub(super) persistence: SessionPersistence,
-    /// Whether the request adds to what the session's file keeps, so a
+    /// Whether the request adds to what the session's file keeps, or
+    /// replaces its system prompt, so a
     /// reopen saves at once rather than lose it to an unload before the
     /// next turn saves.
     pub(super) adds_to_saved: bool,
@@ -99,7 +108,7 @@ impl Setup {
                 cwd.display()
             ))
         })?;
-        let (saved_left_out, saved_dirs) = match base.file() {
+        let (saved_left_out, saved_dirs, saved_prompt) = match base.file() {
             Some(stored) => {
                 let restored = AddedDirs::from_storage(stored, &root);
                 for dir in &restored.missing {
@@ -109,9 +118,13 @@ impl Setup {
                         "could not restore added directory: not found"
                     );
                 }
-                (LeftOut::saved(stored).map_err(open_failed)?, restored.dirs)
+                (
+                    LeftOut::saved(stored).map_err(open_failed)?,
+                    restored.dirs,
+                    saved_host_prompt(stored).map_err(open_failed)?,
+                )
             }
-            None => (LeftOut::default(), AddedDirs::default()),
+            None => (LeftOut::default(), AddedDirs::default(), None),
         };
         let mut asked = LeftOut::default();
         let mut questions = QuestionSupport::Available;
@@ -150,10 +163,17 @@ impl Setup {
         };
         let left_out = saved_left_out.union(asked);
         let added_dirs = saved_dirs.union(&root, &asked_dirs);
+        let host_prompt = match &requested.system_prompt {
+            Some(asked) => Some(host_prompt(asked)?),
+            None => saved_prompt.clone(),
+        };
         Ok(Self {
             adds_to_saved: matches!(base, Base::Reopened(_))
-                && (left_out != saved_left_out || added_dirs != saved_dirs),
+                && (left_out != saved_left_out
+                    || added_dirs != saved_dirs
+                    || host_prompt != saved_prompt),
             left_out,
+            host_prompt,
             questions,
             surfaces,
             children,
@@ -163,6 +183,25 @@ impl Setup {
             host_mcp: host_mcp_config(&requested.mcp_servers),
         })
     }
+}
+
+/// The session's form of a client's system prompt. An empty one, or one in
+/// a mode this daemon does not know, is invalid params.
+pub(super) fn host_prompt(asked: &rho_protocol::SystemPrompt) -> Result<HostPrompt, RpcError> {
+    if asked.text.trim().is_empty() {
+        return Err(invalid("a system prompt needs text"));
+    }
+    let mode = match asked.mode {
+        SystemPromptMode::Append => HostPromptMode::Append,
+        SystemPromptMode::Override => HostPromptMode::Override,
+        // `SystemPromptMode` is `#[non_exhaustive]`: a mode from a later
+        // protocol minor that this daemon does not know fails here.
+        _ => return Err(invalid("unknown system prompt mode")),
+    };
+    Ok(HostPrompt {
+        mode,
+        text: asked.text.clone(),
+    })
 }
 
 fn invalid(message: impl Into<String>) -> RpcError {

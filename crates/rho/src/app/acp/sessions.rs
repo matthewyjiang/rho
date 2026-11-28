@@ -439,15 +439,20 @@ impl Adapter {
         Ok(live)
     }
 
-    /// `session/new`: a new daemon session, attached.
+    /// `session/new`: a new daemon session, attached, with the host's
+    /// `system_prompt`, which only v2 takes.
     pub(super) async fn new_session(
         &self,
         request: &NewSessionRequest,
+        system_prompt: Option<rho_protocol::SystemPrompt>,
     ) -> Result<Started, AcpError> {
         let cwd = requests::session_cwd(&request.cwd)?;
+        self.refuse_unknown_system_prompt(system_prompt.as_ref())
+            .await?;
         let setup = self.launch.setup(
             &request.additional_directories,
             &request.mcp_servers,
+            system_prompt,
             self.negotiated.get(),
         );
         let created = self
@@ -466,33 +471,55 @@ impl Adapter {
     }
 
     /// `session/load`: the saved session, its history replayed through
-    /// `port`.
+    /// `port`, with the host's `system_prompt` when it brings one, which
+    /// only v2 takes; without one it keeps the prompt it saved.
     pub(super) async fn load_session(
         &self,
         request: &LoadSessionRequest,
+        system_prompt: Option<rho_protocol::SystemPrompt>,
         port: Arc<dyn AcpClientPort>,
     ) -> Result<Started, AcpError> {
         self.reopen(
             &request.session_id,
             &request.additional_directories,
             &request.mcp_servers,
+            system_prompt,
             Show::History(port),
         )
         .await
     }
 
-    /// `session/resume`: the saved session, whose history the host has.
+    /// `session/resume`: the saved session, whose history the host has,
+    /// with `system_prompt` as for [`Self::load_session`].
     pub(super) async fn resume_session(
         &self,
         request: &ResumeSessionRequest,
+        system_prompt: Option<rho_protocol::SystemPrompt>,
     ) -> Result<Started, AcpError> {
         self.reopen(
             &request.session_id,
             &request.additional_directories,
             &request.mcp_servers,
+            system_prompt,
             Show::Skip,
         )
         .await
+    }
+
+    /// Refuses a host's system prompt while the daemon is another build,
+    /// which may not know the field and would open the session without it
+    /// rather than refuse it, as v2 requires of a prompt it can't apply.
+    async fn refuse_unknown_system_prompt(
+        &self,
+        system_prompt: Option<&rho_protocol::SystemPrompt>,
+    ) -> Result<(), AcpError> {
+        if system_prompt.is_none() || self.daemon.link().await?.skew().is_none() {
+            return Ok(());
+        }
+        Err(AcpError::invalid_params().data(
+            "the running rho daemon is another build than `rho acp`, so it may not apply \
+             systemPrompt; run `rho daemon restart`",
+        ))
     }
 
     /// `session/load` and `session/resume`. A session already open here is
@@ -502,8 +529,11 @@ impl Adapter {
         session_id: &AcpSessionId,
         additional_directories: &[std::path::PathBuf],
         servers: &[McpServer],
+        system_prompt: Option<rho_protocol::SystemPrompt>,
         show: Show,
     ) -> Result<Started, AcpError> {
+        self.refuse_unknown_system_prompt(system_prompt.as_ref())
+            .await?;
         if let Some(live) = self.sessions.remove(&session_id.0) {
             self.detach(&live, Wait::Prompt).await;
             // The old attachment's events still in flight are routed, and
@@ -512,9 +542,12 @@ impl Adapter {
                 link.fence().await;
             }
         }
-        let setup = self
-            .launch
-            .setup(additional_directories, servers, self.negotiated.get());
+        let setup = self.launch.setup(
+            additional_directories,
+            servers,
+            system_prompt,
+            self.negotiated.get(),
+        );
         self.open(SessionId::new(session_id.0.as_ref()), setup, show)
             .await
     }
@@ -557,12 +590,18 @@ impl Adapter {
         let (replayed, through) = oneshot::channel();
         let (gate, gate_receiver) = oneshot::channel();
         let attacher: Arc<dyn Attacher> = self.daemon.clone();
+        // The pump's recovery attaches bring no system prompt: the session
+        // keeps the one it has, which another client may have changed since.
+        let recovery = SessionSetup {
+            system_prompt: None,
+            ..setup
+        };
         let pump = pump::spawn(
             context,
             attacher,
             receiver,
             Arc::clone(&shared),
-            setup,
+            recovery,
             &self.herdr,
             Opening {
                 response,

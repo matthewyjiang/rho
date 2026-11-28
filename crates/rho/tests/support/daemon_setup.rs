@@ -11,7 +11,7 @@ use rho_protocol::{
     Ask, ChildThreads, Client, ClientError, DaemonNotification, ErrorCode, IdleWake, JobKind,
     JobListParams, JobState, Operation, PathScope, SessionAttachParams, SessionDetachParams,
     SessionEvent, SessionEventParams, SessionId, SessionListParams, SessionNewParams, SessionPart,
-    SessionSetup, ToolCallId, ToolStatus, TurnOutcome,
+    SessionSetup, SystemPrompt, SystemPromptMode, ToolCallId, ToolStatus, TurnOutcome,
 };
 use serde_json::Value;
 
@@ -387,6 +387,44 @@ async fn a_reopen_that_narrows_a_session_saves_it_narrowed() {
             questionnaire: false,
             agent: false,
         },
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
+// Covers: a client's system prompt is saved with the session: after the
+// daemon unloads it, a reopen that brings no setup still gives the model the
+// host's instructions, rather than the prompt living only until the unload.
+// Owner: daemon session setup.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_session_keeps_its_system_prompt_when_a_reopen_brings_none() {
+    let sandbox = Sandbox::new();
+    // The fixture answers with the request it got.
+    let client = sandbox
+        .start_daemon_with("inspect", &["--unload-idle-after", "200ms"])
+        .await;
+    let system = |request: &Value| request["messages"][0]["System"].as_str().map(str::to_owned);
+    let setup = SessionSetup {
+        system_prompt: Some(SystemPrompt::new(
+            SystemPromptMode::Override,
+            "Answer as a pirate.",
+        )),
+        ..SessionSetup::default()
+    };
+    let session = new_session(&sandbox, &client, None, setup).await.unwrap();
+    let opened = system(&inspected_request(&sandbox, &client, &session).await);
+    settled_job(&sandbox, &client, &session).await;
+    sandbox.wait_unloaded(&session, /*times*/ 1).await;
+
+    let reopened = system(&inspected_request(&sandbox, &client, &session).await);
+    assert_eq!(
+        (
+            opened
+                .as_deref()
+                .map(|text| text.starts_with("Answer as a pirate.\n")),
+            reopened == opened,
+        ),
+        (Some(true), true),
         "log:\n{}",
         sandbox.isolated.daemon_log()
     );

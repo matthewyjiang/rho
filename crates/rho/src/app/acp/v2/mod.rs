@@ -68,8 +68,8 @@ pub(super) fn agent(agent: Arc<Adapter>) -> impl ConnectTo<Client> {
                     let agent = Arc::clone(&agent);
                     cx.spawn(async move {
                         let started = async {
-                            let request = requests::new_session_request(&request)?;
-                            let started = agent.new_session(&request).await?;
+                            let (request, system_prompt) = requests::new_session_request(&request)?;
+                            let started = agent.new_session(&request, system_prompt).await?;
                             let setup = requests::setup(&started.options, agent.toggles())?;
                             let response = v2::NewSessionResponse::new(bridge::<_, v2::SessionId>(
                                 &started.session_id,
@@ -309,9 +309,12 @@ async fn resume(
 ) -> Result<(), AcpError> {
     let session_id = request.session_id.clone();
     let started = async {
-        let started = match requests::resume_session_request(&request)? {
-            Reattach::Replay(request) => agent.load_session(&request, replay).await?,
-            Reattach::Resume(request) => agent.resume_session(&request).await?,
+        let (reattach, system_prompt) = requests::resume_session_request(&request)?;
+        let started = match reattach {
+            Reattach::Replay(request) => {
+                agent.load_session(&request, system_prompt, replay).await?
+            }
+            Reattach::Resume(request) => agent.resume_session(&request, system_prompt).await?,
         };
         let setup = requests::setup(&started.options, agent.toggles())?;
         Ok::<_, AcpError>((setup, started))

@@ -403,7 +403,7 @@ fn v1_agent(adapter: Arc<Adapter>) -> impl ConnectTo<Client> {
                     let adapter = Arc::clone(&adapter);
                     let port: Arc<dyn AcpClientPort> = Arc::new(ConnectionPort { cx: cx.clone() });
                     cx.spawn(async move {
-                        let started = adapter.new_session(&request).await;
+                        let started = adapter.new_session(&request, /*system_prompt*/ None).await;
                         let toggles = adapter.toggles();
                         respond_started(responder, &port, started, |started| {
                             started.new_session_response(toggles)
@@ -421,7 +421,9 @@ fn v1_agent(adapter: Arc<Adapter>) -> impl ConnectTo<Client> {
                     let adapter = Arc::clone(&adapter);
                     let port: Arc<dyn AcpClientPort> = Arc::new(ConnectionPort { cx: cx.clone() });
                     cx.spawn(async move {
-                        let started = adapter.load_session(&request, Arc::clone(&port)).await;
+                        let started = adapter
+                            .load_session(&request, /*system_prompt*/ None, Arc::clone(&port))
+                            .await;
                         let toggles = adapter.toggles();
                         respond_started(responder, &port, started, |started| {
                             started.load_session_response(toggles)
@@ -439,7 +441,9 @@ fn v1_agent(adapter: Arc<Adapter>) -> impl ConnectTo<Client> {
                     let adapter = Arc::clone(&adapter);
                     let port: Arc<dyn AcpClientPort> = Arc::new(ConnectionPort { cx: cx.clone() });
                     cx.spawn(async move {
-                        let started = adapter.resume_session(&request).await;
+                        let started = adapter
+                            .resume_session(&request, /*system_prompt*/ None)
+                            .await;
                         let toggles = adapter.toggles();
                         respond_started(responder, &port, started, |started| {
                             started.resume_session_response(toggles)

@@ -283,6 +283,7 @@ fn prompt_source_label(source: WirePromptSource) -> &'static str {
         WirePromptSource::ModelReplace => "Model prompt (replace)",
         WirePromptSource::InstructionFile => "Instruction file",
         WirePromptSource::Skills => "Skills listing",
+        WirePromptSource::Host => "Host instructions",
         WirePromptSource::Unattributed => "System prompt",
         _ => "Other",
     }
@@ -356,6 +357,7 @@ fn system_prompt_parts(tokens: u64, sources: &[PromptSource]) -> Vec<ContextProm
                 PromptSourceKind::ModelReplace => WirePromptSource::ModelReplace,
                 PromptSourceKind::Agents => WirePromptSource::InstructionFile,
                 PromptSourceKind::Skills => WirePromptSource::Skills,
+                PromptSourceKind::Host => WirePromptSource::Host,
             },
             path: source.path.clone().map(Into::into),
             tokens,

@@ -1,9 +1,12 @@
 //! A session's setup: the choices a client makes for a session the daemon
 //! opens for it, the ones `rho acp` takes per session and `rho` takes as
 //! flags: directories outside the workspace, MCP servers of the client's
-//! own, parts of the session left out, and who runs its child agents.
+//! own, parts of the session left out, who runs its child agents, and the
+//! system prompt it gives the session's model.
 //! [`super::SessionNewParams`] and [`super::SessionAttachParams`] carry one;
-//! the daemon applies it only when that request opens the session.
+//! the daemon applies it only when that request opens the session, but for
+//! [`SessionSetup::surfaces`] and [`SessionSetup::system_prompt`], which it
+//! also reads from an attach to a session it has loaded.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -79,6 +82,17 @@ pub struct SessionSetup {
     /// ([`Surfaces::Drawn`]).
     #[serde(default, skip_serializing_if = "Surfaces::is_unsupported")]
     pub surfaces: Surfaces,
+    /// Instructions the client gives the session's model at system level,
+    /// as an ACP host's `systemPrompt` does: Rho's own prompt alone, when
+    /// absent. One without text, or in a mode the daemon does not know, is
+    /// [`crate::ErrorCode::InvalidParams`], and the session does not open.
+    /// The session saves the last one a request brought: a reopen without
+    /// one keeps it, and one with another replaces it. Unlike the rest of a
+    /// setup, the daemon also reads it from an attach to a session it has
+    /// loaded, which takes it from its next turn: a turn under way keeps
+    /// the prompt it started with.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system_prompt: Option<SystemPrompt>,
 }
 
 impl SessionSetup {
@@ -195,6 +209,44 @@ impl Surfaces {
     pub fn is_unsupported(&self) -> bool {
         *self == Self::Unsupported
     }
+}
+
+/// Instructions a client gives a session's model at system level
+/// ([`SessionSetup::system_prompt`]). Built with [`SystemPrompt::new`], so a
+/// later minor can add an optional field.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[non_exhaustive]
+pub struct SystemPrompt {
+    /// How the instructions combine with Rho's own prompt.
+    pub mode: SystemPromptMode,
+    /// The instructions.
+    pub text: String,
+}
+
+impl SystemPrompt {
+    pub fn new(mode: SystemPromptMode, text: impl Into<String>) -> Self {
+        Self {
+            mode,
+            text: text.into(),
+        }
+    }
+}
+
+/// How a client's [`SystemPrompt`] combines with Rho's own prompt. Neither
+/// mode changes the session's tools.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum SystemPromptMode {
+    /// After Rho's whole prompt.
+    Append,
+    /// In place of Rho's default instructions: its base prompt, a per-model
+    /// prompt file, and its tool-usage guidance. What describes the
+    /// session's workspace and environment stays: the working directory,
+    /// the running model and the advisor's, MCP and OpenAPI context,
+    /// `AGENTS.md` files, the skill listing, and the instructions an agent
+    /// definition adds to Rho's prompt.
+    Override,
 }
 
 /// A part of a session a client can leave out.

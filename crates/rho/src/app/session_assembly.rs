@@ -79,6 +79,8 @@ pub(super) struct SessionAssemblyOptions<'a, ExtendTools, Approval, Options> {
     pub extend_tools: ExtendTools,
     /// Host instructions retained across model-specific behavioral replacement.
     pub system_prompt_suffix: Option<&'a str>,
+    /// The instructions the session's host gives its model, if any.
+    pub host_prompt: Option<&'a crate::prompt::HostPrompt>,
     /// Builds the approval wiring for this caller's permission story.
     pub approval: Approval,
     /// Chooses the session options once the provider is known.
@@ -237,6 +239,7 @@ where
         process_keep_warm,
         extend_tools,
         system_prompt_suffix,
+        host_prompt,
         approval,
         session_options,
     } = options;
@@ -296,8 +299,8 @@ where
     let workspace = sdk_options.workspace.build_workspace(added_dirs)?;
     let ToolsAndPrompt {
         tools: tool_set,
-        mut prompt,
-        mut prompt_template,
+        prompt,
+        prompt_template,
         pending_tool_sources,
     } = assemble_tools_and_prompt(ToolsAndPromptOptions {
         config,
@@ -323,6 +326,8 @@ where
         process_keep_warm,
         environment: environment.clone(),
         subagent_pool,
+        host_prompt,
+        system_prompt_suffix,
     })
     .await?;
     // Wrapped at once, so a failure below stops the load as it drops.
@@ -332,17 +337,15 @@ where
         )
     });
     let tool_set = extend_tools(tool_set);
-    if let Some(suffix) = system_prompt_suffix {
-        let retained = format!("\n\n{suffix}");
-        prompt.append_retained(&retained);
-        if let Some(template) = prompt_template.as_mut() {
-            template.append_retained(&retained);
+    // A host's instructions may differ from those the session saved with.
+    let resumed_prompt = match &prompt.system {
+        rho_sdk::SystemPrompt::Custom(text)
+            if prompt_template.is_some() || host_prompt.is_some() =>
+        {
+            Some(text.clone())
         }
-    }
-    let resumed_prompt = prompt_template.as_ref().and_then(|_| match &prompt.system {
-        rho_sdk::SystemPrompt::Custom(text) => Some(text.clone()),
         _ => None,
-    });
+    };
 
     let context_window = configured_context_window(config);
     let compaction = sdk_options.runtime.compaction.clone();

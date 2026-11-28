@@ -7,14 +7,14 @@ use {
     crate::agent::{PromptPolicy, ToolCapability},
     crate::config::Config,
     crate::diagnostics::RuntimeDiagnostics,
-    crate::prompt,
+    crate::prompt::{self, HostPrompt},
     crate::tools::{
         advisor::AdvisorSessionStore,
         sdk_registry::{AppToolSet, DelegationConfig, ToolSetOptions},
     },
 };
 
-use super::agent_binding::BoundAgent;
+use super::{active_prompt::ActivePrompt, agent_binding::BoundAgent};
 
 pub(crate) struct ToolsAndPromptOptions<'a> {
     pub(crate) config: &'a Config,
@@ -58,6 +58,12 @@ pub(crate) struct ToolsAndPromptOptions<'a> {
     pub(crate) environment: crate::session_environment::SessionEnvironment,
     /// Where delegated agents take capacity, and who else hears of them.
     pub(crate) subagent_pool: crate::app::subagent_pool::SubagentPool,
+    /// The instructions the session's host gives its model, if any.
+    pub(crate) host_prompt: Option<&'a HostPrompt>,
+    /// Host instructions retained across model-specific behavioral
+    /// replacement, such as a child's contract with its parent; after the
+    /// host prompt's override, before its appended section.
+    pub(crate) system_prompt_suffix: Option<&'a str>,
 }
 
 /// Whether this session loads external tool sources: MCP servers from user
@@ -371,68 +377,62 @@ pub(crate) async fn assemble_tools_and_prompt(
     let mcp_report = tools.mcp_report().clone();
     let openapi_report = tools.openapi_report().clone();
     let specs = tools.specs();
-    let mut prompt_template = None;
-    let mut model_prompt = None;
-    let mut sources = Vec::new();
-    let system_prompt = if options.no_system_prompt {
-        SystemPrompt::None
-    } else {
-        let mut text = match options.agent.prompt() {
-            PromptPolicy::Replace(text) => text.clone(),
-            PromptPolicy::Extend(extra) => {
-                // The bound model, not the host one: a delegated agent that
-                // pins its own model must be told the model it is running on.
-                let running = options.agent.prompt_model();
-                let advisor = advisor_capable
-                    .then(|| crate::tools::advisor::advisor_model(options.config))
-                    .flatten()
-                    .map(crate::model_identity::PromptModel::from_internal_agent);
-                // Interactive sessions stay cache-only on the first frame. A
-                // later one-shot rewrite can land display names if hydrate
-                // finishes before the first request. Automation stays cache-only.
-                if options.await_catalog_names {
-                    rho_providers::model::ensure_model_catalog_names().await;
-                }
-                let mut template = prompt::system_prompt_template_with_plugin_skills(
-                    &specs,
-                    options.cwd,
-                    advisor.as_ref(),
-                    plugin_skills,
-                );
-                template.replace_tool_sources(&mcp_report, &openapi_report, tools.ui_tool());
-                template.set_added_dirs(options.added_dirs);
-                let mut retained = String::new();
-                if !launch_delegation_enabled {
-                    prompt::append_subagents_disabled_instruction(&mut retained);
-                }
-                if !extra.is_empty() {
-                    retained.push_str(&format!("\n\n# Agent instructions\n\n{extra}"));
-                }
-                template.append_retained(&retained);
-                let built = match template.build(&running) {
-                    Ok(built) => built,
-                    Err(error) => {
-                        if let Some(pending) = pending_tool_sources {
-                            pending.abort();
-                        }
-                        tools.shutdown().await;
-                        return Err(error);
-                    }
-                };
-                sources = built.sources;
-                prompt_template = Some(template);
-                model_prompt = built.model_prompt;
-                built.text
+    let suffix = options.system_prompt_suffix;
+    let (prompt, prompt_template) = match prompt_base(options.agent, options.no_system_prompt) {
+        PromptBase::Untemplated(replacing) => (
+            untemplated_prompt(replacing, options.host_prompt, suffix),
+            None,
+        ),
+        PromptBase::Template(extra) => {
+            // The bound model, not the host one: a delegated agent that
+            // pins its own model must be told the model it is running on.
+            let running = options.agent.prompt_model();
+            let advisor = advisor_capable
+                .then(|| crate::tools::advisor::advisor_model(options.config))
+                .flatten()
+                .map(crate::model_identity::PromptModel::from_internal_agent);
+            // Interactive sessions stay cache-only on the first frame. A
+            // later one-shot rewrite can land display names if hydrate
+            // finishes before the first request. Automation stays cache-only.
+            if options.await_catalog_names {
+                rho_providers::model::ensure_model_catalog_names().await;
             }
-        };
-        if text.is_empty() {
-            text = "You are a coding agent.".into();
+            let mut template = prompt::system_prompt_template_with_plugin_skills(
+                &specs,
+                options.cwd,
+                advisor.as_ref(),
+                plugin_skills,
+            );
+            template.replace_tool_sources(&mcp_report, &openapi_report, tools.ui_tool());
+            template.set_added_dirs(options.added_dirs);
+            let mut retained = String::new();
+            if !launch_delegation_enabled {
+                prompt::append_subagents_disabled_instruction(&mut retained);
+            }
+            if !extra.is_empty() {
+                retained.push_str(&format!("\n\n# Agent instructions\n\n{extra}"));
+            }
+            if let Some(suffix) = suffix {
+                retained.push_str(&format!("\n\n{suffix}"));
+            }
+            template.append_retained(&retained);
+            template.set_host_prompt(options.host_prompt.cloned());
+            let built = match template.build(&running) {
+                Ok(built) => built,
+                Err(error) => {
+                    if let Some(pending) = pending_tool_sources {
+                        pending.abort();
+                    }
+                    tools.shutdown().await;
+                    return Err(error);
+                }
+            };
+            // Advisor steering lives on the tool description / enable
+            // notice, not here, so mid-session /advisor toggles never
+            // require a prompt rewrite.
+            (ActivePrompt::from_prepared(built), Some(template))
         }
-        // Advisor steering lives on the tool description / enable notice, not
-        // here, so mid-session /advisor toggles never require a prompt rewrite.
-        SystemPrompt::Custom(text)
     };
-    let prompt = super::active_prompt::ActivePrompt::new(system_prompt, model_prompt, sources);
     prompt.install(options.diagnostics, tools.advisor());
     options.diagnostics.update_tools(&specs);
     Ok(ToolsAndPrompt {
@@ -441,6 +441,61 @@ pub(crate) async fn assemble_tools_and_prompt(
         prompt_template,
         pending_tool_sources,
     })
+}
+
+/// Where a session's system prompt starts from.
+pub(crate) enum PromptBase<'a> {
+    /// Rho's prompt template, with the instructions the agent adds.
+    Template(&'a str),
+    /// No template: the prompt of an agent whose own replaces Rho's, or
+    /// none when the session leaves Rho's prompt out.
+    Untemplated(Option<&'a str>),
+}
+
+/// Where the system prompt of a session running `agent` starts from, when
+/// it leaves Rho's prompt out (`no_system_prompt`) or not.
+pub(crate) fn prompt_base(agent: &BoundAgent, no_system_prompt: bool) -> PromptBase<'_> {
+    match agent.prompt() {
+        _ if no_system_prompt => PromptBase::Untemplated(None),
+        PromptPolicy::Replace(text) => PromptBase::Untemplated(Some(text)),
+        PromptPolicy::Extend(extra) => PromptBase::Template(extra),
+    }
+}
+
+/// The prompt of a session without a template, laid out as a template's
+/// is: the agent's `replacing` prompt ([`PromptBase::Untemplated`]), or the
+/// host's override in its place; then `suffix`; then the host's appended
+/// section. Without Rho's prompt or an agent's, the host's text stands
+/// alone.
+pub(crate) fn untemplated_prompt(
+    replacing: Option<&str>,
+    host: Option<&HostPrompt>,
+    suffix: Option<&str>,
+) -> ActivePrompt {
+    let replacing = replacing.map(|text| match text {
+        "" => "You are a coding agent.".to_owned(),
+        text => text.to_owned(),
+    });
+    let (lead, section) = match host {
+        None => (replacing, None),
+        Some(host) => match (host.override_text(), replacing) {
+            (Some(text), _) => (Some(text.to_owned()), None),
+            (None, Some(replacing)) => (Some(replacing), host.appended_section()),
+            (None, None) => (Some(host.text.clone()), None),
+        },
+    };
+    let mut prompt = ActivePrompt::new(
+        lead.map_or(SystemPrompt::None, SystemPrompt::Custom),
+        /*loaded*/ None,
+        Vec::new(),
+    );
+    if let Some(suffix) = suffix {
+        prompt.append_retained(&format!("\n\n{suffix}"));
+    }
+    if let Some(section) = section {
+        prompt.append_retained(&section);
+    }
+    prompt
 }
 
 pub(super) fn mcp_config_for_attach(

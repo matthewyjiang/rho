@@ -162,9 +162,9 @@ pub(super) struct OpenedSession {
     /// The environment the session's children see, which each prompt
     /// replaces with its client's.
     pub(super) environment: SessionEnvironment,
-    /// The setup the opening request brought, as it brought it: what the
-    /// session reopens with when pull request news wakes it unloaded (see
-    /// `pull_request_wake.rs`).
+    /// The setup the opening request brought, but its system prompt, which
+    /// the session's file keeps: what the session reopens with when pull
+    /// request news wakes it unloaded (see `pull_request_wake.rs`).
     pub(super) setup: SessionSetup,
     /// The session it forks, for a fork, new or reopened.
     pub(super) fork_of: Option<rho_sdk::SessionId>,
@@ -389,6 +389,7 @@ async fn open_runtime(
     let config_path = settings.agent_path().to_path_buf();
     let Setup {
         left_out,
+        host_prompt,
         questions,
         surfaces,
         children,
@@ -486,6 +487,7 @@ async fn open_runtime(
             diagnostics,
             agent,
             prompt_suffix: None,
+            host_prompt,
         },
         host: HostCapabilities {
             questions,
@@ -569,7 +571,12 @@ async fn open_runtime(
         config,
         global,
         environment,
-        setup: requested,
+        // Its file keeps the system prompt, which a later attach may have
+        // replaced by the time a reopen reads this.
+        setup: SessionSetup {
+            system_prompt: None,
+            ..requested
+        },
         fork_of,
         held_context: PromptContext::default(),
     })

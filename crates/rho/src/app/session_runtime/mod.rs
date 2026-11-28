@@ -57,6 +57,7 @@ mod credentials;
 mod delegation;
 mod events;
 mod handle;
+mod host_prompt;
 mod inspect;
 mod left_out;
 mod mode;
@@ -101,6 +102,7 @@ pub(crate) use events::{
     SessionEvent, TurnControl, TurnKeys,
 };
 pub(crate) use handle::{SessionHandle, SteerError};
+pub(crate) use host_prompt::saved as saved_host_prompt;
 pub(crate) use left_out::LeftOut;
 pub(crate) use mode::SessionPermission;
 pub(crate) use open::{NodeSession, SessionOpening};

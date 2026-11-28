@@ -3,7 +3,8 @@
 //! prompt's turn and a settings change join the queue on their session's
 //! runtime this way under the session's turn lock, so the order they take
 //! the runtime in is the order they started under that lock (see
-//! `Sessions::prompt` and `configure`).
+//! `Sessions::prompt` and `configure`), as does the system prompt an attach
+//! brings to a loaded session (see `host_prompt.rs`).
 
 use std::{
     future::Future,

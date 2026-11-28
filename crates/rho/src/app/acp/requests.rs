@@ -79,6 +79,7 @@ impl Launch {
         &self,
         directories: &[PathBuf],
         servers: &[AcpMcpServer],
+        system_prompt: Option<rho_protocol::SystemPrompt>,
         features: HostFeatures,
     ) -> SessionSetup {
         let mut additional_directories = self.added_dirs.clone();
@@ -114,6 +115,7 @@ impl Launch {
             sign_in: rho_protocol::SignIn::Required,
             // ACP has no A2UI surfaces to draw.
             surfaces: rho_protocol::Surfaces::Unsupported,
+            system_prompt,
         }
     }
 }

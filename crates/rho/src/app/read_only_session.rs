@@ -108,6 +108,7 @@ pub(super) async fn assemble(session: ReadOnlySession<'_>) -> anyhow::Result<Bui
         process_keep_warm: crate::tools::process::KeepWarmOffer::Hidden,
         extend_tools: std::convert::identity,
         system_prompt_suffix: None,
+        host_prompt: None,
         approval: |_: ApprovalInputs| {
             Ok(SessionApproval {
                 session: None,

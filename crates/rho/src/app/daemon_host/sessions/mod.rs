@@ -87,6 +87,7 @@ mod grant;
 mod held_context;
 mod hold;
 mod hooks;
+mod host_prompt;
 mod idle_wake;
 mod inputs;
 mod inspect;
@@ -728,6 +729,13 @@ impl Sessions {
         // has loaded keeps the environment and setup it opened with.
         // Its grant is its environment's: an attach names none.
         let draws = params.setup.surfaces;
+        // Applied to a loaded session too, from its next turn.
+        let prompt = params
+            .setup
+            .system_prompt
+            .as_ref()
+            .map(setup::host_prompt)
+            .transpose()?;
         let with = OpenWith::under(
             grant::asked(/*named*/ None, &params.environment)?,
             &params.environment,
@@ -754,6 +762,9 @@ impl Sessions {
                 ))
             })
             .await?;
+        if let Some(prompt) = prompt {
+            host_prompt::apply_when_free(&session, prompt, self.stopping.clone());
+        }
         if let Some(turn) = resumed {
             // Spawned before anything awaits, as a prompt's turn is.
             TurnTask {

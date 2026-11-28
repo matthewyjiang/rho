@@ -277,6 +277,7 @@ pub use session_hooks::{
 };
 pub use setup::{
     ChildThreads, IdleWake, McpServer, SecretMap, SessionPart, SessionSetup, SignIn, Surfaces,
+    SystemPrompt, SystemPromptMode,
 };
 pub use store::{
     AuthChooseStoreParams, AuthChooseStoreResponse, CredentialStoreKind, CredentialStoreStatus,

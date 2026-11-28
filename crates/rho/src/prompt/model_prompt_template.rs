@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use crate::model_identity::PromptModel;
 
 use super::{
+    host_prompt::HostPrompt,
     model_prompts::{self, ModelPrompt, ModelPromptMode},
     project_instructions::ProjectInstructions,
     PromptSource, PromptSourceKind, SystemPrompt, BASE_SYSTEM_PROMPT,
@@ -13,6 +14,11 @@ use super::{
 /// Ordered assembly parts keep each retained section's text and provenance together.
 #[derive(Clone)]
 enum PromptPart {
+    /// Rho's tool-usage guidance, which a host's override replaces.
+    Guidance {
+        text: String,
+        sources: Vec<PromptSource>,
+    },
     Retained {
         text: String,
         sources: Vec<PromptSource>,
@@ -30,6 +36,8 @@ pub(crate) struct ModelPromptTemplate {
     /// MCP servers, OpenAPI sources and the `ui` tool; see
     /// [`super::tool_sources_context`].
     tool_sources: String,
+    /// The host's instructions, if it gave any.
+    host: Option<HostPrompt>,
 }
 
 #[cfg(test)]
@@ -37,21 +45,43 @@ pub(crate) struct ModelPromptTemplate {
 mod tests;
 
 impl ModelPromptTemplate {
+    /// A template with Rho's tool-usage `guidance` and its `sources`.
     pub(super) fn new(
         home: Option<&Path>,
         before_model: String,
-        retained: String,
+        guidance: String,
         sources: Vec<PromptSource>,
     ) -> Self {
         Self {
             home: home.map(Path::to_path_buf),
             before_model,
-            parts: vec![PromptPart::Retained {
-                text: retained,
+            parts: vec![PromptPart::Guidance {
+                text: guidance,
                 sources,
             }],
             tool_sources: String::new(),
+            host: None,
         }
+    }
+
+    /// Puts `context`, which describes the session rather than guides the
+    /// model, right before the guidance, where a host's override keeps it.
+    pub(super) fn with_context_before_guidance(mut self, context: String) -> Self {
+        if !context.is_empty() {
+            let sources = vec![PromptSource {
+                kind: PromptSourceKind::Base,
+                path: None,
+                bytes: context.len(),
+            }];
+            self.parts.insert(
+                0,
+                PromptPart::Retained {
+                    text: context,
+                    sources,
+                },
+            );
+        }
+        self
     }
 
     pub(super) fn with_project_instructions(mut self, cwd: &Path) -> Self {
@@ -75,7 +105,7 @@ impl ModelPromptTemplate {
             .iter_mut()
             .filter_map(|part| match part {
                 PromptPart::ProjectInstructions(instructions) => Some(instructions),
-                PromptPart::Retained { .. } => None,
+                PromptPart::Guidance { .. } | PromptPart::Retained { .. } => None,
             })
             .flat_map(|instructions| {
                 instructions.set_added_dirs(added_dirs.as_slice(), home.as_deref())
@@ -99,6 +129,11 @@ impl ModelPromptTemplate {
         );
     }
 
+    /// Sets the host's instructions, which every later render applies.
+    pub(crate) fn set_host_prompt(&mut self, host: Option<HostPrompt>) {
+        self.host = host;
+    }
+
     /// Replace startup external tool context rather than retaining stale
     /// connect status.
     pub(crate) fn replace_tool_sources(
@@ -111,8 +146,12 @@ impl ModelPromptTemplate {
     }
 
     /// A model switch preserves instruction files cached for the current session.
+    /// A host's override reads no model prompt file, which it would drop.
     pub(crate) fn build(&self, running: &PromptModel) -> anyhow::Result<SystemPrompt> {
-        let selected = model_prompts::load(self.home.as_deref(), running)?;
+        let selected = match self.host.as_ref().and_then(HostPrompt::override_text) {
+            Some(_) => None,
+            None => model_prompts::load(self.home.as_deref(), running)?,
+        };
         Ok(self.render(running, selected.as_ref()))
     }
 
@@ -129,7 +168,17 @@ impl ModelPromptTemplate {
             path: None,
             bytes: 0,
         }];
-        if !matches!(
+        let host_override = self.host.as_ref().and_then(HostPrompt::override_text);
+        // The host's override stands in for the base and model prompts.
+        let selected = selected.filter(|_| host_override.is_none());
+        if let Some(host) = host_override {
+            text.push_str(host);
+            sources.push(PromptSource {
+                kind: PromptSourceKind::Host,
+                path: None,
+                bytes: host.len(),
+            });
+        } else if !matches!(
             selected.map(|prompt| prompt.mode),
             Some(ModelPromptMode::Replace)
         ) {
@@ -161,7 +210,12 @@ impl ModelPromptTemplate {
         sources[0].bytes += text.len() - start;
         for part in &self.parts {
             match part {
-                PromptPart::Retained {
+                PromptPart::Guidance { .. } if host_override.is_some() => {}
+                PromptPart::Guidance {
+                    text: retained,
+                    sources: retained_sources,
+                }
+                | PromptPart::Retained {
                     text: retained,
                     sources: retained_sources,
                 } => {
@@ -178,6 +232,14 @@ impl ModelPromptTemplate {
                     instructions.append_to(&mut text, &mut sources);
                 }
             }
+        }
+        if let Some(section) = self.host.as_ref().and_then(HostPrompt::appended_section) {
+            text.push_str(&section);
+            sources.push(PromptSource {
+                kind: PromptSourceKind::Host,
+                path: None,
+                bytes: section.len(),
+            });
         }
         SystemPrompt {
             text,

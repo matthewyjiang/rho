@@ -169,6 +169,7 @@ pub(crate) async fn run_child(run: ChildRun) -> anyhow::Result<()> {
             diagnostics,
             agent: bound,
             prompt_suffix: Some(CHILD_COMMUNICATION_CONTRACT),
+            host_prompt: None,
         },
         host: HostCapabilities {
             // A child shows its parent's user nothing in this version.

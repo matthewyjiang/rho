@@ -43,7 +43,6 @@ fn v2_refuses_forbidden_requests_with_the_codes_it_names() {
     let (mut server, session) = v2_session(&workspace);
     let cwd = workspace.project.clone();
     let text = json!({"type": "text", "text": "hi"});
-    let system_prompt = json!({"mode": "append", "content": [text]});
     let stdio = |name: &str, command: &str| json!({"type": "stdio", "name": name, "command": command, "args": [], "env": []});
     let cases = [
         (
@@ -83,18 +82,6 @@ fn v2_refuses_forbidden_requests_with_the_codes_it_names() {
             "an empty prompt",
             "session/prompt",
             json!({"sessionId": session, "prompt": []}),
-            json!({"code": -32602, "sessionId": null}),
-        ),
-        (
-            "a systemPrompt on session/new",
-            "session/new",
-            json!({"cwd": cwd, "systemPrompt": system_prompt}),
-            json!({"code": -32602, "sessionId": null}),
-        ),
-        (
-            "a systemPrompt on session/resume",
-            "session/resume",
-            json!({"sessionId": session, "cwd": cwd, "systemPrompt": system_prompt}),
             json!({"code": -32602, "sessionId": null}),
         ),
         (

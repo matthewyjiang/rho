@@ -58,6 +58,12 @@ pub(crate) struct SessionLaunch {
     /// parent. Not part of the [`RunShape`]: it lives in the built prompt,
     /// which a permission mode rebuild reuses.
     pub(crate) prompt_suffix: Option<&'static str>,
+    /// The instructions the session's host gives its model, which its saves
+    /// record (see `host_prompt.rs`). Unlike the rest of the launch, a host
+    /// may replace them mid-session (`SessionRuntime::set_host_prompt`):
+    /// kept here, so a rebuild of the session, such as an agent rebind,
+    /// keeps the current ones.
+    pub(crate) host_prompt: Option<crate::prompt::HostPrompt>,
 }
 
 /// What the session's host does for it: whether it asks a person, who runs
@@ -443,6 +449,7 @@ pub(super) async fn build_session(
             with_plan_exit(tools, build, agent, config)
         },
         system_prompt_suffix: build.launch.prompt_suffix,
+        host_prompt: build.launch.host_prompt.as_ref(),
         approval: |inputs: ApprovalInputs| Ok(build.host.approvals.wire(inputs)),
         session_options,
     })

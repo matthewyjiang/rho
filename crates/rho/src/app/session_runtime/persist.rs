@@ -347,6 +347,7 @@ impl SessionRuntime {
             code_mode: self.built.tools.code_mode().clone(),
             added_dirs: self.added_dirs.clone(),
             left_out: self.build.launch.left_out,
+            host_prompt: self.build.launch.host_prompt.clone(),
             auth: self.auth.clone(),
             settings: self.settings_record(),
             started_sessions: self.started_sessions.clone(),
@@ -380,6 +381,7 @@ pub(super) struct DurableState {
     pub(super) code_mode: Arc<crate::tools::code_mode::CodeModeSurface>,
     pub(super) added_dirs: AddedDirs,
     pub(super) left_out: LeftOut,
+    pub(super) host_prompt: Option<crate::prompt::HostPrompt>,
     pub(super) auth: String,
     /// The session's settings, once a host kept them.
     pub(super) settings: SettingsRecord,
@@ -397,11 +399,13 @@ impl DurableState {
             code_mode,
             added_dirs,
             left_out,
+            host_prompt,
             auth,
             settings,
             started_sessions,
         } = self;
         let snapshot = todo.decorate(prompt.decorate(code_mode.decorate(snapshot)));
+        let snapshot = super::host_prompt::decorate(host_prompt.as_ref(), snapshot);
         started_sessions.decorate(settings.decorate(super::agent::decorate_model_override(
             left_out.decorate(added_dirs.decorate(snapshot)),
             auth,

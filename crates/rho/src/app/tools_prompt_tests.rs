@@ -88,6 +88,8 @@ async fn assemble_awaiting_catalog(
         process_keep_warm: crate::tools::process::KeepWarmOffer::Hidden,
         environment: Default::default(),
         subagent_pool: crate::app::subagent_pool::SubagentPool::Own,
+        host_prompt: None,
+        system_prompt_suffix: None,
     })
     .await
     .unwrap();
@@ -163,6 +165,8 @@ async fn the_advisor_receives_the_executor_system_prompt() {
         process_keep_warm: crate::tools::process::KeepWarmOffer::Hidden,
         environment: Default::default(),
         subagent_pool: crate::app::subagent_pool::SubagentPool::Own,
+        host_prompt: None,
+        system_prompt_suffix: None,
     })
     .await
     .unwrap();
@@ -286,6 +290,8 @@ async fn deferred_mcp_connect_returns_pending_inventory_without_waiting() {
             process_keep_warm: crate::tools::process::KeepWarmOffer::Hidden,
             environment: Default::default(),
             subagent_pool: crate::app::subagent_pool::SubagentPool::Own,
+            host_prompt: None,
+            system_prompt_suffix: None,
         }),
     )
     .await
@@ -349,6 +355,8 @@ auth = { type = "bearer", token_env = "TOKEN" }"#,
         process_keep_warm: crate::tools::process::KeepWarmOffer::Hidden,
         environment: Default::default(),
         subagent_pool: crate::app::subagent_pool::SubagentPool::Own,
+        host_prompt: None,
+        system_prompt_suffix: None,
     })
     .await
     .unwrap();
@@ -479,4 +487,52 @@ fn mcp_attach_none_drops_user_and_plugin_servers() {
     let none = mcp_config_for_attach(&config, plugin, ToolSourceAttach::None);
     pretty_assertions::assert_eq!(none.servers.is_empty(), true);
     pretty_assertions::assert_eq!(none.invalid_servers.is_empty(), true);
+}
+
+// Covers: a session without a prompt template lays out the host's prompt as
+// a template does: an override takes the agent's place, an appended section
+// follows the agent's prompt and the host process's suffix, and without
+// Rho's prompt or an agent's the host's text stands alone.
+// Owner: prompt assembly for untemplated sessions.
+#[test]
+fn untemplated_prompts_apply_the_host_prompt_as_templates_do() {
+    use crate::prompt::{HostPrompt, HostPromptMode};
+
+    let host = |mode| HostPrompt {
+        mode,
+        text: "host".into(),
+    };
+    let append = host(HostPromptMode::Append);
+    let override_ = host(HostPromptMode::Override);
+    let cases = [
+        (Some("agent"), None, None, Some("agent")),
+        (None, None, Some("suffix"), None),
+        (
+            Some("agent"),
+            Some(&append),
+            Some("suffix"),
+            Some("agent\n\nsuffix\n\n# Host instructions\n\nhost\n"),
+        ),
+        (
+            Some("agent"),
+            Some(&override_),
+            Some("suffix"),
+            Some("host\n\nsuffix"),
+        ),
+        (None, Some(&append), None, Some("host")),
+        (None, Some(&override_), None, Some("host")),
+        (Some(""), None, None, Some("You are a coding agent.")),
+    ];
+    for (replacing, host, suffix, expected) in cases {
+        let prompt = super::untemplated_prompt(replacing, host, suffix);
+        let text = match prompt.system {
+            SystemPrompt::Custom(text) => Some(text),
+            _ => None,
+        };
+        assert_eq!(
+            text.as_deref(),
+            expected,
+            "{replacing:?} {host:?} {suffix:?}"
+        );
+    }
 }

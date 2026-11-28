@@ -80,6 +80,9 @@ mod v2_errors;
 #[path = "support/acp_v2_prompt_tests.rs"]
 mod v2_prompt;
 
+#[path = "support/acp_v2_system_prompt_tests.rs"]
+mod v2_system_prompt;
+
 /// Failure bound for one reply; the fixture answers without network.
 const REPLY_TIMEOUT: Duration = Duration::from_secs(60);
 
