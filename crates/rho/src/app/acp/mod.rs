@@ -12,6 +12,7 @@ mod auth;
 mod daemon;
 mod elicitation;
 mod host_features;
+mod initialize_screen;
 mod inputs;
 mod options;
 mod permission;
@@ -19,6 +20,7 @@ mod prompt;
 mod requests;
 mod sessions;
 mod t3_prompt;
+mod transport;
 mod updates;
 mod v2;
 
@@ -40,7 +42,7 @@ use agent_client_protocol::{
         SetSessionModeRequest, StopReason,
     },
     v1::{ConnectionTo, Responder},
-    Agent, Client, ConnectTo, Error as AcpError, JsonRpcResponse, Role, Stdio,
+    Agent, Client, ConnectTo, Error as AcpError, JsonRpcResponse, Role,
 };
 use rho_protocol::{methods::SessionList, SessionListParams, SessionPart};
 
@@ -253,28 +255,13 @@ impl Adapter {
         })
     }
 
-    /// Keeps the host's features and connection from `initialize`.
-    pub(super) fn record_client(
-        &self,
-        request: &InitializeRequest,
-        port: Arc<dyn AcpClientPort>,
-        turns: Turns,
-    ) {
-        self.negotiated.record(request, port, turns);
-    }
-
     /// The v1 handshake. The v2 adapter translates the response.
     pub(super) async fn initialize(&self, request: &InitializeRequest) -> InitializeResponse {
         InitializeResponse::new(ProtocolVersion::V1)
             .agent_capabilities(
                 AgentCapabilities::new()
                     .load_session(true)
-                    .prompt_capabilities(
-                        PromptCapabilities::new()
-                            .image(true)
-                            .audio(false)
-                            .embedded_context(true),
-                    )
+                    .prompt_capabilities(prompt_capabilities())
                     // Host stdio servers are the ACP baseline; Streamable
                     // HTTP is the transport Rho also speaks. SSE is not.
                     .mcp_capabilities(McpCapabilities::new().http(true))
@@ -348,11 +335,12 @@ pub(super) async fn run(cli: Cli) -> anyhow::Result<()> {
     let adapter = Arc::new(Adapter::new(&cli)?);
     // Host integrations do not change protocol negotiation: each connection
     // uses the highest version both sides support.
+    const VERSIONS: &[ProtocolVersion] = &[ProtocolVersion::V1, ProtocolVersion::V2];
     let server = Agent
         .protocol_router()
         .with_v1(v1_agent(Arc::clone(&adapter)))
         .with_v2(v2::agent(Arc::clone(&adapter)))
-        .connect_to(Stdio::new());
+        .connect_to(transport::HostStdio::new(VERSIONS));
     let served = tokio::select! {
         served = tokio::spawn(server) => served
             .map_err(|error| anyhow::anyhow!("ACP server task failed: {error}"))
@@ -377,6 +365,15 @@ async fn stopped(stops: &mut ShutdownSignals, hangup: &mut TerminalClosed) {
     }
 }
 
+/// The prompt content Rho accepts beyond text and resource links. ACP v2
+/// refuses a prompt carrying any other type (`v2::requests::prompt_request`).
+fn prompt_capabilities() -> PromptCapabilities {
+    PromptCapabilities::new()
+        .image(true)
+        .audio(false)
+        .embedded_context(true)
+}
+
 /// The ACP v1 agent for one connection.
 fn v1_agent(adapter: Arc<Adapter>) -> impl ConnectTo<Client> {
     Agent
@@ -386,7 +383,7 @@ fn v1_agent(adapter: Arc<Adapter>) -> impl ConnectTo<Client> {
             {
                 let adapter = Arc::clone(&adapter);
                 async move |request: InitializeRequest, responder, cx| {
-                    adapter.record_client(
+                    adapter.negotiated.record(
                         &request,
                         Arc::new(ConnectionPort { cx: cx.clone() }),
                         Turns::Prompted,
@@ -622,8 +619,10 @@ where
 }
 
 /// `resource_not_found` as ACP v1 writes it, for a session the host names
-/// that this adapter does not hold. The adapter speaks v1 on every
-/// connection, so v2 hosts get the same error.
+/// that this adapter does not hold. Every `-32002` the adapter sends names
+/// a session: v2 rewrites each one into its `data.sessionId` form
+/// (`v2::errors::session_scoped`), so another missing resource needs
+/// another code.
 fn resource_not_found(uri: Option<String>) -> AcpError {
     agent_client_protocol::v1::schema::Error::resource_not_found(uri).into()
 }
