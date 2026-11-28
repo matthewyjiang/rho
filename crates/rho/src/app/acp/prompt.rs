@@ -105,7 +105,7 @@ impl Adapter {
                         // Another client's turn, or one the daemon started
                         // to hand the model finished background work, holds
                         // the session: the prompt stays held until it ends.
-                        Err(Refused::Busy { busy, .. }) => place.until_free(busy).await?,
+                        Err(Refused::Busy(refusal)) => place.until_free(refusal.busy).await?,
                         Err(Refused::Failed(error)) => return Err(error),
                     }
                 }
@@ -176,7 +176,9 @@ impl Adapter {
             return Ok(stop_reason(outcome)?);
         }
         Err(match error.error_code() {
-            Some(DaemonErrorCode::SessionBusy) => Refused::Busy { error, busy },
+            Some(DaemonErrorCode::SessionBusy) => {
+                Refused::Busy(Box::new(BusyRefusal { error, busy }))
+            }
             _ => Refused::Failed(daemon::daemon_error(&error)),
         })
     }
@@ -193,18 +195,23 @@ enum Insert<'a> {
 
 /// Why handing the daemon a prompt did not end in a turn.
 enum Refused {
-    /// A turn holds the session, as `busy` saw it.
-    Busy {
-        error: ClientError,
-        busy: Busy,
-    },
+    /// A turn holds the session. Boxed: the daemon's error and the watch
+    /// are large next to an [`AcpError`].
+    Busy(Box<BusyRefusal>),
     Failed(AcpError),
+}
+
+/// The daemon's busy refusal of a prompt, and the session's job as `busy`
+/// saw it from just before the prompt was sent.
+struct BusyRefusal {
+    error: ClientError,
+    busy: Busy,
 }
 
 impl Refused {
     fn into_error(self) -> AcpError {
         match self {
-            Self::Busy { error, .. } => daemon::daemon_error(&error),
+            Self::Busy(refusal) => daemon::daemon_error(&refusal.error),
             Self::Failed(error) => error,
         }
     }
