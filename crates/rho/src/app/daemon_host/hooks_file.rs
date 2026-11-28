@@ -3,6 +3,11 @@
 //! a session would load, so a copied file never leaves the daemon running no
 //! hooks at all. Sessions read the file as they open and on
 //! `rho/session/hooks/reload`, so a write changes no loaded session.
+//!
+//! A write holds the file's edit lock from its revision check through its
+//! write, as a `config.toml` edit does, so no other rho process replaces
+//! the file in between. A text editor takes no lock, so its save can still
+//! land in that window, which lasts microseconds.
 
 use std::{
     io,
@@ -22,8 +27,9 @@ const ABSENT: &str = "absent";
 /// The daemon's user hooks file.
 pub(super) struct HooksFileStore {
     path: PathBuf,
-    /// Held from a write's revision check through its write, so the file
-    /// checked is the one replaced.
+    /// Held from a write's revision check through its write, so this
+    /// daemon's writes wait for each other instead of finding the edit lock
+    /// held.
     writes: tokio::sync::Mutex<()>,
 }
 
@@ -65,6 +71,7 @@ impl HooksFileStore {
                 .map_err(|error| RpcError::new(ErrorCode::InvalidParams, error.to_string()))?;
         }
         let _writing = self.writes.lock().await;
+        let _locked = self.lock()?;
         if revision(self.read()?.as_deref()) != params.revision {
             return Err(RpcError::new(
                 ErrorCode::ConfigConflict,
@@ -90,6 +97,24 @@ impl HooksFileStore {
         Ok(HooksFileSetResponse::new(revision(
             params.text.as_deref().map(str::as_bytes),
         )))
+    }
+
+    /// The file's edit lock, which every rho writer of it takes. Held by
+    /// another, it is a conflict the client can retry after reading again.
+    fn lock(&self) -> Result<crate::config_writer::edit_lock::EditFileLock, RpcError> {
+        crate::config_writer::edit_lock::acquire_edit_lock(&self.path).map_err(|error| {
+            if error.kind() == io::ErrorKind::WouldBlock {
+                RpcError::new(
+                    ErrorCode::ConfigConflict,
+                    format!("{} is being edited; read it again", self.path.display()),
+                )
+            } else {
+                RpcError::new(
+                    ErrorCode::InternalError,
+                    format!("could not lock {}: {error}", self.path.display()),
+                )
+            }
+        })
     }
 
     /// The file's bytes, `None` when there is no file.

@@ -49,8 +49,9 @@ async fn set(
 }
 
 // Covers: a client replaces the user's hooks file only at the revision it
-// read and only with text a session would load; it reads back exactly what
-// it wrote, comments included, and deleting the file reads as absent again.
+// read, only with text a session would load, and only while no other rho
+// process holds the file's edit lock; it reads back exactly what it wrote,
+// comments included, and deleting the file reads as absent again.
 // Owner: daemon hooks file protocol.
 #[tokio::test]
 async fn a_client_replaces_the_users_hooks_file_only_at_the_revision_it_read() {
@@ -73,15 +74,21 @@ async fn a_client_replaces_the_users_hooks_file_only_at_the_revision_it_read() {
         (written.clone(), Some(HOOKS))
     );
 
+    let lock = std::fs::File::create(path.with_file_name(".hooks.toml.rho-edit.lock")).unwrap();
+    fs2::FileExt::try_lock_exclusive(&lock).unwrap();
+    let held = set(&client, &written, None).await;
+    drop(lock);
     let refused = [
         set(&client, &written, Some("version = 2\n")).await,
         set(&client, &absent.revision, None).await,
+        held,
     ];
     assert_eq!(
         refused,
         [
             Err(ErrorCode::InvalidParams),
-            Err(ErrorCode::ConfigConflict)
+            Err(ErrorCode::ConfigConflict),
+            Err(ErrorCode::ConfigConflict),
         ]
     );
     assert_eq!(std::fs::read_to_string(&path).unwrap(), HOOKS);
