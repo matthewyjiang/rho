@@ -8,10 +8,12 @@
 //! A prompt takes its [`Place`] in its session's line as the connection
 //! reads it, before any later message is handled, so its order against the
 //! session's other prompts and its cancels is the host's. A `session/cancel`
-//! drops every prompt still held when it arrives ([`Line::cancels`]), and
-//! `$/cancel_request` drops the one it names; both answer `-32800` and the
-//! prompt is never inserted. A prompt the daemon already took is no longer
-//! held: a cancel then cancels its turn, as it cancels any turn.
+//! or a close drops every prompt still held when it arrives
+//! ([`Line::cancels`]), and `$/cancel_request` drops the one it names; each
+//! answers `-32800` and the prompt is never inserted. A prompt the daemon
+//! already took is no longer held: a cancel then cancels its turn, as it
+//! cancels any turn, including a cancel read while the prompt was on its
+//! way to the daemon.
 
 use std::{collections::VecDeque, future::Future, sync::Arc};
 
@@ -30,7 +32,8 @@ impl Default for Holds {
 }
 
 impl Holds {
-    /// `session/cancel` arrived: every prompt held now is dropped.
+    /// The session was cancelled or closed: every prompt held now is
+    /// dropped.
     pub(in crate::app::acp) fn cancel(&self) {
         self.0.send_modify(|line| line.cancels += 1);
     }
@@ -41,7 +44,7 @@ struct Line {
     /// The tickets of the prompts waiting for their turn, oldest first.
     waiting: VecDeque<u64>,
     next: u64,
-    /// How many `session/cancel`s arrived. A prompt that arrived before
+    /// How many cancels and closes arrived. A prompt that arrived before
     /// the latest one is dropped.
     cancels: u64,
 }
@@ -84,9 +87,10 @@ impl Place {
     pub(in crate::app::acp) async fn take_turn(&self) -> Result<MutexGuard<'_, ()>, AcpError> {
         let first_free = async {
             let mut line = self.live.held.0.subscribe();
-            // The sender lives as long as `self.live`.
+            // The sender lives as long as `self.live`. A cancel ends the
+            // wait too, and `unless_dropped` answers it.
             let _ = line
-                .wait_for(|line| line.waiting.front() == Some(&self.ticket))
+                .wait_for(|line| self.dropped(line) || line.waiting.front() == Some(&self.ticket))
                 .await;
             self.live.prompt.lock().await
         };
@@ -104,8 +108,8 @@ impl Place {
 
     /// Fails as a dropped prompt fails, once a cancel covered it.
     pub(in crate::app::acp) fn check(&self) -> Result<(), AcpError> {
-        if self.live.held.0.borrow().cancels != self.cancels {
-            return Err(cancelled_by_session_cancel());
+        if self.session_cancelled() {
+            return Err(cancelled());
         }
         if self.cancellation.is_cancelled() {
             return Err(AcpError::request_cancelled());
@@ -113,16 +117,27 @@ impl Place {
         Ok(())
     }
 
+    /// Whether the session was cancelled or closed since the prompt
+    /// arrived: one that was taken meanwhile has its turn stopped.
+    pub(in crate::app::acp) fn session_cancelled(&self) -> bool {
+        self.dropped(&self.live.held.0.borrow())
+    }
+
+    /// A cancel or close arrived since the prompt did.
+    fn dropped(&self, line: &Line) -> bool {
+        line.cancels != self.cancels
+    }
+
     /// Runs `work` while the prompt is held, failing as soon as a cancel
     /// covers it.
     async fn unless_dropped<T>(&self, work: impl Future<Output = T>) -> Result<T, AcpError> {
         let mut line = self.live.held.0.subscribe();
         let session_cancelled = async {
-            let _ = line.wait_for(|line| line.cancels != self.cancels).await;
+            let _ = line.wait_for(|line| self.dropped(line)).await;
         };
         tokio::select! {
             biased;
-            () = session_cancelled => Err(cancelled_by_session_cancel()),
+            () = session_cancelled => Err(cancelled()),
             () = self.cancellation.cancelled() => Err(AcpError::request_cancelled()),
             value = work => Ok(value),
         }
@@ -143,6 +158,6 @@ impl Drop for Place {
     }
 }
 
-fn cancelled_by_session_cancel() -> AcpError {
-    AcpError::request_cancelled().data("session/cancel arrived before the prompt was inserted")
+fn cancelled() -> AcpError {
+    AcpError::request_cancelled().data("the session was cancelled before the prompt was inserted")
 }

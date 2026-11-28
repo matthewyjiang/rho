@@ -266,17 +266,26 @@ fn v2_holds_a_prompt_behind_another_clients_turn() {
     );
     barrier(&mut second, &mut log);
     std::fs::write(&release, "").unwrap();
-    let mut idles = 0;
+    let mut answered = false;
     read_until(&second, &mut log, |message| {
-        idles += usize::from(idle(message));
-        idles == 2
+        answered |= message["id"] == "p2";
+        answered && idle(message)
     });
 
     let m2 = message_id(&log, "p2");
+    let mut lifecycle = lifecycle(&log);
+    // The other turn's end, which this host was told is running. A prompt
+    // that reached the daemon just as that turn ended, before the refusal
+    // the hold waits on, reports the session from then on instead.
+    if lifecycle
+        .first()
+        .is_some_and(|step| step == "idle end_turn")
+    {
+        lifecycle.remove(0);
+    }
     assert_eq!(
-        lifecycle(&log),
+        lifecycle,
         [
-            "idle end_turn".to_owned(),
             format!("user_message {m2}"),
             "running".into(),
             format!("reply p2 {m2}"),

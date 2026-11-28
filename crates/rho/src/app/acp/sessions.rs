@@ -35,7 +35,7 @@ use agent_client_protocol::{
         SessionId as AcpSessionId, SetSessionConfigOptionRequest, SetSessionConfigOptionResponse,
         SetSessionModeRequest, SetSessionModeResponse,
     },
-    Error as AcpError,
+    Error as AcpError, RequestCancellation,
 };
 use rho_protocol::{
     methods::{
@@ -222,8 +222,9 @@ pub(super) struct Live {
     shared: Arc<Shared>,
     /// Held while a prompt of this host's runs.
     pub(super) prompt: tokio::sync::Mutex<()>,
-    /// Set by `session/cancel` until the prompt ends, so a prompt sent
-    /// right after a cancel waits for the cancelled one.
+    /// Set by `session/cancel` until the prompt ends, so an ACP v1 prompt
+    /// sent right after a cancel waits for the cancelled one; ACP v2
+    /// prompts are held instead ([`Self::held`]).
     pub(super) cancelling: AtomicBool,
     /// ACP v2 prompts waiting for the session, and its cancels, which drop
     /// the prompts held when they arrive.
@@ -407,12 +408,16 @@ impl Adapter {
         Ok(())
     }
 
+    /// The open session `id`, attached or not.
+    fn open_live(&self, id: &AcpSessionId) -> Result<Arc<Live>, AcpError> {
+        self.sessions
+            .get(&id.0)
+            .ok_or_else(|| super::resource_not_found(Some(id.0.to_string())))
+    }
+
     /// The open session `id`, attached.
     pub(super) async fn live(&self, id: &AcpSessionId) -> Result<Arc<Live>, AcpError> {
-        let live = self
-            .sessions
-            .get(&id.0)
-            .ok_or_else(|| super::resource_not_found(Some(id.0.to_string())))?;
+        let live = self.open_live(id)?;
         {
             // Held across the reattach, so concurrent requests reattach once.
             let _attaching = live.attaching.lock().await;
@@ -736,13 +741,9 @@ impl Adapter {
     pub(super) fn hold(
         &self,
         id: &AcpSessionId,
-        cancellation: agent_client_protocol::RequestCancellation,
+        cancellation: RequestCancellation,
     ) -> Result<Place, AcpError> {
-        let live = self
-            .sessions
-            .get(&id.0)
-            .ok_or_else(|| super::resource_not_found(Some(id.0.to_string())))?;
-        Ok(Place::new(live, cancellation))
+        Ok(Place::new(self.open_live(id)?, cancellation))
     }
 
     /// `session/cancel`: drops the session's held prompts and asks the
@@ -757,6 +758,11 @@ impl Adapter {
     async fn cancel_live(&self, live: &Live) {
         live.held.cancel();
         live.cancelling.store(true, Ordering::Release);
+        self.stop_turn(live).await;
+    }
+
+    /// Asks the daemon to stop `live`'s turn under way.
+    pub(super) async fn stop_turn(&self, live: &Live) {
         // A closed connection already failed the prompt; the turn runs on in
         // the daemon, as when this process is killed.
         let Some(link) = self.daemon.current().await else {
