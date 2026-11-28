@@ -25,7 +25,6 @@ mod tables;
 mod writer_run;
 
 use std::{
-    collections::BTreeMap,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, MutexGuard, PoisonError},
 };
@@ -33,7 +32,7 @@ use std::{
 use rho_protocol::{
     ConfigError as WireError, ConfigGetParams, ConfigGetResponse, ConfigLayer, ConfigNamespace,
     ConfigRegisterParams, ConfigRegisterResponse, ConfigRevision, ConfigSchema, ConfigSetParams,
-    ConfigSetResponse, ConfigWatch, ErrorCode, RpcError, SettingEntry, SettingKey,
+    ConfigSetResponse, ConfigWatch, ErrorCode, RpcError, SettingKey,
 };
 use tokio::sync::watch;
 
@@ -45,8 +44,8 @@ use self::{
 use crate::{
     app::agent_concurrency::AgentConcurrency,
     config::{
-        agent_schema, agent_values, apply_agent_changes, resolve_document, ChangeError, Config,
-        ConfigDocument, ConfigError, ConfigWarning,
+        agent_revision, agent_schema, agent_values, apply_agent_changes, resolve_document,
+        ChangeError, Config, ConfigDocument, ConfigError, ConfigWarning,
     },
 };
 
@@ -90,9 +89,10 @@ impl ConfigStore {
             agent_path: rho_home.join("config.toml"),
             schema: agent_schema(),
             agent: tokio::sync::Mutex::default(),
+            // The defaults, which a file broken from the start keeps.
             agent_state: watch::Sender::new(Arc::new(ConfigGetResponse {
-                revision: ConfigRevision::new(""),
-                values: Default::default(),
+                revision: agent_revision(&ConfigDocument::default()),
+                values: agent_values(&ConfigDocument::default(), &Config::default()),
                 errors: Vec::new(),
             })),
             agent_config: Mutex::new(None),
@@ -100,7 +100,7 @@ impl ConfigStore {
             clients: Clients::new(rho_home.join("clients")),
         };
         let stat = Stat::of(&store.agent_path);
-        store.publish_agent(read_agent(&store.agent_path));
+        store.publish_file();
         store
             .agent
             .try_lock()
@@ -227,8 +227,8 @@ impl ConfigStore {
         let (stat, doc) = edit.save()?;
         file.seen = Some(stat);
         log_warnings(&self.agent_path, &warnings);
-        let values = agent_values(&doc, &config);
-        Ok((doc, self.publish_agent(Ok((config, values)))))
+        let revision = self.publish_loaded(&doc, config);
+        Ok((doc, revision))
     }
 
     /// Reads `config.toml` again if it changed since `seen`, the agent
@@ -239,40 +239,51 @@ impl ConfigStore {
             return;
         }
         *seen = Some(stat);
-        self.publish_agent(read_agent(&self.agent_path));
+        self.publish_file();
     }
 
-    /// Publishes a read of `config.toml`: a config that loaded with its
-    /// values, or the errors that kept it from loading, which keep the last
-    /// good values. Returns the revision now in force.
-    fn publish_agent(&self, read: AgentRead) -> ConfigRevision {
-        let (values, errors) = match read {
-            Ok((config, values)) => {
-                self.concurrency.set_total(config.agent_concurrency);
-                *self.config() = Some(Arc::new(config));
-                (values, Vec::new())
+    /// Reads `config.toml` and publishes what it holds.
+    fn publish_file(&self) {
+        match read_agent(&self.agent_path) {
+            Ok((doc, config)) => {
+                self.publish_loaded(&doc, config);
             }
-            Err(errors) => {
-                // Logged once per broken edit: only a changed file is read
-                // again.
-                tracing::warn!(
-                    path = %self.shown_path(),
-                    errors = %listed(&errors),
-                    "config does not load; new sessions fail to open until it is fixed"
-                );
-                let values = match &*self.config() {
-                    Some(_) => self.agent_state.borrow().values.clone(),
-                    None => agent_values(&ConfigDocument::default(), &Config::default()),
-                };
-                (values, errors)
-            }
-        };
+            Err(errors) => self.publish_broken(errors),
+        }
+    }
+
+    /// Publishes `config`, which `doc` loads as, with the settings it holds.
+    /// Returns the revision now in force.
+    fn publish_loaded(&self, doc: &ConfigDocument, config: Config) -> ConfigRevision {
         let state = ConfigGetResponse {
-            revision: file::revision(&values),
-            values,
-            errors,
+            revision: agent_revision(doc),
+            values: agent_values(doc, &config),
+            errors: Vec::new(),
         };
+        self.concurrency.set_total(config.agent_concurrency);
+        *self.config() = Some(Arc::new(config));
         let revision = state.revision.clone();
+        self.publish(state);
+        revision
+    }
+
+    /// Publishes the errors that keep `config.toml` from loading, keeping
+    /// the last good values and revision.
+    fn publish_broken(&self, errors: Vec<WireError>) {
+        // Logged once per broken edit: only a changed file is read again.
+        tracing::warn!(
+            path = %self.shown_path(),
+            errors = %listed(&errors),
+            "config does not load; new sessions fail to open until it is fixed"
+        );
+        let state = ConfigGetResponse {
+            errors,
+            ..(**self.agent_state.borrow()).clone()
+        };
+        self.publish(state);
+    }
+
+    fn publish(&self, state: ConfigGetResponse) {
         self.agent_state.send_if_modified(|current| {
             let changed = **current != state;
             if changed {
@@ -280,7 +291,6 @@ impl ConfigStore {
             }
             changed
         });
-        revision
     }
 
     /// Nothing panics while holding the lock, so a poisoned one is still
@@ -292,13 +302,9 @@ impl ConfigStore {
     }
 }
 
-/// A loaded config with its values, or every error that kept it from
-/// loading.
-type AgentRead = Result<(Config, BTreeMap<SettingKey, SettingEntry>), Vec<WireError>>;
-
-/// The config `path` holds with its values, or every error that keeps it
-/// from loading.
-fn read_agent(path: &Path) -> AgentRead {
+/// The file at `path` and the config it loads as, or every error that keeps
+/// it from loading.
+fn read_agent(path: &Path) -> Result<(ConfigDocument, Config), Vec<WireError>> {
     let doc = file::read(path).map_err(|error| {
         vec![WireError {
             key: None,
@@ -307,8 +313,7 @@ fn read_agent(path: &Path) -> AgentRead {
     })?;
     let (config, warnings) = resolve_document(&doc).map_err(|errors| wire_errors(&errors))?;
     log_warnings(path, &warnings);
-    let values = agent_values(&doc, &config);
-    Ok((config, values))
+    Ok((doc, config))
 }
 
 /// Every error of a read, one per line, by setting when it has one.

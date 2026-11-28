@@ -2,11 +2,13 @@
 //! copies between daemons row by row, such as provider profiles, read and
 //! written entry by entry (`crate::config::read_table`).
 //!
-//! A table's revision is its own, so a table write never makes a pending
-//! `rho/config/set` stale. A write that moves a setting's value, such as an
-//! alias an `@alias` model names, publishes the agent namespace's new state
-//! as `rho/config/set` does, and the config reaches turns and sessions the
-//! same way.
+//! A table write never moves the agent namespace's revision, which hashes
+//! only the keys settings read as the file holds them
+//! (`crate::config::agent_revision`), so it never makes a pending
+//! `rho/config/set` stale. A write that moves a setting's resolved value,
+//! such as the alias an `@alias` model names, still publishes the agent
+//! namespace's new values, under the same revision, and the config reaches
+//! turns and sessions as a `rho/config/set` does.
 
 use rho_protocol::{
     ConfigTable, ConfigTableGetParams, ConfigTableGetResponse, ConfigTableSetParams,

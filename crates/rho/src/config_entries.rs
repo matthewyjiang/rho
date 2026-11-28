@@ -2,7 +2,8 @@
 //! methods that read and write a table entry by entry, such as
 //! `rho/config/table/*`. The feature that owns a table says where its
 //! entries sit and how a put is checked. This module holds the parts every
-//! such table shares:
+//! such table shares, which the agent settings' revision
+//! (`super::agent_revision`) also hashes its leaves with:
 //!
 //! - an entry's TOML as JSON, and back;
 //! - the entries of a table keyed by name, at a key path whose segments may
@@ -189,7 +190,8 @@ fn sorted(value: Json) -> Json {
     }
 }
 
-/// The revision of what a read returned: the SHA-256 of its
+/// The revision of what a read returned, or of the leaves a file holds:
+/// the SHA-256 of its
 /// [`canonical_json`], so it survives a daemon restart and a hand edit that
 /// changes only comments or formatting. Not for values a client must not
 /// learn by guessing, such as secrets, which need a keyed digest over

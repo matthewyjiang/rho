@@ -4,11 +4,11 @@
 
 use pretty_assertions::assert_eq;
 use rho_protocol::{
-    methods::{ConfigGet, ConfigTableGet, ConfigTableSet},
-    Client, ClientError, ConfigChangedParams, ConfigGetParams, ConfigNamespace, ConfigRevision,
-    ConfigTable, ConfigTableGetParams, ConfigTableGetResponse, ConfigTableSetParams,
-    DaemonNotification, ErrorCode, ModelSelection, SettingEntry, SettingKey, SettingValue,
-    TableChange, TableEntry, ValueSource,
+    methods::{ConfigGet, ConfigSet, ConfigTableGet, ConfigTableSet},
+    Client, ClientError, ConfigChangedParams, ConfigGetParams, ConfigLayer, ConfigNamespace,
+    ConfigRevision, ConfigSetParams, ConfigTable, ConfigTableGetParams, ConfigTableGetResponse,
+    ConfigTableSetParams, DaemonNotification, ErrorCode, ModelSelection, SettingChange,
+    SettingEntry, SettingKey, SettingValue, TableChange, TableEntry, ValueSource,
 };
 use serde_json::json;
 
@@ -62,15 +62,17 @@ fn put(key: &str, value: serde_json::Value) -> TableChange {
 // Covers: a client puts table entries only at the table's revision and only
 // as the loader takes them, keeping the file's comments; reading the table
 // back gives what it wrote, and a write that moves a setting (the alias the
-// conversation model names) tells every client reading the settings.
+// conversation model names) tells every client reading the settings, under
+// the settings revision read before it, which a settings write may still
+// send, as a sync copying aliases and then settings does.
 // Owner: daemon settings store.
 #[tokio::test]
-async fn a_table_write_lands_at_its_revision_and_moves_the_settings_it_names() {
+async fn a_table_write_lands_at_its_revision_and_moves_the_settings_under_theirs() {
     let sandbox = Sandbox::new();
     std::fs::write(&sandbox.isolated.config_path, CONFIG).unwrap();
     let client = sandbox.start_daemon("fixed").await;
     let (reader, mut changes) = sandbox.connect_following().await;
-    reader
+    let settings = reader
         .request::<ConfigGet>(&ConfigGetParams {
             namespace: ConfigNamespace::Agent,
         })
@@ -108,18 +110,43 @@ async fn a_table_write_lands_at_its_revision_and_moves_the_settings_it_names() {
         .await
         .expect("the daemon notifies")
         .expect("the connection stays open");
-    let DaemonNotification::ConfigChanged(ConfigChangedParams { values, .. }) = notified else {
+    let DaemonNotification::ConfigChanged(ConfigChangedParams {
+        revision, values, ..
+    }) = notified
+    else {
         panic!("expected rho/config/changed, got {notified:?}");
     };
-    assert_eq!(
-        values.get(&SettingKey::new("model")),
-        Some(&SettingEntry {
-            value: Some(SettingValue::Model(ModelSelection::Rho {
-                provider: "openai".into(),
-                model: "@fast".into(),
-            })),
-            source: ValueSource::Global,
+    let settings_written = client
+        .request::<ConfigSet>(&ConfigSetParams {
+            namespace: ConfigNamespace::Agent,
+            layer: ConfigLayer::Global,
+            revision: settings.revision.clone(),
+            writer: None,
+            changes: vec![SettingChange::Set {
+                key: SettingKey::new("web_search.mode"),
+                value: SettingValue::Text("auto".into()),
+            }],
         })
+        .await
+        .map(drop)
+        .map_err(|error| error.to_string());
+    assert_eq!(
+        (
+            revision,
+            values.get(&SettingKey::new("model")),
+            settings_written
+        ),
+        (
+            settings.revision,
+            Some(&SettingEntry {
+                value: Some(SettingValue::Model(ModelSelection::Rho {
+                    provider: "openai".into(),
+                    model: "@fast".into(),
+                })),
+                source: ValueSource::Global,
+            }),
+            Ok(()),
+        )
     );
 
     let saved = std::fs::read_to_string(&sandbox.isolated.config_path).unwrap();

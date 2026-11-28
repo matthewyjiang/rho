@@ -59,8 +59,8 @@ mod wire;
 #[cfg(test)]
 pub(crate) use wire::default_fits_kind;
 pub(crate) use wire::{
-    agent_schema, agent_values, apply_agent_changes, client_specs_problem, spec_values,
-    write_changes,
+    agent_revision, agent_schema, agent_values, apply_agent_changes, client_specs_problem,
+    spec_values, write_changes,
 };
 
 #[path = "config_migrate_2x.rs"]

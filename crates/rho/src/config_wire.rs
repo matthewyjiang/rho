@@ -10,14 +10,14 @@
 use std::collections::BTreeMap;
 
 use rho_protocol::{
-    ConfigCategory, ConfigSchema, ModelRuntime, ModelSelection, SettingChange, SettingEntry,
-    SettingKey, SettingKind, SettingSpec, SettingValue, ValueSource,
+    ConfigCategory, ConfigRevision, ConfigSchema, ModelRuntime, ModelSelection, SettingChange,
+    SettingEntry, SettingKey, SettingKind, SettingSpec, SettingValue, ValueSource,
 };
 use toml_edit::Value;
 
 use super::{
     document::{shown, ConfigDocument},
-    load,
+    entries, load,
     registry::AGENT_SETTINGS,
     setting::{save_settings, AnySetting, ConfigError},
     ChangeError, Config, ConfigWarning,
@@ -74,6 +74,27 @@ pub(crate) fn agent_values(
             (key, entry)
         })
         .collect()
+}
+
+/// The revision of the agent settings `doc` itself holds: every leaf a
+/// setting owns, with the TOML value it holds, before the loader resolves
+/// aliases or providers. So it moves when a key a settings write could
+/// change does, `values` or not, such as a model's `auth`; never for the
+/// tables `rho/config/table/set` writes, not even an alias that moves what
+/// an `@alias` model resolves to, nor for comments, formatting or key
+/// order.
+pub(crate) fn agent_revision(doc: &ConfigDocument) -> ConfigRevision {
+    let keys: BTreeMap<String, serde_json::Value> = doc
+        .leaf_paths()
+        .into_iter()
+        .filter(|path| AGENT_SETTINGS.iter().any(|setting| setting.owns(path)))
+        .filter_map(|path| {
+            let path: Vec<&str> = path.iter().map(String::as_str).collect();
+            let item = doc.get_at(&path)?;
+            Some((entries::dotted_key(&path), entries::to_json(item)))
+        })
+        .collect();
+    entries::revision(&keys)
 }
 
 /// Applies protocol `changes`, in order, to the agent settings `doc`

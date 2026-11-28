@@ -1544,8 +1544,9 @@ fn config_get_line(id: i64) -> String {
 
 // Covers: `rho/config/get` answers, then sends `rho/config/changed` with
 // every entry that changed since the last notification, even when two
-// states were published before the forwarder ran; reading the namespace
-// again replaces the forwarder instead of adding a second one.
+// states were published before the forwarder ran, and with none when only
+// the revision moved; reading the namespace again replaces the forwarder
+// instead of adding a second one.
 // Owner: protocol server config forwarding.
 #[tokio::test]
 async fn config_get_answers_then_forwards_every_changed_entry() {
@@ -1587,6 +1588,10 @@ async fn config_get_answers_then_forwards_every_changed_entry() {
         .state
         .send_replace(config_state("r3", &[("a", false), ("b", true)]));
     assert_eq!(peer.take(1).await, [changed("r3", &[("a", false)])]);
+    service
+        .state
+        .send_replace(config_state("r4", &[("a", false), ("b", true)]));
+    assert_eq!(peer.take(1).await, [changed("r4", &[])]);
     peer.close_input().await;
     assert_eq!(peer.remaining().await, []);
 }

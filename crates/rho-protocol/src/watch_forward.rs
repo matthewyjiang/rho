@@ -221,9 +221,11 @@ async fn forward_watched<T>(
     forwarders.finish_watched(&slot);
 }
 
-/// `next` as a `rho/config/changed` for `namespace`: the entries `sent` did
-/// not have, or had otherwise, and the whole error list. `None` when
-/// neither changed.
+/// `next` as a `rho/config/changed` for `namespace`: its revision, the
+/// entries `sent` did not have, or had otherwise, and the whole error list.
+/// `None` when none of them changed. A revision can move with no value
+/// changing, such as an agent model's `auth`, which `values` do not carry,
+/// and a client must still hear it to write at it.
 fn config_changes(
     namespace: &ConfigNamespace,
     sent: &ConfigGetResponse,
@@ -235,7 +237,7 @@ fn config_changes(
         .filter(|(key, entry)| sent.values.get(*key) != Some(*entry))
         .map(|(key, entry)| (key.clone(), entry.clone()))
         .collect();
-    if values.is_empty() && next.errors == sent.errors {
+    if values.is_empty() && next.errors == sent.errors && next.revision == sent.revision {
         return None;
     }
     let params = ConfigChangedParams {
