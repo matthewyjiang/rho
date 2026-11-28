@@ -96,9 +96,10 @@ impl Sessions {
     }
 
     /// Starts a turn that delivers `session`'s waiting results, unless a
-    /// turn is under way, the session is leaving, or the daemon stops.
-    /// Returns the turn it started, if it started one.
-    fn deliver_idle_results(
+    /// turn is under way, the session is leaving, a client held its results
+    /// for its next turn, or the daemon stops. Returns the turn it started,
+    /// if it started one.
+    pub(super) fn deliver_idle_results(
         &self,
         session: &Arc<LoadedSession>,
         background: &AwaitedWork,
@@ -109,7 +110,8 @@ impl Sessions {
         let mut slot = session.enter()?;
         // Under the turn lock, which every turn starts under: only a turn
         // takes a result, so one that waits now is this turn's to deliver.
-        if !background.has_result() {
+        // A turn starting releases held results, so the hold is read here.
+        if session.wake_held() || !background.has_result() {
             return None;
         }
         let grant = self.jobs.grant_of(&session.job)?;

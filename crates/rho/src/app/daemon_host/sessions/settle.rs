@@ -44,11 +44,35 @@ impl LoadedSession {
         self.wake_gave_up.store(true, Ordering::Relaxed);
     }
 
+    /// A client asked that the session's results wait for its next turn
+    /// ([`rho_protocol::SESSION_BACKGROUND_HOLD`]): the daemon starts no
+    /// turn to deliver them meanwhile, and its background work, running or
+    /// ended, keeps it neither loaded nor an upgrade waiting (see `unload`)
+    /// nor from settling, which its clients hear at once.
+    pub(super) fn hold_wake(&self) {
+        // Under the turn lock, which a delivery turn reads the hold under
+        // and every turn clears it under as it starts: a delivery turn
+        // either never starts, or started already and leaves the hold set
+        // for its end, so cancelling it delivers nothing either.
+        let turn = self.turn();
+        self.wake_held.store(true, Ordering::Relaxed);
+        drop(turn);
+        self.give_up_waking();
+    }
+
+    /// Whether the session's results wait for its next turn (see
+    /// [`Self::hold_wake`]).
+    pub(super) fn wake_held(&self) -> bool {
+        self.wake_held.load(Ordering::Relaxed)
+    }
+
     /// A turn starts and takes the session's results, so whatever gave up
-    /// waking the session for them looks again once it ends. Call under the
-    /// turn lock as the turn starts, before its activity is reported.
+    /// waking the session for them, or held them, looks again once it ends.
+    /// Call under the turn lock as the turn starts, before its activity is
+    /// reported.
     pub(super) fn rearm_wake(&self) {
         self.wake_gave_up.store(false, Ordering::Relaxed);
+        self.wake_held.store(false, Ordering::Relaxed);
     }
 
     /// Whether the daemon or the session's host will start a turn for work

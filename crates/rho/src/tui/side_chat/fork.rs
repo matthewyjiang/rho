@@ -276,6 +276,7 @@ async fn delete(daemon: &Daemon, id: &SessionId) {
         .request::<SessionDelete>(&SessionDeleteParams {
             session: id.clone(),
             unless_attached: false,
+            background: rho_protocol::DeleteBackground::Refuse,
         })
         .await
     {

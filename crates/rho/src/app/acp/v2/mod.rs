@@ -7,7 +7,9 @@
 //! the prompt lifecycle, which v2 redesigned, wraps the v1 prompt
 //! ([`prompt`]). v1 clients keep the unchanged v1 builder. Every
 //! `state_update` lists the session's background work, which the host may
-//! cancel piece by piece ([`background`]).
+//! cancel piece by piece ([`background`]). Closing or deleting a session
+//! stops its work (`sessions::Close::Stop`); the connection's end leaves it
+//! running.
 
 mod background;
 mod errors;
@@ -26,7 +28,11 @@ use agent_client_protocol::{
 };
 use serde::{de::DeserializeOwned, Serialize};
 
-use super::{host_features::Turns, sessions::Started, Adapter, Foreground};
+use super::{
+    host_features::Turns,
+    sessions::{Close, Started},
+    Adapter, Foreground,
+};
 use port::V2Port;
 use requests::Reattach;
 
@@ -141,7 +147,9 @@ pub(super) fn agent(agent: Arc<Adapter>) -> impl ConnectTo<Client> {
                             cx: V2ConnectionTo<Client>| {
                     let agent = Arc::clone(&agent);
                     spawn_response(&cx, responder, async move {
-                        let response = agent.delete_session(&bridge(&request)?).await?;
+                        let response = agent
+                            .delete_session(&bridge(&request)?, Close::Stop)
+                            .await?;
                         bridge(&response)
                     })
                 }
@@ -175,7 +183,7 @@ pub(super) fn agent(agent: Arc<Adapter>) -> impl ConnectTo<Client> {
                             cx: V2ConnectionTo<Client>| {
                     let agent = Arc::clone(&agent);
                     spawn_response(&cx, responder, async move {
-                        let response = agent.close_session(&bridge(&request)?).await?;
+                        let response = agent.close_session(&bridge(&request)?, Close::Stop).await?;
                         bridge(&response)
                     })
                 }

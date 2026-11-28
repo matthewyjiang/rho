@@ -163,11 +163,11 @@ impl Sessions {
             let Some(session) = self.loaded().get(&fork).cloned() else {
                 continue;
             };
-            let held = self.hold_to_delete(fork, session, params.unless_attached);
+            let held = self.hold_to_delete(fork, session, &params);
             taken.push(held.await.map_err(|error| in_fork(error, &id))?);
         }
         if let Some(session) = &loaded {
-            let held = self.hold_to_delete(id.clone(), Arc::clone(session), params.unless_attached);
+            let held = self.hold_to_delete(id.clone(), Arc::clone(session), &params);
             taken.push(held.await?);
         }
         // The store's refusals, checked while the sessions are still loaded,
@@ -222,16 +222,16 @@ impl Sessions {
     }
 
     /// Holds `session`, loaded as `id`, for its delete and takes its
-    /// runtime, unless a settings change is queued or applying, its turn or
-    /// background work is under way, or `unless_attached` and a client
-    /// follows it. Held from prompts and settings changes until the
-    /// returned hold is dropped, which puts the runtime back unless the
-    /// delete unloaded the session.
+    /// runtime, unless a settings change is queued or applying, its turn is
+    /// under way, it has background work and `params` refuses that, or
+    /// `params.unless_attached` and a client follows it. Held from prompts
+    /// and settings changes until the returned hold is dropped, which puts
+    /// the runtime back unless the delete unloaded the session.
     async fn hold_to_delete(
         &self,
         id: SessionId,
         session: Arc<LoadedSession>,
-        unless_attached: bool,
+        params: &SessionDeleteParams,
     ) -> Result<HeldToDelete, RpcError> {
         let held = {
             // Under the turn lock a prompt starts its turn under, so this
@@ -245,7 +245,7 @@ impl Sessions {
                 Some(Hold::Deleting) => return Err(being_deleted()),
                 None => {}
             }
-            if unless_attached && session.feed.followed() {
+            if params.unless_attached && session.feed.followed() {
                 return Err(open_in_a_client(&id));
             }
             match self.jobs.session_job(&id) {
@@ -261,7 +261,13 @@ impl Sessions {
         let Some(runtime) = slot.take() else {
             return Err(stopping());
         };
-        if runtime.has_background_work() {
+        // Unloading tears the runtime down, which ends its work and drops
+        // its results with it.
+        let refused = match params.background {
+            wire::DeleteBackground::Refuse => runtime.has_background_work(),
+            wire::DeleteBackground::Stop => false,
+        };
+        if refused {
             *slot = Some(runtime);
             return Err(busy(BACKGROUND_WORK));
         }

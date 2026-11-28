@@ -433,3 +433,54 @@ async fn a_watched_pull_requests_news_starts_a_delivery_turn_on_the_idle_session
     );
     fixture.shutdown().await;
 }
+
+// Covers: a client that holds the session's results during a turn, as an
+// ACP v2 close does before it cancels that turn
+// (`rho/session/background/hold`), has the cancelled turn's end start no
+// delivery turn for the result it left, and the session settle; the next
+// turn releases the hold, so a result that turn leaves wakes the session
+// again. A miss runs a model turn after the host closed the session, which
+// it never sees. Owner: daemon idle wake.
+#[tokio::test]
+async fn a_held_result_starts_no_delivery_turn_until_the_next_turn() {
+    use wire::SessionActivity::{Active, Settled};
+    let fixture = Fixture::new(BackgroundWait::HostTurns).await;
+    fixture.finish_subagent();
+    fixture.session.report_activity();
+    let waiting = activity(&fixture.session);
+    let work = fixture.session.background.awaited().unwrap();
+
+    let turn = fixture.start_turn();
+    fixture.session.hold_wake();
+    fixture.end_turn(turn, TurnEnd::Cancelled);
+    let held = fixture
+        .sessions
+        .deliver_idle_results(&fixture.session, &work);
+    let settled = activity(&fixture.session);
+    // Cancelled, so it leaves the subagent's result.
+    let turn = fixture.start_turn();
+    fixture.end_turn(turn, TurnEnd::Cancelled);
+    let rearmed = activity(&fixture.session);
+    // Held here, so the delivery turn ends cancelled before it begins.
+    let runtime = fixture.session.runtime.lock().await;
+    let released = fixture
+        .sessions
+        .deliver_idle_results(&fixture.session, &work)
+        .is_some();
+    fixture.session.cancel_turn();
+    drop(runtime);
+    let ended = || {
+        seen(&fixture.session)
+            .iter()
+            .filter(|seen| **seen == Seen::TurnEnded)
+            .count()
+            == 3
+    };
+    until(ended, "the released delivery turn ends").await;
+
+    assert_eq!(
+        (waiting, held, settled, rearmed, released),
+        (Some(Active), None, Some(Settled), Some(Active), true)
+    );
+    fixture.shutdown().await;
+}

@@ -382,6 +382,33 @@ pub struct SessionDeleteParams {
     /// tell which of them another client has open.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub unless_attached: bool,
+    /// What the delete does with the session's background work. Omitted is
+    /// [`DeleteBackground::Refuse`]; a daemon from before this field ignores
+    /// it and refuses.
+    #[serde(default, skip_serializing_if = "refuses")]
+    pub background: DeleteBackground,
+}
+
+/// What [`SESSION_DELETE`] does with a session's background work: the
+/// processes, workflow runs and subagents its turns started, and the results
+/// of finished work no turn took yet. The daemon reads it, so it has no
+/// `Unknown`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DeleteBackground {
+    /// Refuse the delete as [`crate::ErrorCode::SessionBusy`] while there is
+    /// any.
+    #[default]
+    Refuse,
+    /// Stop the work and drop the results with the session, as an ACP v2
+    /// host's `session/delete` requires.
+    Stop,
+}
+
+/// Whether the delete refuses a session with background work, the default
+/// the wire leaves out.
+fn refuses(background: &DeleteBackground) -> bool {
+    *background == DeleteBackground::Refuse
 }
 
 /// Result of [`SESSION_DELETE`]: the session's files are gone, with those
@@ -394,7 +421,8 @@ pub struct SessionDeleteParams {
 ///
 /// A session whose turn is under way, a settings change waiting or
 /// applying, background work running, such as a subagent, or a run it started not yet
-/// finished is refused as [`crate::ErrorCode::SessionBusy`]; one another
+/// finished is refused as [`crate::ErrorCode::SessionBusy`], background work
+/// and its results only under [`DeleteBackground::Refuse`]; one another
 /// process has open, or one a session it started is open in, as
 /// [`crate::ErrorCode::SessionInUse`]. Either refusal leaves a loaded
 /// session loaded. A session the daemon loaded but that has saved nothing

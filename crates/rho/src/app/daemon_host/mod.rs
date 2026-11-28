@@ -504,6 +504,13 @@ impl Service for DaemonHost {
         self.sessions.background_stop(params).await
     }
 
+    async fn session_background_hold(
+        &self,
+        params: rho_protocol::SessionBackgroundHoldParams,
+    ) -> Result<rho_protocol::SessionBackgroundHoldResponse, RpcError> {
+        self.sessions.background_hold(params).await
+    }
+
     async fn list_session_pull_requests(
         &self,
         params: rho_protocol::SessionPullRequestListParams,

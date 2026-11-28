@@ -257,6 +257,12 @@ struct LoadedSession {
     /// session settles; cleared as a turn starts. Only [`settle`]'s methods
     /// (`give_up_waking`, `mark_wake_given_up`, `rearm_wake`) touch it.
     wake_gave_up: AtomicBool,
+    /// Set once a client asked that the session's results wait for its next
+    /// turn ([`rho_protocol::SESSION_BACKGROUND_HOLD`]): the daemon starts
+    /// no turn to deliver them (see [`idle_wake`]), and its background work
+    /// keeps it loaded no longer (see [`unload`]); cleared as a turn starts.
+    /// Only [`settle`]'s methods touch it.
+    wake_held: AtomicBool,
     /// The session's side of the watcher that takes its subagents'
     /// questions, when a person can be asked (see [`child_questions`]).
     child_questions: Option<ChildQuestions>,
@@ -417,6 +423,7 @@ impl LoadedSession {
             wake: T3Wake::of(&runtime, wakes).map(tokio::sync::Mutex::new),
             idle_wake: IdleWatch::of(&runtime),
             wake_gave_up: AtomicBool::new(false),
+            wake_held: AtomicBool::new(false),
             cache_warm: KeepWarm::of(&runtime),
             held_context: Mutex::new(held_context),
             peer_wake: peer_wake::PeerWake::of(&runtime),

@@ -74,6 +74,9 @@ mod update_metadata;
 #[path = "support/acp_usage_cost_tests.rs"]
 mod usage_cost;
 
+#[path = "support/acp_v2_close_tests.rs"]
+mod v2_close;
+
 #[path = "support/acp_v2_errors_tests.rs"]
 mod v2_errors;
 

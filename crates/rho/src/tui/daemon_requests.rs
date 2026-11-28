@@ -393,6 +393,7 @@ impl DaemonRequests {
                             let params = SessionDeleteParams {
                                 session: SessionId::new(session),
                                 unless_attached: true,
+                                background: rho_protocol::DeleteBackground::Refuse,
                             };
                             let answer = on_connection(&mut control_target, &daemon, |link| {
                                 let params = params.clone();
