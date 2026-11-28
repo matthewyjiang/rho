@@ -8,7 +8,7 @@ What `rho acp` sends and accepts over ACP, for people building or debugging a ho
 
 ## Initialize
 
-Rho speaks ACP protocol versions 1 and 2 (draft) and answers each connection with the highest version at or below the one the host asked for; a request for version 0 gets `1`. The same negotiation applies to `rho acp --t3code`; use an up-to-date T3 Code build as described in [T3 Code](/integrations/acp/t3-code). The rest of this page describes v1. See [Protocol v2](#protocol-v2) for what changes on a v2 connection. The response carries `agentInfo` (v2: `info`) with `name: "rho"`, `title: "Rho"`, and `version` set to what `rho --version` prints.
+Rho speaks ACP protocol versions 1 and 2 (draft) and answers each connection with the highest version at or below the one the host asked for; a request for version 0 fails with `-32022` (see [Protocol v2](#protocol-v2), Errors and validation). The same negotiation applies to `rho acp --t3code`; use an up-to-date T3 Code build as described in [T3 Code](/integrations/acp/t3-code). The rest of this page describes v1. See [Protocol v2](#protocol-v2) for what changes on a v2 connection. The response carries `agentInfo` (v2: `info`) with `name: "rho"`, `title: "Rho"`, and `version` set to what `rho --version` prints.
 
 Every connection must start with `initialize`; Rho picks the protocol version from it and closes a connection that sends anything else first.
 
@@ -51,6 +51,19 @@ A host that sends `"protocolVersion": 2` gets the [ACP v2 draft](https://agentcl
 - **Diffs.** Each file change is a `changes` entry (`add`, `delete`, or `modify`; a move is a `delete` and an `add`) with a `git_patch` using absolute paths. A path Git would quote gets no patch.
 - **Permissions.** The approval's question is the request `title`, or `Allow this tool call?` when the policy asks without a reason, as `supervised` mode does; the tool call goes in `subject`.
 - **Authentication.** `authenticate` and `logout` are `auth/login` and `auth/logout`.
+- **Errors and validation.** A request naming a session that doesn't exist or isn't open on the connection (`session/prompt`, `session/resume`, `session/set_config_option`, `tool_call/cancel`, `terminal/cancel`) fails with `-32002` and `data.sessionId` set to the requested ID. `-32602` (invalid params) refuses each of these, and none of them creates a session or inserts a prompt:
+  - a prompt with no content blocks, or with a block type Rho doesn't advertise, such as `audio`;
+  - a `systemPrompt` on `session/new` or `session/resume`, because Rho doesn't advertise `session.systemPrompt`;
+  - two MCP servers with the same `name`;
+  - a stdio MCP server whose `command` isn't an absolute path.
+
+  Two version rules apply on every connection, v1 ones included:
+  - `protocolVersion: 0` fails with `-32022` and `data` `{"requested": 0, "supported": [1, 2]}`; it no longer falls back to v1.
+  - A missing or malformed `protocolVersion` fails with `-32602` and leaves the connection uninitialized, so the host can send a corrected `initialize`.
+
+  On v2, a host may repeat `initialize` before its first other request, and the latest one that succeeded decides what Rho uses. A v1 connection keeps its first `initialize`.
+
+  When the host closes the connection without reading the last reply, `rho acp` exits with status 0.
 
 ### Background work on v2
 

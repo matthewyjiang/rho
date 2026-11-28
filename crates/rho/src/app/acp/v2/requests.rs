@@ -129,11 +129,29 @@ struct Environment {
     mcp_servers: Vec<v1::McpServer>,
 }
 
+/// Refuses what v2 forbids before the session exists: a `systemPrompt`,
+/// which Rho doesn't advertise (`session.systemPrompt`), and MCP servers
+/// that share a `name`.
 fn environment(
     cwd: &v2::AbsolutePath,
     additional_directories: &[v2::AbsolutePath],
     mcp_servers: &[v2::McpServer],
+    system_prompt: Option<&v2::SystemPrompt>,
 ) -> Result<Environment, AcpError> {
+    if system_prompt.is_some() {
+        return Err(AcpError::invalid_params().data(
+            "Rho does not support systemPrompt; it does not advertise session.systemPrompt",
+        ));
+    }
+    let mut names = std::collections::HashSet::new();
+    if let Some(name) = mcp_servers
+        .iter()
+        .filter_map(mcp_server_name)
+        .find(|name| !names.insert(*name))
+    {
+        return Err(AcpError::invalid_params()
+            .data(format!("more than one MCP server is named \"{name}\"")));
+    }
     Ok(Environment {
         cwd: cwd.0.clone(),
         additional_directories: additional_directories
@@ -147,9 +165,25 @@ fn environment(
     })
 }
 
-/// v2 tags stdio servers `type: "stdio"`, which v1 leaves untagged.
+fn mcp_server_name(server: &v2::McpServer) -> Option<&str> {
+    match server {
+        v2::McpServer::Stdio(stdio) => Some(&stdio.name),
+        v2::McpServer::Http(http) => Some(&http.name),
+        // `mcp_server` refuses a transport this version doesn't know.
+        _ => None,
+    }
+}
+
+/// v2 tags stdio servers `type: "stdio"`, which v1 leaves untagged, and
+/// requires their `command` to be an absolute path.
 fn mcp_server(server: &v2::McpServer) -> Result<v1::McpServer, AcpError> {
     Ok(match server {
+        v2::McpServer::Stdio(stdio) if !stdio.command.0.is_absolute() => {
+            return Err(AcpError::invalid_params().data(format!(
+                "the command of MCP server \"{}\" must be an absolute path",
+                stdio.name
+            )));
+        }
         v2::McpServer::Stdio(stdio) => v1::McpServer::Stdio(
             v1::McpServerStdio::new(stdio.name.clone(), stdio.command.0.clone())
                 .args(stdio.args.clone())
@@ -175,6 +209,7 @@ pub(super) fn new_session_request(
         &request.cwd,
         &request.additional_directories,
         &request.mcp_servers,
+        request.system_prompt.as_ref(),
     )?;
     Ok(v1::NewSessionRequest::new(env.cwd)
         .additional_directories(env.additional_directories)
@@ -197,6 +232,7 @@ pub(super) fn resume_session_request(
         &request.cwd,
         &request.additional_directories,
         &request.mcp_servers,
+        request.system_prompt.as_ref(),
     )?;
     let session_id = bridge::<_, v1::SessionId>(&request.session_id)?;
     Ok(match &request.replay_from {
@@ -239,7 +275,22 @@ pub(super) fn setup(options: &SessionOptions, toggles: Toggles) -> Result<Setup,
     })
 }
 
+/// The v1 prompt, once the v2 one passes the checks v1 didn't make: at
+/// least one content block, each of a type Rho advertised.
 pub(super) fn prompt_request(request: &v2::PromptRequest) -> Result<v1::PromptRequest, AcpError> {
+    if request.prompt.is_empty() {
+        return Err(AcpError::invalid_params().data("a prompt needs at least one content block"));
+    }
+    let advertised = crate::app::acp::prompt_capabilities();
+    if let Some(kind) = request
+        .prompt
+        .iter()
+        .find_map(|block| unadvertised(block, &advertised))
+    {
+        return Err(AcpError::invalid_params().data(format!(
+            "Rho does not accept prompt content of type \"{kind}\"; see capabilities.session.prompt"
+        )));
+    }
     Ok(v1::PromptRequest::new(
         bridge::<_, v1::SessionId>(&request.session_id)?,
         bridge(&request.prompt).map_err(|_| {
@@ -247,6 +298,25 @@ pub(super) fn prompt_request(request: &v2::PromptRequest) -> Result<v1::PromptRe
         })?,
     )
     .meta(request.meta.clone()))
+}
+
+/// The type of `block` if `advertised` doesn't cover it. Text and resource
+/// links are the baseline every agent accepts.
+fn unadvertised(
+    block: &v2::ContentBlock,
+    advertised: &v1::PromptCapabilities,
+) -> Option<&'static str> {
+    let (kind, accepted) = match block {
+        v2::ContentBlock::Text(_) => ("text", true),
+        v2::ContentBlock::ResourceLink(_) => ("resource_link", true),
+        v2::ContentBlock::Image(_) => ("image", advertised.image),
+        v2::ContentBlock::Audio(_) => ("audio", advertised.audio),
+        v2::ContentBlock::Resource(_) => ("resource", advertised.embedded_context),
+        // A type this version doesn't know, or an unstable one such as
+        // `skill`, which Rho doesn't advertise.
+        _ => ("unknown", false),
+    };
+    (!accepted).then_some(kind)
 }
 
 pub(super) fn set_config_option_request(

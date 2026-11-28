@@ -14,7 +14,7 @@
 //! and sign-in runs in a terminal. Rho asks no host for `fs/*` or `terminal/*`: the daemon runs
 //! the session's tools on its own disk and processes.
 
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, PoisonError, RwLock};
 
 use agent_client_protocol::v1::schema::InitializeRequest;
 
@@ -118,10 +118,12 @@ impl HostFeatures {
 /// every session. Every connection begins with `initialize`: the
 /// protocol router that picks the version rejects anything else first.
 #[derive(Default)]
-pub(super) struct NegotiatedFeatures(OnceLock<(HostFeatures, Arc<dyn AcpClientPort>)>);
+pub(super) struct NegotiatedFeatures(RwLock<Option<Negotiated>>);
+
+type Negotiated = (HostFeatures, Arc<dyn AcpClientPort>);
 
 impl NegotiatedFeatures {
-    /// Keeps the first `initialize`; ACP negotiates capabilities once per
+    /// Keeps the first `initialize`: ACP v1 negotiates capabilities once per
     /// connection.
     pub(super) fn record(
         &self,
@@ -129,19 +131,37 @@ impl NegotiatedFeatures {
         client: Arc<dyn AcpClientPort>,
         turns: Turns,
     ) {
-        let _ = self
-            .0
-            .set((HostFeatures::from_initialize(request, turns), client));
+        self.0
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get_or_insert_with(|| (HostFeatures::from_initialize(request, turns), client));
+    }
+
+    /// Replaces what an earlier `initialize` recorded. ACP v2 lets the host
+    /// repeat `initialize` before its first other request, and the latest
+    /// one that succeeded is authoritative, so call this only once one has.
+    pub(super) fn replace(
+        &self,
+        request: &InitializeRequest,
+        client: Arc<dyn AcpClientPort>,
+        turns: Turns,
+    ) {
+        *self.0.write().unwrap_or_else(PoisonError::into_inner) =
+            Some((HostFeatures::from_initialize(request, turns), client));
     }
 
     pub(super) fn get(&self) -> HostFeatures {
-        self.0
-            .get()
+        self.read()
+            .as_ref()
             .map(|(features, _)| *features)
             .unwrap_or_default()
     }
 
     pub(super) fn client(&self) -> Option<Arc<dyn AcpClientPort>> {
-        self.0.get().map(|(_, client)| Arc::clone(client))
+        self.read().as_ref().map(|(_, client)| Arc::clone(client))
+    }
+
+    fn read(&self) -> std::sync::RwLockReadGuard<'_, Option<Negotiated>> {
+        self.0.read().unwrap_or_else(PoisonError::into_inner)
     }
 }

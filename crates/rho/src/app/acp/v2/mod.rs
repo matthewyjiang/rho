@@ -10,6 +10,7 @@
 //! cancel piece by piece ([`background`]).
 
 mod background;
+mod errors;
 mod git_patch;
 mod port;
 mod prompt;
@@ -44,10 +45,15 @@ pub(super) fn agent(agent: Arc<Adapter>) -> impl ConnectTo<Client> {
                         Ok(request) => request,
                         Err(error) => return responder.respond_with_error(error),
                     };
-                    agent.record_client(&request, Arc::new(V2Port::new(cx.clone())), Turns::Any);
+                    let port = Arc::new(V2Port::new(cx.clone()));
                     let agent = Arc::clone(&agent);
                     spawn_response(&cx, responder, async move {
-                        requests::initialize_response(agent.initialize(&request).await)
+                        let response =
+                            requests::initialize_response(agent.initialize(&request).await)?;
+                        // The host may repeat `initialize` before its first
+                        // other request; the latest that succeeded counts.
+                        agent.negotiated.replace(&request, port, Turns::Any);
+                        Ok(response)
                     })
                 }
             },
@@ -94,6 +100,7 @@ pub(super) fn agent(agent: Arc<Adapter>) -> impl ConnectTo<Client> {
                     let agent = Arc::clone(&agent);
                     let port = Arc::new(V2Port::replaying(cx.clone()));
                     let live = V2Port::new(cx.clone());
+                    let responder = errors::session_scoped(responder, &request.session_id);
                     cx.spawn(async move { resume(&agent, request, responder, port, &live).await })
                 }
             },
@@ -105,6 +112,7 @@ pub(super) fn agent(agent: Arc<Adapter>) -> impl ConnectTo<Client> {
                 async move |request: v2::PromptRequest,
                             responder: Responder<v2::PromptResponse>,
                             cx: V2ConnectionTo<Client>| {
+                    let responder = errors::session_scoped(responder, &request.session_id);
                     prompt::spawn(Arc::clone(&agent), request, responder, cx)
                 }
             },
@@ -147,6 +155,7 @@ pub(super) fn agent(agent: Arc<Adapter>) -> impl ConnectTo<Client> {
                             responder: Responder<v2::SetSessionConfigOptionResponse>,
                             cx: V2ConnectionTo<Client>| {
                     let agent = Arc::clone(&agent);
+                    let responder = errors::session_scoped(responder, &request.session_id);
                     spawn_response(&cx, responder, async move {
                         let request = requests::set_config_option_request(&request)?;
                         let response = agent.set_config_option(&request).await?;
@@ -219,6 +228,7 @@ pub(super) fn agent(agent: Arc<Adapter>) -> impl ConnectTo<Client> {
                             responder: Responder<v2::CancelTerminalResponse>,
                             cx: V2ConnectionTo<Client>| {
                     let agent = Arc::clone(&agent);
+                    let responder = errors::session_scoped(responder, &request.session_id);
                     spawn_response(&cx, responder, async move {
                         let session_id = bridge::<_, v1::SessionId>(&request.session_id)?;
                         let terminal = request.terminal_id.0.to_string();
@@ -240,6 +250,7 @@ pub(super) fn agent(agent: Arc<Adapter>) -> impl ConnectTo<Client> {
                             responder: Responder<v2::CancelToolCallResponse>,
                             cx: V2ConnectionTo<Client>| {
                     let agent = Arc::clone(&agent);
+                    let responder = errors::session_scoped(responder, &request.session_id);
                     spawn_response(&cx, responder, async move {
                         let session_id = bridge::<_, v1::SessionId>(&request.session_id)?;
                         let tool_call = request.tool_call_id.0.to_string();

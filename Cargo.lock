@@ -5089,6 +5089,7 @@ dependencies = [
  "arboard",
  "async-trait",
  "base64 0.23.1",
+ "blocking",
  "bytes",
  "chrono",
  "clap",
