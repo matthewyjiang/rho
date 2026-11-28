@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.7.0](https://github.com/matthewyjiang/rho/compare/rho-protocol-v1.6.0...rho-protocol-v1.7.0) (2026-11-28)
+
+
+### Features
+
+* **config:** mark settings that belong to one machine or that only another method changes ([#2061](https://github.com/matthewyjiang/rho/issues/2061)) ([5f68b84](https://github.com/matthewyjiang/rho/commit/5f68b8486c40f6ba1f1569a84cab8bf2f0b5a57f))
+* **protocol:** copy MCP servers between daemons with sealed secrets ([#2067](https://github.com/matthewyjiang/rho/issues/2067)) ([9650b2a](https://github.com/matthewyjiang/rho/commit/9650b2aec4d2491c0540754692be26f499a10add))
+* **protocol:** import sealed API keys and revert them ([#2065](https://github.com/matthewyjiang/rho/issues/2065)) ([19ce4a0](https://github.com/matthewyjiang/rho/commit/19ce4a0da45714a896c43c34d89aafc63654fbe3))
+* **protocol:** read and write provider profiles, model aliases and favorites ([#2064](https://github.com/matthewyjiang/rho/issues/2064)) ([b4ab852](https://github.com/matthewyjiang/rho/commit/b4ab85206cdedff4faeb6e31210262d93e289c59))
+* **protocol:** read and write the user's hooks file ([#2062](https://github.com/matthewyjiang/rho/issues/2062)) ([24c068c](https://github.com/matthewyjiang/rho/commit/24c068cdc8611fffe7927dee6c69da85168d7927))
+* **protocol:** seal saved API keys to another daemon ([#2063](https://github.com/matthewyjiang/rho/issues/2063)) ([44775ef](https://github.com/matthewyjiang/rho/commit/44775ef15cfd7175e0b98581327b642dc0296883))
+
 ## [1.6.0](https://github.com/matthewyjiang/rho/compare/rho-protocol-v1.5.0...rho-protocol-v1.6.0) (2026-11-27)
 
 
