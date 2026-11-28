@@ -201,9 +201,11 @@ fn v2_cancels_answer_held_prompts_cancelled_and_never_insert_them() {
     }));
     send_prompt(&mut server, "p4", &session_id, "after the cancel");
     let mut idles = 0;
+    let mut p2_answered = false;
     read_until(&server, &mut log, |message| {
         idles += usize::from(idle(message));
-        idles == 2
+        p2_answered |= message["id"] == "p2";
+        idles == 2 && p2_answered
     });
 
     let [m1, m4] = ["p1", "p4"].map(|id| message_id(&log, id));
