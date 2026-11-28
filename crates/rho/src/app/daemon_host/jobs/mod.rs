@@ -18,6 +18,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use super::sessions::KeyDigest;
 use crate::{caller_context::CallerContext, workflow::RunId};
 
 mod registry;
@@ -221,14 +222,19 @@ pub(super) enum Keeping {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct TurnRecord {
     pub(super) id: rho_protocol::TurnId,
-    /// The key the prompt that started the turn named, if it named one.
+    /// The digest of the key the prompt that started the turn named, if it
+    /// named one; never the key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(super) key: Option<rho_protocol::IdempotencyKey>,
+    pub(super) key_digest: Option<KeyDigest>,
     /// Whether the turn began, as its prompt's request was answered (see
     /// `sessions::turn::PromptStart`). A turn that did not begin ran
     /// nothing, so a prompt sent again with its key starts a turn.
     #[serde(default)]
     pub(super) began: bool,
+    /// The user message the turn inserted, as it began, if it inserted one
+    /// the daemon knew then, which a prompt sent again answers with.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) message: Option<rho_protocol::MessageId>,
     /// Whether a restart in place that interrupts the turn has the
     /// restarted daemon continue it (see `sessions/restart_resume.rs`):
     /// only a turn with no time limit, of a session whose client takes the
@@ -241,13 +247,14 @@ pub(super) struct TurnRecord {
 }
 
 impl TurnRecord {
-    /// A turn about to start, under a new id, for a prompt that named `key`,
-    /// which no restart continues.
-    pub(super) fn starting(key: Option<rho_protocol::IdempotencyKey>) -> Self {
+    /// A turn about to start, under a new id, for a prompt that named the
+    /// key `key_digest` is of, which no restart continues.
+    pub(super) fn starting(key_digest: Option<KeyDigest>) -> Self {
         Self {
             id: rho_protocol::TurnId::new(uuid::Uuid::new_v4().hyphenated().to_string()),
-            key,
+            key_digest,
             began: false,
+            message: None,
             continues_after_restart: false,
         }
     }

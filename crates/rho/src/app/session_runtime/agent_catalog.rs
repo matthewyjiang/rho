@@ -61,7 +61,12 @@ impl SessionRuntime {
         // User-role context stays at the tail; providers may hoist system
         // messages into the cached prefix.
         let context = format!("{CONTEXT_PREFIX}{}", serde_json::to_string(&changes)?);
-        self.append_context(context, Message::user_text(DISPLAY), [])?;
+        self.append_context(
+            context,
+            Message::user_text(DISPLAY),
+            /*display_key*/ None,
+            [],
+        )?;
         Ok(Some(DISPLAY))
     }
 }

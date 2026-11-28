@@ -23,11 +23,11 @@ use crate::{
         SessionMarkMethod, SessionMarkParams, SessionMcp, SessionMcpCatalogParams,
         SessionMcpCatalogRead, SessionMcpComplete, SessionMcpCompleteParams, SessionMcpParams,
         SessionMcpResourceParams, SessionMcpResourceRead, SessionNew, SessionNewParams,
-        SessionProcesses, SessionProcessesParams, SessionPrompt, SessionPromptParams,
-        SessionPullRequestLink, SessionPullRequestLinkParams, SessionPullRequestList,
-        SessionPullRequestListParams, SessionPullRequestShow, SessionPullRequestShowParams,
-        SessionPullRequestUnlink, SessionPullRequestUnlinkParams, SessionRename,
-        SessionRenameParams, SessionReportParams, SessionReportRead, SessionSearch,
+        SessionProcesses, SessionProcessesParams, SessionPrompt, SessionPromptAnswered,
+        SessionPromptParams, SessionPullRequestLink, SessionPullRequestLinkParams,
+        SessionPullRequestList, SessionPullRequestListParams, SessionPullRequestShow,
+        SessionPullRequestShowParams, SessionPullRequestUnlink, SessionPullRequestUnlinkParams,
+        SessionRename, SessionRenameParams, SessionReportParams, SessionReportRead, SessionSearch,
         SessionSearchParams, SessionSteer, SessionSteerParams, SessionSurfaceAction,
         SessionSurfaceActionParams, SessionUnsteer, SessionUnsteerParams, Status, Stop,
         WorktreePrune, WorktreePruneParams, AUTH_CHOOSE_STORE, AUTH_KEY, AUTH_LIST,
@@ -311,7 +311,7 @@ impl ServiceCall {
                 encode_result::<SessionFork>(&service.fork_session(params).await?)
             }
             Self::PromptSession(params) => {
-                encode_result::<SessionPrompt>(&service.prompt_session(params).await?)
+                encode_result::<SessionPromptAnswered>(&service.answer_prompt(params).await?)
             }
             Self::CancelSession(params) => {
                 encode_result::<SessionCancel>(&service.cancel_session(params).await?)

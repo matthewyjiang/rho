@@ -152,6 +152,7 @@ pub(super) async fn watch(
         .session
         .live()
         .shown_prompt(display, &InsertedMessage::Unreplayed);
+    view.inserted([&shown]);
     view.session.feed.publish([shown]);
     // A prompt sent while the wait runs resumes it.
     view.session.turn().kind = TurnKind::WakeWait;

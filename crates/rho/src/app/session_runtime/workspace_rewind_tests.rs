@@ -23,7 +23,12 @@ fn leaf(runtime: &SessionRuntime) -> NodeId {
 
 fn add(runtime: &mut SessionRuntime, text: &str) -> NodeId {
     runtime
-        .append_context(text.into(), Message::user_text(text), [])
+        .append_context(
+            text.into(),
+            Message::user_text(text),
+            /*display_key*/ None,
+            [],
+        )
         .unwrap();
     leaf(runtime)
 }

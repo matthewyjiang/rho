@@ -11069,6 +11069,34 @@
       ],
       "type": "object"
     },
+    "SessionPromptAnswer": {
+      "description": "What a [`SESSION_PROMPT`] answer carries: [`SessionPromptResponse`],\nflat, and what that struct cannot take in a protocol minor. A client\nthat reads only [`SessionPromptResponse`] ignores the rest; one that\nreads this type asks with [`super::SessionPromptAnswered`].\n\n# Next major\n\nNEXT_MAJOR(rho-protocol): add message and sent_again to SessionPromptResponse and remove SessionPromptAnswer, SessionPromptAnswered and Service::answer_prompt.\n\n`SessionPromptResponse` has only public fields and is not\n`#[non_exhaustive]`, so a field is a major change. Until then the schema\npublishes [`SESSION_PROMPT`]'s result as this type.",
+      "properties": {
+        "message": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MessageId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The user message the prompt inserted, which its turn's\n[`SessionEvent::UserMessage`] carries and a replay of the saved\nmessage repeats; for a prompt sent again, the one the first prompt\ninserted. Absent when the daemon does not know it: the turn queued\nfor capacity before it inserted one, a client's workflow start\ninserts none, or the daemon predates the field."
+        },
+        "sent_again": {
+          "description": "Whether the prompt's key is one an earlier prompt on the session\nnamed, so the prompt started nothing: `turn` and `message` are the\nearlier prompt's.",
+          "type": "boolean"
+        },
+        "turn": {
+          "$ref": "#/$defs/TurnId",
+          "description": "The turn the prompt started, or, for a prompt sent again with its\n[`SessionPromptParams::idempotency_key`], the turn it started the\nfirst time. The turn's [`SessionEvent::State`]s and its\n[`SessionEvent::TurnEnded`] carry it."
+        }
+      },
+      "required": [
+        "turn"
+      ],
+      "type": "object"
+    },
     "SessionPromptParams": {
       "description": "Params of [`SESSION_PROMPT`].",
       "properties": {
@@ -11107,7 +11135,7 @@
               "type": "null"
             }
           ],
-          "description": "The client's name for this prompt, which makes sending it again\nsafe, as after a connection that closed before the answer came. A\nprompt whose key is that of the session's latest turn starts none:\nit answers as the first one does, with that turn's id once the turn\nbegan, even after the turn ended or the daemon restarted. The daemon\ncompares only the key, never the content. It keeps the latest turn's\nkey alone, so a prompt is safe to send again until another turn\nstarts on the session. A turn that ended before it began ran\nnothing and frees its key: sending the prompt again starts a turn.\nAn empty key is [`crate::ErrorCode::InvalidParams`]."
+          "description": "The client's name for this prompt, which makes sending it again\nsafe, as after a connection that closed before the answer came. A\nprompt whose key an earlier prompt on the session named starts no\nturn: it answers as the first one does, once that one's turn began,\nwith [`SessionPromptAnswer::sent_again`] set. The daemon compares\nonly the key, never the content. It knows a key as long as the\nsession keeps the user message its prompt saved, across restarts\ntoo, and the key of a prompt that saved none, such as `/compact`,\nwhile the daemon has the session loaded or the prompt's turn is the\nsession's latest. A turn that ended before it began ran nothing and\nfrees its key: sending the prompt again starts a turn. An empty key\nis [`crate::ErrorCode::InvalidParams`]. The daemon never shows a key\nto clients."
         },
         "session": {
           "$ref": "#/$defs/SessionId"
@@ -11126,19 +11154,6 @@
         "session",
         "content",
         "environment"
-      ],
-      "type": "object"
-    },
-    "SessionPromptResponse": {
-      "description": "Result of [`SESSION_PROMPT`]: the turn began: it saved its prompt, or,\nfor `/compact`, its compaction started; or, for a session another job\nstarted ([`SessionNewParams::parent`]), it queued for capacity in the\ndaemon-wide agent budget. The turn runs on in the daemon;\n[`super::JOB_LIST`] reports how it ends.\n\nA turn that ends before it began answers with an error\ninstead: [`crate::ErrorCode::TurnEnded`], whose `data` is the turn's\n[`crate::TurnOutcome`], or [`crate::ErrorCode::DaemonStopping`] when the\ndaemon stopped it.",
-      "properties": {
-        "turn": {
-          "$ref": "#/$defs/TurnId",
-          "description": "The turn the prompt started, or, for a prompt sent again with its\n[`SessionPromptParams::idempotency_key`], the turn it started the\nfirst time. The turn's [`SessionEvent::State`]s and its\n[`SessionEvent::TurnEnded`] carry it."
-        }
-      },
-      "required": [
-        "turn"
       ],
       "type": "object"
     },
@@ -14441,7 +14456,7 @@
         "$ref": "#/$defs/SessionPromptParams"
       },
       "result": {
-        "$ref": "#/$defs/SessionPromptResponse"
+        "$ref": "#/$defs/SessionPromptAnswer"
       }
     },
     "rho/session/pull_request/link": {

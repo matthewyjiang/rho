@@ -457,15 +457,22 @@ impl JobRegistry {
         Ok((self.wrote(record, was_in_progress), grant))
     }
 
-    /// Records that job `id`'s turn `turn` began, so a later daemon still
-    /// answers a prompt sent again with the turn's key instead of running
-    /// it. Does nothing once it is recorded, or once another turn started.
-    pub(in crate::app::daemon_host) fn turn_began(&self, id: &JobId, turn: &rho_protocol::TurnId) {
+    /// Records that job `id`'s turn `turn` began, inserting `message` if
+    /// it is known, so a later daemon still answers a prompt sent again
+    /// with the turn's key instead of running it. Does nothing once it is
+    /// recorded, or once another turn started.
+    pub(in crate::app::daemon_host) fn turn_began(
+        &self,
+        id: &JobId,
+        turn: &rho_protocol::TurnId,
+        message: Option<rho_protocol::MessageId>,
+    ) {
         let mut jobs = self.lock();
         if let Some(record) = jobs.get_mut(id) {
             let current = record.turn.as_mut();
             if let Some(turn) = current.filter(|current| current.id == *turn && !current.began) {
                 turn.began = true;
+                turn.message = message;
                 persist(&self.store, record);
             }
         }

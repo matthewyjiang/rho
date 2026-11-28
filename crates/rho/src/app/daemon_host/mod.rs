@@ -42,8 +42,8 @@ use rho_protocol::{
     SessionConfigureResponse, SessionDeleteParams, SessionDeleteResponse, SessionForkParams,
     SessionForkResponse, SessionHoldParams, SessionHoldResponse, SessionListDetailedResponse,
     SessionListParams, SessionListResponse, SessionMarkParams, SessionMarkResponse,
-    SessionNewParams, SessionNewResponse, SessionObserveParams, SessionPromptParams,
-    SessionPromptResponse, SessionRenameParams, SessionRenameResponse, SessionSearchParams,
+    SessionNewParams, SessionNewResponse, SessionObserveParams, SessionPromptAnswer,
+    SessionPromptParams, SessionRenameParams, SessionRenameResponse, SessionSearchParams,
     SessionSearchResponse, SessionSteerParams, SessionSteerResponse, SessionSurfaceActionParams,
     SessionSurfaceActionResponse, SessionUnsteerParams, SessionUnsteerResponse, SettingsService,
     Subscription, WorktreePruneParams, WorktreePruneResponse, PROTOCOL_VERSION,
@@ -428,10 +428,10 @@ impl Service for DaemonHost {
         self.sessions.fork(params).await
     }
 
-    async fn prompt_session(
+    async fn answer_prompt(
         &self,
         params: SessionPromptParams,
-    ) -> Result<SessionPromptResponse, RpcError> {
+    ) -> Result<SessionPromptAnswer, RpcError> {
         self.sessions.prompt(params).await
     }
 

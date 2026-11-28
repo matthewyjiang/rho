@@ -10,6 +10,7 @@ use tokio::sync::{mpsc, watch};
 
 use super::{DaemonView, PromptStart, StartedTurn, TurnLimit, TurnTask, UNEXPECTED_STOP};
 use crate::app::daemon_host::sessions::{
+    prompt_keys::PromptMessage,
     queued::Queued,
     test_events::{
         approval, approval_withdrawn, plan, plan_withdrawn, question, question_withdrawn,
@@ -72,7 +73,8 @@ fn turn_of(jobs: &JobRegistry, job: &JobId) -> rho_protocol::TurnId {
 fn view_of(session: Arc<LoadedSession>) -> (DaemonView, watch::Receiver<PromptStart>) {
     let (started, start) = watch::channel(PromptStart::Pending);
     let turn = turn_of(&session.jobs, &session.job);
-    (DaemonView::new(session, turn, started), start)
+    let message = PromptMessage::default();
+    (DaemonView::new(session, turn, started, message), start)
 }
 
 /// The turn `session` has under way, as a prompt starts it, which `cancel`
@@ -88,6 +90,8 @@ fn started_turn(
         runtime: Queued::join(&session.runtime),
         budget: None,
         start,
+        message: PromptMessage::default(),
+        user_key: None,
         limit: None,
     };
     (turn, started)

@@ -4,28 +4,31 @@
 //!
 //! Every turn starts under a new [`TurnId`], which its prompt answers with
 //! and its events carry. A prompt that names an idempotency key is safe to
-//! send again (#1777): while the key is that of the session's latest turn,
-//! and that turn began or may yet, the prompt starts nothing and answers as
-//! the first one does.
+//! send again (#1777): while the session knows the key (see
+//! [`prompt_keys`](super::prompt_keys)), and the turn it started began or
+//! may yet, the prompt starts nothing and answers as the first one does.
 
 use rho_protocol::{
-    ErrorCode, IdempotencyKey, ProjectTrustMismatch, PromptAuthor, RpcError, SessionPromptParams,
-    SessionPromptResponse, SessionSetup, TurnId,
+    ErrorCode, IdempotencyKey, MessageId, ProjectTrustMismatch, PromptAuthor, RpcError,
+    SessionPromptAnswer, SessionPromptParams, SessionPromptResponse, SessionSetup, TurnId,
 };
 use rho_sdk::CancellationToken;
 use tokio::sync::watch;
 
 use super::{
     super::{
-        jobs::{JobRecord, JobState, StartTurnError, TurnRecord},
+        jobs::{JobState, StartTurnError, TurnRecord},
         subagents::TurnBudget,
         wire::state_event,
     },
-    being_deleted, ended_early, grant, stopping, Hold, LoadedSession, OpenWith, PromptStart,
-    Queued, Sessions, TurnKind, TurnLimit, TurnSlot, TurnTask,
+    being_deleted, ended_early, grant,
+    prompt_keys::{row_key, KeyDigest, PromptMessage, SentBefore},
+    stopping, Hold, LoadedSession, OpenWith, PromptStart, Queued, Sessions, TurnKind, TurnLimit,
+    TurnSlot, TurnTask,
 };
 use crate::{
     app::{prompt_content::Prompt, session_runtime::SessionRuntime},
+    session::tree::MessageKey,
     session_environment::TrustMismatch,
 };
 
@@ -40,6 +43,11 @@ pub(super) struct StartedTurn {
     pub(super) budget: Option<TurnBudget>,
     /// Told how the turn began, once it has (see [`PromptStart`]).
     pub(super) start: watch::Sender<PromptStart>,
+    /// The user message the turn inserts, once it has.
+    pub(super) message: PromptMessage,
+    /// The key the turn saves its user message under, when its prompt named
+    /// an idempotency key (see [`row_key`]).
+    pub(super) user_key: Option<MessageKey>,
     /// When the daemon cancels the turn as timed out; `None` sets no limit.
     /// Given to [`Sessions::start_turn`], so the turn runs under the limit
     /// its record was told of: a restart continues only a turn without one
@@ -87,12 +95,9 @@ fn trust_mismatch(mismatch: &TrustMismatch) -> RpcError {
 pub(super) enum Entered {
     /// Its turn started.
     Started(StartedTurn),
-    /// Its key is that of the session's latest turn, `id`, which it starts
-    /// no second time: it answers as that turn's prompt does, by `start`.
-    SentAgain {
-        id: TurnId,
-        start: watch::Receiver<PromptStart>,
-    },
+    /// Its key is one an earlier prompt named, whose turn it starts no
+    /// second time: it answers as that turn's prompt does.
+    SentAgain(SentBefore),
     /// It cancelled the wake wait under way (see [`TurnKind::WakeWait`]),
     /// and starts once that wait ended.
     BehindWakeWait,
@@ -107,7 +112,7 @@ impl Sessions {
     pub(in crate::app::daemon_host) async fn prompt(
         &self,
         params: SessionPromptParams,
-    ) -> Result<SessionPromptResponse, RpcError> {
+    ) -> Result<SessionPromptAnswer, RpcError> {
         self.refuse_when_stopping()?;
         let key = params.idempotency_key;
         if key.as_ref().is_some_and(|key| key.as_str().is_empty()) {
@@ -135,7 +140,17 @@ impl Sessions {
             &params.environment,
             SessionSetup::default(),
         )?;
-        let (id, mut start) = loop {
+        // How the prompt is answered once the turn began: as the one that
+        // started it, or as one sent again.
+        type Answer = fn(SessionPromptResponse, Option<MessageId>) -> SessionPromptAnswer;
+        let (
+            SentBefore {
+                id,
+                mut start,
+                message,
+            },
+            answer,
+        ): (_, Answer) = loop {
             let (session, entered) = self
                 .enter_session(&params.session, &with, |session, turn| {
                     let limit = params.timeout_ms.map(TurnLimit::starting_now);
@@ -148,8 +163,11 @@ impl Sessions {
                 .await?;
             match entered {
                 Entered::Started(turn) => {
-                    let id = turn.id.clone();
-                    let start = turn.start.subscribe();
+                    let sent = SentBefore {
+                        id: turn.id.clone(),
+                        start: turn.start.subscribe(),
+                        message: turn.message.clone(),
+                    };
                     // Spawned before anything awaits, so the turn runs and
                     // records its end apart from this request: the
                     // transport joins every request it read, but this one
@@ -160,9 +178,9 @@ impl Sessions {
                         stopping: self.stopping.clone(),
                     }
                     .spawn(prompt, params.author);
-                    break (id, start);
+                    break (sent, SessionPromptAnswer::new);
                 }
-                Entered::SentAgain { id, start } => break (id, start),
+                Entered::SentAgain(sent) => break (sent, SessionPromptAnswer::retry),
                 // Free once the cancelled wait recorded its end.
                 Entered::BehindWakeWait => drop(session.runtime.lock().await),
             }
@@ -173,7 +191,9 @@ impl Sessions {
         tokio::select! {
             biased;
             start = start.wait_for(|start| *start != PromptStart::Pending) => match start.as_deref() {
-                Ok(PromptStart::Began) => Ok(SessionPromptResponse { turn: id }),
+                Ok(PromptStart::Began) => {
+                    Ok(answer(SessionPromptResponse { turn: id }, message.get()))
+                }
                 Ok(PromptStart::Ended(outcome)) => Err(ended_early(outcome)),
                 // Only a turn the daemon's stop interrupted, or one whose
                 // task the exiting runtime dropped, never says.
@@ -205,26 +225,19 @@ impl Sessions {
         if let Some(mismatch) = session.environment.trust_mismatch(&with.environment) {
             return Err(trust_mismatch(&mismatch));
         }
-        if let Some(sent) = turn
-            .keyed
+        let digest = key.as_ref().map(|key| KeyDigest::of(&session.id, key));
+        if let Some(sent) = digest
             .as_ref()
-            .filter(|sent| Some(&sent.key) == key.as_ref())
+            .and_then(|digest| turn.keys.sent_before(digest))
         {
-            // A turn that ended before it began ran nothing: its key starts
-            // a turn again.
-            if !matches!(*sent.start.borrow(), PromptStart::Ended(_)) {
-                return Ok(Entered::SentAgain {
-                    id: sent.id.clone(),
-                    start: sent.start.clone(),
-                });
-            }
+            return Ok(Entered::SentAgain(sent));
         }
         // A restart continues the turn with one the daemon starts, under no
         // limit (see `restart_resume`): only for a client that takes such
         // turns, and only for a turn that had no limit to lose.
         let record = TurnRecord {
             continues_after_restart: session.idle_wake.is_some() && limit.is_none(),
-            ..TurnRecord::starting(key.clone())
+            ..TurnRecord::starting(digest.clone())
         };
         let id = record.id.clone();
         let (budget, grant) = match self
@@ -286,12 +299,16 @@ impl Sessions {
         turn.kind = TurnKind::Prompt;
         turn.prompts += 1;
         let (start, started) = watch::channel(PromptStart::Pending);
-        // The latest turn's key alone is kept: this turn's, or none.
-        turn.keyed = key.map(|key| KeyedTurn {
-            key,
-            id: id.clone(),
-            start: started,
-        });
+        let message = PromptMessage::default();
+        let user_key = digest.as_ref().map(|digest| row_key(digest, &id));
+        if let Some(digest) = digest {
+            let sent = SentBefore {
+                id: id.clone(),
+                start: started,
+                message: message.clone(),
+            };
+            turn.keys.turn_started(digest, sent);
+        }
         // Queued on the runtime under the turn lock the turn starts under,
         // as a change queues under it (see `configure`): a change counted
         // before this applies before the turn, and one sent once the job
@@ -302,35 +319,10 @@ impl Sessions {
             runtime: Queued::join(&session.runtime),
             budget,
             start,
+            message,
+            user_key,
             limit,
         }))
-    }
-}
-
-/// A turn a prompt naming `key` started, as a prompt sent again with the
-/// key finds it.
-pub(super) struct KeyedTurn {
-    key: IdempotencyKey,
-    id: rho_protocol::TurnId,
-    /// How the turn began, once it has.
-    start: tokio::sync::watch::Receiver<PromptStart>,
-}
-
-impl KeyedTurn {
-    /// The turn job `job` last ran, as an earlier daemon or an earlier load
-    /// recorded it, if a prompt naming a key started it and it began: one
-    /// that did not begin ran nothing, so its key starts a turn again.
-    pub(super) fn recorded(job: &JobRecord) -> Option<Self> {
-        let TurnRecord {
-            id,
-            key,
-            began,
-            continues_after_restart: _,
-        } = job.turn.clone()?;
-        let key = key.filter(|_| began)?;
-        // The sender is dropped: the turn began, and nothing changes that.
-        let (_, start) = tokio::sync::watch::channel(PromptStart::Began);
-        Some(Self { key, id, start })
     }
 }
 

@@ -91,7 +91,7 @@ fn turn_rows_join_the_nodes_that_carry_a_prompt_on() -> anyhow::Result<()> {
     let saved = |revision: u64, history: Vec<Message>, shown: usize| {
         let snapshot = snapshot(&session, revision, history);
         let rows = &snapshot.history()[snapshot.history().len() - shown..];
-        session.save_snapshot_node(&snapshot, rows)
+        session.save_snapshot_node(&snapshot, rows, /*keys*/ &[])
     };
     let user = Message::user_text;
     let reply = Message::assistant_text;

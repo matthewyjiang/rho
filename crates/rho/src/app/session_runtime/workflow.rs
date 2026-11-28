@@ -173,7 +173,7 @@ impl SessionRuntime {
             "{}\n\n{started}",
             starting_notice(&start, &workflow_name, &run_id)
         );
-        let (inserted, reply) = self.record_started(by, model, &notice)?;
+        let (inserted, reply) = self.record_started(prompt, by, model, &notice)?;
         Ok(WorkflowStart::Started {
             notice,
             inserted,
@@ -186,6 +186,7 @@ impl SessionRuntime {
     /// message and the notice as saved (see [`Self::append_context`]).
     fn record_started(
         &mut self,
+        prompt: &PromptScope,
         by: StartedBy<'_>,
         model: String,
         notice: &str,
@@ -195,11 +196,17 @@ impl SessionRuntime {
                 .append_context(
                     model,
                     Message::User(display.blocks().into()),
+                    prompt.take_user_key(),
                     [Message::assistant_text(notice)],
                 )
                 .map(|(inserted, [reply])| (Some(inserted), reply)),
             StartedBy::Host => self
-                .append_context(model, Message::assistant_text(notice), [])
+                .append_context(
+                    model,
+                    Message::assistant_text(notice),
+                    /*display_key*/ None,
+                    [],
+                )
                 .map(|(reply, [])| (None, reply)),
         };
         // Hosts such as ACP show only the outermost message, so keep the

@@ -11,8 +11,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    ContentBlock, Cursor, IdempotencyKey, InputRequest, JobState, Seq, SessionEvent, SessionSetup,
-    SteerId, StreamId, TurnId,
+    ContentBlock, Cursor, IdempotencyKey, InputRequest, JobState, MessageId, Seq, SessionEvent,
+    SessionSetup, SteerId, StreamId, TurnId,
 };
 
 /// Open a new session in a workspace, before its first prompt.
@@ -315,14 +315,17 @@ pub struct SessionPromptParams {
     pub grant: Option<super::SessionGrant>,
     /// The client's name for this prompt, which makes sending it again
     /// safe, as after a connection that closed before the answer came. A
-    /// prompt whose key is that of the session's latest turn starts none:
-    /// it answers as the first one does, with that turn's id once the turn
-    /// began, even after the turn ended or the daemon restarted. The daemon
-    /// compares only the key, never the content. It keeps the latest turn's
-    /// key alone, so a prompt is safe to send again until another turn
-    /// starts on the session. A turn that ended before it began ran
-    /// nothing and frees its key: sending the prompt again starts a turn.
-    /// An empty key is [`crate::ErrorCode::InvalidParams`].
+    /// prompt whose key an earlier prompt on the session named starts no
+    /// turn: it answers as the first one does, once that one's turn began,
+    /// with [`SessionPromptAnswer::sent_again`] set. The daemon compares
+    /// only the key, never the content. It knows a key as long as the
+    /// session keeps the user message its prompt saved, across restarts
+    /// too, and the key of a prompt that saved none, such as `/compact`,
+    /// while the daemon has the session loaded or the prompt's turn is the
+    /// session's latest. A turn that ended before it began ran nothing and
+    /// frees its key: sending the prompt again starts a turn. An empty key
+    /// is [`crate::ErrorCode::InvalidParams`]. The daemon never shows a key
+    /// to clients.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub idempotency_key: Option<IdempotencyKey>,
     /// Who the prompt speaks for; absent, the person.
@@ -391,6 +394,59 @@ pub struct SessionPromptResponse {
     /// first time. The turn's [`SessionEvent::State`]s and its
     /// [`SessionEvent::TurnEnded`] carry it.
     pub turn: TurnId,
+}
+
+/// What a [`SESSION_PROMPT`] answer carries: [`SessionPromptResponse`],
+/// flat, and what that struct cannot take in a protocol minor. A client
+/// that reads only [`SessionPromptResponse`] ignores the rest; one that
+/// reads this type asks with [`super::SessionPromptAnswered`].
+///
+/// # Next major
+///
+/// NEXT_MAJOR(rho-protocol): add message and sent_again to SessionPromptResponse and remove SessionPromptAnswer, SessionPromptAnswered and Service::answer_prompt.
+///
+/// `SessionPromptResponse` has only public fields and is not
+/// `#[non_exhaustive]`, so a field is a major change. Until then the schema
+/// publishes [`SESSION_PROMPT`]'s result as this type.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[non_exhaustive]
+pub struct SessionPromptAnswer {
+    #[serde(flatten)]
+    pub response: SessionPromptResponse,
+    /// The user message the prompt inserted, which its turn's
+    /// [`SessionEvent::UserMessage`] carries and a replay of the saved
+    /// message repeats; for a prompt sent again, the one the first prompt
+    /// inserted. Absent when the daemon does not know it: the turn queued
+    /// for capacity before it inserted one, a client's workflow start
+    /// inserts none, or the daemon predates the field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<MessageId>,
+    /// Whether the prompt's key is one an earlier prompt on the session
+    /// named, so the prompt started nothing: `turn` and `message` are the
+    /// earlier prompt's.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub sent_again: bool,
+}
+
+impl SessionPromptAnswer {
+    /// The answer to a prompt that started `response`'s turn, which
+    /// inserted `message` if the daemon knows it.
+    pub fn new(response: SessionPromptResponse, message: Option<MessageId>) -> Self {
+        Self {
+            response,
+            message,
+            sent_again: false,
+        }
+    }
+
+    /// The answer to a prompt sent again: `response` and `message` are
+    /// those of the prompt that named its key first.
+    pub fn retry(response: SessionPromptResponse, message: Option<MessageId>) -> Self {
+        Self {
+            sent_again: true,
+            ..Self::new(response, message)
+        }
+    }
 }
 
 /// Params of [`SESSION_CANCEL`].

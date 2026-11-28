@@ -103,7 +103,7 @@ pub(crate) use events::{
 pub(crate) use handle::{SessionHandle, SteerError};
 pub(crate) use left_out::LeftOut;
 pub(crate) use mode::SessionPermission;
-pub(crate) use open::{NodeSession, SessionOpening};
+pub(crate) use open::{NodeSession, SavedHistory, SessionOpening};
 pub(crate) use persist::SessionStorage;
 pub(crate) use prompt::PromptScope;
 pub(crate) use prompt_turn::{PlanReport, TurnView};

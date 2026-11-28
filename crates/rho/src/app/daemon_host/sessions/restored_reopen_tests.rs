@@ -59,7 +59,12 @@ async fn a_reopened_session_attaches_to_the_conversation_its_restore_left() {
         let runtime = runtime.as_mut().unwrap();
         for text in ["first", "second"] {
             runtime
-                .append_context(text.into(), Message::user_text(text), [])
+                .append_context(
+                    text.into(),
+                    Message::user_text(text),
+                    /*display_key*/ None,
+                    [],
+                )
                 .unwrap();
         }
         super::turn::save_transcript(&session, runtime);
@@ -88,7 +93,7 @@ async fn a_reopened_session_attaches_to_the_conversation_its_restore_left() {
         .await
         .unwrap();
     let runtime = session.runtime.lock().await;
-    let (reopened, _) = opening_feed(
+    let (reopened, _, _) = opening_feed(
         &sessions.jobs.get(&session.job).unwrap(),
         runtime.as_ref().unwrap(),
         &Config::default(),

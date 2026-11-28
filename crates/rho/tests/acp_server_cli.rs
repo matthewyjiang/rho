@@ -77,6 +77,9 @@ mod usage_cost;
 #[path = "support/acp_v2_errors_tests.rs"]
 mod v2_errors;
 
+#[path = "support/acp_v2_idempotency_tests.rs"]
+mod v2_idempotency;
+
 #[path = "support/acp_v2_prompt_tests.rs"]
 mod v2_prompt;
 

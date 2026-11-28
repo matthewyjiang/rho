@@ -207,7 +207,7 @@ impl SessionRuntime {
             let paused = self.begin_workspace_checkpoint()?;
             // The prompt is durable before anything runs, so a host that
             // dies mid-turn still replays it.
-            let inserted = self.insert_user_message(&checkpoint)?;
+            let inserted = self.insert_user_message(&checkpoint, prompt)?;
             io.emit(SessionEvent::MessageInserted(inserted));
             // Named from the prompt as the user sent it, beside the run, so
             // a long first turn does not hold the title up.

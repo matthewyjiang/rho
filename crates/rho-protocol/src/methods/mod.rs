@@ -266,11 +266,11 @@ pub use session::{
     SessionAttachParams, SessionAttachResponse, SessionCancelParams, SessionCancelResponse,
     SessionDetachParams, SessionDetachResponse, SessionDetachedParams, SessionEventEnvelope,
     SessionEventParams, SessionForkParams, SessionForkResponse, SessionId, SessionNewParams,
-    SessionNewResponse, SessionObserveParams, SessionPromptParams, SessionPromptResponse,
-    SessionSteerParams, SessionSteerResponse, SessionUnsteerParams, SessionUnsteerResponse,
-    SessionWorktree, UnsteerOutcome, SESSION_ATTACH, SESSION_CANCEL, SESSION_DETACH,
-    SESSION_DETACHED, SESSION_EVENT, SESSION_FORK, SESSION_NEW, SESSION_OBSERVE, SESSION_PROMPT,
-    SESSION_STEER, SESSION_UNSTEER,
+    SessionNewResponse, SessionObserveParams, SessionPromptAnswer, SessionPromptParams,
+    SessionPromptResponse, SessionSteerParams, SessionSteerResponse, SessionUnsteerParams,
+    SessionUnsteerResponse, SessionWorktree, UnsteerOutcome, SESSION_ATTACH, SESSION_CANCEL,
+    SESSION_DETACH, SESSION_DETACHED, SESSION_EVENT, SESSION_FORK, SESSION_NEW, SESSION_OBSERVE,
+    SESSION_PROMPT, SESSION_STEER, SESSION_UNSTEER,
 };
 pub use session_hooks::{
     HooksReloadOutcome, SessionHooksReloadParams, SessionHooksReloadResponse, SESSION_HOOKS_RELOAD,
@@ -312,6 +312,18 @@ pub trait Method {
     type Result: Serialize + DeserializeOwned + JsonSchema;
 }
 
+/// [`SESSION_PROMPT`] as the daemon answers it, which
+/// [`crate::Client::request`] decodes whole: [`SessionPromptAnswer`], where
+/// [`SessionPrompt`] reads its [`SessionPromptResponse`] alone. The schema
+/// publishes the method once, under [`SessionPrompt`].
+pub struct SessionPromptAnswered;
+
+impl Method for SessionPromptAnswered {
+    const NAME: &'static str = SESSION_PROMPT;
+    type Params = SessionPromptParams;
+    type Result = SessionPromptAnswer;
+}
+
 /// A notification the daemon sends, typed like [`Method`].
 ///
 /// Implemented by the zero-sized markers this module declares. The daemon
@@ -327,7 +339,9 @@ pub trait Notification {
 /// What [`visit`] calls for every method and notification; implemented by
 /// [`crate::schema`] to publish them.
 pub(crate) trait Visitor {
-    fn method<M: Method>(&mut self);
+    /// `Wire` is what the daemon answers `M` with: `M::Result`, or a type
+    /// that reads as it and carries more.
+    fn method<M: Method, Wire: JsonSchema>(&mut self);
     /// `Wire` is what the daemon sends as `N`'s params: `N::Params`, or a
     /// type that reads as it and carries more.
     fn notification<N: Notification, Wire: JsonSchema>(&mut self);
@@ -336,13 +350,13 @@ pub(crate) trait Visitor {
 /// Declares the method and notification markers and [`visit`] from one list,
 /// so a method cannot exist without being published (#1657).
 macro_rules! protocol {
-    // The type a notification's schema publishes: its own params, or the
-    // wider type the daemon sends (`as`).
+    // The type a method's result or a notification's params publishes: its
+    // own, or the wider type the daemon sends (`as`).
     (@wire $params:ty) => { $params };
     (@wire $params:ty, $wire:ty) => { $wire };
     (
         methods {
-            $($method:ident = $method_name:ident: $params:ty => $result:ty,)+
+            $($method:ident = $method_name:ident: $params:ty => $result:ty $(as $result_wire:ty)?,)+
         }
         notifications {
             $($notification:ident = $notification_name:ident: $notification_params:ty $(as $notification_wire:ty)?,)+
@@ -370,7 +384,7 @@ macro_rules! protocol {
 
         /// Calls `visitor` for every method, then every notification.
         pub(crate) fn visit(visitor: &mut impl Visitor) {
-            $(visitor.method::<$method>();)+
+            $(visitor.method::<$method, protocol!(@wire $result $(, $result_wire)?)>();)+
             $(visitor.notification::<$notification, protocol!(@wire $notification_params $(, $notification_wire)?)>();)+
         }
     };
@@ -384,7 +398,8 @@ protocol! {
         Restart = DAEMON_RESTART: RestartParams => RestartResponse,
         SessionNew = SESSION_NEW: SessionNewParams => SessionNewResponse,
         SessionFork = SESSION_FORK: SessionForkParams => SessionForkResponse,
-        SessionPrompt = SESSION_PROMPT: SessionPromptParams => SessionPromptResponse,
+        // NEXT_MAJOR(rho-protocol): add message and sent_again to SessionPromptResponse and remove SessionPromptAnswer, SessionPromptAnswered and Service::answer_prompt.
+        SessionPrompt = SESSION_PROMPT: SessionPromptParams => SessionPromptResponse as SessionPromptAnswer,
         SessionCancel = SESSION_CANCEL: SessionCancelParams => SessionCancelResponse,
         SessionSteer = SESSION_STEER: SessionSteerParams => SessionSteerResponse,
         SessionUnsteer = SESSION_UNSTEER: SessionUnsteerParams => SessionUnsteerResponse,

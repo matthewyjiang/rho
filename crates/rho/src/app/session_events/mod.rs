@@ -48,6 +48,7 @@ mod test_support;
 mod tools;
 
 pub(crate) use live::{CompactionEnd, LiveEvents};
+pub(crate) use message_ids::user_message_id;
 pub(crate) use replay::{row_locations, SavedTranscript, SavedTurn};
 
 /// A wire event, with what a client is sent beside it

@@ -109,7 +109,7 @@ impl Sessions {
             JobRecord::new_session(JobId::generate(), stored.cwd().to_path_buf(), id.clone())
         });
         let opened = open_to_read(stored, &self.subagents, &self.settings, &job.id).await?;
-        let (feed, _) = opening_feed(
+        let (feed, _, _) = opening_feed(
             &job,
             &opened.runtime,
             &opened.config,

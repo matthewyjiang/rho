@@ -27,6 +27,7 @@ use super::{
     inputs::{Asker, Inputs},
     marks,
     options::available_auths,
+    prompt_keys::PromptMessage,
     saved_replay,
     start::StartedTurn,
     LoadedSession,
@@ -47,6 +48,7 @@ use crate::{
         workflow_cli::discover::WorkflowLaunch,
     },
     config::Config,
+    session::tree::MessageKey,
 };
 use wake::WakePrompt;
 
@@ -125,6 +127,9 @@ enum TurnInput {
     Prompt {
         input: Prompt,
         author: wire::PromptAuthor,
+        /// The key the prompt's user message is saved under, if any (see
+        /// [`StartedTurn::user_key`]).
+        user_key: Option<MessageKey>,
     },
     /// A turn the daemon starts on its own.
     Daemon(DaemonTurn),
@@ -169,7 +174,12 @@ impl TurnTask {
     /// Runs the turn of `input`, which `author` sent, in a daemon task,
     /// which tells [`StartedTurn::start`] how the turn began.
     pub(super) fn spawn(self, input: Prompt, author: wire::PromptAuthor) {
-        tokio::spawn(self.run(TurnInput::Prompt { input, author }));
+        let user_key = self.turn.user_key.clone();
+        tokio::spawn(self.run(TurnInput::Prompt {
+            input,
+            author,
+            user_key,
+        }));
     }
 
     /// Runs `turn`, which the daemon started on its own, in a daemon task.
@@ -187,6 +197,8 @@ impl TurnTask {
                     runtime,
                     budget,
                     start,
+                    message,
+                    user_key: _,
                     limit,
                 },
             stopping,
@@ -203,7 +215,7 @@ impl TurnTask {
         let mut runtime = runtime.acquire().await;
         // Declared after the lock, so even a panic records the end (see
         // `DaemonView`'s drop) before the lock is released.
-        let mut view = DaemonView::new(Arc::clone(&session), id, start);
+        let mut view = DaemonView::new(Arc::clone(&session), id, start, message);
         // With the limit, in milliseconds, when it cancelled the turn: not
         // when a client's cancel came first and the turn was still winding
         // down at the deadline.
@@ -225,9 +237,17 @@ impl TurnTask {
                         let config = session.config_for_turn(runtime).await;
                         let turn = async {
                             match input {
-                                TurnInput::Prompt { input, author } => {
-                                    run_turn(runtime, &mut view, input, author, &config, &cancel)
-                                        .await
+                                TurnInput::Prompt {
+                                    input,
+                                    author,
+                                    user_key,
+                                } => {
+                                    let prompt = PromptTurn {
+                                        input,
+                                        author,
+                                        user_key,
+                                    };
+                                    run_turn(runtime, &mut view, prompt, &config, &cancel).await
                                 }
                                 TurnInput::Daemon(turn) => {
                                     run_daemon_turn(runtime, &mut view, turn, &config, &cancel)
@@ -406,6 +426,14 @@ async fn report_title(session: Weak<LoadedSession>, title: TitleJob) {
     }
 }
 
+/// A client's prompt, as its turn runs it.
+struct PromptTurn {
+    input: Prompt,
+    author: wire::PromptAuthor,
+    /// The key its user message is saved under, if any.
+    user_key: Option<MessageKey>,
+}
+
 /// Begins a prompt on `runtime` and runs it: the T3 wake watcher's wait
 /// when it is one, its slash command when the person's message starts with
 /// one the daemon runs, else a model turn on it. The prompt's context goes
@@ -417,8 +445,11 @@ async fn report_title(session: Weak<LoadedSession>, title: TitleJob) {
 async fn run_turn(
     runtime: &mut SessionRuntime,
     view: &mut DaemonView,
-    prompt: Prompt,
-    author: wire::PromptAuthor,
+    PromptTurn {
+        input: prompt,
+        author,
+        user_key,
+    }: PromptTurn,
     config: &Config,
     cancel: &CancellationToken,
 ) -> anyhow::Result<Ran> {
@@ -437,6 +468,9 @@ async fn run_turn(
     };
     if scope.attached_tool_sources() {
         view.session.tool_sources_attached(runtime).await;
+    }
+    if let Some(key) = user_key {
+        scope.key_user_message(key);
     }
     // A cancel sent before the prompt began only tripped `cancel`: the turn
     // ends here, before it saves the prompt or calls the model, and dropping
@@ -559,6 +593,7 @@ async fn compact(
         shown.extend(live.compaction_started(wire::CompactionTrigger::Command));
         shown
     };
+    view.inserted(&started);
     view.session.feed.publish(started);
     // Nothing rejects the command from here on; the prompt's request need
     // not wait for the compaction.
@@ -658,6 +693,7 @@ async fn start_workflow(
             .chain([live.shown_reply(&reply, notice.clone())])
             .collect::<Vec<_>>()
     };
+    view.inserted(&shown);
     view.session.feed.publish(shown);
     view.began();
     Ok(Ran::Completed(wire::TurnOutcome::Answered {
@@ -698,6 +734,8 @@ pub(super) struct DaemonView {
     /// Told `Began` once the turn began (see [`PromptStart::Began`]), or
     /// how the turn ended if it ends first.
     start: watch::Sender<PromptStart>,
+    /// The prompt's user message, once the turn showed it.
+    message: PromptMessage,
     /// Whether the turn's end is recorded.
     ended: bool,
 }
@@ -707,12 +745,31 @@ impl DaemonView {
         session: Arc<LoadedSession>,
         turn: wire::TurnId,
         start: watch::Sender<PromptStart>,
+        message: PromptMessage,
     ) -> Self {
         Self {
             session,
             turn,
             start,
+            message,
             ended: false,
+        }
+    }
+
+    /// Notes the prompt's user message among `shown`, the events the turn
+    /// shows as it inserts it, which the prompt's request answers with once
+    /// the turn began. A steer is no prompt's.
+    pub(super) fn inserted<'a>(&self, shown: impl IntoIterator<Item = &'a wire::SessionEvent>) {
+        let prompt = shown.into_iter().find_map(|event| match event {
+            wire::SessionEvent::UserMessage {
+                message,
+                steer: None,
+                ..
+            } => Some(message),
+            _ => None,
+        });
+        if let Some(message) = prompt {
+            self.message.set(message.clone());
         }
     }
 
@@ -785,7 +842,10 @@ impl DaemonView {
         // Recorded before the request is answered, so a daemon killed right
         // after its answer still left the turn recorded as begun. The
         // registry records it once, and only on this turn.
-        self.session.jobs.turn_began(&self.session.job, &self.turn);
+        let message = self.message.get();
+        self.session
+            .jobs
+            .turn_began(&self.session.job, &self.turn, message);
         self.tell_start(PromptStart::Began);
     }
 
@@ -838,6 +898,10 @@ impl DaemonView {
                 wire
             };
             let wire = cost.priced(&event, wire, &self.session.id).await;
+            let inserted = matches!(event, SessionEvent::MessageInserted(_));
+            if inserted {
+                self.inserted(wire.iter().map(|shown| &shown.event));
+            }
             self.session.feed.publish(wire);
             if let Some(keep) = &self.session.cache_warm {
                 match &event {
@@ -851,7 +915,7 @@ impl DaemonView {
                     _ => {}
                 }
             }
-            if matches!(event, SessionEvent::MessageInserted(_)) {
+            if inserted {
                 self.began();
             }
             self.session.change_inputs(|inputs| {

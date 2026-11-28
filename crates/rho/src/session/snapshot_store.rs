@@ -57,19 +57,16 @@ impl Session {
         Ok(())
     }
 
-    /// [`Self::save_snapshot`], returning the saved node, whose display rows
-    /// are `display_tail` in order.
+    /// [`Self::save_snapshot_keyed`], returning the saved node, whose display
+    /// rows are `display_tail` in order.
     pub(crate) fn save_snapshot_node(
         &self,
         snapshot: &SessionSnapshot,
         display_tail: &[Message],
+        keys: &[(usize, MessageKey)],
     ) -> anyhow::Result<NodeId> {
-        let (node, _) = self.save_snapshot_with_compaction_facts(
-            snapshot,
-            display_tail,
-            /*keys*/ &[],
-            None,
-        )?;
+        let (node, _) =
+            self.save_snapshot_with_compaction_facts(snapshot, display_tail, keys, None)?;
         Ok(node)
     }
 

@@ -120,10 +120,10 @@ struct Publisher {
 }
 
 impl Visitor for Publisher {
-    fn method<M: Method>(&mut self) {
+    fn method<M: Method, Wire: JsonSchema>(&mut self) {
         let schema = json!({
             "params": self.generator.subschema_for::<M::Params>().to_value(),
-            "result": self.generator.subschema_for::<M::Result>().to_value(),
+            "result": self.generator.subschema_for::<Wire>().to_value(),
         });
         self.methods.insert(M::NAME.to_owned(), schema);
     }

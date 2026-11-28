@@ -301,14 +301,19 @@ impl Change {
         let applied = match self {
             Self::Context { text, display } => {
                 return runtime
-                    .append_context(text, Message::user_text(display), [])
+                    .append_context(
+                        text,
+                        Message::user_text(display),
+                        /*display_key*/ None,
+                        [],
+                    )
                     .map(|_| Applied::Rows { notice: None })
                     .map_err(|error| {
                         RpcError::new(
                             ErrorCode::InternalError,
                             format!("could not save the context: {error:#}"),
                         )
-                    })
+                    });
             }
             Self::AgentCatalog => {
                 return runtime

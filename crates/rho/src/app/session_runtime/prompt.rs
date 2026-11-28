@@ -7,13 +7,15 @@
 //! failure for the next prompt to renew, and a turn that reached the model's
 //! answer asks to name the session (see `title.rs`).
 
+use std::sync::{Mutex, PoisonError};
+
 use rho_sdk::CancellationToken;
 
 use super::{
     prompt_gate::{ActiveWork, PromptGeneration},
     SessionHandle, SessionRuntime,
 };
-use crate::config::Config;
+use crate::{config::Config, session::tree::MessageKey};
 
 /// One prompt the runtime started, held for the whole prompt. Dropping it
 /// ends the prompt, however the prompt returns, so a cancel aimed at it does
@@ -30,6 +32,9 @@ pub(crate) struct PromptScope {
     /// Whether the prompt's start attached the session's deferred tool
     /// sources, which changed its tool list.
     attached_tool_sources: bool,
+    /// The key the prompt's user message is saved under, which its first
+    /// save takes (see [`Self::key_user_message`]).
+    user_key: Mutex<Option<MessageKey>>,
 }
 
 impl PromptScope {
@@ -41,7 +46,26 @@ impl PromptScope {
             handle: handle.clone(),
             generation,
             attached_tool_sources: false,
+            user_key: Mutex::new(None),
         }
+    }
+
+    /// Saves the prompt's user message under `key`, so a reload replays
+    /// it under the id the host shows it under live, which the host derives
+    /// from the prompt's idempotency key to know the prompt again. Only the
+    /// prompt's first saved message takes it, not the user message of a
+    /// plan's implementation turn that follows in the same prompt.
+    pub(crate) fn key_user_message(&self, key: MessageKey) {
+        *self.user_key.lock().unwrap_or_else(PoisonError::into_inner) = Some(key);
+    }
+
+    /// The key the prompt's user message is saved under, for the save that
+    /// saves it.
+    pub(super) fn take_user_key(&self) -> Option<MessageKey> {
+        self.user_key
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
     }
 
     /// Whether the session's tool list changed as the prompt started,
