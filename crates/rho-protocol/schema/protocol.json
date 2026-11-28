@@ -3628,6 +3628,70 @@
         }
       ]
     },
+    "ImportOutcome": {
+      "anyOf": [
+        {
+          "description": "Saved, and journaled.",
+          "properties": {
+            "type": {
+              "const": "saved",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Not saved, for the reason `message` gives, such as an auth profile\nthe target does not know.",
+          "properties": {
+            "message": {
+              "type": "string"
+            },
+            "type": {
+              "const": "failed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "message"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "properties": {
+            "type": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object",
+          "x-rho-other": true
+        }
+      ],
+      "description": "What an import did with one item. One item failing does not stop the\nrest. Protocol minors may add outcomes."
+    },
+    "ImportedSecret": {
+      "description": "What became of one sealed item.",
+      "properties": {
+        "item": {
+          "$ref": "#/$defs/SecretItem"
+        },
+        "outcome": {
+          "$ref": "#/$defs/ImportOutcome"
+        }
+      },
+      "required": [
+        "item",
+        "outcome"
+      ],
+      "type": "object"
+    },
     "InputAnswer": {
       "description": "An answer to an input request. Each [`Ask`] lists the answers it takes;\nany other is [`crate::ErrorCode::InvalidParams`].",
       "oneOf": [
@@ -7811,6 +7875,83 @@
       ],
       "description": "Why a turn asks the provider again ([`SessionEvent::ProviderRetry`])."
     },
+    "RevertOutcome": {
+      "anyOf": [
+        {
+          "description": "The value from before the sync is back, or, for an item the sync\nadded, the item is gone. It leaves the journal.",
+          "properties": {
+            "type": {
+              "const": "restored",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "It changed since the sync and was not in `overwrite`, so it was left\nalone and stays in the journal.",
+          "properties": {
+            "type": {
+              "const": "changed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Not restored, for the reason `message` gives, such as an item the\nsync did not change or that was already reverted.",
+          "properties": {
+            "message": {
+              "type": "string"
+            },
+            "type": {
+              "const": "failed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "message"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "properties": {
+            "type": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object",
+          "x-rho-other": true
+        }
+      ],
+      "description": "What a revert did with one item. One item failing does not stop the\nrest. Protocol minors may add outcomes."
+    },
+    "RevertedItem": {
+      "description": "What a revert did with one item.",
+      "properties": {
+        "item": {
+          "$ref": "#/$defs/SyncItem"
+        },
+        "outcome": {
+          "$ref": "#/$defs/RevertOutcome"
+        }
+      },
+      "required": [
+        "item",
+        "outcome"
+      ],
+      "type": "object"
+    },
     "SealRecipient": {
       "description": "A one-time public key that secrets can be sealed to.",
       "properties": {
@@ -11876,6 +12017,23 @@
       ],
       "type": "object"
     },
+    "SyncDiscardParams": {
+      "description": "Params of [`SYNC_DISCARD`].",
+      "properties": {
+        "sync": {
+          "$ref": "#/$defs/SyncId",
+          "description": "A sync the journal holds; another is\n[`crate::ErrorCode::SyncNotFound`]."
+        }
+      },
+      "required": [
+        "sync"
+      ],
+      "type": "object"
+    },
+    "SyncDiscardResponse": {
+      "description": "Result of [`SYNC_DISCARD`].",
+      "type": "object"
+    },
     "SyncExportParams": {
       "description": "Params of [`SYNC_EXPORT`]. The secrets come from the daemon's own\ncredential store.",
       "properties": {
@@ -11918,6 +12076,114 @@
       ],
       "type": "object"
     },
+    "SyncId": {
+      "description": "One Sync press, as the client names it: an opaque string, such as a\nUUID, the client picks.",
+      "type": "string"
+    },
+    "SyncImportKeysParams": {
+      "description": "Params of [`SYNC_IMPORT_KEYS`].",
+      "properties": {
+        "sealed": {
+          "$ref": "#/$defs/SealedSecrets",
+          "description": "API keys sealed to a recipient this daemon issued, opened as\n[`super::SYNC_COMPARE`] opens them, using the recipient up."
+        },
+        "sync": {
+          "$ref": "#/$defs/SyncId",
+          "description": "The sync to journal under. One naming another sync than the journal\nholds replaces the journal, and the earlier sync can no longer be\nreverted."
+        }
+      },
+      "required": [
+        "sealed",
+        "sync"
+      ],
+      "type": "object"
+    },
+    "SyncImportKeysResponse": {
+      "description": "Result of [`SYNC_IMPORT_KEYS`]: each sealed item, in order, with what\nbecame of it.",
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/ImportedSecret"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "SyncItem": {
+      "anyOf": [
+        {
+          "description": "The saved API key of auth profile `auth`. Built with\n[`SyncItem::api_key`].",
+          "properties": {
+            "auth": {
+              "type": "string"
+            },
+            "type": {
+              "const": "api_key",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "auth"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "properties": {
+            "type": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object",
+          "x-rho-other": true
+        }
+      ],
+      "description": "Something a sync changed that the target can revert. Protocol minors\nmay add kinds."
+    },
+    "SyncItemState": {
+      "anyOf": [
+        {
+          "const": "unchanged",
+          "description": "The target holds what the sync wrote.",
+          "type": "string"
+        },
+        {
+          "const": "changed",
+          "description": "Something changed or removed it since.",
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "Protocol minors may add states."
+    },
+    "SyncItemStatus": {
+      "description": "Whether one journaled item changed since the sync wrote it.",
+      "properties": {
+        "item": {
+          "$ref": "#/$defs/SyncItem"
+        },
+        "state": {
+          "$ref": "#/$defs/SyncItemState"
+        }
+      },
+      "required": [
+        "item",
+        "state"
+      ],
+      "type": "object"
+    },
     "SyncRecipientParams": {
       "description": "Params of [`SYNC_RECIPIENT`].",
       "type": "object"
@@ -11931,6 +12197,85 @@
       },
       "required": [
         "recipient"
+      ],
+      "type": "object"
+    },
+    "SyncRevertParams": {
+      "description": "Params of [`SYNC_REVERT`].",
+      "properties": {
+        "items": {
+          "description": "The items to restore. One that changed since the sync is skipped\nunless `overwrite` names it too.",
+          "items": {
+            "$ref": "#/$defs/SyncItem"
+          },
+          "type": "array"
+        },
+        "overwrite": {
+          "description": "Items to restore even though they changed since the sync.",
+          "items": {
+            "$ref": "#/$defs/SyncItem"
+          },
+          "type": "array"
+        },
+        "sync": {
+          "$ref": "#/$defs/SyncId",
+          "description": "A sync the journal holds; another is\n[`crate::ErrorCode::SyncNotFound`]."
+        }
+      },
+      "required": [
+        "sync",
+        "items"
+      ],
+      "type": "object"
+    },
+    "SyncRevertResponse": {
+      "description": "Result of [`SYNC_REVERT`]: each requested item, in order, with what\nbecame of it.",
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/RevertedItem"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "SyncStatusParams": {
+      "description": "Params of [`SYNC_STATUS`].",
+      "properties": {
+        "sync": {
+          "$ref": "#/$defs/SyncId",
+          "description": "A sync the journal holds; another is\n[`crate::ErrorCode::SyncNotFound`]."
+        }
+      },
+      "required": [
+        "sync"
+      ],
+      "type": "object"
+    },
+    "SyncStatusResponse": {
+      "description": "Result of [`SYNC_STATUS`].",
+      "properties": {
+        "expires_at": {
+          "description": "Unix time, in seconds, when the journal expires: 7 days after the\nsync's last write.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "items": {
+          "description": "Each item the sync changed and that is not reverted yet.",
+          "items": {
+            "$ref": "#/$defs/SyncItemStatus"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "expires_at",
+        "items"
       ],
       "type": "object"
     },
@@ -13360,6 +13705,9 @@
     "-32029": {
       "name": "SealRecipientGone"
     },
+    "-32030": {
+      "name": "SyncNotFound"
+    },
     "-32600": {
       "name": "InvalidRequest"
     },
@@ -13881,6 +14229,14 @@
         "$ref": "#/$defs/SyncCompareResponse"
       }
     },
+    "rho/sync/discard": {
+      "params": {
+        "$ref": "#/$defs/SyncDiscardParams"
+      },
+      "result": {
+        "$ref": "#/$defs/SyncDiscardResponse"
+      }
+    },
     "rho/sync/export": {
       "params": {
         "$ref": "#/$defs/SyncExportParams"
@@ -13889,12 +14245,36 @@
         "$ref": "#/$defs/SyncExportResponse"
       }
     },
+    "rho/sync/import_keys": {
+      "params": {
+        "$ref": "#/$defs/SyncImportKeysParams"
+      },
+      "result": {
+        "$ref": "#/$defs/SyncImportKeysResponse"
+      }
+    },
     "rho/sync/recipient": {
       "params": {
         "$ref": "#/$defs/SyncRecipientParams"
       },
       "result": {
         "$ref": "#/$defs/SyncRecipientResponse"
+      }
+    },
+    "rho/sync/revert": {
+      "params": {
+        "$ref": "#/$defs/SyncRevertParams"
+      },
+      "result": {
+        "$ref": "#/$defs/SyncRevertResponse"
+      }
+    },
+    "rho/sync/status": {
+      "params": {
+        "$ref": "#/$defs/SyncStatusParams"
+      },
+      "result": {
+        "$ref": "#/$defs/SyncStatusResponse"
       }
     },
     "rho/worktree/prune": {

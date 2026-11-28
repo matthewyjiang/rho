@@ -5,9 +5,12 @@ use std::sync::{Arc, Mutex};
 
 use pretty_assertions::assert_eq;
 use rho_protocol::{
-    methods::{SyncCompare, SyncExport, SyncRecipient},
-    CompareState, ErrorCode, SecretComparison, SecretItem, SyncCompareParams, SyncCompareResponse,
-    SyncExportParams, SyncRecipientParams,
+    methods::{SyncCompare, SyncExport, SyncImportKeys, SyncRecipient, SyncRevert, SyncStatus},
+    Client, CompareState, ErrorCode, ImportOutcome, ImportedSecret, RevertOutcome, RevertedItem,
+    SealedSecrets, SecretComparison, SecretItem, SyncCompareParams, SyncCompareResponse,
+    SyncExportParams, SyncId, SyncImportKeysParams, SyncImportKeysResponse, SyncItem,
+    SyncItemState, SyncItemStatus, SyncRecipientParams, SyncRevertParams, SyncRevertResponse,
+    SyncStatusParams,
 };
 use rho_providers::credentials::CredentialStore;
 
@@ -15,6 +18,22 @@ use super::auth::{rpc_error, Fixture, FIRST_KEY, KEY_ACCOUNT};
 
 fn api_key(auth: &str) -> SecretItem {
     SecretItem::api_key(auth)
+}
+
+/// The source's saved `mock` key, sealed to a recipient the target issued.
+async fn sealed_mock_key(from: &Client, to: &Client) -> SealedSecrets {
+    let recipient = to
+        .request::<SyncRecipient>(&SyncRecipientParams::default())
+        .await
+        .unwrap()
+        .recipient;
+    from.request::<SyncExport>(&SyncExportParams::new(
+        recipient,
+        vec![api_key("mock-api-key")],
+    ))
+    .await
+    .unwrap()
+    .sealed
 }
 
 // Covers: a key saved in one daemon's store, for a provider its config
@@ -61,5 +80,67 @@ async fn a_saved_key_travels_sealed_between_daemons() {
             .unwrap_err()
             .error_code(),
         Some(ErrorCode::SealRecipientGone)
+    );
+}
+
+// Covers: a sealed key imported on the target replaces its own and is
+// journaled under the sync; once the target's key changes again, a revert
+// leaves it until told to overwrite, then restores the target's original
+// key and forgets the sync.
+// Owner: daemon e2e (two daemons over their sockets).
+#[tokio::test]
+async fn an_imported_key_reverts_to_the_targets_own() {
+    let valid = Arc::new(Mutex::new(FIRST_KEY.to_owned()));
+    let source = Fixture::start_with(&valid, |_| {}).await;
+    let target = Fixture::start_with(&valid, |_| {}).await;
+    source.store.set_secret(KEY_ACCOUNT, "sk-source").unwrap();
+    target.store.set_secret(KEY_ACCOUNT, "sk-target").unwrap();
+    let from = source.sandbox.connect().await;
+    let to = target.sandbox.connect().await;
+    let sync = SyncId::new("press-1");
+    let item = SyncItem::api_key("mock-api-key");
+
+    let sealed = sealed_mock_key(&from, &to).await;
+    assert_eq!(
+        to.request::<SyncImportKeys>(&SyncImportKeysParams::new(sealed, sync.clone()))
+            .await
+            .unwrap(),
+        SyncImportKeysResponse::new(vec![ImportedSecret::new(
+            api_key("mock-api-key"),
+            ImportOutcome::Saved
+        )])
+    );
+    assert_eq!(target.saved_key().as_deref(), Some("sk-source"));
+
+    target.store.set_secret(KEY_ACCOUNT, "sk-changed").unwrap();
+    assert_eq!(
+        to.request::<SyncStatus>(&SyncStatusParams::new(sync.clone()))
+            .await
+            .unwrap()
+            .items,
+        vec![SyncItemStatus::new(item.clone(), SyncItemState::Changed)]
+    );
+    let revert = SyncRevertParams::new(sync.clone(), vec![item.clone()]);
+    assert_eq!(
+        to.request::<SyncRevert>(&revert).await.unwrap(),
+        SyncRevertResponse::new(vec![RevertedItem::new(
+            item.clone(),
+            RevertOutcome::Changed
+        )])
+    );
+    assert_eq!(
+        to.request::<SyncRevert>(&revert.with_overwrite(vec![item.clone()]))
+            .await
+            .unwrap(),
+        SyncRevertResponse::new(vec![RevertedItem::new(item, RevertOutcome::Restored)])
+    );
+    assert_eq!(target.saved_key().as_deref(), Some("sk-target"));
+    assert_eq!(
+        to.request::<SyncStatus>(&SyncStatusParams::new(sync))
+            .await
+            .map_err(rpc_error)
+            .unwrap_err()
+            .error_code(),
+        Some(ErrorCode::SyncNotFound)
     );
 }

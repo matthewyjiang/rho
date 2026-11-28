@@ -72,6 +72,10 @@
 //! | [`SYNC_RECIPIENT`] | [`SyncRecipientParams`] | [`SyncRecipientResponse`] |
 //! | [`SYNC_EXPORT`] | [`SyncExportParams`] | [`SyncExportResponse`] |
 //! | [`SYNC_COMPARE`] | [`SyncCompareParams`] | [`SyncCompareResponse`] |
+//! | [`SYNC_IMPORT_KEYS`] | [`SyncImportKeysParams`] | [`SyncImportKeysResponse`] |
+//! | [`SYNC_STATUS`] | [`SyncStatusParams`] | [`SyncStatusResponse`] |
+//! | [`SYNC_REVERT`] | [`SyncRevertParams`] | [`SyncRevertResponse`] |
+//! | [`SYNC_DISCARD`] | [`SyncDiscardParams`] | [`SyncDiscardResponse`] |
 //!
 //! The daemon sends these notifications; clients send none.
 //!
@@ -124,6 +128,7 @@ mod setup;
 mod store;
 mod surface;
 mod sync;
+mod sync_journal;
 mod worktree;
 
 pub use auth::{
@@ -279,6 +284,12 @@ pub use sync::{
     SyncCompareParams, SyncCompareResponse, SyncExportParams, SyncExportResponse,
     SyncRecipientParams, SyncRecipientResponse, SYNC_COMPARE, SYNC_EXPORT, SYNC_RECIPIENT,
 };
+pub use sync_journal::{
+    ImportOutcome, ImportedSecret, RevertOutcome, RevertedItem, SyncDiscardParams,
+    SyncDiscardResponse, SyncId, SyncImportKeysParams, SyncImportKeysResponse, SyncItem,
+    SyncItemState, SyncItemStatus, SyncRevertParams, SyncRevertResponse, SyncStatusParams,
+    SyncStatusResponse, SYNC_DISCARD, SYNC_IMPORT_KEYS, SYNC_REVERT, SYNC_STATUS,
+};
 pub use worktree::{
     WorktreePruneParams, WorktreePruneResponse, WorktreeReport, WorktreeVerdict, WORKTREE_PRUNE,
 };
@@ -427,6 +438,10 @@ protocol! {
         SyncRecipient = SYNC_RECIPIENT: SyncRecipientParams => SyncRecipientResponse,
         SyncExport = SYNC_EXPORT: SyncExportParams => SyncExportResponse,
         SyncCompare = SYNC_COMPARE: SyncCompareParams => SyncCompareResponse,
+        SyncImportKeys = SYNC_IMPORT_KEYS: SyncImportKeysParams => SyncImportKeysResponse,
+        SyncStatus = SYNC_STATUS: SyncStatusParams => SyncStatusResponse,
+        SyncRevert = SYNC_REVERT: SyncRevertParams => SyncRevertResponse,
+        SyncDiscard = SYNC_DISCARD: SyncDiscardParams => SyncDiscardResponse,
     }
     notifications {
         // NEXT_MAJOR(rho-protocol): add an optional unix-ms at field to SessionEventParams and remove SessionEventEnvelope.
