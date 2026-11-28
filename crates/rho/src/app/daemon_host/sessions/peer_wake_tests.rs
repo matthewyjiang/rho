@@ -48,7 +48,7 @@ async fn prompt(
     timeout(TEST_BUDGET, sessions.prompt(prompt_params(session, key)))
         .await
         .expect("the daemon answers the prompt")
-        .map(|started| started.turn)
+        .map(|started| started.response.turn)
         .map_err(|error| error.error_code())
 }
 

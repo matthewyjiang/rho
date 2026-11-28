@@ -13,7 +13,7 @@ use pretty_assertions::assert_eq;
 use rho_protocol::{
     methods::{
         JobList, SessionAnswer, SessionAttach, SessionCancel, SessionDetach, SessionHold,
-        SessionNew, SessionPrompt,
+        SessionNew, SessionPrompt, SessionPromptAnswered,
     },
     AnswerStop, ApprovalAsk, ApprovalSource, Ask, Client, ClientEnvironment, ClientError,
     ClientHello, ClientInfo, CompactionStatus, ContentBlock, Cursor, DaemonNotification,
@@ -22,8 +22,8 @@ use rho_protocol::{
     Resolution, RpcError, Seq, SessionActivity, SessionAnswerParams, SessionAttachParams,
     SessionAttachResponse, SessionCancelParams, SessionDetachParams, SessionDetachedParams,
     SessionEvent, SessionEventParams, SessionHoldParams, SessionId, SessionNewParams,
-    SessionPromptParams, SessionSetup, StreamId, ToolCallId, ToolContent, ToolStatus, TurnError,
-    TurnErrorKind, TurnId, TurnOutcome,
+    SessionPromptAnswer, SessionPromptParams, SessionSetup, StreamId, ToolCallId, ToolContent,
+    ToolStatus, TurnError, TurnErrorKind, TurnId, TurnOutcome,
 };
 use rho_tui_pty::IsolatedHome;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -396,8 +396,21 @@ impl Sandbox {
         text: &str,
         key: Option<&str>,
     ) -> Result<TurnId, Option<ErrorCode>> {
+        self.prompt_answered(client, session, text, key)
+            .await
+            .map(|prompted| prompted.response.turn)
+    }
+
+    /// [`Self::prompt_keyed`], with the daemon's whole answer.
+    pub(super) async fn prompt_answered(
+        &self,
+        client: &Client,
+        session: &SessionId,
+        text: &str,
+        key: Option<&str>,
+    ) -> Result<SessionPromptAnswer, Option<ErrorCode>> {
         client
-            .request::<SessionPrompt>(&SessionPromptParams {
+            .request::<SessionPromptAnswered>(&SessionPromptParams {
                 author: rho_protocol::PromptAuthor::Person,
                 session: session.clone(),
                 content: vec![ContentBlock::Text { text: text.into() }],
@@ -407,7 +420,6 @@ impl Sandbox {
                 grant: None,
             })
             .await
-            .map(|prompted| prompted.turn)
             .map_err(|error| match error {
                 ClientError::Rpc { error, .. } => error.error_code(),
                 error => panic!("prompt failed outside the protocol: {error}"),
@@ -1352,6 +1364,84 @@ async fn a_turn_ended_early_is_recorded_and_its_session_continues() {
             sandbox.isolated.daemon_log()
         );
     }
+}
+
+// Covers: a prompt's idempotency key names the user message it saved, not
+// only the session's latest turn: sent again after another turn, and after
+// the daemon restarted, it starts nothing and answers with the first
+// prompt's turn and message, the id a replay gives that message. The
+// latest turn's key, a `/compact` that saved no message, names its
+// message across the restart too.
+// Owner: daemon prompt keys (`sessions/prompt_keys.rs`).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_prompt_key_names_its_saved_message_across_turns_and_restarts() {
+    let sandbox = Sandbox::new();
+    let (mut daemon, client) = sandbox.spawn_daemon(sandbox.rho("fixed"), &[]).await;
+    let session = sandbox.new_session(&client).await;
+    let prompts = [("first", "k1"), ("second", "k2"), ("/compact", "k3")];
+    let mut first = Vec::new();
+    for (text, key) in prompts {
+        let answered = sandbox.prompt_answered(&client, &session, text, Some(key));
+        first.push(answered.await.unwrap());
+        settled_job(&sandbox, &client, &session).await;
+    }
+    let again = sandbox
+        .prompt_answered(&client, &session, "first", Some("k1"))
+        .await;
+
+    drop(client);
+    let stop = sandbox
+        .rho("tool-call")
+        .args(["daemon", "stop"])
+        .status()
+        .unwrap();
+    assert!(stop.success(), "log:\n{}", sandbox.isolated.daemon_log());
+    daemon.wait().unwrap();
+    let client = sandbox.start_daemon("fixed").await;
+    let mut after_restart = Vec::new();
+    for (text, key) in prompts {
+        let answered = sandbox.prompt_answered(&client, &session, text, Some(key));
+        after_restart.push(answered.await);
+    }
+    let (mut follower, _) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
+    // The reopened feed ends its replay with how the last turn ended.
+    follower
+        .read_until(|event| matches!(event, SessionEvent::TurnEnded { .. }))
+        .await;
+    let replayed: Vec<_> = follower
+        .events
+        .iter()
+        .filter_map(|(_, event)| match event {
+            SessionEvent::UserMessage { message, .. } => Some(message.clone()),
+            _ => None,
+        })
+        .collect();
+
+    let sent_again = |first: &SessionPromptAnswer| {
+        SessionPromptAnswer::retry(first.response.clone(), first.message.clone())
+    };
+    assert_eq!(
+        (
+            first
+                .iter()
+                .map(|first| first.sent_again)
+                .collect::<Vec<_>>(),
+            again,
+            after_restart,
+            replayed,
+        ),
+        (
+            vec![false, false, false],
+            Ok(sent_again(&first[0])),
+            first.iter().map(|first| Ok(sent_again(first))).collect(),
+            first[..2]
+                .iter()
+                .filter_map(|first| first.message.clone())
+                .collect(),
+        ),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
 }
 
 // Covers: a session no daemon ran, saved by a foreground `rho run`, is

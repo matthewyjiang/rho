@@ -23,6 +23,13 @@
 //! (unknown session, a rejected command, a `session/cancel` or
 //! `$/cancel_request` while it is held, a close) gets an error response
 //! and no updates, which v2 reserves for prompts never inserted.
+//!
+//! A prompt's `idempotencyKey` makes a retry safe. A retry of a prompt this
+//! connection still holds, or already inserted, answers as that prompt does
+//! (`prompt::hold`). Any other goes to the daemon, which knows the key while
+//! the session keeps the prompt's user message: a retry it recognizes is
+//! answered with the original `messageId` and sends no `user_message` and
+//! no state, as no message was inserted and no work started.
 
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -33,7 +40,11 @@ use agent_client_protocol::{
 };
 
 use super::{background, port::V2Port, requests};
-use crate::app::acp::{prompt::BusyPrompt, sessions::Accept, Adapter, Foreground};
+use crate::app::acp::{
+    prompt::{BusyPrompt, Entry, Prompted, Retries},
+    sessions::Accept,
+    Adapter, Foreground,
+};
 
 pub(super) fn spawn(
     adapter: Arc<Adapter>,
@@ -51,10 +62,21 @@ pub(super) fn spawn(
         Ok(place) => place,
         Err(error) => return responder.respond_with_error(error),
     };
+    let (place, retries) = match place.keyed(request.idempotency_key.clone()) {
+        Entry::Held { place, retries } => (place, retries),
+        Entry::Retry(retry) => {
+            return cx.spawn(async move {
+                match retry.outcome().await {
+                    Ok(message_id) => responder.respond(v2::PromptResponse::new(message_id)),
+                    Err(error) => responder.respond_with_error(error),
+                }
+            });
+        }
+    };
     let port = Arc::new(V2Port::new(cx.clone()));
     cx.spawn(async move {
         let session_id = request.session_id.clone();
-        let unanswered = Arc::new(Mutex::new(Some(responder)));
+        let unanswered = Arc::new(Mutex::new(Some(Answer { responder, retries })));
         let accept: Accept = Box::new({
             let port = Arc::clone(&port);
             let unanswered = Arc::clone(&unanswered);
@@ -77,19 +99,55 @@ pub(super) fn spawn(
                 BusyPrompt::Hold(place),
             )
             .await;
-        let Some(responder) = take(&unanswered) else {
+        let Some(answer) = take(&unanswered) else {
             return Ok(());
         };
-        let error = match result {
-            Err(error) => error,
+        match result {
+            Ok(Prompted::SentAgain { turn, message }) => {
+                // The daemon names the first prompt's message unless that
+                // prompt inserted none it knew, which a turn `rho acp`
+                // starts always does: the retry gets one named after the
+                // turn.
+                let message_id = message.map_or_else(
+                    || format!("rho-user-{turn}"),
+                    |message| message.as_str().to_owned(),
+                );
+                answer.inserted(v2::MessageId::new(message_id))
+            }
             // The turn ended before the daemon saved the prompt, as a
             // cancel that beat it does.
-            Ok(_) => {
-                AcpError::request_cancelled().data("the prompt was cancelled before it started")
-            }
-        };
-        responder.respond_with_error(error)
+            Ok(Prompted::Ended(_)) => answer.failed(
+                AcpError::request_cancelled().data("the prompt was cancelled before it started"),
+            ),
+            Err(error) => answer.failed(error),
+        }
     })
+}
+
+/// A prompt's response until it is sent, and the retries on this
+/// connection that hear its outcome then.
+struct Answer {
+    responder: Responder<v2::PromptResponse>,
+    retries: Option<Retries>,
+}
+
+impl Answer {
+    fn inserted(self, message_id: v2::MessageId) -> Result<(), AcpError> {
+        let answered = self
+            .responder
+            .respond(v2::PromptResponse::new(message_id.clone()));
+        if let Some(retries) = self.retries {
+            retries.tell(Ok(message_id));
+        }
+        answered
+    }
+
+    fn failed(self, error: AcpError) -> Result<(), AcpError> {
+        if let Some(retries) = self.retries {
+            retries.tell(Err(error.clone()));
+        }
+        self.responder.respond_with_error(error)
+    }
 }
 
 /// Reports the inserted user message, `running`, and the prompt's answer.
@@ -99,7 +157,7 @@ fn acknowledge(
     prompt: Vec<v2::ContentBlock>,
     message_id: v1::MessageId,
     running: v2::SessionUpdate,
-    unanswered: &Mutex<Option<Responder<v2::PromptResponse>>>,
+    unanswered: &Mutex<Option<Answer>>,
 ) {
     let message_id = v2::MessageId::new(message_id.0);
     let user_message =
@@ -107,9 +165,7 @@ fn acknowledge(
     let sent = port
         .send_update(session_id, user_message)
         .and_then(|()| port.send_update(session_id, running));
-    let answered = take(unanswered).map_or(Ok(()), |responder| {
-        responder.respond(v2::PromptResponse::new(message_id))
-    });
+    let answered = take(unanswered).map_or(Ok(()), |answer| answer.inserted(message_id));
     if let Err(error) = sent.and(answered) {
         tracing::warn!(%error, "could not acknowledge ACP v2 prompt");
     }

@@ -53,7 +53,12 @@ async fn selecting_a_node_moves_the_model_conversation_and_the_leaf_to_it() {
     let mut runtime = idle_runtime(home.path(), &config).await;
     let add = |runtime: &mut SessionRuntime, text: &str| {
         runtime
-            .append_context(text.into(), Message::user_text(text), [])
+            .append_context(
+                text.into(),
+                Message::user_text(text),
+                /*display_key*/ None,
+                [],
+            )
             .unwrap();
         leaf(runtime).expect("the row saved a node")
     };

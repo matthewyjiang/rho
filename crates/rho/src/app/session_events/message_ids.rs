@@ -39,6 +39,12 @@ pub(super) fn keyed_message_id(key: &MessageKey, part: KeyedPart) -> MessageId {
     })
 }
 
+/// The id of the user message saved as the row keyed `key`, live and
+/// replayed alike, as a keyed prompt's is.
+pub(crate) fn user_message_id(key: &MessageKey) -> MessageId {
+    keyed_message_id(key, KeyedPart::Whole)
+}
+
 /// The id of a live message no save keys, as one outside a run.
 pub(super) fn fresh_message_id() -> MessageId {
     MessageId::new(format!("msg-{}", uuid::Uuid::new_v4()))

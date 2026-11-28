@@ -89,7 +89,7 @@ async fn a_prompt_sent_while_a_change_waits_runs_after_it() {
     let prompted = timeout(TEST_BUDGET, prompt)
         .await
         .expect("the turn saves its prompt once the change applied")
-        .map(|prompted| Some(prompted.turn));
+        .map(|prompted| Some(prompted.response.turn));
 
     let seen: Vec<_> = session
         .feed

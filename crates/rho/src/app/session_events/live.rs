@@ -19,7 +19,7 @@ use rho_sdk::{
 
 use super::{
     cards,
-    message_ids::{fresh_message_id, ChunkKind, MessageStream},
+    message_ids::{fresh_message_id, user_message_id, ChunkKind, MessageStream},
     named_call, opened_call, plan_entries,
     replay::{saved_message_id, SavedTurn},
     result_content, status_update, steer_to_wire, text_content, tools, user_content, CallIds,
@@ -949,6 +949,7 @@ fn hosted_activity(name: &str, detail: &str) -> WireEvent {
 fn inserted_message_id(inserted: &InsertedMessage) -> MessageId {
     match inserted {
         InsertedMessage::Saved(origin) => saved_message_id(origin),
+        InsertedMessage::Keyed(key) => user_message_id(key),
         InsertedMessage::Unreplayed => fresh_message_id(),
     }
 }

@@ -66,9 +66,10 @@ use crate::{
     app::{
         pull_requests::Forge,
         session_events::{LiveEvents, SavedTurn},
-        session_runtime::{SessionHandle, SessionRuntime},
+        session_runtime::{SavedHistory, SessionHandle, SessionRuntime},
     },
     config::Config,
+    session::tree::ProjectedMessage,
 };
 
 mod answer_question;
@@ -99,6 +100,7 @@ mod open;
 mod options;
 mod peer_wake;
 mod processes;
+mod prompt_keys;
 mod pull_request_wake;
 mod pull_requests;
 mod queued;
@@ -133,10 +135,12 @@ use inputs::Inputs;
 use open::open_failed;
 pub(super) use open::{session_environment, Workspace};
 use open::{OpenWith, OpenedSession};
+pub(super) use prompt_keys::KeyDigest;
+use prompt_keys::PromptKeys;
 use queued::Queued;
 use reopen::ReopenLocks;
 use restart_resume::RestartResumes;
-use start::{Entered, KeyedTurn};
+use start::Entered;
 use t3_wake::{T3Wake, WakeDir};
 pub(in crate::app) use turn::DAEMON_COMMANDS;
 use turn::{DaemonTurn, PromptStart, TurnLimit, TurnTask};
@@ -283,10 +287,9 @@ struct TurnSlot {
     /// What the session's current or last turn runs, which decides what a
     /// prompt sent while it runs does. A prompt sets it as its turn starts.
     kind: TurnKind,
-    /// The session's current or last turn that a prompt naming a key
-    /// started, which a prompt sent again with that key answers as (see
-    /// [`start`]). A turn starting replaces it.
-    keyed: Option<KeyedTurn>,
+    /// The turns prompts naming a key started, which a prompt sent again
+    /// with the key answers as (see [`prompt_keys`]).
+    keys: PromptKeys,
     /// Whether the session is in use, idle, or unloaded, as the idle unload
     /// tracks it.
     residency: Residency,
@@ -331,30 +334,37 @@ async fn time_out(session: Weak<LoadedSession>, id: rho_protocol::InputRequestId
 /// could not be read.
 fn saved_replay(live: &mut LiveEvents, runtime: &SessionRuntime, job: &JobId) -> Option<SavedTurn> {
     let saved = runtime.saved_history()?;
-    match saved.display_rows() {
-        Ok(rows) => live.replay(&rows, saved.cwd(), saved.tools()),
-        Err(error) => {
+    let rows = saved_rows(&saved, job)?;
+    live.replay(&rows, saved.cwd(), saved.tools())
+}
+
+/// The rows of `saved` along the session's branch, or `None` when they
+/// could not be read.
+fn saved_rows(saved: &SavedHistory<'_>, job: &JobId) -> Option<Vec<ProjectedMessage>> {
+    saved
+        .display_rows()
+        .inspect_err(|error| {
             tracing::warn!(
                 %job,
                 error = format!("{error:#}"),
                 "could not read the session's saved rows; a reset replays only the turns since, live, until a later turn saves"
             );
-            None
-        }
-    }
+        })
+        .ok()
 }
 
 /// The feed of a session opened as `runtime` with `config`, whose turns are
-/// recorded on `job`, and the mapper that replayed it: the feed begins with
-/// the conversation the session has saved and how the job's last turn
-/// ended, which a new session has neither of, so a client attaching to a
-/// reopened session learns that end (#1661).
+/// recorded on `job`, the mapper that replayed it, and the keyed prompts its
+/// saved rows and job name: the feed begins with the conversation the
+/// session has saved and how the job's last turn ended, which a new session
+/// has neither of, so a client attaching to a reopened session learns that
+/// end (#1661).
 fn opening_feed(
     job: &JobRecord,
     runtime: &SessionRuntime,
     config: &Config,
     auths: &[String],
-) -> (Feed, LiveEvents) {
+) -> (Feed, LiveEvents, PromptKeys) {
     let mut live = LiveEvents::new(
         runtime.workspace_root(),
         runtime.tools(),
@@ -373,8 +383,14 @@ fn opening_feed(
     feed.seed_started_session_defaults(options::started_session_defaults(
         runtime.started_session_defaults(),
     ));
-    if let Some(saved) = saved_replay(&mut live, runtime, &job.id) {
-        feed.end_turn(saved);
+    let saved = runtime.saved_history();
+    let rows = saved.as_ref().and_then(|saved| saved_rows(saved, &job.id));
+    let keys = PromptKeys::loaded(job, rows.as_deref().unwrap_or_default());
+    if let Some(turn) = saved
+        .zip(rows)
+        .and_then(|(saved, rows)| live.replay(&rows, saved.cwd(), saved.tools()))
+    {
+        feed.end_turn(turn);
         feed.seed_usage(&live.context_usage(runtime.context_estimate()));
     }
     // An outcome is recorded with the turn it is of.
@@ -384,7 +400,7 @@ fn opening_feed(
             state_event(&last),
         ]);
     }
-    (feed, live)
+    (feed, live, keys)
 }
 
 impl LoadedSession {
@@ -409,8 +425,7 @@ impl LoadedSession {
             fork_of,
             held_context,
         } = opened;
-        let (feed, live) = opening_feed(job, &runtime, &config, auths);
-        let keyed = KeyedTurn::recorded(job);
+        let (feed, live, keys) = opening_feed(job, &runtime, &config, auths);
         let job = job.id.clone();
         Self {
             id: runtime.session_id().clone(),
@@ -444,7 +459,7 @@ impl LoadedSession {
             turn: Mutex::new(TurnSlot {
                 cancel: CancellationToken::new(),
                 kind: TurnKind::Prompt,
-                keyed,
+                keys,
                 residency: Residency::InUse,
                 hold: None,
                 plan_switches: 0,

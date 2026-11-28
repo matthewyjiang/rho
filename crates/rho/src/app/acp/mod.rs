@@ -456,7 +456,7 @@ fn v1_agent(adapter: Arc<Adapter>) -> impl ConnectTo<Client> {
                 async move |request: PromptRequest, responder, cx| {
                     let adapter = Arc::clone(&adapter);
                     spawn_response(&cx, responder, async move {
-                        let stop = adapter
+                        let prompted = adapter
                             .prompt(
                                 &request.session_id,
                                 &request.prompt,
@@ -464,6 +464,12 @@ fn v1_agent(adapter: Arc<Adapter>) -> impl ConnectTo<Client> {
                                 prompt::BusyPrompt::Reject,
                             )
                             .await?;
+                        let stop = match prompted {
+                            prompt::Prompted::Ended(stop) => stop,
+                            // A v1 prompt names no key, so the daemon never
+                            // takes it for one sent again.
+                            prompt::Prompted::SentAgain { .. } => StopReason::EndTurn,
+                        };
                         Ok(PromptResponse::new(stop))
                     })
                 }

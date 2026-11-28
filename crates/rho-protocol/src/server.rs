@@ -38,8 +38,8 @@ use crate::{
         SessionMcpCompleteResponse, SessionMcpInventory, SessionMcpParams,
         SessionMcpResourceParams, SessionMcpResourceResponse, SessionNewParams, SessionNewResponse,
         SessionObserve, SessionObserveParams, SessionProcessesParams, SessionProcessesResponse,
-        SessionPromptParams, SessionPromptResponse, SessionPullRequestLinkParams,
-        SessionPullRequestLinkResponse, SessionPullRequestListParams,
+        SessionPromptAnswer, SessionPromptParams, SessionPromptResponse,
+        SessionPullRequestLinkParams, SessionPullRequestLinkResponse, SessionPullRequestListParams,
         SessionPullRequestListResponse, SessionPullRequestShowParams,
         SessionPullRequestShowResponse, SessionPullRequestUnlinkParams,
         SessionPullRequestUnlinkResponse, SessionRenameParams, SessionRenameResponse,
@@ -158,16 +158,34 @@ pub trait Service: SettingsService + Send + Sync {
         unsupported(SESSION_FORK)
     }
 
-    /// Handles `rho/session/prompt`: start a turn the service runs in a task
-    /// of its own, resolving once the turn has begun (see
-    /// [`SessionPromptResponse`]). The turn outlives the request and the
-    /// connection.
+    /// Handles `rho/session/prompt` unless [`Self::answer_prompt`] is
+    /// overridden: start a turn the service runs in a task of its own,
+    /// resolving once the turn has begun (see [`SessionPromptResponse`]).
+    /// The turn outlives the request and the connection.
     fn prompt_session(
         &self,
         params: SessionPromptParams,
     ) -> impl Future<Output = Result<SessionPromptResponse, RpcError>> + Send {
         let _ = params;
         unsupported(SESSION_PROMPT)
+    }
+
+    /// Handles `rho/session/prompt` as [`Self::prompt_session`] does, also
+    /// naming the message the prompt inserted and whether it was sent
+    /// again ([`SessionPromptAnswer`]). By default, the answer of
+    /// [`Self::prompt_session`], which names neither.
+    ///
+    /// # Next major
+    ///
+    /// NEXT_MAJOR(rho-protocol): add message and sent_again to SessionPromptResponse and remove SessionPromptAnswer, SessionPromptAnswered and Service::answer_prompt.
+    fn answer_prompt(
+        &self,
+        params: SessionPromptParams,
+    ) -> impl Future<Output = Result<SessionPromptAnswer, RpcError>> + Send {
+        async move {
+            let response = self.prompt_session(params).await?;
+            Ok(SessionPromptAnswer::new(response, /*message*/ None))
+        }
     }
 
     /// Handles `rho/session/cancel`: ask the session's turn in progress to

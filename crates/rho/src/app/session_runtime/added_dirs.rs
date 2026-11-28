@@ -63,7 +63,12 @@ impl SessionRuntime {
             .unwrap_or_default();
         // The row also advances the revision the saved set rides on.
         let (model, display) = crate::prompt::added_dir_context(&dir, &new_files);
-        if let Err(error) = self.append_context(model, Message::user_text(display), []) {
+        if let Err(error) = self.append_context(
+            model,
+            Message::user_text(display),
+            /*display_key*/ None,
+            [],
+        ) {
             if let Some(template) = self.built.prompt_template.as_mut() {
                 template.set_added_dirs(&previous);
             }

@@ -39,7 +39,7 @@ async fn prompt(
     timeout(TEST_BUDGET, prompted)
         .await
         .expect("the daemon answers the prompt")
-        .map(|prompted| prompted.turn)
+        .map(|prompted| prompted.response.turn)
         .map_err(|error| error.error_code())
 }
 

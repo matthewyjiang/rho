@@ -42,13 +42,13 @@ use super::{
     events::{InsertedMessage, TurnKeys},
     left_out::LeftOut,
     saved_settings::SettingsRecord,
-    SessionRuntime, StartedSessions,
+    PromptScope, SessionRuntime, StartedSessions,
 };
 use crate::{
     added_dirs::AddedDirs,
     app::active_prompt::ActivePrompt,
     session::{
-        tree::{DisplayKeys, DisplayRowOrigin, NodeId},
+        tree::{DisplayKeys, DisplayRowOrigin, MessageKey, NodeId},
         Session as StoredSession, SessionPersistence, SessionProvenance,
     },
     tools::todo::TodoState,
@@ -210,28 +210,31 @@ impl SessionRuntime {
         Ok(checkpoint)
     }
 
-    /// Saves the turn's user message before its run starts, and returns the
-    /// message as inserted.
+    /// Saves the turn's user message before its run starts, under the key
+    /// `prompt` names for it, if any, and returns the message as inserted.
     pub(super) fn insert_user_message(
         &mut self,
         checkpoint: &TurnCheckpoint,
+        prompt: &PromptScope,
     ) -> anyhow::Result<InsertedMessage> {
         let mut display = checkpoint.0.lock_display();
         let Some(user) = display.unsaved_user.clone() else {
             return Ok(InsertedMessage::Unreplayed);
         };
-        let (inserted, []) = self.save_prompt_rows(user, [])?;
+        let (inserted, []) = self.save_prompt_rows(user, prompt.take_user_key(), [])?;
         display.mark_user_written();
         Ok(inserted)
     }
 
-    /// Saves the prompt's `user` message with the display rows `following`
-    /// it as one node, and returns the rows a reload replays each message
-    /// as, in order. An ephemeral runtime saves nothing, so its messages are
-    /// unreplayed.
+    /// Saves the prompt's `user` message, under `user_key` when the host
+    /// named one (see [`PromptScope::key_user_message`]), with the display
+    /// rows `following` it as one node, and returns the rows a reload
+    /// replays each message as, in order. An ephemeral runtime saves
+    /// nothing, so its messages are unreplayed.
     pub(crate) fn save_prompt_rows<const N: usize>(
         &mut self,
         user: Message,
+        user_key: Option<MessageKey>,
         following: [Message; N],
     ) -> anyhow::Result<(InsertedMessage, [InsertedMessage; N])> {
         let unreplayed = || {
@@ -245,14 +248,16 @@ impl SessionRuntime {
         let Some(stored) = self.stored()? else {
             return Ok(unreplayed());
         };
-        let node = stored.save_snapshot_node(&snapshot, &rows)?;
+        let keys: Vec<_> = user_key.iter().map(|key| (0, key.clone())).collect();
+        let node = stored.save_snapshot_node(&snapshot, &rows, &keys)?;
         let row = |row| {
             InsertedMessage::Saved(DisplayRowOrigin {
                 node: node.clone(),
                 row,
             })
         };
-        Ok((row(0), std::array::from_fn(|index| row(index + 1))))
+        let user = user_key.map_or_else(|| row(0), InsertedMessage::Keyed);
+        Ok((user, std::array::from_fn(|index| row(index + 1))))
     }
 
     /// Saves the settled turn with the display rows its step checkpoints

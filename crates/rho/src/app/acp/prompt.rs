@@ -9,8 +9,14 @@
 //!
 //! A prompt that finds the session busy is refused on ACP v1 and held on
 //! ACP v2 until the session is free ([`BusyPrompt`], `hold`).
+//!
+//! An ACP v2 prompt hands the daemon its idempotency key. A key the daemon
+//! knows from an earlier prompt starts nothing: the daemon answers with that
+//! prompt's turn and user message ([`Prompted::SentAgain`]), and the pump
+//! follows no turn for it.
 
 mod hold;
+mod retry;
 
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -22,8 +28,9 @@ use agent_client_protocol::{
     Error as AcpError, ErrorCode,
 };
 use rho_protocol::{
-    methods::SessionPrompt, AnswerStop, ClientEnvironment, ClientError,
-    ErrorCode as DaemonErrorCode, SessionPromptParams, TurnError, TurnErrorKind, TurnOutcome,
+    methods::SessionPromptAnswered, AnswerStop, ClientEnvironment, ClientError,
+    ErrorCode as DaemonErrorCode, SessionPromptParams, TurnError, TurnErrorKind, TurnId,
+    TurnOutcome,
 };
 use tokio::sync::oneshot;
 
@@ -33,7 +40,8 @@ use super::{
     sessions::{Accept, Busy, Control, Live, Waiter},
     Adapter,
 };
-pub(super) use hold::{Holds, Place};
+pub(super) use hold::{Entry, Holds, Place};
+pub(super) use retry::Retries;
 
 /// What a prompt does while the session's foreground work is busy.
 pub(super) enum BusyPrompt {
@@ -44,6 +52,19 @@ pub(super) enum BusyPrompt {
     /// Hold it in its place in the session's line and insert it as the
     /// session's next turn once the session is free, as ACP v2 requires.
     Hold(Place),
+}
+
+/// How a prompt the daemon took ended.
+pub(super) enum Prompted {
+    /// Its turn ended so.
+    Ended(StopReason),
+    /// Its idempotency key is one an earlier prompt named, so it started
+    /// nothing: `message` is the user message that prompt inserted, when the
+    /// daemon knows it, of `turn`. Only an ACP v2 prompt names a key.
+    SentAgain {
+        turn: TurnId,
+        message: Option<rho_protocol::MessageId>,
+    },
 }
 
 impl Adapter {
@@ -59,7 +80,7 @@ impl Adapter {
         content: &[ContentBlock],
         accept: Option<Accept>,
         busy: BusyPrompt,
-    ) -> Result<StopReason, AcpError> {
+    ) -> Result<Prompted, AcpError> {
         let accept = Arc::new(Mutex::new(accept));
         match busy {
             BusyPrompt::Reject => {
@@ -80,7 +101,7 @@ impl Adapter {
                 // The host closed the session while this prompt queued
                 // behind a cancelled one.
                 if live.closing.load(Ordering::Acquire) {
-                    return Ok(StopReason::Cancelled);
+                    return Ok(Prompted::Ended(StopReason::Cancelled));
                 }
                 self.send_prompt(&live, content, &accept, Insert::Now)
                     .await
@@ -91,7 +112,7 @@ impl Adapter {
                 let live = place.live();
                 // The host closed the session while this prompt was held.
                 if live.closing.load(Ordering::Acquire) {
-                    return Ok(StopReason::Cancelled);
+                    return Ok(Prompted::Ended(StopReason::Cancelled));
                 }
                 loop {
                     // Attaches the session, which may have gone stale while
@@ -120,7 +141,7 @@ impl Adapter {
         content: &[ContentBlock],
         accept: &Arc<Mutex<Option<Accept>>>,
         insert: Insert<'_>,
-    ) -> Result<StopReason, Refused> {
+    ) -> Result<Prompted, Refused> {
         let link = self.daemon.link().await.map_err(AcpError::from)?;
         let (outcome, ended) = oneshot::channel();
         let waiter = Waiter {
@@ -129,19 +150,26 @@ impl Adapter {
         };
         let (began, turn) = oneshot::channel();
         live.deliver(&link, Control::Arm { waiter, turn }).await?;
+        let build = match link.skew() {
+            None => DaemonBuild::Same,
+            Some(_) => DaemonBuild::Other,
+        };
+        let idempotency_key = match (insert, build) {
+            (Insert::Held(place), DaemonBuild::Same) => place
+                .key()
+                .map(|key| rho_protocol::IdempotencyKey::new(key.as_str())),
+            // A daemon of another build may be an older one, which answers
+            // a retry with a turn that may have ended without saying it
+            // started none, so the pump would wait for that turn forever.
+            (Insert::Held(_), DaemonBuild::Other) | (Insert::Now, _) => None,
+        };
         let params = SessionPromptParams {
             author: rho_protocol::PromptAuthor::Person,
             session: live.id.clone(),
-            content: self.launch.prompt_content(
-                content,
-                match link.skew() {
-                    None => DaemonBuild::Same,
-                    Some(_) => DaemonBuild::Other,
-                },
-            ),
+            content: self.launch.prompt_content(content, build),
             timeout_ms: None,
             environment: ClientEnvironment::of_this_process(),
-            idempotency_key: None,
+            idempotency_key,
             grant: None,
         };
         let busy = live.watch_busy();
@@ -149,17 +177,26 @@ impl Adapter {
         if let Insert::Held(place) = insert {
             place.check()?;
         }
-        let error = match link.request::<SessionPrompt>(&params).await {
-            Ok(response) => {
+        let error = match link.request::<SessionPromptAnswered>(&params).await {
+            Ok(answer) if answer.sent_again => {
+                // No turn of this prompt's to follow: the pump reads on.
+                drop(began);
+                return Ok(Prompted::SentAgain {
+                    turn: answer.response.turn,
+                    message: answer.message,
+                });
+            }
+            Ok(answer) => {
                 // A pump that is gone fails `ended`.
-                let _ = began.send(response.turn);
+                let _ = began.send(answer.response.turn);
                 // A cancel read while the request was on its way may have
                 // reached the daemon before the prompt and stopped nothing;
                 // the prompt's turn, now under way, is the one it meant.
                 if matches!(insert, Insert::Held(place) if place.session_cancelled()) {
                     self.stop_turn(live).await;
                 }
-                return Ok(stop_reason(ended.await.map_err(|_| daemon::lost())??)?);
+                let stop = stop_reason(ended.await.map_err(|_| daemon::lost())??)?;
+                return Ok(Prompted::Ended(stop));
             }
             Err(error) => error,
         };
@@ -173,7 +210,7 @@ impl Adapter {
             let _ = done.await;
         }
         if let Some(outcome) = error.turn_ended() {
-            return Ok(stop_reason(outcome)?);
+            return Ok(Prompted::Ended(stop_reason(outcome)?));
         }
         Err(match error.error_code() {
             Some(DaemonErrorCode::SessionBusy) => {

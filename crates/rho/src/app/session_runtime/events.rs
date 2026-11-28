@@ -60,6 +60,9 @@ pub(crate) struct PlanApprovalRequest {
 pub(crate) enum InsertedMessage {
     /// Saved as this display row; a reload replays the message from it.
     Saved(DisplayRowOrigin),
+    /// Saved under this key, which a reload replays the message from, as
+    /// a prompt the host names by its idempotency key is.
+    Keyed(MessageKey),
     /// Not replayed, such as the prompt of an ephemeral session, or of a
     /// host command that saves nothing.
     Unreplayed,
