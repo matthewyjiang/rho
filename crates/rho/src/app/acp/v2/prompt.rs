@@ -16,9 +16,13 @@
 //! Both state updates list the session's background work as the host was
 //! last told it, holding it while they send ([`super::background`]).
 //!
-//! A prompt that stops before its message is inserted (busy or unknown
-//! session, a rejected command, a cancel or close first) gets an error
-//! response and no updates, which v2 reserves for prompts never inserted.
+//! A prompt that arrives while the session is busy, with this host's
+//! prompt, another client's, or a turn the daemon started, is held, its
+//! response pending, and inserted as the session's next turn
+//! (`prompt::hold`). A prompt that stops before its message is inserted
+//! (unknown session, a rejected command, a `session/cancel` or
+//! `$/cancel_request` while it is held, a close) gets an error response
+//! and no updates, which v2 reserves for prompts never inserted.
 
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -29,7 +33,7 @@ use agent_client_protocol::{
 };
 
 use super::{background, port::V2Port, requests};
-use crate::app::acp::{sessions::Accept, Adapter, Foreground};
+use crate::app::acp::{prompt::BusyPrompt, sessions::Accept, Adapter, Foreground};
 
 pub(super) fn spawn(
     adapter: Arc<Adapter>,
@@ -37,12 +41,18 @@ pub(super) fn spawn(
     responder: Responder<v2::PromptResponse>,
     cx: V2ConnectionTo<Client>,
 ) -> Result<(), AcpError> {
+    let v1_request = match requests::prompt_request(&request) {
+        Ok(v1_request) => v1_request,
+        Err(error) => return responder.respond_with_error(error),
+    };
+    // Before the connection reads on, so the prompt is in line ahead of
+    // every prompt and cancel the host sent after it.
+    let place = match adapter.hold(&v1_request.session_id, responder.cancellation()) {
+        Ok(place) => place,
+        Err(error) => return responder.respond_with_error(error),
+    };
     let port = Arc::new(V2Port::new(cx.clone()));
     cx.spawn(async move {
-        let v1_request = match requests::prompt_request(&request) {
-            Ok(v1_request) => v1_request,
-            Err(error) => return responder.respond_with_error(error),
-        };
         let session_id = request.session_id.clone();
         let unanswered = Arc::new(Mutex::new(Some(responder)));
         let accept: Accept = Box::new({
@@ -60,7 +70,12 @@ pub(super) fn spawn(
             }
         });
         let result = adapter
-            .prompt(&v1_request.session_id, &v1_request.prompt, Some(accept))
+            .prompt(
+                &v1_request.session_id,
+                &v1_request.prompt,
+                Some(accept),
+                BusyPrompt::Hold(place),
+            )
             .await;
         let Some(responder) = take(&unanswered) else {
             return Ok(());

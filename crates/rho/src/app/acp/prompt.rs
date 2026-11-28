@@ -6,6 +6,11 @@
 //! message and end, which arrive as events, are matched to the prompt by
 //! that id. The daemon answers the prompt once it saved it, or with the
 //! turn's outcome when the turn ended first (a cancel that beat it).
+//!
+//! A prompt that finds the session busy is refused on ACP v1 and held on
+//! ACP v2 until the session is free ([`BusyPrompt`], `hold`).
+
+mod hold;
 
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -17,8 +22,8 @@ use agent_client_protocol::{
     Error as AcpError, ErrorCode,
 };
 use rho_protocol::{
-    methods::SessionPrompt, AnswerStop, ClientEnvironment, SessionPromptParams, TurnError,
-    TurnErrorKind, TurnOutcome,
+    methods::SessionPrompt, AnswerStop, ClientEnvironment, ErrorCode as DaemonErrorCode,
+    SessionPromptParams, TurnError, TurnErrorKind, TurnOutcome,
 };
 use tokio::sync::oneshot;
 
@@ -28,6 +33,18 @@ use super::{
     sessions::{Accept, Control, Waiter},
     Adapter,
 };
+pub(super) use hold::{Holds, Place};
+
+/// What a prompt does while the session's foreground work is busy.
+pub(super) enum BusyPrompt {
+    /// Refuse it with invalid request, as ACP v1 does: a v1 host prompts
+    /// once its last prompt was answered. A prompt sent right after a
+    /// cancel waits for the cancelled turn instead.
+    Reject,
+    /// Hold it in its place in the session's line and insert it as the
+    /// session's next turn once the session is free, as ACP v2 requires.
+    Hold(Place),
+}
 
 impl Adapter {
     /// Runs `content` as a prompt on session `session_id` until its turn
@@ -35,24 +52,36 @@ impl Adapter {
     /// once the daemon saved it, before the turn's end; a prompt whose turn
     /// ended before it began never calls it. The session's pump reports
     /// the turn's end to the host ([`super::AcpClientPort::turn_ended`]).
+    /// `busy` says what a prompt does while the session runs another turn.
     pub(super) async fn prompt(
         &self,
         session_id: &AcpSessionId,
         content: &[ContentBlock],
         accept: Option<Accept>,
+        busy: BusyPrompt,
     ) -> Result<StopReason, AcpError> {
-        let live = self.live(session_id).await?;
-        let _turn = match live.prompt.try_lock() {
-            Ok(turn) => turn,
-            // A host that cancels and prompts again at once waits for the
-            // cancelled turn.
-            Err(_) if live.cancelling.load(Ordering::Acquire) => live.prompt.lock().await,
-            Err(_) => {
-                return Err(AcpError::invalid_request().data(format!(
-                    "session '{}' already has an active prompt",
-                    session_id.0
-                )));
-            }
+        let place = match busy {
+            BusyPrompt::Reject => None,
+            BusyPrompt::Hold(place) => Some(place),
+        };
+        let live = match &place {
+            None => self.live(session_id).await?,
+            Some(place) => Arc::clone(place.live()),
+        };
+        let _turn = match &place {
+            Some(place) => place.take_turn().await?,
+            None => match live.prompt.try_lock() {
+                Ok(turn) => turn,
+                // A host that cancels and prompts again at once waits for
+                // the cancelled turn.
+                Err(_) if live.cancelling.load(Ordering::Acquire) => live.prompt.lock().await,
+                Err(_) => {
+                    return Err(AcpError::invalid_request().data(format!(
+                        "session '{}' already has an active prompt",
+                        session_id.0
+                    )));
+                }
+            },
         };
         let _cancelled = ClearOnDrop(&live.cancelling);
         // The host closed the session while this prompt queued behind a
@@ -60,51 +89,71 @@ impl Adapter {
         if live.closing.load(Ordering::Acquire) {
             return Ok(StopReason::Cancelled);
         }
-        let link = self.daemon.link().await?;
-        let (outcome, ended) = oneshot::channel();
-        let waiter = Waiter {
-            outcome,
-            accept: Arc::new(Mutex::new(accept)),
-        };
-        let (began, turn) = oneshot::channel();
-        live.deliver(&link, Control::Arm { waiter, turn }).await?;
-        let params = SessionPromptParams {
-            author: rho_protocol::PromptAuthor::Person,
-            session: live.id.clone(),
-            content: self.launch.prompt_content(
-                content,
-                match link.skew() {
-                    None => DaemonBuild::Same,
-                    Some(_) => DaemonBuild::Other,
-                },
-            ),
-            timeout_ms: None,
-            environment: ClientEnvironment::of_this_process(),
-            idempotency_key: None,
-            grant: None,
-        };
-        let outcome = match link.request::<SessionPrompt>(&params).await {
-            Ok(response) => {
-                // A pump that is gone fails `ended`.
-                let _ = began.send(response.turn);
-                ended.await.map_err(|_| daemon::lost())??
+        let accept = Arc::new(Mutex::new(accept));
+        loop {
+            // A held prompt may have waited out the session's attachment.
+            if place.is_some() {
+                self.live(session_id).await?;
             }
-            Err(error) => {
-                // No turn to wait on: the pump reads on.
-                drop(began);
-                // What the turn showed before it ended, such as a menu its
-                // end refreshed, reaches the host before this answer.
-                let (flushed, done) = oneshot::channel();
-                if live.deliver(&link, Control::Flush(flushed)).await.is_ok() {
-                    let _ = done.await;
+            let link = self.daemon.link().await?;
+            let (outcome, ended) = oneshot::channel();
+            let waiter = Waiter {
+                outcome,
+                accept: Arc::clone(&accept),
+            };
+            let (began, turn) = oneshot::channel();
+            live.deliver(&link, Control::Arm { waiter, turn }).await?;
+            let params = SessionPromptParams {
+                author: rho_protocol::PromptAuthor::Person,
+                session: live.id.clone(),
+                content: self.launch.prompt_content(
+                    content,
+                    match link.skew() {
+                        None => DaemonBuild::Same,
+                        Some(_) => DaemonBuild::Other,
+                    },
+                ),
+                timeout_ms: None,
+                environment: ClientEnvironment::of_this_process(),
+                idempotency_key: None,
+                grant: None,
+            };
+            let busy = live.watch_busy();
+            // Past this point the daemon may insert the prompt, so a cancel
+            // that arrives later cancels its turn instead.
+            if let Some(place) = &place {
+                place.check()?;
+            }
+            let error = match link.request::<SessionPrompt>(&params).await {
+                Ok(response) => {
+                    // A pump that is gone fails `ended`.
+                    let _ = began.send(response.turn);
+                    return stop_reason(ended.await.map_err(|_| daemon::lost())??);
                 }
-                return match error.turn_ended() {
-                    Some(outcome) => stop_reason(outcome),
-                    None => Err(daemon::daemon_error(&error)),
-                };
+                Err(error) => error,
+            };
+            // No turn to wait on: the pump reads on.
+            drop(began);
+            // What the turn showed before it ended, such as a menu its end
+            // refreshed, reaches the host before this answer, and a busy
+            // session's state reaches `busy`.
+            let (flushed, done) = oneshot::channel();
+            if live.deliver(&link, Control::Flush(flushed)).await.is_ok() {
+                let _ = done.await;
             }
-        };
-        stop_reason(outcome)
+            if let Some(outcome) = error.turn_ended() {
+                return stop_reason(outcome);
+            }
+            match &place {
+                // Another client's turn, or one the daemon started to hand
+                // the model finished background work, holds the session:
+                // the prompt stays held until that turn ends.
+                Some(place) if error.error_code() == Some(DaemonErrorCode::SessionBusy) => {
+                    place.until_free(busy).await?;
+                }
+                _ => return Err(daemon::daemon_error(&error)),
+            }
+        }
     }
 }
 
