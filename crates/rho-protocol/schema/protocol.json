@@ -11311,7 +11311,7 @@
       "description": "The values a setting takes."
     },
     "SettingSpec": {
-      "description": "One setting, as a settings screen shows it.",
+      "description": "One setting, as a settings screen shows it.\n\n# Next major\n\nNEXT_MAJOR(rho-protocol): make SettingSpec #[non_exhaustive] and build it with SettingSpec::new(key, kind, category, label, help, applies) plus with_* setters for the optional fields, so later fields are additive.\n\nEvery field is public and the struct is exhaustive, so a new field\nbreaks struct literals.",
       "properties": {
         "applies": {
           "$ref": "#/$defs/Applies"
@@ -11346,6 +11346,14 @@
         },
         "overridable_per_project": {
           "description": "Whether a project may override the setting once project config\nexists; settings that size the daemon itself never may.",
+          "type": "boolean"
+        },
+        "per_machine": {
+          "description": "Whether the setting belongs to one machine, such as one that sizes\nthe daemon or names a program or path there, so copying settings\nfrom one daemon to another leaves it out unless the user picks it.\nAbsent, and false, from a daemon that predates it.",
+          "type": "boolean"
+        },
+        "read_only": {
+          "description": "Whether `rho/config/set` refuses the agent setting, which another\nmethod changes, such as `behavior.credential_store` through\n`rho/auth/choose_store`. A client offers no edit for it, and copying\nsettings between daemons leaves it out. A client's own settings\n([`ConfigRegisterParams`]) may not set it. Absent, and false, from a\ndaemon that predates it.",
           "type": "boolean"
         },
         "section": {

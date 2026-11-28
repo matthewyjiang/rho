@@ -23,6 +23,8 @@ const META: SettingMeta = SettingMeta {
     help: "Test.",
     applies: Apply::Immediately,
     overridable_per_project: false,
+    per_machine: false,
+    changed_through: None,
 };
 
 static FLAG: Setting<Store, bool> = Setting {

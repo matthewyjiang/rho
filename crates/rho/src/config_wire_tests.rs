@@ -332,12 +332,15 @@ fn spec(key: &str, kind: SettingKind, default: Option<SettingValue>) -> SettingS
         help: String::new(),
         applies: rho_protocol::Applies::Immediately,
         overridable_per_project: false,
+        per_machine: false,
+        read_only: false,
     }
 }
 
 // Covers: a client's registered settings must be storable as plain TOML
 // values at keys that do not collide, with defaults their kinds take, or
-// the daemon would write a file it cannot read back.
+// the daemon would write a file it cannot read back; and none may be
+// read-only, which nothing would enforce.
 // Owner: config wire codec.
 #[test]
 fn client_specs_are_refused_unless_storable() {
@@ -397,6 +400,16 @@ fn client_specs_are_refused_unless_storable() {
             "a key that is not a bare path",
             vec![spec("a b", SettingKind::Bool, None)],
             Some("setting key `a b` must be dotted letters, digits, `_`, or `-`"),
+        ),
+        (
+            "a read-only setting",
+            vec![SettingSpec {
+                read_only: true,
+                ..spec("locked", SettingKind::Bool, None)
+            }],
+            Some(
+                "setting `locked` cannot be read-only: only rho/config/set changes a client's settings",
+            ),
         ),
     ];
     for (name, specs, expected) in cases {

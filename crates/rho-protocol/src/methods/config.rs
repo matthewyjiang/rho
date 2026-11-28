@@ -34,6 +34,13 @@ impl fmt::Display for SettingKey {
 }
 
 /// One setting, as a settings screen shows it.
+///
+/// # Next major
+///
+/// NEXT_MAJOR(rho-protocol): make SettingSpec #[non_exhaustive] and build it with SettingSpec::new(key, kind, category, label, help, applies) plus with_* setters for the optional fields, so later fields are additive.
+///
+/// Every field is public and the struct is exhaustive, so a new field
+/// breaks struct literals.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SettingSpec {
     pub key: SettingKey,
@@ -55,6 +62,20 @@ pub struct SettingSpec {
     /// Whether a project may override the setting once project config
     /// exists; settings that size the daemon itself never may.
     pub overridable_per_project: bool,
+    /// Whether the setting belongs to one machine, such as one that sizes
+    /// the daemon or names a program or path there, so copying settings
+    /// from one daemon to another leaves it out unless the user picks it.
+    /// Absent, and false, from a daemon that predates it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub per_machine: bool,
+    /// Whether `rho/config/set` refuses the agent setting, which another
+    /// method changes, such as `behavior.credential_store` through
+    /// `rho/auth/choose_store`. A client offers no edit for it, and copying
+    /// settings between daemons leaves it out. A client's own settings
+    /// ([`ConfigRegisterParams`]) may not set it. Absent, and false, from a
+    /// daemon that predates it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub read_only: bool,
 }
 
 /// The values a setting takes.
@@ -469,3 +490,7 @@ pub struct ConfigChangedParams {
     /// The whole error list, which replaces the last one.
     pub errors: Vec<ConfigError>,
 }
+
+#[cfg(test)]
+#[path = "config_tests.rs"]
+mod tests;

@@ -23,6 +23,8 @@ fn spec(key: &str, label: &str, kind: SettingKind, applies: Applies) -> SettingS
         help: format!("{label} help."),
         applies,
         overridable_per_project: false,
+        per_machine: false,
+        read_only: false,
     }
 }
 
@@ -127,7 +129,8 @@ pub(in crate::tui) fn settings() -> DaemonSettings {
             Applies::Immediately,
         )
     };
-    // The daemon changes it only through `rho/auth/choose_store`.
+    // The daemon changes it only through `rho/auth/choose_store`. Not
+    // flagged, as a daemon from before `read_only` sends it.
     let store = SettingSpec {
         category: "providers".into(),
         section: None,
@@ -135,6 +138,18 @@ pub(in crate::tui) fn settings() -> DaemonSettings {
             "behavior.credential_store",
             "Credential store",
             SettingKind::Text,
+            Applies::Restart,
+        )
+    };
+    // Another method changes it, and the daemon says so.
+    let locked = SettingSpec {
+        category: "providers".into(),
+        section: None,
+        read_only: true,
+        ..spec(
+            "providers.locked",
+            "Locked",
+            SettingKind::Bool,
             Applies::Restart,
         )
     };
@@ -158,7 +173,7 @@ pub(in crate::tui) fn settings() -> DaemonSettings {
                 label: "Providers".into(),
             },
         ],
-        settings: vec![mode, model, shell, threshold, store],
+        settings: vec![mode, model, shell, threshold, store, locked],
         file_only: Vec::new(),
     };
     let agent = values(
@@ -256,8 +271,8 @@ fn setting(namespace: SettingsNamespace, key: &str) -> Option<ConfigRow> {
 
 // Covers: the root lists each agent category that has settings, in schema
 // order, then the `tui` client's; an empty category would open a blank page.
-// The credential store, which only `rho/auth/choose_store` changes, is left
-// out, and its category with it.
+// A `read_only` setting is left out, and so is the credential store from a
+// daemon that predates the flag; their category goes with them.
 // Owner: daemon settings schema → `/config` rows (pure).
 #[test]
 fn root_rows_list_every_category_with_settings() {
