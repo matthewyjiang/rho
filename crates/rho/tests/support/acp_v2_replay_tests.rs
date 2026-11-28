@@ -320,12 +320,18 @@ fn v2_resume_of_its_own_running_prompt_keeps_the_prompt() {
         "jsonrpc": "2.0", "id": server.next_id, "method": "session/prompt",
         "params": {"sessionId": session_id, "prompt": [{"type": "text", "text": call.to_string()}]},
     }));
-    let asked = loop {
-        let message = server.recv("the prompt's permission request");
+    // The permission request and the `requires_action` state reach the
+    // host in either order; both are in before the resume, so all of the
+    // turn's live traffic so far precedes it.
+    let (mut asked, mut waiting) = (None, false);
+    while asked.is_none() || !waiting {
+        let message = server.recv("the prompt's permission request and requires_action");
+        waiting |= kind(&message) == "state:requires_action";
         if message["method"] == "session/request_permission" {
-            break message;
+            asked = Some(message);
         }
-    };
+    }
+    let asked = asked.unwrap();
     server.next_id += 1;
     let held = server.next_id;
     server.send(&json!({
