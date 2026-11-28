@@ -168,8 +168,9 @@ pub use methods::{
 };
 pub use methods::{
     BackgroundItem, BackgroundStatus, BackgroundWork, SessionBackground,
-    SessionBackgroundListParams, SessionBackgroundListResponse, SessionBackgroundStopParams,
-    SessionBackgroundStopResponse, SESSION_BACKGROUND_LIST, SESSION_BACKGROUND_STOP,
+    SessionBackgroundHoldParams, SessionBackgroundHoldResponse, SessionBackgroundListParams,
+    SessionBackgroundListResponse, SessionBackgroundStopParams, SessionBackgroundStopResponse,
+    SESSION_BACKGROUND_HOLD, SESSION_BACKGROUND_LIST, SESSION_BACKGROUND_STOP,
 };
 pub use methods::{
     BranchLookup, BranchPullRequest, LinkedPullRequest, ListedSessionPullRequests,
@@ -218,11 +219,11 @@ pub use methods::{
     ConfiguredMcpServer, McpListParams, McpListResponse, McpServerSource, McpTransport, MCP_LIST,
 };
 pub use methods::{
-    DetailedSessionSummary, ExcerptRole, SearchExcerpt, SearchLocation, SessionDeleteParams,
-    SessionDeleteResponse, SessionListDetailedResponse, SessionListParams, SessionListResponse,
-    SessionRenameParams, SessionRenameResponse, SessionSearchHit, SessionSearchParams,
-    SessionSearchResponse, SessionSummary, SESSION_DELETE, SESSION_LIST, SESSION_LIST_DETAILED,
-    SESSION_RENAME, SESSION_SEARCH,
+    DeleteWork, DetailedSessionSummary, ExcerptRole, SearchExcerpt, SearchLocation,
+    SessionDeleteParams, SessionDeleteResponse, SessionListDetailedResponse, SessionListParams,
+    SessionListResponse, SessionRenameParams, SessionRenameResponse, SessionSearchHit,
+    SessionSearchParams, SessionSearchResponse, SessionSummary, SESSION_DELETE, SESSION_LIST,
+    SESSION_LIST_DETAILED, SESSION_RENAME, SESSION_SEARCH,
 };
 pub use methods::{
     HooksFile, HooksFileScope, HooksFileStatus, HooksListParams, HooksListResponse, HOOKS_LIST,

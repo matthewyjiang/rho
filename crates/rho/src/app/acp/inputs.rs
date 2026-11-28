@@ -13,9 +13,13 @@
 //!   forms. A host without forms leaves it to the other clients: sessions
 //!   it opens ask none (the daemon declines an MCP server's question
 //!   itself), but a session another client opened may.
+//!
+//! Closing a session on ACP v2 withdraws its open requests from the host
+//! before it answers ([`Asks::withdrawn`]).
 
 use std::{
     collections::HashMap,
+    future::Future,
     sync::{atomic::AtomicU64, Arc},
 };
 
@@ -25,7 +29,7 @@ use rho_protocol::{
     Ask, ClientError, ErrorCode, InputAnswer, InputRequest, InputRequestId, SessionAnswerParams,
     SessionHoldParams, SessionId,
 };
-use tokio::task::JoinHandle;
+use tokio::{sync::watch, task::JoinHandle};
 
 use super::{
     elicitation,
@@ -46,6 +50,45 @@ pub(super) struct InputContext {
     /// Numbers the placeholder cards of calls the host never saw, across
     /// this process's sessions.
     pub(super) placeholders: Arc<AtomicU64>,
+    /// The session's input tasks, each of which may have a request open on
+    /// the host.
+    pub(super) asks: Asks,
+}
+
+/// Counts a session's input tasks until each is gone. A task that is
+/// aborted drops its host request, which withdraws the request from the
+/// host with `$/cancel_request` as it drops, so once none is left, none of
+/// the session's requests is open on the host.
+#[derive(Clone, Default)]
+pub(super) struct Asks(Arc<watch::Sender<usize>>);
+
+impl Asks {
+    fn spawn(&self, ask: impl Future<Output = ()> + Send + 'static) -> JoinHandle<()> {
+        self.0.send_modify(|tasks| *tasks += 1);
+        // Moved into the task, so it drops with the task's future, even one
+        // aborted before it first ran.
+        let counted = Counted(Arc::clone(&self.0));
+        tokio::spawn(async move {
+            let _counted = counted;
+            ask.await;
+        })
+    }
+
+    /// Waits until every input task is gone: answered, or aborted, as when
+    /// the session's pump stops.
+    pub(super) async fn withdrawn(&self) {
+        // The sender lives as long as `self`.
+        let _ = self.0.subscribe().wait_for(|tasks| *tasks == 0).await;
+    }
+}
+
+/// One input task, counted in its session's [`Asks`] while it lives.
+struct Counted(Arc<watch::Sender<usize>>);
+
+impl Drop for Counted {
+    fn drop(&mut self) {
+        self.0.send_modify(|tasks| *tasks -= 1);
+    }
 }
 
 /// The input requests one session has open on the host.
@@ -66,7 +109,7 @@ impl Inputs {
             return;
         }
         let id = request.id;
-        let task = tokio::spawn(ask(request, context.clone()));
+        let task = context.asks.spawn(ask(request, context.clone()));
         self.open.insert(id, task);
     }
 

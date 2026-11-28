@@ -236,6 +236,7 @@ impl Pump {
             port,
             features: HostFeatures::default(),
             placeholders: Arc::new(AtomicU64::new(0)),
+            asks: Default::default(),
         };
         let (inbound, receiver) = mpsc::unbounded_channel();
         let (replayed, _) = oneshot::channel();

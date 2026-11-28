@@ -15,11 +15,12 @@ use crate::{
         JobListParams, McpConfigGet, McpConfigGetParams, McpConfigSet, McpConfigSetParams, McpList,
         McpListParams, ModelRefresh, ModelRefreshParams, Restart, RestartParams, RestartResponse,
         SessionAnswer, SessionAnswerParams, SessionAnswerQuestion, SessionAnswerQuestionParams,
-        SessionBackgroundList, SessionBackgroundListParams, SessionBackgroundStop,
-        SessionBackgroundStopParams, SessionCancel, SessionCancelParams, SessionConfigure,
-        SessionConfigureParams, SessionDelete, SessionDeleteParams, SessionFork, SessionForkParams,
-        SessionHold, SessionHoldParams, SessionHooksReload, SessionHooksReloadParams, SessionId,
-        SessionInspect, SessionInspectParams, SessionList, SessionListDetailed, SessionListParams,
+        SessionBackgroundHold, SessionBackgroundHoldParams, SessionBackgroundList,
+        SessionBackgroundListParams, SessionBackgroundStop, SessionBackgroundStopParams,
+        SessionCancel, SessionCancelParams, SessionConfigure, SessionConfigureParams,
+        SessionDelete, SessionDeleteParams, SessionFork, SessionForkParams, SessionHold,
+        SessionHoldParams, SessionHooksReload, SessionHooksReloadParams, SessionId, SessionInspect,
+        SessionInspectParams, SessionList, SessionListDetailed, SessionListParams,
         SessionMarkMethod, SessionMarkParams, SessionMcp, SessionMcpCatalogParams,
         SessionMcpCatalogRead, SessionMcpComplete, SessionMcpCompleteParams, SessionMcpParams,
         SessionMcpResourceParams, SessionMcpResourceRead, SessionNew, SessionNewParams,
@@ -34,14 +35,14 @@ use crate::{
         AUTH_LOGIN_CANCEL, AUTH_LOGOUT, CONFIG_REGISTER, CONFIG_SCHEMA, CONFIG_SET,
         CONFIG_TABLE_GET, CONFIG_TABLE_SET, DAEMON_RESTART, DAEMON_STATUS, DAEMON_STOP,
         HOOKS_FILE_GET, HOOKS_FILE_SET, HOOKS_LIST, JOB_LIST, MCP_CONFIG_GET, MCP_CONFIG_SET,
-        MCP_LIST, MODEL_REFRESH, SESSION_ANSWER, SESSION_ANSWER_QUESTION, SESSION_BACKGROUND_LIST,
-        SESSION_BACKGROUND_STOP, SESSION_CANCEL, SESSION_CONFIGURE, SESSION_DELETE, SESSION_FORK,
-        SESSION_HOLD, SESSION_HOOKS_RELOAD, SESSION_INSPECT, SESSION_LIST, SESSION_LIST_DETAILED,
-        SESSION_MARK, SESSION_MCP, SESSION_MCP_CATALOG, SESSION_MCP_COMPLETE, SESSION_MCP_RESOURCE,
-        SESSION_NEW, SESSION_PROCESSES, SESSION_PROMPT, SESSION_PULL_REQUEST_LINK,
-        SESSION_PULL_REQUEST_LIST, SESSION_PULL_REQUEST_SHOW, SESSION_PULL_REQUEST_UNLINK,
-        SESSION_RENAME, SESSION_REPORT, SESSION_SEARCH, SESSION_STEER, SESSION_SURFACE_ACTION,
-        SESSION_UNSTEER, WORKTREE_PRUNE,
+        MCP_LIST, MODEL_REFRESH, SESSION_ANSWER, SESSION_ANSWER_QUESTION, SESSION_BACKGROUND_HOLD,
+        SESSION_BACKGROUND_LIST, SESSION_BACKGROUND_STOP, SESSION_CANCEL, SESSION_CONFIGURE,
+        SESSION_DELETE, SESSION_FORK, SESSION_HOLD, SESSION_HOOKS_RELOAD, SESSION_INSPECT,
+        SESSION_LIST, SESSION_LIST_DETAILED, SESSION_MARK, SESSION_MCP, SESSION_MCP_CATALOG,
+        SESSION_MCP_COMPLETE, SESSION_MCP_RESOURCE, SESSION_NEW, SESSION_PROCESSES, SESSION_PROMPT,
+        SESSION_PULL_REQUEST_LINK, SESSION_PULL_REQUEST_LIST, SESSION_PULL_REQUEST_SHOW,
+        SESSION_PULL_REQUEST_UNLINK, SESSION_RENAME, SESSION_REPORT, SESSION_SEARCH, SESSION_STEER,
+        SESSION_SURFACE_ACTION, SESSION_UNSTEER, WORKTREE_PRUNE,
     },
     methods::{
         PluginsInstall, PluginsInstallParams, PluginsList, PluginsListParams, PluginsRemove,
@@ -78,6 +79,7 @@ pub(crate) enum ServiceCall {
     SessionProcesses(SessionProcessesParams),
     ListSessionBackground,
     SessionBackgroundStop(SessionBackgroundStopParams),
+    SessionBackgroundHold(SessionBackgroundHoldParams),
     ListSessionPullRequests(SessionPullRequestListParams),
     ShowSessionPullRequest(SessionPullRequestShowParams),
     LinkSessionPullRequest(SessionPullRequestLinkParams),
@@ -166,6 +168,9 @@ impl ServiceCall {
             SESSION_BACKGROUND_STOP => {
                 decode_params::<SessionBackgroundStop>(params).map(Self::SessionBackgroundStop)
             }
+            SESSION_BACKGROUND_HOLD => {
+                decode_params::<SessionBackgroundHold>(params).map(Self::SessionBackgroundHold)
+            }
             SESSION_PULL_REQUEST_LIST => {
                 decode_params::<SessionPullRequestList>(params).map(Self::ListSessionPullRequests)
             }
@@ -242,6 +247,7 @@ impl ServiceCall {
             | Self::SessionMcpComplete(SessionMcpCompleteParams { session, .. })
             | Self::SessionProcesses(SessionProcessesParams { session, .. })
             | Self::SessionBackgroundStop(SessionBackgroundStopParams { session, .. })
+            | Self::SessionBackgroundHold(SessionBackgroundHoldParams { session })
             | Self::ShowSessionPullRequest(SessionPullRequestShowParams { session, .. })
             | Self::LinkSessionPullRequest(SessionPullRequestLinkParams { session, .. })
             | Self::UnlinkSessionPullRequest(SessionPullRequestUnlinkParams { session, .. })
@@ -357,6 +363,9 @@ impl ServiceCall {
             }
             Self::SessionBackgroundStop(params) => encode_result::<SessionBackgroundStop>(
                 &service.session_background_stop(params).await?,
+            ),
+            Self::SessionBackgroundHold(params) => encode_result::<SessionBackgroundHold>(
+                &service.session_background_hold(params).await?,
             ),
             Self::ListSessionPullRequests(params) => encode_result::<SessionPullRequestList>(
                 &service.list_session_pull_requests(params).await?,

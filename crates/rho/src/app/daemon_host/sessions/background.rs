@@ -310,17 +310,7 @@ impl Sessions {
         &self,
         params: wire::SessionBackgroundStopParams,
     ) -> Result<wire::SessionBackgroundStopResponse, RpcError> {
-        self.refuse_when_stopping()?;
-        let not_loaded = || {
-            RpcError::new(
-                ErrorCode::SessionNotLoaded,
-                "the daemon has not loaded the session; attach to it first",
-            )
-        };
-        let session = self
-            .loaded_session(&params.session)
-            .await?
-            .ok_or_else(not_loaded)?;
+        let session = self.background_session(&params.session).await?;
         session
             .background
             .stop(&params.work)
@@ -332,6 +322,29 @@ impl Sessions {
                 )
             })?;
         Ok(wire::SessionBackgroundStopResponse {})
+    }
+
+    /// `rho/session/background/hold`.
+    pub(in crate::app::daemon_host) async fn background_hold(
+        &self,
+        params: wire::SessionBackgroundHoldParams,
+    ) -> Result<wire::SessionBackgroundHoldResponse, RpcError> {
+        self.background_session(&params.session).await?.hold_wake();
+        Ok(wire::SessionBackgroundHoldResponse {})
+    }
+
+    /// The loaded `session` whose background work a request is about.
+    async fn background_session(
+        &self,
+        session: &wire::SessionId,
+    ) -> Result<Arc<LoadedSession>, RpcError> {
+        self.refuse_when_stopping()?;
+        self.loaded_session(session).await?.ok_or_else(|| {
+            RpcError::new(
+                ErrorCode::SessionNotLoaded,
+                "the daemon has not loaded the session; attach to it first",
+            )
+        })
     }
 }
 

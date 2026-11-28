@@ -382,6 +382,36 @@ pub struct SessionDeleteParams {
     /// tell which of them another client has open.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub unless_attached: bool,
+    /// What the delete does with the session's turn under way and its
+    /// background work. Omitted is [`DeleteWork::Refuse`]; a daemon from
+    /// before this field ignores it and refuses.
+    #[serde(default, skip_serializing_if = "refuses")]
+    pub work: DeleteWork,
+}
+
+/// What [`SESSION_DELETE`] does with a session's work: its turn under way,
+/// whichever client started it, and its background work, the processes,
+/// workflow runs and subagents its turns started and the results of
+/// finished work no turn took yet. The session's loaded forks, deleted with
+/// it, are treated the same. The daemon reads it, so it has no `Unknown`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DeleteWork {
+    /// Refuse the delete as [`crate::ErrorCode::SessionBusy`] while there is
+    /// any.
+    #[default]
+    Refuse,
+    /// Stop the work, as an ACP v2 host's `session/delete` requires: hold
+    /// the session's results ([`super::SESSION_BACKGROUND_HOLD`]), cancel
+    /// its turn and wait for it to end, then delete, which ends the
+    /// background work and drops the results with the session.
+    Stop,
+}
+
+/// Whether the delete refuses a session with work, the default the wire
+/// leaves out.
+fn refuses(work: &DeleteWork) -> bool {
+    *work == DeleteWork::Refuse
 }
 
 /// Result of [`SESSION_DELETE`]: the session's files are gone, with those
@@ -394,7 +424,8 @@ pub struct SessionDeleteParams {
 ///
 /// A session whose turn is under way, a settings change waiting or
 /// applying, background work running, such as a subagent, or a run it started not yet
-/// finished is refused as [`crate::ErrorCode::SessionBusy`]; one another
+/// finished is refused as [`crate::ErrorCode::SessionBusy`], its turn and
+/// its background work only under [`DeleteWork::Refuse`]; one another
 /// process has open, or one a session it started is open in, as
 /// [`crate::ErrorCode::SessionInUse`]. Either refusal leaves a loaded
 /// session loaded. A session the daemon loaded but that has saved nothing

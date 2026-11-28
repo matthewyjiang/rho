@@ -420,6 +420,7 @@ async fn a_mark_reaches_attached_clients_and_the_list_and_outlives_the_daemon() 
     let delete = SessionDeleteParams {
         session: deleted.clone(),
         unless_attached: false,
+        work: rho_protocol::DeleteWork::Refuse,
     };
     call::<SessionDelete>(&client, &delete).await.unwrap();
     let after_delete = mark(&client, &deleted, Some(NewSessionMark::Done)).await;
@@ -498,6 +499,7 @@ async fn a_delete_can_spare_a_session_a_client_is_attached_to() {
     let params = SessionDeleteParams {
         session: session.clone(),
         unless_attached: true,
+        work: rho_protocol::DeleteWork::Refuse,
     };
 
     let (watcher, _notifications) = follow(&sandbox, &session).await;
@@ -545,6 +547,7 @@ async fn a_delete_detaches_a_loaded_sessions_clients_and_removes_it() {
         &SessionDeleteParams {
             session: deleted.clone(),
             unless_attached: false,
+            work: rho_protocol::DeleteWork::Refuse,
         },
     )
     .await
@@ -600,6 +603,7 @@ async fn a_delete_removes_a_session_the_daemon_has_not_loaded() {
         let params = SessionDeleteParams {
             session: session.clone(),
             unless_attached: false,
+            work: rho_protocol::DeleteWork::Refuse,
         };
         let client = &client;
         async move { call::<SessionDelete>(client, &params).await }
@@ -639,6 +643,7 @@ async fn a_delete_is_refused_while_the_turn_runs() {
         &SessionDeleteParams {
             session: session.clone(),
             unless_attached: false,
+            work: rho_protocol::DeleteWork::Refuse,
         },
     )
     .await;

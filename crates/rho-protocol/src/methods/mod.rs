@@ -30,6 +30,7 @@
 //! | [`SESSION_PROCESSES`] | [`SessionProcessesParams`] | [`SessionProcessesResponse`] |
 //! | [`SESSION_BACKGROUND_LIST`] | [`SessionBackgroundListParams`] | [`SessionBackgroundListResponse`] |
 //! | [`SESSION_BACKGROUND_STOP`] | [`SessionBackgroundStopParams`] | [`SessionBackgroundStopResponse`] |
+//! | [`SESSION_BACKGROUND_HOLD`] | [`SessionBackgroundHoldParams`] | [`SessionBackgroundHoldResponse`] |
 //! | [`SESSION_PULL_REQUEST_LIST`] | [`SessionPullRequestListParams`] | [`SessionPullRequestListResponse`] |
 //! | [`SESSION_PULL_REQUEST_SHOW`] | [`SessionPullRequestShowParams`] | [`SessionPullRequestShowResponse`] |
 //! | [`SESSION_PULL_REQUEST_LINK`] | [`SessionPullRequestLinkParams`] | [`SessionPullRequestLinkResponse`] |
@@ -139,15 +140,16 @@ pub use auth::{
 };
 pub use background::{
     BackgroundItem, BackgroundStatus, BackgroundWork, SessionBackground,
-    SessionBackgroundListParams, SessionBackgroundListResponse, SessionBackgroundStopParams,
-    SessionBackgroundStopResponse, SESSION_BACKGROUND_LIST, SESSION_BACKGROUND_STOP,
+    SessionBackgroundHoldParams, SessionBackgroundHoldResponse, SessionBackgroundListParams,
+    SessionBackgroundListResponse, SessionBackgroundStopParams, SessionBackgroundStopResponse,
+    SESSION_BACKGROUND_HOLD, SESSION_BACKGROUND_LIST, SESSION_BACKGROUND_STOP,
 };
 pub use catalog::{
-    DetailedSessionSummary, ExcerptRole, SearchExcerpt, SearchLocation, SessionDeleteParams,
-    SessionDeleteResponse, SessionListDetailedResponse, SessionListParams, SessionListResponse,
-    SessionRenameParams, SessionRenameResponse, SessionSearchHit, SessionSearchParams,
-    SessionSearchResponse, SessionSummary, SESSION_DELETE, SESSION_LIST, SESSION_LIST_DETAILED,
-    SESSION_RENAME, SESSION_SEARCH,
+    DeleteWork, DetailedSessionSummary, ExcerptRole, SearchExcerpt, SearchLocation,
+    SessionDeleteParams, SessionDeleteResponse, SessionListDetailedResponse, SessionListParams,
+    SessionListResponse, SessionRenameParams, SessionRenameResponse, SessionSearchHit,
+    SessionSearchParams, SessionSearchResponse, SessionSummary, SESSION_DELETE, SESSION_LIST,
+    SESSION_LIST_DETAILED, SESSION_RENAME, SESSION_SEARCH,
 };
 pub use config::{
     Applies, ClientName, ConfigCategory, ConfigChangedParams, ConfigError, ConfigGetParams,
@@ -403,6 +405,7 @@ protocol! {
         SessionProcesses = SESSION_PROCESSES: SessionProcessesParams => SessionProcessesResponse,
         SessionBackgroundList = SESSION_BACKGROUND_LIST: SessionBackgroundListParams => SessionBackgroundListResponse,
         SessionBackgroundStop = SESSION_BACKGROUND_STOP: SessionBackgroundStopParams => SessionBackgroundStopResponse,
+        SessionBackgroundHold = SESSION_BACKGROUND_HOLD: SessionBackgroundHoldParams => SessionBackgroundHoldResponse,
         SessionPullRequestList = SESSION_PULL_REQUEST_LIST: SessionPullRequestListParams => SessionPullRequestListResponse,
         SessionPullRequestShow = SESSION_PULL_REQUEST_SHOW: SessionPullRequestShowParams => SessionPullRequestShowResponse,
         SessionPullRequestLink = SESSION_PULL_REQUEST_LINK: SessionPullRequestLinkParams => SessionPullRequestLinkResponse,

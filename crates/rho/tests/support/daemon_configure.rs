@@ -314,6 +314,7 @@ async fn a_change_sent_during_a_turn_applies_at_its_end_before_the_next_turn() {
     let delete = SessionDeleteParams {
         session: session.clone(),
         unless_attached: false,
+        work: rho_protocol::DeleteWork::Refuse,
     };
     let turn_runs = RpcError::new(
         ErrorCode::SessionBusy,

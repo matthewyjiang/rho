@@ -57,7 +57,7 @@ use crate::{
 use auth::LoginFlight;
 use host_features::{NegotiatedFeatures, Turns};
 use requests::{Launch, LaunchHost};
-use sessions::{Sessions, Started};
+use sessions::{Close, Sessions, Started};
 
 /// Outbound ACP host port: session updates, permission prompts, and
 /// elicitations, as one connection's protocol version sends them.
@@ -488,7 +488,7 @@ fn v1_agent(adapter: Arc<Adapter>) -> impl ConnectTo<Client> {
                 async move |request: DeleteSessionRequest, responder, cx| {
                     let adapter = Arc::clone(&adapter);
                     spawn_response(&cx, responder, async move {
-                        adapter.delete_session(&request).await
+                        adapter.delete_session(&request, Close::Detach).await
                     })
                 }
             },
@@ -524,7 +524,7 @@ fn v1_agent(adapter: Arc<Adapter>) -> impl ConnectTo<Client> {
                 async move |request: CloseSessionRequest, responder, cx| {
                     let adapter = Arc::clone(&adapter);
                     spawn_response(&cx, responder, async move {
-                        adapter.close_session(&request).await
+                        adapter.close_session(&request, Close::Detach).await
                     })
                 }
             },

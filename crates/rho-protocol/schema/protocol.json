@@ -2578,6 +2578,21 @@
       ],
       "description": "How a client offers a question's suggested answer."
     },
+    "DeleteWork": {
+      "description": "What [`SESSION_DELETE`] does with a session's work: its turn under way,\nwhichever client started it, and its background work, the processes,\nworkflow runs and subagents its turns started and the results of\nfinished work no turn took yet. The session's loaded forks, deleted with\nit, are treated the same. The daemon reads it, so it has no `Unknown`.",
+      "oneOf": [
+        {
+          "const": "refuse",
+          "description": "Refuse the delete as [`crate::ErrorCode::SessionBusy`] while there is\nany.",
+          "type": "string"
+        },
+        {
+          "const": "stop",
+          "description": "Stop the work, as an ACP v2 host's `session/delete` requires: hold\nthe session's results ([`super::SESSION_BACKGROUND_HOLD`]), cancel\nits turn and wait for it to end, then delete, which ends the\nbackground work and drops the results with the session.",
+          "type": "string"
+        }
+      ]
+    },
     "DetachReason": {
       "anyOf": [
         {
@@ -8681,6 +8696,22 @@
       ],
       "type": "object"
     },
+    "SessionBackgroundHoldParams": {
+      "description": "Params of [`SESSION_BACKGROUND_HOLD`].",
+      "properties": {
+        "session": {
+          "$ref": "#/$defs/SessionId"
+        }
+      },
+      "required": [
+        "session"
+      ],
+      "type": "object"
+    },
+    "SessionBackgroundHoldResponse": {
+      "description": "Result of [`SESSION_BACKGROUND_HOLD`]: the session's results wait for\nits next turn.",
+      "type": "object"
+    },
     "SessionBackgroundListParams": {
       "description": "Params of [`SESSION_BACKGROUND_LIST`].",
       "type": "object"
@@ -9239,6 +9270,10 @@
         "unless_attached": {
           "description": "Refuse a session a client is attached to, as\n[`crate::ErrorCode::SessionInUse`], rather than detach its clients:\nfor a client that deletes sessions it is not showing and cannot\ntell which of them another client has open.",
           "type": "boolean"
+        },
+        "work": {
+          "$ref": "#/$defs/DeleteWork",
+          "description": "What the delete does with the session's turn under way and its\nbackground work. Omitted is [`DeleteWork::Refuse`]; a daemon from\nbefore this field ignores it and refuses."
         }
       },
       "required": [
@@ -9247,7 +9282,7 @@
       "type": "object"
     },
     "SessionDeleteResponse": {
-      "description": "Result of [`SESSION_DELETE`]: the session's files are gone, with those\nof the sessions it owns, its subagents' and forks',\nand the daemon has unloaded it, detaching its clients as\n[`super::DetachReason::Deleted`]. Its job stays in [`super::JOB_LIST`].\nThe sessions it started through session control\n([`super::SessionNewParams::parent`]) stay, still naming it as\n[`DetailedSessionSummary::parent`].\n\nA session whose turn is under way, a settings change waiting or\napplying, background work running, such as a subagent, or a run it started not yet\nfinished is refused as [`crate::ErrorCode::SessionBusy`]; one another\nprocess has open, or one a session it started is open in, as\n[`crate::ErrorCode::SessionInUse`]. Either refusal leaves a loaded\nsession loaded. A session the daemon loaded but that has saved nothing\nyet is unloaded all the same. An id the daemon has not loaded and nothing\nis saved under is [`crate::ErrorCode::SessionNotFound`].",
+      "description": "Result of [`SESSION_DELETE`]: the session's files are gone, with those\nof the sessions it owns, its subagents' and forks',\nand the daemon has unloaded it, detaching its clients as\n[`super::DetachReason::Deleted`]. Its job stays in [`super::JOB_LIST`].\nThe sessions it started through session control\n([`super::SessionNewParams::parent`]) stay, still naming it as\n[`DetailedSessionSummary::parent`].\n\nA session whose turn is under way, a settings change waiting or\napplying, background work running, such as a subagent, or a run it started not yet\nfinished is refused as [`crate::ErrorCode::SessionBusy`], its turn and\nits background work only under [`DeleteWork::Refuse`]; one another\nprocess has open, or one a session it started is open in, as\n[`crate::ErrorCode::SessionInUse`]. Either refusal leaves a loaded\nsession loaded. A session the daemon loaded but that has saved nothing\nyet is unloaded all the same. An id the daemon has not loaded and nothing\nis saved under is [`crate::ErrorCode::SessionNotFound`].",
       "type": "object"
     },
     "SessionDetachParams": {
@@ -14274,6 +14309,14 @@
       },
       "result": {
         "$ref": "#/$defs/SessionAttachResponse"
+      }
+    },
+    "rho/session/background/hold": {
+      "params": {
+        "$ref": "#/$defs/SessionBackgroundHoldParams"
+      },
+      "result": {
+        "$ref": "#/$defs/SessionBackgroundHoldResponse"
       }
     },
     "rho/session/background/list": {

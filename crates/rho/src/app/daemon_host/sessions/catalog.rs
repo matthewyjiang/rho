@@ -7,9 +7,11 @@
 //! A rename tells a loaded session's attached clients the new title. A
 //! delete must unload a loaded session first, since its runtime holds the
 //! file's lease: it refuses one with a turn or background work under way,
-//! or a settings change queued or applying, or whose delete the store would
-//! refuse, holds it from prompts and changes while it tears it down, and
-//! then detaches its clients as `deleted`. The session's loaded forks, whose
+//! unless the client asks it to stop that work, which it then does once
+//! nothing else refuses, or one with a settings change queued or applying,
+//! or whose delete the store would refuse, holds it from prompts and
+//! changes while it tears it down, and then detaches its clients as
+//! `deleted`. The session's loaded forks, whose
 //! files the store deletes with it, are checked and unloaded with it: one
 //! that refuses refuses the delete, and leaves them all loaded.
 
@@ -155,20 +157,19 @@ impl Sessions {
             }
         }
         // Each loaded session the delete reaches, its forks first, is held
-        // and checked before any is let go, so a refused delete leaves them
-        // all loaded.
-        let mut taken = Vec::with_capacity(forks.len() + 1);
+        // and checked before any is let go or has its turn cancelled, so a
+        // refused delete leaves them all loaded and their turns running.
+        let mut holds = Vec::with_capacity(forks.len() + 1);
         for fork in forks {
             // Unloaded meanwhile, as by its idle unload.
             let Some(session) = self.loaded().get(&fork).cloned() else {
                 continue;
             };
-            let held = self.hold_to_delete(fork, session, params.unless_attached);
-            taken.push(held.await.map_err(|error| in_fork(error, &id))?);
+            let held = self.hold_to_delete(fork, session, &params);
+            holds.push(held.map_err(|error| in_fork(error, &id))?);
         }
         if let Some(session) = &loaded {
-            let held = self.hold_to_delete(id.clone(), Arc::clone(session), params.unless_attached);
-            taken.push(held.await?);
+            holds.push(self.hold_to_delete(id.clone(), Arc::clone(session), &params)?);
         }
         // The store's refusals, checked while the sessions are still loaded,
         // whose leases on their files it skips: only those, since another
@@ -176,11 +177,17 @@ impl Sessions {
         // unloaded.
         {
             let id = id.clone();
-            let open: Vec<String> = taken.iter().map(|held| held.id.to_string()).collect();
+            let open: Vec<String> = holds.iter().map(|hold| hold.id.to_string()).collect();
             store_blocking("check the session's delete", move || {
                 StoredSession::check_delete_exact(id.as_str(), &open)
             })
             .await?;
+        }
+        let mut taken = Vec::with_capacity(holds.len());
+        for hold in holds {
+            let fork = hold.id != id;
+            let held = self.take_to_delete(hold, &params).await;
+            taken.push(held.map_err(|error| if fork { in_fork(error, &id) } else { error })?);
         }
         let unloaded = self.unload_to_delete(taken, params.unless_attached).await?;
         let deleted = {
@@ -221,47 +228,96 @@ impl Sessions {
         Ok(SessionDeleteResponse {})
     }
 
-    /// Holds `session`, loaded as `id`, for its delete and takes its
-    /// runtime, unless a settings change is queued or applying, its turn or
-    /// background work is under way, or `unless_attached` and a client
-    /// follows it. Held from prompts and settings changes until the
-    /// returned hold is dropped, which puts the runtime back unless the
-    /// delete unloaded the session.
-    async fn hold_to_delete(
+    /// Holds `session`, loaded as `id`, for its delete, unless a settings
+    /// change is queued or applying, its turn is under way and `params`
+    /// refuses that, or `params.unless_attached` and a client follows it.
+    /// Held from prompts and settings changes until the hold is dropped.
+    /// Cancels nothing: [`Self::take_to_delete`] does, once every session
+    /// the delete reaches is held and the store's check passed.
+    fn hold_to_delete(
         &self,
         id: SessionId,
         session: Arc<LoadedSession>,
-        unless_attached: bool,
-    ) -> Result<HeldToDelete, RpcError> {
-        let held = {
-            // Under the turn lock a prompt starts its turn under, so this
-            // sees every turn started before it, and a prompt after it sees
-            // the delete.
-            let mut turn = session.turn();
-            match turn.hold {
-                Some(Hold::Configuring(_)) => return Err(busy(CHANGE_QUEUED)),
-                // Deletes of one session wait on its reopen lock, so none
-                // finds another under way.
-                Some(Hold::Deleting) => return Err(being_deleted()),
-                None => {}
-            }
-            if unless_attached && session.feed.followed() {
-                return Err(open_in_a_client(&id));
-            }
-            match self.jobs.session_job(&id) {
-                SessionJob::Busy(job) if job == session.job => return Err(busy(TURN_UNDER_WAY)),
-                SessionJob::Busy(job) => return Err(writing(&job, &id)),
-                SessionJob::New | SessionJob::Last(_) => {}
-            }
-            Held::delete(&session, &mut turn)
+        params: &SessionDeleteParams,
+    ) -> Result<HoldToDelete, RpcError> {
+        // Under the turn lock a prompt starts its turn under, so this sees
+        // every turn started before it, and a prompt after it sees the
+        // delete.
+        let mut turn = session.turn();
+        match turn.hold {
+            Some(Hold::Configuring(_)) => return Err(busy(CHANGE_QUEUED)),
+            // Deletes of one session wait on its reopen lock, so none finds
+            // another under way.
+            Some(Hold::Deleting) => return Err(being_deleted()),
+            None => {}
+        }
+        if params.unless_attached && session.feed.followed() {
+            return Err(open_in_a_client(&id));
+        }
+        let busy_turn = match self.jobs.session_job(&id) {
+            SessionJob::Busy(job) if job == session.job => match params.work {
+                wire::DeleteWork::Refuse => return Err(busy(TURN_UNDER_WAY)),
+                wire::DeleteWork::Stop => true,
+            },
+            SessionJob::Busy(job) => return Err(writing(&job, &id)),
+            SessionJob::New | SessionJob::Last(_) => false,
         };
+        let held = Held::delete(&session, &mut turn);
+        drop(turn);
+        Ok(HoldToDelete {
+            id,
+            session,
+            held,
+            busy_turn,
+        })
+    }
+
+    /// Takes the runtime of a session [`Self::hold_to_delete`] held, unless
+    /// it has background work and `params` refuses that. Puts the runtime
+    /// back when the returned hold is dropped, unless the delete unloaded
+    /// the session.
+    ///
+    /// Under [`wire::DeleteWork::Stop`], a turn under way, whichever client
+    /// started it, is cancelled first as `session/cancel` does, with the
+    /// session's results held, so its end starts no delivery turn, and this
+    /// waits for that end, as an ACP v2 close does.
+    async fn take_to_delete(
+        &self,
+        hold: HoldToDelete,
+        params: &SessionDeleteParams,
+    ) -> Result<HeldToDelete, RpcError> {
+        let HoldToDelete {
+            id,
+            session,
+            held,
+            busy_turn,
+        } = hold;
+        if busy_turn {
+            {
+                let turn = session.turn();
+                session.hold_wake_under(&turn);
+                session.cancel_turn_under(&turn);
+            }
+            session.give_up_waking();
+            // No timeout, as an ACP v2 close waits for the turn it cancelled:
+            // a cancelled turn ends, its tools' processes killed, and the
+            // hold keeps any turn from starting after it. The delete's
+            // `unloading` and `reopening` locks are held meanwhile.
+            self.turn_ended(&session).await;
+        }
         // Free once a turn that just recorded its end released it.
         let mut slot = Arc::clone(&session.runtime).lock_owned().await;
         // Only the daemon's stop takes the runtime of a session in use.
         let Some(runtime) = slot.take() else {
             return Err(stopping());
         };
-        if runtime.has_background_work() {
+        // Unloading tears the runtime down, which ends its work and drops
+        // its results with it.
+        let refused = match params.work {
+            wire::DeleteWork::Refuse => runtime.has_background_work(),
+            wire::DeleteWork::Stop => false,
+        };
+        if refused {
             *slot = Some(runtime);
             return Err(busy(BACKGROUND_WORK));
         }
@@ -272,6 +328,21 @@ impl Sessions {
             runtime: Some(runtime),
             held: Some(held),
         })
+    }
+
+    /// Waits until `session`'s turn, which a delete cancelled, has ended:
+    /// its job no longer runs one.
+    async fn turn_ended(&self, session: &LoadedSession) {
+        loop {
+            // Enabled before the look, so an end after it wakes this.
+            let changed = self.jobs.changed();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            match self.jobs.session_job(&session.id) {
+                SessionJob::Busy(job) if job == session.job => changed.await,
+                SessionJob::Busy(_) | SessionJob::New | SessionJob::Last(_) => return,
+            }
+        }
     }
 
     /// Unloads the sessions in `taken`, held for a delete whose checks
@@ -319,6 +390,16 @@ impl Sessions {
 
 /// A loaded session held for its delete, with its runtime taken: put back
 /// when dropped, unless the delete unloaded the session.
+/// A session [`Sessions::hold_to_delete`] held, whose runtime its delete
+/// has yet to take.
+struct HoldToDelete {
+    id: SessionId,
+    session: Arc<LoadedSession>,
+    held: Held,
+    /// Its turn is under way, which the delete cancels.
+    busy_turn: bool,
+}
+
 struct HeldToDelete {
     id: SessionId,
     session: Arc<LoadedSession>,

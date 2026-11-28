@@ -15,6 +15,9 @@
 //! the host learns of it, then live events. When the attachment ends with
 //! the connection or the daemon, the session goes stale, and the next
 //! request about it has the pump attach again after its cursor.
+//!
+//! Closing a session ([`Close`]) detaches it on ACP v1, and stops its work
+//! on ACP v2.
 
 mod pump;
 
@@ -39,13 +42,14 @@ use agent_client_protocol::{
 };
 use rho_protocol::{
     methods::{
-        SessionAttach, SessionBackgroundStop, SessionCancel, SessionConfigure, SessionDelete,
-        SessionDetach, SessionNew,
+        SessionAttach, SessionBackgroundHold, SessionBackgroundStop, SessionCancel,
+        SessionConfigure, SessionDelete, SessionDetach, SessionNew,
     },
-    BackgroundItem, BackgroundWork, ClientEnvironment, Cursor, ErrorCode, JobState, Replay,
-    SessionAttachParams, SessionAttachResponse, SessionBackgroundStopParams, SessionCancelParams,
-    SessionChange, SessionConfigureParams, SessionDeleteParams, SessionDetachParams, SessionId,
-    SessionNewParams, SessionOptions, SessionSetup, TurnId, TurnOutcome,
+    BackgroundItem, BackgroundWork, ClientEnvironment, Cursor, DeleteWork, ErrorCode, JobState,
+    Replay, SessionAttachParams, SessionAttachResponse, SessionBackgroundHoldParams,
+    SessionBackgroundStopParams, SessionCancelParams, SessionChange, SessionConfigureParams,
+    SessionDeleteParams, SessionDetachParams, SessionId, SessionNewParams, SessionOptions,
+    SessionSetup, TurnId, TurnOutcome,
 };
 use tokio::{
     sync::{mpsc, oneshot, watch},
@@ -54,7 +58,7 @@ use tokio::{
 
 use super::{
     daemon,
-    inputs::InputContext,
+    inputs::{Asks, InputContext},
     options,
     prompt::{Holds, Place},
     requests, AcpClientPort, Adapter, Foreground,
@@ -235,6 +239,8 @@ pub(super) struct Live {
     pub(super) closing: AtomicBool,
     attaching: tokio::sync::Mutex<()>,
     pump: JoinHandle<()>,
+    /// The pump's input tasks, whose host requests a close withdraws.
+    asks: Asks,
 }
 
 impl Live {
@@ -285,6 +291,32 @@ impl Busy {
             (false, true) => Ok(()),
             (false, false) => self.0.changed().await,
         };
+    }
+}
+
+/// What closing a session does with its work.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Close {
+    /// Stops relaying it, as ACP v1 does: this host's prompt is cancelled,
+    /// and the rest, another client's turn and the background work, runs
+    /// on in the daemon.
+    Detach,
+    /// Stops it, as ACP v2 requires: its held prompts and its turn,
+    /// whoever's, are cancelled, its background work is stopped, and its
+    /// open input requests are withdrawn from the host, before the host is
+    /// answered, and the host hears nothing of it after.
+    Stop,
+}
+
+impl Close {
+    /// What deleting the session does with the work the daemon still has
+    /// once it is closed so: a turn another client runs, and background
+    /// work.
+    fn delete_work(self) -> DeleteWork {
+        match self {
+            Self::Detach => DeleteWork::Refuse,
+            Self::Stop => DeleteWork::Stop,
+        }
     }
 }
 
@@ -546,6 +578,7 @@ impl Adapter {
             background: Mutex::new(background.clone()),
             attachment: watch::channel(Attachment::Stale).0,
         });
+        let asks = Asks::default();
         let context = InputContext {
             daemon: Arc::clone(&self.daemon),
             session: id.clone(),
@@ -553,6 +586,7 @@ impl Adapter {
             port,
             features: self.negotiated.get(),
             placeholders: Arc::clone(&self.sessions.placeholders),
+            asks: asks.clone(),
         };
         let (replayed, through) = oneshot::channel();
         let (gate, gate_receiver) = oneshot::channel();
@@ -581,6 +615,7 @@ impl Adapter {
             closing: AtomicBool::new(false),
             attaching: tokio::sync::Mutex::new(()),
             pump,
+            asks,
         });
         lock(&self.sessions.live).insert(acp_id.0.to_string(), Arc::clone(&live));
         if let Err(error) = through.await.unwrap_or_else(|_| Err(daemon::lost())) {
@@ -623,8 +658,83 @@ impl Adapter {
                 let _ = attachment.wait_for(|attachment| !attachment.busy()).await;
             }
         }
+        self.release(live).await;
+    }
+
+    /// Stops `live`'s work, then its relaying, as ACP v2 `session/close`
+    /// requires; the session stays in the daemon. Its results are held for
+    /// its next turn first, so neither the work's end nor the cancel has
+    /// the daemon start a turn to deliver them. Its held prompts are
+    /// dropped and its turn, whoever's, is cancelled, and the host hears
+    /// that turn end before this returns. Then its running background work
+    /// is stopped, and the relaying ends as [`Self::release`] says.
+    async fn stop(&self, live: &Live) {
+        // Before the cancel, so a prompt queued behind the cancelled one
+        // sees it once it gets the lock.
+        live.closing.store(true, Ordering::Release);
+        self.hold_results(live).await;
+        self.cancel_live(live).await;
+        // This host's prompt, whose turn's end the pump reported first.
+        drop(live.prompt.lock().await);
+        // Any other turn, another client's or one the daemon started, which
+        // the pump follows and reports the end of before the job's idle
+        // state; an attachment that ended reports none busy.
+        let mut attachment = live.shared.attachment.subscribe();
+        let _ = attachment.wait_for(|attachment| !attachment.busy()).await;
+        // Again, since a turn starting clears the hold, as a prompt of this
+        // host's that reached the daemon after the first does; none can
+        // start now, so the stops' results are held.
+        self.hold_results(live).await;
+        // A stale or deleted attachment's work list is out of date. A daemon
+        // that is gone is not started again to hear the stops.
+        let attached = matches!(*live.shared.attachment.borrow(), Attachment::Attached(_));
+        if let (true, Some(link)) = (attached, self.daemon.current().await) {
+            let running: Vec<BackgroundItem> = lock(&live.shared.background)
+                .iter()
+                .filter(|work| work.status.is_running())
+                .map(|work| work.item.clone())
+                .collect();
+            for work in running {
+                let params = SessionBackgroundStopParams {
+                    session: live.id.clone(),
+                    work,
+                };
+                if let Err(error) = link.request::<SessionBackgroundStop>(&params).await {
+                    // Work that ended meanwhile.
+                    tracing::debug!(%error, "could not stop an ACP session's background work");
+                }
+            }
+        }
+        self.release(live).await;
+    }
+
+    /// Has the daemon hold `live`'s background results for its next turn
+    /// ([`rho_protocol::SESSION_BACKGROUND_HOLD`]). A daemon that has not
+    /// loaded the session, or is gone, starts no turn for them either.
+    async fn hold_results(&self, live: &Live) {
+        let Some(link) = self.daemon.current().await else {
+            return;
+        };
+        let params = SessionBackgroundHoldParams {
+            session: live.id.clone(),
+        };
+        if let Err(error) = link.request::<SessionBackgroundHold>(&params).await {
+            tracing::debug!(%error, "could not hold an ACP session's background results");
+        }
+    }
+
+    /// Ends relaying `live` once its turn is done with: its routing and pump
+    /// stop, the input requests the pump has open are withdrawn from the
+    /// host, and it is detached from the daemon. The host hears nothing more
+    /// of it once this returns.
+    async fn release(&self, live: &Live) {
         let attachment = *live.shared.attachment.borrow();
         self.forget(live);
+        // The pump is gone once its receiver is, after anything it was
+        // sending; its input tasks, aborted with it, withdraw their host
+        // requests as they go.
+        live.inbound.closed().await;
+        live.asks.withdrawn().await;
         // A stale or deleted attachment has nothing left to detach.
         if !matches!(attachment, Attachment::Attached(_)) {
             return;
@@ -646,19 +756,25 @@ impl Adapter {
         live.pump.abort();
     }
 
-    /// `session/close`: stops relaying the session; it stays saved.
+    /// `session/close`: stops relaying the session, and its work as `close`
+    /// says; it stays saved.
     pub(super) async fn close_session(
         &self,
         request: &CloseSessionRequest,
+        close: Close,
     ) -> Result<CloseSessionResponse, AcpError> {
         if let Some(live) = self.sessions.remove(&request.session_id.0) {
-            self.detach(&live, Wait::Prompt).await;
+            match close {
+                Close::Detach => self.detach(&live, Wait::Prompt).await,
+                Close::Stop => self.stop(&live).await,
+            }
         }
         Ok(CloseSessionResponse::new())
     }
 
     /// Detaches every session, as when the host disconnects or this
-    /// process is told to stop.
+    /// process is told to stop: the connection's end leaves its sessions'
+    /// work running, on ACP v2 too.
     pub(super) async fn close_all(&self) {
         for live in self.sessions.take_all() {
             self.detach(&live, Wait::Prompt).await;
@@ -667,19 +783,27 @@ impl Adapter {
     }
 
     /// `session/delete`. Hosts such as Zed delete from history without
-    /// closing the thread, so a session open here is closed first, after
-    /// its turn ends. Deleting converges: a session that is already gone,
-    /// or never was, is deleted.
+    /// closing the thread, so a session open here is closed first, as
+    /// `close` says: detached once its turn ends, or stopped. A stopped
+    /// session's delete, open here or not, has the daemon cancel a turn
+    /// another client runs and end the background work it still has, where
+    /// a detached one's refuses while there is either. Deleting
+    /// converges: a session that is already gone, or never was, is deleted.
     pub(super) async fn delete_session(
         &self,
         request: &DeleteSessionRequest,
+        close: Close,
     ) -> Result<DeleteSessionResponse, AcpError> {
         if let Some(live) = self.sessions.remove(&request.session_id.0) {
-            self.detach(&live, Wait::Job).await;
+            match close {
+                Close::Detach => self.detach(&live, Wait::Job).await,
+                Close::Stop => self.stop(&live).await,
+            }
         }
         let params = SessionDeleteParams {
             session: SessionId::new(request.session_id.0.as_ref()),
             unless_attached: false,
+            work: close.delete_work(),
         };
         let link = self.daemon.link().await?;
         match link.request::<SessionDelete>(&params).await {

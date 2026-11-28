@@ -212,7 +212,8 @@ impl Sessions {
 impl Sessions {
     /// How many loaded sessions with no turn under way have work of their
     /// own a restart would cut short, which keeps an upgrade waiting
-    /// (#1713): background work their prompts started, a queued settings
+    /// (#1713): background work their prompts started, unless a client held
+    /// its results (`rho/session/background/hold`), a queued settings
     /// change, or, for one a client follows, nothing saved yet, so a
     /// restarted daemon could not reopen it for that client. Turns under way
     /// are the job registry's to count.
@@ -242,7 +243,8 @@ impl LoadedSession {
         }
         match self.runtime.try_lock() {
             Ok(runtime) => runtime.as_ref().is_some_and(|runtime| {
-                runtime.has_background_work() || (!runtime.is_saved() && self.feed.followed())
+                (!self.wake_held() && runtime.has_background_work())
+                    || (!runtime.is_saved() && self.feed.followed())
             }),
             // A turn that just ended, or a change, still holds it.
             Err(_) => true,
@@ -251,12 +253,14 @@ impl LoadedSession {
 
     /// Whether the session's runtime keeps it loaded: background work its
     /// prompts started runs on or holds a result, which a teardown would
-    /// stop or drop. So does a runtime a turn that just ended still holds.
+    /// stop or drop, unless a client held those results, as one that
+    /// stopped the session's work does. So does a runtime a turn that just
+    /// ended still holds.
     fn runtime_keeps_loaded(&self) -> bool {
         match self.runtime.try_lock() {
             Ok(runtime) => runtime
                 .as_ref()
-                .is_some_and(SessionRuntime::has_background_work),
+                .is_some_and(|runtime| !self.wake_held() && runtime.has_background_work()),
             Err(_) => true,
         }
     }

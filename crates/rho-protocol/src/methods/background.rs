@@ -15,6 +15,21 @@ use super::SessionId;
 /// [`crate::ErrorCode::SessionNotLoaded`].
 pub const SESSION_BACKGROUND_STOP: &str = "rho/session/background/stop";
 
+/// Hold a loaded session's background results for its next turn: until a
+/// turn of the session's begins, the daemon starts no turn of its own to
+/// give the model the results of work that finished, even for a session
+/// it wakes ([`super::IdleWake::Turn`]), and the session's background work,
+/// running or ended, keeps it neither loaded, nor an upgrade waiting, nor
+/// from settling: an idle unload ends what still runs and drops the
+/// results. The next turn takes the results, and ends the hold.
+///
+/// For a client that stops a session's work as it closes it, such as an
+/// ACP v2 host's `session/close`: held before the cancel, the work the
+/// cancel and the stops end starts no turn after the close. An unloaded
+/// session is [`crate::ErrorCode::SessionNotLoaded`]; a daemon from before
+/// this method answers [`crate::ErrorCode::MethodNotFound`].
+pub const SESSION_BACKGROUND_HOLD: &str = "rho/session/background/hold";
+
 /// List the background work of every loaded session that has some, as each
 /// session's last [`super::SessionEvent::Background`] did, without
 /// attaching to any. Work runs on after the turn that started it ends, so
@@ -65,6 +80,17 @@ pub struct SessionBackgroundStopParams {
 /// Result of [`SESSION_BACKGROUND_STOP`].
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SessionBackgroundStopResponse {}
+
+/// Params of [`SESSION_BACKGROUND_HOLD`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SessionBackgroundHoldParams {
+    pub session: SessionId,
+}
+
+/// Result of [`SESSION_BACKGROUND_HOLD`]: the session's results wait for
+/// its next turn.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SessionBackgroundHoldResponse {}
 
 /// One piece of a session's background work, as
 /// [`super::SessionEvent::Background`] lists it.

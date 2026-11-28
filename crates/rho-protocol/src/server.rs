@@ -27,14 +27,15 @@ use crate::{
         AuthLogoutResponse, ClientInfo, ConfigGet, Hello, JobListResponse, ModelListMethod,
         SessionAnswerParams, SessionAnswerQuestionParams, SessionAnswerQuestionResponse,
         SessionAnswerResponse, SessionAttach, SessionAttachParams, SessionAttachResponse,
-        SessionBackgroundListResponse, SessionBackgroundStopParams, SessionBackgroundStopResponse,
-        SessionCancelParams, SessionCancelResponse, SessionConfigureParams,
-        SessionConfigureResponse, SessionDeleteParams, SessionDeleteResponse, SessionDetach,
-        SessionDetachParams, SessionDetachResponse, SessionForkParams, SessionForkResponse,
-        SessionHoldParams, SessionHoldResponse, SessionHooksReloadParams,
-        SessionHooksReloadResponse, SessionInspectParams, SessionInspectResponse,
-        SessionListDetailedResponse, SessionListParams, SessionListResponse, SessionMarkParams,
-        SessionMarkResponse, SessionMcpCatalog, SessionMcpCatalogParams, SessionMcpCompleteParams,
+        SessionBackgroundHoldParams, SessionBackgroundHoldResponse, SessionBackgroundListResponse,
+        SessionBackgroundStopParams, SessionBackgroundStopResponse, SessionCancelParams,
+        SessionCancelResponse, SessionConfigureParams, SessionConfigureResponse,
+        SessionDeleteParams, SessionDeleteResponse, SessionDetach, SessionDetachParams,
+        SessionDetachResponse, SessionForkParams, SessionForkResponse, SessionHoldParams,
+        SessionHoldResponse, SessionHooksReloadParams, SessionHooksReloadResponse,
+        SessionInspectParams, SessionInspectResponse, SessionListDetailedResponse,
+        SessionListParams, SessionListResponse, SessionMarkParams, SessionMarkResponse,
+        SessionMcpCatalog, SessionMcpCatalogParams, SessionMcpCompleteParams,
         SessionMcpCompleteResponse, SessionMcpInventory, SessionMcpParams,
         SessionMcpResourceParams, SessionMcpResourceResponse, SessionNewParams, SessionNewResponse,
         SessionObserve, SessionObserveParams, SessionProcessesParams, SessionProcessesResponse,
@@ -48,14 +49,14 @@ use crate::{
         SessionSurfaceActionResponse, SessionUnsteerParams, SessionUnsteerResponse,
         WorktreePruneParams, WorktreePruneResponse, AUTH_CHOOSE_STORE, AUTH_KEY, AUTH_LIST,
         AUTH_LOGIN, AUTH_LOGIN_CANCEL, AUTH_LOGOUT, CONFIG_GET, HELLO, MODEL_LIST, SESSION_ANSWER,
-        SESSION_ANSWER_QUESTION, SESSION_ATTACH, SESSION_BACKGROUND_LIST, SESSION_BACKGROUND_STOP,
-        SESSION_CANCEL, SESSION_CONFIGURE, SESSION_DELETE, SESSION_DETACH, SESSION_FORK,
-        SESSION_HOLD, SESSION_HOOKS_RELOAD, SESSION_INSPECT, SESSION_LIST, SESSION_LIST_DETAILED,
-        SESSION_MARK, SESSION_MCP, SESSION_MCP_CATALOG, SESSION_MCP_COMPLETE, SESSION_MCP_RESOURCE,
-        SESSION_NEW, SESSION_OBSERVE, SESSION_PROCESSES, SESSION_PROMPT, SESSION_PULL_REQUEST_LINK,
-        SESSION_PULL_REQUEST_LIST, SESSION_PULL_REQUEST_SHOW, SESSION_PULL_REQUEST_UNLINK,
-        SESSION_RENAME, SESSION_REPORT, SESSION_SEARCH, SESSION_STEER, SESSION_SURFACE_ACTION,
-        SESSION_UNSTEER, WORKTREE_PRUNE,
+        SESSION_ANSWER_QUESTION, SESSION_ATTACH, SESSION_BACKGROUND_HOLD, SESSION_BACKGROUND_LIST,
+        SESSION_BACKGROUND_STOP, SESSION_CANCEL, SESSION_CONFIGURE, SESSION_DELETE, SESSION_DETACH,
+        SESSION_FORK, SESSION_HOLD, SESSION_HOOKS_RELOAD, SESSION_INSPECT, SESSION_LIST,
+        SESSION_LIST_DETAILED, SESSION_MARK, SESSION_MCP, SESSION_MCP_CATALOG,
+        SESSION_MCP_COMPLETE, SESSION_MCP_RESOURCE, SESSION_NEW, SESSION_OBSERVE,
+        SESSION_PROCESSES, SESSION_PROMPT, SESSION_PULL_REQUEST_LINK, SESSION_PULL_REQUEST_LIST,
+        SESSION_PULL_REQUEST_SHOW, SESSION_PULL_REQUEST_UNLINK, SESSION_RENAME, SESSION_REPORT,
+        SESSION_SEARCH, SESSION_STEER, SESSION_SURFACE_ACTION, SESSION_UNSTEER, WORKTREE_PRUNE,
     },
     subscription::Subscription,
     BuildId, BuildSkew, DaemonInfo, DaemonStatus, ErrorCode, FrameError, HelloResponse, Message,
@@ -319,6 +320,16 @@ pub trait Service: SettingsService + Send + Sync {
     ) -> impl Future<Output = Result<SessionBackgroundStopResponse, RpcError>> + Send {
         let _ = params;
         unsupported(SESSION_BACKGROUND_STOP)
+    }
+
+    /// Handles `rho/session/background/hold`: hold the loaded session's
+    /// background results for its next turn.
+    fn session_background_hold(
+        &self,
+        params: SessionBackgroundHoldParams,
+    ) -> impl Future<Output = Result<SessionBackgroundHoldResponse, RpcError>> + Send {
+        let _ = params;
+        unsupported(SESSION_BACKGROUND_HOLD)
     }
 
     /// Handles `rho/session/pull_request/list`: lease and list the sessions' pull requests.

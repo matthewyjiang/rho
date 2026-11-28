@@ -7,9 +7,13 @@ use std::path::Path;
 
 use pretty_assertions::assert_eq;
 use rho_protocol::{
-    methods::{SessionBackgroundList, SessionCancel},
-    BackgroundStatus, IdleWake, JobState, SessionBackgroundListParams, SessionCancelParams,
-    SessionSetup,
+    methods::{
+        SessionBackgroundHold, SessionBackgroundList, SessionBackgroundStop, SessionCancel,
+        SessionDelete,
+    },
+    BackgroundStatus, DeleteWork, ErrorCode, IdleWake, JobState, SessionBackgroundHoldParams,
+    SessionBackgroundListParams, SessionBackgroundStopParams, SessionCancelParams,
+    SessionDeleteParams, SessionSetup,
 };
 use serde_json::json;
 
@@ -139,6 +143,158 @@ async fn the_background_list_shows_work_that_outlives_the_turn() {
         })
         .await;
     settled_job(&sandbox, &client, &session).await;
+}
+
+// Covers: a delete refuses a session with work, a background process that
+// outlived its turn or a turn under way that another client started,
+// unless the client asks it to stop the session's work
+// (`DeleteWork::Stop`, as an ACP v2 `session/delete` does): then it
+// cancels the turn, which ends cancelled, deletes the session and ends the
+// process, children included. A miss leaves ACP v2 deletes failing for a
+// session that ran a background process or that another connection is
+// prompting, which the spec requires to succeed.
+// Owner: daemon session catalog.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_delete_that_stops_the_sessions_work_cancels_its_turn_and_ends_its_processes() {
+    // (the tool whose sleeper is the work, and how the job ends)
+    let cases = [
+        ("process", JobState::Completed),
+        ("bash", JobState::Cancelled),
+    ];
+    let (mut outcomes, mut logs) = (Vec::new(), String::new());
+    for (tool, _) in cases {
+        let sandbox = Sandbox::new();
+        sandbox.set_permission_mode("bypass");
+        let client = sandbox.start_daemon("tool-call").await;
+        // Woken by the daemon, so a turn ends while its process runs on.
+        let setup = SessionSetup {
+            idle_wake: IdleWake::Turn,
+            ..SessionSetup::default()
+        };
+        let session = sandbox.new_session_with_setup(&client, setup).await;
+        let arguments = match tool {
+            "process" => json!({"action": "start", "command": sleeper("work.pid")}),
+            _ => json!({"command": sleeper("work.pid")}),
+        };
+        let call = json!({"id": "work", "name": tool, "arguments": arguments});
+        sandbox.prompt_tool_call(&client, &session, &call).await;
+        let pid = sandbox
+            .poll_until("the sleeper to start", async || {
+                recorded_pid(&sandbox.workspace, "work.pid")
+            })
+            .await;
+        let _leftover = Sleepers(vec![pid]);
+        if tool == "process" {
+            settled_job(&sandbox, &client, &session).await;
+        }
+        let delete = |work| SessionDeleteParams {
+            session: session.clone(),
+            unless_attached: false,
+            work,
+        };
+
+        let refused = client
+            .request::<SessionDelete>(&delete(DeleteWork::Refuse))
+            .await
+            .map_err(|error| error.error_code());
+        let stopped = client
+            .request::<SessionDelete>(&delete(DeleteWork::Stop))
+            .await
+            .map_err(|error| error.error_code());
+        sandbox
+            .poll_until("the sleeper to end", async || (!running(pid)).then_some(()))
+            .await;
+        let ended = settled_job(&sandbox, &client, &session).await.state;
+        outcomes.push((refused, stopped, ended));
+        logs += &format!("{tool} log:\n{}\n", sandbox.isolated.daemon_log());
+    }
+
+    let expected: Vec<_> = cases
+        .iter()
+        .map(|&(_, ended)| {
+            (
+                Err(Some(ErrorCode::SessionBusy)),
+                Ok(Default::default()),
+                ended,
+            )
+        })
+        .collect();
+    assert_eq!(outcomes, expected, "{logs}");
+}
+
+// Covers: a client that holds a session's results, then stops its
+// background process, as an ACP v2 `session/close` does, has the daemon
+// start no turn to give the model the stopped process's result, and the
+// held result keeps the idle session loaded no longer. A miss runs a model
+// turn after the host closed the session, or pins the closed session and
+// its file in the daemon until it stops, blocking upgrades.
+// Owner: daemon session background.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_held_session_starts_no_turn_for_its_stopped_work_and_unloads() {
+    let sandbox = Sandbox::new();
+    sandbox.set_permission_mode("bypass");
+    let client = sandbox
+        .start_daemon_with("tool-call", &["--unload-idle-after", "200ms"])
+        .await;
+    let setup = SessionSetup {
+        idle_wake: IdleWake::Turn,
+        ..SessionSetup::default()
+    };
+    let session = sandbox.new_session_with_setup(&client, setup).await;
+    let process = json!({
+        "id": "background",
+        "name": "process",
+        "arguments": {"action": "start", "command": sleeper("background.pid")},
+    });
+    sandbox.prompt_tool_call(&client, &session, &process).await;
+    let pid = sandbox
+        .poll_until("the process to start", async || {
+            recorded_pid(&sandbox.workspace, "background.pid")
+        })
+        .await;
+    let _leftover = Sleepers(vec![pid]);
+    settled_job(&sandbox, &client, &session).await;
+    let records = sandbox.session_records(&session).len();
+    let list = client
+        .request::<SessionBackgroundList>(&SessionBackgroundListParams {})
+        .await
+        .unwrap();
+    let work = list
+        .sessions
+        .into_iter()
+        .filter(|listed| listed.session == session)
+        .flat_map(|listed| listed.work)
+        .map(|work| work.item)
+        .next()
+        .expect("the daemon lists the process");
+
+    client
+        .request::<SessionBackgroundHold>(&SessionBackgroundHoldParams {
+            session: session.clone(),
+        })
+        .await
+        .unwrap();
+    client
+        .request::<SessionBackgroundStop>(&SessionBackgroundStopParams {
+            session: session.clone(),
+            work,
+        })
+        .await
+        .unwrap();
+    sandbox
+        .poll_until("the process to end", async || (!running(pid)).then_some(()))
+        .await;
+    // The wait is the check that the held result keeps the session loaded
+    // no longer.
+    sandbox.wait_unloaded(&session, 1).await;
+
+    // A delivery turn would have saved its prompt and answer.
+    assert_eq!(
+        sandbox.session_records(&session).len(),
+        records,
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
 }
 
 // Covers: `rho daemon stop` ends the processes its sessions' tools started,
