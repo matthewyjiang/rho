@@ -328,7 +328,10 @@ fn v2_resume_replays_and_refused_prompts_send_nothing() {
     assert_eq!(held[message_id.as_str().unwrap()], "read the shared notes");
     assert!(kinds.contains(&"tool_call_update"), "{kinds:?}");
     assert_eq!(
-        replay.last().unwrap(),
+        replay
+            .iter()
+            .rfind(|update| update["sessionUpdate"] == "state_update")
+            .unwrap(),
         &json!({"sessionUpdate": "state_update", "state": "idle", "background": []})
     );
 }

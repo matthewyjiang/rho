@@ -25,6 +25,8 @@ impl V2Port {
     /// A port for a replay. v2 hosts append chunks to a message they already
     /// hold, so before a replayed message's first chunk this port sends the
     /// message with no content, which resets it; see [`updates::reset`].
+    /// It sends history only ([`is_history`]): a v2 resume reports the
+    /// session's current info once the replay is through.
     pub(super) fn replaying(cx: V2ConnectionTo<Client>) -> Self {
         Self {
             cx,
@@ -46,6 +48,41 @@ impl V2Port {
     }
 }
 
+/// Whether a replay sends `update`. v2 replays the conversation, not the
+/// notices, states and session info that were current while it went on:
+/// those are live only, and a resume reports what is current now.
+fn is_history(update: &v2::SessionUpdate) -> bool {
+    use v2::SessionUpdate as U;
+    match update {
+        U::UserMessageChunk(_)
+        | U::UserMessage(_)
+        | U::AgentMessageChunk(_)
+        | U::AgentMessage(_)
+        | U::AgentThoughtChunk(_)
+        | U::AgentThought(_)
+        | U::ToolCallContentChunk(_)
+        | U::ToolCallUpdate(_)
+        | U::TerminalUpdate(_)
+        | U::TerminalOutputChunk(_)
+        | U::PlanUpdate(_)
+        | U::PlanRemoved(_)
+        | U::CompactionUpdate(_)
+        | U::CompactionSummaryChunk(_)
+        | U::SubagentUpdate(_)
+        | U::SessionMessage(_)
+        | U::SessionMessageChunk(_) => true,
+        U::StateUpdate(_)
+        | U::AvailableCommandsUpdate(_)
+        | U::ConfigOptionUpdate(_)
+        | U::SessionInfoUpdate(_)
+        | U::UsageUpdate(_)
+        | U::Notice(_)
+        | U::ReplayComplete(_) => false,
+        // An update a newer schema adds, which no rho mapping makes yet.
+        _ => true,
+    }
+}
+
 impl AcpClientPort for V2Port {
     fn send_session_notification(
         &self,
@@ -53,6 +90,11 @@ impl AcpClientPort for V2Port {
     ) -> Pin<Box<dyn Future<Output = Result<(), AcpError>> + Send + '_>> {
         Box::pin(async move {
             match updates::notification(notification) {
+                Ok(Some(notification))
+                    if self.replayed.is_some() && !is_history(&notification.update) =>
+                {
+                    Ok(())
+                }
                 Ok(Some(notification)) => {
                     if let (Some(replayed), Some(message)) =
                         (&self.replayed, updates::chunk_message_id(&notification))
@@ -124,7 +166,8 @@ impl AcpClientPort for V2Port {
     }
 
     /// Reports `requires_action` while the turn waits for a person, and
-    /// `running` once it goes on.
+    /// `running` once it goes on; also the state of a session observed
+    /// again after [`AcpClientPort::unobservable`], `idle` included.
     fn foreground_changed(
         &self,
         session_id: &v1::SessionId,
@@ -162,6 +205,18 @@ impl AcpClientPort for V2Port {
         });
         if let Err(error) = sent {
             tracing::warn!(%error, "could not report background work over ACP v2");
+        }
+    }
+
+    /// Reports the `unknown` state, with no background list: the host can
+    /// tell neither while the session cannot be observed.
+    fn unobservable(&self, session_id: &v1::SessionId) {
+        let unknown =
+            v2::SessionUpdate::StateUpdate(v2::StateUpdate::Unknown(v2::UnknownStateUpdate::new()));
+        let sent = bridge::<_, v2::SessionId>(session_id)
+            .and_then(|session_id| self.send_update(&session_id, unknown));
+        if let Err(error) = sent {
+            tracing::warn!(%error, "could not report a session's lost state over ACP v2");
         }
     }
 }

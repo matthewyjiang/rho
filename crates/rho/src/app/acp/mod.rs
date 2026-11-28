@@ -57,7 +57,7 @@ use crate::{
 use auth::LoginFlight;
 use host_features::{NegotiatedFeatures, Turns};
 use requests::{Launch, LaunchHost};
-use sessions::{Sessions, Started};
+use sessions::{IfOpen, Sessions, Started};
 
 /// Outbound ACP host port: session updates, permission prompts, and
 /// elicitations, as one connection's protocol version sends them.
@@ -112,10 +112,12 @@ pub(super) trait AcpClientPort: Send + Sync {
     fn background_changed(&self, _session_id: &SessionId, _change: BackgroundChanged<'_>) {}
 
     /// Session `session_id`'s foreground work is now `foreground`, which no
-    /// prompt of the host's reports: a turn it did not prompt began, or the
-    /// turn it follows began or stopped waiting for a person. Never
-    /// [`Foreground::Idle`], whose turn end [`Self::turn_ended`] reports. Only ACP v2 reports turn
-    /// state, so a v1 host has nothing to hear.
+    /// prompt of the host's reports: a turn it did not prompt began, the
+    /// turn it follows began or stopped waiting for a person, or the
+    /// session can be observed again after [`Self::unobservable`].
+    /// [`Foreground::Idle`] only for that last case; otherwise a followed
+    /// turn's end is reported by [`Self::turn_ended`]. Only ACP v2 reports
+    /// turn state, so a v1 host has nothing to hear.
     fn foreground_changed(
         &self,
         _session_id: &SessionId,
@@ -123,6 +125,12 @@ pub(super) trait AcpClientPort: Send + Sync {
         _background: &[rho_protocol::BackgroundWork],
     ) {
     }
+
+    /// Session `session_id`'s work can no longer be observed, as when the
+    /// daemon link is lost, until [`Self::foreground_changed`] reports it
+    /// again. Only ACP v2 reports it (the `unknown` state), so a v1 host
+    /// has nothing to hear.
+    fn unobservable(&self, _session_id: &SessionId) {}
 }
 
 /// A session's background work went from `previous` to `current`.
@@ -421,7 +429,9 @@ fn v1_agent(adapter: Arc<Adapter>) -> impl ConnectTo<Client> {
                     let adapter = Arc::clone(&adapter);
                     let port: Arc<dyn AcpClientPort> = Arc::new(ConnectionPort { cx: cx.clone() });
                     cx.spawn(async move {
-                        let started = adapter.load_session(&request, Arc::clone(&port)).await;
+                        let started = adapter
+                            .load_session(&request, Arc::clone(&port), IfOpen::Restart)
+                            .await;
                         let toggles = adapter.toggles();
                         respond_started(responder, &port, started, |started| {
                             started.load_session_response(toggles)
@@ -439,7 +449,7 @@ fn v1_agent(adapter: Arc<Adapter>) -> impl ConnectTo<Client> {
                     let adapter = Arc::clone(&adapter);
                     let port: Arc<dyn AcpClientPort> = Arc::new(ConnectionPort { cx: cx.clone() });
                     cx.spawn(async move {
-                        let started = adapter.resume_session(&request).await;
+                        let started = adapter.resume_session(&request, IfOpen::Restart).await;
                         let toggles = adapter.toggles();
                         respond_started(responder, &port, started, |started| {
                             started.resume_session_response(toggles)

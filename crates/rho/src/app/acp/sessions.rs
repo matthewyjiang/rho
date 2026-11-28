@@ -33,7 +33,7 @@ use agent_client_protocol::{
         CloseSessionRequest, CloseSessionResponse, DeleteSessionRequest, DeleteSessionResponse,
         LoadSessionRequest, McpServer, MessageId, NewSessionRequest, ResumeSessionRequest,
         SessionId as AcpSessionId, SetSessionConfigOptionRequest, SetSessionConfigOptionResponse,
-        SetSessionModeRequest, SetSessionModeResponse,
+        SetSessionModeRequest, SetSessionModeResponse, UsageUpdate,
     },
     Error as AcpError, RequestCancellation,
 };
@@ -66,6 +66,9 @@ use crate::app::daemon_client::{Daemon, Link, Routed, SessionRoute};
 enum Inbound {
     Routed(Routed),
     Control(Control),
+    /// Every event of the attachment a [`Control::Resync`] detached went
+    /// before this, which the pump sends itself.
+    Drained,
 }
 
 /// What a session's requests hand its pump.
@@ -73,6 +76,9 @@ pub(super) enum Control {
     /// Attach again after the cursor, once the last attachment ended;
     /// answered once the replay is through, or with why the attach failed.
     Resume(Replayed),
+    /// Attach again in place for a host that resumes the session it has
+    /// open, following on whatever turn the pump follows; see [`Resync`].
+    Resync(Box<Resync>),
     /// A prompt of this host's is about to be sent; see [`Waiter`]. `turn`
     /// hears the turn the daemon answers it with, and closes unheard when
     /// the prompt started none. The pump waits for it before it reads on.
@@ -90,8 +96,19 @@ pub(super) enum Control {
     Flush(oneshot::Sender<()>),
 }
 
-/// Told once an attachment's replay is through, or why it never started.
-pub(super) type Replayed = oneshot::Sender<Result<(), AcpError>>;
+/// Told once an attachment's replay is through, with the session's
+/// [`Current`] info, or why it never started.
+pub(super) type Replayed = oneshot::Sender<Result<Current, AcpError>>;
+
+/// What a session's info is as its replay ends. ACP v2 replays no past info,
+/// so a v2 resume reports this after the replay.
+#[derive(Debug)]
+pub(super) struct Current {
+    /// The session's title, once it has one.
+    pub(super) title: Option<String>,
+    /// The session's last usage report, if it has one.
+    pub(super) usage: Option<UsageUpdate>,
+}
 
 /// The attach that opened a session, which its pump starts on.
 struct Opening {
@@ -100,6 +117,26 @@ struct Opening {
     replayed: Replayed,
     /// Released once the host has the response that names the session.
     gate: oneshot::Receiver<()>,
+}
+
+/// An in-place attach for a host's resume of a session open here. The
+/// daemon replaces an attachment without marking where the old one's
+/// events end, so the pump detaches first ([`Attacher::detach`]) and
+/// attaches once it read them all ([`Inbound::Drained`]).
+pub(super) struct Resync {
+    from: ReplayFrom,
+    setup: SessionSetup,
+    replayed: Replayed,
+    /// Released once the host has the resume's response.
+    gate: oneshot::Receiver<()>,
+}
+
+/// Where a [`Resync`] replays from.
+pub(super) enum ReplayFrom {
+    /// The start, as history shown through this port.
+    Start(Arc<dyn AcpClientPort>),
+    /// The pump's cursor: the events the host missed, if any.
+    Cursor,
 }
 
 /// What a pump does with an attachment's replay.
@@ -192,6 +229,13 @@ pub(super) trait Attacher: Send + Sync {
         after: Option<&'a Cursor>,
         setup: &'a SessionSetup,
     ) -> Pin<Box<dyn Future<Output = Result<SessionAttachResponse, AcpError>> + Send + 'a>>;
+
+    /// Ends `session`'s attachment, returning once every event it sent is
+    /// routed. Nothing to end once the connection closed.
+    fn detach<'a>(
+        &'a self,
+        session: &'a SessionId,
+    ) -> Pin<Box<dyn Future<Output = Result<(), AcpError>> + Send + 'a>>;
 }
 
 impl Attacher for Daemon {
@@ -211,6 +255,25 @@ impl Attacher for Daemon {
             self.request::<SessionAttach>(&params)
                 .await
                 .map_err(AcpError::from)
+        })
+    }
+
+    fn detach<'a>(
+        &'a self,
+        session: &'a SessionId,
+    ) -> Pin<Box<dyn Future<Output = Result<(), AcpError>> + Send + 'a>> {
+        Box::pin(async move {
+            let Some(link) = self.current().await else {
+                return Ok(());
+            };
+            let params = SessionDetachParams {
+                session: session.clone(),
+            };
+            link.request::<SessionDetach>(&params)
+                .await
+                .map_err(|error| daemon::daemon_error(&error))?;
+            link.fence().await;
+            Ok(())
         })
     }
 }
@@ -288,6 +351,18 @@ impl Busy {
     }
 }
 
+/// What `session/load` and `session/resume` do with a session already open
+/// here.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum IfOpen {
+    /// Close it first, cancelling this host's prompt, and attach afresh,
+    /// as ACP v1 does.
+    Restart,
+    /// Attach again in place, so this host's prompt runs on, as ACP v2
+    /// resumes require.
+    Resync,
+}
+
 /// What closing a session waits for once it cancelled this host's prompt.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Wait {
@@ -305,7 +380,8 @@ pub(super) struct Sessions {
     placeholders: Arc<AtomicU64>,
 }
 
-/// A session the host just opened, before the host has its response.
+/// A session the host just opened or resynced, before the host has its
+/// response.
 pub(super) struct Started {
     pub(super) session_id: AcpSessionId,
     pub(super) options: SessionOptions,
@@ -314,6 +390,8 @@ pub(super) struct Started {
     pub(super) state: JobState,
     /// The session's background work when the attachment began.
     pub(super) background: Vec<BackgroundWork>,
+    /// The session's info when the attachment began.
+    pub(super) current: Current,
     gate: oneshot::Sender<()>,
 }
 
@@ -471,12 +549,14 @@ impl Adapter {
         &self,
         request: &LoadSessionRequest,
         port: Arc<dyn AcpClientPort>,
+        if_open: IfOpen,
     ) -> Result<Started, AcpError> {
         self.reopen(
             &request.session_id,
             &request.additional_directories,
             &request.mcp_servers,
             Show::History(port),
+            if_open,
         )
         .await
     }
@@ -485,26 +565,41 @@ impl Adapter {
     pub(super) async fn resume_session(
         &self,
         request: &ResumeSessionRequest,
+        if_open: IfOpen,
     ) -> Result<Started, AcpError> {
         self.reopen(
             &request.session_id,
             &request.additional_directories,
             &request.mcp_servers,
             Show::Skip,
+            if_open,
         )
         .await
     }
 
     /// `session/load` and `session/resume`. A session already open here is
-    /// closed first, so the host gets a fresh attachment.
+    /// restarted or resynced as `if_open` says; a deleted one is opened
+    /// afresh.
     async fn reopen(
         &self,
         session_id: &AcpSessionId,
         additional_directories: &[std::path::PathBuf],
         servers: &[McpServer],
         show: Show,
+        if_open: IfOpen,
     ) -> Result<Started, AcpError> {
-        if let Some(live) = self.sessions.remove(&session_id.0) {
+        let setup = self
+            .launch
+            .setup(additional_directories, servers, self.negotiated.get());
+        if let Some(live) = self.sessions.get(&session_id.0) {
+            let attachment = *live.shared.attachment.borrow();
+            match (if_open, attachment) {
+                (IfOpen::Resync, Attachment::Attached(_) | Attachment::Stale) => {
+                    return self.resync(&live, setup, show).await;
+                }
+                (IfOpen::Resync, Attachment::Deleted) | (IfOpen::Restart, _) => {}
+            }
+            self.sessions.remove(&session_id.0);
             self.detach(&live, Wait::Prompt).await;
             // The old attachment's events still in flight are routed, and
             // dropped, before the new one's route takes their place.
@@ -512,11 +607,52 @@ impl Adapter {
                 link.fence().await;
             }
         }
-        let setup = self
-            .launch
-            .setup(additional_directories, servers, self.negotiated.get());
         self.open(SessionId::new(session_id.0.as_ref()), setup, show)
             .await
+    }
+
+    /// Has open session `live`'s pump attach again in place with `setup`
+    /// ([`Resync`]), showing the replay as `show` says, and returns once
+    /// the replay is through.
+    async fn resync(
+        &self,
+        live: &Live,
+        setup: SessionSetup,
+        show: Show,
+    ) -> Result<Started, AcpError> {
+        // Held across the attach, so a request finding the session stale
+        // meanwhile does not attach it too.
+        let _attaching = live.attaching.lock().await;
+        let link = self.daemon.link().await?;
+        // A lost connection took the session's route with it.
+        self.daemon.route(&live.id, route(&live.inbound));
+        let (replayed, through) = oneshot::channel();
+        let (gate, gate_receiver) = oneshot::channel();
+        let from = match show {
+            Show::History(port) => ReplayFrom::Start(port),
+            Show::Missed | Show::Skip => ReplayFrom::Cursor,
+        };
+        let resync = Resync {
+            from,
+            setup,
+            replayed,
+            gate: gate_receiver,
+        };
+        live.deliver(&link, Control::Resync(Box::new(resync)))
+            .await?;
+        let current = through.await.unwrap_or_else(|_| Err(daemon::lost()))?;
+        // The pump waits for the gate, so nothing changes these meanwhile.
+        let Attachment::Attached(state) = *live.shared.attachment.borrow() else {
+            return Err(daemon::lost());
+        };
+        Ok(Started {
+            session_id: AcpSessionId::new(live.id.as_str()),
+            options: lock(&live.shared.options).clone(),
+            state,
+            background: lock(&live.shared.background).clone(),
+            current,
+            gate,
+        })
     }
 
     /// Attaches session `id` and starts its pump; returns once the replay
@@ -560,7 +696,7 @@ impl Adapter {
         let pump = pump::spawn(
             context,
             attacher,
-            receiver,
+            (inbound.downgrade(), receiver),
             Arc::clone(&shared),
             setup,
             &self.herdr,
@@ -583,16 +719,20 @@ impl Adapter {
             pump,
         });
         lock(&self.sessions.live).insert(acp_id.0.to_string(), Arc::clone(&live));
-        if let Err(error) = through.await.unwrap_or_else(|_| Err(daemon::lost())) {
-            self.sessions.remove(&acp_id.0);
-            self.detach(&live, Wait::Prompt).await;
-            return Err(error);
-        }
+        let current = match through.await.unwrap_or_else(|_| Err(daemon::lost())) {
+            Ok(current) => current,
+            Err(error) => {
+                self.sessions.remove(&acp_id.0);
+                self.detach(&live, Wait::Prompt).await;
+                return Err(error);
+            }
+        };
         Ok(Started {
             session_id: acp_id,
             options,
             state,
             background,
+            current,
             gate,
         })
     }
@@ -606,7 +746,8 @@ impl Adapter {
         live.inbound
             .send(Inbound::Control(Control::Resume(replayed)))
             .map_err(|_| daemon::lost())?;
-        through.await.unwrap_or_else(|_| Err(daemon::lost()))
+        through.await.unwrap_or_else(|_| Err(daemon::lost()))?;
+        Ok(())
     }
 
     /// Stops relaying `live`: cancels this host's prompt and waits as
