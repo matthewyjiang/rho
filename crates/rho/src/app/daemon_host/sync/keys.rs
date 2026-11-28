@@ -1,5 +1,5 @@
 //! Saving opened API keys on the target and restoring what they replaced:
-//! what `rho/sync/import_keys`, `status`, `revert`, and `discard` do to a
+//! what `rho/sync/import_keys` and a revert of an API key do to a
 //! credential store and its [`journal`].
 //!
 //! An import journals each key before it writes any, so a crash between
@@ -7,15 +7,15 @@
 //! whose write never happened reads as changed.
 
 use rho_protocol::{
-    ErrorCode, ImportOutcome, ImportedSecret, RevertOutcome, RevertedItem, RpcError, SecretItem,
-    SyncId, SyncItem, SyncItemState, SyncItemStatus, SyncStatusResponse,
+    ErrorCode, ImportOutcome, ImportedSecret, RevertOutcome, RpcError, SecretItem, SyncId, SyncItem,
 };
 use rho_providers::credentials::{CredentialResult, CredentialStore};
 use zeroize::Zeroizing;
 
 use super::{
-    api_key_auth,
-    journal::{self, Journal, JournalItem, JOURNAL_LIFETIME},
+    journal::{self, Draft, Journal, JournalItem, Place},
+    store_error,
+    values::api_key_auth,
 };
 use crate::app::credential_writes::{self, CredentialWriteError};
 
@@ -44,11 +44,7 @@ pub(super) fn import(
     values: &[String],
     now: u64,
 ) -> Result<Vec<ImportedSecret>, RpcError> {
-    let loaded = journal::load(stores.journal, now).map_err(store_error)?;
-    let mut journal = loaded
-        .clone()
-        .filter(|journal| &journal.sync == sync)
-        .unwrap_or_else(|| Journal::new(sync.clone(), now));
+    let mut draft = Draft::begin(stores.journal, sync, now).map_err(store_error)?;
     let mut outcomes = Vec::with_capacity(items.len());
     let mut writes = Vec::new();
     for (item, value) in items.iter().zip(values) {
@@ -59,11 +55,14 @@ pub(super) fn import(
             match credential_writes::api_key_account(auth) {
                 Ok(account) => {
                     let previous = stores.keys.get_secret_fresh(account).map_err(store_error)?;
-                    let item = SyncItem::api_key(auth);
-                    let displaced = journal.record(item.clone(), account, previous, value);
+                    let place = Place::ApiKey {
+                        auth: auth.to_owned(),
+                        account: account.to_owned(),
+                    };
+                    let displaced = draft.journal.record(place, previous, Some(value));
                     writes.push(Write {
                         index: outcomes.len(),
-                        item,
+                        item: SyncItem::api_key(auth),
                         account,
                         value,
                         displaced,
@@ -78,26 +77,22 @@ pub(super) fn import(
     if writes.is_empty() {
         return Ok(imported(items, outcomes));
     }
-    journal.expires_at = now + JOURNAL_LIFETIME;
-    journal::save(stores.journal, &journal).map_err(store_error)?;
+    draft.save(stores.journal).map_err(store_error)?;
     let attempted = writes.len();
     let mut unwritten = 0;
     for write in writes {
         if let Err(error) = stores.keys.set_secret(write.account, write.value) {
             let message = credential_writes::redacted(error.to_string(), write.value);
             outcomes[write.index] = failed(format!("could not save the key: {message}"));
-            journal.undo(&write.item, write.displaced);
+            draft.journal.undo(&write.item, write.displaced);
             unwritten += 1;
         }
     }
-    let settled = match (unwritten, loaded) {
-        (0, _) => Ok(()),
+    let settled = match unwritten {
+        0 => Ok(()),
         // Nothing written replaces nothing.
-        (unwritten, Some(loaded)) if unwritten == attempted => {
-            journal::save(stores.journal, &loaded)
-        }
-        (unwritten, None) if unwritten == attempted => journal::delete(stores.journal),
-        _ => journal::save(stores.journal, &journal),
+        unwritten if unwritten == attempted => draft.abandon(stores.journal),
+        _ => draft.save(stores.journal),
     };
     if let Err(error) = settled {
         // The journal still names the keys that were not written; they read
@@ -118,100 +113,30 @@ struct Write<'a> {
     displaced: Option<JournalItem>,
 }
 
-/// Whether each item `sync` changed still holds what it wrote.
-pub(super) fn status(
-    stores: Stores,
-    sync: &SyncId,
-    now: u64,
-) -> Result<SyncStatusResponse, RpcError> {
-    let journal = journal_of(stores, sync, now)?;
-    let items = journal
-        .items
-        .iter()
-        .map(|journaled| {
-            let current = stores
-                .keys
-                .get_secret_fresh(&journaled.account)
-                .map_err(store_error)?
-                .map(Zeroizing::new);
-            let state = if journaled.unchanged(current.as_deref().map(String::as_str)) {
-                SyncItemState::Unchanged
-            } else {
-                SyncItemState::Changed
-            };
-            Ok(SyncItemStatus::new(journaled.item.clone(), state))
-        })
-        .collect::<Result<_, RpcError>>()?;
-    Ok(SyncStatusResponse::new(journal.expires_at, items))
-}
-
-/// Restores each of `items` that `sync` changed and that still holds what
-/// it wrote, or that `overwrite` names, and forgets the ones restored.
-pub(super) fn revert(
-    stores: Stores,
-    sync: &SyncId,
-    items: Vec<SyncItem>,
-    overwrite: &[SyncItem],
-    now: u64,
-) -> Result<Vec<RevertedItem>, RpcError> {
-    let mut journal = journal_of(stores, sync, now)?;
-    let mut reverted = Vec::with_capacity(items.len());
-    for item in items {
-        let outcome = match journal.find(&item).cloned() {
-            None => RevertOutcome::Failed {
-                message: "this sync did not change it, or it is already reverted".into(),
-            },
-            Some(journaled) => match restore(stores.keys, &journaled, overwrite) {
-                Ok(RevertOutcome::Restored) => {
-                    journal.remove(&item);
-                    RevertOutcome::Restored
-                }
-                Ok(outcome) => outcome,
-                Err(error) => RevertOutcome::Failed {
-                    message: format!("could not restore it: {error}"),
-                },
-            },
-        };
-        reverted.push(RevertedItem::new(item, outcome));
-    }
-    if reverted
-        .iter()
-        .any(|reverted| reverted.outcome == RevertOutcome::Restored)
-    {
-        if let Err(error) = journal::save(stores.journal, &journal) {
-            // The keys are restored; their entries stay and read as changed,
-            // and restoring one again with `overwrite` writes the same value.
-            tracing::warn!(%error, "could not update the sync journal after a revert");
-        }
-    }
-    Ok(reverted)
-}
-
-/// Deletes `sync`'s journal, leaving what it wrote.
-pub(super) fn discard(stores: Stores, sync: &SyncId, now: u64) -> Result<(), RpcError> {
-    journal_of(stores, sync, now)?;
-    journal::delete(stores.journal).map_err(store_error)
-}
-
-/// Puts back what `journaled` replaced, unless something changed it since
-/// the sync and `overwrite` does not name it.
-fn restore(
+/// The value the store account `account` holds now.
+pub(super) fn current(
     keys: &dyn CredentialStore,
+    account: &str,
+) -> CredentialResult<Option<Zeroizing<String>>> {
+    Ok(keys.get_secret_fresh(account)?.map(Zeroizing::new))
+}
+
+/// Puts back the key `journaled` replaced at `account`, unless something
+/// changed it since the sync and `overwrite` is false.
+pub(super) fn restore(
+    keys: &dyn CredentialStore,
+    account: &str,
     journaled: &JournalItem,
-    overwrite: &[SyncItem],
+    overwrite: bool,
 ) -> CredentialResult<RevertOutcome> {
-    let current = keys
-        .get_secret_fresh(&journaled.account)?
-        .map(Zeroizing::new);
-    if !journaled.unchanged(current.as_deref().map(String::as_str))
-        && !overwrite.contains(&journaled.item)
-    {
+    let current = current(keys, account)?;
+    if !journaled.unchanged(current.as_deref().map(String::as_str)) && !overwrite {
         return Ok(RevertOutcome::Changed);
     }
     match &journaled.previous {
-        Some(previous) => keys.set_secret(&journaled.account, previous)?,
+        Some(previous) => keys.set_secret(account, previous)?,
         None => {
-            keys.delete_secret(&journaled.account)?;
+            keys.delete_secret(account)?;
         }
     }
     Ok(RevertOutcome::Restored)
@@ -219,7 +144,7 @@ fn restore(
 
 /// The journal of `sync`, or `SyncNotFound` when the daemon keeps another
 /// sync's or none.
-fn journal_of(stores: Stores, sync: &SyncId, now: u64) -> Result<Journal, RpcError> {
+pub(super) fn journal_of(stores: Stores, sync: &SyncId, now: u64) -> Result<Journal, RpcError> {
     journal::load(stores.journal, now)
         .map_err(store_error)?
         .filter(|journal| &journal.sync == sync)
@@ -231,6 +156,12 @@ fn journal_of(stores: Stores, sync: &SyncId, now: u64) -> Result<Journal, RpcErr
                 ),
             )
         })
+}
+
+/// Deletes `sync`'s journal, leaving what it wrote.
+pub(super) fn discard(stores: Stores, sync: &SyncId, now: u64) -> Result<(), RpcError> {
+    journal_of(stores, sync, now)?;
+    journal::delete(stores.journal).map_err(store_error)
 }
 
 fn imported(items: Vec<SecretItem>, outcomes: Vec<ImportOutcome>) -> Vec<ImportedSecret> {
@@ -245,13 +176,6 @@ fn failed(message: impl ToString) -> ImportOutcome {
     ImportOutcome::Failed {
         message: message.to_string(),
     }
-}
-
-fn store_error(error: impl std::fmt::Display) -> RpcError {
-    RpcError::new(
-        ErrorCode::CredentialStoreUnavailable,
-        format!("could not use the credential store: {error}"),
-    )
 }
 
 #[cfg(test)]

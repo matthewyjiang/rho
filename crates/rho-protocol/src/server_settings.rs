@@ -23,6 +23,10 @@ use crate::{
         MODEL_LIST, MODEL_REFRESH,
     },
     methods::{
+        McpConfigGetParams, McpConfigGetResponse, McpConfigSetParams, McpConfigSetResponse,
+        MCP_CONFIG_GET, MCP_CONFIG_SET,
+    },
+    methods::{
         PluginsInstallParams, PluginsInstallResponse, PluginsListParams, PluginsListResponse,
         PluginsRemoveParams, PluginsRemoveResponse, PluginsSetEnabledParams,
         PluginsSetEnabledResponse, PluginsUpdateParams, PluginsUpdateResponse, PLUGINS_INSTALL,
@@ -43,8 +47,8 @@ use crate::{
 };
 
 /// The daemon's answers to `rho/config/*`, `rho/model/*`, `rho/mcp/list`,
-/// `rho/hooks/list`, `rho/hooks/file/*`, `rho/plugins/*`, and
-/// `rho/sync/*`, which
+/// `rho/mcp/config/*`, `rho/hooks/list`, `rho/hooks/file/*`, `rho/plugins/*`,
+/// and `rho/sync/*`, which
 /// [`crate::Service`] requires. Calls run as [`crate::Service`]'s do: each
 /// in its own task, overlapping within a connection and across
 /// connections. Each method answers [`crate::ErrorCode::MethodNotFound`]
@@ -285,6 +289,26 @@ pub trait SettingsService: Send + Sync {
     ) -> impl Future<Output = Result<SyncDiscardResponse, RpcError>> + Send {
         let _ = params;
         unsupported(SYNC_DISCARD)
+    }
+
+    /// Answers `rho/mcp/config/get`: the servers of `[mcp.servers]`, without
+    /// their secret values.
+    fn mcp_config_get(
+        &self,
+        params: McpConfigGetParams,
+    ) -> impl Future<Output = Result<McpConfigGetResponse, RpcError>> + Send {
+        let _ = params;
+        unsupported(MCP_CONFIG_GET)
+    }
+
+    /// Handles `rho/mcp/config/set`: put or remove servers, filling their
+    /// secrets from the target's own values or a sealed bundle.
+    fn mcp_config_set(
+        &self,
+        params: McpConfigSetParams,
+    ) -> impl Future<Output = Result<McpConfigSetResponse, RpcError>> + Send {
+        let _ = params;
+        unsupported(MCP_CONFIG_SET)
     }
 }
 

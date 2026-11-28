@@ -5099,6 +5099,7 @@ dependencies = [
  "futures-util",
  "gethostname",
  "hex",
+ "hmac 0.13.0",
  "hpke",
  "http",
  "http-body-util",

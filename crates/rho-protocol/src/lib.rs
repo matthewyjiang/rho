@@ -241,6 +241,11 @@ pub use methods::{
     SyncStatusResponse, SYNC_DISCARD, SYNC_IMPORT_KEYS, SYNC_REVERT, SYNC_STATUS,
 };
 pub use methods::{
+    McpConfigGetParams, McpConfigGetResponse, McpConfigSetParams, McpConfigSetResponse, McpSecret,
+    McpSecretKind, McpSecretSlot, McpServerChange, McpServerEntry, SecretSource, MCP_CONFIG_GET,
+    MCP_CONFIG_SET,
+};
+pub use methods::{
     NewSessionMark, SessionMark, SessionMarkParams, SessionMarkResponse, SESSION_MARK,
 };
 pub use methods::{

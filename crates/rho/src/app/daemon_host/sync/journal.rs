@@ -2,14 +2,20 @@
 //! `rho/sync/revert` can restore them.
 //!
 //! One journal, the last sync's, lives in the daemon's own credential
-//! store under [`JOURNAL_ACCOUNT`], as protected as the keys it holds. Each
-//! item keeps the raw store account it restores, so a revert does not need
-//! the auth profile to still resolve, and a SHA-256 digest of the value the
-//! sync wrote, so a revert can tell whether anything changed it since.
+//! store under [`JOURNAL_ACCOUNT`], as protected as the secrets it holds.
+//! Each item keeps where it restores to ([`Place`]): an API key's raw store
+//! account, so a revert does not need the auth profile to still resolve, or
+//! an MCP server's identity, whose whole entry it keeps. It keeps a SHA-256
+//! digest of what the sync wrote, so a revert can tell whether anything
+//! changed it since.
 //!
 //! The journal expires [`JOURNAL_LIFETIME`] after the sync's last write. An
 //! expired journal reads as none and is deleted as it is read: at daemon
 //! start, and by every `rho/sync/*` method that reads it.
+//!
+//! A write journals through a [`Draft`]: the journal is saved before the
+//! write, so a crash between the two can still revert, and a write that
+//! does not happen puts back the journal it found.
 //!
 //! Callers pass the untracked store: no provider reads the journal, so
 //! writing it must not rebuild any session's provider.
@@ -46,15 +52,34 @@ pub(super) struct Journal {
 #[derive(Clone, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
 pub(super) struct JournalItem {
     #[zeroize(skip)]
-    pub(super) item: SyncItem,
-    /// The credential store account it is saved under.
-    #[zeroize(skip)]
-    pub(super) account: String,
-    /// The value before the sync; `None` when the sync added it.
+    pub(super) place: Place,
+    /// The value before the sync: an API key, or an MCP server's entry as
+    /// canonical JSON. `None` when the sync added it.
     pub(super) previous: Option<String>,
-    /// The hex SHA-256 of the value the sync wrote.
+    /// The hex SHA-256 of the value the sync wrote; `None` when it removed
+    /// the item.
     #[zeroize(skip)]
-    pub(super) written: String,
+    pub(super) written: Option<String>,
+}
+
+/// Where a journaled item lives.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(super) enum Place {
+    /// The API key of auth profile `auth`, saved under `account`.
+    ApiKey { auth: String, account: String },
+    /// The MCP server `identity` of `config.toml`.
+    McpServer { identity: String },
+}
+
+impl Place {
+    /// The item a client names it by.
+    pub(super) fn item(&self) -> SyncItem {
+        match self {
+            Self::ApiKey { auth, .. } => SyncItem::api_key(auth),
+            Self::McpServer { identity } => SyncItem::mcp_server(identity),
+        }
+    }
 }
 
 impl Journal {
@@ -70,33 +95,34 @@ impl Journal {
 
     /// The journaled item `item`, if the sync changed it.
     pub(super) fn find(&self, item: &SyncItem) -> Option<&JournalItem> {
-        self.items.iter().find(|journaled| &journaled.item == item)
+        self.items
+            .iter()
+            .find(|journaled| &journaled.place.item() == item)
     }
 
-    /// Records that the sync writes `value` to `item` at `account`, which
-    /// holds `previous`, and returns the entry this replaces, for
-    /// [`Self::undo`] if the write fails. An item the sync already changed
-    /// keeps the value from before its first write.
+    /// Records that the sync writes `value` to `place`, which holds
+    /// `previous`, or removes it for `None`, and returns the entry this
+    /// replaces, for [`Self::undo`] if the write fails. An item the sync
+    /// already changed keeps the value from before its first write.
     pub(super) fn record(
         &mut self,
-        item: SyncItem,
-        account: &str,
+        place: Place,
         previous: Option<String>,
-        value: &str,
+        value: Option<&str>,
     ) -> Option<JournalItem> {
-        let written = written(value);
+        let written = value.map(written);
+        let item = place.item();
         if let Some(journaled) = self
             .items
             .iter_mut()
-            .find(|journaled| journaled.item == item)
+            .find(|journaled| journaled.place.item() == item)
         {
             let displaced = journaled.clone();
             journaled.written = written;
             return Some(displaced);
         }
         self.items.push(JournalItem {
-            item,
-            account: account.to_owned(),
+            place,
             previous,
             written,
         });
@@ -111,26 +137,72 @@ impl Journal {
 
     /// Forgets `item`, once restored.
     pub(super) fn remove(&mut self, item: &SyncItem) {
-        self.items.retain(|journaled| &journaled.item != item);
+        self.items
+            .retain(|journaled| &journaled.place.item() != item);
+    }
+}
+
+/// The journal one write builds: [`Draft::begin`] loads the journal the
+/// write finds, and keeps it to put back should the write not happen.
+pub(super) struct Draft {
+    /// The journal the write found, of any sync.
+    loaded: Option<Journal>,
+    /// The journal of the write's sync: the one found, if of that sync,
+    /// with what the write records.
+    pub(super) journal: Journal,
+    /// When the write started, in Unix seconds.
+    now: u64,
+}
+
+impl Draft {
+    /// Starts the journal of a write under `sync` at `now`.
+    pub(super) fn begin(
+        store: &dyn CredentialStore,
+        sync: &SyncId,
+        now: u64,
+    ) -> CredentialResult<Self> {
+        let loaded = load(store, now)?;
+        let journal = loaded
+            .clone()
+            .filter(|journal| &journal.sync == sync)
+            .unwrap_or_else(|| Journal::new(sync.clone(), now));
+        Ok(Self {
+            loaded,
+            journal,
+            now,
+        })
+    }
+
+    /// Saves the journal, to live [`JOURNAL_LIFETIME`] from the write.
+    pub(super) fn save(&mut self, store: &dyn CredentialStore) -> CredentialResult<()> {
+        self.journal.expires_at = self.now + JOURNAL_LIFETIME;
+        save(store, &self.journal)
+    }
+
+    /// Puts back the journal the write found: the write wrote nothing.
+    pub(super) fn abandon(self, store: &dyn CredentialStore) -> CredentialResult<()> {
+        match &self.loaded {
+            Some(loaded) => save(store, loaded),
+            None => delete(store),
+        }
     }
 }
 
 impl JournalItem {
-    /// Whether `current`, the value its account holds now, is still what
-    /// the sync wrote.
+    /// Whether `current`, the value its place holds now, is still what the
+    /// sync wrote: the same value, or still none when the sync removed it.
     pub(super) fn unchanged(&self, current: Option<&str>) -> bool {
-        current.is_some_and(|current| written(current) == self.written)
+        current.map(written) == self.written
     }
 }
 
-// By hand, so printing a journal never prints a key.
+// By hand, so printing a journal never prints a secret.
 impl fmt::Debug for JournalItem {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("JournalItem")
-            .field("item", &self.item)
-            .field("account", &self.account)
-            .field("previous", &self.previous.as_ref().map(|_| "[key]"))
+            .field("place", &self.place)
+            .field("previous", &self.previous.as_ref().map(|_| "[secret]"))
             .field("written", &self.written)
             .finish()
     }
@@ -162,7 +234,7 @@ pub(super) fn save(store: &dyn CredentialStore, journal: &Journal) -> Credential
         return delete(store);
     }
     // Sized exactly before writing, so growing the buffer leaves no
-    // unzeroized copy of a key behind.
+    // unzeroized copy of a secret behind.
     let mut length = Length(0);
     serde_json::to_writer(&mut length, journal).expect("a journal serializes");
     let mut saved = Zeroizing::new(Vec::with_capacity(length.0));
@@ -196,3 +268,7 @@ impl io::Write for Length {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "journal_tests.rs"]
+mod tests;

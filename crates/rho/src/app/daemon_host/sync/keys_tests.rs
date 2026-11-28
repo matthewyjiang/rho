@@ -1,14 +1,12 @@
 use pretty_assertions::assert_eq;
 use rho_protocol::{
-    ErrorCode, ImportOutcome, ImportedSecret, RevertOutcome, RevertedItem, SecretItem, SyncId,
-    SyncItem, SyncItemState, SyncItemStatus, SyncStatusResponse,
+    ErrorCode, ImportOutcome, ImportedSecret, RevertOutcome, SecretItem, SyncId, SyncItem,
 };
-use rho_providers::credentials::{
-    CredentialError, CredentialResult, CredentialStore, MemoryCredentialStore,
-};
+use rho_providers::credentials::{CredentialStore, MemoryCredentialStore};
 
 use super::*;
 use crate::app::credential_writes::api_key_account;
+use crate::app::daemon_host::sync::{journal::JOURNAL_LIFETIME, test_stores::Refusing};
 
 const NOW: u64 = 1_000;
 const ANTHROPIC: &str = "anthropic-api-key";
@@ -57,29 +55,26 @@ fn import_keys(
     import_into(store, store, sync, keys)
 }
 
-/// `inner`, except that it refuses every write to `account`.
-struct Refusing<'a> {
-    inner: &'a MemoryCredentialStore,
-    account: &'static str,
+/// Whether `auth`'s key still holds what `sync` wrote.
+fn unchanged(store: &MemoryCredentialStore, sync: &SyncId, auth: &str) -> bool {
+    let journal = journal_of(stores(store), sync, NOW).unwrap();
+    let current = current(store, account(auth)).unwrap();
+    journal
+        .find(&SyncItem::api_key(auth))
+        .unwrap()
+        .unchanged(current.as_deref().map(String::as_str))
 }
 
-impl CredentialStore for Refusing<'_> {
-    fn get_secret(&self, account: &str) -> CredentialResult<Option<String>> {
-        self.inner.get_secret(account)
-    }
-
-    fn set_secret(&self, account: &str, secret: &str) -> CredentialResult<()> {
-        if account == self.account {
-            return Err(CredentialError::StoreUnavailable(format!(
-                "refused {secret}"
-            )));
-        }
-        self.inner.set_secret(account, secret)
-    }
-
-    fn delete_secret(&self, account: &str) -> CredentialResult<bool> {
-        self.inner.delete_secret(account)
-    }
+/// Restores `auth`'s key from `sync`'s journal.
+fn restore_key(
+    store: &MemoryCredentialStore,
+    sync: &SyncId,
+    auth: &str,
+    overwrite: bool,
+) -> RevertOutcome {
+    let journal = journal_of(stores(store), sync, NOW).unwrap();
+    let journaled = journal.find(&SyncItem::api_key(auth)).unwrap();
+    restore(store, account(auth), journaled, overwrite).unwrap()
 }
 
 fn error_code<T>(result: Result<T, RpcError>) -> Option<ErrorCode> {
@@ -88,11 +83,10 @@ fn error_code<T>(result: Result<T, RpcError>) -> Option<ErrorCode> {
 
 // Covers: an import saves each key and journals what it replaced, keeping
 // the value from before the sync's first write when the sync imports a key
-// twice; a revert puts the old key back, deletes a key the sync added, and
-// deletes the journal once nothing is left, so the sync is then not found.
+// twice; restoring puts the old key back and deletes a key the sync added.
 // Owner: sync keys policy (`sync/keys.rs`).
 #[test]
-fn a_revert_restores_what_the_sync_replaced() {
+fn a_restore_puts_back_what_the_sync_replaced() {
     let store = MemoryCredentialStore::default();
     store.set_secret(account(ANTHROPIC), "sk-old").unwrap();
     let sync = SyncId::new("s");
@@ -111,64 +105,40 @@ fn a_revert_restores_what_the_sync_replaced() {
     );
     assert_eq!(saved(&store, ANTHROPIC).as_deref(), Some("sk-new"));
     assert_eq!(
-        status(stores(&store), &sync, NOW).unwrap(),
-        SyncStatusResponse::new(
-            NOW + JOURNAL_LIFETIME,
-            vec![
-                SyncItemStatus::new(SyncItem::api_key(ANTHROPIC), SyncItemState::Unchanged),
-                SyncItemStatus::new(SyncItem::api_key(MOONSHOT), SyncItemState::Unchanged),
-            ]
-        )
+        journal_of(stores(&store), &sync, NOW).unwrap().expires_at,
+        NOW + JOURNAL_LIFETIME
     );
+    assert!(unchanged(&store, &sync, ANTHROPIC));
+    assert!(unchanged(&store, &sync, MOONSHOT));
 
-    let both = vec![SyncItem::api_key(ANTHROPIC), SyncItem::api_key(MOONSHOT)];
     assert_eq!(
-        revert(stores(&store), &sync, both.clone(), &[], NOW).unwrap(),
-        vec![
-            RevertedItem::new(SyncItem::api_key(ANTHROPIC), RevertOutcome::Restored),
-            RevertedItem::new(SyncItem::api_key(MOONSHOT), RevertOutcome::Restored),
-        ]
+        [ANTHROPIC, MOONSHOT].map(|auth| restore_key(&store, &sync, auth, /*overwrite*/ false)),
+        [RevertOutcome::Restored, RevertOutcome::Restored]
     );
     assert_eq!(saved(&store, ANTHROPIC).as_deref(), Some("sk-old"));
     assert_eq!(saved(&store, MOONSHOT), None);
-    assert_eq!(store.get_secret(journal::JOURNAL_ACCOUNT).unwrap(), None);
-    assert_eq!(
-        error_code(status(stores(&store), &sync, NOW)),
-        Some(ErrorCode::SyncNotFound)
-    );
 }
 
 // Covers: a key changed on the target since the sync reads as changed, and
-// a revert leaves it, and keeps it journaled, unless `overwrite` names it.
+// a restore leaves it unless told to overwrite.
 // Owner: sync keys policy (`sync/keys.rs`).
 #[test]
-fn a_revert_keeps_a_key_changed_since_the_sync_unless_overwritten() {
+fn a_restore_keeps_a_key_changed_since_the_sync_unless_overwritten() {
     let store = MemoryCredentialStore::default();
     store.set_secret(account(ANTHROPIC), "sk-old").unwrap();
     let sync = SyncId::new("s");
     import_keys(&store, &sync, &[(ANTHROPIC, "sk-new")]);
     store.set_secret(account(ANTHROPIC), "sk-mine").unwrap();
-    let item = SyncItem::api_key(ANTHROPIC);
 
+    assert!(!unchanged(&store, &sync, ANTHROPIC));
     assert_eq!(
-        status(stores(&store), &sync, NOW).unwrap().items,
-        vec![SyncItemStatus::new(item.clone(), SyncItemState::Changed)]
-    );
-    assert_eq!(
-        revert(stores(&store), &sync, vec![item.clone()], &[], NOW).unwrap(),
-        vec![RevertedItem::new(item.clone(), RevertOutcome::Changed)]
+        restore_key(&store, &sync, ANTHROPIC, /*overwrite*/ false),
+        RevertOutcome::Changed
     );
     assert_eq!(saved(&store, ANTHROPIC).as_deref(), Some("sk-mine"));
     assert_eq!(
-        revert(
-            stores(&store),
-            &sync,
-            vec![item.clone()],
-            std::slice::from_ref(&item),
-            NOW
-        )
-        .unwrap(),
-        vec![RevertedItem::new(item, RevertOutcome::Restored)]
+        restore_key(&store, &sync, ANTHROPIC, /*overwrite*/ true),
+        RevertOutcome::Restored
     );
     assert_eq!(saved(&store, ANTHROPIC).as_deref(), Some("sk-old"));
 }
@@ -248,41 +218,10 @@ fn a_refused_write_replaces_nothing_in_the_journal() {
     );
     assert_eq!(saved_each(both), vec![true, false]);
 
-    let anthropic = SyncItem::api_key(ANTHROPIC);
-    assert_eq!(
-        status(stores(&store), &first, NOW).unwrap().items,
-        vec![SyncItemStatus::new(
-            anthropic.clone(),
-            SyncItemState::Unchanged
-        )]
-    );
-    revert(stores(&store), &first, vec![anthropic], &[], NOW).unwrap();
-    assert_eq!(saved(&store, ANTHROPIC).as_deref(), Some("sk-old"));
-}
-
-// Covers: a revert whose journal update the store refuses still reports,
-// and keeps, the keys it restored.
-// Owner: sync keys policy (`sync/keys.rs`).
-#[test]
-fn a_revert_reports_what_it_restored_even_if_the_journal_stays() {
-    let store = MemoryCredentialStore::default();
-    store.set_secret(account(ANTHROPIC), "sk-old").unwrap();
-    let sync = SyncId::new("s");
-    import_keys(&store, &sync, &[(ANTHROPIC, "sk-new"), (MOONSHOT, "sk-m")]);
-    let refusing = Refusing {
-        inner: &store,
-        account: journal::JOURNAL_ACCOUNT,
-    };
-    let stores = Stores {
-        keys: &store,
-        journal: &refusing,
-    };
-    let anthropic = SyncItem::api_key(ANTHROPIC);
-
-    assert_eq!(
-        revert(stores, &sync, vec![anthropic.clone()], &[], NOW).unwrap(),
-        vec![RevertedItem::new(anthropic, RevertOutcome::Restored)]
-    );
+    let journal = journal_of(stores(&store), &first, NOW).unwrap();
+    assert!(journal.find(&SyncItem::api_key(MOONSHOT)).is_none());
+    assert!(unchanged(&store, &first, ANTHROPIC));
+    restore_key(&store, &first, ANTHROPIC, /*overwrite*/ false);
     assert_eq!(saved(&store, ANTHROPIC).as_deref(), Some("sk-old"));
 }
 
@@ -301,9 +240,9 @@ fn the_journal_keeps_only_the_last_sync_until_it_expires() {
         error_code(discard(stores(&store), &first, NOW)),
         Some(ErrorCode::SyncNotFound)
     );
-    assert!(status(stores(&store), &second, NOW + JOURNAL_LIFETIME - 1).is_ok());
+    assert!(journal_of(stores(&store), &second, NOW + JOURNAL_LIFETIME - 1).is_ok());
     assert_eq!(
-        error_code(status(stores(&store), &second, NOW + JOURNAL_LIFETIME)),
+        error_code(journal_of(stores(&store), &second, NOW + JOURNAL_LIFETIME)),
         Some(ErrorCode::SyncNotFound)
     );
     assert_eq!(store.get_secret(journal::JOURNAL_ACCOUNT).unwrap(), None);

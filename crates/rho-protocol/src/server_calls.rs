@@ -12,34 +12,36 @@ use crate::{
         ConfigRegisterParams, ConfigSchemaMethod, ConfigSchemaParams, ConfigSet, ConfigSetParams,
         ConfigTableGet, ConfigTableGetParams, ConfigTableSet, ConfigTableSetParams, HooksFileGet,
         HooksFileGetParams, HooksFileSet, HooksFileSetParams, HooksList, HooksListParams, JobList,
-        JobListParams, McpList, McpListParams, ModelRefresh, ModelRefreshParams, Restart,
-        RestartParams, RestartResponse, SessionAnswer, SessionAnswerParams, SessionAnswerQuestion,
-        SessionAnswerQuestionParams, SessionBackgroundList, SessionBackgroundListParams,
-        SessionBackgroundStop, SessionBackgroundStopParams, SessionCancel, SessionCancelParams,
-        SessionConfigure, SessionConfigureParams, SessionDelete, SessionDeleteParams, SessionFork,
-        SessionForkParams, SessionHold, SessionHoldParams, SessionHooksReload,
-        SessionHooksReloadParams, SessionId, SessionInspect, SessionInspectParams, SessionList,
-        SessionListDetailed, SessionListParams, SessionMarkMethod, SessionMarkParams, SessionMcp,
-        SessionMcpCatalogParams, SessionMcpCatalogRead, SessionMcpComplete,
-        SessionMcpCompleteParams, SessionMcpParams, SessionMcpResourceParams,
-        SessionMcpResourceRead, SessionNew, SessionNewParams, SessionProcesses,
-        SessionProcessesParams, SessionPrompt, SessionPromptParams, SessionPullRequestLink,
-        SessionPullRequestLinkParams, SessionPullRequestList, SessionPullRequestListParams,
-        SessionPullRequestShow, SessionPullRequestShowParams, SessionPullRequestUnlink,
-        SessionPullRequestUnlinkParams, SessionRename, SessionRenameParams, SessionReportParams,
-        SessionReportRead, SessionSearch, SessionSearchParams, SessionSteer, SessionSteerParams,
-        SessionSurfaceAction, SessionSurfaceActionParams, SessionUnsteer, SessionUnsteerParams,
-        Status, Stop, WorktreePrune, WorktreePruneParams, AUTH_CHOOSE_STORE, AUTH_KEY, AUTH_LIST,
+        JobListParams, McpConfigGet, McpConfigGetParams, McpConfigSet, McpConfigSetParams, McpList,
+        McpListParams, ModelRefresh, ModelRefreshParams, Restart, RestartParams, RestartResponse,
+        SessionAnswer, SessionAnswerParams, SessionAnswerQuestion, SessionAnswerQuestionParams,
+        SessionBackgroundList, SessionBackgroundListParams, SessionBackgroundStop,
+        SessionBackgroundStopParams, SessionCancel, SessionCancelParams, SessionConfigure,
+        SessionConfigureParams, SessionDelete, SessionDeleteParams, SessionFork, SessionForkParams,
+        SessionHold, SessionHoldParams, SessionHooksReload, SessionHooksReloadParams, SessionId,
+        SessionInspect, SessionInspectParams, SessionList, SessionListDetailed, SessionListParams,
+        SessionMarkMethod, SessionMarkParams, SessionMcp, SessionMcpCatalogParams,
+        SessionMcpCatalogRead, SessionMcpComplete, SessionMcpCompleteParams, SessionMcpParams,
+        SessionMcpResourceParams, SessionMcpResourceRead, SessionNew, SessionNewParams,
+        SessionProcesses, SessionProcessesParams, SessionPrompt, SessionPromptParams,
+        SessionPullRequestLink, SessionPullRequestLinkParams, SessionPullRequestList,
+        SessionPullRequestListParams, SessionPullRequestShow, SessionPullRequestShowParams,
+        SessionPullRequestUnlink, SessionPullRequestUnlinkParams, SessionRename,
+        SessionRenameParams, SessionReportParams, SessionReportRead, SessionSearch,
+        SessionSearchParams, SessionSteer, SessionSteerParams, SessionSurfaceAction,
+        SessionSurfaceActionParams, SessionUnsteer, SessionUnsteerParams, Status, Stop,
+        WorktreePrune, WorktreePruneParams, AUTH_CHOOSE_STORE, AUTH_KEY, AUTH_LIST,
         AUTH_LOGIN_CANCEL, AUTH_LOGOUT, CONFIG_REGISTER, CONFIG_SCHEMA, CONFIG_SET,
         CONFIG_TABLE_GET, CONFIG_TABLE_SET, DAEMON_RESTART, DAEMON_STATUS, DAEMON_STOP,
-        HOOKS_FILE_GET, HOOKS_FILE_SET, HOOKS_LIST, JOB_LIST, MCP_LIST, MODEL_REFRESH,
-        SESSION_ANSWER, SESSION_ANSWER_QUESTION, SESSION_BACKGROUND_LIST, SESSION_BACKGROUND_STOP,
-        SESSION_CANCEL, SESSION_CONFIGURE, SESSION_DELETE, SESSION_FORK, SESSION_HOLD,
-        SESSION_HOOKS_RELOAD, SESSION_INSPECT, SESSION_LIST, SESSION_LIST_DETAILED, SESSION_MARK,
-        SESSION_MCP, SESSION_MCP_CATALOG, SESSION_MCP_COMPLETE, SESSION_MCP_RESOURCE, SESSION_NEW,
-        SESSION_PROCESSES, SESSION_PROMPT, SESSION_PULL_REQUEST_LINK, SESSION_PULL_REQUEST_LIST,
-        SESSION_PULL_REQUEST_SHOW, SESSION_PULL_REQUEST_UNLINK, SESSION_RENAME, SESSION_REPORT,
-        SESSION_SEARCH, SESSION_STEER, SESSION_SURFACE_ACTION, SESSION_UNSTEER, WORKTREE_PRUNE,
+        HOOKS_FILE_GET, HOOKS_FILE_SET, HOOKS_LIST, JOB_LIST, MCP_CONFIG_GET, MCP_CONFIG_SET,
+        MCP_LIST, MODEL_REFRESH, SESSION_ANSWER, SESSION_ANSWER_QUESTION, SESSION_BACKGROUND_LIST,
+        SESSION_BACKGROUND_STOP, SESSION_CANCEL, SESSION_CONFIGURE, SESSION_DELETE, SESSION_FORK,
+        SESSION_HOLD, SESSION_HOOKS_RELOAD, SESSION_INSPECT, SESSION_LIST, SESSION_LIST_DETAILED,
+        SESSION_MARK, SESSION_MCP, SESSION_MCP_CATALOG, SESSION_MCP_COMPLETE, SESSION_MCP_RESOURCE,
+        SESSION_NEW, SESSION_PROCESSES, SESSION_PROMPT, SESSION_PULL_REQUEST_LINK,
+        SESSION_PULL_REQUEST_LIST, SESSION_PULL_REQUEST_SHOW, SESSION_PULL_REQUEST_UNLINK,
+        SESSION_RENAME, SESSION_REPORT, SESSION_SEARCH, SESSION_STEER, SESSION_SURFACE_ACTION,
+        SESSION_UNSTEER, WORKTREE_PRUNE,
     },
     methods::{
         PluginsInstall, PluginsInstallParams, PluginsList, PluginsListParams, PluginsRemove,
@@ -95,6 +97,8 @@ pub(crate) enum ServiceCall {
     LogoutAuth(AuthLogoutParams),
     ListAuths(AuthListParams),
     ListMcpServers(McpListParams),
+    GetMcpConfig(McpConfigGetParams),
+    SetMcpConfig(McpConfigSetParams),
     ListHooks(HooksListParams),
     ReadHooksFile(HooksFileGetParams),
     WriteHooksFile(HooksFileSetParams),
@@ -192,6 +196,8 @@ impl ServiceCall {
             AUTH_LOGOUT => decode_params::<AuthLogout>(params).map(Self::LogoutAuth),
             AUTH_LIST => decode_params::<AuthList>(params).map(Self::ListAuths),
             MCP_LIST => decode_params::<McpList>(params).map(Self::ListMcpServers),
+            MCP_CONFIG_GET => decode_params::<McpConfigGet>(params).map(Self::GetMcpConfig),
+            MCP_CONFIG_SET => decode_params::<McpConfigSet>(params).map(Self::SetMcpConfig),
             HOOKS_LIST => decode_params::<HooksList>(params).map(Self::ListHooks),
             HOOKS_FILE_GET => decode_params::<HooksFileGet>(params).map(Self::ReadHooksFile),
             HOOKS_FILE_SET => decode_params::<HooksFileSet>(params).map(Self::WriteHooksFile),
@@ -279,6 +285,8 @@ impl ServiceCall {
             | Self::SetConfig(_)
             | Self::GetConfigTable(_)
             | Self::SetConfigTable(_)
+            | Self::GetMcpConfig(_)
+            | Self::SetMcpConfig(_)
             | Self::RefreshModels(_)
             | Self::Sync(_) => None,
         }
@@ -443,6 +451,12 @@ impl ServiceCall {
             }
             Self::SetConfig(params) => {
                 encode_result::<ConfigSet>(&service.set_config(params).await?)
+            }
+            Self::GetMcpConfig(params) => {
+                encode_result::<McpConfigGet>(&service.mcp_config_get(params).await?)
+            }
+            Self::SetMcpConfig(params) => {
+                encode_result::<McpConfigSet>(&service.mcp_config_set(params).await?)
             }
             Self::GetConfigTable(params) => {
                 encode_result::<ConfigTableGet>(&service.get_config_table(params).await?)

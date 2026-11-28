@@ -4484,6 +4484,87 @@
       ],
       "type": "object"
     },
+    "McpConfigGetParams": {
+      "description": "Params of [`MCP_CONFIG_GET`].",
+      "type": "object"
+    },
+    "McpConfigGetResponse": {
+      "description": "Result of [`MCP_CONFIG_GET`].",
+      "properties": {
+        "revision": {
+          "$ref": "#/$defs/ConfigRevision",
+          "description": "Send it with the next [`MCP_CONFIG_SET`]. It covers the secret\nvalues too, under a key the daemon draws when it starts, so it\ntells nothing about them, and a daemon restart makes it stale."
+        },
+        "servers": {
+          "description": "By identity.",
+          "items": {
+            "$ref": "#/$defs/McpServerEntry"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "revision",
+        "servers"
+      ],
+      "type": "object"
+    },
+    "McpConfigSetParams": {
+      "description": "Params of [`MCP_CONFIG_SET`]. Every change lands, or none does: the\nwhole file must still load with them, and a change the daemon refuses\nleaves the file as it was.",
+      "properties": {
+        "changes": {
+          "description": "Applied in order.",
+          "items": {
+            "$ref": "#/$defs/McpServerChange"
+          },
+          "type": "array"
+        },
+        "revision": {
+          "$ref": "#/$defs/ConfigRevision",
+          "description": "The revision the changes were made against. A stale one is refused\nwith [`crate::ErrorCode::ConfigConflict`]."
+        },
+        "sealed": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SealedSecrets"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The values of the secrets whose source is\n[`SecretSource::Sealed`], sealed to a recipient this daemon issued.\nIts items must be exactly those secrets. Opening it, once the\nrevision holds, uses the recipient up, as [`super::SYNC_COMPARE`]\ndoes, so a set refused after that needs a new recipient and export."
+        },
+        "sync": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SyncId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Journal what the changes replace under this sync, so\n[`super::SYNC_REVERT`] can restore each server. Without it the\nwrite cannot be reverted."
+        }
+      },
+      "required": [
+        "revision",
+        "changes"
+      ],
+      "type": "object"
+    },
+    "McpConfigSetResponse": {
+      "description": "Result of [`MCP_CONFIG_SET`].",
+      "properties": {
+        "revision": {
+          "$ref": "#/$defs/ConfigRevision",
+          "description": "The revision with the changes."
+        }
+      },
+      "required": [
+        "revision"
+      ],
+      "type": "object"
+    },
     "McpListParams": {
       "description": "Params of [`MCP_LIST`].",
       "properties": {
@@ -4519,6 +4600,59 @@
       "required": [
         "config_path",
         "servers"
+      ],
+      "type": "object"
+    },
+    "McpSecret": {
+      "description": "One secret a put writes.",
+      "properties": {
+        "slot": {
+          "$ref": "#/$defs/McpSecretSlot"
+        },
+        "source": {
+          "$ref": "#/$defs/SecretSource"
+        }
+      },
+      "required": [
+        "slot",
+        "source"
+      ],
+      "type": "object"
+    },
+    "McpSecretKind": {
+      "anyOf": [
+        {
+          "const": "header",
+          "description": "`headers`, sent with each request to a Streamable HTTP server.",
+          "type": "string"
+        },
+        {
+          "const": "env",
+          "description": "`env`, set for a stdio server's process.",
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "Which map of a server a secret sits in. Protocol minors may add kinds."
+    },
+    "McpSecretSlot": {
+      "description": "One secret of a server, named without its value.",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/McpSecretKind"
+        },
+        "name": {
+          "description": "The header's or variable's name.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "name"
       ],
       "type": "object"
     },
@@ -4587,6 +4721,85 @@
           "type": "object"
         }
       ]
+    },
+    "McpServerChange": {
+      "description": "One change of an [`MCP_CONFIG_SET`]. The daemon reads it, so it has no\n`Unknown`.",
+      "oneOf": [
+        {
+          "description": "Write the whole server `identity`, adding it when the file lacks it:\n`value`, which must not hold `headers` or `env`, with those maps\nrebuilt from `secrets`. A field or secret it leaves out is removed.",
+          "properties": {
+            "identity": {
+              "type": "string"
+            },
+            "op": {
+              "const": "put",
+              "type": "string"
+            },
+            "secrets": {
+              "items": {
+                "$ref": "#/$defs/McpSecret"
+              },
+              "type": "array"
+            },
+            "value": true
+          },
+          "required": [
+            "op",
+            "identity",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Remove the server `identity`, which the file must hold.",
+          "properties": {
+            "identity": {
+              "type": "string"
+            },
+            "op": {
+              "const": "remove",
+              "type": "string"
+            }
+          },
+          "required": [
+            "op",
+            "identity"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "McpServerEntry": {
+      "description": "One server of `[mcp.servers]`.",
+      "properties": {
+        "error": {
+          "description": "Why the daemon does not load it, as [`super::MCP_LIST`] reports; its\n`value` is still returned.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "identity": {
+          "description": "Its key under `[mcp.servers]`.",
+          "type": "string"
+        },
+        "secrets": {
+          "description": "The names in its `headers` and `env` maps.",
+          "items": {
+            "$ref": "#/$defs/McpSecretSlot"
+          },
+          "type": "array"
+        },
+        "value": {
+          "description": "The entry as `config.toml` holds it, as JSON, without its `headers`\nand `env` maps, whose values are secrets. Everything else stays,\nsuch as `headers_from_env`, which names variables only."
+        }
+      },
+      "required": [
+        "identity",
+        "value",
+        "secrets"
+      ],
+      "type": "object"
     },
     "McpServerSource": {
       "anyOf": [
@@ -8159,6 +8372,48 @@
           "type": "object"
         },
         {
+          "description": "The value of header `name` of MCP server `server`, under\n`[mcp.servers]` in `config.toml`. Built with\n[`SecretItem::mcp_header`].",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "server": {
+              "type": "string"
+            },
+            "type": {
+              "const": "mcp_header",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "server",
+            "name"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The value of environment variable `name` of MCP server `server`.\nBuilt with [`SecretItem::mcp_env`].",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "server": {
+              "type": "string"
+            },
+            "type": {
+              "const": "mcp_env",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "server",
+            "name"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Any other value: one a later protocol minor adds.",
           "properties": {
             "type": {
@@ -8180,6 +8435,21 @@
       },
       "description": "Values by name that may be secrets, such as an MCP server's environment\nvariables and headers. Its `Debug` shows only the names, so the daemon\nnever logs a value.",
       "type": "object"
+    },
+    "SecretSource": {
+      "description": "Where a put takes one secret's value from. The daemon reads it, so it\nhas no `Unknown`.",
+      "oneOf": [
+        {
+          "const": "keep",
+          "description": "The value the target's entry already holds in that slot.",
+          "type": "string"
+        },
+        {
+          "const": "sealed",
+          "description": "The value of the matching item of the set's `sealed` bundle:\n[`super::SecretItem::McpHeader`] or [`super::SecretItem::McpEnv`]\nwith this server's identity.",
+          "type": "string"
+        }
+      ]
     },
     "Selection": {
       "anyOf": [
@@ -12133,6 +12403,23 @@
           "type": "object"
         },
         {
+          "description": "The whole MCP server `identity` under `[mcp.servers]`, its secret\nvalues included, as [`super::MCP_CONFIG_SET`] wrote it. Built with\n[`SyncItem::mcp_server`].",
+          "properties": {
+            "identity": {
+              "type": "string"
+            },
+            "type": {
+              "const": "mcp_server",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "identity"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Any other value: one a later protocol minor adds.",
           "properties": {
             "type": {
@@ -13883,6 +14170,22 @@
       },
       "result": {
         "$ref": "#/$defs/JobListResponse"
+      }
+    },
+    "rho/mcp/config/get": {
+      "params": {
+        "$ref": "#/$defs/McpConfigGetParams"
+      },
+      "result": {
+        "$ref": "#/$defs/McpConfigGetResponse"
+      }
+    },
+    "rho/mcp/config/set": {
+      "params": {
+        "$ref": "#/$defs/McpConfigSetParams"
+      },
+      "result": {
+        "$ref": "#/$defs/McpConfigSetResponse"
       }
     },
     "rho/mcp/list": {
