@@ -270,8 +270,12 @@ impl Busy {
     /// to hear of it, so the caller tries again and is refused again if
     /// the turn still runs. Also returns once the attachment ends.
     pub(super) async fn ended(mut self) {
-        let changed = self.0.has_changed().unwrap_or(true);
-        let busy = self.0.borrow_and_update().busy();
+        // One read: a state the pump sends between two reads would be
+        // marked seen without counting as a change, and wait forever.
+        let (busy, changed) = {
+            let seen = self.0.borrow_and_update();
+            (seen.busy(), seen.has_changed())
+        };
         let _ = match (busy, changed) {
             (true, _) => self
                 .0
