@@ -24,6 +24,11 @@ use super::{
 /// The `tui` client's namespace name.
 const TUI_CLIENT: &str = "tui";
 
+/// The agent setting a daemon from before [`SettingSpec::read_only`]
+/// refuses without saying so: `/config` leaves it out by key too.
+// NEXT_MAJOR(rho-protocol): drop this key fallback and filter by `read_only` alone once every supported daemon sends the flag.
+const PRE_READ_ONLY_REFUSED: &str = "behavior.credential_store";
+
 /// The settings namespaces the TUI reads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -120,7 +125,9 @@ impl DaemonSettings {
         // `/config` leaves out what `rho/config/set` refuses, such as the
         // credential store, which `rho credential-store set` and the login
         // question change through `rho/auth/choose_store`.
-        schema.settings.retain(|spec| !spec.read_only);
+        schema
+            .settings
+            .retain(|spec| !spec.read_only && spec.key.as_str() != PRE_READ_ONLY_REFUSED);
         Self {
             schema,
             tui_specs,
