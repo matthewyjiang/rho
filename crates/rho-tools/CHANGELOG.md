@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.7.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v2.6.0...rho-agent-tools-v2.7.0) (2026-11-28)
+
+
+### Features
+
+* **config:** mark settings that belong to one machine or that only another method changes ([#2061](https://github.com/matthewyjiang/rho/issues/2061)) ([5f68b84](https://github.com/matthewyjiang/rho/commit/5f68b8486c40f6ba1f1569a84cab8bf2f0b5a57f))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 6.2.0 to 6.2.1
+
 ## [2.6.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v2.5.0...rho-agent-tools-v2.6.0) (2026-11-27)
 
 

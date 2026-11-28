@@ -5050,7 +5050,7 @@ dependencies = [
 
 [[package]]
 name = "rho-agent-tools"
-version = "2.6.0"
+version = "2.7.0"
 dependencies = [
  "base64 0.23.1",
  "calamine",
@@ -5082,7 +5082,7 @@ dependencies = [
 
 [[package]]
 name = "rho-coding-agent"
-version = "3.6.0"
+version = "3.7.0"
 dependencies = [
  "agent-client-protocol",
  "anyhow",
@@ -5181,7 +5181,7 @@ dependencies = [
 
 [[package]]
 name = "rho-providers"
-version = "3.3.1"
+version = "3.3.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5218,7 +5218,7 @@ dependencies = [
 
 [[package]]
 name = "rho-sdk"
-version = "6.2.0"
+version = "6.2.1"
 dependencies = [
  "chrono",
  "pretty_assertions",

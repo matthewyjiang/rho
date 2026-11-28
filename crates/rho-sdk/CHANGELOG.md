@@ -1,5 +1,12 @@
 # Changelog
 
+## [6.2.1](https://github.com/matthewyjiang/rho/compare/rho-sdk-v6.2.0...rho-sdk-v6.2.1) (2026-11-28)
+
+
+### Bug Fixes
+
+* **sdk:** see a cancel on a parked wait after the scheduling budget runs out ([#2066](https://github.com/matthewyjiang/rho/issues/2066)) ([72999b8](https://github.com/matthewyjiang/rho/commit/72999b833a4955c6f6504dc1318618ecd456d8ba))
+
 ## [6.2.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v6.1.0...rho-sdk-v6.2.0) (2026-11-27)
 
 
